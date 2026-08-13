@@ -2530,55 +2530,79 @@ export default function App() {
     });
   }
 
-  async function uploadPdf(file) {
+  async function uploadOnePdf(file) {
+    const transferId = addTransfer({ name: file.name, kind: "upload", info: fmtBytes(file.size) });
+    const form = new FormData();
+    form.append("file", file);
+    const resp = await fetch(`${API}/uploads`, { method: "POST", body: form, credentials: "include" });
+    if (!resp.ok) {
+      const text = await resp.text();
+      let msg = text; // FastAPI errors come as {"detail": "..."} — show the human message
+      try { const j = JSON.parse(text); if (typeof j.detail === "string") msg = j.detail; } catch {}
+      updateTransfer(transferId, { status: "error", info: "failed" });
+      throw new Error(msg || `upload failed (${resp.status})`);
+    }
+    const data = await resp.json();
+    updateTransfer(transferId, { status: "done", info: fmtBytes(file.size) });
+    const defaultTitle = getPdfPageTitle(data.doc_id, data.source_url);
+    const block = await getOrCreateBlockForDoc(data.doc_id, defaultTitle, data.source_url);
+    // If the file carries embedded annotations (SumatraPDF etc.), pull them in
+    importEmbeddedAnnots(block.id, data.doc_id, true);
+    return { data, block, defaultTitle };
+  }
+
+  async function uploadPdfs(fileList) {
     if (readOnly) return;
-    if (!file || file.type !== "application/pdf") {
+    const isPdf = (f) => f.type === "application/pdf" || /\.pdf$/i.test(f.name || "");
+    const files = Array.from(fileList || []).filter(isPdf);
+    if (!files.length) {
       setStatus("Not a PDF file.");
       return;
     }
     const maxUploadMb = quotaInfo?.max_upload_mb || 50;
-    if (file.size > maxUploadMb * 1024 * 1024) {
-      setStatus(`File too large (max ${maxUploadMb} MB).`);
-      return;
-    }
     setLoading(true);
-    setStatus(`Uploading ${file.name}...`);
-    const transferId = addTransfer({ name: file.name, kind: "upload", info: fmtBytes(file.size) });
+    let last = null;
+    const failed = [];
     try {
-      const form = new FormData();
-      form.append("file", file);
-      const resp = await fetch(`${API}/uploads`, { method: "POST", body: form, credentials: "include" });
-      if (!resp.ok) {
-        const text = await resp.text();
-        let msg = text; // FastAPI errors come as {"detail": "..."} — show the human message
-        try { const j = JSON.parse(text); if (typeof j.detail === "string") msg = j.detail; } catch {}
-        updateTransfer(transferId, { status: "error", info: "failed" });
-        throw new Error(msg || `upload failed (${resp.status})`);
+      for (const file of files) {
+        if (file.size > maxUploadMb * 1024 * 1024) {
+          failed.push(`${file.name} (max ${maxUploadMb} MB)`);
+          continue;
+        }
+        setStatus(`Uploading ${file.name}...`);
+        try {
+          last = await uploadOnePdf(file);
+        } catch (err) {
+          failed.push(`${file.name} (${err.message})`);
+        }
       }
-      const data = await resp.json();
-      updateTransfer(transferId, { status: "done", info: fmtBytes(file.size) });
-      refreshQuota();
-      // Open the uploaded PDF directly (bypass openPdf's URL-resolution path)
-      const sourceUrl = data.source_url;
-      const defaultTitle = getPdfPageTitle(data.doc_id, sourceUrl);
-      const block = await getOrCreateBlockForDoc(data.doc_id, defaultTitle, sourceUrl);
-      const nextBlocks = await loadBlocksForBlock(block.id);
-      setDocId(data.doc_id);
-      setInputUrl(sourceUrl);
-      setFocusedBlockId(block.id);
-      setFocusedBlock(block);
-      setPdfTitle(block.content || defaultTitle);
-      setSummary(block.properties?.summary || "");
-      setCategory(block.properties?.category || "");
-      setPageFolders(parseFolderTags(block.properties?.folder));
-      setPdfUrl(sourceUrl);
-      const newUrl = `${window.location.pathname}?block=${encodeURIComponent(block.id)}`;
-      window.history.replaceState({}, "", newUrl);
-      setStatus(`Uploaded ${file.name} (${data.doc_id})`);
-      // If the file carries embedded annotations (SumatraPDF etc.), pull them in
-      importEmbeddedAnnots(block.id, data.doc_id, true);
-    } catch (err) {
-      setStatus(`Upload failed: ${err.message}`);
+      const okCount = files.length - failed.length;
+      if (okCount > 0) refreshQuota();
+      if (files.length === 1 && last) {
+        // Single upload keeps the old behavior: open the paper directly
+        // (bypass openPdf's URL-resolution path).
+        const { data, block, defaultTitle } = last;
+        await loadBlocksForBlock(block.id);
+        setDocId(data.doc_id);
+        setInputUrl(data.source_url);
+        setFocusedBlockId(block.id);
+        setFocusedBlock(block);
+        setPdfTitle(block.content || defaultTitle);
+        setSummary(block.properties?.summary || "");
+        setCategory(block.properties?.category || "");
+        setPageFolders(parseFolderTags(block.properties?.folder));
+        setPdfUrl(data.source_url);
+        const newUrl = `${window.location.pathname}?block=${encodeURIComponent(block.id)}`;
+        window.history.replaceState({}, "", newUrl);
+        setStatus(`Uploaded ${files[0].name} (${data.doc_id})`);
+      } else if (okCount > 0) {
+        fetchHomeBlocks();
+        setStatus(failed.length
+          ? `Uploaded ${okCount} of ${files.length} PDFs — failed: ${failed.join(", ")}`
+          : `Uploaded ${okCount} PDFs.`);
+      } else {
+        setStatus(`Upload failed: ${failed.join(", ")}`);
+      }
     } finally {
       setLoading(false);
     }
@@ -5116,12 +5140,10 @@ export default function App() {
       }}
       onDrop={readOnly ? undefined : (e) => {
         appRef.current?.classList.remove("dragOver");
-        const file = e.dataTransfer?.files?.[0];
-        if (!file) return;
-        if (file.type === "application/pdf") {
-          e.preventDefault();
-          uploadPdf(file);
-        }
+        const files = Array.from(e.dataTransfer?.files || []).filter((f) => f.type === "application/pdf");
+        if (!files.length) return;
+        e.preventDefault();
+        uploadPdfs(files);
       }}
     >
       {!readOnly ? (
@@ -5192,13 +5214,14 @@ export default function App() {
                     }}
                   />
                   <label className="popoverItem" style={{ cursor: loading ? "not-allowed" : "pointer" }}>
-                    Upload PDF…
+                    Upload PDFs…
                     <input
                       type="file"
                       accept=".pdf"
+                      multiple
                       style={{ display: "none" }}
                       disabled={loading}
-                      onChange={(e) => { const f = e.target.files?.[0]; e.target.value = ""; setOpenPopover(null); if (f) uploadPdf(f); }}
+                      onChange={(e) => { const files = Array.from(e.target.files || []); e.target.value = ""; setOpenPopover(null); if (files.length) uploadPdfs(files); }}
                     />
                   </label>
                   <button className="popoverItem" onClick={createNotePage}>New note page</button>
