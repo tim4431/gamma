@@ -1,5 +1,5 @@
 import React from "react";
-import { API, apiJson, fmtBytes } from "./utils";
+import { API, apiJson, fmtBytes, copyText } from "./utils";
 import { parseFolderTags } from "./libraryUtils";
 import {
   ActivityIcon,
@@ -16,6 +16,7 @@ import {
 
 const NAV_ITEMS = [
   ["papers", "Paper metadata", PaperIcon],
+  ["notes", "Notes", PenIcon],
   ["library", "Library status", ListIcon],
   ["ai", "AI & API keys", KeyIcon],
   ["prompts", "Prompts", SlidersIcon],
@@ -100,12 +101,6 @@ function PapersSettings({ value }) {
         checked={value.pdfSaveLocal}
         onChange={value.setPdfSaveLocal}
       />
-      <SettingToggle
-        label="Note badges on highlights"
-        description="Show a small speech-bubble next to a highlight in the PDF when you've typed a note on it. Click the bubble to jump to the note."
-        checked={value.hlNoteBadges}
-        onChange={value.setHlNoteBadges}
-      />
       <label className="settingRow">
         <span className="settingText">
           <span className="settingLabel">Embedded PDF annotations</span>
@@ -124,6 +119,28 @@ function PapersSettings({ value }) {
       </label>
       <MetaModelRow value={value} />
       {value.isAdmin ? <ServerLimitRows setStatus={value.setStatus} refreshQuota={value.refreshQuota} /> : null}
+    </>
+  );
+}
+
+function NotesSettings({ value }) {
+  return (
+    <>
+      <PaneIntro title="Notes">
+        How the note outliner behaves while you write. These preferences are saved in this browser.
+      </PaneIntro>
+      <SettingToggle
+        label="Enter starts a new note"
+        description="Logseq-style: Enter creates the next note, Shift+Enter types a line break inside the current one. Turn off to swap them — Enter types line breaks, Shift+Enter starts a new note (the + button under the notes always creates one)."
+        checked={value.enterNewNote}
+        onChange={value.setEnterNewNote}
+      />
+      <SettingToggle
+        label="Note badges on highlights"
+        description="Show a small speech-bubble next to a highlight in the PDF when you've typed a note on it. Click the bubble to jump to the note."
+        checked={value.hlNoteBadges}
+        onChange={value.setHlNoteBadges}
+      />
     </>
   );
 }
@@ -658,6 +675,7 @@ function AiSettings({ value }) {
           ) : null}
           {value.aiKeysInfo.providers.map((provider) => {
             const protocol = value.aiProtocolOf(provider.protocol);
+            const test = value.aiKeyTests?.[provider.id];
             return (
               <label key={provider.id} className={`aiProvRow aiProvSelectable ${activeKeyId === provider.id ? "active" : ""}`}>
                 {value.aiKeysInfo.providers.length > 1 ? (
@@ -689,9 +707,21 @@ function AiSettings({ value }) {
                       <span className="categoryTag" key={model}>{model}</span>
                     ))}
                   </span>
+                  {test ? (
+                    <span className={`aiProvDesc ${test.busy ? "" : test.ok ? "aiTestOk" : "aiKeysError"}`}>
+                      {test.busy
+                        ? "Testing… sending a tiny request"
+                        : test.ok
+                          ? `✓ working · ${test.model} · ${(test.latency_ms / 1000).toFixed(1)}s`
+                          : `✗ ${test.error}`}
+                    </span>
+                  ) : null}
                 </span>
                 {value.aiKeysInfo.can_edit ? (
                   <span className="aiProvActions">
+                    <button className="uiBtn sm" disabled={value.aiKeysBusy || test?.busy} title="Send a tiny AI request through this credential to check it still works" onClick={() => value.testAiProvider(provider)}>
+                      Test
+                    </button>
                     <button className="uiBtn sm iconSq" disabled={value.aiKeysBusy} title="Edit this key" onClick={() => value.startEditAiProvider(provider)}>
                       <PenIcon size={13} />
                     </button>
@@ -856,9 +886,8 @@ function LogBox({ label, description, entries, emptyText, copyStatus, setStatus 
     const text = entries
       .map((entry) => `${new Date(entry.timeMs).toLocaleTimeString([], { hour12: false })} ${entry.text}`)
       .join("\n");
-    navigator.clipboard?.writeText(text).then(
-      () => setStatus(copyStatus),
-      () => setStatus("Copy failed—copy manually."),
+    copyText(text).then(
+      (ok) => setStatus(ok ? copyStatus : "Copy failed—copy manually."),
     );
   }
   return (
@@ -1237,6 +1266,7 @@ export default function SettingsDialog({
   onPaneChange,
   onClose,
   papers,
+  notes,
   library,
   ai,
   prompts,
@@ -1261,6 +1291,7 @@ export default function SettingsDialog({
         <div className="settingsPane">
           <button className="uiClose uiCloseLg settingsClose" onClick={onClose} title="Close settings" aria-label="Close settings">×</button>
           {activePane === "papers" ? <PapersSettings value={papers} /> : null}
+          {activePane === "notes" ? <NotesSettings value={notes} /> : null}
           {activePane === "library" ? <LibrarySettings value={library} /> : null}
           {activePane === "ai" ? <AiSettings value={ai} /> : null}
           {activePane === "prompts" ? <PromptSettings value={prompts} /> : null}

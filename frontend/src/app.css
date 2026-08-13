@@ -647,6 +647,28 @@ body {
   font-style: italic;
 }
 
+/* Ghost "+ New note" row under the block tree — the mouse path to a fresh
+   top-level note (the keyboard path is Enter/Shift+Enter, Settings → Notes). */
+.addNoteBtn {
+  display: block;
+  width: 100%;
+  text-align: left;
+  margin: 2px 0 12px;
+  padding: 5px 10px;
+  background: none;
+  border: none;
+  border-radius: 6px;
+  color: var(--text-muted);
+  font: inherit;
+  font-size: 12.5px;
+  cursor: pointer;
+}
+
+.addNoteBtn:hover {
+  background: var(--bg-hover);
+  color: var(--text-primary);
+}
+
 .blockRefChip {
   display: inline-block;
   background: #1e3a5a;
@@ -1343,6 +1365,20 @@ button.pdfOutlineChevron:hover { background: rgba(128, 128, 128, 0.28); color: v
   white-space: nowrap;
 }
 /* .categoryTagRemove look comes from .uiClose.uiCloseSm */
+/* Folder-label variant of the chips/badges: same accent, folder icon marks the kind */
+.folderChip {
+  display: inline-flex;
+  align-items: center;
+  gap: 3px;
+}
+.categorySuggestionItem.categorySuggestionFolder {
+  display: flex;
+  align-items: center;
+  gap: 5px;
+}
+.categorySuggestionItem.categorySuggestionFolder svg {
+  flex-shrink: 0;
+}
 .categorySuggestions {
   position: absolute;
   top: 100%;
@@ -2305,6 +2341,7 @@ button.pdfOutlineChevron:hover { background: rgba(128, 128, 128, 0.28); color: v
 }
 .aiKeyInput:focus { border-color: var(--text-dim); }
 .aiKeysError { color: #e5534b; }
+.aiTestOk { color: #4caf50; }
 /* Uniform buttons for the settings modals (AI providers, prompt editor):
    ghost by default, .primary for the main action, .danger for destructive,
    .sm for inline row actions. */
@@ -3001,18 +3038,19 @@ button.pdfOutlineChevron:hover { background: rgba(128, 128, 128, 0.28); color: v
 .pdfNoteTip {
   position: fixed;
   z-index: var(--z-popover);
-  max-width: 380px;
+  max-width: min(520px, calc(100vw - 16px));
   max-height: 40vh;
-  overflow: hidden;
+  overflow-y: auto;
   padding: 6px 10px;
   font-size: 13px;
   line-height: 1.45;
   color: var(--text-primary);
-  pointer-events: none;
 }
 .pdfNoteTip > *:first-child { margin-top: 0; }
 .pdfNoteTip > *:last-child { margin-bottom: 0; }
 .pdfNoteTip p { margin: 4px 0; }
+.pdfNoteTip img { max-width: 100%; height: auto; }
+.pdfNoteTip .katex-display { margin: 6px 0; overflow-x: auto; overflow-y: hidden; }
 
 /* --- area notes (Ctrl+drag rectangle selection on the PDF) --- */
 /* pinch-preview transform target. Origin 0 0 = the layer's top-left, which

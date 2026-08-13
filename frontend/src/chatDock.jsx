@@ -4,7 +4,7 @@
 // App provides context (open paper, library, selections) and the model/effort/
 // prompt preferences it also needs elsewhere.
 import React, { useEffect, useMemo, useRef, useState } from "react";
-import { API, apiJson } from "./utils";
+import { API, apiJson, copyText } from "./utils";
 import { DockWindow, ChatMarkdown, AutoGrowTextarea, useCopied } from "./widgets";
 import { ArrowUpIcon, BookIcon, CheckIcon, ChevronDownIcon, ChevronUpIcon, CopyIcon, FileIcon, MicIcon, PaperclipIcon, PencilIcon, StopIcon, XIcon } from "./icons";
 
@@ -483,10 +483,7 @@ export default function ChatDock({
   }, []);
 
   async function copyChatMessage(idx, text) {
-    try {
-      await navigator.clipboard.writeText(text || "");
-      flashCopiedMsg(idx);
-    } catch {}
+    if (await copyText(text || "")) flashCopiedMsg(idx);
   }
 
   const headerContent = (

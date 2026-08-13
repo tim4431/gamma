@@ -1,7 +1,7 @@
 import React, { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState } from "react";
 import { Panel, PanelGroup, PanelResizeHandle } from "react-resizable-panels";
 import PdfViewer, { COLORS, clampZoom } from "./pdfViewer";
-import { API, apiJson, makeId, fmtBytes, getDocIdForUrl, resolvePdfUrl, setExpectedUser, getExpectedUser, usePersistedState, usePersistedFlag } from "./utils";
+import { API, apiJson, makeId, fmtBytes, getDocIdForUrl, resolvePdfUrl, setExpectedUser, getExpectedUser, usePersistedState, usePersistedFlag, copyText, copyRich } from "./utils";
 import {
   BlockDropIndicator,
   ChatMarkdown,
@@ -31,6 +31,7 @@ import {
   setBlockEditMode,
   addSiblingBlock,
   addChildBlock,
+  addRootBlock,
   indentBlock,
   outdentBlock,
   toggleCollapsed,
@@ -52,6 +53,7 @@ import { loadSession, saveSession, clearSession } from "./sessionState";
 import { AuthLoading, LoginPage, SessionConflictPage } from "./LoginPage";
 import SettingsDialog, { QuotaMeter } from "./settings";
 import {
+  cleanFolderPath,
   cleanFolderSegment,
   findPageForUrl,
   formatRelativeTime,
@@ -394,6 +396,7 @@ export default function App() {
   const [focusedBlock, setFocusedBlock] = useState(null);
   const [summary, setSummary] = useState("");
   const [category, setCategory] = useState("");
+  const [pageFolders, setPageFolders] = useState([]); // focused page's folder labels (paths)
   const [categoryEditing, setCategoryEditing] = useState(false);
   const [categoryInput, setCategoryInput] = useState("");
   const [categorySuggestionIdx, setCategorySuggestionIdx] = useState(-1);
@@ -723,6 +726,7 @@ export default function App() {
       try { await writePageFolders(b.id, next); } catch {}
     }
     updateExtraFolders((prev) => [...new Set(prev.map(mapTag))]);
+    setPageFolders((prev) => [...new Set(prev.map(mapTag))]);
     if (folderFilter === oldPath || folderFilter.startsWith(oldPath + "/")) {
       const next = mapTag(folderFilter);
       setFolderFilter(next);
@@ -746,6 +750,7 @@ export default function App() {
           try { await writePageFolders(b.id, parseFolderTags(b.properties?.folder).filter((t) => !inPath(t))); } catch {}
         }
         updateExtraFolders((prev) => prev.filter((f) => !inPath(f)));
+        setPageFolders((prev) => prev.filter((t) => !inPath(t)));
         if (folderFilter === path || folderFilter.startsWith(path + "/")) {
           const parent = path.includes("/") ? path.slice(0, path.lastIndexOf("/")) : "";
           setFolderFilter(parent);
@@ -1418,6 +1423,9 @@ export default function App() {
   const [pdfSaveLocal, setPdfSaveLocal] = usePersistedFlag("gamma-pdf-save", true);
   // Speech-bubble badge on PDF highlights that carry a typed note.
   const [hlNoteBadges, setHlNoteBadges] = usePersistedFlag("gamma-hl-note-badge", true);
+  // Enter key in the note editor: off (default) = Enter types a line break and
+  // Shift+Enter starts a new note; on = the Logseq-style swap of the two.
+  const [enterNewNote, setEnterNewNote] = usePersistedFlag("gamma-enter-new-note", false);
   // Embedded PDF annotations (burned in by a Gamma export or another viewer)
   // would render twice once imported as blocks — canvas + overlay. "hide"
   // keeps them out of the canvas; "strip" removes them from the stored file
@@ -1468,6 +1476,9 @@ export default function App() {
   const [aiKeysForm, setAiKeysForm] = useState(null); // null | {id: ""=add, protocol, name, api_key, base_url, models}
   const [aiKeysBusy, setAiKeysBusy] = useState(false);
   const [aiKeysError, setAiKeysError] = useState("");
+  // Per-entry results of the list's Test button (a tiny live completion):
+  // id -> {busy} | {ok, model, latency_ms} | {ok: false, error}
+  const [aiKeyTests, setAiKeyTests] = useState({});
 
   // The settings page (account popover → Settings…): two-column modal,
   // categories on the left, the selected pane on the right.
@@ -1554,11 +1565,26 @@ export default function App() {
     setAiKeysError("");
     setAiKeysInfo(null);
     setAiKeysForm(null);
+    setAiKeyTests({});
     try {
       setAiKeysInfo(await apiJson(`${API}/ai/settings`));
     } catch (err) {
       setAiKeysError(err.message);
     }
+  }
+
+  // Probe one entry with a tiny real completion — the honest answer to "will
+  // my chats work", surfacing an expired ChatGPT sign-in as a readable error
+  // here instead of a 502 mid-conversation.
+  async function testAiProvider(p) {
+    setAiKeyTests((t) => ({ ...t, [p.id]: { busy: true } }));
+    let result;
+    try {
+      result = await apiJson(`${API}/ai/providers/${p.id}/test`, { method: "POST" });
+    } catch (err) {
+      result = { ok: false, error: err.message };
+    }
+    setAiKeyTests((t) => ({ ...t, [p.id]: result }));
   }
   // Entering the AI pane always refetches the masked key list.
   useEffect(() => {
@@ -1999,30 +2025,22 @@ export default function App() {
   }, [openPopover, pageMeta]);
 
   async function copyCitation(kind, text) {
-    try {
-      if (kind === "ppt" && navigator.clipboard?.write && window.ClipboardItem) {
-        // Rich copy: PowerPoint/Word get real italics & bold, plain-text
-        // targets get the clean string without markdown markers.
-        const esc = (text || "").replace(/&/g, "&amp;").replace(/</g, "&lt;").replace(/>/g, "&gt;");
-        const html = esc
-          .replace(/\*\*([^*]+)\*\*/g, "<b>$1</b>")
-          .replace(/_([^_]+)_/g, "<i>$1</i>")
-          .replace(/\*([^*]+)\*/g, "<i>$1</i>");
-        const plain = (text || "")
-          .replace(/\*\*([^*]+)\*\*/g, "$1")
-          .replace(/_([^_]+)_/g, "$1")
-          .replace(/\*([^*]+)\*/g, "$1");
-        await navigator.clipboard.write([new ClipboardItem({
-          "text/html": new Blob([html], { type: "text/html" }),
-          "text/plain": new Blob([plain], { type: "text/plain" }),
-        })]);
-      } else {
-        await navigator.clipboard.writeText(text || "");
-      }
-      flashCiteCopied(kind);
-    } catch {
-      setStatus("Copy failed — copy manually.");
+    let ok;
+    if (kind === "ppt") {
+      // Rich copy: PowerPoint/Word get real italics & bold via text/html;
+      // plain-text targets keep the markdown source so **bold** survives a
+      // paste into notes or any markdown editor.
+      const esc = (text || "").replace(/&/g, "&amp;").replace(/</g, "&lt;").replace(/>/g, "&gt;");
+      const html = esc
+        .replace(/\*\*([^*]+)\*\*/g, "<b>$1</b>")
+        .replace(/_([^_]+)_/g, "<i>$1</i>")
+        .replace(/\*([^*]+)\*/g, "<i>$1</i>");
+      ok = await copyRich(html, text || "");
+    } else {
+      ok = await copyText(text || "");
     }
+    if (ok) flashCiteCopied(kind);
+    else setStatus("Copy failed — copy manually.");
   }
 
   useEffect(() => {
@@ -2508,54 +2526,79 @@ export default function App() {
     });
   }
 
-  async function uploadPdf(file) {
+  async function uploadOnePdf(file) {
+    const transferId = addTransfer({ name: file.name, kind: "upload", info: fmtBytes(file.size) });
+    const form = new FormData();
+    form.append("file", file);
+    const resp = await fetch(`${API}/uploads`, { method: "POST", body: form, credentials: "include" });
+    if (!resp.ok) {
+      const text = await resp.text();
+      let msg = text; // FastAPI errors come as {"detail": "..."} — show the human message
+      try { const j = JSON.parse(text); if (typeof j.detail === "string") msg = j.detail; } catch {}
+      updateTransfer(transferId, { status: "error", info: "failed" });
+      throw new Error(msg || `upload failed (${resp.status})`);
+    }
+    const data = await resp.json();
+    updateTransfer(transferId, { status: "done", info: fmtBytes(file.size) });
+    const defaultTitle = getPdfPageTitle(data.doc_id, data.source_url);
+    const block = await getOrCreateBlockForDoc(data.doc_id, defaultTitle, data.source_url);
+    // If the file carries embedded annotations (SumatraPDF etc.), pull them in
+    importEmbeddedAnnots(block.id, data.doc_id, true);
+    return { data, block, defaultTitle };
+  }
+
+  async function uploadPdfs(fileList) {
     if (readOnly) return;
-    if (!file || file.type !== "application/pdf") {
+    const isPdf = (f) => f.type === "application/pdf" || /\.pdf$/i.test(f.name || "");
+    const files = Array.from(fileList || []).filter(isPdf);
+    if (!files.length) {
       setStatus("Not a PDF file.");
       return;
     }
     const maxUploadMb = quotaInfo?.max_upload_mb || 50;
-    if (file.size > maxUploadMb * 1024 * 1024) {
-      setStatus(`File too large (max ${maxUploadMb} MB).`);
-      return;
-    }
     setLoading(true);
-    setStatus(`Uploading ${file.name}...`);
-    const transferId = addTransfer({ name: file.name, kind: "upload", info: fmtBytes(file.size) });
+    let last = null;
+    const failed = [];
     try {
-      const form = new FormData();
-      form.append("file", file);
-      const resp = await fetch(`${API}/uploads`, { method: "POST", body: form, credentials: "include" });
-      if (!resp.ok) {
-        const text = await resp.text();
-        let msg = text; // FastAPI errors come as {"detail": "..."} — show the human message
-        try { const j = JSON.parse(text); if (typeof j.detail === "string") msg = j.detail; } catch {}
-        updateTransfer(transferId, { status: "error", info: "failed" });
-        throw new Error(msg || `upload failed (${resp.status})`);
+      for (const file of files) {
+        if (file.size > maxUploadMb * 1024 * 1024) {
+          failed.push(`${file.name} (max ${maxUploadMb} MB)`);
+          continue;
+        }
+        setStatus(`Uploading ${file.name}...`);
+        try {
+          last = await uploadOnePdf(file);
+        } catch (err) {
+          failed.push(`${file.name} (${err.message})`);
+        }
       }
-      const data = await resp.json();
-      updateTransfer(transferId, { status: "done", info: fmtBytes(file.size) });
-      refreshQuota();
-      // Open the uploaded PDF directly (bypass openPdf's URL-resolution path)
-      const sourceUrl = data.source_url;
-      const defaultTitle = getPdfPageTitle(data.doc_id, sourceUrl);
-      const block = await getOrCreateBlockForDoc(data.doc_id, defaultTitle, sourceUrl);
-      const nextBlocks = await loadBlocksForBlock(block.id);
-      setDocId(data.doc_id);
-      setInputUrl(sourceUrl);
-      setFocusedBlockId(block.id);
-      setFocusedBlock(block);
-      setPdfTitle(block.content || defaultTitle);
-      setSummary(block.properties?.summary || "");
-      setCategory(block.properties?.category || "");
-      setPdfUrl(sourceUrl);
-      const newUrl = `${window.location.pathname}?block=${encodeURIComponent(block.id)}`;
-      window.history.replaceState({}, "", newUrl);
-      setStatus(`Uploaded ${file.name} (${data.doc_id})`);
-      // If the file carries embedded annotations (SumatraPDF etc.), pull them in
-      importEmbeddedAnnots(block.id, data.doc_id, true);
-    } catch (err) {
-      setStatus(`Upload failed: ${err.message}`);
+      const okCount = files.length - failed.length;
+      if (okCount > 0) refreshQuota();
+      if (files.length === 1 && last) {
+        // Single upload keeps the old behavior: open the paper directly
+        // (bypass openPdf's URL-resolution path).
+        const { data, block, defaultTitle } = last;
+        await loadBlocksForBlock(block.id);
+        setDocId(data.doc_id);
+        setInputUrl(data.source_url);
+        setFocusedBlockId(block.id);
+        setFocusedBlock(block);
+        setPdfTitle(block.content || defaultTitle);
+        setSummary(block.properties?.summary || "");
+        setCategory(block.properties?.category || "");
+        setPageFolders(parseFolderTags(block.properties?.folder));
+        setPdfUrl(data.source_url);
+        const newUrl = `${window.location.pathname}?block=${encodeURIComponent(block.id)}`;
+        window.history.replaceState({}, "", newUrl);
+        setStatus(`Uploaded ${files[0].name} (${data.doc_id})`);
+      } else if (okCount > 0) {
+        fetchHomeBlocks();
+        setStatus(failed.length
+          ? `Uploaded ${okCount} of ${files.length} PDFs — failed: ${failed.join(", ")}`
+          : `Uploaded ${okCount} PDFs.`);
+      } else {
+        setStatus(`Upload failed: ${failed.join(", ")}`);
+      }
     } finally {
       setLoading(false);
     }
@@ -2591,6 +2634,7 @@ export default function App() {
       setPdfTitle(block.content || pdfFile.name.replace('.pdf', ''));
       setSummary(block.properties?.summary || "");
       setCategory(block.properties?.category || "");
+      setPageFolders(parseFolderTags(block.properties?.folder));
       setPdfUrl(data.source_url);
       await fetchHomeBlocks();
       const newUrl = `${window.location.pathname}?block=${encodeURIComponent(block.id)}`;
@@ -2643,6 +2687,7 @@ export default function App() {
       setPdfTitle(block.content || defaultTitle);
       setSummary(block.properties?.summary || "");
       setCategory(block.properties?.category || "");
+      setPageFolders(parseFolderTags(block.properties?.folder));
       setPdfUrl(proxiedUrl);
       const newUrl = `${window.location.pathname}?block=${encodeURIComponent(block.id)}`;
       window.history.replaceState({}, "", newUrl);
@@ -2733,6 +2778,7 @@ export default function App() {
       setPdfTitle(block.content || "Untitled");
       setSummary(props.summary || "");
       setCategory(props.category || "");
+      setPageFolders(parseFolderTags(props.folder));
       setDocId(props.doc_id || "");
 
       let openedPdfUrl = "";
@@ -2968,6 +3014,7 @@ export default function App() {
     setPdfTitle("");
     setSummary("");
     setCategory("");
+    setPageFolders([]);
     setBacklinks([]);
     setPdfHidden(false);
     setFolderFilter("");
@@ -3056,6 +3103,27 @@ export default function App() {
     target.addEventListener("pointercancel", onUp);
   }
 
+  // Folder labels typed in the label frontmatter: anything containing "/" is a
+  // folder path ("cs229/" → folder cs229, "cs229/hw" → its subfolder). Unlike
+  // category labels there is no draft/commit cycle — writes go straight to
+  // properties.folder with the same refinement rule as addPagesToFolder.
+  function addPageFolderTag(raw) {
+    const path = cleanFolderPath(raw);
+    if (!path || !focusedBlockId || readOnly || pageFolders.includes(path)) return;
+    const next = [...pageFolders.filter((t) => !path.startsWith(t + "/")), path];
+    setPageFolders(next);
+    updateExtraFolders((prev) => prev.filter((f) => f !== path));
+    writePageFolders(focusedBlockId, next).then(() => fetchHomeBlocks()).catch(() => {});
+  }
+
+  function removePageFolderTag(path) {
+    if (!focusedBlockId || readOnly) return;
+    const next = pageFolders.filter((t) => t !== path);
+    if (next.length === pageFolders.length) return;
+    setPageFolders(next);
+    writePageFolders(focusedBlockId, next).then(() => fetchHomeBlocks()).catch(() => {});
+  }
+
   function addCategoryTag(tag) {
     if (!tag.trim()) return;
     setCategory(prev => {
@@ -3075,10 +3143,11 @@ export default function App() {
   }
 
   function commitAndCloseCategory() {
+    const input = categoryInput.trim();
+    if (input.includes("/")) addPageFolderTag(input);
     const finalCategory = (() => {
       const tags = category ? category.split(",").map(t => t.trim()).filter(Boolean) : [];
-      const input = categoryInput.trim();
-      if (input && !tags.includes(input)) tags.push(input);
+      if (input && !input.includes("/") && !tags.includes(input)) tags.push(input);
       return tags.join(",");
     })();
     setCategory(finalCategory);
@@ -3117,12 +3186,8 @@ export default function App() {
   }
 
   async function copyShareLink() {
-    try {
-      await navigator.clipboard.writeText(shareUrl);
-      flashShareCopied();
-    } catch {
-      setStatus("Copy failed — copy the link manually.");
-    }
+    if (await copyText(shareUrl)) flashShareCopied();
+    else setStatus("Copy failed — copy the link manually.");
   }
 
   // Download the current page as Markdown. The server returns a bare .md, or a
@@ -3735,6 +3800,19 @@ export default function App() {
     );
   }
 
+  // "+ New note" under the block tree (also the whole empty state's action):
+  // append an empty top-level note and start editing it.
+  function addRootNote() {
+    if (readOnly) return;
+    const { blocks: next, newId } = addRootBlock(blocks);
+    pendingFocusRef.current = newId;
+    setBlocks(next);
+    setFocusedId(newId);
+  }
+  const addNoteButton = !homeMode && !readOnly && focusedBlockId ? (
+    <button className="addNoteBtn" title="Add a note at the end" onClick={addRootNote}>+ New note</button>
+  ) : null;
+
   // The notes window - docked via notesDock, or filling the center when no PDF is shown.
   const notesWindow = notesVisible ? (
     <div className="sidebar">
@@ -3771,15 +3849,35 @@ export default function App() {
                 {categoryEditing ? (() => {
                     const currentTags = category.split(",").map(t => t.trim()).filter(Boolean);
                     const q = categoryInput.trim();
-                    const suggestions = q ? [...new Set(homeBlocks.flatMap(b =>
+                    const ql = q.toLowerCase();
+                    const labelSugs = q ? [...new Set(homeBlocks.flatMap(b =>
                       (b.properties?.category || "").split(",").map(t => t.trim()).filter(Boolean)
                     ))].filter(t =>
-                      t.toLowerCase().includes(q.toLowerCase()) &&
+                      t.toLowerCase().includes(ql) &&
                       !currentTags.includes(t)
-                    ).sort().slice(0, 8) : [];
+                    ).sort() : [];
+                    const folderSugs = q ? allFolderPaths.filter(f =>
+                      f.toLowerCase().includes(ql) && !pageFolders.includes(f)
+                    ).sort() : [];
+                    const suggestions = [
+                      ...folderSugs.map(v => ({ kind: "folder", value: v })),
+                      ...labelSugs.map(v => ({ kind: "label", value: v })),
+                    ].slice(0, 8);
+                    const pickSuggestion = (s) => {
+                      if (s.kind === "folder") addPageFolderTag(s.value); else addCategoryTag(s.value);
+                      setCategoryInput("");
+                      setCategorySuggestionIdx(-1);
+                    };
                     return (
                     <div className="categoryTagInputContainer">
                       <div className="categoryTagInputWrap">
+                        {pageFolders.map((f) => (
+                          <span key={`f:${f}`} className="categoryTag folderChip" title={`Folder: ${f}`}>
+                            <FolderIcon size={10} />
+                            {f}
+                            <button className="uiClose uiCloseSm categoryTagRemove" tabIndex={-1} onMouseDown={(e) => { e.preventDefault(); e.stopPropagation(); removePageFolderTag(f); }}>×</button>
+                          </span>
+                        ))}
                         {category.split(",").map((t, i) => t.trim() ? (
                           <span key={i} className="categoryTag">
                             {t.trim()}
@@ -3796,7 +3894,7 @@ export default function App() {
                               const parts = val.split(",");
                               for (let i = 0; i < parts.length - 1; i++) {
                                 const tag = parts[i].trim();
-                                if (tag) addCategoryTag(tag);
+                                if (tag) { if (tag.includes("/")) addPageFolderTag(tag); else addCategoryTag(tag); }
                               }
                               setCategoryInput(parts[parts.length - 1].trimStart());
                             } else {
@@ -3814,9 +3912,7 @@ export default function App() {
                               setCategorySuggestionIdx(i => Math.max(i - 1, -1));
                             } else if (e.key === "Enter" && categorySuggestionIdx >= 0 && categorySuggestionIdx < suggestions.length) {
                               e.preventDefault();
-                              addCategoryTag(suggestions[categorySuggestionIdx]);
-                              setCategoryInput("");
-                              setCategorySuggestionIdx(-1);
+                              pickSuggestion(suggestions[categorySuggestionIdx]);
                             } else if (e.key === "Enter") {
                               e.preventDefault();
                               commitAndCloseCategory();
@@ -3829,16 +3925,16 @@ export default function App() {
                           }}
                           onBlur={commitAndCloseCategory}
                           autoFocus
-                          placeholder="type to add..."
+                          placeholder="type to add… (/ = folder)"
                         />
                       </div>
                       {suggestions.length > 0 ? (
                         <div className="categorySuggestions">
                           {suggestions.map((s, i) => (
-                            <button key={s} className={`categorySuggestionItem${i === categorySuggestionIdx ? " selected" : ""}`}
-                              onMouseDown={(e) => { e.preventDefault(); e.stopPropagation(); addCategoryTag(s); setCategoryInput(""); setCategorySuggestionIdx(-1); }}
+                            <button key={`${s.kind}:${s.value}`} className={`categorySuggestionItem${s.kind === "folder" ? " categorySuggestionFolder" : ""}${i === categorySuggestionIdx ? " selected" : ""}`}
+                              onMouseDown={(e) => { e.preventDefault(); e.stopPropagation(); pickSuggestion(s); }}
                               onMouseEnter={() => setCategorySuggestionIdx(i)}
-                            >{s}</button>
+                            >{s.kind === "folder" ? <><FolderIcon size={11} />{s.value}/</> : s.value}</button>
                           ))}
                         </div>
                       ) : null}
@@ -3850,19 +3946,33 @@ export default function App() {
                       onClick={() => { setCategoryInput(""); setCategorySuggestionIdx(-1); setCategoryEditing(true); }}
                       title="Click to edit"
                     >
-                      {category ? (
-                        category.split(",").map((t, i) => t.trim() ? (
-                          <span
-                            key={i}
-                            className="categoryBadge"
-                            title={`Label: ${t.trim()} — right-click to rename or delete`}
-                            onContextMenu={(e) => {
-                              e.preventDefault();
-                              e.stopPropagation();
-                              setHomeMenu({ kind: "label", name: t.trim(), x: e.clientX, y: e.clientY });
-                            }}
-                          >{t.trim()}</span>
-                        ) : null)
+                      {category || pageFolders.length ? (
+                        <>
+                          {pageFolders.map((f) => (
+                            <span
+                              key={`f:${f}`}
+                              className="categoryBadge folderChip"
+                              title={`Folder: ${f} — right-click to rename or delete`}
+                              onContextMenu={(e) => {
+                                e.preventDefault();
+                                e.stopPropagation();
+                                setHomeMenu({ kind: "folder", name: f, x: e.clientX, y: e.clientY });
+                              }}
+                            ><FolderIcon size={10} />{f}</span>
+                          ))}
+                          {category.split(",").map((t, i) => t.trim() ? (
+                            <span
+                              key={i}
+                              className="categoryBadge"
+                              title={`Label: ${t.trim()} — right-click to rename or delete`}
+                              onContextMenu={(e) => {
+                                e.preventDefault();
+                                e.stopPropagation();
+                                setHomeMenu({ kind: "label", name: t.trim(), x: e.clientX, y: e.clientY });
+                              }}
+                            >{t.trim()}</span>
+                          ) : null)}
+                        </>
                       ) : "Add labels..."}
                     </span>
                   )}
@@ -4580,9 +4690,12 @@ export default function App() {
               )
             ) : homeMode && categoryFilter ? null : (
             (homeMode ? homeVisiblePages : visibleBlocks).length === 0 ? (
-              <div className="empty">{homeMode
-                ? (folderFilter ? "This folder is empty — drag papers onto it from the library." : "No pages yet — use the + button above to open a PDF or start a note page.")
-                : "No blocks yet."}</div>
+              <>
+                <div className="empty">{homeMode
+                  ? (folderFilter ? "This folder is empty — drag papers onto it from the library." : "No pages yet — use the + button above to open a PDF or start a note page.")
+                  : "No blocks yet."}</div>
+                {addNoteButton}
+              </>
             ) : (
               (() => {
                 const rowProps = {
@@ -4675,6 +4788,7 @@ export default function App() {
                       persistBlocks(next).catch((err) => setStatus(`Save failed: ${err.message}`));
                     }
                   },
+                  enterNewNote,
                   onEnterSibling: (id) => {
                     if (readOnly) return;
                     if (homeMode) {
@@ -4817,6 +4931,7 @@ export default function App() {
                 return (
                   <>
                     <BlockTree blocks={homeMode ? homeVisiblePages : blocks} readOnly={readOnly} rowProps={rowProps} />
+                    {addNoteButton}
                     {homeMode && homeSortedPages.length > homeVisiblePages.length ? (
                       <button
                         ref={loadMoreRef}
@@ -5035,12 +5150,10 @@ export default function App() {
       }}
       onDrop={readOnly ? undefined : (e) => {
         appRef.current?.classList.remove("dragOver");
-        const file = e.dataTransfer?.files?.[0];
-        if (!file) return;
-        if (file.type === "application/pdf") {
-          e.preventDefault();
-          uploadPdf(file);
-        }
+        const files = Array.from(e.dataTransfer?.files || []).filter((f) => f.type === "application/pdf");
+        if (!files.length) return;
+        e.preventDefault();
+        uploadPdfs(files);
       }}
     >
       {!readOnly ? (
@@ -5111,13 +5224,14 @@ export default function App() {
                     }}
                   />
                   <label className="popoverItem" style={{ cursor: loading ? "not-allowed" : "pointer" }}>
-                    Upload PDF…
+                    Upload PDFs…
                     <input
                       type="file"
                       accept=".pdf"
+                      multiple
                       style={{ display: "none" }}
                       disabled={loading}
-                      onChange={(e) => { const f = e.target.files?.[0]; e.target.value = ""; setOpenPopover(null); if (f) uploadPdf(f); }}
+                      onChange={(e) => { const files = Array.from(e.target.files || []); e.target.value = ""; setOpenPopover(null); if (files.length) uploadPdfs(files); }}
                     />
                   </label>
                   <button className="popoverItem" onClick={createNotePage}>New note page</button>
@@ -5760,8 +5874,6 @@ export default function App() {
           setMetaAutoFetch,
           pdfSaveLocal,
           setPdfSaveLocal,
-          hlNoteBadges,
-          setHlNoteBadges,
           embAnnots,
           setEmbAnnots,
           metaModel,
@@ -5770,6 +5882,12 @@ export default function App() {
           isAdmin: !!authUser?.is_admin,
           setStatus,
           refreshQuota, // keep the client-side pre-upload size check in sync without a re-login
+        }}
+        notes={{
+          enterNewNote,
+          setEnterNewNote,
+          hlNoteBadges,
+          setHlNoteBadges,
         }}
         library={{
           // batch metadata retry uses the same prompt/model/context prefs as
@@ -5799,6 +5917,8 @@ export default function App() {
           startAddAiProvider,
           startEditAiProvider,
           deleteAiProvider,
+          aiKeyTests,
+          testAiProvider,
           startChatGPTAuth,
           loadModelCatalog,
           addCatalogModel,
@@ -5908,7 +6028,7 @@ export default function App() {
               </>
             ) : (
               <>
-                <button className="ctxMenuItem" onClick={() => { setHomeMenu(null); setFolderFilter(homeMenu.name); window.history.replaceState(null, "", `/?folder=${encodeURIComponent(homeMenu.name)}`); }}>Open</button>
+                <button className="ctxMenuItem" onClick={() => { const name = homeMenu.name; setHomeMenu(null); if (!homeMode) goHome(); setFolderFilter(name); window.history.replaceState(null, "", `/?folder=${encodeURIComponent(name)}`); }}>Open</button>
                 <button className="ctxMenuItem" onClick={() => { setHomeMenu(null); setFolderRenaming({ name: homeMenu.name, draft: homeMenu.name }); }}>Rename</button>
                 <button className="ctxMenuItem" onClick={() => { setHomeMenu(null); deleteFolderByName(homeMenu.name); }}>Delete</button>
               </>
@@ -5973,7 +6093,7 @@ export default function App() {
                 // Also a paste-able deep link: opening it jumps straight to
                 // this highlight (in the browser, chat notes, anywhere).
                 if (blk) {
-                  navigator.clipboard?.writeText(`${window.location.origin}/?block=${encodeURIComponent(blk.id)}`).catch(() => {});
+                  copyText(`${window.location.origin}/?block=${encodeURIComponent(blk.id)}`);
                 }
                 setHighlightMenu(null);
                 setStatus("Reference point copied — paste the link, or pick it in another paper's link dialog.");
