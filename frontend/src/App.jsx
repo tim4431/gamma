@@ -52,6 +52,7 @@ import { loadSession, saveSession, clearSession } from "./sessionState";
 import { AuthLoading, LoginPage, SessionConflictPage } from "./LoginPage";
 import SettingsDialog, { QuotaMeter } from "./settings";
 import {
+  cleanFolderPath,
   cleanFolderSegment,
   findPageForUrl,
   formatRelativeTime,
@@ -394,6 +395,7 @@ export default function App() {
   const [focusedBlock, setFocusedBlock] = useState(null);
   const [summary, setSummary] = useState("");
   const [category, setCategory] = useState("");
+  const [pageFolders, setPageFolders] = useState([]); // focused page's folder labels (paths)
   const [categoryEditing, setCategoryEditing] = useState(false);
   const [categoryInput, setCategoryInput] = useState("");
   const [categorySuggestionIdx, setCategorySuggestionIdx] = useState(-1);
@@ -723,6 +725,7 @@ export default function App() {
       try { await writePageFolders(b.id, next); } catch {}
     }
     updateExtraFolders((prev) => [...new Set(prev.map(mapTag))]);
+    setPageFolders((prev) => [...new Set(prev.map(mapTag))]);
     if (folderFilter === oldPath || folderFilter.startsWith(oldPath + "/")) {
       const next = mapTag(folderFilter);
       setFolderFilter(next);
@@ -746,6 +749,7 @@ export default function App() {
           try { await writePageFolders(b.id, parseFolderTags(b.properties?.folder).filter((t) => !inPath(t))); } catch {}
         }
         updateExtraFolders((prev) => prev.filter((f) => !inPath(f)));
+        setPageFolders((prev) => prev.filter((t) => !inPath(t)));
         if (folderFilter === path || folderFilter.startsWith(path + "/")) {
           const parent = path.includes("/") ? path.slice(0, path.lastIndexOf("/")) : "";
           setFolderFilter(parent);
@@ -2548,6 +2552,7 @@ export default function App() {
       setPdfTitle(block.content || defaultTitle);
       setSummary(block.properties?.summary || "");
       setCategory(block.properties?.category || "");
+      setPageFolders(parseFolderTags(block.properties?.folder));
       setPdfUrl(sourceUrl);
       const newUrl = `${window.location.pathname}?block=${encodeURIComponent(block.id)}`;
       window.history.replaceState({}, "", newUrl);
@@ -2591,6 +2596,7 @@ export default function App() {
       setPdfTitle(block.content || pdfFile.name.replace('.pdf', ''));
       setSummary(block.properties?.summary || "");
       setCategory(block.properties?.category || "");
+      setPageFolders(parseFolderTags(block.properties?.folder));
       setPdfUrl(data.source_url);
       await fetchHomeBlocks();
       const newUrl = `${window.location.pathname}?block=${encodeURIComponent(block.id)}`;
@@ -2643,6 +2649,7 @@ export default function App() {
       setPdfTitle(block.content || defaultTitle);
       setSummary(block.properties?.summary || "");
       setCategory(block.properties?.category || "");
+      setPageFolders(parseFolderTags(block.properties?.folder));
       setPdfUrl(proxiedUrl);
       const newUrl = `${window.location.pathname}?block=${encodeURIComponent(block.id)}`;
       window.history.replaceState({}, "", newUrl);
@@ -2733,6 +2740,7 @@ export default function App() {
       setPdfTitle(block.content || "Untitled");
       setSummary(props.summary || "");
       setCategory(props.category || "");
+      setPageFolders(parseFolderTags(props.folder));
       setDocId(props.doc_id || "");
 
       let openedPdfUrl = "";
@@ -2968,6 +2976,7 @@ export default function App() {
     setPdfTitle("");
     setSummary("");
     setCategory("");
+    setPageFolders([]);
     setBacklinks([]);
     setPdfHidden(false);
     setFolderFilter("");
@@ -3056,6 +3065,27 @@ export default function App() {
     target.addEventListener("pointercancel", onUp);
   }
 
+  // Folder labels typed in the label frontmatter: anything containing "/" is a
+  // folder path ("cs229/" → folder cs229, "cs229/hw" → its subfolder). Unlike
+  // category labels there is no draft/commit cycle — writes go straight to
+  // properties.folder with the same refinement rule as addPagesToFolder.
+  function addPageFolderTag(raw) {
+    const path = cleanFolderPath(raw);
+    if (!path || !focusedBlockId || readOnly || pageFolders.includes(path)) return;
+    const next = [...pageFolders.filter((t) => !path.startsWith(t + "/")), path];
+    setPageFolders(next);
+    updateExtraFolders((prev) => prev.filter((f) => f !== path));
+    writePageFolders(focusedBlockId, next).then(() => fetchHomeBlocks()).catch(() => {});
+  }
+
+  function removePageFolderTag(path) {
+    if (!focusedBlockId || readOnly) return;
+    const next = pageFolders.filter((t) => t !== path);
+    if (next.length === pageFolders.length) return;
+    setPageFolders(next);
+    writePageFolders(focusedBlockId, next).then(() => fetchHomeBlocks()).catch(() => {});
+  }
+
   function addCategoryTag(tag) {
     if (!tag.trim()) return;
     setCategory(prev => {
@@ -3075,10 +3105,11 @@ export default function App() {
   }
 
   function commitAndCloseCategory() {
+    const input = categoryInput.trim();
+    if (input.includes("/")) addPageFolderTag(input);
     const finalCategory = (() => {
       const tags = category ? category.split(",").map(t => t.trim()).filter(Boolean) : [];
-      const input = categoryInput.trim();
-      if (input && !tags.includes(input)) tags.push(input);
+      if (input && !input.includes("/") && !tags.includes(input)) tags.push(input);
       return tags.join(",");
     })();
     setCategory(finalCategory);
@@ -3771,15 +3802,35 @@ export default function App() {
                 {categoryEditing ? (() => {
                     const currentTags = category.split(",").map(t => t.trim()).filter(Boolean);
                     const q = categoryInput.trim();
-                    const suggestions = q ? [...new Set(homeBlocks.flatMap(b =>
+                    const ql = q.toLowerCase();
+                    const labelSugs = q ? [...new Set(homeBlocks.flatMap(b =>
                       (b.properties?.category || "").split(",").map(t => t.trim()).filter(Boolean)
                     ))].filter(t =>
-                      t.toLowerCase().includes(q.toLowerCase()) &&
+                      t.toLowerCase().includes(ql) &&
                       !currentTags.includes(t)
-                    ).sort().slice(0, 8) : [];
+                    ).sort() : [];
+                    const folderSugs = q ? allFolderPaths.filter(f =>
+                      f.toLowerCase().includes(ql) && !pageFolders.includes(f)
+                    ).sort() : [];
+                    const suggestions = [
+                      ...folderSugs.map(v => ({ kind: "folder", value: v })),
+                      ...labelSugs.map(v => ({ kind: "label", value: v })),
+                    ].slice(0, 8);
+                    const pickSuggestion = (s) => {
+                      if (s.kind === "folder") addPageFolderTag(s.value); else addCategoryTag(s.value);
+                      setCategoryInput("");
+                      setCategorySuggestionIdx(-1);
+                    };
                     return (
                     <div className="categoryTagInputContainer">
                       <div className="categoryTagInputWrap">
+                        {pageFolders.map((f) => (
+                          <span key={`f:${f}`} className="categoryTag folderChip" title={`Folder: ${f}`}>
+                            <FolderIcon size={10} />
+                            {f}
+                            <button className="uiClose uiCloseSm categoryTagRemove" tabIndex={-1} onMouseDown={(e) => { e.preventDefault(); e.stopPropagation(); removePageFolderTag(f); }}>×</button>
+                          </span>
+                        ))}
                         {category.split(",").map((t, i) => t.trim() ? (
                           <span key={i} className="categoryTag">
                             {t.trim()}
@@ -3796,7 +3847,7 @@ export default function App() {
                               const parts = val.split(",");
                               for (let i = 0; i < parts.length - 1; i++) {
                                 const tag = parts[i].trim();
-                                if (tag) addCategoryTag(tag);
+                                if (tag) { if (tag.includes("/")) addPageFolderTag(tag); else addCategoryTag(tag); }
                               }
                               setCategoryInput(parts[parts.length - 1].trimStart());
                             } else {
@@ -3814,9 +3865,7 @@ export default function App() {
                               setCategorySuggestionIdx(i => Math.max(i - 1, -1));
                             } else if (e.key === "Enter" && categorySuggestionIdx >= 0 && categorySuggestionIdx < suggestions.length) {
                               e.preventDefault();
-                              addCategoryTag(suggestions[categorySuggestionIdx]);
-                              setCategoryInput("");
-                              setCategorySuggestionIdx(-1);
+                              pickSuggestion(suggestions[categorySuggestionIdx]);
                             } else if (e.key === "Enter") {
                               e.preventDefault();
                               commitAndCloseCategory();
@@ -3829,16 +3878,16 @@ export default function App() {
                           }}
                           onBlur={commitAndCloseCategory}
                           autoFocus
-                          placeholder="type to add..."
+                          placeholder="type to add… (/ = folder)"
                         />
                       </div>
                       {suggestions.length > 0 ? (
                         <div className="categorySuggestions">
                           {suggestions.map((s, i) => (
-                            <button key={s} className={`categorySuggestionItem${i === categorySuggestionIdx ? " selected" : ""}`}
-                              onMouseDown={(e) => { e.preventDefault(); e.stopPropagation(); addCategoryTag(s); setCategoryInput(""); setCategorySuggestionIdx(-1); }}
+                            <button key={`${s.kind}:${s.value}`} className={`categorySuggestionItem${s.kind === "folder" ? " categorySuggestionFolder" : ""}${i === categorySuggestionIdx ? " selected" : ""}`}
+                              onMouseDown={(e) => { e.preventDefault(); e.stopPropagation(); pickSuggestion(s); }}
                               onMouseEnter={() => setCategorySuggestionIdx(i)}
-                            >{s}</button>
+                            >{s.kind === "folder" ? <><FolderIcon size={11} />{s.value}/</> : s.value}</button>
                           ))}
                         </div>
                       ) : null}
@@ -3850,19 +3899,33 @@ export default function App() {
                       onClick={() => { setCategoryInput(""); setCategorySuggestionIdx(-1); setCategoryEditing(true); }}
                       title="Click to edit"
                     >
-                      {category ? (
-                        category.split(",").map((t, i) => t.trim() ? (
-                          <span
-                            key={i}
-                            className="categoryBadge"
-                            title={`Label: ${t.trim()} — right-click to rename or delete`}
-                            onContextMenu={(e) => {
-                              e.preventDefault();
-                              e.stopPropagation();
-                              setHomeMenu({ kind: "label", name: t.trim(), x: e.clientX, y: e.clientY });
-                            }}
-                          >{t.trim()}</span>
-                        ) : null)
+                      {category || pageFolders.length ? (
+                        <>
+                          {pageFolders.map((f) => (
+                            <span
+                              key={`f:${f}`}
+                              className="categoryBadge folderChip"
+                              title={`Folder: ${f} — right-click to rename or delete`}
+                              onContextMenu={(e) => {
+                                e.preventDefault();
+                                e.stopPropagation();
+                                setHomeMenu({ kind: "folder", name: f, x: e.clientX, y: e.clientY });
+                              }}
+                            ><FolderIcon size={10} />{f}</span>
+                          ))}
+                          {category.split(",").map((t, i) => t.trim() ? (
+                            <span
+                              key={i}
+                              className="categoryBadge"
+                              title={`Label: ${t.trim()} — right-click to rename or delete`}
+                              onContextMenu={(e) => {
+                                e.preventDefault();
+                                e.stopPropagation();
+                                setHomeMenu({ kind: "label", name: t.trim(), x: e.clientX, y: e.clientY });
+                              }}
+                            >{t.trim()}</span>
+                          ) : null)}
+                        </>
                       ) : "Add labels..."}
                     </span>
                   )}
@@ -5908,7 +5971,7 @@ export default function App() {
               </>
             ) : (
               <>
-                <button className="ctxMenuItem" onClick={() => { setHomeMenu(null); setFolderFilter(homeMenu.name); window.history.replaceState(null, "", `/?folder=${encodeURIComponent(homeMenu.name)}`); }}>Open</button>
+                <button className="ctxMenuItem" onClick={() => { const name = homeMenu.name; setHomeMenu(null); if (!homeMode) goHome(); setFolderFilter(name); window.history.replaceState(null, "", `/?folder=${encodeURIComponent(name)}`); }}>Open</button>
                 <button className="ctxMenuItem" onClick={() => { setHomeMenu(null); setFolderRenaming({ name: homeMenu.name, draft: homeMenu.name }); }}>Rename</button>
                 <button className="ctxMenuItem" onClick={() => { setHomeMenu(null); deleteFolderByName(homeMenu.name); }}>Delete</button>
               </>
