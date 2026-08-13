@@ -658,6 +658,7 @@ function AiSettings({ value }) {
           ) : null}
           {value.aiKeysInfo.providers.map((provider) => {
             const protocol = value.aiProtocolOf(provider.protocol);
+            const test = value.aiKeyTests?.[provider.id];
             return (
               <label key={provider.id} className={`aiProvRow aiProvSelectable ${activeKeyId === provider.id ? "active" : ""}`}>
                 {value.aiKeysInfo.providers.length > 1 ? (
@@ -689,9 +690,21 @@ function AiSettings({ value }) {
                       <span className="categoryTag" key={model}>{model}</span>
                     ))}
                   </span>
+                  {test ? (
+                    <span className={`aiProvDesc ${test.busy ? "" : test.ok ? "aiTestOk" : "aiKeysError"}`}>
+                      {test.busy
+                        ? "Testing… sending a tiny request"
+                        : test.ok
+                          ? `✓ working · ${test.model} · ${(test.latency_ms / 1000).toFixed(1)}s`
+                          : `✗ ${test.error}`}
+                    </span>
+                  ) : null}
                 </span>
                 {value.aiKeysInfo.can_edit ? (
                   <span className="aiProvActions">
+                    <button className="uiBtn sm" disabled={value.aiKeysBusy || test?.busy} title="Send a tiny AI request through this credential to check it still works" onClick={() => value.testAiProvider(provider)}>
+                      Test
+                    </button>
                     <button className="uiBtn sm iconSq" disabled={value.aiKeysBusy} title="Edit this key" onClick={() => value.startEditAiProvider(provider)}>
                       <PenIcon size={13} />
                     </button>

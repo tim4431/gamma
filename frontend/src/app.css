@@ -2319,6 +2319,7 @@ button.pdfOutlineChevron:hover { background: rgba(128, 128, 128, 0.28); color: v
 }
 .aiKeyInput:focus { border-color: var(--text-dim); }
 .aiKeysError { color: #e5534b; }
+.aiTestOk { color: #4caf50; }
 /* Uniform buttons for the settings modals (AI providers, prompt editor):
    ghost by default, .primary for the main action, .danger for destructive,
    .sm for inline row actions. */
