@@ -1,7 +1,7 @@
 import React, { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState } from "react";
 import { Panel, PanelGroup, PanelResizeHandle } from "react-resizable-panels";
 import PdfViewer, { COLORS, clampZoom } from "./pdfViewer";
-import { API, apiJson, makeId, fmtBytes, getDocIdForUrl, resolvePdfUrl, setExpectedUser, getExpectedUser, usePersistedState, usePersistedFlag } from "./utils";
+import { API, apiJson, makeId, fmtBytes, getDocIdForUrl, resolvePdfUrl, setExpectedUser, getExpectedUser, usePersistedState, usePersistedFlag, copyText, copyRich } from "./utils";
 import {
   BlockDropIndicator,
   ChatMarkdown,
@@ -31,6 +31,7 @@ import {
   setBlockEditMode,
   addSiblingBlock,
   addChildBlock,
+  addRootBlock,
   indentBlock,
   outdentBlock,
   toggleCollapsed,
@@ -1422,6 +1423,9 @@ export default function App() {
   const [pdfSaveLocal, setPdfSaveLocal] = usePersistedFlag("gamma-pdf-save", true);
   // Speech-bubble badge on PDF highlights that carry a typed note.
   const [hlNoteBadges, setHlNoteBadges] = usePersistedFlag("gamma-hl-note-badge", true);
+  // Enter key in the note editor: off (default) = Enter types a line break and
+  // Shift+Enter starts a new note; on = the Logseq-style swap of the two.
+  const [enterNewNote, setEnterNewNote] = usePersistedFlag("gamma-enter-new-note", false);
   // Embedded PDF annotations (burned in by a Gamma export or another viewer)
   // would render twice once imported as blocks — canvas + overlay. "hide"
   // keeps them out of the canvas; "strip" removes them from the stored file
@@ -2021,30 +2025,25 @@ export default function App() {
   }, [openPopover, pageMeta]);
 
   async function copyCitation(kind, text) {
-    try {
-      if (kind === "ppt" && navigator.clipboard?.write && window.ClipboardItem) {
-        // Rich copy: PowerPoint/Word get real italics & bold, plain-text
-        // targets get the clean string without markdown markers.
-        const esc = (text || "").replace(/&/g, "&amp;").replace(/</g, "&lt;").replace(/>/g, "&gt;");
-        const html = esc
-          .replace(/\*\*([^*]+)\*\*/g, "<b>$1</b>")
-          .replace(/_([^_]+)_/g, "<i>$1</i>")
-          .replace(/\*([^*]+)\*/g, "<i>$1</i>");
-        const plain = (text || "")
-          .replace(/\*\*([^*]+)\*\*/g, "$1")
-          .replace(/_([^_]+)_/g, "$1")
-          .replace(/\*([^*]+)\*/g, "$1");
-        await navigator.clipboard.write([new ClipboardItem({
-          "text/html": new Blob([html], { type: "text/html" }),
-          "text/plain": new Blob([plain], { type: "text/plain" }),
-        })]);
-      } else {
-        await navigator.clipboard.writeText(text || "");
-      }
-      flashCiteCopied(kind);
-    } catch {
-      setStatus("Copy failed — copy manually.");
+    let ok;
+    if (kind === "ppt") {
+      // Rich copy: PowerPoint/Word get real italics & bold, plain-text
+      // targets get the clean string without markdown markers.
+      const esc = (text || "").replace(/&/g, "&amp;").replace(/</g, "&lt;").replace(/>/g, "&gt;");
+      const html = esc
+        .replace(/\*\*([^*]+)\*\*/g, "<b>$1</b>")
+        .replace(/_([^_]+)_/g, "<i>$1</i>")
+        .replace(/\*([^*]+)\*/g, "<i>$1</i>");
+      const plain = (text || "")
+        .replace(/\*\*([^*]+)\*\*/g, "$1")
+        .replace(/_([^_]+)_/g, "$1")
+        .replace(/\*([^*]+)\*/g, "$1");
+      ok = await copyRich(html, plain);
+    } else {
+      ok = await copyText(text || "");
     }
+    if (ok) flashCiteCopied(kind);
+    else setStatus("Copy failed — copy manually.");
   }
 
   useEffect(() => {
@@ -3190,12 +3189,8 @@ export default function App() {
   }
 
   async function copyShareLink() {
-    try {
-      await navigator.clipboard.writeText(shareUrl);
-      flashShareCopied();
-    } catch {
-      setStatus("Copy failed — copy the link manually.");
-    }
+    if (await copyText(shareUrl)) flashShareCopied();
+    else setStatus("Copy failed — copy the link manually.");
   }
 
   // Download the current page as Markdown. The server returns a bare .md, or a
@@ -3807,6 +3802,19 @@ export default function App() {
       />
     );
   }
+
+  // "+ New note" under the block tree (also the whole empty state's action):
+  // append an empty top-level note and start editing it.
+  function addRootNote() {
+    if (readOnly) return;
+    const { blocks: next, newId } = addRootBlock(blocks);
+    pendingFocusRef.current = newId;
+    setBlocks(next);
+    setFocusedId(newId);
+  }
+  const addNoteButton = !homeMode && !readOnly && focusedBlockId ? (
+    <button className="addNoteBtn" title="Add a note at the end" onClick={addRootNote}>+ New note</button>
+  ) : null;
 
   // The notes window - docked via notesDock, or filling the center when no PDF is shown.
   const notesWindow = notesVisible ? (
@@ -4685,9 +4693,12 @@ export default function App() {
               )
             ) : homeMode && categoryFilter ? null : (
             (homeMode ? homeVisiblePages : visibleBlocks).length === 0 ? (
-              <div className="empty">{homeMode
-                ? (folderFilter ? "This folder is empty — drag papers onto it from the library." : "No pages yet — use the + button above to open a PDF or start a note page.")
-                : "No blocks yet."}</div>
+              <>
+                <div className="empty">{homeMode
+                  ? (folderFilter ? "This folder is empty — drag papers onto it from the library." : "No pages yet — use the + button above to open a PDF or start a note page.")
+                  : "No blocks yet."}</div>
+                {addNoteButton}
+              </>
             ) : (
               (() => {
                 const rowProps = {
@@ -4780,6 +4791,7 @@ export default function App() {
                       persistBlocks(next).catch((err) => setStatus(`Save failed: ${err.message}`));
                     }
                   },
+                  enterNewNote,
                   onEnterSibling: (id) => {
                     if (readOnly) return;
                     if (homeMode) {
@@ -4922,6 +4934,7 @@ export default function App() {
                 return (
                   <>
                     <BlockTree blocks={homeMode ? homeVisiblePages : blocks} readOnly={readOnly} rowProps={rowProps} />
+                    {addNoteButton}
                     {homeMode && homeSortedPages.length > homeVisiblePages.length ? (
                       <button
                         ref={loadMoreRef}
@@ -5864,8 +5877,6 @@ export default function App() {
           setMetaAutoFetch,
           pdfSaveLocal,
           setPdfSaveLocal,
-          hlNoteBadges,
-          setHlNoteBadges,
           embAnnots,
           setEmbAnnots,
           metaModel,
@@ -5874,6 +5885,12 @@ export default function App() {
           isAdmin: !!authUser?.is_admin,
           setStatus,
           refreshQuota, // keep the client-side pre-upload size check in sync without a re-login
+        }}
+        notes={{
+          enterNewNote,
+          setEnterNewNote,
+          hlNoteBadges,
+          setHlNoteBadges,
         }}
         library={{
           // batch metadata retry uses the same prompt/model/context prefs as
@@ -6079,7 +6096,7 @@ export default function App() {
                 // Also a paste-able deep link: opening it jumps straight to
                 // this highlight (in the browser, chat notes, anywhere).
                 if (blk) {
-                  navigator.clipboard?.writeText(`${window.location.origin}/?block=${encodeURIComponent(blk.id)}`).catch(() => {});
+                  copyText(`${window.location.origin}/?block=${encodeURIComponent(blk.id)}`);
                 }
                 setHighlightMenu(null);
                 setStatus("Reference point copied — paste the link, or pick it in another paper's link dialog.");

@@ -142,6 +142,55 @@ function usePersistedFlag(key, initial) {
   return usePersistedState(key, initial, FLAG_CODEC);
 }
 
+// ---- Clipboard ----------------------------------------------------------------
+// navigator.clipboard exists only in secure contexts (https / localhost); Gamma
+// is typically reached over plain-HTTP LAN, so every copy needs the legacy
+// hidden-textarea + execCommand fallback. `html` adds a text/html flavor (real
+// bold/italics for Word & PowerPoint) alongside the plain string.
+function legacyCopy(plain, html) {
+  const ta = document.createElement("textarea");
+  ta.value = plain;
+  ta.setAttribute("readonly", "");
+  ta.style.cssText = "position:fixed;top:0;left:0;width:2em;height:2em;opacity:0";
+  const active = document.activeElement;
+  document.body.appendChild(ta);
+  ta.addEventListener("copy", (e) => {
+    e.preventDefault();
+    e.clipboardData.setData("text/plain", plain);
+    if (html) e.clipboardData.setData("text/html", html);
+  });
+  ta.select();
+  ta.setSelectionRange(0, plain.length); // iOS Safari ignores select()
+  let ok = false;
+  try { ok = document.execCommand("copy"); } catch {}
+  ta.remove();
+  try { active?.focus?.(); } catch {}
+  return ok;
+}
+
+// Copy plain text; resolves true when the text made it to the clipboard.
+async function copyText(text) {
+  const plain = text || "";
+  if (window.isSecureContext && navigator.clipboard?.writeText) {
+    try { await navigator.clipboard.writeText(plain); return true; } catch {}
+  }
+  return legacyCopy(plain);
+}
+
+// Copy with a rich HTML flavor plus a plain-text fallback flavor.
+async function copyRich(html, plain) {
+  if (window.isSecureContext && navigator.clipboard?.write && window.ClipboardItem) {
+    try {
+      await navigator.clipboard.write([new ClipboardItem({
+        "text/html": new Blob([html], { type: "text/html" }),
+        "text/plain": new Blob([plain], { type: "text/plain" }),
+      })]);
+      return true;
+    } catch {}
+  }
+  return legacyCopy(plain, html);
+}
+
 async function apiJson(url, options = {}) {
   const r = await fetch(url, { ...options, credentials: "include" });
   if (r.status === 401) {
@@ -174,4 +223,4 @@ async function resolvePdfUrl(rawUrl, allowOa = true) {
   });
 }
 
-export { API, makeId, fmtBytes, sha256, getDocIdForUrl, apiJson, resolvePdfUrl, setExpectedUser, getExpectedUser, usePersistedState, usePersistedFlag };
+export { API, makeId, fmtBytes, sha256, getDocIdForUrl, apiJson, resolvePdfUrl, setExpectedUser, getExpectedUser, usePersistedState, usePersistedFlag, copyText, copyRich };
