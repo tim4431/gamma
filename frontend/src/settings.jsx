@@ -993,7 +993,7 @@ function DiagnosticsSettings({ value }) {
 // editor per account — name, password, privilege, storage limits, delete —
 // instead of scattered per-action forms.
 function UsersSettings({ value }) {
-  const { me, setStatus, confirm, onSelfRenamed, refreshQuota } = value;
+  const { setStatus, confirm, onSelfRenamed, refreshQuota } = value;
   const [info, setInfo] = React.useState(null); // {users, me}
   const [error, setError] = React.useState("");
   const [busy, setBusy] = React.useState(false);
@@ -1006,8 +1006,37 @@ function UsersSettings({ value }) {
     apiJson(`${API}/admin/settings`).then(setDefaults).catch(() => {});
   }, []);
 
-  const myName = info?.me || me;
+  const myName = info?.me;
   const lastAdmin = (u) => u.is_admin && (info?.users || []).filter((x) => x.is_admin && !x.is_guest).length <= 1;
+
+  // Mutation responses carry the fresh users list but omit used_bytes (the
+  // server only stats every account's disk on the GET listing) — carry the
+  // last known usage forward. Returns the response, or null after setError.
+  async function usersCall(path, method, body) {
+    setBusy(true);
+    setError("");
+    try {
+      const d = await apiJson(`${API}/admin/users${path}`, {
+        method,
+        ...(body ? { headers: { "Content-Type": "application/json" }, body: JSON.stringify(body) } : {}),
+      });
+      setInfo((prev) => {
+        const usage = new Map((prev?.users || []).map((u) => [u.username, u.used_bytes]));
+        if (d.renamed) usage.set(d.renamed.to, usage.get(d.renamed.from));
+        return {
+          ...prev,
+          users: d.users.map((u) => (u.used_bytes == null ? { ...u, used_bytes: usage.get(u.username) ?? 0 } : u)),
+          me: d.renamed?.from === prev?.me ? d.renamed.to : prev?.me,
+        };
+      });
+      return d;
+    } catch (err) {
+      setError(err.message);
+      return null;
+    } finally {
+      setBusy(false);
+    }
+  }
 
   function openEdit(u) {
     setError("");
@@ -1046,41 +1075,21 @@ function UsersSettings({ value }) {
     const newName = u.is_guest ? u.username : (edit.username || "").trim();
     const renaming = newName && newName !== u.username;
     if (!Object.keys(payload).length && !renaming) { setEdit(null); return; }
-    setBusy(true);
-    setError("");
-    try {
-      if (Object.keys(payload).length) {
-        const d = await apiJson(`${API}/admin/users/${encodeURIComponent(u.username)}`, {
-          method: "PUT",
-          headers: { "Content-Type": "application/json" },
-          body: JSON.stringify(payload),
-        });
-        setInfo((prev) => ({ ...prev, users: d.users }));
-      }
-      if (renaming) {
-        const d = await apiJson(`${API}/admin/users/${encodeURIComponent(u.username)}/rename`, {
-          method: "POST",
-          headers: { "Content-Type": "application/json" },
-          body: JSON.stringify({ new_username: newName }),
-        });
-        setInfo((prev) => ({
-          ...prev,
-          users: d.users,
-          me: d.renamed?.from === prev.me ? d.renamed.to : prev.me,
-        }));
-        if (d.renamed) setStatus(`Renamed ${d.renamed.from} → ${d.renamed.to}. Sessions keep working.`);
-        // Renamed yourself? Re-read the session so the whole app re-keys
-        // (avatar, per-user prefs, synced tabs all follow the new name).
-        if (d.renamed?.from === myName) onSelfRenamed?.();
-      } else {
-        setStatus(`Updated ${u.username}.`);
-      }
-      if (u.username === myName) refreshQuota?.();
-      setEdit(null);
-    } catch (err) {
-      setError(err.message);
+    if (Object.keys(payload).length) {
+      if (!await usersCall(`/${encodeURIComponent(u.username)}`, "PUT", payload)) return;
     }
-    setBusy(false);
+    if (renaming) {
+      const d = await usersCall(`/${encodeURIComponent(u.username)}/rename`, "POST", { new_username: newName });
+      if (!d) return;
+      if (d.renamed) setStatus(`Renamed ${d.renamed.from} → ${d.renamed.to}. Sessions keep working.`);
+      // Renamed yourself? Re-read the session so the whole app re-keys
+      // (avatar, per-user prefs, synced tabs all follow the new name).
+      if (d.renamed?.from === myName) onSelfRenamed?.();
+    } else {
+      setStatus(`Updated ${u.username}.`);
+    }
+    if (u.username === myName) refreshQuota?.();
+    setEdit(null);
   }
 
   function deleteAccount(u) {
@@ -1090,17 +1099,10 @@ function UsersSettings({ value }) {
       confirmLabel: "Delete",
       danger: true,
       onConfirm: async () => {
-        setBusy(true);
-        setError("");
-        try {
-          const d = await apiJson(`${API}/admin/users/${encodeURIComponent(u.username)}`, { method: "DELETE" });
-          setInfo((prev) => ({ ...prev, users: d.users }));
-          setStatus(d.warning || `Deleted ${u.username}.`);
-          setEdit(null);
-        } catch (err) {
-          setError(err.message);
-        }
-        setBusy(false);
+        const d = await usersCall(`/${encodeURIComponent(u.username)}`, "DELETE");
+        if (!d) return;
+        setStatus(d.warning || `Deleted ${u.username}.`);
+        setEdit(null);
       },
     });
   }
@@ -1108,21 +1110,11 @@ function UsersSettings({ value }) {
   async function submitAdd() {
     const f = addForm;
     if (!f?.username.trim() || !f?.password) { setError("Username and password are required."); return; }
-    setBusy(true);
-    setError("");
-    try {
-      const d = await apiJson(`${API}/admin/users`, {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ username: f.username.trim(), password: f.password, is_admin: !!f.is_admin }),
-      });
-      setInfo((prev) => ({ ...prev, users: d.users }));
-      setStatus(`Created ${f.username.trim()}.`);
-      setAddForm(null);
-    } catch (err) {
-      setError(err.message);
-    }
-    setBusy(false);
+    const d = await usersCall("", "POST",
+      { username: f.username.trim(), password: f.password, is_admin: !!f.is_admin });
+    if (!d) return;
+    setStatus(`Created ${f.username.trim()}.`);
+    setAddForm(null);
   }
 
   function editForm(u) {

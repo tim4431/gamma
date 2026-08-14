@@ -4,7 +4,7 @@
 // App provides context (open paper, library, selections) and the model/effort/
 // prompt preferences it also needs elsewhere.
 import React, { useEffect, useMemo, useRef, useState } from "react";
-import { API, apiJson, copyText } from "./utils";
+import { API, apiJson, copyText, isPdfFile } from "./utils";
 import { DockWindow, ChatMarkdown, AutoGrowTextarea, useCopied } from "./widgets";
 import { ArrowUpIcon, BookIcon, CheckIcon, ChevronDownIcon, ChevronUpIcon, CopyIcon, FileIcon, MicIcon, PaperclipIcon, PencilIcon, StopIcon, XIcon } from "./icons";
 
@@ -116,7 +116,7 @@ export default function ChatDock({
   // become one-shot native attachments (same as the library PDF button).
   function addChatFiles(files) {
     for (const f of files) {
-      if (f.type === "application/pdf" || /\.pdf$/i.test(f.name || "")) {
+      if (isPdfFile(f)) {
         if (f.size > 15 * 1024 * 1024) { setStatus(`"${f.name}" is too large to attach (max 15 MB).`); continue; }
         const reader = new FileReader();
         reader.onload = () => setChatFiles((prev) => prev.length >= 4 ? prev : [...prev, { name: f.name || "file.pdf", data: reader.result }]);
