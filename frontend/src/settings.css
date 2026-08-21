@@ -60,6 +60,9 @@
 .settingsPaneHint { font-size: 11.5px; color: var(--text-muted); line-height: 1.5; }
 .oauthInstructions { margin: 6px 0 0; padding-left: 18px; display: grid; gap: 3px; }
 .settingsAlignStart { justify-content: flex-start; }
+/* Backup/restore actions (Settings → Users → Data): two wide buttons per row
+   that wrap instead of squeezing when the pane is narrow. */
+.settingsDataBtns { flex-wrap: wrap; }
 .settingsNoMargin { margin: 0; }
 /* A 28px (Lg) button tucked into the modal's 12px-radius corner, its circle
    concentric with the corner arc. */

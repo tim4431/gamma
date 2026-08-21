@@ -16,9 +16,9 @@ import ChatDock from "./chatDock";
 import SearchPanel from "./search";
 import { ContextMenu } from "./menus";
 import {
-  ActivityIcon, AlertCircleIcon, ArrowLeftIcon, CheckIcon, CopyIcon, DownloadIcon, ExportIcon,
+  ActivityIcon, AlertCircleIcon, ArrowLeftIcon, CheckIcon, CopyIcon, DatabaseIcon, DownloadIcon,
   ExternalLinkIcon, EyeIcon, FileGlyph, FileHighlightIcon, FileIcon, FileNotesIcon, FileTextIcon, FitWidthIcon, FolderGlyph,
-  FolderIcon, FolderOpenIcon, FolderPlusIcon, HomeIcon, ImportIcon, InfoIcon, LabelIcon,
+  FolderIcon, FolderOpenIcon, FolderPlusIcon, HomeIcon, InfoIcon, LabelIcon,
   LinkIcon, LogOutIcon, MaximizeIcon, MenuIcon, MinimizeIcon, PinIcon, PlusIcon,
   RectSelectIcon, SearchIcon, SettingsIcon, SparklesIcon, TextCursorIcon, TrashIcon, UploadIcon,
   UserIcon, UsersIcon, XIcon, ZoomInIcon, ZoomOutIcon,
@@ -260,15 +260,19 @@ export default function App() {
   // navigation) so the user sees the two slow parts: the server zipping a big
   // library ("preparing", no byte counter) and the download itself (percent
   // from content-length). Shows in the pill + a background-tasks row.
-  async function exportUserData(withUploads) {
-    const label = withUploads ? "Export my data" : "Export database";
+  // `target` names another account (admins only, from Settings → Users);
+  // omitted it means your own data.
+  async function exportUserData(withUploads, target) {
+    const other = target && target !== authUser?.user ? target : null;
+    const qs = (extra) => `${extra}${other ? `${extra ? "&" : "?"}user=${encodeURIComponent(other)}` : ""}`;
+    const label = (withUploads ? "Export data" : "Export database") + (other ? ` — ${other}` : "");
     const tid = addTransfer({ name: label, kind: "download", info: "preparing…" });
     postPill("backup", { msg: "Preparing export — the server is zipping your data…", spinner: true });
     // The response only starts once the server finished zipping; until then,
     // poll the zipping percent from the export-progress side-channel.
     const zipPoll = setInterval(async () => {
       try {
-        const p = await apiJson(`${API}/export-progress`);
+        const p = await apiJson(`${API}/export-progress${qs("")}`);
         if (p.active && p.total) {
           const pct = Math.min(99, Math.floor((p.done / p.total) * 100));
           postPill("backup", { msg: `Preparing export — zipping… ${pct}% (${fmtBytes(p.done)} of ${fmtBytes(p.total)})`, spinner: true });
@@ -277,7 +281,7 @@ export default function App() {
       } catch {}
     }, 500);
     try {
-      const res = await fetch(`${API}/export${withUploads ? "" : "?uploads=0"}`, { credentials: "include" });
+      const res = await fetch(`${API}/export${qs(withUploads ? "" : "?uploads=0")}`, { credentials: "include" });
       if (!res.ok) throw new Error((await res.json().catch(() => ({}))).detail || res.statusText);
       clearInterval(zipPoll);
       const total = Number(res.headers.get("content-length")) || 0;
@@ -323,12 +327,14 @@ export default function App() {
     }
   }
 
-  // Restore an "Export my data" zip into this account. mode "replace": notes +
-  // settings are replaced by the backup, uploaded files are merged in. mode
-  // "merge": only pages/chats missing here are added, existing data wins.
-  // Full reload afterwards — every piece of in-memory state (home feed, tabs,
-  // chats) is stale after a restore.
-  function importUserData(mode = "replace") {
+  // Restore an exported zip into an account. mode "replace": notes + settings
+  // are replaced by the backup, uploaded files are merged in. mode "merge":
+  // only pages/chats missing here are added, existing data wins. `target` is
+  // another account (admins only); restoring into your own account reloads
+  // afterwards — every piece of in-memory state (home feed, tabs, chats) is
+  // stale — while another account's restore leaves this workspace alone.
+  function importUserData(mode = "replace", target) {
+    const who = target || authUser.user;
     const inp = document.createElement("input");
     inp.type = "file";
     inp.accept = ".zip,application/zip";
@@ -338,22 +344,22 @@ export default function App() {
       setConfirmBox(mode === "merge" ? {
         title: "Merge backup",
         message: (
-          <>Merge "{f.name}" ({fmtBytes(f.size)}) into the account "{authUser.user}"?
-          {" "}Pages and chats from the backup that don't exist here yet will be <b>added</b>.
-          {" "}Everything already in this account (including settings) is <b>kept unchanged</b>.</>
+          <>Merge "{f.name}" ({fmtBytes(f.size)}) into the account "{who}"?
+          {" "}Pages and chats from the backup that don't exist there yet will be <b>added</b>.
+          {" "}Everything already in that account (including settings) is <b>kept unchanged</b>.</>
         ),
         confirmLabel: "Merge",
-        onConfirm: () => runBackupImport(f, mode),
+        onConfirm: () => runBackupImport(f, mode, who),
       } : {
         title: "Replace all data",
         message: (
-          <>Restore "{f.name}" ({fmtBytes(f.size)}) into the account "{authUser.user}"?
-          {" "}<b>ALL current notes, chats, and settings will be REPLACED</b> by the backup.
+          <>Restore "{f.name}" ({fmtBytes(f.size)}) into the account "{who}"?
+          {" "}<b>ALL of that account's notes, chats, and settings will be REPLACED</b> by the backup.
           {" "}Uploaded PDFs are merged in (nothing is deleted). <b>This cannot be undone.</b></>
         ),
         confirmLabel: "Replace",
         danger: true,
-        onConfirm: () => runBackupImport(f, mode),
+        onConfirm: () => runBackupImport(f, mode, who),
       });
     };
     inp.click();
@@ -362,13 +368,14 @@ export default function App() {
   // XMLHttpRequest instead of fetch: it reports upload progress, so a large
   // zip shows a percent while the bytes go up, then an indeterminate
   // "restoring/merging" hint while the server unzips and swaps the databases.
-  function runBackupImport(f, mode) {
+  function runBackupImport(f, mode, target) {
     const merging = mode === "merge";
+    const other = target && target !== authUser?.user ? target : null;
     const tid = addTransfer({ name: `${merging ? "Merge" : "Restore"} ${f.name}`.slice(0, 60), kind: "upload", info: "uploading…" });
     const fd = new FormData();
     fd.append("file", f);
     const xhr = new XMLHttpRequest();
-    xhr.open("POST", `${API}/import-data?mode=${mode}`);
+    xhr.open("POST", `${API}/import-data?mode=${mode}${other ? `&user=${encodeURIComponent(other)}` : ""}`);
     xhr.withCredentials = true;
     // XHR bypasses the window.fetch wrapper, so the tab-identity guard header
     // must be set by hand — this is the most destructive endpoint in the app.
@@ -392,7 +399,10 @@ export default function App() {
       postPill("backup", null);
       if (xhr.status >= 200 && xhr.status < 300) {
         updateTransfer(tid, { status: "done", info: merging ? `${d.pages_added ?? 0} pages added` : "restored" });
-        window.location.href = window.location.pathname; // fresh state, no stale ?block=
+        // Another account's data changed, not this workspace's — nothing here
+        // is stale, so stay put instead of throwing the session away.
+        if (other) setStatus(`${merging ? "Merged into" : "Restored"} ${other}.`);
+        else window.location.href = window.location.pathname; // fresh state, no stale ?block=
       } else {
         const msg = d.detail || xhr.statusText || "failed";
         updateTransfer(tid, { status: "error", info: String(msg).slice(0, 60) });
@@ -5577,48 +5587,27 @@ export default function App() {
                 <SettingsIcon className="popoverItemIcon" size={15} />
                 Settings…
               </button>
-              <button
-                className="popoverItem"
-                onClick={() => { setOpenPopover(null); exportUserData(true); }}
-                title="Download a zip backup: your notes databases + every uploaded PDF"
-              >
-                <ExportIcon className="popoverItemIcon" size={15} />
-                Export my data (.zip)
-              </button>
-              <button
-                className="popoverItem"
-                onClick={() => { setOpenPopover(null); exportUserData(false); }}
-                title="Download a small zip with just the databases (notes, chats, settings) — no uploaded PDFs"
-              >
-                <ExportIcon className="popoverItemIcon" size={15} />
-                Export database only (.zip)
-              </button>
-              {!authUser.is_guest ? (
-                <>
-                  <button
-                    className="popoverItem"
-                    onClick={() => { setOpenPopover(null); importUserData("replace"); }}
-                    title="Restore an exported zip: notes and settings are replaced by the backup, uploaded files are merged in"
-                  >
-                    <ImportIcon className="popoverItemIcon" size={15} />
-                    Import data (.zip)…
-                  </button>
-                  <button
-                    className="popoverItem"
-                    onClick={() => { setOpenPopover(null); importUserData("merge"); }}
-                    title="Add pages from an exported zip that are missing here; everything already in this account is kept unchanged"
-                  >
-                    <ImportIcon className="popoverItemIcon" size={15} />
-                    Import &amp; merge (.zip)…
-                  </button>
-                </>
-              ) : null}
+              {/* One entry, one pane: backups live on each account's row in
+                  Settings → Users, which for a non-admin is only their own. */}
               {authUser.is_admin ? (
-                <button className="popoverItem" onClick={() => { setSettingsOpen("users"); setOpenPopover(null); }}>
+                <button
+                  className="popoverItem"
+                  onClick={() => { setSettingsOpen("users"); setOpenPopover(null); }}
+                  title="Accounts, storage limits, and backup/restore for any of them"
+                >
                   <UsersIcon className="popoverItemIcon" size={15} />
                   Manage users…
                 </button>
-              ) : null}
+              ) : (
+                <button
+                  className="popoverItem"
+                  onClick={() => { setSettingsOpen("users"); setOpenPopover(null); }}
+                  title="Download a backup of this account, or restore one"
+                >
+                  <DatabaseIcon className="popoverItemIcon" size={15} />
+                  Backup &amp; restore…
+                </button>
+              )}
               <div className="popoverDivider" />
               <button className="popoverItem popoverItemDanger" onClick={doLogout}>
                 <LogOutIcon className="popoverItemIcon" size={15} />
@@ -6187,9 +6176,18 @@ export default function App() {
           },
         }}
         search={{ searchDetailsHome, setSearchDetailsHome, searchDetailsPaper, setSearchDetailsPaper, indexTask, setStatus }}
-        users={authUser?.is_admin ? {
+        users={authUser?.user ? {
+          // Everyone gets this pane for their own backups; only admins see
+          // the other accounts and the account editor.
+          isAdmin: !!authUser?.is_admin,
+          me: authUser.user,
+          isGuest: !!authUser?.is_guest,
+          quotaInfo,
+          exportUserData,
+          importUserData,
           setStatus,
           confirm: setConfirmBox,
+          closeSettings: () => setSettingsOpen(null),
           onSelfRenamed: checkSession, // self-rename re-keys the whole app
           refreshQuota,
         } : null}
