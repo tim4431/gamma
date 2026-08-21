@@ -1556,6 +1556,10 @@ export default function App() {
   // Enter key in the note editor: off (default) = Enter types a line break and
   // Shift+Enter starts a new note; on = the Logseq-style swap of the two.
   const [enterNewNote, setEnterNewNote] = usePersistedFlag("gamma-enter-new-note", false);
+  // Touch scrolling in a zoomed-in PDF: a near-vertical one-finger swipe keeps
+  // the horizontal position it started from, so the text column doesn't wander
+  // sideways as you read down the page.
+  const [snapVertical, setSnapVertical] = usePersistedFlag("gamma-snap-vertical", true);
   // Embedded PDF annotations (burned in by a Gamma export or another viewer)
   // would render twice once imported as blocks — canvas + overlay. "hide"
   // keeps them out of the canvas; "strip" removes them from the stored file
@@ -5791,6 +5795,7 @@ export default function App() {
             <PdfViewer url={pdfUrl} highlights={highlights}
               noteBadges={hlNoteBadges}
               hideEmbeddedAnnots={embAnnots === "hide"}
+              snapVertical={snapVertical}
               areaMode={areaSelectMode && isPhone && !readOnly}
               pdfScaleValue={pdfScale} scrollRef={scrollToRef}
               searchRef={pdfSearchRef}
@@ -6092,6 +6097,8 @@ export default function App() {
           setPdfSaveLocal,
           embAnnots,
           setEmbAnnots,
+          snapVertical,
+          setSnapVertical,
           metaModel,
           setMetaModel,
           aiModels: scopedAiModels,
