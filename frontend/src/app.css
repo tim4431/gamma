@@ -186,6 +186,12 @@ body {
   /* mobile browsers: exclude the collapsing URL bar so nothing hides behind it */
   height: 100dvh;
 }
+/* Phone: no browser zoom of the app chrome (a zoomed page hides the toolbars
+   and there is no way back to them). `manipulation` also drops the 300 ms
+   double-tap-zoom delay; panning and the PDF's own pinch handlers still work. */
+.app.phoneUI {
+  touch-action: manipulation;
+}
 
 .topbar {
   display: flex;
@@ -2008,12 +2014,24 @@ button.pdfOutlineChevron:hover { background: rgba(128, 128, 128, 0.28); color: v
 }
 .phonePanel .dockWindow { border-left: none; }
 .phonePanel .dockGrip { cursor: default; }
-.phoneTabBar {
+/* One bar along the bottom: view tabs on the left, the topbar's action
+   buttons on the right (the tab row up top is too narrow for both, and the
+   bottom is where a thumb lands). The action group keeps the `.topbar`
+   class so every ".topbar X" rule — icon buttons, popover chrome — still
+   applies to it unchanged. */
+.phoneBottomBar {
+  position: relative; /* containing block for the action popovers */
   display: flex;
+  align-items: center;
   flex-shrink: 0;
   border-top: 1px solid var(--border);
   background: var(--bg-deeper);
   padding-bottom: env(safe-area-inset-bottom);
+}
+.phoneTabBar {
+  display: flex;
+  flex: 1 1 auto;
+  min-width: 0;
 }
 .phoneTab {
   flex: 1;
@@ -2030,11 +2048,56 @@ button.pdfOutlineChevron:hover { background: rgba(128, 128, 128, 0.28); color: v
   font-weight: 500;
 }
 .phoneTab.active { color: var(--accent); }
+/* Sharing the row with the actions leaves no room for labels — the icon
+   carries it, with an accent underline marking the open view. */
+.phoneTabBar.hasActions .phoneTab {
+  flex: 0 0 auto;
+  position: relative;
+  padding: 11px 13px;
+}
+.phoneTabBar.hasActions .phoneTab > span { display: none; }
+.phoneTabBar.hasActions .phoneTab.active::after {
+  content: "";
+  position: absolute;
+  left: 6px;
+  right: 6px;
+  bottom: 3px;
+  height: 2px;
+  border-radius: 1px;
+  background: var(--accent);
+}
+.phoneBottomBar .topbar.phoneActions {
+  position: static; /* let the popovers anchor to the whole bar */
+  flex: 0 0 auto;
+  gap: 0;
+  padding: 0 4px;
+  border-bottom: none;
+  background: none;
+}
+/* thumb-sized targets, matching the tab buttons' height */
+.phoneBottomBar .topbar.phoneActions .iconBtn {
+  width: 38px;
+  height: 38px;
+}
+/* Popovers open upward and span the bar instead of hanging off its right
+   edge — their desktop min-widths are wider than a phone screen. */
+.phoneBottomBar [data-popover] { position: static !important; }
+.phoneBottomBar .popover {
+  top: auto;
+  bottom: calc(100% + 6px);
+  left: 6px;
+  right: 6px;
+  width: auto;
+  min-width: 0;
+  max-width: none;
+  max-height: 70vh;
+  overflow-y: auto;
+}
 
 /* pseudo-fullscreen (iOS has no Fullscreen API): hide the app chrome and let
    the work area take the whole screen; the viewer's own ⛶ button exits */
 .app.pseudoFullscreen .topbar,
-.app.pseudoFullscreen .phoneTabBar,
+.app.pseudoFullscreen .phoneBottomBar,
 .app.pseudoFullscreen .status { display: none !important; }
 
 /* chat attach picker + zoom input */
