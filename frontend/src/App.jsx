@@ -21,7 +21,6 @@ import {
   ActivityIcon, AlertCircleIcon, ArrowLeftIcon, CheckIcon, CopyIcon, DatabaseIcon, DownloadIcon, ExportIcon,
   ExternalLinkIcon, EyeIcon, FileGlyph, FileIcon, FileTextIcon, FitWidthIcon, FolderGlyph,
   FolderIcon, FolderOpenIcon, FolderPlusIcon, HomeIcon, ImportIcon, InfoIcon, LabelIcon,
-  MessageSquareIcon,
   LinkIcon, LogOutIcon, MaximizeIcon, MenuIcon, MinimizeIcon, PinIcon, PlusIcon,
   RectSelectIcon, SearchIcon, SettingsIcon, SparklesIcon, TextCursorIcon, TrashIcon, UploadIcon,
   UserIcon, UsersIcon, XIcon, ZoomInIcon, ZoomOutIcon,
@@ -5269,7 +5268,7 @@ export default function App() {
           {!menuReadOnly ? (
             <button className="popoverItem" onClick={() => setChatHidden((v) => !v)}>
               <span className="check">{!chatHidden ? "✓" : ""}</span>
-              <MessageSquareIcon className="popoverItemIcon" size={15} /> AI Chat
+              <SparklesIcon className="popoverItemIcon" size={15} /> AI Chat
             </button>
           ) : null}
           {!menuReadOnly ? <div className="popoverDivider" /> : null}
