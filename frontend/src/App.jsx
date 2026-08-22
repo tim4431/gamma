@@ -1618,9 +1618,6 @@ export default function App() {
   // categories on the left, the selected pane on the right.
   const [settingsOpen, setSettingsOpen] = useState(null); // null | pane id — see NAV_GROUPS in settings.jsx
   const [importOpen, setImportOpen] = useState(false);
-  // Which account's backup panel the Users pane should open expanded (the
-  // popover's "Backup & restore…" — null lands on the plain account list).
-  const [dataPaneFor, setDataPaneFor] = useState(null);
   // Export dialog: one "Export…" menu entry, the shape of the export chosen
   // here. Remembered across sessions — most people export the same way twice.
   const [exportOpen, setExportOpen] = useState(false);
@@ -5581,11 +5578,11 @@ export default function App() {
                 <SettingsIcon className="popoverItemIcon" size={15} />
                 Settings…
               </button>
-              {/* Both land in Settings → Users; they differ in where they put
-                  you — your own data panel, or the account list. */}
+              {/* Both land in Settings → Users: your row carries the
+                  Export/Import menus, admins see every account. */}
               <button
                 className="popoverItem"
-                onClick={() => { setDataPaneFor(authUser.user); setSettingsOpen("users"); setOpenPopover(null); }}
+                onClick={() => { setSettingsOpen("users"); setOpenPopover(null); }}
                 title="Download a backup of this account, or restore one"
               >
                 <DatabaseIcon className="popoverItemIcon" size={15} />
@@ -5594,7 +5591,7 @@ export default function App() {
               {authUser.is_admin ? (
                 <button
                   className="popoverItem"
-                  onClick={() => { setDataPaneFor(null); setSettingsOpen("users"); setOpenPopover(null); }}
+                  onClick={() => { setSettingsOpen("users"); setOpenPopover(null); }}
                   title="Accounts, storage limits, and backup/restore for any of them"
                 >
                   <UsersIcon className="popoverItemIcon" size={15} />
@@ -6087,7 +6084,7 @@ export default function App() {
       <SettingsDialog
         activePane={settingsOpen}
         onPaneChange={setSettingsOpen}
-        onClose={() => { setSettingsOpen(null); setDataPaneFor(null); }}
+        onClose={() => setSettingsOpen(null)}
         papers={{
           oaFallback,
           setOaFallback,
@@ -6196,14 +6193,13 @@ export default function App() {
           // the other accounts and the account editor.
           isAdmin: !!authUser?.is_admin,
           me: authUser.user,
-          openDataFor: dataPaneFor,
           isGuest: !!authUser?.is_guest,
           quotaInfo,
           exportUserData,
           importUserData,
           setStatus,
           confirm: setConfirmBox,
-          closeSettings: () => { setSettingsOpen(null); setDataPaneFor(null); },
+          closeSettings: () => setSettingsOpen(null),
           onSelfRenamed: checkSession, // self-rename re-keys the whole app
           refreshQuota,
         } : null}
