@@ -1567,6 +1567,10 @@ export default function App() {
   const [embAnnots, setEmbAnnots] = usePersistedState("gamma-embedded-annots", "hide", {
     parse: (raw) => (raw === "hide" || raw === "strip" ? raw : undefined),
   });
+  // Theme: "system" follows the OS; "light"/"dark" pin it (Settings → General).
+  const [theme, setTheme] = usePersistedState("gamma-theme", "system", {
+    parse: (raw) => (raw === "system" || raw === "light" || raw === "dark" ? raw : undefined),
+  });
   // User preferences (Settings in the account popover)
   const [oaFallback, setOaFallback] = usePersistedFlag("gamma-oa-fallback", true);
   const [metaAutoFetch, setMetaAutoFetch] = usePersistedFlag("gamma-meta-auto", true);
@@ -2609,14 +2613,15 @@ export default function App() {
     if (session.notesVisible != null) setNotesVisible(session.notesVisible);
   }, []);
 
-  // Theme follows the OS preference — no in-app toggle.
+  // Theme: System tracks the OS preference live; Light/Dark pin it.
   useEffect(() => {
     const mq = window.matchMedia("(prefers-color-scheme: dark)");
-    const apply = () => document.documentElement.setAttribute("data-theme", mq.matches ? "dark" : "light");
+    const apply = () => document.documentElement.setAttribute(
+      "data-theme", theme === "system" ? (mq.matches ? "dark" : "light") : theme);
     apply();
     mq.addEventListener("change", apply);
     return () => mq.removeEventListener("change", apply);
-  }, []);
+  }, [theme]);
 
   // Record a "recently viewed" entry whenever a page is opened.
   useEffect(() => {
@@ -6086,6 +6091,8 @@ export default function App() {
         onPaneChange={setSettingsOpen}
         onClose={() => setSettingsOpen(null)}
         papers={{
+          theme,
+          setTheme,
           oaFallback,
           setOaFallback,
           metaAutoFetch,
@@ -6115,6 +6122,7 @@ export default function App() {
           metaPrompt,
           metaFetchModel,
           metaContextChars,
+          indexTask,
           setStatus,
         }}
         ai={{
