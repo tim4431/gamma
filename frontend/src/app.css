@@ -30,6 +30,8 @@
   --border-light: #444;
   --border-hover: #555;
   --border-subtle: #3f3f3f;
+  --ok: #4caf7d;
+  --danger: #e05c5c;
   --accent: #5b9bd5;
   --accent-dark: #3a7bd5;
   --accent-bright: #7ab8f5;
@@ -72,6 +74,8 @@
   --border-light: #cccccc;
   --border-hover: #aaaaaa;
   --border-subtle: #e0e0e0;
+  --ok: #2f8f57;
+  --danger: #c23b3b;
   --accent: var(--accent-dark);
   --accent-dark: #3a7bd5;
   --accent-bright: #2b6bcb;
@@ -81,7 +85,6 @@
   --scrollbar-bg: #f5f5f5;
   --scrollbar-thumb: #cccccc;
 }
-
 
 * { box-sizing: border-box; }
 
@@ -214,8 +217,7 @@ body {
   font-size: 14px;
 }
 
-.topbar button,
-.noteBtn {
+.topbar button {
   padding: 7px 12px;
   background: var(--bg-raised);
   color: var(--text-primary);
@@ -226,8 +228,7 @@ body {
   font-size: 13px;
 }
 
-.topbar button:hover,
-.noteBtn:hover {
+.topbar button:hover {
   background: var(--bg-hover);
 }
 
@@ -316,95 +317,8 @@ body {
 .sysLogMsg { color: var(--text-muted); word-break: break-word; white-space: pre-wrap; } /* pre-wrap: server tracebacks are multi-line */
 .sysLogEmpty { color: var(--text-tertiary); padding: 4px 0; }
 
-.pdfSaveToggle {
-  display: flex;
-  align-items: center;
-  gap: 8px;
-  margin-top: 8px;
-  cursor: pointer;
-  font-size: 12px;
-  color: var(--text-muted);
-  user-select: none;
-}
-.pdfSaveSwitch {
-  position: relative;
-  display: inline-block;
-  width: 28px;
-  height: 16px;
-  flex-shrink: 0;
-}
-.pdfSaveSwitch input {
-  opacity: 0;
-  width: 0;
-  height: 0;
-  position: absolute;
-}
-.pdfSaveSlider {
-  position: absolute;
-  inset: 0;
-  background: var(--bg-subtle);
-  border-radius: 8px;
-  transition: background 0.15s;
-}
-.pdfSaveSlider::before {
-  content: "";
-  position: absolute;
-  width: 12px;
-  height: 12px;
-  left: 2px;
-  top: 2px;
-  background: #fff;
-  border-radius: 50%;
-  transition: transform 0.15s;
-}
-.pdfSaveSwitch input:checked + .pdfSaveSlider {
-  background: var(--accent);
-}
-.pdfSaveSwitch input:checked + .pdfSaveSlider::before {
-  transform: translateX(12px);
-}
-
-.menuToggleBtn {
-  font-size: 18px;
-  line-height: 1;
-}
-
-/* The overflow menu is always a dropdown under the ⋮ button */
-.topbarOverflow {
-  display: none;
-  position: absolute;
-  top: 100%;
-  right: 8px;
-  z-index: 100;
-  flex-direction: column;
-  gap: 2px;
-  background: var(--bg-surface);
-  border: 1px solid var(--border);
-  border-radius: 10px;
-  padding: 6px;
-  box-shadow: 0 6px 24px rgba(0, 0, 0, 0.2);
-  min-width: 180px;
-}
-.topbarOverflow.open {
-  display: flex;
-}
-.topbar .topbarOverflow button {
-  white-space: nowrap;
-  width: 100%;
-  text-align: left;
-  background: none;
-  border: none;
-  border-radius: 6px;
-  padding: 8px 10px;
-}
-.topbar .topbarOverflow button:hover {
-  background: var(--bg-hover);
-}
-
 @media (max-width: 680px) {
-  .openBtn {
-    display: none !important;  /* Enter key opens instead */
-  }
+
   .topbar input {
     min-width: 80px;
   }
@@ -416,11 +330,7 @@ body {
     padding: 7px 10px;
     font-size: 13px;
   }
-  .themeToggle {
-    padding: 7px 10px !important;
-    font-size: 16px;
-    min-width: 36px;
-  }
+
 }
 
 .main {
@@ -457,27 +367,6 @@ body {
   position: relative !important;
 }
 
-.splitter {
-  flex: 0 0 8px;
-  width: 8px;
-  cursor: col-resize;
-  background: var(--bg-block);
-  border-left: 1px solid var(--border);
-  border-right: 1px solid var(--border);
-  position: relative;
-  z-index: 50;
-  touch-action: none !important;
-  user-select: none;
-  -webkit-user-select: none;
-  display: flex;
-  align-items: center;
-  justify-content: center;
-}
-
-.splitter:hover {
-  background: var(--bg-hover);
-}
-
 .pageTitleRow {
   display: flex;
   align-items: flex-start;
@@ -490,27 +379,6 @@ body {
   font-size: 18px;
   flex: 1;
   min-width: 0;
-}
-
-.pageHeaderMeta {
-  margin-bottom: 14px;
-  padding: 10px;
-  border: 1px solid var(--border);
-  border-radius: 10px;
-  background: var(--bg-deeper);
-}
-
-.pageHeaderLabel {
-  font-size: 12px;
-  color: var(--text-muted);
-  margin-bottom: 6px;
-}
-
-.pageHeaderUrl {
-  font-size: 12px;
-  line-height: 1.4;
-  word-break: break-all;
-  color: var(--text-secondary);
 }
 
 .blockList {
@@ -564,15 +432,6 @@ body {
   cursor: pointer;
   padding: 0;
   font-size: 14px;
-}
-
-.noteSwatch {
-  display: inline-block;
-  width: 10px;
-  height: 10px;
-  border-radius: 999px;
-  margin-top: 7px;
-  flex: 0 0 auto;
 }
 
 .blockBody {
@@ -720,21 +579,8 @@ body {
   opacity: 0.5;
 }
 
-.sidebarFooter {
-  position: sticky;
-  bottom: 0;
-  padding-top: 10px;
-  background: linear-gradient(to bottom, rgba(24,24,24,0), rgba(24,24,24,1) 30%);
-}
-
 .empty {
   color: var(--text-muted);
-}
-
-.PdfHighlighter__tip,
-.PdfHighlighter__tip-container,
-.PdfHighlighter__popup {
-  z-index: 30000 !important;
 }
 
 /* highlight-color picker over a text selection (shared surface recipe) */
@@ -743,22 +589,6 @@ body {
   padding: 10px;
   min-width: 260px;
   z-index: var(--z-tip);
-}
-
-.plainTipInput {
-  width: 100%;
-  min-height: 90px;
-  resize: vertical;
-  box-sizing: border-box;
-  font: inherit;
-  margin-bottom: 8px;
-  color: var(--text-primary);
-  background: #fff;
-}
-
-.plainTipActions {
-  display: flex;
-  gap: 8px;
 }
 
 .colorRow {
@@ -781,10 +611,6 @@ body {
   box-shadow: 0 0 0 2px var(--border);
 }
 
-.colorWrap .Highlight__part {
-  background: var(--highlight-color) !important;
-}
-
 @keyframes flashHighlightCustom {
   0% {
     background: rgba(255, 80, 80, 0.95);
@@ -792,10 +618,6 @@ body {
   100% {
     background: var(--highlight-color);
   }
-}
-
-.flashWrap .Highlight__part {
-  animation: flashHighlightCustom 1s ease-out 1 !important;
 }
 
 @media (max-width: 900px) {
@@ -812,9 +634,6 @@ body {
     border-top: 1px solid var(--border) !important;
   }
 
-  .splitter {
-    display: none;
-  }
 }
 
 .highlightDotBtn {
@@ -854,73 +673,11 @@ body {
   max-width: 75vw !important;
 }
 
-.layout-vertical .main {
-  flex-direction: column !important;
-}
-
-.layout-vertical .viewerWrap {
-  flex: 1 1 auto !important;
-  width: 100% !important;
-  height: auto !important;
-  min-height: 0 !important;
-}
-
-.layout-vertical .sidebar {
-  flex: 0 0 var(--sidebar-height, 280px) !important;
-  width: 100% !important;
-  max-width: none !important;
-  height: var(--sidebar-height, 280px) !important;
-  border-left: none !important;
-  border-top: 1px solid var(--border) !important;
-  resize: none !important;
-}
-
 @media (max-width: 900px) {
   .layout-horizontal .sidebar {
     min-width: 220px !important;
   }
 }
-
-@media (max-width: 900px) {
-  .main.mobileHorizontal {
-    flex-direction: row !important;
-  }
-
-  .main.mobileVertical {
-    flex-direction: column !important;
-  }
-
-  .main.mobileHorizontal .sidebar {
-    width: var(--sidebar-width, 420px) !important;
-    max-width: 85vw !important;
-    height: 100% !important;
-    border-left: 1px solid var(--border) !important;
-    border-top: none !important;
-  }
-
-  .main.mobileVertical .sidebar {
-    width: 100% !important;
-    max-width: none !important;
-    height: var(--sidebar-height, 260px) !important;
-    border-left: none !important;
-    border-top: 1px solid var(--border) !important;
-  }
-
-  .main.mobileVertical .splitter {
-    width: 100% !important;
-    height: 8px !important;
-    cursor: row-resize !important;
-  }
-
-  .main.mobileHorizontal .splitter {
-    width: 8px !important;
-    height: 100% !important;
-    cursor: col-resize !important;
-  }
-}
-
-
-
 
 /* --- drag-and-drop overlay for PDF uploads --- */
 .app.dragOver::after {
@@ -938,7 +695,6 @@ body {
   pointer-events: none;
   z-index: 9999;
 }
-
 
 /* --- inline-editable title --- */
 .titleText { margin: 0; }
@@ -964,11 +720,6 @@ body {
 }
 .titleEdit:focus { outline: none; border-color: var(--accent-dark); }
 
-
-
-
-
-
 /* --- home button (icon-style, identical on editor and read-only) --- */
 .homeBtn {
   flex-shrink: 0;
@@ -977,7 +728,6 @@ body {
 .homeBtn:disabled {
   cursor: default;
 }
-
 
 /* --- drag-and-drop (Phase A: bigger, whiter, in-row, tight to dot column) --- */
 .dropIndicator {
@@ -1030,14 +780,12 @@ body {
   min-width: 0;
 }
 
-
 /* equal-width dot slot for alignment between highlight and non-highlight blocks */
 .dotSlot { width: 16px; min-width: 16px; display: inline-flex; align-items: center; justify-content: center; }
 .dotSlotEmpty { height: 16px; }
 .pageBulletBtn { color: var(--text-bright); }
 .pageBulletBtn:hover { color: var(--accent-bright); }
 .pageBulletDot { display: inline-block; width: 10px; height: 10px; border-radius: 999px; background: currentColor; }
-
 
 /* Logseq-style depth guide lines (one per depth level) */
 .sortableBlockWrap[data-depth] { position: relative; }
@@ -1056,14 +804,12 @@ body {
   opacity: 0.6;
 }
 
-
 /* Logseq-style nested children container */
 .blockChildren {
   border-left: 1px solid var(--border-subtle);
   padding-left: 14px;
   margin-left: 11px;  /* align line under the dot column of parent */
 }
-
 
 /* Close-PDF feature */
 .viewerWrap.pdfHidden { display: none; }
@@ -1283,16 +1029,13 @@ button.pdfOutlineChevron:hover { background: rgba(128, 128, 128, 0.28); color: v
 }
 
 /* When PDF is hidden, sidebar takes full width */
-.main.pdfHidden .sidebar,
-.layout-horizontal .main.pdfHidden .sidebar,
-.layout-vertical .main.pdfHidden .sidebar {
+.main.pdfHidden .sidebar {
   flex: 1 1 auto !important;
   width: 100% !important;
   max-width: none !important;
   height: 100% !important;
   border-left: none !important;
 }
-
 
 .categoryFrontmatter {
   display: flex;
@@ -1444,7 +1187,6 @@ button.pdfOutlineChevron:hover { background: rgba(128, 128, 128, 0.28); color: v
   padding: 2px 8px;
   cursor: pointer;
 }
-.attachModeTarget { cursor: pointer; }
 
 /* -- backlinks panel -- */
 .backlinksPanel {
@@ -1598,7 +1340,6 @@ button.pdfOutlineChevron:hover { background: rgba(128, 128, 128, 0.28); color: v
   font-size: 13px;
   font-weight: 600;
 }
-.logoutMenuBtn { color: var(--text-muted); }
 
 /* --- popovers --- */
 .popoverAnchor {
@@ -1662,16 +1403,6 @@ button.pdfOutlineChevron:hover { background: rgba(128, 128, 128, 0.28); color: v
   color: var(--text-secondary);
 }
 .userPopover { min-width: 268px; }
-.topbar .userBadge {
-  background: var(--bg-raised);
-  border: 1px solid var(--border-hover);
-  border-radius: 999px;
-  padding: 5px 12px;
-  font-size: 12px;
-  color: var(--text-primary);
-  cursor: pointer;
-}
-.topbar .userBadge:hover { background: var(--bg-hover); }
 
 /* account card header inside the popover */
 .userCard {
@@ -1982,7 +1713,7 @@ button.pdfOutlineChevron:hover { background: rgba(128, 128, 128, 0.28); color: v
 .slotStackGroup { flex: 1; min-width: 0; min-height: 0; display: flex; }
 .slotStackGroup > [data-panel-group] { flex: 1; }
 /* unified compact header controls */
-.dockWindowHeader .chatClearBtn { white-space: nowrap; }
+.dockWindowHeader .uiBtn.sm { padding: 2px 10px; font-size: 11px; }
 .dockWindowHeader .chatHeaderSelects { margin: 0; }
 .dockWindowHeader .chatPanelHeaderBtns { flex-shrink: 0; }
 .dockWindowBody {
@@ -2105,7 +1836,7 @@ button.pdfOutlineChevron:hover { background: rgba(128, 128, 128, 0.28); color: v
 
 /* chat attach picker + zoom input */
 .popover.popUp { top: auto; bottom: calc(100% + 6px); left: 0; right: auto; }
-.attachPopover { min-width: 300px; max-width: 380px; }
+
 /* GPT-style "+" menu: icon + label + dim hint per row */
 .chatPlusMenu { min-width: 260px; max-width: 340px; padding: 4px; }
 .chatPlusMenuItem {
@@ -2191,9 +1922,7 @@ button.pdfOutlineChevron:hover { background: rgba(128, 128, 128, 0.28); color: v
   border: 1px solid var(--border-subtle);
   color: var(--text-dim);
 }
-.attachList { max-height: 40vh; overflow-y: auto; display: flex; flex-direction: column; gap: 2px; }
-.attachItem { font-size: 12px; }
-.attachItem input { flex-shrink: 0; }
+
 .chatAttachToggle.on {
   color: #8ab4f8;
   border-color: #8ab4f8;
@@ -2226,23 +1955,9 @@ button.pdfOutlineChevron:hover { background: rgba(128, 128, 128, 0.28); color: v
 .pageActionBtn:disabled { opacity: 0.6; cursor: default; }
 .pageActionBtn.pageDeleteBtn:hover { color: #d05050; }
 .sourcePopover { min-width: 300px; right: 0; }
-.findNav { display: inline-flex; gap: 2px; }
+
 .searchResult.active { background: color-mix(in srgb, var(--accent-dark) 14%, transparent); }
 
-.sidebarDockGrip {
-  flex-shrink: 0;
-  text-align: center;
-  font-size: 10px;
-  letter-spacing: 0.08em;
-  text-transform: uppercase;
-  color: var(--text-dim);
-  padding: 2px 0 4px;
-  cursor: grab;
-  user-select: none;
-  touch-action: none;
-  border-bottom: 1px solid var(--border-subtle);
-}
-.sidebarDockGrip:hover { color: var(--text-primary); background: var(--bg-hover); }
 .dockPreview {
   position: fixed;
   z-index: 2000;
@@ -2261,16 +1976,6 @@ button.pdfOutlineChevron:hover { background: rgba(128, 128, 128, 0.28); color: v
 .chatPanelHeaderBtns {
   display: flex;
   gap: 4px;
-}
-.chatClearBtn {
-  background: none;
-  border: 1px solid var(--border-subtle);
-  border-radius: 3px;
-  color: var(--text-muted);
-  font-size: 10px;
-  cursor: pointer;
-  padding: 1px 6px;
-  font-family: inherit;
 }
 .chatMessages {
   flex: 1;
@@ -2364,7 +2069,8 @@ button.pdfOutlineChevron:hover { background: rgba(128, 128, 128, 0.28); color: v
   0%, 80%, 100% { opacity: 0.25; transform: translateY(0); }
   40% { opacity: 1; transform: translateY(-2px); }
 }
-/* model + effort switchers */
+/* model + effort switchers — shared MenuSelect pills, sized down for the
+   window header (the dropdown look itself comes from .uiBtn/.uiSelectBtn). */
 .chatHeaderSelects {
   display: flex;
   gap: 4px;
@@ -2372,23 +2078,8 @@ button.pdfOutlineChevron:hover { background: rgba(128, 128, 128, 0.28); color: v
   margin-right: auto;
   min-width: 0;
 }
-.chatModelSelect {
-  background: var(--bg-surface);
-  border: 1px solid var(--border-subtle);
-  border-radius: 3px;
-  color: var(--text-muted);
-  font-size: 10px;
-  font-family: inherit;
-  padding: 1px 2px;
-  max-width: 180px;
-  outline: none;
-  cursor: pointer;
-  min-width: 0;
-}
-:is(.chatClearBtn, .chatModelSelect):hover {
-  color: var(--text-primary);
-  border-color: var(--border);
-}
+.chatHeaderSelects .uiBtn.sm { padding: 2px 8px; font-size: 11px; min-width: 0; }
+.chatHeaderSelects .uiSelectBtn .uiSelectLabel { max-width: 150px; }
 /* prompt editor */
 .promptTextarea {
   width: 100%;
@@ -2437,6 +2128,28 @@ button.pdfOutlineChevron:hover { background: rgba(128, 128, 128, 0.28); color: v
 .uiBtn.sm { font-size: 11.5px; padding: 4px 12px; border-radius: 8px; }
 /* Icon-only square variant (delete/edit row actions). */
 .uiBtn.iconSq { width: 27px; height: 25px; padding: 0; flex-shrink: 0; }
+/* Dropdown trigger (Codex-style select): a uiBtn whose content is the
+   current choice plus a chevron. `.block` stretches it into a form field. */
+.uiSelectBtn { gap: 7px; }
+.uiSelectBtn .uiSelectLabel {
+  max-width: 220px;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.uiSelectBtn .uiSelectChev { color: var(--text-dim); flex-shrink: 0; }
+.uiSelectBtn.block { width: 100%; justify-content: space-between; }
+.uiSelectBtn.block .uiSelectLabel { max-width: none; }
+/* Checkmark on the selected row of a dropdown menu. */
+.ctxMenuCheck { margin-left: auto; padding-left: 14px; color: var(--text-primary); flex-shrink: 0; }
+/* Selected state for a button that is a choice rather than an action —
+   segmented groups (Settings) light the active option this way. */
+.uiBtn.on {
+  background: var(--accent-bg);
+  border-color: var(--accent-dark);
+  color: var(--text-primary);
+}
+.uiBtn.on:hover:not(:disabled) { background: var(--accent-bg); color: var(--text-primary); }
 .uiBtn.primary { background: var(--accent-dark); border-color: transparent; color: #fff; }
 .uiBtn.primary:hover:not(:disabled) { background: #3568a0; color: #fff; }
 .uiBtn.danger:hover:not(:disabled) {
@@ -2456,19 +2169,32 @@ button.pdfOutlineChevron:hover { background: rgba(128, 128, 128, 0.28); color: v
 }
 .chatEmptyLink:hover { color: #6fb2ff; }
 .aiProvRow {
+  position: relative;
   display: flex;
   align-items: center;
   justify-content: space-between;
   gap: 10px;
-  padding: 8px 2px;
-  border-bottom: 1px solid var(--border-subtle);
+  padding: 8px 8px;
+  border-radius: 10px;
+  transition: background 0.12s ease;
 }
+/* Flat at rest: rows are separated by a straight inset hairline (a border
+   would curve around the radius and read as a card edge), and only hover
+   paints the rounded highlight. */
+.aiProvRow:not(:last-of-type)::after {
+  content: "";
+  position: absolute;
+  left: 8px;
+  right: 8px;
+  bottom: 0;
+  height: 1px;
+  background: var(--border-subtle);
+}
+.aiProvRow:hover { background: var(--bg-hover); }
 .aiProvName { font-size: 12.5px; font-weight: 600; color: var(--text-primary); }
 .aiProvDesc { font-size: 11px; color: var(--text-muted); overflow-wrap: anywhere; }
 .aiProvActions { display: flex; gap: 6px; flex-shrink: 0; }
-.aiProvForm { margin-top: 8px; }
-/* layout only: field caption sitting above an input inside a form */
-.formFieldLabel { display: block; margin: 2px 0 4px; }
+
 /* Storage meter (QuotaMeter): thin cloud-drive-style usage bar. */
 .quotaMeter { display: block; min-width: 0; }
 .quotaBar {
@@ -2483,9 +2209,6 @@ button.pdfOutlineChevron:hover { background: rgba(128, 128, 128, 0.28); color: v
 .quotaBarFill.full { background: #e5534b; }
 /* meters inside user-list rows stay compact */
 .aiProvMeta .quotaMeter { max-width: 260px; }
-/* right-hand cell of a settings row holding a meter */
-.settingQuotaCell { width: 200px; flex-shrink: 0; text-align: right; }
-.settingQuotaCell .settingDesc { white-space: nowrap; }
 /* storage meter in the account popover: numbers ride in the user card row,
    the bar (quota only) sits as a thin strip beneath it */
 .popoverQuota { padding: 0 14px 8px; }
@@ -2576,6 +2299,9 @@ button.pdfOutlineChevron:hover { background: rgba(128, 128, 128, 0.28); color: v
    user from the Users manager) — it must always stack above sibling overlays
    regardless of DOM order. */
 .reportOverlay[data-popover="confirm"] { z-index: 1300; }
+/* Sub-dialogs opened from inside the settings modal (edit key, edit account,
+   add user): above the settings overlay, still below the confirm box. */
+.reportOverlay.subDialog { z-index: 1290; }
 .reportModal {
   border-radius: var(--radius-surface);
   padding: 16px;
@@ -2619,7 +2345,6 @@ button.pdfOutlineChevron:hover { background: rgba(128, 128, 128, 0.28); color: v
   justify-content: flex-end;
   gap: 8px;
 }
-.reportModalBtns .chatClearBtn { font-size: 12px; padding: 5px 12px; }
 .chatInputRow {
   display: flex;
   gap: 4px;
@@ -2736,31 +2461,6 @@ button.pdfOutlineChevron:hover { background: rgba(128, 128, 128, 0.28); color: v
   line-height: 1.5;
   margin-top: 12px;
 }
-
-/* --- User badge --- */
-.userBadge {
-  display: inline-flex;
-  align-items: center;
-  gap: 6px;
-  padding: 3px 10px;
-  background: var(--bg-raised);
-  border: 1px solid var(--border);
-  border-radius: 14px;
-  font-size: 12px;
-  color: var(--text-secondary);
-  white-space: nowrap;
-}
-.logoutBtn {
-  background: none;
-  border: none;
-  color: var(--text-muted);
-  cursor: pointer;
-  font-size: 14px;
-  padding: 0 2px;
-  line-height: 1;
-}
-.logoutBtn:hover { color: var(--text-primary); }
-.pdfSaveSwitch.disabled { opacity: 0.5; pointer-events: none; }
 
 /* --- page header: title with category chips below, buttons at the right --- */
 .pageTitleMain {
@@ -3163,18 +2863,6 @@ button.pdfOutlineChevron:hover { background: rgba(128, 128, 128, 0.28); color: v
   border-radius: 2px;
 }
 
-/* --- citation export (share popover) --- */
-.citeMetaLine {
-  font-size: 12px;
-  color: var(--text-secondary);
-  padding: 0 4px;
-  overflow: hidden;
-  text-overflow: ellipsis;
-  white-space: nowrap;
-}
-.citeMetaSource { color: var(--text-dim); font-size: 11px; }
-.citeBtnRow { gap: 6px; }
-.citeBtnRow .chatClearBtn { font-size: 12px; padding: 5px 10px; }
 .pptCiteBox {
   display: flex;
   align-items: flex-start;
@@ -3290,9 +2978,6 @@ button.pdfOutlineChevron:hover { background: rgba(128, 128, 128, 0.28); color: v
 .blockLinkChip:hover { background: var(--accent-dark); border-color: #4a8abf; color: #fff; }
 [data-theme="light"] .blockLinkChip { background: #e3effa; color: #2b6bcb; border-color: #b5d2ee; }
 [data-theme="light"] .blockLinkChip:hover { background: #cfe3f7; color: #1d5ab3; }
-
-/* --- prompt editor (3 prompts) --- */
-.promptModal { width: min(560px, calc(100vw - 32px)); overflow-y: auto; }
 
 /* --- cursor-positioned context menu (shared surface recipe) --- */
 .ctxMenu {
@@ -3427,7 +3112,6 @@ button.pdfOutlineChevron:hover { background: rgba(128, 128, 128, 0.28); color: v
 .exportModal .reportModalTitle { margin-bottom: 4px; }
 .exportModal .reportModalHint { margin-top: 6px; }
 .exportModal .reportModalBtns { margin-top: 8px; }
-.exportFormatSelect { min-width: 168px; }
 .confirmMessage { font-size: 13px; color: var(--text-secondary); }
 .linkPromptUrl { word-break: break-all; font-family: ui-monospace, SFMono-Regular, Menlo, monospace; }
 .uiBtn.primary.dangerBtn { background: #b93c3c; }

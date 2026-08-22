@@ -1,48 +1,265 @@
 import React from "react";
 import { API, apiJson, fmtBytes, copyText } from "./utils";
 import { parseFolderTags } from "./libraryUtils";
+import { ActionMenu, MenuSelect } from "./menus";
 import {
   ActivityIcon,
   BookIcon,
+  BugIcon,
+  CloudDownloadIcon,
+  CornerDownLeftIcon,
   DatabaseIcon,
   ExportIcon,
+  EyeOffIcon,
+  FileTextIcon,
+  GlobeIcon,
+  HardDriveIcon,
+  HighlightIcon,
+  HomeIcon,
   ImportIcon,
   KeyIcon,
+  LayoutIcon,
   ListIcon,
+  MessageSquareIcon,
+  MicIcon,
+  MoveVerticalIcon,
   PaperIcon,
   PenIcon,
+  PlusIcon,
+  RectSelectIcon,
+  RefreshIcon,
+  ScissorsIcon,
   SearchIcon,
-  SlidersIcon,
+  ServerIcon,
+  SettingsIcon,
+  ShieldIcon,
+  SparklesIcon,
+  TerminalIcon,
   Trash2Icon,
+  TypeIcon,
   UserIcon,
   UsersIcon,
 } from "./icons";
 
-const NAV_ITEMS = [
-  ["papers", "Paper metadata", PaperIcon],
-  ["notes", "Notes", PenIcon],
-  ["library", "Library status", ListIcon],
-  ["ai", "AI & API keys", KeyIcon],
-  ["prompts", "Prompts", SlidersIcon],
-  ["context", "AI chat", BookIcon],
-  ["search", "Search", SearchIcon],
-  ["users", "Users", UsersIcon], // relabelled "Account" for non-admins (see SettingsDialog)
-  ["diagnostics", "Diagnostics", ActivityIcon],
+// Seven panes in three groups. Each pane is a stack of Sections, each Section a
+// stack of Rows — icon · label · one short hint · control. The paragraph that
+// used to sit under every label now lives in the row's `title`, so a pane scans
+// as a column of pictures and still explains itself on hover.
+const NAV_GROUPS = [
+  ["Workspace", [
+    ["general", "General", SettingsIcon],
+    ["search", "Search", SearchIcon],
+    ["library", "Library", ListIcon],
+  ]],
+  ["AI", [
+    ["ai", "Providers", KeyIcon],
+    ["assistant", "Assistant", SparklesIcon],
+  ]],
+  ["Account", [
+    ["users", "Users", UsersIcon], // relabelled "You" for non-admins (see SettingsDialog)
+    ["advanced", "Advanced", ActivityIcon],
+  ]],
 ];
+// Older entry points (and anything that remembered a pane id) still resolve.
+const PANE_ALIASES = {
+  papers: "general", notes: "general",
+  prompts: "assistant", context: "assistant",
+  diagnostics: "advanced", account: "users",
+};
 
-function PaneIntro({ title, children }) {
+// --- pane primitives --------------------------------------------------------
+
+function PaneHead({ icon: Icon, title, children }) {
+  return (
+    <div className="setHead">
+      <span className="setHeadIcon"><Icon size={17} /></span>
+      <span className="settingText">
+        <span className="settingsPaneTitle">{title}</span>
+        {children ? <span className="settingsPaneHint">{children}</span> : null}
+      </span>
+    </div>
+  );
+}
+
+function Section({ title, action, children }) {
   return (
     <>
-      <div className="settingsPaneTitle">{title}</div>
-      <div className="settingsPaneHint">{children}</div>
+      <div className="setSection">
+        <span className="setSectionLabel">{title}</span>
+        <span className="setSectionRule" />
+        {action}
+      </div>
+      {children}
     </>
   );
+}
+
+// `title` is the long explanation — deliberately not rendered, only hovered.
+// Rows are plain containers: the control on the right is the only click target,
+// so a stray click on the label or hint never flips a setting.
+function Row({ icon: Icon, label, hint, title, children }) {
+  return (
+    <div className="settingRow setRow" title={title}>
+      <span className="setIcon">{Icon ? <Icon size={15} /> : null}</span>
+      <span className="settingText">
+        <span className="settingLabel">{label}</span>
+        {hint ? <span className="settingDesc">{hint}</span> : null}
+      </span>
+      {children}
+    </div>
+  );
+}
+
+function Toggle({ checked, onChange, label, ...row }) {
+  return (
+    <Row label={label} {...row}>
+      <span className="switch">
+        <input
+          type="checkbox" checked={checked} aria-label={label}
+          onChange={(event) => onChange(event.target.checked)}
+        />
+        <span className="switchTrack" />
+      </span>
+    </Row>
+  );
+}
+
+// Joined pill buttons for a single mutually-exclusive choice.
+// `options` are [value, label, Icon, tooltip].
+function Segmented({ value, onChange, options }) {
+  return (
+    <span className="segGroup">
+      {options.map(([val, label, Icon, tip]) => (
+        <button
+          key={val} type="button" title={tip || label}
+          className={`uiBtn sm ${value === val ? "on" : ""}`}
+          onClick={() => onChange(val)}
+        >
+          {Icon ? <Icon size={13} /> : null}{label}
+        </button>
+      ))}
+    </span>
+  );
+}
+
+// Centered popup dialog opened from inside the settings modal — same shape as
+// the PDF export dialog (reportModal), stacked above the settings overlay.
+// Every editor dialog is composed the same way: SubDialog › .settingsForm ›
+// Step (numbered stages, for flows) or Field (label + hint + one control),
+// closed by a .reportModalBtns footer.
+function SubDialog({ title, onClose, children }) {
+  return (
+    <div className="reportOverlay subDialog" onClick={onClose}>
+      <div className="reportModal" onClick={(event) => event.stopPropagation()}>
+        <div className="reportModalTitle">{title}</div>
+        {children}
+      </div>
+    </div>
+  );
+}
+
+// Numbered stage of a dialog flow (the add/edit-key wizard).
+function Step({ n, title, hint, children }) {
+  return (
+    <div className="setStep">
+      <div className="setStepHead">
+        <span className="setStepNum">{n}</span>
+        <span className="settingText">
+          <span className="setStepTitle">{title}</span>
+          {hint ? <span className="settingDesc">{hint}</span> : null}
+        </span>
+      </div>
+      <div className="setStepBody">{children}</div>
+    </div>
+  );
+}
+
+// One labeled control: bold-ish caption, muted hint after it, control below.
+function Field({ label, hint, children }) {
+  return (
+    <label className="setField">
+      <span className="setFieldLabel">
+        {label}
+        {hint ? <span className="settingDesc"> — {hint}</span> : null}
+      </span>
+      {children}
+    </label>
+  );
+}
+
+// Number input with a fixed unit suffix, so "MB" never has to live in the
+// label text. Empty string means "inherit" wherever the caller says so.
+function UnitInput({ value, onChange, unit, placeholder, min, onEnter }) {
+  return (
+    <span className="unitInput">
+      <input
+        className="aiKeyInput" type="number" min={min}
+        placeholder={placeholder} value={value}
+        onChange={(event) => onChange(event.target.value)}
+        onKeyDown={onEnter ? (event) => { if (event.key === "Enter") onEnter(); } : undefined}
+      />
+      <span className="unitSuffix">{unit}</span>
+    </span>
+  );
+}
+
+// Character budgets span 100 … 1 000 000, so the slider is log-scaled and snaps
+// to round numbers; the box next to it still accepts any exact value.
+const SLIDER_MIN = 100, SLIDER_MAX = 1000000, SLIDER_SPAN = Math.log(SLIDER_MAX / SLIDER_MIN);
+const toSlider = (v) => Math.round((1000 * Math.log(Math.max(SLIDER_MIN, v) / SLIDER_MIN)) / SLIDER_SPAN);
+const fromSlider = (s) => {
+  const raw = SLIDER_MIN * Math.exp((s / 1000) * SLIDER_SPAN);
+  const step = raw < 10000 ? 100 : raw < 100000 ? 1000 : 10000;
+  return Math.min(SLIDER_MAX, Math.max(SLIDER_MIN, Math.round(raw / step) * step));
+};
+
+function CharSlider({ value, onChange }) {
+  return (
+    <span className="setSlider">
+      <input
+        type="range" min="0" max="1000" step="1" className="setRange"
+        value={toSlider(value)}
+        onChange={(event) => onChange(fromSlider(Number(event.target.value)))}
+      />
+      <input
+        className="aiKeyInput setNum" type="number" min={SLIDER_MIN} max={SLIDER_MAX} step="1000"
+        value={value}
+        onChange={(event) => {
+          const next = Number.parseInt(event.target.value, 10);
+          if (Number.isFinite(next)) onChange(Math.min(SLIDER_MAX, Math.max(SLIDER_MIN, next)));
+        }}
+      />
+    </span>
+  );
+}
+// ~1800 characters is about one dense page of a paper — enough to make an
+// abstract character budget mean something.
+const approxPages = (chars) => `≈ ${Math.max(1, Math.round(chars / 1800))} page${chars >= 2700 ? "s" : ""}`;
+
+// Coverage tile: big count, what it counts, and how far along it is.
+function Stat({ icon: Icon, label, value, total, title }) {
+  const pct = total ? Math.round((value / total) * 100) : 0;
+  const tone = pct >= 100 ? "ok" : pct < 60 ? "warn" : "";
+  return (
+    <div className="setStat" title={title}>
+      <span className="setStatTop">
+        <span className="setStatNum">{value}</span>
+        <span className="setStatOf">/ {total}</span>
+      </span>
+      <span className="setStatLabel"><Icon size={12} />{label}</span>
+      <span className="setStatBar"><i className={tone} style={{ width: `${Math.max(pct, 2)}%` }} /></span>
+    </div>
+  );
+}
+
+function Empty({ icon: Icon, children }) {
+  return <div className="setEmpty"><Icon size={26} />{children}</div>;
 }
 
 // Cloud-drive-style storage meter: thin bar + "used of total" caption.
 // quotaMb 0/undefined = unlimited → caption only, no bar (no denominator).
 // barOnly renders just the bar (the account popover puts the numbers next to
-// the user card instead). Shared by the popover, Users pane, Library status.
+// the user card instead). Shared by the popover, Users pane, Library.
 export function QuotaMeter({ usedBytes, quotaMb, barOnly }) {
   if (usedBytes == null) return null;
   const quotaBytes = (quotaMb || 0) * 1024 * 1024;
@@ -66,97 +283,146 @@ export function QuotaMeter({ usedBytes, quotaMb, barOnly }) {
   );
 }
 
-function SettingToggle({ label, description, checked, onChange }) {
-  return (
-    <label className="settingRow">
-      <span className="settingText">
-        <span className="settingLabel">{label}</span>
-        <span className="settingDesc">{description}</span>
-      </span>
-      <span className="switch">
-        <input type="checkbox" checked={checked} onChange={(event) => onChange(event.target.checked)} />
-        <span className="switchTrack" />
-      </span>
-    </label>
-  );
-}
+// --- General: reading, notes, interface -------------------------------------
 
-function PapersSettings({ value }) {
+function GeneralSettings({ value }) {
   return (
     <>
-      <PaneIntro title="Paper metadata">
-        How papers are fetched, stored, and enriched when you open them. These preferences are saved in this browser.
-      </PaneIntro>
-      <SettingToggle
-        label="Open-access fallback"
-        description="When a publisher PDF is paywalled or refuses to download, load a legal open-access copy instead—usually the arXiv version. A note tells you when the substitute isn't the published version."
-        checked={value.oaFallback}
-        onChange={value.setOaFallback}
-      />
-      <SettingToggle
-        label="Auto-fetch metadata"
-        description="Look up title, authors, venue, and BibTeX the first time a paper opens (arXiv → DOI → AI). Turn this off to fetch only via the refresh button in the metadata popover."
-        checked={value.metaAutoFetch}
-        onChange={value.setMetaAutoFetch}
-      />
-      <SettingToggle
-        label="Save external PDFs"
-        description="Keep a server copy of PDFs opened from a URL, so they load instantly next time and survive dead links."
-        checked={value.pdfSaveLocal}
-        onChange={value.setPdfSaveLocal}
-      />
-      <SettingToggle
-        label="Snap vertical scrolling"
-        description="On a touch screen, a one-finger swipe that's roughly straight up or down scrolls a zoomed-in PDF vertically only, so the page doesn't drift sideways while you read. Diagonal and sideways swipes still pan freely."
-        checked={value.snapVertical}
-        onChange={value.setSnapVertical}
-      />
-      <label className="settingRow">
-        <span className="settingText">
-          <span className="settingLabel">Embedded PDF annotations</span>
-          <span className="settingDesc">
-            Highlights, notes, and rectangle annotations saved inside a PDF file (a Gamma export,
-            SumatraPDF, Acrobat…) are imported as regular highlights — this controls what happens to
-            the embedded originals so they don't render twice. "Hide in viewer" leaves the file untouched; "Strip from file" removes them
-            from the stored PDF when they're imported.
-          </span>
-        </span>
-        <select className="aiKeyInput settingSelect" value={value.embAnnots}
-          onChange={(e) => value.setEmbAnnots(e.target.value)}>
-          <option value="hide">Hide in viewer</option>
-          <option value="strip">Strip from file</option>
-        </select>
-      </label>
-      <MetaModelRow value={value} />
-      {value.isAdmin ? <ServerLimitRows setStatus={value.setStatus} refreshQuota={value.refreshQuota} /> : null}
+      <PaneHead icon={SettingsIcon} title="General">
+        Reading, notes and interface preferences — saved in this browser.
+      </PaneHead>
+      <Section title="Reading">
+        <Toggle
+          icon={CloudDownloadIcon}
+          label="Open-access fallback"
+          hint="Fetch a free copy when a publisher blocks the PDF"
+          title="When a publisher PDF is paywalled or refuses to download, load a legal open-access copy instead — usually the arXiv version. A note tells you when the substitute isn't the published version."
+          checked={value.oaFallback}
+          onChange={value.setOaFallback}
+        />
+        <Toggle
+          icon={SparklesIcon}
+          label="Auto-fetch metadata"
+          hint="Title, authors and BibTeX on first open"
+          title="Look up title, authors, venue and BibTeX the first time a paper opens (arXiv → DOI → AI). Turn this off to fetch only via the refresh button in the metadata popover."
+          checked={value.metaAutoFetch}
+          onChange={value.setMetaAutoFetch}
+        />
+        <Toggle
+          icon={HardDriveIcon}
+          label="Save external PDFs"
+          hint="Keep a server copy of PDFs opened from a URL"
+          title="Keep a server copy of PDFs opened from a URL, so they load instantly next time and survive dead links."
+          checked={value.pdfSaveLocal}
+          onChange={value.setPdfSaveLocal}
+        />
+        <Toggle
+          icon={MoveVerticalIcon}
+          label="Snap vertical scrolling"
+          hint="Straight one-finger swipes don't drift sideways"
+          title="On a touch screen, a one-finger swipe that's roughly straight up or down scrolls a zoomed-in PDF vertically only, so the page doesn't drift sideways while you read. Diagonal and sideways swipes still pan freely."
+          checked={value.snapVertical}
+          onChange={value.setSnapVertical}
+        />
+        <Row
+          icon={HighlightIcon}
+          label="Annotations inside the file"
+          hint="Imported as highlights — what happens to the originals"
+          title={"Highlights, notes and rectangles saved inside a PDF file (a Gamma export, SumatraPDF, Acrobat…) are imported as regular highlights. This controls the embedded originals so they don't render twice: Hide leaves the file untouched, Strip removes them from the stored PDF on import."}
+        >
+          <Segmented
+            value={value.embAnnots}
+            onChange={value.setEmbAnnots}
+            options={[
+              ["hide", "Hide", EyeOffIcon, "Leave the file untouched; the viewer just doesn't paint them"],
+              ["strip", "Strip", ScissorsIcon, "Rewrite the stored PDF without them once they're imported"],
+            ]}
+          />
+        </Row>
+      </Section>
+      <Section title="Notes">
+        <Toggle
+          icon={CornerDownLeftIcon}
+          label="Enter starts a new note"
+          hint="Off: Enter breaks the line, Shift+Enter starts a note"
+          title="Logseq-style: Enter creates the next note, Shift+Enter types a line break inside the current one. Turn off to swap them (the + button under the notes always creates one)."
+          checked={value.enterNewNote}
+          onChange={value.setEnterNewNote}
+        />
+        <Toggle
+          icon={MessageSquareIcon}
+          label="Note badges on highlights"
+          hint="Bubble on a highlight that carries a note"
+          title="Show a small speech-bubble next to a highlight in the PDF when you've typed a note on it. Click the bubble to jump to the note."
+          checked={value.hlNoteBadges}
+          onChange={value.setHlNoteBadges}
+        />
+      </Section>
     </>
   );
 }
 
-function NotesSettings({ value }) {
+// --- Search -----------------------------------------------------------------
+
+// Kick off a full search-index rebuild. Shared by the Library pane and the
+// Search pane — only the phrasing after the scheduled count differs.
+async function requestReindex(setStatus, scheduledSuffix) {
+  try {
+    const result = await apiJson(`${API}/search-reindex`, { method: "POST" });
+    setStatus(result.busy
+      ? "Indexing is already running—see the tasks popover."
+      : result.scheduled
+        ? `Re-indexing ${result.scheduled} paper${result.scheduled === 1 ? "" : "s"} ${scheduledSuffix}`
+        : "No papers with PDFs to index.");
+  } catch (err) {
+    setStatus(`Reindex failed: ${err.message}`);
+  }
+}
+
+function SearchSettings({ value }) {
   return (
     <>
-      <PaneIntro title="Notes">
-        How the note outliner behaves while you write. These preferences are saved in this browser.
-      </PaneIntro>
-      <SettingToggle
-        label="Enter starts a new note"
-        description="Logseq-style: Enter creates the next note, Shift+Enter types a line break inside the current one. Turn off to swap them — Enter types line breaks, Shift+Enter starts a new note (the + button under the notes always creates one)."
-        checked={value.enterNewNote}
-        onChange={value.setEnterNewNote}
-      />
-      <SettingToggle
-        label="Note badges on highlights"
-        description="Show a small speech-bubble next to a highlight in the PDF when you've typed a note on it. Click the bubble to jump to the note."
-        checked={value.hlNoteBadges}
-        onChange={value.setHlNoteBadges}
-      />
+      <PaneHead icon={SearchIcon} title="Search">
+        Your notes and every PDF in the library. PDFs are indexed in the background.
+      </PaneHead>
+      <Section title="Auto-expand results">
+        <Toggle
+          icon={HomeIcon}
+          label="On the home page"
+          hint="Search from the library opens with full result lists"
+          title="With no PDF open the compact find bar has nothing to show, so the home page defaults to expanded. Turn off to start collapsed anyway."
+          checked={value.searchDetailsHome}
+          onChange={value.setSearchDetailsHome}
+        />
+        <Toggle
+          icon={PaperIcon}
+          label="While reading a paper"
+          hint="Off: search opens as a compact browser-style find bar"
+          title="In a paper, Ctrl+F defaults to the compact find bar (match counter and next/previous only). Turn on to open with the full grouped result lists instead."
+          checked={value.searchDetailsPaper}
+          onChange={value.setSearchDetailsPaper}
+        />
+      </Section>
+      <Section title="Index">
+        <Row
+          icon={RefreshIcon}
+          label="PDF text index"
+          hint={value.indexTask?.active ? "Rebuilding — progress in the tasks popover" : "Re-extract every paper if results look stale"}
+          title="Full-text search reads a per-user index built from the extracted PDF text. Rebuild it when library-wide results look stale or incomplete."
+        >
+          <button className="uiBtn sm" disabled={value.indexTask?.active} onClick={() => requestReindex(value.setStatus, "in the background.")}>
+            {value.indexTask?.active ? "Indexing…" : "Rebuild"}
+          </button>
+        </Row>
+      </Section>
     </>
   );
 }
+
+// --- Library: storage + per-paper health ------------------------------------
 
 // Admin-only server-wide default storage limits (users.db via
-// /api/admin/settings). Per-account overrides live in the Users dialog.
+// /api/admin/settings). Per-account overrides live in the Users pane.
 function ServerLimitRows({ setStatus, refreshQuota }) {
   const [saved, setSaved] = React.useState(null); // {max_upload_mb, quota_mb}
   const [draft, setDraft] = React.useState({ max_upload_mb: "", quota_mb: "" });
@@ -184,65 +450,55 @@ function ServerLimitRows({ setStatus, refreshQuota }) {
       setStatus(`Could not save: ${err.message}`);
     }
   }
-  function row(key, label, desc, min, saveLabel) {
+  function row(key, icon, label, hint, title, min, saveLabel) {
     const parsed = parseInt(draft[key], 10);
     const valid = Number.isFinite(parsed) && parsed >= min;
     const dirty = saved && valid && parsed !== saved[key];
     return (
-      <div className="settingRow">
-        <span className="settingText">
-          <span className="settingLabel">{label}</span>
-          <span className="settingDesc">{desc}</span>
-        </span>
-        {error ? (
-          <span className="settingDesc">{error}</span>
-        ) : (
-          <span style={{ display: "flex", gap: 6, alignItems: "center" }}>
-            <input
-              className="aiKeyInput" style={{ width: 84, textAlign: "right" }}
-              type="number" min={min}
+      <Row icon={icon} label={label} hint={error || hint} title={title}>
+        {error ? null : (
+          <span className="setSlider">
+            <UnitInput
+              unit="MB" min={min}
               value={draft[key]}
-              disabled={!saved}
-              onChange={(e) => setDraft((f) => ({ ...f, [key]: e.target.value }))}
-              onKeyDown={(e) => { if (e.key === "Enter" && dirty) save(key, saveLabel); }}
+              onChange={(next) => setDraft((f) => ({ ...f, [key]: next }))}
+              onEnter={() => { if (dirty) save(key, saveLabel); }}
             />
             <button className="uiBtn sm" disabled={!dirty} onClick={() => save(key, saveLabel)}>Save</button>
           </span>
         )}
-      </div>
+      </Row>
     );
   }
   return (
     <>
-      {row("max_upload_mb", "Default maximum upload size (MB)",
-        "Server-wide cap on a single uploaded PDF or image. Override per account from Manage users. Admins only.",
-        1, "Upload limit")}
-      {row("quota_mb", "Default storage quota (MB)",
-        "Total uploads storage per account; 0 = unlimited. Override per account from Manage users. Admins only.",
-        0, "Storage quota")}
+      {row("max_upload_mb", ImportIcon, "Default max upload", "Largest single PDF or image, per account",
+        "Server-wide cap on a single uploaded PDF or image. Override it per account from the Users pane. Admins only.", 1, "Upload limit")}
+      {row("quota_mb", ServerIcon, "Default quota", "Total uploads per account · 0 = unlimited",
+        "Server-wide total uploads storage per account; 0 means unlimited. Override it per account from the Users pane. Admins only.", 0, "Storage quota")}
     </>
   );
 }
 
 // Everyone sees their own usage against their effective limits (GET /api/quota).
-function StorageUsageRow() {
+function StorageCard() {
   const [q, setQ] = React.useState(null);
-  React.useEffect(() => {
-    apiJson(`${API}/quota`).then(setQ).catch(() => {});
-  }, []);
+  React.useEffect(() => { apiJson(`${API}/quota`).then(setQ).catch(() => {}); }, []);
   if (!q) return null;
   return (
-    <div className="settingRow">
-      <span className="settingText">
-        <span className="settingLabel">Storage used</span>
-        <span className="settingDesc">
-          Uploaded PDFs and images on the server. Files up to {q.max_upload_mb} MB each
-          {q.quota_mb ? `, ${q.quota_mb} MB total.` : ", no total quota."}
+    <div className="setCard">
+      <div className="setCardHead">
+        <span className="setIcon"><HardDriveIcon size={15} /></span>
+        <span className="settingText">
+          <span className="settingLabel">Uploaded files</span>
+          <span className="settingDesc">PDFs and images on the server · up to {q.max_upload_mb} MB each</span>
         </span>
-      </span>
-      <span className="settingQuotaCell">
-        <QuotaMeter usedBytes={q.used_bytes} quotaMb={q.quota_mb} />
-      </span>
+        <span className="setCardVal">
+          {fmtBytes(q.used_bytes)}
+          <em>{q.quota_mb ? ` / ${fmtBytes(q.quota_mb * 1024 * 1024)}` : " · no quota"}</em>
+        </span>
+      </div>
+      <QuotaMeter usedBytes={q.used_bytes} quotaMb={q.quota_mb} barOnly />
     </div>
   );
 }
@@ -250,62 +506,22 @@ function StorageUsageRow() {
 function LibrarySettings({ value }) {
   return (
     <>
-      <PaneIntro title="Library status">
-        Per-paper health of your library: metadata, extracted PDF text, and the search index —
-        with batch retry for failed or missing metadata lookups.
-      </PaneIntro>
-      <StorageUsageRow />
+      <PaneHead icon={ListIcon} title="Library">
+        Storage, and per-paper health of metadata, extracted text and the search index.
+      </PaneHead>
+      <Section title="Storage">
+        <StorageCard />
+        {value.isAdmin ? <ServerLimitRows setStatus={value.setStatus} refreshQuota={value.refreshQuota} /> : null}
+      </Section>
       <MetaStatusSection value={value} />
     </>
   );
 }
 
-// Which model runs the AI step of metadata lookups (identifier detection +
-// extraction from the first pages). Default follows whatever the chat panel
-// has selected; a cheap model is usually plenty here.
-function MetaModelRow({ value }) {
-  const models = value.aiModels || [];
-  const multiProvider = new Set(models.map((m) => m.provider)).size > 1;
-  const current = value.metaModel && models.some((m) => m.id === value.metaModel) ? value.metaModel : "";
-  return (
-    <label className="settingRow">
-      <span className="settingText">
-        <span className="settingLabel">Metadata model</span>
-        <span className="settingDesc">Model used when metadata has to be AI-extracted from the PDF text (no arXiv id or DOI found). A fast, cheap model works well for this.</span>
-      </span>
-      <select className="aiKeyInput settingSelect" value={current}
-        onChange={(e) => value.setMetaModel(e.target.value)}>
-        <option value="">Same as chat model</option>
-        {models.map((m) => (
-          <option key={m.id} value={m.id}>
-            {multiProvider ? `${m.model} · ${m.provider_name || m.provider}` : m.model}
-          </option>
-        ))}
-      </select>
-    </label>
-  );
-}
-
-// Kick off a full search-index rebuild. Shared by the library-status pane and
-// the Search pane — only the phrasing after the scheduled count differs.
-async function requestReindex(setStatus, scheduledSuffix) {
-  try {
-    const result = await apiJson(`${API}/search-reindex`, { method: "POST" });
-    setStatus(result.busy
-      ? "Indexing is already running—see the tasks popover."
-      : result.scheduled
-        ? `Re-indexing ${result.scheduled} paper${result.scheduled === 1 ? "" : "s"} ${scheduledSuffix}`
-        : "No papers with PDFs to index.");
-  } catch (err) {
-    setStatus(`Reindex failed: ${err.message}`);
-  }
-}
-
 // Library-wide health: per paper, whether metadata resolved, whether the PDF
 // yielded extractable text, and whether the search index covers it — with
-// batch retry (selected / missing / all) for the metadata lookups. Text and
-// index state come from the FTS index, so "not indexed" means unknown, not
-// broken; the Reindex button fills those in.
+// batch retry for the metadata lookups. Text and index state come from the FTS
+// index, so "unknown" means not visited yet, not broken; Reindex fills it in.
 function MetaStatusSection({ value }) {
   const [papers, setPapers] = React.useState(null); // null = loading
   const [error, setError] = React.useState("");
@@ -326,6 +542,34 @@ function MetaStatusSection({ value }) {
     }
   }
   React.useEffect(() => { refresh(); }, []);
+
+  // Indexing runs in a background thread server-side, so after scheduling we
+  // re-poll the table a few times to let the dots fill in. A newer poll (or
+  // unmount) cancels the older one.
+  const pollRef = React.useRef(0);
+  React.useEffect(() => () => { pollRef.current++; }, []);
+  function pollRefresh() {
+    const id = ++pollRef.current;
+    [1500, 4000, 8000, 15000].forEach((ms) =>
+      setTimeout(() => { if (pollRef.current === id) refresh(); }, ms));
+  }
+
+  // Index specific papers (the per-row button) without touching the rest.
+  async function indexDocs(docIds) {
+    try {
+      const r = await apiJson(`${API}/search-reindex`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ doc_ids: docIds }),
+      });
+      value.setStatus(r.busy
+        ? "Indexing is already running—try again when it finishes."
+        : `Indexing ${docIds.length === 1 ? "1 paper" : `${docIds.length} papers`} in the background.`);
+      pollRefresh();
+    } catch (err) {
+      value.setStatus(`Indexing failed: ${err.message}`);
+    }
+  }
 
   const list = papers || [];
   const textOk = (p) => (p.text_chars ?? 0) >= 50; // same threshold as /api/pdf-text-status
@@ -376,8 +620,6 @@ function MetaStatusSection({ value }) {
     refresh();
   }
 
-  const reindex = () => requestReindex(value.setStatus, "— text status fills in as it runs.");
-
   function toggle(id) {
     setSelected((prev) => {
       const next = new Set(prev);
@@ -386,53 +628,74 @@ function MetaStatusSection({ value }) {
     });
   }
   const allSelected = list.length > 0 && selected.size === list.length;
+  // One adaptive primary action instead of three near-identical buttons: a
+  // selection wins, otherwise it offers exactly the papers that need work.
+  const targets = selected.size ? list.filter((p) => selected.has(p.id)) : missing;
 
+  const cell = (tone, text, title) => (
+    <span className={`metaCell ${tone}`} title={title}><i className="setDot" />{text}</span>
+  );
   const metaCell = (p) => (
     p.has_meta
-      ? <span className="metaStatOk">✓ {p.meta_source === "ai" ? "AI" : p.meta_source || "yes"}</span>
+      ? cell("ok", p.meta_source === "ai" ? "AI" : p.meta_source || "yes", "Metadata resolved")
       : p.meta_error
-        ? <span className="metaStatBad" title={p.meta_error}>✗ failed</span>
-        : <span className="metaStatMuted">—</span>
+        ? cell("bad", "failed", p.meta_error)
+        : cell("muted", "none", "No metadata yet")
   );
   // Text and index are separate columns: extraction state is only known once
-  // the indexer has visited the doc, so an unindexed paper shows "?" here.
+  // the indexer has visited the doc, so an unindexed paper shows "unknown".
   const textCell = (p) => (
     p.text_chars === null
-      ? <span className="metaStatMuted" title="Unknown until the paper is indexed — Reindex to find out">?</span>
+      ? cell("muted", "unknown", "Unknown until the paper is indexed — Reindex to find out")
       : textOk(p)
-        ? <span className="metaStatOk" title={`${p.text_chars.toLocaleString()} characters extracted`}>✓ {p.text_chars >= 1000 ? `${Math.round(p.text_chars / 1000)}k` : p.text_chars}</span>
-        : <span className="metaStatBad" title={p.has_file ? "No text layer — scanned or image-only?" : "PDF file not on the server"}>✗ no text</span>
+        ? cell("ok", p.text_chars >= 1000 ? `${Math.round(p.text_chars / 1000)}k` : String(p.text_chars),
+          `${p.text_chars.toLocaleString()} characters extracted`)
+        : cell("bad", "no text", p.has_file ? "No text layer — scanned or image-only?" : "PDF file not on the server")
   );
   const indexCell = (p) => (
     p.indexed
-      ? <span className="metaStatOk">✓ indexed</span>
+      ? cell("ok", "indexed", "In the search index")
       : p.index_stale
-        ? <span className="metaStatMuted" title="Indexed with an older extractor version — Reindex refreshes it">stale</span>
-        : <span className="metaStatMuted" title="Not in the search index yet">—</span>
+        ? cell("muted", "stale", "Indexed with an older extractor version — Reindex refreshes it")
+        : cell("muted", "—", "Not in the search index yet")
   );
 
   return (
-    <>
-      <div className="promptSectionHead metaStatHead">
-        <span>Papers</span>
+    <Section
+      title="Papers"
+      action={
         <span className="metaStatActions">
-          <select className="homeSortSelect" value={sortMode} onChange={(e) => setSortMode(e.target.value)} title="Sort papers">
-            <option value="meta">Metadata — unfinished first</option>
-            <option value="text">PDF text — unfinished first</option>
-            <option value="updated">Recently modified</option>
-          </select>
-          <button className="uiBtn sm" onClick={reindex} title="Re-extract every paper's text into the search index (also fills in the text column)">Reindex</button>
-          <button className="uiBtn sm" onClick={refresh} disabled={!!busy}>Refresh</button>
+          <MenuSelect
+            label="Sort papers" value={sortMode} onChange={setSortMode}
+            options={[
+              ["meta", "Missing metadata first"],
+              ["text", "Missing text first"],
+              ["updated", "Recently modified"],
+            ]}
+          />
+          <button className="uiBtn sm iconSq" aria-label="Reindex"
+            title="Re-extract every paper into the search index (also fills in the text column)"
+            onClick={() => { requestReindex(value.setStatus, "— text status fills in as it runs."); pollRefresh(); }}>
+            <RefreshIcon size={13} />
+          </button>
+          <button className="uiBtn sm iconSq" onClick={refresh} disabled={!!busy} title="Reload this table" aria-label="Reload">
+            <ActivityIcon size={13} />
+          </button>
         </span>
-      </div>
-      {papers === null ? <div className="reportModalHint">Loading…</div> : null}
-      {error ? <div className="reportModalHint">Status failed: {error}</div> : null}
-      {papers !== null && !list.length ? <div className="reportModalHint">No papers yet — open a PDF first.</div> : null}
+      }
+    >
+      {papers === null ? <Empty icon={ListIcon}>Loading…</Empty> : null}
+      {error ? <Empty icon={ActivityIcon}>Status unavailable — {error}</Empty> : null}
+      {papers !== null && !list.length && !error ? <Empty icon={PaperIcon}>No papers yet — open a PDF first.</Empty> : null}
       {list.length ? (
         <>
-          <div className="metaStatSummary">
-            Out of {list.length} paper{list.length === 1 ? "" : "s"}: <b>{counts.meta}</b> with metadata
-            · <b>{counts.text}</b> with extracted text · <b>{counts.indexed}</b> indexed for search
+          <div className="setStats">
+            <Stat icon={PaperIcon} label="metadata" value={counts.meta} total={list.length}
+              title="Papers with a resolved title, authors and BibTeX" />
+            <Stat icon={FileTextIcon} label="text layer" value={counts.text} total={list.length}
+              title="Papers whose PDF yielded extractable text" />
+            <Stat icon={SearchIcon} label="indexed" value={counts.indexed} total={list.length}
+              title="Papers covered by the full-text search index" />
           </div>
           <div className="metaStatTable">
             <div className="metaStatRow metaStatHeader">
@@ -444,8 +707,9 @@ function MetaStatusSection({ value }) {
               />
               <span>Paper</span>
               <span>Metadata</span>
-              <span>PDF text</span>
+              <span>Text</span>
               <span>Index</span>
+              <span />
             </div>
             {sorted.map((p) => (
               <label key={p.id} className="metaStatRow">
@@ -454,6 +718,15 @@ function MetaStatusSection({ value }) {
                 {metaCell(p)}
                 {textCell(p)}
                 {indexCell(p)}
+                {p.doc_id && p.has_file && (!p.indexed || p.index_stale || p.text_chars === null) ? (
+                  <button
+                    className="searchToggle" aria-label={`Index ${p.title}`}
+                    title="Extract this paper's text into the search index now"
+                    onClick={(e) => { e.preventDefault(); e.stopPropagation(); indexDocs([p.doc_id]); }}
+                  >
+                    <RefreshIcon size={13} />
+                  </button>
+                ) : <span />}
               </label>
             ))}
           </div>
@@ -464,31 +737,35 @@ function MetaStatusSection({ value }) {
             </div>
           ) : (
             <div className="metaStatBatchRow">
-              <button className="uiBtn sm" disabled={!selected.size}
-                onClick={() => retry(list.filter((p) => selected.has(p.id)))}>
-                Retry selected{selected.size ? ` (${selected.size})` : ""}
+              <span className="metaStatProgress">
+                {selected.size
+                  ? `${selected.size} selected`
+                  : missing.length ? `${missing.length} without metadata` : "Every paper has metadata"}
+              </span>
+              <button className="uiBtn sm primary" disabled={!targets.length} onClick={() => retry(targets)}>
+                <SparklesIcon size={13} />{selected.size ? "Fetch selected" : "Fetch missing"}
               </button>
-              <button className="uiBtn sm" disabled={!missing.length}
-                onClick={() => retry(missing)}>
-                Retry missing ({missing.length})
+              <button className="uiBtn sm" disabled={!list.length} onClick={() => retry(list)}
+                title="Re-fetch metadata for every paper, including ones that already have it">
+                Refetch all
               </button>
-              <button className="uiBtn sm" onClick={() => retry(list)}>Retry all ({list.length})</button>
             </div>
           )}
         </>
       ) : null}
-    </>
+    </Section>
   );
 }
 
-function ProviderForm({ value }) {
+// --- AI providers -----------------------------------------------------------
+
+function ProviderForm({ value, onCancel }) {
   const {
     aiKeysForm,
     setAiKeysForm,
     aiKeysInfo,
     aiKeysBusy,
     aiKeysError,
-    setAiKeysError,
     aiModelCatalog,
     formOauthPending,
     formModels,
@@ -507,149 +784,150 @@ function ProviderForm({ value }) {
   const protocol = aiProtocolOf(aiKeysForm.protocol);
 
   return (
-    <div className="aiProvForm">
-      <div className="promptSectionHead"><span>{aiKeysForm.id ? "Edit key" : "Add key"}</span></div>
-      <select
-        className="aiKeyInput"
-        value={aiKeysForm.protocol}
-        onChange={(event) => setAiKeysForm((form) => ({ ...form, protocol: event.target.value }))}
-      >
-        {aiKeysInfo.protocols.map((item) => <option key={item.id} value={item.id}>{item.label}</option>)}
-      </select>
+    <div className="settingsForm">
+      <Step n={1} title="Protocol" hint="Pick the API format, not the vendor — most services speak one of these.">
+        <MenuSelect
+          block label="API protocol"
+          value={aiKeysForm.protocol}
+          onChange={(protocol) => setAiKeysForm((form) => ({ ...form, protocol }))}
+          options={aiKeysInfo.protocols.map((item) => [item.id, item.label])}
+        />
+      </Step>
 
-      {oauth ? (
-        <>
-          <div className="reportModalHint">
-            No API key—usage is billed to your ChatGPT Plus/Pro subscription.
+      <Step
+        n={2}
+        title={oauth ? "Sign in with ChatGPT" : "Credentials"}
+        hint={oauth
+          ? "No API key — usage is billed to your ChatGPT subscription."
+          : "Stored on the server, never shown to the browser again."}
+      >
+        {oauth ? (
+          <>
             <ol className="oauthInstructions">
               <li>Open ChatGPT sign-in below and log in.</li>
-              <li>The login ends on a localhost error page; that is expected.</li>
-              <li>Copy the full callback URL from the browser address bar.</li>
+              <li>It ends on a localhost error page — that is expected.</li>
+              <li>Copy the full callback URL from the address bar.</li>
               <li>Paste it below and select Connect.</li>
             </ol>
+            <div className="reportModalBtns settingsAlignStart">
+              <button className="uiBtn" disabled={aiKeysBusy} onClick={startChatGPTAuth}>
+                {aiKeysForm.oauthState ? "Re-open ChatGPT sign-in" : "Open ChatGPT sign-in"}
+              </button>
+            </div>
+            <Field label="Callback URL" hint="the full address the sign-in ended on">
+              <input
+                className="aiKeyInput" type="text" spellCheck={false}
+                placeholder="http://localhost:1455/auth/callback?code=…"
+                value={aiKeysForm.oauthCallback || ""}
+                onChange={(event) => setAiKeysForm((form) => ({ ...form, oauthCallback: event.target.value }))}
+              />
+            </Field>
+          </>
+        ) : (
+          <>
+            <Field label="API key" hint={aiKeysForm.id ? "leave empty to keep the current one" : null}>
+              <input
+                className="aiKeyInput" type="password" autoComplete="new-password" spellCheck={false}
+                placeholder="sk-…"
+                value={aiKeysForm.api_key}
+                onChange={(event) => setAiKeysForm((form) => ({ ...form, api_key: event.target.value }))}
+                onBlur={() => { if (aiKeysForm.api_key?.trim()) loadModelCatalog(); }}
+              />
+            </Field>
+            <Field label="Base URL" hint={`optional — default ${protocol?.default_base_url || ""}`}>
+              <input
+                className="aiKeyInput" type="text" spellCheck={false}
+                placeholder={protocol?.default_base_url || ""}
+                value={aiKeysForm.base_url}
+                onChange={(event) => setAiKeysForm((form) => ({ ...form, base_url: event.target.value }))}
+              />
+            </Field>
+          </>
+        )}
+        <Field label="Name" hint={'optional — e.g. "DeepSeek", "work key"'}>
+          <input
+            className="aiKeyInput" type="text" spellCheck={false}
+            value={aiKeysForm.name}
+            onChange={(event) => setAiKeysForm((form) => ({ ...form, name: event.target.value }))}
+          />
+        </Field>
+      </Step>
+
+      <Step
+        n={3}
+        title="Models"
+        hint={formModels.length
+          ? "Offered in the chat model menu."
+          : `None picked yet — the chat menu falls back to ${protocol?.default_model || "the provider default"}.`}
+      >
+        {formModels.length ? (
+          <div className="aiModelChips">
+            {formModels.map((model) => (
+              <span className="categoryTag" key={model}>
+                {model}
+                <button className="uiClose uiCloseSm" title="Remove model" aria-label={`Remove ${model}`} onClick={() => removeModel(model)}>×</button>
+              </span>
+            ))}
           </div>
-          <div className="reportModalBtns settingsAlignStart">
-            <button className="uiBtn" disabled={aiKeysBusy} onClick={startChatGPTAuth}>
-              {aiKeysForm.oauthState ? "Re-open ChatGPT sign-in" : "Open ChatGPT sign-in"}
-            </button>
-          </div>
+        ) : null}
+        <div className="aiProvPwForm">
           <input
             className="aiKeyInput"
             type="text"
             spellCheck={false}
-            placeholder="Paste the callback URL"
-            value={aiKeysForm.oauthCallback || ""}
-            onChange={(event) => setAiKeysForm((form) => ({ ...form, oauthCallback: event.target.value }))}
+            list="aiModelSuggestions"
+            placeholder={aiModelCatalog?.loading
+              ? "Add a model — loading the provider list…"
+              : availModels.length
+                ? `Add a model — type or pick (${availModels.length} available), Enter to add`
+                : "Add a model — Enter to add"}
+            value={customModel}
+            onChange={(event) => {
+              const next = event.target.value;
+              const inputType = event.nativeEvent?.inputType;
+              if ((!inputType || inputType === "insertReplacementText") && availModels.includes(next)) {
+                addCatalogModel(next);
+                setCustomModel("");
+              } else {
+                setCustomModel(next);
+              }
+            }}
+            onKeyDown={(event) => {
+              if (event.key !== "Enter") return;
+              event.preventDefault();
+              if (customModel.trim()) {
+                addCatalogModel(customModel.trim());
+                setCustomModel("");
+              }
+            }}
           />
-        </>
-      ) : (
-        <div className="reportModalHint">
-          Pick the API format, not the vendor. Many services support either Anthropic or OpenAI-compatible requests.
+          <datalist id="aiModelSuggestions">
+            {availModels.map((model) => <option key={model} value={model} />)}
+          </datalist>
+          <button
+            className="uiBtn sm"
+            disabled={!!aiModelCatalog?.loading || formOauthPending}
+            title={formOauthPending ? "Connect with ChatGPT first" : "Fetch the models available to this credential"}
+            onClick={loadModelCatalog}
+          >
+            {aiModelCatalog?.loading
+              ? <><span className="transferSpin inline" /> fetching…</>
+              : aiModelCatalog?.models
+                ? <><RefreshIcon size={12} /> {aiModelCatalog.models.length} usable</>
+                : <><RefreshIcon size={12} /> Fetch</>}
+          </button>
         </div>
-      )}
+        {aiModelCatalog?.error ? (
+          <div className="reportModalHint settingsNoMargin">
+            {aiModelCatalog.error}{" "}
+            <button className="searchToggle" title="Retry loading the model list" onClick={loadModelCatalog}><RefreshIcon size={12} /></button>
+          </div>
+        ) : null}
+      </Step>
 
-      <input
-        className="aiKeyInput"
-        type="text"
-        spellCheck={false}
-        placeholder='Name (optional—e.g. "DeepSeek", "work key")'
-        value={aiKeysForm.name}
-        onChange={(event) => setAiKeysForm((form) => ({ ...form, name: event.target.value }))}
-      />
-      {!oauth ? (
-        <>
-          <input
-            className="aiKeyInput"
-            type="password"
-            autoComplete="new-password"
-            spellCheck={false}
-            placeholder={aiKeysForm.id ? "API key (leave empty to keep the current one)" : "API key"}
-            value={aiKeysForm.api_key}
-            onChange={(event) => setAiKeysForm((form) => ({ ...form, api_key: event.target.value }))}
-            onBlur={() => { if (aiKeysForm.api_key?.trim()) loadModelCatalog(); }}
-          />
-          <input
-            className="aiKeyInput"
-            type="text"
-            spellCheck={false}
-            placeholder={`Base URL (optional—default ${protocol?.default_base_url || ""})`}
-            value={aiKeysForm.base_url}
-            onChange={(event) => setAiKeysForm((form) => ({ ...form, base_url: event.target.value }))}
-          />
-        </>
-      ) : null}
-
-      <div className="reportModalHint aiModelsHead settingsNoMargin">
-        <span>
-          Models shown in the chat model menu
-          {formModels.length === 0 ? ` (none picked: uses ${protocol?.default_model || "the provider default"})` : ""}
-        </span>
-        <button
-          className="searchToggle transferClearBtn"
-          disabled={!!aiModelCatalog?.loading || formOauthPending}
-          title={formOauthPending ? "Connect with ChatGPT first" : "Fetch models available to this credential"}
-          onClick={loadModelCatalog}
-        >
-          {aiModelCatalog?.loading
-            ? <><span className="transferSpin inline" /> fetching models…</>
-            : aiModelCatalog?.models
-              ? `↻ ${aiModelCatalog.models.length} usable models`
-              : formOauthPending ? "Models list after connect" : "Fetch usable models"}
-        </button>
-      </div>
-      {formModels.length ? (
-        <div className="aiModelChips">
-          {formModels.map((model) => (
-            <span className="categoryTag" key={model}>
-              {model}
-              <button className="uiClose uiCloseSm" title="Remove model" aria-label={`Remove ${model}`} onClick={() => removeModel(model)}>×</button>
-            </span>
-          ))}
-        </div>
-      ) : null}
-      <div className="aiProvPwForm">
-        <input
-          className="aiKeyInput"
-          type="text"
-          spellCheck={false}
-          list="aiModelSuggestions"
-          placeholder={aiModelCatalog?.loading
-            ? "Add a model—loading the provider's list…"
-            : availModels.length
-              ? `Add a model—type or pick (${availModels.length} available), Enter to add`
-              : "Add a model—Enter to add"}
-          value={customModel}
-          onChange={(event) => {
-            const next = event.target.value;
-            const inputType = event.nativeEvent?.inputType;
-            if ((!inputType || inputType === "insertReplacementText") && availModels.includes(next)) {
-              addCatalogModel(next);
-              setCustomModel("");
-            } else {
-              setCustomModel(next);
-            }
-          }}
-          onKeyDown={(event) => {
-            if (event.key !== "Enter") return;
-            event.preventDefault();
-            if (customModel.trim()) {
-              addCatalogModel(customModel.trim());
-              setCustomModel("");
-            }
-          }}
-        />
-        <datalist id="aiModelSuggestions">
-          {availModels.map((model) => <option key={model} value={model} />)}
-        </datalist>
-      </div>
-      {aiModelCatalog?.error ? (
-        <div className="reportModalHint settingsNoMargin">
-          {aiModelCatalog.error}{" "}
-          <button className="searchToggle" title="Retry loading the model list" onClick={loadModelCatalog}>↻</button>
-        </div>
-      ) : null}
+      {aiKeysError ? <div className="settingsPaneHint aiKeysError">{aiKeysError}</div> : null}
       <div className="reportModalBtns">
-        <button className="uiBtn" onClick={() => { setAiKeysForm(null); setAiKeysError(""); }}>Cancel</button>
+        <button className="uiBtn" onClick={onCancel}>Cancel</button>
         <button className="uiBtn primary" disabled={aiKeysBusy} onClick={submitAiProvider}>
           {aiKeysBusy
             ? "Saving…"
@@ -658,57 +936,63 @@ function ProviderForm({ value }) {
               : aiKeysForm.id ? "Save changes" : "Add key"}
         </button>
       </div>
-      {aiKeysError ? <div className="settingsPaneHint aiKeysError">{aiKeysError}</div> : null}
     </div>
   );
 }
 
 function AiSettings({ value }) {
+  const closeKeyForm = () => { value.setAiKeysForm(null); value.setAiKeysError(""); };
   const activeKeyId = value.aiKeysInfo?.providers.some((item) => item.id === value.aiProvider)
     ? value.aiProvider
     : value.aiKeysInfo?.providers[0]?.id;
+  const canEdit = value.aiKeysInfo?.can_edit;
+  const providers = value.aiKeysInfo?.providers || [];
   return (
     <>
-      <PaneIntro title="AI & API keys">
-        Bring your own API keys. They are stored on the server and never returned to the browser. The selected
-        credential is used for AI requests; its configured models appear in the chat model menu.
-      </PaneIntro>
-      {!value.aiKeysInfo && !value.aiKeysError ? <div className="settingsPaneHint">Loading…</div> : null}
+      <PaneHead icon={KeyIcon} title="Providers">
+        Your own API keys, stored on the server and never sent back to the browser.
+      </PaneHead>
+      {!value.aiKeysInfo && !value.aiKeysError ? <Empty icon={KeyIcon}>Loading…</Empty> : null}
       {value.aiKeysInfo ? (
         <>
-          {value.aiKeysInfo.providers.length === 0 && !value.aiKeysForm ? (
-            <div className="settingsPaneHint">
-              {value.aiKeysInfo.can_edit
-                ? "No keys yet—add one to enable AI chat, metadata extraction, and citations."
-                : "Guest accounts can't store API keys. Ask the admin for an account to use AI features."}
-            </div>
+          {providers.length === 0 && !value.aiKeysForm ? (
+            <Empty icon={KeyIcon}>
+              {canEdit
+                ? "No keys yet — add one to enable chat, metadata extraction and citations."
+                : "Guest accounts cannot store API keys. Ask the admin for an account."}
+            </Empty>
           ) : null}
-          {value.aiKeysInfo.providers.map((provider) => {
+          {providers.length ? <Section title={providers.length > 1 ? "Keys · pick the one AI requests use" : "Keys"} /> : null}
+          {providers.map((provider) => {
             const protocol = value.aiProtocolOf(provider.protocol);
             const test = value.aiKeyTests?.[provider.id];
+            const oauth = value.isOauthProto(provider.protocol);
+            const active = activeKeyId === provider.id;
             return (
-              <label key={provider.id} className={`aiProvRow aiProvSelectable ${activeKeyId === provider.id ? "active" : ""}`}>
-                {value.aiKeysInfo.providers.length > 1 ? (
+              <label key={provider.id} className={`aiProvRow aiProvSelectable ${active ? "active" : ""}`}>
+                {providers.length > 1 ? (
                   <input
                     type="radio"
                     className="aiProvRadio"
                     name="activeAiKey"
-                    checked={activeKeyId === provider.id}
+                    checked={active}
                     onChange={() => value.setAiProvider(provider.id)}
                     title="Use this key for AI requests"
                   />
                 ) : null}
+                <span className={`aiProvAvatar ${active ? "active" : ""}`}>
+                  {oauth ? <SparklesIcon size={15} /> : <KeyIcon size={15} />}
+                </span>
                 <span className="aiProvMeta">
                   <span className="aiProvName">
                     {provider.name || protocol?.label || provider.protocol}
-                    {activeKeyId === provider.id ? <span className="aiProvActiveBadge">in use</span> : null}
+                    {active ? <span className="aiProvActiveBadge">in use</span> : null}
                   </span>
                   <span className="aiProvDesc">
-                    {value.isOauthProto(provider.protocol)
+                    {oauth
                       ? `${provider.oauth_connected ? `signed in${provider.account ? ` as ${provider.account}` : ""}` : "not connected"} · ChatGPT subscription`
                       : `key ${provider.key_hint || "set"} · ${protocol?.label || provider.protocol}`}
                     {provider.base_url ? ` · ${provider.base_url}` : ""}
-                    {provider.created_at ? ` · added ${new Date(provider.created_at).toLocaleDateString()}` : ""}
                   </span>
                   <span className="aiProvDesc aiProvModels">
                     {(parseFolderTags(provider.models).length
@@ -720,22 +1004,26 @@ function AiSettings({ value }) {
                   {test ? (
                     <span className={`aiProvDesc ${test.busy ? "" : test.ok ? "aiTestOk" : "aiKeysError"}`}>
                       {test.busy
-                        ? "Testing… sending a tiny request"
+                        ? "Testing…"
                         : test.ok
                           ? `✓ working · ${test.model} · ${(test.latency_ms / 1000).toFixed(1)}s`
                           : `✗ ${test.error}`}
                     </span>
                   ) : null}
                 </span>
-                {value.aiKeysInfo.can_edit ? (
+                {canEdit ? (
                   <span className="aiProvActions">
-                    <button className="uiBtn sm" disabled={value.aiKeysBusy || test?.busy} title="Send a tiny AI request through this credential to check it still works" onClick={() => value.testAiProvider(provider)}>
+                    <button className="uiBtn sm" disabled={value.aiKeysBusy || test?.busy}
+                      title="Send a tiny AI request through this credential to check it still works"
+                      onClick={() => value.testAiProvider(provider)}>
                       Test
                     </button>
-                    <button className="uiBtn sm iconSq" disabled={value.aiKeysBusy} title="Edit this key" onClick={() => value.startEditAiProvider(provider)}>
+                    <button className="uiBtn sm iconSq" disabled={value.aiKeysBusy} title="Edit this key"
+                      aria-label="Edit key" onClick={() => value.startEditAiProvider(provider)}>
                       <PenIcon size={13} />
                     </button>
-                    <button className="uiBtn sm iconSq danger" disabled={value.aiKeysBusy} title="Remove this key" onClick={() => value.deleteAiProvider(provider)}>
+                    <button className="uiBtn sm iconSq danger" disabled={value.aiKeysBusy} title="Remove this key"
+                      aria-label="Remove key" onClick={() => value.deleteAiProvider(provider)}>
                       <Trash2Icon size={13} />
                     </button>
                   </span>
@@ -743,11 +1031,19 @@ function AiSettings({ value }) {
               </label>
             );
           })}
-          {value.aiKeysForm
-            ? <ProviderForm value={value} />
-            : value.aiKeysInfo.can_edit
-              ? <div className="reportModalBtns"><button className="uiBtn primary" onClick={value.startAddAiProvider}>+ Add key</button></div>
-              : null}
+          {canEdit ? (
+            <div className="reportModalBtns settingsAlignStart">
+              <button className="uiBtn primary" onClick={value.startAddAiProvider}>+ Add key</button>
+            </div>
+          ) : null}
+          {value.aiKeysForm ? (
+            <SubDialog
+              title={value.aiKeysForm.id ? "Edit key" : "Add key"}
+              onClose={closeKeyForm}
+            >
+              <ProviderForm value={value} onCancel={closeKeyForm} />
+            </SubDialog>
+          ) : null}
         </>
       ) : null}
       {!value.aiKeysForm && value.aiKeysError ? <div className="settingsPaneHint aiKeysError">{value.aiKeysError}</div> : null}
@@ -755,160 +1051,176 @@ function AiSettings({ value }) {
   );
 }
 
-function PromptSettings({ value }) {
+// --- Assistant: models, chat, context budgets, prompts ----------------------
+
+// Which model runs the AI step of metadata lookups (identifier detection +
+// extraction from the first pages). Default follows whatever the chat panel
+// has selected; a cheap model is usually plenty here.
+function MetaModelSelect({ value }) {
+  const models = value.aiModels || [];
+  const multiProvider = new Set(models.map((m) => m.provider)).size > 1;
+  const current = value.metaModel && models.some((m) => m.id === value.metaModel) ? value.metaModel : "";
   return (
-    <>
-      <PaneIntro title="Prompts">
-        Instructions Gamma sends with each kind of AI request. Custom prompts are saved in this browser.
-      </PaneIntro>
-      {[
-        ["Chat system prompt", value.chatSystem, value.promptDraft, value.setPromptDraft, value.aiInfo?.default_prompt, 5],
-        ["Metadata extraction", value.metaPrompt, value.metaPromptDraft, value.setMetaPromptDraft, value.aiInfo?.metadata_prompt, 4],
-        ["PPT citation", value.citePrompt, value.citePromptDraft, value.setCitePromptDraft, value.aiInfo?.cite_prompt, 4],
-      ].map(([label, custom, draft, setDraft, defaultValue, rows]) => (
-        <React.Fragment key={label}>
-          <div className="promptSectionHead">
-            <span>{label}{custom ? " · custom" : ""}</span>
-            <button className="uiBtn sm" onClick={() => setDraft(defaultValue || "")}>Reset</button>
+    <MenuSelect
+      label="Metadata model" value={current} onChange={value.setMetaModel}
+      options={[
+        ["", "Same as chat"],
+        ...models.map((m) => [m.id, multiProvider ? `${m.model} · ${m.provider_name || m.provider}` : m.model]),
+      ]}
+    />
+  );
+}
+
+const DICTATION_LANGS = [
+  ["", "Auto-detect"], ["en", "English"], ["zh", "中文"], ["ja", "日本語"], ["ko", "한국어"],
+  ["de", "Deutsch"], ["fr", "Français"], ["es", "Español"], ["pt", "Português"],
+  ["it", "Italiano"], ["ru", "Русский"], ["hi", "हिन्दी"], ["ar", "العربية"],
+];
+
+// One accordion instead of three stacked textareas: only the prompt being
+// edited takes up space, and Restore default lights up only when it would
+// change something.
+function PromptAccordion({ items }) {
+  const [open, setOpen] = React.useState(items[0].key);
+  return (
+    <div className="setAccList">
+      {items.map(({ key, label, icon: Icon, draft, setDraft, defaultValue, custom }) => {
+        const isOpen = open === key;
+        const modified = (draft || "").trim() !== (defaultValue || "").trim();
+        return (
+          <div key={key} className={`setAcc ${isOpen ? "open" : ""}`}>
+            <button className="setAccHead" onClick={() => setOpen(isOpen ? null : key)}>
+              <span className="setIcon"><Icon size={14} /></span>
+              <span className="setAccName">{label}</span>
+              {custom ? <span className="uiTag">custom</span> : null}
+              <span className="setAccChevron">{isOpen ? "▾" : "▸"}</span>
+            </button>
+            {isOpen ? (
+              <div className="setAccBody">
+                <textarea className="promptTextarea" value={draft} rows={6}
+                  onChange={(event) => setDraft(event.target.value)} />
+                <div className="reportModalBtns settingsAlignStart">
+                  <button className="uiBtn sm" disabled={!modified} onClick={() => setDraft(defaultValue || "")}>
+                    Restore default
+                  </button>
+                </div>
+              </div>
+            ) : null}
           </div>
-          <textarea className="promptTextarea" value={draft} onChange={(event) => setDraft(event.target.value)} rows={rows} />
-        </React.Fragment>
-      ))}
-      <div className="reportModalBtns">
-        <button className="uiBtn primary" onClick={value.savePrompts}>Save prompts</button>
-      </div>
-    </>
+        );
+      })}
+    </div>
   );
 }
 
-function ContextSettings({ value }) {
-  const limits = [
-    ["Single-paper chat", "Maximum characters extracted from the open paper for a normal chat message.", value.chatContextChars, value.setChatContextChars],
-    ["Metadata extraction", "Maximum characters read while detecting identifiers and extracting paper metadata.", value.metaContextChars, value.setMetaContextChars],
-    ["Multi-paper chat total", "Total character budget shared evenly by the selected papers.", value.multiContextChars, value.setMultiContextChars],
+function AssistantSettings({ value }) {
+  const prompts = [
+    { key: "chat", label: "Chat system prompt", icon: MessageSquareIcon,
+      draft: value.promptDraft, setDraft: value.setPromptDraft,
+      defaultValue: value.aiInfo?.default_prompt, custom: !!value.chatSystem, saved: value.chatSystem },
+    { key: "meta", label: "Metadata extraction", icon: PaperIcon,
+      draft: value.metaPromptDraft, setDraft: value.setMetaPromptDraft,
+      defaultValue: value.aiInfo?.metadata_prompt, custom: !!value.metaPrompt, saved: value.metaPrompt },
+    { key: "cite", label: "PPT citation", icon: TypeIcon,
+      draft: value.citePromptDraft, setDraft: value.setCitePromptDraft,
+      defaultValue: value.aiInfo?.cite_prompt, custom: !!value.citePrompt, saved: value.citePrompt },
   ];
+  // A stored "" means "use the default", so the effective saved text is the
+  // custom one or the default — that is what a draft is dirty against.
+  const dirty = prompts.some((p) => (p.draft || "").trim() !== (p.saved || p.defaultValue || "").trim());
+
+  const limits = [
+    [FileTextIcon, "Single paper", "Read from the open paper for one chat message",
+      value.chatContextChars, value.setChatContextChars],
+    [PaperIcon, "Metadata extraction", "Read while detecting identifiers and extracting fields",
+      value.metaContextChars, value.setMetaContextChars],
+    [BookIcon, "Multi-paper total", "Shared evenly by every selected paper",
+      value.multiContextChars, value.setMultiContextChars],
+  ];
+
   return (
     <>
-      <PaneIntro title="AI chat">
-        Chat behavior and how much extracted PDF text Gamma sends to the AI. Larger context values can improve answers but use more tokens.
-      </PaneIntro>
-      <SettingToggle
-        label="Clear snapshots when clicking elsewhere"
-        description="A plain click in the PDF clears the quoted text selections under the chat. Turn this on to also drop pending rectangle snapshots with that click — images pasted into the chat are never touched."
-        checked={value.chatImgAutoClear}
-        onChange={value.setChatImgAutoClear}
-      />
-      <label className="settingRow">
-        <span className="settingText">
-          <span className="settingLabel">Voice dictation model</span>
-          <span className="settingDesc">Speech-to-text for the chat's mic button. gpt-4o-transcribe is what ChatGPT's dictation uses; needs an OpenAI-protocol provider key.</span>
-        </span>
-        <select className="aiKeyInput settingSelect" value={value.dictationModel}
-          onChange={(e) => value.setDictationModel(e.target.value)}>
-          <option value="gpt-4o-transcribe">gpt-4o-transcribe</option>
-          <option value="gpt-4o-mini-transcribe">gpt-4o-mini-transcribe</option>
-          <option value="whisper-1">whisper-1</option>
-        </select>
-      </label>
-      <label className="settingRow">
-        <span className="settingText">
-          <span className="settingLabel">Voice dictation language</span>
-          <span className="settingDesc">Telling the model the spoken language improves accuracy; auto-detect handles mixed or unlisted languages.</span>
-        </span>
-        <select className="aiKeyInput settingSelect" value={value.dictationLang}
-          onChange={(e) => value.setDictationLang(e.target.value)}>
-          <option value="">Auto-detect</option>
-          <option value="en">English</option>
-          <option value="zh">中文 (Chinese)</option>
-          <option value="ja">日本語 (Japanese)</option>
-          <option value="ko">한국어 (Korean)</option>
-          <option value="de">Deutsch (German)</option>
-          <option value="fr">Français (French)</option>
-          <option value="es">Español (Spanish)</option>
-          <option value="pt">Português (Portuguese)</option>
-          <option value="it">Italiano (Italian)</option>
-          <option value="ru">Русский (Russian)</option>
-          <option value="hi">हिन्दी (Hindi)</option>
-          <option value="ar">العربية (Arabic)</option>
-        </select>
-      </label>
-      {limits.map(([label, description, current, setCurrent]) => (
-        <label className="settingRow" key={label}>
-          <span className="settingText">
-            <span className="settingLabel">{label}</span>
-            <span className="settingDesc">{description}</span>
-          </span>
-          <input
-            className="aiKeyInput contextLimitInput"
-            type="number"
-            min="100"
-            max="1000000"
-            step="1000"
-            value={current}
-            onChange={(event) => {
-              const next = Number.parseInt(event.target.value, 10);
-              if (Number.isFinite(next)) setCurrent(Math.min(1000000, Math.max(100, next)));
-            }}
+      <PaneHead icon={SparklesIcon} title="Assistant">
+        Which model runs each AI job, how much of a paper it sees, and what it is told.
+      </PaneHead>
+      <Section title="Models">
+        <Row icon={PaperIcon} label="Metadata model"
+          hint="Used when metadata has to be read from the PDF"
+          title="Model used when metadata has to be AI-extracted from the PDF text (no arXiv id or DOI found). A fast, cheap model works well for this.">
+          <MetaModelSelect value={value} />
+        </Row>
+        <Row icon={MicIcon} label="Dictation model"
+          hint="Speech-to-text for the chat mic button"
+          title="gpt-4o-transcribe is what ChatGPT dictation uses; it needs an OpenAI-protocol provider key.">
+          <MenuSelect
+            label="Dictation model" value={value.dictationModel} onChange={value.setDictationModel}
+            options={[
+              ["gpt-4o-transcribe", "gpt-4o-transcribe"],
+              ["gpt-4o-mini-transcribe", "gpt-4o-mini-transcribe"],
+              ["whisper-1", "whisper-1"],
+            ]}
           />
-        </label>
-      ))}
-      <div className="reportModalBtns"><button className="uiBtn" onClick={value.reset}>Reset defaults</button></div>
+        </Row>
+        <Row icon={GlobeIcon} label="Dictation language"
+          hint="Naming the language improves accuracy"
+          title="Telling the model the spoken language improves accuracy; auto-detect handles mixed or unlisted languages.">
+          <MenuSelect
+            label="Dictation language" value={value.dictationLang} onChange={value.setDictationLang}
+            options={DICTATION_LANGS}
+          />
+        </Row>
+      </Section>
+      <Section title="Chat">
+        <Toggle
+          icon={RectSelectIcon}
+          label="Clear snapshots on click"
+          hint="A plain click in the PDF also drops pending snapshots"
+          title="A plain click in the PDF clears the quoted text selections under the chat. Turn this on to also drop pending rectangle snapshots with that click — images pasted into the chat are never touched."
+          checked={value.chatImgAutoClear}
+          onChange={value.setChatImgAutoClear}
+        />
+      </Section>
+      <Section
+        title="Context size"
+        action={<button className="uiBtn sm" onClick={value.reset} title="Back to 8000 / 6000 / 18000 characters">Reset</button>}
+      >
+        {limits.map(([icon, label, hint, current, setCurrent]) => (
+          <Row key={label} icon={icon} label={label} hint={`${hint} · ${approxPages(current)}`}
+            title="Extracted PDF text is measured in characters. Larger budgets can improve answers but cost more tokens.">
+            <CharSlider value={current} onChange={setCurrent} />
+          </Row>
+        ))}
+      </Section>
+      <Section
+        title="Prompts"
+        action={
+          <button className={`uiBtn sm ${dirty ? "primary" : ""}`} disabled={!dirty} onClick={value.savePrompts}>
+            {dirty ? "Save prompts" : "Saved"}
+          </button>
+        }
+      >
+        <PromptAccordion items={prompts} />
+      </Section>
     </>
   );
 }
 
-function SearchSettings({ value }) {
-  const rebuild = () => requestReindex(value.setStatus, "in the background.");
-  return (
-    <>
-      <PaneIntro title="Search">
-        Full-text search covers your notes and every PDF in the library. PDFs are indexed automatically in the background.
-      </PaneIntro>
-      <SettingToggle
-        label="Expand result details on the home page"
-        description="Search from the library opens with full result lists. With no PDF open, the compact find bar has nothing to show."
-        checked={value.searchDetailsHome}
-        onChange={value.setSearchDetailsHome}
-      />
-      <SettingToggle
-        label="Expand result details in a paper"
-        description="Open search with full result lists while reading a paper. When off, search starts as a compact find bar."
-        checked={value.searchDetailsPaper}
-        onChange={value.setSearchDetailsPaper}
-      />
-      <div className="settingRow">
-        <span className="settingText">
-          <span className="settingLabel">Rebuild the PDF text index</span>
-          <span className="settingDesc">Re-extract every paper when library-wide results look stale or incomplete.</span>
-        </span>
-        <button className="uiBtn sm" disabled={value.indexTask?.active} onClick={rebuild}>
-          {value.indexTask?.active ? "Indexing…" : "Rebuild"}
-        </button>
-      </div>
-    </>
-  );
-}
+// --- Advanced: logs ---------------------------------------------------------
 
 // Newest-first log list with a Copy button — one rendering for the session
 // log and the admin server log. Entries are normalized to {key, timeMs, text}.
-function LogBox({ label, description, entries, emptyText, copyStatus, setStatus }) {
+function LogBox({ icon, label, description, entries, emptyText, copyStatus, setStatus }) {
   function copy() {
     const text = entries
       .map((entry) => `${new Date(entry.timeMs).toLocaleTimeString([], { hour12: false })} ${entry.text}`)
       .join("\n");
-    copyText(text).then(
-      (ok) => setStatus(ok ? copyStatus : "Copy failed—copy manually."),
-    );
+    copyText(text).then((ok) => setStatus(ok ? copyStatus : "Copy failed—copy manually."));
   }
   return (
     <>
-      <div className="settingRow">
-        <span className="settingText">
-          <span className="settingLabel">{label}</span>
-          <span className="settingDesc">{description}</span>
-        </span>
+      <Row icon={icon} label={label} hint={description}>
         <button className="uiBtn sm" disabled={!entries.length} onClick={copy}>Copy</button>
-      </div>
+      </Row>
       <div className="sysLogBox">
         {entries.length ? [...entries].reverse().map((entry) => (
           <div key={entry.key} className="sysLogRow">
@@ -921,7 +1233,7 @@ function LogBox({ label, description, entries, emptyText, copyStatus, setStatus 
   );
 }
 
-// Admin-only view of the backend's in-memory log (GET /api/admin/logs).
+// Admin-only view of the backend in-memory log (GET /api/admin/logs).
 // Polls with a seq cursor while the pane is open; secrets are scrubbed
 // server-side before entries ever reach the buffer.
 function ServerLogBox({ setStatus }) {
@@ -956,8 +1268,9 @@ function ServerLogBox({ setStatus }) {
   }));
   return (
     <LogBox
+      icon={ServerIcon}
       label="Server log"
-      description="Backend events since the server started, newest first. Secrets are masked; visible to admins only."
+      description="Backend events since startup · secrets masked · admins only"
       entries={shown}
       emptyText={error ? `Server log unavailable: ${error}`
         : entries ? "Nothing logged since the server started."
@@ -968,59 +1281,67 @@ function ServerLogBox({ setStatus }) {
   );
 }
 
-function DiagnosticsSettings({ value }) {
+function AdvancedSettings({ value }) {
   return (
     <>
-      <PaneIntro title="Diagnostics">
-        Status messages appear briefly as a floating pill. Pin them to a permanent bar or inspect this session's log.
-      </PaneIntro>
-      <SettingToggle
-        label="Show status bar"
-        description="Keep the latest status message visible below the tabs."
-        checked={value.statusBarVisible}
-        onChange={value.setStatusBarVisible}
-      />
-      <SettingToggle
-        label="Debug logging"
-        description="Trace reading-position tracking, restore, and sync events into the system log below (and the browser console)."
-        checked={value.debugLog}
-        onChange={value.setDebugLog}
-      />
-      <LogBox
-        label="System log"
-        description="Application events from this session, newest first."
-        entries={value.sysLog.map((entry, index) => ({ key: index, timeMs: entry.t, text: entry.msg }))}
-        emptyText="Nothing logged yet this session."
-        copyStatus="Log copied."
-        setStatus={value.setStatus}
-      />
-      {value.isAdmin ? <ServerLogBox setStatus={value.setStatus} /> : null}
+      <PaneHead icon={ActivityIcon} title="Advanced">
+        Status surface, tracing and logs — the things worth attaching to a bug report.
+      </PaneHead>
+      <Section title="Interface">
+        <Toggle
+          icon={LayoutIcon}
+          label="Status bar"
+          hint="Pin the latest status message below the tabs"
+          title="Status messages appear briefly as a floating pill. Turn this on to keep the latest one visible in a permanent bar below the tabs."
+          checked={value.statusBarVisible}
+          onChange={value.setStatusBarVisible}
+        />
+      </Section>
+      <Section title="Tracing">
+        <Toggle
+          icon={BugIcon}
+          label="Debug logging"
+          hint="Trace reading-position, restore and sync events"
+          title="Trace reading-position tracking, restore and sync events into the system log below (and the browser console)."
+          checked={value.debugLog}
+          onChange={value.setDebugLog}
+        />
+      </Section>
+      <Section title="Logs">
+        <LogBox
+          icon={TerminalIcon}
+          label="System log"
+          description="Application events from this browser session"
+          entries={value.sysLog.map((entry, index) => ({ key: index, timeMs: entry.t, text: entry.msg }))}
+          emptyText="Nothing logged yet this session."
+          copyStatus="Log copied."
+          setStatus={value.setStatus}
+        />
+        {value.isAdmin ? <ServerLogBox setStatus={value.setStatus} /> : null}
+      </Section>
     </>
   );
 }
 
+// --- Users / Account --------------------------------------------------------
+
 // Settings → Users: the GUI for /api/admin/users*, plus the backup/restore
-// actions for each account (the Data button — they used to live in the account
-// popover). One combined editor per account — name, password, privilege,
-// storage limits, delete — instead of scattered per-action forms.
+// actions for each account (the Data button). One combined editor per account
+// — name, password, privilege, storage limits, delete.
 //
-// Non-admins get this pane too, as "Account": a single read-only row for
+// Non-admins get this pane too, as "You": a single read-only row for
 // themselves with the Data button. /api/admin/* is admin-only, so their row is
 // built from the session + /api/quota instead of the accounts listing, and
 // there is no editor — the same rule the backend enforces on /api/export and
 // /api/import-data (your own account, unless you are an admin).
 function UsersSettings({ value }) {
-  const { setStatus, confirm, onSelfRenamed, refreshQuota, closeSettings, openDataFor,
+  const { setStatus, confirm, onSelfRenamed, refreshQuota, closeSettings,
           isAdmin, me, isGuest, quotaInfo, exportUserData, importUserData } = value;
   const [info, setInfo] = React.useState(null); // {users, me}
   const [error, setError] = React.useState("");
   const [busy, setBusy] = React.useState(false);
   const [edit, setEdit] = React.useState(null); // {original, username, password, is_admin, max_upload_mb, quota_mb}
   const [addForm, setAddForm] = React.useState(null); // {username, password, is_admin}
-  // Username whose backup panel is open. The popover's "Backup & restore…"
-  // opens this pane already pointed at your own row, so an admin doesn't have
-  // to find themselves in a list of accounts first.
-  const [dataFor, setDataFor] = React.useState(openDataFor || null);
 
   const [defaults, setDefaults] = React.useState(null); // {max_upload_mb, quota_mb} server-wide
   React.useEffect(() => {
@@ -1075,13 +1396,6 @@ function UsersSettings({ value }) {
     }
   }
 
-  function openData(u) {
-    setError("");
-    setEdit(null);
-    setAddForm(null);
-    setDataFor(u.username);
-  }
-
   // Export/import report progress in the status pill and the background-tasks
   // popover, and the import confirm box wants the screen — so get out of the
   // settings modal first.
@@ -1090,18 +1404,20 @@ function UsersSettings({ value }) {
     fn();
   }
 
-  function openEdit(u) {
+  // Two separate editors per account: credentials (rename/password/privilege)
+  // and storage limits — each its own button and dialog.
+  // edit = {kind: "account", original, username, password, is_admin}
+  //      | {kind: "storage", original, max_upload_mb, quota_mb}
+  function openAccount(u) {
     setError("");
     setAddForm(null);
-    setDataFor(null);
-    setEdit({
-      original: u,
-      username: u.username,
-      password: "",
-      is_admin: !!u.is_admin,
-      max_upload_mb: u.max_upload_mb ?? "",
-      quota_mb: u.quota_mb ?? "",
-    });
+    setEdit({ kind: "account", original: u, username: u.username, password: "", is_admin: !!u.is_admin });
+  }
+
+  function openStorage(u) {
+    setError("");
+    setAddForm(null);
+    setEdit({ kind: "storage", original: u, max_upload_mb: u.max_upload_mb ?? "", quota_mb: u.quota_mb ?? "" });
   }
 
   // "" = inherit the server default (sent as explicit null), digits = override
@@ -1112,20 +1428,12 @@ function UsersSettings({ value }) {
     return Number.isFinite(n) ? n : NaN;
   }
 
-  async function saveEdit() {
+  async function saveAccount() {
     const u = edit.original;
-    const maxMb = parseLimit(edit.max_upload_mb);
-    const quotaMb = parseLimit(edit.quota_mb);
-    if (Number.isNaN(maxMb) || Number.isNaN(quotaMb)) {
-      setError("Storage limits must be whole numbers of MB, or blank for the server default.");
-      return;
-    }
     const payload = {};
     if (edit.password) payload.password = edit.password;
-    if (!u.is_guest && edit.is_admin !== !!u.is_admin) payload.is_admin = edit.is_admin;
-    if (maxMb !== (u.max_upload_mb ?? null)) payload.max_upload_mb = maxMb;
-    if (quotaMb !== (u.quota_mb ?? null)) payload.quota_mb = quotaMb;
-    const newName = u.is_guest ? u.username : (edit.username || "").trim();
+    if (edit.is_admin !== !!u.is_admin) payload.is_admin = edit.is_admin;
+    const newName = (edit.username || "").trim();
     const renaming = newName && newName !== u.username;
     if (!Object.keys(payload).length && !renaming) { setEdit(null); return; }
     if (Object.keys(payload).length) {
@@ -1141,7 +1449,25 @@ function UsersSettings({ value }) {
     } else {
       setStatus(`Updated ${u.username}.`);
     }
-    if (u.username === myName) refreshQuota?.();
+    setEdit(null);
+  }
+
+  async function saveStorage() {
+    const u = edit.original;
+    const maxMb = parseLimit(edit.max_upload_mb);
+    const quotaMb = parseLimit(edit.quota_mb);
+    if (Number.isNaN(maxMb) || Number.isNaN(quotaMb)) {
+      setError("Storage limits must be whole numbers of MB, or blank for the server default.");
+      return;
+    }
+    const payload = {};
+    if (maxMb !== (u.max_upload_mb ?? null)) payload.max_upload_mb = maxMb;
+    if (quotaMb !== (u.quota_mb ?? null)) payload.quota_mb = quotaMb;
+    if (Object.keys(payload).length) {
+      if (!await usersCall(`/${encodeURIComponent(u.username)}`, "PUT", payload)) return;
+      setStatus(`Storage limits updated for ${u.username}.`);
+      if (u.username === myName) refreshQuota?.();
+    }
     setEdit(null);
   }
 
@@ -1170,128 +1496,134 @@ function UsersSettings({ value }) {
     setAddForm(null);
   }
 
-  // Backup/restore for one account. Admins get it on every row; everyone else
-  // only ever sees their own (the pane shows no other accounts).
-  function dataForm(u) {
+  // Backup/restore, as Export/Import dropdowns on every row. Admins get them
+  // on each account; everyone else only ever sees their own row.
+  function dataMenus(u) {
     const mine = u.username === myName;
     const who = mine ? "your" : `${u.username}'s`;
     return (
-      <div className="aiProvForm" key={u.username}>
-        <div className="promptSectionHead"><span>{mine ? "Your data" : `${u.username}'s data`}</span></div>
-        <QuotaMeter usedBytes={u.used_bytes} quotaMb={u.quota_mb ?? defaults?.quota_mb} />
-        <span className="settingDesc formFieldLabel">
-          A backup zip holds {who} notes databases (pages, highlights, chats, settings) and,
-          unless you pick the small one, every uploaded PDF and image.
-        </span>
-        <div className="reportModalBtns settingsAlignStart settingsDataBtns">
-          <button
-            className="uiBtn"
-            title={`Download a zip backup: ${who} notes databases + every uploaded PDF`}
-            onClick={() => runDataAction(() => exportUserData(true, u.username))}
-          >
-            <ExportIcon size={13} /> Export data (.zip)
-          </button>
-          <button
-            className="uiBtn"
-            title="Download a small zip with just the databases (notes, chats, settings) — no uploaded PDFs"
-            onClick={() => runDataAction(() => exportUserData(false, u.username))}
-          >
-            <ExportIcon size={13} /> Export database only (.zip)
-          </button>
-        </div>
-        {u.is_guest ? (
-          <span className="settingDesc">
-            The guest workspace is shared and resets daily — backups can't be restored into it.
-          </span>
-        ) : (
-          <div className="reportModalBtns settingsAlignStart settingsDataBtns">
-            <button
-              className="uiBtn"
-              title={`Restore an exported zip: ${who} notes and settings are replaced by the backup, uploaded files are merged in`}
-              onClick={() => runDataAction(() => importUserData("replace", u.username))}
-            >
-              <ImportIcon size={13} /> Import data (.zip)…
-            </button>
-            <button
-              className="uiBtn"
-              title={`Add pages from an exported zip that are missing there; everything already in ${mine ? "your" : "that"} account is kept unchanged`}
-              onClick={() => runDataAction(() => importUserData("merge", u.username))}
-            >
-              <ImportIcon size={13} /> Import &amp; merge (.zip)…
-            </button>
-          </div>
+      <>
+        <ActionMenu
+          label="Export" icon={ExportIcon}
+          items={[
+            {
+              icon: ExportIcon, label: "Everything (.zip)",
+              title: `Download a zip backup: ${who} notes databases + every uploaded PDF`,
+              onClick: () => runDataAction(() => exportUserData(true, u.username)),
+            },
+            {
+              icon: DatabaseIcon, label: "Database only (.zip)",
+              title: "A small zip with just the databases (notes, chats, settings) — no uploaded PDFs",
+              onClick: () => runDataAction(() => exportUserData(false, u.username)),
+            },
+          ]}
+        />
+        {u.is_guest ? null : (
+          <ActionMenu
+            label="Import" icon={ImportIcon}
+            items={[
+              {
+                icon: ImportIcon, label: "Restore backup…",
+                title: `Restore an exported zip: ${who} notes and settings are replaced by the backup, uploaded files are merged in`,
+                onClick: () => runDataAction(() => importUserData("replace", u.username)),
+              },
+              {
+                icon: PlusIcon, label: "Merge in…",
+                title: `Add pages from an exported zip that are missing there; everything already in ${mine ? "your" : "that"} account is kept unchanged`,
+                onClick: () => runDataAction(() => importUserData("merge", u.username)),
+              },
+            ]}
+          />
         )}
-        <div className="reportModalBtns">
-          <button className="uiBtn" onClick={() => setDataFor(null)}>Close</button>
-        </div>
-      </div>
+      </>
     );
   }
 
-  function editForm(u) {
-    // effective quota = this account's override, else the server default
-    const effQuota = u.quota_mb ?? defaults?.quota_mb;
-    const defUpload = defaults ? `server default (${defaults.max_upload_mb} MB)` : "server default";
-    const defQuota = defaults
-      ? `server default (${defaults.quota_mb ? `${defaults.quota_mb} MB` : "unlimited"})`
-      : "server default";
+  const closeEdit = () => { setEdit(null); setError(""); };
+
+  function accountDialog() {
+    const u = edit.original;
     return (
-      <div className="aiProvForm" key={u.username}>
-        <div className="promptSectionHead"><span>{u.is_guest ? "Guest storage limits" : `Edit ${u.username}`}</span></div>
-        <QuotaMeter usedBytes={u.used_bytes} quotaMb={effQuota} />
-        {!u.is_guest ? (
-          <>
-            <span className="settingDesc formFieldLabel">Username — change it to rename the account (sessions and share links keep working)</span>
+      <SubDialog title={`Edit ${u.username}`} onClose={closeEdit}>
+        <div className="settingsForm">
+          <Field label="Username" hint="renaming keeps sessions and share links working">
             <input
               className="aiKeyInput" type="text" spellCheck={false}
               value={edit.username}
               onChange={(e) => setEdit((f) => ({ ...f, username: e.target.value }))}
             />
+          </Field>
+          <Field label="New password" hint="blank keeps the current one">
             <input
               className="aiKeyInput" type="password" autoComplete="new-password"
-              placeholder="New password — blank keeps the current one"
               value={edit.password}
               onChange={(e) => setEdit((f) => ({ ...f, password: e.target.value }))}
             />
-            <label className="uiCheckRow" title={lastAdmin(u) ? "The last admin can't be demoted" : ""}>
-              <input
-                type="checkbox" checked={edit.is_admin} disabled={lastAdmin(u)}
-                onChange={(e) => setEdit((f) => ({ ...f, is_admin: e.target.checked }))}
-              />
-              Admin privilege
-            </label>
-          </>
-        ) : null}
-        <span className="settingDesc formFieldLabel">Max upload size (MB) — largest single PDF/image; blank = server default</span>
-        <input
-          className="aiKeyInput" type="number" min={1}
-          placeholder={defUpload}
-          value={edit.max_upload_mb}
-          onChange={(e) => setEdit((f) => ({ ...f, max_upload_mb: e.target.value }))}
-        />
-        <span className="settingDesc formFieldLabel">Storage quota (MB) — total for all uploads; blank = server default, 0 = unlimited</span>
-        <input
-          className="aiKeyInput" type="number" min={0}
-          placeholder={defQuota}
-          value={edit.quota_mb}
-          onChange={(e) => setEdit((f) => ({ ...f, quota_mb: e.target.value }))}
-        />
-        <div className="reportModalBtns">
-          {!u.is_guest && u.username !== myName ? (
-            <button className="uiBtn danger" disabled={busy} onClick={() => deleteAccount(u)}>
-              <Trash2Icon size={13} /> Delete…
-            </button>
-          ) : null}
-          <button className="uiBtn" onClick={() => { setEdit(null); setError(""); }}>Cancel</button>
-          <button className="uiBtn primary" disabled={busy} onClick={saveEdit}>Save</button>
+          </Field>
+          <label className="uiCheckRow" title={lastAdmin(u) ? "The last admin can't be demoted" : ""}>
+            <input
+              type="checkbox" checked={edit.is_admin} disabled={lastAdmin(u)}
+              onChange={(e) => setEdit((f) => ({ ...f, is_admin: e.target.checked }))}
+            />
+            <ShieldIcon size={13} /> Admin privilege
+          </label>
+          {error ? <div className="settingsPaneHint aiKeysError">{error}</div> : null}
+          <div className="reportModalBtns">
+            {u.username !== myName ? (
+              <button className="uiBtn danger" disabled={busy} onClick={() => deleteAccount(u)}>
+                <Trash2Icon size={13} /> Delete…
+              </button>
+            ) : null}
+            <button className="uiBtn" onClick={closeEdit}>Cancel</button>
+            <button className="uiBtn primary" disabled={busy} onClick={saveAccount}>Save</button>
+          </div>
         </div>
-      </div>
+      </SubDialog>
+    );
+  }
+
+  function storageDialog() {
+    const u = edit.original;
+    // effective quota = this account's override, else the server default
+    const effQuota = u.quota_mb ?? defaults?.quota_mb;
+    const defUpload = defaults ? `server default (${defaults.max_upload_mb})` : "server default";
+    const defQuota = defaults
+      ? `server default (${defaults.quota_mb || "unlimited"})`
+      : "server default";
+    return (
+      <SubDialog title={`Storage limits — ${u.username}`} onClose={closeEdit}>
+        <div className="settingsForm">
+          <QuotaMeter usedBytes={u.used_bytes} quotaMb={effQuota} />
+          <Field label="Max upload size" hint="largest single PDF or image · blank inherits">
+            <UnitInput
+              unit="MB" min={1} placeholder={defUpload}
+              value={edit.max_upload_mb}
+              onChange={(max_upload_mb) => setEdit((f) => ({ ...f, max_upload_mb }))}
+            />
+          </Field>
+          <Field label="Storage quota" hint="total for all uploads · blank inherits · 0 = unlimited">
+            <UnitInput
+              unit="MB" min={0} placeholder={defQuota}
+              value={edit.quota_mb}
+              onChange={(quota_mb) => setEdit((f) => ({ ...f, quota_mb }))}
+            />
+          </Field>
+          {error ? <div className="settingsPaneHint aiKeysError">{error}</div> : null}
+          <div className="reportModalBtns">
+            <button className="uiBtn" onClick={closeEdit}>Cancel</button>
+            <button className="uiBtn primary" disabled={busy} onClick={saveStorage}>Save</button>
+          </div>
+        </div>
+      </SubDialog>
     );
   }
 
   function userRow(u) {
     return (
       <div key={u.username} className="aiProvRow">
+        <span className={`aiProvAvatar ${u.is_admin ? "active" : ""}`}>
+          {u.is_admin ? <ShieldIcon size={15} /> : <UserIcon size={15} />}
+        </span>
         <span className="aiProvMeta">
           <span className="aiProvName">
             {u.username}
@@ -1303,91 +1635,91 @@ function UsersSettings({ value }) {
             {u.is_guest
               ? "shared demo workspace, resets daily"
               : u.created_at // absent on the self row: non-admins can't list accounts
-                ? `created ${new Date(u.created_at).toLocaleDateString()}`
+                ? `since ${new Date(u.created_at).toLocaleDateString()}`
                 : "signed in"}
             {u.max_upload_mb != null ? ` · max file ${u.max_upload_mb} MB` : ""}
-            {u.quota_mb != null ? (u.quota_mb ? ` · quota ${u.quota_mb} MB` : " · quota unlimited") : ""}
+            {u.quota_mb != null ? (u.quota_mb ? ` · quota ${u.quota_mb} MB` : " · unlimited") : ""}
           </span>
           <QuotaMeter usedBytes={u.used_bytes} quotaMb={u.quota_mb ?? defaults?.quota_mb} />
         </span>
         <span className="aiProvActions">
-          <button
-            className="uiBtn sm iconSq"
-            title={u.username === myName ? "Back up or restore your data" : `Back up or restore ${u.username}'s data`}
-            aria-label="Backup and restore"
-            onClick={() => openData(u)}
-          >
-            <DatabaseIcon size={13} />
-          </button>
+          {dataMenus(u)}
           {isAdmin ? (
-            <button
-              className="uiBtn sm iconSq" disabled={busy}
-              title={u.is_guest ? "Guest storage limits" : `Edit ${u.username}`}
-              aria-label="Edit account"
-              onClick={() => openEdit(u)}
-            >
-              <PenIcon size={13} />
-            </button>
+            <>
+              <button
+                className="uiBtn sm iconSq" disabled={busy}
+                title={`Storage limits for ${u.username}`}
+                aria-label="Storage limits"
+                onClick={() => openStorage(u)}
+              >
+                <HardDriveIcon size={13} />
+              </button>
+              {!u.is_guest ? (
+                <button
+                  className="uiBtn sm iconSq" disabled={busy}
+                  title={`Rename ${u.username}, set a password, or grant admin`}
+                  aria-label="Edit account"
+                  onClick={() => openAccount(u)}
+                >
+                  <PenIcon size={13} />
+                </button>
+              ) : null}
+            </>
           ) : null}
         </span>
       </div>
     );
   }
 
-  const rowFor = (u) => (
-    dataFor === u.username ? dataForm(u)
-      : edit?.original.username === u.username ? editForm(u)
-        : userRow(u)
-  );
-
   return (
     <>
       {isAdmin ? (
-        <PaneIntro title="Users">
-          Accounts on this server. Admin is a privilege, not a name — any account can be granted it,
-          and the last admin can never be demoted or deleted. Storage limits left blank inherit the
-          server defaults from the Paper metadata pane. The database button backs up or restores an
-          account's whole workspace.
-        </PaneIntro>
+        <PaneHead icon={UsersIcon} title="Users">
+          Accounts on this server. The last admin can never be demoted or deleted.
+        </PaneHead>
       ) : (
-        <PaneIntro title="Account">
-          Your account and its storage. The database button downloads a backup of everything you
-          have here, or restores one. Only an admin can rename accounts, change passwords or set
-          storage limits.
-        </PaneIntro>
+        <PaneHead icon={UserIcon} title="You">
+          Your account and its storage. Only an admin can rename it or change its limits.
+        </PaneHead>
       )}
-      {isAdmin && !info && !error ? <div className="reportModalHint">Loading…</div> : null}
-      {rows.map(rowFor)}
+      {isAdmin && !info && !error ? <Empty icon={UsersIcon}>Loading…</Empty> : null}
+      {rows.map(userRow)}
+      {edit?.kind === "account" ? accountDialog() : null}
+      {edit?.kind === "storage" ? storageDialog() : null}
       {!isAdmin ? null : addForm ? (
-        <div className="aiProvForm">
-          <div className="promptSectionHead"><span>Add user</span></div>
-          <input
-            className="aiKeyInput" type="text" spellCheck={false} autoFocus
-            placeholder="Username (letters, digits, _ . -)"
-            value={addForm.username}
-            onChange={(e) => setAddForm((f) => ({ ...f, username: e.target.value }))}
-          />
-          <input
-            className="aiKeyInput" type="password" autoComplete="new-password"
-            placeholder="Password"
-            value={addForm.password}
-            onChange={(e) => setAddForm((f) => ({ ...f, password: e.target.value }))}
-            onKeyDown={(e) => { if (e.key === "Enter") submitAdd(); }}
-          />
+        <SubDialog title="Add user" onClose={() => { setAddForm(null); setError(""); }}>
+          <div className="settingsForm">
+          <Field label="Username" hint="letters, digits, _ . -">
+            <input
+              className="aiKeyInput" type="text" spellCheck={false} autoFocus
+              value={addForm.username}
+              onChange={(e) => setAddForm((f) => ({ ...f, username: e.target.value }))}
+            />
+          </Field>
+          <Field label="Password">
+            <input
+              className="aiKeyInput" type="password" autoComplete="new-password"
+              value={addForm.password}
+              onChange={(e) => setAddForm((f) => ({ ...f, password: e.target.value }))}
+              onKeyDown={(e) => { if (e.key === "Enter") submitAdd(); }}
+            />
+          </Field>
           <label className="uiCheckRow">
             <input
               type="checkbox" checked={!!addForm.is_admin}
               onChange={(e) => setAddForm((f) => ({ ...f, is_admin: e.target.checked }))}
             />
-            Grant the admin privilege
+            <ShieldIcon size={13} /> Grant the admin privilege
           </label>
+          {error ? <div className="settingsPaneHint aiKeysError">{error}</div> : null}
           <div className="reportModalBtns">
             <button className="uiBtn" onClick={() => { setAddForm(null); setError(""); }}>Cancel</button>
             <button className="uiBtn primary" disabled={busy} onClick={submitAdd}>
               {busy ? "Creating…" : "Create user"}
             </button>
           </div>
-        </div>
+          </div>
+        </SubDialog>
       ) : info ? (
         <div className="reportModalBtns settingsAlignStart">
           <button className="uiBtn" onClick={() => { setError(""); setEdit(null); setAddForm({ username: "", password: "", is_admin: false }); }}>
@@ -1395,10 +1727,12 @@ function UsersSettings({ value }) {
           </button>
         </div>
       ) : null}
-      {error ? <div className="reportModalHint aiKeysError">{error}</div> : null}
+      {error && !edit && !addForm ? <div className="settingsPaneHint aiKeysError">{error}</div> : null}
     </>
   );
 }
+
+// --- the dialog -------------------------------------------------------------
 
 export default function SettingsDialog({
   activePane,
@@ -1415,33 +1749,54 @@ export default function SettingsDialog({
   diagnostics,
 }) {
   if (!activePane) return null;
-  // The users pane doubles as every non-admin's own "Account" pane — same
+  const pane = PANE_ALIASES[activePane] || activePane;
+  // The users pane doubles as every non-admin's own account pane — same
   // component, but it only ever shows their row (see UsersSettings).
-  const navItems = NAV_ITEMS.map(([id, label, Icon]) =>
-    (id === "users" && !users?.isAdmin ? [id, "Account", UserIcon] : [id, label, Icon]))
-    .filter(([id]) => id !== "users" || users);
+  const groups = NAV_GROUPS
+    .map(([group, items]) => [
+      group,
+      items
+        .map(([id, label, Icon]) => (id === "users" && !users?.isAdmin ? [id, "You", UserIcon] : [id, label, Icon]))
+        .filter(([id]) => id !== "users" || users),
+    ])
+    .filter(([, items]) => items.length);
+
   return (
     <div className="reportOverlay" onClick={onClose}>
       <div className="settingsModal" onClick={(event) => event.stopPropagation()}>
         <div className="settingsSidebar">
-          <div className="settingsSideTitle">Settings</div>
-          {navItems.map(([id, label, Icon]) => (
-            <button key={id} className={`settingsNavBtn ${activePane === id ? "active" : ""}`} onClick={() => onPaneChange(id)}>
-              <Icon size={15} />{label}
-            </button>
+          <div className="settingsSideTitle"><SettingsIcon size={15} />Settings</div>
+          {groups.map(([group, items]) => (
+            <React.Fragment key={group}>
+              <div className="settingsNavGroup">{group}</div>
+              {items.map(([id, label, Icon]) => (
+                <button key={id} title={label} onClick={() => onPaneChange(id)}
+                  className={`settingsNavBtn ${pane === id ? "active" : ""}`}>
+                  <Icon size={15} /><span>{label}</span>
+                </button>
+              ))}
+            </React.Fragment>
           ))}
         </div>
         <div className="settingsPane">
           <button className="uiClose uiCloseLg settingsClose" onClick={onClose} title="Close settings" aria-label="Close settings">×</button>
-          {activePane === "papers" ? <PapersSettings value={papers} /> : null}
-          {activePane === "notes" ? <NotesSettings value={notes} /> : null}
-          {activePane === "library" ? <LibrarySettings value={library} /> : null}
-          {activePane === "ai" ? <AiSettings value={ai} /> : null}
-          {activePane === "prompts" ? <PromptSettings value={prompts} /> : null}
-          {activePane === "context" ? <ContextSettings value={context} /> : null}
-          {activePane === "search" ? <SearchSettings value={search} /> : null}
-          {activePane === "users" && users ? <UsersSettings value={users} /> : null}
-          {activePane === "diagnostics" ? <DiagnosticsSettings value={diagnostics} /> : null}
+          {pane === "general" ? <GeneralSettings value={{ ...papers, ...notes }} /> : null}
+          {pane === "search" ? <SearchSettings value={search} /> : null}
+          {pane === "library" ? (
+            <LibrarySettings value={{ ...library, isAdmin: papers.isAdmin, refreshQuota: papers.refreshQuota }} />
+          ) : null}
+          {pane === "ai" ? <AiSettings value={ai} /> : null}
+          {pane === "assistant" ? (
+            <AssistantSettings value={{
+              ...prompts,
+              ...context,
+              metaModel: papers.metaModel,
+              setMetaModel: papers.setMetaModel,
+              aiModels: papers.aiModels,
+            }} />
+          ) : null}
+          {pane === "users" && users ? <UsersSettings value={users} /> : null}
+          {pane === "advanced" ? <AdvancedSettings value={diagnostics} /> : null}
         </div>
       </div>
     </div>

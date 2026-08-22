@@ -1616,11 +1616,8 @@ export default function App() {
 
   // The settings page (account popover → Settings…): two-column modal,
   // categories on the left, the selected pane on the right.
-  const [settingsOpen, setSettingsOpen] = useState(null); // null | "papers" | "library" | "ai" | "prompts" | "search" | "account"
+  const [settingsOpen, setSettingsOpen] = useState(null); // null | pane id — see NAV_GROUPS in settings.jsx
   const [importOpen, setImportOpen] = useState(false);
-  // Which account's backup panel the Users pane should open expanded (the
-  // popover's "Backup & restore…" — null lands on the plain account list).
-  const [dataPaneFor, setDataPaneFor] = useState(null);
   // Export dialog: one "Export…" menu entry, the shape of the export chosen
   // here. Remembered across sessions — most people export the same way twice.
   const [exportOpen, setExportOpen] = useState(false);
@@ -3598,10 +3595,10 @@ export default function App() {
     await loadBlocksForBlock(focusedBlockId);
   }
 
-  // (Re)entering the Prompts pane rebuilds the drafts from the saved values —
-  // switching away without saving is the cancel path.
+  // (Re)entering the Assistant pane rebuilds the prompt drafts from the saved
+  // values — switching away without saving is the cancel path.
   useEffect(() => {
-    if (settingsOpen !== "prompts") return;
+    if (settingsOpen !== "assistant") return;
     setPromptDraft(chatSystem || aiInfo?.default_prompt || "");
     setMetaPromptDraft(metaPrompt || aiInfo?.metadata_prompt || "");
     setCitePromptDraft(citePrompt || aiInfo?.cite_prompt || "");
@@ -5577,15 +5574,15 @@ export default function App() {
                 </div>
               ) : null}
               <div className="popoverDivider" />
-              <button className="popoverItem" onClick={() => { setSettingsOpen("papers"); setOpenPopover(null); }}>
+              <button className="popoverItem" onClick={() => { setSettingsOpen("general"); setOpenPopover(null); }}>
                 <SettingsIcon className="popoverItemIcon" size={15} />
                 Settings…
               </button>
-              {/* Both land in Settings → Users; they differ in where they put
-                  you — your own data panel, or the account list. */}
+              {/* Both land in Settings → Users: your row carries the
+                  Export/Import menus, admins see every account. */}
               <button
                 className="popoverItem"
-                onClick={() => { setDataPaneFor(authUser.user); setSettingsOpen("users"); setOpenPopover(null); }}
+                onClick={() => { setSettingsOpen("users"); setOpenPopover(null); }}
                 title="Download a backup of this account, or restore one"
               >
                 <DatabaseIcon className="popoverItemIcon" size={15} />
@@ -5594,7 +5591,7 @@ export default function App() {
               {authUser.is_admin ? (
                 <button
                   className="popoverItem"
-                  onClick={() => { setDataPaneFor(null); setSettingsOpen("users"); setOpenPopover(null); }}
+                  onClick={() => { setSettingsOpen("users"); setOpenPopover(null); }}
                   title="Accounts, storage limits, and backup/restore for any of them"
                 >
                   <UsersIcon className="popoverItemIcon" size={15} />
@@ -5945,7 +5942,7 @@ export default function App() {
             <div className="reportModalTitle">{confirmBox.title}</div>
             <div className="reportModalHint confirmMessage">{confirmBox.message}</div>
             <div className="reportModalBtns">
-              <button className="chatClearBtn" onClick={() => setConfirmBox(null)} autoFocus>Cancel</button>
+              <button className="uiBtn" onClick={() => setConfirmBox(null)} autoFocus>Cancel</button>
               {confirmBox.altLabel ? (
                 <button
                   className={`uiBtn ${confirmBox.altDanger ? "dangerBtn" : ""}`}
@@ -5991,20 +5988,20 @@ export default function App() {
             <div className="reportModalTitle">External link</div>
             <div className="reportModalHint confirmMessage linkPromptUrl">{linkPrompt}</div>
             <div className="reportModalBtns">
-              <button className="chatClearBtn" onClick={() => setLinkPrompt(null)}>Cancel</button>
+              <button className="uiBtn" onClick={() => setLinkPrompt(null)}>Cancel</button>
               {(() => {
                 // Right-click always lands here, even for links whose paper is
                 // already in the library — offer that copy instead of a re-fetch.
                 const pid = findPageForUrl(linkPrompt, homeBlocks);
                 return pid ? (
                   <button
-                    className="chatClearBtn"
+                    className="uiBtn"
                     onClick={() => { setLinkPrompt(null); openBlock(pid, { pushNav: true }); }}
                     title="This paper is already in your library"
                   >Open in Gamma</button>
                 ) : (
                   <button
-                    className="chatClearBtn"
+                    className="uiBtn"
                     onClick={() => { const url = linkPrompt; setLinkPrompt(null); pushNav(); openPdf(url); }}
                     title="Resolve this link as a PDF and open it as a new paper in Gamma"
                   >Fetch into Gamma</button>
@@ -6077,9 +6074,9 @@ export default function App() {
             </div>
             <div className="reportModalBtns">
               {linkDialog.editBlockId ? (
-                <button className="chatClearBtn" onClick={() => createLinkHighlight({})} title="Turn this back into a plain highlight">Remove link</button>
+                <button className="uiBtn" onClick={() => createLinkHighlight({})} title="Turn this back into a plain highlight">Remove link</button>
               ) : null}
-              <button className="chatClearBtn" onClick={() => setLinkDialog(null)}>Cancel</button>
+              <button className="uiBtn" onClick={() => setLinkDialog(null)}>Cancel</button>
             </div>
           </div>
         </div>
@@ -6087,7 +6084,7 @@ export default function App() {
       <SettingsDialog
         activePane={settingsOpen}
         onPaneChange={setSettingsOpen}
-        onClose={() => { setSettingsOpen(null); setDataPaneFor(null); }}
+        onClose={() => setSettingsOpen(null)}
         papers={{
           oaFallback,
           setOaFallback,
@@ -6196,14 +6193,13 @@ export default function App() {
           // the other accounts and the account editor.
           isAdmin: !!authUser?.is_admin,
           me: authUser.user,
-          openDataFor: dataPaneFor,
           isGuest: !!authUser?.is_guest,
           quotaInfo,
           exportUserData,
           importUserData,
           setStatus,
           confirm: setConfirmBox,
-          closeSettings: () => { setSettingsOpen(null); setDataPaneFor(null); },
+          closeSettings: () => setSettingsOpen(null),
           onSelfRenamed: checkSession, // self-rename re-keys the whole app
           refreshQuota,
         } : null}
