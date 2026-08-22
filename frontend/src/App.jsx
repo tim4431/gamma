@@ -1616,7 +1616,7 @@ export default function App() {
 
   // The settings page (account popover → Settings…): two-column modal,
   // categories on the left, the selected pane on the right.
-  const [settingsOpen, setSettingsOpen] = useState(null); // null | "papers" | "library" | "ai" | "prompts" | "search" | "account"
+  const [settingsOpen, setSettingsOpen] = useState(null); // null | pane id — see NAV_GROUPS in settings.jsx
   const [importOpen, setImportOpen] = useState(false);
   // Which account's backup panel the Users pane should open expanded (the
   // popover's "Backup & restore…" — null lands on the plain account list).
@@ -3598,10 +3598,10 @@ export default function App() {
     await loadBlocksForBlock(focusedBlockId);
   }
 
-  // (Re)entering the Prompts pane rebuilds the drafts from the saved values —
-  // switching away without saving is the cancel path.
+  // (Re)entering the Assistant pane rebuilds the prompt drafts from the saved
+  // values — switching away without saving is the cancel path.
   useEffect(() => {
-    if (settingsOpen !== "prompts") return;
+    if (settingsOpen !== "assistant") return;
     setPromptDraft(chatSystem || aiInfo?.default_prompt || "");
     setMetaPromptDraft(metaPrompt || aiInfo?.metadata_prompt || "");
     setCitePromptDraft(citePrompt || aiInfo?.cite_prompt || "");
@@ -5577,7 +5577,7 @@ export default function App() {
                 </div>
               ) : null}
               <div className="popoverDivider" />
-              <button className="popoverItem" onClick={() => { setSettingsOpen("papers"); setOpenPopover(null); }}>
+              <button className="popoverItem" onClick={() => { setSettingsOpen("general"); setOpenPopover(null); }}>
                 <SettingsIcon className="popoverItemIcon" size={15} />
                 Settings…
               </button>
