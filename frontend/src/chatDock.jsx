@@ -6,6 +6,7 @@
 import React, { useEffect, useMemo, useRef, useState } from "react";
 import { API, apiJson, copyText, isPdfFile } from "./utils";
 import { DockWindow, ChatMarkdown, AutoGrowTextarea, useCopied } from "./widgets";
+import { MenuSelect } from "./menus";
 import { ArrowUpIcon, BookIcon, CheckIcon, ChevronDownIcon, ChevronUpIcon, CopyIcon, FileIcon, MicIcon, PaperclipIcon, PencilIcon, StopIcon, XIcon } from "./icons";
 
 export default function ChatDock({
@@ -504,30 +505,32 @@ export default function ChatDock({
         const currentId = models.some((m) => m.id === chatModel) ? chatModel : models[0].id;
         return (
           <span className="chatHeaderSelects">
-            <select className="chatModelSelect" value={currentId}
-              onChange={(e) => setChatModel(e.target.value)} title="Switch model">
-              {models.map((m) => (
-                <option key={m.id} value={m.id}>
-                  {multiProvider ? `${m.model} · ${m.provider_name || m.provider}` : m.model}
-                </option>
-              ))}
-            </select>
-            <select className="chatModelSelect" value={chatEffort}
-              onChange={(e) => setChatEffort(e.target.value)}
-              title="Reasoning effort — leave on 'effort: default' unless the model supports it">
-              <option value="">effort: default</option>
-              {(aiInfo.efforts || ["low", "medium", "high"]).map((ef) => (
-                <option key={ef} value={ef}>effort: {ef}</option>
-              ))}
-            </select>
+            <MenuSelect
+              label="Switch model"
+              value={currentId}
+              onChange={setChatModel}
+              options={models.map((m) => [
+                m.id,
+                multiProvider ? `${m.model} · ${m.provider_name || m.provider}` : m.model,
+              ])}
+            />
+            <MenuSelect
+              label="Reasoning effort — leave on 'effort: default' unless the model supports it"
+              value={chatEffort}
+              onChange={setChatEffort}
+              options={[
+                ["", "effort: default"],
+                ...(aiInfo.efforts || ["low", "medium", "high"]).map((ef) => [ef, `effort: ${ef}`]),
+              ]}
+            />
           </span>
         );
       })() : null}
       <div className="chatPanelHeaderBtns">
-        <button className={`chatClearBtn ${chatFindOpen ? "on" : ""}`}
+        <button className={`uiBtn sm ${chatFindOpen ? "on" : ""}`}
           onClick={() => { setChatFindOpen((v) => !v); setChatFind(""); }}
           title="Find in this conversation">Find</button>
-        <button className="chatClearBtn" onClick={clearChat} title="Start a fresh conversation (clears saved history)">New chat</button>
+        <button className="uiBtn sm" onClick={clearChat} title="Start a fresh conversation (clears saved history)">New chat</button>
       </div>
     </>
   );
@@ -616,8 +619,8 @@ export default function ChatDock({
                         }}
                       />
                       <div className="chatEditBtns">
-                        <button type="button" className="chatClearBtn" onClick={() => setEditingMsg(null)}>Cancel</button>
-                        <button type="button" className="chatClearBtn chatEditSend"
+                        <button type="button" className="uiBtn sm" onClick={() => setEditingMsg(null)}>Cancel</button>
+                        <button type="button" className="uiBtn sm chatEditSend"
                           disabled={!editingMsg.text.trim() || chatLoading}
                           onClick={() => {
                             const base = chatMessages.slice(0, i);
@@ -899,7 +902,7 @@ export default function ChatDock({
             ) : null}
             <div className="reportModalBtns">
               {chatDocs.length ? (
-                <button className="chatClearBtn" onClick={() => setChatDocs([])}>Clear selection</button>
+                <button className="uiBtn" onClick={() => setChatDocs([])}>Clear selection</button>
               ) : null}
               <button className="uiBtn primary" onClick={() => setDocPicker(false)}>Done</button>
             </div>
