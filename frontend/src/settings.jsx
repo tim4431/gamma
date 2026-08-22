@@ -759,14 +759,13 @@ function MetaStatusSection({ value }) {
 
 // --- AI providers -----------------------------------------------------------
 
-function ProviderForm({ value }) {
+function ProviderForm({ value, onCancel }) {
   const {
     aiKeysForm,
     setAiKeysForm,
     aiKeysInfo,
     aiKeysBusy,
     aiKeysError,
-    setAiKeysError,
     aiModelCatalog,
     formOauthPending,
     formModels,
@@ -928,7 +927,7 @@ function ProviderForm({ value }) {
 
       {aiKeysError ? <div className="settingsPaneHint aiKeysError">{aiKeysError}</div> : null}
       <div className="reportModalBtns">
-        <button className="uiBtn" onClick={() => { setAiKeysForm(null); setAiKeysError(""); }}>Cancel</button>
+        <button className="uiBtn" onClick={onCancel}>Cancel</button>
         <button className="uiBtn primary" disabled={aiKeysBusy} onClick={submitAiProvider}>
           {aiKeysBusy
             ? "Saving…"
@@ -942,6 +941,7 @@ function ProviderForm({ value }) {
 }
 
 function AiSettings({ value }) {
+  const closeKeyForm = () => { value.setAiKeysForm(null); value.setAiKeysError(""); };
   const activeKeyId = value.aiKeysInfo?.providers.some((item) => item.id === value.aiProvider)
     ? value.aiProvider
     : value.aiKeysInfo?.providers[0]?.id;
@@ -1039,9 +1039,9 @@ function AiSettings({ value }) {
           {value.aiKeysForm ? (
             <SubDialog
               title={value.aiKeysForm.id ? "Edit key" : "Add key"}
-              onClose={() => { value.setAiKeysForm(null); value.setAiKeysError(""); }}
+              onClose={closeKeyForm}
             >
-              <ProviderForm value={value} />
+              <ProviderForm value={value} onCancel={closeKeyForm} />
             </SubDialog>
           ) : null}
         </>
@@ -1539,11 +1539,12 @@ function UsersSettings({ value }) {
     );
   }
 
+  const closeEdit = () => { setEdit(null); setError(""); };
+
   function accountDialog() {
     const u = edit.original;
-    const close = () => { setEdit(null); setError(""); };
     return (
-      <SubDialog title={`Edit ${u.username}`} onClose={close}>
+      <SubDialog title={`Edit ${u.username}`} onClose={closeEdit}>
         <div className="settingsForm">
           <Field label="Username" hint="renaming keeps sessions and share links working">
             <input
@@ -1573,7 +1574,7 @@ function UsersSettings({ value }) {
                 <Trash2Icon size={13} /> Delete…
               </button>
             ) : null}
-            <button className="uiBtn" onClick={close}>Cancel</button>
+            <button className="uiBtn" onClick={closeEdit}>Cancel</button>
             <button className="uiBtn primary" disabled={busy} onClick={saveAccount}>Save</button>
           </div>
         </div>
@@ -1589,9 +1590,8 @@ function UsersSettings({ value }) {
     const defQuota = defaults
       ? `server default (${defaults.quota_mb || "unlimited"})`
       : "server default";
-    const close = () => { setEdit(null); setError(""); };
     return (
-      <SubDialog title={`Storage limits — ${u.username}`} onClose={close}>
+      <SubDialog title={`Storage limits — ${u.username}`} onClose={closeEdit}>
         <div className="settingsForm">
           <QuotaMeter usedBytes={u.used_bytes} quotaMb={effQuota} />
           <Field label="Max upload size" hint="largest single PDF or image · blank inherits">
@@ -1610,7 +1610,7 @@ function UsersSettings({ value }) {
           </Field>
           {error ? <div className="settingsPaneHint aiKeysError">{error}</div> : null}
           <div className="reportModalBtns">
-            <button className="uiBtn" onClick={close}>Cancel</button>
+            <button className="uiBtn" onClick={closeEdit}>Cancel</button>
             <button className="uiBtn primary" disabled={busy} onClick={saveStorage}>Save</button>
           </div>
         </div>
