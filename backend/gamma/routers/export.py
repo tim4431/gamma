@@ -34,7 +34,14 @@ from ..markdown_export import (
 from ..logbuf import log
 from ..pdf_export import annotate_pdf, highlight_note_text
 from ..pdf_notes import render_notes
-from ..zotero_export import IMAGE_MIME, MD_IMAGE_RE, build_rdf, note_html, strip_image_md
+from ..zotero_export import (
+    IMAGE_MIME,
+    MD_IMAGE_RE,
+    build_rdf,
+    highlight_memo_html,
+    note_html,
+    strip_image_md,
+)
 
 router = APIRouter(prefix="/api", tags=["export"])
 
@@ -147,6 +154,12 @@ def _collect_marks(blocks) -> list[dict]:
 _EMBED_IMAGE_CAP = 4_000_000
 
 
+def _walk_tree(node):
+    yield node
+    for child in node.get("children") or []:
+        yield from _walk_tree(child)
+
+
 def _image_resolver(uploads_dir):
     """``resolve_image`` for note_html: upload filename → (mime, base64)."""
     def resolve(filename):
@@ -209,11 +222,7 @@ def _zotero_export_zip(conn, user, roots, base: str, folder_scope: str | None,
         images = []
         if include_pdf:
             seen = set()
-            def walk(node):
-                yield node
-                for child in node.get("children") or []:
-                    yield from walk(child)
-            for node in walk(page):
+            for node in _walk_tree(page):
                 for fname in MD_IMAGE_RE.findall(node.get("content") or ""):
                     if fname in seen or not (uploads_dir / fname).is_file():
                         continue
@@ -234,6 +243,20 @@ def _zotero_export_zip(conn, user, roots, base: str, folder_scope: str | None,
                 if cprops.get("highlight_id") or cprops.get("link_url"):
                     continue
                 html = note_html(child, resolve_image=resolve_image)
+                if html:
+                    note_htmls.append(html)
+            # Writing nested under a highlight normally travels only in the
+            # annotation popup — but that comment is plain text, so a
+            # highlight whose notes carry images ALSO becomes a Zotero note
+            # (page + quote header) with the pictures embedded.
+            for node in _walk_tree(page):
+                nprops = node.get("properties") or {}
+                if not nprops.get("highlight_id"):
+                    continue
+                if not any(MD_IMAGE_RE.search(d.get("content") or "")
+                           for d in _walk_tree(node)):
+                    continue
+                html = highlight_memo_html(node, resolve_image=resolve_image)
                 if html:
                     note_htmls.append(html)
 

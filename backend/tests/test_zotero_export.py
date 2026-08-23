@@ -140,8 +140,15 @@ def test_zotero_export_note_images(guest):
     pdf = z.read(f"{base}/{it['pdf_paths'][0]}")
     annots = PdfReader(io.BytesIO(pdf)).pages[0]["/Annots"]
     contents = [str(a.get_object().get("/Contents") or "") for a in annots]
-    assert any(f"(image: {img_name})" in c for c in contents)
+    assert any(f"(image: {img_name} — see item notes)" in c for c in contents)
     assert not any("![fig]" in c for c in contents)
+    # ...and, since comments can't hold pictures, the highlight's writing ALSO
+    # became a Zotero note with a page+quote header (the memo the placeholder
+    # points at). Top-level note + highlight note = 2 memos.
+    notes = [n["text"] for n in it["notes"]]
+    assert len(notes) == 2
+    hl_note = next(n for n in notes if "p.1" in n)
+    assert "“quoted”" in hl_note and "see" in hl_note
 
 
 def test_zotero_export_switches(guest):

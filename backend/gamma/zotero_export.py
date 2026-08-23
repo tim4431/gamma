@@ -73,8 +73,10 @@ IMAGE_MIME = {
 
 def strip_image_md(text: str) -> str:
     """Markdown image refs → a readable placeholder. Annotation comments are
-    plain text, so the image itself travels as an item attachment instead."""
-    return MD_IMAGE_RE.sub(lambda m: f"(image: {m.group(1)})", text or "")
+    plain text (they come from the PDF's /Contents), so the image itself
+    travels embedded in a Zotero note (``highlight_memo_html``) and as an item
+    attachment instead."""
+    return MD_IMAGE_RE.sub(lambda m: f"(image: {m.group(1)} — see item notes)", text or "")
 
 
 def _inline_html(text: str) -> str:
@@ -129,6 +131,25 @@ def note_html(node, resolve_image=None) -> str:
     if kids:
         parts += f"<ul>{kids}</ul>"
     return parts
+
+
+def highlight_memo_html(node, resolve_image=None) -> str:
+    """A Zotero note for a highlight whose writing carries images. The
+    annotation comment can only hold a plain placeholder, so the pictures live
+    here — prefixed with the page and quote, so the note stays findable next
+    to its annotation."""
+    props = node.get("properties") or {}
+    page_no = props.get("pdf_page") or (props.get("pdf_position") or {}).get("pageNumber")
+    quote = re.sub(r"\s+", " ", props.get("quote") or "").strip()
+    header = " — ".join(part for part in (
+        f"p.{page_no}" if page_no else "",
+        f"“{quote[:120]}”" if quote else "",
+    ) if part)
+    body = note_html(node, resolve_image)
+    if not body:
+        return ""
+    head = f"<p><strong>{html_mod.escape(header, quote=False)}</strong></p>" if header else ""
+    return head + body
 
 
 # --- the RDF document -------------------------------------------------------

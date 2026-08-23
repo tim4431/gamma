@@ -77,8 +77,10 @@ extract and pick the .rdf, and the export dialog shows a numbered step guide
 for the format. Pasted note images: embedded in the Memo HTML as data URIs
 (Zotero's note import keeps them — verified live; `_EMBED_IMAGE_CAP` guards
 size), attached to the item as image `z:Attachment`s when bundling, and
-replaced by a plain `(image: …)` placeholder in annotation comments
-(`strip_image_md`). `/api/folders/export` (all modes) reports per-page
+replaced by a plain `(image: … — see item notes)` placeholder in annotation
+comments (`strip_image_md`) — comments come from the PDF's `/Contents` and can
+never render a picture, so a highlight whose notes carry images ALSO becomes
+its own Memo with a page+quote header (`highlight_memo_html`). `/api/folders/export` (all modes) reports per-page
 progress through `/api/folders/export-progress`, which the frontend polls into
 the status pill during folder exports. Highlights are not in the RDF
 — like Zotero's "Include Annotations" they're burned into the exported PDF
