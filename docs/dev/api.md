@@ -6,11 +6,37 @@ else; in dev, Vite proxies `/api` → `127.0.0.1:9001`.
 ## Auth model
 
 - A `session` cookie identifies the user (middleware sets
-  `request.state.user`). Write endpoints require it.
-- Share tokens (`?share=<token>`) give unauthenticated **read** access;
-  endpoints that support shared views also accept `?user=` as a fallback to
-  resolve whose data to read. Keep that read/write distinction when adding
-  endpoints.
+  `request.state.user`). Write endpoints require it (`require_user`).
+- Share tokens (`?share=<token>`) are the ONLY unauthenticated **read** path.
+  `resolve_user` returns the session user, or the owner named by a valid
+  `?share=` token — there is no `?user=` fallback (it used to trust any
+  username and leaked whole accounts). A share is scoped to one document:
+  read endpoints that can serve a share view also call `share_scope_doc()` and
+  `blocks_store.assert_block_in_doc()`, so a token can only reach its own
+  document's subtree and assets — root listing, backlinks, other docs, and
+  folder export are refused (403). Keep that read/write + scope distinction when
+  adding endpoints.
+- Outbound fetches of user-supplied URLs (PDF proxy/resolver, AI PDF
+  re-download) go through `gamma.net_guard.guarded_urlopen`, which blocks
+  non-http(s) schemes (`file:`, `ftp:`, …) and hosts that resolve to
+  loopback/private/link-local/metadata addresses (SSRF), re-checking on every
+  redirect.
+- Usernames and doc ids are validated (`db.safe_username` / `db.safe_doc_id`,
+  used by `user_db_path` / `user_uploads_dir` / `pdf_upload_path`) before they
+  become filesystem paths — no traversal.
+- The session cookie is `HttpOnly; SameSite=Lax`, and `Secure` when the request
+  is HTTPS (auto via scheme / `X-Forwarded-Proto` — off on plain-HTTP LAN so
+  login still works there). Sessions are enforced server-side against
+  `SESSION_MAX_AGE` (expired rows are deleted in the middleware) and are revoked
+  when the account's password is changed.
+- `/api/login` and `/api/login-guest` are rate-limited per IP/username
+  (`gamma/ratelimit.py`, in-process fixed windows → 429). Not an edge WAF; add
+  one for large public deployments.
+- Every response carries baseline hardening headers (`X-Content-Type-Options`,
+  `X-Frame-Options: SAMEORIGIN`, `Referrer-Policy`, `Content-Security-Policy:
+  frame-ancestors 'self'`, and HSTS on HTTPS). SVG uploads are served
+  `Content-Disposition: attachment` + `CSP: sandbox` so they can't run inline as
+  stored XSS.
 - `/api/admin/*` additionally requires the `is_admin` flag.
 
 ## Endpoints
@@ -86,6 +112,7 @@ Route order matters: the static-prefix routes (`by-doc`, `children`,
 |---|---|---|
 | POST | `/import/logseq` | Logseq .pdf + .edn import |
 | POST | `/import/pdf-annotations` | import annotations embedded in the PDF (idempotent; optional `strip`) |
+| POST | `/import/zotero` | Zotero library import: zip of a "Zotero RDF" export (multipart `file`; `strip`, optional `folder` prefix). Items→pages+metadata, collections→folders, tags→labels, notes→blocks; embedded annotations via the same importer. Idempotent by file hash / `zotero_key` |
 | GET | `/pages/{id}/export` | Markdown export (`?mode=readable&highlights=&notes=&pdf=`) |
 | GET | `/pages/{id}/export-pdf` | PDF with annotations written back (`?highlights=&notes=`) |
 | GET | `/folders/export` | Logseq-graph export |

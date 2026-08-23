@@ -36,7 +36,7 @@ export default function ChatDock({
   // Settings per-tool permission map ({list, read, search, rename, move}) and
   // toolRounds the round budget. When the AI applied changes, onLibraryChange
   // refreshes the home feed.
-  organizeFolder = null, toolRounds, agentPerms, agentSystem, onLibraryChange,
+  organizeFolder = null, toolRounds, agentReadChars, agentPerms, agentSystem, onLibraryChange,
   onGrip, onGripDoubleClick, collapsed, onClose,
 }) {
   const [chatMessages, setChatMessages] = useState([]);
@@ -65,7 +65,8 @@ export default function ChatDock({
         ? { agent_scope: "page", page_id: focusedBlockId }
         : null;
     return scope
-      ? { ...scope, tool_rounds: toolRounds || 0, permissions: agentPerms || {}, agent_system: agentSystem || "" }
+      ? { ...scope, tool_rounds: toolRounds || 0, read_char_limit: agentReadChars || 0,
+          permissions: agentPerms || {}, agent_system: agentSystem || "" }
       : {};
   };
   // Empty-state intro and input placeholder for an agent-enabled home chat.

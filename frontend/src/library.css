@@ -27,11 +27,15 @@
 .carouselTrack::-webkit-scrollbar {
   display: none;
 }
-/* Recents card: cover (page snapshot at the last-read spot, else summary
-   excerpt, else file glyph) over a title + kind/time footer. */
-.recentCard {
+/* The shared home card (PageCard in fileBrowser.jsx): a cover — page snapshot
+   when available, else the file/folder glyph — over a footer of title + label
+   chips + kind/time. ONE geometry for every surface (both carousels, the
+   pinned strip, the grid): a 16/10 cover, two reserved title lines and one
+   reserved chip line, so cards are the same height and their cover/footer
+   divider lines up wherever they are shown. The container only picks the
+   width — fixed inside a carousel, a fluid track inside .fileGrid. */
+.pageCard {
   position: relative;
-  flex: 0 0 150px;
   display: flex;
   flex-direction: column;
   padding: 0;
@@ -44,17 +48,32 @@
   text-align: left;
   color: var(--text-primary);
   font: inherit;
-  scroll-snap-align: start;
   transition: background 120ms ease, border-color 120ms ease, box-shadow 120ms ease;
 }
-.recentCard:hover {
+/* One width for every fixed-width strip card, and the grid's minimum track —
+   so a card is the same card wherever it is shown. */
+:root { --card-w: 150px; }
+.carouselTrack .pageCard, .pinnedStrip .pageCard {
+  flex: 0 0 var(--card-w);
+  scroll-snap-align: start;
+}
+.pageCard:hover {
   background: var(--bg-elevated);
   border-color: var(--border);
   box-shadow: 0 2px 8px rgba(0, 0, 0, 0.08);
 }
-.recentCardCover {
-  height: 88px;
+.pageCard.selected {
+  background: var(--accent-bg-light);
+  border-color: var(--accent-dark);
+}
+.pageCard.dragOver {
+  background: var(--accent-bg);
+  border-color: var(--accent-dark);
+  border-style: dashed;
+}
+.pageCardCover {
   flex: 0 0 auto;
+  aspect-ratio: 16 / 10;
   display: flex;
   align-items: center;
   justify-content: center;
@@ -63,7 +82,7 @@
   border-bottom: 1px solid var(--border-subtle);
   color: var(--text-dim);
 }
-.recentCardCover img {
+.pageCardCover img {
   display: block;
   width: 100%;
   height: 100%;
@@ -71,46 +90,62 @@
   object-position: top;
 }
 /* Snapshots are light PDF pages — tone them down a notch on a dark card. */
-[data-theme="dark"] .recentCardCover img { filter: brightness(0.9); }
-.recentCardCover .tileGlyph { width: 30px; height: 30px; }
-.recentCardExcerpt {
-  align-self: stretch;
-  padding: 8px 10px;
-  font-size: 9.5px;
-  line-height: 1.5;
-  color: var(--text-muted);
-  overflow: hidden;
-  display: -webkit-box;
-  -webkit-line-clamp: 4;
-  -webkit-box-orient: vertical;
-}
-.recentCardBody {
+[data-theme="dark"] .pageCardCover img { filter: brightness(0.9); }
+.pageCardCover .tileGlyph { width: 34px; height: 34px; }
+.pageCard:hover .fileGlyph, .pageCard.selected .fileGlyph { color: var(--accent); }
+.pageCardBody {
   display: flex;
   flex-direction: column;
   gap: 5px;
   padding: 8px 10px 9px;
 }
-.recentCardTitle {
+.pageCardTitle {
+  min-height: 2.6em;
   font-size: 12.5px;
   line-height: 1.3;
   font-weight: 500;
+  word-break: break-word;
   overflow: hidden;
   display: -webkit-box;
   -webkit-line-clamp: 2;
   -webkit-box-orient: vertical;
 }
-.recentCardMeta {
+.pageCardMeta {
   display: flex;
   align-items: baseline;
-  justify-content: space-between;
   gap: 6px;
   font-size: 10.5px;
 }
-.recentCardTime { color: var(--text-dim); white-space: nowrap; }
-.recentCardKind { font-size: 9.5px; font-weight: 600; letter-spacing: 0.04em; text-transform: uppercase; color: var(--text-dim); }
+.pageCardTime { margin-left: auto; color: var(--text-dim); white-space: nowrap; }
+.pageCardKind { font-size: 9.5px; font-weight: 600; letter-spacing: 0.04em; text-transform: uppercase; color: var(--text-dim); }
+.pageCardCount {
+  font-size: 10px;
+  color: var(--text-muted);
+  background: var(--bg-raised);
+  border-radius: 999px;
+  padding: 0 7px;
+}
+/* Label + folder chips: one clipped line, never wraps or grows the card.
+   The line is reserved even when a card has no chips (CardLabels renders the
+   span empty), so footers stay the same height. */
+.cardLabels {
+  min-height: 15px;
+  display: flex;
+  align-items: center;
+  gap: 4px;
+  min-width: 0;
+  overflow: hidden;
+}
+.cardLabels .folderTagBadge,
+.cardLabels .labelTagBadge { margin-left: 0; flex: 0 0 auto; }
+/* The new-folder placeholder + add-folder cards. */
+.pageCardAdd { border-style: dashed; background: none; color: var(--text-muted); }
+.pageCardAdd .pageCardCover { background: none; border-bottom-style: dashed; }
+.pageCardAdd .tileGlyph { color: var(--text-dim); width: 40px; height: 40px; }
+.pageCardAdd .pageCardTitle { color: var(--text-muted); font-weight: 400; }
 /* Look comes from .uiClose.uiCloseSm; this positions it and reveals on hover
    (always visible on touch, where there is no hover to reveal it). */
-.recentCardClose {
+.pageCardClose {
   position: absolute;
   top: 4px;
   right: 4px;
@@ -118,9 +153,9 @@
   transition: opacity 0.12s;
   background: var(--bg-card);
 }
-.recentCard:hover .recentCardClose, .recentCardClose:focus-visible { opacity: 1; }
+.pageCard:hover .pageCardClose, .pageCardClose:focus-visible { opacity: 1; }
 @media (hover: none) {
-  .recentCardClose { opacity: 0.7; }
+  .pageCardClose { opacity: 0.7; }
 }
 
 .categoryBackBtn {
@@ -270,6 +305,9 @@
 
 /* --- modern file-manager home: view toggle, grid tiles, pinned, pins --- */
 .homeListSpacer { flex: 1; }
+/* the sort trigger (a uiBtn sm, ~26px from its padding) sits between the
+   28px-tall toggle groups — pin its height so the toolbar reads as one row */
+.homeListBar .uiSelectBtn { height: 28px; padding-top: 0; padding-bottom: 0; }
 .homeViewToggle {
   display: inline-flex;
   gap: 2px;
@@ -323,9 +361,7 @@
   position: relative;
 }
 .fileRow:hover { background: var(--bg-block); }
-.fileRow.selected,
-.fileTile.selected,
-.folderTile.selected {
+.fileRow.selected {
   background: var(--accent-bg-light);
   border-color: var(--accent-dark);
 }
@@ -417,94 +453,23 @@
   overflow-x: auto;
   padding-bottom: 4px;
 }
-.pinnedTile {
-  position: relative;
-  flex: 0 0 auto;
-  width: 128px;
-  display: flex;
-  flex-direction: column;
-  align-items: center;
-  gap: 6px;
-  padding: 12px 8px 10px;
-  border-radius: 10px;
-  border: 1px solid var(--border-subtle);
-  background: var(--bg-block);
-  cursor: pointer;
-  user-select: none;
-}
-.pinnedTile:hover { border-color: var(--border); background: var(--bg-raised); }
-.pinnedTile.selected { border-color: var(--accent-dark); background: var(--accent-bg-light); }
-.pinnedTileName {
-  font-size: 12px;
-  color: var(--text-secondary);
-  text-align: center;
-  line-height: 1.25;
-  display: -webkit-box;
-  -webkit-line-clamp: 2;
-  -webkit-box-orient: vertical;
-  overflow: hidden;
-}
 
-/* file/folder grid */
+/* file/folder grid: fluid pageCard tracks — cards flex with the window */
 .fileGrid {
   display: grid;
-  grid-template-columns: repeat(auto-fill, minmax(132px, 1fr));
-  gap: 6px;
+  grid-template-columns: repeat(auto-fill, minmax(var(--card-w), 1fr));
+  gap: 8px;
   padding: 4px;
   align-content: start;
 }
-.fileTile, .folderTile {
-  position: relative;
-  display: flex;
-  flex-direction: column;
-  align-items: center;
-  gap: 8px;
-  padding: 14px 8px 10px;
-  border-radius: 12px;
-  border: 1px solid transparent;
-  background: none;
-  cursor: pointer;
-  user-select: none;
-  text-align: center;
-  font: inherit;
-}
-.fileTile:hover, .folderTile:hover { background: var(--bg-block); }
-.folderTile.dragOver { background: var(--accent-bg); border-color: var(--accent-dark); border-style: dashed; }
 .tileGlyph { width: 52px; height: 52px; flex-shrink: 0; }
 .folderGlyph { color: var(--accent); }
 .fileGlyph { color: var(--text-muted); }
-.fileTile:hover .fileGlyph, .fileTile.selected .fileGlyph { color: var(--accent); }
-.folderTileAdd .tileGlyph, .folderTileNew .tileGlyph { color: var(--text-dim); width: 46px; height: 46px; }
-.tileName {
-  font-size: 12.5px;
-  color: var(--text-secondary);
-  line-height: 1.25;
-  word-break: break-word;
-  display: -webkit-box;
-  -webkit-line-clamp: 2;
-  -webkit-box-orient: vertical;
-  overflow: hidden;
-}
-.tileKind {
-  font-size: 9.5px;
-  font-weight: 600;
-  letter-spacing: 0.04em;
-  color: var(--text-dim);
-  text-transform: uppercase;
-}
-.tileFolderCount {
-  font-size: 10px;
-  color: var(--text-muted);
-  background: var(--bg-raised);
-  border-radius: 999px;
-  padding: 0 7px;
-}
 .tileRenameInput {
   width: 100%;
   border-color: var(--accent-dark);
   font-size: 12px;
   padding: 2px 6px;
-  text-align: center;
 }
 
 /* pin button shared by grid tiles + pinned strip */
@@ -527,10 +492,10 @@
   right: 4px;
   opacity: 0;
   transition: opacity 0.12s;
+  background: var(--bg-card); /* legible over a snapshot cover */
 }
-.fileTile:hover .tilePinBtn { opacity: 0.7; }
+.pageCard:hover .tilePinBtn { opacity: 0.7; }
 .tilePinBtn:hover, .tilePinBtn.pinned { opacity: 1; }
-.pinnedTile .pinBtn { position: absolute; top: 4px; right: 4px; }
 
 /* folder tags on file rows */
 .folderTagBadge {
