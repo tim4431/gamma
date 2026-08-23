@@ -6,11 +6,24 @@ else; in dev, Vite proxies `/api` → `127.0.0.1:9001`.
 ## Auth model
 
 - A `session` cookie identifies the user (middleware sets
-  `request.state.user`). Write endpoints require it.
-- Share tokens (`?share=<token>`) give unauthenticated **read** access;
-  endpoints that support shared views also accept `?user=` as a fallback to
-  resolve whose data to read. Keep that read/write distinction when adding
-  endpoints.
+  `request.state.user`). Write endpoints require it (`require_user`).
+- Share tokens (`?share=<token>`) are the ONLY unauthenticated **read** path.
+  `resolve_user` returns the session user, or the owner named by a valid
+  `?share=` token — there is no `?user=` fallback (it used to trust any
+  username and leaked whole accounts). A share is scoped to one document:
+  read endpoints that can serve a share view also call `share_scope_doc()` and
+  `blocks_store.assert_block_in_doc()`, so a token can only reach its own
+  document's subtree and assets — root listing, backlinks, other docs, and
+  folder export are refused (403). Keep that read/write + scope distinction when
+  adding endpoints.
+- Outbound fetches of user-supplied URLs (PDF proxy/resolver, AI PDF
+  re-download) go through `gamma.net_guard.guarded_urlopen`, which blocks
+  non-http(s) schemes (`file:`, `ftp:`, …) and hosts that resolve to
+  loopback/private/link-local/metadata addresses (SSRF), re-checking on every
+  redirect.
+- Usernames and doc ids are validated (`db.safe_username` / `db.safe_doc_id`,
+  used by `user_db_path` / `user_uploads_dir` / `pdf_upload_path`) before they
+  become filesystem paths — no traversal.
 - `/api/admin/*` additionally requires the `is_admin` flag.
 
 ## Endpoints

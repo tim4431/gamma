@@ -11,17 +11,19 @@ server-side fetch — that's their bot protection, not a bug here).
 import hashlib
 import json
 import re
+import sqlite3
 import urllib.parse
 from urllib.error import HTTPError, URLError
-from urllib.request import Request as URLRequest, urlopen
+from urllib.request import Request as URLRequest
 
 from fastapi import APIRouter, HTTPException, Request
 from fastapi.responses import RedirectResponse, StreamingResponse
 from pydantic import BaseModel
 
-from ..auth import require_user, resolve_user
-from ..db import user_uploads_dir
+from ..auth import require_user, resolve_user, share_scope_doc
+from ..db import user_db_path, user_uploads_dir
 from ..logbuf import log
+from ..net_guard import guarded_urlopen
 from ..server_settings import can_store
 
 router = APIRouter(prefix="/api", tags=["pdf"])
@@ -81,7 +83,7 @@ def _open_access_pdf_for_doi(doi: str) -> tuple[str, str]:
         url = (f"https://api.unpaywall.org/v2/{urllib.parse.quote(doi)}"
                f"?email={urllib.parse.quote(CONTACT_EMAIL)}")
         req = URLRequest(url, headers={"User-Agent": "gamma-pdf-annotator/1.0"})
-        with urlopen(req, timeout=15) as resp:
+        with guarded_urlopen(req, timeout=15) as resp:
             data = json.loads(resp.read())
         locs = [l for l in (data.get("oa_locations") or []) if l.get("url_for_pdf")]
         order = {"publishedVersion": 0, "acceptedVersion": 1, "submittedVersion": 2}
@@ -115,7 +117,7 @@ def resolve_pdf(payload: ResolvePdfRequest, request: Request):
         """(final_url, content_type, body). Body is only read for non-PDF
         responses (capped) so HTML pages can be inspected for PDF pointers."""
         req = URLRequest(u, headers=BROWSER_HEADERS)
-        with urlopen(req, timeout=20) as resp:
+        with guarded_urlopen(req, timeout=20) as resp:
             ctype = resp.headers.get("Content-Type", "").lower()
             body = b"" if "application/pdf" in ctype else resp.read(600_000)
             return resp.geturl(), ctype, body
@@ -206,9 +208,25 @@ def resolve_pdf(payload: ResolvePdfRequest, request: Request):
                "and the page doesn't advertise a PDF). Download it in your browser and drop it onto Gamma.")
 
 
+def _share_allows_source(user: str, scope_doc_id: str, source_url: str) -> bool:
+    """A share link may only proxy the exact source URL recorded on its own
+    document's page block."""
+    with sqlite3.connect(user_db_path(user, "pages.db")) as conn:
+        row = conn.execute(
+            "SELECT json_extract(properties, '$.source_url'), "
+            "json_extract(properties, '$.sourceUrl') FROM unified_blocks "
+            "WHERE json_extract(properties, '$.doc_id') = ?",
+            (scope_doc_id,),
+        ).fetchone()
+    return bool(row) and source_url in {v for v in row if v}
+
+
 @router.get("/pdf")
 def proxy_pdf(source_url: str, request: Request):
     user = resolve_user(request)
+    scope = share_scope_doc(request)
+    if scope is not None and not _share_allows_source(user, scope, source_url):
+        raise HTTPException(status_code=403, detail="not accessible via this share link")
     uploads = user_uploads_dir(user)
     pdf_doc_id = hashlib.sha256(source_url.encode()).hexdigest()[:24]
     local_path = uploads / f"{pdf_doc_id}.pdf"
@@ -224,7 +242,7 @@ def proxy_pdf(source_url: str, request: Request):
     # a slow link looked like a hang.
     try:
         req = URLRequest(source_url, headers=BROWSER_HEADERS)
-        resp = urlopen(req, timeout=30)
+        resp = guarded_urlopen(req, timeout=30)
     except HTTPError as e:
         if e.code in (401, 403):
             raise HTTPException(
