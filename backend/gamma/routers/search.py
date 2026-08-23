@@ -27,7 +27,7 @@ from ..ai_context import pdf_path as _pdf_path
 from ..auth import require_user
 from ..db import page_now, user_db_path
 from ..logbuf import log
-from ..pdf_text import MAX_PAGES, extract_pages
+from ..pdf_text import extract_pages
 from ..textnorm import INDEX_VERSION, normalize_text
 
 router = APIRouter(prefix="/api", tags=["search"])
@@ -37,7 +37,6 @@ _FTS_SCHEMA = (
     "CREATE TABLE IF NOT EXISTS pdf_fts_docs (doc_id TEXT PRIMARY KEY, indexed_at TEXT NOT NULL, pages INTEGER, ver INTEGER NOT NULL DEFAULT 0)",
 )
 
-_MAX_PAGES = MAX_PAGES    # per document (the shared extractor's ceiling)
 _MAX_PAGE_CHARS = 20000   # per page
 
 _index_threads: dict[str, threading.Thread] = {}
@@ -56,7 +55,7 @@ def _ensure_schema(conn):
 
 def _extract_pages(path) -> list[str]:
     """Text per page (1-based order) — the shared extractor in gamma.pdf_text."""
-    return extract_pages(str(path), _MAX_PAGES)
+    return extract_pages(str(path))
 
 
 def _index_doc(user: str, doc_id: str):

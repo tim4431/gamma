@@ -35,6 +35,7 @@ import sqlite3
 
 from .ai_context import page_report_section
 from .db import page_now, user_db_path
+from .foldertags import clean_path, parse_tags
 from .logbuf import log
 from .textnorm import INDEX_VERSION
 
@@ -55,6 +56,10 @@ READ_CHARS_CAP = 20000
 READ_CHARS_MAX = 1_000_000  # sanity ceiling, matches the settings slider's range
 _DETAIL_CAP = 4000      # chars of a tool's output kept for the chat's expandable chip
 _ARG_CAP = 400          # chars per argument value in that chip
+# The zero-hit search retry: drop glue words shorter than this, keep at most
+# this many of the longest remaining terms.
+_RELAX_MIN_TERM_LEN = 3
+_RELAX_MAX_TERMS = 3
 
 # Base role prompt — the user-editable part (prompt editor, "Library agent");
 # agent_system() appends the mechanical scope/permission lines to it.
@@ -73,19 +78,7 @@ AGENT_PROMPT = (
 )
 
 
-# --- folder-tag helpers (keep in sync with frontend/src/libraryUtils.js) ------
-
-def parse_tags(raw: str) -> list[str]:
-    return [t.strip() for t in (raw or "").split(",") if t.strip()]
-
-
-def _clean_segment(name: str) -> str:
-    return re.sub(r"\s+", " ", re.sub(r"[,/]", " ", name or "")).strip()
-
-
-def clean_path(path: str) -> str:
-    return "/".join(s for s in (_clean_segment(p) for p in (path or "").split("/")) if s)
-
+# --- folder-tag helpers (shared rules live in gamma/foldertags.py) -------------
 
 def _add_tag(tags: list[str], path: str) -> list[str]:
     """addFolderTag: keep other tags, but refine away ancestors of the new path."""
@@ -230,12 +223,12 @@ def _run_list_pages(conn, user: str, scope: dict, args: dict):
 
 def _read_cap(value) -> int:
     """The effective per-call document-text cap: the request's user preference
-    when sane, READ_CHARS_CAP otherwise (0/None = not set)."""
+    clamped to READ_CHARS_MAX; READ_CHARS_CAP when unset (0/None/garbage)."""
     try:
         cap = int(value or 0)
     except (TypeError, ValueError):
         cap = 0
-    return cap if 0 < cap <= READ_CHARS_MAX else READ_CHARS_CAP
+    return min(cap, READ_CHARS_MAX) if cap > 0 else READ_CHARS_CAP
 
 
 def _run_read_page(conn, user: str, scope: dict, args: dict):
@@ -314,9 +307,12 @@ def _run_search_pdfs(conn, user: str, scope: dict, args: dict):
             # into zero hits, which the model reads as "the paper is silent".
             # Retry with only the longest words (they carry the meaning) so a
             # miss still points somewhere, clearly labelled as approximate.
-            terms = sorted((t for t in re.split(r"[\s,]+", query) if len(t) > 2),
+            tokens = [t for t in re.split(r"[\s,]+", query) if t]
+            terms = sorted((t for t in tokens if len(t) >= _RELAX_MIN_TERM_LEN),
                            key=len, reverse=True)
-            for keep in range(min(3, len(terms)), 0, -1):
+            for keep in range(min(_RELAX_MAX_TERMS, len(terms)), 0, -1):
+                if keep == len(tokens):
+                    continue  # same term set as the query that just missed
                 lines = fts(database, " ".join(terms[:keep]))
                 if lines:
                     relaxed = " ".join(terms[:keep])

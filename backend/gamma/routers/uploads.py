@@ -1,6 +1,5 @@
 """PDF/image uploads (content-hash deduped) and upload serving."""
 
-import hashlib
 import sqlite3
 
 from fastapi import APIRouter, File, HTTPException, Request, UploadFile
@@ -10,7 +9,15 @@ from ..auth import require_user, share_grant
 from ..blocks_store import fetch_subtree
 from ..db import user_db_path, user_uploads_dir
 from ..server_settings import check_upload_allowed, usage_bytes, user_limits
-from ..storage import ALLOWED_IMAGE_TYPES, IMAGE_EXTENSIONS, IMAGE_MEDIA_TYPES, find_upload_file
+from ..storage import (
+    ALLOWED_IMAGE_TYPES,
+    IMAGE_EXTENSIONS,
+    IMAGE_MEDIA_TYPES,
+    content_digest,
+    find_upload_file,
+    is_pdf,
+    store_pdf,
+)
 
 router = APIRouter(prefix="/api", tags=["uploads"])
 
@@ -29,24 +36,13 @@ async def get_quota(request: Request):
 @router.post("/uploads")
 async def upload_pdf(request: Request, file: UploadFile = File(...)):
     user = require_user(request)
-    uploads = user_uploads_dir(user)
-    uploads.mkdir(parents=True, exist_ok=True)
     contents = await file.read()
-    if len(contents) < 4 or contents[:4] != b"%PDF":
+    if not is_pdf(contents):
         raise HTTPException(status_code=400, detail="not a valid PDF (missing %PDF header)")
-
-    digest = hashlib.sha256(contents).hexdigest()[:24]
-    target = uploads / f"{digest}.pdf"
-    already_existed = target.exists()
-    if not already_existed:
-        # dedup first: a re-upload of a stored file costs nothing, so limits
-        # only gate genuinely new bytes
-        check_upload_allowed(user, len(contents))
-        target.write_bytes(contents)
-
+    doc_id, source_url, already_existed = store_pdf(user, contents)
     return {
-        "doc_id": digest,
-        "source_url": f"/api/uploads/{digest}.pdf",
+        "doc_id": doc_id,
+        "source_url": source_url,
         "size": len(contents),
         "already_existed": already_existed,
     }
@@ -60,7 +56,7 @@ async def upload_image(request: Request, file: UploadFile = File(...)):
     if file.content_type not in ALLOWED_IMAGE_TYPES:
         raise HTTPException(status_code=400, detail=f"unsupported image type: {file.content_type}")
     contents = await file.read()
-    digest = hashlib.sha256(contents).hexdigest()[:24]
+    digest = content_digest(contents)
     ext = IMAGE_EXTENSIONS[file.content_type]
     target = uploads / f"{digest}{ext}"
     already_existed = target.exists()

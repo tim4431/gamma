@@ -2,7 +2,6 @@
 embedded in the PDF itself (e.g. saved by SumatraPDF/Acrobat/Zotero), and whole
 Zotero libraries (a zip of the "Zotero RDF" export)."""
 
-import hashlib
 import json
 import os
 import posixpath
@@ -18,9 +17,10 @@ from fractional_indexing import generate_key_between, generate_n_keys_between
 
 from ..auth import require_user
 from ..db import page_now, pdf_upload_path, user_db_path, user_uploads_dir
-from ..server_settings import check_upload_allowed
 from ..blocks_store import last_child_position
+from ..foldertags import clean_path, parse_tags
 from ..logbuf import log
+from ..storage import content_digest, is_pdf, store_pdf
 from ..logseq_import import (
     edn_highlight_position,
     edn_highlight_to_block,
@@ -29,7 +29,7 @@ from ..logseq_import import (
     parse_edn,
     parse_logseq_md,
 )
-from ..zotero_import import clean_folder_path, find_zip_entry, parse_zotero_rdf, zip_name_map
+from ..zotero_import import find_zip_entry, parse_zotero_rdf, zip_name_map
 
 router = APIRouter(prefix="/api", tags=["import"])
 
@@ -43,17 +43,10 @@ async def import_logseq(
 ):
     # 1. Validate and store PDF
     user = require_user(request)
-    uploads = user_uploads_dir(user)
-    uploads.mkdir(parents=True, exist_ok=True)
     pdf_bytes = await pdf.read()
-    if len(pdf_bytes) < 4 or pdf_bytes[:4] != b"%PDF":
+    if not is_pdf(pdf_bytes):
         raise HTTPException(status_code=400, detail="not a valid PDF")
-    digest = hashlib.sha256(pdf_bytes).hexdigest()[:24]
-    target = uploads / f"{digest}.pdf"
-    if not target.exists():
-        check_upload_allowed(user, len(pdf_bytes))
-        target.write_bytes(pdf_bytes)
-    source_url = f"/api/uploads/{digest}.pdf"
+    digest, source_url, _ = store_pdf(user, pdf_bytes)
 
     # 2. Parse EDN → build quote→highlight lookup
     edn_text = (await edn.read()).decode("utf-8")
@@ -408,13 +401,8 @@ def import_pdf_annotations(payload: PdfAnnotsRequest, request: Request):
 # Zotero re-embeds annotations — so the item key is what survives a re-export).
 
 
-def _split_tags(raw: str) -> list[str]:
-    """Mirror of frontend parseFolderTags: comma-separated folder/label lists."""
-    return [t.strip() for t in (raw or "").split(",") if t.strip()]
-
-
 def _merge_tags(existing_raw: str, new_tags: list[str]) -> str:
-    merged = _split_tags(existing_raw)
+    merged = parse_tags(existing_raw)
     for t in new_tags:
         if t not in merged:
             merged.append(t)
@@ -432,11 +420,11 @@ def _zotero_item_page(conn, user, uploads, zf, names, base, item, prefix, now, r
             report["warnings"].append({"title": item["title"], "reason": f"file not in zip: {path}"})
             continue
         data = zf.read(real)
-        if len(data) < 4 or data[:4] != b"%PDF":
+        if not is_pdf(data):
             report["warnings"].append({"title": item["title"], "reason": f"not a PDF: {path}"})
             continue
         # First stored PDF becomes the page's file; extra attachments are left out.
-        pdf_bytes, digest = data, hashlib.sha256(data).hexdigest()[:24]
+        pdf_bytes, digest = data, content_digest(data)
         if len(item["pdf_paths"]) > 1:
             report["warnings"].append({"title": item["title"],
                                        "reason": f"only the first of {len(item['pdf_paths'])} PDFs imported"})
@@ -463,14 +451,11 @@ def _zotero_item_page(conn, user, uploads, zf, names, base, item, prefix, now, r
     # Attach the file only when the page doesn't already have one — a page
     # found by zotero_key keeps its existing PDF (and the highlights tied to it).
     if digest and not props.get("doc_id"):
-        target = uploads / f"{digest}.pdf"
-        if not target.exists():
-            # dedup first: limits only gate genuinely new bytes
-            check_upload_allowed(user, len(pdf_bytes))
-            target.write_bytes(pdf_bytes)
+        _, source_url, already_existed = store_pdf(user, pdf_bytes)
+        if not already_existed:
             report["pdfs_stored"] += 1
         props["doc_id"] = digest
-        props["source_url"] = f"/api/uploads/{digest}.pdf"
+        props["source_url"] = source_url
 
     if item["meta"]["title"] and not props.get("meta"):
         props["meta"] = item["meta"]
@@ -550,7 +535,7 @@ def import_zotero(request: Request, file: UploadFile = File(...),
             raise HTTPException(status_code=400, detail="no importable items in the export")
 
         names = zip_name_map(zf)
-        prefix = clean_folder_path(folder)
+        prefix = clean_path(folder)
         uploads = user_uploads_dir(user)
         uploads.mkdir(parents=True, exist_ok=True)
         now = page_now()

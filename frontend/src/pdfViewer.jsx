@@ -1300,6 +1300,10 @@ function OutlineNode({ item, depth, onDest, onUrl }) {
 // plain-text only. Portaled to <body> with fixed coordinates so the pinch
 // transform on .pdfZoomLayer (an ancestor transform makes position:fixed
 // resolve against it, not the viewport) can never misplace it.
+// .pdfNoteTip's CSS max-width is min(NOTE_TIP_W, 100vw - 2·VIEWPORT_PAD) —
+// keep these in sync with app.css.
+const NOTE_TIP_W = 520;
+const VIEWPORT_PAD = 8;
 function NoteBadge({ hlId, text, style, onClick, onContextMenu }) {
   const [tip, setTip] = useState(null);
   const btnRef = useRef(null);
@@ -1313,8 +1317,10 @@ function NoteBadge({ hlId, text, style, onClick, onContextMenu }) {
     const r = btnRef.current?.getBoundingClientRect();
     if (!r) return;
     const below = r.top < window.innerHeight * 0.45;
+    // Clamp so the tip's max width fits: .pdfNoteTip caps at NOTE_TIP_W px
+    // (app.css) plus VIEWPORT_PAD of breathing room on each side.
     setTip({
-      left: Math.max(8, Math.min(r.left - 12, window.innerWidth - 536)),
+      left: Math.max(VIEWPORT_PAD, Math.min(r.left - 12, window.innerWidth - NOTE_TIP_W - 2 * VIEWPORT_PAD)),
       ...(below ? { top: r.bottom + 6 } : { bottom: window.innerHeight - r.top + 6 }),
     });
   };

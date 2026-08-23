@@ -1,5 +1,5 @@
 import React from "react";
-import { API, apiJson, fmtBytes, copyText } from "./utils";
+import { API, apiJson, fmtBytes, copyText, importZoteroZip } from "./utils";
 import { MenuSelect } from "./menus";
 import {
   PaneHead, Section, Row, Toggle, Segmented, UnitInput, CharSlider, approxPages,
@@ -133,6 +133,7 @@ function GeneralSettings({ value }) {
             value={value.fileLabels}
             onChange={value.setFileLabels}
             options={[
+              // values = FILE_LABEL_MODES in prefs.js (its codec validates them)
               ["both", "Folders & labels"],
               ["folders", "Folders only"],
               ["labels", "Labels only"],
@@ -374,23 +375,8 @@ function ZoteroImportRow({ value, onDone }) {
     setBusy(true);
     value.setStatus("Importing Zotero library — this can take a while for big exports…");
     try {
-      const fd = new FormData();
-      fd.append("file", file);
-      fd.append("strip", value.stripAnnots ? "true" : "false");
-      const data = await apiJson(`${API}/import/zotero`, { method: "POST", body: fd });
-      const problems = (data.skipped?.length || 0) + (data.warnings?.length || 0);
-      if (problems) {
-        [...(data.skipped || []), ...(data.warnings || [])].forEach((s) =>
-          console.warn(`Zotero import: ${s.title} — ${s.reason}`));
-      }
-      const bits = [
-        `${data.pages_created} new page${data.pages_created === 1 ? "" : "s"}`,
-        data.pages_merged ? `${data.pages_merged} updated` : "",
-        data.annotations_imported ? `${data.annotations_imported} annotations` : "",
-        data.notes_imported ? `${data.notes_imported} notes` : "",
-        problems ? `${problems} issue${problems === 1 ? "" : "s"} (see browser console)` : "",
-      ].filter(Boolean).join(" · ");
-      value.setStatus(`Zotero import: ${bits}.`);
+      const { summary } = await importZoteroZip(file, value.stripAnnots);
+      value.setStatus(`Zotero import: ${summary}.`);
       onDone?.();
     } catch (err) {
       value.setStatus(`Zotero import failed: ${err.message}`);

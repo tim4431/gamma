@@ -25,6 +25,7 @@ from ..db import user_db_path, user_uploads_dir
 from ..logbuf import log
 from ..net_guard import guarded_urlopen
 from ..server_settings import can_store
+from ..storage import DIGEST_CHARS
 
 router = APIRouter(prefix="/api", tags=["pdf"])
 
@@ -228,7 +229,9 @@ def proxy_pdf(source_url: str, request: Request):
     if scope is not None and not _share_allows_source(user, scope, source_url):
         raise HTTPException(status_code=403, detail="not accessible via this share link")
     uploads = user_uploads_dir(user)
-    pdf_doc_id = hashlib.sha256(source_url.encode()).hexdigest()[:24]
+    # Proxy cache ids hash the URL (the bytes aren't known yet), same length
+    # as the content-hash upload names.
+    pdf_doc_id = hashlib.sha256(source_url.encode()).hexdigest()[:DIGEST_CHARS]
     local_path = uploads / f"{pdf_doc_id}.pdf"
     want_save = request.query_params.get("save") == "1"
 

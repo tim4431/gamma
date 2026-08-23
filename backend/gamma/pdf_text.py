@@ -33,19 +33,30 @@ MAX_PAGES = 5000
 _lock = threading.RLock()
 
 
-def iter_page_texts(src, max_pages: int = MAX_PAGES, start_page: int = 1):
-    """Yield per-page text for pages ``start_page``..``max_pages`` (1-based).
-    src is a path str or PDF bytes. Hold ``_lock`` while consuming this."""
+def _open(src):
+    """Open a PDF as ``("pdfium", doc)``, or ``("pypdf2", reader)`` when
+    pdfium can't open the file at all. src is a path str or PDF bytes."""
     try:
         import pypdfium2 as pdfium
-        pdf = pdfium.PdfDocument(src)
+        return "pdfium", pdfium.PdfDocument(src)
     except Exception as e:
         log.warning(f"[pdf-text] pypdfium2 open failed ({e}), falling back to PyPDF2")
         from PyPDF2 import PdfReader
-        reader = PdfReader(io.BytesIO(src) if isinstance(src, (bytes, bytearray)) else str(src))
-        if len(reader.pages) > max_pages:
-            log.warning(f"[pdf-text] {len(reader.pages)}-page PDF truncated to {max_pages} pages")
-        for i, pg in enumerate(reader.pages):
+        return "pypdf2", PdfReader(io.BytesIO(src) if isinstance(src, (bytes, bytearray)) else str(src))
+
+
+def _warn_truncated(total: int, max_pages: int):
+    if total > max_pages:
+        log.warning(f"[pdf-text] {total}-page PDF truncated to {max_pages} pages")
+
+
+def iter_page_texts(src, max_pages: int = MAX_PAGES, start_page: int = 1):
+    """Yield per-page text for pages ``start_page``..``max_pages`` (1-based).
+    src is a path str or PDF bytes. Hold ``_lock`` while consuming this."""
+    kind, pdf = _open(src)
+    if kind == "pypdf2":
+        _warn_truncated(len(pdf.pages), max_pages)
+        for i, pg in enumerate(pdf.pages):
             if i >= max_pages:
                 return
             if i + 1 < start_page:
@@ -56,8 +67,7 @@ def iter_page_texts(src, max_pages: int = MAX_PAGES, start_page: int = 1):
                 yield ""
         return
     try:
-        if len(pdf) > max_pages:
-            log.warning(f"[pdf-text] {len(pdf)}-page PDF truncated to {max_pages} pages")
+        _warn_truncated(len(pdf), max_pages)
         for i in range(max(0, start_page - 1), min(len(pdf), max_pages)):
             page = pdf[i]
             tp = page.get_textpage()
@@ -103,17 +113,13 @@ def page_count(src) -> int:
     """How many pages a PDF has (0 = unreadable). No text extraction."""
     with _lock:
         try:
-            import pypdfium2 as pdfium
-            pdf = pdfium.PdfDocument(src)
+            kind, pdf = _open(src)
+            if kind == "pypdf2":
+                return len(pdf.pages)
             try:
                 return len(pdf)
             finally:
                 pdf.close()
-        except Exception:
-            try:
-                from PyPDF2 import PdfReader
-                return len(PdfReader(
-                    io.BytesIO(src) if isinstance(src, (bytes, bytearray)) else str(src)).pages)
-            except Exception as e:
-                log.warning(f"[pdf-text] page count failed: {e}")
-                return 0
+        except Exception as e:
+            log.warning(f"[pdf-text] page count failed: {e}")
+            return 0

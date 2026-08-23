@@ -21,6 +21,10 @@ const TOOL_ROUNDS_CODEC = {
   },
 };
 
+// Chip-display modes for home cards/rows; the codec and the Settings
+// MenuSelect both derive from this list.
+export const FILE_LABEL_MODES = ["off", "labels", "folders", "both"];
+
 // Folder-agent per-tool permissions (Settings → Assistant → Folder agent).
 // Missing keys mean allowed, so new tools default on for existing users.
 const AGENT_PERMS_DEFAULT = { list: true, read: true, search: true, rename: true, move: true };
@@ -48,7 +52,7 @@ export function useAppPrefs() {
   const [recentThumbs, setRecentThumbs] = usePersistedFlag("gamma-recent-thumbs", true);
   // Folder/label chips on home file cards and list rows.
   const [fileLabels, setFileLabels] = usePersistedState("gamma-home-file-labels", "both", {
-    parse: (raw) => (raw === "off" || raw === "labels" || raw === "folders" || raw === "both" ? raw : undefined),
+    parse: (raw) => (FILE_LABEL_MODES.includes(raw) ? raw : undefined),
   });
 
   // --- Papers (Settings → General) ---
@@ -110,6 +114,8 @@ export function useAppPrefs() {
   const [multiContextChars, setMultiContextChars] = usePersistedState("gamma-multi-context-chars", 18000, CONTEXT_CHARS_CODEC);
   const [toolRounds, setToolRounds] = usePersistedState("gamma-ai-tool-rounds", 32, TOOL_ROUNDS_CODEC);
   // Per-read_page-call cap on document text the folder/paper agent may pull.
+  // The default matches the backend's fallback (READ_CHARS_CAP in
+  // gamma/ai_tools.py) — keep the two in sync.
   const [agentReadChars, setAgentReadChars] = usePersistedState("gamma-ai-read-chars", 20000, CONTEXT_CHARS_CODEC);
   const [agentPerms, setAgentPerms] = usePersistedState("gamma-ai-agent-perms", AGENT_PERMS_DEFAULT, AGENT_PERMS_CODEC);
 

@@ -1,7 +1,7 @@
 import React, { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState } from "react";
 import { Panel, PanelGroup, PanelResizeHandle } from "react-resizable-panels";
 import PdfViewer, { COLORS, clampZoom } from "./pdfViewer";
-import { API, apiJson, makeId, fmtBytes, getDocIdForUrl, isPdfFile, resolvePdfUrl, setExpectedUser, getExpectedUser, usePersistedState, usePersistedFlag, copyText, copyRich } from "./utils";
+import { API, apiJson, makeId, fmtBytes, getDocIdForUrl, isPdfFile, importZoteroZip, resolvePdfUrl, setExpectedUser, getExpectedUser, usePersistedState, usePersistedFlag, copyText, copyRich } from "./utils";
 import {
   BlockDropIndicator,
   ChatMarkdown,
@@ -148,8 +148,15 @@ async function collectEntryFiles(entries) {
 // "last viewed place" cover for the recents cards. Reads the canvases pdf.js
 // already painted, so it costs one drawImage per visible page. Returns null
 // while the visible pages aren't painted yet (caller retries later).
+// Size/quality keep a capture well under the server's MAX_SNAP_CHARS cap
+// (gamma/routers/prefs.py) — a bigger thumbnail would be rejected with a 413.
 const SNAP_WIDTH = 320;   // thumbnail backing width (px)
 const SNAP_MAX_HEIGHT = 480;
+const SNAP_QUALITY = 0.55;
+// The recents queue length (cards in the "Recently viewed" strip); the local
+// snapshot cache prunes to the same count. The server-side snapshot store
+// keeps a few spares above this (PAGE_SNAPS_CAP = 30 in gamma/db.py).
+const RECENTS_CAP = 24;
 function captureViewerSnapshot() {
   const scroller = document.querySelector(".pdfViewer");
   if (!scroller) return null;
@@ -185,13 +192,13 @@ function captureViewerSnapshot() {
   // Mostly-blank captures (pages still rendering) are worse than keeping the
   // previous snapshot — require the strip to be at least 40% real page.
   if (covered < vr.width * capH * 0.4) return null;
-  try { return out.toDataURL("image/jpeg", 0.55); } catch { return null; }
+  try { return out.toDataURL("image/jpeg", SNAP_QUALITY); } catch { return null; }
 }
 
 // Horizontal card strip. No arrow chrome: a mouse wheel scrolls it sideways
 // (native non-passive listener — React's synthetic onWheel can't
 // preventDefault), touch swipes pan natively via overflow-x.
-function CardCarousel({ label, children }) {
+function CardCarousel({ label, children, className }) {
   const trackRef = useRef(null);
   useEffect(() => {
     const el = trackRef.current;
@@ -208,7 +215,7 @@ function CardCarousel({ label, children }) {
     return () => el.removeEventListener("wheel", onWheel);
   }, []);
   return (
-    <div className="carouselRow">
+    <div className={"carouselRow" + (className ? " " + className : "")}>
       {label ? <div className="carouselLabel">{label}</div> : null}
       <div className="carouselTrack" ref={trackRef}>{children}</div>
     </div>
@@ -708,6 +715,18 @@ export default function App() {
     lastPageClickRef.current = id;
     setSelectedFolders(new Set());
     setSelectedPages(new Set([id]));
+  }
+
+  // Right-click on ANY page surface (grid card, list row, recents/pinned/
+  // category strips): keep an existing multi-selection, otherwise select just
+  // this page, then open the shared page menu at the cursor.
+  function openPageMenu(id, name) {
+    return (e) => {
+      e.preventDefault();
+      setSelectedPages((prev) => (prev.has(id) ? prev : new Set([id])));
+      lastPageClickRef.current = id;
+      setHomeMenu({ kind: "page", id, name, x: e.clientX, y: e.clientY });
+    };
   }
 
   // Double-click / Enter / context-menu "Open": the old single-click behavior.
@@ -1511,13 +1530,13 @@ export default function App() {
       clearTimeout(recentsPushTimerRef.current);
       recentsPushTimerRef.current = null;
     }
-    let list = (Array.isArray(value) ? value : []).filter((r) => r && r.id).slice(0, 24);
+    let list = (Array.isArray(value) ? value : []).filter((r) => r && r.id).slice(0, RECENTS_CAP);
     // The page open in THIS window stays the freshest entry even when the
     // stored queue predates it (just opened here, push not flushed yet) —
     // merged and pushed back, tabs-style.
     const fid = focusedBlockIdRef.current;
     if (fid && list[0]?.id !== fid) {
-      list = [{ id: fid, at: new Date().toISOString() }, ...list.filter((r) => r.id !== fid)].slice(0, 24);
+      list = [{ id: fid, at: new Date().toISOString() }, ...list.filter((r) => r.id !== fid)].slice(0, RECENTS_CAP);
       pushRecentsToServer(list);
     }
     setRecentViews(list);
@@ -1526,7 +1545,7 @@ export default function App() {
   function pushRecentView(id) {
     if (!id) return;
     setRecentViews((prev) => {
-      const next = [{ id, at: new Date().toISOString() }, ...prev.filter((r) => r.id !== id)].slice(0, 24);
+      const next = [{ id, at: new Date().toISOString() }, ...prev.filter((r) => r.id !== id)].slice(0, RECENTS_CAP);
       const u = prefsUserRef.current;
       if (u) { try { localStorage.setItem(`gamma-recent-views:${u}`, JSON.stringify(next)); } catch {} }
       pushRecentsToServer(next);
@@ -1587,9 +1606,9 @@ export default function App() {
     const at = new Date().toISOString();
     const next = { ...pageSnapsRef.current, [id]: { img, at } };
     const ids = Object.keys(next);
-    if (ids.length > 24) {
+    if (ids.length > RECENTS_CAP) {
       ids.sort((a, b) => (next[a].at || "").localeCompare(next[b].at || ""));
-      for (const drop of ids.slice(0, ids.length - 24)) delete next[drop];
+      for (const drop of ids.slice(0, ids.length - RECENTS_CAP)) delete next[drop];
     }
     setSnapsState(next);
     pushSnapSoon(id, img, at);
@@ -3204,22 +3223,9 @@ export default function App() {
     const taskId = addTransfer({ name: `Zotero import — ${file.name.slice(0, 48)}`, kind: "import", info: "importing…" });
     setStatus("Importing Zotero library — this can take a while for big exports…");
     try {
-      const form = new FormData();
-      form.append("file", file);
-      form.append("strip", strip ? "true" : "false");
-      const data = await apiJson(`${API}/import/zotero`, { method: "POST", body: form });
-      const problems = (data.skipped?.length || 0) + (data.warnings?.length || 0);
-      [...(data.skipped || []), ...(data.warnings || [])].forEach((s) =>
-        console.warn(`Zotero import: ${s.title} — ${s.reason}`));
+      const { data, summary } = await importZoteroZip(file, strip);
       updateTransfer(taskId, { status: "done", info: `${data.pages_created + data.pages_merged} pages` });
-      const bits = [
-        `${data.pages_created} new page${data.pages_created === 1 ? "" : "s"}`,
-        data.pages_merged ? `${data.pages_merged} updated` : "",
-        data.annotations_imported ? `${data.annotations_imported} annotations` : "",
-        data.notes_imported ? `${data.notes_imported} notes` : "",
-        problems ? `${problems} issue${problems === 1 ? "" : "s"} (details in the browser console)` : "",
-      ].filter(Boolean).join(" · ");
-      setStatus(`Zotero import: ${bits}.`);
+      setStatus(`Zotero import: ${summary}.`);
       refreshQuota?.();
       await fetchHomeBlocks();
     } catch (err) {
@@ -3610,14 +3616,9 @@ export default function App() {
   }
 
   function closeTab(id) {
-    const idx = openTabs.findIndex((t) => t.id === id);
     const next = openTabs.filter((t) => t.id !== id);
     updateTabs(next);
-    if (id === focusedBlockId) {
-      const neighbor = next[Math.min(idx, next.length - 1)];
-      if (neighbor) openBlock(neighbor.id, { restoreScroll: true });
-      else goHome();
-    }
+    if (id === focusedBlockId) goHome();
   }
 
   // Drag any window by its grip; drop zones dock it left, right, or bottom.
@@ -4133,26 +4134,36 @@ export default function App() {
     }
     return [...set].sort((a, b) => a.localeCompare(b));
   }, [allFolderPaths, folderFilter]);
-  // Device-local view history as a lookup ({pageId → ISO time}, capped at 24
-  // entries) — feeds the "Recently viewed" sort; unviewed pages have no entry.
+  // The account-synced view history as a lookup ({pageId → ISO time},
+  // RECENTS_CAP entries) — feeds the "Recently viewed" sort; unviewed pages
+  // have no entry.
   const viewedAtById = useMemo(() => new Map(recentViews.map((r) => [r.id, r.at])), [recentViews]);
   // Per-folder rollup: page count + latest contained-page timestamps, so
   // folders can sort on the same criteria as files. Computed for EVERY known
   // path, not just the level on screen — the context menu's folder flyout
-  // sorts the whole library by the same clock.
+  // sorts the whole library by the same clock. One pass over the pages (each
+  // page credits every ancestor prefix of its folder tags) — this recomputes
+  // on every recents push, so a per-path page scan would be quadratic.
   const folderMeta = useMemo(() => {
     const m = {};
-    for (const f of allFolderPaths) {
-      let count = 0, updated = "", created = "", viewed = "";
-      for (const b of pageBlocks) {
-        if (!b._folders.some((t) => t === f || t.startsWith(f + "/"))) continue;
-        count++;
-        if (b._updatedAt > updated) updated = b._updatedAt;
-        if (b._createdAt > created) created = b._createdAt;
-        const v = viewedAtById.get(b._pageId) || "";
-        if (v > viewed) viewed = v;
+    for (const f of allFolderPaths) m[f] = { count: 0, updated: "", created: "", viewed: "" };
+    for (const b of pageBlocks) {
+      const v = viewedAtById.get(b._pageId) || "";
+      const seen = new Set();
+      for (const t of b._folders) {
+        const segs = t.split("/");
+        for (let i = 1; i <= segs.length; i++) {
+          const f = segs.slice(0, i).join("/");
+          if (seen.has(f)) continue;
+          seen.add(f);
+          const meta = m[f];
+          if (!meta) continue;
+          meta.count++;
+          if (b._updatedAt > meta.updated) meta.updated = b._updatedAt;
+          if (b._createdAt > meta.created) meta.created = b._createdAt;
+          if (v > meta.viewed) meta.viewed = v;
+        }
       }
-      m[f] = { count, updated, created, viewed };
     }
     return m;
   }, [allFolderPaths, pageBlocks, viewedAtById]);
@@ -4959,12 +4970,7 @@ export default function App() {
                           folders={parseFolderTags(b.properties?.folder)} labels={parseFolderTags(b.properties?.category)}
                           labelMode={fileLabels} onClick={() => openBlock(b.id)}
                           className={selectedPages.has(b.id) ? "selected" : ""}
-                          onContextMenu={(e) => {
-                            e.preventDefault();
-                            setSelectedPages((prev) => (prev.has(b.id) ? prev : new Set([b.id])));
-                            lastPageClickRef.current = b.id;
-                            setHomeMenu({ kind: "page", id: b.id, name: b.content, x: e.clientX, y: e.clientY });
-                          }} />
+                          onContextMenu={openPageMenu(b.id, b.content)} />
                       ))}
                     </CardCarousel>
                   </>
@@ -4976,23 +4982,15 @@ export default function App() {
               // filtering still works via ?category= URLs and search chips
               // (handled by the categoryFilter branch above).
               return recentViewedPages.length > 0 ? (
-                <CardCarousel label="Recently viewed">
+                <CardCarousel label="Recently viewed" className="recentsCarousel">
                   {recentViewedPages.map((b) => (
                     <PageCard key={b._pageId} title={b.content} glyph={<FileGlyph isPdf={!!b._sourceUrl} />}
                       snap={recentThumbs ? pageSnaps[b._pageId]?.img : null}
                       kind={b._sourceUrl ? "PDF" : "Note"} time={formatRelativeTime(b._viewedAt)}
                       folders={b._folders} labels={b._labels} labelMode={fileLabels}
-                     
                       className={selectedPages.has(b._pageId) ? "selected" : ""}
                       onClick={() => openPage(b._pageId)}
-                      onContextMenu={(e) => {
-                        // Same menu as a library card — the shortcut strip is
-                        // just another view of the same page.
-                        e.preventDefault();
-                        setSelectedPages((prev) => (prev.has(b._pageId) ? prev : new Set([b._pageId])));
-                        lastPageClickRef.current = b._pageId;
-                        setHomeMenu({ kind: "page", id: b._pageId, name: b.content, x: e.clientX, y: e.clientY });
-                      }}>
+                      onContextMenu={openPageMenu(b._pageId, b.content)}>
                       <button
                         className="uiClose uiCloseSm pageCardClose"
                         title="Remove from Recently viewed"
@@ -5018,17 +5016,11 @@ export default function App() {
                       kind={b._sourceUrl ? "PDF" : "Note"}
                       time={formatRelativeTime(b._updatedAt)}
                       folders={b._folders} labels={b._labels} labelMode={fileLabels}
-                     
                       draggable
                       onDragStart={(e) => { e.dataTransfer.setData("text/plain", b._pageId); e.dataTransfer.effectAllowed = "move"; }}
                       onClick={(e) => handlePageClick(b, e)}
                       onDoubleClick={() => openPage(b._pageId)}
-                      onContextMenu={(e) => {
-                        e.preventDefault();
-                        setSelectedPages((prev) => (prev.has(b._pageId) ? prev : new Set([b._pageId])));
-                        lastPageClickRef.current = b._pageId;
-                        setHomeMenu({ kind: "page", id: b._pageId, name: b.content, x: e.clientX, y: e.clientY });
-                      }}
+                      onContextMenu={openPageMenu(b._pageId, b.content)}
                     >
                       <button
                         className="pinBtn tilePinBtn pinned"
@@ -5117,7 +5109,6 @@ export default function App() {
                         count={folderMeta[f]?.count || 0}
                         time={cardTime(item)}
                         labelMode={fileLabels}
-                       
                         renameNode={folderRenaming?.name === f ? (
                           <input
                             autoFocus
@@ -5155,7 +5146,6 @@ export default function App() {
                           kind={b._sourceUrl ? "PDF" : "Note"}
                           time={cardTime(item)}
                           folders={b._folders} labels={b._labels} labelMode={fileLabels}
-                         
                           renameNode={isEditing ? (
                             <input
                               autoFocus
@@ -5173,12 +5163,7 @@ export default function App() {
                           onDragStart={(e) => { e.dataTransfer.setData("text/plain", id); e.dataTransfer.effectAllowed = "move"; }}
                           onClick={(e) => handlePageClick(b, e)}
                           onDoubleClick={() => { if (!isEditing) openPage(id); }}
-                          onContextMenu={(e) => {
-                            e.preventDefault();
-                            setSelectedPages((prev) => (prev.has(id) ? prev : new Set([id])));
-                            lastPageClickRef.current = id;
-                            setHomeMenu({ kind: "page", id, name: b.content, x: e.clientX, y: e.clientY });
-                          }}
+                          onContextMenu={openPageMenu(id, b.content)}
                         >
                           <button
                             className={`pinBtn tilePinBtn ${isPinned ? "pinned" : ""}`}
@@ -5190,7 +5175,7 @@ export default function App() {
                     })}
                     {homeKinds === "files" ? null : newFolderOpen ? (
                       <PageCard
-                        className="pageCardNew"
+                        className="pageCardAdd"
                         glyph={<FolderGlyph />}
                         kind="Folder"
                         labelMode={fileLabels}
@@ -5279,12 +5264,7 @@ export default function App() {
                           onDragStart={(e) => { e.dataTransfer.setData("text/plain", id); e.dataTransfer.effectAllowed = "move"; }}
                           onClick={(e) => handlePageClick(b, e)}
                           onDoubleClick={() => { if (!isEditing) openPage(id); }}
-                          onContextMenu={(e) => {
-                            e.preventDefault();
-                            setSelectedPages((prev) => (prev.has(id) ? prev : new Set([id])));
-                            lastPageClickRef.current = id;
-                            setHomeMenu({ kind: "page", id, name: b.content, x: e.clientX, y: e.clientY });
-                          }}
+                          onContextMenu={openPageMenu(id, b.content)}
                           title={`${b.content}\nClick to select · double-click to open`}
                         >
                           <span className="fileRowIcon"><FileGlyph isPdf={!!b._sourceUrl} /></span>
@@ -5405,13 +5385,7 @@ export default function App() {
                     }
                   },
                   onPageOpen: handlePageClick,
-                  onPageContext: (pageBlock, e) => {
-                    const id = pageBlock._pageId;
-                    // Right-click keeps an existing multi-selection; otherwise selects the card
-                    setSelectedPages((prev) => (prev.has(id) ? prev : new Set([id])));
-                    lastPageClickRef.current = id;
-                    setHomeMenu({ kind: "page", id, name: pageBlock.content, x: e.clientX, y: e.clientY });
-                  },
+                  onPageContext: (pageBlock, e) => openPageMenu(pageBlock._pageId, pageBlock.content)(e),
                   selectedPageIds: selectedPages,
                   onChangeText: (id, text) => {
                     if (readOnly) return;

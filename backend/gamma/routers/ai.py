@@ -30,6 +30,7 @@ from ..ai_tools import (
     MAX_TOOL_ACTIONS,
     MAX_TOOL_ROUNDS,
     MUTATING_TOOLS,
+    READ_CHARS_MAX,
     agent_system,
     agent_tools,
     run_agent_tool,
@@ -103,7 +104,7 @@ class AIChatRequest(BaseModel):
     permissions: dict = Field(default_factory=dict)
     agent_system: str = ""
     tool_rounds: int = Field(default=0, ge=0, le=100)
-    read_char_limit: int = Field(default=0, ge=0, le=1_000_000)
+    read_char_limit: int = Field(default=0, ge=0, le=READ_CHARS_MAX)
     context_char_limit: int = Field(default=8000, ge=100, le=1_000_000)
     multi_context_char_limit: int = Field(default=18000, ge=100, le=1_000_000)
 

@@ -16,6 +16,9 @@ from .textnorm import normalize_text
 
 
 MAX_ATTACH_PDF_BYTES = 15 * 1024 * 1024
+# Cap on the selected-PDF-passages payload a chat request may carry — the
+# prompt copy (final_prompt) and the context locator (gather_inputs) share it.
+MAX_SELECTION_CHARS = 24_000
 
 
 def parse_images(images: list) -> list[tuple[str, str]]:
@@ -56,7 +59,7 @@ def parse_files(files: list) -> list[str]:
 def final_prompt(payload) -> str:
     """Append the selected PDF passage to a user's current prompt."""
     prompt = payload.prompt
-    selection = (payload.selection or "").strip()[:24000]
+    selection = (payload.selection or "").strip()[:MAX_SELECTION_CHARS]
     if selection:
         prompt = (
             f"{prompt}\n\n"
@@ -198,23 +201,16 @@ def extract_pdf_context(user: str, doc_id: str, limit: int = 8000) -> str:
     paper and answers detail questions from memory rather than looking them
     up — measurably the biggest source of confident wrong answers.
     """
+    text, next_offset, _ = pdf_excerpt(user, doc_id, limit)
+    if next_offset is None:
+        return text  # the whole document fits (or nothing extracted) — no caveat needed
     path = pdf_path(user, doc_id)
-    if not path:
-        log.warning("[ai_chat] PDF still not found after download attempt")
-        return ""
-    try:
-        text = extract_text(str(path), limit)
-    except Exception as error:
-        log.warning(f"[ai_chat] extraction error: {error}")
-        return PDF_EXTRACT_FAILED
-    if len(text) <= limit:
-        return text  # the whole document fits — no caveat needed
-    pages = page_count(str(path))
+    pages = page_count(str(path)) if path else 0
     where = f" of this {pages}-page PDF" if pages else ""
     return (f"[EXCERPT — the first {limit:,} characters{where}. The rest of the "
             f"document is NOT shown below. Anything outside this excerpt has to "
             f"be looked up before you can answer about it.]\n\n"
-            + truncate(text, limit))
+            f"{text}\n…[truncated]")
 
 
 # One line per PDF page, read from the search index (which already holds the
@@ -223,22 +219,28 @@ def extract_pdf_context(user: str, doc_id: str, limit: int = 8000) -> str:
 # in testing this cut tool calls and stopped it settling for a plausible but
 # wrong neighbouring page.
 MAP_BUDGET = 2400
+# Chars of page text one outline line shows; the substr fetches a little extra
+# so whitespace collapse still fills the line, and the sampling step estimates
+# each line's cost as the text plus the "  p.N: " prefix.
+_MAP_LINE_CHARS = 80
 
 
 def document_map(user: str, doc_id: str, budget: int = MAP_BUDGET) -> str:
     """How each PDF page starts, as a compact outline. "" when the document
-    isn't indexed yet (search is unavailable then too)."""
+    isn't indexed yet (search is unavailable then too). Reads whichever index
+    version is stored — a page-start outline barely depends on normalization,
+    and stale docs re-index lazily through the search paths anyway."""
     try:
         with sqlite3.connect(user_db_path(user, "data.db")) as connection:
             rows = connection.execute(
-                "SELECT page, substr(content, 1, 90) FROM pdf_fts "
+                f"SELECT page, substr(content, 1, {_MAP_LINE_CHARS + 10}) FROM pdf_fts "
                 "WHERE doc_id = ? ORDER BY page", (doc_id,)).fetchall()
     except sqlite3.OperationalError:
         return ""  # index tables don't exist yet
     if len(rows) < 3:
         return ""  # too short to need a map
-    step = max(1, len(rows) * 100 // budget)
-    lines = [f"  p.{page}: {' '.join((head or '').split())[:80]}"
+    step = max(1, len(rows) * (_MAP_LINE_CHARS + 20) // budget)
+    lines = [f"  p.{page}: {' '.join((head or '').split())[:_MAP_LINE_CHARS]}"
              for page, head in rows[::step] if (head or "").strip()]
     if not lines:
         return ""
@@ -295,27 +297,54 @@ def pdf_text_from_b64(data: str, limit: int = 8000) -> str:
         return ""
 
 
-def _locate_passage(pages: list[str], passage: str) -> int | None:
+# Selected-passage location: how much of a passage's head anchors the search,
+# the least head that's trustworthy, and how far the seam window reaches to
+# either side of a page boundary.
+_ANCHOR_CHARS = 200
+_MIN_ANCHOR_CHARS = 12
+_SEAM_CHARS = 500
+_MAX_SELECTIONS = 6           # passages per request; the chat UI "---"-joins them
+_HEAD_GROUNDING_CHARS = 2000  # head slice (title/abstract) kept for grounding
+
+
+def _normalized_pages(pages: list[str]) -> tuple[list[str], list[str]]:
+    """Each page's normalized text plus the page-seam joins (page i glued to
+    i+1, so hyphenated line breaks across the boundary re-join), computed once
+    so locating several passages doesn't re-normalize the whole document."""
+    norm = [normalize_text(p).lower() for p in pages]
+    seams = [normalize_text(a[-_SEAM_CHARS:] + "\n" + b[:_SEAM_CHARS]).lower()
+             for a, b in zip(pages, pages[1:])]
+    return norm, seams
+
+
+def _locate_passage(norm: list[str], seams: list[str], passage: str) -> int | None:
     """1-based PDF page a selected passage starts on (None = not found).
     Matches the passage's head on normalized text (textnorm rules — the same
     canon the pdf.js text layer and the extractors converge to), so viewer
     selections find their spot despite ligature/whitespace differences."""
-    needle = normalize_text(passage).lower()[:200]
-    if len(needle) < 12:  # too short to be a trustworthy anchor
+    needle = normalize_text(passage).lower()[:_ANCHOR_CHARS]
+    if len(needle) < _MIN_ANCHOR_CHARS:  # too short to be a trustworthy anchor
         return None
-    previous = None
-    for page_no, page in enumerate(pages, start=1):
-        if needle in normalize_text(page).lower():
+    for page_no, page_norm in enumerate(norm, start=1):
+        if needle in page_norm:
             return page_no
         # A selection starting near the bottom of a page continues onto the
-        # next — normalize the seam as one string (so hyphenated line breaks
-        # across the boundary re-join) and credit the page it starts on.
-        if previous is not None:
-            seam = normalize_text(previous[-500:] + "\n" + page[:500]).lower()
-            if needle in seam:
-                return page_no - 1
-        previous = page
+        # next — the seam covers the boundary and credits the page it starts on.
+        if page_no >= 2 and needle in seams[page_no - 2]:
+            return page_no - 1
     return None
+
+
+def _join_upto(pages: list[str], start: int, limit: int) -> str:
+    """pages[start:] joined with blank lines, cut at limit chars — without
+    materializing the whole rest of the document just to slice it."""
+    parts, total = [], 0
+    for page in pages[start:]:
+        parts.append(page)
+        total += len(page) + 2
+        if total >= limit:
+            break
+    return "\n\n".join(parts)[:limit]
 
 
 def selection_context(user: str, doc_id: str, selection: str, budget: int) -> str | None:
@@ -333,15 +362,16 @@ def selection_context(user: str, doc_id: str, selection: str, budget: int) -> st
     except Exception as error:
         log.warning(f"[ai_chat] selection-context extraction error: {error}")
         return None
-    # The chat UI joins multiple selections with "---" on its own line.
-    passages = [p.strip() for p in re.split(r"\n\s*---\s*\n", selection) if p.strip()][:6]
+    passages = [p.strip() for p in re.split(r"\n\s*---\s*\n", selection)
+                if p.strip()][:_MAX_SELECTIONS]
+    norm, seams = _normalized_pages(pages)
     located = [(p, page_no) for p in passages
-               if (page_no := _locate_passage(pages, p))]
+               if (page_no := _locate_passage(norm, seams, p))]
     if not located:
         return None
     sections = []
-    head = min(2000, budget // 4)
-    head_text = "\n\n".join(pages)[:head].strip()
+    head = min(_HEAD_GROUNDING_CHARS, budget // 4)
+    head_text = _join_upto(pages, 0, head).strip()
     if head_text:
         sections.append(f"Start of the document (for grounding):\n{head_text}")
     share = max(1, (budget - head) // len(located))
@@ -351,7 +381,7 @@ def selection_context(user: str, doc_id: str, selection: str, budget: int) -> st
         if page_no in seen:  # passages on one page share a window
             continue
         seen.add(page_no)
-        window = "\n\n".join(pages[page_no - 1:])[:share].strip()
+        window = _join_upto(pages, page_no - 1, share).strip()
         if window:
             windows += 1
             sections.append("Text around the selected passage "
@@ -469,7 +499,7 @@ def gather_inputs(user: str, payload, allow_native: bool) -> tuple[list[str], st
             # With a selection, center the budget on the selected passages
             # (located by page) instead of the start of the paper; fall back
             # to the plain head excerpt when nothing could be located.
-            selection = (payload.selection or "").strip()[:24000]
+            selection = (payload.selection or "").strip()[:MAX_SELECTION_CHARS]
             text = (selection_context(user, payload.doc_id, selection,
                                       payload.context_char_limit)
                     if selection else None)
