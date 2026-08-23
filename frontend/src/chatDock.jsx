@@ -7,7 +7,12 @@ import React, { useEffect, useMemo, useRef, useState } from "react";
 import { API, apiJson, copyText, isPdfFile } from "./utils";
 import { DockWindow, ChatMarkdown, AutoGrowTextarea, useCopied } from "./widgets";
 import { MenuSelect } from "./menus";
-import { ArrowUpIcon, BookIcon, CheckIcon, ChevronDownIcon, ChevronUpIcon, CopyIcon, FileIcon, FolderIcon, MicIcon, PaperclipIcon, PencilIcon, StopIcon, XIcon } from "./icons";
+import { ArrowUpIcon, BookIcon, CheckIcon, ChevronDownIcon, ChevronUpIcon, CopyIcon, FileIcon, FolderIcon, ListIcon, MicIcon, PaperclipIcon, PencilIcon, SearchIcon, StopIcon, XIcon } from "./icons";
+
+// Folder-agent tool chips: icon per action kind; rename/move are the kinds
+// that changed the library (they trigger the home-feed refresh).
+const ACTION_ICONS = { rename: PencilIcon, move: FolderIcon, search: SearchIcon, read: BookIcon, list: ListIcon };
+const MUTATING_KINDS = new Set(["rename", "move"]);
 
 export default function ChatDock({
   docId, focusedBlockId, homeBlocks, pdfTitle, openTabs,
@@ -20,11 +25,11 @@ export default function ChatDock({
   openPopover, setOpenPopover,
   setStatus,
   // Home/folder view: the folder path being viewed ("" = library root) —
-  // enables the folder-agent tools; null in the paper view. agentRead /
-  // agentWrite are the Settings permission toggles (read papers/notes/search;
-  // rename/move) and toolRounds the round budget. When the AI applied
-  // changes, onLibraryChange refreshes the home feed.
-  organizeFolder = null, toolRounds, agentRead = true, agentWrite = true, onLibraryChange,
+  // enables the folder-agent tools; null in the paper view. agentPerms is the
+  // Settings per-tool permission map ({list, read, search, rename, move}) and
+  // toolRounds the round budget. When the AI applied changes, onLibraryChange
+  // refreshes the home feed.
+  organizeFolder = null, toolRounds, agentPerms, agentSystem, onLibraryChange,
   onGrip, onGripDoubleClick, collapsed, onClose,
 }) {
   const [chatMessages, setChatMessages] = useState([]);
@@ -39,6 +44,10 @@ export default function ChatDock({
   // another. App migrates the buckets on folder rename/move/delete
   // (POST /api/chats/folder-rename).
   const chatKey = focusedBlockId || (organizeFolder ? `home:${organizeFolder}` : "home");
+  // What the folder agent may do here, per the Settings toggles.
+  const perm = (key) => agentPerms?.[key] !== false;
+  const agentReads = perm("list") || perm("read") || perm("search");
+  const agentWrites = perm("rename") || perm("move");
   const chatKeyRef = useRef(chatKey);
   chatKeyRef.current = chatKey;
   // Which conversation the in-flight request belongs to (typing indicator
@@ -291,9 +300,14 @@ export default function ChatDock({
           context_char_limit: chatContextChars,
           multi_context_char_limit: multiContextChars,
           stream: true,
-          ...(organizeFolder != null && (agentRead || agentWrite)
-            ? { organize: true, folder: organizeFolder, tool_rounds: toolRounds || 0,
-                allow_read: !!agentRead, allow_write: !!agentWrite }
+          // Agent scope: folder chats reach the folder's pages; paper chats
+          // get the read tools (read_page / search_pdfs) for their own paper.
+          ...(organizeFolder != null && (agentReads || agentWrites)
+            ? { agent_scope: "folder", folder: organizeFolder, tool_rounds: toolRounds || 0,
+                permissions: agentPerms || {}, agent_system: agentSystem || "" }
+            : focusedBlockId && (perm("read") || perm("search"))
+            ? { agent_scope: "page", page_id: focusedBlockId, tool_rounds: toolRounds || 0,
+                permissions: agentPerms || {}, agent_system: agentSystem || "" }
             : {}),
         }),
       });
@@ -333,8 +347,9 @@ export default function ChatDock({
       setChatLoading(false);
       setChatLoadingKey("");
       chatAbortRef.current = null;
-      // Organizer tools renamed/moved/labeled pages — reload the home feed.
-      if (actions.length) onLibraryChange?.();
+      // Agent tools renamed/moved pages — reload the home feed. Read-only
+      // tool calls (list/read/search) render as chips but change nothing.
+      if (actions.some((a) => MUTATING_KINDS.has(a.kind))) onLibraryChange?.();
     }
   }
 
@@ -611,9 +626,9 @@ export default function ChatDock({
                 </>
               ) : "AI is not configured."
             ) : focusedBlockId ? "Ask AI about this page…"
-              : organizeFolder != null && agentWrite
-                ? `Ask AI anything — it can ${agentRead ? "read, search and " : ""}organize ${organizeFolder ? "this folder" : "your library"} (rename papers, file them into folders)…`
-              : organizeFolder != null && agentRead
+              : organizeFolder != null && agentWrites
+                ? `Ask AI anything — it can ${agentReads ? "read, search and " : ""}organize ${organizeFolder ? "this folder" : "your library"} (rename papers, file them into folders)…`
+              : organizeFolder != null && agentReads
                 ? `Ask AI across ${organizeFolder ? "this folder's papers" : "your library"} — it can read, search and summarize them…`
                 : "Ask AI anything, or generate a report from your pages…"}
           </div>
@@ -679,12 +694,15 @@ export default function ChatDock({
                     ) : null}
                     {!isUser && m.actions?.length ? (
                       <div className="chatToolActions">
-                        {m.actions.map((a, j) => (
-                          <div key={j} className="chatToolAction" title={a.summary}>
-                            {a.kind === "rename" ? <PencilIcon size={11} /> : <FolderIcon size={11} />}
-                            <span>{a.summary}</span>
-                          </div>
-                        ))}
+                        {m.actions.map((a, j) => {
+                          const Icon = ACTION_ICONS[a.kind] || FolderIcon;
+                          return (
+                            <div key={j} className="chatToolAction" title={a.summary}>
+                              <Icon size={11} />
+                              <span>{a.summary}</span>
+                            </div>
+                          );
+                        })}
                       </div>
                     ) : null}
                     {isUser
@@ -842,7 +860,7 @@ export default function ChatDock({
           onKeyDown={(e) => {
             if (e.key === "Enter" && !e.shiftKey) { e.preventDefault(); sendChatMessage(); }
           }}
-          placeholder={chatFiles.length ? `Ask about the attached file${chatFiles.length > 1 ? "s" : ""}…` : chatImages.length ? "Ask about the pasted figure…" : (pdfSelections.length ? (pdfSelections.length > 1 ? `Ask about the ${pdfSelections.length} selected passages…` : "Ask about the selection…") : (chatDocs.length ? `Ask about ${chatDocs.length} selected PDF${chatDocs.length > 1 ? "s" : ""}…` : organizeFolder != null && (agentRead || agentWrite) ? (agentWrite ? `Ask, or organize ${organizeFolder ? "this folder" : "your library"}…` : `Ask across ${organizeFolder ? "this folder" : "your library"}…`) : "Ask…"))}
+          placeholder={chatFiles.length ? `Ask about the attached file${chatFiles.length > 1 ? "s" : ""}…` : chatImages.length ? "Ask about the pasted figure…" : (pdfSelections.length ? (pdfSelections.length > 1 ? `Ask about the ${pdfSelections.length} selected passages…` : "Ask about the selection…") : (chatDocs.length ? `Ask about ${chatDocs.length} selected PDF${chatDocs.length > 1 ? "s" : ""}…` : organizeFolder != null && (agentReads || agentWrites) ? (agentWrites ? `Ask, or organize ${organizeFolder ? "this folder" : "your library"}…` : `Ask across ${organizeFolder ? "this folder" : "your library"}…`) : "Ask…"))}
         />
         {chatLoading ? (
           <button className="uiBtn chatCircleBtn chatStopBtn" type="button" onClick={stopChat} title="Stop generating" aria-label="Stop generating">

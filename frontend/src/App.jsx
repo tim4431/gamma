@@ -91,6 +91,18 @@ const TOOL_ROUNDS_CODEC = {
   },
 };
 
+// Folder-agent per-tool permissions (Settings → Assistant → Folder agent).
+const AGENT_PERMS_DEFAULT = { list: true, read: true, search: true, rename: true, move: true };
+const AGENT_PERMS_CODEC = {
+  parse: (raw) => {
+    try {
+      const value = JSON.parse(raw);
+      return value && typeof value === "object" ? { ...AGENT_PERMS_DEFAULT, ...value } : undefined;
+    } catch { return undefined; }
+  },
+  serialize: JSON.stringify,
+};
+
 // Phone detection: below 700px the desktop dock system is unusable, so the
 // workspace switches to a single full-width panel with a bottom tab bar. The
 // second clause keeps a rotated (landscape) phone in the phone layout — the
@@ -1632,14 +1644,17 @@ export default function App() {
   const [dictationModel, setDictationModel] = usePersistedState("gamma-dictation-model", "gpt-4o-transcribe");
   const [dictationLang, setDictationLang] = usePersistedState("gamma-dictation-lang", "");
   const [chatSystem, setChatSystem] = usePersistedState("gamma-chat-system", "");
+  // Library-agent base role prompt ("" = built-in default from /api/ai/models).
+  const [agentSystem, setAgentSystem] = usePersistedState("gamma-agent-system", "");
+  const [agentPromptDraft, setAgentPromptDraft] = useState("");
   const [chatContextChars, setChatContextChars] = usePersistedState("gamma-chat-context-chars", 8000, CONTEXT_CHARS_CODEC);
   const [metaContextChars, setMetaContextChars] = usePersistedState("gamma-meta-context-chars", 6000, CONTEXT_CHARS_CODEC);
   const [multiContextChars, setMultiContextChars] = usePersistedState("gamma-multi-context-chars", 18000, CONTEXT_CHARS_CODEC);
   const [toolRounds, setToolRounds] = usePersistedState("gamma-ai-tool-rounds", 32, TOOL_ROUNDS_CODEC);
-  // Folder-agent permissions (Settings → Assistant): what the home/folder
-  // chat may do — read papers/notes/search, and rename/move pages.
-  const [agentRead, setAgentRead] = usePersistedFlag("gamma-ai-agent-read", true);
-  const [agentWrite, setAgentWrite] = usePersistedFlag("gamma-ai-agent-write", true);
+  // Folder-agent permissions (Settings → Assistant): one flag per tool the
+  // home/folder chat may use. Missing keys mean allowed, so new tools default
+  // on for existing users.
+  const [agentPerms, setAgentPerms] = usePersistedState("gamma-ai-agent-perms", AGENT_PERMS_DEFAULT, AGENT_PERMS_CODEC);
   const [promptDraft, setPromptDraft] = useState("");
   // AI providers (Settings → AI providers): a user-managed list of API keys,
   // OpenAI-platform style. Keys are stored server-side per user; the server
@@ -3638,10 +3653,11 @@ export default function App() {
   // (Re)entering the Assistant pane rebuilds the prompt drafts from the saved
   // values — switching away without saving is the cancel path.
   useEffect(() => {
-    if (settingsOpen !== "assistant") return;
+    if (settingsOpen !== "prompts" && settingsOpen !== "assistant") return;
     setPromptDraft(chatSystem || aiInfo?.default_prompt || "");
     setMetaPromptDraft(metaPrompt || aiInfo?.metadata_prompt || "");
     setCitePromptDraft(citePrompt || aiInfo?.cite_prompt || "");
+    setAgentPromptDraft(agentSystem || aiInfo?.agent_prompt || "");
   }, [settingsOpen]);
 
 
@@ -5241,7 +5257,7 @@ export default function App() {
           openPopover={openPopover} setOpenPopover={setOpenPopover}
           setStatus={setStatus}
           organizeFolder={!focusedBlockId && !readOnly ? folderFilter : null}
-          toolRounds={toolRounds} agentRead={agentRead} agentWrite={agentWrite}
+          toolRounds={toolRounds} agentPerms={agentPerms} agentSystem={agentSystem}
           onLibraryChange={fetchHomeBlocks}
         />
       );
@@ -5352,7 +5368,7 @@ export default function App() {
         <button
           className={`iconBtn addBtn ${openPopover === "add" ? "activeIcon" : ""}`}
           onClick={() => setOpenPopover((p) => (p === "add" ? null : "add"))}
-          title="Add — open a PDF by URL, upload a file, or start a note page"
+          title="Add — open a PDF by URL, arXiv id or DOI, upload a file, or start a note page"
           aria-label="Add"
         >
           <PlusIcon size={17} strokeWidth={2.2} />
@@ -5364,7 +5380,7 @@ export default function App() {
               className="searchInput"
               value={addUrl}
               onChange={(e) => setAddUrl(e.target.value)}
-              placeholder="Open a PDF by URL — press Enter"
+              placeholder="PDF URL, arXiv id, or DOI — press Enter"
               onKeyDown={(e) => {
                 if (e.key === "Enter" && addUrl.trim() && !loading) {
                   setOpenPopover(null);
@@ -6205,6 +6221,9 @@ export default function App() {
           setMetaPromptDraft,
           citePromptDraft,
           setCitePromptDraft,
+          agentSystem,
+          agentPromptDraft,
+          setAgentPromptDraft,
           savePrompts: () => {
             const normalizePrompt = (draft, defaultValue) => {
               const value = (draft || "").trim();
@@ -6213,6 +6232,7 @@ export default function App() {
             setChatSystem(normalizePrompt(promptDraft, aiInfo?.default_prompt));
             setMetaPrompt(normalizePrompt(metaPromptDraft, aiInfo?.metadata_prompt));
             setCitePrompt(normalizePrompt(citePromptDraft, aiInfo?.cite_prompt));
+            setAgentSystem(normalizePrompt(agentPromptDraft, aiInfo?.agent_prompt));
             setStatus("Prompts saved.");
           },
         }}
@@ -6231,10 +6251,8 @@ export default function App() {
           setMultiContextChars,
           toolRounds,
           setToolRounds,
-          agentRead,
-          setAgentRead,
-          agentWrite,
-          setAgentWrite,
+          agentPerms,
+          setAgentPerms,
           reset: () => {
             setChatContextChars(8000);
             setMetaContextChars(6000);
