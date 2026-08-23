@@ -13,8 +13,17 @@ annotations (which come straight from PDF user space).
 No appearance streams (/AP) are written — every mainstream viewer synthesizes
 the marker look for /Highlight annotations from /QuadPoints + /C, and the
 outline for /Square from /Rect + /C + /BS.
+
+Zotero compatibility: its reader imports /Highlight (→ highlight) and /Square
+(→ image/area annotation) — but pdf-worker's ``readRawAnnotation`` DROPS a
+/Square that carries no annotation id (``/Zotero:Key``, or ``/NM`` shaped
+``Zotero-<key>``); highlights import fine without one. So every /Square gets a
+deterministic ``/NM`` key derived from the highlight block id (stable across
+re-exports, so Zotero can dedupe), spelled in Zotero's own 8-char key
+alphabet. Highlights stay id-less on purpose.
 """
 
+import hashlib
 import io
 import re
 
@@ -100,9 +109,20 @@ def _highlight_annotation(rects, color, note, author):
     return _finish_annotation(annot, color, note, author)
 
 
-def _square_annotation(rects, color, note, author):
+# Zotero's item-key alphabet (32 chars — 5 bits per char).
+_ZOTERO_KEY_CHARS = "23456789ABCDEFGHIJKLMNPQRSTUVWXZ"
+
+
+def zotero_annot_key(highlight_id: str) -> str:
+    """Deterministic 8-char Zotero-style key for a highlight block id."""
+    digest = hashlib.sha1((highlight_id or "").encode("utf-8")).digest()
+    return "".join(_ZOTERO_KEY_CHARS[b & 31] for b in digest[:8])
+
+
+def _square_annotation(rects, color, note, author, highlight_id=""):
     """Area note → /Square: a stroked rectangle (no interior fill — it would
-    obscure the figure underneath) over the bounding box of the rects."""
+    obscure the figure underneath) over the bounding box of the rects. The
+    /NM id is what makes Zotero import it (see module docstring)."""
     xs = [v for x1, _, x2, _ in rects for v in (x1, x2)]
     ys = [v for _, y1, _, y2 in rects for v in (y1, y2)]
     annot = DictionaryObject({
@@ -116,6 +136,8 @@ def _square_annotation(rects, color, note, author):
             NameObject("/S"): NameObject("/S"),
         }),
     })
+    if highlight_id:
+        annot[NameObject("/NM")] = TextStringObject(f"Zotero-{zotero_annot_key(highlight_id)}")
     return _finish_annotation(annot, color, note, author)
 
 
@@ -144,8 +166,9 @@ def annotate_pdf(pdf_bytes: bytes, highlights, author: str = "") -> tuple[bytes,
     """Return (annotated pdf bytes, number of annotations written).
 
     ``highlights``: [{position: <pdf_position dict>, color: <css string>,
-    note: <str>}]. Positions with no usable rects or an out-of-range page are
-    skipped rather than failing the whole export.
+    note: <str>, id: <highlight block id, optional>}]. Positions with no
+    usable rects or an out-of-range page are skipped rather than failing the
+    whole export.
     """
     reader = PdfReader(io.BytesIO(pdf_bytes))
     writer = PdfWriter()
@@ -169,9 +192,12 @@ def annotate_pdf(pdf_bytes: bytes, highlights, author: str = "") -> tuple[bytes,
         except Exception:
             rotation = 0
         pdf_rects = [_viewer_rect_to_pdf(r, rotation, crop) for r in viewer_rects]
-        make = _square_annotation if pos.get("area") else _highlight_annotation
-        annot = make(pdf_rects, parse_css_color(h.get("color")),
-                     h.get("note") or "", author)
+        color = parse_css_color(h.get("color"))
+        if pos.get("area"):
+            annot = _square_annotation(pdf_rects, color, h.get("note") or "",
+                                       author, highlight_id=h.get("id") or "")
+        else:
+            annot = _highlight_annotation(pdf_rects, color, h.get("note") or "", author)
         writer.add_annotation(page_number=page_num - 1, annotation=annot)
         written += 1
 

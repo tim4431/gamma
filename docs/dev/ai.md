@@ -1,12 +1,12 @@
-# AI wiring: providers, chat, and the agent loop
+# AI: providers, chat, and the library agent
 
-Developer-facing map of the AI stack — provider storage and protocols, the
-`/api/ai/chat` request/stream shape, and the library agent's internals. The
-human-facing agent doc (tools, permissions, privacy) is [agent.md](agent.md);
-how long papers reach the model is [ai_context.md](ai_context.md). Code:
-`gamma/ai_settings.py`, `gamma/ai_client.py`, `gamma/ai_context.py`,
-`gamma/ai_tools.py`, `gamma/chatgpt_oauth.py`, `gamma/routers/ai.py` +
-the chat-history router.
+The AI stack in one place — provider storage and protocols, the `/api/ai/chat`
+request/stream shape, and the library agent: what it can reach, how the tool
+loop runs, and what the user controls. The tools themselves are catalogued in
+[ai_tools.md](ai_tools.md); how long papers reach the model is
+[ai_context.md](ai_context.md). Code: `gamma/ai_settings.py`,
+`gamma/ai_client.py`, `gamma/ai_context.py`, `gamma/ai_tools.py`,
+`gamma/chatgpt_oauth.py`, `gamma/routers/ai.py` + the chat-history router.
 
 ## Providers
 
@@ -72,56 +72,48 @@ panel's switchers and the prompt editor (four editable prompts: chat system,
 metadata extraction, PPT citation — defaults in `ai.py` — and the library-agent
 base prompt, default in `ai_tools.py`).
 
-## Library agent internals
+## The library agent
 
-Human-facing doc: [agent.md](agent.md) — keep it in sync. Every chat declares
-an `agent_scope` — `"folder"` (home/folder view; `folder` = current path, `""`
-= root) or `"page"` (paper view; `page_id` = the focused page) — plus
-`permissions` (the Settings → Assistant → Folder agent per-tool toggles —
-localStorage JSON `gamma-ai-agent-perms`, missing key = allowed) and optional
-`agent_system` (custom base prompt; the Prompts pane's "Library agent" entry,
-default `ai_tools.AGENT_PROMPT` via `/api/ai/models`).
+The chat is more than a chatbot: it can act on the library through tools the
+server executes on its behalf ([ai_tools.md](ai_tools.md) describes each one).
+What it can reach depends on where the chat is opened — every chat declares an
+`agent_scope`:
 
-`gamma/ai_tools.py` is a registry (`TOOLS`): each tool declares its wire spec,
-permission key, allowed scopes, mutating flag, and executor — arming is
-`agent_tools(scope_type, perms)`, dispatch is
-`run_agent_tool(user, scope, name, args)`, and the scope check
-(`_load_scoped_page`/`_scope_docs`: folder = tag prefix match, page = id
-equality) is shared by all executors.
+- `"folder"` — the home/folder chat (`folder` = current path, `""` = root):
+  tools reach the pages in that folder.
+- `"page"` — the paper chat (`page_id` = the focused page): tools reach only
+  that paper, and only the reading tools exist there.
 
-The tools:
+The request also carries `permissions` (the Settings → Assistant → Folder
+agent per-tool toggles — localStorage JSON `gamma-ai-agent-perms`, missing key
+= allowed, so new tools default on) and optional `agent_system` (custom base
+prompt; the Prompts pane's "Library agent" entry, default
+`ai_tools.AGENT_PROMPT` via `/api/ai/models`). The scope and permission lines
+are always appended mechanically to the base prompt, so a custom prompt can
+change the agent's style but not widen its reach. Everything off (or no/invalid
+scope) = plain chat.
 
-- `list_pages` (folder only; optional `label`/`folder`/`title_contains`
-  filters, or `list_labels: true` for the label/folder vocabulary with counts)
-- `read_page` (page_report_section excerpt + notes, `pdf_chars` per call capped
-  by the Settings → Assistant "Read window" preference (`gamma-ai-read-chars` →
-  request `read_char_limit`, rides in the scope dict as `read_chars`, default
-  20000 — `agent_tools` formats the cap into the armed spec), `pdf_page` starts
-  the excerpt at a 1-based PDF page (extract_text's start_page — how a
-  search_pdfs hit is followed up) and `pdf_offset` windows onward from there —
-  the excerpt names the next offset while text remains; both scopes)
-- `search_pdfs` (in-scope FTS snippets via the routers.search helpers, kicks
-  background indexing; a zero-hit query is retried with its longest words only
-  and the result labelled approximate — the strict AND query otherwise reads as
-  "the paper is silent"; both scopes)
-- `rename_page` + `move_page` (folder only)
+### Permissions and knobs (Settings → Assistant)
 
-Folder semantics mirror
-[frontend/src/libraryUtils.js](../../frontend/src/libraryUtils.js); keep them
-in sync. Everything off (or no/invalid scope) = plain chat; un-armed tools are
-also refused at execution. Deliberately no delete, no note/highlight edits, and
-no flat-label writes (folder labels change only through move_page) — every
-action is reversible.
+One toggle per tool (both scopes): List pages, Read papers & notes, Search PDF
+text, Rename pages, Move pages. Plus:
+
+- **Tool rounds** (`gamma-ai-tool-rounds` → request `tool_rounds`, default 32,
+  user-tunable 1–100) — provider round-trips one message may use.
+- **Read window** (`gamma-ai-read-chars` → request `read_char_limit`, default
+  20 000) — the most document text one `read_page` call may return; long
+  papers are read in windows of this size.
+
+Rounds and the ≤200-mutation ceiling are runaway guards, not workload caps.
 
 ### The tool loop
 
-The router runs a tool loop (`agent_events`; rounds default 32, user-tunable
-1–100 via `tool_rounds` from Settings → Assistant → "Tool rounds"
-(`gamma-ai-tool-rounds`); ≤200 mutations — runaway guards, not workload caps;
-the Responses builders enable `parallel_tool_calls` when tools ride along so
-bulk renames batch per round) over `ai_client.sse_events`, which parses tool
-calls from all three protocols' SSE (tool defs + `tool_calls`/`role:"tool"`
-message extensions are translated per wire in the request builders).
+The router runs a loop (`agent_events`) over `ai_client.sse_events`, which
+parses tool calls from all three protocols' SSE (tool defs +
+`tool_calls`/`role:"tool"` message extensions are translated per wire in the
+request builders; the Responses builders enable `parallel_tool_calls` when
+tools ride along, so bulk renames batch per round): the model calls tools →
+the server executes them → results go back → repeat until it answers.
 
 Every tool call streams back as an
 `{"action": {kind, summary, tool, args, result}}` NDJSON line (kinds
@@ -131,11 +123,13 @@ failed/blocked calls) that the chat renders as a chip and saves in the message
 output the model got; only applied rename/move count against
 `MAX_TOOL_ACTIONS` and trigger the home-feed refresh (`onLibraryChange`).
 
+### Replay across turns
+
 On agent requests, `build_messages(..., with_tools=True)` (`ai_context.py`)
 replays each saved reply's recorded actions as assistant `tool_calls` +
-`role:"tool"` turns, so the model keeps prior tool results across turns instead
-of re-listing; results share `TOOL_REPLAY_BUDGET` chars newest-first (older
-ones elided), and `_anthropic_messages` folds a plain user turn into a
+`role:"tool"` turns, so the model keeps prior tool results across turns
+instead of re-listing; results share `TOOL_REPLAY_BUDGET` chars newest-first
+(older ones elided), and `_anthropic_messages` folds a plain user turn into a
 preceding tool_result turn to keep roles alternating. Plain chats never replay
 (providers reject tool blocks without tool defs).
 
@@ -144,11 +138,15 @@ OpenAI-protocol calls that carry tools are rerouted to the platform
 completions — but only against the official api.openai.com base URL; custom
 gateways keep chat-completions tools.
 
+
 ## Chat history buckets
 
 Focused page id in the paper view, `home` at the library root,
-`home:<folder path>` per folder — the `/api/chats/{block_id:path}` routes take
-the `:path` converter for the nested keys, and folder rename/move/delete calls
-`POST /api/chats/folder-rename` ({src, dst}; dst "" deletes) BEFORE rewriting
-the tags so the destination bucket exists when ChatDock reloads (a destination
-holding a real conversation wins; empty save-echo rows are overwritten).
+`home:<folder path>` per folder — each folder keeps its own conversation, and
+switching folders re-scopes the next message. The
+`/api/chats/{block_id:path}` routes take the `:path` converter for the nested
+keys, and folder rename/move/delete calls `POST /api/chats/folder-rename`
+({src, dst}; dst "" deletes) BEFORE rewriting the tags so the destination
+bucket exists when ChatDock reloads (a destination holding a real conversation
+wins; empty save-echo rows are overwritten) — folder conversations follow
+renames and moves, and are deleted with their folder.

@@ -1,6 +1,6 @@
 # Gamma user guide
 
-A quick tour of everything you can do. For install instructions see the [README](../README.md); for what the AI agent may touch, see [the agent guide](dev/agent.md).
+A quick tour of everything you can do. For install instructions see the [README](../README.md); for what the AI agent may touch, see [the agent tools guide](dev/ai_tools.md).
 
 ## Getting started
 
@@ -41,7 +41,7 @@ Open the chat from the **⋮ menu → AI Chat**. Configure providers in Settings
 - **Context**: in a paper the chat reads that paper's text automatically; the **PDF toggle** attaches the actual file (so the model sees figures and tables) — it turns itself off once the file has been sent in a conversation, to avoid re-billing it every message.
 - **Add more**: paste images, Ctrl+drag a region of the page (see above), or use the **+ menu** to attach files or pick several papers from your library (optionally with your notes and highlights).
 - **Quote passages**: click a highlight to set the chat's "Selection"; Ctrl+click more highlights to add up to six passages.
-- **Library agent**: on the home page or in a folder, the chat can act on your library — list, read and search the papers in view, rename them, file them into folders (*"rename these to AuthorYear style"*, *"which of these measure T1?"*). Every tool call shows as a chip you can click to see exactly what it did; permissions are per-tool in Settings → Assistant. It can never delete anything or edit your notes. Details: [the agent guide](dev/agent.md).
+- **Library agent**: on the home page or in a folder, the chat can act on your library — list, read and search the papers in view, rename them, file them into folders (*"rename these to AuthorYear style"*, *"which of these measure T1?"*). Every tool call shows as a chip you can click to see exactly what it did; permissions are per-tool in Settings → Assistant. It can never delete anything or edit your notes. Details: [the agent tools guide](dev/ai_tools.md).
 - Per message: **copy**, **edit & re-send** (pencil, discards the replies after it), and a **stop** button while streaming. **Ctrl+F inside the panel** finds text in the conversation. A mic button dictates into the input.
 - Each paper and each folder keeps its own conversation; **New chat** starts over.
 

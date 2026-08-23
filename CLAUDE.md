@@ -12,9 +12,9 @@ Topic docs live in `docs/dev/` — **read the relevant one before working in tha
 
 - [docs/dev/api.md](docs/dev/api.md) — every `/api/*` endpoint, grouped, plus the auth model.
 - [docs/dev/user_db.md](docs/dev/user_db.md) — the data directory and per-user DBs, auth middleware, seeding/first-run admin, `manage.py` CLI, user-management GUI, storage limits, the server log.
-- [docs/dev/ai.md](docs/dev/ai.md) — AI wiring: provider entries and protocols (incl. ChatGPT OAuth), the `/api/ai/chat` request/stream shape, the library agent's tool registry/loop/replay, chat-history buckets.
+- [docs/dev/ai.md](docs/dev/ai.md) — the AI stack: provider entries and protocols (incl. ChatGPT OAuth), the `/api/ai/chat` request/stream shape, the library agent (scopes, permissions, tool loop, replay, privacy), chat-history buckets.
+- [docs/dev/ai_tools.md](docs/dev/ai_tools.md) — the agent's tools: what each does, arguments and caps, guardrails.
 - [docs/dev/ai_context.md](docs/dev/ai_context.md) — how the AI chat reads long papers: excerpt labelling, document map, search relaxation, page cap, the grounding prompt, and the eval results behind them.
-- [docs/dev/agent.md](docs/dev/agent.md) — the library agent, human-facing: tools, permissions, scopes, privacy.
 - [docs/dev/paper_metadata.md](docs/dev/paper_metadata.md) — metadata fetch/edit/cite/status and `/api/resolve-pdf` resolution chain.
 - [docs/dev/import_export.md](docs/dev/import_export.md) — the Import/Export dialogs and pipelines: embedded PDF annotations, Zotero and Logseq imports, Markdown export, the annotated-PDF writer (fonts, vector math/CJK, images).
 - [docs/dev/home_library.md](docs/dev/home_library.md) — folder labels, the merged listing and sorts, the shared page card, recents strip + cover snapshots, the home context menu.

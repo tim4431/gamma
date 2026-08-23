@@ -783,7 +783,7 @@ function PromptsSettings({ value }) {
   );
 }
 
-// The folder agent's capabilities, one toggle per tool (see docs/dev/agent.md).
+// The folder agent's capabilities, one toggle per tool (see docs/dev/ai_tools.md).
 const AGENT_PERM_ROWS = [
   ["list", ListIcon, "List pages",
    "See the folder's page titles, labels and metadata"],
