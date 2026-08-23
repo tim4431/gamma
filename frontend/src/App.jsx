@@ -3848,6 +3848,16 @@ export default function App() {
       inp.click();
       return;
     }
+    if (o.source === "gamma") {
+      // Another Gamma's Export → Gamma zip (or a full backup): merge it in
+      // through the same upload/progress path as Settings → Restore backup.
+      const inp = document.createElement("input");
+      inp.type = "file";
+      inp.accept = ".zip,application/zip";
+      inp.onchange = () => { if (inp.files?.[0]) runBackupImport(inp.files[0], "merge"); };
+      inp.click();
+      return;
+    }
     const inp = document.createElement("input");
     inp.type = "file";
     inp.multiple = true;
@@ -3884,6 +3894,10 @@ export default function App() {
           if (await downloadExport(`${base}&mode=zotero-rdf&${flags}&${bundle}`, "zotero.zip")) {
             setStatus("Zotero library saved — unzip it, then import the .rdf in Zotero (File → Import).");
           }
+        } else if (o.format === "gamma") {
+          if (await downloadExport(`${base}&mode=gamma`, "gamma.zip")) {
+            setStatus("Gamma export saved — in the other Gamma: Import → Gamma export (.zip).");
+          }
         } else {
           await downloadExport(`${base}&mode=readable&${flags}&${bundle}`, "folder.zip");
         }
@@ -3906,6 +3920,12 @@ export default function App() {
     if (o.format === "zotero") {
       if (await downloadExport(`/pages/${id}/export?mode=zotero-rdf&${flags}&${bundle}`, "zotero.zip")) {
         setStatus("Zotero export saved — unzip it, then in Zotero pick the .rdf file via File → Import (it can't read the .zip itself).");
+      }
+      return;
+    }
+    if (o.format === "gamma") {
+      if (await downloadExport(`/pages/${id}/export?mode=gamma`, "gamma.zip")) {
+        setStatus("Gamma export saved — in the other Gamma: Import → Gamma export (.zip).");
       }
       return;
     }
@@ -5756,8 +5776,8 @@ export default function App() {
                   setExportOpen(true);
                 }}
                 title={homeMode
-                  ? `Download the “${folderFilter}” folder — every paper in it as Markdown, a Logseq graph, or a Zotero library`
-                  : "Download this page — the PDF with highlights and notes, Markdown, a Logseq graph, or a Zotero library"}
+                  ? `Download the “${folderFilter}” folder — every paper in it as Markdown, a Logseq graph, a Zotero library, or a Gamma export`
+                  : "Download this page — the PDF with highlights and notes, Markdown, a Logseq graph, a Zotero library, or a Gamma export"}
               >
                 <ExportIcon className="popoverItemIcon" size={15} />
                 Export…
@@ -6792,7 +6812,7 @@ export default function App() {
                 <MenuItem icon={PenIcon} onClick={() => { setHomeMenu(null); setFolderRenaming({ name: homeMenu.name, draft: homeMenu.name }); }}>Rename</MenuItem>
                 <MenuItem
                   icon={ExportIcon}
-                  title="Download every paper in this folder — Markdown, a Logseq graph, or a Zotero library"
+                  title="Download every paper in this folder — Markdown, a Logseq graph, a Zotero library, or a Gamma export"
                   onClick={() => { const name = homeMenu.name; setHomeMenu(null); setExportFolder(name); setExportOpen(true); }}
                 >Export…</MenuItem>
                 <MenuItem icon={TrashIcon} danger onClick={() => { setHomeMenu(null); deleteFolderByName(homeMenu.name); }}>Delete</MenuItem>

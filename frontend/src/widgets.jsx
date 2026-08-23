@@ -290,7 +290,48 @@ const EXPORT_FORMATS = [
   ["markdown", "Markdown (.md)"],
   ["logseq", "Logseq graph (.zip)"],
   ["zotero", "Zotero RDF (.zip)"],
+  ["gamma", "Gamma (.zip)"],
 ];
+
+// What the Highlights / Notes / Bundle switches mean per format: a short hint
+// under the label, the long explanation on hover. Formats missing a key fall
+// back to nothing (the switch is hidden or pinned there).
+const EXPORT_SWITCH_TEXT = {
+  highlights: {
+    pdf: ["Standard PDF annotations",
+      "Burned in as standard PDF annotations — they survive in Acrobat, SumatraPDF, browsers."],
+    markdown: ["Blockquotes with page numbers",
+      "Each highlighted passage as a blockquote with its page number."],
+    logseq: ["Always in a graph (hls page + .edn)",
+      "Always included: a graph's highlights are its hls page and .edn."],
+    zotero: ["Embedded into the exported PDF copies",
+      "Written into the exported PDF copies as standard annotations — Zotero's own “Include Annotations” convention, its reader picks them up on import."],
+    gamma: ["Always — a Gamma export is a 1:1 copy",
+      "A Gamma export carries the pages exactly as they are, highlights included."],
+  },
+  notes: {
+    pdf: ["Printed onto the page in free space",
+      "Printed onto the page in nearby free space, with a line back to the highlight. Off: they stay in the annotation popups."],
+    markdown: ["Nested under their highlights",
+      "Your own writing, nested under the highlight it belongs to."],
+    logseq: ["Always in a graph",
+      "Always included: the graph's notes page."],
+    zotero: ["Zotero notes on each item",
+      "Top-level notes become Zotero notes attached to the item; writing under a highlight travels in its annotation popup."],
+    gamma: ["Always — a Gamma export is a 1:1 copy",
+      "A Gamma export carries the pages exactly as they are, notes included."],
+  },
+  bundle: {
+    markdown: ["Pack the PDF and images into the .zip",
+      "Pack the PDF and any pasted images into the .zip. Off: they stay as links back to this server."],
+    logseq: ["Pack the PDF and images into the .zip",
+      "Pack the PDF and any pasted images into the .zip. Off: they stay as links back to this server."],
+    zotero: ["Include the PDF files (Zotero's “Export Files”)",
+      "Pack each paper's PDF into the .zip so Zotero imports the files too. Off: metadata, collections and notes only."],
+    gamma: ["Every referenced file is included",
+      "A Gamma export always bundles the PDFs and images the pages reference — the other Gamma needs them."],
+  },
+};
 
 // Same row dialect as the settings panes (settings.jsx Row/Toggle): icon tile ·
 // label · one short hint · control, with the long explanation on hover only.
@@ -331,25 +372,31 @@ function ExportDialog({ opts, setOpts, hasPdf, pdfStored, folder, onCancel, onEx
   const isPdf = format === "pdf";
   const isGraph = format === "logseq";
   const isZotero = format === "zotero";
+  const isGamma = format === "gamma";
   const set = (patch) => setOpts((o) => ({ ...o, ...patch }));
+  const text = (row) => EXPORT_SWITCH_TEXT[row][format] || EXPORT_SWITCH_TEXT[row].markdown;
 
-  // A graph is defined by carrying both layers, so its switches are pinned on.
-  const highlights = isGraph ? true : opts.highlights;
-  const notes = isGraph ? true : opts.notes;
+  // A graph is defined by carrying both layers, and a Gamma export is a 1:1
+  // copy — their switches are pinned on.
+  const pinned = isGraph || isGamma;
+  const highlights = pinned ? true : opts.highlights;
+  const notes = pinned ? true : opts.notes;
   const rawPdf = isPdf && !highlights && !notes;
   const noPdfCopy = isPdf && !pdfStored;
 
   const summary = isGraph
     ? "A Logseq graph: the notes page plus native PDF highlights (hls page + .edn)."
-    : isPdf
-      ? noPdfCopy
-        ? "This PDF isn't stored on the server, so only the file itself can be exported."
-        : rawPdf
-          ? "The PDF file exactly as stored, with nothing added."
-          : `The PDF with ${highlights ? "highlight annotations" : "no annotations"}${notes ? " and every note printed onto the page" : ""}.`
-      : highlights || notes
-        ? `Markdown with ${highlights ? "quoted highlights" : "no quotes"}${notes ? " and your notes" : ""}.`
-        : "Markdown with the title and metadata only — both switches are off.";
+    : isGamma
+      ? `A 1:1 copy${folder ? " of the folder" : ""}: pages with all blocks, metadata, AI chats and files. Another Gamma imports it via Import → Gamma export — merging, never overwriting.`
+      : isPdf
+        ? noPdfCopy
+          ? "This PDF isn't stored on the server, so only the file itself can be exported."
+          : rawPdf
+            ? "The PDF file exactly as stored, with nothing added."
+            : `The PDF with ${highlights ? "highlight annotations" : "no annotations"}${notes ? " and every note printed onto the page" : ""}.`
+        : highlights || notes
+          ? `Markdown with ${highlights ? "quoted highlights" : "no quotes"}${notes ? " and your notes" : ""}.`
+          : "Markdown with the title and metadata only — both switches are off.";
 
   return (
     <div className="reportOverlay" onClick={onCancel}>
@@ -365,56 +412,29 @@ function ExportDialog({ opts, setOpts, hasPdf, pdfStored, folder, onCancel, onEx
         <SwitchRow
           icon={HighlightIcon}
           label="Highlights"
-          hint={isPdf
-            ? "Standard PDF annotations"
-            : isGraph
-              ? "Always in a graph (hls page + .edn)"
-              : isZotero
-                ? "Embedded into the exported PDF copies"
-                : "Blockquotes with page numbers"}
-          title={isPdf
-            ? "Burned in as standard PDF annotations — they survive in Acrobat, SumatraPDF, browsers."
-            : isGraph
-              ? "Always included: a graph's highlights are its hls page and .edn."
-              : isZotero
-                ? "Written into the exported PDF copies as standard annotations — Zotero's own “Include Annotations” convention, its reader picks them up on import."
-                : "Each highlighted passage as a blockquote with its page number."}
+          hint={text("highlights")[0]}
+          title={text("highlights")[1]}
           checked={highlights}
-          disabled={isGraph || noPdfCopy}
+          disabled={pinned || noPdfCopy}
           onChange={(v) => set({ highlights: v })}
         />
         <SwitchRow
           icon={PenIcon}
           label="Notes"
-          hint={isPdf
-            ? "Printed onto the page in free space"
-            : isGraph
-              ? "Always in a graph"
-              : isZotero
-                ? "Zotero notes on each item"
-                : "Nested under their highlights"}
-          title={isPdf
-            ? "Printed onto the page in nearby free space, with a line back to the highlight. Off: they stay in the annotation popups."
-            : isGraph
-              ? "Always included: the graph's notes page."
-              : isZotero
-                ? "Top-level notes become Zotero notes attached to the item; writing under a highlight travels in its annotation popup."
-                : "Your own writing, nested under the highlight it belongs to."}
+          hint={text("notes")[0]}
+          title={text("notes")[1]}
           checked={notes}
-          disabled={isGraph || noPdfCopy}
+          disabled={pinned || noPdfCopy}
           onChange={(v) => set({ notes: v })}
         />
         {isPdf ? null : (
           <SwitchRow
             icon={PaperclipIcon}
             label="Bundle the files"
-            hint={isZotero
-              ? "Include the PDF files (Zotero's “Export Files”)"
-              : "Pack the PDF and images into the .zip"}
-            title={isZotero
-              ? "Pack each paper's PDF into the .zip so Zotero imports the files too. Off: metadata, collections and notes only."
-              : "Pack the PDF and any pasted images into the .zip. Off: they stay as links back to this server."}
-            checked={opts.bundle}
+            hint={text("bundle")[0]}
+            title={text("bundle")[1]}
+            checked={isGamma ? true : opts.bundle}
+            disabled={isGamma}
             onChange={(v) => set({ bundle: v })}
           />
         )}
@@ -458,11 +478,12 @@ function ImportDialog({ hasPdf, stripDefault, busy, onCancel, onImport }) {
   const src = !hasPdf && source === "annots" ? "zotero" : source;
   // Zotero's reader annotations arrive embedded in the exported PDF copies,
   // so the strip switch applies to that source exactly like to "this PDF".
-  const stripApplies = src !== "logseq";
+  const stripApplies = src === "annots" || src === "zotero";
 
   const hints = {
     annots: "Highlights, notes and boxes saved inside this PDF (a Gamma export, SumatraPDF, Acrobat…) become regular blocks. Importing twice adds nothing — each annotation is matched to the block it already made.",
     logseq: "Pick a Logseq .pdf and its .edn (a .md of notes is optional). The paper and its highlights land in your library as a new page.",
+    gamma: "A zip made by another Gamma's Export → Gamma format (a full backup works too). Its pages, files and chats merge into your library — nothing existing is touched, and re-importing the same zip adds nothing.",
   };
 
   return (
@@ -477,6 +498,7 @@ function ImportDialog({ hasPdf, stripDefault, busy, onCancel, onImport }) {
               ...(hasPdf ? [["annots", "Annotations in this PDF"]] : []),
               ["zotero", "Zotero library (.zip)"],
               ["logseq", "Logseq highlights (.pdf + .edn)"],
+              ["gamma", "Gamma export (.zip)"],
             ]}
           />
         </DialogRow>
@@ -508,9 +530,9 @@ function ImportDialog({ hasPdf, stripDefault, busy, onCancel, onImport }) {
           <button className="uiBtn" onClick={onCancel}>Cancel</button>
           <button
             className="uiBtn primary" disabled={busy}
-            onClick={() => onImport(src === "logseq" ? { source: "logseq" } : { source: src, strip })}
+            onClick={() => onImport(stripApplies ? { source: src, strip } : { source: src })}
           >
-            {src === "annots" ? "Import" : src === "zotero" ? "Choose .zip…" : "Choose files…"}
+            {src === "annots" ? "Import" : src === "logseq" ? "Choose files…" : "Choose .zip…"}
           </button>
         </div>
       </div>

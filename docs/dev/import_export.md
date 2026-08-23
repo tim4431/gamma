@@ -87,11 +87,38 @@ the status pill during folder exports. Highlights are not in the RDF
 copies with `pdf_export.annotate_pdf` (`highlights=0` skips that, `pdf=0`
 omits the files entirely, `notes=0` the Memos).
 
+## The export framework
+
+`/pages/{id}/export` and `/folders/export` share one driver (`_run_export` in
+`routers/export.py`): it walks the selected pages exactly once (subtree fetch
+→ `build_tree` → progress bookkeeping) and feeds each page to a per-format
+`_Builder` (`_MarkdownBuilder`, `_LogseqBuilder`, `_ZoteroBuilder`,
+`_GammaBuilder` — keyed by `?mode=`), which accumulates zip parts and names
+the download. Adding an export format = adding a builder; the endpoints,
+progress plumbing and `_zip_response` stay untouched.
+
+## Gamma-to-Gamma export
+
+`?mode=gamma` (`_GammaBuilder`): a *scoped account backup* in the same
+`gamma-backup-1` layout as `/api/export` — a `pages.db` holding just the
+selected page subtrees verbatim (same block ids), a `data.db` with their AI
+chats (plus the folder view's own `home:<path>` chat buckets on a folder
+export), `uploads/` with just the referenced files (doc_id PDFs + anything
+matching `UPLOAD_RE` in content/properties — the orphan-cleanup reference
+rule), and a `manifest.json`. **There is no new import code**: any Gamma
+imports it through the existing `/api/import-data?mode=merge` — additive,
+deduped by block id / doc id / content hash, so re-importing adds nothing. The
+⋮ Import dialog's "Gamma export (.zip)" source feeds the zip to that endpoint
+via the same upload/progress path as Settings → Restore backup (guests can't
+import). The dialog's three switches don't apply — a Gamma export is a 1:1
+copy, so they're pinned on.
+
 ## The Export dialog
 
 The ⋮ menu's single "Export…" entry → `ExportDialog` in `widgets.jsx`: one
-Notion-style dialog — format (PDF / Markdown / Logseq graph / Zotero RDF) plus
-Highlights, Notes and Bundle-the-files switches, remembered in `localStorage`
+Notion-style dialog — format (PDF / Markdown / Logseq graph / Zotero RDF /
+Gamma) plus Highlights, Notes and Bundle-the-files switches (per-format hint
+text lives in the `EXPORT_SWITCH_TEXT` table), remembered in `localStorage`
 (`gamma-export-opts`). The switches are query flags on two endpoints:
 `/pages/{id}/export?mode=readable&highlights=&notes=&pdf=` (Markdown,
 `render_readable` in `markdown_export.py`; dropping highlights keeps a
