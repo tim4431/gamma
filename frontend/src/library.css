@@ -53,6 +53,8 @@
 /* One width for every fixed-width strip card, and the grid's minimum track —
    so a card is the same card wherever it is shown. */
 :root { --card-w: 150px; }
+/* Recently-viewed strip: slightly larger cards (same geometry, wider track). */
+.recentsCarousel { --card-w: 170px; }
 .carouselTrack .pageCard, .pinnedStrip .pageCard {
   flex: 0 0 var(--card-w);
   scroll-snap-align: start;
@@ -62,15 +64,9 @@
   border-color: var(--border);
   box-shadow: 0 2px 8px rgba(0, 0, 0, 0.08);
 }
-.pageCard.selected {
-  background: var(--accent-bg-light);
-  border-color: var(--accent-dark);
-}
-.pageCard.dragOver {
-  background: var(--accent-bg);
-  border-color: var(--accent-dark);
-  border-style: dashed;
-}
+/* .selected / .dragOver are shared with the list rows — see the :is() rules
+   next to .fileRow / .folderRow below (they must sit after those :hover
+   rules to win when both apply). */
 .pageCardCover {
   flex: 0 0 auto;
   aspect-ratio: 16 / 10;
@@ -117,7 +113,7 @@
   font-size: 10.5px;
 }
 .pageCardTime { margin-left: auto; color: var(--text-dim); white-space: nowrap; }
-.pageCardKind { font-size: 9.5px; font-weight: 600; letter-spacing: 0.04em; text-transform: uppercase; color: var(--text-dim); }
+:is(.pageCardKind, .fileRowKind) { font-size: 9.5px; font-weight: 600; letter-spacing: 0.04em; text-transform: uppercase; color: var(--text-dim); }
 .pageCardCount {
   font-size: 10px;
   color: var(--text-muted);
@@ -125,27 +121,28 @@
   border-radius: 999px;
   padding: 0 7px;
 }
-/* Label + folder chips: one clipped line, never wraps or grows the card.
-   The line is reserved even when a card has no chips (CardLabels renders the
-   span empty), so footers stay the same height. */
-.cardLabels {
-  min-height: 15px;
+/* Label + folder chips (both rendered by CardLabels): one clipped line that
+   never wraps. On a card the line is reserved even with no chips (the span
+   renders empty), so footers stay the same height; on a file row it is capped
+   to half the row (see .fileRowLabels below). */
+:is(.cardLabels, .fileRowLabels) {
   display: flex;
   align-items: center;
-  gap: 4px;
   min-width: 0;
   overflow: hidden;
 }
-.cardLabels .folderTagBadge,
-.cardLabels .labelTagBadge { margin-left: 0; flex: 0 0 auto; }
+:is(.cardLabels, .fileRowLabels) .folderTagBadge,
+:is(.cardLabels, .fileRowLabels) .labelTagBadge { margin-left: 0; flex: 0 0 auto; }
+.cardLabels { min-height: 15px; gap: 4px; }
 /* The new-folder placeholder + add-folder cards. */
 .pageCardAdd { border-style: dashed; background: none; color: var(--text-muted); }
 .pageCardAdd .pageCardCover { background: none; border-bottom-style: dashed; }
 .pageCardAdd .tileGlyph { color: var(--text-dim); width: 40px; height: 40px; }
 .pageCardAdd .pageCardTitle { color: var(--text-muted); font-weight: 400; }
-/* Look comes from .uiClose.uiCloseSm; this positions it and reveals on hover
-   (always visible on touch, where there is no hover to reveal it). */
-.pageCardClose {
+/* Hover-revealed card overlay buttons (the recents ×, the pin): positioned in
+   the cover corner, solid card background so they stay legible over a
+   snapshot. The × look itself comes from .uiClose.uiCloseSm. */
+:is(.pageCardClose, .tilePinBtn) {
   position: absolute;
   top: 4px;
   right: 4px;
@@ -214,19 +211,11 @@
   outline: 1px solid var(--accent-dark);
   border-radius: 6px;
 }
-.ctxMenuLabel {
-  font-size: 10px;
-  letter-spacing: 0.06em;
-  text-transform: uppercase;
-  color: var(--text-dim);
-  padding: 6px 10px 2px;
-  border-top: 1px solid var(--border-subtle);
-  margin-top: 4px;
-}
-.folderRow.dragOver {
+:is(.pageCard, .folderRow).dragOver {
   background: var(--accent-bg);
   border-color: var(--accent-dark);
 }
+.pageCard.dragOver { border-style: dashed; }
 .folderName {
   flex: 1;
   min-width: 0;
@@ -361,7 +350,7 @@
   position: relative;
 }
 .fileRow:hover { background: var(--bg-block); }
-.fileRow.selected {
+:is(.pageCard, .fileRow).selected {
   background: var(--accent-bg-light);
   border-color: var(--accent-dark);
 }
@@ -395,31 +384,19 @@
   font-size: 14px;
   padding: 2px 6px;
 }
-.fileRowKind {
-  flex: 0 0 auto;
-  font-size: 9.5px;
-  font-weight: 600;
-  letter-spacing: 0.04em;
-  text-transform: uppercase;
-  color: var(--text-dim);
-}
+/* type/size comes from the shared :is(.pageCardKind, .fileRowKind) rule */
+.fileRowKind { flex: 0 0 auto; }
 .fileRowPin { flex: 0 0 auto; opacity: 0; transition: opacity 0.12s; }
 .fileRow:hover .fileRowPin { opacity: 0.6; }
 .fileRowPin:hover, .fileRowPin.pinned { opacity: 1; }
-/* Folder + label chips, capped to a width and clipped so they never push the
+/* Chip line on a file row (shared base above): capped so it never pushes the
    kind/pin off the row. Order in the row: name … [labels] PDF pin. */
 .fileRowLabels {
-  display: flex;
-  align-items: center;
   gap: 6px;
   flex: 0 1 auto;
-  min-width: 0;
   max-width: 50%;
-  overflow: hidden;
   margin-left: 8px;
 }
-.fileRowLabels .folderTagBadge,
-.fileRowLabels .labelTagBadge { margin-left: 0; flex: 0 0 auto; }
 .labelTagBadge {
   display: inline-flex;
   align-items: center;
@@ -486,14 +463,7 @@
 }
 .pinBtn:hover { color: var(--accent); background: var(--bg-raised); }
 .pinBtn.pinned { color: var(--accent); }
-.tilePinBtn {
-  position: absolute;
-  top: 4px;
-  right: 4px;
-  opacity: 0;
-  transition: opacity 0.12s;
-  background: var(--bg-card); /* legible over a snapshot cover */
-}
+/* placement/reveal comes from the shared :is(.pageCardClose, .tilePinBtn) rule */
 .pageCard:hover .tilePinBtn { opacity: 0.7; }
 .tilePinBtn:hover, .tilePinBtn.pinned { opacity: 1; }
 

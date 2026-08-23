@@ -1,12 +1,44 @@
-"""Uploaded-file helpers: media types, lookup, orphan cleanup."""
+"""Uploaded-file helpers: media types, content-hash storage, lookup, orphan
+cleanup."""
 
+import hashlib
 from pathlib import Path
 
 from .db import user_uploads_dir
+from .server_settings import check_upload_allowed
 
 ALLOWED_IMAGE_TYPES = {"image/png", "image/jpeg", "image/gif", "image/webp", "image/svg+xml"}
 IMAGE_EXTENSIONS = {"image/png": ".png", "image/jpeg": ".jpg", "image/gif": ".gif", "image/webp": ".webp", "image/svg+xml": ".svg"}
 IMAGE_MEDIA_TYPES = {".png": "image/png", ".jpg": "image/jpeg", ".jpeg": "image/jpeg", ".gif": "image/gif", ".webp": "image/webp", ".svg": "image/svg+xml"}
+
+# Upload filenames are the content sha256 truncated to this many hex chars
+# (long enough that collisions stay theoretical, short enough to read in logs).
+DIGEST_CHARS = 24
+
+
+def is_pdf(data: bytes) -> bool:
+    return len(data) >= 4 and data[:4] == b"%PDF"
+
+
+def content_digest(data: bytes) -> str:
+    return hashlib.sha256(data).hexdigest()[:DIGEST_CHARS]
+
+
+def store_pdf(user: str, data: bytes) -> tuple[str, str, bool]:
+    """Store PDF bytes under their content hash (callers validate with
+    :func:`is_pdf` first). Returns ``(doc_id, source_url, already_existed)``.
+    Dedup first: a re-upload of a stored file adds no bytes, so the storage
+    limits only gate genuinely new ones (check_upload_allowed raises 413/507
+    past them)."""
+    uploads = user_uploads_dir(user)
+    uploads.mkdir(parents=True, exist_ok=True)
+    doc_id = content_digest(data)
+    target = uploads / f"{doc_id}.pdf"
+    already_existed = target.exists()
+    if not already_existed:
+        check_upload_allowed(user, len(data))
+        target.write_bytes(data)
+    return doc_id, f"/api/uploads/{doc_id}.pdf", already_existed
 
 
 def find_upload_file(filename: str, user: str) -> Path | None:

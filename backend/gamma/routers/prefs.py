@@ -8,6 +8,11 @@ read or write prefs. Values are opaque JSON blobs; keep them small.
 The `ai-settings` key holds the user's AI provider API keys and is reserved:
 it is only reachable through /api/ai/settings, which masks the keys — these
 generic endpoints must never serve it raw.
+
+Also here: /api/page-snaps — the recents-card cover thumbnails (small JPEG
+data URLs the client captures from the rendered viewer). Same "UI state that
+follows the account" idea, but far over the prefs size cap, so they get their
+own data.db table with a per-entry newest-wins write and a hard count cap.
 """
 
 import json
@@ -19,7 +24,14 @@ from pydantic import BaseModel
 
 from ..ai_settings import AI_SETTINGS_PREF_KEY
 from ..auth import require_user
-from ..db import get_pref, set_pref
+from ..db import (
+    delete_page_snap,
+    get_page_snaps,
+    get_pref,
+    safe_doc_id,
+    set_page_snap,
+    set_pref,
+)
 
 router = APIRouter(prefix="/api", tags=["prefs"])
 
@@ -52,3 +64,55 @@ async def write_pref(key: str, payload: PrefWriteRequest, request: Request):
         raise HTTPException(status_code=413, detail="pref value too large")
     updated_at = set_pref(user, key, payload.value)
     return {"key": key, "updated_at": updated_at}
+
+
+# --- Page snapshots (recents-card covers) ---------------------------------
+
+# 320×480 max at JPEG q0.55 is a few tens of KB base64; anything bigger is a
+# bug (the frontend's SNAP_WIDTH/SNAP_MAX_HEIGHT/SNAP_QUALITY in App.jsx must
+# stay comfortably under this).
+MAX_SNAP_CHARS = 200 * 1024
+
+
+def _check_snap_id(page_id: str):
+    """Page ids come from the client; the doc-id shape guard covers them."""
+    try:
+        safe_doc_id(page_id)
+    except ValueError:
+        raise HTTPException(status_code=400, detail="invalid page id")
+
+
+class SnapWriteRequest(BaseModel):
+    img: str = ""
+    at: str = ""  # capture time (ISO, client clock) — newest wins across devices
+
+
+# Sync endpoints: they move up-to-200KB blobs through sqlite — FastAPI's
+# threadpool keeps the event loop free (same rule as the other blocking routes).
+@router.get("/page-snaps")
+def read_page_snaps(request: Request, after: str = ""):
+    """All stored covers, or (with ?after=<iso>) only ones newer than that —
+    the cheap focus-pull form: clients send their newest local `at`."""
+    user = require_user(request)
+    return {"snaps": get_page_snaps(user, after=after)}
+
+
+@router.put("/page-snaps/{page_id}")
+def write_page_snap(page_id: str, payload: SnapWriteRequest, request: Request):
+    user = require_user(request)
+    _check_snap_id(page_id)
+    img = payload.img or ""
+    if not img.startswith("data:image/jpeg;base64,"):
+        raise HTTPException(status_code=400, detail="expected a JPEG data URL")
+    if len(img) > MAX_SNAP_CHARS:
+        raise HTTPException(status_code=413, detail="snapshot too large")
+    at = set_page_snap(user, page_id, img, at=payload.at)
+    return {"page_id": page_id, "at": at}
+
+
+@router.delete("/page-snaps/{page_id}")
+def remove_page_snap(page_id: str, request: Request):
+    user = require_user(request)
+    _check_snap_id(page_id)
+    delete_page_snap(user, page_id)
+    return {"ok": True}

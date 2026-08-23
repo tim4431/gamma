@@ -42,8 +42,12 @@
   --accent-bg: rgba(42,79,122,0.3);
   --accent-bg-light: rgba(90,155,213,0.1);
   --drag-accent: #64b5f6;
-  --scrollbar-bg: #1a1a1a;
-  --scrollbar-thumb: #3f3f3f;
+  /* The dark thumb pair keeps its own names so .pdfViewer.pdfDark can re-pin
+     it while the light theme is active. */
+  --scrollbar-thumb-dark: #3f3f3f;
+  --scrollbar-thumb-dark-hover: #565656;
+  --scrollbar-thumb: var(--scrollbar-thumb-dark);
+  --scrollbar-thumb-hover: var(--scrollbar-thumb-dark-hover);
   /* Native chrome (scrollbars, form controls) follows the app theme. */
   color-scheme: dark;
   --radius-control: 6px;
@@ -90,12 +94,40 @@
   --accent-bg: rgba(74,144,226,0.12);
   --accent-bg-light: rgba(74,144,226,0.06);
   --drag-accent: #1565c0;
-  --scrollbar-bg: #f5f5f5;
-  --scrollbar-thumb: #cccccc;
+  --scrollbar-thumb: #cbcbcb;
+  --scrollbar-thumb-hover: #a8a8a8;
   color-scheme: light;
 }
 
 * { box-sizing: border-box; }
+
+/* Scrollbars are part of the theme, not OS chrome: a thin bar on a transparent
+   track (so it reads as whatever surface it sits on) with a muted thumb.
+   Firefox and Chromium 121+ take the standard properties; the @supports
+   fallback covers older WebKit/Blink, where the pseudo-elements additionally
+   drop the stepper buttons and give the thumb a hover state. Scrollers that
+   hide their bar entirely (.tabStrip, .carouselTrack) override this from
+   their own class rule. */
+* {
+  scrollbar-width: thin;
+  scrollbar-color: var(--scrollbar-thumb) transparent;
+}
+
+@supports not (scrollbar-width: thin) {
+  ::-webkit-scrollbar { width: 10px; height: 10px; }
+  ::-webkit-scrollbar-track,
+  ::-webkit-scrollbar-corner { background: transparent; }
+  ::-webkit-scrollbar-button { display: none; }
+  /* The transparent border + content-box clip is the padding that keeps the
+     thumb off the edges; background alone would fill the full track width. */
+  ::-webkit-scrollbar-thumb {
+    background: var(--scrollbar-thumb);
+    background-clip: content-box;
+    border: 2px solid transparent;
+    border-radius: 8px;
+  }
+  ::-webkit-scrollbar-thumb:hover { background: var(--scrollbar-thumb-hover); background-clip: content-box; }
+}
 
 /* Shared visual primitives. Components keep their layout and sizing rules,
    while these groups own the recurring surface, field, and hover language. */
@@ -1759,6 +1791,13 @@ button.pdfOutlineChevron:hover { background: rgba(128, 128, 128, 0.28); color: v
   display: flex;
   background: var(--bg-surface);
 }
+/* Inactive overlay: laid out (so its scroll offsets survive) but invisible
+   and click-through. display:none would destroy the layout box and reset
+   every scroller inside it back to the top. */
+.phonePanel.phonePanelHidden {
+  visibility: hidden;
+  pointer-events: none;
+}
 .phonePanel .dockWindow { border-left: none; }
 .phonePanel .dockGrip { cursor: default; }
 /* One bar along the bottom: view tabs on the left, the topbar's action
@@ -2153,11 +2192,6 @@ button.pdfOutlineChevron:hover { background: rgba(128, 128, 128, 0.28); color: v
 .uiSelectBtn .uiSelectChev { color: var(--text-dim); flex-shrink: 0; }
 .uiSelectBtn.block { width: 100%; justify-content: space-between; }
 .uiSelectBtn.block .uiSelectLabel { max-width: none; }
-/* Checkmark on the selected row of a dropdown menu. */
-/* Trailing check on the current choice. Spacing is margin, never padding:
-   with the global border-box, padding on an <svg> eats its own content
-   box and the glyph renders at zero width (i.e. invisibly). */
-.ctxMenuCheck { margin-left: auto; color: var(--text-primary); flex-shrink: 0; }
 /* Selected state for a button that is a choice rather than an action —
    segmented groups (Settings) light the active option this way. */
 .uiBtn.on {
@@ -2862,6 +2896,7 @@ button.pdfOutlineChevron:hover { background: rgba(128, 128, 128, 0.28); color: v
 .pdfNoteTip {
   position: fixed;
   z-index: var(--z-popover);
+  /* 520/16 = NOTE_TIP_W / 2·VIEWPORT_PAD in pdfViewer.jsx — keep in sync. */
   max-width: min(520px, calc(100vw - 16px));
   max-height: 40vh;
   overflow-y: auto;
@@ -2896,7 +2931,9 @@ button.pdfOutlineChevron:hover { background: rgba(128, 128, 128, 0.28); color: v
    highlights and find marks switch to screen — multiply's dark-background
    dual. !important because both the wrap background and the blend modes are
    inline styles in pdfViewer.jsx. */
-.pdfViewer.pdfDark { background: #181818; color-scheme: dark; } /* dark surround + scrollbar even in the light theme */
+.pdfViewer.pdfDark { background: #181818; color-scheme: dark;
+  --scrollbar-thumb: var(--scrollbar-thumb-dark);
+  --scrollbar-thumb-hover: var(--scrollbar-thumb-dark-hover); } /* dark surround + scrollbar even in the light theme */
 .pdfViewer.pdfDark .pdfPageWrap { background: #101010 !important; }
 .pdfViewer.pdfDark .pdfPageWrap > canvas { filter: invert(0.94) hue-rotate(180deg); }
 .pdfViewer.pdfDark .pdfPageWrap :is([data-hl-id], .pdfFindMark) { mix-blend-mode: screen !important; }
@@ -3102,9 +3139,27 @@ button.pdfOutlineChevron:hover { background: rgba(128, 128, 128, 0.28); color: v
 .ctxMenuItem:disabled { opacity: 0.45; cursor: default; }
 .ctxMenuItem:disabled:hover { background: none; }
 
+/* Section label row inside a menu (MenuLabel). */
+.ctxMenuLabel {
+  font-size: 10px;
+  letter-spacing: 0.06em;
+  text-transform: uppercase;
+  color: var(--text-dim);
+  padding: 6px 10px 2px;
+  border-top: 1px solid var(--border-subtle);
+  margin-top: 4px;
+}
+
+/* Trailing markers of an iconed row — the selected-choice check and the
+   flyout chevron. Spacing is margin, never padding: with the global
+   border-box, padding on an <svg> eats its own content box and the glyph
+   renders at zero width (i.e. invisibly). */
+:is(.ctxMenuCheck, .ctxSubChev) { margin-left: auto; flex-shrink: 0; }
+.ctxMenuCheck { color: var(--text-primary); }
+
 /* --- nested flyout (SubMenuItem) --- */
 .ctxSubWrap { position: relative; }
-.ctxSubChev { margin-left: auto; color: var(--text-dim); flex-shrink: 0; }
+.ctxSubChev { color: var(--text-dim); }
 .ctxSubTrigger.open { background: var(--bg-hover); }
 /* The panel rides inside the parent menu (see SubMenuItem) — absolute, not
    the fixed positioning .ctxMenu gives every other menu surface. */

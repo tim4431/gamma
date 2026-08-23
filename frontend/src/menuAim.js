@@ -123,4 +123,4 @@ function useMenuAim({ graceMs = 300, slack = 6 } = {}) {
   return { setTarget, guard, keep };
 }
 
-export { useMenuAim, isAimingAt, aimTriangle, pointInTriangle };
+export { useMenuAim };

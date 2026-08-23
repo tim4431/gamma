@@ -37,7 +37,6 @@ _FTS_SCHEMA = (
     "CREATE TABLE IF NOT EXISTS pdf_fts_docs (doc_id TEXT PRIMARY KEY, indexed_at TEXT NOT NULL, pages INTEGER, ver INTEGER NOT NULL DEFAULT 0)",
 )
 
-_MAX_PAGES = 400          # per document
 _MAX_PAGE_CHARS = 20000   # per page
 
 _index_threads: dict[str, threading.Thread] = {}
@@ -56,7 +55,7 @@ def _ensure_schema(conn):
 
 def _extract_pages(path) -> list[str]:
     """Text per page (1-based order) — the shared extractor in gamma.pdf_text."""
-    return extract_pages(str(path), _MAX_PAGES)
+    return extract_pages(str(path))
 
 
 def _index_doc(user: str, doc_id: str):

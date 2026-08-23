@@ -13,6 +13,11 @@ import { useMenuAim } from "./menuAim";
 // any nesting depth — can open/close flyouts without the caller wiring state.
 const MenuCtx = createContext(null);
 
+// Shared geometry: minimum gap a menu keeps to the viewport edge, and how far
+// a flyout rides above its trigger row so their first items line up.
+const VIEWPORT_PAD = 8;
+const SUB_TOP_NUDGE = -4;
+
 // A context menu positioned at a screen point (x, y). Rendered through a
 // portal so it escapes the window-stack's overflow/stacking contexts, clamps
 // itself inside the viewport, and dismisses on outside-pointerdown or Escape.
@@ -34,7 +39,7 @@ function ContextMenu({ x, y, onClose, className = "", anchorRight = false, ignor
   useLayoutEffect(() => {
     const el = ref.current;
     if (!el) return;
-    const pad = 8;
+    const pad = VIEWPORT_PAD;
     const { width, height } = el.getBoundingClientRect();
     let left = anchorRight ? x - width : x, top = y;
     if (left + width > window.innerWidth - pad) left = Math.max(pad, window.innerWidth - width - pad);
@@ -115,7 +120,7 @@ function SubMenuItem({ id, icon: Icon, label, title, children }) {
   const open = openSub === id;
   const panelRef = useRef(null);
   const wrapRef = useRef(null);
-  const [style, setStyle] = useState({ left: "100%", top: -4 });
+  const [style, setStyle] = useState({ left: "100%", top: SUB_TOP_NUDGE });
 
   // Side-flip + vertical clamp: prefer opening right, fall back to left when
   // that would leave the viewport, and slide up so the panel always fits.
@@ -123,11 +128,11 @@ function SubMenuItem({ id, icon: Icon, label, title, children }) {
     if (!open) return;
     const panel = panelRef.current, wrap = wrapRef.current;
     if (!panel || !wrap) return;
-    const pad = 8;
+    const pad = VIEWPORT_PAD;
     const w = wrap.getBoundingClientRect();
     const p = panel.getBoundingClientRect();
     const flip = w.right + p.width > window.innerWidth - pad && w.left - p.width > pad;
-    let top = -4;
+    let top = SUB_TOP_NUDGE;
     if (w.top + top + p.height > window.innerHeight - pad) top = window.innerHeight - pad - p.height - w.top;
     if (w.top + top < pad) top = pad - w.top;
     setStyle(flip ? { right: "100%", top } : { left: "100%", top });
@@ -143,9 +148,9 @@ function SubMenuItem({ id, icon: Icon, label, title, children }) {
 
   return (
     <div className="ctxSubWrap" ref={wrapRef}>
-      <button
-        type="button"
-        className={`ctxMenuItem ctxMenuItemIconed ctxSubTrigger ${open ? "open" : ""}`}
+      <MenuItem
+        icon={Icon}
+        className={`ctxSubTrigger ${open ? "open" : ""}`}
         data-submenu={id}
         title={title}
         aria-haspopup="menu"
@@ -153,11 +158,10 @@ function SubMenuItem({ id, icon: Icon, label, title, children }) {
         onPointerEnter={() => aim?.guard(() => setOpenSub(id))}
         onClick={(e) => { e.stopPropagation(); aim?.keep(); setOpenSub(open ? null : id); }}
         onKeyDown={(e) => { if (e.key === "ArrowRight") { e.preventDefault(); setOpenSub(id); } }}
+        trailing={<ChevronRightIcon size={13} className="ctxSubChev" />}
       >
-        <span className="ctxMenuIcon">{Icon ? <Icon size={14} /> : null}</span>
-        <span className="ctxMenuText">{label}</span>
-        <ChevronRightIcon size={13} className="ctxSubChev" />
-      </button>
+        {label}
+      </MenuItem>
       {open ? (
         <div ref={panelRef} className="ctxMenu ctxSubMenu" style={style} role="menu">
           {children}

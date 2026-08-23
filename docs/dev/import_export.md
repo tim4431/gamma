@@ -1,0 +1,132 @@
+# Import and export
+
+The ⋮ menu's Import…/Export… dialogs and every pipeline behind them: embedded
+PDF annotations, Logseq graphs, Zotero libraries, Markdown export, and the
+annotated-PDF writer. Code: `gamma/routers/imports.py`, `gamma/zotero_import.py`,
+`gamma/logseq_import.py`, `gamma/markdown_export.py`, `gamma/pdf_export.py`,
+`gamma/pdf_notes.py`, `gamma/note_markup.py`, `gamma/vector_text.py`,
+`gamma/pdf_image.py`; frontend dialogs in
+[widgets.jsx](../../frontend/src/widgets.jsx).
+
+## Importing annotations embedded in a PDF
+
+`/api/import/pdf-annotations` converts annotations embedded in the PDF file
+(SumatraPDF/Acrobat/Gamma-export highlights, notes, and /Square//Circle → area
+highlights) into highlight blocks — idempotent via `properties.imported_annot`
+keys; opacity honors the annotation's `/CA` so a Gamma export → re-import
+round-trips exact colors; PyPDF2 dict access returns `IndirectObject`s, always
+`.get_object()` them.
+
+Because imported annotations would otherwise render twice (pdf.js paints them
+into the canvas AND the blocks draw as overlays), the Settings → Reading → PDF
+viewer → "Annotations inside the file" preference either hides them viewer-side
+(`annotationMode: DISABLE`, default) or sends `strip: true` so the import
+rewrites the stored PDF without them (the ⋮ menu's "Import…" dialog can
+override that for one run; the auto-import on open always follows the
+preference); stripped blocks get `properties.annot_stripped`, which tells
+`/export-pdf` to write them again (it skips `imported_annot` blocks only while
+the original is still embedded).
+
+## The Import dialog
+
+The ⋮ menu's single "Import…" entry → `ImportDialog` in `widgets.jsx`: the
+export dialog's counterpart — pick a source (annotations embedded in this PDF,
+a Logseq .pdf + .edn, or a Zotero library .zip), flip the strip switch (applies
+to embedded annotations, including the ones inside Zotero's exported PDFs),
+confirm. Zotero is the default source (a numbered step guide reusing
+settingsKit's `Step`); with a PDF open, that PDF's own annotations win. Nothing
+is remembered: the switch starts from the Settings preference each time, so the
+setting stays the standing policy.
+
+## Zotero library import
+
+`POST /api/import/zotero` (Settings → Library → Import): a zip of Zotero's
+File → Export Library → "Zotero RDF" (with Export Files/Notes).
+`gamma/zotero_import.py` parses the RDF (items, journal records carrying the
+DOI, collections, tags, HTML notes) and tolerant zip-name lookup
+(cp437-mojibake, NFC/NFD, backslashes); the endpoint in `routers/imports.py`
+uploads PDFs (dedup + quota per file, over-quota items are skipped not fatal),
+upserts pages keyed by file hash then `properties.zotero_key` (re-exports
+change bytes — Zotero re-embeds annotations at export time), maps
+collections→folder labels (optional `folder` prefix form field),
+tags→`category`, notes→child blocks (`properties.zotero_note`), then runs the
+shared `import_embedded_annotations` (reader annotations arrive inside the
+exported PDFs; `strip` follows the client's embedded-annotations preference).
+Merging only fills gaps: existing meta/bibtex/files are kept, labels union.
+
+## The Export dialog
+
+The ⋮ menu's single "Export…" entry → `ExportDialog` in `widgets.jsx`: one
+Notion-style dialog — format (PDF / Markdown / Logseq graph) plus Highlights,
+Notes and Bundle-the-files switches, remembered in `localStorage`
+(`gamma-export-opts`). The switches are query flags on two endpoints:
+`/pages/{id}/export?mode=readable&highlights=&notes=&pdf=` (Markdown,
+`render_readable` in `markdown_export.py`; dropping highlights keeps a
+highlight block's own text as a plain bullet) and
+`/pages/{id}/export-pdf?highlights=&notes=`. Two combinations are special: a
+Logseq graph is defined by carrying both layers, so its switches are pinned on
+and disabled; a PDF with both off is the stored file itself, which the frontend
+downloads from the viewer's own URL (so it also works for a PDF that only
+exists behind the proxy).
+
+## PDF export
+
+`/api/pages/{id}/export-pdf`: highlights become standard `/Highlight` (or
+`/Square` for area notes) annotations with the note text in the popup
+(`gamma/pdf_export.py`) — `?highlights=0` skips that layer entirely.
+
+### Notes drawn on the page
+
+`?notes=1` adds a second layer from `gamma/pdf_notes.py` — every non-empty note
+is *drawn on the page*, in the nearest patch of empty space, with a leader line
+back to its highlight. Free space comes from pdfium page-object bounds
+rasterized into an occupancy grid (display space, top-left origin, /Rotate
+applied — same frame the viewer stores rects in) with a summed-area table
+behind the candidate search; already-placed boxes are marked occupied so notes
+never collide.
+
+Notes are markdown, so `gamma/note_markup.py` splits each one into text spans
+(`(TEXT, str, level)`, level ±1 = real super/subscript), inline-math spans,
+display-math items and image items first; markdown emphasis/links/code are
+stripped.
+
+### Vector text (math and CJK)
+
+`gamma/vector_text.py` draws what the base-14 fonts can't, as vector paths:
+`math()` typesets LaTeX with ziamath, `glyphs()` renders CJK per character with
+ziafont (a *plain .ttf* — ziafont can't open the .ttc collections most CJK font
+packages ship, hence `fonts-droid-fallback` in the Dockerfile; without it CJK
+falls back to the non-embedded CID font, which pdf.js renders as latin
+gibberish). Both libraries emit plain glyph *outlines* (M/L/Q/Z paths + rects)
+once `config.svg2 = False` — otherwise glyphs come wrapped in a `<symbol>`
+whose own viewBox rescales them ~1.5×, so `_svg_ops` refuses any
+`<symbol>`/`<use>`/`transform` rather than drawing it at the wrong size. It
+also honours each shape's `fill`/`stroke`/`fill-rule`: `\boxed{}` is a
+*stroked, unfilled* rect, and painting it solid turns the whole equation into a
+black slab. SVG's y-down axis matches the display frame, so ops drop in with a
+translate/scale; inline math and CJK sit on the text baseline (the viewBox
+origin *is* the baseline), `$$…$$` gets a centred row, and a box that had to
+shrink an equation or picture loses to a wider candidate. When ziamath is
+missing or chokes, `note_markup.latex_spans` falls back to a unicode
+approximation (`\frac{a}{b}` → `a/b`, unknown commands keep their name so
+`\sin` works) — tests cover both fallbacks.
+
+### Images
+
+`gamma/pdf_image.py` embeds `![](/api/uploads/…)` refs as image XObjects — JPEG
+verbatim, 8-bit gray/RGB/palette PNG verbatim too (PDF's `/Predictor 15` IS PNG
+row filtering), alpha/16-bit PNG unfiltered in Python onto white (hence
+`MAX_PIXELS`). A palette's `/Indexed` lookup must be a `ByteStringObject`: as a
+text string PyPDF2 re-encodes it to UTF-16 and the picture comes out one flat
+colour.
+
+### Fonts and content streams
+
+Text is a hand-built content stream merged with `merge_page` using three fonts
+every viewer has: Helvetica (WinAnsi), Symbol (Greek/math —
+`pdf_notes.SYMBOL` holds codes AND advance widths measured from the font
+itself; every `note_markup.SYMBOLS` value must be drawable by one of the three,
+which a test enforces), and a non-embedded STSong-Light CID font for CJK.
+Deliberately no reportlab/Pillow dependency. PyPDF2 leaves merged content
+inline in the page dict; it must be re-added as an indirect object or the file
+is unreadable.

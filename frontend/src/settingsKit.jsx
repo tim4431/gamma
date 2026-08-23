@@ -141,7 +141,9 @@ export function UnitInput({ value, onChange, unit, placeholder, min, onEnter }) 
 }
 
 // Character budgets span 100 … 1 000 000, so the slider is log-scaled and snaps
-// to round numbers; the box next to it still accepts any exact value.
+// to round numbers; the box next to it still accepts any exact value. The max
+// matches the backend's request-model ceiling (READ_CHARS_MAX in
+// gamma/ai_tools.py) — keep the two in sync.
 const SLIDER_MIN = 100, SLIDER_MAX = 1000000, SLIDER_SPAN = Math.log(SLIDER_MAX / SLIDER_MIN);
 const toSlider = (v) => Math.round((1000 * Math.log(Math.max(SLIDER_MIN, v) / SLIDER_MIN)) / SLIDER_SPAN);
 const fromSlider = (s) => {
