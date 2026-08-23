@@ -404,7 +404,7 @@ function ZoteroImportRow({ value, onDone }) {
       icon={BookIcon}
       label="Zotero library"
       hint={"Zip of a “Zotero RDF” export, with files and notes"}
-      title={'In Zotero: File → Export Library → format "Zotero RDF", check "Export Files" and "Export Notes" (annotations are included in the PDFs). Zip the exported folder and upload it here. Collections become folders, tags become labels, notes become blocks; re-importing updates instead of duplicating.'}
+      title={'1) In Zotero: File → Export Library… (or right-click a collection), format "Zotero RDF". 2) Check "Export Files" and "Export Notes" — the files carry your PDFs and their annotations. 3) Zip the exported folder and upload it here. Collections become folders, tags labels, notes blocks; re-importing updates instead of duplicating.'}
     >
       <input
         ref={fileRef} type="file" accept=".zip,application/zip" hidden

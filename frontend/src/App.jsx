@@ -4832,6 +4832,7 @@ export default function App() {
                       snap={recentThumbs ? pageSnaps[b._pageId]?.img : null}
                       kind={b._sourceUrl ? "PDF" : "Note"} time={formatRelativeTime(b._viewedAt)}
                       folders={b._folders} labels={b._labels} labelMode={fileLabels}
+                     
                       className={selectedPages.has(b._pageId) ? "selected" : ""}
                       onClick={() => openPage(b._pageId)}
                       onContextMenu={(e) => {
@@ -4867,7 +4868,7 @@ export default function App() {
                       kind={b._sourceUrl ? "PDF" : "Note"}
                       time={formatRelativeTime(b._updatedAt)}
                       folders={b._folders} labels={b._labels} labelMode={fileLabels}
-                      reserveLabels={fileLabels !== "off"}
+                     
                       draggable
                       onDragStart={(e) => { e.dataTransfer.setData("text/plain", b._pageId); e.dataTransfer.effectAllowed = "move"; }}
                       onClick={(e) => handlePageClick(b, e)}
@@ -4965,7 +4966,8 @@ export default function App() {
                         kind="Folder"
                         count={folderMeta[f]?.count || 0}
                         time={cardTime(item)}
-                        reserveLabels={fileLabels !== "off"}
+                        labelMode={fileLabels}
+                       
                         renameNode={folderRenaming?.name === f ? (
                           <input
                             autoFocus
@@ -5003,7 +5005,7 @@ export default function App() {
                           kind={b._sourceUrl ? "PDF" : "Note"}
                           time={cardTime(item)}
                           folders={b._folders} labels={b._labels} labelMode={fileLabels}
-                          reserveLabels={fileLabels !== "off"}
+                         
                           renameNode={isEditing ? (
                             <input
                               autoFocus
@@ -5041,6 +5043,7 @@ export default function App() {
                         className="pageCardNew"
                         glyph={<FolderGlyph />}
                         kind="Folder"
+                        labelMode={fileLabels}
                         renameNode={
                           <input
                             autoFocus
@@ -5062,6 +5065,7 @@ export default function App() {
                         className="pageCardAdd"
                         glyph={<FolderPlusIcon className="tileGlyph" size={null} strokeWidth={1.5} />}
                         title="New folder"
+                        labelMode={fileLabels}
                         onClick={() => { setNewFolderName(""); setNewFolderOpen(true); }}
                       />
                     )}
@@ -6233,9 +6237,20 @@ export default function App() {
       {confirmBox ? (
         // data-popover keeps an open popover (e.g. search) alive while the dialog is up
         <div className="reportOverlay" data-popover="confirm" onClick={() => setConfirmBox(null)}>
-          <div className="reportModal confirmModal" onClick={(e) => e.stopPropagation()}>
-            <div className="reportModalTitle">{confirmBox.title}</div>
-            <div className="reportModalHint confirmMessage">{confirmBox.message}</div>
+          <div
+            className="reportModal confirmModal"
+            onClick={(e) => e.stopPropagation()}
+            onKeyDown={(e) => { if (e.key === "Escape") { e.stopPropagation(); setConfirmBox(null); } }}
+          >
+            <div className="confirmHead">
+              <span className={`confirmIcon ${confirmBox.danger ? "danger" : ""}`}>
+                {confirmBox.danger ? <AlertCircleIcon size={16} /> : <InfoIcon size={16} />}
+              </span>
+              <span className="settingText">
+                <span className="reportModalTitle">{confirmBox.title}</span>
+                <span className="confirmMessage">{confirmBox.message}</span>
+              </span>
+            </div>
             <div className="reportModalBtns">
               <button className="uiBtn" onClick={() => setConfirmBox(null)} autoFocus>Cancel</button>
               {confirmBox.altLabel ? (
@@ -6280,8 +6295,14 @@ export default function App() {
       {linkPrompt ? (
         <div className="reportOverlay" onClick={() => setLinkPrompt(null)}>
           <div className="reportModal confirmModal" onClick={(e) => e.stopPropagation()}>
-            <div className="reportModalTitle">External link</div>
-            <div className="reportModalHint confirmMessage linkPromptUrl">{linkPrompt}</div>
+            <div className="confirmHead">
+              <span className="confirmIcon"><LinkIcon size={16} /></span>
+              <span className="settingText">
+                <span className="reportModalTitle">External link</span>
+                <span className="confirmMessage">Open this link in a new browser tab, or pull the paper into your library.</span>
+              </span>
+            </div>
+            <div className="linkPromptUrl">{linkPrompt}</div>
             <div className="reportModalBtns">
               <button className="uiBtn" onClick={() => setLinkPrompt(null)}>Cancel</button>
               {(() => {
@@ -6293,19 +6314,19 @@ export default function App() {
                     className="uiBtn"
                     onClick={() => { setLinkPrompt(null); openBlock(pid, { pushNav: true }); }}
                     title="This paper is already in your library"
-                  >Open in Gamma</button>
+                  ><FileTextIcon size={13} />Open in Gamma</button>
                 ) : (
                   <button
                     className="uiBtn"
                     onClick={() => { const url = linkPrompt; setLinkPrompt(null); pushNav(); openPdf(url); }}
                     title="Resolve this link as a PDF and open it as a new paper in Gamma"
-                  >Fetch into Gamma</button>
+                  ><DownloadIcon size={13} />Fetch into Gamma</button>
                 );
               })()}
               <button
                 className="uiBtn primary"
                 onClick={() => { window.open(linkPrompt, "_blank", "noopener"); setLinkPrompt(null); }}
-              >Open in browser</button>
+              ><ExternalLinkIcon size={13} />Open in browser</button>
             </div>
           </div>
         </div>

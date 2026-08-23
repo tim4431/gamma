@@ -38,6 +38,20 @@ trigger without closing it. The module is plain geometry plus a `useMenuAim`
 hook (`setTarget` / `guard` / `keep`) — any other menu surface can adopt it
 without going through `menus.jsx`.
 
+### Dialogs
+
+`.reportOverlay` › `.reportModal` is the one dialog surface (settingsKit's
+`SubDialog` wraps it for the settings editors). Confirm-style dialogs — the
+shared `confirmBox`, the external-link prompt — add a `.confirmHead`: an icon
+chip (`.confirmIcon`, `.danger` for destructive) leading a title plus one
+line of explanation, the same shape as a settings `PaneHead`, over the
+right-aligned `.reportModalBtns` row. Escape closes them.
+
+Destructive affordances all read from one set of tokens — `--danger`,
+`--danger-bg`, `--danger-border` — so the solid confirm button, the outlined
+secondary, `.uiBtn.danger` and a menu's `danger` row are the same red in both
+themes. Never hardcode a red.
+
 ## Settings primitives
 
 Settings panes are built only from
