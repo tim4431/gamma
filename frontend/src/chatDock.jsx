@@ -48,6 +48,28 @@ export default function ChatDock({
   const perm = (key) => agentPerms?.[key] !== false;
   const agentReads = perm("list") || perm("read") || perm("search");
   const agentWrites = perm("rename") || perm("move");
+  // Agent fields riding on /api/ai/chat ({} = plain chat): folder chats reach
+  // the folder's pages, paper chats get the read tools (read_page /
+  // search_pdfs) for their own paper.
+  const agentPayload = () => {
+    const scope = organizeFolder != null && (agentReads || agentWrites)
+      ? { agent_scope: "folder", folder: organizeFolder }
+      : focusedBlockId && (perm("read") || perm("search"))
+        ? { agent_scope: "page", page_id: focusedBlockId }
+        : null;
+    return scope
+      ? { ...scope, tool_rounds: toolRounds || 0, permissions: agentPerms || {}, agent_system: agentSystem || "" }
+      : {};
+  };
+  // Empty-state intro and input placeholder for an agent-enabled home chat.
+  const agentScopeName = organizeFolder ? "this folder" : "your library";
+  const agentIntro = organizeFolder == null ? null
+    : agentWrites
+      ? `Ask AI anything — it can ${agentReads ? "read, search and " : ""}organize ${agentScopeName} (rename papers, file them into folders)…`
+      : agentReads
+        ? `Ask AI across ${organizeFolder ? "this folder's papers" : "your library"} — it can read, search and summarize them…`
+        : null;
+  const agentAsk = agentIntro ? (agentWrites ? `Ask, or organize ${agentScopeName}…` : `Ask across ${agentScopeName}…`) : null;
   const chatKeyRef = useRef(chatKey);
   chatKeyRef.current = chatKey;
   // Which conversation the in-flight request belongs to (typing indicator
@@ -300,15 +322,7 @@ export default function ChatDock({
           context_char_limit: chatContextChars,
           multi_context_char_limit: multiContextChars,
           stream: true,
-          // Agent scope: folder chats reach the folder's pages; paper chats
-          // get the read tools (read_page / search_pdfs) for their own paper.
-          ...(organizeFolder != null && (agentReads || agentWrites)
-            ? { agent_scope: "folder", folder: organizeFolder, tool_rounds: toolRounds || 0,
-                permissions: agentPerms || {}, agent_system: agentSystem || "" }
-            : focusedBlockId && (perm("read") || perm("search"))
-            ? { agent_scope: "page", page_id: focusedBlockId, tool_rounds: toolRounds || 0,
-                permissions: agentPerms || {}, agent_system: agentSystem || "" }
-            : {}),
+          ...agentPayload(),
         }),
       });
       if (!res.ok) {
@@ -626,11 +640,7 @@ export default function ChatDock({
                 </>
               ) : "AI is not configured."
             ) : focusedBlockId ? "Ask AI about this page…"
-              : organizeFolder != null && agentWrites
-                ? `Ask AI anything — it can ${agentReads ? "read, search and " : ""}organize ${organizeFolder ? "this folder" : "your library"} (rename papers, file them into folders)…`
-              : organizeFolder != null && agentReads
-                ? `Ask AI across ${organizeFolder ? "this folder's papers" : "your library"} — it can read, search and summarize them…`
-                : "Ask AI anything, or generate a report from your pages…"}
+              : agentIntro || "Ask AI anything, or generate a report from your pages…"}
           </div>
         ) : (
           chatMessages.map((m, i) => {
@@ -860,7 +870,7 @@ export default function ChatDock({
           onKeyDown={(e) => {
             if (e.key === "Enter" && !e.shiftKey) { e.preventDefault(); sendChatMessage(); }
           }}
-          placeholder={chatFiles.length ? `Ask about the attached file${chatFiles.length > 1 ? "s" : ""}…` : chatImages.length ? "Ask about the pasted figure…" : (pdfSelections.length ? (pdfSelections.length > 1 ? `Ask about the ${pdfSelections.length} selected passages…` : "Ask about the selection…") : (chatDocs.length ? `Ask about ${chatDocs.length} selected PDF${chatDocs.length > 1 ? "s" : ""}…` : organizeFolder != null && (agentReads || agentWrites) ? (agentWrites ? `Ask, or organize ${organizeFolder ? "this folder" : "your library"}…` : `Ask across ${organizeFolder ? "this folder" : "your library"}…`) : "Ask…"))}
+          placeholder={chatFiles.length ? `Ask about the attached file${chatFiles.length > 1 ? "s" : ""}…` : chatImages.length ? "Ask about the pasted figure…" : (pdfSelections.length ? (pdfSelections.length > 1 ? `Ask about the ${pdfSelections.length} selected passages…` : "Ask about the selection…") : (chatDocs.length ? `Ask about ${chatDocs.length} selected PDF${chatDocs.length > 1 ? "s" : ""}…` : agentAsk || "Ask…"))}
         />
         {chatLoading ? (
           <button className="uiBtn chatCircleBtn chatStopBtn" type="button" onClick={stopChat} title="Stop generating" aria-label="Stop generating">
