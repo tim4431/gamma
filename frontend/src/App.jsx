@@ -780,6 +780,23 @@ export default function App() {
   const prefixMapTag = (oldPath, newPath) => (t) =>
     t === oldPath ? newPath : t.startsWith(oldPath + "/") ? newPath + t.slice(oldPath.length) : t;
 
+  // Per-folder home-chat buckets ("home:<path>") follow the same prefix
+  // rewrites as the folder tags; dst "" drops the conversations (folder
+  // deleted). Runs BEFORE the tag rewrite flips folderFilter, so ChatDock
+  // reloads the destination bucket only after it exists. Best-effort — a
+  // failed move orphans a conversation, never page data.
+  async function moveFolderChats(moves) {
+    for (const [src, dst] of moves) {
+      try {
+        await apiJson(`${API}/chats/folder-rename`, {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({ src, dst }),
+        });
+      } catch {}
+    }
+  }
+
   // Rename one path segment: rewrites the prefix on every page's folder tags,
   // so renaming a parent folder carries all its subfolders along.
   async function renameFolder(oldPath, newNameRaw) {
@@ -788,6 +805,7 @@ export default function App() {
     const parent = oldPath.includes("/") ? oldPath.slice(0, oldPath.lastIndexOf("/")) : "";
     const newPath = parent ? `${parent}/${newName}` : newName;
     if (!newName || newPath === oldPath) return;
+    await moveFolderChats([[oldPath, newPath]]);
     await applyFolderMap(prefixMapTag(oldPath, newPath));
     setStatus(`Folder renamed to “${newPath}”.`);
   }
@@ -804,6 +822,7 @@ export default function App() {
       if (newPath !== oldPath) moves.push([oldPath, newPath]);
     }
     if (!moves.length) return;
+    await moveFolderChats(moves);
     await applyFolderMap((t) => {
       for (const [oldPath, newPath] of moves) {
         if (t === oldPath) return newPath;
@@ -845,6 +864,7 @@ export default function App() {
     const inPath = (t) => t === path || t.startsWith(path + "/");
     const members = homeBlocks.filter((b) => parseFolderTags(b.properties?.folder).some(inPath));
     const cleanupAfter = async (statusMsg) => {
+      await moveFolderChats([[path, ""]]); // drop the folder's chat buckets too
       updateExtraFolders((prev) => prev.filter((f) => !inPath(f)));
       setPageFolders((prev) => prev.filter((t) => !inPath(t)));
       if (folderFilter === path || folderFilter.startsWith(path + "/")) {
@@ -1616,6 +1636,10 @@ export default function App() {
   const [metaContextChars, setMetaContextChars] = usePersistedState("gamma-meta-context-chars", 6000, CONTEXT_CHARS_CODEC);
   const [multiContextChars, setMultiContextChars] = usePersistedState("gamma-multi-context-chars", 18000, CONTEXT_CHARS_CODEC);
   const [toolRounds, setToolRounds] = usePersistedState("gamma-ai-tool-rounds", 32, TOOL_ROUNDS_CODEC);
+  // Folder-agent permissions (Settings → Assistant): what the home/folder
+  // chat may do — read papers/notes/search, and rename/move pages.
+  const [agentRead, setAgentRead] = usePersistedFlag("gamma-ai-agent-read", true);
+  const [agentWrite, setAgentWrite] = usePersistedFlag("gamma-ai-agent-write", true);
   const [promptDraft, setPromptDraft] = useState("");
   // AI providers (Settings → AI providers): a user-managed list of API keys,
   // OpenAI-platform style. Keys are stored server-side per user; the server
@@ -5217,7 +5241,7 @@ export default function App() {
           openPopover={openPopover} setOpenPopover={setOpenPopover}
           setStatus={setStatus}
           organizeFolder={!focusedBlockId && !readOnly ? folderFilter : null}
-          toolRounds={toolRounds}
+          toolRounds={toolRounds} agentRead={agentRead} agentWrite={agentWrite}
           onLibraryChange={fetchHomeBlocks}
         />
       );
@@ -6207,6 +6231,10 @@ export default function App() {
           setMultiContextChars,
           toolRounds,
           setToolRounds,
+          agentRead,
+          setAgentRead,
+          agentWrite,
+          setAgentWrite,
           reset: () => {
             setChatContextChars(8000);
             setMetaContextChars(6000);

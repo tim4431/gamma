@@ -20,10 +20,11 @@ export default function ChatDock({
   openPopover, setOpenPopover,
   setStatus,
   // Home/folder view: the folder path being viewed ("" = library root) —
-  // enables the library-organizer tools; null in the paper view. When the
-  // AI applied changes, onLibraryChange refreshes the home feed. toolRounds
-  // is the Settings-configurable agent round budget.
-  organizeFolder = null, toolRounds, onLibraryChange,
+  // enables the folder-agent tools; null in the paper view. agentRead /
+  // agentWrite are the Settings permission toggles (read papers/notes/search;
+  // rename/move) and toolRounds the round budget. When the AI applied
+  // changes, onLibraryChange refreshes the home feed.
+  organizeFolder = null, toolRounds, agentRead = true, agentWrite = true, onLibraryChange,
   onGrip, onGripDoubleClick, collapsed, onClose,
 }) {
   const [chatMessages, setChatMessages] = useState([]);
@@ -32,8 +33,12 @@ export default function ChatDock({
   // Tracks which block we've finished loading from the server, so the save
   // effect doesn't fire (and clobber the stored chat) before the load lands.
   const chatLoadedForRef = useRef("");
-  // Chat history is per page; the home view gets its own bucket.
-  const chatKey = focusedBlockId || "home";
+  // Chat history is per page; the home view buckets per folder ("home" at the
+  // library root, "home:<path>" inside a folder) — switching folders switches
+  // conversations, so the organizer never drags one folder's context into
+  // another. App migrates the buckets on folder rename/move/delete
+  // (POST /api/chats/folder-rename).
+  const chatKey = focusedBlockId || (organizeFolder ? `home:${organizeFolder}` : "home");
   const chatKeyRef = useRef(chatKey);
   chatKeyRef.current = chatKey;
   // Which conversation the in-flight request belongs to (typing indicator
@@ -286,8 +291,9 @@ export default function ChatDock({
           context_char_limit: chatContextChars,
           multi_context_char_limit: multiContextChars,
           stream: true,
-          ...(organizeFolder != null
-            ? { organize: true, folder: organizeFolder, tool_rounds: toolRounds || 0 }
+          ...(organizeFolder != null && (agentRead || agentWrite)
+            ? { organize: true, folder: organizeFolder, tool_rounds: toolRounds || 0,
+                allow_read: !!agentRead, allow_write: !!agentWrite }
             : {}),
         }),
       });
@@ -605,8 +611,10 @@ export default function ChatDock({
                 </>
               ) : "AI is not configured."
             ) : focusedBlockId ? "Ask AI about this page…"
-              : organizeFolder != null
-                ? `Ask AI anything — or have it organize ${organizeFolder ? "this folder" : "your library"} (rename papers, file them into folders)…`
+              : organizeFolder != null && agentWrite
+                ? `Ask AI anything — it can ${agentRead ? "read, search and " : ""}organize ${organizeFolder ? "this folder" : "your library"} (rename papers, file them into folders)…`
+              : organizeFolder != null && agentRead
+                ? `Ask AI across ${organizeFolder ? "this folder's papers" : "your library"} — it can read, search and summarize them…`
                 : "Ask AI anything, or generate a report from your pages…"}
           </div>
         ) : (
@@ -834,7 +842,7 @@ export default function ChatDock({
           onKeyDown={(e) => {
             if (e.key === "Enter" && !e.shiftKey) { e.preventDefault(); sendChatMessage(); }
           }}
-          placeholder={chatFiles.length ? `Ask about the attached file${chatFiles.length > 1 ? "s" : ""}…` : chatImages.length ? "Ask about the pasted figure…" : (pdfSelections.length ? (pdfSelections.length > 1 ? `Ask about the ${pdfSelections.length} selected passages…` : "Ask about the selection…") : (chatDocs.length ? `Ask about ${chatDocs.length} selected PDF${chatDocs.length > 1 ? "s" : ""}…` : organizeFolder != null ? `Ask, or organize ${organizeFolder ? "this folder" : "your library"}…` : "Ask…"))}
+          placeholder={chatFiles.length ? `Ask about the attached file${chatFiles.length > 1 ? "s" : ""}…` : chatImages.length ? "Ask about the pasted figure…" : (pdfSelections.length ? (pdfSelections.length > 1 ? `Ask about the ${pdfSelections.length} selected passages…` : "Ask about the selection…") : (chatDocs.length ? `Ask about ${chatDocs.length} selected PDF${chatDocs.length > 1 ? "s" : ""}…` : organizeFolder != null && (agentRead || agentWrite) ? (agentWrite ? `Ask, or organize ${organizeFolder ? "this folder" : "your library"}…` : `Ask across ${organizeFolder ? "this folder" : "your library"}…`) : "Ask…"))}
         />
         {chatLoading ? (
           <button className="uiBtn chatCircleBtn chatStopBtn" type="button" onClick={stopChat} title="Stop generating" aria-label="Stop generating">
