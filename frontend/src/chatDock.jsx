@@ -10,9 +10,16 @@ import { MenuSelect } from "./menus";
 import { ArrowUpIcon, BookIcon, CheckIcon, ChevronDownIcon, ChevronUpIcon, CopyIcon, FileIcon, FolderIcon, ListIcon, MicIcon, PaperclipIcon, PencilIcon, SearchIcon, StopIcon, XIcon } from "./icons";
 
 // Folder-agent tool chips: icon per action kind; rename/move are the kinds
-// that changed the library (they trigger the home-feed refresh).
-const ACTION_ICONS = { rename: PencilIcon, move: FolderIcon, search: SearchIcon, read: BookIcon, list: ListIcon };
+// that changed the library (they trigger the home-feed refresh). Every chip
+// carries the raw call the server ran (tool/args/result, both truncated), so
+// clicking one expands the arguments and the output the model saw.
+const ACTION_ICONS = { rename: PencilIcon, move: FolderIcon, search: SearchIcon, read: BookIcon, list: ListIcon, error: XIcon };
 const MUTATING_KINDS = new Set(["rename", "move"]);
+const toolCallText = (a) => {
+  const args = Object.entries(a.args || {}).map(([k, v]) => `${k}: ${v}`).join(", ");
+  const head = `${a.tool || a.kind}(${args})`;
+  return [head, a.result].filter(Boolean).join("\n\n");
+};
 
 export default function ChatDock({
   docId, focusedBlockId, homeBlocks, pdfTitle, openTabs,
@@ -80,6 +87,12 @@ export default function ChatDock({
   // like pdfSelections — so the PDF viewer can attach into it.
   const [editingMsg, setEditingMsg] = useState(null); // {idx, text} — editing a sent user message
   const [copiedMsgIdx, flashCopiedMsg] = useCopied(1200);
+  const [openActions, setOpenActions] = useState(() => new Set()); // expanded tool chips, "<msg>:<action>"
+  const toggleAction = (key) => setOpenActions((prev) => {
+    const next = new Set(prev);
+    next.has(key) ? next.delete(key) : next.add(key);
+    return next;
+  });
   const [chatFindOpen, setChatFindOpen] = useState(false);
   const [chatFind, setChatFind] = useState("");
   const [chatFindIdx, setChatFindIdx] = useState(0);
@@ -706,10 +719,28 @@ export default function ChatDock({
                       <div className="chatToolActions">
                         {m.actions.map((a, j) => {
                           const Icon = ACTION_ICONS[a.kind] || FolderIcon;
+                          // Chats saved before tool output was recorded have
+                          // no raw call — those chips stay plain text.
+                          const hasDetail = !!(a.tool || a.result);
+                          const key = `${i}:${j}`;
+                          const open = openActions.has(key);
                           return (
-                            <div key={j} className="chatToolAction" title={a.summary}>
-                              <Icon size={11} />
-                              <span>{a.summary}</span>
+                            <div key={j} className={`chatToolAction${a.error ? " err" : ""}`}>
+                              {hasDetail ? (
+                                <button type="button" className="chatToolActionHead"
+                                  onClick={() => toggleAction(key)}
+                                  title={open ? "Hide tool output" : "Show tool output"}>
+                                  <Icon size={11} />
+                                  <span>{a.summary}</span>
+                                  {open ? <ChevronUpIcon size={10} /> : <ChevronDownIcon size={10} />}
+                                </button>
+                              ) : (
+                                <div className="chatToolActionHead plain" title={a.summary}>
+                                  <Icon size={11} />
+                                  <span>{a.summary}</span>
+                                </div>
+                              )}
+                              {open ? <pre className="chatToolDetail">{toolCallText(a)}</pre> : null}
                             </div>
                           );
                         })}
