@@ -7,7 +7,7 @@ import React, { useEffect, useMemo, useRef, useState } from "react";
 import { API, apiJson, copyText, isPdfFile } from "./utils";
 import { DockWindow, ChatMarkdown, AutoGrowTextarea, useCopied } from "./widgets";
 import { MenuSelect } from "./menus";
-import { ArrowUpIcon, BookIcon, CheckIcon, ChevronDownIcon, ChevronUpIcon, CopyIcon, FileIcon, MicIcon, PaperclipIcon, PencilIcon, StopIcon, XIcon } from "./icons";
+import { ArrowUpIcon, BookIcon, CheckIcon, ChevronDownIcon, ChevronUpIcon, CopyIcon, FileIcon, FolderIcon, MicIcon, PaperclipIcon, PencilIcon, StopIcon, XIcon } from "./icons";
 
 export default function ChatDock({
   docId, focusedBlockId, homeBlocks, pdfTitle, openTabs,
@@ -19,6 +19,11 @@ export default function ChatDock({
   aiInfo, aiProvider, openAiKeysEditor,
   openPopover, setOpenPopover,
   setStatus,
+  // Home/folder view: the folder path being viewed ("" = library root) —
+  // enables the library-organizer tools; null in the paper view. When the
+  // AI applied changes, onLibraryChange refreshes the home feed. toolRounds
+  // is the Settings-configurable agent round budget.
+  organizeFolder = null, toolRounds, onLibraryChange,
   onGrip, onGripDoubleClick, collapsed, onClose,
 }) {
   const [chatMessages, setChatMessages] = useState([]);
@@ -257,6 +262,8 @@ export default function ChatDock({
     const ctrl = new AbortController();
     chatAbortRef.current = ctrl;
     let acc = ""; // streamed reply so far — kept on Stop
+    const actions = []; // organizer mutations streamed for this reply
+    const aiMsg = (extra = {}) => ({ role: "ai", text: acc, ...(actions.length ? { actions: [...actions] } : {}), ...extra });
     try {
       const res = await fetch(`${API}/ai/chat`, {
         method: "POST",
@@ -279,6 +286,9 @@ export default function ChatDock({
           context_char_limit: chatContextChars,
           multi_context_char_limit: multiContextChars,
           stream: true,
+          ...(organizeFolder != null
+            ? { organize: true, folder: organizeFolder, tool_rounds: toolRounds || 0 }
+            : {}),
         }),
       });
       if (!res.ok) {
@@ -300,23 +310,25 @@ export default function ChatDock({
           if (!line.trim()) continue;
           const ev = JSON.parse(line);
           if (ev.error) throw new Error(ev.error);
+          if (ev.action) { actions.push(ev.action); continue; }
           acc += ev.delta || "";
         }
-        if (acc) showReply({ role: "ai", text: acc, partial: true });
+        if (acc || actions.length) showReply(aiMsg({ partial: true }));
       }
-      showReply({ role: "ai", text: acc || "(no response)" }, true);
+      showReply(aiMsg({ text: acc || (actions.length ? "" : "(no response)") }), true);
     } catch (err) {
       const stopped = err?.name === "AbortError";
-      showReply({
-        role: "ai",
+      showReply(aiMsg({
         text: stopped
           ? (acc ? `${acc}\n\n*(stopped)*` : "*(stopped)*")
           : (acc ? `${acc}\n\n**Error:** ${err.message}` : `Error: ${err.message}`),
-      }, true);
+      }), true);
     } finally {
       setChatLoading(false);
       setChatLoadingKey("");
       chatAbortRef.current = null;
+      // Organizer tools renamed/moved/labeled pages — reload the home feed.
+      if (actions.length) onLibraryChange?.();
     }
   }
 
@@ -592,7 +604,10 @@ export default function ChatDock({
                   {" "}with your API key to enable it.
                 </>
               ) : "AI is not configured."
-            ) : (focusedBlockId ? "Ask AI about this page…" : "Ask AI anything, or generate a report from your pages…")}
+            ) : focusedBlockId ? "Ask AI about this page…"
+              : organizeFolder != null
+                ? `Ask AI anything — or have it organize ${organizeFolder ? "this folder" : "your library"} (rename papers, file them into folders)…`
+                : "Ask AI anything, or generate a report from your pages…"}
           </div>
         ) : (
           chatMessages.map((m, i) => {
@@ -651,6 +666,16 @@ export default function ChatDock({
                             <FileIcon size={11} />
                             {n.slice(0, 40)}{n.length > 40 ? "…" : ""}
                           </span>
+                        ))}
+                      </div>
+                    ) : null}
+                    {!isUser && m.actions?.length ? (
+                      <div className="chatToolActions">
+                        {m.actions.map((a, j) => (
+                          <div key={j} className="chatToolAction" title={a.summary}>
+                            {a.kind === "rename" ? <PencilIcon size={11} /> : <FolderIcon size={11} />}
+                            <span>{a.summary}</span>
+                          </div>
                         ))}
                       </div>
                     ) : null}
@@ -809,7 +834,7 @@ export default function ChatDock({
           onKeyDown={(e) => {
             if (e.key === "Enter" && !e.shiftKey) { e.preventDefault(); sendChatMessage(); }
           }}
-          placeholder={chatFiles.length ? `Ask about the attached file${chatFiles.length > 1 ? "s" : ""}…` : chatImages.length ? "Ask about the pasted figure…" : (pdfSelections.length ? (pdfSelections.length > 1 ? `Ask about the ${pdfSelections.length} selected passages…` : "Ask about the selection…") : (chatDocs.length ? `Ask about ${chatDocs.length} selected PDF${chatDocs.length > 1 ? "s" : ""}…` : "Ask…"))}
+          placeholder={chatFiles.length ? `Ask about the attached file${chatFiles.length > 1 ? "s" : ""}…` : chatImages.length ? "Ask about the pasted figure…" : (pdfSelections.length ? (pdfSelections.length > 1 ? `Ask about the ${pdfSelections.length} selected passages…` : "Ask about the selection…") : (chatDocs.length ? `Ask about ${chatDocs.length} selected PDF${chatDocs.length > 1 ? "s" : ""}…` : organizeFolder != null ? `Ask, or organize ${organizeFolder ? "this folder" : "your library"}…` : "Ask…"))}
         />
         {chatLoading ? (
           <button className="uiBtn chatCircleBtn chatStopBtn" type="button" onClick={stopChat} title="Stop generating" aria-label="Stop generating">
