@@ -3,7 +3,7 @@
 The ⋮ menu's Import…/Export… dialogs and every pipeline behind them: embedded
 PDF annotations, Logseq graphs, Zotero libraries, Markdown export, and the
 annotated-PDF writer. Code: `gamma/routers/imports.py`, `gamma/zotero_import.py`,
-`gamma/logseq_import.py`, `gamma/markdown_export.py`, `gamma/pdf_export.py`,
+`gamma/zotero_export.py`, `gamma/logseq_import.py`, `gamma/markdown_export.py`, `gamma/pdf_export.py`,
 `gamma/pdf_notes.py`, `gamma/note_markup.py`, `gamma/vector_text.py`,
 `gamma/pdf_image.py`; frontend dialogs in
 [widgets.jsx](../../frontend/src/widgets.jsx).
@@ -54,11 +54,71 @@ shared `import_embedded_annotations` (reader annotations arrive inside the
 exported PDFs; `strip` follows the client's embedded-annotations preference).
 Merging only fills gaps: existing meta/bibtex/files are kept, labels union.
 
+## Zotero RDF export
+
+The import's exact inverse (`gamma/zotero_export.py`, endpoint branches in
+`routers/export.py`): `?mode=zotero-rdf` on `/pages/{id}/export` and
+`/folders/export` builds a `<slug>/<slug>.rdf` + `<slug>/files/<n>/<name>.pdf`
+zip that Zotero's File → Import reads (unzipped) and Gamma's own
+`/api/import/zotero` accepts as-is. Element shapes mirror what Zotero itself
+writes and `parse_zotero_rdf` reads: venue/volume/DOI on a standalone
+`bib:Journal` referenced by `dcterms:isPartOf`, notes as `bib:Memo` HTML
+(top-level non-highlight subtrees, one note each — the inverse of the import's
+notes→child-blocks mapping), folder labels as the `z:Collection` tree (a folder
+export confines them to paths under the exported folder), tags as `dc:subject`,
+`properties.zotero_key` reused as `rdf:about` so keys survive a round trip.
+Attachment paths live in `z:path` like Zotero's own export — never an
+`rdf:resource` *element*, an RDF/XML syntax term that Zotero tolerates but
+strict parsers (rdflib) reject. The pipeline is verified against a live Zotero
+via its connector server's `/connector/import` (same translator code path as
+the wizard). Zotero cannot read the .zip itself — its wizard reports
+"unsupported format" for one, so the zip ships a README.txt telling people to
+extract and pick the .rdf, and the export dialog shows a numbered step guide
+for the format. Pasted note images: embedded in the Memo HTML as data URIs
+(Zotero's note import keeps them — verified live; `_EMBED_IMAGE_CAP` guards
+size), attached to the item as image `z:Attachment`s when bundling, and
+replaced by a plain `(image: … — see item notes)` placeholder in annotation
+comments (`strip_image_md`) — comments come from the PDF's `/Contents` and can
+never render a picture, so a highlight whose notes carry images ALSO becomes
+its own Memo with a page+quote header (`highlight_memo_html`). `/api/folders/export` (all modes) reports per-page
+progress through `/api/folders/export-progress`, which the frontend polls into
+the status pill during folder exports. Highlights are not in the RDF
+— like Zotero's "Include Annotations" they're burned into the exported PDF
+copies with `pdf_export.annotate_pdf` (`highlights=0` skips that, `pdf=0`
+omits the files entirely, `notes=0` the Memos).
+
+## The export framework
+
+`/pages/{id}/export` and `/folders/export` share one driver (`_run_export` in
+`routers/export.py`): it walks the selected pages exactly once (subtree fetch
+→ `build_tree` → progress bookkeeping) and feeds each page to a per-format
+`_Builder` (`_MarkdownBuilder`, `_LogseqBuilder`, `_ZoteroBuilder`,
+`_GammaBuilder` — keyed by `?mode=`), which accumulates zip parts and names
+the download. Adding an export format = adding a builder; the endpoints,
+progress plumbing and `_zip_response` stay untouched.
+
+## Gamma-to-Gamma export
+
+`?mode=gamma` (`_GammaBuilder`): a *scoped account backup* in the same
+`gamma-backup-1` layout as `/api/export` — a `pages.db` holding just the
+selected page subtrees verbatim (same block ids), a `data.db` with their AI
+chats (plus the folder view's own `home:<path>` chat buckets on a folder
+export), `uploads/` with just the referenced files (doc_id PDFs + anything
+matching `UPLOAD_RE` in content/properties — the orphan-cleanup reference
+rule), and a `manifest.json`. **There is no new import code**: any Gamma
+imports it through the existing `/api/import-data?mode=merge` — additive,
+deduped by block id / doc id / content hash, so re-importing adds nothing. The
+⋮ Import dialog's "Gamma export (.zip)" source feeds the zip to that endpoint
+via the same upload/progress path as Settings → Restore backup (guests can't
+import). The dialog's three switches don't apply — a Gamma export is a 1:1
+copy, so they're pinned on.
+
 ## The Export dialog
 
 The ⋮ menu's single "Export…" entry → `ExportDialog` in `widgets.jsx`: one
-Notion-style dialog — format (PDF / Markdown / Logseq graph) plus Highlights,
-Notes and Bundle-the-files switches, remembered in `localStorage`
+Notion-style dialog — format (PDF / Markdown / Logseq graph / Zotero RDF /
+Gamma) plus Highlights, Notes and Bundle-the-files switches (per-format hint
+text lives in the `EXPORT_SWITCH_TEXT` table), remembered in `localStorage`
 (`gamma-export-opts`). The switches are query flags on two endpoints:
 `/pages/{id}/export?mode=readable&highlights=&notes=&pdf=` (Markdown,
 `render_readable` in `markdown_export.py`; dropping highlights keeps a
@@ -69,11 +129,21 @@ and disabled; a PDF with both off is the stored file itself, which the frontend
 downloads from the viewer's own URL (so it also works for a PDF that only
 exists behind the proxy).
 
+The dialog can also target a whole folder: opened from home with a folder open
+(the ⋮ Export… entry) or from a folder card's context menu (`exportFolder`
+state in App.jsx), it drops the single-PDF format and sends the same
+format/switch flags to `/folders/export?name=` (readable, `logseq-graph` or
+`zotero-rdf`).
+
 ## PDF export
 
 `/api/pages/{id}/export-pdf`: highlights become standard `/Highlight` (or
 `/Square` for area notes) annotations with the note text in the popup
-(`gamma/pdf_export.py`) — `?highlights=0` skips that layer entirely.
+(`gamma/pdf_export.py`) — `?highlights=0` skips that layer entirely. Every
+`/Square` carries an `/NM` id (`Zotero-<key>`, deterministic from the block
+id): Zotero's pdf-worker maps `/Square`→image annotation but silently DROPS
+one without an id, while `/Highlight` imports id-less — without `/NM`, area
+notes vanish in Zotero.
 
 ### Notes drawn on the page
 

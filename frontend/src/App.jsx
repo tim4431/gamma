@@ -1141,7 +1141,7 @@ export default function App() {
   // the pill renders a single winner, so messages can never overlap.
   //   entry: { msg, spinner?, error?, retry?, final? }
   // Ongoing entries (spinner) hold their channel until the source posts again
-  // or clears it (entry = null). Final entries linger ~0.6s, then fade out.
+  // or clears it (entry = null). Final entries linger 1s, then fade out.
   // When several channels are active: error > lingering final > ongoing,
   // ties broken by recency.
   const [status, setStatusRaw] = useState("Ready.");
@@ -1202,8 +1202,8 @@ export default function App() {
     const ifMine = (fn) => setPillChannels((prev) => (prev[channel]?.seq === seq ? fn(prev) : prev));
     if (entry.final) {
       timers[channel] = [
-        setTimeout(() => ifMine((prev) => ({ ...prev, [channel]: { ...prev[channel], fading: true } })), 600),
-        setTimeout(() => ifMine((prev) => { const next = { ...prev }; delete next[channel]; return next; }), 1000),
+        setTimeout(() => ifMine((prev) => ({ ...prev, [channel]: { ...prev[channel], fading: true } })), 1000),
+        setTimeout(() => ifMine((prev) => { const next = { ...prev }; delete next[channel]; return next; }), 1400),
       ];
     }
     if (opts?.after) {
@@ -1923,6 +1923,10 @@ export default function App() {
   // Export dialog: one "Export…" menu entry, the shape of the export chosen
   // here. Remembered across sessions — most people export the same way twice.
   const [exportOpen, setExportOpen] = useState(false);
+  // null = export the focused page; a folder path = export that whole folder
+  // (set when the dialog is opened from home with a folder open, or from a
+  // folder card's context menu).
+  const [exportFolder, setExportFolder] = useState(null);
   const [exportOpts, setExportOpts] = usePersistedState(
     "gamma-export-opts",
     { format: "pdf", highlights: true, notes: true, bundle: true },
@@ -3813,8 +3817,10 @@ export default function App() {
       a.remove();
       setTimeout(() => URL.revokeObjectURL(url), 2000);
       setStatus(`Exported ${filename}`);
+      return filename;
     } catch (err) {
       setStatus(`Export failed: ${err.message}`);
+      return null;
     }
   }
 
@@ -3842,6 +3848,16 @@ export default function App() {
       inp.click();
       return;
     }
+    if (o.source === "gamma") {
+      // Another Gamma's Export → Gamma zip (or a full backup): merge it in
+      // through the same upload/progress path as Settings → Restore backup.
+      const inp = document.createElement("input");
+      inp.type = "file";
+      inp.accept = ".zip,application/zip";
+      inp.onchange = () => { if (inp.files?.[0]) runBackupImport(inp.files[0], "merge"); };
+      inp.click();
+      return;
+    }
     const inp = document.createElement("input");
     inp.type = "file";
     inp.multiple = true;
@@ -3856,17 +3872,61 @@ export default function App() {
   // works for PDFs that only exist behind the proxy).
   async function runExport(o) {
     setExportOpen(false);
+    const flags = `highlights=${o.highlights ? 1 : 0}&notes=${o.notes ? 1 : 0}`;
+    const bundle = `pdf=${o.bundle ? 1 : 0}`;
+    if (exportFolder) {
+      const base = `/folders/export?name=${encodeURIComponent(exportFolder)}`;
+      // Per-page progress from the server while the download request runs
+      // (same polling pattern as the backup export).
+      const poll = setInterval(async () => {
+        try {
+          const p = await apiJson(`${API}/folders/export-progress`);
+          if (p.active && p.total) {
+            const pct = Math.round((p.done / p.total) * 100);
+            setStatus(`Exporting “${exportFolder}” — ${p.done}/${p.total} papers (${pct}%)…`);
+          }
+        } catch { /* progress is best-effort */ }
+      }, 500);
+      try {
+        if (o.format === "logseq") {
+          await downloadExport(`${base}&mode=logseq-graph&${bundle}`, "graph.zip");
+        } else if (o.format === "zotero") {
+          if (await downloadExport(`${base}&mode=zotero-rdf&${flags}&${bundle}`, "zotero.zip")) {
+            setStatus("Zotero library saved — unzip it, then import the .rdf in Zotero (File → Import).");
+          }
+        } else if (o.format === "gamma") {
+          if (await downloadExport(`${base}&mode=gamma`, "gamma.zip")) {
+            setStatus("Gamma export saved — in the other Gamma: Import → Gamma export (.zip).");
+          }
+        } else {
+          await downloadExport(`${base}&mode=readable&${flags}&${bundle}`, "folder.zip");
+        }
+      } finally {
+        clearInterval(poll);
+      }
+      return;
+    }
     const id = focusedBlock?.id;
     if (!id) { setStatus("Open a page first to export it."); return; }
-    const flags = `highlights=${o.highlights ? 1 : 0}&notes=${o.notes ? 1 : 0}`;
     if (o.format === "pdf") {
       if (!o.highlights && !o.notes) { await exportRawPdf(); return; }
       await downloadExport(`/pages/${id}/export-pdf?${flags}`, "export.pdf");
       return;
     }
-    const bundle = `pdf=${o.bundle ? 1 : 0}`;
     if (o.format === "logseq") {
       await downloadExport(`/pages/${id}/export?mode=logseq-graph&${bundle}`, "graph.zip");
+      return;
+    }
+    if (o.format === "zotero") {
+      if (await downloadExport(`/pages/${id}/export?mode=zotero-rdf&${flags}&${bundle}`, "zotero.zip")) {
+        setStatus("Zotero export saved — unzip it, then in Zotero pick the .rdf file via File → Import (it can't read the .zip itself).");
+      }
+      return;
+    }
+    if (o.format === "gamma") {
+      if (await downloadExport(`/pages/${id}/export?mode=gamma`, "gamma.zip")) {
+        setStatus("Gamma export saved — in the other Gamma: Import → Gamma export (.zip).");
+      }
       return;
     }
     await downloadExport(`/pages/${id}/export?mode=readable&${flags}&${bundle}`, "page.md");
@@ -5705,13 +5765,19 @@ export default function App() {
               Import…
             </button>
           ) : null}
-          {focusedBlock && !homeMode ? (
+          {(focusedBlock && !homeMode) || (homeMode && folderFilter) ? (
             <>
               <div className="popoverDivider" />
               <button
                 className="popoverItem"
-                onClick={() => { setOpenPopover(null); setExportOpen(true); }}
-                title="Download this page — the PDF with highlights and notes, Markdown, or a Logseq graph"
+                onClick={() => {
+                  setOpenPopover(null);
+                  setExportFolder(homeMode ? folderFilter : null);
+                  setExportOpen(true);
+                }}
+                title={homeMode
+                  ? `Download the “${folderFilter}” folder — every paper in it as Markdown, a Logseq graph, a Zotero library, or a Gamma export`
+                  : "Download this page — the PDF with highlights and notes, Markdown, a Logseq graph, a Zotero library, or a Gamma export"}
               >
                 <ExportIcon className="popoverItemIcon" size={15} />
                 Export…
@@ -6352,8 +6418,9 @@ export default function App() {
         <ExportDialog
           opts={exportOpts}
           setOpts={setExportOpts}
-          hasPdf={!!pdfUrl}
+          hasPdf={!!pdfUrl && !exportFolder}
           pdfStored={!!docId}
+          folder={exportFolder}
           onCancel={() => setExportOpen(false)}
           onExport={runExport}
         />
@@ -6743,6 +6810,11 @@ export default function App() {
               <>
                 <MenuItem icon={FolderOpenIcon} onClick={() => { const name = homeMenu.name; setHomeMenu(null); if (!homeMode) goHome(); setFolderFilter(name); window.history.replaceState(null, "", `/?folder=${encodeURIComponent(name)}`); }}>Open</MenuItem>
                 <MenuItem icon={PenIcon} onClick={() => { setHomeMenu(null); setFolderRenaming({ name: homeMenu.name, draft: homeMenu.name }); }}>Rename</MenuItem>
+                <MenuItem
+                  icon={ExportIcon}
+                  title="Download every paper in this folder — Markdown, a Logseq graph, a Zotero library, or a Gamma export"
+                  onClick={() => { const name = homeMenu.name; setHomeMenu(null); setExportFolder(name); setExportOpen(true); }}
+                >Export…</MenuItem>
                 <MenuItem icon={TrashIcon} danger onClick={() => { setHomeMenu(null); deleteFolderByName(homeMenu.name); }}>Delete</MenuItem>
               </>
             )}

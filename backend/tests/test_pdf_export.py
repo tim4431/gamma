@@ -81,6 +81,7 @@ def test_annotate_multiline_and_skips_unusable():
     assert str(obj["/Subtype"]) == "/Highlight"
     assert len(obj["/QuadPoints"]) == 16  # two quads, one per line rect
     assert "/Contents" not in obj  # empty note omitted
+    assert "/NM" not in obj  # highlights import into Zotero without an id
 
 
 def test_annotate_area_as_square():
@@ -92,7 +93,8 @@ def test_annotate_area_as_square():
     pos["area"] = True
     out, written = annotate_pdf(
         _blank_pdf(),
-        [{"position": pos, "color": "rgba(155, 205, 255, 0.65)", "note": "figure note"}],
+        [{"position": pos, "color": "rgba(155, 205, 255, 0.65)", "note": "figure note",
+          "id": "myarea1"}],
         author="tester",
     )
     assert written == 1
@@ -106,6 +108,14 @@ def test_annotate_area_as_square():
     assert str(obj["/T"]) == "tester"
     assert float(obj["/CA"]) == 0.65
     assert int(obj["/BS"]["/W"]) == 2
+    # Zotero's pdf-worker imports a /Square (→ area/image annotation) ONLY if
+    # it carries an id: /NM shaped "Zotero-<8 chars of its key alphabet>".
+    # Deterministic from the block id so re-exports keep stable keys.
+    from gamma.pdf_export import zotero_annot_key
+    nm = str(obj["/NM"])
+    assert nm == f"Zotero-{zotero_annot_key('myarea1')}"
+    assert len(nm) == len("Zotero-") + 8
+    assert all(c in "23456789ABCDEFGHIJKLMNPQRSTUVWXZ" for c in nm[7:])
 
     # And it round-trips: the importer reads the /Square back as an area
     # highlight (position carries area: true) with the exact color.

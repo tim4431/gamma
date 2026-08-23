@@ -2,7 +2,10 @@
 page references uploaded assets (Notion-style: bare file vs. bundle decided by
 whether there's anything to bundle)."""
 
+import base64
+import json
 import os
+import re
 import sqlite3
 import tempfile
 import zipfile
@@ -14,7 +17,15 @@ from starlette.background import BackgroundTask
 
 from ..auth import resolve_user, share_scope_doc
 from ..blocks_store import BLOCK_COLUMNS, assert_block_in_doc, block_to_dict, fetch_subtree
-from ..db import pdf_upload_path, safe_doc_id, user_db_path, user_uploads_dir
+from ..db import (
+    PAGES_SCHEMA,
+    connect_data_db,
+    page_now,
+    pdf_upload_path,
+    safe_doc_id,
+    user_db_path,
+    user_uploads_dir,
+)
 from ..logseq_graph_export import (
     CONFIG_EDN,
     collect_highlights,
@@ -24,13 +35,23 @@ from ..logseq_graph_export import (
     render_hls_md,
 )
 from ..markdown_export import (
+    UPLOAD_RE,
     build_tree,
     collect_and_rewrite,
     render_readable,
     slugify,
 )
+from ..logbuf import log
 from ..pdf_export import annotate_pdf, highlight_note_text
 from ..pdf_notes import render_notes
+from ..zotero_export import (
+    IMAGE_MIME,
+    MD_IMAGE_RE,
+    build_rdf,
+    highlight_memo_html,
+    note_html,
+    strip_image_md,
+)
 
 router = APIRouter(prefix="/api", tags=["export"])
 
@@ -109,41 +130,376 @@ def _graph_page_parts(page, uploads_dir, include_pdf):
     return entries, files, blobs, assets
 
 
+def _collect_marks(blocks) -> list[dict]:
+    """Highlight blocks → annotate_pdf marks (position/color/popup note).
+    Skips annotations that came from the PDF itself and are STILL embedded in
+    it (annot_stripped marks ones the import removed from the file), and link
+    regions (Gamma navigation aids, not annotations)."""
+    children_by_id: dict = {}
+    for b in sorted(blocks, key=lambda b: b["position"] or ""):
+        children_by_id.setdefault(b["parent_id"], []).append(b)
+
+    marks = []
+    for b in blocks:
+        props = b["properties"]
+        if not props.get("highlight_id") or not props.get("pdf_position"):
+            continue
+        if props.get("imported_annot") and not props.get("annot_stripped"):
+            continue
+        if props.get("link_url") or props.get("link_page_id"):
+            continue
+        marks.append({
+            "position": props["pdf_position"],
+            "color": props.get("color"),
+            "note": highlight_note_text(b, children_by_id),
+            # For /Square annotations: the deterministic /NM key Zotero
+            # requires before it will import an area annotation.
+            "id": props["highlight_id"],
+        })
+    return marks
+
+
+# Pasted images above this size stay attachments only — a data URI this big
+# would bloat the note beyond what Zotero's editor handles gracefully.
+_EMBED_IMAGE_CAP = 4_000_000
+
+
+def _walk_tree(node):
+    yield node
+    for child in node.get("children") or []:
+        yield from _walk_tree(child)
+
+
+def _image_resolver(uploads_dir):
+    """``resolve_image`` for note_html: upload filename → (mime, base64)."""
+    def resolve(filename):
+        mime = IMAGE_MIME.get(filename.rsplit(".", 1)[-1].lower())
+        path = uploads_dir / filename
+        if not mime or not path.is_file() or path.stat().st_size > _EMBED_IMAGE_CAP:
+            return None
+        return mime, base64.b64encode(path.read_bytes()).decode("ascii")
+    return resolve
+
+
+# --- format builders --------------------------------------------------------
+# One export = one builder. The driver (_run_export) walks the selected pages
+# exactly once — subtree fetch, tree build, progress bookkeeping — and feeds
+# each page to the mode's builder; the builder accumulates zip parts and names
+# the download. Adding an export format = adding a builder here; the
+# endpoints, the progress plumbing and _zip_response stay untouched.
+
+class _Builder:
+    """opts: {"pdf": bool, "highlights": bool, "notes": bool,
+    "folder_scope": path | None}."""
+    suffix = ".zip"  # appended to the base slug for the download name
+
+    def __init__(self, user, base: str, opts: dict):
+        self.user = user
+        self.base = base
+        self.opts = opts
+        self.uploads_dir = user_uploads_dir(user)
+        self.entries, self.assets = [], set()
+        self.files, self.blobs = [], []
+
+    def add_page(self, n: int, rows, page):
+        raise NotImplementedError
+
+    def finish(self):
+        """Last chance to add whole-export parts (config files, the RDF…)."""
+
+    def response(self) -> FileResponse:
+        self.finish()
+        return _zip_response(self.entries, self.assets, self.uploads_dir,
+                             f"{self.base}{self.suffix}", self.files, self.blobs)
+
+
+class _MarkdownBuilder(_Builder):
+    """One readable .md per page plus a shared assets/ folder (deduped by
+    content-hash filename)."""
+
+    def __init__(self, user, base, opts):
+        super().__init__(user, base, opts)
+        self.used = set()
+
+    def add_page(self, n, rows, page):
+        md, page_assets = collect_and_rewrite(
+            render_readable(page, highlights=self.opts["highlights"], notes=self.opts["notes"]),
+            include_pdf=self.opts["pdf"])
+        self.assets |= page_assets
+        slug = slugify(page.get("content"), page["id"])
+        arcname = f"{slug}.md"
+        # id suffix makes collisions near-impossible, but guard anyway.
+        while arcname in self.used:
+            arcname = f"{slug}-{len(self.used)}.md"
+        self.used.add(arcname)
+        self.entries.append((arcname, md))
+
+
+class _LogseqBuilder(_Builder):
+    """A Logseq file graph: pages/ + assets/ + logseq/config.edn, highlights
+    as native hls__ pages + EDN (see _graph_page_parts)."""
+    suffix = "-logseq.zip"
+
+    def add_page(self, n, rows, page):
+        p_entries, p_files, p_blobs, p_assets = _graph_page_parts(
+            page, self.uploads_dir, self.opts["pdf"])
+        self.entries += p_entries
+        self.files += p_files
+        self.blobs += p_blobs
+        self.assets |= p_assets
+
+    def finish(self):
+        self.entries.append(("logseq/config.edn", CONFIG_EDN))
+
+
+class _ZoteroBuilder(_Builder):
+    """A Zotero RDF library: ``<base>/<base>.rdf`` + ``<base>/files/<n>/…``.
+    Highlights travel embedded inside the PDF copies (annotate_pdf — Zotero's
+    "Include Annotations" convention), notes become bib:Memo items with pasted
+    images embedded as data URIs, folder labels (confined to the exported
+    folder) the collection tree. Images referenced anywhere in a page also
+    ride as item attachments; annotation comments carry a plain "(image: …)"
+    placeholder since they can't hold pictures."""
+    suffix = "-zotero.zip"
+
+    def __init__(self, user, base, opts):
+        super().__init__(user, base, opts)
+        self.items = []
+        self.resolve_image = _image_resolver(self.uploads_dir)
+
+    def add_page(self, n, rows, page):
+        props = page.get("properties") or {}
+        meta = props.get("meta") if isinstance(props.get("meta"), dict) else {}
+        title = re.sub(r"\s+", " ", page.get("content") or "").strip() or "Untitled"
+        include_pdf = self.opts["pdf"]
+
+        pdf_arc = None
+        doc_id = props.get("doc_id")
+        if include_pdf and doc_id:
+            try:
+                pdf_path = pdf_upload_path(self.user, doc_id)
+            except ValueError:
+                pdf_path = None
+            if pdf_path and pdf_path.is_file():
+                data = pdf_path.read_bytes()
+                if self.opts["highlights"]:
+                    marks = _collect_marks([block_to_dict(r) for r in rows])
+                    for m in marks:
+                        m["note"] = strip_image_md(m["note"])
+                    if marks:
+                        try:
+                            data, _ = annotate_pdf(data, marks, author=self.user)
+                        except Exception as e:
+                            log(f"zotero export: annotating '{title}' failed, exporting bare PDF: {e}")
+                            data = pdf_path.read_bytes()
+                pdf_arc = f"files/{n}/{slugify(title, '')}.pdf"
+                self.blobs.append((f"{self.base}/{pdf_arc}", data))
+
+        images = []
+        if include_pdf:
+            seen = set()
+            for node in _walk_tree(page):
+                for fname in MD_IMAGE_RE.findall(node.get("content") or ""):
+                    if fname in seen or not (self.uploads_dir / fname).is_file():
+                        continue
+                    seen.add(fname)
+                    arc = f"files/{n}/{fname}"
+                    self.blobs.append((f"{self.base}/{arc}", (self.uploads_dir / fname).read_bytes()))
+                    images.append({"path": arc, "title": fname,
+                                   "mime": IMAGE_MIME.get(fname.rsplit(".", 1)[-1].lower())
+                                           or "application/octet-stream"})
+
+        note_htmls = []
+        if self.opts["notes"]:
+            # Top-level non-highlight subtrees, one Zotero note each — the
+            # inverse of the import's notes→child-blocks mapping. Writing
+            # nested under highlights instead travels in the annotation popups.
+            for child in page["children"]:
+                cprops = child.get("properties") or {}
+                if cprops.get("highlight_id") or cprops.get("link_url"):
+                    continue
+                html = note_html(child, resolve_image=self.resolve_image)
+                if html:
+                    note_htmls.append(html)
+            # Popup comments are plain text, so a highlight whose notes carry
+            # images ALSO becomes a Zotero note (page + quote header) with the
+            # pictures embedded.
+            for node in _walk_tree(page):
+                nprops = node.get("properties") or {}
+                if not nprops.get("highlight_id"):
+                    continue
+                if not any(MD_IMAGE_RE.search(d.get("content") or "")
+                           for d in _walk_tree(node)):
+                    continue
+                html = highlight_memo_html(node, resolve_image=self.resolve_image)
+                if html:
+                    note_htmls.append(html)
+
+        folders = [p.strip() for p in (props.get("folder") or "").split(",") if p.strip()]
+        scope = self.opts.get("folder_scope")
+        if scope:
+            folders = [p for p in folders if p == scope or p.startswith(scope + "/")]
+        arxiv = (meta or {}).get("arxiv_id") or ""
+        self.items.append({
+            # Real Zotero keys are "#item_<n>" — a distinct prefix for generated
+            # ones so a re-exported import can't collide with a fresh page.
+            "key": props.get("zotero_key")
+                   or (f"https://arxiv.org/abs/{arxiv}" if arxiv else f"#gamma_item_{n}"),
+            "title": title,
+            "meta": meta or {},
+            "tags": [t.strip() for t in (props.get("category") or "").split(",") if t.strip()],
+            "folders": folders,
+            "pdf_path": pdf_arc,
+            "images": images,
+            "notes": note_htmls,
+        })
+
+    def finish(self):
+        # Zotero's import wizard can't read a .zip (it reports "unsupported
+        # format") — people try exactly that, so the how-to rides along.
+        readme = (
+            "Import into Zotero\n"
+            "==================\n\n"
+            f"1. Extract this zip somewhere (keep {self.base}.rdf and files/ together).\n"
+            f"2. In Zotero: File -> Import... -> \"A file\" -> pick {self.base}.rdf.\n\n"
+            "Do NOT pick the .zip itself - Zotero reports 'unsupported format' for it.\n"
+            "Collections, tags, notes and PDFs (highlights embedded) come along.\n"
+        )
+        self.entries += [(f"{self.base}/{self.base}.rdf", build_rdf(self.items)),
+                         (f"{self.base}/README.txt", readme)]
+
+
+class _GammaBuilder(_Builder):
+    """A scoped account backup in the ``gamma-backup-1`` layout (/api/export's
+    format): a pages.db holding just the selected page subtrees verbatim, a
+    data.db with their AI chats (plus, on a folder export, the folder view's
+    own chat buckets), and uploads/ with just the files they reference. Any
+    Gamma imports it through the existing ``/api/import-data?mode=merge`` —
+    additive, deduped by block id / doc id / content hash, so re-importing
+    adds nothing. Lossless by construction, which is why the dialog's three
+    switches don't apply to this format."""
+    suffix = "-gamma.zip"
+
+    def __init__(self, user, base, opts):
+        super().__init__(user, base, opts)
+        self.db = sqlite3.connect(":memory:")
+        for stmt in PAGES_SCHEMA:
+            self.db.execute(stmt)
+        self.page_ids = []
+        self.upload_names = set()
+
+    def add_page(self, n, rows, page):
+        self.page_ids.append(page["id"])
+        for row in rows:
+            # A page can sit in several exported folders only once — roots are
+            # distinct — but keep the guard for shared subtrees.
+            self.db.execute(
+                f"INSERT OR IGNORE INTO unified_blocks ({BLOCK_COLUMNS}) "
+                "VALUES (?, ?, ?, ?, ?, ?, ?)", tuple(row))
+            # Referenced uploads: any /api/uploads/<file> in content or
+            # properties (source_url, pasted images), plus the doc_id PDF —
+            # the same reference rule storage.cleanup_orphan_uploads applies.
+            for text in (row[3] or "", row[4] or ""):
+                self.upload_names.update(UPLOAD_RE.findall(text))
+        doc_id = (page.get("properties") or {}).get("doc_id")
+        if doc_id:
+            self.upload_names.add(f"{doc_id}.pdf")
+
+    def finish(self):
+        self.db.commit()
+        pages_bytes = self.db.serialize()
+        self.db.close()
+
+        chat_keys = list(self.page_ids)
+        scope = self.opts.get("folder_scope")
+        data_bytes = None
+        with connect_data_db(self.user) as src:
+            marks = ",".join("?" for _ in chat_keys)
+            rows = src.execute(
+                f"SELECT block_id, messages, updated_at FROM chats WHERE block_id IN ({marks})",
+                chat_keys).fetchall() if chat_keys else []
+            if scope:
+                rows += src.execute(
+                    "SELECT block_id, messages, updated_at FROM chats "
+                    "WHERE block_id = ? OR substr(block_id, 1, ?) = ?",
+                    (f"home:{scope}", len(f"home:{scope}/"), f"home:{scope}/")).fetchall()
+        if rows:
+            out = sqlite3.connect(":memory:")
+            out.execute("CREATE TABLE chats (block_id TEXT PRIMARY KEY, "
+                        "messages TEXT NOT NULL, updated_at TEXT NOT NULL)")
+            out.executemany("INSERT OR IGNORE INTO chats VALUES (?, ?, ?)", rows)
+            out.commit()
+            data_bytes = out.serialize()
+            out.close()
+
+        self.blobs.append(("pages.db", pages_bytes))
+        if data_bytes:
+            self.blobs.append(("data.db", data_bytes))
+        self.blobs.append(("manifest.json", json.dumps({
+            "format": "gamma-backup-1",  # what import-data validates
+            "scope": {"folder": scope, "pages": len(self.page_ids)},
+            "exported_at": page_now(),
+        }, indent=2)))
+        self.files += [(f"uploads/{name}", self.uploads_dir / name)
+                       for name in sorted(self.upload_names)]
+
+
+_BUILDERS = {
+    "readable": _MarkdownBuilder,
+    "logseq-graph": _LogseqBuilder,
+    "zotero-rdf": _ZoteroBuilder,
+    "gamma": _GammaBuilder,
+}
+
+
+def _run_export(conn, user, mode: str, root_ids, base: str, opts: dict,
+                progress: dict | None = None) -> _Builder:
+    """The shared export driver: one pass over the selected pages, each handed
+    to the mode's builder. ``progress`` is the /folders/export-progress dict."""
+    cls = _BUILDERS.get(mode)
+    if cls is None:
+        raise HTTPException(status_code=400, detail=f"unknown export mode: {mode}")
+    builder = cls(user, base, opts)
+    for n, root_id in enumerate(root_ids, 1):
+        rows = fetch_subtree(conn, root_id)
+        page = build_tree(rows, root_id)
+        if page is None:
+            continue
+        if progress is not None:
+            progress["title"] = (page.get("content") or "").strip()
+        builder.add_page(n, rows, page)
+        if progress is not None:
+            progress["done"] += 1
+    return builder
+
+
 # Sync on purpose: rendering + zipping runs in FastAPI's threadpool.
 @router.get("/pages/{block_id}/export")
 def export_page(block_id: str, request: Request, mode: str = "readable", pdf: int = 1,
                 highlights: int = 1, notes: int = 1):
-    """One page → readable Markdown: bare .md when it references no local
-    assets, else a .zip of the .md plus an assets/ folder. ``highlights=0`` /
-    ``notes=0`` (the export dialog's switches) leave out the quoted PDF text or
-    your own writing. ``mode=logseq-graph`` instead returns a complete Logseq
-    file graph (pages/ + assets/ + logseq/config.edn, highlights as native
-    hls__ page + EDN) — openable by file-based Logseq directly and convertible
-    by the DB version's "File to DB graph" importer; a graph is defined by both
-    layers, so the two switches don't apply to it."""
+    """One page in any export format (see the _Builder classes): ``readable``
+    Markdown (bare .md when it references no local assets, else a .zip with an
+    assets/ folder; ``highlights=0``/``notes=0`` — the dialog's switches —
+    leave out the quoted PDF text or your own writing), ``logseq-graph`` (a
+    complete Logseq file graph, both switches pinned on), ``zotero-rdf`` (a
+    one-item Zotero RDF library), or ``gamma`` (a scoped account backup any
+    Gamma imports via /api/import-data?mode=merge)."""
     user = resolve_user(request)
     scope = share_scope_doc(request)
+    opts = {"pdf": bool(pdf), "highlights": bool(highlights), "notes": bool(notes),
+            "folder_scope": None}
     with sqlite3.connect(user_db_path(user, "pages.db")) as conn:
         assert_block_in_doc(conn, block_id, scope)
-        rows = fetch_subtree(conn, block_id)
-    if not rows:
-        raise HTTPException(status_code=404, detail="page not found")
+        if not conn.execute("SELECT 1 FROM unified_blocks WHERE id = ?", (block_id,)).fetchone():
+            raise HTTPException(status_code=404, detail="page not found")
+        row = conn.execute("SELECT content FROM unified_blocks WHERE id = ?", (block_id,)).fetchone()
+        slug = slugify(row[0], block_id)
+        builder = _run_export(conn, user, mode, [block_id], slug, opts)
 
-    page = build_tree(rows, block_id)
-    slug = slugify(page.get("content"), block_id)
-
-    if mode == "logseq-graph":
-        entries, files, blobs, assets = _graph_page_parts(page, user_uploads_dir(user), bool(pdf))
-        entries.append(("logseq/config.edn", CONFIG_EDN))
-        return _zip_response(entries, assets, user_uploads_dir(user),
-                             f"{slug}-logseq.zip", files, blobs)
-
-    md, assets = collect_and_rewrite(
-        render_readable(page, highlights=bool(highlights), notes=bool(notes)),
-        include_pdf=bool(pdf))
-    if not assets:
-        return _md_response(md, slug)
-    return _zip_response([(f"{slug}.md", md)], assets, user_uploads_dir(user), f"{slug}.zip")
+    # A single readable page referencing no local assets is just the .md.
+    if mode == "readable" and not builder.assets:
+        return _md_response(builder.entries[0][1], slug)
+    return builder.response()
 
 
 # Sync on purpose: PyPDF2 rewriting is CPU-bound; the threadpool keeps the loop free.
@@ -175,27 +531,7 @@ def export_page_pdf(block_id: str, request: Request, notes: int = 0, highlights:
     if not pdf_path.is_file():
         raise HTTPException(status_code=404, detail="PDF not stored on the server")
 
-    children_by_id: dict = {}
-    for b in sorted(blocks, key=lambda b: b["position"] or ""):
-        children_by_id.setdefault(b["parent_id"], []).append(b)
-
-    marks = []  # not "highlights": that name is the query flag now
-    for b in blocks:
-        props = b["properties"]
-        if not props.get("highlight_id") or not props.get("pdf_position"):
-            continue
-        # Skip annotations that came from the PDF itself and are STILL embedded
-        # in it (annot_stripped marks ones the import removed from the file),
-        # and link regions (Gamma navigation aids, not annotations).
-        if props.get("imported_annot") and not props.get("annot_stripped"):
-            continue
-        if props.get("link_url") or props.get("link_page_id"):
-            continue
-        marks.append({
-            "position": props["pdf_position"],
-            "color": props.get("color"),
-            "note": highlight_note_text(b, children_by_id),
-        })
+    marks = _collect_marks(blocks)
 
     written = 0
     pdf_bytes = pdf_path.read_bytes()
@@ -227,6 +563,19 @@ def export_page_pdf(block_id: str, request: Request, notes: int = 0, highlights:
     )
 
 
+# Per-user progress of a running /folders/export, for the frontend's percent
+# display (same in-memory pattern as auth.py's backup _export_progress).
+_folder_export_progress: dict[str, dict] = {}
+
+
+@router.get("/folders/export-progress")
+def folder_export_progress(request: Request):
+    if share_scope_doc(request) is not None:
+        raise HTTPException(status_code=403, detail="not accessible via this share link")
+    user = resolve_user(request)
+    return _folder_export_progress.get(user) or {"active": False, "total": 0, "done": 0}
+
+
 def _page_in_folder(props: dict, name: str) -> bool:
     raw = props.get("folder") or ""
     for path in (p.strip() for p in raw.split(",")):
@@ -236,9 +585,14 @@ def _page_in_folder(props: dict, name: str) -> bool:
 
 
 @router.get("/folders/export")
-def export_folder(request: Request, name: str, mode: str = "readable", pdf: int = 1):
-    """Every page tagged into folder ``name`` (or a subfolder of it) → a single
-    .zip: one .md per page at the root, a shared assets/ folder (deduped)."""
+def export_folder(request: Request, name: str, mode: str = "readable", pdf: int = 1,
+                  highlights: int = 1, notes: int = 1):
+    """Every page tagged into folder ``name`` (or a subfolder of it), in any
+    export format (see the _Builder classes): ``readable`` (one .md per page +
+    a shared assets/ folder), ``logseq-graph`` (a complete Logseq file graph),
+    ``zotero-rdf`` (a Zotero RDF library — subfolders become collections), or
+    ``gamma`` (a scoped account backup any Gamma imports via
+    /api/import-data?mode=merge). Progress: /folders/export-progress."""
     name = (name or "").strip().strip("/")
     if not name:
         raise HTTPException(status_code=400, detail="folder name required")
@@ -246,41 +600,23 @@ def export_folder(request: Request, name: str, mode: str = "readable", pdf: int 
     if share_scope_doc(request) is not None:
         raise HTTPException(status_code=403, detail="not accessible via this share link")
     user = resolve_user(request)
+    folder_slug = slugify(name.replace("/", "-"), "")
+    opts = {"pdf": bool(pdf), "highlights": bool(highlights), "notes": bool(notes),
+            "folder_scope": name}
     with sqlite3.connect(user_db_path(user, "pages.db")) as conn:
         roots = conn.execute(
             f"SELECT {BLOCK_COLUMNS} FROM unified_blocks WHERE parent_id = 'root'"
         ).fetchall()
-        matches = [block_to_dict(r) for r in roots]
-        matches = [b for b in matches if _page_in_folder(b["properties"], name)]
+        matches = [b for b in (block_to_dict(r) for r in roots)
+                   if _page_in_folder(b["properties"], name)]
         if not matches:
             raise HTTPException(status_code=404, detail="no pages in that folder")
 
-        entries, assets, used = [], set(), set()
-        files, blobs = [], []
-        for root in matches:
-            rows = fetch_subtree(conn, root["id"])
-            page = build_tree(rows, root["id"])
-            if mode == "logseq-graph":
-                p_entries, p_files, p_blobs, p_assets = _graph_page_parts(
-                    page, user_uploads_dir(user), bool(pdf))
-                entries += p_entries
-                files += p_files
-                blobs += p_blobs
-                assets |= p_assets
-                continue
-            md, page_assets = collect_and_rewrite(render_readable(page), include_pdf=bool(pdf))
-            assets |= page_assets
-            slug = slugify(page.get("content"), root["id"])
-            arcname = f"{slug}.md"
-            # id suffix makes collisions near-impossible, but guard anyway.
-            while arcname in used:
-                arcname = f"{slug}-{len(used)}.md"
-            used.add(arcname)
-            entries.append((arcname, md))
-
-    folder_slug = slugify(name.replace("/", "-"), "")
-    if mode == "logseq-graph":
-        entries.append(("logseq/config.edn", CONFIG_EDN))
-        return _zip_response(entries, assets, user_uploads_dir(user),
-                             f"{folder_slug}-logseq.zip", files, blobs)
-    return _zip_response(entries, assets, user_uploads_dir(user), f"{folder_slug}.zip")
+        prog = {"active": True, "total": len(matches), "done": 0, "title": ""}
+        _folder_export_progress[user] = prog
+        try:
+            builder = _run_export(conn, user, mode, [b["id"] for b in matches],
+                                  folder_slug, opts, progress=prog)
+        finally:
+            prog["active"] = False
+    return builder.response()
