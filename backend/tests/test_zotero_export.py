@@ -104,6 +104,46 @@ def test_page_zotero_export_roundtrips_through_parser(guest):
     assert pdf.startswith(b"%PDF") and b"/Highlight" in pdf
 
 
+_PNG = bytes.fromhex(
+    "89504e470d0a1a0a0000000d4948445200000001000000010806000000"
+    "1f15c4890000000d49444154789c626001000000ffff03000006000557"
+    "bfabd40000000049454e44ae426082")
+
+
+def test_zotero_export_note_images(guest):
+    """Pasted images: embedded as data URIs inside the Zotero note, attached
+    to the item as an image attachment, and replaced by a plain placeholder in
+    the annotation comment (comments can't hold pictures)."""
+    from PyPDF2 import PdfReader
+
+    page = _paper(guest, "zxi")
+    img = guest.post("/api/upload-image", files={"file": ("fig.png", _PNG, "image/png")})
+    assert img.status_code == 200, img.text
+    img_url = img.json()["url"]  # /api/uploads/<sha>.png
+    img_name = img_url.rsplit("/", 1)[-1]
+    _put_children(guest, page["id"], [
+        _positioned("zxih", "quoted", note=f"see ![fig]({img_url})"),
+        {"id": "zxin", "content": f"figure: ![fig]({img_url})", "properties": {}, "children": []},
+    ])
+
+    z = _zip_of(guest.get(f"/api/pages/{page['id']}/export", params={"mode": "zotero-rdf"}))
+    base = next(n for n in z.namelist() if n.endswith(".rdf")).rsplit("/", 1)[0]
+    rdf = z.read(f"{base}/{base}.rdf").decode("utf-8")
+
+    # image file rides in the zip and as an item attachment in the RDF
+    assert z.read(f"{base}/files/1/{img_name}") == _PNG
+    assert f"files/1/{img_name}" in rdf and "image/png" in rdf
+    # the note embeds it as a data URI (Zotero keeps those in notes)
+    assert "data:image/png;base64," in rdf
+    # the annotation comment gets the plain placeholder, not raw markdown
+    it = _rdf_items(z)[0]
+    pdf = z.read(f"{base}/{it['pdf_paths'][0]}")
+    annots = PdfReader(io.BytesIO(pdf)).pages[0]["/Annots"]
+    contents = [str(a.get_object().get("/Contents") or "") for a in annots]
+    assert any(f"(image: {img_name})" in c for c in contents)
+    assert not any("![fig]" in c for c in contents)
+
+
 def test_zotero_export_switches(guest):
     page = _paper(guest, "zxb")
     # notes=0: no Memo; highlights=0: bare PDF copy; pdf=0: no files at all

@@ -341,17 +341,15 @@ function ExportDialog({ opts, setOpts, hasPdf, pdfStored, folder, onCancel, onEx
 
   const summary = isGraph
     ? "A Logseq graph: the notes page plus native PDF highlights (hls page + .edn)."
-    : isZotero
-      ? `A Zotero RDF library: metadata, ${folder ? "subfolders as collections" : "folders as collections"} and tags${opts.bundle ? `, the PDF${folder ? "s" : ""}${highlights ? " with highlights embedded" : ""}` : ""}${notes ? ", notes" : ""} — Zotero's File → Import reads the unzipped .rdf.`
-      : isPdf
-        ? noPdfCopy
-          ? "This PDF isn't stored on the server, so only the file itself can be exported."
-          : rawPdf
-            ? "The PDF file exactly as stored, with nothing added."
-            : `The PDF with ${highlights ? "highlight annotations" : "no annotations"}${notes ? " and every note printed onto the page" : ""}.`
-        : highlights || notes
-          ? `Markdown with ${highlights ? "quoted highlights" : "no quotes"}${notes ? " and your notes" : ""}.`
-          : "Markdown with the title and metadata only — both switches are off.";
+    : isPdf
+      ? noPdfCopy
+        ? "This PDF isn't stored on the server, so only the file itself can be exported."
+        : rawPdf
+          ? "The PDF file exactly as stored, with nothing added."
+          : `The PDF with ${highlights ? "highlight annotations" : "no annotations"}${notes ? " and every note printed onto the page" : ""}.`
+      : highlights || notes
+        ? `Markdown with ${highlights ? "quoted highlights" : "no quotes"}${notes ? " and your notes" : ""}.`
+        : "Markdown with the title and metadata only — both switches are off.";
 
   return (
     <div className="reportOverlay" onClick={onCancel}>
@@ -420,7 +418,20 @@ function ExportDialog({ opts, setOpts, hasPdf, pdfStored, folder, onCancel, onEx
             onChange={(v) => set({ bundle: v })}
           />
         )}
-        <div className="reportModalHint">{summary}</div>
+        {isZotero ? (
+          // Same numbered-step guide as the Zotero import dialog — the .zip
+          // trap (Zotero can't read one) is worth spelling out every time.
+          <div className="importSteps">
+            <Step n={1} title="Download the .zip"
+              hint={`Metadata, ${folder ? "subfolders" : "folders"} as collections, tags, notes${opts.bundle ? `; the PDF${folder ? "s" : ""}${highlights ? " with highlights embedded" : ""} and note images` : ""}.`} />
+            <Step n={2} title="Unzip it"
+              hint="Keep the .rdf and the files/ folder together." />
+            <Step n={3} title="Import the .rdf in Zotero"
+              hint={'File → Import… → "A file" → pick the .rdf — never the .zip (Zotero calls it an unsupported format). Untick "Place imported collections… into a new collection" to skip the extra wrapper folder.'} />
+          </div>
+        ) : (
+          <div className="reportModalHint">{summary}</div>
+        )}
         <div className="reportModalBtns">
           <button className="uiBtn" onClick={onCancel}>Cancel</button>
           <button

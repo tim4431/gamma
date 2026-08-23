@@ -116,6 +116,7 @@ Route order matters: the static-prefix routes (`by-doc`, `children`,
 | GET | `/pages/{id}/export` | page export (`?mode=readable|logseq-graph|zotero-rdf` + `highlights=&notes=&pdf=`) |
 | GET | `/pages/{id}/export-pdf` | PDF with annotations written back (`?highlights=&notes=`) |
 | GET | `/folders/export` | whole-folder export, same modes/flags (`?name=` + `mode=readable|logseq-graph|zotero-rdf`); subfolders become Zotero collections |
+| GET | `/folders/export-progress` | per-page progress of a running folder export (`{active, total, done, title}`) |
 
 ### Prefs (`prefs.py`)
 | Method | Path | Purpose |

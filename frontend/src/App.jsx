@@ -1141,7 +1141,7 @@ export default function App() {
   // the pill renders a single winner, so messages can never overlap.
   //   entry: { msg, spinner?, error?, retry?, final? }
   // Ongoing entries (spinner) hold their channel until the source posts again
-  // or clears it (entry = null). Final entries linger ~0.6s, then fade out.
+  // or clears it (entry = null). Final entries linger 1s, then fade out.
   // When several channels are active: error > lingering final > ongoing,
   // ties broken by recency.
   const [status, setStatusRaw] = useState("Ready.");
@@ -1202,8 +1202,8 @@ export default function App() {
     const ifMine = (fn) => setPillChannels((prev) => (prev[channel]?.seq === seq ? fn(prev) : prev));
     if (entry.final) {
       timers[channel] = [
-        setTimeout(() => ifMine((prev) => ({ ...prev, [channel]: { ...prev[channel], fading: true } })), 600),
-        setTimeout(() => ifMine((prev) => { const next = { ...prev }; delete next[channel]; return next; }), 1000),
+        setTimeout(() => ifMine((prev) => ({ ...prev, [channel]: { ...prev[channel], fading: true } })), 1000),
+        setTimeout(() => ifMine((prev) => { const next = { ...prev }; delete next[channel]; return next; }), 1400),
       ];
     }
     if (opts?.after) {
@@ -3866,14 +3866,29 @@ export default function App() {
     const bundle = `pdf=${o.bundle ? 1 : 0}`;
     if (exportFolder) {
       const base = `/folders/export?name=${encodeURIComponent(exportFolder)}`;
-      if (o.format === "logseq") {
-        await downloadExport(`${base}&mode=logseq-graph&${bundle}`, "graph.zip");
-      } else if (o.format === "zotero") {
-        if (await downloadExport(`${base}&mode=zotero-rdf&${flags}&${bundle}`, "zotero.zip")) {
-          setStatus("Zotero library saved — unzip it, then in Zotero pick the .rdf file via File → Import (it can't read the .zip itself).");
+      // Per-page progress from the server while the download request runs
+      // (same polling pattern as the backup export).
+      const poll = setInterval(async () => {
+        try {
+          const p = await apiJson(`${API}/folders/export-progress`);
+          if (p.active && p.total) {
+            const pct = Math.round((p.done / p.total) * 100);
+            setStatus(`Exporting “${exportFolder}” — ${p.done}/${p.total} papers (${pct}%)…`);
+          }
+        } catch { /* progress is best-effort */ }
+      }, 500);
+      try {
+        if (o.format === "logseq") {
+          await downloadExport(`${base}&mode=logseq-graph&${bundle}`, "graph.zip");
+        } else if (o.format === "zotero") {
+          if (await downloadExport(`${base}&mode=zotero-rdf&${flags}&${bundle}`, "zotero.zip")) {
+            setStatus("Zotero library saved — unzip it, then import the .rdf in Zotero (File → Import).");
+          }
+        } else {
+          await downloadExport(`${base}&mode=readable&${flags}&${bundle}`, "folder.zip");
         }
-      } else {
-        await downloadExport(`${base}&mode=readable&${flags}&${bundle}`, "folder.zip");
+      } finally {
+        clearInterval(poll);
       }
       return;
     }

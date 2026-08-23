@@ -73,7 +73,14 @@ strict parsers (rdflib) reject. The pipeline is verified against a live Zotero
 via its connector server's `/connector/import` (same translator code path as
 the wizard). Zotero cannot read the .zip itself — its wizard reports
 "unsupported format" for one, so the zip ships a README.txt telling people to
-extract and pick the .rdf. Highlights are not in the RDF
+extract and pick the .rdf, and the export dialog shows a numbered step guide
+for the format. Pasted note images: embedded in the Memo HTML as data URIs
+(Zotero's note import keeps them — verified live; `_EMBED_IMAGE_CAP` guards
+size), attached to the item as image `z:Attachment`s when bundling, and
+replaced by a plain `(image: …)` placeholder in annotation comments
+(`strip_image_md`). `/api/folders/export` (all modes) reports per-page
+progress through `/api/folders/export-progress`, which the frontend polls into
+the status pill during folder exports. Highlights are not in the RDF
 — like Zotero's "Include Annotations" they're burned into the exported PDF
 copies with `pdf_export.annotate_pdf` (`highlights=0` skips that, `pdf=0`
 omits the files entirely, `notes=0` the Memos).

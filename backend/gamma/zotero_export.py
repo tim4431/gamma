@@ -60,6 +60,23 @@ def _sub(parent, prefix, tag, text=None, **attrs):
 
 # --- notes: block text → the minimal HTML Zotero notes hold -----------------
 
+# Markdown image refs to Gamma's content-addressed uploads (the image shape of
+# markdown_export.UPLOAD_RE).
+MD_IMAGE_RE = re.compile(r"!\[[^\]]*\]\(/api/uploads/([0-9a-fA-F]+\.[A-Za-z0-9]+)\)")
+
+IMAGE_MIME = {
+    "png": "image/png", "jpg": "image/jpeg", "jpeg": "image/jpeg",
+    "gif": "image/gif", "webp": "image/webp", "svg": "image/svg+xml",
+    "bmp": "image/bmp",
+}
+
+
+def strip_image_md(text: str) -> str:
+    """Markdown image refs → a readable placeholder. Annotation comments are
+    plain text, so the image itself travels as an item attachment instead."""
+    return MD_IMAGE_RE.sub(lambda m: f"(image: {m.group(1)})", text or "")
+
+
 def _inline_html(text: str) -> str:
     """The inverse of zotero_import.html_note_text's inline rules: escape,
     then **bold**/*italic* back to tags, newlines to <br/>."""
@@ -69,9 +86,29 @@ def _inline_html(text: str) -> str:
     return s.replace("\n", "<br/>")
 
 
-def note_html(node) -> str:
+def _content_html(text: str, resolve_image) -> str:
+    """Inline HTML for one block's text; markdown image refs become embedded
+    ``<img src="data:...">`` (Zotero's note import keeps data URIs verbatim —
+    verified live) or a plain placeholder when the file can't be resolved."""
+    parts, last = [], 0
+    for m in MD_IMAGE_RE.finditer(text):
+        parts.append(_inline_html(text[last:m.start()]))
+        data = resolve_image(m.group(1)) if resolve_image else None
+        if data:
+            mime, b64 = data
+            parts.append(f'<img src="data:{mime};base64,{b64}"/>')
+        else:
+            parts.append(f"(image: {m.group(1)})")
+        last = m.end()
+    parts.append(_inline_html(text[last:]))
+    return "".join(parts)
+
+
+def note_html(node, resolve_image=None) -> str:
     """One block subtree (a ``build_tree`` node) → one Zotero note's HTML:
-    the block itself as a paragraph, children as nested lists."""
+    the block itself as a paragraph, children as nested lists.
+    ``resolve_image(filename) -> (mime, base64) | None`` embeds pasted images
+    into the note."""
 
     def items(children):
         out = ""
@@ -80,13 +117,14 @@ def note_html(node) -> str:
             inner = items(child.get("children") or [])
             if not content and not inner:
                 continue
-            out += f"<li>{_inline_html(content)}" + (f"<ul>{inner}</ul>" if inner else "") + "</li>"
+            out += (f"<li>{_content_html(content, resolve_image)}"
+                    + (f"<ul>{inner}</ul>" if inner else "") + "</li>")
         return out
 
     parts = ""
     content = (node.get("content") or "").strip()
     if content:
-        parts += f"<p>{_inline_html(content)}</p>"
+        parts += f"<p>{_content_html(content, resolve_image)}</p>"
     kids = items(node.get("children") or [])
     if kids:
         parts += f"<ul>{kids}</ul>"
@@ -167,6 +205,17 @@ def build_rdf(items: list[dict]) -> str:
             _sub(att, "z", "path", rdf_resource=item["pdf_path"])
             _sub(att, "dc", "title", "PDF")
             _sub(att, "link", "type", "application/pdf")
+
+        # Pasted note images ride as further attachments on the item — the
+        # counterpart of the "(image: …)" placeholders in annotation comments.
+        for k, img in enumerate(item.get("images") or [], 1):
+            img_key = f"#img_{n}_{k}"
+            _sub(el, "link", "link", rdf_resource=img_key)
+            att = _sub(root, "z", "Attachment", rdf_about=img_key)
+            _sub(att, "z", "itemType", "attachment")
+            _sub(att, "z", "path", rdf_resource=img["path"])
+            _sub(att, "dc", "title", img.get("title") or "Image")
+            _sub(att, "link", "type", img.get("mime") or "application/octet-stream")
 
         for i, html in enumerate(item.get("notes") or [], 1):
             memo_key = f"#note_{n}_{i}"
