@@ -40,6 +40,8 @@
   --drag-accent: #64b5f6;
   --scrollbar-bg: #1a1a1a;
   --scrollbar-thumb: #3f3f3f;
+  /* Native chrome (scrollbars, form controls) follows the app theme. */
+  color-scheme: dark;
   --radius-control: 6px;
   --radius-surface: 10px;
   --shadow-surface: 0 8px 24px rgba(0, 0, 0, 0.28);
@@ -84,6 +86,7 @@
   --drag-accent: #1565c0;
   --scrollbar-bg: #f5f5f5;
   --scrollbar-thumb: #cccccc;
+  color-scheme: light;
 }
 
 * { box-sizing: border-box; }
@@ -385,6 +388,10 @@ body {
   flex: 1;
   overflow-y: auto;
   overflow-x: hidden;
+  /* Reserve the scrollbar's space even while nothing scrolls, so the layout
+     (the home library's right-aligned toolbar especially) doesn't shift when
+     the scrollbar appears. */
+  scrollbar-gutter: stable;
   min-height: 0;
   padding-bottom: 24px;
 }
@@ -2171,6 +2178,9 @@ button.pdfOutlineChevron:hover { background: rgba(128, 128, 128, 0.28); color: v
 .aiProvRow {
   position: relative;
   display: flex;
+  /* narrow panes: the action buttons drop to their own line instead of
+     crushing the text column to a few px (one-character-per-line wrapping) */
+  flex-wrap: wrap;
   align-items: center;
   justify-content: space-between;
   gap: 10px;
@@ -2193,7 +2203,7 @@ button.pdfOutlineChevron:hover { background: rgba(128, 128, 128, 0.28); color: v
 .aiProvRow:hover { background: var(--bg-hover); }
 .aiProvName { font-size: 12.5px; font-weight: 600; color: var(--text-primary); }
 .aiProvDesc { font-size: 11px; color: var(--text-muted); overflow-wrap: anywhere; }
-.aiProvActions { display: flex; gap: 6px; flex-shrink: 0; }
+.aiProvActions { display: flex; gap: 6px; flex-shrink: 0; margin-left: auto; }
 
 /* Storage meter (QuotaMeter): thin cloud-drive-style usage bar. */
 .quotaMeter { display: block; min-width: 0; }
@@ -2616,6 +2626,44 @@ button.pdfOutlineChevron:hover { background: rgba(128, 128, 128, 0.28); color: v
   overflow: hidden;
 }
 .chatBubble.ai .chatPdfChip { background: var(--bg-raised); color: var(--text-muted); }
+/* Agent tool calls (folder/paper chat): one row per call, click to expand the
+   arguments and the output the model got back. */
+.chatToolActions { display: flex; flex-direction: column; gap: 3px; margin-bottom: 6px; }
+.chatToolAction { display: flex; flex-direction: column; gap: 3px; min-width: 0; }
+.chatToolActionHead {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  font-size: 11px;
+  font-family: inherit;
+  color: var(--text-muted);
+  background: none;
+  border: 0;
+  padding: 0;
+  min-width: 0;
+  text-align: left;
+  cursor: pointer;
+}
+.chatToolActionHead.plain { cursor: default; }
+.chatToolActionHead:hover:not(.plain) { color: var(--text); }
+.chatToolAction.err .chatToolActionHead { color: var(--danger); }
+.chatToolActionHead svg { flex: none; }
+.chatToolActionHead span { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.chatToolDetail {
+  margin: 0 0 2px;
+  padding: 6px 8px;
+  max-height: 220px;
+  overflow: auto;
+  font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
+  font-size: 10.5px;
+  line-height: 1.45;
+  color: var(--text-muted);
+  background: var(--bg-raised);
+  border: 1px solid var(--border);
+  border-radius: 6px;
+  white-space: pre-wrap;
+  overflow-wrap: anywhere;
+}
 .chatPdfToggle {
   gap: 3px;
   font-size: 10px;
@@ -2831,6 +2879,17 @@ button.pdfOutlineChevron:hover { background: rgba(128, 128, 128, 0.28); color: v
 }
 
 /* Ctrl held: dragging draws a rectangle, so cue it over everything on the page. */
+/* Flip page colors (Settings → Reading → PDF viewer): display-only night
+   rendering. The canvas is inverted (hue-rotate keeps colors' hue, so figures
+   come out as negatives but diagrams stay recognizable); overlays are NOT
+   inverted, but their multiply blend would vanish on a dark page, so
+   highlights and find marks switch to screen — multiply's dark-background
+   dual. !important because both the wrap background and the blend modes are
+   inline styles in pdfViewer.jsx. */
+.pdfViewer.pdfDark { background: #181818; color-scheme: dark; } /* dark surround + scrollbar even in the light theme */
+.pdfViewer.pdfDark .pdfPageWrap { background: #101010 !important; }
+.pdfViewer.pdfDark .pdfPageWrap > canvas { filter: invert(0.94) hue-rotate(180deg); }
+.pdfViewer.pdfDark .pdfPageWrap :is([data-hl-id], .pdfFindMark) { mix-blend-mode: screen !important; }
 .pdfViewer.areaCursor .pdfPageWrap,
 .pdfViewer.areaCursor .textLayer,
 .pdfViewer.areaCursor .textLayer span {

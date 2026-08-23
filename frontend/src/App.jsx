@@ -13,16 +13,16 @@ import {
   useCopied,
 } from "./widgets";
 import { BlockTree, _dragState } from "./blockTree";
-import { ViewToggle } from "./fileBrowser";
+import { KindToggle, ViewToggle } from "./fileBrowser";
 import ChatDock from "./chatDock";
 import SearchPanel from "./search";
-import { ContextMenu } from "./menus";
+import { ContextMenu, MenuSelect } from "./menus";
 import {
-  ActivityIcon, AlertCircleIcon, ArrowLeftIcon, CheckIcon, CopyIcon, DatabaseIcon, DownloadIcon, ExportIcon,
+  ActivityIcon, AlertCircleIcon, ArrowLeftIcon, ArrowUpDownIcon, CheckIcon, CopyIcon, DatabaseIcon, DownloadIcon, ExportIcon,
   ExternalLinkIcon, EyeIcon, FileGlyph, FileIcon, FileTextIcon, FitWidthIcon, FolderGlyph,
   FolderIcon, FolderOpenIcon, FolderPlusIcon, HomeIcon, ImportIcon, InfoIcon, LabelIcon,
-  LinkIcon, LogOutIcon, MaximizeIcon, MenuIcon, MinimizeIcon, PinIcon, PlusIcon,
-  RectSelectIcon, SearchIcon, SettingsIcon, SparklesIcon, TextCursorIcon, TrashIcon, UploadIcon,
+  LinkIcon, LogOutIcon, MaximizeIcon, MenuIcon, MinimizeIcon, PenIcon, PinIcon, PlusIcon,
+  RectSelectIcon, SearchIcon, SettingsIcon, SparklesIcon, TextCursorIcon, TrashIcon, TypeIcon, UploadIcon,
   UserIcon, UsersIcon, XIcon, ZoomInIcon, ZoomOutIcon,
 } from "./icons";
 
@@ -53,7 +53,9 @@ import {
 } from "./logseqPdfModel";
 import { loadSession, saveSession, clearSession } from "./sessionState";
 import { AuthLoading, LoginPage, SessionConflictPage } from "./LoginPage";
-import SettingsDialog, { QuotaMeter } from "./settings";
+import { useAppPrefs } from "./prefs";
+import SettingsDialog from "./settings";
+import { QuotaMeter } from "./settingsKit";
 import {
   addFolderTag,
   cleanFolderPath,
@@ -73,15 +75,6 @@ import {
 // catch-all marks unrecognized phases as failed, so a new local phase must
 // fail closed (ignored) rather than show a spurious error row.
 const TRANSFER_PHASES = new Set(["start", "progress", "done", "cached", "error", "cancelled"]);
-
-// Codec for the AI context-size preferences (chars of extracted PDF text):
-// clamp stored values to a sane range, fall back to the default otherwise.
-const CONTEXT_CHARS_CODEC = {
-  parse: (raw) => {
-    const value = Number.parseInt(raw, 10);
-    return Number.isFinite(value) && value >= 100 && value <= 1000000 ? value : undefined;
-  },
-};
 
 // Phone detection: below 700px the desktop dock system is unusable, so the
 // workspace switches to a single full-width panel with a bottom tab bar. The
@@ -108,6 +101,16 @@ function useIsPhone() {
 
 // Drag payload prefix marking a folder drag (page cards drag their bare id).
 const FOLDER_DRAG = "gamma-folder:";
+
+// Home sort is a per-folder choice: {"": "updated", "readout": "title", …} —
+// a folder without an entry inherits from its nearest ancestor (root = "").
+// Seeded from the old global gamma-home-sort key so an existing choice sticks.
+const HOME_SORT_CODEC = {
+  parse: (raw) => { try { const v = JSON.parse(raw); return v && typeof v === "object" ? v : undefined; } catch { return undefined; } },
+  serialize: JSON.stringify,
+};
+let HOME_SORT_DEFAULT = {};
+try { const old = localStorage.getItem("gamma-home-sort"); if (old) HOME_SORT_DEFAULT = { "": old }; } catch {}
 
 // Folder uploads tag each PDF with its directory path as a folder label:
 // "papers/readout/x.pdf" → "papers/readout" (the picked/dropped root included).
@@ -138,6 +141,111 @@ async function collectEntryFiles(entries) {
   }
   for (const entry of entries) await walk(entry, "");
   return out;
+}
+
+// --- Recently-viewed snapshots -------------------------------------------
+// Composite the PDF viewer's visible area into a small JPEG data URL — the
+// "last viewed place" cover for the recents cards. Reads the canvases pdf.js
+// already painted, so it costs one drawImage per visible page. Returns null
+// while the visible pages aren't painted yet (caller retries later).
+const SNAP_WIDTH = 320;   // thumbnail backing width (px)
+const SNAP_MAX_HEIGHT = 480;
+function captureViewerSnapshot() {
+  const scroller = document.querySelector(".pdfViewer");
+  if (!scroller) return null;
+  const vr = scroller.getBoundingClientRect();
+  if (vr.width < 60 || vr.height < 60) return null;
+  const k = SNAP_WIDTH / vr.width;
+  const outH = Math.min(Math.round(vr.height * k), SNAP_MAX_HEIGHT);
+  const capH = outH / k; // captured strip height in CSS px
+  const out = document.createElement("canvas");
+  out.width = SNAP_WIDTH; out.height = outH;
+  const ctx = out.getContext("2d");
+  ctx.fillStyle = "#fff";
+  ctx.fillRect(0, 0, out.width, out.height);
+  let covered = 0;
+  for (const wrap of scroller.querySelectorAll(".pdfPageWrap")) {
+    const r = wrap.getBoundingClientRect();
+    if (r.bottom <= vr.top || r.top >= vr.top + capH) continue;
+    const canvas = wrap.querySelector("canvas");
+    if (!canvas || !canvas.width || !canvas.height) continue;
+    // Visible slice of this page in CSS px, mapped to the canvas backing
+    // resolution on the source side and to the thumbnail on the dest side.
+    const x0 = Math.max(vr.left, r.left), x1 = Math.min(vr.right, r.right);
+    const y0 = Math.max(vr.top, r.top), y1 = Math.min(vr.top + capH, r.bottom);
+    if (x1 <= x0 || y1 <= y0) continue;
+    const kx = canvas.width / r.width, ky = canvas.height / r.height;
+    try {
+      ctx.drawImage(canvas,
+        (x0 - r.left) * kx, (y0 - r.top) * ky, (x1 - x0) * kx, (y1 - y0) * ky,
+        (x0 - vr.left) * k, (y0 - vr.top) * k, (x1 - x0) * k, (y1 - y0) * k);
+    } catch { continue; }
+    covered += (x1 - x0) * (y1 - y0);
+  }
+  // Mostly-blank captures (pages still rendering) are worse than keeping the
+  // previous snapshot — require the strip to be at least 40% real page.
+  if (covered < vr.width * capH * 0.4) return null;
+  try { return out.toDataURL("image/jpeg", 0.55); } catch { return null; }
+}
+
+// One card in a home carousel: a cover (page snapshot at the last-read spot,
+// else the summary excerpt, else the file glyph) over title + kind/time.
+// cover=false collapses it to the compact text-only card. A div, not a
+// button — the hover-revealed remove × nests inside (same as .pinnedTile).
+function RecentCard({ title, isPdf, summary, time, snap, cover = true, onOpen, onRemove }) {
+  return (
+    <div className="recentCard" onClick={onOpen} title={title}>
+      {cover ? (
+        <div className="recentCardCover">
+          {snap ? <img src={snap} alt="" draggable={false} />
+            : summary ? <div className="recentCardExcerpt">{summary}</div>
+            : <FileGlyph isPdf={isPdf} />}
+        </div>
+      ) : null}
+      <div className="recentCardBody">
+        <div className="recentCardTitle">{title || "Untitled"}</div>
+        <div className="recentCardMeta">
+          <span className="recentCardKind">{isPdf ? "PDF" : "Note"}</span>
+          <span className="recentCardTime">{time}</span>
+        </div>
+      </div>
+      {onRemove ? (
+        <button
+          className="uiClose uiCloseSm recentCardClose"
+          title="Remove from Recently viewed"
+          aria-label="Remove from Recently viewed"
+          onClick={(e) => { e.stopPropagation(); onRemove(); }}
+        >×</button>
+      ) : null}
+    </div>
+  );
+}
+
+// Horizontal card strip. No arrow chrome: a mouse wheel scrolls it sideways
+// (native non-passive listener — React's synthetic onWheel can't
+// preventDefault), touch swipes pan natively via overflow-x.
+function CardCarousel({ label, children }) {
+  const trackRef = useRef(null);
+  useEffect(() => {
+    const el = trackRef.current;
+    if (!el) return;
+    function onWheel(e) {
+      // Real horizontal input (trackpads, tilt wheels) already works; pinch
+      // gestures (ctrlKey) belong to the browser zoom.
+      if (e.ctrlKey || Math.abs(e.deltaX) >= Math.abs(e.deltaY)) return;
+      if (el.scrollWidth <= el.clientWidth) return; // nothing to pan → page scrolls
+      el.scrollLeft += e.deltaMode === 1 ? e.deltaY * 33 : e.deltaY; // LINE mode (Firefox) → ~px
+      e.preventDefault();
+    }
+    el.addEventListener("wheel", onWheel, { passive: false });
+    return () => el.removeEventListener("wheel", onWheel);
+  }, []);
+  return (
+    <div className="carouselRow">
+      {label ? <div className="carouselLabel">{label}</div> : null}
+      <div className="carouselTrack" ref={trackRef}>{children}</div>
+    </div>
+  );
 }
 
 export default function App() {
@@ -459,13 +567,26 @@ export default function App() {
   const [extraFolders, setExtraFolders] = useState([]);
   const [newFolderOpen, setNewFolderOpen] = useState(false);
   const [newFolderName, setNewFolderName] = useState("");
-  // Home feed: sort criterion + how many rows are rendered (grows on scroll).
-  const [homeSort, changeHomeSort] = usePersistedState("gamma-home-sort", "updated");
+  // Home feed: per-folder sort criterion + how many rows are rendered (grows
+  // on scroll). Changing the sort only pins it for the folder being viewed;
+  // folders without an explicit choice inherit from their nearest ancestor.
+  const [homeSortMap, setHomeSortMap] = usePersistedState("gamma-home-sort-map", HOME_SORT_DEFAULT, HOME_SORT_CODEC);
+  const homeSort = useMemo(() => {
+    let p = folderFilter;
+    for (;;) {
+      if (homeSortMap[p]) return homeSortMap[p];
+      if (!p) return "updated";
+      p = p.includes("/") ? p.slice(0, p.lastIndexOf("/")) : "";
+    }
+  }, [homeSortMap, folderFilter]);
+  function changeHomeSort(v) { setHomeSortMap((m) => ({ ...m, [folderFilter]: v })); }
   // Home layout: "list" (block-style rows) or "grid" (icon tiles).
   const [homeView, changeHomeView] = usePersistedState("gamma-home-view", "list");
+  // Kind filter: "all" (folders + files), "folders", or "files".
+  const [homeKinds, changeHomeKinds] = usePersistedState("gamma-home-kinds", "all");
   const HOME_PAGE_CHUNK = 30;
   const [homeShowCount, setHomeShowCount] = useState(HOME_PAGE_CHUNK);
-  useEffect(() => { setHomeShowCount(HOME_PAGE_CHUNK); }, [folderFilter, homeSort]);
+  useEffect(() => { setHomeShowCount(HOME_PAGE_CHUNK); }, [folderFilter, homeSort, homeKinds]);
   const loadMoreRef = useRef(null);
   function updateExtraFolders(updater) {
     setExtraFolders((prev) => {
@@ -496,6 +617,7 @@ export default function App() {
       setOpenTabs([]);
       setExtraFolders([]);
       setRecentViews([]);
+      setPageSnaps({});
       readPosRef.current = {};
       readPosLoadedRef.current = false;
       return;
@@ -508,6 +630,7 @@ export default function App() {
     setOpenTabs(Array.isArray(localTabs) ? localTabs : []);
     try { setExtraFolders(JSON.parse(localStorage.getItem(`gamma-extra-folders:${u}`) || "[]")); } catch { setExtraFolders([]); }
     try { setRecentViews(JSON.parse(localStorage.getItem(`gamma-recent-views:${u}`) || "[]")); } catch { setRecentViews([]); }
+    try { setPageSnaps(JSON.parse(localStorage.getItem(`gamma-page-snaps:${u}`) || "{}")); } catch { setPageSnaps({}); }
     readPosLoadedRef.current = false;
     try { readPosRef.current = JSON.parse(localStorage.getItem(`gamma-read-pos:${u}`) || "{}"); } catch { readPosRef.current = {}; }
     // …then the server copy, which wins (tabs sync across browsers). An
@@ -772,6 +895,23 @@ export default function App() {
   const prefixMapTag = (oldPath, newPath) => (t) =>
     t === oldPath ? newPath : t.startsWith(oldPath + "/") ? newPath + t.slice(oldPath.length) : t;
 
+  // Per-folder home-chat buckets ("home:<path>") follow the same prefix
+  // rewrites as the folder tags; dst "" drops the conversations (folder
+  // deleted). Runs BEFORE the tag rewrite flips folderFilter, so ChatDock
+  // reloads the destination bucket only after it exists. Best-effort — a
+  // failed move orphans a conversation, never page data.
+  async function moveFolderChats(moves) {
+    for (const [src, dst] of moves) {
+      try {
+        await apiJson(`${API}/chats/folder-rename`, {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({ src, dst }),
+        });
+      } catch {}
+    }
+  }
+
   // Rename one path segment: rewrites the prefix on every page's folder tags,
   // so renaming a parent folder carries all its subfolders along.
   async function renameFolder(oldPath, newNameRaw) {
@@ -780,6 +920,7 @@ export default function App() {
     const parent = oldPath.includes("/") ? oldPath.slice(0, oldPath.lastIndexOf("/")) : "";
     const newPath = parent ? `${parent}/${newName}` : newName;
     if (!newName || newPath === oldPath) return;
+    await moveFolderChats([[oldPath, newPath]]);
     await applyFolderMap(prefixMapTag(oldPath, newPath));
     setStatus(`Folder renamed to “${newPath}”.`);
   }
@@ -796,6 +937,7 @@ export default function App() {
       if (newPath !== oldPath) moves.push([oldPath, newPath]);
     }
     if (!moves.length) return;
+    await moveFolderChats(moves);
     await applyFolderMap((t) => {
       for (const [oldPath, newPath] of moves) {
         if (t === oldPath) return newPath;
@@ -837,6 +979,7 @@ export default function App() {
     const inPath = (t) => t === path || t.startsWith(path + "/");
     const members = homeBlocks.filter((b) => parseFolderTags(b.properties?.folder).some(inPath));
     const cleanupAfter = async (statusMsg) => {
+      await moveFolderChats([[path, ""]]); // drop the folder's chat buckets too
       updateExtraFolders((prev) => prev.filter((f) => !inPath(f)));
       setPageFolders((prev) => prev.filter((t) => !inPath(t)));
       if (folderFilter === path || folderFilter.startsWith(path + "/")) {
@@ -1331,6 +1474,41 @@ export default function App() {
       return next;
     });
   }
+  // The × on a recents card: drop the entry and its snapshot.
+  function removeRecentView(id) {
+    const u = prefsUserRef.current;
+    setRecentViews((prev) => {
+      const next = prev.filter((r) => r.id !== id);
+      if (u) { try { localStorage.setItem(`gamma-recent-views:${u}`, JSON.stringify(next)); } catch {} }
+      return next;
+    });
+    setPageSnaps((prev) => {
+      if (!prev[id]) return prev;
+      const next = { ...prev };
+      delete next[id];
+      if (u) { try { localStorage.setItem(`gamma-page-snaps:${u}`, JSON.stringify(next)); } catch {} }
+      return next;
+    });
+  }
+  // Page snapshots — a small JPEG of the viewer at the last-read spot,
+  // captured from the already-rendered pdf.js canvases and shown as the
+  // recents-card cover ({pageId: {img, at}}). Device-local like the view
+  // history; capped so the localStorage footprint stays bounded.
+  const [pageSnaps, setPageSnaps] = useState({});
+  function savePageSnap(id, img) {
+    if (!id || !img) return;
+    setPageSnaps((prev) => {
+      const next = { ...prev, [id]: { img, at: new Date().toISOString() } };
+      const ids = Object.keys(next);
+      if (ids.length > 24) {
+        ids.sort((a, b) => (next[a].at || "").localeCompare(next[b].at || ""));
+        for (const drop of ids.slice(0, ids.length - 24)) delete next[drop];
+      }
+      const u = prefsUserRef.current;
+      if (u) { try { localStorage.setItem(`gamma-page-snaps:${u}`, JSON.stringify(next)); } catch {} }
+      return next;
+    });
+  }
   const [tabMenu, setTabMenu] = useState(null); // {id, pinned, x, y} — tab right-click menu
   // FLIP animation: when tab order changes, slide each tab from its old
   // position to the new one (Chrome-style), instead of snapping.
@@ -1550,35 +1728,24 @@ export default function App() {
   }, []);
   const [pdfHidden, setPdfHidden] = useState(false);
   const [pdfScale, setPdfScale] = useState("page-width");
-  const [pdfSaveLocal, setPdfSaveLocal] = usePersistedFlag("gamma-pdf-save", true);
-  // Speech-bubble badge on PDF highlights that carry a typed note.
-  const [hlNoteBadges, setHlNoteBadges] = usePersistedFlag("gamma-hl-note-badge", true);
-  // Enter key in the note editor: off (default) = Enter types a line break and
-  // Shift+Enter starts a new note; on = the Logseq-style swap of the two.
-  const [enterNewNote, setEnterNewNote] = usePersistedFlag("gamma-enter-new-note", false);
-  // Touch scrolling in a zoomed-in PDF: a near-vertical one-finger swipe keeps
-  // the horizontal position it started from, so the text column doesn't wander
-  // sideways as you read down the page.
-  const [snapVertical, setSnapVertical] = usePersistedFlag("gamma-snap-vertical", true);
-  // Embedded PDF annotations (burned in by a Gamma export or another viewer)
-  // would render twice once imported as blocks — canvas + overlay. "hide"
-  // keeps them out of the canvas; "strip" removes them from the stored file
-  // at import time.
-  const [embAnnots, setEmbAnnots] = usePersistedState("gamma-embedded-annots", "hide", {
-    parse: (raw) => (raw === "hide" || raw === "strip" ? raw : undefined),
-  });
-  // User preferences (Settings in the account popover)
-  const [oaFallback, setOaFallback] = usePersistedFlag("gamma-oa-fallback", true);
-  const [metaAutoFetch, setMetaAutoFetch] = usePersistedFlag("gamma-meta-auto", true);
-  // Search popover: whether the result-detail lists start expanded, one
-  // default per place (SearchPanel receives them each time it opens).
-  // Home page: expanded unless turned off — with no open PDF the compact
-  // find bar shows nothing. Paper view: compact find unless turned on.
-  const [searchDetailsHome, setSearchDetailsHome] = usePersistedFlag("gamma-search-details-home", true);
-  const [searchDetailsPaper, setSearchDetailsPaper] = usePersistedFlag("gamma-search-details", false);
-  // The always-on status bar under the tabs — off by default, the floating
-  // pill carries user-facing messages; the bar is a debugging aid.
-  const [statusBarVisible, setStatusBarVisible] = usePersistedFlag("gamma-status-bar", false);
+  // Every localStorage-backed user preference (the Settings dialog's state)
+  // lives in useAppPrefs (prefs.js) — one hook, one storage key per entry.
+  const {
+    theme, setTheme, pdfDarkPage, setPdfDarkPage, recentThumbs, setRecentThumbs,
+    oaFallback, setOaFallback, metaAutoFetch, setMetaAutoFetch, pdfSaveLocal, setPdfSaveLocal,
+    snapVertical, setSnapVertical, embAnnots, setEmbAnnots,
+    searchDetailsHome, setSearchDetailsHome, searchDetailsPaper, setSearchDetailsPaper,
+    enterNewNote, setEnterNewNote, hlNoteBadges, setHlNoteBadges,
+    statusBarVisible, setStatusBarVisible,
+    chatEffort, setChatEffort, metaModel, setMetaModel,
+    dictationModel, setDictationModel, dictationLang, setDictationLang,
+    chatSystem, setChatSystem, agentSystem, setAgentSystem,
+    metaPrompt, setMetaPrompt, citePrompt, setCitePrompt,
+    chatContextChars, setChatContextChars, metaContextChars, setMetaContextChars,
+    multiContextChars, setMultiContextChars,
+    toolRounds, setToolRounds, agentPerms, setAgentPerms,
+    chatImgAutoClear, setChatImgAutoClear,
+  } = useAppPrefs();
   const pageTitleSaveTimerRef = useRef(null);
   const viewerWrapRef = useRef(null);
   const pdfRetryRef = useRef(null); // set by PdfViewer: re-runs a failed load (pill's Retry button)
@@ -1589,18 +1756,7 @@ export default function App() {
   const [chatModel, setChatModel] = useState(() => {
     try { return localStorage.getItem("gamma-chat-model") || ""; } catch { return ""; }
   });
-  const [chatEffort, setChatEffort] = usePersistedState("gamma-chat-effort", "");
-  // Model for AI metadata extraction (Settings → Paper metadata). "" = follow
-  // the chat model; a stale pick (provider/model removed) also falls back.
-  const [metaModel, setMetaModel] = usePersistedState("gamma-meta-model", "");
-  // Voice dictation (mic button): transcription model + spoken language
-  // ("" = auto-detect), configured in Settings → AI chat.
-  const [dictationModel, setDictationModel] = usePersistedState("gamma-dictation-model", "gpt-4o-transcribe");
-  const [dictationLang, setDictationLang] = usePersistedState("gamma-dictation-lang", "");
-  const [chatSystem, setChatSystem] = usePersistedState("gamma-chat-system", "");
-  const [chatContextChars, setChatContextChars] = usePersistedState("gamma-chat-context-chars", 8000, CONTEXT_CHARS_CODEC);
-  const [metaContextChars, setMetaContextChars] = usePersistedState("gamma-meta-context-chars", 6000, CONTEXT_CHARS_CODEC);
-  const [multiContextChars, setMultiContextChars] = usePersistedState("gamma-multi-context-chars", 18000, CONTEXT_CHARS_CODEC);
+  const [agentPromptDraft, setAgentPromptDraft] = useState("");
   const [promptDraft, setPromptDraft] = useState("");
   // AI providers (Settings → AI providers): a user-managed list of API keys,
   // OpenAI-platform style. Keys are stored server-side per user; the server
@@ -1910,10 +2066,7 @@ export default function App() {
     while (seen.size > 16) seen.delete(seen.values().next().value);
     setChatImages((prev) => prev.length >= 4 || prev.includes(dataUrl) ? prev : [...prev, dataUrl]);
   }
-  // Off by default: snapshots stay attached until removed or sent. On, a
-  // plain click elsewhere in the PDF drops them — the same gesture that
-  // clears quoted text selections. Ref-mirrored for the mouseup listener.
-  const [chatImgAutoClear, setChatImgAutoClear] = usePersistedFlag("gamma-chat-img-autoclear", false);
+  // Ref-mirror of the snapshot auto-clear preference for the mouseup listener.
   const chatImgAutoClearRef = useRef(chatImgAutoClear);
   useEffect(() => { chatImgAutoClearRef.current = chatImgAutoClear; }, [chatImgAutoClear]);
   // Clicking a highlight — on the PDF or its card in the notes — feeds the
@@ -2015,9 +2168,8 @@ export default function App() {
       setStatus(`Metadata save failed: ${err.message}`);
     }
   }
-  // Editable prompts for metadata extraction and PPT citations (empty = server default)
-  const [metaPrompt, setMetaPrompt] = usePersistedState("gamma-meta-prompt", "");
-  const [citePrompt, setCitePrompt] = usePersistedState("gamma-cite-prompt", "");
+  // Draft copies of the editable prompts (empty = server default), rebuilt
+  // from the saved values whenever the Prompts/Assistant pane opens.
   const [metaPromptDraft, setMetaPromptDraft] = useState("");
   const [citePromptDraft, setCitePromptDraft] = useState("");
 
@@ -2609,20 +2761,23 @@ export default function App() {
     if (session.notesVisible != null) setNotesVisible(session.notesVisible);
   }, []);
 
-  // Theme follows the OS preference — no in-app toggle.
+  // Theme: System tracks the OS preference live; Light/Dark pin it.
   useEffect(() => {
     const mq = window.matchMedia("(prefers-color-scheme: dark)");
-    const apply = () => document.documentElement.setAttribute("data-theme", mq.matches ? "dark" : "light");
+    const apply = () => document.documentElement.setAttribute(
+      "data-theme", theme === "system" ? (mq.matches ? "dark" : "light") : theme);
     apply();
     mq.addEventListener("change", apply);
     return () => mq.removeEventListener("change", apply);
-  }, []);
+  }, [theme]);
 
-  // Record a "recently viewed" entry whenever a page is opened.
+  // Record a "recently viewed" entry whenever a page is opened. sessionUser
+  // in the deps re-fires it once login resolves — a page opened by direct URL
+  // shows before the session check finishes, and the first run skips.
   useEffect(() => {
     if (!focusedBlockId || readOnly || !prefsUserRef.current) return;
     pushRecentView(focusedBlockId);
-  }, [focusedBlockId, readOnly]);
+  }, [focusedBlockId, readOnly, sessionUser]);
 
   // Keep the tab strip in sync with the open page.
   useEffect(() => {
@@ -2674,8 +2829,47 @@ export default function App() {
       }
       if (reason) return;
       recordReadPos(focusedBlockId, n);
+      // Refresh this page's recents-card snapshot once the scroll settles.
+      if (snapTimerRef.current) clearTimeout(snapTimerRef.current);
+      const id = focusedBlockId;
+      snapTimerRef.current = setTimeout(() => {
+        snapTimerRef.current = null;
+        captureSnapRef.current?.(id);
+      }, 1200);
     };
   });
+
+  // Snapshot capture for the recents cards — same guards as the tracker, but
+  // re-checked at fire time via the ref (the timers outlive this closure).
+  // Returns true only when a real capture was stored.
+  const snapTimerRef = useRef(null);
+  const captureSnapRef = useRef(null);
+  useEffect(() => {
+    captureSnapRef.current = (id) => {
+      if (!recentThumbs) return false;
+      if (readOnly || !id || id !== focusedBlockId || !pdfUrl || pdfHidden) return false;
+      if (pdfRenderedUrlRef.current !== pdfUrl) return false;
+      if (restoringForRef.current === focusedBlockId || coarseRestorePendingRef.current) return false;
+      const img = captureViewerSnapshot();
+      if (img) savePageSnap(id, img);
+      return !!img;
+    };
+  });
+  // A page opened and left without scrolling still gets a cover: the restore
+  // scrolls with the tracker paused, so poll a few times after the document
+  // (re)renders until a capture sticks. The scroll-settle path above keeps it
+  // fresh afterwards.
+  useEffect(() => {
+    if (!recentThumbs || !pdfUrl || pdfHidden || readOnly || !focusedBlockId) return;
+    const id = focusedBlockId;
+    let tries = 0, timer = null;
+    const attempt = () => {
+      timer = null;
+      if (!captureSnapRef.current?.(id) && tries++ < 10) timer = setTimeout(attempt, 1500);
+    };
+    timer = setTimeout(attempt, 1500);
+    return () => { if (timer) clearTimeout(timer); };
+  }, [pdfUrl, pdfHidden, focusedBlockId, readOnly, recentThumbs]);
 
   async function loadBlocksForBlock(blockId) {
     try {
@@ -3598,10 +3792,11 @@ export default function App() {
   // (Re)entering the Assistant pane rebuilds the prompt drafts from the saved
   // values — switching away without saving is the cancel path.
   useEffect(() => {
-    if (settingsOpen !== "assistant") return;
+    if (settingsOpen !== "prompts" && settingsOpen !== "assistant") return;
     setPromptDraft(chatSystem || aiInfo?.default_prompt || "");
     setMetaPromptDraft(metaPrompt || aiInfo?.metadata_prompt || "");
     setCitePromptDraft(citePrompt || aiInfo?.cite_prompt || "");
+    setAgentPromptDraft(agentSystem || aiInfo?.agent_prompt || "");
   }, [settingsOpen]);
 
 
@@ -3755,24 +3950,62 @@ export default function App() {
     }
     return [...set].sort((a, b) => a.localeCompare(b));
   }, [allFolderPaths, folderFilter]);
-  const folderCounts = useMemo(() => {
+  // Device-local view history as a lookup ({pageId → ISO time}, capped at 24
+  // entries) — feeds the "Recently viewed" sort; unviewed pages have no entry.
+  const viewedAtById = useMemo(() => new Map(recentViews.map((r) => [r.id, r.at])), [recentViews]);
+  // Per-folder rollup: page count + latest contained-page timestamps, so
+  // folders can sort on the same criteria as files.
+  const folderMeta = useMemo(() => {
     const m = {};
     for (const f of childFolders) {
-      m[f] = pageBlocks.filter((b) => b._folders.some((t) => t === f || t.startsWith(f + "/"))).length;
+      let count = 0, updated = "", created = "", viewed = "";
+      for (const b of pageBlocks) {
+        if (!b._folders.some((t) => t === f || t.startsWith(f + "/"))) continue;
+        count++;
+        if (b._updatedAt > updated) updated = b._updatedAt;
+        if (b._createdAt > created) created = b._createdAt;
+        const v = viewedAtById.get(b._pageId) || "";
+        if (v > viewed) viewed = v;
+      }
+      m[f] = { count, updated, created, viewed };
     }
     return m;
-  }, [childFolders, pageBlocks]);
-  // What the home list shows: inside a folder → pages tagged exactly that
-  // path (deeper ones live in the subfolder rows); at root → EVERY page as a
-  // sortable recents feed, loaded incrementally.
-  const homeSortedPages = useMemo(() => {
-    const arr = folderFilter ? pageBlocks.filter((b) => b._folders.includes(folderFilter)) : [...pageBlocks];
-    const cmp = homeSort === "title" ? (a, b) => a.content.localeCompare(b.content)
+  }, [childFolders, pageBlocks, viewedAtById]);
+  // What the home list shows: folders and files as ONE sorted listing —
+  // inside a folder → its subfolders + pages tagged exactly that path; at
+  // root → top-level folders + EVERY page as a recents feed, loaded
+  // incrementally. Date sorts rank a folder by its most recent content; an
+  // empty folder has no timestamps and sinks to the bottom.
+  const homeItems = useMemo(() => {
+    const items = homeKinds === "files" ? [] : childFolders.map((f) => ({
+      kind: "folder", key: `folder:${f}`, folder: f,
+      _title: f.slice(f.lastIndexOf("/") + 1),
+      _updatedAt: folderMeta[f]?.updated || "", _createdAt: folderMeta[f]?.created || "",
+      _viewedAt: folderMeta[f]?.viewed || "",
+    }));
+    const pages = homeKinds === "folders" ? []
+      : folderFilter ? pageBlocks.filter((b) => b._folders.includes(folderFilter)) : pageBlocks;
+    for (const b of pages) {
+      items.push({
+        kind: "page", key: b._pageId, block: b, _title: b.content,
+        _updatedAt: b._updatedAt, _createdAt: b._createdAt,
+        _viewedAt: viewedAtById.get(b._pageId) || "",
+      });
+    }
+    // "viewed" falls back to modified time so the never-viewed tail (the view
+    // history keeps only the last 24 opens) still has a sensible order.
+    const cmp = homeSort === "title" ? (a, b) => a._title.localeCompare(b._title)
       : homeSort === "created" ? (a, b) => (b._createdAt || "").localeCompare(a._createdAt || "")
+      : homeSort === "viewed" ? (a, b) => ((b._viewedAt || "").localeCompare(a._viewedAt || "") || (b._updatedAt || "").localeCompare(a._updatedAt || ""))
       : (a, b) => (b._updatedAt || "").localeCompare(a._updatedAt || "");
-    return arr.sort(cmp);
-  }, [pageBlocks, folderFilter, homeSort]);
-  const homeVisiblePages = useMemo(() => homeSortedPages.slice(0, homeShowCount), [homeSortedPages, homeShowCount]);
+    return items.sort(cmp);
+  }, [pageBlocks, folderFilter, childFolders, folderMeta, viewedAtById, homeSort, homeKinds]);
+  const homeVisibleItems = useMemo(() => homeItems.slice(0, homeShowCount), [homeItems, homeShowCount]);
+  // Page-shaped view of the visible slice (shift-range selection, BlockTree).
+  const homeVisiblePages = useMemo(
+    () => homeVisibleItems.filter((it) => it.kind === "page").map((it) => it.block),
+    [homeVisibleItems]
+  );
   // Pinned papers — shown as a favorites strip at the library root. Most
   // recently pinned first.
   const pinnedPages = useMemo(
@@ -3812,7 +4045,7 @@ export default function App() {
     });
     obs.observe(el);
     return () => obs.disconnect();
-  }, [homeVisiblePages.length, homeSortedPages.length, homeMode]);
+  }, [homeVisibleItems.length, homeItems.length, homeMode]);
   // Identity-stable: every keystroke in a note replaces `blocks`, but the
   // derived highlights rarely change — returning the previous array when the
   // content is identical keeps the viewer's per-page memo effective (otherwise
@@ -4516,21 +4749,13 @@ export default function App() {
                       title="Right-click to rename or delete this label"
                       onContextMenu={openTagMenu("label", categoryFilter)}
                     >{categoryFilter}</div>
-                    <div className="carouselRow">
-                      <div className="carouselTrackWrap">
-                        <div className="carouselTrack">
-                          {filtered.map((b) => (
-                            <button key={b.id} className="recentCard" onClick={() => openBlock(b.id)} title={b.content}>
-                              <div className="recentCardTitle">{b.content || "Untitled"}</div>
-                              <div className="recentCardMeta">
-                                {b.properties?.summary && <span className="recentCardSummary">{b.properties.summary}</span>}
-                                <span className="recentCardTime">{formatRelativeTime(b.updated_at)}</span>
-                              </div>
-                            </button>
-                          ))}
-                        </div>
-                      </div>
-                    </div>
+                    <CardCarousel>
+                      {filtered.map((b) => (
+                        <RecentCard key={b.id} title={b.content} isPdf={!!b.properties?.source_url}
+                          summary={b.properties?.summary} snap={pageSnaps[b.id]?.img} cover={recentThumbs}
+                          time={formatRelativeTime(b.updated_at)} onOpen={() => openBlock(b.id)} />
+                      ))}
+                    </CardCarousel>
                   </>
                 );
               }
@@ -4540,24 +4765,14 @@ export default function App() {
               // filtering still works via ?category= URLs and search chips
               // (handled by the categoryFilter branch above).
               return recentViewedPages.length > 0 ? (
-                <div className="carouselRow">
-                  <div className="carouselLabel">Recently viewed</div>
-                  <div className="carouselTrackWrap">
-                    <button className="carouselArrow carouselArrowLeft" onClick={(e) => { const t = e.currentTarget.parentElement.querySelector('.carouselTrack'); if (t) t.scrollBy({ left: -220, behavior: 'smooth' }); }}>‹</button>
-                    <div className="carouselTrack">
-                      {recentViewedPages.map((b) => (
-                        <button key={b._pageId} className="recentCard" onClick={() => openPage(b._pageId)} title={b.content}>
-                          <div className="recentCardTitle">{b.content || "Untitled"}</div>
-                          <div className="recentCardMeta">
-                            <span className="recentCardKind">{b._sourceUrl ? "PDF" : "Note"}</span>
-                            <span className="recentCardTime">{formatRelativeTime(b._viewedAt)}</span>
-                          </div>
-                        </button>
-                      ))}
-                    </div>
-                    <button className="carouselArrow carouselArrowRight" onClick={(e) => { const t = e.currentTarget.parentElement.querySelector('.carouselTrack'); if (t) t.scrollBy({ left: 220, behavior: 'smooth' }); }}>›</button>
-                  </div>
-                </div>
+                <CardCarousel label="Recently viewed">
+                  {recentViewedPages.map((b) => (
+                    <RecentCard key={b._pageId} title={b.content} isPdf={!!b._sourceUrl}
+                      summary={b.properties?.quote} snap={pageSnaps[b._pageId]?.img} cover={recentThumbs}
+                      time={formatRelativeTime(b._viewedAt)} onOpen={() => openPage(b._pageId)}
+                      onRemove={() => removeRecentView(b._pageId)} />
+                  ))}
+                </CardCarousel>
               ) : null;
             })() : null}
             {homeMode && !categoryFilter && !folderFilter && pinnedPages.length > 0 ? (
@@ -4590,10 +4805,8 @@ export default function App() {
                 </div>
               </div>
             ) : null}
-            {homeMode && !categoryFilter ? (
+            {homeMode && !categoryFilter && folderFilter ? (
               <div className="folderBrowser">
-                {folderFilter ? (
-                  <>
                     <div
                       className={`folderRow folderBackRow ${folderDragOver === "__up__" ? "dragOver" : ""}`}
                       onClick={() => {
@@ -4629,89 +4842,38 @@ export default function App() {
                         );
                       })}
                     </div>
-                  </>
-                ) : null}
-                {homeView === "list" ? (<>
-                {childFolders.map((f) => (
-                  <div
-                    key={f}
-                    className={`folderRow ${folderDragOver === f ? "dragOver" : ""} ${selectedFolders.has(f) ? "selected" : ""}`}
-                    draggable={folderRenaming?.name !== f}
-                    onDragStart={(e) => { e.dataTransfer.setData("text/plain", FOLDER_DRAG + f); e.dataTransfer.effectAllowed = "move"; }}
-                    onClick={(e) => handleFolderClick(f, e)}
-                    onDoubleClick={() => { if (folderRenaming?.name !== f) openFolder(f); }}
-                    onContextMenu={openTagMenu("folder", f)}
-                    onDragOver={(e) => { e.preventDefault(); setFolderDragOver(f); }}
-                    onDragLeave={() => setFolderDragOver(null)}
-                    onDrop={(e) => dropOnFolder(e, f)}
-                    title="Click to select · double-click to open · right-click to rename or delete · drop a paper or folder to move it in"
-                  >
-                    <FolderIcon size={15} />
-                    {folderRenaming?.name === f ? (
-                      <input
-                        autoFocus
-                        className="folderNewInput"
-                        value={folderRenaming.draft}
-                        onClick={(e) => e.stopPropagation()}
-                        onChange={(e) => setFolderRenaming({ name: f, draft: e.target.value })}
-                        onKeyDown={(e) => {
-                          if (e.key === "Enter") renameFolder(f, folderRenaming.draft);
-                          else if (e.key === "Escape") setFolderRenaming(null);
-                        }}
-                        onBlur={() => renameFolder(f, folderRenaming.draft)}
-                      />
-                    ) : (
-                      <span className="folderName">{f.slice(f.lastIndexOf("/") + 1)}</span>
-                    )}
-                    <span className="folderCount">{folderCounts[f] || 0}</span>
-                  </div>
-                ))}
-                {newFolderOpen ? (
-                  <div className="folderRow folderNewRow">
-                    <FolderPlusIcon size={15} />
-                    <input
-                      autoFocus
-                      className="folderNewInput"
-                      value={newFolderName}
-                      onChange={(e) => setNewFolderName(e.target.value)}
-                      placeholder="Folder name…"
-                      onKeyDown={(e) => {
-                        if (e.key === "Enter") { e.preventDefault(); commitNewFolder(); }
-                        else if (e.key === "Escape") { setNewFolderOpen(false); setNewFolderName(""); }
-                      }}
-                      onBlur={commitNewFolder}
-                    />
-                  </div>
-                ) : (
-                  <button className="folderRow folderNewBtn" onClick={() => { setNewFolderName(""); setNewFolderOpen(true); }}>
-                    <FolderPlusIcon size={15} />
-                    <span className="folderName">New folder</span>
-                  </button>
-                )}
-                </>) : null}
               </div>
             ) : null}
             {homeMode && !categoryFilter ? (
               <div className="homeListBar">
-                <span className="homeListLabel">{folderFilter ? "Files" : "All files"}</span>
+                <span className="homeListLabel">{folderFilter ? "Contents" : "Library"}</span>
                 <span className="homeListSpacer" />
-                <select className="homeSortSelect" value={homeSort} onChange={(e) => changeHomeSort(e.target.value)} title="Sort files">
-                  <option value="updated">Recently modified</option>
-                  <option value="created">Recently added</option>
-                  <option value="title">Title A–Z</option>
-                </select>
+                <MenuSelect
+                  icon={ArrowUpDownIcon}
+                  label={folderFilter ? "Sort this folder — subfolders inherit it" : "Sort the library — folders inherit it"}
+                  value={homeSort}
+                  onChange={changeHomeSort}
+                  options={[
+                    ["updated", "Recently modified", PenIcon],
+                    ["created", "Recently added", PlusIcon],
+                    ["viewed", "Recently viewed", EyeIcon],
+                    ["title", "Title A–Z", TypeIcon],
+                  ]}
+                />
+                <KindToggle value={homeKinds} onChange={changeHomeKinds} />
                 <ViewToggle view={homeView} onChange={changeHomeView} />
               </div>
             ) : null}
             {homeMode && !categoryFilter && homeView === "grid" ? (
-              (childFolders.length === 0 && homeVisiblePages.length === 0 && !newFolderOpen) ? (
-                <div className="empty">{folderFilter ? "This folder is empty — drag papers onto it from the library." : "No pages yet — use the + button above to open a PDF or start a note page."}</div>
-              ) : (
                 <>
+                  {homeItems.length === 0 && !newFolderOpen ? (
+                    <div className="empty">{folderFilter ? "This folder is empty — drag papers onto it from the library." : "No pages yet — use the + button above to open a PDF or start a note page."}</div>
+                  ) : null}
                   <div className="fileGrid" onClick={(e) => { if (e.target.classList.contains("fileGrid")) clearSelection(); }}>
-                    {childFolders.map((f) => (
+                    {homeVisibleItems.map((item) => {
+                      if (item.kind === "folder") { const f = item.folder; return (
                       <div
-                        key={f}
+                        key={item.key}
                         className={`folderTile ${folderDragOver === f ? "dragOver" : ""} ${selectedFolders.has(f) ? "selected" : ""}`}
                         draggable={folderRenaming?.name !== f}
                         onDragStart={(e) => { e.dataTransfer.setData("text/plain", FOLDER_DRAG + f); e.dataTransfer.effectAllowed = "move"; }}
@@ -4739,10 +4901,10 @@ export default function App() {
                         ) : (
                           <span className="tileName">{f.slice(f.lastIndexOf("/") + 1)}</span>
                         )}
-                        <span className="tileFolderCount">{folderCounts[f] || 0}</span>
+                        <span className="tileFolderCount">{folderMeta[f]?.count || 0}</span>
                       </div>
-                    ))}
-                    {homeVisiblePages.map((b) => {
+                      ); }
+                      const b = item.block;
                       const id = b._pageId;
                       const isPinned = !!b._pinned;
                       const isEditing = homeEditingId === id;
@@ -4787,7 +4949,7 @@ export default function App() {
                         </div>
                       );
                     })}
-                    {newFolderOpen ? (
+                    {homeKinds === "files" ? null : newFolderOpen ? (
                       <div className="folderTile folderTileNew">
                         <FolderGlyph />
                         <input
@@ -4811,20 +4973,54 @@ export default function App() {
                       </button>
                     )}
                   </div>
-                  {homeSortedPages.length > homeVisiblePages.length ? (
+                  {homeItems.length > homeVisibleItems.length ? (
                     <button ref={loadMoreRef} className="loadMoreBtn" onClick={() => setHomeShowCount((c) => c + HOME_PAGE_CHUNK)}>
-                      Showing {homeVisiblePages.length} of {homeSortedPages.length} — load more
+                      Showing {homeVisibleItems.length} of {homeItems.length} — load more
                     </button>
                   ) : null}
                 </>
-              )
             ) : homeMode && !categoryFilter && homeView === "list" ? (
-              homeVisiblePages.length === 0 ? (
-                <div className="empty">{folderFilter ? "This folder is empty — drag papers onto it from the library." : "No pages yet — use the + button above to open a PDF or start a note page."}</div>
-              ) : (
                 <>
+                  {homeItems.length === 0 && !newFolderOpen ? (
+                    <div className="empty">{folderFilter ? "This folder is empty — drag papers onto it from the library." : "No pages yet — use the + button above to open a PDF or start a note page."}</div>
+                  ) : null}
                   <div className="fileList" onClick={(e) => { if (e.target.classList.contains("fileList")) clearSelection(); }}>
-                    {homeVisiblePages.map((b) => {
+                    {homeVisibleItems.map((item) => {
+                      if (item.kind === "folder") { const f = item.folder; return (
+                      <div
+                        key={item.key}
+                        className={`folderRow ${folderDragOver === f ? "dragOver" : ""} ${selectedFolders.has(f) ? "selected" : ""}`}
+                        draggable={folderRenaming?.name !== f}
+                        onDragStart={(e) => { e.dataTransfer.setData("text/plain", FOLDER_DRAG + f); e.dataTransfer.effectAllowed = "move"; }}
+                        onClick={(e) => handleFolderClick(f, e)}
+                        onDoubleClick={() => { if (folderRenaming?.name !== f) openFolder(f); }}
+                        onContextMenu={openTagMenu("folder", f)}
+                        onDragOver={(e) => { e.preventDefault(); setFolderDragOver(f); }}
+                        onDragLeave={() => setFolderDragOver(null)}
+                        onDrop={(e) => dropOnFolder(e, f)}
+                        title="Click to select · double-click to open · right-click to rename or delete · drop a paper or folder to move it in"
+                      >
+                        <FolderIcon size={15} />
+                        {folderRenaming?.name === f ? (
+                          <input
+                            autoFocus
+                            className="folderNewInput"
+                            value={folderRenaming.draft}
+                            onClick={(e) => e.stopPropagation()}
+                            onChange={(e) => setFolderRenaming({ name: f, draft: e.target.value })}
+                            onKeyDown={(e) => {
+                              if (e.key === "Enter") renameFolder(f, folderRenaming.draft);
+                              else if (e.key === "Escape") setFolderRenaming(null);
+                            }}
+                            onBlur={() => renameFolder(f, folderRenaming.draft)}
+                          />
+                        ) : (
+                          <span className="folderName">{f.slice(f.lastIndexOf("/") + 1)}</span>
+                        )}
+                        <span className="folderCount">{folderMeta[f]?.count || 0}</span>
+                      </div>
+                      ); }
+                      const b = item.block;
                       const id = b._pageId;
                       const isPinned = !!b._pinned;
                       const isEditing = homeEditingId === id;
@@ -4890,14 +5086,35 @@ export default function App() {
                         </div>
                       );
                     })}
+                    {homeKinds === "files" ? null : newFolderOpen ? (
+                      <div className="folderRow folderNewRow">
+                        <FolderPlusIcon size={15} />
+                        <input
+                          autoFocus
+                          className="folderNewInput"
+                          value={newFolderName}
+                          onChange={(e) => setNewFolderName(e.target.value)}
+                          placeholder="Folder name…"
+                          onKeyDown={(e) => {
+                            if (e.key === "Enter") { e.preventDefault(); commitNewFolder(); }
+                            else if (e.key === "Escape") { setNewFolderOpen(false); setNewFolderName(""); }
+                          }}
+                          onBlur={commitNewFolder}
+                        />
+                      </div>
+                    ) : (
+                      <button className="folderRow folderNewBtn" onClick={() => { setNewFolderName(""); setNewFolderOpen(true); }}>
+                        <FolderPlusIcon size={15} />
+                        <span className="folderName">New folder</span>
+                      </button>
+                    )}
                   </div>
-                  {homeSortedPages.length > homeVisiblePages.length ? (
+                  {homeItems.length > homeVisibleItems.length ? (
                     <button ref={loadMoreRef} className="loadMoreBtn" onClick={() => setHomeShowCount((c) => c + HOME_PAGE_CHUNK)}>
-                      Showing {homeVisiblePages.length} of {homeSortedPages.length} — load more
+                      Showing {homeVisibleItems.length} of {homeItems.length} — load more
                     </button>
                   ) : null}
                 </>
-              )
             ) : homeMode && categoryFilter ? null : (
             (homeMode ? homeVisiblePages : visibleBlocks).length === 0 ? (
               <>
@@ -5142,13 +5359,13 @@ export default function App() {
                   <>
                     <BlockTree blocks={homeMode ? homeVisiblePages : blocks} readOnly={readOnly} rowProps={rowProps} />
                     {addNoteButton}
-                    {homeMode && homeSortedPages.length > homeVisiblePages.length ? (
+                    {homeMode && homeItems.length > homeVisibleItems.length ? (
                       <button
                         ref={loadMoreRef}
                         className="loadMoreBtn"
                         onClick={() => setHomeShowCount((c) => c + HOME_PAGE_CHUNK)}
                       >
-                        Showing {homeVisiblePages.length} of {homeSortedPages.length} — load more
+                        Showing {homeVisibleItems.length} of {homeItems.length} — load more
                       </button>
                     ) : null}
                     <BlockDropIndicator target={dropTarget} />
@@ -5200,6 +5417,9 @@ export default function App() {
           openAiKeysEditor={openAiKeysEditor}
           openPopover={openPopover} setOpenPopover={setOpenPopover}
           setStatus={setStatus}
+          organizeFolder={!focusedBlockId && !readOnly ? folderFilter : null}
+          toolRounds={toolRounds} agentPerms={agentPerms} agentSystem={agentSystem}
+          onLibraryChange={fetchHomeBlocks}
         />
       );
     }
@@ -5309,7 +5529,7 @@ export default function App() {
         <button
           className={`iconBtn addBtn ${openPopover === "add" ? "activeIcon" : ""}`}
           onClick={() => setOpenPopover((p) => (p === "add" ? null : "add"))}
-          title="Add — open a PDF by URL, upload a file, or start a note page"
+          title="Add — open a PDF by URL, arXiv id or DOI, upload a file, or start a note page"
           aria-label="Add"
         >
           <PlusIcon size={17} strokeWidth={2.2} />
@@ -5321,7 +5541,7 @@ export default function App() {
               className="searchInput"
               value={addUrl}
               onChange={(e) => setAddUrl(e.target.value)}
-              placeholder="Open a PDF by URL — press Enter"
+              placeholder="PDF URL, arXiv id, or DOI — press Enter"
               onKeyDown={(e) => {
                 if (e.key === "Enter" && addUrl.trim() && !loading) {
                   setOpenPopover(null);
@@ -5793,6 +6013,7 @@ export default function App() {
               noteBadges={hlNoteBadges}
               hideEmbeddedAnnots={embAnnots === "hide"}
               snapVertical={snapVertical}
+              darkPage={pdfDarkPage}
               areaMode={areaSelectMode && isPhone && !readOnly}
               pdfScaleValue={pdfScale} scrollRef={scrollToRef}
               searchRef={pdfSearchRef}
@@ -6086,6 +6307,8 @@ export default function App() {
         onPaneChange={setSettingsOpen}
         onClose={() => setSettingsOpen(null)}
         papers={{
+          theme,
+          setTheme,
           oaFallback,
           setOaFallback,
           metaAutoFetch,
@@ -6096,6 +6319,10 @@ export default function App() {
           setEmbAnnots,
           snapVertical,
           setSnapVertical,
+          pdfDarkPage,
+          setPdfDarkPage,
+          recentThumbs,
+          setRecentThumbs,
           metaModel,
           setMetaModel,
           aiModels: scopedAiModels,
@@ -6115,6 +6342,7 @@ export default function App() {
           metaPrompt,
           metaFetchModel,
           metaContextChars,
+          indexTask,
           setStatus,
         }}
         ai={{
@@ -6156,6 +6384,9 @@ export default function App() {
           setMetaPromptDraft,
           citePromptDraft,
           setCitePromptDraft,
+          agentSystem,
+          agentPromptDraft,
+          setAgentPromptDraft,
           savePrompts: () => {
             const normalizePrompt = (draft, defaultValue) => {
               const value = (draft || "").trim();
@@ -6164,6 +6395,7 @@ export default function App() {
             setChatSystem(normalizePrompt(promptDraft, aiInfo?.default_prompt));
             setMetaPrompt(normalizePrompt(metaPromptDraft, aiInfo?.metadata_prompt));
             setCitePrompt(normalizePrompt(citePromptDraft, aiInfo?.cite_prompt));
+            setAgentSystem(normalizePrompt(agentPromptDraft, aiInfo?.agent_prompt));
             setStatus("Prompts saved.");
           },
         }}
@@ -6180,6 +6412,10 @@ export default function App() {
           setMetaContextChars,
           multiContextChars,
           setMultiContextChars,
+          toolRounds,
+          setToolRounds,
+          agentPerms,
+          setAgentPerms,
           reset: () => {
             setChatContextChars(8000);
             setMetaContextChars(6000);

@@ -27,6 +27,14 @@ export const FolderPlusIcon = (p) => (
 export const FolderOpenIcon = (p) => (
   <Icon {...p}><path d="m6 14 1.5-2.9A2 2 0 0 1 9.24 10H20a2 2 0 0 1 1.94 2.5l-1.54 6a2 2 0 0 1-1.95 1.5H4a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h3.9a2 2 0 0 1 1.69.9l.81 1.2a2 2 0 0 0 1.67.9H18a2 2 0 0 1 2 2v2" /></Icon>
 );
+// Small folder + file pair — the home library's "everything" filter state.
+export const FolderFilesIcon = (p) => (
+  <Icon {...p}>
+    <path d="M14 12.5a1.8 1.8 0 0 0 1.8-1.8V6.4a1.8 1.8 0 0 0-1.8-1.8H9.5a1.8 1.8 0 0 1-1.5-.8l-.5-.7a1.8 1.8 0 0 0-1.5-.8H4a1.8 1.8 0 0 0-1.8 1.8v6.6A1.8 1.8 0 0 0 4 12.5Z" />
+    <path d="M19.5 21.5h-5A1.5 1.5 0 0 1 13 20v-8a1.5 1.5 0 0 1 1.5-1.5H18l3 3V20a1.5 1.5 0 0 1-1.5 1.5Z" />
+    <path d="M18 10.5V14h3" />
+  </Icon>
+);
 export const FileIcon = (p) => (
   <Icon {...p}><path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z" /><path d="M14 2v6h6" /></Icon>
 );
@@ -73,6 +81,9 @@ export const ArrowLeftIcon = (p) => (
 );
 export const ArrowUpIcon = (p) => (
   <Icon {...p}><path d="M12 19V5" /><path d="m5 12 7-7 7 7" /></Icon>
+);
+export const ArrowUpDownIcon = (p) => (
+  <Icon {...p}><path d="m21 16-4 4-4-4" /><path d="M17 20V4" /><path d="m3 8 4-4 4 4" /><path d="M7 4v16" /></Icon>
 );
 export const PlusIcon = (p) => (
   <Icon {...p}><path d="M12 5v14" /><path d="M5 12h14" /></Icon>
@@ -184,6 +195,15 @@ export const CornerDownLeftIcon = (p) => (
 );
 export const LayoutIcon = (p) => (
   <Icon {...p}><rect x="3" y="4" width="18" height="16" rx="2" /><path d="M3 15h18" /></Icon>
+);
+export const MonitorIcon = (p) => (
+  <Icon {...p}><rect x="2" y="3" width="20" height="14" rx="2" /><line x1="8" y1="21" x2="16" y2="21" /><line x1="12" y1="17" x2="12" y2="21" /></Icon>
+);
+export const SunIcon = (p) => (
+  <Icon {...p}><circle cx="12" cy="12" r="4" /><path d="M12 2v2" /><path d="M12 20v2" /><path d="m4.93 4.93 1.41 1.41" /><path d="m17.66 17.66 1.41 1.41" /><path d="M2 12h2" /><path d="M20 12h2" /><path d="m6.34 17.66-1.41 1.41" /><path d="m19.07 4.93-1.41 1.41" /></Icon>
+);
+export const MoonIcon = (p) => (
+  <Icon {...p}><path d="M12 3a6 6 0 0 0 9 9 9 9 0 1 1-9-9Z" /></Icon>
 );
 export const HardDriveIcon = (p) => (
   <Icon {...p}><path d="M3 12h18" /><path d="M5.5 5h13a2 2 0 0 1 1.8 1.1l1.5 3A2 2 0 0 1 22 10v7a2 2 0 0 1-2 2H4a2 2 0 0 1-2-2v-7a2 2 0 0 1 .2-.9l1.5-3A2 2 0 0 1 5.5 5z" /><path d="M6.5 15.5h.01" /><path d="M10.5 15.5h.01" /></Icon>

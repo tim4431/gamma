@@ -7,7 +7,19 @@ import React, { useEffect, useMemo, useRef, useState } from "react";
 import { API, apiJson, copyText, isPdfFile } from "./utils";
 import { DockWindow, ChatMarkdown, AutoGrowTextarea, useCopied } from "./widgets";
 import { MenuSelect } from "./menus";
-import { ArrowUpIcon, BookIcon, CheckIcon, ChevronDownIcon, ChevronUpIcon, CopyIcon, FileIcon, MicIcon, PaperclipIcon, PencilIcon, StopIcon, XIcon } from "./icons";
+import { ArrowUpIcon, BookIcon, CheckIcon, ChevronDownIcon, ChevronUpIcon, CopyIcon, FileIcon, FolderIcon, ListIcon, MicIcon, PaperclipIcon, PencilIcon, SearchIcon, StopIcon, XIcon } from "./icons";
+
+// Folder-agent tool chips: icon per action kind; rename/move are the kinds
+// that changed the library (they trigger the home-feed refresh). Every chip
+// carries the raw call the server ran (tool/args/result, both truncated), so
+// clicking one expands the arguments and the output the model saw.
+const ACTION_ICONS = { rename: PencilIcon, move: FolderIcon, search: SearchIcon, read: BookIcon, list: ListIcon, error: XIcon };
+const MUTATING_KINDS = new Set(["rename", "move"]);
+const toolCallText = (a) => {
+  const args = Object.entries(a.args || {}).map(([k, v]) => `${k}: ${v}`).join(", ");
+  const head = `${a.tool || a.kind}(${args})`;
+  return [head, a.result].filter(Boolean).join("\n\n");
+};
 
 export default function ChatDock({
   docId, focusedBlockId, homeBlocks, pdfTitle, openTabs,
@@ -19,6 +31,12 @@ export default function ChatDock({
   aiInfo, aiProvider, openAiKeysEditor,
   openPopover, setOpenPopover,
   setStatus,
+  // Home/folder view: the folder path being viewed ("" = library root) —
+  // enables the folder-agent tools; null in the paper view. agentPerms is the
+  // Settings per-tool permission map ({list, read, search, rename, move}) and
+  // toolRounds the round budget. When the AI applied changes, onLibraryChange
+  // refreshes the home feed.
+  organizeFolder = null, toolRounds, agentPerms, agentSystem, onLibraryChange,
   onGrip, onGripDoubleClick, collapsed, onClose,
 }) {
   const [chatMessages, setChatMessages] = useState([]);
@@ -27,8 +45,38 @@ export default function ChatDock({
   // Tracks which block we've finished loading from the server, so the save
   // effect doesn't fire (and clobber the stored chat) before the load lands.
   const chatLoadedForRef = useRef("");
-  // Chat history is per page; the home view gets its own bucket.
-  const chatKey = focusedBlockId || "home";
+  // Chat history is per page; the home view buckets per folder ("home" at the
+  // library root, "home:<path>" inside a folder) — switching folders switches
+  // conversations, so the organizer never drags one folder's context into
+  // another. App migrates the buckets on folder rename/move/delete
+  // (POST /api/chats/folder-rename).
+  const chatKey = focusedBlockId || (organizeFolder ? `home:${organizeFolder}` : "home");
+  // What the folder agent may do here, per the Settings toggles.
+  const perm = (key) => agentPerms?.[key] !== false;
+  const agentReads = perm("list") || perm("read") || perm("search");
+  const agentWrites = perm("rename") || perm("move");
+  // Agent fields riding on /api/ai/chat ({} = plain chat): folder chats reach
+  // the folder's pages, paper chats get the read tools (read_page /
+  // search_pdfs) for their own paper.
+  const agentPayload = () => {
+    const scope = organizeFolder != null && (agentReads || agentWrites)
+      ? { agent_scope: "folder", folder: organizeFolder }
+      : focusedBlockId && (perm("read") || perm("search"))
+        ? { agent_scope: "page", page_id: focusedBlockId }
+        : null;
+    return scope
+      ? { ...scope, tool_rounds: toolRounds || 0, permissions: agentPerms || {}, agent_system: agentSystem || "" }
+      : {};
+  };
+  // Empty-state intro and input placeholder for an agent-enabled home chat.
+  const agentScopeName = organizeFolder ? "this folder" : "your library";
+  const agentIntro = organizeFolder == null ? null
+    : agentWrites
+      ? `Ask AI anything — it can ${agentReads ? "read, search and " : ""}organize ${agentScopeName} (rename papers, file them into folders)…`
+      : agentReads
+        ? `Ask AI across ${organizeFolder ? "this folder's papers" : "your library"} — it can read, search and summarize them…`
+        : null;
+  const agentAsk = agentIntro ? (agentWrites ? `Ask, or organize ${agentScopeName}…` : `Ask across ${agentScopeName}…`) : null;
   const chatKeyRef = useRef(chatKey);
   chatKeyRef.current = chatKey;
   // Which conversation the in-flight request belongs to (typing indicator
@@ -39,6 +87,12 @@ export default function ChatDock({
   // like pdfSelections — so the PDF viewer can attach into it.
   const [editingMsg, setEditingMsg] = useState(null); // {idx, text} — editing a sent user message
   const [copiedMsgIdx, flashCopiedMsg] = useCopied(1200);
+  const [openActions, setOpenActions] = useState(() => new Set()); // expanded tool chips, "<msg>:<action>"
+  const toggleAction = (key) => setOpenActions((prev) => {
+    const next = new Set(prev);
+    next.has(key) ? next.delete(key) : next.add(key);
+    return next;
+  });
   const [chatFindOpen, setChatFindOpen] = useState(false);
   const [chatFind, setChatFind] = useState("");
   const [chatFindIdx, setChatFindIdx] = useState(0);
@@ -257,6 +311,8 @@ export default function ChatDock({
     const ctrl = new AbortController();
     chatAbortRef.current = ctrl;
     let acc = ""; // streamed reply so far — kept on Stop
+    const actions = []; // organizer mutations streamed for this reply
+    const aiMsg = (extra = {}) => ({ role: "ai", text: acc, ...(actions.length ? { actions: [...actions] } : {}), ...extra });
     try {
       const res = await fetch(`${API}/ai/chat`, {
         method: "POST",
@@ -279,6 +335,7 @@ export default function ChatDock({
           context_char_limit: chatContextChars,
           multi_context_char_limit: multiContextChars,
           stream: true,
+          ...agentPayload(),
         }),
       });
       if (!res.ok) {
@@ -300,23 +357,26 @@ export default function ChatDock({
           if (!line.trim()) continue;
           const ev = JSON.parse(line);
           if (ev.error) throw new Error(ev.error);
+          if (ev.action) { actions.push(ev.action); continue; }
           acc += ev.delta || "";
         }
-        if (acc) showReply({ role: "ai", text: acc, partial: true });
+        if (acc || actions.length) showReply(aiMsg({ partial: true }));
       }
-      showReply({ role: "ai", text: acc || "(no response)" }, true);
+      showReply(aiMsg({ text: acc || (actions.length ? "" : "(no response)") }), true);
     } catch (err) {
       const stopped = err?.name === "AbortError";
-      showReply({
-        role: "ai",
+      showReply(aiMsg({
         text: stopped
           ? (acc ? `${acc}\n\n*(stopped)*` : "*(stopped)*")
           : (acc ? `${acc}\n\n**Error:** ${err.message}` : `Error: ${err.message}`),
-      }, true);
+      }), true);
     } finally {
       setChatLoading(false);
       setChatLoadingKey("");
       chatAbortRef.current = null;
+      // Agent tools renamed/moved pages — reload the home feed. Read-only
+      // tool calls (list/read/search) render as chips but change nothing.
+      if (actions.some((a) => MUTATING_KINDS.has(a.kind))) onLibraryChange?.();
     }
   }
 
@@ -592,7 +652,8 @@ export default function ChatDock({
                   {" "}with your API key to enable it.
                 </>
               ) : "AI is not configured."
-            ) : (focusedBlockId ? "Ask AI about this page…" : "Ask AI anything, or generate a report from your pages…")}
+            ) : focusedBlockId ? "Ask AI about this page…"
+              : agentIntro || "Ask AI anything, or generate a report from your pages…"}
           </div>
         ) : (
           chatMessages.map((m, i) => {
@@ -652,6 +713,37 @@ export default function ChatDock({
                             {n.slice(0, 40)}{n.length > 40 ? "…" : ""}
                           </span>
                         ))}
+                      </div>
+                    ) : null}
+                    {!isUser && m.actions?.length ? (
+                      <div className="chatToolActions">
+                        {m.actions.map((a, j) => {
+                          const Icon = ACTION_ICONS[a.kind] || FolderIcon;
+                          // Chats saved before tool output was recorded have
+                          // no raw call — those chips stay plain text.
+                          const hasDetail = !!(a.tool || a.result);
+                          const key = `${i}:${j}`;
+                          const open = openActions.has(key);
+                          return (
+                            <div key={j} className={`chatToolAction${a.error ? " err" : ""}`}>
+                              {hasDetail ? (
+                                <button type="button" className="chatToolActionHead"
+                                  onClick={() => toggleAction(key)}
+                                  title={open ? "Hide tool output" : "Show tool output"}>
+                                  <Icon size={11} />
+                                  <span>{a.summary}</span>
+                                  {open ? <ChevronUpIcon size={10} /> : <ChevronDownIcon size={10} />}
+                                </button>
+                              ) : (
+                                <div className="chatToolActionHead plain" title={a.summary}>
+                                  <Icon size={11} />
+                                  <span>{a.summary}</span>
+                                </div>
+                              )}
+                              {open ? <pre className="chatToolDetail">{toolCallText(a)}</pre> : null}
+                            </div>
+                          );
+                        })}
                       </div>
                     ) : null}
                     {isUser
@@ -809,7 +901,7 @@ export default function ChatDock({
           onKeyDown={(e) => {
             if (e.key === "Enter" && !e.shiftKey) { e.preventDefault(); sendChatMessage(); }
           }}
-          placeholder={chatFiles.length ? `Ask about the attached file${chatFiles.length > 1 ? "s" : ""}…` : chatImages.length ? "Ask about the pasted figure…" : (pdfSelections.length ? (pdfSelections.length > 1 ? `Ask about the ${pdfSelections.length} selected passages…` : "Ask about the selection…") : (chatDocs.length ? `Ask about ${chatDocs.length} selected PDF${chatDocs.length > 1 ? "s" : ""}…` : "Ask…"))}
+          placeholder={chatFiles.length ? `Ask about the attached file${chatFiles.length > 1 ? "s" : ""}…` : chatImages.length ? "Ask about the pasted figure…" : (pdfSelections.length ? (pdfSelections.length > 1 ? `Ask about the ${pdfSelections.length} selected passages…` : "Ask about the selection…") : (chatDocs.length ? `Ask about ${chatDocs.length} selected PDF${chatDocs.length > 1 ? "s" : ""}…` : agentAsk || "Ask…"))}
         />
         {chatLoading ? (
           <button className="uiBtn chatCircleBtn chatStopBtn" type="button" onClick={stopChat} title="Stop generating" aria-label="Stop generating">
