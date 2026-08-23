@@ -13,7 +13,7 @@ import {
   useCopied,
 } from "./widgets";
 import { BlockTree, _dragState } from "./blockTree";
-import { KindToggle, ViewToggle } from "./fileBrowser";
+import { CardLabels, KindToggle, PageCard, ViewToggle } from "./fileBrowser";
 import ChatDock from "./chatDock";
 import SearchPanel from "./search";
 import { ContextMenu, MenuSelect } from "./menus";
@@ -186,39 +186,6 @@ function captureViewerSnapshot() {
   // previous snapshot — require the strip to be at least 40% real page.
   if (covered < vr.width * capH * 0.4) return null;
   try { return out.toDataURL("image/jpeg", 0.55); } catch { return null; }
-}
-
-// One card in a home carousel: a cover (page snapshot at the last-read spot,
-// else the summary excerpt, else the file glyph) over title + kind/time.
-// cover=false collapses it to the compact text-only card. A div, not a
-// button — the hover-revealed remove × nests inside (same as .pinnedTile).
-function RecentCard({ title, isPdf, summary, time, snap, cover = true, onOpen, onRemove }) {
-  return (
-    <div className="recentCard" onClick={onOpen} title={title}>
-      {cover ? (
-        <div className="recentCardCover">
-          {snap ? <img src={snap} alt="" draggable={false} />
-            : summary ? <div className="recentCardExcerpt">{summary}</div>
-            : <FileGlyph isPdf={isPdf} />}
-        </div>
-      ) : null}
-      <div className="recentCardBody">
-        <div className="recentCardTitle">{title || "Untitled"}</div>
-        <div className="recentCardMeta">
-          <span className="recentCardKind">{isPdf ? "PDF" : "Note"}</span>
-          <span className="recentCardTime">{time}</span>
-        </div>
-      </div>
-      {onRemove ? (
-        <button
-          className="uiClose uiCloseSm recentCardClose"
-          title="Remove from Recently viewed"
-          aria-label="Remove from Recently viewed"
-          onClick={(e) => { e.stopPropagation(); onRemove(); }}
-        >×</button>
-      ) : null}
-    </div>
-  );
 }
 
 // Horizontal card strip. No arrow chrome: a mouse wheel scrolls it sideways
@@ -1509,6 +1476,22 @@ export default function App() {
       return next;
     });
   }
+  // A snapshot only exists to cover a recents card — when a page falls out of
+  // the (capped) queue, its snapshot goes too. Also sweeps leftovers from
+  // before pruning existed. Loads set both states in one batch, so this never
+  // sees a loaded snap map against a not-yet-loaded queue.
+  useEffect(() => {
+    const keep = new Set(recentViews.map((r) => r.id));
+    const stale = Object.keys(pageSnaps).filter((id) => !keep.has(id));
+    if (!stale.length) return;
+    setPageSnaps((prev) => {
+      const next = { ...prev };
+      for (const id of stale) delete next[id];
+      const u = prefsUserRef.current;
+      if (u) { try { localStorage.setItem(`gamma-page-snaps:${u}`, JSON.stringify(next)); } catch {} }
+      return next;
+    });
+  }, [recentViews, pageSnaps]);
   const [tabMenu, setTabMenu] = useState(null); // {id, pinned, x, y} — tab right-click menu
   // FLIP animation: when tab order changes, slide each tab from its old
   // position to the new one (Chrome-style), instead of snapping.
@@ -1732,6 +1715,7 @@ export default function App() {
   // lives in useAppPrefs (prefs.js) — one hook, one storage key per entry.
   const {
     theme, setTheme, pdfDarkPage, setPdfDarkPage, recentThumbs, setRecentThumbs,
+    fileLabels, setFileLabels,
     oaFallback, setOaFallback, metaAutoFetch, setMetaAutoFetch, pdfSaveLocal, setPdfSaveLocal,
     snapVertical, setSnapVertical, embAnnots, setEmbAnnots,
     searchDetailsHome, setSearchDetailsHome, searchDetailsPaper, setSearchDetailsPaper,
@@ -1743,7 +1727,7 @@ export default function App() {
     metaPrompt, setMetaPrompt, citePrompt, setCitePrompt,
     chatContextChars, setChatContextChars, metaContextChars, setMetaContextChars,
     multiContextChars, setMultiContextChars,
-    toolRounds, setToolRounds, agentPerms, setAgentPerms,
+    toolRounds, setToolRounds, agentReadChars, setAgentReadChars, agentPerms, setAgentPerms,
     chatImgAutoClear, setChatImgAutoClear,
   } = useAppPrefs();
   const pageTitleSaveTimerRef = useRef(null);
@@ -4009,6 +3993,14 @@ export default function App() {
     return items.sort(cmp);
   }, [pageBlocks, folderFilter, childFolders, folderMeta, viewedAtById, homeSort, homeKinds]);
   const homeVisibleItems = useMemo(() => homeItems.slice(0, homeShowCount), [homeItems, homeShowCount]);
+  // Timestamp shown on a library card follows the active sort: sorted by view
+  // time → viewed (falling back to modified, same as the sort), by added →
+  // created; modified otherwise (incl. Title A–Z).
+  const cardTime = (item) => formatRelativeTime(
+    homeSort === "viewed" ? (item._viewedAt || item._updatedAt)
+      : homeSort === "created" ? item._createdAt
+      : item._updatedAt
+  );
   // Page-shaped view of the visible slice (shift-range selection, BlockTree).
   const homeVisiblePages = useMemo(
     () => homeVisibleItems.filter((it) => it.kind === "page").map((it) => it.block),
@@ -4759,9 +4751,10 @@ export default function App() {
                     >{categoryFilter}</div>
                     <CardCarousel>
                       {filtered.map((b) => (
-                        <RecentCard key={b.id} title={b.content} isPdf={!!b.properties?.source_url}
-                          summary={b.properties?.summary} snap={pageSnaps[b.id]?.img} cover={recentThumbs}
-                          time={formatRelativeTime(b.updated_at)} onOpen={() => openBlock(b.id)} />
+                        <PageCard key={b.id} title={b.content} glyph={<FileGlyph isPdf={!!b.properties?.source_url} />}
+                          kind={b.properties?.source_url ? "PDF" : "Note"} time={formatRelativeTime(b.updated_at)}
+                          folders={parseFolderTags(b.properties?.folder)} labels={parseFolderTags(b.properties?.category)}
+                          labelMode={fileLabels} onClick={() => openBlock(b.id)} />
                       ))}
                     </CardCarousel>
                   </>
@@ -4775,10 +4768,18 @@ export default function App() {
               return recentViewedPages.length > 0 ? (
                 <CardCarousel label="Recently viewed">
                   {recentViewedPages.map((b) => (
-                    <RecentCard key={b._pageId} title={b.content} isPdf={!!b._sourceUrl}
-                      summary={b.properties?.quote} snap={pageSnaps[b._pageId]?.img} cover={recentThumbs}
-                      time={formatRelativeTime(b._viewedAt)} onOpen={() => openPage(b._pageId)}
-                      onRemove={() => removeRecentView(b._pageId)} />
+                    <PageCard key={b._pageId} title={b.content} glyph={<FileGlyph isPdf={!!b._sourceUrl} />}
+                      snap={recentThumbs ? pageSnaps[b._pageId]?.img : null}
+                      kind={b._sourceUrl ? "PDF" : "Note"} time={formatRelativeTime(b._viewedAt)}
+                      folders={b._folders} labels={b._labels} labelMode={fileLabels}
+                      onClick={() => openPage(b._pageId)}>
+                      <button
+                        className="uiClose uiCloseSm pageCardClose"
+                        title="Remove from Recently viewed"
+                        aria-label="Remove from Recently viewed"
+                        onClick={(e) => { e.stopPropagation(); removeRecentView(b._pageId); }}
+                      >×</button>
+                    </PageCard>
                   ))}
                 </CardCarousel>
               ) : null;
@@ -4880,21 +4881,17 @@ export default function App() {
                   <div className="fileGrid" onClick={(e) => { if (e.target.classList.contains("fileGrid")) clearSelection(); }}>
                     {homeVisibleItems.map((item) => {
                       if (item.kind === "folder") { const f = item.folder; return (
-                      <div
+                      <PageCard
                         key={item.key}
-                        className={`folderTile ${folderDragOver === f ? "dragOver" : ""} ${selectedFolders.has(f) ? "selected" : ""}`}
-                        draggable={folderRenaming?.name !== f}
-                        onDragStart={(e) => { e.dataTransfer.setData("text/plain", FOLDER_DRAG + f); e.dataTransfer.effectAllowed = "move"; }}
-                        onClick={(e) => handleFolderClick(f, e)}
-                        onDoubleClick={() => { if (folderRenaming?.name !== f) openFolder(f); }}
-                        onContextMenu={openTagMenu("folder", f)}
-                        onDragOver={(e) => { e.preventDefault(); setFolderDragOver(f); }}
-                        onDragLeave={() => setFolderDragOver(null)}
-                        onDrop={(e) => dropOnFolder(e, f)}
-                        title="Click to select · double-click to open · drop a paper or folder to move it in"
-                      >
-                        <FolderGlyph />
-                        {folderRenaming?.name === f ? (
+                        className={`${folderDragOver === f ? "dragOver" : ""} ${selectedFolders.has(f) ? "selected" : ""}`}
+                        glyph={<FolderGlyph />}
+                        title={f.slice(f.lastIndexOf("/") + 1)}
+                        tip="Click to select · double-click to open · drop a paper or folder to move it in"
+                        kind="Folder"
+                        count={folderMeta[f]?.count || 0}
+                        time={cardTime(item)}
+                        reserveLabels={fileLabels !== "off"}
+                        renameNode={folderRenaming?.name === f ? (
                           <input
                             autoFocus
                             className="tileRenameInput"
@@ -4906,39 +4903,33 @@ export default function App() {
                             }}
                             onBlur={(e) => renameFolder(f, e.currentTarget.value)}
                           />
-                        ) : (
-                          <span className="tileName">{f.slice(f.lastIndexOf("/") + 1)}</span>
-                        )}
-                        <span className="tileFolderCount">{folderMeta[f]?.count || 0}</span>
-                      </div>
+                        ) : null}
+                        draggable={folderRenaming?.name !== f}
+                        onDragStart={(e) => { e.dataTransfer.setData("text/plain", FOLDER_DRAG + f); e.dataTransfer.effectAllowed = "move"; }}
+                        onClick={(e) => handleFolderClick(f, e)}
+                        onDoubleClick={() => { if (folderRenaming?.name !== f) openFolder(f); }}
+                        onContextMenu={openTagMenu("folder", f)}
+                        onDragOver={(e) => { e.preventDefault(); setFolderDragOver(f); }}
+                        onDragLeave={() => setFolderDragOver(null)}
+                        onDrop={(e) => dropOnFolder(e, f)}
+                      />
                       ); }
                       const b = item.block;
                       const id = b._pageId;
                       const isPinned = !!b._pinned;
                       const isEditing = homeEditingId === id;
                       return (
-                        <div
+                        <PageCard
                           key={id}
-                          className={`fileTile ${selectedPages.has(id) ? "selected" : ""}`}
-                          draggable={!isEditing}
-                          onDragStart={(e) => { e.dataTransfer.setData("text/plain", id); e.dataTransfer.effectAllowed = "move"; }}
-                          onClick={(e) => handlePageClick(b, e)}
-                          onDoubleClick={() => { if (!isEditing) openPage(id); }}
-                          onContextMenu={(e) => {
-                            e.preventDefault();
-                            setSelectedPages((prev) => (prev.has(id) ? prev : new Set([id])));
-                            lastPageClickRef.current = id;
-                            setHomeMenu({ kind: "page", id, name: b.content, x: e.clientX, y: e.clientY });
-                          }}
-                          title={`${b.content}\nClick to select · double-click to open`}
-                        >
-                          <button
-                            className={`pinBtn tilePinBtn ${isPinned ? "pinned" : ""}`}
-                            title={isPinned ? "Unpin" : "Pin to top"}
-                            onClick={(e) => { e.stopPropagation(); setPagesPinned([id], !isPinned); }}
-                          ><PinIcon filled={isPinned} size={12} /></button>
-                          <FileGlyph isPdf={!!b._sourceUrl} />
-                          {isEditing ? (
+                          className={selectedPages.has(id) ? "selected" : ""}
+                          glyph={<FileGlyph isPdf={!!b._sourceUrl} />}
+                          title={b.content}
+                          tip={`${b.content}\nClick to select · double-click to open`}
+                          kind={b._sourceUrl ? "PDF" : "Note"}
+                          time={cardTime(item)}
+                          folders={b._folders} labels={b._labels} labelMode={fileLabels}
+                          reserveLabels={fileLabels !== "off"}
+                          renameNode={isEditing ? (
                             <input
                               autoFocus
                               className="tileRenameInput"
@@ -4950,35 +4941,54 @@ export default function App() {
                               }}
                               onBlur={(e) => commitPageRename(id, e.currentTarget.value)}
                             />
-                          ) : (
-                            <span className="tileName">{b.content || "Untitled"}</span>
-                          )}
-                          <span className="tileKind">{b._sourceUrl ? "PDF" : "Note"}</span>
-                        </div>
+                          ) : null}
+                          draggable={!isEditing}
+                          onDragStart={(e) => { e.dataTransfer.setData("text/plain", id); e.dataTransfer.effectAllowed = "move"; }}
+                          onClick={(e) => handlePageClick(b, e)}
+                          onDoubleClick={() => { if (!isEditing) openPage(id); }}
+                          onContextMenu={(e) => {
+                            e.preventDefault();
+                            setSelectedPages((prev) => (prev.has(id) ? prev : new Set([id])));
+                            lastPageClickRef.current = id;
+                            setHomeMenu({ kind: "page", id, name: b.content, x: e.clientX, y: e.clientY });
+                          }}
+                        >
+                          <button
+                            className={`pinBtn tilePinBtn ${isPinned ? "pinned" : ""}`}
+                            title={isPinned ? "Unpin" : "Pin to top"}
+                            onClick={(e) => { e.stopPropagation(); setPagesPinned([id], !isPinned); }}
+                          ><PinIcon filled={isPinned} size={12} /></button>
+                        </PageCard>
                       );
                     })}
                     {homeKinds === "files" ? null : newFolderOpen ? (
-                      <div className="folderTile folderTileNew">
-                        <FolderGlyph />
-                        <input
-                          autoFocus
-                          className="tileRenameInput"
-                          value={newFolderName}
-                          placeholder="Folder name…"
-                          onClick={(e) => e.stopPropagation()}
-                          onChange={(e) => setNewFolderName(e.target.value)}
-                          onKeyDown={(e) => {
-                            if (e.key === "Enter") { e.preventDefault(); commitNewFolder(); }
-                            else if (e.key === "Escape") { setNewFolderOpen(false); setNewFolderName(""); }
-                          }}
-                          onBlur={commitNewFolder}
-                        />
-                      </div>
+                      <PageCard
+                        className="pageCardNew"
+                        glyph={<FolderGlyph />}
+                        kind="Folder"
+                        renameNode={
+                          <input
+                            autoFocus
+                            className="tileRenameInput"
+                            value={newFolderName}
+                            placeholder="Folder name…"
+                            onClick={(e) => e.stopPropagation()}
+                            onChange={(e) => setNewFolderName(e.target.value)}
+                            onKeyDown={(e) => {
+                              if (e.key === "Enter") { e.preventDefault(); commitNewFolder(); }
+                              else if (e.key === "Escape") { setNewFolderOpen(false); setNewFolderName(""); }
+                            }}
+                            onBlur={commitNewFolder}
+                          />
+                        }
+                      />
                     ) : (
-                      <button className="folderTile folderTileAdd" onClick={() => { setNewFolderName(""); setNewFolderOpen(true); }} title="New folder">
-                        <FolderPlusIcon className="tileGlyph" size={null} strokeWidth={1.5} />
-                        <span className="tileName">New folder</span>
-                      </button>
+                      <PageCard
+                        className="pageCardAdd"
+                        glyph={<FolderPlusIcon className="tileGlyph" size={null} strokeWidth={1.5} />}
+                        title="New folder"
+                        onClick={() => { setNewFolderName(""); setNewFolderOpen(true); }}
+                      />
                     )}
                   </div>
                   {homeItems.length > homeVisibleItems.length ? (
@@ -5064,27 +5074,8 @@ export default function App() {
                           ) : (
                             <span className="fileRowName">{b.content || "Untitled"}</span>
                           )}
-                          {(b._folders?.length || b._labels?.length) ? (
-                            <span className="fileRowLabels">
-                              {b._folders?.map((f) => (
-                                <span key={`f:${f}`} className="folderTagBadge" title={`In folder ${f}`}>
-                                  <FolderIcon size={10} />
-                                  {f}
-                                </span>
-                              ))}
-                              {b._labels?.map((l) => (
-                                <span
-                                  key={`l:${l}`}
-                                  className="labelTagBadge"
-                                  title={`Label: ${l} — right-click to rename or delete`}
-                                  onContextMenu={openTagMenu("label", l)}
-                                >
-                                  <LabelIcon size={10} />
-                                  {l}
-                                </span>
-                              ))}
-                            </span>
-                          ) : null}
+                          <CardLabels className="fileRowLabels" folders={b._folders} labels={b._labels}
+                            mode={fileLabels} onLabelMenu={(l) => openTagMenu("label", l)} />
                           <span className="fileRowKind">{b._sourceUrl ? "PDF" : "Note"}</span>
                           <button
                             className={`pinBtn fileRowPin ${isPinned ? "pinned" : ""}`}
@@ -5426,7 +5417,7 @@ export default function App() {
           openPopover={openPopover} setOpenPopover={setOpenPopover}
           setStatus={setStatus}
           organizeFolder={!focusedBlockId && !readOnly ? folderFilter : null}
-          toolRounds={toolRounds} agentPerms={agentPerms} agentSystem={agentSystem}
+          toolRounds={toolRounds} agentReadChars={agentReadChars} agentPerms={agentPerms} agentSystem={agentSystem}
           onLibraryChange={fetchHomeBlocks}
         />
       );
@@ -6331,6 +6322,8 @@ export default function App() {
           setPdfDarkPage,
           recentThumbs,
           setRecentThumbs,
+          fileLabels,
+          setFileLabels,
           metaModel,
           setMetaModel,
           aiModels: scopedAiModels,
@@ -6422,6 +6415,8 @@ export default function App() {
           setMultiContextChars,
           toolRounds,
           setToolRounds,
+          agentReadChars,
+          setAgentReadChars,
           agentPerms,
           setAgentPerms,
           reset: () => {
