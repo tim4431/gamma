@@ -24,6 +24,19 @@ else; in dev, Vite proxies `/api` → `127.0.0.1:9001`.
 - Usernames and doc ids are validated (`db.safe_username` / `db.safe_doc_id`,
   used by `user_db_path` / `user_uploads_dir` / `pdf_upload_path`) before they
   become filesystem paths — no traversal.
+- The session cookie is `HttpOnly; SameSite=Lax`, and `Secure` when the request
+  is HTTPS (auto via scheme / `X-Forwarded-Proto` — off on plain-HTTP LAN so
+  login still works there). Sessions are enforced server-side against
+  `SESSION_MAX_AGE` (expired rows are deleted in the middleware) and are revoked
+  when the account's password is changed.
+- `/api/login` and `/api/login-guest` are rate-limited per IP/username
+  (`gamma/ratelimit.py`, in-process fixed windows → 429). Not an edge WAF; add
+  one for large public deployments.
+- Every response carries baseline hardening headers (`X-Content-Type-Options`,
+  `X-Frame-Options: SAMEORIGIN`, `Referrer-Policy`, `Content-Security-Policy:
+  frame-ancestors 'self'`, and HSTS on HTTPS). SVG uploads are served
+  `Content-Disposition: attachment` + `CSP: sandbox` so they can't run inline as
+  stored XSS.
 - `/api/admin/*` additionally requires the `is_admin` flag.
 
 ## Endpoints
