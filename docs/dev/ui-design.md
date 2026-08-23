@@ -15,7 +15,28 @@ already exists. Bespoke CSS classes are for **layout only**.
 | `aiKeyInput` | every text/number/password input in dialogs and settings |
 | `switch` / `switchTrack` | every on/off toggle |
 | `MenuSelect` / `ActionMenu` ([menus.jsx](../../frontend/src/menus.jsx)) | every dropdown: Codex-style pill trigger + checkmarked `ContextMenu`. No native `<select>` anywhere |
+| `MenuItem` / `MenuLabel` / `SubMenuItem` ([menus.jsx](../../frontend/src/menus.jsx)) | every row inside a menu: icon column + ellipsizing label (+ `danger`, `trailing`). `SubMenuItem` is the nested flyout — hover-opened, safe-triangle guarded |
 | `categoryTag`, `uiTag` | chips and small badges |
+
+### Menus and submenus
+
+Every cursor-anchored menu is a `ContextMenu`; every row inside one is a
+`MenuItem` (icon column, ellipsizing label, optional `trailing` node,
+`danger` for destructive actions). A row that opens a nested list is a
+`SubMenuItem` — it renders its panel *inside* the parent menu's DOM (a
+portalled panel would sit outside the parent's outside-pointerdown test, and
+the parent would dismiss itself before a click on a flyout row could land),
+flips to the other side and clamps vertically when the viewport is tight.
+
+Submenus open on hover, and the hover-switching is guarded by
+[menuAim.js](../../frontend/src/menuAim.js): while a flyout is open, a
+pointer move that stays inside the triangle from the cursor's recent position
+to the flyout's near edge counts as "aiming at the flyout", and the hover
+change it would cause is held until the aim breaks or the cursor stops. That
+is what lets a diagonal move into the flyout pass over the rows below the
+trigger without closing it. The module is plain geometry plus a `useMenuAim`
+hook (`setTarget` / `guard` / `keep`) — any other menu surface can adopt it
+without going through `menus.jsx`.
 
 ## Settings primitives
 
@@ -68,3 +89,4 @@ to screen, and darkens the scroller surround.
 | `blockTree.jsx`, `logseqPdfModel.js` | outliner rendering / pure tree ops |
 | `libraryUtils.js` | folder-tag semantics (mirrored by `backend/gamma/ai_tools.py`) |
 | `widgets.jsx`, `menus.jsx`, `icons.jsx` | shared components |
+| `menuAim.js` | pointer-trajectory ("safe triangle") hover intent for hierarchical menus — UI-agnostic, consumed by `menus.jsx` |

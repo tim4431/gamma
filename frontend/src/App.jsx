@@ -16,7 +16,7 @@ import { BlockTree, _dragState } from "./blockTree";
 import { CardLabels, KindToggle, PageCard, ViewToggle } from "./fileBrowser";
 import ChatDock from "./chatDock";
 import SearchPanel from "./search";
-import { ContextMenu, MenuSelect } from "./menus";
+import { ContextMenu, MenuItem, MenuLabel, MenuSelect, SubMenuItem } from "./menus";
 import {
   ActivityIcon, AlertCircleIcon, ArrowLeftIcon, ArrowUpDownIcon, CheckIcon, CopyIcon, DatabaseIcon, DownloadIcon, ExportIcon,
   ExternalLinkIcon, EyeIcon, FileGlyph, FileIcon, FileTextIcon, FitWidthIcon, FolderGlyph,
@@ -3045,6 +3045,39 @@ export default function App() {
     }
   }
 
+  // Whole-library import from a zipped Zotero RDF export (the import dialog's
+  // third source; also reachable from Settings → Library). Collections become
+  // folders, tags labels, notes child blocks; the reader annotations ride
+  // inside the exported PDFs, so strip works exactly like for "this PDF".
+  async function importZotero(file, strip = embAnnots === "strip") {
+    if (readOnly) return;
+    const taskId = addTransfer({ name: `Zotero import — ${file.name.slice(0, 48)}`, kind: "import", info: "importing…" });
+    setStatus("Importing Zotero library — this can take a while for big exports…");
+    try {
+      const form = new FormData();
+      form.append("file", file);
+      form.append("strip", strip ? "true" : "false");
+      const data = await apiJson(`${API}/import/zotero`, { method: "POST", body: form });
+      const problems = (data.skipped?.length || 0) + (data.warnings?.length || 0);
+      [...(data.skipped || []), ...(data.warnings || [])].forEach((s) =>
+        console.warn(`Zotero import: ${s.title} — ${s.reason}`));
+      updateTransfer(taskId, { status: "done", info: `${data.pages_created + data.pages_merged} pages` });
+      const bits = [
+        `${data.pages_created} new page${data.pages_created === 1 ? "" : "s"}`,
+        data.pages_merged ? `${data.pages_merged} updated` : "",
+        data.annotations_imported ? `${data.annotations_imported} annotations` : "",
+        data.notes_imported ? `${data.notes_imported} notes` : "",
+        problems ? `${problems} issue${problems === 1 ? "" : "s"} (details in the browser console)` : "",
+      ].filter(Boolean).join(" · ");
+      setStatus(`Zotero import: ${bits}.`);
+      refreshQuota?.();
+      await fetchHomeBlocks();
+    } catch (err) {
+      updateTransfer(taskId, { status: "error", info: (err.message || "failed").slice(0, 60) });
+      setStatus(`Zotero import failed: ${err.message}`);
+    }
+  }
+
   async function openPdf(sourceUrl) {
     if (!sourceUrl || readOnly) return;
     leaveCurrentPage();
@@ -3650,6 +3683,14 @@ export default function App() {
       importEmbeddedAnnots(focusedBlockId, docId, false, o.strip);
       return;
     }
+    if (o.source === "zotero") {
+      const inp = document.createElement("input");
+      inp.type = "file";
+      inp.accept = ".zip,application/zip";
+      inp.onchange = () => { if (inp.files?.[0]) importZotero(inp.files[0], o.strip); };
+      inp.click();
+      return;
+    }
     const inp = document.createElement("input");
     inp.type = "file";
     inp.multiple = true;
@@ -3946,10 +3987,12 @@ export default function App() {
   // entries) — feeds the "Recently viewed" sort; unviewed pages have no entry.
   const viewedAtById = useMemo(() => new Map(recentViews.map((r) => [r.id, r.at])), [recentViews]);
   // Per-folder rollup: page count + latest contained-page timestamps, so
-  // folders can sort on the same criteria as files.
+  // folders can sort on the same criteria as files. Computed for EVERY known
+  // path, not just the level on screen — the context menu's folder flyout
+  // sorts the whole library by the same clock.
   const folderMeta = useMemo(() => {
     const m = {};
-    for (const f of childFolders) {
+    for (const f of allFolderPaths) {
       let count = 0, updated = "", created = "", viewed = "";
       for (const b of pageBlocks) {
         if (!b._folders.some((t) => t === f || t.startsWith(f + "/"))) continue;
@@ -3962,7 +4005,17 @@ export default function App() {
       m[f] = { count, updated, created, viewed };
     }
     return m;
-  }, [childFolders, pageBlocks, viewedAtById]);
+  }, [allFolderPaths, pageBlocks, viewedAtById]);
+  // Folder order for the context menu's "Move to folder" flyout: every known
+  // path, ranked by the same clock the library listing is sorted by, so the
+  // folder you were last working in sits right under the cursor. Title A–Z
+  // keeps the alphabetical order allFolderPaths already has.
+  const folderMenuPaths = useMemo(() => {
+    if (homeSort === "title") return allFolderPaths;
+    const key = homeSort === "created" ? "created" : homeSort === "viewed" ? "viewed" : "updated";
+    const stamp = (f) => (key === "viewed" ? (folderMeta[f]?.viewed || folderMeta[f]?.updated) : folderMeta[f]?.[key]) || "";
+    return [...allFolderPaths].sort((a, b) => stamp(b).localeCompare(stamp(a)) || a.localeCompare(b));
+  }, [allFolderPaths, folderMeta, homeSort]);
   // What the home list shows: folders and files as ONE sorted listing —
   // inside a folder → its subfolders + pages tagged exactly that path; at
   // root → top-level folders + EVERY page as a recents feed, loaded
@@ -4754,7 +4807,14 @@ export default function App() {
                         <PageCard key={b.id} title={b.content} glyph={<FileGlyph isPdf={!!b.properties?.source_url} />}
                           kind={b.properties?.source_url ? "PDF" : "Note"} time={formatRelativeTime(b.updated_at)}
                           folders={parseFolderTags(b.properties?.folder)} labels={parseFolderTags(b.properties?.category)}
-                          labelMode={fileLabels} onClick={() => openBlock(b.id)} />
+                          labelMode={fileLabels} onClick={() => openBlock(b.id)}
+                          className={selectedPages.has(b.id) ? "selected" : ""}
+                          onContextMenu={(e) => {
+                            e.preventDefault();
+                            setSelectedPages((prev) => (prev.has(b.id) ? prev : new Set([b.id])));
+                            lastPageClickRef.current = b.id;
+                            setHomeMenu({ kind: "page", id: b.id, name: b.content, x: e.clientX, y: e.clientY });
+                          }} />
                       ))}
                     </CardCarousel>
                   </>
@@ -4772,7 +4832,16 @@ export default function App() {
                       snap={recentThumbs ? pageSnaps[b._pageId]?.img : null}
                       kind={b._sourceUrl ? "PDF" : "Note"} time={formatRelativeTime(b._viewedAt)}
                       folders={b._folders} labels={b._labels} labelMode={fileLabels}
-                      onClick={() => openPage(b._pageId)}>
+                      className={selectedPages.has(b._pageId) ? "selected" : ""}
+                      onClick={() => openPage(b._pageId)}
+                      onContextMenu={(e) => {
+                        // Same menu as a library card — the shortcut strip is
+                        // just another view of the same page.
+                        e.preventDefault();
+                        setSelectedPages((prev) => (prev.has(b._pageId) ? prev : new Set([b._pageId])));
+                        lastPageClickRef.current = b._pageId;
+                        setHomeMenu({ kind: "page", id: b._pageId, name: b.content, x: e.clientX, y: e.clientY });
+                      }}>
                       <button
                         className="uiClose uiCloseSm pageCardClose"
                         title="Remove from Recently viewed"
@@ -4789,9 +4858,18 @@ export default function App() {
                 <div className="pinnedLabel"><PinIcon filled size={12} /> Pinned</div>
                 <div className="pinnedStrip">
                   {pinnedPages.map((b) => (
-                    <div
+                    <PageCard
                       key={b._pageId}
-                      className={`pinnedTile ${selectedPages.has(b._pageId) ? "selected" : ""}`}
+                      className={selectedPages.has(b._pageId) ? "selected" : ""}
+                      glyph={<FileGlyph isPdf={!!b._sourceUrl} />}
+                      title={b.content}
+                      tip={`${b.content}\nClick to select · double-click to open`}
+                      kind={b._sourceUrl ? "PDF" : "Note"}
+                      time={formatRelativeTime(b._updatedAt)}
+                      folders={b._folders} labels={b._labels} labelMode={fileLabels}
+                      reserveLabels={fileLabels !== "off"}
+                      draggable
+                      onDragStart={(e) => { e.dataTransfer.setData("text/plain", b._pageId); e.dataTransfer.effectAllowed = "move"; }}
                       onClick={(e) => handlePageClick(b, e)}
                       onDoubleClick={() => openPage(b._pageId)}
                       onContextMenu={(e) => {
@@ -4800,16 +4878,13 @@ export default function App() {
                         lastPageClickRef.current = b._pageId;
                         setHomeMenu({ kind: "page", id: b._pageId, name: b.content, x: e.clientX, y: e.clientY });
                       }}
-                      title={`${b.content}\nClick to select · double-click to open`}
                     >
-                      <FileGlyph isPdf={!!b._sourceUrl} />
-                      <span className="pinnedTileName">{b.content || "Untitled"}</span>
                       <button
-                        className="pinBtn pinned"
+                        className="pinBtn tilePinBtn pinned"
                         title="Unpin"
                         onClick={(e) => { e.stopPropagation(); setPagesPinned([b._pageId], false); }}
                       ><PinIcon filled size={12} /></button>
-                    </div>
+                    </PageCard>
                   ))}
                 </div>
               </div>
@@ -5496,7 +5571,7 @@ export default function App() {
             <button
               className="popoverItem"
               onClick={() => { setOpenPopover(null); setImportOpen(true); }}
-              title="Bring in highlights — the ones saved inside this PDF file, or a Logseq export"
+              title="Bring in highlights — the ones saved inside this PDF file, a Logseq export, or a whole Zotero library"
             >
               <ImportIcon className="popoverItemIcon" size={15} />
               Import…
@@ -6345,6 +6420,10 @@ export default function App() {
           metaContextChars,
           indexTask,
           setStatus,
+          // Zotero library import: annotations embedded in the exported PDFs
+          // follow the standing strip-vs-hide viewer preference
+          stripAnnots: embAnnots === "strip",
+          onLibraryChange: fetchHomeBlocks,
         }}
         ai={{
           aiKeysInfo,
@@ -6462,42 +6541,64 @@ export default function App() {
               // Acting on a selected card acts on the whole selection
               const ids = selectedPages.size > 1 && selectedPages.has(homeMenu.id) ? [...selectedPages] : [homeMenu.id];
               const many = ids.length > 1;
+              const allPinned = ids.every((id) => pageBlocks.find((b) => b._pageId === id)?._pinned);
+              // Folder tags the acted-on pages already carry — offered for
+              // removal alongside the current folder view.
+              const ownTags = [...new Set(ids.flatMap((id) => pageBlocks.find((b) => b._pageId === id)?._folders || []))];
               return (
                 <>
                   {!many ? (
-                    <button className="ctxMenuItem" onClick={() => { setHomeMenu(null); clearSelection(); openBlock(homeMenu.id, { restoreScroll: true }); }}>Open</button>
+                    <MenuItem icon={ExternalLinkIcon} onClick={() => { setHomeMenu(null); clearSelection(); openBlock(homeMenu.id, { restoreScroll: true }); }}>Open</MenuItem>
                   ) : null}
                   {!many ? (
-                    <button className="ctxMenuItem" onClick={() => { setHomeMenu(null); clearSelection(); setHomeEditingId(homeMenu.id); }}>Rename</button>
+                    <MenuItem icon={PenIcon} onClick={() => { setHomeMenu(null); clearSelection(); setHomeEditingId(homeMenu.id); }}>Rename</MenuItem>
                   ) : null}
-                  {ids.every((id) => pageBlocks.find((b) => b._pageId === id)?._pinned) ? (
-                    <button className="ctxMenuItem" onClick={() => { setHomeMenu(null); setPagesPinned(ids, false); }}>{many ? "Unpin" : "Unpin"}</button>
-                  ) : (
-                    <button className="ctxMenuItem" onClick={() => { setHomeMenu(null); setPagesPinned(ids, true); }}>{many ? `Pin ${ids.length} pages` : "Pin"}</button>
-                  )}
-                  <button className="ctxMenuItem" onClick={() => { setHomeMenu(null); duplicatePages(ids); }}>{many ? `Duplicate ${ids.length} pages` : "Duplicate"}</button>
-                  <button className="ctxMenuItem" onClick={() => { setHomeMenu(null); deletePages(ids); }}>{many ? `Delete ${ids.length} pages` : "Delete"}</button>
-                  <div className="ctxMenuLabel">Add to folder</div>
-                  {allFolderPaths.map((f) => (
-                    <button key={f} className="ctxMenuItem" onClick={() => { setHomeMenu(null); addPagesToFolder(ids, f); }}>{f}</button>
-                  ))}
-                  {folderFilter ? (
-                    <button className="ctxMenuItem" onClick={() => { setHomeMenu(null); removePagesFromFolder(ids, folderFilter); }}>Remove from “{folderFilter}”</button>
-                  ) : null}
-                  <button className="ctxMenuItem" onClick={() => { setHomeMenu(null); removePagesFromFolder(ids, ""); }}>Clear folder tags</button>
+                  <MenuItem icon={PinIcon} onClick={() => { setHomeMenu(null); setPagesPinned(ids, !allPinned); }}>
+                    {allPinned ? "Unpin" : many ? `Pin ${ids.length} pages` : "Pin"}
+                  </MenuItem>
+                  <MenuItem icon={CopyIcon} onClick={() => { setHomeMenu(null); duplicatePages(ids); }}>{many ? `Duplicate ${ids.length} pages` : "Duplicate"}</MenuItem>
+                  <SubMenuItem
+                    id="folders"
+                    icon={FolderIcon}
+                    label="Move to folder"
+                    title="A paper can sit in several folders — this adds it to the one you pick (same as dragging it onto the folder)."
+                  >
+                    {folderMenuPaths.length ? folderMenuPaths.map((f) => (
+                      <MenuItem
+                        key={f}
+                        icon={FolderIcon}
+                        title={ownTags.includes(f) ? `Already in ${f}` : f}
+                        trailing={ownTags.includes(f) ? <CheckIcon size={14} className="ctxMenuCheck" /> : null}
+                        onClick={() => { setHomeMenu(null); addPagesToFolder(ids, f); }}
+                      >{f}</MenuItem>
+                    )) : (
+                      <MenuItem disabled>No folders yet</MenuItem>
+                    )}
+                    {folderFilter || ownTags.length ? <MenuLabel>Remove from</MenuLabel> : null}
+                    {folderFilter ? (
+                      <MenuItem icon={FolderOpenIcon} onClick={() => { setHomeMenu(null); removePagesFromFolder(ids, folderFilter); }}>{`“${folderFilter}”`}</MenuItem>
+                    ) : null}
+                    {ownTags.filter((f) => f !== folderFilter).map((f) => (
+                      <MenuItem key={`rm:${f}`} icon={FolderOpenIcon} title={f} onClick={() => { setHomeMenu(null); removePagesFromFolder(ids, f); }}>{`“${f}”`}</MenuItem>
+                    ))}
+                    {folderFilter || ownTags.length ? (
+                      <MenuItem icon={XIcon} onClick={() => { setHomeMenu(null); removePagesFromFolder(ids, ""); }}>All folders</MenuItem>
+                    ) : null}
+                  </SubMenuItem>
+                  <MenuItem icon={TrashIcon} danger onClick={() => { setHomeMenu(null); deletePages(ids); }}>{many ? `Delete ${ids.length} pages` : "Delete"}</MenuItem>
                 </>
               );
             })() : homeMenu.kind === "label" ? (
               <>
-                <button className="ctxMenuItem" onClick={() => { const name = homeMenu.name; setHomeMenu(null); if (!homeMode) goHome(); setCategoryFilter(name); window.history.replaceState(null, "", `/?category=${encodeURIComponent(name)}`); }}>Open</button>
-                <button className="ctxMenuItem" onClick={() => { setHomeMenu(null); setLabelRenaming({ name: homeMenu.name, draft: homeMenu.name }); }}>Rename</button>
-                <button className="ctxMenuItem" onClick={() => { setHomeMenu(null); deleteLabelByName(homeMenu.name); }}>Delete</button>
+                <MenuItem icon={LabelIcon} onClick={() => { const name = homeMenu.name; setHomeMenu(null); if (!homeMode) goHome(); setCategoryFilter(name); window.history.replaceState(null, "", `/?category=${encodeURIComponent(name)}`); }}>Open</MenuItem>
+                <MenuItem icon={PenIcon} onClick={() => { setHomeMenu(null); setLabelRenaming({ name: homeMenu.name, draft: homeMenu.name }); }}>Rename</MenuItem>
+                <MenuItem icon={TrashIcon} danger onClick={() => { setHomeMenu(null); deleteLabelByName(homeMenu.name); }}>Delete</MenuItem>
               </>
             ) : (
               <>
-                <button className="ctxMenuItem" onClick={() => { const name = homeMenu.name; setHomeMenu(null); if (!homeMode) goHome(); setFolderFilter(name); window.history.replaceState(null, "", `/?folder=${encodeURIComponent(name)}`); }}>Open</button>
-                <button className="ctxMenuItem" onClick={() => { setHomeMenu(null); setFolderRenaming({ name: homeMenu.name, draft: homeMenu.name }); }}>Rename</button>
-                <button className="ctxMenuItem" onClick={() => { setHomeMenu(null); deleteFolderByName(homeMenu.name); }}>Delete</button>
+                <MenuItem icon={FolderOpenIcon} onClick={() => { const name = homeMenu.name; setHomeMenu(null); if (!homeMode) goHome(); setFolderFilter(name); window.history.replaceState(null, "", `/?folder=${encodeURIComponent(name)}`); }}>Open</MenuItem>
+                <MenuItem icon={PenIcon} onClick={() => { setHomeMenu(null); setFolderRenaming({ name: homeMenu.name, draft: homeMenu.name }); }}>Rename</MenuItem>
+                <MenuItem icon={TrashIcon} danger onClick={() => { setHomeMenu(null); deleteFolderByName(homeMenu.name); }}>Delete</MenuItem>
               </>
             )}
         </ContextMenu>

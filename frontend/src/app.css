@@ -2148,7 +2148,10 @@ button.pdfOutlineChevron:hover { background: rgba(128, 128, 128, 0.28); color: v
 .uiSelectBtn.block { width: 100%; justify-content: space-between; }
 .uiSelectBtn.block .uiSelectLabel { max-width: none; }
 /* Checkmark on the selected row of a dropdown menu. */
-.ctxMenuCheck { margin-left: auto; padding-left: 14px; color: var(--text-primary); flex-shrink: 0; }
+/* Trailing check on the current choice. Spacing is margin, never padding:
+   with the global border-box, padding on an <svg> eats its own content
+   box and the glyph renders at zero width (i.e. invisibly). */
+.ctxMenuCheck { margin-left: auto; color: var(--text-primary); flex-shrink: 0; }
 /* Selected state for a button that is a choice rather than an action —
    segmented groups (Settings) light the active option this way. */
 .uiBtn.on {
@@ -3072,8 +3075,39 @@ button.pdfOutlineChevron:hover { background: rgba(128, 128, 128, 0.28); color: v
 .ctxMenuIcon {
   display: inline-flex;
   align-items: center;
+  justify-content: center;
+  width: 15px;
   color: var(--text-muted);
   flex-shrink: 0;
+}
+/* Label column of an iconed row — long folder paths ellipsize instead of
+   stretching the menu across the screen (the full path stays in the title). */
+.ctxMenuText {
+  flex: 1;
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+/* Destructive rows (Delete) — same red language as .uiBtn.danger. */
+.ctxMenuItem.danger:hover { background: rgba(229, 83, 75, 0.1); color: #e5534b; }
+.ctxMenuItem.danger:hover .ctxMenuIcon { color: #e5534b; }
+.ctxMenuItem:disabled { opacity: 0.45; cursor: default; }
+.ctxMenuItem:disabled:hover { background: none; }
+
+/* --- nested flyout (SubMenuItem) --- */
+.ctxSubWrap { position: relative; }
+.ctxSubChev { margin-left: auto; color: var(--text-dim); flex-shrink: 0; }
+.ctxSubTrigger.open { background: var(--bg-hover); }
+/* The panel rides inside the parent menu (see SubMenuItem) — absolute, not
+   the fixed positioning .ctxMenu gives every other menu surface. */
+.ctxSubMenu {
+  position: absolute;
+  min-width: 190px;
+  max-width: 320px;
+  max-height: min(60vh, 420px);
+  overflow-y: auto;
+  overscroll-behavior: contain;
 }
 
 /* --- block-ref autocomplete popup (shared surface recipe) --- */
