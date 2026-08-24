@@ -88,8 +88,10 @@ used as text — the stock accents sit near 3:1 on cream), and
 `[data-theme="sepia"] .pdfViewer:not(.pdfDark)` tints the page by giving the
 page wrapper the `--pdf-paper` ground and letting the canvas `multiply` onto
 it. Multiply, not a `sepia()`/`hue-rotate` filter: white paper lands exactly
-on the ground color while black text stays black and figures only warm
-slightly. The tint needs no prop — `data-theme` is global, so it is pure CSS
+on the ground color while figures only warm slightly. The canvas also gets
+`opacity: 0.82` — under multiply that leaves the paper invariant and lifts
+only the ink, black → `(1−α)·paper` ≈ `#2e2c29` (~12.6:1), the softened
+charcoal the eye-strain guidance recommends over pure black. The tint needs no prop — `data-theme` is global, so it is pure CSS
 — and "Flip page colors" wins when both are on. Light-ground rules that were
 `[data-theme="light"] …` are now `:is([data-theme="light"], [data-theme="sepia"])`;
 extend that list, don't add a third copy.

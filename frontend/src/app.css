@@ -3196,7 +3196,13 @@ button.pdfOutlineChevron:hover { background: rgba(128, 128, 128, 0.28); color: v
   background: var(--pdf-paper) !important;
   isolation: isolate;
 }
-[data-theme="sepia"] .pdfViewer:not(.pdfDark) .pdfPageWrap > canvas { mix-blend-mode: multiply; }
+/* Soft ink: under multiply, canvas opacity composes as a*(canvas*paper) +
+   (1-a)*paper - white areas are exactly paper either way (paper invariant),
+   while black ink lifts to (1-a)*paper: a warm charcoal derived from the
+   ground itself (~#2e2c29, about 12.6:1 - the "charcoal not pure black"
+   eye-strain guidance) without a contrast() filter, which would darken the
+   paper too. Figures fade toward paper by the same 18%, a mild wash. */
+[data-theme="sepia"] .pdfViewer:not(.pdfDark) .pdfPageWrap > canvas { mix-blend-mode: multiply; opacity: 0.82; }
 
 /* --- AI translated view (overlay over the original text runs) ---
    The layer sits between the canvas and the text layer: each block is an
@@ -3261,6 +3267,7 @@ button.pdfOutlineChevron:hover { background: rgba(128, 128, 128, 0.28); color: v
 /* Same for the eye-comfort ground: the masks are opaque divs above the
    canvas, so the page tint's blend never reaches them. */
 [data-theme="sepia"] .pdfViewer:not(.pdfDark) :is(.pdfTransMask, .pdfTransText > span) { background: var(--pdf-paper); }
+[data-theme="sepia"] .pdfViewer:not(.pdfDark) .pdfTransText { color: #2e2c29; }
 /* Alt held = peek at the original (class set by the viewer). */
 .pdfViewer.transPeek .pdfTransLayer { visibility: hidden; }
 /* Tiny percentage under the zoom column's translate button while a job runs. */
