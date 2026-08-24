@@ -99,6 +99,13 @@ export const AlertCircleIcon = (p) => (
 export const ActivityIcon = (p) => (
   <Icon {...p}><path d="M22 12h-2.48a2 2 0 0 0-1.93 1.46l-2.35 8.36a.25.25 0 0 1-.48 0L9.24 2.18a.25.25 0 0 0-.48 0l-2.35 8.36A2 2 0 0 1 4.49 12H2" /></Icon>
 );
+export const BrainIcon = (p) => (
+  <Icon {...p}>
+    <path d="M9.5 4A2.5 2.5 0 0 0 7 6.5v.25A2.75 2.75 0 0 0 5.25 12 3.25 3.25 0 0 0 7 18.25V19a2 2 0 0 0 4 0V5.5A1.5 1.5 0 0 0 9.5 4Z" />
+    <path d="M14.5 4A2.5 2.5 0 0 1 17 6.5v.25A2.75 2.75 0 0 1 18.75 12 3.25 3.25 0 0 1 17 18.25V19a2 2 0 0 1-4 0V5.5A1.5 1.5 0 0 1 14.5 4Z" />
+    <path d="M7 9.5h1.5A2.5 2.5 0 0 1 11 12" /><path d="M17 9.5h-1.5A2.5 2.5 0 0 0 13 12" />
+  </Icon>
+);
 export const UploadIcon = (p) => (
   <Icon {...p}><path d="M12 15V3" /><path d="m7 8 5-5 5 5" /><path d="M21 17v2a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-2" /></Icon>
 );
@@ -225,6 +232,13 @@ export const GlobeIcon = (p) => (
 );
 export const TypeIcon = (p) => (
   <Icon {...p}><path d="M4 7V5h16v2" /><path d="M12 5v14" /><path d="M9 19h6" /></Icon>
+);
+export const LanguagesIcon = (p) => (
+  <Icon {...p}><path d="m5 8 6 6" /><path d="m4 14 6-6 2-3" /><path d="M2 5h12" /><path d="M7 2h1" /><path d="m22 22-5-10-5 10" /><path d="M14 18h6" /></Icon>
+);
+// Languages icon with a slash: translations exist but are hidden.
+export const LanguagesOffIcon = (p) => (
+  <Icon {...p}><path d="m5 8 6 6" /><path d="m4 14 6-6 2-3" /><path d="M2 5h12" /><path d="M7 2h1" /><path d="m22 22-5-10-5 10" /><path d="M14 18h6" /><path d="M3 3l18 18" /></Icon>
 );
 export const ShieldIcon = (p) => (
   <Icon {...p}><path d="M12 22s8-4 8-10V5l-8-3-8 3v7c0 6 8 10 8 10z" /></Icon>

@@ -7,7 +7,7 @@ import React, { useEffect, useMemo, useRef, useState } from "react";
 import { API, apiJson, copyText, isPdfFile } from "./utils";
 import { DockWindow, ChatMarkdown, AutoGrowTextarea, useCopied } from "./widgets";
 import { MenuSelect } from "./menus";
-import { ArrowUpIcon, BookIcon, CheckIcon, ChevronDownIcon, ChevronUpIcon, CopyIcon, FileIcon, FolderIcon, ListIcon, MicIcon, PaperclipIcon, PencilIcon, SearchIcon, StopIcon, XIcon } from "./icons";
+import { ArrowUpIcon, BookIcon, BrainIcon, CheckIcon, ChevronDownIcon, ChevronUpIcon, CopyIcon, FileIcon, FolderIcon, ListIcon, MicIcon, PaperclipIcon, PencilIcon, SearchIcon, SlidersIcon, StopIcon, XIcon } from "./icons";
 
 // Folder-agent tool chips: icon per action kind; rename/move are the kinds
 // that changed the library (they trigger the home-feed refresh). Every chip
@@ -36,7 +36,8 @@ export default function ChatDock({
   // Settings per-tool permission map ({list, read, search, rename, move}) and
   // toolRounds the round budget. When the AI applied changes, onLibraryChange
   // refreshes the home feed.
-  organizeFolder = null, toolRounds, agentReadChars, agentPerms, agentSystem, onLibraryChange,
+  organizeFolder = null, toolRounds, agentReadChars, agentPerms, agentSystem,
+  agentEnabled, folderToolsDefault, pdfToolsDefault, onLibraryChange,
   onGrip, onGripDoubleClick, collapsed, onClose,
 }) {
   const [chatMessages, setChatMessages] = useState([]);
@@ -51,14 +52,34 @@ export default function ChatDock({
   // another. App migrates the buckets on folder rename/move/delete
   // (POST /api/chats/folder-rename).
   const chatKey = focusedBlockId || (organizeFolder ? `home:${organizeFolder}` : "home");
-  // What the folder agent may do here, per the Settings toggles.
-  const perm = (key) => agentPerms?.[key] !== false;
+  const folderChat = organizeFolder != null;
+  const settingsDefault = folderChat ? folderToolsDefault !== false : !!pdfToolsDefault;
+  // Conversation-local overrides. Switching pages/folders retains each
+  // conversation's choice for this session; New chat drops it back to the
+  // configured scope default.
+  const [chatToolConfigs, setChatToolConfigs] = useState({});
+  const chatToolConfig = chatToolConfigs[chatKey];
+  const chatToolPerms = agentPerms || {};
+  const toolsRequested = chatToolConfig?.enabled ?? settingsDefault;
+  const toolsEnabled = !!agentEnabled && !!toolsRequested;
+  const perm = (key) => chatToolPerms?.[key] !== false;
+  const toggleToolsForChat = () => setChatToolConfigs((prev) => ({
+    ...prev,
+    [chatKey]: { enabled: !(prev[chatKey]?.enabled ?? settingsDefault) },
+  }));
+  const resetToolConfig = () => setChatToolConfigs((prev) => {
+    const next = { ...prev };
+    delete next[chatKey];
+    return next;
+  });
+  // What the agent may do here after applying the chat-local switches.
   const agentReads = perm("list") || perm("read") || perm("search");
   const agentWrites = perm("rename") || perm("move");
   // Agent fields riding on /api/ai/chat ({} = plain chat): folder chats reach
   // the folder's pages, paper chats get the read tools (read_page /
   // search_pdfs) for their own paper.
   const agentPayload = () => {
+    if (!toolsEnabled) return {};
     const scope = organizeFolder != null && (agentReads || agentWrites)
       ? { agent_scope: "folder", folder: organizeFolder }
       : focusedBlockId && (perm("read") || perm("search"))
@@ -66,12 +87,12 @@ export default function ChatDock({
         : null;
     return scope
       ? { ...scope, tool_rounds: toolRounds || 0, read_char_limit: agentReadChars || 0,
-          permissions: agentPerms || {}, agent_system: agentSystem || "" }
+          permissions: chatToolPerms, agent_system: agentSystem || "" }
       : {};
   };
   // Empty-state intro and input placeholder for an agent-enabled home chat.
   const agentScopeName = organizeFolder ? "this folder" : "your library";
-  const agentIntro = organizeFolder == null ? null
+  const agentIntro = organizeFolder == null || !toolsEnabled ? null
     : agentWrites
       ? `Ask AI anything — it can ${agentReads ? "read, search and " : ""}organize ${agentScopeName} (rename papers, file them into folders)…`
       : agentReads
@@ -162,6 +183,7 @@ export default function ChatDock({
   function clearChat() {
     setChatMessages([]);
     setAttachPdf(true); // new chat: first question carries the full PDF again
+    resetToolConfig();
     fetch(`${API}/chats/${encodeURIComponent(chatKey)}`, {
       method: "DELETE",
       credentials: "include",
@@ -577,6 +599,8 @@ export default function ChatDock({
             />
             <MenuSelect
               label="Reasoning effort — leave on 'effort: default' unless the model supports it"
+              icon={BrainIcon}
+              iconOnly
               value={chatEffort}
               onChange={setChatEffort}
               options={[
@@ -588,9 +612,24 @@ export default function ChatDock({
         );
       })() : null}
       <div className="chatPanelHeaderBtns">
-        <button className={`uiBtn sm ${chatFindOpen ? "on" : ""}`}
+        <button
+          type="button"
+          className={`uiBtn sm iconSq chatHeaderIconBtn chatToolsBtn ${toolsEnabled ? "on" : ""}`}
+          disabled={!agentEnabled}
+          aria-pressed={toolsEnabled}
+          aria-label={`Tools ${toolsEnabled ? "on" : "off"}`}
+          onClick={() => { setOpenPopover(null); toggleToolsForChat(); }}
+          title={agentEnabled
+            ? `Turn tools ${toolsEnabled ? "off" : "on"} for this chat only`
+            : "Agent tools are disabled in Settings → Assistant"}
+        >
+          <SlidersIcon size={17} />
+        </button>
+        <button className={`uiBtn sm iconSq chatHeaderIconBtn ${chatFindOpen ? "on" : ""}`}
           onClick={() => { setChatFindOpen((v) => !v); setChatFind(""); }}
-          title="Find in this conversation">Find</button>
+          title="Find in this conversation" aria-label="Find in this conversation">
+          <SearchIcon size={17} />
+        </button>
         <button className="uiBtn sm" onClick={clearChat} title="Start a fresh conversation (clears saved history)">New chat</button>
       </div>
     </>

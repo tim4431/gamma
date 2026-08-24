@@ -23,11 +23,14 @@ Nine panes in four rail groups (`NAV_GROUPS` in
 - **Workspace** — General (theme, flip page colors, home-card thumbnails and
   folder/label chips, paper-fetching prefs),
   Library (storage usage/limits, search index, per-paper metadata health table)
-- **Reading** — PDF viewer (snap scrolling, embedded annotations), Search
+- **Reading** — PDF viewer (snap scrolling, embedded annotations, the
+  translated view's target language + model), Search
   (auto-expand defaults), Notes (Enter behavior, note badges)
-- **AI** — Providers (API keys, in [settingsAi.jsx](../../frontend/src/settingsAi.jsx)),
-  Assistant (models, folder-agent permissions, tool rounds, agent read window,
-  context budgets),
+- **AI** — Provider and models (credentials, automatic subscription usage,
+  provider model catalogs, metadata and dictation model choices, in
+  [settingsAi.jsx](../../frontend/src/settingsAi.jsx)),
+  Assistant (the folder-agent master switch, folder/PDF per-chat tool
+  defaults, per-tool permissions, tool rounds, agent read window, context budgets),
   Prompts (the four editable prompts, as an accordion)
 - **Account** — Users (admin account management / "You" for non-admins, in
   [settingsUsers.jsx](../../frontend/src/settingsUsers.jsx)), Advanced (status

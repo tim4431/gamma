@@ -38,9 +38,21 @@ settingsKit's `Step`); with a PDF open, that PDF's own annotations win. Nothing
 is remembered: the switch starts from the Settings preference each time, so the
 setting stays the standing policy.
 
+## Plain Markdown uploads
+
+The add menu's file picker, directory picker, and whole-window file drop all
+accept `.md` / `.markdown` alongside PDFs. `POST /api/import/markdown` decodes
+UTF-8 (5 MB cap), reduces any browser-supplied relative upload path to its
+filename leaf, uses a YAML-frontmatter `title` or that filename's stem as the
+note-page title, and converts the document into nested Gamma blocks through
+`gamma/markdown_import.py`. Headings and indented lists retain hierarchy;
+paragraphs, fenced code, math and other Markdown stay as raw block content for
+the normal editor renderer. In mixed folder uploads, Markdown note pages and
+PDF pages receive the same subfolder labels; unsupported files are skipped.
+
 ## Zotero library import
 
-`POST /api/import/zotero` (Settings → Library → Import): a zip of Zotero's
+`POST /api/import/zotero` (⋮ → Import… → Zotero library): a zip of Zotero's
 File → Export Library → "Zotero RDF" (with Export Files/Notes).
 `gamma/zotero_import.py` parses the RDF (items, journal records carrying the
 DOI, collections, tags, HTML notes) and tolerant zip-name lookup

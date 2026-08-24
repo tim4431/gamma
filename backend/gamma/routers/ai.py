@@ -1,11 +1,15 @@
 """AI chat, provider settings, model discovery, and ChatGPT OAuth routes."""
 
+import hashlib
 import json
 import re
 import secrets
 import sqlite3
+import threading
 import time
 import urllib.error
+from collections import OrderedDict
+from concurrent.futures import ThreadPoolExecutor
 from urllib.request import Request as URLRequest, urlopen
 
 from fastapi import APIRouter, File, Form, HTTPException, Request, UploadFile
@@ -278,14 +282,18 @@ class AIProviderRequest(BaseModel):
 
 def _apply_provider_fields(entry: dict, payload: AIProviderRequest):
     """Validate + copy the editable fields of a provider entry in place."""
+    oauth_entry = AI_PROTOCOLS.get(entry.get("protocol"), {}).get("auth") == "oauth"
     if payload.name is not None:
         entry["name"] = str(payload.name).strip()[:MAX_NAME_LEN]
-    if payload.api_key:  # never clears — deleting the entry is the only way to drop a key
+    # OAuth secrets and endpoints are owned by the sign-in flow. In
+    # particular, accepting an arbitrary base URL here would let a crafted API
+    # request redirect the bearer token on the next model or usage call.
+    if payload.api_key and not oauth_entry:  # never clears; delete the entry to drop a key
         key = str(payload.api_key).strip()
         if not key or len(key) > MAX_KEY_LEN or any(c.isspace() for c in key):
             raise HTTPException(status_code=400, detail="invalid API key")
         entry["api_key"] = key
-    if payload.base_url is not None:
+    if payload.base_url is not None and not oauth_entry:
         url = str(payload.base_url).strip().rstrip("/")
         if (url and not re.match(r"^https?://", url)) or len(url) > MAX_URL_LEN:
             raise HTTPException(status_code=400, detail="base URL must start with http(s)://")
@@ -380,6 +388,107 @@ def ai_provider_test(provider_id: str, request: Request):
     except Exception as e:
         return {"ok": False, "model": model, "error": str(e)}
     return {"ok": True, "model": model, "latency_ms": int((time.time() - started) * 1000)}
+
+
+def _usage_window(raw: dict | None, name: str = "") -> dict | None:
+    if not isinstance(raw, dict):
+        return None
+    try:
+        used = max(0.0, min(100.0, float(raw.get("used_percent", 0))))
+    except (TypeError, ValueError):
+        return None
+    try:
+        seconds = max(0, int(raw.get("limit_window_seconds") or 0))
+    except (TypeError, ValueError):
+        seconds = 0
+    try:
+        reset_at = int(raw.get("reset_at") or 0)
+    except (TypeError, ValueError):
+        reset_at = 0
+    if not name:
+        if 4 * 3600 <= seconds <= 6 * 3600:
+            name = "5-hour"
+        elif 6 * 86400 <= seconds <= 8 * 86400:
+            name = "Weekly"
+        elif seconds:
+            name = f"{max(1, round(seconds / 3600))}-hour"
+        else:
+            name = "Usage"
+    return {
+        "name": name,
+        "used_percent": used,
+        "remaining_percent": max(0.0, 100.0 - used),
+        "window_seconds": seconds,
+        "reset_at": reset_at,
+    }
+
+
+# Sync def: this read-only account call runs in FastAPI's threadpool.
+@router.post("/ai/providers/{provider_id}/usage")
+def ai_provider_usage(provider_id: str, request: Request):
+    """Return subscription allowance for a ChatGPT OAuth provider.
+
+    API-key protocols have no portable quota endpoint: OpenAI-compatible
+    gateways and Anthropic-style services all expose different billing/admin
+    APIs. Report that honestly instead of presenting token counts as quota.
+    """
+    user = _require_editor(request)
+    entry = next((e for e in load_provider_entries(user) if e.get("id") == provider_id), None)
+    if not entry:
+        raise HTTPException(status_code=404, detail="provider not found")
+    if entry.get("protocol") != "chatgpt":
+        return {"available": False,
+                "reason": "This API-key provider does not expose a standard remaining-usage percentage."}
+
+    clear_refresh_backoff(user, provider_id)
+    rt = ai_runtime(user)
+    conf = rt["providers"].get(provider_id)
+    if not conf:
+        return {"available": False, "reason": "Sign in with ChatGPT again to query usage."}
+    # Use the administrator-controlled protocol endpoint, never the saved
+    # entry value: OAuth entries cannot redirect their bearer token.
+    base = str(AI_PROTOCOLS["chatgpt"]["base_url"]).rstrip("/")
+    # The model endpoint is .../backend-api/codex; Codex's account client uses
+    # the sibling .../backend-api/wham/usage endpoint.
+    account_base = base[:-len("/codex")] if base.endswith("/codex") else base
+    url = f"{account_base}/wham/usage"
+    headers = {
+        "Authorization": f"Bearer {conf['api_key']}",
+        "Accept": "application/json",
+        "User-Agent": "codex-cli",
+    }
+    if conf.get("account_id"):
+        headers["ChatGPT-Account-Id"] = conf["account_id"]
+    req = URLRequest(url, headers=headers, method="GET")
+    try:
+        data = _model_catalog_json(req)
+    except Exception as e:
+        raise HTTPException(status_code=502,
+                            detail=f"usage inquiry failed: {_upstream_detail(e, 200)}")
+    if not isinstance(data, dict):
+        raise HTTPException(status_code=502, detail="usage inquiry returned invalid data")
+
+    rate = data.get("rate_limit")
+    rate = rate if isinstance(rate, dict) else {}
+    windows = [w for w in (
+        _usage_window(rate.get("primary_window")),
+        _usage_window(rate.get("secondary_window")),
+    ) if w]
+    for extra in data.get("additional_rate_limits") or []:
+        if not isinstance(extra, dict):
+            continue
+        extra_rate = extra.get("rate_limit") if isinstance(extra.get("rate_limit"), dict) else {}
+        window = _usage_window(extra_rate.get("primary_window"),
+                               str(extra.get("limit_name") or "Additional limit"))
+        if window:
+            windows.append(window)
+    return {
+        "available": bool(windows),
+        "plan_type": str(data.get("plan_type") or ""),
+        "windows": windows,
+        "credits": data.get("credits") if isinstance(data.get("credits"), dict) else None,
+        "reason": "" if windows else "The provider returned no usage windows.",
+    }
 
 
 # Fallback when the live listing fails on a connected entry (offline, backend
@@ -495,6 +604,173 @@ def ai_model_catalog(payload: ModelCatalogRequest, request: Request):
                if re.match(r"^(gpt-|o\d|chatgpt-)", i)
                and not re.search(r"embed|whisper|tts|audio|image|dall-e|moderation|transcribe|realtime|search", i)]
     return {"models": sorted(set(ids))}
+
+
+# --- PDF translation ----------------------------------------------------------
+# Backs the viewer's translated view: the frontend segments a page into
+# paragraph blocks (frontend/src/pdfTranslate.js) and sends their TEXT here;
+# geometry never leaves the client. Translations are cached per (user, target
+# language, model, source text) — IN MEMORY only, deliberately: nothing is
+# persisted to disk, the cache just makes retries, re-shows and halted-job
+# resumes free until the server restarts.
+
+# Allowlisted target languages (code → name spliced into the prompt). Mirrored
+# in frontend/src/prefs.js TRANSLATE_LANGS — keep the two in sync.
+TRANSLATE_LANGS = {
+    "en": "English", "zh-CN": "Simplified Chinese", "zh-TW": "Traditional Chinese",
+    "ja": "Japanese", "ko": "Korean", "de": "German", "fr": "French",
+    "es": "Spanish", "pt": "Portuguese", "it": "Italian", "ru": "Russian",
+}
+
+_TRANSLATE_PROMPT = (
+    "You translate paragraphs extracted from an academic paper into {lang}. "
+    "The user message is a JSON array of strings; each string is one paragraph, "
+    "heading, or caption. Reply with ONLY a JSON array of strings of the SAME "
+    "length and order — element i is the translation of element i. No code "
+    "fences, no commentary. Rules: keep inline math, LaTeX, numbers, symbols, "
+    "variable names, citation markers like [12], and URLs exactly as written; "
+    "keep the register of an academic paper; translate headings as headings. "
+    "Return a string unchanged when it is already in the target language or is "
+    "pure math/code."
+)
+
+_TRANSLATE_MAX_TEXTS = 200      # paragraphs per request (a page is ~10–50)
+_TRANSLATE_MAX_CHARS = 60000    # total source chars per request
+# In-memory LRU: key (see _translate_key) → translated text. Process-wide,
+# never written to disk; a restart simply starts cold. The lock matters:
+# requests run in FastAPI's threadpool and the viewer fires several in
+# parallel, so touches and evictions would otherwise race.
+_TRANSLATE_CACHE: "OrderedDict[str, str]" = OrderedDict()
+_TRANSLATE_CACHE_CAP = 5000     # cached paragraphs kept in memory (LRU)
+_TRANSLATE_LOCK = threading.Lock()
+
+
+def _cache_get(keys: list) -> dict:
+    """LRU-touching lookup: {key: translation} for every key already cached."""
+    with _TRANSLATE_LOCK:
+        hits = {}
+        for k in keys:
+            if k in _TRANSLATE_CACHE:
+                _TRANSLATE_CACHE.move_to_end(k)
+                hits[k] = _TRANSLATE_CACHE[k]
+        return hits
+
+
+def _cache_put(key: str, text: str):
+    with _TRANSLATE_LOCK:
+        _TRANSLATE_CACHE[key] = text
+        _TRANSLATE_CACHE.move_to_end(key)
+        while len(_TRANSLATE_CACHE) > _TRANSLATE_CACHE_CAP:
+            _TRANSLATE_CACHE.popitem(last=False)
+
+
+class AITranslateRequest(BaseModel):
+    texts: list = Field(default_factory=list)  # source paragraphs, viewer order
+    lang: str = "zh-CN"   # target language code (TRANSLATE_LANGS key)
+    model: str = ""       # model registry id; "" = the user's default
+    effort: str = ""      # reasoning effort; "" = provider default (param omitted)
+
+
+def _translate_key(user: str, lang: str, model: str, text: str) -> str:
+    # Keyed on the bare model NAME (not the registry id): registry ids embed
+    # the provider-entry id, which changes when a key is re-added — the cached
+    # translation shouldn't die with it. The username scopes the shared
+    # in-memory dict per account.
+    return hashlib.sha256(f"{user}\x00{lang}\x00{model}\x00{text}".encode()).hexdigest()
+
+
+def _parse_translation_array(reply: str, n: int) -> list:
+    """The model's reply as a list of n strings — tolerates code fences and
+    prose around the array, nothing else."""
+    s = (reply or "").strip()
+    i, j = s.find("["), s.rfind("]")
+    if i < 0 or j <= i:
+        raise ValueError("no JSON array in reply")
+    arr = json.loads(s[i:j + 1])
+    if not isinstance(arr, list) or len(arr) != n:
+        raise ValueError(f"expected {n} translations, got {len(arr) if isinstance(arr, list) else 'non-list'}")
+    return ["" if t is None else str(t) for t in arr]
+
+
+# Sync def: the AI call runs in the threadpool.
+@router.post("/ai/translate")
+def ai_translate(payload: AITranslateRequest, request: Request):
+    user = require_user(request)
+    lang = payload.lang
+    if lang not in TRANSLATE_LANGS:
+        raise HTTPException(status_code=400, detail="unsupported target language")
+    texts = payload.texts
+    if not isinstance(texts, list) or not texts or len(texts) > _TRANSLATE_MAX_TEXTS:
+        raise HTTPException(status_code=400, detail=f"texts must be 1–{_TRANSLATE_MAX_TEXTS} strings")
+    if any(not isinstance(t, str) for t in texts):
+        raise HTTPException(status_code=400, detail="texts must be strings")
+    if sum(len(t) for t in texts) > _TRANSLATE_MAX_CHARS:
+        raise HTTPException(status_code=413, detail="too much text in one request")
+
+    rt = require_ai_runtime(user)
+    entry = _resolve_model(rt, payload.model)
+    model_name = entry["model"]
+
+    keys = [_translate_key(user, lang, model_name, t) for t in texts]
+    # hits: key → translation, for every paragraph that won't need the model.
+    # Filled from the cache now and from the provider reply below; the final
+    # response reads texts the map doesn't cover (whitespace-only paragraphs)
+    # verbatim.
+    hits = _cache_get(keys)
+
+    # Whitespace-only paragraphs never reach the model; every other cache miss
+    # goes upstream in ONE call (duplicates collapsed), as a JSON array both ways.
+    miss, queued = [], set()
+    for i, t in enumerate(texts):
+        if keys[i] not in hits and keys[i] not in queued and t.strip():
+            queued.add(keys[i])
+            miss.append(i)
+    if miss:
+        miss_texts = [texts[i] for i in miss]
+        system = _TRANSLATE_PROMPT.format(lang=TRANSLATE_LANGS[lang])
+        effort = _resolve_effort(payload.effort)
+
+        def call(batch):
+            # Output roughly tracks input length (CJK ≈ 1 token/char); the
+            # generous floor covers JSON overhead and reasoning models whose
+            # thinking spends from the same budget.
+            max_tokens = min(30000, 8000 + 2 * sum(len(t) for t in batch))
+            return _call_ai(
+                [{"role": "user", "content": json.dumps(batch, ensure_ascii=False)}],
+                system, entry, rt, effort=effort, max_tokens=max_tokens, timeout=180)
+
+        try:
+            reply = call(miss_texts)
+        except Exception as e:
+            log.warning(f"[ai_translate] {e}")
+            raise HTTPException(status_code=502, detail=f"translation failed: {e}")
+        try:
+            translated = _parse_translation_array(reply, len(miss_texts))
+        except ValueError as e:
+            # The provider answered but the array is off — models sometimes
+            # merge or drop an element. Salvage paragraph by paragraph (a
+            # 1-element array can't misalign) instead of failing the chunk;
+            # a paragraph that still won't translate comes back VERBATIM, so
+            # the viewer shows the original there instead of erroring. The
+            # single-paragraph calls run concurrently — sequential salvage of
+            # a 6-paragraph chunk would take 6 model round-trips.
+            log.warning(f"[ai_translate] {e} — salvaging per paragraph")
+
+            def salvage(t):
+                try:
+                    return _parse_translation_array(call([t]), 1)[0]
+                except Exception as e2:
+                    log.warning(f"[ai_translate] paragraph salvage failed: {e2}")
+                    return t
+
+            with ThreadPoolExecutor(max_workers=min(4, len(miss_texts))) as pool:
+                translated = list(pool.map(salvage, miss_texts))
+        for i, t in zip(miss, translated):
+            hits[keys[i]] = t
+            if t and t != texts[i]:  # identity fallbacks stay uncached so a retry can improve them
+                _cache_put(keys[i], t)
+    out = [hits.get(k, texts[i]) for i, k in enumerate(keys)]
+    return {"translations": out, "model": entry["id"], "cached": not miss}
 
 
 # --- Voice dictation ----------------------------------------------------------

@@ -21,6 +21,14 @@ feeds the Settings → Library pane's status table and its adaptive batch retry
 
 No Google Scholar — it has no API and blocks scraping.
 
+PDF uploads use the browser-provided original filename as their initial page
+title and enter a lazy sequential metadata queue after the upload UI completes.
+The page stores an `auto_title` compare-and-swap marker: a successful lookup may
+replace that filename with the paper title only while the page title still
+matches the marker. Any explicit rename clears it, so a slow lookup cannot
+overwrite the user's edit. The AI fallback model is selected in Settings →
+Providers; arXiv and DOI resolutions do not call that model.
+
 ## PDF resolution
 
 `/api/resolve-pdf`: arXiv abs→pdf rewrite → direct fetch → HTML pages inspected

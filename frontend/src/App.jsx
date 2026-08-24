@@ -1,7 +1,7 @@
 import React, { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState } from "react";
 import { Panel, PanelGroup, PanelResizeHandle } from "react-resizable-panels";
 import PdfViewer, { COLORS, clampZoom } from "./pdfViewer";
-import { API, apiJson, makeId, fmtBytes, getDocIdForUrl, isPdfFile, importZoteroZip, resolvePdfUrl, setExpectedUser, getExpectedUser, usePersistedState, usePersistedFlag, copyText, copyRich } from "./utils";
+import { API, apiJson, makeId, fmtBytes, getDocIdForUrl, isPdfFile, isMarkdownFile, importZoteroZip, resolvePdfUrl, setExpectedUser, getExpectedUser, usePersistedState, usePersistedFlag, copyText, copyRich } from "./utils";
 import {
   BlockDropIndicator,
   ChatMarkdown,
@@ -18,10 +18,10 @@ import ChatDock from "./chatDock";
 import SearchPanel from "./search";
 import { ContextMenu, MenuItem, MenuLabel, MenuSelect, SubMenuItem } from "./menus";
 import {
-  ActivityIcon, AlertCircleIcon, ArrowLeftIcon, ArrowUpDownIcon, CheckIcon, CopyIcon, DatabaseIcon, DownloadIcon, ExportIcon,
-  ExternalLinkIcon, EyeIcon, FileGlyph, FileIcon, FileTextIcon, FitWidthIcon, FolderGlyph,
+  ActivityIcon, AlertCircleIcon, ArrowLeftIcon, ArrowUpDownIcon, BookIcon, CheckIcon, CopyIcon, DatabaseIcon, DownloadIcon, ExportIcon,
+  ExternalLinkIcon, EyeIcon, EyeOffIcon, FileGlyph, FileIcon, FileTextIcon, FitWidthIcon, FolderGlyph,
   FolderIcon, FolderOpenIcon, FolderPlusIcon, HomeIcon, ImportIcon, InfoIcon, LabelIcon,
-  LinkIcon, LogOutIcon, MaximizeIcon, MenuIcon, MinimizeIcon, PenIcon, PinIcon, PlusIcon,
+  LanguagesIcon, LanguagesOffIcon, LinkIcon, LogOutIcon, MaximizeIcon, MenuIcon, MinimizeIcon, PenIcon, PinIcon, PlusIcon,
   RectSelectIcon, SearchIcon, SettingsIcon, SparklesIcon, TextCursorIcon, TrashIcon, TypeIcon, UploadIcon,
   UserIcon, UsersIcon, XIcon, ZoomInIcon, ZoomOutIcon,
 } from "./icons";
@@ -53,7 +53,7 @@ import {
 } from "./logseqPdfModel";
 import { loadSession, saveSession, clearSession } from "./sessionState";
 import { AuthLoading, LoginPage, SessionConflictPage } from "./LoginPage";
-import { useAppPrefs } from "./prefs";
+import { TRANSLATE_LANGS, useAppPrefs } from "./prefs";
 import SettingsDialog from "./settings";
 import { QuotaMeter } from "./settingsKit";
 import {
@@ -117,6 +117,14 @@ try { const old = localStorage.getItem("gamma-home-sort"); if (old) HOME_SORT_DE
 function folderFromRelPath(relPath) {
   const idx = (relPath || "").lastIndexOf("/");
   return idx > 0 ? cleanFolderPath(relPath.slice(0, idx)) : "";
+}
+
+// Directory uploads occasionally expose a relative path as File.name (and
+// some browsers also transmit it as the multipart filename). Folder placement
+// is tracked separately; titles and original_filename must always be one leaf.
+function uploadLeafName(file, fallback = "") {
+  const raw = String(file?.name || file?.webkitRelativePath || "").replace(/\\/g, "/");
+  return raw.slice(raw.lastIndexOf("/") + 1).trim() || fallback;
 }
 
 // Recursively walk directory entries from a drop into {file, folder} pairs.
@@ -1880,6 +1888,9 @@ export default function App() {
     fileLabels, setFileLabels,
     oaFallback, setOaFallback, metaAutoFetch, setMetaAutoFetch, pdfSaveLocal, setPdfSaveLocal,
     snapVertical, setSnapVertical, embAnnots, setEmbAnnots,
+    translateEnabled, setTranslateEnabled,
+    translateLang, setTranslateLang, translateModel, setTranslateModel,
+    translateEffort, setTranslateEffort, translateParallel, setTranslateParallel,
     searchDetailsHome, setSearchDetailsHome, searchDetailsPaper, setSearchDetailsPaper,
     enterNewNote, setEnterNewNote, hlNoteBadges, setHlNoteBadges,
     statusBarVisible, setStatusBarVisible,
@@ -1890,6 +1901,8 @@ export default function App() {
     chatContextChars, setChatContextChars, metaContextChars, setMetaContextChars,
     multiContextChars, setMultiContextChars,
     toolRounds, setToolRounds, agentReadChars, setAgentReadChars, agentPerms, setAgentPerms,
+    agentEnabled, setAgentEnabled, folderToolsDefault, setFolderToolsDefault,
+    pdfToolsDefault, setPdfToolsDefault,
     chatImgAutoClear, setChatImgAutoClear,
   } = useAppPrefs();
   const pageTitleSaveTimerRef = useRef(null);
@@ -1915,6 +1928,9 @@ export default function App() {
   // Per-entry results of the list's Test button (a tiny live completion):
   // id -> {busy} | {ok, model, latency_ms} | {ok: false, error}
   const [aiKeyTests, setAiKeyTests] = useState({});
+  // id -> {busy} | normalized subscription allowance. API-key providers
+  // return an explicit unavailable reason because their billing APIs differ.
+  const [aiKeyUsage, setAiKeyUsage] = useState({});
 
   // The settings page (account popover → Settings…): two-column modal,
   // categories on the left, the selected pane on the right.
@@ -2018,8 +2034,19 @@ export default function App() {
     setAiKeysInfo(null);
     setAiKeysForm(null);
     setAiKeyTests({});
+    setAiKeyUsage({});
     try {
-      setAiKeysInfo(await apiJson(`${API}/ai/settings`));
+      const info = await apiJson(`${API}/ai/settings`);
+      setAiKeysInfo(info);
+      // Usage is account status, not an edit action: fetch it as soon as the
+      // pane opens. Only OAuth protocols have a portable percentage endpoint;
+      // generic API-key providers would merely return "unavailable".
+      const oauthProtocols = new Set((info.protocols || [])
+        .filter((protocol) => protocol.auth === "oauth")
+        .map((protocol) => protocol.id));
+      (info.providers || [])
+        .filter((provider) => oauthProtocols.has(provider.protocol))
+        .forEach((provider) => queryAiProviderUsage(provider));
     } catch (err) {
       setAiKeysError(err.message);
     }
@@ -2037,6 +2064,16 @@ export default function App() {
       result = { ok: false, error: err.message };
     }
     setAiKeyTests((t) => ({ ...t, [p.id]: result }));
+  }
+  async function queryAiProviderUsage(p) {
+    setAiKeyUsage((u) => ({ ...u, [p.id]: { busy: true } }));
+    let result;
+    try {
+      result = await apiJson(`${API}/ai/providers/${p.id}/usage`, { method: "POST" });
+    } catch (err) {
+      result = { available: false, reason: err.message };
+    }
+    setAiKeyUsage((u) => ({ ...u, [p.id]: result }));
   }
   // Entering the AI pane always refetches the masked key list.
   useEffect(() => {
@@ -2309,7 +2346,8 @@ export default function App() {
       setFocusedBlock((prev) => prev && prev.id === blockId
         ? { ...prev, properties: { ...prev.properties, meta: data.meta, bibtex: data.bibtex, ppt_cite: "", meta_error: undefined } }
         : prev);
-      if (data.meta?.title && /^PDF Notes - /.test(focusedBlock?.content || "")) {
+      if (data.meta?.title && (focusedBlock?.properties?.auto_title === focusedBlock?.content
+          || /^PDF Notes - /.test(focusedBlock?.content || ""))) {
         await renameTitle(data.meta.title);
       }
       fetchHomeBlocks(); // keep the library's meta fresh for DOI-link matching
@@ -2333,6 +2371,64 @@ export default function App() {
   const metaFetchModel = metaModel && scopedAiModels.some((m) => m.id === metaModel)
     ? metaModel
     : chatSendModel;
+
+  // --- PDF translation (the 文A button in the viewer's zoom column) ---
+  // The button prompts "this page or whole document"; the queue itself lives
+  // in PdfViewer (translateCtl), which calls back into translateParagraphs
+  // below for each page. Language, model, effort and parallelism live in
+  // Settings → Reading → PDF viewer.
+  const translateSendModel = translateModel && scopedAiModels.some((m) => m.id === translateModel)
+    ? translateModel
+    : chatSendModel;
+  const translateLangLabel = (TRANSLATE_LANGS.find(([code]) => code === translateLang) || ["", ""])[1];
+  const pdfTranslateCtl = useRef(null); // imperative surface set by PdfViewer
+  const [pdfTransState, setPdfTransState] = useState({ running: false, progress: 0, shown: true, pages: 0 });
+  const [transMenu, setTransMenu] = useState(null); // {x, y} while the button's option menu is open
+  const transTaskRef = useRef(null); // background-tasks row for the running job
+  const transLongRef = useRef(0); // long-press timer (touch): opens the menu like right-click does
+  const transLongFiredRef = useRef(false); // swallow the click that follows a fired long-press
+  function openTransMenu(el) {
+    const r = el.getBoundingClientRect();
+    setTransMenu({ x: r.right + 8, y: r.top - 4 });
+  }
+  function handleTranslateState(st) {
+    setPdfTransState(st);
+    if (st.running && !transTaskRef.current) {
+      transTaskRef.current = addTransfer({ name: `Translate ${st.label} → ${translateLangLabel}`, kind: "ai", info: "0%" });
+    }
+    if (transTaskRef.current) {
+      if (st.running) {
+        updateTransfer(transTaskRef.current, { info: `${Math.round(st.progress * 100)}%` });
+      } else {
+        const full = st.progress >= 0.999;
+        updateTransfer(transTaskRef.current, { status: "done", info: full ? "100%" : `stopped at ${Math.round(st.progress * 100)}%` });
+        transTaskRef.current = null;
+      }
+    }
+  }
+  // One chunk of paragraphs → translations, a single provider call. All the
+  // chunking, queueing and parallelism live in the viewer's engine; this is
+  // just the HTTP wrapper carrying the language/model/effort settings.
+  // Returns null on failure (already surfaced on the status pill) — the
+  // engine retries a chunk once before failing the job. `signal` is the
+  // job's AbortController: halting cancels the requests still in flight.
+  async function translateChunk(texts, signal) {
+    try {
+      const data = await apiJson(`${API}/ai/translate`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        signal,
+        body: JSON.stringify({
+          texts, lang: translateLang,
+          model: translateSendModel || "", effort: translateEffort || "",
+        }),
+      });
+      return data.translations || null;
+    } catch (err) {
+      if (err.name !== "AbortError") setStatus(`Translation failed: ${err.message}`);
+      return null;
+    }
+  }
 
   // POST /metadata/fetch for one page, tracked as a transfer-panel task.
   // Shared by the open-page fetch and the bulk-upload follow-up; throws on
@@ -2370,14 +2466,22 @@ export default function App() {
       setPageBibtex(data.bibtex || "");
       setPptCite(""); // fresh metadata invalidates the cached slide citation
       setFocusedBlock((prev) => prev && prev.id === block.id
-        ? { ...prev, properties: { ...prev.properties, meta: data.meta, bibtex: data.bibtex, meta_error: undefined } }
+        ? {
+            ...prev,
+            ...(data.page_title ? { content: data.page_title } : {}),
+            properties: {
+              ...prev.properties,
+              meta: data.meta,
+              bibtex: data.bibtex,
+              meta_error: undefined,
+              ...(data.title_updated ? { auto_title: undefined } : {}),
+            },
+          }
         : prev);
       // Auto-fill the page title from metadata when it's still the default filename
       // title — awaited so the library refetch below can't win the race and
       // resurrect the stale name in the link dialog / home list.
-      if (data.meta?.title && /^PDF Notes - /.test(block.content || "") && focusedBlockIdRef.current === block.id) {
-        await renameTitle(data.meta.title);
-      }
+      if (data.page_title && focusedBlockIdRef.current === block.id) setPdfTitle(data.page_title);
       if (!data.cached) {
         setStatus(`Paper metadata found (${data.source === "ai" ? "AI-extracted" : data.source}).`);
         fetchHomeBlocks(); // keep the library's meta fresh for DOI-link matching
@@ -2398,28 +2502,43 @@ export default function App() {
     }
   }
 
-  // Bulk-upload follow-up: fetch metadata for each new page (sequentially, like
-  // the Settings batch retry) and replace still-default "PDF Notes - <sha>.pdf"
-  // titles with the paper title. The single-upload path doesn't need this — it
-  // opens the page, and the open-time effect below handles it.
+  // Every uploaded PDF enters the same lazy, sequential metadata queue. The
+  // server may replace its original-filename title only while the automatic
+  // title marker still matches, so an in-flight lookup cannot undo a rename.
+  function queueMetadataForUploads(uploaded) {
+    if (readOnly || !metaAutoFetch) return;
+    const pending = uploaded.filter(({ block }) => block?.id
+      && !block.properties?.meta && !block.properties?.meta_error
+      && !attemptedMetaRef.current.has(block.id));
+    pending.forEach(({ block }) => attemptedMetaRef.current.add(block.id));
+    if (pending.length) setTimeout(() => fetchMetadataForUploads(pending), 0);
+  }
+
   async function fetchMetadataForUploads(uploaded) {
     if (readOnly || !metaAutoFetch) return;
-    let renamed = 0;
-    for (const { block, defaultTitle } of uploaded) {
+    let completed = 0;
+    for (const { block } of uploaded) {
       if (!block?.id || block.properties?.meta) continue;
       try {
         const data = await fetchMetadataRequest(block);
-        if (data.meta?.title && block.content === defaultTitle) {
-          await apiJson(`${API}/blocks/${block.id}`, {
-            method: "PUT",
-            headers: { "Content-Type": "application/json" },
-            body: JSON.stringify({ content: data.meta.title }),
-          });
-          renamed++;
+        completed++;
+        if (data.page_title) block.content = data.page_title;
+        block.properties = {
+          ...block.properties,
+          meta: data.meta,
+          bibtex: data.bibtex,
+          meta_error: undefined,
+          ...(data.title_updated ? { auto_title: undefined } : {}),
+        };
+        if (focusedBlockIdRef.current === block.id) {
+          setPageMeta(data.meta || null);
+          setPageBibtex(data.bibtex || "");
+          setFocusedBlock({ ...block });
+          if (data.page_title) setPdfTitle(data.page_title);
         }
       } catch {} // task already marked failed by fetchMetadataRequest
     }
-    if (renamed) fetchHomeBlocks();
+    if (completed) fetchHomeBlocks();
   }
 
   // When a paper is opened/uploaded, fetch its metadata in the background
@@ -3042,12 +3161,16 @@ export default function App() {
     }
   }
 
-  async function getOrCreateBlockForDoc(targetDocId, defaultTitle, sourceUrl) {
+  async function getOrCreateBlockForDoc(targetDocId, defaultTitle, sourceUrl, originalFilename = "") {
     if (!targetDocId) throw new Error("docId required");
     return await apiJson(`${API}/blocks/by-doc/${targetDocId}`, {
       method: "POST",
       headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ default_title: defaultTitle || `PDF Notes - ${targetDocId}`, source_url: sourceUrl || null })
+      body: JSON.stringify({
+        default_title: defaultTitle || `PDF Notes - ${targetDocId}`,
+        source_url: sourceUrl || null,
+        original_filename: originalFilename || null,
+      })
     });
   }
 
@@ -3080,9 +3203,10 @@ export default function App() {
   }
 
   async function uploadOnePdf(file, folder = "") {
-    const transferId = addTransfer({ name: file.name, kind: "upload", info: fmtBytes(file.size) });
+    const filename = uploadLeafName(file, "upload.pdf");
+    const transferId = addTransfer({ name: filename, kind: "upload", info: fmtBytes(file.size) });
     const form = new FormData();
-    form.append("file", file);
+    form.append("file", file, filename);
     let data;
     try {
       data = await apiJson(`${API}/uploads`, { method: "POST", body: form });
@@ -3091,8 +3215,10 @@ export default function App() {
       throw err;
     }
     updateTransfer(transferId, { status: "done", info: fmtBytes(file.size) });
-    const defaultTitle = getPdfPageTitle(data.doc_id, data.source_url);
-    const block = await getOrCreateBlockForDoc(data.doc_id, defaultTitle, data.source_url);
+    const defaultTitle = filename || `${data.doc_id}.pdf`;
+    const block = await getOrCreateBlockForDoc(
+      data.doc_id, defaultTitle, data.source_url, filename || defaultTitle,
+    );
     if (folder) {
       const tags = parseFolderTags(block.properties?.folder);
       if (!tags.includes(folder)) {
@@ -3108,7 +3234,23 @@ export default function App() {
     return { data, block, defaultTitle };
   }
 
-  async function uploadPdfs(fileList) {
+  async function importOneMarkdown(file, folder = "") {
+    const filename = uploadLeafName(file, "note.md");
+    const transferId = addTransfer({ name: filename, kind: "import", info: fmtBytes(file.size) });
+    const form = new FormData();
+    form.append("file", file, filename);
+    form.append("folder", folder);
+    try {
+      const data = await apiJson(`${API}/import/markdown`, { method: "POST", body: form });
+      updateTransfer(transferId, { status: "done", info: `${data.imported || 0} notes` });
+      return { data, kind: "markdown" };
+    } catch (err) {
+      updateTransfer(transferId, { status: "error", info: "failed" });
+      throw err;
+    }
+  }
+
+  async function uploadFiles(fileList) {
     if (readOnly) return;
     // Accepts Files (picker/drop) or {file, folder} pairs (dropped-folder walk);
     // the directory picker's Files carry the path in webkitRelativePath instead.
@@ -3116,33 +3258,40 @@ export default function App() {
     const base = homeMode && folderFilter ? folderFilter : "";
     const items = Array.from(fileList || [])
       .map((it) => (it instanceof File ? { file: it, folder: folderFromRelPath(it.webkitRelativePath) } : it))
-      .filter((it) => it?.file && isPdfFile(it.file))
-      .map(({ file, folder }) => ({ file, folder: [base, folder].filter(Boolean).join("/") }));
+      .filter((it) => it?.file && (isPdfFile(it.file) || isMarkdownFile(it.file)))
+      .map(({ file, folder }) => ({
+        file,
+        filename: uploadLeafName(file),
+        folder: [base, folder].filter(Boolean).join("/"),
+      }));
     if (!items.length) {
-      setStatus("No PDF files found.");
+      setStatus("No PDF or Markdown files found.");
       return;
     }
     setLoading(true);
     const done = [];
     const failed = [];
     try {
-      for (const { file, folder } of items) {
+      for (const { file, filename, folder } of items) {
         // Pre-check only with the quota info loaded — otherwise let the
         // server's check_upload_allowed decide (its 413 detail is surfaced
         // per file below).
-        if (quotaInfo && file.size > quotaInfo.max_upload_mb * 1024 * 1024) {
-          failed.push(`${file.name} (max ${quotaInfo.max_upload_mb} MB)`);
+        if (isPdfFile(file) && quotaInfo && file.size > quotaInfo.max_upload_mb * 1024 * 1024) {
+          failed.push(`${filename} (max ${quotaInfo.max_upload_mb} MB)`);
           continue;
         }
-        setStatus(`Uploading ${file.name}...`);
+        setStatus(`${isPdfFile(file) ? "Uploading" : "Importing"} ${filename}...`);
         try {
-          done.push(await uploadOnePdf(file, folder));
+          done.push(isPdfFile(file)
+            ? { ...(await uploadOnePdf(file, folder)), kind: "pdf" }
+            : await importOneMarkdown(file, folder));
         } catch (err) {
-          failed.push(`${file.name} (${err.message})`);
+          failed.push(`${filename} (${err.message})`);
         }
       }
-      if (done.length) refreshQuota();
-      if (items.length === 1 && done.length) {
+      const pdfDone = done.filter((item) => item.kind === "pdf");
+      if (pdfDone.length) refreshQuota();
+      if (items.length === 1 && done.length && done[0].kind === "pdf") {
         // Single upload keeps the old behavior: open the paper directly
         // (bypass openPdf's URL-resolution path).
         const { data, block, defaultTitle } = done[0];
@@ -3158,18 +3307,21 @@ export default function App() {
         setPdfUrl(data.source_url);
         const newUrl = `${window.location.pathname}?block=${encodeURIComponent(block.id)}`;
         window.history.replaceState({}, "", newUrl);
-        setStatus(`Uploaded ${items[0].file.name} (${data.doc_id})`);
+        setStatus(`Uploaded ${items[0].filename} (${data.doc_id})`);
+      } else if (items.length === 1 && done.length) {
+        await fetchHomeBlocks();
+        await openBlock(done[0].data.block_id, { pushNav: true });
+        setStatus(`Imported ${items[0].filename} as a note.`);
       } else if (done.length) {
         fetchHomeBlocks();
         setStatus(failed.length
-          ? `Uploaded ${done.length} of ${items.length} PDFs — failed: ${failed.join(", ")}`
-          : `Uploaded ${done.length} PDFs.`);
-        // Bulk uploads never get opened, so the open-time auto-metadata (which
-        // also fills in real titles) wouldn't run — do it here in the background.
-        fetchMetadataForUploads(done);
+          ? `Imported ${done.length} of ${items.length} files — failed: ${failed.join(", ")}`
+          : `Imported ${done.length} files.`);
       } else {
         setStatus(`Upload failed: ${failed.join(", ")}`);
       }
+      // Runs after the upload/import UI work and never delays its completion.
+      queueMetadataForUploads(pdfDone);
     } finally {
       setLoading(false);
     }
@@ -5691,6 +5843,7 @@ export default function App() {
           setStatus={setStatus}
           organizeFolder={!focusedBlockId && !readOnly ? folderFilter : null}
           toolRounds={toolRounds} agentReadChars={agentReadChars} agentPerms={agentPerms} agentSystem={agentSystem}
+          agentEnabled={agentEnabled} folderToolsDefault={folderToolsDefault} pdfToolsDefault={pdfToolsDefault}
           onLibraryChange={fetchHomeBlocks}
         />
       );
@@ -5829,20 +5982,20 @@ export default function App() {
               }}
             />
             <label className="popoverItem" style={{ cursor: loading ? "not-allowed" : "pointer" }}>
-              Upload PDFs…
+              Upload files…
               <input
                 type="file"
-                accept=".pdf"
+                accept=".pdf,.md,.markdown,application/pdf,text/markdown"
                 multiple
                 style={{ display: "none" }}
                 disabled={loading}
-                onChange={(e) => { const files = Array.from(e.target.files || []); e.target.value = ""; setOpenPopover(null); if (files.length) uploadPdfs(files); }}
+                onChange={(e) => { const files = Array.from(e.target.files || []); e.target.value = ""; setOpenPopover(null); if (files.length) uploadFiles(files); }}
               />
             </label>
             <label
               className="popoverItem"
               style={{ cursor: loading ? "not-allowed" : "pointer" }}
-              title="Upload every PDF in a folder — subfolders become folder labels"
+              title="Import every PDF and Markdown note in a folder — subfolders become folder labels"
             >
               Upload folder…
               <input
@@ -5850,7 +6003,7 @@ export default function App() {
                 webkitdirectory=""
                 style={{ display: "none" }}
                 disabled={loading}
-                onChange={(e) => { const files = Array.from(e.target.files || []); e.target.value = ""; setOpenPopover(null); if (files.length) uploadPdfs(files); }}
+                onChange={(e) => { const files = Array.from(e.target.files || []); e.target.value = ""; setOpenPopover(null); if (files.length) uploadFiles(files); }}
               />
             </label>
             <button className="popoverItem" onClick={createNotePage}>New note page</button>
@@ -6135,13 +6288,14 @@ export default function App() {
           .filter(Boolean);
         if (entries.some((en) => en.isDirectory)) {
           e.preventDefault();
-          collectEntryFiles(entries).then((found) => uploadPdfs(found));
+          collectEntryFiles(entries).then((found) => uploadFiles(found));
           return;
         }
-        const files = Array.from(e.dataTransfer.files || []).filter(isPdfFile);
+        const files = Array.from(e.dataTransfer.files || [])
+          .filter((file) => isPdfFile(file) || isMarkdownFile(file));
         if (!files.length) return;
         e.preventDefault();
-        uploadPdfs(files);
+        uploadFiles(files);
       }}
     >
       {!readOnly ? (
@@ -6213,6 +6367,30 @@ export default function App() {
           </button>
         </ContextMenu>
       )}
+      {transMenu && (
+        <ContextMenu x={transMenu.x} y={transMenu.y} onClose={() => setTransMenu(null)}>
+          {pdfTransState.running ? (
+            <MenuItem icon={XIcon} onClick={() => { setTransMenu(null); pdfTranslateCtl.current?.halt(); }}>
+              Stop translating
+            </MenuItem>
+          ) : (
+            <>
+              <MenuItem icon={FileIcon} onClick={() => { setTransMenu(null); pdfTranslateCtl.current?.translatePage(); }}>
+                Translate this page
+              </MenuItem>
+              <MenuItem icon={BookIcon} onClick={() => { setTransMenu(null); pdfTranslateCtl.current?.translateDoc(); }}>
+                Translate whole document
+              </MenuItem>
+            </>
+          )}
+          {pdfTransState.pages > 0 ? (
+            <MenuItem icon={pdfTransState.shown ? EyeOffIcon : EyeIcon}
+              onClick={() => { setTransMenu(null); pdfTranslateCtl.current?.setShown(!pdfTransState.shown); }}>
+              {pdfTransState.shown ? "Show original" : "Show translation"}
+            </MenuItem>
+          ) : null}
+        </ContextMenu>
+      )}
 
       <div className="workArea">
       <PanelGroup direction="horizontal" autoSaveId="gamma-work-h" ref={(h) => { panelGroupRefs.current["work-h"] = h; }}>
@@ -6260,6 +6438,45 @@ export default function App() {
               <button className="pdfFitWidthBtn" onClick={() => zoomTo("page-width")} title="Fit to width" aria-label="Fit to width">
                 <FitWidthIcon size={15} />
               </button>
+              {translateEnabled && !readOnly ? (
+                <button
+                  className={pdfTransState.running || (pdfTransState.pages > 0 && pdfTransState.shown) ? "modeActive" : ""}
+                  onClick={(e) => {
+                    if (transLongFiredRef.current) { transLongFiredRef.current = false; return; }
+                    if (pdfTransState.running) { pdfTranslateCtl.current?.halt(); return; }
+                    if (pdfTransState.pages > 0) { pdfTranslateCtl.current?.setShown(!pdfTransState.shown); return; }
+                    pdfTranslateCtl.current?.translatePage();
+                  }}
+                  onContextMenu={(e) => { e.preventDefault(); openTransMenu(e.currentTarget); }}
+                  onPointerDown={(e) => {
+                    if (e.pointerType === "mouse") return;
+                    const el = e.currentTarget;
+                    clearTimeout(transLongRef.current);
+                    transLongRef.current = setTimeout(() => { transLongFiredRef.current = true; openTransMenu(el); }, 500);
+                  }}
+                  onPointerUp={() => clearTimeout(transLongRef.current)}
+                  onPointerCancel={() => clearTimeout(transLongRef.current)}
+                  title={pdfTransState.running
+                    ? `Translating… ${Math.round(pdfTransState.progress * 100)}% — click to stop (right-click for options)`
+                    : pdfTransState.pages > 0
+                      ? (pdfTransState.shown
+                          ? "Hide the translation (all pages; Alt peeks) — right-click for options"
+                          : "Show the translation — right-click for options")
+                      : `Translate this page into ${translateLangLabel} — right-click: whole document & options`}
+                  aria-label={pdfTransState.running ? "Stop translating"
+                    : pdfTransState.pages > 0 ? (pdfTransState.shown ? "Hide translation" : "Show translation")
+                    : "Translate"}
+                >
+                  {pdfTransState.running
+                    ? <span className="pillSpin" aria-hidden="true" />
+                    : pdfTransState.pages > 0 && !pdfTransState.shown
+                      ? <LanguagesOffIcon size={15} />
+                      : <LanguagesIcon size={15} />}
+                </button>
+              ) : null}
+              {translateEnabled && !readOnly && pdfTransState.running ? (
+                <div className="pdfTransPct">{Math.round(pdfTransState.progress * 100)}%</div>
+              ) : null}
               {isPhone && !readOnly ? (
                 <button
                   className={areaSelectMode ? "modeActive" : ""}
@@ -6292,6 +6509,11 @@ export default function App() {
               hideEmbeddedAnnots={embAnnots === "hide"}
               snapVertical={snapVertical}
               darkPage={pdfDarkPage}
+              translateKey={`${translateLang}|${translateSendModel}`}
+              translateParallel={translateParallel}
+              onTranslate={readOnly ? undefined : translateChunk}
+              translateCtlRef={pdfTranslateCtl}
+              onTranslateState={handleTranslateState}
               areaMode={areaSelectMode && isPhone && !readOnly}
               pdfScaleValue={pdfScale} scrollRef={scrollToRef}
               searchRef={pdfSearchRef}
@@ -6615,15 +6837,22 @@ export default function App() {
           setEmbAnnots,
           snapVertical,
           setSnapVertical,
+          translateEnabled,
+          setTranslateEnabled,
+          translateLang,
+          setTranslateLang,
+          translateModel,
+          setTranslateModel,
+          translateEffort,
+          setTranslateEffort,
+          translateParallel,
+          setTranslateParallel,
           pdfDarkPage,
           setPdfDarkPage,
           recentThumbs,
           setRecentThumbs,
           fileLabels,
           setFileLabels,
-          metaModel,
-          setMetaModel,
-          aiModels: scopedAiModels,
           isAdmin: !!authUser?.is_admin,
           setStatus,
           refreshQuota, // keep the client-side pre-upload size check in sync without a re-login
@@ -6642,10 +6871,6 @@ export default function App() {
           metaContextChars,
           indexTask,
           setStatus,
-          // Zotero library import: annotations embedded in the exported PDFs
-          // follow the standing strip-vs-hide viewer preference
-          stripAnnots: embAnnots === "strip",
-          onLibraryChange: fetchHomeBlocks,
         }}
         ai={{
           aiKeysInfo,
@@ -6669,6 +6894,15 @@ export default function App() {
           deleteAiProvider,
           aiKeyTests,
           testAiProvider,
+          aiKeyUsage,
+          queryAiProviderUsage,
+          metaModel,
+          setMetaModel,
+          aiModels: scopedAiModels,
+          dictationModel,
+          setDictationModel,
+          dictationLang,
+          setDictationLang,
           startChatGPTAuth,
           loadModelCatalog,
           addCatalogModel,
@@ -6704,10 +6938,6 @@ export default function App() {
         context={{
           chatImgAutoClear,
           setChatImgAutoClear,
-          dictationModel,
-          setDictationModel,
-          dictationLang,
-          setDictationLang,
           chatContextChars,
           setChatContextChars,
           metaContextChars,
@@ -6720,6 +6950,12 @@ export default function App() {
           setAgentReadChars,
           agentPerms,
           setAgentPerms,
+          agentEnabled,
+          setAgentEnabled,
+          folderToolsDefault,
+          setFolderToolsDefault,
+          pdfToolsDefault,
+          setPdfToolsDefault,
           reset: () => {
             setChatContextChars(8000);
             setMetaContextChars(6000);

@@ -8,10 +8,10 @@ loop runs, and what the user controls. The tools themselves are catalogued in
 `gamma/ai_client.py`, `gamma/ai_context.py`, `gamma/ai_tools.py`,
 `gamma/chatgpt_oauth.py`, `gamma/routers/ai.py` + the chat-history router.
 
-## Providers
+## Provider and models
 
 There are NO env API keys; providers are per-user GUI entries (Settings →
-Providers) stored under the reserved `ai-settings` prefs key in the user's
+Provider and models) stored under the reserved `ai-settings` prefs key in the user's
 `data.db` — a LIST of `{id, name, protocol, api_key, base_url, models}` managed
 via `POST/PUT/DELETE /api/ai/providers[/{id}]`. The generic prefs endpoints
 refuse the key; the only read path is the masked `GET /api/ai/settings` (last-4
@@ -23,8 +23,25 @@ so an expired ChatGPT grant is re-tried immediately.
 `ai_runtime(user)` in `gamma/ai_settings.py` builds the per-request config and
 model registry (ids are `<entryId>:<model>`; the wire format comes from the
 entry's `protocol`, never from the provider id) — AI endpoints must use it, not
-module-level config constants. Env vars only set each protocol's default base
-URL (`GAMMA_AI_ANTHROPIC_BASE_URL` / `GAMMA_AI_OPENAI_BASE_URL`).
+module-level config constants for credentials or model routing. Env vars set
+each protocol's administrator-controlled default base URL, including
+`GAMMA_AI_CHATGPT_BASE_URL`.
+
+The Provider and models pane also exposes `POST /api/ai/providers/{id}/usage`. For a
+ChatGPT OAuth entry it reads normalized subscription rate-limit windows
+(`used_percent`, `remaining_percent`, and reset time) without exposing the
+bearer token. Opening the pane queries OAuth usage automatically (the Usage
+button remains available for a manual refresh). Each window is one compact
+summary line above the same progress meter used for storage quota, filled by
+the percentage used. Each provider row also opens its model configuration,
+where models can be fetched, added, or removed.
+API-key protocols return an explicit unavailable result because OpenAI-
+compatible and Anthropic-style providers do not share a portable quota API.
+The account request deliberately uses the administrator-controlled ChatGPT
+protocol URL, not an entry field, and OAuth entries cannot edit their API key
+or base URL; this prevents a settings request from redirecting a bearer token.
+The ChatGPT account endpoint is provider-specific and may require maintenance
+if its upstream contract changes.
 
 ### The chatgpt protocol (OAuth)
 
@@ -84,9 +101,10 @@ What it can reach depends on where the chat is opened — every chat declares an
 - `"page"` — the paper chat (`page_id` = the focused page): tools reach only
   that paper, and only the reading tools exist there.
 
-The request also carries `permissions` (the Settings → Assistant → Folder
-agent per-tool toggles — localStorage JSON `gamma-ai-agent-perms`, missing key
-= allowed, so new tools default on) and optional `agent_system` (custom base
+The request also carries `permissions` (the effective per-chat tool choices,
+initially based on Settings → Assistant → Folder agent — localStorage JSON
+`gamma-ai-agent-perms`, missing key = allowed, so new tools default on) and
+optional `agent_system` (custom base
 prompt; the Prompts pane's "Library agent" entry, default
 `ai_tools.AGENT_PROMPT` via `/api/ai/models`). The scope and permission lines
 are always appended mechanically to the base prompt, so a custom prompt can
@@ -95,8 +113,16 @@ scope) = plain chat.
 
 ### Permissions and knobs (Settings → Assistant)
 
-One toggle per tool (both scopes): List pages, Read papers & notes, Search PDF
-text, Rename pages, Move pages. Plus:
+The overall **Enable agent** switch (`gamma-ai-agent-enabled`, default on)
+disables tool use everywhere. Folder chats default to tools on
+(`gamma-ai-folder-tools-default`) and PDF chats default to tools off
+(`gamma-ai-pdf-tools-default`); both defaults are configurable here. The Tools
+button in each folder/PDF chat header toggles the configured tool set for that
+chat only. New chat resets the switch to the Settings default.
+
+One default permission per tool: List pages, Read papers & notes, Search PDF
+text, Rename pages, Move pages. Folder scope offers all five; PDF scope exposes
+only the two reading tools. Plus:
 
 - **Tool rounds** (`gamma-ai-tool-rounds` → request `tool_rounds`, default 32,
   user-tunable 1–100) — provider round-trips one message may use.
@@ -138,6 +164,54 @@ OpenAI-protocol calls that carry tools are rerouted to the platform
 completions — but only against the official api.openai.com base URL; custom
 gateways keep chat-completions tools.
 
+
+## PDF translation
+
+`POST /api/ai/translate` backs the viewer's translated view. ONE 文A button
+in the PDF zoom column does everything by state: click translates the
+current page when nothing is translated yet, toggles show/hide for ALL pages
+once translations exist under the current language+model (switching either
+in Settings makes the button translate afresh; hidden = slashed icon;
+holding Alt peeks), and
+halts a running job; right-click (long-press on touch) opens the option
+menu — Translate this page / Translate whole document / Show
+original·translation (Stop translating while running). A whole-document job
+queues pages nearest the current page first (forward before backward at
+equal distance), so the page being read paints immediately. The queue lives
+in `pdfViewer.jsx` (`translateCtl`), producer/consumer style: the producer
+segments queued pages in order and feeds one flat list of ~6-paragraph /
+1200-char chunks, while N workers (Settings → Reading → parallel requests,
+typed, 1–32) stream through it across page boundaries — the first request is
+in flight while later pages are still segmenting, chunks paint as they land,
+char-weighted progress shows under the button and as a background-tasks row.
+Halting aborts the in-flight requests (each job carries an AbortController)
+and keeps finished chunks; re-running skips done pages and re-fills partial
+ones from the server cache. Reliability: each chunk gets one client-side
+retry, and the server salvages a miscounted model reply ("expected 5, got
+4") by re-translating that batch paragraph by paragraph, concurrently — a
+paragraph that still fails comes back verbatim (shown as original, uncached)
+instead of failing the request.
+
+Geometry never leaves the client: `frontend/src/pdfTranslate.js` segments
+pdf.js text runs into paragraph blocks (columns via whitespace-river
+detection, paragraphs via indents/font changes, figure-wrap via sustained
+width changes; math-heavy/numeric blocks are skipped), each carrying
+PER-LINE rects. The overlay masks exactly those original lines (plus the
+leading between them) and lays the translation over them with an inline
+cloned background — so figures a paragraph brushes against are never painted
+over, and the layout never moves. Translated text is selectable/copyable;
+while shown, the invisible original text layer stands down.
+
+Targets are the allowlisted `TRANSLATE_LANGS` codes (mirrored in
+`frontend/src/prefs.js`); model and reasoning `effort` come from Settings →
+Reading (model follows the chat model by default; effort omitted unless
+picked — Low/Minimal is the speed lever for reasoning models); the whole
+Translation section can be switched off there too. The server keeps an
+**in-memory only** LRU (~5k entries, lock-guarded — requests run in the
+threadpool) per (user, language, bare model name, source text) —
+deliberately nothing on disk; it makes halts/retries/re-shows free until a
+restart. Duplicate paragraphs within a request go upstream once. Caps: 200
+texts / 60k chars per request.
 
 ## Chat history buckets
 
