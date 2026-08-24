@@ -154,6 +154,12 @@ export function useAppPrefs() {
   // gamma/ai_tools.py) — keep the two in sync.
   const [agentReadChars, setAgentReadChars] = usePersistedState("gamma-ai-read-chars", 20000, CONTEXT_CHARS_CODEC);
   const [agentPerms, setAgentPerms] = usePersistedState("gamma-ai-agent-perms", AGENT_PERMS_DEFAULT, AGENT_PERMS_CODEC);
+  // Master kill-switch plus the starting state for each chat scope. A chat can
+  // override its own tool set from the header; PDF chat starts conservative,
+  // while the library/folder organizer keeps its existing agent-first default.
+  const [agentEnabled, setAgentEnabled] = usePersistedFlag("gamma-ai-agent-enabled", true);
+  const [folderToolsDefault, setFolderToolsDefault] = usePersistedFlag("gamma-ai-folder-tools-default", true);
+  const [pdfToolsDefault, setPdfToolsDefault] = usePersistedFlag("gamma-ai-pdf-tools-default", false);
 
   // --- Chat behavior (Settings → Assistant) ---
   // Off by default: rectangle snapshots stay attached until removed or sent.
@@ -179,6 +185,8 @@ export function useAppPrefs() {
     chatContextChars, setChatContextChars, metaContextChars, setMetaContextChars,
     multiContextChars, setMultiContextChars,
     toolRounds, setToolRounds, agentReadChars, setAgentReadChars, agentPerms, setAgentPerms,
+    agentEnabled, setAgentEnabled, folderToolsDefault, setFolderToolsDefault,
+    pdfToolsDefault, setPdfToolsDefault,
     chatImgAutoClear, setChatImgAutoClear,
   };
 }

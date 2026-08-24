@@ -189,6 +189,54 @@ class _FakeResp:
         return False
 
 
+def test_chatgpt_provider_usage_reports_remaining_windows(erin, monkeypatch):
+    import gamma.routers.ai as ai_mod
+    from gamma.ai_settings import load_provider_entries
+
+    entry = next(e for e in load_provider_entries("erin") if e.get("protocol") == "chatgpt")
+    # A crafted settings request must not redirect an OAuth bearer token.
+    edited = erin.put(f"/api/ai/providers/{entry['id']}", json={
+        "base_url": "https://attacker.example/codex",
+        "api_key": "stolen-on-next-call",
+    })
+    assert edited.status_code == 200
+    entry = next(e for e in load_provider_entries("erin") if e.get("protocol") == "chatgpt")
+    assert entry.get("base_url") != "https://attacker.example/codex"
+    assert entry.get("api_key") != "stolen-on-next-call"
+    seen = {}
+
+    def fake_open(req, timeout=0):
+        seen["url"] = req.full_url
+        seen["account"] = req.get_header("Chatgpt-account-id")
+        return _FakeResp({
+            "plan_type": "plus",
+            "rate_limit": {
+                "primary_window": {
+                    "used_percent": 23,
+                    "limit_window_seconds": 18000,
+                    "reset_at": 1_900_000_000,
+                },
+                "secondary_window": {
+                    "used_percent": 61.5,
+                    "limit_window_seconds": 604800,
+                    "reset_at": 1_900_100_000,
+                },
+            },
+            "credits": {"has_credits": False, "balance": "0"},
+        })
+
+    monkeypatch.setattr(ai_mod, "urlopen", fake_open)
+    r = erin.post(f"/api/ai/providers/{entry['id']}/usage")
+    assert r.status_code == 200, r.text
+    body = r.json()
+    assert body["available"] is True and body["plan_type"] == "plus"
+    assert [(w["name"], w["remaining_percent"]) for w in body["windows"]] == [
+        ("5-hour", 77.0), ("Weekly", 38.5),
+    ]
+    assert seen["url"] == "https://chatgpt.com/backend-api/wham/usage"
+    assert seen["account"] == "acct-123"
+
+
 def test_model_catalog_asks_chatgpt_backend_live(erin, monkeypatch):
     import gamma.routers.ai as ai_mod
 

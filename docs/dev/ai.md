@@ -8,10 +8,10 @@ loop runs, and what the user controls. The tools themselves are catalogued in
 `gamma/ai_client.py`, `gamma/ai_context.py`, `gamma/ai_tools.py`,
 `gamma/chatgpt_oauth.py`, `gamma/routers/ai.py` + the chat-history router.
 
-## Providers
+## Provider and models
 
 There are NO env API keys; providers are per-user GUI entries (Settings →
-Providers) stored under the reserved `ai-settings` prefs key in the user's
+Provider and models) stored under the reserved `ai-settings` prefs key in the user's
 `data.db` — a LIST of `{id, name, protocol, api_key, base_url, models}` managed
 via `POST/PUT/DELETE /api/ai/providers[/{id}]`. The generic prefs endpoints
 refuse the key; the only read path is the masked `GET /api/ai/settings` (last-4
@@ -23,8 +23,25 @@ so an expired ChatGPT grant is re-tried immediately.
 `ai_runtime(user)` in `gamma/ai_settings.py` builds the per-request config and
 model registry (ids are `<entryId>:<model>`; the wire format comes from the
 entry's `protocol`, never from the provider id) — AI endpoints must use it, not
-module-level config constants. Env vars only set each protocol's default base
-URL (`GAMMA_AI_ANTHROPIC_BASE_URL` / `GAMMA_AI_OPENAI_BASE_URL`).
+module-level config constants for credentials or model routing. Env vars set
+each protocol's administrator-controlled default base URL, including
+`GAMMA_AI_CHATGPT_BASE_URL`.
+
+The Provider and models pane also exposes `POST /api/ai/providers/{id}/usage`. For a
+ChatGPT OAuth entry it reads normalized subscription rate-limit windows
+(`used_percent`, `remaining_percent`, and reset time) without exposing the
+bearer token. Opening the pane queries OAuth usage automatically (the Usage
+button remains available for a manual refresh). Each window is one compact
+summary line above the same progress meter used for storage quota, filled by
+the percentage used. Each provider row also opens its model configuration,
+where models can be fetched, added, or removed.
+API-key protocols return an explicit unavailable result because OpenAI-
+compatible and Anthropic-style providers do not share a portable quota API.
+The account request deliberately uses the administrator-controlled ChatGPT
+protocol URL, not an entry field, and OAuth entries cannot edit their API key
+or base URL; this prevents a settings request from redirecting a bearer token.
+The ChatGPT account endpoint is provider-specific and may require maintenance
+if its upstream contract changes.
 
 ### The chatgpt protocol (OAuth)
 
@@ -84,9 +101,10 @@ What it can reach depends on where the chat is opened — every chat declares an
 - `"page"` — the paper chat (`page_id` = the focused page): tools reach only
   that paper, and only the reading tools exist there.
 
-The request also carries `permissions` (the Settings → Assistant → Folder
-agent per-tool toggles — localStorage JSON `gamma-ai-agent-perms`, missing key
-= allowed, so new tools default on) and optional `agent_system` (custom base
+The request also carries `permissions` (the effective per-chat tool choices,
+initially based on Settings → Assistant → Folder agent — localStorage JSON
+`gamma-ai-agent-perms`, missing key = allowed, so new tools default on) and
+optional `agent_system` (custom base
 prompt; the Prompts pane's "Library agent" entry, default
 `ai_tools.AGENT_PROMPT` via `/api/ai/models`). The scope and permission lines
 are always appended mechanically to the base prompt, so a custom prompt can
@@ -95,8 +113,16 @@ scope) = plain chat.
 
 ### Permissions and knobs (Settings → Assistant)
 
-One toggle per tool (both scopes): List pages, Read papers & notes, Search PDF
-text, Rename pages, Move pages. Plus:
+The overall **Enable agent** switch (`gamma-ai-agent-enabled`, default on)
+disables tool use everywhere. Folder chats default to tools on
+(`gamma-ai-folder-tools-default`) and PDF chats default to tools off
+(`gamma-ai-pdf-tools-default`); both defaults are configurable here. The Tools
+button in each folder/PDF chat header toggles the configured tool set for that
+chat only. New chat resets the switch to the Settings default.
+
+One default permission per tool: List pages, Read papers & notes, Search PDF
+text, Rename pages, Move pages. Folder scope offers all five; PDF scope exposes
+only the two reading tools. Plus:
 
 - **Tool rounds** (`gamma-ai-tool-rounds` → request `tool_rounds`, default 32,
   user-tunable 1–100) — provider round-trips one message may use.

@@ -96,6 +96,7 @@ Route order matters: the static-prefix routes (`by-doc`, `children`,
 | GET | `/ai/settings` | masked provider list (key hints only) |
 | POST/PUT/DELETE | `/ai/providers[/{id}]` | manage provider entries |
 | POST | `/ai/providers/{id}/test` | live probe of one credential |
+| POST | `/ai/providers/{id}/usage` | ChatGPT subscription allowance windows; explicitly unavailable for generic API-key providers |
 | POST | `/ai/model-catalog` | list models available to a credential |
 | POST | `/ai/oauth/chatgpt/start`, `/complete` | ChatGPT OAuth (PKCE, pasted callback URL) |
 | POST | `/ai/transcribe` | voice dictation |
@@ -112,6 +113,7 @@ Route order matters: the static-prefix routes (`by-doc`, `children`,
 | Method | Path | Purpose |
 |---|---|---|
 | POST | `/import/logseq` | Logseq .pdf + .edn import |
+| POST | `/import/markdown` | UTF-8 `.md`/`.markdown` file → note page and nested blocks (optional `folder`) |
 | POST | `/import/pdf-annotations` | import annotations embedded in the PDF (idempotent; optional `strip`) |
 | POST | `/import/zotero` | Zotero library import: zip of a "Zotero RDF" export (multipart `file`; `strip`, optional `folder` prefix). Items→pages+metadata, collections→folders, tags→labels, notes→blocks; embedded annotations via the same importer. Idempotent by file hash / `zotero_key` |
 | GET | `/pages/{id}/export` | page export (`?mode=readable|logseq-graph|zotero-rdf|gamma` + `highlights=&notes=&pdf=`); `gamma` = scoped backup for `/import-data?mode=merge` |

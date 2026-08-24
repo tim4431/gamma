@@ -16,6 +16,18 @@ IMAGE_MEDIA_TYPES = {".png": "image/png", ".jpg": "image/jpeg", ".jpeg": "image/
 DIGEST_CHARS = 24
 
 
+def display_filename(name: str, fallback: str = "") -> str:
+    """A browser-supplied upload name reduced to one display-only leaf.
+
+    Directory pickers may put a relative path in the multipart filename on
+    some browsers. Folder placement is carried separately, so neither POSIX
+    nor Windows separators belong in a page title or original_filename.
+    """
+    raw = str(name or "").replace("\x00", "").strip().replace("\\", "/")
+    leaf = raw.rsplit("/", 1)[-1].strip()
+    return (leaf or fallback)[:500]
+
+
 def is_pdf(data: bytes) -> bool:
     return len(data) >= 4 and data[:4] == b"%PDF"
 

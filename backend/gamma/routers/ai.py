@@ -282,14 +282,18 @@ class AIProviderRequest(BaseModel):
 
 def _apply_provider_fields(entry: dict, payload: AIProviderRequest):
     """Validate + copy the editable fields of a provider entry in place."""
+    oauth_entry = AI_PROTOCOLS.get(entry.get("protocol"), {}).get("auth") == "oauth"
     if payload.name is not None:
         entry["name"] = str(payload.name).strip()[:MAX_NAME_LEN]
-    if payload.api_key:  # never clears — deleting the entry is the only way to drop a key
+    # OAuth secrets and endpoints are owned by the sign-in flow. In
+    # particular, accepting an arbitrary base URL here would let a crafted API
+    # request redirect the bearer token on the next model or usage call.
+    if payload.api_key and not oauth_entry:  # never clears; delete the entry to drop a key
         key = str(payload.api_key).strip()
         if not key or len(key) > MAX_KEY_LEN or any(c.isspace() for c in key):
             raise HTTPException(status_code=400, detail="invalid API key")
         entry["api_key"] = key
-    if payload.base_url is not None:
+    if payload.base_url is not None and not oauth_entry:
         url = str(payload.base_url).strip().rstrip("/")
         if (url and not re.match(r"^https?://", url)) or len(url) > MAX_URL_LEN:
             raise HTTPException(status_code=400, detail="base URL must start with http(s)://")
@@ -384,6 +388,107 @@ def ai_provider_test(provider_id: str, request: Request):
     except Exception as e:
         return {"ok": False, "model": model, "error": str(e)}
     return {"ok": True, "model": model, "latency_ms": int((time.time() - started) * 1000)}
+
+
+def _usage_window(raw: dict | None, name: str = "") -> dict | None:
+    if not isinstance(raw, dict):
+        return None
+    try:
+        used = max(0.0, min(100.0, float(raw.get("used_percent", 0))))
+    except (TypeError, ValueError):
+        return None
+    try:
+        seconds = max(0, int(raw.get("limit_window_seconds") or 0))
+    except (TypeError, ValueError):
+        seconds = 0
+    try:
+        reset_at = int(raw.get("reset_at") or 0)
+    except (TypeError, ValueError):
+        reset_at = 0
+    if not name:
+        if 4 * 3600 <= seconds <= 6 * 3600:
+            name = "5-hour"
+        elif 6 * 86400 <= seconds <= 8 * 86400:
+            name = "Weekly"
+        elif seconds:
+            name = f"{max(1, round(seconds / 3600))}-hour"
+        else:
+            name = "Usage"
+    return {
+        "name": name,
+        "used_percent": used,
+        "remaining_percent": max(0.0, 100.0 - used),
+        "window_seconds": seconds,
+        "reset_at": reset_at,
+    }
+
+
+# Sync def: this read-only account call runs in FastAPI's threadpool.
+@router.post("/ai/providers/{provider_id}/usage")
+def ai_provider_usage(provider_id: str, request: Request):
+    """Return subscription allowance for a ChatGPT OAuth provider.
+
+    API-key protocols have no portable quota endpoint: OpenAI-compatible
+    gateways and Anthropic-style services all expose different billing/admin
+    APIs. Report that honestly instead of presenting token counts as quota.
+    """
+    user = _require_editor(request)
+    entry = next((e for e in load_provider_entries(user) if e.get("id") == provider_id), None)
+    if not entry:
+        raise HTTPException(status_code=404, detail="provider not found")
+    if entry.get("protocol") != "chatgpt":
+        return {"available": False,
+                "reason": "This API-key provider does not expose a standard remaining-usage percentage."}
+
+    clear_refresh_backoff(user, provider_id)
+    rt = ai_runtime(user)
+    conf = rt["providers"].get(provider_id)
+    if not conf:
+        return {"available": False, "reason": "Sign in with ChatGPT again to query usage."}
+    # Use the administrator-controlled protocol endpoint, never the saved
+    # entry value: OAuth entries cannot redirect their bearer token.
+    base = str(AI_PROTOCOLS["chatgpt"]["base_url"]).rstrip("/")
+    # The model endpoint is .../backend-api/codex; Codex's account client uses
+    # the sibling .../backend-api/wham/usage endpoint.
+    account_base = base[:-len("/codex")] if base.endswith("/codex") else base
+    url = f"{account_base}/wham/usage"
+    headers = {
+        "Authorization": f"Bearer {conf['api_key']}",
+        "Accept": "application/json",
+        "User-Agent": "codex-cli",
+    }
+    if conf.get("account_id"):
+        headers["ChatGPT-Account-Id"] = conf["account_id"]
+    req = URLRequest(url, headers=headers, method="GET")
+    try:
+        data = _model_catalog_json(req)
+    except Exception as e:
+        raise HTTPException(status_code=502,
+                            detail=f"usage inquiry failed: {_upstream_detail(e, 200)}")
+    if not isinstance(data, dict):
+        raise HTTPException(status_code=502, detail="usage inquiry returned invalid data")
+
+    rate = data.get("rate_limit")
+    rate = rate if isinstance(rate, dict) else {}
+    windows = [w for w in (
+        _usage_window(rate.get("primary_window")),
+        _usage_window(rate.get("secondary_window")),
+    ) if w]
+    for extra in data.get("additional_rate_limits") or []:
+        if not isinstance(extra, dict):
+            continue
+        extra_rate = extra.get("rate_limit") if isinstance(extra.get("rate_limit"), dict) else {}
+        window = _usage_window(extra_rate.get("primary_window"),
+                               str(extra.get("limit_name") or "Additional limit"))
+        if window:
+            windows.append(window)
+    return {
+        "available": bool(windows),
+        "plan_type": str(data.get("plan_type") or ""),
+        "windows": windows,
+        "credits": data.get("credits") if isinstance(data.get("credits"), dict) else None,
+        "reason": "" if windows else "The provider returned no usage windows.",
+    }
 
 
 # Fallback when the live listing fails on a connected entry (offline, backend
