@@ -3597,7 +3597,7 @@ export default function App() {
   goBackNavRef.current = goBackNav;
   const navStackLen = navStack.length;
 
-  function goHome(refreshHome = true) {
+  function goHome(refreshHome = true, keepFilters = false) {
     leaveCurrentPage();
     clearSession();
     suppressAutosaveRef.current = true;
@@ -3613,16 +3613,26 @@ export default function App() {
     setPageFolders([]);
     setBacklinks([]);
     setPdfHidden(false);
-    setFolderFilter("");
-    setCategoryFilter("");
+    if (!keepFilters) {
+      setFolderFilter("");
+      setCategoryFilter("");
+    }
     if (refreshHome) fetchHomeBlocks();
-    window.history.replaceState({}, "", window.location.pathname);
+    if (keepFilters && categoryFilter) {
+      window.history.replaceState(null, "", `/?category=${encodeURIComponent(categoryFilter)}`);
+    } else if (keepFilters && folderFilter) {
+      window.history.replaceState(null, "", `/?folder=${encodeURIComponent(folderFilter)}`);
+    } else {
+      window.history.replaceState({}, "", window.location.pathname);
+    }
   }
 
   function closeTab(id) {
     const next = openTabs.filter((t) => t.id !== id);
     updateTabs(next);
-    if (id === focusedBlockId) goHome();
+    // Closing the on-screen paper returns to the folder/label view the user
+    // was last browsing, not the library root.
+    if (id === focusedBlockId) goHome(true, true);
   }
 
   // Drag any window by its grip; drop zones dock it left, right, or bottom.
