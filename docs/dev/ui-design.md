@@ -70,8 +70,8 @@ Settings panes are built only from
 
 ## Theme
 
-Four states: System (default, tracks `prefers-color-scheme` live) or pinned
-Light/Dark/Sepia — `gamma-theme` in localStorage (valid values are `THEMES`
+Five states: System (default, tracks `prefers-color-scheme` live) or pinned
+Light/Dark/Sepia/Gray — `gamma-theme` in localStorage (valid values are `THEMES`
 in `prefs.js`), applied as `data-theme` on the root element. An inline script in `index.html` applies a pinned theme before
 first paint; `color-scheme` follows so native controls match. Scrollbars are
 themed rather than left to the OS: a global `scrollbar-width: thin` +
@@ -81,8 +81,8 @@ themed rather than left to the OS: a global `scrollbar-width: thin` +
 inverts the PDF canvas (`.pdfDark`), swaps highlight blending from multiply
 to screen, and darkens the scroller surround.
 
-**Sepia** is the eye-comfort mode and the one theme that reaches the PDF
-page as well as the chrome: its tokens are Solarized Light (warm cream ground
+**Sepia** and **Gray** are the eye-comfort modes and the themes that reach
+the PDF page as well as the chrome. Sepia: its tokens are Solarized Light (warm cream ground
 `#fdf6e3`, charcoal-teal text, Solarized accents darkened where a token is
 used as text — the stock accents sit near 3:1 on cream), and
 `[data-theme="sepia"] .pdfViewer:not(.pdfDark)` tints the page by giving the
@@ -91,10 +91,16 @@ it. Multiply, not a `sepia()`/`hue-rotate` filter: white paper lands exactly
 on the ground color while figures only warm slightly. The canvas also gets
 `opacity: 0.82` — under multiply that leaves the paper invariant and lifts
 only the ink, black → `(1−α)·paper` ≈ `#2e2c29` (~12.6:1), the softened
-charcoal the eye-strain guidance recommends over pure black. The tint needs no prop — `data-theme` is global, so it is pure CSS
+charcoal the eye-strain guidance recommends over pure black. **Gray** is the
+neutral counterpart — the same machinery driven by different tokens
+(`--pdf-paper: #f4f4f4`, `#2d2d2d` text ladder, Light's role colors) for
+users who want the glare cut without a color cast; the PDF rules select
+`:is([data-theme="sepia"], [data-theme="gray"])`, so a new tinted theme only
+needs a token block plus membership in those lists. The tint needs no prop — `data-theme` is global, so it is pure CSS
 — and "Flip page colors" wins when both are on. Light-ground rules that were
-`[data-theme="light"] …` are now `:is([data-theme="light"], [data-theme="sepia"])`;
-extend that list, don't add a third copy.
+`[data-theme="light"] …` are now
+`:is([data-theme="light"], [data-theme="sepia"], [data-theme="gray"])`;
+extend that list, don't add another copy.
 
 ## Layout
 
