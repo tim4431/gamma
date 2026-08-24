@@ -9,12 +9,15 @@ import rehypeKatex from "rehype-katex";
 import rehypeRaw from "rehype-raw";
 import { withLegacyAccessors } from "./logseqPdfModel";
 import { COLORS } from "./pdfViewer";
-import { AutoGrowTextarea, handleMarkdownCopy } from "./widgets";
+import { handleMarkdownCopy } from "./widgets";
 import { FolderIcon, LinkIcon } from "./icons";
 import {
-  caretClientPos, findMathAtCursor, insertionFor, latexCompletions,
+  findMathAtCursor, insertionFor, latexCompletions,
   LatexAcPopup, MathLivePreview,
 } from "./latexEditor";
+import { BlockCmEditor } from "./blockCmEditor";
+import { filterSlashCommands, SlashMenuPopup } from "./slashMenu";
+import { remarkCallouts } from "./callouts";
 
 // Module-level ref for native HTML5 drag-and-drop (shared with App's drop handlers)
 const _dragState = { draggingId: null, dropTarget: null };
@@ -26,12 +29,18 @@ const _dragState = { draggingId: null, dropTarget: null };
 // labels are resolved by the caller so the comparison here stays a string
 // check. onBlockRefClick is deliberately excluded from the comparison — the
 // caller passes an identity-stable wrapper.
-const BlockMarkdown = React.memo(function BlockMarkdown({ content, refLabels, onBlockRefClick }) {
+const BlockMarkdown = React.memo(function BlockMarkdown({ content, refLabels, onBlockRefClick, onTaskToggle }) {
+  // GFM task-list checkboxes render in document order; this counter maps the
+  // nth rendered checkbox back to the nth `[ ]`/`[x]` marker in the source so
+  // clicking one toggles the right marker. Reset per render — the whole
+  // element tree is rebuilt whenever this component re-renders.
+  let taskIdx = -1;
   return (
     <ReactMarkdown
       // remark-breaks: a single Enter inside a note renders as a real line
       // break (the editor lets you type them), not markdown's soft-break space.
-      remarkPlugins={[remarkGfm, remarkMath, remarkBreaks]}
+      // remarkCallouts must run before it (it eats the marker line's "\n").
+      remarkPlugins={[remarkGfm, remarkMath, remarkCallouts, remarkBreaks]}
       rehypePlugins={[rehypeRaw, rehypeKatex]}
       urlTransform={(url) => url.startsWith("blockref:") ? url : defaultUrlTransform(url)}
       components={{
@@ -56,7 +65,23 @@ const BlockMarkdown = React.memo(function BlockMarkdown({ content, refLabels, on
             );
           }
           return <a href={href} target="_blank" rel="noreferrer">{children}</a>;
-        }
+        },
+        input: ({ node, type, checked, disabled, ...props }) => {
+          if (type !== "checkbox") return <input type={type} {...props} />;
+          taskIdx += 1;
+          const idx = taskIdx;
+          return (
+            <input
+              type="checkbox"
+              className="mdTaskCheckbox"
+              checked={!!checked}
+              disabled={!onTaskToggle}
+              onChange={(e) => onTaskToggle?.(idx, e.target.checked)}
+              onMouseDown={(e) => e.stopPropagation()}
+              onClick={(e) => e.stopPropagation()}
+            />
+          );
+        },
       }}
     >
       {content
@@ -150,6 +175,22 @@ function BlockRow({
   const refClickRef = useRef(null);
   refClickRef.current = onBlockRefClick;
   const stableRefClick = useRef((id) => refClickRef.current?.(id)).current;
+  // Same identity-stable idiom for task-checkbox toggles: flip the nth
+  // `[ ]`/`[x]` marker in the source (list task items only — the regex mirrors
+  // what remark-gfm turns into checkboxes).
+  const taskToggleRef = useRef(null);
+  taskToggleRef.current = (idx, checked) => {
+    let i = -1;
+    const newVal = (block.content || "").replace(
+      /(^|\n)([ \t]*(?:[-*+]|\d+\.)[ \t]+\[)([ xX])(\])/g,
+      (m, p1, p2, p3, p4) => {
+        i += 1;
+        return i === idx ? p1 + p2 + (checked ? "x" : " ") + p4 : m;
+      },
+    );
+    if (newVal !== block.content) onChangeText(block.id, newVal);
+  };
+  const stableTaskToggle = useRef((idx, checked) => taskToggleRef.current?.(idx, checked)).current;
   // Resolve [[ref]] chip labels here (cheap per render) so BlockMarkdown's
   // memo can compare them as strings instead of depending on allBlocks,
   // whose identity changes on every edit.
@@ -168,6 +209,10 @@ function BlockRow({
   // edit AND caret move (onSelect) — the preview must track the caret.
   const [mathUi, setMathUi] = useState(null);
   const [mathAcIdx, setMathAcIdx] = useState(0);
+  // "/" command menu: { start, query, items, anchor }. Opened only by TYPING
+  // the slash (caret moves just keep or close it), suppressed inside math.
+  const [slashMenu, setSlashMenu] = useState(null);
+  const [slashIdx, setSlashIdx] = useState(0);
   const [searchResults, setSearchResults] = useState([]);
   const [imageDragOver, setImageDragOver] = useState(false);
   const uploadingRef = useRef(false);
@@ -228,7 +273,7 @@ function BlockRow({
     const next = {
       tex: ta.value.slice(seg.start, seg.end),
       display: seg.display,
-      anchor: caretClientPos(ta, cursor),
+      anchor: ta.caretCoords(cursor),
       ac: null,
     };
     setMathUi((prev) => {
@@ -257,53 +302,75 @@ function BlockRow({
     });
   }
 
+  // "/" trigger: a slash starting a word, with the query typed so far after
+  // it. Recomputed on edits (typing=true, may open) and caret moves
+  // (typing=false, only keeps an already-open menu on the same trigger).
+  function updateSlashMenu(ta, typing) {
+    const cursor = ta.selectionStart;
+    if (cursor !== ta.selectionEnd) { setSlashMenu(null); return; }
+    const m = ta.value.slice(0, cursor).match(/(?:^|\s)\/([a-zA-Z0-9-]*)$/);
+    if (!m || findMathAtCursor(ta.value, cursor)) { setSlashMenu(null); return; }
+    const start = cursor - m[1].length - 1;
+    const items = filterSlashCommands(m[1]);
+    if (!items.length) { setSlashMenu(null); return; }
+    const anchor = ta.caretCoords(start);
+    setSlashMenu((prev) => {
+      if (!typing && prev?.start !== start) return null;
+      return { start, query: m[1], items, anchor };
+    });
+    if (typing) setSlashIdx(0);
+  }
+
+  function runSlashCommand(c) {
+    const ta = ref.current;
+    if (!ta || !slashMenu) return;
+    const start = slashMenu.start;
+    const value = ta.value;
+    const cursor = ta.selectionStart;
+    setSlashMenu(null);
+    c.run({
+      value,
+      start,
+      cursor,
+      setText: (newVal, selStart, selEnd) => {
+        onChangeText(block.id, newVal);
+        requestAnimationFrame(() => {
+          try { ta.setSelectionRange(selStart, selEnd ?? selStart); } catch (_) {}
+          ta.focus();
+          updateMathUi(ta, false);
+        });
+      },
+      openRefPopup: () => {
+        requestAnimationFrame(() => {
+          setRefPopup({ query: "", rect: ta.getBoundingClientRect() });
+          setRefSelectedIdx(0);
+        });
+      },
+      // The file dialog blurs the editor (which exits edit mode), so the
+      // upload appends to the value captured here, with "/image" removed.
+      pickImage: () => {
+        const base = value.slice(0, start) + value.slice(cursor);
+        const inp = document.createElement("input");
+        inp.type = "file";
+        inp.accept = "image/*";
+        inp.onchange = async () => {
+          const url = await uploadImage(inp.files?.[0]);
+          if (url) onChangeText(block.id, (base ? base + "\n" : "") + `![](${url})`);
+        };
+        inp.click();
+      },
+    });
+  }
+
   useEffect(() => {
     registerRef(block.id, ref);
   }, [block.id, registerRef]);
 
+  // Caret-at-click placement now happens inside BlockCmEditor (posAtCoords on
+  // mount); just drop the captured coords once edit mode is entered so later
+  // re-renders don't reuse them.
   useEffect(() => {
-    if (!block.editMode) return;
-    const el = ref.current;
-    if (!el) return;
-    const pos = clickPosRef.current;
-    clickPosRef.current = null;
-    if (!pos) {
-      // No click coords (e.g., entered edit via Enter/Tab) — default cursor to end
-      return;
-    }
-    // Ask the browser which character offset in the textarea corresponds to (x, y).
-    // Different browsers: caretPositionFromPoint (Firefox), caretRangeFromPoint (WebKit/Chromium).
-    let offset = null;
-    try {
-      if (document.caretPositionFromPoint) {
-        const cp = document.caretPositionFromPoint(pos.x, pos.y);
-        if (cp && cp.offsetNode === el) offset = cp.offset;
-      } else if (document.caretRangeFromPoint) {
-        const range = document.caretRangeFromPoint(pos.x, pos.y);
-        if (range && range.startContainer === el) offset = range.startOffset;
-      }
-    } catch (_) {
-      // ignore
-    }
-    if (offset == null) {
-      // Fallback: estimate from vertical line + horizontal fraction using the textarea's metrics
-      const rect = el.getBoundingClientRect();
-      const relY = Math.max(0, pos.y - rect.top - parseFloat(getComputedStyle(el).paddingTop || "0"));
-      const lineHeight = parseFloat(getComputedStyle(el).lineHeight) || 20;
-      const lineIndex = Math.floor(relY / lineHeight);
-      const lines = (el.value || "").split("\n");
-      const targetLine = Math.min(lines.length - 1, Math.max(0, lineIndex));
-      const lineStart = lines.slice(0, targetLine).reduce((n, l) => n + l.length + 1, 0);
-      const relX = Math.max(0, pos.x - rect.left - parseFloat(getComputedStyle(el).paddingLeft || "0"));
-      // Approximate char width from font size
-      const fontSize = parseFloat(getComputedStyle(el).fontSize) || 14;
-      const charW = fontSize * 0.55;
-      const col = Math.min(lines[targetLine]?.length || 0, Math.round(relX / charW));
-      offset = lineStart + col;
-    }
-    try {
-      el.setSelectionRange(offset, offset);
-    } catch (_) {}
+    if (block.editMode) clickPosRef.current = null;
   }, [block.editMode]);
 
   const isHighlight = !!block.highlightId;
@@ -481,7 +548,7 @@ function BlockRow({
             title="Open page"
           ><span className="pageBulletDot" /></button>
         ) : (
-          <span className="dotSlot dotSlotEmpty" />
+          <span className="dotSlot dotSlotEmpty"><span className="noteBulletDot" /></span>
         )}
 
         <div className="blockBody">
@@ -496,11 +563,13 @@ function BlockRow({
           </div>
 
           {!readOnly && block.editMode ? (
-            <AutoGrowTextarea
+            <BlockCmEditor
               ref={ref}
               autoFocus
-              className="blockEditor"
-              data-block-id={block.id}
+              className="blockEditor blockEditorCm"
+              dataBlockId={block.id}
+              clickPos={clickPosRef.current}
+              refLabels={refLabels}
               value={block.content || ""}
               onChange={(e) => {
                 onChangeText(block.id, e.target.value);
@@ -514,11 +583,13 @@ function BlockRow({
                   setRefPopup(null);
                 }
                 updateMathUi(e.target, true);
+                updateSlashMenu(e.target, true);
               }}
-              onSelect={(e) => updateMathUi(e.target, false)}
+              onSelect={(e) => { updateMathUi(e.target, false); updateSlashMenu(e.target, false); }}
               onBlur={() => {
                 onStartEdit(block.id, false);
                 setMathUi(null);
+                setSlashMenu(null);
                 setTimeout(() => setRefPopup(null), 120);
               }}
               onPaste={handleEditorPaste}
@@ -528,6 +599,13 @@ function BlockRow({
                   if (e.key === "ArrowUp") { e.preventDefault(); setRefSelectedIdx((i) => Math.max(i - 1, 0)); return; }
                   if (e.key === "Enter") { e.preventDefault(); insertRef(searchResults[refSelectedIdx]); return; }
                   if (e.key === "Escape") { e.preventDefault(); setRefPopup(null); return; }
+                }
+                if (slashMenu) {
+                  const n = slashMenu.items.length;
+                  if (e.key === "ArrowDown") { e.preventDefault(); setSlashIdx((i) => Math.min(i + 1, n - 1)); return; }
+                  if (e.key === "ArrowUp") { e.preventDefault(); setSlashIdx((i) => Math.max(i - 1, 0)); return; }
+                  if (e.key === "Enter" || e.key === "Tab") { e.preventDefault(); runSlashCommand(slashMenu.items[slashIdx]); return; }
+                  if (e.key === "Escape") { e.preventDefault(); setSlashMenu(null); return; }
                 }
                 if (mathUi?.ac) {
                   const n = mathUi.ac.items.length;
@@ -544,6 +622,41 @@ function BlockRow({
                 if (e.key === "Enter" && newNoteKey) {
                   e.preventDefault();
                   onEnterSibling(block.id);
+                } else if (e.key === "Enter") {
+                  // The line-break Enter continues markdown lists/quotes
+                  // (Obsidian-style): "- [ ] foo⏎" starts the next line with
+                  // "- [ ] "; Enter on an empty marker line removes the
+                  // marker (ends the list). No marker → plain newline.
+                  const ta = ref.current;
+                  const cursor = ta?.selectionStart;
+                  if (ta && cursor === ta.selectionEnd) {
+                    const val = ta.value;
+                    const lineStart = val.lastIndexOf("\n", cursor - 1) + 1;
+                    const lineText = val.slice(lineStart, cursor);
+                    const m = lineText.match(/^(\s*)([-*+] \[[ xX]\] |[-*+] |\d+\. |> )/);
+                    if (m) {
+                      e.preventDefault();
+                      // Atomic CM dispatch (change + caret together) — the
+                      // onChangeText round-trip with a deferred caret would
+                      // race with the next keystrokes.
+                      if (lineText.length === m[0].length) {
+                        ta.view?.dispatch({
+                          changes: { from: lineStart, to: cursor, insert: "" },
+                          selection: { anchor: lineStart },
+                          userEvent: "delete",
+                        });
+                      } else {
+                        let marker = m[0].replace(/\[[xX]\]/, "[ ]");
+                        const num = marker.match(/^(\s*)(\d+)\. $/);
+                        if (num) marker = `${num[1]}${Number(num[2]) + 1}. `;
+                        ta.view?.dispatch({
+                          changes: { from: cursor, to: cursor, insert: "\n" + marker },
+                          selection: { anchor: cursor + 1 + marker.length },
+                          userEvent: "input",
+                        });
+                      }
+                    }
+                  }
                 } else if (e.key === "Tab" && !e.shiftKey) {
                   e.preventDefault();
                   onIndent(block.id);
@@ -561,12 +674,13 @@ function BlockRow({
                   onDelete(block.id);
                 }
               }}
-              placeholder="Type..."
+              placeholder="Type — '/' for commands"
             />
           ) : (
             <div className="blockRendered" onCopy={handleMarkdownCopy}>
               {(block.content || "").trim() ? (
-                <BlockMarkdown content={block.content || ""} refLabels={refLabels} onBlockRefClick={stableRefClick} />
+                <BlockMarkdown content={block.content || ""} refLabels={refLabels} onBlockRefClick={stableRefClick}
+                  onTaskToggle={readOnly ? undefined : stableTaskToggle} />
               ) : (
                 <div className="blockPlaceholder">(empty)</div>
               )}
@@ -610,6 +724,9 @@ function BlockRow({
             <LatexAcPopup items={mathUi.ac.items} selected={mathAcIdx} anchor={mathUi.anchor} onPick={acceptLatexAc} />
           ) : null}
         </>
+      ) : null}
+      {!readOnly && block.editMode && slashMenu ? (
+        <SlashMenuPopup items={slashMenu.items} selected={slashIdx} anchor={slashMenu.anchor} onPick={runSlashCommand} />
       ) : null}
       {refPopup && searchResults.length > 0 && (
         <div

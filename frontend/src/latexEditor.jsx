@@ -221,7 +221,7 @@ export function caretClientPos(ta, index) {
 // Keystroke-hot path: memoize renders (the preview re-renders the same
 // candidates constantly while the user types).
 const _kcache = new Map();
-function renderKatex(tex, displayMode) {
+export function renderKatex(tex, displayMode) {
   const key = (displayMode ? "D:" : "I:") + tex;
   let html = _kcache.get(key);
   if (html === undefined) {
@@ -243,7 +243,7 @@ const sampleFor = (c) => c.sample
 // worst-case clamp against max-width shoved narrow tips far left of the
 // caret near the right window edge) and keep it inside the viewport.
 // useLayoutEffect runs pre-paint, so the off-screen first pass never shows.
-function useCaretAnchored(anchor, preferAbove, deps) {
+export function useCaretAnchored(anchor, preferAbove, deps) {
   const ref = useRef(null);
   const [style, setStyle] = useState({ left: -9999, top: 0 });
   useLayoutEffect(() => {

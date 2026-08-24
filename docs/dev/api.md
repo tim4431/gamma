@@ -57,7 +57,7 @@ else; in dev, Vite proxies `/api` → `127.0.0.1:9001`.
 | POST/PUT/DELETE | `/blocks`, `/blocks/{id}` | CRUD |
 | PUT | `/blocks/{id}/children` | replace the whole subtree (delete + reinsert; triggers orphan-upload cleanup) |
 | POST | `/blocks/{id}/reorder` | sibling reorder |
-| GET | `/block-search` | fuzzy note/page/highlight search |
+| GET | `/block-search` | fuzzy note/page/highlight search; empty `q` returns recently edited blocks (feeds the `[[ref]]` popup's initial suggestions) |
 | POST | `/blocks-replace` | bulk replace (no frontend UI currently) |
 
 Route order matters: the static-prefix routes (`by-doc`, `children`,
