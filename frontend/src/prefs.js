@@ -89,11 +89,13 @@ export function useAppPrefs() {
     parse: (raw) => (TRANSLATE_LANGS.some(([code]) => code === raw) ? raw : undefined),
   });
   // Parallel translation requests: chunks of a page are translated this many
-  // at a time — the whole-document queue never exceeds it either.
+  // at a time — the whole-document queue never exceeds it either. Typed in
+  // Settings, clamped to 1–32 (a chunk is ~1200 chars, so even 32 stays well
+  // under provider rate limits for most accounts).
   const [translateParallel, setTranslateParallel] = usePersistedState("gamma-translate-parallel", 3, {
     parse: (raw) => {
       const n = Number.parseInt(raw, 10);
-      return Number.isFinite(n) && n >= 1 && n <= 8 ? n : undefined;
+      return Number.isFinite(n) && n >= 1 && n <= 32 ? n : undefined;
     },
   });
   // Model for page translation. "" = follow the chat model; a stale pick

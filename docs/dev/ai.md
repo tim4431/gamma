@@ -144,23 +144,27 @@ gateways keep chat-completions tools.
 `POST /api/ai/translate` backs the viewer's translated view. ONE 文A button
 in the PDF zoom column does everything by state: click translates the
 current page when nothing is translated yet, toggles show/hide for ALL pages
-once translations exist (hidden = slashed icon; holding Alt peeks), and
+once translations exist under the current language+model (switching either
+in Settings makes the button translate afresh; hidden = slashed icon;
+holding Alt peeks), and
 halts a running job; right-click (long-press on touch) opens the option
 menu — Translate this page / Translate whole document / Show
 original·translation (Stop translating while running). A whole-document job
 queues pages nearest the current page first (forward before backward at
 equal distance), so the page being read paints immediately. The queue lives
-in `pdfViewer.jsx` (`translateCtl`): a job segments every queued page up
-front, chunks the paragraphs (~6 paragraphs / 1200 chars) into ONE flat
-list, and N workers (Settings → Reading → parallel requests) stream through
-it across page boundaries — chunks paint as they land, char-weighted
-progress shows under the button and as a background-tasks row; halting keeps
-finished chunks, re-running skips done pages and re-fills partial ones from
-the server cache. Reliability: each chunk gets one
-client-side retry, and the server salvages a miscounted model reply
-("expected 5, got 4") by re-translating that batch paragraph by paragraph —
-a paragraph that still fails comes back verbatim (shown as original,
-uncached) instead of failing the request.
+in `pdfViewer.jsx` (`translateCtl`), producer/consumer style: the producer
+segments queued pages in order and feeds one flat list of ~6-paragraph /
+1200-char chunks, while N workers (Settings → Reading → parallel requests,
+typed, 1–32) stream through it across page boundaries — the first request is
+in flight while later pages are still segmenting, chunks paint as they land,
+char-weighted progress shows under the button and as a background-tasks row.
+Halting aborts the in-flight requests (each job carries an AbortController)
+and keeps finished chunks; re-running skips done pages and re-fills partial
+ones from the server cache. Reliability: each chunk gets one client-side
+retry, and the server salvages a miscounted model reply ("expected 5, got
+4") by re-translating that batch paragraph by paragraph, concurrently — a
+paragraph that still fails comes back verbatim (shown as original, uncached)
+instead of failing the request.
 
 Geometry never leaves the client: `frontend/src/pdfTranslate.js` segments
 pdf.js text runs into paragraph blocks (columns via whitespace-river
@@ -177,9 +181,11 @@ Targets are the allowlisted `TRANSLATE_LANGS` codes (mirrored in
 Reading (model follows the chat model by default; effort omitted unless
 picked — Low/Minimal is the speed lever for reasoning models); the whole
 Translation section can be switched off there too. The server keeps an
-**in-memory only** LRU (~5k entries) per (user, language, bare model name,
-source text) — deliberately nothing on disk; it makes halts/retries/re-shows
-free until a restart. Caps: 200 texts / 60k chars per request.
+**in-memory only** LRU (~5k entries, lock-guarded — requests run in the
+threadpool) per (user, language, bare model name, source text) —
+deliberately nothing on disk; it makes halts/retries/re-shows free until a
+restart. Duplicate paragraphs within a request go upstream once. Caps: 200
+texts / 60k chars per request.
 
 ## Chat history buckets
 

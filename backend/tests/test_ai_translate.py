@@ -95,6 +95,18 @@ def test_translate_caches_per_paragraph(carol, monkeypatch):
     assert calls[-1] == ["The quick brown fox."]
 
 
+def test_translate_dedupes_within_request(carol, monkeypatch):
+    # The same paragraph appearing twice (running headers, repeated captions)
+    # goes upstream once; the one translation fills both slots.
+    fake, calls = _fake_call(lambda batch: [f"译:{t}" for t in batch])
+    monkeypatch.setattr("gamma.routers.ai._call_ai", fake)
+    r = carol.post("/api/ai/translate",
+                   json={"texts": ["a twin paragraph", "a twin paragraph"], "lang": "it"})
+    assert r.status_code == 200
+    assert r.json()["translations"] == ["译:a twin paragraph", "译:a twin paragraph"]
+    assert calls == [["a twin paragraph"]]
+
+
 def test_translate_forwards_effort(carol, monkeypatch):
     seen = {}
 
