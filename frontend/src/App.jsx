@@ -18,10 +18,10 @@ import ChatDock from "./chatDock";
 import SearchPanel from "./search";
 import { ContextMenu, MenuItem, MenuLabel, MenuSelect, SubMenuItem } from "./menus";
 import {
-  ActivityIcon, AlertCircleIcon, ArrowLeftIcon, ArrowUpDownIcon, CheckIcon, CopyIcon, DatabaseIcon, DownloadIcon, ExportIcon,
-  ExternalLinkIcon, EyeIcon, FileGlyph, FileIcon, FileTextIcon, FitWidthIcon, FolderGlyph,
+  ActivityIcon, AlertCircleIcon, ArrowLeftIcon, ArrowUpDownIcon, BookIcon, CheckIcon, CopyIcon, DatabaseIcon, DownloadIcon, ExportIcon,
+  ExternalLinkIcon, EyeIcon, EyeOffIcon, FileGlyph, FileIcon, FileTextIcon, FitWidthIcon, FolderGlyph,
   FolderIcon, FolderOpenIcon, FolderPlusIcon, HomeIcon, ImportIcon, InfoIcon, LabelIcon,
-  LinkIcon, LogOutIcon, MaximizeIcon, MenuIcon, MinimizeIcon, PenIcon, PinIcon, PlusIcon,
+  LanguagesIcon, LanguagesOffIcon, LinkIcon, LogOutIcon, MaximizeIcon, MenuIcon, MinimizeIcon, PenIcon, PinIcon, PlusIcon,
   RectSelectIcon, SearchIcon, SettingsIcon, SparklesIcon, TextCursorIcon, TrashIcon, TypeIcon, UploadIcon,
   UserIcon, UsersIcon, XIcon, ZoomInIcon, ZoomOutIcon,
 } from "./icons";
@@ -53,7 +53,7 @@ import {
 } from "./logseqPdfModel";
 import { loadSession, saveSession, clearSession } from "./sessionState";
 import { AuthLoading, LoginPage, SessionConflictPage } from "./LoginPage";
-import { useAppPrefs } from "./prefs";
+import { TRANSLATE_LANGS, useAppPrefs } from "./prefs";
 import SettingsDialog from "./settings";
 import { QuotaMeter } from "./settingsKit";
 import {
@@ -1880,6 +1880,9 @@ export default function App() {
     fileLabels, setFileLabels,
     oaFallback, setOaFallback, metaAutoFetch, setMetaAutoFetch, pdfSaveLocal, setPdfSaveLocal,
     snapVertical, setSnapVertical, embAnnots, setEmbAnnots,
+    translateEnabled, setTranslateEnabled,
+    translateLang, setTranslateLang, translateModel, setTranslateModel,
+    translateEffort, setTranslateEffort, translateParallel, setTranslateParallel,
     searchDetailsHome, setSearchDetailsHome, searchDetailsPaper, setSearchDetailsPaper,
     enterNewNote, setEnterNewNote, hlNoteBadges, setHlNoteBadges,
     statusBarVisible, setStatusBarVisible,
@@ -2333,6 +2336,62 @@ export default function App() {
   const metaFetchModel = metaModel && scopedAiModels.some((m) => m.id === metaModel)
     ? metaModel
     : chatSendModel;
+
+  // --- PDF translation (the 文A button in the viewer's zoom column) ---
+  // The button prompts "this page or whole document"; the queue itself lives
+  // in PdfViewer (translateCtl), which calls back into translateParagraphs
+  // below for each page. Language, model, effort and parallelism live in
+  // Settings → Reading → PDF viewer.
+  const translateSendModel = translateModel && scopedAiModels.some((m) => m.id === translateModel)
+    ? translateModel
+    : chatSendModel;
+  const translateLangLabel = (TRANSLATE_LANGS.find(([code]) => code === translateLang) || ["", ""])[1];
+  const pdfTranslateCtl = useRef(null); // imperative surface set by PdfViewer
+  const [pdfTransState, setPdfTransState] = useState({ running: false, progress: 0, shown: true, pages: 0 });
+  const [transMenu, setTransMenu] = useState(null); // {x, y} while the button's option menu is open
+  const transTaskRef = useRef(null); // background-tasks row for the running job
+  const transLongRef = useRef(0); // long-press timer (touch): opens the menu like right-click does
+  const transLongFiredRef = useRef(false); // swallow the click that follows a fired long-press
+  function openTransMenu(el) {
+    const r = el.getBoundingClientRect();
+    setTransMenu({ x: r.right + 8, y: r.top - 4 });
+  }
+  function handleTranslateState(st) {
+    setPdfTransState(st);
+    if (st.running && !transTaskRef.current) {
+      transTaskRef.current = addTransfer({ name: `Translate ${st.label} → ${translateLangLabel}`, kind: "ai", info: "0%" });
+    }
+    if (transTaskRef.current) {
+      if (st.running) {
+        updateTransfer(transTaskRef.current, { info: `${Math.round(st.progress * 100)}%` });
+      } else {
+        const full = st.progress >= 0.999;
+        updateTransfer(transTaskRef.current, { status: "done", info: full ? "100%" : `stopped at ${Math.round(st.progress * 100)}%` });
+        transTaskRef.current = null;
+      }
+    }
+  }
+  // One chunk of paragraphs → translations, a single provider call. All the
+  // chunking, queueing and parallelism live in the viewer's engine; this is
+  // just the HTTP wrapper carrying the language/model/effort settings.
+  // Returns null on failure (already surfaced on the status pill) — the
+  // engine retries a chunk once before failing the job.
+  async function translateChunk(texts) {
+    try {
+      const data = await apiJson(`${API}/ai/translate`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          texts, lang: translateLang,
+          model: translateSendModel || "", effort: translateEffort || "",
+        }),
+      });
+      return data.translations || null;
+    } catch (err) {
+      setStatus(`Translation failed: ${err.message}`);
+      return null;
+    }
+  }
 
   // POST /metadata/fetch for one page, tracked as a transfer-panel task.
   // Shared by the open-page fetch and the bulk-upload follow-up; throws on
@@ -6213,6 +6272,30 @@ export default function App() {
           </button>
         </ContextMenu>
       )}
+      {transMenu && (
+        <ContextMenu x={transMenu.x} y={transMenu.y} onClose={() => setTransMenu(null)}>
+          {pdfTransState.running ? (
+            <MenuItem icon={XIcon} onClick={() => { setTransMenu(null); pdfTranslateCtl.current?.halt(); }}>
+              Stop translating
+            </MenuItem>
+          ) : (
+            <>
+              <MenuItem icon={FileIcon} onClick={() => { setTransMenu(null); pdfTranslateCtl.current?.translatePage(); }}>
+                Translate this page
+              </MenuItem>
+              <MenuItem icon={BookIcon} onClick={() => { setTransMenu(null); pdfTranslateCtl.current?.translateDoc(); }}>
+                Translate whole document
+              </MenuItem>
+            </>
+          )}
+          {pdfTransState.pages > 0 ? (
+            <MenuItem icon={pdfTransState.shown ? EyeOffIcon : EyeIcon}
+              onClick={() => { setTransMenu(null); pdfTranslateCtl.current?.setShown(!pdfTransState.shown); }}>
+              {pdfTransState.shown ? "Show original" : "Show translation"}
+            </MenuItem>
+          ) : null}
+        </ContextMenu>
+      )}
 
       <div className="workArea">
       <PanelGroup direction="horizontal" autoSaveId="gamma-work-h" ref={(h) => { panelGroupRefs.current["work-h"] = h; }}>
@@ -6260,6 +6343,45 @@ export default function App() {
               <button className="pdfFitWidthBtn" onClick={() => zoomTo("page-width")} title="Fit to width" aria-label="Fit to width">
                 <FitWidthIcon size={15} />
               </button>
+              {translateEnabled && !readOnly ? (
+                <button
+                  className={pdfTransState.running || (pdfTransState.pages > 0 && pdfTransState.shown) ? "modeActive" : ""}
+                  onClick={(e) => {
+                    if (transLongFiredRef.current) { transLongFiredRef.current = false; return; }
+                    if (pdfTransState.running) { pdfTranslateCtl.current?.halt(); return; }
+                    if (pdfTransState.pages > 0) { pdfTranslateCtl.current?.setShown(!pdfTransState.shown); return; }
+                    pdfTranslateCtl.current?.translatePage();
+                  }}
+                  onContextMenu={(e) => { e.preventDefault(); openTransMenu(e.currentTarget); }}
+                  onPointerDown={(e) => {
+                    if (e.pointerType === "mouse") return;
+                    const el = e.currentTarget;
+                    clearTimeout(transLongRef.current);
+                    transLongRef.current = setTimeout(() => { transLongFiredRef.current = true; openTransMenu(el); }, 500);
+                  }}
+                  onPointerUp={() => clearTimeout(transLongRef.current)}
+                  onPointerCancel={() => clearTimeout(transLongRef.current)}
+                  title={pdfTransState.running
+                    ? `Translating… ${Math.round(pdfTransState.progress * 100)}% — click to stop (right-click for options)`
+                    : pdfTransState.pages > 0
+                      ? (pdfTransState.shown
+                          ? "Hide the translation (all pages; Alt peeks) — right-click for options"
+                          : "Show the translation — right-click for options")
+                      : `Translate this page into ${translateLangLabel} — right-click: whole document & options`}
+                  aria-label={pdfTransState.running ? "Stop translating"
+                    : pdfTransState.pages > 0 ? (pdfTransState.shown ? "Hide translation" : "Show translation")
+                    : "Translate"}
+                >
+                  {pdfTransState.running
+                    ? <span className="pillSpin" aria-hidden="true" />
+                    : pdfTransState.pages > 0 && !pdfTransState.shown
+                      ? <LanguagesOffIcon size={15} />
+                      : <LanguagesIcon size={15} />}
+                </button>
+              ) : null}
+              {translateEnabled && !readOnly && pdfTransState.running ? (
+                <div className="pdfTransPct">{Math.round(pdfTransState.progress * 100)}%</div>
+              ) : null}
               {isPhone && !readOnly ? (
                 <button
                   className={areaSelectMode ? "modeActive" : ""}
@@ -6292,6 +6414,11 @@ export default function App() {
               hideEmbeddedAnnots={embAnnots === "hide"}
               snapVertical={snapVertical}
               darkPage={pdfDarkPage}
+              translateKey={`${translateLang}|${translateSendModel}`}
+              translateParallel={translateParallel}
+              onTranslate={readOnly ? undefined : translateChunk}
+              translateCtlRef={pdfTranslateCtl}
+              onTranslateState={handleTranslateState}
               areaMode={areaSelectMode && isPhone && !readOnly}
               pdfScaleValue={pdfScale} scrollRef={scrollToRef}
               searchRef={pdfSearchRef}
@@ -6615,6 +6742,16 @@ export default function App() {
           setEmbAnnots,
           snapVertical,
           setSnapVertical,
+          translateEnabled,
+          setTranslateEnabled,
+          translateLang,
+          setTranslateLang,
+          translateModel,
+          setTranslateModel,
+          translateEffort,
+          setTranslateEffort,
+          translateParallel,
+          setTranslateParallel,
           pdfDarkPage,
           setPdfDarkPage,
           recentThumbs,

@@ -25,6 +25,14 @@ const TOOL_ROUNDS_CODEC = {
 // MenuSelect both derive from this list.
 export const FILE_LABEL_MODES = ["off", "labels", "folders", "both"];
 
+// Target languages for the PDF translated view. Codes mirror the backend's
+// allowlist (TRANSLATE_LANGS in gamma/routers/ai.py) — keep the two in sync.
+export const TRANSLATE_LANGS = [
+  ["zh-CN", "中文（简体）"], ["zh-TW", "中文（繁體）"], ["en", "English"],
+  ["ja", "日本語"], ["ko", "한국어"], ["de", "Deutsch"], ["fr", "Français"],
+  ["es", "Español"], ["pt", "Português"], ["it", "Italiano"], ["ru", "Русский"],
+];
+
 // Folder-agent per-tool permissions (Settings → Assistant → Folder agent).
 // Missing keys mean allowed, so new tools default on for existing users.
 const AGENT_PERMS_DEFAULT = { list: true, read: true, search: true, rename: true, move: true };
@@ -71,6 +79,32 @@ export function useAppPrefs() {
   // at import time.
   const [embAnnots, setEmbAnnots] = usePersistedState("gamma-embedded-annots", "hide", {
     parse: (raw) => (raw === "hide" || raw === "strip" ? raw : undefined),
+  });
+
+  // --- Translation (Settings → Reading → PDF viewer) ---
+  // Master switch: off removes the translate button from the viewer.
+  const [translateEnabled, setTranslateEnabled] = usePersistedFlag("gamma-translate-enabled", true);
+  // Target language for the translated view (the 文A button in the viewer).
+  const [translateLang, setTranslateLang] = usePersistedState("gamma-translate-lang", "zh-CN", {
+    parse: (raw) => (TRANSLATE_LANGS.some(([code]) => code === raw) ? raw : undefined),
+  });
+  // Parallel translation requests: chunks of a page are translated this many
+  // at a time — the whole-document queue never exceeds it either.
+  const [translateParallel, setTranslateParallel] = usePersistedState("gamma-translate-parallel", 3, {
+    parse: (raw) => {
+      const n = Number.parseInt(raw, 10);
+      return Number.isFinite(n) && n >= 1 && n <= 8 ? n : undefined;
+    },
+  });
+  // Model for page translation. "" = follow the chat model; a stale pick
+  // (provider/model removed) also falls back.
+  const [translateModel, setTranslateModel] = usePersistedState("gamma-translate-model", "");
+  // Reasoning effort for translation calls. "" = provider default (param
+  // omitted — some models reject it outright, so that stays the safe
+  // default); Low/Minimal is the speed lever for reasoning models, which
+  // otherwise spend their thinking budget before the first output token.
+  const [translateEffort, setTranslateEffort] = usePersistedState("gamma-translate-effort", "", {
+    parse: (raw) => (["", "minimal", "low", "medium", "high"].includes(raw) ? raw : undefined),
   });
 
   // --- Search (Settings → Reading) ---
@@ -130,6 +164,9 @@ export function useAppPrefs() {
     fileLabels, setFileLabels,
     oaFallback, setOaFallback, metaAutoFetch, setMetaAutoFetch, pdfSaveLocal, setPdfSaveLocal,
     snapVertical, setSnapVertical, embAnnots, setEmbAnnots,
+    translateEnabled, setTranslateEnabled,
+    translateLang, setTranslateLang, translateModel, setTranslateModel,
+    translateEffort, setTranslateEffort, translateParallel, setTranslateParallel,
     searchDetailsHome, setSearchDetailsHome, searchDetailsPaper, setSearchDetailsPaper,
     enterNewNote, setEnterNewNote, hlNoteBadges, setHlNoteBadges,
     statusBarVisible, setStatusBarVisible,

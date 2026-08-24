@@ -139,6 +139,48 @@ completions — but only against the official api.openai.com base URL; custom
 gateways keep chat-completions tools.
 
 
+## PDF translation
+
+`POST /api/ai/translate` backs the viewer's translated view. ONE 文A button
+in the PDF zoom column does everything by state: click translates the
+current page when nothing is translated yet, toggles show/hide for ALL pages
+once translations exist (hidden = slashed icon; holding Alt peeks), and
+halts a running job; right-click (long-press on touch) opens the option
+menu — Translate this page / Translate whole document / Show
+original·translation (Stop translating while running). A whole-document job
+queues pages nearest the current page first (forward before backward at
+equal distance), so the page being read paints immediately. The queue lives
+in `pdfViewer.jsx` (`translateCtl`): a job segments every queued page up
+front, chunks the paragraphs (~6 paragraphs / 1200 chars) into ONE flat
+list, and N workers (Settings → Reading → parallel requests) stream through
+it across page boundaries — chunks paint as they land, char-weighted
+progress shows under the button and as a background-tasks row; halting keeps
+finished chunks, re-running skips done pages and re-fills partial ones from
+the server cache. Reliability: each chunk gets one
+client-side retry, and the server salvages a miscounted model reply
+("expected 5, got 4") by re-translating that batch paragraph by paragraph —
+a paragraph that still fails comes back verbatim (shown as original,
+uncached) instead of failing the request.
+
+Geometry never leaves the client: `frontend/src/pdfTranslate.js` segments
+pdf.js text runs into paragraph blocks (columns via whitespace-river
+detection, paragraphs via indents/font changes, figure-wrap via sustained
+width changes; math-heavy/numeric blocks are skipped), each carrying
+PER-LINE rects. The overlay masks exactly those original lines (plus the
+leading between them) and lays the translation over them with an inline
+cloned background — so figures a paragraph brushes against are never painted
+over, and the layout never moves. Translated text is selectable/copyable;
+while shown, the invisible original text layer stands down.
+
+Targets are the allowlisted `TRANSLATE_LANGS` codes (mirrored in
+`frontend/src/prefs.js`); model and reasoning `effort` come from Settings →
+Reading (model follows the chat model by default; effort omitted unless
+picked — Low/Minimal is the speed lever for reasoning models); the whole
+Translation section can be switched off there too. The server keeps an
+**in-memory only** LRU (~5k entries) per (user, language, bare model name,
+source text) — deliberately nothing on disk; it makes halts/retries/re-shows
+free until a restart. Caps: 200 texts / 60k chars per request.
+
 ## Chat history buckets
 
 Focused page id in the paper view, `home` at the library root,

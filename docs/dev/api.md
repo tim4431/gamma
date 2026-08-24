@@ -99,6 +99,7 @@ Route order matters: the static-prefix routes (`by-doc`, `children`,
 | POST | `/ai/model-catalog` | list models available to a credential |
 | POST | `/ai/oauth/chatgpt/start`, `/complete` | ChatGPT OAuth (PKCE, pasted callback URL) |
 | POST | `/ai/transcribe` | voice dictation |
+| POST | `/ai/translate` | translate paragraph texts for the viewer's translated view (`{texts, lang, model, effort}` → `{translations}`; in-memory per-paragraph cache) |
 | GET | `/pdf-text-status` | whether a doc has extractable text |
 
 ### Chats (`chats.py`, prefix `/api/chats`)

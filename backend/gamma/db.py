@@ -91,6 +91,9 @@ DATA_SCHEMA = [
     # captured client-side from the rendered viewer), synced across devices.
     # Too big for the prefs KV, hence their own table + /api/page-snaps.
     "CREATE TABLE IF NOT EXISTS page_snaps (page_id TEXT PRIMARY KEY, img TEXT NOT NULL, at TEXT NOT NULL)",
+    # (A short-lived `translations` table existed briefly during development
+    # of the PDF translated view — the cache is in-memory now; a leftover
+    # table is harmless, like the legacy `annotations` one.)
 ]
 
 # Snapshots exist only to cover the (24-entry) recents queue; keep a few
