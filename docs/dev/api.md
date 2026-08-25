@@ -80,6 +80,11 @@ Route order matters: the static-prefix routes (`by-doc`, `children`,
 | POST | `/search-reindex` | full rebuild, or just `doc_ids` from the body |
 | GET | `/tasks` | background task progress (indexing, downloads) |
 
+### Link previews (`links.py`)
+| Method | Path | Purpose |
+|---|---|---|
+| GET | `/link-preview?url=` | webpage title for the frontend's link chips (`{url, host, title}`); fetch goes through the SSRF guard, results cached in-process (TTL 24 h) |
+
 ### Metadata (`metadata.py`)
 | Method | Path | Purpose |
 |---|---|---|
@@ -95,8 +100,9 @@ Route order matters: the static-prefix routes (`by-doc`, `children`,
 | GET | `/ai/models` | model registry + default prompts (feeds the model switchers and prompt editor) |
 | GET | `/ai/settings` | masked provider list (key hints only) |
 | POST/PUT/DELETE | `/ai/providers[/{id}]` | manage provider entries |
-| POST | `/ai/providers/{id}/test` | live probe of one credential |
-| POST | `/ai/providers/{id}/usage` | ChatGPT subscription allowance windows; explicitly unavailable for generic API-key providers |
+| POST | `/ai/providers/{id}/test` | live probe of one credential (model: the entry's `test_model`, else the request's `model` — the client sends its metadata model — else the first model); failures carry an `auth` flag for expired/rejected credentials |
+| POST | `/ai/providers/{id}/usage` | ChatGPT subscription allowance windows; explicitly unavailable for generic API-key providers; an expired sign-in returns `{available: false, auth: true}` in-body |
+| POST | `/ai/health` | login connection check of one entry (`{provider_id, mode}`; `""` = first entry): `mode: "ping"` is the free credential check (OAuth → usage endpoint, API key → `/v1/models`), `"test"` the tiny live completion; always answers in-body `{configured, ok, auth?, error?}` |
 | POST | `/ai/model-catalog` | list models available to a credential |
 | POST | `/ai/oauth/chatgpt/start`, `/complete` | ChatGPT OAuth (PKCE, pasted callback URL) |
 | POST | `/ai/transcribe` | voice dictation |

@@ -50,6 +50,16 @@ export const SLASH_COMMANDS = [
     run: (ctx) => { replaceRange(ctx, "[["); ctx.openRefPopup(); },
   },
   {
+    name: "embed", label: "Embed note", glyph: "⧉", hint: "show a block inline",
+    keywords: ["transclude", "include", "block"],
+    run: (ctx) => { replaceRange(ctx, "![["); ctx.openRefPopup(); },
+  },
+  {
+    name: "highlight", label: "Highlight text", glyph: "==", hint: "==marked==",
+    keywords: ["mark", "yellow", "emphasize"],
+    run: (ctx) => replaceRange(ctx, "==x==", 2, 1),
+  },
+  {
     name: "math", label: "Inline equation", glyph: "$x$", hint: "LaTeX, rendered in place",
     keywords: ["equation", "latex", "tex"],
     run: (ctx) => replaceRange(ctx, "$x$", 1, 1),

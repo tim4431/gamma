@@ -18,7 +18,26 @@ refuse the key; the only read path is the masked `GET /api/ai/settings` (last-4
 hint, never the key), guests can't write. `POST /api/ai/providers/{id}/test`
 probes an entry with a tiny live completion for the settings list's Test button
 — result in-body, never an HTTP error, and it clears the OAuth refresh backoff
-so an expired ChatGPT grant is re-tried immediately.
+so an expired ChatGPT grant is re-tried immediately. The probe's model:
+the entry's optional `test_model` (editable in the form's Models step), else
+the `model` sent with the request (the client passes its effective metadata
+model — the cheap utility model), else the entry's first model. A failed probe
+carries an `auth` flag on 401/403 so the row renders
+"sign-in expired — reconnect" instead of the upstream body. Upstream error
+details are summarized before display everywhere (`upstream_detail` in
+`ai_client.py`): JSON bodies reduce to their message field, HTML error pages
+(a proxy's 502 page) to their `<title>`.
+
+`POST /api/ai/health` ({provider_id, mode}; "" = first entry) is the login
+connection check (Settings → Provider and models → "Check at login",
+localStorage `gamma-ai-login-check`, default on): mode `"ping"` verifies the
+credential for free — OAuth entries hit the usage endpoint, API keys list
+`/v1/models`, both 401 on a dead credential (404/405 = gateway without a
+listing → ok-but-unverified, no false alarm) — and `"test"` runs the same tiny
+completion as the Test button. The answer is always in-body
+(`{configured, ok, auth?, error?}`); a failure renders as a warning strip in
+the chat window ("authentication is broken — sign in again"), dismissed or
+cleared by a passing Test / provider edit.
 
 `ai_runtime(user)` in `gamma/ai_settings.py` builds the per-request config and
 model registry (ids are `<entryId>:<model>`; the wire format comes from the
@@ -37,6 +56,8 @@ the percentage used. Each provider row also opens its model configuration,
 where models can be fetched, added, or removed.
 API-key protocols return an explicit unavailable result because OpenAI-
 compatible and Anthropic-style providers do not share a portable quota API.
+An expired ChatGPT sign-in answers in-body (`{available: false, auth: true}`
+with a "sign in again" reason) rather than dumping the upstream 401.
 The account request deliberately uses the administrator-controlled ChatGPT
 protocol URL, not an entry field, and OAuth entries cannot edit their API key
 or base URL; this prevents a settings request from redirecting a bearer token.

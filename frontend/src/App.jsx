@@ -1937,7 +1937,7 @@ export default function App() {
     searchDetailsHome, setSearchDetailsHome, searchDetailsPaper, setSearchDetailsPaper,
     enterNewNote, setEnterNewNote, hlNoteBadges, setHlNoteBadges,
     statusBarVisible, setStatusBarVisible,
-    chatEffort, setChatEffort, metaModel, setMetaModel,
+    chatEffort, setChatEffort, aiLoginCheck, setAiLoginCheck, metaModel, setMetaModel,
     dictationModel, setDictationModel, dictationLang, setDictationLang,
     chatSystem, setChatSystem, agentSystem, setAgentSystem,
     metaPrompt, setMetaPrompt, citePrompt, setCitePrompt,
@@ -1990,6 +1990,10 @@ export default function App() {
   // id -> {busy} | normalized subscription allowance. API-key providers
   // return an explicit unavailable reason because their billing APIs differ.
   const [aiKeyUsage, setAiKeyUsage] = useState({});
+  // Login connection check (POST /ai/health, Settings → Provider and models):
+  // null = nothing to report; a failed result renders the chat panel's
+  // warning strip ("sign-in expired — reconnect") until fixed or dismissed.
+  const [aiHealth, setAiHealth] = useState(null);
 
   // The settings page (account popover → Settings…): two-column modal,
   // categories on the left, the selected pane on the right.
@@ -2118,11 +2122,17 @@ export default function App() {
     setAiKeyTests((t) => ({ ...t, [p.id]: { busy: true } }));
     let result;
     try {
-      result = await apiJson(`${API}/ai/providers/${p.id}/test`, { method: "POST" });
+      result = await apiJson(`${API}/ai/providers/${p.id}/test`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ model: probeModelFor(p.id) }),
+      });
     } catch (err) {
       result = { ok: false, error: err.message };
     }
     setAiKeyTests((t) => ({ ...t, [p.id]: result }));
+    // A passing test clears this provider's login-check warning strip.
+    if (result.ok) setAiHealth((h) => (h?.provider_id === p.id ? null : h));
   }
   async function queryAiProviderUsage(p) {
     setAiKeyUsage((u) => ({ ...u, [p.id]: { busy: true } }));
@@ -2134,6 +2144,31 @@ export default function App() {
     }
     setAiKeyUsage((u) => ({ ...u, [p.id]: result }));
   }
+  // Connection check of the active provider (Settings → Provider and models →
+  // "Check connection at login"): a broken credential surfaces as the chat
+  // panel's warning strip at login instead of as a failed chat later. The
+  // default "ping" mode spends no tokens; network failures reaching our own
+  // server stay silent — every other request would be failing too.
+  const aiHealthArgsRef = useRef({});
+  aiHealthArgsRef.current = { mode: aiLoginCheck, provider: aiProvider };
+  async function checkAiHealth() {
+    const { mode, provider } = aiHealthArgsRef.current;
+    if (mode === "off") { setAiHealth(null); return; }
+    try {
+      const r = await apiJson(`${API}/ai/health`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ provider_id: provider || "", mode, model: probeModelFor(provider) }),
+      });
+      setAiHealth(r.configured && !r.ok ? r : null);
+    } catch {}
+  }
+  useEffect(() => {
+    if (!authUser?.user || authUser.is_guest || readOnly) return;
+    // Delayed so the server-synced active-provider pick can land first.
+    const timer = setTimeout(checkAiHealth, 1500);
+    return () => clearTimeout(timer);
+  }, [authUser?.user, readOnly]);
   // Entering the AI pane always refetches the masked key list.
   useEffect(() => {
     if (settingsOpen === "ai" && authUser?.user && !readOnly) loadAiKeys();
@@ -2153,12 +2188,12 @@ export default function App() {
 
   function startAddAiProvider() {
     setAiKeysError("");
-    setAiKeysForm({ id: "", protocol: aiKeysInfo?.protocols?.[0]?.id || "anthropic", name: "", api_key: "", base_url: "", models: "" });
+    setAiKeysForm({ id: "", protocol: aiKeysInfo?.protocols?.[0]?.id || "anthropic", name: "", api_key: "", base_url: "", models: "", test_model: "" });
   }
 
   function startEditAiProvider(p) {
     setAiKeysError("");
-    setAiKeysForm({ id: p.id, protocol: p.protocol, name: p.name || "", api_key: "", base_url: p.base_url || "", models: p.models || "" });
+    setAiKeysForm({ id: p.id, protocol: p.protocol, name: p.name || "", api_key: "", base_url: p.base_url || "", models: p.models || "", test_model: p.test_model || "" });
   }
 
   // Model picker for the form: API protocols are listed live from the
@@ -2246,6 +2281,7 @@ export default function App() {
                   name: f.name.trim(), models: f.models.trim() } }
       : { url: `${API}/ai/providers${f.id ? `/${f.id}` : ""}`, method: f.id ? "PUT" : "POST",
           body: { protocol: f.protocol, name: f.name.trim(), base_url: f.base_url.trim(), models: f.models.trim(),
+                  test_model: (f.test_model || "").trim(),
                   ...(f.api_key.trim() ? { api_key: f.api_key.trim() } : {}) } };
     await runAiKeysRequest(() => apiJson(req.url, {
       method: req.method,
@@ -2278,6 +2314,9 @@ export default function App() {
       setAiKeysInfo(await call());
       if (closeForm) setAiKeysForm(null);
       refreshAiModels();
+      // A provider edit may have fixed (or removed) the credential behind the
+      // chat panel's warning strip — re-run the check while one is showing.
+      if (aiHealth) checkAiHealth();
     } catch (err) {
       setAiKeysError(err.message);
     } finally {
@@ -2430,6 +2469,16 @@ export default function App() {
   const metaFetchModel = metaModel && scopedAiModels.some((m) => m.id === metaModel)
     ? metaModel
     : chatSendModel;
+
+  // Model name the credential probes (Test button / login check "test" mode)
+  // prefer: the effective metadata model when it belongs to the probed entry —
+  // metadata fetches already trust it as the cheap utility model. The entry's
+  // own "Test model" setting still wins server-side; registry ids are
+  // "<entryId>:<model>", so a model from another entry is not sent.
+  const probeModelFor = (providerId) => {
+    const rid = metaModel || chatSendModel || "";
+    return providerId && rid.startsWith(`${providerId}:`) ? rid.slice(providerId.length + 1) : "";
+  };
 
   // --- PDF translation (the 文A button in the viewer's zoom column) ---
   // The button prompts "this page or whole document"; the queue itself lives
@@ -4948,7 +4997,9 @@ export default function App() {
                   <span data-popover="meta" style={{ position: "relative", display: "inline-flex" }}>
                     <button
                       className="pageActionBtn"
-                      title="Paper metadata (authors, venue, DOI, source file…)"
+                      title={metaBusy
+                        ? "Fetching paper metadata…"
+                        : "Paper metadata (authors, venue, DOI, source file…)"}
                       aria-label="Paper metadata"
                       onClick={(e) => {
                         const opening = openPopover !== "meta";
@@ -4963,7 +5014,9 @@ export default function App() {
                         setOpenPopover(opening ? "meta" : null);
                       }}
                     >
-                      <InfoIcon size={15} />
+                      {/* Same busy affordance as the translate button: the
+                          icon becomes a spinner while a fetch is running. */}
+                      {metaBusy ? <span className="pillSpin" aria-hidden="true" /> : <InfoIcon size={15} />}
                     </button>
                     {openPopover === "meta" ? (
                       <div
@@ -5898,6 +5951,7 @@ export default function App() {
           chatSystem={chatSystem} aiInfo={aiInfo} aiProvider={aiProvider}
           chatContextChars={chatContextChars} multiContextChars={multiContextChars}
           openAiKeysEditor={openAiKeysEditor}
+          aiHealth={aiHealth} dismissAiHealth={() => setAiHealth(null)}
           openPopover={openPopover} setOpenPopover={setOpenPopover}
           setStatus={setStatus}
           organizeFolder={!focusedBlockId && !readOnly ? folderFilter : null}
@@ -6957,6 +7011,8 @@ export default function App() {
           testAiProvider,
           aiKeyUsage,
           queryAiProviderUsage,
+          aiLoginCheck,
+          setAiLoginCheck,
           metaModel,
           setMetaModel,
           aiModels: scopedAiModels,

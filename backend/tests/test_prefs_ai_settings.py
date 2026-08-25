@@ -174,6 +174,8 @@ def test_provider_test_probe_reports_ok(alice, monkeypatch):
 
 def test_provider_test_reports_upstream_failure_in_body(alice, monkeypatch):
     # A failed probe is a successful test: 200 with the upstream error in-body.
+    # A 401 additionally carries the auth flag — the UI renders "reconnect"
+    # instead of the raw upstream body.
     import gamma.routers.ai as ai_mod
     from gamma.ai_client import UpstreamError
 
@@ -185,11 +187,121 @@ def test_provider_test_reports_upstream_failure_in_body(alice, monkeypatch):
     r = alice.post(f"/api/ai/providers/{pid}/test")
     assert r.status_code == 200
     assert r.json()["ok"] is False
+    assert r.json()["auth"] is True
     assert "401" in r.json()["error"]
+
+
+def test_provider_test_non_auth_failure_is_not_flagged(alice, monkeypatch):
+    import gamma.routers.ai as ai_mod
+    from gamma.ai_client import UpstreamError
+
+    def fake_call(*a, **kw):
+        raise UpstreamError(502, "upstream 502: Bad gateway")
+
+    monkeypatch.setattr(ai_mod, "_call_ai", fake_call)
+    pid = alice.get("/api/ai/settings").json()["providers"][0]["id"]
+    body = alice.post(f"/api/ai/providers/{pid}/test").json()
+    assert body["ok"] is False and body["auth"] is False
 
 
 def test_provider_test_unknown_entry_404(alice):
     assert alice.post("/api/ai/providers/does-not-exist/test").status_code == 404
+
+
+def test_probe_uses_configured_test_model(alice, monkeypatch):
+    # Probe model priority: the entry-level test_model, else the model sent
+    # with the request (the client's effective metadata model), else the first
+    # model. The masked settings echo test_model so the form can edit it.
+    import gamma.routers.ai as ai_mod
+
+    seen = {}
+    monkeypatch.setattr(ai_mod, "_call_ai", lambda m, s, entry, rt, **kw: seen.update(entry))
+    pid = alice.get("/api/ai/settings").json()["providers"][0]["id"]
+    r = alice.put(f"/api/ai/providers/{pid}", json={"test_model": "claude-cheap"})
+    assert r.status_code == 200
+    assert r.json()["providers"][0]["test_model"] == "claude-cheap"
+    assert alice.post(f"/api/ai/providers/{pid}/test").json()["ok"] is True
+    assert seen["model"] == "claude-cheap"
+    # An explicit test_model beats the request's fallback model.
+    alice.post(f"/api/ai/providers/{pid}/test", json={"model": "claude-meta"})
+    assert seen["model"] == "claude-cheap"
+
+    alice.put(f"/api/ai/providers/{pid}", json={"test_model": ""})
+    alice.post(f"/api/ai/providers/{pid}/test")
+    assert seen["model"] == "claude-solo"
+    # With no test_model, the request's metadata-model fallback wins over the
+    # first model.
+    alice.post(f"/api/ai/providers/{pid}/test", json={"model": "claude-meta"})
+    assert seen["model"] == "claude-meta"
+    assert alice.put(f"/api/ai/providers/{pid}", json={"test_model": "x" * 101}).status_code == 400
+
+
+# --- upstream error summarization ---------------------------------------------
+
+def _http_error(code, body, reason="err"):
+    import io
+    import urllib.error
+    return urllib.error.HTTPError("http://x", code, reason, None, io.BytesIO(body.encode()))
+
+
+def test_upstream_detail_summarizes_noise_bodies():
+    # HTML error pages (a proxy's 502) collapse to their <title>, JSON errors
+    # to their message — a settings row never shows raw markup.
+    from gamma.ai_client import upstream_detail
+
+    html = "<!DOCTYPE html> <html><head><title>xwtim.com | 502:\n Bad gateway</title></head><body>Error</body></html>"
+    assert upstream_detail(_http_error(502, html)) == "upstream 502: xwtim.com | 502: Bad gateway"
+    js = '{"error": {"message": "Provided authentication token is expired.", "code": "token_expired"}}'
+    assert upstream_detail(_http_error(401, js)) == "upstream 401: Provided authentication token is expired."
+    assert upstream_detail(_http_error(500, "plain text failure")) == "upstream 500: plain text failure"
+    assert upstream_detail(_http_error(502, "<html><body>no title</body></html>", "Bad Gateway")) \
+        == "upstream 502: Bad Gateway"
+
+
+# --- login connection check (/api/ai/health) ----------------------------------
+
+def test_ai_health_reports_unconfigured(guest):
+    r = guest.post("/api/ai/health", json={})
+    assert r.status_code == 200
+    assert r.json() == {"configured": False, "ok": True}
+
+
+def test_ai_health_ping_checks_credential_for_free(alice, monkeypatch):
+    # "ping" mode never runs a completion: API keys are checked via the
+    # provider's model listing; 401 comes back as a broken-credential flag,
+    # 404 (gateway without /v1/models) as ok-but-unverified.
+    import gamma.routers.ai as ai_mod
+
+    pid = alice.get("/api/ai/settings").json()["providers"][0]["id"]
+    seen = {}
+    monkeypatch.setattr(ai_mod, "_model_catalog_json", lambda req: seen.update(url=req.full_url) or {})
+    body = alice.post("/api/ai/health", json={"provider_id": pid, "mode": "ping"}).json()
+    assert body["configured"] and body["ok"] is True
+    assert "/v1/models" in seen["url"]
+
+    def dead_key(req):
+        raise _http_error(401, '{"error": {"message": "invalid x-api-key"}}')
+    monkeypatch.setattr(ai_mod, "_model_catalog_json", dead_key)
+    body = alice.post("/api/ai/health", json={"provider_id": pid, "mode": "ping"}).json()
+    assert body["ok"] is False and body["auth"] is True
+    assert "invalid x-api-key" in body["error"]
+
+    def no_listing(req):
+        raise _http_error(404, "")
+    monkeypatch.setattr(ai_mod, "_model_catalog_json", no_listing)
+    body = alice.post("/api/ai/health", json={"provider_id": pid, "mode": "ping"}).json()
+    assert body["ok"] is True and body["unverified"] is True
+
+
+def test_ai_health_test_mode_runs_the_probe(alice, monkeypatch):
+    # provider_id "" targets the first entry; "test" mode is the Test button's
+    # tiny live completion.
+    import gamma.routers.ai as ai_mod
+
+    monkeypatch.setattr(ai_mod, "_call_ai", lambda *a, **kw: "ok")
+    body = alice.post("/api/ai/health", json={"mode": "test"}).json()
+    assert body["configured"] and body["ok"] is True
+    assert body["model"] == "claude-solo" and body["provider_name"]
 
 
 def test_export_stays_owner_only(alice):

@@ -29,6 +29,7 @@ export default function ChatDock({
   dictationModel, dictationLang,
   chatContextChars, multiContextChars,
   aiInfo, aiProvider, openAiKeysEditor,
+  aiHealth, dismissAiHealth,
   openPopover, setOpenPopover,
   setStatus,
   // Home/folder view: the folder path being viewed ("" = library root) —
@@ -639,6 +640,22 @@ export default function ChatDock({
     <DockWindow title="Chat" onGrip={onGrip} onGripDoubleClick={onGripDoubleClick}
       collapsed={collapsed} onClose={onClose} headerContent={headerContent}>
     <div className="chatPanel chatWindow">
+      {aiHealth && !aiHealth.ok ? (
+        // The login connection check found the active provider broken — say so
+        // here, where the failure would otherwise surface mid-conversation.
+        <div className="chatHealthStrip" title={aiHealth.error || ""}>
+          <span className="chatHealthText">
+            {aiHealth.provider_name ? `${aiHealth.provider_name}: ` : ""}
+            {aiHealth.auth
+              ? "authentication is broken — sign in again or update the key."
+              : `connection failed — ${aiHealth.error || "provider unreachable"}`}
+          </span>
+          {openAiKeysEditor ? (
+            <button className="uiBtn sm" onClick={openAiKeysEditor}>Fix…</button>
+          ) : null}
+          <button className="uiClose" onClick={dismissAiHealth} title="Dismiss" aria-label="Dismiss">×</button>
+        </div>
+      ) : null}
       {chatFindOpen ? (
         <div className="chatFindRow">
           <input
