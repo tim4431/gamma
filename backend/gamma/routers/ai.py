@@ -370,6 +370,15 @@ def _is_oauth_entry(entry: dict) -> bool:
     return AI_PROTOCOLS.get(entry.get("protocol"), {}).get("auth") == "oauth"
 
 
+def _no_credential(entry: dict) -> dict:
+    """The in-body failure for an entry ``ai_runtime`` dropped: no key, or a
+    ChatGPT sign-in whose refresh failed."""
+    return {"ok": False, "auth": True,
+            "error": "ChatGPT sign-in expired or disconnected — sign in again"
+            if _is_oauth_entry(entry)
+            else "entry has no usable credential — set an API key or sign in again"}
+
+
 def _probe_model(entry: dict, fallback: str = "") -> str:
     """The model probes go through: the entry's configured test model, else
     the caller's fallback (the client sends its effective metadata model — the
@@ -392,10 +401,7 @@ def _probe_entry(user: str, entry: dict, fallback_model: str = "") -> dict:
     clear_refresh_backoff(user, provider_id)
     rt = ai_runtime(user)
     if provider_id not in rt["providers"]:
-        return {"ok": False, "auth": True,
-                "error": "ChatGPT sign-in expired or disconnected — sign in again"
-                if _is_oauth_entry(entry)
-                else "entry has no usable credential — set an API key or sign in again"}
+        return _no_credential(entry)
     model = _probe_model(entry, fallback_model)
     started = time.time()
     try:
@@ -683,13 +689,9 @@ def ai_health(payload: AIHealthRequest, request: Request):
     if payload.mode == "test":
         return {**result, **_probe_entry(user, entry, payload.model)}
     clear_refresh_backoff(user, entry.get("id"))
-    rt = ai_runtime(user)
-    conf = rt["providers"].get(entry.get("id"))
+    conf = ai_runtime(user)["providers"].get(entry.get("id"))
     if not conf:
-        return {**result, "ok": False, "auth": True,
-                "error": "ChatGPT sign-in expired or disconnected — sign in again"
-                if _is_oauth_entry(entry)
-                else "entry has no usable credential — set an API key"}
+        return {**result, **_no_credential(entry)}
     try:
         if conf["protocol"] == "chatgpt":
             _model_catalog_json(_chatgpt_usage_request(conf))

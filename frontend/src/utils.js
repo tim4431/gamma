@@ -1,6 +1,7 @@
 // Small shared helpers: API base, fetch wrapper, ids, hashing, formatting.
 
 import { useEffect, useState } from "react";
+import { makeBlockId } from "./logseqPdfModel";
 
 const API = "/api";
 
@@ -93,16 +94,9 @@ window.fetch = function (input, options) {
 };
 // -----------------------------------------------------------------------------
 
-// 9 random bytes, base64url — matches the backend's secrets.token_urlsafe(9)
-// (12 chars, 72 bits; the old Math.random base36 slice was 8 chars from a
-// non-crypto RNG).
-function makeId() {
-  const bytes = new Uint8Array(9);
-  if (globalThis.crypto?.getRandomValues) crypto.getRandomValues(bytes);
-  else for (let i = 0; i < bytes.length; i++) bytes[i] = Math.floor(Math.random() * 256);
-  return btoa(String.fromCharCode(...bytes))
-    .replace(/\+/g, "-").replace(/\//g, "_");
-}
+// One id generator for blocks, uploads and tasks alike (logseqPdfModel owns it
+// so the pure model stays import-free).
+const makeId = makeBlockId;
 
 function fmtBytes(n) {
   if (n == null) return "";
@@ -202,6 +196,16 @@ const isPdfFile = (f) => f.type === "application/pdf" || /\.pdf$/i.test(f.name |
 const isMarkdownFile = (f) => /\.(?:md|markdown)$/i.test(f.name || "")
   || /^(?:text\/markdown|text\/x-markdown)$/i.test(f.type || "");
 
+// FastAPI errors come as {"detail": "..."} — show the human message, not raw JSON.
+async function apiError(r) {
+  const text = await r.text().catch(() => "");
+  try {
+    const j = JSON.parse(text);
+    if (typeof j?.detail === "string") return new Error(j.detail);
+  } catch {}
+  return new Error(text || `HTTP ${r.status}`);
+}
+
 async function apiJson(url, options = {}) {
   const r = await fetch(url, { ...options, credentials: "include" });
   if (r.status === 401) {
@@ -211,16 +215,7 @@ async function apiJson(url, options = {}) {
     }
     throw new Error("401 Unauthorized");
   }
-  if (!r.ok) {
-    const text = await r.text();
-    // FastAPI errors come as {"detail": "..."} — show the human message, not raw JSON
-    let msg = text;
-    try {
-      const j = JSON.parse(text);
-      if (j && typeof j.detail === "string") msg = j.detail;
-    } catch {}
-    throw new Error(msg || `HTTP ${r.status}`);
-  }
+  if (!r.ok) throw await apiError(r);
   return r.json();
 }
 
@@ -255,4 +250,25 @@ async function resolvePdfUrl(rawUrl, allowOa = true) {
   });
 }
 
-export { API, makeId, fmtBytes, sha256, getDocIdForUrl, isPdfFile, isMarkdownFile, apiJson, importZoteroZip, resolvePdfUrl, setExpectedUser, getExpectedUser, usePersistedState, usePersistedFlag, copyText, copyRich };
+// Same-origin proxy for an external PDF. `save` caches a copy in uploads;
+// `share` carries the read token in the public view.
+function pdfProxyUrl(sourceUrl, { save = false, share = "" } = {}) {
+  return `${API}/pdf?source_url=${encodeURIComponent(sourceUrl)}`
+    + (save ? "&save=1" : "")
+    + (share ? `&share=${encodeURIComponent(share)}` : "");
+}
+
+// Headers-only check that the proxy can really deliver this PDF: resolution
+// only picks a candidate URL, and the download behind it still fails on
+// paywalls, blocked server-side fetches, or HTML pretending to be a paper.
+// The proxy already rejects all of those with a human-readable 400, so this
+// just needs its headers — the body is cancelled the moment they land, which
+// costs one upstream connection and no download (and never `save`: a
+// cancelled stream is not cached anyway).
+async function probePdfUrl(sourceUrl) {
+  const r = await fetch(pdfProxyUrl(sourceUrl), { credentials: "include" });
+  if (!r.ok) throw await apiError(r); // reads the error body — cancel only the good stream
+  try { await r.body?.cancel(); } catch {}
+}
+
+export { API, makeId, fmtBytes, sha256, getDocIdForUrl, isPdfFile, isMarkdownFile, apiJson, importZoteroZip, resolvePdfUrl, pdfProxyUrl, probePdfUrl, setExpectedUser, getExpectedUser, usePersistedState, usePersistedFlag, copyText, copyRich };

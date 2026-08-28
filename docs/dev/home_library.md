@@ -25,13 +25,41 @@ flat label.
 The root view is a recents feed of ALL pages, rendered incrementally (30 +
 IntersectionObserver load-more). Folders and files render as ONE merged sorted
 listing (list and grid): date sorts rank a folder by its most recent contained
-page, Title A–Z intermixes by name; a KindToggle (`gamma-home-kinds`) filters
-the listing to folders-only or files-only.
+page, Title A–Z intermixes by name; a KindToggle picks what the listing shows —
+folders + files, folders only, files only, or **labels**.
 
 The sort choice (updated/created/viewed/title, an iconed MenuSelect pill;
 "viewed" ranks by the account-synced view history with modified time as
-tie-break) is per-folder — localStorage `gamma-home-sort-map`, `""` = root; a
-folder without an entry inherits from its nearest ancestor.
+tie-break) and the kind filter are both per-VIEW — localStorage
+`gamma-home-sort-map` / `gamma-home-kinds-map`, keyed by folder path with
+`""` = root and `"#<label>"` for a label view, seeded from the older global
+`gamma-home-sort` / `gamma-home-kinds` keys; a view without an entry inherits
+from its nearest ancestor folder (a label view inherits the root).
+
+**The label view** is the flat mirror of the folder view, not a separate
+surface: the KindToggle's Labels mode lists the labels carried by the pages in
+scope (`labelMeta`, the label twin of `folderMeta` — count + latest
+modified/added/viewed, so labels sort by the same clock), as the same rows and
+cards folders use with a tag glyph. Click selects, double-click opens, a paper
+dropped on one gets that label, right-click is the existing label
+rename/delete menu. Opening a label KEEPS the folder scope (`?folder=…` and
+`?category=…` can both be in the URL — `homeUrlFor`), so a label opened inside
+a folder reads as "this folder, narrowed to that label"; its browse bar is the
+same back row + breadcrumb, ending in a label crumb, and dropping a paper on
+its back row takes the label off. Inside a label there are only papers, so the
+KindToggle hides and the kind filter is ignored there.
+
+A search box sits left of the sort pill (`ListFindBox`, live as you type, per
+view, not persisted). It never drops anything: matching items float to the top
+of the current sort and the rest stay in place dimmed (`.homeDim`). A page
+matches on its title plus its folder/label chips; matching is
+case/diacritic-folded, every whitespace term must appear.
+
+New folder is the FIRST item of the listing itself, not a toolbar button (a
+`folderNewBtn` row / `pageCardAdd` tile that turns into its own name input in
+place — Enter or blur commits, Escape cancels); it is hidden while the folder
+is filtered to files-only, to labels, or inside a label view. The toolbar is
+search box → sort → kind → list/grid.
 
 Search chips (Tab autosuggest) cover both kinds: label chips match exactly,
 folder chips match by prefix.
@@ -39,12 +67,12 @@ folder chips match by prefix.
 ## The card
 
 One shared card (`PageCard` in `fileBrowser.jsx`) renders every home card
-surface — the "Recently viewed" strip, the pinned strip, the `?category=`
-carousel, and the grid listing's files AND folders: a cover over a bottom-stuck
+surface — the "Recently viewed" strip, the pinned strip, and the grid
+listing's files, folders AND labels: a cover over a bottom-stuck
 footer of title + folder/label chips + kind and relative time (library cards
 show the time matching the active sort — viewed/created/modified; the recents
 strip always shows viewed). Only the recents strip shows snapshot covers;
-library/category cards always use the glyph.
+library cards always use the glyph.
 
 The card geometry lives on the card itself, not per surface: a 16/10 cover, two
 reserved title lines and one reserved chip line (`CardLabels` renders its span
@@ -88,4 +116,4 @@ primitives: a "Move to folder" flyout lists every folder path ordered by the
 rollup), checks the ones the selection already carries, and ends with the
 per-tag "remove from" rows; adding still uses the soft-link `addPagesToFolder`
 (same as dropping a card on a folder). Every page card surface opens the SAME
-menu — the Recently-viewed strip and the `?category=` carousel included.
+menu — the Recently-viewed strip and the pinned strip included.

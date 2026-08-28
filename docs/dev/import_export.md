@@ -1,10 +1,11 @@
 # Import and export
 
 The ⋮ menu's Import…/Export… dialogs and every pipeline behind them: embedded
-PDF annotations, Logseq graphs, Zotero libraries, Markdown export, and the
-annotated-PDF writer. Code: `gamma/routers/imports.py`, `gamma/zotero_import.py`,
+PDF annotations, Logseq graphs, Zotero libraries, Markdown export, the notes
+typeset as their own PDF, and the annotated-PDF writer. Code: `gamma/routers/imports.py`, `gamma/zotero_import.py`,
 `gamma/zotero_export.py`, `gamma/logseq_import.py`, `gamma/markdown_export.py`, `gamma/pdf_export.py`,
-`gamma/pdf_notes.py`, `gamma/note_markup.py`, `gamma/vector_text.py`,
+`gamma/pdf_notes.py`, `gamma/pdf_document.py`, `gamma/pdf_typeset.py`,
+`gamma/note_markup.py`, `gamma/vector_text.py`,
 `gamma/pdf_image.py`; frontend dialogs in
 [widgets.jsx](../../frontend/src/widgets.jsx).
 
@@ -104,10 +105,12 @@ omits the files entirely, `notes=0` the Memos).
 `/pages/{id}/export` and `/folders/export` share one driver (`_run_export` in
 `routers/export.py`): it walks the selected pages exactly once (subtree fetch
 → `build_tree` → progress bookkeeping) and feeds each page to a per-format
-`_Builder` (`_MarkdownBuilder`, `_LogseqBuilder`, `_ZoteroBuilder`,
-`_GammaBuilder` — keyed by `?mode=`), which accumulates zip parts and names
-the download. Adding an export format = adding a builder; the endpoints,
-progress plumbing and `_zip_response` stay untouched.
+`_Builder` (`_MarkdownBuilder`, `_NotesPdfBuilder`, `_LogseqBuilder`,
+`_ZoteroBuilder`, `_GammaBuilder` — keyed by `?mode=`), which accumulates zip
+parts and names the download. Adding an export format = adding a builder; the
+endpoints, progress plumbing and `_zip_response` stay untouched. A builder
+whose download isn't a zip overrides `response()` instead (`_NotesPdfBuilder`
+returns one PDF).
 
 ## Gamma-to-Gamma export
 
@@ -128,14 +131,18 @@ copy, so they're pinned on.
 ## The Export dialog
 
 The ⋮ menu's single "Export…" entry → `ExportDialog` in `widgets.jsx`: one
-Notion-style dialog — format (PDF / Markdown / Logseq graph / Zotero RDF /
-Gamma) plus Highlights, Notes and Bundle-the-files switches (per-format hint
+Notion-style dialog — format (PDF / Notes as PDF / Markdown / Logseq graph /
+Zotero RDF / Gamma) plus Highlights, Notes and Bundle-the-files switches (per-format hint
 text lives in the `EXPORT_SWITCH_TEXT` table), remembered in `localStorage`
 (`gamma-export-opts`). The switches are query flags on two endpoints:
 `/pages/{id}/export?mode=readable&highlights=&notes=&pdf=` (Markdown,
 `render_readable` in `markdown_export.py`; dropping highlights keeps a
 highlight block's own text as a plain bullet) and
-`/pages/{id}/export-pdf?highlights=&notes=`. Two combinations are special: a
+`/pages/{id}/export-pdf?highlights=&notes=`. "PDF" is the paper itself and is
+hidden when there is none (a note page, an unsaved proxy PDF, a folder) —
+"Notes as PDF" (`?mode=notes-pdf`) takes over as the fallback format, and its
+Bundle switch is hidden because a document always embeds its images. Two
+combinations are special: a
 Logseq graph is defined by carrying both layers, so its switches are pinned on
 and disabled; a PDF with both off is the stored file itself, which the frontend
 downloads from the viewer's own URL (so it also works for a PDF that only
@@ -147,7 +154,42 @@ state in App.jsx), it drops the single-PDF format and sends the same
 format/switch flags to `/folders/export?name=` (readable, `logseq-graph` or
 `zotero-rdf`).
 
-## PDF export
+## Notes as a PDF document
+
+`?mode=notes-pdf` on both export endpoints (`_NotesPdfBuilder` →
+`gamma/pdf_document.py`) typesets the *notes themselves* as a new PDF — the
+inverse of the annotated export below, and the only PDF a page without a paper
+can produce, so the Export dialog offers it everywhere (a folder export puts
+every page in one document, each starting on a fresh sheet).
+
+Each block's markdown is parsed twice: into chunks (headings, paragraphs,
+`>` quotes and `> [!type]` callouts, list items, `- [ ]` todos, fenced code,
+`---` rules, images, `$$…$$` math) and each chunk's text into styled inline
+spans (bold, italic, `code`, strike, `==mark==`, `[[refs]]`, links, `$…$`
+math). Highlights become quoted passages with a bar in the highlight's own
+colour and a `p. N` marker, and the Highlights/Notes switches mean exactly what
+they do in the Markdown export (drop highlights and a highlight block keeps its
+own writing as a plain bullet). Links become real `/Link` annotations, page
+titles and headings become PDF bookmarks. Layout constants (A4, margins, sizes)
+live at the top of the module.
+
+Pagination is per line, not per block: the canvas breaks a page between lines
+so nothing is ever clipped, and code lines carry their leading whitespace as an
+x offset because wrapping drops spaces at the start of a line.
+
+## The shared typesetting engine
+
+`gamma/pdf_typeset.py` is what both PDF writers draw with — font choice per
+character (Helvetica in four styles, Courier, Symbol, the non-embedded
+STSong-Light CID font), AFM widths, span resolution through `vector_text`,
+tokenizing, wrapping and the content-stream operators. Spans are
+`(kind, payload, level, style)`; `style` is a `Style(bits, href)`, so the note
+boxes pass `PLAIN` and the document passes emphasis and link targets through
+the same layout code. Everything is laid out in the y-down display frame and
+flipped into user space by one `cm`. `pdf_image.XObjectStore` is the shared
+upload → image-XObject registry.
+
+## Annotated-PDF export
 
 `/api/pages/{id}/export-pdf`: highlights become standard `/Highlight` (or
 `/Square` for area notes) annotations with the note text in the popup
@@ -206,7 +248,7 @@ colour.
 
 Text is a hand-built content stream merged with `merge_page` using three fonts
 every viewer has: Helvetica (WinAnsi), Symbol (Greek/math —
-`pdf_notes.SYMBOL` holds codes AND advance widths measured from the font
+`pdf_typeset.SYMBOL` holds codes AND advance widths measured from the font
 itself; every `note_markup.SYMBOLS` value must be drawable by one of the three,
 which a test enforces), and a non-embedded STSong-Light CID font for CJK.
 Deliberately no reportlab/Pillow dependency. PyPDF2 leaves merged content

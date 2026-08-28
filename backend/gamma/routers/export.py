@@ -1,6 +1,8 @@
-"""Markdown export: a page (or a folder of pages) as .md, or .zip when the
-page references uploaded assets (Notion-style: bare file vs. bundle decided by
-whether there's anything to bundle)."""
+"""Exporting pages: one driver (``_run_export``) walks the selected page
+subtrees and feeds them to the format's ``_Builder`` — Markdown, a Logseq
+graph, a Zotero RDF library, a scoped Gamma backup, or the notes typeset as a
+PDF document. Most builders produce a zip; a bare .md (nothing to bundle) and
+the notes PDF are single files."""
 
 import base64
 import json
@@ -42,6 +44,7 @@ from ..markdown_export import (
     slugify,
 )
 from ..logbuf import log
+from ..pdf_document import render_document
 from ..pdf_export import annotate_pdf, highlight_note_text
 from ..pdf_notes import render_notes
 from ..zotero_export import (
@@ -444,11 +447,42 @@ class _GammaBuilder(_Builder):
                        for name in sorted(self.upload_names)]
 
 
+class _NotesPdfBuilder(_Builder):
+    """The notes themselves as a PDF document (``pdf_document``): title,
+    metadata, the block tree typeset as nested bullets with quotes, code,
+    images and math. The only builder whose download isn't a zip — one PDF
+    holds every selected page, each starting on a fresh sheet — so it
+    overrides ``response`` instead of accumulating zip parts."""
+    suffix = "-notes.pdf"
+
+    def __init__(self, user, base, opts):
+        super().__init__(user, base, opts)
+        self.pages = []
+
+    def add_page(self, n, rows, page):
+        self.pages.append(page)
+
+    def response(self) -> Response:
+        try:
+            pdf_bytes = render_document(
+                self.pages, uploads_dir=self.uploads_dir,
+                highlights=self.opts["highlights"], notes=self.opts["notes"])
+        except Exception as e:
+            log(f"notes PDF export failed for '{self.base}': {e}")
+            raise HTTPException(status_code=400, detail=f"could not build the PDF: {e}")
+        return Response(
+            content=pdf_bytes,
+            media_type="application/pdf",
+            headers={"Content-Disposition": _content_disposition(f"{self.base}{self.suffix}")},
+        )
+
+
 _BUILDERS = {
     "readable": _MarkdownBuilder,
     "logseq-graph": _LogseqBuilder,
     "zotero-rdf": _ZoteroBuilder,
     "gamma": _GammaBuilder,
+    "notes-pdf": _NotesPdfBuilder,
 }
 
 
@@ -480,10 +514,12 @@ def export_page(block_id: str, request: Request, mode: str = "readable", pdf: in
     """One page in any export format (see the _Builder classes): ``readable``
     Markdown (bare .md when it references no local assets, else a .zip with an
     assets/ folder; ``highlights=0``/``notes=0`` — the dialog's switches —
-    leave out the quoted PDF text or your own writing), ``logseq-graph`` (a
-    complete Logseq file graph, both switches pinned on), ``zotero-rdf`` (a
-    one-item Zotero RDF library), or ``gamma`` (a scoped account backup any
-    Gamma imports via /api/import-data?mode=merge)."""
+    leave out the quoted PDF text or your own writing), ``notes-pdf`` (the
+    notes typeset as their own PDF document — the one format a page without a
+    PDF can still export as one), ``logseq-graph`` (a complete Logseq file
+    graph, both switches pinned on), ``zotero-rdf`` (a one-item Zotero RDF
+    library), or ``gamma`` (a scoped account backup any Gamma imports via
+    /api/import-data?mode=merge)."""
     user = resolve_user(request)
     scope = share_scope_doc(request)
     opts = {"pdf": bool(pdf), "highlights": bool(highlights), "notes": bool(notes),
@@ -589,10 +625,12 @@ def export_folder(request: Request, name: str, mode: str = "readable", pdf: int 
                   highlights: int = 1, notes: int = 1):
     """Every page tagged into folder ``name`` (or a subfolder of it), in any
     export format (see the _Builder classes): ``readable`` (one .md per page +
-    a shared assets/ folder), ``logseq-graph`` (a complete Logseq file graph),
-    ``zotero-rdf`` (a Zotero RDF library — subfolders become collections), or
-    ``gamma`` (a scoped account backup any Gamma imports via
-    /api/import-data?mode=merge). Progress: /folders/export-progress."""
+    a shared assets/ folder), ``notes-pdf`` (every page's notes in one PDF
+    document, each starting on a fresh sheet), ``logseq-graph`` (a complete
+    Logseq file graph), ``zotero-rdf`` (a Zotero RDF library — subfolders
+    become collections), or ``gamma`` (a scoped account backup any Gamma
+    imports via /api/import-data?mode=merge). Progress:
+    /folders/export-progress."""
     name = (name or "").strip().strip("/")
     if not name:
         raise HTTPException(status_code=400, detail="folder name required")

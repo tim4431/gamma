@@ -37,3 +37,12 @@ for the `citation_pdf_url` meta tag → Unpaywall open-access fallback for DOIs
 sends `allow_oa: false`; identifies itself with a fixed project email in
 `pdf.py` — no config). Non-published substitutions return a `note` the frontend
 surfaces.
+
+Resolution only picks a candidate URL — the download behind it can still fail
+(paywall, blocked server-side fetch, HTML behind the link). So `openPdf` in
+`App.jsx` preflights the resolved URL with `probePdfUrl` (`utils.js`): it opens
+`/api/pdf` without `save=1`, keeps the headers and cancels the body, and only
+then creates the page. `/api/pdf` is the single arbiter of "is this a PDF" —
+its 400 `detail` becomes the failure status, and no page is left behind. A URL
+whose paper is already in the library skips the preflight, so an existing page
+stays openable even after its source goes away.
