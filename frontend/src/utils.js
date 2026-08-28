@@ -1,6 +1,7 @@
 // Small shared helpers: API base, fetch wrapper, ids, hashing, formatting.
 
 import { useEffect, useState } from "react";
+import { makeBlockId } from "./logseqPdfModel";
 
 const API = "/api";
 
@@ -93,16 +94,9 @@ window.fetch = function (input, options) {
 };
 // -----------------------------------------------------------------------------
 
-// 9 random bytes, base64url — matches the backend's secrets.token_urlsafe(9)
-// (12 chars, 72 bits; the old Math.random base36 slice was 8 chars from a
-// non-crypto RNG).
-function makeId() {
-  const bytes = new Uint8Array(9);
-  if (globalThis.crypto?.getRandomValues) crypto.getRandomValues(bytes);
-  else for (let i = 0; i < bytes.length; i++) bytes[i] = Math.floor(Math.random() * 256);
-  return btoa(String.fromCharCode(...bytes))
-    .replace(/\+/g, "-").replace(/\//g, "_");
-}
+// One id generator for blocks, uploads and tasks alike (logseqPdfModel owns it
+// so the pure model stays import-free).
+const makeId = makeBlockId;
 
 function fmtBytes(n) {
   if (n == null) return "";
