@@ -42,9 +42,12 @@ python -m pytest tests -q
 ```
 
 In-process API tests (FastAPI TestClient) against a throwaway data
-directory — no server, no network. The frontend has **no test suite or
-linter**: verify UI changes by running the app (at minimum, `npm run build`
-must pass).
+directory — no server, no network. Run them with the project venv's
+interpreter (`venv/Scripts/python.exe` on Windows): the two vector-math
+tests need `ziamath` from `requirements.txt`, and a system/conda `python`
+without it fails them with "ziamath is not importable" rather than a
+puzzling path count. The frontend has **no test suite or linter**: verify UI
+changes by running the app (at minimum, `npm run build` must pass).
 
 ## Debugging surfaces
 
