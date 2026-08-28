@@ -18,3 +18,10 @@ def clean_segment(name: str) -> str:
 
 def clean_path(path: str) -> str:
     return "/".join(s for s in (clean_segment(p) for p in (path or "").split("/")) if s)
+
+
+def add_tag(tags: list[str], path: str) -> list[str]:
+    """addFolderTag: keep the other tags (a page may live in several folders),
+    but refine away ancestors of the new path — filing "readout" into
+    "readout/nondestructive" shouldn't leave both levels."""
+    return [t for t in tags if t != path and not path.startswith(t + "/")] + [path]
