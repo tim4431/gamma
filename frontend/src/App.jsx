@@ -1,7 +1,7 @@
 import React, { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState } from "react";
 import { Panel, PanelGroup, PanelResizeHandle } from "react-resizable-panels";
 import PdfViewer, { COLORS, clampZoom } from "./pdfViewer";
-import { API, apiJson, makeId, fmtBytes, getDocIdForUrl, isPdfFile, isMarkdownFile, importZoteroZip, resolvePdfUrl, setExpectedUser, getExpectedUser, usePersistedState, usePersistedFlag, copyText, copyRich } from "./utils";
+import { API, apiJson, makeId, fmtBytes, getDocIdForUrl, isPdfFile, isMarkdownFile, importZoteroZip, resolvePdfUrl, pdfProxyUrl, probePdfUrl, setExpectedUser, getExpectedUser, usePersistedState, usePersistedFlag, copyText, copyRich } from "./utils";
 import {
   BlockDropIndicator,
   ChatMarkdown,
@@ -2497,7 +2497,7 @@ export default function App() {
   const [pptCite, setPptCite] = useState("");
   const [pptCiteBusy, setPptCiteBusy] = useState(false);
   const [metaPopPos, setMetaPopPos] = useState({ top: 0, right: 0 }); // fixed-position anchor for the metadata popover
-  const [citeCopied, flashCiteCopied, resetCiteCopied] = useCopied(); // "bibtex" | "ppt"
+  const [copiedKey, flashCopied, resetCopied] = useCopied(); // "bibtex" | "ppt" | "source"
   // Editable copy of the metadata fields shown in the popover. Kept as flat
   // strings (authors comma-joined); rebuilt whenever the popover opens or a
   // fetch lands, so a refresh replaces any half-typed edits with the result.
@@ -2768,7 +2768,7 @@ export default function App() {
   // (arXiv → DOI → AI on the server). Cached in the page's properties.
   useEffect(() => {
     setPptCite("");
-    resetCiteCopied();
+    resetCopied();
     const b = focusedBlock;
     if (readOnly || !b?.id || !b.properties?.doc_id) { setPageMeta(null); setPageBibtex(""); return; }
     if (b.properties.meta) {
@@ -2853,7 +2853,8 @@ export default function App() {
     }
   }, [openPopover, pageMeta]);
 
-  async function copyCitation(kind, text) {
+  // Copy + tick feedback for the page popovers, keyed by which row was hit.
+  async function copyFlash(kind, text) {
     let ok;
     if (kind === "ppt") {
       // Rich copy: PowerPoint/Word get real italics & bold via text/html;
@@ -2868,7 +2869,7 @@ export default function App() {
     } else {
       ok = await copyText(text || "");
     }
-    if (ok) flashCiteCopied(kind);
+    if (ok) flashCopied(kind);
     else setStatus("Copy failed — copy manually.");
   }
 
@@ -3635,16 +3636,16 @@ export default function App() {
         finalUrl = resolved.source_url;
         pdfNote = resolved.note || "";
         resolvedDocId = await getDocIdForUrl(finalUrl);
-        proxiedUrl = `${API}/pdf?source_url=${encodeURIComponent(finalUrl)}${pdfSaveLocal ? "&save=1" : ""}`;
-        // /api/resolve-pdf only picks a candidate URL — the download can still
-        // fail (paywall, blocked fetch, HTML behind the link). Confirm the
-        // bytes really arrive BEFORE a page is created, or a dead link leaves
-        // behind an empty page that does nothing but repeat the error.
-        // Skipped when the paper is already in the library: an existing page
-        // must stay reachable even if its source has since gone away.
-        let known = null;
-        try { known = await apiJson(`${API}/blocks/by-doc/${resolvedDocId}`); } catch {}
-        if (!known) await probePdfUrl(finalUrl);
+        proxiedUrl = pdfProxyUrl(finalUrl, { save: pdfSaveLocal });
+        // A new paper must download before it gets a page — otherwise a dead
+        // link leaves behind an empty page that only ever repeats the error.
+        // Papers already in the library skip the check: an existing page stays
+        // openable even once its source has gone away.
+        const known = await apiJson(`${API}/blocks/by-doc/${resolvedDocId}`).catch(() => null);
+        if (!known) {
+          updateTransfer(taskId, { info: "checking link…" });
+          await probePdfUrl(finalUrl);
+        }
         transferByUrlRef.current[proxiedUrl] = taskId; // viewer's byte-level reporting takes over this row
       }
       // Resolve block + load children FIRST, before setPdfUrl, to avoid mid-render highlight race
@@ -3719,7 +3720,7 @@ export default function App() {
       const isLocal = src.startsWith("/api/");
       const proxiedUrl = isLocal
         ? `${src}${src.includes("?") ? "&" : "?"}share=${encodeURIComponent(token)}`
-        : src ? `${API}/pdf?source_url=${encodeURIComponent(src)}&share=${encodeURIComponent(token)}` : "";
+        : src ? pdfProxyUrl(src, { share: token }) : "";
 
       suppressAutosaveRef.current = true;
       setFocusedBlockId(block?.id || "");
@@ -3765,7 +3766,7 @@ export default function App() {
       if (props.source_url) {
         const src = props.source_url;
         const isLocal = src.startsWith("/api/");
-        openedPdfUrl = isLocal ? src : `${API}/pdf?source_url=${encodeURIComponent(src)}`;
+        openedPdfUrl = isLocal ? src : pdfProxyUrl(src);
         setInputUrl(src);
         setPdfUrl(openedPdfUrl);
         setBlocks(childBlocks);
@@ -5338,12 +5339,22 @@ export default function App() {
                         ) : null}
                         <div className="popoverDivider" />
                         <div className="popoverSection">Source file</div>
-                        <input
-                          className="searchInput"
-                          value={sourceDraft}
-                          onChange={(e) => setSourceDraft(e.target.value)}
-                          placeholder="PDF URL or /api/uploads/…"
-                        />
+                        <div className="shareRow">
+                          <input
+                            value={sourceDraft}
+                            onChange={(e) => setSourceDraft(e.target.value)}
+                            placeholder="PDF URL or /api/uploads/…"
+                          />
+                          <button
+                            className="chatMsgActionBtn"
+                            title="Copy the source URL"
+                            aria-label="Copy source URL"
+                            disabled={!sourceDraft.trim()}
+                            onClick={() => copyFlash("source", sourceDraft.trim())}
+                          >
+                            {copiedKey === "source" ? <CheckIcon size={13} /> : <CopyIcon size={13} />}
+                          </button>
+                        </div>
                         {sourceDraft.trim() && sourceDraft.trim() !== inputUrl ? (
                           <div className="reportModalBtns">
                             <button
@@ -6337,7 +6348,14 @@ export default function App() {
             aria-label="Background tasks"
           >
             <ActivityIcon size={16} />
-            {(transfers.some((t) => t.status === "active") || indexTask?.active) ? <span className="transferSpin" /> : null}
+            {/* Spinner while anything runs, otherwise a red dot for a failed
+                transfer — a refused download no longer leaves a broken page
+                behind, so this is the only sign it happened. "ai" jobs are
+                excluded: a paper with no findable metadata is routine, and
+                the metadata popover says so itself. */}
+            {(transfers.some((t) => t.status === "active") || indexTask?.active)
+              ? <span className="transferSpin" />
+              : transfers.some((t) => t.status === "error" && t.kind !== "ai") ? <span className="transferDot" /> : null}
           </button>
           {openPopover === "downloads" ? (
             <div className="popover downloadsPopover">
@@ -6466,11 +6484,11 @@ export default function App() {
                       <div className="pptCitePreview"><ChatMarkdown text={pptCite} /></div>
                       <button
                         className="chatMsgActionBtn"
-                        onClick={() => copyCitation("ppt", pptCite)}
+                        onClick={() => copyFlash("ppt", pptCite)}
                         title="Copy — pastes with real italics/bold into PowerPoint"
                         aria-label="Copy slide citation"
                       >
-                        {citeCopied === "ppt"
+                        {copiedKey === "ppt"
                           ? <CheckIcon size={13} />
                           : <CopyIcon size={13} />}
                       </button>
@@ -6485,11 +6503,11 @@ export default function App() {
                         <pre className="bibtexPre">{pageBibtex}</pre>
                         <button
                           className="chatMsgActionBtn"
-                          onClick={() => copyCitation("bibtex", pageBibtex)}
+                          onClick={() => copyFlash("bibtex", pageBibtex)}
                           title="Copy the BibTeX entry"
                           aria-label="Copy BibTeX"
                         >
-                          {citeCopied === "bibtex"
+                          {copiedKey === "bibtex"
                             ? <CheckIcon size={13} />
                             : <CopyIcon size={13} />}
                         </button>
@@ -7037,7 +7055,7 @@ export default function App() {
       ) : null}
       {linkPrompt ? (
         <div className="reportOverlay" onClick={() => setLinkPrompt(null)}>
-          <div className="reportModal confirmModal" onClick={(e) => e.stopPropagation()}>
+          <div className="reportModal confirmModal linkPromptModal" onClick={(e) => e.stopPropagation()}>
             <div className="confirmHead">
               <span className="confirmIcon"><LinkIcon size={16} /></span>
               <span className="settingText">
