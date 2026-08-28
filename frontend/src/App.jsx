@@ -4168,6 +4168,8 @@ export default function App() {
           if (await downloadExport(`${base}&mode=gamma`, "gamma.zip")) {
             setStatus("Gamma export saved — in the other Gamma: Import → Gamma export (.zip).");
           }
+        } else if (o.format === "notespdf") {
+          await downloadExport(`${base}&mode=notes-pdf&${flags}`, "notes.pdf");
         } else {
           await downloadExport(`${base}&mode=readable&${flags}&${bundle}`, "folder.zip");
         }
@@ -4181,6 +4183,12 @@ export default function App() {
     if (o.format === "pdf") {
       if (!o.highlights && !o.notes) { await exportRawPdf(); return; }
       await downloadExport(`/pages/${id}/export-pdf?${flags}`, "export.pdf");
+      return;
+    }
+    if (o.format === "notespdf") {
+      // The notes as their own PDF — no paper needed, so this works on note
+      // pages too (where the annotated-PDF format isn't offered).
+      await downloadExport(`/pages/${id}/export?mode=notes-pdf&${flags}`, "notes.pdf");
       return;
     }
     if (o.format === "logseq") {

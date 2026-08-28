@@ -286,7 +286,8 @@ function OpenTabs({
 // the format can't honour is shown disabled rather than hidden, so the choice
 // on offer never changes shape between formats.
 const EXPORT_FORMATS = [
-  ["pdf", "PDF"],
+  ["pdf", "PDF (the paper, annotated)"],
+  ["notespdf", "Notes as PDF"],
   ["markdown", "Markdown (.md)"],
   ["logseq", "Logseq graph (.zip)"],
   ["zotero", "Zotero RDF (.zip)"],
@@ -300,6 +301,8 @@ const EXPORT_SWITCH_TEXT = {
   highlights: {
     pdf: ["Standard PDF annotations",
       "Burned in as standard PDF annotations — they survive in Acrobat, SumatraPDF, browsers."],
+    notespdf: ["Quoted passages with page numbers",
+      "Each highlighted passage as a quote with its page number, in the colour you highlighted it."],
     markdown: ["Blockquotes with page numbers",
       "Each highlighted passage as a blockquote with its page number."],
     logseq: ["Always in a graph (hls page + .edn)",
@@ -312,6 +315,8 @@ const EXPORT_SWITCH_TEXT = {
   notes: {
     pdf: ["Printed onto the page in free space",
       "Printed onto the page in nearby free space, with a line back to the highlight. Off: they stay in the annotation popups."],
+    notespdf: ["Typeset under their highlights",
+      "Your own writing, typeset under the highlight it belongs to — headings, lists, code, math and pasted images included."],
     markdown: ["Nested under their highlights",
       "Your own writing, nested under the highlight it belongs to."],
     logseq: ["Always in a graph",
@@ -363,13 +368,14 @@ function SwitchRow({ checked, onChange, disabled, label, ...row }) {
 }
 
 function ExportDialog({ opts, setOpts, hasPdf, pdfStored, folder, onCancel, onExport }) {
-  // A note page has no PDF to export; a PDF opened from a URL and not saved
-  // here has no server copy to annotate; a folder (`folder` = its path) is
-  // many papers, so the single-PDF format doesn't apply. All fall back to
-  // Markdown.
+  // A note page has no PDF to annotate; a PDF opened from a URL and not saved
+  // here has no server copy either; a folder (`folder` = its path) is many
+  // papers, so the annotated-paper format doesn't apply. All fall back to
+  // "Notes as PDF", which needs no paper — it typesets the notes themselves.
   const allowPdf = hasPdf && !folder;
-  const format = allowPdf || opts.format !== "pdf" ? opts.format : "markdown";
+  const format = allowPdf || opts.format !== "pdf" ? opts.format : "notespdf";
   const isPdf = format === "pdf";
+  const isDoc = format === "notespdf";
   const isGraph = format === "logseq";
   const isZotero = format === "zotero";
   const isGamma = format === "gamma";
@@ -394,7 +400,11 @@ function ExportDialog({ opts, setOpts, hasPdf, pdfStored, folder, onCancel, onEx
           : rawPdf
             ? "The PDF file exactly as stored, with nothing added."
             : `The PDF with ${highlights ? "highlight annotations" : "no annotations"}${notes ? " and every note printed onto the page" : ""}.`
-        : highlights || notes
+        : isDoc
+          ? highlights || notes
+            ? `A new PDF of ${folder ? "every page in the folder" : "this page"} — title, ${highlights ? "quoted highlights" : "no quotes"}${notes ? " and your notes, typeset" : ""}.`
+            : "A new PDF with the title and metadata only — both switches are off."
+          : highlights || notes
           ? `Markdown with ${highlights ? "quoted highlights" : "no quotes"}${notes ? " and your notes" : ""}.`
           : "Markdown with the title and metadata only — both switches are off.";
 
@@ -427,7 +437,7 @@ function ExportDialog({ opts, setOpts, hasPdf, pdfStored, folder, onCancel, onEx
           disabled={pinned || noPdfCopy}
           onChange={(v) => set({ notes: v })}
         />
-        {isPdf ? null : (
+        {isPdf || isDoc ? null : (
           <SwitchRow
             icon={PaperclipIcon}
             label="Bundle the files"

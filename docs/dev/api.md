@@ -122,9 +122,9 @@ Route order matters: the static-prefix routes (`by-doc`, `children`,
 | POST | `/import/markdown` | UTF-8 `.md`/`.markdown` file → note page and nested blocks (optional `folder`) |
 | POST | `/import/pdf-annotations` | import annotations embedded in the PDF (idempotent; optional `strip`) |
 | POST | `/import/zotero` | Zotero library import: zip of a "Zotero RDF" export (multipart `file`; `strip`, optional `folder` prefix). Items→pages+metadata, collections→folders, tags→labels, notes→blocks; embedded annotations via the same importer. Idempotent by file hash / `zotero_key` |
-| GET | `/pages/{id}/export` | page export (`?mode=readable|logseq-graph|zotero-rdf|gamma` + `highlights=&notes=&pdf=`); `gamma` = scoped backup for `/import-data?mode=merge` |
-| GET | `/pages/{id}/export-pdf` | PDF with annotations written back (`?highlights=&notes=`) |
-| GET | `/folders/export` | whole-folder export, same modes/flags (`?name=` + `mode=`); subfolders become Zotero collections |
+| GET | `/pages/{id}/export` | page export (`?mode=readable|notes-pdf|logseq-graph|zotero-rdf|gamma` + `highlights=&notes=&pdf=`); `notes-pdf` = the notes typeset as their own PDF (works without a paper); `gamma` = scoped backup for `/import-data?mode=merge` |
+| GET | `/pages/{id}/export-pdf` | the page's own PDF with annotations written back (`?highlights=&notes=`) |
+| GET | `/folders/export` | whole-folder export, same modes/flags (`?name=` + `mode=`); subfolders become Zotero collections, `notes-pdf` one PDF for the whole folder |
 | GET | `/folders/export-progress` | per-page progress of a running folder export (`{active, total, done, title}`) |
 
 ### Prefs (`prefs.py`)
