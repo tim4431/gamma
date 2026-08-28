@@ -18,6 +18,7 @@ Topic docs live in `docs/dev/` — **read the relevant one before working in tha
 - [docs/dev/paper_metadata.md](docs/dev/paper_metadata.md) — metadata fetch/edit/cite/status and `/api/resolve-pdf` resolution chain.
 - [docs/dev/import_export.md](docs/dev/import_export.md) — the Import/Export dialogs and pipelines: embedded PDF annotations, Zotero and Logseq imports, Markdown export, the notes-as-PDF document writer, the annotated-PDF writer, and the typesetting engine they share (fonts, vector math/CJK, images).
 - [docs/dev/home_library.md](docs/dev/home_library.md) — folder labels, the merged listing and sorts, the shared page card, recents strip + cover snapshots, the home context menu.
+- [docs/dev/extension.md](docs/dev/extension.md) — the Gamma Connector browser extension (`extension/`, MV3): detection, popup, the `/api/clip` ingest, auth via the shared session cookie.
 - [docs/dev/settings.md](docs/dev/settings.md) — where every setting is stored (localStorage / synced prefs / server), the Settings dialog's pane and file layout, storage limits.
 - [docs/dev/ui-design.md](docs/dev/ui-design.md) — the unified control classes, settings primitives, theme system, layout rules, frontend file map.
 - [docs/dev/debugging.md](docs/dev/debugging.md) — run/test/debug: commands, test suite, log surfaces, common gotchas.
@@ -70,6 +71,10 @@ Frontend has no test suite or linter; verify UI changes by running the app. Dock
 - Home library (folder labels, merged listing, the shared `PageCard`, recents strip + snapshots, context menu): [docs/dev/home_library.md](docs/dev/home_library.md).
 - Menus (`src/menus.jsx`): `ContextMenu` + row primitives (`MenuItem`/`MenuLabel`/`SubMenuItem`). A flyout renders INSIDE the parent menu's DOM (portalling would break the outside-pointerdown test) and opens on hover guarded by `src/menuAim.js` (the "safe triangle"; UI-agnostic, reuse for any hierarchical surface).
 - Frontend always talks same-origin `/api/*`; in dev Vite proxies to :9001. Endpoint reference: [docs/dev/api.md](docs/dev/api.md).
+
+### Browser extension (`extension/`)
+
+- Gamma Connector, a Zotero-Connector-style Chrome MV3 extension, no build step (plain ES modules; load unpacked). `detect.js` (content script) finds the paper on a page, `worker.js` keeps per-tab state + badge and runs saves through ONE server call, `POST /api/clip` (`gamma/routers/clip.py`), which reuses `pdf.resolve_source` / `pdf.download_pdf`, `blocks_store.get_or_create_doc_page` and `metadata.fetch_page_metadata` — keep the ingest logic in those helpers, never re-implement it in the extension. Auth is the app's session cookie (the extension holds a runtime host permission for the server origin, so `SameSite=Lax` is sent); no tokens, no CORS. Details: [docs/dev/extension.md](docs/dev/extension.md).
 
 ### Data-model invariants
 
