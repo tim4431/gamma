@@ -3061,6 +3061,8 @@ button.pdfOutlineChevron:hover { background: rgba(128, 128, 128, 0.28); color: v
   padding: 0 8px;
 }
 .chatPdfToggle:disabled { opacity: 0.4; cursor: default; }
+/* Info pill next to the PDF toggle when the provider refuses PDF files */
+.chatPdfToggle.chatPdfWarn { padding: 0 6px; color: var(--danger); }
 
 /* "+" context button and round send/stop */
 .chatAttachToggle.chatPlusBtn {

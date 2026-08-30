@@ -106,8 +106,8 @@ All four are session-only (`require_user`), never share-token readable.
 ### AI (`ai.py`) — all config is per-user GUI entries, no env API keys
 | Method | Path | Purpose |
 |---|---|---|
-| POST | `/ai/chat` | chat; NDJSON stream of `{delta}`/`{action}`/`{error}`; carries model id, effort, context, images, files, and the agent scope (see [ai.md](ai.md)) |
-| GET | `/ai/models` | model registry + default prompts (feeds the model switchers and prompt editor) |
+| POST | `/ai/chat` | chat; NDJSON stream of `{context}` (first line: per-document coverage — native/text, pages shown of total) then `{delta}`/`{action}`/`{error}`; carries model id, effort, context, images, files, and the agent scope (see [ai.md](ai.md)) |
+| GET | `/ai/models` | model registry (each model carries `native_pdf`: whether its provider accepts the PDF file itself) + default prompts (feeds the model switchers and prompt editor) |
 | GET | `/ai/settings` | masked provider list (key hints only) |
 | POST/PUT/DELETE | `/ai/providers[/{id}]` | manage provider entries |
 | POST | `/ai/providers/{id}/test` | live probe of one credential (model: the entry's `test_model`, else the request's `model` — the client sends its metadata model — else the first model); failures carry an `auth` flag for expired/rejected credentials |
