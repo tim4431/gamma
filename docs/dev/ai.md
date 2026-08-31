@@ -92,6 +92,20 @@ as a native document/file content part when the request sets `attach_pdf`; the
 built-in chat system prompt grounds paper claims in text actually read (the
 model must look details up or say they're absent, never fill gaps from memory).
 
+Whatever went to the model is reported back: the stream's first line is
+`{"context": [...]}` (non-stream: a `context` field) with one entry per
+document — `title`, `doc_id`, `native` (the file itself was sent),
+`native_requested`, `partial`, `chars`, `pages`, `pages_shown` (uploaded
+`files` are reported the same way, and get the single-paper budget when they
+fall back to text). The chat saves it on the reply and shows a chip only when
+it matters: "Model saw pages 1–9 of 22" for a truncated paper, "PDF file not
+accepted — sent as text" when the file was requested but the provider took
+text instead. `/api/ai/models` marks each model `native_pdf` (false for
+ChatGPT sign-in entries: their wire is the Codex backend, which refuses
+`input_file` parts). The chat's PDF button doesn't default on for such a
+model; switching it on by hand shows a warning pill, and pending uploaded
+PDFs get the same warning on their chips.
+
 PDF extraction (`gamma/pdf_text.py`) is serialized behind a lock — pdfium is
 not thread-safe and overlapping extractions fail both — and reads up to
 `MAX_PAGES` (5000, a runaway guard that logs when it bites; pages past it are
@@ -134,11 +148,11 @@ scope) = plain chat.
 
 ### Permissions and knobs (Settings → Assistant)
 
-The overall **Enable agent** switch (`gamma-ai-agent-enabled`, default on)
-disables tool use everywhere. Folder chats default to tools on
-(`gamma-ai-folder-tools-default`) and PDF chats default to tools off
-(`gamma-ai-pdf-tools-default`); both defaults are configurable here. The Tools
-button in each folder/PDF chat header toggles the configured tool set for that
+The overall **Enable tools** switch (`gamma-ai-agent-enabled`, default on)
+disables tool use everywhere. The "Folder chats"/"PDF chats" toggles set each
+scope's per-chat default (`gamma-ai-folder-tools-default` /
+`gamma-ai-pdf-tools-default`; folder on, PDF off). The Tools
+button (sliders icon) in each folder/PDF chat header toggles the configured tool set for that
 chat only. New chat resets the switch to the Settings default.
 
 One default permission per tool: List pages, Read papers & notes, Search PDF

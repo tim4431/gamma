@@ -129,19 +129,54 @@ async function progress(tabId, text) {
   await setTabState(tabId, { saving: text || "" });
 }
 
-async function bytesFromTab(url) {
+async function looksLikePdf(blob) {
+  const head = new Uint8Array(await blob.slice(0, 5).arrayBuffer());
+  return String.fromCharCode(...head).indexOf("%PDF") === 0;
+}
+
+const NOT_PDF_MSG = "this tab isn't a PDF (or the site sent a login page instead)";
+
+async function bytesFromTab(url, tabId) {
   // The browser's own session (institutional login, cookies) fetches what
   // the server can't. Needs a host permission for that site — the popup asks
   // for it before sending the save.
-  const res = await fetch(url, { credentials: "include" });
-  if (!res.ok) throw new Error(`the browser couldn't download the PDF (${res.status})`);
-  const blob = await res.blob();
-  const head = new Uint8Array(await blob.slice(0, 5).arrayBuffer());
-  if (String.fromCharCode(...head).indexOf("%PDF") !== 0) throw new Error("this tab isn't a PDF (or the site sent a login page instead)");
-  return blob;
+  let lastErr;
+  try {
+    const res = await fetch(url, { credentials: "include" });
+    if (!res.ok) throw new Error(`the browser couldn't download the PDF (${res.status})`);
+    const blob = await res.blob();
+    if (await looksLikePdf(blob)) return blob;
+    throw new Error(NOT_PDF_MSG);
+  } catch (err) { lastErr = err; }
+  // Publisher bot checks (science.org & co.) 403 the worker's fetch — wrong
+  // origin, no Referer. Retry from inside the page, where the same request
+  // looks like the reader loading the PDF. Raw PDF tabs have no content
+  // script; sendMessage fails there and the direct error stands.
+  if (tabId != null) {
+    let r = null;
+    try { r = await chrome.tabs.sendMessage(tabId, { type: "fetch-pdf", url }); } catch {}
+    if (r && r.ok && r.base64) {
+      const bytes = Uint8Array.from(atob(r.base64), (c) => c.charCodeAt(0));
+      const blob = new Blob([bytes], { type: "application/pdf" });
+      if (await looksLikePdf(blob)) return blob;
+      lastErr = new Error(NOT_PDF_MSG);
+    } else if (r && (r.status || r.error)) {
+      lastErr = new Error(r.error || `the browser couldn't download the PDF (${r.status})`);
+    }
+  }
+  throw lastErr;
 }
 
-async function savePaper({ tabId, candidate, folder, labels, title, uploadFromTab, source_url }) {
+async function uploadBlob(tabId, blob, url) {
+  const form = new FormData();
+  const name = (decodeURIComponent(url.split("?")[0].split("/").pop() || "") || "paper.pdf").replace(/\.pdf$/i, "") + ".pdf";
+  form.append("file", blob, name);
+  if (tabId != null) await progress(tabId, "uploading…");
+  const up = await api("/uploads", { form });
+  return up.doc_id;
+}
+
+async function savePaper({ tabId, candidate, folder, labels, title, source_url }) {
   const settings = await getSettings();
   const cand = candidate || { kind: "none", source_url: source_url || "" };
   const payload = {
@@ -152,21 +187,36 @@ async function savePaper({ tabId, candidate, folder, labels, title, uploadFromTa
     labels: labels != null ? labels : settings.labels,
     allow_oa: settings.allowOa, save_copy: settings.saveCopy,
   };
+  // The URL this browser could download itself: the tab that *is* a PDF, or
+  // the page's advertised PDF link.
+  const fetchUrl = cand.pdf_url || (cand.is_pdf_tab ? cand.source_url : "");
   if (tabId != null) await progress(tabId, "resolving…");
   try {
-    if (uploadFromTab) {
-      const url = cand.pdf_url || cand.source_url;
-      if (tabId != null) await progress(tabId, "downloading in your browser…");
-      const blob = await bytesFromTab(url);
-      const form = new FormData();
-      const name = (decodeURIComponent(url.split("?")[0].split("/").pop() || "") || "paper.pdf").replace(/\.pdf$/i, "") + ".pdf";
-      form.append("file", blob, name);
-      if (tabId != null) await progress(tabId, "uploading…");
-      const up = await api("/uploads", { form });
-      payload.doc_id = up.doc_id;
+    if (cand.is_pdf_tab && fetchUrl) {
+      // The tab is the PDF — upload the bytes the browser already has access
+      // to instead of making the server re-download (it may not be able to).
+      // Best-effort: on failure the server-side resolve below still runs.
+      try {
+        if (tabId != null) await progress(tabId, "downloading in your browser…");
+        payload.doc_id = await uploadBlob(tabId, await bytesFromTab(fetchUrl, tabId), fetchUrl);
+      } catch {}
     }
     if (tabId != null) await progress(tabId, "saving to your library…");
-    const out = await api("/clip", { json: payload });
+    let out;
+    try {
+      out = await api("/clip", { json: payload });
+    } catch (err) {
+      // The server couldn't fetch the PDF (paywall, bot check) — this
+      // browser's session often can. Download here, upload, save again.
+      if (!(err instanceof ApiError) || err.status !== 400 || payload.doc_id || !fetchUrl) throw err;
+      if (tabId != null) await progress(tabId, "server couldn't fetch it — downloading in your browser…");
+      let blob;
+      try { blob = await bytesFromTab(fetchUrl, tabId); }
+      catch { throw err; } // the server's explanation is the useful one
+      payload.doc_id = await uploadBlob(tabId, blob, fetchUrl);
+      if (tabId != null) await progress(tabId, "saving to your library…");
+      out = await api("/clip", { json: payload });
+    }
     if (tabId != null) await setTabState(tabId, { saving: "", hit: out, last: out, error: "" });
     return out;
   } catch (err) {
@@ -296,13 +346,13 @@ chrome.runtime.onInstalled.addListener(() => {
   });
 });
 
-async function savePageFromTab(tab, extra = {}) {
+async function savePageFromTab(tab) {
   const st = await ensureDetection(tab.id);
   if (st.hit) { await notify(`Already in your library: ${st.hit.title}`, await openInGamma(st.hit)); return; }
   const cand = st.candidate || candidateFromUrl(tab.url, tab.title);
   if (cand.kind === "none") { await notify("No paper or PDF found on this page."); return; }
   try {
-    const out = await savePaper({ tabId: tab.id, candidate: cand, uploadFromTab: !!cand.is_pdf_tab && !!extra.uploadFromTab });
+    const out = await savePaper({ tabId: tab.id, candidate: cand });
     await notify(`${out.existed ? "Already in your library" : "Saved"}: ${out.title}`, await openInGamma(out));
   } catch (err) {
     await notify(`Save failed: ${err.message}`);

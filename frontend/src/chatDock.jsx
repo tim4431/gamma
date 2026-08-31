@@ -7,13 +7,51 @@ import React, { useEffect, useMemo, useRef, useState } from "react";
 import { API, apiJson, copyText, isPdfFile } from "./utils";
 import { DockWindow, ChatMarkdown, AutoGrowTextarea, useCopied } from "./widgets";
 import { MenuSelect } from "./menus";
-import { ArrowUpIcon, BookIcon, BrainIcon, CheckIcon, ChevronDownIcon, ChevronUpIcon, CopyIcon, FileIcon, FolderIcon, ListIcon, MicIcon, PaperclipIcon, PencilIcon, SearchIcon, SlidersIcon, StopIcon, XIcon } from "./icons";
+import { CharSlider, approxPages } from "./settingsKit";
+import { AlertCircleIcon, ArrowUpIcon, BookIcon, CheckIcon, ChevronDownIcon, ChevronUpIcon, CopyIcon, FileIcon, FolderIcon, InfoIcon, ListIcon, MicIcon, PaperclipIcon, PencilIcon, PlusIcon, SearchIcon, SettingsIcon, SlidersIcon, StopIcon, XIcon } from "./icons";
 
 // Folder-agent tool chips: icon per action kind; rename/move are the kinds
 // that changed the library (they trigger the home-feed refresh). Every chip
 // carries the raw call the server ran (tool/args/result, both truncated), so
 // clicking one expands the arguments and the output the model saw.
 const ACTION_ICONS = { rename: PencilIcon, move: FolderIcon, search: SearchIcon, read: BookIcon, list: ListIcon, error: XIcon };
+// What the model was given for a reply, per document — streamed by
+// /api/ai/chat as its first line and saved on the message. Shown only when
+// it matters: the paper was truncated, or the PDF file was requested but the
+// provider refused it (text went instead). A full native attachment or a
+// paper that fit whole stays silent.
+function ContextCoverage({ items }) {
+  const notes = items.map((c) => {
+    const refused = c.native_requested && !c.native;
+    if (!refused && !c.partial) return null;
+    const span = c.pages_shown && c.pages
+      ? `pages 1–${Math.min(c.pages_shown, c.pages)} of ${c.pages}`
+      : c.selection ? "selected passages + head" : `${(c.chars || 0).toLocaleString()} characters`;
+    const what = c.title ? `“${c.title.slice(0, 48)}${c.title.length > 48 ? "…" : ""}”` : "the PDF";
+    const short = refused && !c.partial
+      ? `PDF file not accepted — sent as text`
+      : refused
+        ? `PDF file not accepted — text only, ${span}`
+        : `Model saw ${span}`;
+    const long = (refused ? "This provider does not accept PDF files, so the document went as extracted text. " : "")
+      + (c.partial
+        ? `Only ${span} of ${what} fit the context budget — the rest was not visible to the model. Raise the budget in Settings → Assistant → Context, or turn on Tools so it can read and search the whole paper.`
+        : `${what} was sent as extracted text.`);
+    return { short, long, refused };
+  }).filter(Boolean);
+  if (!notes.length) return null;
+  return (
+    <div className="chatMsgPdfs">
+      {notes.map((n, i) => (
+        <span key={i} className="chatPdfChip" title={n.long}>
+          {n.refused ? <AlertCircleIcon size={11} /> : <InfoIcon size={11} />}
+          {n.short}
+        </span>
+      ))}
+    </div>
+  );
+}
+
 const MUTATING_KINDS = new Set(["rename", "move"]);
 const toolCallText = (a) => {
   const args = Object.entries(a.args || {}).map(([k, v]) => `${k}: ${v}`).join(", ");
@@ -27,7 +65,7 @@ export default function ChatDock({
   chatImages, setChatImages,
   chatModel, setChatModel, chatEffort, setChatEffort, chatSystem,
   dictationModel, dictationLang,
-  chatContextChars, multiContextChars,
+  chatContextChars, setChatContextChars, multiContextChars,
   aiInfo, aiProvider, openAiKeysEditor,
   aiHealth, dismissAiHealth,
   openPopover, setOpenPopover,
@@ -123,6 +161,20 @@ export default function ChatDock({
   // derived from the loaded history below, so a refresh can't re-enable it
   // after the PDF was already sent (re-sending re-bills the whole file).
   const [attachPdf, setAttachPdf] = useState(false);
+  // Whether the active model's provider takes the PDF file itself. The
+  // ChatGPT sign-in wire (Codex backend) refuses file parts — the server
+  // falls back to extracted text — so there the PDF button must not
+  // default on, and turning it on by hand gets a warning, not silence.
+  const activeModel = (aiInfo?.models || []).find((m) => m.id === chatModel) || null;
+  const nativePdf = activeModel ? activeModel.native_pdf !== false : true;
+  const nativePdfNote = nativePdf ? "" :
+    `${activeModel?.provider_name || "This provider"} does not accept PDF files — the PDF is sent as extracted text instead (first ${(chatContextChars || 0).toLocaleString()} characters; Settings → Assistant → Context).`;
+  const attachPdfManualRef = useRef(false); // the user toggled the PDF button themselves
+  useEffect(() => {
+    // A provider without native PDF input: drop the automatic "send the file
+    // once" default. A deliberate manual switch-on stays (with its warning).
+    if (!nativePdf && !attachPdfManualRef.current) setAttachPdf(false);
+  }, [nativePdf]);
   // Extra chat context: selected PDF pages + whether to include notes/highlights.
   const [chatDocs, setChatDocs] = useState([]);
   const [chatIncludeNotes, setChatIncludeNotes] = useState(false);
@@ -160,7 +212,8 @@ export default function ChatDock({
         const sent = msgs.some((m) => m.pdfDocs
           ? (docId && m.pdfDocs.includes(docId)) || m.pdfDocs.some((d) => chatDocs.includes(d))
           : m.pdfs?.length);
-        setAttachPdf(!sent);
+        attachPdfManualRef.current = false;
+        setAttachPdf(!sent && nativePdf);
       })
       .catch(() => { if (!cancelled) chatLoadedForRef.current = chatKey; });
     return () => { cancelled = true; };
@@ -183,7 +236,8 @@ export default function ChatDock({
 
   function clearChat() {
     setChatMessages([]);
-    setAttachPdf(true); // new chat: first question carries the full PDF again
+    attachPdfManualRef.current = false;
+    setAttachPdf(nativePdf); // new chat: first question carries the full PDF again (where the provider takes it)
     resetToolConfig();
     fetch(`${API}/chats/${encodeURIComponent(chatKey)}`, {
       method: "DELETE",
@@ -336,7 +390,13 @@ export default function ChatDock({
     chatAbortRef.current = ctrl;
     let acc = ""; // streamed reply so far — kept on Stop
     const actions = []; // organizer mutations streamed for this reply
-    const aiMsg = (extra = {}) => ({ role: "ai", text: acc, ...(actions.length ? { actions: [...actions] } : {}), ...extra });
+    let coverage = null; // {"context": [...]} — what the model was given, per document
+    const aiMsg = (extra = {}) => ({
+      role: "ai", text: acc,
+      ...(actions.length ? { actions: [...actions] } : {}),
+      ...(coverage ? { context: coverage } : {}),
+      ...extra,
+    });
     try {
       const res = await fetch(`${API}/ai/chat`, {
         method: "POST",
@@ -382,6 +442,7 @@ export default function ChatDock({
           const ev = JSON.parse(line);
           if (ev.error) throw new Error(ev.error);
           if (ev.action) { actions.push(ev.action); continue; }
+          if (ev.context) { coverage = ev.context; continue; }
           acc += ev.delta || "";
         }
         if (acc || actions.length) showReply(aiMsg({ partial: true }));
@@ -571,6 +632,10 @@ export default function ChatDock({
     if (await copyText(text || "")) flashCopiedMsg(idx);
   }
 
+  // Header: one icon strip (the PDF zoom column's buttons, laid flat) —
+  // ⚙ chat settings (model, reasoning effort, context size — the same prefs
+  // Settings → Assistant edits, in a popover), Tools, Find, New chat.
+  const settingsOpen = openPopover === "chatsettings";
   const headerContent = (
     <>
       {aiInfo && !aiInfo.enabled && openAiKeysEditor ? (
@@ -579,59 +644,80 @@ export default function ChatDock({
           Set up AI…
         </button>
       ) : null}
-      {aiInfo?.models?.length > 0 ? (() => {
-        // Scoped to the active key (Settings → AI & API keys); all models
-        // only when no key is selected or the selected one is gone.
-        const models = aiProvider && aiInfo.models.some((m) => m.provider === aiProvider)
-          ? aiInfo.models.filter((m) => m.provider === aiProvider)
-          : aiInfo.models;
-        const multiProvider = new Set(models.map((m) => m.provider)).size > 1;
-        const currentId = models.some((m) => m.id === chatModel) ? chatModel : models[0].id;
-        return (
-          <span className="chatHeaderSelects">
-            <MenuSelect
-              label="Switch model"
-              value={currentId}
-              onChange={setChatModel}
-              options={models.map((m) => [
-                m.id,
-                multiProvider ? `${m.model} · ${m.provider_name || m.provider}` : m.model,
-              ])}
-            />
-            <MenuSelect
-              label="Reasoning effort — leave on 'effort: default' unless the model supports it"
-              icon={BrainIcon}
-              iconOnly
-              value={chatEffort}
-              onChange={setChatEffort}
-              options={[
-                ["", "effort: default"],
-                ...(aiInfo.efforts || ["low", "medium", "high"]).map((ef) => [ef, `effort: ${ef}`]),
-              ]}
-            />
-          </span>
-        );
-      })() : null}
-      <div className="chatPanelHeaderBtns">
+      <div className="ctlBtnRow chatPanelHeaderBtns">
+        {aiInfo?.models?.length > 0 ? (() => {
+          // Scoped to the active key (Settings → AI & API keys); all models
+          // only when no key is selected or the selected one is gone.
+          const models = aiProvider && aiInfo.models.some((m) => m.provider === aiProvider)
+            ? aiInfo.models.filter((m) => m.provider === aiProvider)
+            : aiInfo.models;
+          const multiProvider = new Set(models.map((m) => m.provider)).size > 1;
+          const currentId = models.some((m) => m.id === chatModel) ? chatModel : models[0].id;
+          const currentModel = models.find((m) => m.id === currentId);
+          return (
+            <span data-popover="chatsettings" style={{ position: "relative", display: "inline-flex" }}>
+              <button type="button" className={`ctlBtn ${settingsOpen ? "modeActive" : ""}`}
+                onClick={() => setOpenPopover((p) => (p === "chatsettings" ? null : "chatsettings"))}
+                title={`Chat settings — ${currentModel?.model || "model"}${chatEffort ? `, effort: ${chatEffort}` : ""}, context ${chatContextChars.toLocaleString()} chars`}
+                aria-label="Chat settings" aria-expanded={settingsOpen}>
+                <SettingsIcon size={15} />
+              </button>
+              {settingsOpen ? (
+                <div className="popover chatSettingsPop">
+                  <div className="popoverSection">Model</div>
+                  <MenuSelect
+                    block
+                    label="Switch model"
+                    value={currentId}
+                    onChange={setChatModel}
+                    options={models.map((m) => [
+                      m.id,
+                      multiProvider ? `${m.model} · ${m.provider_name || m.provider}` : m.model,
+                    ])}
+                  />
+                  <div className="popoverSection">Reasoning effort</div>
+                  <MenuSelect
+                    block
+                    label="Reasoning effort — leave on 'default' unless the model supports it"
+                    value={chatEffort}
+                    onChange={setChatEffort}
+                    options={[
+                      ["", "default"],
+                      ...(aiInfo.efforts || ["low", "medium", "high"]).map((ef) => [ef, ef]),
+                    ]}
+                  />
+                  <div className="popoverSection">Context per paper · {approxPages(chatContextChars)}</div>
+                  <CharSlider value={chatContextChars} onChange={setChatContextChars} />
+                  <div className="popoverHint">
+                    Extracted PDF text sent with each message. The multi-paper total and the agent's read window are in Settings → Assistant.
+                  </div>
+                </div>
+              ) : null}
+            </span>
+          );
+        })() : null}
         <button
           type="button"
-          className={`uiBtn sm iconSq chatHeaderIconBtn chatToolsBtn ${toolsEnabled ? "on" : ""}`}
+          className={`ctlBtn ${toolsEnabled ? "modeActive" : ""}`}
           disabled={!agentEnabled}
           aria-pressed={toolsEnabled}
           aria-label={`Tools ${toolsEnabled ? "on" : "off"}`}
           onClick={() => { setOpenPopover(null); toggleToolsForChat(); }}
           title={agentEnabled
-            ? `Turn tools ${toolsEnabled ? "off" : "on"} for this chat only`
+            ? `Tools ${toolsEnabled ? "on" : "off"} — click to turn ${toolsEnabled ? "off" : "on"} for this chat only`
             : "Agent tools are disabled in Settings → Assistant"}
         >
-          <SlidersIcon size={17} />
+          <SlidersIcon size={15} />
         </button>
-        <button className={`uiBtn sm iconSq chatHeaderIconBtn ${chatFindOpen ? "on" : ""}`}
+        <button type="button" className={`ctlBtn ${chatFindOpen ? "modeActive" : ""}`}
           onClick={() => { setChatFindOpen((v) => !v); setChatFind(""); }}
           title="Find in this conversation" aria-label="Find in this conversation">
-          <SearchIcon size={17} />
+          <SearchIcon size={15} />
         </button>
-        <button className="uiBtn sm" onClick={clearChat} title="Start a fresh conversation (clears saved history)">New chat</button>
+        <button type="button" className="ctlBtn" onClick={clearChat}
+          title="New chat — start a fresh conversation (clears saved history)" aria-label="New chat">
+          <PlusIcon size={16} />
+        </button>
       </div>
     </>
   );
@@ -772,6 +858,9 @@ export default function ChatDock({
                         ))}
                       </div>
                     ) : null}
+                    {!isUser && m.context?.length ? (
+                      <ContextCoverage items={m.context} />
+                    ) : null}
                     {!isUser && m.actions?.length ? (
                       <div className="chatToolActions">
                         {m.actions.map((a, j) => {
@@ -855,8 +944,8 @@ export default function ChatDock({
       {chatFiles.length ? (
         <div className="chatImgPreviewRow">
           {chatFiles.map((f, i) => (
-            <span key={i} className="chatFileChip" title={`${f.name} — sent with your next message`}>
-              <FileIcon size={12} />
+            <span key={i} className="chatFileChip" title={nativePdf ? `${f.name} — sent with your next message` : `${f.name} — ${nativePdfNote}`}>
+              {nativePdf ? <FileIcon size={12} /> : <AlertCircleIcon size={12} />}
               <span className="chatFileChipName">{f.name}</span>
               <button type="button" className="uiClose uiCloseSm chatFileChipRemove" title="Remove file"
                 onClick={() => setChatFiles((prev) => prev.filter((_, j) => j !== i))}>×</button>
@@ -941,14 +1030,23 @@ export default function ChatDock({
           type="button"
           className={`chatAttachToggle chatPdfToggle ${attachPdf ? "on" : ""}`}
           disabled={!docId && !chatDocs.length}
-          onClick={() => setAttachPdf((v) => !v)}
-          title={attachPdf
-            ? "Full PDF file is sent with each message (model sees figures & tables). Click to switch to extracted text only."
-            : "Send the full PDF file with your messages so the model sees figures & tables (uses more tokens). Click to enable."}
+          onClick={() => { attachPdfManualRef.current = true; setAttachPdf((v) => !v); }}
+          title={!nativePdf
+            ? `${attachPdf ? "On, but: " : ""}${nativePdfNote}`
+            : attachPdf
+              ? "Full PDF file is sent with each message (model sees figures & tables). Click to switch to extracted text only."
+              : "Send the full PDF file with your messages so the model sees figures & tables (uses more tokens). Click to enable."}
         >
           <FileIcon size={12} />
           PDF
         </button>
+        {attachPdf && !nativePdf ? (
+          <button type="button" className="chatAttachToggle chatPdfToggle chatPdfWarn"
+            onClick={() => setStatus(nativePdfNote)} title={nativePdfNote}
+            aria-label="This provider cannot accept PDF files">
+            <AlertCircleIcon size={12} />
+          </button>
+        ) : null}
         <AutoGrowTextarea
           className="chatInput chatInputArea"
           rows={1}

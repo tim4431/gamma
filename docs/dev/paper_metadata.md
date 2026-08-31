@@ -8,7 +8,10 @@ stored PDF. Code: `gamma/routers/metadata.py`, `gamma/pdf.py`.
 `/api/metadata/fetch` resolves a page's paper via arXiv API → DOI content
 negotiation (doi.org, with glued-suffix DOI candidates) → AI extraction from
 the first pages; result + BibTeX cached on the page block (`properties.meta` /
-`properties.bibtex`). `/api/metadata/update` saves hand-edited fields from the
+`properties.bibtex`). The fetch also kicks background search indexing for the
+paper (`ai_context.ensure_indexed`) — the paper is being set up, so search,
+the AI document map and library-wide Ctrl+F shouldn't wait for the first
+search to discover it. `/api/metadata/update` saves hand-edited fields from the
 metadata popover (rebuilds BibTeX, source `manual`, invalidates the cached
 citation). `/api/metadata/cite` turns the BibTeX into a PPT-style markdown
 citation via AI.

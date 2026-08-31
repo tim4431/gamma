@@ -80,6 +80,8 @@ Now :9002 is a pixel-identical, disposable copy of the showcase workspace.
 | `docs/demo-download-and-chat.gif` | open paper by URL (pasted) → drag-select the abstract sentence → ask the AI briefly, watch the answer stream (the README **hero** GIF, first image) | `:9001` |
 | `docs/demo-reference-links.gif` | atom-arrays paper, page 3: click the tiny "36" citation once → jumps to the reference → select just the "36." number → click its arXiv link → **Fetch into Gamma**. Recorded at normal scale; a smooth **camera zoom** (post-process, `gen-zoom.py`) magnifies the citation+reference — the page itself never zooms (README "Link and organize" section) | `:9001` |
 | `docs/demo-library.gif` | drag a paper into a folder, then Ctrl+F lighting up matches | isolated |
+| `docs/demo-agent.gif` | home chat: "Organize my library …" → tool chips stream (List/Read/Move) → folders appear in the list (README "An agent in your library"). Recorder [record-agent.mjs](./record-agent.mjs) | isolated (the agent MOVES pages) |
+| `docs/demo-connector.gif` | arXiv abs page → extension popup (opened as a page via `?tab=`, composited as an overlay on a frozen arXiv frame) → Save to Gamma into a folder → Open in Gamma (README "Save from your browser"). Recorder [record-connector.mjs](./record-connector.mjs): persistent context + `--load-extension`, popup video cropped to 360px and ffmpeg-overlaid, 3 segments concat'd; [gen-conn.py](./gen-conn.py) does the compositing plus a zoompan camera zoom (title → pan to popup → out into Gamma; palette pass must run separately from zoompan or ffmpeg OOMs) | isolated |
 
 GIF slots exist as HTML comments in README.md — when adding one, replace the
 comment with `![…](./docs/demo-*.gif)`. Each GIF has its own checked-in
