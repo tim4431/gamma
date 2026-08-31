@@ -1,7 +1,7 @@
 import React, { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState } from "react";
 import { Panel, PanelGroup, PanelResizeHandle } from "react-resizable-panels";
 import PdfViewer, { COLORS, clampZoom } from "./pdfViewer";
-import { API, apiJson, makeId, fmtBytes, getDocIdForUrl, isPdfFile, isMarkdownFile, importZoteroZip, resolvePdfUrl, pdfProxyUrl, probePdfUrl, setExpectedUser, getExpectedUser, usePersistedState, usePersistedFlag, copyText, copyRich } from "./utils";
+import { API, apiJson, makeId, fmtBytes, getDocIdForUrl, isPdfFile, isMarkdownFile, isUnverifiedPaperMeta, importZoteroZip, resolvePdfUrl, pdfProxyUrl, probePdfUrl, setExpectedUser, getExpectedUser, usePersistedState, usePersistedFlag, copyText, copyRich } from "./utils";
 import {
   BlockDropIndicator,
   ChatMarkdown,
@@ -226,13 +226,14 @@ function captureViewerSnapshot() {
   try { return out.toDataURL("image/jpeg", SNAP_QUALITY); } catch { return null; }
 }
 
-// Horizontal card strip. No arrow chrome: a mouse wheel scrolls it sideways
-// (native non-passive listener — React's synthetic onWheel can't
-// preventDefault), touch swipes pan natively via overflow-x.
-function CardCarousel({ label, children, className }) {
-  const trackRef = useRef(null);
-  useEffect(() => {
-    const el = trackRef.current;
+// Wheel-to-horizontal-pan for a card strip (native non-passive listener —
+// React's synthetic onWheel can't preventDefault); touch swipes pan natively
+// via overflow-x. Returns a callback ref (not a plain one) so the listener
+// follows the element through conditional mounts.
+function useWheelPan() {
+  const cleanupRef = useRef(null);
+  return useCallback((el) => {
+    if (cleanupRef.current) { cleanupRef.current(); cleanupRef.current = null; }
     if (!el) return;
     function onWheel(e) {
       // Real horizontal input (trackpads, tilt wheels) already works; pinch
@@ -243,8 +244,13 @@ function CardCarousel({ label, children, className }) {
       e.preventDefault();
     }
     el.addEventListener("wheel", onWheel, { passive: false });
-    return () => el.removeEventListener("wheel", onWheel);
+    cleanupRef.current = () => el.removeEventListener("wheel", onWheel);
   }, []);
+}
+
+// Horizontal card strip. No arrow chrome: the wheel pans it sideways.
+function CardCarousel({ label, children, className }) {
+  const trackRef = useWheelPan();
   return (
     <div className={"carouselRow" + (className ? " " + className : "")}>
       {label ? <div className="carouselLabel">{label}</div> : null}
@@ -2003,6 +2009,14 @@ export default function App() {
         // Focus in the chat window → ChatDock's own listener opens find-in-chat
         if (document.activeElement?.closest?.(".chatPanel")) return;
         e.preventDefault();
+        // On the home library, plain Ctrl+F targets the listing search box
+        // (only rendered there — DOM presence stands in for homeMode, which
+        // this once-mounted listener can't read). Ctrl+Shift+F still opens
+        // the full search panel.
+        if (!e.shiftKey) {
+          const homeFind = document.querySelector(".homeFindInput");
+          if (homeFind) { homeFind.focus(); homeFind.select(); return; }
+        }
         setOpenPopover((p) => (p === "search" && !e.shiftKey ? null : "search"));
       } else if (e.altKey && e.key === "ArrowLeft") {
         e.preventDefault();
@@ -2477,6 +2491,9 @@ export default function App() {
   // and doesn't spin for a fetch that belongs to a different page.
   const [metaFetchingIds, setMetaFetchingIds] = useState(() => new Set());
   const metaBusy = metaFetchingIds.has(focusedBlockId);
+  // Unverified-paper warning (red "!") — shared predicate with the Settings →
+  // Library status table, see isUnverifiedPaperMeta in utils.js.
+  const metaUnverifiedPaper = !!pageMeta && isUnverifiedPaperMeta(pageMeta.source, pageMeta.kind);
   const [pptCite, setPptCite] = useState("");
   const [pptCiteBusy, setPptCiteBusy] = useState(false);
   const [metaPopPos, setMetaPopPos] = useState({ top: 0, right: 0 }); // fixed-position anchor for the metadata popover
@@ -3185,7 +3202,10 @@ export default function App() {
   }
 
   function onCacheRef(id, blockData) {
-    setRefCache((prev) => prev[id] ? prev : { ...prev, [id]: blockData });
+    // Merge-write: embed in-place edits push updated content for an already
+    // cached ref, so this must overwrite (while keeping fields the caller
+    // didn't send, e.g. page_title).
+    setRefCache((prev) => ({ ...prev, [id]: { ...(prev[id] || {}), ...blockData } }));
   }
 
   function triggerFlash(highlightId) {
@@ -4719,7 +4739,8 @@ export default function App() {
     [homeVisibleItems]
   );
   // Pinned papers — shown as a favorites strip at the library root. Most
-  // recently pinned first.
+  // recently pinned first. Scrolls like the recents carousel: wheel pans it.
+  const pinnedStripRef = useWheelPan();
   const pinnedPages = useMemo(
     () => pageBlocks.filter((b) => b._pinned).sort((a, b) => (b._pinned || "").localeCompare(a._pinned || "")),
     [pageBlocks]
@@ -5168,7 +5189,9 @@ export default function App() {
                       className="pageActionBtn"
                       title={metaBusy
                         ? "Fetching paper metadata…"
-                        : "Paper metadata (authors, venue, DOI, source file…)"}
+                        : metaUnverifiedPaper
+                          ? "Metadata was AI-extracted and could not be verified against a registry — check it before citing"
+                          : "Paper metadata (authors, venue, DOI, source file…)"}
                       aria-label="Paper metadata"
                       onClick={(e) => {
                         const opening = openPopover !== "meta";
@@ -5187,6 +5210,13 @@ export default function App() {
                           icon becomes a spinner while a fetch is running. */}
                       {metaBusy ? <span className="pillSpin" aria-hidden="true" /> : <InfoIcon size={15} />}
                     </button>
+                    {/* AI-extracted metadata never passed a registry check —
+                        flag it so nobody cites it unverified. Only for things
+                        that claim to be papers: course notes, slides etc.
+                        (meta.kind) have no registry record to verify against. */}
+                    {!metaBusy && metaUnverifiedPaper ? (
+                      <span className="metaWarnDot" aria-hidden="true">!</span>
+                    ) : null}
                     {openPopover === "meta" ? (
                       <div
                         className="popover sourcePopover metaPopover"
@@ -5258,7 +5288,18 @@ export default function App() {
                             </div>
                           ))}
                           {pageMeta?.source ? (
-                            <div className="metaRow"><span className="metaKey">Source</span><span className="metaVal">{pageMeta.source === "ai" ? "AI-extracted" : pageMeta.source === "manual" ? "edited by hand" : pageMeta.source}</span></div>
+                            <div className="metaRow">
+                              <span className="metaKey">Source</span>
+                              <span
+                                className={metaUnverifiedPaper ? "metaVal metaValWarn" : "metaVal"}
+                                title={metaUnverifiedPaper ? "Extracted by AI from the PDF text and not confirmed by arXiv/Crossref — fields may be wrong, verify before citing" : undefined}
+                              >
+                                {metaUnverifiedPaper ? "AI-extracted — verify before citing"
+                                  : pageMeta.source === "ai" ? `AI-extracted (${pageMeta.kind || "document"} — not a published paper, so no registry to check against)`
+                                    : pageMeta.source === "manual" ? "edited by hand"
+                                      : pageMeta.source}
+                              </span>
+                            </div>
                           ) : null}
                           <div className="metaRow">
                             <span className="metaKey">PDF text</span>
@@ -5468,7 +5509,7 @@ export default function App() {
             {homeMode && !categoryFilter && !folderFilter && pinnedPages.length > 0 ? (
               <div className="pinnedSection">
                 <div className="pinnedLabel"><PinIcon filled size={12} /> Pinned</div>
-                <div className="pinnedStrip">
+                <div className="pinnedStrip" ref={pinnedStripRef}>
                   {pinnedPages.map((b) => (
                     <PageCard
                       key={b._pageId}
@@ -6026,6 +6067,7 @@ export default function App() {
                       .catch((err) => setStatus(`Delete failed: ${err}`));
                     setBlocks(removeBlockTree(blocks, id));
                   },
+                  onStatus: (msg) => setStatus(msg),
                   onBlockDragOver: (e, block) => {
                     e.preventDefault();
                     e.dataTransfer.dropEffect = "move";
@@ -7193,6 +7235,8 @@ export default function App() {
           metaContextChars,
           indexTask,
           setStatus,
+          // status-table row click: jump to the paper (closing the dialog)
+          openPaper: (id) => { setSettingsOpen(null); openPage(id); },
         }}
         ai={{
           aiKeysInfo,

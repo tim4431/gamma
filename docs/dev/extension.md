@@ -57,7 +57,7 @@ helpers — never re-implement it in the extension.
 | `worker.js` | per-tab state in `chrome.storage.session` (`tab:<id>` → `{candidate, hit, auth, saving, error}`), badge/icon, `lookup`, the save pipeline, context menus, keyboard command, notifications, and the message API (`get-state`, `save`, `clip-selection`, `auth-changed`, `open`) |
 | `detect.js` | content script (`document_idle`): identifier extraction, re-run on SPA URL changes; answers `get-detection` / `get-selection` / `fetch-pdf` (downloads a PDF from inside the page and relays it base64 — publisher bot checks that 403 the worker's fetch accept the page's own same-origin request) |
 | `api.js` | settings (`chrome.storage.sync`: `server, folder, labels, allowOa, saveCopy`), `api()` fetch wrapper (`credentials: "include"`, JSON `detail` → `ApiError{status}`), `login/logout/whoAmI` |
-| `popup.html/js/css` | setup (no server) → sign-in → main view; `?tab=<id>` targets a specific tab when opened as a page (tests) |
+| `popup.html/js/css` | setup (no server) → offline (server unreachable, with Retry) → sign-in → main view; the footer shows a connection dot (green signed in / amber signed out / red unreachable) beside `host · user` and an options gear (the app's SettingsIcon). The folder picker and label suggestions are plain-JS menus mirroring the app's MenuSelect/ctxMenu recipes, and `popup.css` copies the app's theme tokens (light/dark via `prefers-color-scheme`) — keep it in step with `app.css` when the control recipes change. `?tab=<id>` targets a specific tab when opened as a page (tests) |
 | `options.html/js` | server + host permission, account, saving defaults |
 | `icons/` | blue tile (paper detected) and grey tile (nothing) at 16/32/48/128, generated with Pillow |
 
@@ -137,8 +137,11 @@ Server side (`clip.py`, sync `def` — it downloads):
 5. **Folder + labels** — `properties.folder` / `properties.category` comma
    lists, cleaned by `foldertags`.
 6. **Metadata** — `metadata.fetch_page_metadata()` (extracted from
-   `/api/metadata/fetch`) in a daemon thread; arXiv/DOI paths need no AI
-   provider. Skipped when `meta` already exists or `fetch_metadata: false`.
+   `/api/metadata/fetch`) in a daemon thread; the detector's `doi`/`arxiv_id`
+   ride along as trusted hints (they come from the publisher page's own meta
+   tags, so the lookup resolves them directly instead of re-mining the PDF
+   text); arXiv/DOI paths need no AI provider. Skipped when `meta` already
+   exists or `fetch_metadata: false`.
 
 Companions: `GET /api/library/lookup?doi=&arxiv_id=&url=` (404 when absent;
 identifiers are also extracted from `url`), `GET /api/library/folders` →

@@ -192,6 +192,13 @@ async function copyRich(html, plain) {
   return legacyCopy(plain, html);
 }
 
+// AI-extracted metadata that claims to be a paper never passed a registry
+// check — the UI flags it (red "!" on the metadata button, red cell in the
+// Settings → Library table) so nobody cites it unverified. Non-paper kinds
+// (notes, slides…) have no registry record to verify against, so no flag;
+// records cached before `kind` existed count as papers (the safe default).
+const isUnverifiedPaperMeta = (source, kind) => source === "ai" && (kind || "paper") === "paper";
+
 const isPdfFile = (f) => f.type === "application/pdf" || /\.pdf$/i.test(f.name || "");
 const isMarkdownFile = (f) => /\.(?:md|markdown)$/i.test(f.name || "")
   || /^(?:text\/markdown|text\/x-markdown)$/i.test(f.type || "");
@@ -271,4 +278,4 @@ async function probePdfUrl(sourceUrl) {
   try { await r.body?.cancel(); } catch {}
 }
 
-export { API, makeId, fmtBytes, sha256, getDocIdForUrl, isPdfFile, isMarkdownFile, apiJson, importZoteroZip, resolvePdfUrl, pdfProxyUrl, probePdfUrl, setExpectedUser, getExpectedUser, usePersistedState, usePersistedFlag, copyText, copyRich };
+export { API, makeId, fmtBytes, sha256, getDocIdForUrl, isPdfFile, isMarkdownFile, isUnverifiedPaperMeta, apiJson, importZoteroZip, resolvePdfUrl, pdfProxyUrl, probePdfUrl, setExpectedUser, getExpectedUser, usePersistedState, usePersistedFlag, copyText, copyRich };

@@ -16,8 +16,12 @@ import {
   LatexAcPopup, MathLivePreview,
 } from "./latexEditor";
 import { BlockCmEditor, scanMathSpans } from "./blockCmEditor";
+import { fenceInnerAt, highlightCode, makeCopyButton, scanFences } from "./codeHighlight";
 import { filterSlashCommands, SlashMenuPopup } from "./slashMenu";
 import { remarkCallouts } from "./callouts";
+import { ContextMenu, MenuItem } from "./menus";
+import { API, apiJson, copyText } from "./utils";
+import { Trash2Icon } from "./icons";
 
 // Module-level ref for native HTML5 drag-and-drop (shared with App's drop handlers)
 const _dragState = { draggingId: null, dropTarget: null };
@@ -40,6 +44,9 @@ function applyOutsideSpans(text, spans, fn) {
 
 function mdPreprocess(content, nested) {
   const spans = scanMathSpans(content).map((s) => ({ from: s.from, to: s.to }));
+  // ``` fences claim first (sorted by from, earlier span wins in
+  // applyOutsideSpans) — a [[ref]] or == inside code must stay literal.
+  for (const f of scanFences(content)) spans.push({ from: f.from, to: f.to });
   for (const m of content.matchAll(/`[^`\n]+`/g)) {
     spans.push({ from: m.index, to: m.index + m[0].length });
   }
@@ -129,31 +136,91 @@ function LinkChip({ href, text }) {
   );
 }
 
-// ![[id]] transclusion: the referenced block's content rendered in a card;
-// clicking it jumps to the source block. Content/page title come from the
-// same refLabels resolution as [[ref]] chips.
-function BlockEmbedCard({ refId, refBlock, refLabels, onBlockRefClick }) {
+// ![[id]] transclusion: the referenced block's content rendered in a card.
+// With onEmbedEdit (not read-only), clicking the card edits the SOURCE block
+// in place, Notion-synced-block style — the edit lands on the source on
+// blur, so every other copy re-renders it. The page-title footer jumps to
+// the source; in read-only views the whole card is the jump link.
+function BlockEmbedCard({ refId, refBlock, refLabels, onBlockRefClick, onEmbedEdit }) {
+  const [draft, setDraft] = useState(null); // non-null while editing in place
+  const editable = !!onEmbedEdit && refBlock?.content != null;
+  const save = () => {
+    setDraft((d) => {
+      if (d != null && d !== refBlock.content) onEmbedEdit(refId, d);
+      return null;
+    });
+  };
   return (
     <span
-      className="blockEmbedCard"
-      role="link"
-      title={refBlock?.page_title ? `From: ${refBlock.page_title}` : "Embedded note"}
+      className={`blockEmbedCard${draft != null ? " editing" : ""}`}
+      role={editable ? undefined : "link"}
+      title={draft != null ? undefined
+        : refBlock?.page_title ? `From: ${refBlock.page_title}` : "Embedded note"}
       onMouseDown={(e) => e.stopPropagation()}
       onClick={(e) => {
         e.preventDefault();
         e.stopPropagation();
-        onBlockRefClick?.(refId);
+        if (draft != null) return;
+        if (editable) setDraft(refBlock.content);
+        else onBlockRefClick?.(refId);
       }}
     >
       <span className="blockEmbedBody">
-        {refBlock?.content ? (
+        {draft != null ? (
+          <BlockCmEditor
+            autoFocus
+            className="blockEditor blockEditorCm"
+            value={draft}
+            refLabels={refLabels}
+            onChange={(e) => setDraft(e.target.value)}
+            onBlur={save}
+            onKeyDown={(e) => {
+              // Escape saves and exits, same as blurring a normal block.
+              if (e.key === "Escape") { e.preventDefault(); save(); }
+            }}
+            placeholder="Edit the source note…"
+          />
+        ) : refBlock?.content ? (
           <BlockMarkdown content={refBlock.content} refLabels={refLabels} onBlockRefClick={onBlockRefClick} nested />
         ) : (
           <span className="blockPlaceholder">embedded note…</span>
         )}
       </span>
-      {refBlock?.page_title ? <span className="blockEmbedSrc">{refBlock.page_title}</span> : null}
+      {refBlock?.page_title ? (
+        <span
+          className="blockEmbedSrc"
+          role="link"
+          title="Open the source block"
+          onClick={(e) => { e.stopPropagation(); onBlockRefClick?.(refId); }}
+        >{refBlock.page_title}</span>
+      ) : null}
     </span>
+  );
+}
+
+// Fenced code in the rendered view: react-markdown hands us
+// <pre><code class="language-x">text</code></pre>; re-render it through
+// highlight.js with a small language badge. Inline `code` is untouched.
+// The copy button is the shared DOM one (makeCopyButton — same behavior as
+// the editor's code card), mounted once outside React's reconciliation.
+function CodePre({ children }) {
+  const codeProps = React.Children.toArray(children).find((c) => c?.props)?.props || {};
+  const lang = /language-([\w+#-]+)/.exec(codeProps.className || "")?.[1] || "";
+  const raw = textOf(codeProps.children).replace(/\n$/, "");
+  const html = useMemo(() => highlightCode(raw, lang), [raw, lang]);
+  const rawRef = useRef(raw);
+  rawRef.current = raw;
+  const preRef = useRef(null);
+  useEffect(() => {
+    const btn = makeCopyButton(() => rawRef.current);
+    preRef.current?.appendChild(btn);
+    return () => btn.remove();
+  }, []);
+  return (
+    <pre className="codeBlock" ref={preRef}>
+      {lang ? <span className="codeLangBadge">{lang}</span> : null}
+      <code className="hljs" dangerouslySetInnerHTML={{ __html: html }} />
+    </pre>
   );
 }
 
@@ -164,7 +231,7 @@ function BlockEmbedCard({ refId, refBlock, refLabels, onBlockRefClick }) {
 // labels are resolved by the caller so the comparison here stays a string
 // check. onBlockRefClick/onTaskToggle are deliberately excluded from the
 // comparison — the caller passes identity-stable wrappers.
-const BlockMarkdown = React.memo(function BlockMarkdown({ content, refLabels, onBlockRefClick, onTaskToggle, nested }) {
+const BlockMarkdown = React.memo(function BlockMarkdown({ content, refLabels, onBlockRefClick, onTaskToggle, onEmbedEdit, nested }) {
   // GFM task-list checkboxes render in document order; this counter maps the
   // nth rendered checkbox back to the nth `[ ]`/`[x]` marker in the source so
   // clicking one toggles the right marker. Reset per render — the whole
@@ -207,6 +274,7 @@ const BlockMarkdown = React.memo(function BlockMarkdown({ content, refLabels, on
                 refBlock={refLabels?.[refId]}
                 refLabels={refLabels}
                 onBlockRefClick={onBlockRefClick}
+                onEmbedEdit={onEmbedEdit}
               />
             );
           }
@@ -215,6 +283,7 @@ const BlockMarkdown = React.memo(function BlockMarkdown({ content, refLabels, on
           }
           return <a href={href} target="_blank" rel="noreferrer">{children}</a>;
         },
+        pre: CodePre,
         input: ({ node, type, checked, disabled, ...props }) => {
           if (type !== "checkbox") return <input type={type} {...props} />;
           taskIdx += 1;
@@ -339,6 +408,24 @@ function BlockRow({
     if (newVal !== block.content) onChangeText(block.id, newVal);
   };
   const stableTaskToggle = useRef((idx, checked) => taskToggleRef.current?.(idx, checked)).current;
+  // In-place edits on ![[embed]] cards write to the SOURCE block. A source on
+  // the current page goes through onChangeText (state + debounced autosave —
+  // a direct PUT would be reverted by the page's own autosave); a cross-page
+  // source is PUT directly and the ref cache updated so every copy re-renders.
+  const embedEditRef = useRef(null);
+  embedEditRef.current = (refId, newContent) => {
+    if (allBlocks?.find((b) => b.id === refId)) {
+      onChangeText(refId, newContent);
+    } else {
+      apiJson(`${API}/blocks/${refId}`, {
+        method: "PUT",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ content: newContent }),
+      }).catch(() => {});
+      onCacheRef?.(refId, { content: newContent }); // merge-write keeps page_title etc.
+    }
+  };
+  const stableEmbedEdit = useRef((id, c) => embedEditRef.current?.(id, c)).current;
   // Resolve [[ref]] chip labels here (cheap per render) so BlockMarkdown's
   // memo can compare them as strings instead of depending on allBlocks,
   // whose identity changes on every edit.
@@ -361,6 +448,11 @@ function BlockRow({
   // the slash (caret moves just keep or close it), suppressed inside math.
   const [slashMenu, setSlashMenu] = useState(null);
   const [slashIdx, setSlashIdx] = useState(0);
+  // Notion-style "Paste as" chooser after pasting a URL: the URL text is
+  // already inserted; { start, end, url, items, anchor }. Any further edit,
+  // caret move or blur keeps the URL and dismisses the menu.
+  const [pasteMenu, setPasteMenu] = useState(null);
+  const [pasteIdx, setPasteIdx] = useState(0);
   const [searchResults, setSearchResults] = useState([]);
   const [imageDragOver, setImageDragOver] = useState(false);
   const uploadingRef = useRef(false);
@@ -409,7 +501,8 @@ function BlockRow({
   function updateMathUi(ta, typing) {
     const cursor = ta.selectionStart;
     if (cursor !== ta.selectionEnd) { setMathUi(null); return; }
-    const seg = findMathAtCursor(ta.value, cursor);
+    // A "$" inside a ``` fence is code (shell vars), never math.
+    const seg = fenceInnerAt(ta.value, cursor) ? null : findMathAtCursor(ta.value, cursor);
     if (!seg) { setMathUi(null); return; }
     // \command autocomplete: a backslash-word ending at the caret, only
     // inside math (a bare "\" in prose — file paths — must not trigger it),
@@ -457,7 +550,7 @@ function BlockRow({
     const cursor = ta.selectionStart;
     if (cursor !== ta.selectionEnd) { setSlashMenu(null); return; }
     const m = ta.value.slice(0, cursor).match(/(?:^|\s)\/([a-zA-Z0-9-]*)$/);
-    if (!m || findMathAtCursor(ta.value, cursor)) { setSlashMenu(null); return; }
+    if (!m || findMathAtCursor(ta.value, cursor) || fenceInnerAt(ta.value, cursor)) { setSlashMenu(null); return; }
     const start = cursor - m[1].length - 1;
     const items = filterSlashCommands(m[1]);
     if (!items.length) { setSlashMenu(null); return; }
@@ -561,12 +654,86 @@ function BlockRow({
     if (url) onChangeText(block.id, (block.content || "") + "\n" + `![](${url})`);
   }
 
+  // A gamma block link pastes as mention chip / synced embed / plain URL;
+  // any other URL pastes as-is (the link chip) or as a titled markdown link.
+  function pasteAsItems(blockId) {
+    if (blockId) {
+      return [
+        { name: "mention", glyph: "@", label: "Mention", hint: "inline chip", make: () => `[[${blockId}]]` },
+        { name: "synced", glyph: "⧉", label: "Synced block", hint: "live embed", make: () => `![[${blockId}]]` },
+        { name: "url", glyph: "🔗", label: "URL", hint: "keep the link" },
+      ];
+    }
+    return [
+      { name: "url", glyph: "🔗", label: "URL", hint: "link chip" },
+      { name: "titled", glyph: "🔖", label: "Titled link", hint: "fetch the page title" },
+    ];
+  }
+
+  function applyPasteAs(item) {
+    const pm = pasteMenu;
+    setPasteMenu(null);
+    const ta = ref.current;
+    if (!pm || !ta) return;
+    const doReplace = (text) => {
+      // The pasted URL must still be where we left it (typing dismisses the
+      // menu, but an async titled-link fetch can land late).
+      if (ta.value.slice(pm.start, pm.end) !== pm.url) return;
+      ta.view?.dispatch({
+        changes: { from: pm.start, to: pm.end, insert: text },
+        selection: { anchor: pm.start + text.length },
+        userEvent: "input",
+      });
+      ta.focus();
+    };
+    if (item.make) {
+      doReplace(item.make());
+    } else if (item.name === "titled") {
+      fetch(`/api/link-preview?url=${encodeURIComponent(pm.url)}`)
+        .then((r) => (r.ok ? r.json() : null))
+        .then((d) => {
+          let label = (d?.title || "").replace(/[[\]\n]/g, " ").trim();
+          if (!label) {
+            try { label = new URL(pm.url).hostname.replace(/^www\./, ""); } catch (_) { label = pm.url; }
+          }
+          doReplace(`[${label}](${pm.url})`);
+        })
+        .catch(() => {});
+    }
+    // "url": keep the pasted text as-is
+  }
+
   // Paste an image (screenshot) while editing → upload it and insert the
-  // markdown at the cursor. Text pastes fall through to the browser default.
+  // markdown at the cursor. A single-URL text paste inserts the URL and opens
+  // the "Paste as" chooser. Other text falls through to the browser default.
   async function handleEditorPaste(e) {
     const file = Array.from(e.clipboardData?.items || [])
       .find((it) => it.type?.startsWith("image/"))?.getAsFile();
-    if (!file) return;
+    if (!file) {
+      const text = (e.clipboardData?.getData("text/plain") || "").trim();
+      const ta = ref.current;
+      if (ta && /^https?:\/\/\S+$/i.test(text)) {
+        e.preventDefault();
+        const start = ta.selectionStart;
+        ta.view?.dispatch({
+          changes: { from: start, to: ta.selectionEnd, insert: text },
+          selection: { anchor: start + text.length },
+          userEvent: "input",
+        });
+        let blockId = null;
+        try {
+          const b = new URL(text).searchParams.get("block");
+          if (b && /^[a-zA-Z0-9_-]+$/.test(b)) blockId = b;
+        } catch (_) {}
+        const anchor = ta.caretCoords(start);
+        // After the onChange the dispatch just fired (it clears pasteMenu).
+        requestAnimationFrame(() => {
+          setPasteMenu({ start, end: start + text.length, url: text, items: pasteAsItems(blockId), anchor });
+          setPasteIdx(0);
+        });
+      }
+      return;
+    }
     e.preventDefault();
     const ta = ref.current;
     // Capture the cursor now — the upload takes a beat and focus may move.
@@ -732,16 +899,25 @@ function BlockRow({
                 }
                 updateMathUi(e.target, true);
                 updateSlashMenu(e.target, true);
+                setPasteMenu(null);
               }}
-              onSelect={(e) => { updateMathUi(e.target, false); updateSlashMenu(e.target, false); }}
+              onSelect={(e) => { updateMathUi(e.target, false); updateSlashMenu(e.target, false); setPasteMenu(null); }}
               onBlur={() => {
                 onStartEdit(block.id, false);
                 setMathUi(null);
                 setSlashMenu(null);
+                setPasteMenu(null);
                 setTimeout(() => setRefPopup(null), 120);
               }}
               onPaste={handleEditorPaste}
               onKeyDown={(e) => {
+                if (pasteMenu) {
+                  const n = pasteMenu.items.length;
+                  if (e.key === "ArrowDown") { e.preventDefault(); setPasteIdx((i) => Math.min(i + 1, n - 1)); return; }
+                  if (e.key === "ArrowUp") { e.preventDefault(); setPasteIdx((i) => Math.max(i - 1, 0)); return; }
+                  if (e.key === "Enter" || e.key === "Tab") { e.preventDefault(); applyPasteAs(pasteMenu.items[pasteIdx]); return; }
+                  if (e.key === "Escape") { e.preventDefault(); setPasteMenu(null); return; }
+                }
                 if (refPopup && searchResults.length > 0) {
                   if (e.key === "ArrowDown") { e.preventDefault(); setRefSelectedIdx((i) => Math.min(i + 1, searchResults.length - 1)); return; }
                   if (e.key === "ArrowUp") { e.preventDefault(); setRefSelectedIdx((i) => Math.max(i - 1, 0)); return; }
@@ -761,6 +937,22 @@ function BlockRow({
                   if (e.key === "ArrowUp") { e.preventDefault(); setMathAcIdx((i) => Math.max(i - 1, 0)); return; }
                   if (e.key === "Tab" || e.key === "Enter") { e.preventDefault(); acceptLatexAc(mathUi.ac.items[mathAcIdx]); return; }
                   if (e.key === "Escape") { e.preventDefault(); setMathUi((u) => u ? { ...u, ac: null } : null); return; }
+                }
+                // Inside a ``` fence the outliner keys turn code-editor:
+                // any Enter is a line break (never a new note) and Tab
+                // indents with spaces instead of nesting the block.
+                if ((e.key === "Enter" || (e.key === "Tab" && !e.shiftKey)) && ref.current
+                  && fenceInnerAt(ref.current.value, ref.current.selectionStart)) {
+                  const ta = ref.current;
+                  const selStart = ta.selectionStart, selEnd = ta.selectionEnd;
+                  e.preventDefault();
+                  const ins = e.key === "Enter" ? "\n" : "  ";
+                  ta.view?.dispatch({
+                    changes: { from: selStart, to: selEnd, insert: ins },
+                    selection: { anchor: selStart + ins.length },
+                    userEvent: "input",
+                  });
+                  return;
                 }
                 // Which Enter starts a new note is a preference (Settings →
                 // Notes); the other one falls through to a plain line break.
@@ -828,7 +1020,8 @@ function BlockRow({
             <div className="blockRendered" onCopy={handleMarkdownCopy}>
               {(block.content || "").trim() ? (
                 <BlockMarkdown content={block.content || ""} refLabels={refLabels} onBlockRefClick={stableRefClick}
-                  onTaskToggle={readOnly ? undefined : stableTaskToggle} />
+                  onTaskToggle={readOnly ? undefined : stableTaskToggle}
+                  onEmbedEdit={readOnly ? undefined : stableEmbedEdit} />
               ) : (
                 <div className="blockPlaceholder">(empty)</div>
               )}
@@ -876,6 +1069,9 @@ function BlockRow({
       {!readOnly && block.editMode && slashMenu ? (
         <SlashMenuPopup items={slashMenu.items} selected={slashIdx} anchor={slashMenu.anchor} onPick={runSlashCommand} />
       ) : null}
+      {!readOnly && block.editMode && pasteMenu ? (
+        <SlashMenuPopup title="Paste as" items={pasteMenu.items} selected={pasteIdx} anchor={pasteMenu.anchor} onPick={applyPasteAs} />
+      ) : null}
       {refPopup && searchResults.length > 0 && (
         <div
           className="refPopup"
@@ -910,18 +1106,38 @@ function BlockRow({
 
 function SortableBlockRow({ block, ...rowProps }) {
   const depth = rowProps.depth || 0;
+  // Notion-style handle: drag moves the block, a plain click opens the block
+  // menu (copy link / reference / embed, delete).
+  const [handleMenu, setHandleMenu] = useState(null); // {x, y}
+  const draggedRef = useRef(false);
 
   function onDragStart(e) {
     e.dataTransfer.setData("text/plain", block.id);
     e.dataTransfer.effectAllowed = "move";
     _dragState.draggingId = block.id;
+    draggedRef.current = true;
   }
 
   function onDragEnd() {
     _dragState.draggingId = null;
     _dragState.dropTarget = null;
     window._gammaSetDropTarget?.(null);
+    // Clear AFTER any click the drop gesture might synthesize.
+    setTimeout(() => { draggedRef.current = false; }, 0);
   }
+
+  function onHandleClick(e) {
+    if (draggedRef.current) return;
+    e.preventDefault();
+    e.stopPropagation();
+    setHandleMenu({ x: e.clientX, y: e.clientY });
+  }
+
+  const copy = (text, msg) => {
+    setHandleMenu(null);
+    copyText(text);
+    rowProps.onStatus?.(msg);
+  };
 
   return (
     <div className="sortableBlockWrap" data-block-id={block.id} data-depth={depth}>
@@ -930,9 +1146,29 @@ function SortableBlockRow({ block, ...rowProps }) {
         draggable="true"
         onDragStart={onDragStart}
         onDragEnd={onDragEnd}
-        aria-label="Drag to reorder"
-        title="Drag to reorder"
+        onClick={onHandleClick}
+        aria-label="Drag to move, click for menu"
+        title="Drag to move · click for menu"
       >⋮⋮</span>
+      {handleMenu ? (
+        <ContextMenu x={handleMenu.x} y={handleMenu.y} onClose={() => setHandleMenu(null)}>
+          <MenuItem
+            icon={LinkIcon}
+            title="Paste it in a note to choose mention / synced block, or open it anywhere"
+            onClick={() => copy(
+              `${window.location.origin}/?block=${encodeURIComponent(block.id)}`,
+              "Block link copied — paste into a note for mention / synced block",
+            )}
+          >Copy link to block</MenuItem>
+          {block.id !== "root" ? (
+            <MenuItem
+              icon={Trash2Icon}
+              danger
+              onClick={() => { setHandleMenu(null); rowProps.onDelete?.(block.id); }}
+            >Delete</MenuItem>
+          ) : null}
+        </ContextMenu>
+      ) : null}
       <BlockRow block={block} {...rowProps} />
     </div>
   );

@@ -121,7 +121,10 @@ export function filterSlashCommands(query) {
   return scored.map((x) => x[2]);
 }
 
-export function SlashMenuPopup({ items, selected, anchor, onPick }) {
+// Caret-anchored command popup. Also serves the Notion-style "Paste as"
+// chooser after a URL paste (same look, plus a quiet `title` line) —
+// blockTree owns both triggers and passes the item lists.
+export function SlashMenuPopup({ items, selected, anchor, onPick, title }) {
   const [listRef, style] = useCaretAnchored(anchor, false, [items]);
   useEffect(() => {
     listRef.current?.querySelector(".slashMenuItem.selected")
@@ -129,6 +132,7 @@ export function SlashMenuPopup({ items, selected, anchor, onPick }) {
   }, [selected, listRef]);
   return (
     <div ref={listRef} className="slashMenu" style={style}>
+      {title ? <div className="slashMenuTitle">{title}</div> : null}
       {items.map((c, i) => (
         <button
           key={c.name}
