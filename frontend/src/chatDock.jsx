@@ -7,7 +7,8 @@ import React, { useEffect, useMemo, useRef, useState } from "react";
 import { API, apiJson, copyText, isPdfFile } from "./utils";
 import { DockWindow, ChatMarkdown, AutoGrowTextarea, useCopied } from "./widgets";
 import { MenuSelect } from "./menus";
-import { AlertCircleIcon, ArrowUpIcon, BookIcon, BrainIcon, CheckIcon, ChevronDownIcon, ChevronUpIcon, CopyIcon, FileIcon, FolderIcon, InfoIcon, ListIcon, MicIcon, PaperclipIcon, PencilIcon, SearchIcon, SlidersIcon, StopIcon, XIcon } from "./icons";
+import { CharSlider, approxPages } from "./settingsKit";
+import { AlertCircleIcon, ArrowUpIcon, BookIcon, CheckIcon, ChevronDownIcon, ChevronUpIcon, CopyIcon, FileIcon, FolderIcon, InfoIcon, ListIcon, MicIcon, PaperclipIcon, PencilIcon, PlusIcon, SearchIcon, SettingsIcon, SlidersIcon, StopIcon, XIcon } from "./icons";
 
 // Folder-agent tool chips: icon per action kind; rename/move are the kinds
 // that changed the library (they trigger the home-feed refresh). Every chip
@@ -64,7 +65,7 @@ export default function ChatDock({
   chatImages, setChatImages,
   chatModel, setChatModel, chatEffort, setChatEffort, chatSystem,
   dictationModel, dictationLang,
-  chatContextChars, multiContextChars,
+  chatContextChars, setChatContextChars, multiContextChars,
   aiInfo, aiProvider, openAiKeysEditor,
   aiHealth, dismissAiHealth,
   openPopover, setOpenPopover,
@@ -631,6 +632,10 @@ export default function ChatDock({
     if (await copyText(text || "")) flashCopiedMsg(idx);
   }
 
+  // Header: one icon strip (the PDF zoom column's buttons, laid flat) —
+  // ⚙ chat settings (model, reasoning effort, context size — the same prefs
+  // Settings → Assistant edits, in a popover), Tools, Find, New chat.
+  const settingsOpen = openPopover === "chatsettings";
   const headerContent = (
     <>
       {aiInfo && !aiInfo.enabled && openAiKeysEditor ? (
@@ -639,59 +644,80 @@ export default function ChatDock({
           Set up AI…
         </button>
       ) : null}
-      {aiInfo?.models?.length > 0 ? (() => {
-        // Scoped to the active key (Settings → AI & API keys); all models
-        // only when no key is selected or the selected one is gone.
-        const models = aiProvider && aiInfo.models.some((m) => m.provider === aiProvider)
-          ? aiInfo.models.filter((m) => m.provider === aiProvider)
-          : aiInfo.models;
-        const multiProvider = new Set(models.map((m) => m.provider)).size > 1;
-        const currentId = models.some((m) => m.id === chatModel) ? chatModel : models[0].id;
-        return (
-          <span className="chatHeaderSelects">
-            <MenuSelect
-              label="Switch model"
-              value={currentId}
-              onChange={setChatModel}
-              options={models.map((m) => [
-                m.id,
-                multiProvider ? `${m.model} · ${m.provider_name || m.provider}` : m.model,
-              ])}
-            />
-            <MenuSelect
-              label="Reasoning effort — leave on 'effort: default' unless the model supports it"
-              icon={BrainIcon}
-              iconOnly
-              value={chatEffort}
-              onChange={setChatEffort}
-              options={[
-                ["", "effort: default"],
-                ...(aiInfo.efforts || ["low", "medium", "high"]).map((ef) => [ef, `effort: ${ef}`]),
-              ]}
-            />
-          </span>
-        );
-      })() : null}
-      <div className="chatPanelHeaderBtns">
+      <div className="ctlBtnRow chatPanelHeaderBtns">
+        {aiInfo?.models?.length > 0 ? (() => {
+          // Scoped to the active key (Settings → AI & API keys); all models
+          // only when no key is selected or the selected one is gone.
+          const models = aiProvider && aiInfo.models.some((m) => m.provider === aiProvider)
+            ? aiInfo.models.filter((m) => m.provider === aiProvider)
+            : aiInfo.models;
+          const multiProvider = new Set(models.map((m) => m.provider)).size > 1;
+          const currentId = models.some((m) => m.id === chatModel) ? chatModel : models[0].id;
+          const currentModel = models.find((m) => m.id === currentId);
+          return (
+            <span data-popover="chatsettings" style={{ position: "relative", display: "inline-flex" }}>
+              <button type="button" className={`ctlBtn ${settingsOpen ? "modeActive" : ""}`}
+                onClick={() => setOpenPopover((p) => (p === "chatsettings" ? null : "chatsettings"))}
+                title={`Chat settings — ${currentModel?.model || "model"}${chatEffort ? `, effort: ${chatEffort}` : ""}, context ${chatContextChars.toLocaleString()} chars`}
+                aria-label="Chat settings" aria-expanded={settingsOpen}>
+                <SettingsIcon size={15} />
+              </button>
+              {settingsOpen ? (
+                <div className="popover chatSettingsPop">
+                  <div className="popoverSection">Model</div>
+                  <MenuSelect
+                    block
+                    label="Switch model"
+                    value={currentId}
+                    onChange={setChatModel}
+                    options={models.map((m) => [
+                      m.id,
+                      multiProvider ? `${m.model} · ${m.provider_name || m.provider}` : m.model,
+                    ])}
+                  />
+                  <div className="popoverSection">Reasoning effort</div>
+                  <MenuSelect
+                    block
+                    label="Reasoning effort — leave on 'default' unless the model supports it"
+                    value={chatEffort}
+                    onChange={setChatEffort}
+                    options={[
+                      ["", "default"],
+                      ...(aiInfo.efforts || ["low", "medium", "high"]).map((ef) => [ef, ef]),
+                    ]}
+                  />
+                  <div className="popoverSection">Context per paper · {approxPages(chatContextChars)}</div>
+                  <CharSlider value={chatContextChars} onChange={setChatContextChars} />
+                  <div className="popoverHint">
+                    Extracted PDF text sent with each message. The multi-paper total and the agent's read window are in Settings → Assistant.
+                  </div>
+                </div>
+              ) : null}
+            </span>
+          );
+        })() : null}
         <button
           type="button"
-          className={`uiBtn sm iconSq chatHeaderIconBtn chatToolsBtn ${toolsEnabled ? "on" : ""}`}
+          className={`ctlBtn ${toolsEnabled ? "modeActive" : ""}`}
           disabled={!agentEnabled}
           aria-pressed={toolsEnabled}
           aria-label={`Tools ${toolsEnabled ? "on" : "off"}`}
           onClick={() => { setOpenPopover(null); toggleToolsForChat(); }}
           title={agentEnabled
-            ? `Turn tools ${toolsEnabled ? "off" : "on"} for this chat only`
+            ? `Tools ${toolsEnabled ? "on" : "off"} — click to turn ${toolsEnabled ? "off" : "on"} for this chat only`
             : "Agent tools are disabled in Settings → Assistant"}
         >
-          <SlidersIcon size={17} />
+          <SlidersIcon size={15} />
         </button>
-        <button className={`uiBtn sm iconSq chatHeaderIconBtn ${chatFindOpen ? "on" : ""}`}
+        <button type="button" className={`ctlBtn ${chatFindOpen ? "modeActive" : ""}`}
           onClick={() => { setChatFindOpen((v) => !v); setChatFind(""); }}
           title="Find in this conversation" aria-label="Find in this conversation">
-          <SearchIcon size={17} />
+          <SearchIcon size={15} />
         </button>
-        <button className="uiBtn sm" onClick={clearChat} title="Start a fresh conversation (clears saved history)">New chat</button>
+        <button type="button" className="ctlBtn" onClick={clearChat}
+          title="New chat — start a fresh conversation (clears saved history)" aria-label="New chat">
+          <PlusIcon size={16} />
+        </button>
       </div>
     </>
   );

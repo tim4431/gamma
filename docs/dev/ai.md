@@ -148,11 +148,11 @@ scope) = plain chat.
 
 ### Permissions and knobs (Settings → Assistant)
 
-The overall **Enable agent** switch (`gamma-ai-agent-enabled`, default on)
-disables tool use everywhere. Folder chats default to tools on
-(`gamma-ai-folder-tools-default`) and PDF chats default to tools off
-(`gamma-ai-pdf-tools-default`); both defaults are configurable here. The Tools
-button in each folder/PDF chat header toggles the configured tool set for that
+The overall **Enable tools** switch (`gamma-ai-agent-enabled`, default on)
+disables tool use everywhere. The "Folder chats"/"PDF chats" toggles set each
+scope's per-chat default (`gamma-ai-folder-tools-default` /
+`gamma-ai-pdf-tools-default`; folder on, PDF off). The Tools
+button (sliders icon) in each folder/PDF chat header toggles the configured tool set for that
 chat only. New chat resets the switch to the Settings default.
 
 One default permission per tool: List pages, Read papers & notes, Search PDF
