@@ -2491,6 +2491,11 @@ export default function App() {
   // and doesn't spin for a fetch that belongs to a different page.
   const [metaFetchingIds, setMetaFetchingIds] = useState(() => new Set());
   const metaBusy = metaFetchingIds.has(focusedBlockId);
+  // Unverified-paper warning (red "!"): AI-extracted metadata that claims to
+  // be a paper. Non-paper kinds (course notes, slides… — meta.kind from the
+  // AI classifier) have no registry record to verify, so no warning; records
+  // cached before the kind field existed count as papers (the safe default).
+  const metaUnverifiedPaper = pageMeta?.source === "ai" && (pageMeta.kind || "paper") === "paper";
   const [pptCite, setPptCite] = useState("");
   const [pptCiteBusy, setPptCiteBusy] = useState(false);
   const [metaPopPos, setMetaPopPos] = useState({ top: 0, right: 0 }); // fixed-position anchor for the metadata popover
@@ -5183,7 +5188,7 @@ export default function App() {
                       className="pageActionBtn"
                       title={metaBusy
                         ? "Fetching paper metadata…"
-                        : pageMeta?.source === "ai"
+                        : metaUnverifiedPaper
                           ? "Metadata was AI-extracted and could not be verified against a registry — check it before citing"
                           : "Paper metadata (authors, venue, DOI, source file…)"}
                       aria-label="Paper metadata"
@@ -5205,8 +5210,10 @@ export default function App() {
                       {metaBusy ? <span className="pillSpin" aria-hidden="true" /> : <InfoIcon size={15} />}
                     </button>
                     {/* AI-extracted metadata never passed a registry check —
-                        flag it so nobody cites it unverified. */}
-                    {!metaBusy && pageMeta?.source === "ai" ? (
+                        flag it so nobody cites it unverified. Only for things
+                        that claim to be papers: course notes, slides etc.
+                        (meta.kind) have no registry record to verify against. */}
+                    {!metaBusy && metaUnverifiedPaper ? (
                       <span className="metaWarnDot" aria-hidden="true">!</span>
                     ) : null}
                     {openPopover === "meta" ? (
@@ -5280,7 +5287,7 @@ export default function App() {
                             </div>
                           ))}
                           {pageMeta?.source ? (
-                            <div className="metaRow"><span className="metaKey">Source</span><span className={pageMeta.source === "ai" ? "metaVal metaValWarn" : "metaVal"} title={pageMeta.source === "ai" ? "Extracted by AI from the PDF text and not confirmed by arXiv/Crossref — fields may be wrong, verify before citing" : undefined}>{pageMeta.source === "ai" ? "AI-extracted — verify before citing" : pageMeta.source === "manual" ? "edited by hand" : pageMeta.source}</span></div>
+                            <div className="metaRow"><span className="metaKey">Source</span><span className={metaUnverifiedPaper ? "metaVal metaValWarn" : "metaVal"} title={metaUnverifiedPaper ? "Extracted by AI from the PDF text and not confirmed by arXiv/Crossref — fields may be wrong, verify before citing" : undefined}>{metaUnverifiedPaper ? "AI-extracted — verify before citing" : pageMeta.source === "ai" ? `AI-extracted (${pageMeta.kind || "document"} — not a published paper, so no registry to check against)` : pageMeta.source === "manual" ? "edited by hand" : pageMeta.source}</span></div>
                           ) : null}
                           <div className="metaRow">
                             <span className="metaKey">PDF text</span>

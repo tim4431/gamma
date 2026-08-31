@@ -21,15 +21,24 @@ hallucination): a record found via the text counts as **confirmed** only when
 the registry's title appears in the PDF text (normalized: case, ligatures,
 line-break hyphens — `_title_in_text`); ids from the source URL are trusted
 outright; unconfirmed resolutions are kept only as a fallback when nothing
-confirms. A Crossref search hit is accepted solely on that title-in-text
-evidence. AI output goes through `_verify_ai_meta`: an identifier it produced
+confirms. URL-level trust covers the stored `source_url`, the `web_url` the
+extension clipped from, and detector-supplied `doi`/`arxiv_id` hints
+(`fetch_page_metadata` kwargs — `/api/clip` forwards what `detect.js` read
+off the publisher page's own meta tags). A Crossref search hit is accepted
+solely on that title-in-text evidence. AI output goes through `_verify_ai_meta`: an identifier it produced
 is resolved and, on success, replaced by the registry record; one that
 resolves nowhere and doesn't occur in the PDF is dropped as fabricated, and
 the AI title is cross-checked against Crossref (≥0.92 title similarity +
 compatible year upgrades it). `meta.source` is `arxiv` / `doi` / `crossref`
 (search hit whose doi.org fetch failed) / `ai` / `manual`; `ai` means
 *unverified* — the metadata button shows a red "!" badge, the popover's Source
-row warns, and the Settings → Library table marks the paper red. The fetch
+row warns, and the Settings → Library table marks the paper red. The AI
+extractor also classifies the document (`meta.kind`: `paper` / `notes` /
+`slides` / `thesis` / `book` / `report` / `other`, unknown → `paper`): the
+warning only fires for kind `paper` — course notes and the like have no
+registry record to verify against, so they get a quiet "AI-extracted (notes)"
+instead. Registry-sourced records carry no kind (they're papers by
+construction). The fetch
 also kicks background search indexing for the paper
 (`ai_context.ensure_indexed`) — the paper is being set up, so search, the AI
 document map and library-wide Ctrl+F shouldn't wait for the first search to
