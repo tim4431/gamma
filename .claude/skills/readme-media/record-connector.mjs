@@ -62,9 +62,9 @@ for (let i = 0; i < 30; i++) {
   await pageA.waitForTimeout(500);
 }
 marks.a0 = (Date.now() - marks.tA) / 1000;
-await pageA.mouse.move(700, 500, { steps: 20 });
-await pageA.mouse.wheel(0, 220);
-await pageA.waitForTimeout(1200);
+// no scroll — keep the title in frame; the camera zoom is added in post
+await pageA.mouse.move(640, 320, { steps: 25 });
+await pageA.waitForTimeout(1400);
 // drift toward the toolbar corner as if clicking the extension icon
 await pageA.mouse.move(1380, 40, { steps: 45 });
 await pageA.waitForTimeout(700);
