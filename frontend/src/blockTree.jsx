@@ -20,7 +20,7 @@ import { fenceInnerAt, highlightCode, scanFences } from "./codeHighlight";
 import { filterSlashCommands, PasteAsPopup, SlashMenuPopup } from "./slashMenu";
 import { remarkCallouts } from "./callouts";
 import { ContextMenu, MenuItem } from "./menus";
-import { copyText } from "./utils";
+import { API, apiJson, copyText } from "./utils";
 import { CheckIcon, CopyIcon, Trash2Icon } from "./icons";
 
 // Module-level ref for native HTML5 drag-and-drop (shared with App's drop handlers)
@@ -136,30 +136,64 @@ function LinkChip({ href, text }) {
   );
 }
 
-// ![[id]] transclusion: the referenced block's content rendered in a card;
-// clicking it jumps to the source block. Content/page title come from the
-// same refLabels resolution as [[ref]] chips.
-function BlockEmbedCard({ refId, refBlock, refLabels, onBlockRefClick }) {
+// ![[id]] transclusion: the referenced block's content rendered in a card.
+// With onEmbedEdit (not read-only), clicking the card edits the SOURCE block
+// in place, Notion-synced-block style — the edit lands on the source on
+// blur, so every other copy re-renders it. The page-title footer jumps to
+// the source; in read-only views the whole card is the jump link.
+function BlockEmbedCard({ refId, refBlock, refLabels, onBlockRefClick, onEmbedEdit }) {
+  const [draft, setDraft] = useState(null); // non-null while editing in place
+  const editable = !!onEmbedEdit && refBlock?.content != null;
+  const save = () => {
+    setDraft((d) => {
+      if (d != null && d !== refBlock.content) onEmbedEdit(refId, d);
+      return null;
+    });
+  };
   return (
     <span
-      className="blockEmbedCard"
-      role="link"
-      title={refBlock?.page_title ? `From: ${refBlock.page_title}` : "Embedded note"}
+      className={`blockEmbedCard${draft != null ? " editing" : ""}`}
+      role={editable ? undefined : "link"}
+      title={draft != null ? undefined
+        : refBlock?.page_title ? `From: ${refBlock.page_title}` : "Embedded note"}
       onMouseDown={(e) => e.stopPropagation()}
       onClick={(e) => {
         e.preventDefault();
         e.stopPropagation();
-        onBlockRefClick?.(refId);
+        if (draft != null) return;
+        if (editable) setDraft(refBlock.content);
+        else onBlockRefClick?.(refId);
       }}
     >
       <span className="blockEmbedBody">
-        {refBlock?.content ? (
+        {draft != null ? (
+          <BlockCmEditor
+            autoFocus
+            className="blockEditor blockEditorCm"
+            value={draft}
+            refLabels={refLabels}
+            onChange={(e) => setDraft(e.target.value)}
+            onBlur={save}
+            onKeyDown={(e) => {
+              // Escape saves and exits, same as blurring a normal block.
+              if (e.key === "Escape") { e.preventDefault(); save(); }
+            }}
+            placeholder="Edit the source note…"
+          />
+        ) : refBlock?.content ? (
           <BlockMarkdown content={refBlock.content} refLabels={refLabels} onBlockRefClick={onBlockRefClick} nested />
         ) : (
           <span className="blockPlaceholder">embedded note…</span>
         )}
       </span>
-      {refBlock?.page_title ? <span className="blockEmbedSrc">{refBlock.page_title}</span> : null}
+      {refBlock?.page_title ? (
+        <span
+          className="blockEmbedSrc"
+          role="link"
+          title="Open the source block"
+          onClick={(e) => { e.stopPropagation(); onBlockRefClick?.(refId); }}
+        >{refBlock.page_title}</span>
+      ) : null}
     </span>
   );
 }
@@ -202,7 +236,7 @@ function CodePre({ children }) {
 // labels are resolved by the caller so the comparison here stays a string
 // check. onBlockRefClick/onTaskToggle are deliberately excluded from the
 // comparison — the caller passes identity-stable wrappers.
-const BlockMarkdown = React.memo(function BlockMarkdown({ content, refLabels, onBlockRefClick, onTaskToggle, nested }) {
+const BlockMarkdown = React.memo(function BlockMarkdown({ content, refLabels, onBlockRefClick, onTaskToggle, onEmbedEdit, nested }) {
   // GFM task-list checkboxes render in document order; this counter maps the
   // nth rendered checkbox back to the nth `[ ]`/`[x]` marker in the source so
   // clicking one toggles the right marker. Reset per render — the whole
@@ -245,6 +279,7 @@ const BlockMarkdown = React.memo(function BlockMarkdown({ content, refLabels, on
                 refBlock={refLabels?.[refId]}
                 refLabels={refLabels}
                 onBlockRefClick={onBlockRefClick}
+                onEmbedEdit={onEmbedEdit}
               />
             );
           }
@@ -378,6 +413,24 @@ function BlockRow({
     if (newVal !== block.content) onChangeText(block.id, newVal);
   };
   const stableTaskToggle = useRef((idx, checked) => taskToggleRef.current?.(idx, checked)).current;
+  // In-place edits on ![[embed]] cards write to the SOURCE block. A source on
+  // the current page goes through onChangeText (state + debounced autosave —
+  // a direct PUT would be reverted by the page's own autosave); a cross-page
+  // source is PUT directly and the ref cache updated so every copy re-renders.
+  const embedEditRef = useRef(null);
+  embedEditRef.current = (refId, newContent) => {
+    if (allBlocks?.find((b) => b.id === refId)) {
+      onChangeText(refId, newContent);
+    } else {
+      apiJson(`${API}/blocks/${refId}`, {
+        method: "PUT",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ content: newContent }),
+      }).catch(() => {});
+      onCacheRef?.(refId, { ...(refCache?.[refId] || {}), content: newContent });
+    }
+  };
+  const stableEmbedEdit = useRef((id, c) => embedEditRef.current?.(id, c)).current;
   // Resolve [[ref]] chip labels here (cheap per render) so BlockMarkdown's
   // memo can compare them as strings instead of depending on allBlocks,
   // whose identity changes on every edit.
@@ -974,7 +1027,8 @@ function BlockRow({
             <div className="blockRendered" onCopy={handleMarkdownCopy}>
               {(block.content || "").trim() ? (
                 <BlockMarkdown content={block.content || ""} refLabels={refLabels} onBlockRefClick={stableRefClick}
-                  onTaskToggle={readOnly ? undefined : stableTaskToggle} />
+                  onTaskToggle={readOnly ? undefined : stableTaskToggle}
+                  onEmbedEdit={readOnly ? undefined : stableEmbedEdit} />
               ) : (
                 <div className="blockPlaceholder">(empty)</div>
               )}
