@@ -6,12 +6,34 @@ stored PDF. Code: `gamma/routers/metadata.py`, `gamma/pdf.py`.
 ## Metadata fetch / edit / cite
 
 `/api/metadata/fetch` resolves a page's paper via arXiv API → DOI content
-negotiation (doi.org, with glued-suffix DOI candidates) → AI extraction from
-the first pages; result + BibTeX cached on the page block (`properties.meta` /
-`properties.bibtex`). The fetch also kicks background search indexing for the
-paper (`ai_context.ensure_indexed`) — the paper is being set up, so search,
-the AI document map and library-wide Ctrl+F shouldn't wait for the first
-search to discover it. `/api/metadata/update` saves hand-edited fields from the
+negotiation (doi.org, every DOI in the source URL + scan window with
+glued-suffix variants) → Crossref bibliographic search → AI extraction as a
+last resort; result + BibTeX cached on the page block (`properties.meta` /
+`properties.bibtex`). Identifier scans and title matching read a `SCAN_CHARS`
+(20k) window decoupled from the AI-context pref, **plus the last page** — an
+issue-clipped Science PDF opens with the *previous* article's tail (title 7k+
+chars in) and prints its own DOI only in the end-of-article trailer. The
+Crossref search queries the page title first (≥3 words; users title pages
+with the paper name), then the normalized text head. Only the AI call is
+capped at the pref (`context_char_limit`). Accuracy rules (the first DOI on
+page 1 can belong to a *cited* paper, and AI output can be a plausible
+hallucination): a record found via the text counts as **confirmed** only when
+the registry's title appears in the PDF text (normalized: case, ligatures,
+line-break hyphens — `_title_in_text`); ids from the source URL are trusted
+outright; unconfirmed resolutions are kept only as a fallback when nothing
+confirms. A Crossref search hit is accepted solely on that title-in-text
+evidence. AI output goes through `_verify_ai_meta`: an identifier it produced
+is resolved and, on success, replaced by the registry record; one that
+resolves nowhere and doesn't occur in the PDF is dropped as fabricated, and
+the AI title is cross-checked against Crossref (≥0.92 title similarity +
+compatible year upgrades it). `meta.source` is `arxiv` / `doi` / `crossref`
+(search hit whose doi.org fetch failed) / `ai` / `manual`; `ai` means
+*unverified* — the metadata button shows a red "!" badge, the popover's Source
+row warns, and the Settings → Library table marks the paper red. The fetch
+also kicks background search indexing for the paper
+(`ai_context.ensure_indexed`) — the paper is being set up, so search, the AI
+document map and library-wide Ctrl+F shouldn't wait for the first search to
+discover it. `/api/metadata/update` saves hand-edited fields from the
 metadata popover (rebuilds BibTeX, source `manual`, invalidates the cached
 citation). `/api/metadata/cite` turns the BibTeX into a PPT-style markdown
 citation via AI.
