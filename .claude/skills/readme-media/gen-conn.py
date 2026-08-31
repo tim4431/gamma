@@ -35,10 +35,12 @@ run("-ss", f"{c_start:.2f}", "-t", f"{c_dur:.2f}", "-i", Z["videoC"],
 # concat timeline breakpoints (seconds)
 tB0 = dA                 # popup appears
 tC0 = dA + dB            # Gamma opens
-ZOOM = 1.45
-t1, t2 = 1.6, 2.6        # ramp in, centred on the title
-t3, t4 = tB0 + 0.3, tB0 + 1.1   # pan title -> popup
-t5, t6 = tC0 + 0.3, tC0 + 1.3   # ramp out in Gamma
+# zoom ONLY onto the Connector popup: full view until it appears, ramp in,
+# hold, ramp back out when Gamma opens. Constant centre; clip() does the rest.
+ZOOM = 1.65
+t1, t2 = tB0 + 0.15, tB0 + 1.05   # ramp in as the popup appears
+t3, t4 = tC0 + 0.3, tC0 + 1.3     # ramp out in Gamma
+Cx, Cy = 1188, 200                # popup centre (overlay at 1004..1372 x 10..378)
 FR = 25
 T = f"(on/{FR})"
 
@@ -53,29 +55,13 @@ lerp = lambda a, b, t0, t1_: f"({a}+({b}-{a})*({T}-{t0})/{t1_-t0:.3f})"
 z = piece([
     (t1, "1"),
     (t2, lerp("1", str(ZOOM), t1, t2)),
-    (t5, str(ZOOM)),
-    (t6, lerp(str(ZOOM), "1", t5, t6)),
+    (t3, str(ZOOM)),
+    (t4, lerp(str(ZOOM), "1", t3, t4)),
 ], "1")
-cx = piece([
-    (t1, "720"),
-    (t2, lerp("720", "500", t1, t2)),
-    (t3, "500"),
-    (t4, lerp("500", "944", t3, t4)),
-    (t5, "944"),
-    (t6, lerp("944", "720", t5, t6)),
-], "720")
-cy = piece([
-    (t1, "450"),
-    (t2, lerp("450", "300", t1, t2)),
-    (t3, "300"),
-    (t4, lerp("300", "290", t3, t4)),
-    (t5, "290"),
-    (t6, lerp("290", "450", t5, t6)),
-], "450")
 
 zoomvf = (
-    f"zoompan=z='{z}':x='clip(({cx})-(iw/zoom)/2,0,iw-iw/zoom)'"
-    f":y='clip(({cy})-(ih/zoom)/2,0,ih-ih/zoom)':d=1:s=1440x900:fps={FR}"
+    f"zoompan=z='{z}':x='clip({Cx}-(iw/zoom)/2,0,iw-iw/zoom)'"
+    f":y='clip({Cy}-(ih/zoom)/2,0,ih-ih/zoom)':d=1:s=1440x900:fps={FR}"
 )
 run("-i", "segA.mp4", "-i", "segB.mp4", "-i", "segC.mp4",
     "-filter_complex", "[0:v][1:v][2:v]concat=n=3:v=1," + zoomvf, *ENC, "zoomed.mp4")

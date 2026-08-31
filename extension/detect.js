@@ -98,6 +98,7 @@
   // they 403 the same fetch from the extension's service worker.
   async function fetchPdfForWorker(url) {
     const res = await fetch(url, { credentials: "include" });
+    console.info(`[gamma] in-page PDF fetch ${url} → ${res.status} ${res.headers.get("content-type") || ""}`);
     if (!res.ok) return { ok: false, status: res.status };
     const blob = await res.blob();
     if (blob.size > 60 * 1024 * 1024) return { ok: false, error: "the PDF is too large to relay from this tab" };

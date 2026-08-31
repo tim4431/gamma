@@ -136,32 +136,53 @@ async function looksLikePdf(blob) {
 
 const NOT_PDF_MSG = "this tab isn't a PDF (or the site sent a login page instead)";
 
+// Atypon platforms (science.org & co.) serve the HTML reader at /doi/pdf/…
+// unless ?download=true asks for the file itself — worth a second attempt.
+function pdfUrlVariants(url) {
+  const list = [url];
+  try {
+    const u = new URL(url);
+    if (/\/doi\/e?pdf\//i.test(u.pathname) && !u.searchParams.has("download")) {
+      u.pathname = u.pathname.replace(/\/doi\/epdf\//i, "/doi/pdf/");
+      u.searchParams.set("download", "true");
+      list.push(u.href);
+    }
+  } catch {}
+  return list;
+}
+
 async function bytesFromTab(url, tabId) {
   // The browser's own session (institutional login, cookies) fetches what
-  // the server can't. Needs a host permission for that site — the popup asks
-  // for it before sending the save.
-  let lastErr;
-  try {
-    const res = await fetch(url, { credentials: "include" });
-    if (!res.ok) throw new Error(`the browser couldn't download the PDF (${res.status})`);
-    const blob = await res.blob();
-    if (await looksLikePdf(blob)) return blob;
-    throw new Error(NOT_PDF_MSG);
-  } catch (err) { lastErr = err; }
-  // Publisher bot checks (science.org & co.) 403 the worker's fetch — wrong
-  // origin, no Referer. Retry from inside the page, where the same request
-  // looks like the reader loading the PDF. Raw PDF tabs have no content
-  // script; sendMessage fails there and the direct error stands.
-  if (tabId != null) {
+  // the server can't. Two attempts per URL variant: the worker's direct
+  // fetch, then — publisher bot checks 403 requests with an extension origin
+  // and no Referer — the tab's content script, whose same-origin fetch looks
+  // like the reader loading the PDF. Raw PDF tabs have no content script;
+  // sendMessage fails there and the direct error stands.
+  let lastErr = new Error("the browser couldn't download the PDF");
+  for (const u of pdfUrlVariants(url)) {
+    try {
+      const res = await fetch(u, { credentials: "include" });
+      if (!res.ok) throw new Error(`the browser couldn't download the PDF (${res.status})`);
+      const blob = await res.blob();
+      if (await looksLikePdf(blob)) return blob;
+      throw new Error(NOT_PDF_MSG);
+    } catch (err) {
+      lastErr = err;
+      console.warn(`[gamma] worker fetch failed for ${u}: ${err.message}`);
+    }
+    if (tabId == null) continue;
     let r = null;
-    try { r = await chrome.tabs.sendMessage(tabId, { type: "fetch-pdf", url }); } catch {}
+    try { r = await chrome.tabs.sendMessage(tabId, { type: "fetch-pdf", url: u }); }
+    catch (err) { console.warn(`[gamma] no content-script relay in tab ${tabId} (${err.message}) — is the tab reloaded?`); }
     if (r && r.ok && r.base64) {
       const bytes = Uint8Array.from(atob(r.base64), (c) => c.charCodeAt(0));
       const blob = new Blob([bytes], { type: "application/pdf" });
       if (await looksLikePdf(blob)) return blob;
       lastErr = new Error(NOT_PDF_MSG);
+      console.warn(`[gamma] in-page fetch of ${u} returned non-PDF bytes`);
     } else if (r && (r.status || r.error)) {
       lastErr = new Error(r.error || `the browser couldn't download the PDF (${r.status})`);
+      console.warn(`[gamma] in-page fetch failed for ${u}: ${lastErr.message}`);
     }
   }
   throw lastErr;
@@ -199,7 +220,7 @@ async function savePaper({ tabId, candidate, folder, labels, title, source_url }
       try {
         if (tabId != null) await progress(tabId, "downloading in your browser…");
         payload.doc_id = await uploadBlob(tabId, await bytesFromTab(fetchUrl, tabId), fetchUrl);
-      } catch {}
+      } catch (err) { console.warn(`[gamma] browser-first upload failed, server will try: ${err.message}`); }
     }
     if (tabId != null) await progress(tabId, "saving to your library…");
     let out;
@@ -212,7 +233,7 @@ async function savePaper({ tabId, candidate, folder, labels, title, source_url }
       if (tabId != null) await progress(tabId, "server couldn't fetch it — downloading in your browser…");
       let blob;
       try { blob = await bytesFromTab(fetchUrl, tabId); }
-      catch { throw err; } // the server's explanation is the useful one
+      catch (bErr) { throw new Error(`${err.message} The browser-side download failed too: ${bErr.message}.`); }
       payload.doc_id = await uploadBlob(tabId, blob, fetchUrl);
       if (tabId != null) await progress(tabId, "saving to your library…");
       out = await api("/clip", { json: payload });
