@@ -1,7 +1,7 @@
 import React, { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState } from "react";
 import { Panel, PanelGroup, PanelResizeHandle } from "react-resizable-panels";
 import PdfViewer, { COLORS, clampZoom } from "./pdfViewer";
-import { API, apiJson, makeId, fmtBytes, getDocIdForUrl, isPdfFile, isMarkdownFile, importZoteroZip, resolvePdfUrl, pdfProxyUrl, probePdfUrl, setExpectedUser, getExpectedUser, usePersistedState, usePersistedFlag, copyText, copyRich } from "./utils";
+import { API, apiJson, makeId, fmtBytes, getDocIdForUrl, isPdfFile, isMarkdownFile, isUnverifiedPaperMeta, importZoteroZip, resolvePdfUrl, pdfProxyUrl, probePdfUrl, setExpectedUser, getExpectedUser, usePersistedState, usePersistedFlag, copyText, copyRich } from "./utils";
 import {
   BlockDropIndicator,
   ChatMarkdown,
@@ -2491,11 +2491,9 @@ export default function App() {
   // and doesn't spin for a fetch that belongs to a different page.
   const [metaFetchingIds, setMetaFetchingIds] = useState(() => new Set());
   const metaBusy = metaFetchingIds.has(focusedBlockId);
-  // Unverified-paper warning (red "!"): AI-extracted metadata that claims to
-  // be a paper. Non-paper kinds (course notes, slides… — meta.kind from the
-  // AI classifier) have no registry record to verify, so no warning; records
-  // cached before the kind field existed count as papers (the safe default).
-  const metaUnverifiedPaper = pageMeta?.source === "ai" && (pageMeta.kind || "paper") === "paper";
+  // Unverified-paper warning (red "!") — shared predicate with the Settings →
+  // Library status table, see isUnverifiedPaperMeta in utils.js.
+  const metaUnverifiedPaper = !!pageMeta && isUnverifiedPaperMeta(pageMeta.source, pageMeta.kind);
   const [pptCite, setPptCite] = useState("");
   const [pptCiteBusy, setPptCiteBusy] = useState(false);
   const [metaPopPos, setMetaPopPos] = useState({ top: 0, right: 0 }); // fixed-position anchor for the metadata popover
@@ -5290,7 +5288,18 @@ export default function App() {
                             </div>
                           ))}
                           {pageMeta?.source ? (
-                            <div className="metaRow"><span className="metaKey">Source</span><span className={metaUnverifiedPaper ? "metaVal metaValWarn" : "metaVal"} title={metaUnverifiedPaper ? "Extracted by AI from the PDF text and not confirmed by arXiv/Crossref — fields may be wrong, verify before citing" : undefined}>{metaUnverifiedPaper ? "AI-extracted — verify before citing" : pageMeta.source === "ai" ? `AI-extracted (${pageMeta.kind || "document"} — not a published paper, so no registry to check against)` : pageMeta.source === "manual" ? "edited by hand" : pageMeta.source}</span></div>
+                            <div className="metaRow">
+                              <span className="metaKey">Source</span>
+                              <span
+                                className={metaUnverifiedPaper ? "metaVal metaValWarn" : "metaVal"}
+                                title={metaUnverifiedPaper ? "Extracted by AI from the PDF text and not confirmed by arXiv/Crossref — fields may be wrong, verify before citing" : undefined}
+                              >
+                                {metaUnverifiedPaper ? "AI-extracted — verify before citing"
+                                  : pageMeta.source === "ai" ? `AI-extracted (${pageMeta.kind || "document"} — not a published paper, so no registry to check against)`
+                                    : pageMeta.source === "manual" ? "edited by hand"
+                                      : pageMeta.source}
+                              </span>
+                            </div>
                           ) : null}
                           <div className="metaRow">
                             <span className="metaKey">PDF text</span>
