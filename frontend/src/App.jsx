@@ -2472,7 +2472,11 @@ export default function App() {
   // --- Paper metadata (arXiv / DOI / AI) and citation export -----------------
   const [pageMeta, setPageMeta] = useState(null);   // properties.meta of the open page
   const [pageBibtex, setPageBibtex] = useState("");
-  const [metaBusy, setMetaBusy] = useState(false);
+  // Block ids with a metadata fetch in flight. Tracked per page (not one
+  // boolean) so the button's spinner also covers the upload queue's fetches
+  // and doesn't spin for a fetch that belongs to a different page.
+  const [metaFetchingIds, setMetaFetchingIds] = useState(() => new Set());
+  const metaBusy = metaFetchingIds.has(focusedBlockId);
   const [pptCite, setPptCite] = useState("");
   const [pptCiteBusy, setPptCiteBusy] = useState(false);
   const [metaPopPos, setMetaPopPos] = useState({ top: 0, right: 0 }); // fixed-position anchor for the metadata popover
@@ -2637,6 +2641,7 @@ export default function App() {
   // failure (with the task already marked).
   async function fetchMetadataRequest(block, force = false) {
     const taskId = addTransfer({ name: `Metadata — ${(block.content || "paper").slice(0, 48)}`, kind: "ai", info: "fetching…" });
+    setMetaFetchingIds((prev) => new Set(prev).add(block.id));
     try {
       const data = await apiJson(`${API}/metadata/fetch`, {
         method: "POST",
@@ -2654,12 +2659,13 @@ export default function App() {
     } catch (err) {
       updateTransfer(taskId, { status: "error", info: (err.message || "failed").slice(0, 60) });
       throw err;
+    } finally {
+      setMetaFetchingIds((prev) => { const next = new Set(prev); next.delete(block.id); return next; });
     }
   }
 
   async function fetchMetadata(block, force) {
     if (!block?.id) return;
-    setMetaBusy(true);
     if (force) setStatus("Refreshing paper metadata…");
     try {
       const data = await fetchMetadataRequest(block, force);
@@ -2699,8 +2705,6 @@ export default function App() {
       setFocusedBlock((prev) => prev && prev.id === block.id
         ? { ...prev, properties: { ...prev.properties, meta_error: { at: new Date().toISOString(), detail: (err.message || "failed").slice(0, 200) } } }
         : prev);
-    } finally {
-      setMetaBusy(false);
     }
   }
 
