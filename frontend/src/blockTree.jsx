@@ -48,6 +48,19 @@ function applyOutsideSpans(text, spans, fn) {
 }
 
 function mdPreprocess(content, nested) {
+  // Multi-line $$…$$ renders live in the editor, but remark-math's block rule
+  // wants the fences alone on their lines (same-line content becomes "meta"
+  // and is dropped) — so the rendered view showed the raw source. LaTeX
+  // treats newlines as plain whitespace, so collapse the span onto one line
+  // and it parses exactly like the already-working single-line form.
+  const multi = scanMathSpans(content).filter((s) =>
+    s.display && content.slice(s.from, s.to).includes("\n"));
+  for (let i = multi.length - 1; i >= 0; i--) {
+    const s = multi[i];
+    content = content.slice(0, s.from)
+      + content.slice(s.from, s.to).replace(/\s*\n\s*/g, " ")
+      + content.slice(s.to);
+  }
   const spans = scanMathSpans(content).map((s) => ({ from: s.from, to: s.to }));
   // ``` fences claim first (sorted by from, earlier span wins in
   // applyOutsideSpans) — a [[ref]] or == inside code must stay literal.
