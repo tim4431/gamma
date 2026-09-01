@@ -10,7 +10,11 @@ import { createPortal } from "react-dom";
 import { scanMathSpans } from "./blockCmEditor";
 import { scanFences } from "./codeHighlight";
 import { ContextMenu, MenuItem } from "./menus";
-import { CaptionIcon, DownloadIcon, Trash2Icon, ZoomInIcon } from "./icons";
+import { Segmented } from "./settingsKit";
+import {
+  AlignCenterIcon, AlignLeftIcon, AlignRightIcon, CaptionIcon, DownloadIcon,
+  PlusIcon, Trash2Icon, ZoomInIcon,
+} from "./icons";
 
 // ---------------------------------------------------------------- source scan
 
@@ -166,7 +170,7 @@ export function serializeTable({ header, aligns, body }) {
 
 // ops: {type:"addRow",at} {type:"delRow",at} (at = body index),
 // {type:"addCol",at} {type:"delCol",at}, {type:"align",col,dir},
-// {type:"moveRow",at,dir} {type:"moveCol",at,dir} (dir ±1, at = body/col index),
+// {type:"moveRow",from,to} {type:"moveCol",from,to} (body/col indices),
 // {type:"setCell",row,col,text} (row 0 = header, text already \|-escaped).
 export function applyTableEdit(content, idx, op) {
   const t = scanTables(content)[idx];
@@ -205,16 +209,16 @@ export function applyTableEdit(content, idx, op) {
       tbl.aligns[op.col] = op.dir;
       break;
     case "moveRow": {
-      const to = op.at + op.dir;
-      if (op.at < 0 || op.at >= tbl.body.length || to < 0 || to >= tbl.body.length) return null;
-      const [row] = tbl.body.splice(op.at, 1);
+      const { from, to } = op;
+      if (from < 0 || from >= tbl.body.length || to < 0 || to >= tbl.body.length || from === to) return null;
+      const [row] = tbl.body.splice(from, 1);
       tbl.body.splice(to, 0, row);
       break;
     }
     case "moveCol": {
-      const to = op.at + op.dir;
-      if (op.at < 0 || op.at >= tbl.header.length || to < 0 || to >= tbl.header.length) return null;
-      const mv = (arr) => { const [x] = arr.splice(op.at, 1); arr.splice(to, 0, x); };
+      const { from, to } = op;
+      if (from < 0 || from >= tbl.header.length || to < 0 || to >= tbl.header.length || from === to) return null;
+      const mv = (arr) => { const [x] = arr.splice(from, 1); arr.splice(to, 0, x); };
       mv(tbl.header);
       mv(tbl.aligns);
       tbl.body.forEach((r) => { while (r.length < tbl.header.length) r.push(""); mv(r); });
@@ -432,9 +436,11 @@ const _tableEditSession = new Map(); // editKey → {row, col}
 
 export function MdTableWrap({ idx, onEdit, model, editKey, children }) {
   const wrapRef = useRef(null);
-  const [hover, setHover] = useState(null); // {col,row,colX,rowY,nRows}
-  const [menu, setMenu] = useState(null); // {x,y,kind,at,nRows}
+  const [hover, setHover] = useState(null); // {col,row,colX,rowY}
+  const [menu, setMenu] = useState(null); // {x,y,kind,at}
   const [cellEdit, setCellEdit] = useState(null); // {row,col,text,rect}
+  const [drag, setDrag] = useState(null); // drop-line: {kind, x|y, top/left, size}
+  const dragRef = useRef(null); // {kind, at, from, startX, startY, moved, to}
 
   const stop = (e) => e.stopPropagation();
   const pick = (op) => { setMenu(null); onEdit(idx, op); };
@@ -515,8 +521,88 @@ export function MdTableWrap({ idx, onEdit, model, editKey, children }) {
     };
   };
 
+  // Dragging a handle pill moves its column/row directly (a plain click still
+  // opens the menu): track the pointer, show a drop line at the nearest
+  // boundary, apply one moveCol/moveRow op on release. The op remounts this
+  // component (content rewrite), which is fine — the drag is already over.
+  function slotForCol(clientX) {
+    const cells = [...(wrapRef.current?.querySelector("table")?.rows[0]?.cells || [])];
+    let s = 0;
+    for (const c of cells) {
+      const r = c.getBoundingClientRect();
+      if (clientX > r.left + r.width / 2) s++;
+    }
+    return { s, cells };
+  }
+  function slotForRow(clientY) {
+    const rows = [...(wrapRef.current?.querySelector("table")?.rows || [])].slice(1);
+    let s = 0;
+    for (const r of rows) {
+      const rr = r.getBoundingClientRect();
+      if (clientY > rr.top + rr.height / 2) s++;
+    }
+    return { s, rows };
+  }
+  const handleDown = (kind) => (e) => {
+    if (e.button !== 0 || !hover) return;
+    e.preventDefault();
+    e.stopPropagation();
+    // preventDefault suppresses the natural blur-on-click-elsewhere; restore
+    // it so a later Ctrl+Z reaches the block undo, not a stale input.
+    document.activeElement?.blur?.();
+    dragRef.current = {
+      kind,
+      at: kind === "col" ? hover.col : hover.row,
+      from: kind === "col" ? hover.col : hover.row - 1,   // body index for rows
+      startX: e.clientX, startY: e.clientY, moved: false, to: null,
+    };
+    e.currentTarget.setPointerCapture?.(e.pointerId);
+  };
+  function handleDragMove(e) {
+    const d = dragRef.current;
+    if (!d) return;
+    if (!d.moved && Math.abs(e.clientX - d.startX) + Math.abs(e.clientY - d.startY) <= 4) return;
+    d.moved = true;
+    const wrap = wrapRef.current;
+    const table = wrap?.querySelector("table");
+    if (!table || d.from < 0) return;                     // header row: menu only
+    const wr = wrap.getBoundingClientRect();
+    const tb = table.getBoundingClientRect();
+    if (d.kind === "col") {
+      const { s, cells } = slotForCol(e.clientX);
+      if (!cells.length) return;
+      d.to = Math.min(s > d.from ? s - 1 : s, cells.length - 1);
+      const x = (s === 0 ? cells[0].getBoundingClientRect().left
+        : cells[s - 1].getBoundingClientRect().right) - wr.left;
+      setDrag({ kind: "col", x, top: tb.top - wr.top, size: tb.height });
+    } else {
+      const { s, rows } = slotForRow(e.clientY);
+      if (!rows.length) return;
+      d.to = Math.min(s > d.from ? s - 1 : s, rows.length - 1);
+      const y = (s === 0 ? rows[0].getBoundingClientRect().top
+        : rows[s - 1].getBoundingClientRect().bottom) - wr.top;
+      setDrag({ kind: "row", y, left: tb.left - wr.left, size: tb.width });
+    }
+  }
+  function handleUp(e) {
+    const d = dragRef.current;
+    dragRef.current = null;
+    setDrag(null);
+    if (!d) return;
+    if (!d.moved) {                                       // click: open the menu
+      setMenu({ x: e.clientX, y: e.clientY, kind: d.kind, at: d.at });
+      return;
+    }
+    if (d.to != null && d.from >= 0 && d.to !== d.from) {
+      onEdit(idx, d.kind === "col"
+        ? { type: "moveCol", from: d.from, to: d.to }
+        : { type: "moveRow", from: d.from, to: d.to });
+    }
+  }
+  const cancelDrag = () => { dragRef.current = null; setDrag(null); };
+
   function onOver(e) {
-    if (!onEdit) return;
+    if (!onEdit || dragRef.current) return;
     const cell = e.target.closest?.("td,th");
     const wrap = wrapRef.current;
     if (!cell || !wrap?.contains(cell)) return;
@@ -576,43 +662,46 @@ export function MdTableWrap({ idx, onEdit, model, editKey, children }) {
           {hover ? (
             <>
               <button type="button" className="mdTableHandle mdTableColHandle"
-                style={{ left: hover.colX }} title="Column options"
+                style={{ left: hover.colX }} title="Drag to move · click for options"
                 onMouseDown={stop}
-                onClick={(e) => { stop(e); setMenu({ x: e.clientX, y: e.clientY, kind: "col", at: hover.col, ...counts() }); }}>⋯</button>
+                onPointerDown={handleDown("col")} onPointerMove={handleDragMove}
+                onPointerUp={handleUp} onPointerCancel={cancelDrag}>⋯</button>
               <button type="button" className="mdTableHandle mdTableRowHandle"
-                style={{ top: hover.rowY }} title="Row options"
+                style={{ top: hover.rowY }}
+                title={hover.row > 0 ? "Drag to move · click for options" : "Row options"}
                 onMouseDown={stop}
-                onClick={(e) => { stop(e); setMenu({ x: e.clientX, y: e.clientY, kind: "row", at: hover.row, ...counts() }); }}>⋮</button>
+                onPointerDown={handleDown("row")} onPointerMove={handleDragMove}
+                onPointerUp={handleUp} onPointerCancel={cancelDrag}>⋮</button>
             </>
+          ) : null}
+          {drag?.kind === "col" ? (
+            <div className="mdTableDropLine" style={{ left: drag.x - 1, top: drag.top, width: 2, height: drag.size }} />
+          ) : null}
+          {drag?.kind === "row" ? (
+            <div className="mdTableDropLine" style={{ top: drag.y - 1, left: drag.left, height: 2, width: drag.size }} />
           ) : null}
           {menu?.kind === "col" ? (
             <ContextMenu x={menu.x} y={menu.y} onClose={() => setMenu(null)}>
-              <MenuItem onClick={() => pick({ type: "addCol", at: menu.at })}>Insert column left</MenuItem>
-              <MenuItem onClick={() => pick({ type: "addCol", at: menu.at + 1 })}>Insert column right</MenuItem>
-              {menu.at > 0 ? (
-                <MenuItem onClick={() => pick({ type: "moveCol", at: menu.at, dir: -1 })}>Move left</MenuItem>
-              ) : null}
-              {menu.at < menu.nCols - 1 ? (
-                <MenuItem onClick={() => pick({ type: "moveCol", at: menu.at, dir: 1 })}>Move right</MenuItem>
-              ) : null}
-              <MenuItem onClick={() => pick({ type: "align", col: menu.at, dir: "left" })}>Align left</MenuItem>
-              <MenuItem onClick={() => pick({ type: "align", col: menu.at, dir: "center" })}>Align center</MenuItem>
-              <MenuItem onClick={() => pick({ type: "align", col: menu.at, dir: "right" })}>Align right</MenuItem>
+              <div className="mdTableAlignRow" onMouseDown={stop}>
+                <Segmented
+                  value={model?.aligns?.[menu.at] ?? null}
+                  onChange={(dir) => pick({ type: "align", col: menu.at, dir })}
+                  options={[["left", "", AlignLeftIcon, "Align left"],
+                    ["center", "", AlignCenterIcon, "Align center"],
+                    ["right", "", AlignRightIcon, "Align right"]]}
+                />
+              </div>
+              <MenuItem icon={PlusIcon} onClick={() => pick({ type: "addCol", at: menu.at })}>Insert left</MenuItem>
+              <MenuItem icon={PlusIcon} onClick={() => pick({ type: "addCol", at: menu.at + 1 })}>Insert right</MenuItem>
               <MenuItem danger icon={Trash2Icon} onClick={() => pick({ type: "delCol", at: menu.at })}>Delete column</MenuItem>
             </ContextMenu>
           ) : null}
           {menu?.kind === "row" ? (
             <ContextMenu x={menu.x} y={menu.y} onClose={() => setMenu(null)}>
               {menu.at > 0 ? (
-                <MenuItem onClick={() => pick({ type: "addRow", at: menu.at - 1 })}>Insert row above</MenuItem>
+                <MenuItem icon={PlusIcon} onClick={() => pick({ type: "addRow", at: menu.at - 1 })}>Insert above</MenuItem>
               ) : null}
-              <MenuItem onClick={() => pick({ type: "addRow", at: menu.at })}>Insert row below</MenuItem>
-              {menu.at > 1 ? (
-                <MenuItem onClick={() => pick({ type: "moveRow", at: menu.at - 1, dir: -1 })}>Move up</MenuItem>
-              ) : null}
-              {menu.at > 0 && menu.at < menu.nBody ? (
-                <MenuItem onClick={() => pick({ type: "moveRow", at: menu.at - 1, dir: 1 })}>Move down</MenuItem>
-              ) : null}
+              <MenuItem icon={PlusIcon} onClick={() => pick({ type: "addRow", at: menu.at })}>Insert below</MenuItem>
               {menu.at > 0 ? (
                 <MenuItem danger icon={Trash2Icon} onClick={() => pick({ type: "delRow", at: menu.at - 1 })}>Delete row</MenuItem>
               ) : null}

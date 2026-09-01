@@ -976,9 +976,21 @@ body {
   border-radius: 6px;
   line-height: 1;
   font-size: 11px;
-  cursor: pointer;
+  cursor: grab;
+  touch-action: none;
   box-shadow: 0 1px 4px rgba(0, 0, 0, 0.15);
 }
+.mdTableHandle:active { cursor: grabbing; }
+/* Drop indicator while a handle pill is being dragged. */
+.mdTableDropLine {
+  position: absolute;
+  z-index: 6;
+  background: var(--accent);
+  border-radius: 1px;
+  pointer-events: none;
+}
+/* The column menu's alignment chooser row (a settingsKit Segmented). */
+.mdTableAlignRow { display: flex; justify-content: center; padding: 6px 10px 5px; }
 .mdTableColHandle { top: -7px; transform: translateX(-50%); width: 22px; height: 13px; }
 .mdTableRowHandle { left: -8px; transform: translateY(-50%); width: 13px; height: 22px; }
 .mdTableHandle:hover { color: var(--text-bright); background: var(--bg-subtle); }

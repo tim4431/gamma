@@ -6181,6 +6181,11 @@ export default function App() {
                       setMoveBlockDialog({ blockId: id, query: "", pages });
                     } catch (err) { setStatus(`Could not list pages: ${err.message}`); }
                   },
+                  // Hover-tool edits (table ops, image resize/caption/delete)
+                  // snapshot before writing so Ctrl+Z covers them too.
+                  onSnapshot: () => {
+                    if (!readOnly && !homeMode) pushUndo(blocks);
+                  },
                   onPasteBlocks: (id, nodes) => {
                     if (readOnly || homeMode || !nodes?.length) return;
                     // Undo restores the paste-as-text state (the closure tree

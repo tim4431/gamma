@@ -396,6 +396,7 @@ function BlockRow({
   enterNewNote,
   onAddChild,
   onPasteBlocks,
+  onSnapshot,
   onIndent,
   onOutdent,
   onToggle,
@@ -464,13 +465,19 @@ function BlockRow({
   const imageEditRef = useRef(null);
   imageEditRef.current = (idx, action, payload) => {
     const newVal = applyImageEdit(block.content || "", idx, action, payload);
-    if (newVal != null && newVal !== block.content) onChangeText(block.id, newVal);
+    if (newVal != null && newVal !== block.content) {
+      onSnapshot?.();               // hover-tool edits join the Ctrl+Z stack
+      onChangeText(block.id, newVal);
+    }
   };
   const stableImageEdit = useRef((i, a, p) => imageEditRef.current?.(i, a, p)).current;
   const tableEditRef = useRef(null);
   tableEditRef.current = (idx, op) => {
     const newVal = applyTableEdit(block.content || "", idx, op);
-    if (newVal != null && newVal !== block.content) onChangeText(block.id, newVal);
+    if (newVal != null && newVal !== block.content) {
+      onSnapshot?.();
+      onChangeText(block.id, newVal);
+    }
   };
   const stableTableEdit = useRef((i, o) => tableEditRef.current?.(i, o)).current;
   // Resolve [[ref]] chip labels here (cheap per render) so BlockMarkdown's
@@ -816,7 +823,9 @@ function BlockRow({
           return;
         }
       }
-      const text = (e.clipboardData?.getData("text/plain") || "").trim();
+      // CRLF must not reach a CodeMirror dispatch — the state rejects "\r",
+      // which would swallow the paste after preventDefault already fired.
+      const text = (e.clipboardData?.getData("text/plain") || "").replace(/\r\n?/g, "\n").trim();
       if (ta && /^https?:\/\/\S+$/i.test(text)) {
         e.preventDefault();
         const start = ta.selectionStart;
@@ -842,7 +851,7 @@ function BlockRow({
       // outline — pastes as-is and offers the chooser, same pattern as URLs.
       const tsvMd = ta && !homeMode ? tsvToMarkdown(text) : null;
       const multiline = text.split("\n").filter((l) => l.trim()).length >= 2;
-      if (ta && !homeMode && onPasteBlocks && (tsvMd || multiline)) {
+      if (ta && ta.view && !homeMode && onPasteBlocks && (tsvMd || multiline)) {
         e.preventDefault();
         const start = ta.selectionStart;
         ta.view?.dispatch({
