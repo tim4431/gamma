@@ -107,7 +107,9 @@ omits the files entirely, `notes=0` the Memos).
 → `build_tree` → progress bookkeeping) and feeds each page to a per-format
 `_Builder` (`_MarkdownBuilder`, `_NotesPdfBuilder`, `_LogseqBuilder`,
 `_ZoteroBuilder`, `_GammaBuilder` — keyed by `?mode=`), which accumulates zip
-parts and names the download. Adding an export format = adding a builder; the
+parts and names the download. `begin(conn, root_ids)` shows a builder the
+whole export set before the walk — the DB connection is closed by the time
+`response()` runs. Adding an export format = adding a builder; the
 endpoints, progress plumbing and `_zip_response` stay untouched. A builder
 whose download isn't a zip overrides `response()` instead (`_NotesPdfBuilder`
 returns one PDF).
@@ -139,7 +141,14 @@ text lives in the `EXPORT_SWITCH_TEXT` table), remembered in `localStorage`
 `render_readable` in `markdown_export.py`; dropping highlights keeps a
 highlight block's own text as a plain bullet; image sizes export in the
 Obsidian dialect — `obsidian_image_sizes` rewrites any legacy `{:width N}`
-to `![alt|N](url)`) and
+to `![alt|N](url)`. Block links resolve against the export set
+(`resolve_block_links` + `_MarkdownBuilder.begin`'s page-id → filename map):
+a `[[ref]]` or PDF link region whose target page is in the same export
+becomes a relative link to that page's .md — so a folder zip is
+self-contained — and reads as plain text otherwise; a `![[embed]]`
+materializes the synced block's content with a *(from …)* attribution,
+nested embeds degrading to mentions; ids the resolver doesn't know stay as
+typed) and
 `/pages/{id}/export-pdf?highlights=&notes=`. "PDF" is the paper itself and is
 hidden when there is none (a note page, an unsaved proxy PDF, a folder) —
 "Notes as PDF" (`?mode=notes-pdf`) takes over as the fallback format, and its

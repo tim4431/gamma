@@ -204,6 +204,10 @@ class _Builder:
         self.entries, self.assets = [], set()
         self.files, self.blobs = [], []
 
+    def begin(self, conn, root_ids):
+        """Sees the whole export set before any page is walked (the request's
+        DB connection is only open during the walk, not in ``response``)."""
+
     def add_page(self, n: int, rows, page):
         raise NotImplementedError
 
@@ -218,23 +222,41 @@ class _Builder:
 
 class _MarkdownBuilder(_Builder):
     """One readable .md per page plus a shared assets/ folder (deduped by
-    content-hash filename)."""
+    content-hash filename). [[refs]], ![[embeds]] and internal document links
+    resolve against the export set: a target page that is part of the same
+    export is linked by relative filename, so the zip is self-contained."""
 
     def __init__(self, user, base, opts):
         super().__init__(user, base, opts)
         self.used = set()
+        self.filenames = {}          # page id → arcname inside the zip
+        self.resolve_ref = None
+
+    def begin(self, conn, root_ids):
+        # Every page's filename up front, so cross-page links can be written
+        # while the first page renders.
+        for rid in root_ids:
+            row = conn.execute("SELECT content FROM unified_blocks WHERE id = ?",
+                               (rid,)).fetchone()
+            if row is None:
+                continue
+            slug = slugify(row[0], rid)
+            arcname = f"{slug}.md"
+            # id suffix makes collisions near-impossible, but guard anyway.
+            while arcname in self.used:
+                arcname = f"{slug}-{len(self.used)}.md"
+            self.used.add(arcname)
+            self.filenames[rid] = arcname
+        self.resolve_ref = _block_ref_resolver(conn)
 
     def add_page(self, n, rows, page):
         md, page_assets = collect_and_rewrite(
-            render_readable(page, highlights=self.opts["highlights"], notes=self.opts["notes"]),
+            render_readable(page, highlights=self.opts["highlights"], notes=self.opts["notes"],
+                            resolve_ref=self.resolve_ref, page_file=self.filenames.get),
             include_pdf=self.opts["pdf"])
         self.assets |= page_assets
-        slug = slugify(page.get("content"), page["id"])
-        arcname = f"{slug}.md"
-        # id suffix makes collisions near-impossible, but guard anyway.
-        while arcname in self.used:
-            arcname = f"{slug}-{len(self.used)}.md"
-        self.used.add(arcname)
+        arcname = self.filenames.get(page["id"]) \
+            or f"{slugify(page.get('content'), page['id'])}.md"
         self.entries.append((arcname, md))
 
 
@@ -448,8 +470,8 @@ class _GammaBuilder(_Builder):
 
 
 def _block_ref_resolver(conn):
-    """id → {content, page_title} for ``pdf_document``'s [[refs]] and
-    ``![[embeds]]`` — walks the parent chain for the root page's title, with a
+    """id → {content, page_title, page_id} for [[refs]], ``![[embeds]]`` and
+    internal document links — walks the parent chain for the root page, with a
     per-render cache (the same ref often appears many times)."""
     cache = {}
 
@@ -462,7 +484,7 @@ def _block_ref_resolver(conn):
         result = None
         if row is not None:
             content, parent = row
-            title = ""
+            page_id, title = block_id, ""
             for _ in range(64):                  # parent chain → the page block
                 if not parent or parent == "root":
                     break
@@ -471,8 +493,11 @@ def _block_ref_resolver(conn):
                     (parent,)).fetchone()
                 if up is None:
                     break
-                title, parent = (up[0] or ""), up[1]
-            result = {"content": content or "", "page_title": title.strip()}
+                page_id, title, parent = parent, (up[0] or ""), up[1]
+            if page_id == block_id:              # the ref IS a page block
+                title = content or ""
+            result = {"content": content or "", "page_title": title.strip(),
+                      "page_id": page_id}
         cache[block_id] = result
         return result
 
@@ -530,6 +555,7 @@ def _run_export(conn, user, mode: str, root_ids, base: str, opts: dict,
     if cls is None:
         raise HTTPException(status_code=400, detail=f"unknown export mode: {mode}")
     builder = cls(user, base, opts)
+    builder.begin(conn, root_ids)
     for n, root_id in enumerate(root_ids, 1):
         rows = fetch_subtree(conn, root_id)
         page = build_tree(rows, root_id)

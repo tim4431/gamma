@@ -115,6 +115,70 @@ def test_export_switches_drop_highlights_or_notes(guest):
     assert "quoted passage" not in neither and "free-standing note" not in neither
 
 
+def test_folder_md_export_links_papers_inside_the_export(guest):
+    """[[refs]], ![[embeds]] and link regions whose target page is part of the
+    same export resolve to relative .md links, so the zip is self-contained."""
+    from urllib.parse import quote
+
+    target = make_page(guest, "Target paper", properties={"folder": "proj"})
+    _put_children(guest, target["id"], [
+        {"id": "tb1", "content": "a shared finding\nsecond line", "properties": {}, "children": []},
+        {"id": "tb2", "content": "see [[tb1]] again", "properties": {}, "children": []},
+    ])
+    src = make_page(guest, "Source notes", properties={"folder": "proj"})
+    link = _highlight("lk1", "linked region")
+    link["properties"]["link_page_id"] = target["id"]
+    _put_children(guest, src["id"], [
+        {"id": "sb1", "content": "see [[tb1]] and unknown [[nope404]]", "properties": {}, "children": []},
+        {"id": "sb2", "content": "synced: ![[tb1]]", "properties": {}, "children": []},
+        link,
+    ])
+
+    r = guest.get("/api/folders/export", params={"name": "proj"})
+    assert r.status_code == 200, r.text
+    z = zipfile.ZipFile(io.BytesIO(r.content))
+    target_file = f"{slugify('Target paper', target['id'])}.md"
+    src_file = f"{slugify('Source notes', src['id'])}.md"
+    assert {target_file, src_file} <= set(z.namelist())
+    href = quote(target_file)
+
+    md = z.read(src_file).decode()
+    # A mention links to the target's file, labelled by its first line.
+    assert f"[a shared finding]({href})" in md
+    # An unknown id stays as typed rather than guessing.
+    assert "[[nope404]]" in md
+    # An embed materializes the synced content, with a linked attribution.
+    assert "synced: a shared finding" in md
+    assert f"second line *(from [Target paper]({href}))*" in md
+    # The link region becomes a relative link, not a bare quote.
+    assert f"- [linked region]({href})" in md
+    assert "> linked region" not in md
+
+    # Inside the target page itself: same-page mention reads as plain text.
+    tmd = z.read(target_file).decode()
+    assert "see a shared finding again" in tmd
+    assert href not in tmd
+
+
+def test_single_page_md_export_materializes_embeds(guest):
+    """A synced block from a page outside the export keeps its content with a
+    plain (unlinked) attribution."""
+    origin = make_page(guest, "Origin")
+    _put_children(guest, origin["id"], [
+        {"id": "os1", "content": "the origin text", "properties": {}, "children": []},
+    ])
+    page = make_page(guest, "Uses embed")
+    _put_children(guest, page["id"], [
+        {"id": "ub1", "content": "![[os1]]", "properties": {}, "children": []},
+        {"id": "ub2", "content": "ref: [[os1]]", "properties": {}, "children": []},
+    ])
+    r = guest.get(f"/api/pages/{page['id']}/export")
+    assert r.status_code == 200, r.text
+    assert "the origin text *(from Origin)*" in r.text
+    assert "ref: the origin text" in r.text
+    assert "[[os1]]" not in r.text
+
+
 def test_folder_export_zips_matching_pages(guest):
     make_page(guest, "In folder A", properties={"folder": "research/optics"})
     make_page(guest, "In subfolder", properties={"folder": "research/optics/lasers"})

@@ -9,6 +9,8 @@ text, so the renderers themselves stay ignorant of bundling.
 """
 
 import re
+# aliased: _render_readable_block has a local ``quote`` (the highlight text)
+from urllib.parse import quote as urlquote
 
 from .blocks_store import block_to_dict
 
@@ -53,13 +55,15 @@ def _is_highlight(props):
 
 # --- readable rendering ------------------------------------------------------
 
-def render_readable(page, highlights=True, notes=True):
+def render_readable(page, highlights=True, notes=True, resolve_ref=None, page_file=None):
     """Nested-bullet Markdown with a title, YAML front-matter and BibTeX block.
 
     ``highlights``/``notes`` are the export dialog's two switches: dropping
     highlights leaves your own writing, dropping notes leaves a bare quote
     extract. The front-matter and BibTeX describe the page itself and always
-    stay.
+    stay. ``resolve_ref`` (block id → {content, page_title, page_id} | None)
+    and ``page_file`` (page id → exported filename | None) resolve [[refs]],
+    ![[embeds]] and internal document links — see ``resolve_block_links``.
     """
     props = page.get("properties") or {}
     title = (page.get("content") or "").strip() or "Untitled"
@@ -84,7 +88,8 @@ def render_readable(page, highlights=True, notes=True):
         lines += ["```bibtex", (props["bibtex"] or "").strip(), "```", ""]
 
     for child in page["children"]:
-        _render_readable_block(child, 0, lines, highlights, notes)
+        _render_readable_block(child, 0, lines, highlights, notes,
+                               resolve_ref, page_file, page["id"])
 
     return "\n".join(lines).rstrip() + "\n"
 
@@ -98,25 +103,89 @@ def obsidian_image_sizes(md: str) -> str:
     return _LEGACY_WIDTH_RE.sub(lambda m: f"{m.group(1)}|{m.group(3)}{m.group(2)}", md or "")
 
 
-def _render_readable_block(node, depth, lines, highlights=True, notes=True):
+# [[id]] mention / ![[id]] synced-block embed — the same id charset the
+# editor's mdPreprocess matches.
+_BLOCK_REF_RE = re.compile(r"(!?)\[\[([A-Za-z0-9_-]+)\]\]")
+
+
+def _link_label(text, fallback):
+    """First line of a target's content as a markdown-safe link label."""
+    first = (text or "").strip().split("\n")[0].strip()
+    first = re.sub(r"[\[\]]", "", first).strip()
+    return first[:80] or fallback
+
+
+def resolve_block_links(md, resolve_ref, page_file=None, page_id=None, nested=False):
+    """Rewrite ``[[id]]`` mentions and ``![[id]]`` embeds for the readable
+    export. A mention becomes ``[first line](<target file>)`` when its page is
+    part of the export (``page_file``: page id → zip filename) and just the
+    text when it isn't; an embed materializes the synced block's content, with
+    a ``from`` attribution when the source lives on another page. ``page_id``
+    is the page being rendered (same-page targets don't link to their own
+    file); ``nested`` marks content already inside an embed, where further
+    embeds degrade to mentions so transclusion can't recurse. An id the
+    resolver doesn't know stays as typed."""
+    if not resolve_ref:
+        return md
+
+    def target_href(target_page):
+        if not page_file or not target_page or target_page == page_id:
+            return None
+        filename = page_file(target_page)
+        return urlquote(filename) if filename else None
+
+    def repl(m):
+        is_embed, block_id = m.group(1), m.group(2)
+        ref = resolve_ref(block_id)
+        if not ref:
+            return m.group(0)
+        href = target_href(ref.get("page_id"))
+        content = obsidian_image_sizes((ref.get("content") or "").strip())
+        if is_embed and not nested and content:
+            content = resolve_block_links(content, resolve_ref, page_file,
+                                          page_id=ref.get("page_id"), nested=True)
+            title = _link_label(ref.get("page_title"), "source")
+            if href:
+                return f"{content} *(from [{title}]({href}))*"
+            if ref.get("page_id") != page_id and (ref.get("page_title") or "").strip():
+                return f"{content} *(from {title})*"
+            return content
+        # A mention — or an embed degrading to one (nested, or empty target).
+        label = _link_label(content, block_id)
+        return f"[{label}]({href})" if href else label
+
+    return _BLOCK_REF_RE.sub(repl, md)
+
+
+def _render_readable_block(node, depth, lines, highlights=True, notes=True,
+                           resolve_ref=None, page_file=None, page_id=None):
     props = node.get("properties") or {}
     content = obsidian_image_sizes((node.get("content") or "").strip())
+    content = resolve_block_links(content, resolve_ref, page_file, page_id)
     # The two export switches. A highlight block carries both a PDF region and
     # (often) writing of your own, so dropping highlights keeps its text as a
     # plain bullet rather than losing the note with the quote.
-    if props.get("highlight_id") or props.get("link_url"):
-        if not highlights:
-            props = {}
-        if not notes:
-            content = ""
-    elif not notes:
+    if not highlights and (props.get("highlight_id") or props.get("link_url")):
+        props = {}
+    if not notes:
         content = ""
     indent = "  " * depth
     emitted = False
 
-    if props.get("link_url"):
-        label = content or (props.get("quote") or "").strip() or props["link_url"]
-        lines.append(f"{indent}- [{label}]({props['link_url']})")
+    # A link region: an internal document link whose paper is in the export
+    # links to its .md by relative filename; otherwise the stored URL.
+    link_href = None
+    if props.get("link_url") or props.get("link_page_id"):
+        filename = page_file(props["link_page_id"]) \
+            if page_file and props.get("link_page_id") else None
+        link_href = urlquote(filename) if filename else (props.get("link_url") or None)
+
+    if link_href:
+        label = content or (props.get("quote") or "").strip()
+        if not label and resolve_ref and props.get("link_page_id"):
+            ref = resolve_ref(props["link_page_id"])
+            label = _link_label((ref or {}).get("content"), "")
+        lines.append(f"{indent}- [{label or link_href}]({link_href})")
         emitted = True
     elif _is_highlight(props):
         quote = (props.get("quote") or "").strip()
@@ -147,7 +216,8 @@ def _render_readable_block(node, depth, lines, highlights=True, notes=True):
     # level, so their children stay at the current depth rather than orphaning.
     child_depth = depth + 1 if emitted else depth
     for child in node["children"]:
-        _render_readable_block(child, child_depth, lines, highlights, notes)
+        _render_readable_block(child, child_depth, lines, highlights, notes,
+                               resolve_ref, page_file, page_id)
 
 
 # --- asset handling ----------------------------------------------------------
