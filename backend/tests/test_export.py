@@ -42,6 +42,19 @@ def test_readable_export_is_bare_md(guest):
     assert "my comment" in body
 
 
+def test_readable_export_writes_image_sizes_obsidian_style():
+    page = {"id": "p", "content": "Sized images", "properties": {}, "children": [
+        {"id": "im1", "content": "legacy: ![cap](/api/uploads/ab12.png){:width 240}",
+         "properties": {}, "children": []},
+        {"id": "im2", "content": "already new: ![cap2|180](/api/uploads/cd34.png)",
+         "properties": {}, "children": []},
+    ]}
+    md = render_readable(page)
+    assert "![cap|240](/api/uploads/ab12.png)" in md
+    assert "![cap2|180](/api/uploads/cd34.png)" in md
+    assert "{:width" not in md
+
+
 def test_export_with_asset_returns_zip(guest):
     # A real uploaded PDF so the export must bundle it.
     up = guest.post("/api/uploads", files={"file": ("p.pdf", b"%PDF-1.4 minimal", "application/pdf")})

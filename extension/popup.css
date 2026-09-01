@@ -4,7 +4,7 @@
    theme isn't knowable here, so light/dark follows the OS. */
 :root {
   --bg-surface: #ffffff; --bg-elevated: #ffffff; --bg-input: #ffffff;
-  --bg-hover: #e0e0e0; --bg-active: #d5d5d5;
+  --bg-hover: #e0e0e0; --bg-active: #d5d5d5; --bg-raised: #e8e8e8;
   --text-primary: #1a1a1a; --text-secondary: #333333; --text-muted: #888888; --text-dim: #999999;
   --border: #dddddd; --border-subtle: #e0e0e0;
   --accent: #3a7bd5; --accent-dark: #3a7bd5; --accent-bright: #2b6bcb;
@@ -19,7 +19,7 @@
 @media (prefers-color-scheme: dark) {
   :root {
     --bg-surface: #1a1a1a; --bg-elevated: #232323; --bg-input: #222222;
-    --bg-hover: #333333; --bg-active: #3a3a3a;
+    --bg-hover: #333333; --bg-active: #3a3a3a; --bg-raised: #2a2a2a;
     --text-primary: #eeeeee; --text-secondary: #dddddd; --text-muted: #888888; --text-dim: #666666;
     --border: #333333; --border-subtle: #3f3f3f;
     --accent: #5b9bd5; --accent-dark: #3a7bd5; --accent-bright: #7ab8f5;
@@ -67,6 +67,27 @@ button:focus-visible, input:focus-visible { outline: 2px solid var(--accent); ou
 }
 .field:focus { border-color: var(--text-dim); }
 .field::placeholder { color: var(--text-dim); }
+/* Labels — the app's categoryTag chip input (app.css .categoryTagInputWrap / .categoryTag / .uiClose). */
+.tagField { display: flex; flex-wrap: wrap; align-items: center; gap: 4px; padding: 4px 6px; min-height: 30px; cursor: text; }
+/* The focus ring belongs to the box, not the inner input — its flexible width
+   would make the ring resize as chips are added. */
+.tagField:focus-within { border-color: var(--text-dim); outline: 2px solid var(--accent); outline-offset: 1px; }
+.tagField .tagInput:focus-visible { outline: none; }
+.categoryTag {
+  display: inline-flex; align-items: center; gap: 2px;
+  background: var(--bg-raised); color: var(--accent);
+  padding: 1px 4px 1px 8px; border-radius: 4px;
+  font-size: 11px; font-weight: 500; letter-spacing: 0.02em; white-space: nowrap;
+}
+.uiClose {
+  padding: 0; width: 16px; height: 16px; flex-shrink: 0; background: none; border: none;
+  border-radius: 50%; font-size: 12px; line-height: 1; color: var(--text-dim); cursor: pointer;
+  display: inline-flex; align-items: center; justify-content: center;
+}
+.uiClose:hover { background: var(--bg-hover); color: var(--text-primary); }
+.uiClose:active { transform: scale(0.82); }
+.tagInput { flex: 1; min-width: 60px; background: transparent; border: none; outline: none; font-size: 12.5px; padding: 1px 2px; color: var(--text-primary); }
+.tagInput::placeholder { color: var(--text-dim); }
 .check { display: flex; align-items: center; gap: 8px; color: var(--text-secondary); font-size: 12.5px; padding: 2px 16px; }
 .check input { margin: 0; accent-color: var(--accent); }
 
@@ -108,7 +129,7 @@ button:focus-visible, input:focus-visible { outline: 2px solid var(--accent); ou
   display: block; width: 100%; padding: 7px 12px; background: none; border: none;
   text-align: left; cursor: pointer; font: inherit; font-size: 12.5px; color: var(--text-primary);
 }
-.ctxMenuItem:hover { background: var(--bg-hover); }
+.ctxMenuItem:hover, .ctxMenuItem.selected { background: var(--bg-hover); }
 .ctxMenuItemIconed { display: flex; align-items: center; gap: 8px; }
 .ctxMenuIcon { display: inline-flex; align-items: center; justify-content: center; width: 15px; color: var(--text-muted); flex-shrink: 0; }
 .ctxMenuText { flex: 1; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }

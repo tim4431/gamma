@@ -137,7 +137,9 @@ text lives in the `EXPORT_SWITCH_TEXT` table), remembered in `localStorage`
 (`gamma-export-opts`). The switches are query flags on two endpoints:
 `/pages/{id}/export?mode=readable&highlights=&notes=&pdf=` (Markdown,
 `render_readable` in `markdown_export.py`; dropping highlights keeps a
-highlight block's own text as a plain bullet) and
+highlight block's own text as a plain bullet; image sizes export in the
+Obsidian dialect — `obsidian_image_sizes` rewrites any legacy `{:width N}`
+to `![alt|N](url)`) and
 `/pages/{id}/export-pdf?highlights=&notes=`. "PDF" is the paper itself and is
 hidden when there is none (a note page, an unsaved proxy PDF, a folder) —
 "Notes as PDF" (`?mode=notes-pdf`) takes over as the fallback format, and its
@@ -164,14 +166,28 @@ every page in one document, each starting on a fresh sheet).
 
 Each block's markdown is parsed twice: into chunks (headings, paragraphs,
 `>` quotes and `> [!type]` callouts, list items, `- [ ]` todos, fenced code,
-`---` rules, images, `$$…$$` math) and each chunk's text into styled inline
-spans (bold, italic, `code`, strike, `==mark==`, `[[refs]]`, links, `$…$`
-math). Highlights become quoted passages with a bar in the highlight's own
-colour and a `p. N` marker, and the Highlights/Notes switches mean exactly what
-they do in the Markdown export (drop highlights and a highlight block keeps its
-own writing as a plain bullet). Links become real `/Link` annotations, page
-titles and headings become PDF bookmarks. Layout constants (A4, margins, sizes)
-live at the top of the module.
+`---` rules, GFM tables, images — honoring the editor's size, Obsidian
+`![alt|300]` or legacy Logseq `{:width N}`, capped at the column —
+`![[embed]]` synced blocks, `$$…$$` math) and each
+chunk's text into styled inline spans (bold, italic, `code`, strike,
+`==mark==`, `[[refs]]`, links, `$…$` math). Highlights become quoted passages
+with a bar in the highlight's own colour and a `p. N` marker, and the
+Highlights/Notes switches mean exactly what they do in the Markdown export
+(drop highlights and a highlight block keeps its own writing as a plain
+bullet). Links become real `/Link` annotations, page titles and headings
+become PDF bookmarks. Layout constants (A4, margins, sizes) live at the top of
+the module.
+
+Tables draw as a real grid: column widths measured from the cells (squeezed
+proportionally into the column when too wide), wrapped cells, `:---:`
+alignment honored, the header bold on a tint and repeated when a page break
+falls inside the table. Fenced code is a bordered tinted card, one card
+segment per page it spans. `[[refs]]` and `![[embeds]]` resolve through a
+`resolve_ref` callback (`_block_ref_resolver` in `routers/export.py` — its own
+sqlite connection, since the request's closes before `response()` runs): a ref
+reads as its target's first line in link colour, an embed renders the synced
+block's content as a card with a soft bar and a muted `from <page>` source
+line (nested embeds degrade to refs so transclusion can't recurse).
 
 Pagination is per line, not per block: the canvas breaks a page between lines
 so nothing is ever clipped, and code lines carry their leading whitespace as an

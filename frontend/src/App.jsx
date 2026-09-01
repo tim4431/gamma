@@ -5292,10 +5292,14 @@ export default function App() {
                               <span className="metaKey">Source</span>
                               <span
                                 className={metaUnverifiedPaper ? "metaVal metaValWarn" : "metaVal"}
-                                title={metaUnverifiedPaper ? "Extracted by AI from the PDF text and not confirmed by arXiv/Crossref — fields may be wrong, verify before citing" : undefined}
+                                title={metaUnverifiedPaper
+                                  ? "Extracted by AI from the PDF text and not confirmed by arXiv/Crossref — fields may be wrong, verify before citing"
+                                  : pageMeta.source === "ai"
+                                    ? "Not a published paper, so there is no registry record to verify against"
+                                    : undefined}
                               >
                                 {metaUnverifiedPaper ? "AI-extracted — verify before citing"
-                                  : pageMeta.source === "ai" ? `AI-extracted (${pageMeta.kind || "document"} — not a published paper, so no registry to check against)`
+                                  : pageMeta.source === "ai" ? `AI-extracted (${pageMeta.kind || "document"})`
                                     : pageMeta.source === "manual" ? "edited by hand"
                                       : pageMeta.source}
                               </span>

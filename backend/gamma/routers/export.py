@@ -447,6 +447,38 @@ class _GammaBuilder(_Builder):
                        for name in sorted(self.upload_names)]
 
 
+def _block_ref_resolver(conn):
+    """id → {content, page_title} for ``pdf_document``'s [[refs]] and
+    ``![[embeds]]`` — walks the parent chain for the root page's title, with a
+    per-render cache (the same ref often appears many times)."""
+    cache = {}
+
+    def resolve(block_id):
+        if block_id in cache:
+            return cache[block_id]
+        row = conn.execute(
+            "SELECT content, parent_id FROM unified_blocks WHERE id = ?",
+            (block_id,)).fetchone()
+        result = None
+        if row is not None:
+            content, parent = row
+            title = ""
+            for _ in range(64):                  # parent chain → the page block
+                if not parent or parent == "root":
+                    break
+                up = conn.execute(
+                    "SELECT content, parent_id FROM unified_blocks WHERE id = ?",
+                    (parent,)).fetchone()
+                if up is None:
+                    break
+                title, parent = (up[0] or ""), up[1]
+            result = {"content": content or "", "page_title": title.strip()}
+        cache[block_id] = result
+        return result
+
+    return resolve
+
+
 class _NotesPdfBuilder(_Builder):
     """The notes themselves as a PDF document (``pdf_document``): title,
     metadata, the block tree typeset as nested bullets with quotes, code,
@@ -464,9 +496,13 @@ class _NotesPdfBuilder(_Builder):
 
     def response(self) -> Response:
         try:
-            pdf_bytes = render_document(
-                self.pages, uploads_dir=self.uploads_dir,
-                highlights=self.opts["highlights"], notes=self.opts["notes"])
+            # The request's connection is closed by the time response() runs,
+            # so [[ref]]/![[embed]] resolution opens its own (read-only use).
+            with sqlite3.connect(user_db_path(self.user, "pages.db")) as conn:
+                pdf_bytes = render_document(
+                    self.pages, uploads_dir=self.uploads_dir,
+                    highlights=self.opts["highlights"], notes=self.opts["notes"],
+                    resolve_ref=_block_ref_resolver(conn))
         except Exception as e:
             log(f"notes PDF export failed for '{self.base}': {e}")
             raise HTTPException(status_code=400, detail=f"could not build the PDF: {e}")

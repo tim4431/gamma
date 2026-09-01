@@ -1,17 +1,26 @@
 ---
 name: push_merge
-description: Commit the uncommitted work, push the branch, and open a PR to main.
+description: Push the branch's committed work and merge it to main via a PR (leaves uncommitted changes alone unless told to include them).
 ---
 
 # Push & merge-request
 
-Turn the working tree into a pushed branch + PR against `main`.
+Merge the branch's committed work into `main` via a PR.
+
+**Default scope: existing commits only.** If the working tree has
+uncommitted changes, do NOT commit them — they are ongoing work; leave
+them in the tree and merge only what is already committed. Only commit
+the tree when the user explicitly asked to include the uncommitted
+changes in this push.
 
 ## Steps
 
 1. **Check the tree**: `git status` + `git diff --stat`. If on `main`,
    create a feature branch first (`git checkout -b <short-topic-name>`);
-   otherwise stay on the current branch.
+   otherwise stay on the current branch. Note any uncommitted changes —
+   they stay out of the PR (see scope rule above). If there are no
+   unpushed/unmerged commits either, stop and tell the user there is
+   nothing to merge.
 
 2. **Pre-flight** (skip only if this session already ran them on the
    current tree):
@@ -23,14 +32,17 @@ Turn the working tree into a pushed branch + PR against `main`.
    cd frontend && npm run build
    ```
 
-3. **Commit everything relevant**: `git add` the changed/untracked project
-   files (never `backend/users/`, `venv/`, `dist/`, scratch files). Commit
-   message follows the repo's style — one short descriptive line
-   (see `git log --oneline`), ending with:
+3. **Commit — only if explicitly asked**: when (and only when) the user
+   asked to include the uncommitted changes, `git add` the
+   changed/untracked project files (never `backend/users/`, `venv/`,
+   `dist/`, scratch files). Commit message follows the repo's style —
+   one short descriptive line (see `git log --oneline`), ending with:
 
    ```
    Co-Authored-By: Claude Fable 5 <noreply@anthropic.com>
    ```
+
+   Otherwise skip this step entirely.
 
 4. **Push**: `git push -u origin <branch>`.
 

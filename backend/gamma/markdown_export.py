@@ -89,9 +89,18 @@ def render_readable(page, highlights=True, notes=True):
     return "\n".join(lines).rstrip() + "\n"
 
 
+# Image sizes export in the Obsidian dialect: legacy Logseq
+# ``![a](u){:width N}`` becomes ``![a|N](u)`` (new notes already carry it).
+_LEGACY_WIDTH_RE = re.compile(r"(!\[[^\]]*)(\]\([^)]+\))\{:width\s+(\d+)\}")
+
+
+def obsidian_image_sizes(md: str) -> str:
+    return _LEGACY_WIDTH_RE.sub(lambda m: f"{m.group(1)}|{m.group(3)}{m.group(2)}", md or "")
+
+
 def _render_readable_block(node, depth, lines, highlights=True, notes=True):
     props = node.get("properties") or {}
-    content = (node.get("content") or "").strip()
+    content = obsidian_image_sizes((node.get("content") or "").strip())
     # The two export switches. A highlight block carries both a PDF region and
     # (often) writing of your own, so dropping highlights keeps its text as a
     # plain bullet rather than losing the note with the quote.

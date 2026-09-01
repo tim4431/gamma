@@ -21,12 +21,17 @@ import { filterSlashCommands, SlashMenuPopup } from "./slashMenu";
 import { remarkCallouts } from "./callouts";
 import { ContextMenu, MenuItem } from "./menus";
 import { API, apiJson, copyText } from "./utils";
-import { Trash2Icon } from "./icons";
+import { CopyIcon, Trash2Icon } from "./icons";
+import {
+  applyImageEdit, applyTableEdit, formatTables, htmlTableToMarkdown,
+  MdImage, MdTableWrap, parseTable, scanTables,
+} from "./mdTools";
 
 // Module-level ref for native HTML5 drag-and-drop (shared with App's drop handlers)
 const _dragState = { draggingId: null, dropTarget: null };
 
-// Source → markdown the renderer understands: {:width} images, ![[embeds]],
+// Source → markdown the renderer understands: sized images (Obsidian
+// ![alt|300] and legacy Logseq {:width}), ![[embeds]],
 // [[refs]] and ==highlights== rewritten OUTSIDE math and inline-code spans
 // (a "==" inside $...$ must stay LaTeX). `nested` is the inside-an-embed
 // render: embeds degrade to ref chips so transclusion can't recurse.
@@ -51,7 +56,9 @@ function mdPreprocess(content, nested) {
     spans.push({ from: m.index, to: m.index + m[0].length });
   }
   return applyOutsideSpans(content, spans, (seg) => seg
+    // Sized images: legacy Logseq {:width N} first, then Obsidian ![alt|300].
     .replace(/!\[([^\]]*)\]\(([^)]+)\)\{:width\s+(\d+)\}/g, '<img src="$2" alt="$1" width="$3" />')
+    .replace(/!\[([^\]|]*)\|(\d+)(?:x\d+)?\]\(([^)]+)\)/g, '<img src="$3" alt="$1" width="$2" />')
     .replace(/!\[\[([a-zA-Z0-9_-]+)\]\]/g, nested ? "[$1](blockref:$1)" : "[$1](blockembed:$1)")
     .replace(/\[\[([a-zA-Z0-9_-]+)\]\]/g, "[$1](blockref:$1)")
     .replace(/==([^=\n]+?)==/g, "<mark>$1</mark>"));
@@ -231,12 +238,17 @@ function CodePre({ children }) {
 // labels are resolved by the caller so the comparison here stays a string
 // check. onBlockRefClick/onTaskToggle are deliberately excluded from the
 // comparison — the caller passes identity-stable wrappers.
-const BlockMarkdown = React.memo(function BlockMarkdown({ content, refLabels, onBlockRefClick, onTaskToggle, onEmbedEdit, nested }) {
+const BlockMarkdown = React.memo(function BlockMarkdown({ content, blockId, refLabels, onBlockRefClick, onTaskToggle, onEmbedEdit, onImageEdit, onTableEdit, nested }) {
   // GFM task-list checkboxes render in document order; this counter maps the
   // nth rendered checkbox back to the nth `[ ]`/`[x]` marker in the source so
   // clicking one toggles the right marker. Reset per render — the whole
   // element tree is rebuilt whenever this component re-renders.
-  let taskIdx = -1;
+  // imgIdx/tableIdx do the same for images and tables (mdTools scans the
+  // source with matching rules, so the nth rendered one is the nth scanned).
+  let taskIdx = -1, imgIdx = -1, tableIdx = -1;
+  // Source-order table list; entries inside blockquotes are editable:false
+  // (they still consume an index so the mapping stays aligned).
+  const tableInfo = useMemo(() => scanTables(content || ""), [content]);
   return (
     <ReactMarkdown
       // remark-breaks: a single Enter inside a note renders as a real line
@@ -284,6 +296,25 @@ const BlockMarkdown = React.memo(function BlockMarkdown({ content, refLabels, on
           return <a href={href} target="_blank" rel="noreferrer">{children}</a>;
         },
         pre: CodePre,
+        img: ({ node, src, alt, width }) => {
+          imgIdx += 1;
+          return <MdImage src={src} alt={alt} width={width} idx={imgIdx} onEdit={onImageEdit} />;
+        },
+        table: ({ node, children }) => {
+          tableIdx += 1;
+          const info = tableInfo[tableIdx];
+          const editable = !!(info?.editable && onTableEdit);
+          return (
+            <MdTableWrap
+              idx={tableIdx}
+              onEdit={editable ? onTableEdit : undefined}
+              model={editable ? parseTable(content.slice(info.from, info.to)) : null}
+              editKey={editable ? `${blockId}:${tableIdx}` : null}
+            >
+              {children}
+            </MdTableWrap>
+          );
+        },
         input: ({ node, type, checked, disabled, ...props }) => {
           if (type !== "checkbox") return <input type={type} {...props} />;
           taskIdx += 1;
@@ -426,6 +457,21 @@ function BlockRow({
     }
   };
   const stableEmbedEdit = useRef((id, c) => embedEditRef.current?.(id, c)).current;
+  // Hover tools on rendered images/tables (mdTools): edits are text
+  // transforms on the nth construct in this block's source. A null result
+  // means the scan couldn't locate it — no-op rather than corrupt.
+  const imageEditRef = useRef(null);
+  imageEditRef.current = (idx, action, payload) => {
+    const newVal = applyImageEdit(block.content || "", idx, action, payload);
+    if (newVal != null && newVal !== block.content) onChangeText(block.id, newVal);
+  };
+  const stableImageEdit = useRef((i, a, p) => imageEditRef.current?.(i, a, p)).current;
+  const tableEditRef = useRef(null);
+  tableEditRef.current = (idx, op) => {
+    const newVal = applyTableEdit(block.content || "", idx, op);
+    if (newVal != null && newVal !== block.content) onChangeText(block.id, newVal);
+  };
+  const stableTableEdit = useRef((i, o) => tableEditRef.current?.(i, o)).current;
   // Resolve [[ref]] chip labels here (cheap per render) so BlockMarkdown's
   // memo can compare them as strings instead of depending on allBlocks,
   // whose identity changes on every edit.
@@ -613,6 +659,18 @@ function BlockRow({
   useEffect(() => {
     if (block.editMode) clickPosRef.current = null;
   }, [block.editMode]);
+  // Leaving raw editing pretty-prints any tables in the block. Watched on the
+  // editMode transition (not the editor's onBlur — switching blocks
+  // preventDefaults the mousedown, so the editor unmounts without a blur).
+  const wasEditingRef = useRef(false);
+  useEffect(() => {
+    if (wasEditingRef.current && !block.editMode && !readOnly) {
+      const formatted = formatTables(block.content || "");
+      if (formatted != null) onChangeText(block.id, formatted);
+    }
+    wasEditingRef.current = !!block.editMode;
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [block.editMode]);
 
   const isHighlight = !!block.highlightId;
   const hasChildren = (block.children?.length || 0) > 0;
@@ -710,8 +768,28 @@ function BlockRow({
     const file = Array.from(e.clipboardData?.items || [])
       .find((it) => it.type?.startsWith("image/"))?.getAsFile();
     if (!file) {
-      const text = (e.clipboardData?.getData("text/plain") || "").trim();
       const ta = ref.current;
+      // A clipboard that IS one html table (Excel / Sheets / a copied
+      // rendered table) pastes as a markdown table.
+      const html = e.clipboardData?.getData("text/html") || "";
+      if (ta && /<table[\s>]/i.test(html)) {
+        const md = htmlTableToMarkdown(html);
+        if (md) {
+          e.preventDefault();
+          const start = ta.selectionStart, end = ta.selectionEnd;
+          const val = ta.value || "";
+          const lead = start > 0 && val[start - 1] !== "\n" ? "\n" : "";
+          const trail = end < val.length && val[end] !== "\n" ? "\n" : "";
+          const insert = lead + md + trail;
+          ta.view?.dispatch({
+            changes: { from: start, to: end, insert },
+            selection: { anchor: start + lead.length + md.length },
+            userEvent: "input",
+          });
+          return;
+        }
+      }
+      const text = (e.clipboardData?.getData("text/plain") || "").trim();
       if (ta && /^https?:\/\/\S+$/i.test(text)) {
         e.preventDefault();
         const start = ta.selectionStart;
@@ -1019,9 +1097,11 @@ function BlockRow({
           ) : (
             <div className="blockRendered" onCopy={handleMarkdownCopy}>
               {(block.content || "").trim() ? (
-                <BlockMarkdown content={block.content || ""} refLabels={refLabels} onBlockRefClick={stableRefClick}
+                <BlockMarkdown content={block.content || ""} blockId={block.id} refLabels={refLabels} onBlockRefClick={stableRefClick}
                   onTaskToggle={readOnly ? undefined : stableTaskToggle}
-                  onEmbedEdit={readOnly ? undefined : stableEmbedEdit} />
+                  onEmbedEdit={readOnly ? undefined : stableEmbedEdit}
+                  onImageEdit={readOnly ? undefined : stableImageEdit}
+                  onTableEdit={readOnly ? undefined : stableTableEdit} />
               ) : (
                 <div className="blockPlaceholder">(empty)</div>
               )}
@@ -1104,6 +1184,16 @@ function BlockRow({
   );
 }
 
+// Block subtree → a markdown outline: each block one "- " bullet (extra
+// content lines hang under it), children indented two spaces deeper.
+function subtreeMarkdown(b, depth) {
+  const indent = "  ".repeat(depth);
+  const own = (b.content || "").split("\n")
+    .map((l, i) => (i === 0 ? `${indent}- ` : `${indent}  `) + l)
+    .join("\n");
+  return [own, ...(b.children || []).map((c) => subtreeMarkdown(c, depth + 1))].join("\n");
+}
+
 function SortableBlockRow({ block, ...rowProps }) {
   const depth = rowProps.depth || 0;
   // Notion-style handle: drag moves the block, a plain click opens the block
@@ -1160,6 +1250,14 @@ function SortableBlockRow({ block, ...rowProps }) {
               "Block link copied — paste into a note for mention / synced block",
             )}
           >Copy link to block</MenuItem>
+          <MenuItem
+            icon={CopyIcon}
+            title="Copy this block's markdown source (sub-blocks become an indented list)"
+            onClick={() => copy(
+              block.children?.length ? subtreeMarkdown(block, 0) : block.content || "",
+              "Copied block as markdown",
+            )}
+          >Copy as markdown</MenuItem>
           {block.id !== "root" ? (
             <MenuItem
               icon={Trash2Icon}

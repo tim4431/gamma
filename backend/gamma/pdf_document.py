@@ -55,6 +55,7 @@ from .pdf_typeset import (
     plain,
     resolve,
     span_width,
+    spans_width,
     styled,
     wrap,
 )
@@ -86,6 +87,13 @@ SECTION_GAP = 7.0                        # above a heading
 MUTED = (0.45, 0.46, 0.51)
 QUOTE_COLOR = (0.28, 0.29, 0.33)
 RULE_COLOR = (0.80, 0.81, 0.84)
+EMBED_BAR = (0.62, 0.68, 0.80)           # ![[synced block]] cards
+TABLE_SIZE = 9.2
+TABLE_PAD_X, TABLE_PAD_Y = 5.0, 3.2
+TABLE_BORDER = (0.78, 0.79, 0.82)
+TABLE_HEAD_BG = (0.955, 0.955, 0.962)
+CODE_PAD_X, CODE_PAD_Y = 6.0, 5.0
+CODE_BORDER = (0.84, 0.85, 0.87)
 _CODE_STYLE = Style(MONO, None)
 
 _FENCE_RE = re.compile(r"^\s*```")
@@ -95,7 +103,14 @@ _QUOTE_RE = re.compile(r"^\s{0,3}>\s?(.*)$")
 _CALLOUT_RE = re.compile(r"^\[!(\w+)\][+-]?\s*(.*)$")
 _TODO_RE = re.compile(r"^(\s*)(?:([-*+])\s+)?\[([ xX])\]\s+(.*)$")
 _LIST_RE = re.compile(r"^(\s*)([-*+]|\d{1,3}[.)])\s+(.*)$")
-_IMAGE_RE = re.compile(r"!\[([^\]]*)\]\(\s*([^)\s]+)[^)]*\)")
+# An ![](…) image — sized Obsidian-style (``![alt|300](url)``) or with the
+# legacy Logseq ``{:width N}`` suffix — or an ![[id]] synced-block embed;
+# each leaves the text flow as its own chunk.
+_MEDIA_RE = re.compile(
+    r"!\[(?P<alt>[^\]]*)\]\(\s*(?P<src>[^)\s]+)[^)]*\)(?:\{:width\s+(?P<pxw>\d+)\})?"
+    r"|!\[\[(?P<refid>[a-zA-Z0-9_-]+)\]\]")
+_ALT_WIDTH_RE = re.compile(r"(.*?)\|(\d+)(?:x\d+)?$")
+_DELIM_CELL_RE = re.compile(r":?-+:?")
 
 # One pass over a line of markdown. Order matters: ** before *, ![[ before [[.
 _INLINE_RE = re.compile(
@@ -118,7 +133,18 @@ _BITS = {"bold": BOLD, "italic": ITALIC, "strike": STRIKE, "mark": MARK}
 
 # --- markdown → chunks -------------------------------------------------------
 
-def inline(text: str, style: Style = PLAIN):
+def _ref_label(name: str, resolver) -> str:
+    """What a [[ref]] chip reads as: the referenced block's first line when the
+    resolver knows it (same as the editor), the raw id otherwise."""
+    if resolver:
+        ref = resolver(name)
+        first = ((ref or {}).get("content") or "").strip().split("\n")[0].strip()
+        if first:
+            return first[:80]
+    return name
+
+
+def inline(text: str, style: Style = PLAIN, resolver=None):
     """One line of markdown → styled spans (see pdf_typeset for the shape)."""
     out, pos = [], 0
     for m in _INLINE_RE.finditer(text):
@@ -135,15 +161,16 @@ def inline(text: str, style: Style = PLAIN):
                 out.append((MATH, tex, 0, style))
         elif which in _WRAPPERS:
             marks = _WRAPPERS[which]
-            out.extend(inline(body[marks:-marks], styled(style, _BITS[which])))
+            out.extend(inline(body[marks:-marks], styled(style, _BITS[which]), resolver))
         elif which in ("embed", "ref"):
             # A page reference can't be followed outside Gamma; it still reads
-            # as a reference, in link colour without a target.
+            # as a reference — with the referenced block's text when the
+            # resolver knows it — in link colour without a target.
             name = body.strip("![]").split("|")[0].strip()
-            out.append((TEXT, name, 0, Style(style.bits | LINK, None)))
+            out.append((TEXT, _ref_label(name, resolver), 0, Style(style.bits | LINK, None)))
         elif which == "link":
             label, href = _LINK_PARTS.match(body).groups()
-            out.extend(inline(label or href, styled(style, LINK, href=href)))
+            out.extend(inline(label or href, styled(style, LINK, href=href), resolver))
         else:                                    # bare URL
             out.append((TEXT, body, 0, styled(style, LINK, href=body)))
     if pos < len(text):
@@ -151,27 +178,49 @@ def inline(text: str, style: Style = PLAIN):
     return merge(out)
 
 
-def _text_chunks(text: str, style: Style, **extra):
-    """A line of prose → its text chunk plus a chunk per ``![](…)`` image."""
+def _text_chunks(text: str, style: Style, resolver=None, **extra):
+    """A line of prose → its text chunk plus a chunk per ``![](…)`` image and
+    per ``![[id]]`` synced-block embed."""
     chunks, pos = [], 0
-    for m in _IMAGE_RE.finditer(text):
+    for m in _MEDIA_RE.finditer(text):
         head = text[pos:m.start()]
         if head.strip():
-            chunks.append({"kind": "text", "spans": inline(head, style), **extra})
-        chunks.append({"kind": "image", "src": m.group(2), "alt": m.group(1)})
+            chunks.append({"kind": "text", "spans": inline(head, style, resolver), **extra})
+        if m.group("refid"):
+            chunks.append({"kind": "embed", "id": m.group("refid")})
+        else:
+            alt, pxw = m.group("alt"), m.group("pxw")
+            pipe = _ALT_WIDTH_RE.fullmatch(alt or "")
+            if pipe:                             # Obsidian ![alt|300](url)
+                alt, pxw = pipe.group(1), pxw or pipe.group(2)
+            chunks.append({"kind": "image", "src": m.group("src"), "alt": alt,
+                           "px_w": int(pxw) if pxw else None})
         pos = m.end()
     tail = text[pos:]
     if tail.strip() or not chunks:
-        chunks.append({"kind": "text", "spans": inline(tail, style), **extra})
+        chunks.append({"kind": "text", "spans": inline(tail, style, resolver), **extra})
     return chunks
 
 
-def chunks(md: str):
+def _split_row(line: str):
+    """A GFM table row → its trimmed cells (outer pipes dropped, ``\\|`` kept
+    as a literal pipe)."""
+    s = line.strip()
+    if s.startswith("|"):
+        s = s[1:]
+    if s.endswith("|") and not s.endswith("\\|"):
+        s = s[:-1]
+    return [c.strip().replace("\\|", "|") for c in re.split(r"(?<!\\)\|", s)]
+
+
+def chunks(md: str, resolver=None):
     """A block's markdown → the drawable chunks, in order.
 
     ``text`` chunks carry spans plus the flags the canvas draws them with
-    (``quote``, ``todo``, ``bullet``, ``heading``); ``image``, ``math``,
-    ``code`` and ``rule`` are their own kinds. Blank lines become ``gap``.
+    (``quote``, ``todo``, ``bullet``, ``heading``); ``image``, ``embed``,
+    ``table``, ``math``, ``code`` and ``rule`` are their own kinds. Blank
+    lines become ``gap``. ``resolver`` (id → {content, page_title} or None)
+    gives [[refs]] their referenced text.
     """
     lines = (md or "").replace("\r\n", "\n").replace("\r", "\n").split("\n")
     out, i = [], 0
@@ -201,6 +250,20 @@ def chunks(md: str):
             if tex.strip():
                 out.append({"kind": "math", "tex": tex.strip()})
             continue
+        if "|" in stripped and i + 1 < len(lines):      # GFM table
+            delim = _split_row(lines[i + 1])
+            head = _split_row(stripped)
+            if ("-" in lines[i + 1] and len(delim) == len(head)
+                    and all(_DELIM_CELL_RE.fullmatch(c) for c in delim)):
+                aligns = [("center" if c.startswith(":") and c.endswith(":")
+                           else "right" if c.endswith(":") else "left") for c in delim]
+                rows = [[inline(c, Style(BOLD, None), resolver) for c in head]]
+                i += 2
+                while i < len(lines) and "|" in lines[i] and lines[i].strip():
+                    rows.append([inline(c, PLAIN, resolver) for c in _split_row(lines[i])])
+                    i += 1
+                out.append({"kind": "table", "rows": rows, "aligns": aligns})
+                continue
         i += 1
         if not stripped:
             out.append({"kind": "gap"})
@@ -211,7 +274,7 @@ def chunks(md: str):
         heading = _HEADING_RE.match(line)
         if heading:
             level = len(heading.group(1))
-            out += _text_chunks(heading.group(2), Style(BOLD, None), heading=level)
+            out += _text_chunks(heading.group(2), Style(BOLD, None), resolver, heading=level)
             continue
         quote = _QUOTE_RE.match(line)
         if quote:
@@ -219,27 +282,27 @@ def chunks(md: str):
             callout = _CALLOUT_RE.match(body.strip())
             if callout:                                 # > [!note] Title
                 title = callout.group(2).strip() or callout.group(1).title()
-                out.append({"kind": "text", "spans": inline(title, Style(BOLD, None)),
+                out.append({"kind": "text", "spans": inline(title, Style(BOLD, None), resolver),
                             "quote": True})
                 continue
-            out += _text_chunks(body, Style(ITALIC, None), quote=True)
+            out += _text_chunks(body, Style(ITALIC, None), resolver, quote=True)
             continue
         todo = _TODO_RE.match(line)
         if todo:
             lead, marker, box, body = todo.groups()
             # "- [ ] x" is a list item too, so it lines up with its neighbours.
-            out += _text_chunks(body, PLAIN, todo=box.lower() == "x",
+            out += _text_chunks(body, PLAIN, resolver, todo=box.lower() == "x",
                                 sub=len(lead) // 2 + 1 if marker else 0)
             continue
         item = _LIST_RE.match(line)
         if item:
             marker = item.group(2)
             # "" = a dot; a numbered marker keeps its number.
-            out += _text_chunks(item.group(3), PLAIN,
+            out += _text_chunks(item.group(3), PLAIN, resolver,
                                 bullet=marker if marker[:1].isdigit() else "",
                                 sub=len(item.group(1)) // 2 + 1)
             continue
-        out += _text_chunks(line.strip(), PLAIN)
+        out += _text_chunks(line.strip(), PLAIN, resolver)
     return out
 
 
@@ -250,9 +313,10 @@ class _Canvas:
     images and link boxes each page ends up needing. Every draw call
     paginates itself, so callers never track the page break."""
 
-    def __init__(self, writer: PdfWriter, uploads_dir=None):
+    def __init__(self, writer: PdfWriter, uploads_dir=None, resolve_ref=None):
         self.writer = writer
         self.images = XObjectStore(writer, uploads_dir)
+        self.resolve_ref = resolve_ref   # [[id]] → {content, page_title} | None
         self.pages = []
         self.outline = []          # (title, page index, level) → PDF bookmarks
         self._new_page()
@@ -347,15 +411,17 @@ class _Canvas:
         fill_rect(self.page["ops"], x, self.y, x + width, self.y + thickness, color)
         self.y += 3.0
 
-    def image(self, src: str, x: float, width: float, alt: str = ""):
+    def image(self, src: str, x: float, width: float, alt: str = "", px_w=None):
+        """``px_w`` is the editor's ``{:width N}`` (CSS px) — the drawn width,
+        still capped at the column."""
         info = self.images.resolve(src)
         if not info:
             self.paragraph(inline(alt.strip() or "image", Style(ITALIC, None)),
                            x, width, SMALL_SIZE, color=MUTED)
             return
-        name, px_w, px_h = info
-        w = min(width, px_w * PX_PT)
-        h = w * px_h / max(px_w, 1)
+        name, nat_w, nat_h = info
+        w = min(width, (px_w or nat_w) * PX_PT)
+        h = w * nat_h / max(nat_w, 1)
         cap = PAGE_H - MARGIN_TOP - MARGIN_BOTTOM
         if h > cap:
             w, h = w * cap / h, cap
@@ -384,18 +450,108 @@ class _Canvas:
         self.y += h * scale + IMAGE_GAP
 
     def code(self, lines, x: float, width: float):
-        """A fenced block: monospaced lines on one continuous tint. Leading
-        whitespace is drawn as an offset — wrapping drops spaces at the start
-        of a line, and code that loses its indentation is unreadable."""
+        """A fenced block as a bordered card (the editor's code look): tinted,
+        stroked, one card segment per page it spans. Leading whitespace is
+        drawn as an x offset — wrapping drops spaces at the start of a line,
+        and code that loses its indentation is unreadable."""
         self.gap(PARA_GAP)
-        space = span_width(" ", CODE_SIZE, 0, _CODE_STYLE)
+        size = CODE_SIZE
+        space = span_width(" ", size, 0, _CODE_STYLE)
+        inner = width - 2 * CODE_PAD_X
+        flat = []                                 # (x offset, wrapped line)
         for line in lines or [""]:
             body = (line or "").rstrip()
-            offset = (len(body) - len(body.lstrip(" "))) * space
-            self.paragraph([(TEXT, body.strip() or " ", 0, _CODE_STYLE)],
-                           x + CODE_PAD + offset, width - 2 * CODE_PAD - offset,
-                           CODE_SIZE, leading=1.3, background=CODE_BG,
-                           bg_span=(x, x + width))
+            offset = min((len(body) - len(body.lstrip(" "))) * space, inner * 0.5)
+            spans = [(TEXT, body.strip() or " ", 0, _CODE_STYLE)]
+            for indent, wline in wrap(resolve(spans, size, inner - offset),
+                                      inner - offset, size, hang=0.0):
+                flat.append((offset + indent, wline))
+        line_h, ascent = size * 1.3, size * 0.82
+        i = 0
+        while i < len(flat):
+            if self.room() < line_h + 2 * CODE_PAD_Y and not self.at_top():
+                self.page_break()
+            n = min(len(flat) - i,
+                    max(1, int((self.room() - 2 * CODE_PAD_Y) // line_h)))
+            seg_h = n * line_h + 2 * CODE_PAD_Y
+            ops = self.page["ops"]
+            fill_rect(ops, x, self.y, x + width, self.y + seg_h, CODE_BG)
+            ops.append(b"%s %s %s RG 0.7 w %s %s %s %s re S" % (
+                num(CODE_BORDER[0]), num(CODE_BORDER[1]), num(CODE_BORDER[2]),
+                num(x), num(self.y), num(width), num(seg_h)))
+            yy = self.y + CODE_PAD_Y
+            for offset, wline in flat[i:i + n]:
+                draw_spans(ops, x + CODE_PAD_X + offset, yy + ascent, wline, size,
+                           fonts=self.page["fonts"], links=self.page["links"])
+                yy += line_h
+            self.y += seg_h
+            i += n
+        self.gap(PARA_GAP)
+
+    def table(self, rows, aligns, x: float, width: float):
+        """A GFM table (``rows`` = span lists, header first): measured column
+        widths, wrapped cells, a light grid, the header tinted bold and
+        repeated when a page break falls inside the table."""
+        if not rows:
+            return
+        size = TABLE_SIZE
+        ncols = max(len(r) for r in rows)
+        rows = [list(r) + [[] for _ in range(ncols - len(r))] for r in rows]
+        aligns = (list(aligns or []) + ["left"] * ncols)[:ncols]
+        # Natural column widths, then squeezed proportionally into the column.
+        measured = [[resolve(c, size, width) for c in row] for row in rows]
+        nat = [max(spans_width(measured[r][c], size) for r in range(len(rows)))
+               + 2 * TABLE_PAD_X + 1.0 for c in range(ncols)]
+        total = sum(nat)
+        if total <= width:
+            col_w = nat
+        else:
+            col_w = [max(26.0, w * width / total) for w in nat]
+            squeeze = sum(col_w)
+            if squeeze > width:
+                col_w = [w * width / squeeze for w in col_w]
+        cells, heights = [], []                  # wrapped lines + row heights
+        for r, row in enumerate(rows):
+            row_cells, row_h = [], size * 1.3
+            for c in range(ncols):
+                inner = max(8.0, col_w[c] - 2 * TABLE_PAD_X)
+                lines = wrap(resolve(row[c], size, inner), inner, size, hang=0.0)
+                metrics = [line_metrics(line, size, 1.3) for _i, line in lines]
+                row_cells.append((lines, metrics, inner))
+                row_h = max(row_h, sum(h for _a, h in metrics))
+            cells.append(row_cells)
+            heights.append(row_h + 2 * TABLE_PAD_Y)
+
+        def draw_row(r):
+            ops, y0 = self.page["ops"], self.y
+            if r == 0:
+                fill_rect(ops, x, y0, x + sum(col_w), y0 + heights[0], TABLE_HEAD_BG)
+            cx = x
+            for c in range(ncols):
+                lines, metrics, inner = cells[r][c]
+                ly = y0 + TABLE_PAD_Y
+                for (indent, line), (ascent, h) in zip(lines, metrics):
+                    lw = indent + spans_width(line, size)
+                    shift = (inner - lw if aligns[c] == "right"
+                             else (inner - lw) / 2 if aligns[c] == "center" else 0.0)
+                    draw_spans(ops, cx + TABLE_PAD_X + indent + max(0.0, shift),
+                               ly + ascent, line, size,
+                               fonts=self.page["fonts"], links=self.page["links"])
+                    ly += h
+                ops.append(b"%s %s %s RG 0.6 w %s %s %s %s re S" % (
+                    num(TABLE_BORDER[0]), num(TABLE_BORDER[1]), num(TABLE_BORDER[2]),
+                    num(cx), num(y0), num(col_w[c]), num(heights[r])))
+                cx += col_w[c]
+            self.y = y0 + heights[r]
+
+        self.gap(PARA_GAP)
+        # Never leave the header stranded at the bottom of a page.
+        self.need(heights[0] + (heights[1] if len(rows) > 1 else 0.0))
+        for r in range(len(rows)):
+            if r and heights[r] > self.room() and not self.at_top():
+                self.page_break()
+                draw_row(0)
+            draw_row(r)
         self.gap(PARA_GAP)
 
     def bookmark(self, title: str, level: int = 0):
@@ -495,12 +651,15 @@ def _meta_line(meta: dict) -> str:
 
 
 def _emit_chunks(cv: _Canvas, md: str, x: float, width: float, color=TEXT_COLOR,
-                 quote_bar=None, base_style: Style = PLAIN, bullet: bool = False):
+                 quote_bar=None, base_style: Style = PLAIN, bullet: bool = False,
+                 nested: bool = False):
     """One block's markdown, drawn into the column at ``x``. ``bullet`` puts an
     outliner dot beside the block's first line; ``quote_bar`` (a colour) runs a
-    rule down every line, which is how a highlight's quoted passage reads."""
+    rule down every line, which is how a highlight's quoted passage reads.
+    ``nested`` marks the inside of an ![[embed]] card, where further embeds
+    degrade to reference text so transclusion can't recurse."""
     first = True
-    for chunk in chunks(md):
+    for chunk in chunks(md, cv.resolve_ref):
         kind = chunk["kind"]
         if kind == "gap":
             cv.gap(PARA_GAP)
@@ -512,7 +671,30 @@ def _emit_chunks(cv: _Canvas, md: str, x: float, width: float, color=TEXT_COLOR,
             cv.code(chunk["lines"], x, width)
             continue
         if kind == "image":
-            cv.image(chunk["src"], x, width, chunk.get("alt", ""))
+            cv.image(chunk["src"], x, width, chunk.get("alt", ""),
+                     px_w=chunk.get("px_w"))
+            continue
+        if kind == "table":
+            cv.table(chunk["rows"], chunk["aligns"], x, width)
+            continue
+        if kind == "embed":
+            ref = cv.resolve_ref(chunk["id"]) if (cv.resolve_ref and not nested) else None
+            content = ((ref or {}).get("content") or "").strip()
+            if content:
+                # The synced block's own content, as a card: a soft bar down
+                # the left plus a muted source line, like the editor's card.
+                cv.gap(PARA_GAP)
+                _emit_chunks(cv, content, x + QUOTE_PAD, width - QUOTE_PAD,
+                             quote_bar=EMBED_BAR, nested=True)
+                title = ((ref or {}).get("page_title") or "").strip()
+                if title:
+                    cv.paragraph(inline(f"from {title}", Style(ITALIC, None)),
+                                 x + QUOTE_PAD, width - QUOTE_PAD, SMALL_SIZE,
+                                 color=MUTED, bar=EMBED_BAR)
+                cv.gap(PARA_GAP)
+            else:                      # unresolved: reads as a reference
+                cv.paragraph([(TEXT, _ref_label(chunk["id"], cv.resolve_ref), 0,
+                               Style(LINK, None))], x, width)
             continue
         if kind == "math":
             cv.display_math(chunk["tex"], x, width)
@@ -633,13 +815,15 @@ def _emit_page(cv: _Canvas, page: dict, highlights: bool, notes: bool):
 
 
 def render_document(pages, uploads_dir=None, highlights: bool = True,
-                    notes: bool = True) -> bytes:
+                    notes: bool = True, resolve_ref=None) -> bytes:
     """Page trees (``markdown_export.build_tree`` nodes) → a PDF document, one
     page starting on a fresh sheet. ``highlights``/``notes`` are the export
     dialog's switches; ``uploads_dir`` is where ``/api/uploads/…`` refs are
-    read from (without it images degrade to their alt text)."""
+    read from (without it images degrade to their alt text); ``resolve_ref``
+    (block id → {content, page_title} | None) lets [[refs]] read as their
+    target's text and ``![[embeds]]`` render the synced block's content."""
     writer = PdfWriter()
-    canvas = _Canvas(writer, uploads_dir)
+    canvas = _Canvas(writer, uploads_dir, resolve_ref)
     for n, page in enumerate(pages):
         if n:
             canvas.page_break()
