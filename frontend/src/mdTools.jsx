@@ -166,6 +166,7 @@ export function serializeTable({ header, aligns, body }) {
 
 // ops: {type:"addRow",at} {type:"delRow",at} (at = body index),
 // {type:"addCol",at} {type:"delCol",at}, {type:"align",col,dir},
+// {type:"moveRow",at,dir} {type:"moveCol",at,dir} (dir ±1, at = body/col index),
 // {type:"setCell",row,col,text} (row 0 = header, text already \|-escaped).
 export function applyTableEdit(content, idx, op) {
   const t = scanTables(content)[idx];
@@ -203,6 +204,22 @@ export function applyTableEdit(content, idx, op) {
       if (op.col < 0 || op.col >= tbl.header.length) return null;
       tbl.aligns[op.col] = op.dir;
       break;
+    case "moveRow": {
+      const to = op.at + op.dir;
+      if (op.at < 0 || op.at >= tbl.body.length || to < 0 || to >= tbl.body.length) return null;
+      const [row] = tbl.body.splice(op.at, 1);
+      tbl.body.splice(to, 0, row);
+      break;
+    }
+    case "moveCol": {
+      const to = op.at + op.dir;
+      if (op.at < 0 || op.at >= tbl.header.length || to < 0 || to >= tbl.header.length) return null;
+      const mv = (arr) => { const [x] = arr.splice(op.at, 1); arr.splice(to, 0, x); };
+      mv(tbl.header);
+      mv(tbl.aligns);
+      tbl.body.forEach((r) => { while (r.length < tbl.header.length) r.push(""); mv(r); });
+      break;
+    }
     case "setCell": {
       const txt = String(op.text ?? "");
       if (op.col < 0 || op.col >= Math.max(tbl.header.length, 1)) return null;
@@ -257,6 +274,20 @@ export function htmlTableToMarkdown(html) {
       .filter((c) => c.tagName === "TD" || c.tagName === "TH")
       .map((td) => norm(td.textContent).replace(/\|/g, "\\|")));
   if (rows.length < 1 || !rows[0].length) return null;
+  return serializeTable({ header: rows[0], aligns: rows[0].map(() => null), body: rows.slice(1) });
+}
+
+// Tab-separated plain text (spreadsheet cells copied without an html flavor,
+// CSV tools, terminals) → a pretty markdown table. Deliberately strict — ≥2
+// rows, every row the same tab count, none tab-indented — so tab-indented
+// code or prose with a stray tab can never be mistaken for a table.
+export function tsvToMarkdown(text) {
+  const lines = (text || "").replace(/\r\n?/g, "\n").replace(/\n+$/, "").split("\n");
+  if (lines.length < 2) return null;
+  const tabs = lines.map((l) => (l.match(/\t/g) || []).length);
+  if (tabs[0] < 1 || tabs.some((n) => n !== tabs[0])) return null;
+  if (lines.some((l) => /^\t/.test(l))) return null;
+  const rows = lines.map((l) => l.split("\t").map((c) => c.trim().replace(/\|/g, "\\|")));
   return serializeTable({ header: rows[0], aligns: rows[0].map(() => null), body: rows.slice(1) });
 }
 
@@ -547,17 +578,23 @@ export function MdTableWrap({ idx, onEdit, model, editKey, children }) {
               <button type="button" className="mdTableHandle mdTableColHandle"
                 style={{ left: hover.colX }} title="Column options"
                 onMouseDown={stop}
-                onClick={(e) => { stop(e); setMenu({ x: e.clientX, y: e.clientY, kind: "col", at: hover.col }); }}>⋯</button>
+                onClick={(e) => { stop(e); setMenu({ x: e.clientX, y: e.clientY, kind: "col", at: hover.col, ...counts() }); }}>⋯</button>
               <button type="button" className="mdTableHandle mdTableRowHandle"
                 style={{ top: hover.rowY }} title="Row options"
                 onMouseDown={stop}
-                onClick={(e) => { stop(e); setMenu({ x: e.clientX, y: e.clientY, kind: "row", at: hover.row }); }}>⋮</button>
+                onClick={(e) => { stop(e); setMenu({ x: e.clientX, y: e.clientY, kind: "row", at: hover.row, ...counts() }); }}>⋮</button>
             </>
           ) : null}
           {menu?.kind === "col" ? (
             <ContextMenu x={menu.x} y={menu.y} onClose={() => setMenu(null)}>
               <MenuItem onClick={() => pick({ type: "addCol", at: menu.at })}>Insert column left</MenuItem>
               <MenuItem onClick={() => pick({ type: "addCol", at: menu.at + 1 })}>Insert column right</MenuItem>
+              {menu.at > 0 ? (
+                <MenuItem onClick={() => pick({ type: "moveCol", at: menu.at, dir: -1 })}>Move left</MenuItem>
+              ) : null}
+              {menu.at < menu.nCols - 1 ? (
+                <MenuItem onClick={() => pick({ type: "moveCol", at: menu.at, dir: 1 })}>Move right</MenuItem>
+              ) : null}
               <MenuItem onClick={() => pick({ type: "align", col: menu.at, dir: "left" })}>Align left</MenuItem>
               <MenuItem onClick={() => pick({ type: "align", col: menu.at, dir: "center" })}>Align center</MenuItem>
               <MenuItem onClick={() => pick({ type: "align", col: menu.at, dir: "right" })}>Align right</MenuItem>
@@ -570,6 +607,12 @@ export function MdTableWrap({ idx, onEdit, model, editKey, children }) {
                 <MenuItem onClick={() => pick({ type: "addRow", at: menu.at - 1 })}>Insert row above</MenuItem>
               ) : null}
               <MenuItem onClick={() => pick({ type: "addRow", at: menu.at })}>Insert row below</MenuItem>
+              {menu.at > 1 ? (
+                <MenuItem onClick={() => pick({ type: "moveRow", at: menu.at - 1, dir: -1 })}>Move up</MenuItem>
+              ) : null}
+              {menu.at > 0 && menu.at < menu.nBody ? (
+                <MenuItem onClick={() => pick({ type: "moveRow", at: menu.at - 1, dir: 1 })}>Move down</MenuItem>
+              ) : null}
               {menu.at > 0 ? (
                 <MenuItem danger icon={Trash2Icon} onClick={() => pick({ type: "delRow", at: menu.at - 1 })}>Delete row</MenuItem>
               ) : null}

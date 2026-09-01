@@ -21,10 +21,10 @@ import { filterSlashCommands, SlashMenuPopup } from "./slashMenu";
 import { remarkCallouts } from "./callouts";
 import { ContextMenu, MenuItem } from "./menus";
 import { API, apiJson, copyText } from "./utils";
-import { CopyIcon, Trash2Icon } from "./icons";
+import { CopyIcon, ExportIcon, Trash2Icon } from "./icons";
 import {
   applyImageEdit, applyTableEdit, formatTables, htmlTableToMarkdown,
-  MdImage, MdTableWrap, parseTable, scanTables,
+  MdImage, MdTableWrap, parseTable, scanTables, tsvToMarkdown,
 } from "./mdTools";
 
 // Module-level ref for native HTML5 drag-and-drop (shared with App's drop handlers)
@@ -395,6 +395,7 @@ function BlockRow({
   onEnterSibling,
   enterNewNote,
   onAddChild,
+  onPasteBlocks,
   onIndent,
   onOutdent,
   onToggle,
@@ -745,7 +746,33 @@ function BlockRow({
       ta.focus();
     };
     if (item.make) {
-      doReplace(item.make());
+      let text = item.make();
+      if (item.block) {
+        // A block-level construct (a table) must start and end on its own
+        // line — pad like the direct html-table paste does.
+        const val = ta.value || "";
+        if (pm.start > 0 && val[pm.start - 1] !== "\n") text = "\n" + text;
+        if (pm.end < val.length && val[pm.end] !== "\n") text += "\n";
+      }
+      doReplace(text);
+    } else if (item.name === "blocks") {
+      // Parse server-side (same parser as the .md file import), remove the
+      // pasted text from this block, then hand the tree to App to insert.
+      apiJson(`${API}/markdown-blocks`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ text: pm.url }),
+      }).then((d) => {
+        const nodes = d?.blocks || [];
+        if (!nodes.length) return;
+        if (ta.value.slice(pm.start, pm.end) !== pm.url) return; // edited since
+        ta.view?.dispatch({
+          changes: { from: pm.start, to: pm.end, insert: "" },
+          selection: { anchor: pm.start },
+          userEvent: "input",
+        });
+        onPasteBlocks?.(block.id, nodes);
+      }).catch(() => {});
     } else if (item.name === "titled") {
       fetch(`/api/link-preview?url=${encodeURIComponent(pm.url)}`)
         .then((r) => (r.ok ? r.json() : null))
@@ -758,7 +785,7 @@ function BlockRow({
         })
         .catch(() => {});
     }
-    // "url": keep the pasted text as-is
+    // "url" / "text": keep the pasted text as-is
   }
 
   // Paste an image (screenshot) while editing → upload it and insert the
@@ -807,6 +834,30 @@ function BlockRow({
         // After the onChange the dispatch just fired (it clears pasteMenu).
         requestAnimationFrame(() => {
           setPasteMenu({ start, end: start + text.length, url: text, items: pasteAsItems(blockId), anchor });
+          setPasteIdx(0);
+        });
+        return;
+      }
+      // Structured text — spreadsheet cells (strict TSV) or a multi-line
+      // outline — pastes as-is and offers the chooser, same pattern as URLs.
+      const tsvMd = ta && !homeMode ? tsvToMarkdown(text) : null;
+      const multiline = text.split("\n").filter((l) => l.trim()).length >= 2;
+      if (ta && !homeMode && onPasteBlocks && (tsvMd || multiline)) {
+        e.preventDefault();
+        const start = ta.selectionStart;
+        ta.view?.dispatch({
+          changes: { from: start, to: ta.selectionEnd, insert: text },
+          selection: { anchor: start + text.length },
+          userEvent: "input",
+        });
+        const items = [
+          ...(tsvMd ? [{ name: "table", glyph: "▦", label: "Table", hint: "markdown table", block: true, make: () => tsvMd }] : []),
+          { name: "text", glyph: "¶", label: "Text", hint: "keep in this block" },
+          { name: "blocks", glyph: "≡", label: "Blocks", hint: "split into nested blocks" },
+        ];
+        const anchor = ta.caretCoords(start);
+        requestAnimationFrame(() => {
+          setPasteMenu({ start, end: start + text.length, url: text, items, anchor });
           setPasteIdx(0);
         });
       }
@@ -1018,9 +1069,15 @@ function BlockRow({
                 }
                 // Inside a ``` fence the outliner keys turn code-editor:
                 // any Enter is a line break (never a new note) and Tab
-                // indents with spaces instead of nesting the block.
-                if ((e.key === "Enter" || (e.key === "Tab" && !e.shiftKey)) && ref.current
-                  && fenceInnerAt(ref.current.value, ref.current.selectionStart)) {
+                // indents with spaces instead of nesting the block. Enter
+                // inside $$ display math (closed, or still open while being
+                // typed) is a line break too — a multi-line \begin{array}
+                // would otherwise split into a new note on every row.
+                const inFence = (e.key === "Enter" || (e.key === "Tab" && !e.shiftKey))
+                  && ref.current && fenceInnerAt(ref.current.value, ref.current.selectionStart);
+                const inDisplayMath = !inFence && e.key === "Enter" && ref.current
+                  && !!findMathAtCursor(ref.current.value, ref.current.selectionStart)?.display;
+                if (inFence || inDisplayMath) {
                   const ta = ref.current;
                   const selStart = ta.selectionStart, selEnd = ta.selectionEnd;
                   e.preventDefault();
@@ -1258,6 +1315,20 @@ function SortableBlockRow({ block, ...rowProps }) {
               "Copied block as markdown",
             )}
           >Copy as markdown</MenuItem>
+          {!rowProps.homeMode && block.id !== "root" ? (
+            <MenuItem
+              icon={CopyIcon}
+              title="Insert a copy below (sub-blocks included; highlight anchors are not copied)"
+              onClick={() => { setHandleMenu(null); rowProps.onDuplicate?.(block.id); }}
+            >Duplicate</MenuItem>
+          ) : null}
+          {!rowProps.homeMode && block.id !== "root" ? (
+            <MenuItem
+              icon={ExportIcon}
+              title="Move this block and its sub-blocks to the end of another page"
+              onClick={() => { setHandleMenu(null); rowProps.onMoveToPage?.(block.id); }}
+            >Move to page…</MenuItem>
+          ) : null}
           {block.id !== "root" ? (
             <MenuItem
               icon={Trash2Icon}

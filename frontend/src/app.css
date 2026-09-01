@@ -4102,6 +4102,9 @@ button.pdfOutlineChevron:hover { background: rgba(128, 128, 128, 0.28); color: v
 .importSteps .setStep { margin-bottom: 10px; }
 .importSteps .setStepBody { display: none; }
 .confirmMessage { font-size: 12px; color: var(--text-secondary); line-height: 1.5; }
+/* Move-block dialog: the page list scrolls; rows are the shared ctxMenuItem. */
+.moveBlockList { display: flex; flex-direction: column; max-height: 300px; overflow-y: auto; margin-top: 2px; }
+.moveBlockList .ctxMenuItem { border-radius: 6px; }
 /* Three actions (Cancel / Fetch / Open in browser) don't fit the 420px confirm
    width — they wrapped onto two rows. */
 .linkPromptModal { width: min(520px, calc(100vw - 32px)); }
