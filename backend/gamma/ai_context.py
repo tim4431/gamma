@@ -160,7 +160,7 @@ def _download_pdf_from_source(user: str, doc_id: str, pdf_path) -> None:
         if not row:
             return
         properties = json.loads(row[0] or "{}")
-        source = properties.get("source_url") or properties.get("sourceUrl") or ""
+        source = properties.get("source_url") or ""
         if not source:
             return
         request = URLRequest(

@@ -168,11 +168,54 @@ def ancestor_chains(conn, block_ids: list[str]):
     return ancestors_by_id, page_root_by_id
 
 
+def page_attachment(props: dict | None) -> dict | None:
+    """What a page carries: ``{"kind": "pdf", "id": doc_id, "url": source_url,
+    "name": original_filename}`` when the page has a PDF attachment (a stored
+    ``doc_id`` and/or a ``source_url`` the proxy fetches lazily), else None.
+
+    The ONE place backend code reads ``doc_id``/``source_url`` off a page to
+    decide what kind of page it is (gating, labels, listings) — so a later
+    ``properties.attachments`` list is a drop-in. Lookups BY attachment
+    (``by-doc``, the search index, the PDF export) still key on ``doc_id``
+    directly; that is fine, they are about the file, not the page.
+    Mirrored by ``pageAttachment()`` in frontend/src/libraryUtils.js."""
+    props = props or {}
+    doc_id = str(props.get("doc_id") or "")
+    url = str(props.get("source_url") or "")
+    if not doc_id and not url:
+        return None
+    return {"kind": "pdf", "id": doc_id, "url": url,
+            "name": str(props.get("original_filename") or "")}
+
+
+def create_page(conn, title: str, props: dict | None = None) -> dict:
+    """Insert a new root page (last in the library) and return its block
+    dict. Commits. The one code path that mints pages: POST /api/pages and
+    get_or_create_doc_page both go through it."""
+    block_id = secrets.token_urlsafe(9)
+    title = (title or "").strip() or "Untitled"
+    props = dict(props or {})
+    now = page_now()
+    new_pos = generate_key_between(last_child_position(conn, "root"), None)
+    conn.execute(
+        "INSERT INTO unified_blocks (id, parent_id, position, content, properties, created_at, updated_at) "
+        "VALUES (?, 'root', ?, ?, ?, ?, ?)",
+        (block_id, new_pos, title, json.dumps(props), now, now),
+    )
+    conn.commit()
+    return {
+        "id": block_id, "parent_id": "root", "position": new_pos,
+        "content": title, "properties": props, "created_at": now, "updated_at": now,
+    }
+
+
 def get_or_create_doc_page(conn, doc_id: str, default_title: str = "",
                            source_url: str | None = None,
                            original_filename: str | None = None) -> dict:
-    """The root page holding PDF `doc_id`, created under root when absent.
-    Shared by POST /api/blocks/by-doc and the extension's /api/clip.
+    """Lookup-or-create BY ATTACHMENT: the root page whose PDF attachment is
+    `doc_id`, created under root when absent. Shared by POST /api/blocks/by-doc
+    (PDF ingest from the app) and the extension's /api/clip (dedup). Pages
+    without a PDF are created by POST /api/pages (create_page).
 
     On an existing page this opportunistically backfills the source/filename
     markers; auto_title is only set when the page still carries the exact
@@ -205,14 +248,10 @@ def get_or_create_doc_page(conn, doc_id: str, default_title: str = "",
             row = (*row[:4], json.dumps(props), *row[5:])
         return block_to_dict(row)
 
-    block_id = secrets.token_urlsafe(9)
     original = display_filename(original_filename)
     # Upload callers provide original_filename; its leaf is the authoritative
     # automatic title even if a browser leaked a relative path into the default.
     title = original or (default_title or "").strip() or "Untitled"
-    now = page_now()
-    last_pos = last_child_position(conn, "root")
-    new_pos = generate_key_between(last_pos, None)
     # auto_title is a compare-and-swap marker consumed by metadata_fetch:
     # metadata may replace this value, but an explicit rename clears the
     # marker first (see ub_update_block in routers/blocks.py).
@@ -221,13 +260,4 @@ def get_or_create_doc_page(conn, doc_id: str, default_title: str = "",
         props["source_url"] = source_url
     if original:
         props["original_filename"] = original
-    conn.execute(
-        "INSERT INTO unified_blocks (id, parent_id, position, content, properties, created_at, updated_at) "
-        "VALUES (?, 'root', ?, ?, ?, ?, ?)",
-        (block_id, new_pos, title, json.dumps(props), now, now),
-    )
-    conn.commit()
-    return {
-        "id": block_id, "parent_id": "root", "position": new_pos,
-        "content": title, "properties": props, "created_at": now, "updated_at": now,
-    }
+    return create_page(conn, title, props)

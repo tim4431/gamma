@@ -25,6 +25,8 @@ if (window.location.protocol === 'file:') {
     revealLog: (id) => ipcRenderer.invoke('shell:reveal-log', id),
     setSettings: (patch) => ipcRenderer.invoke('shell:set-settings', patch),
     barExpand: (on) => ipcRenderer.invoke('shell:bar-expand', on),
+    updateCheck: () => ipcRenderer.invoke('shell:update-check'),
+    updateInstall: () => ipcRenderer.invoke('shell:update-install'),
     onState: (cb) => {
       const handler = (_e, state) => cb(state);
       ipcRenderer.on('shell:state', handler);

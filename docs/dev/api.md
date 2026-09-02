@@ -18,7 +18,8 @@ else; in dev, Vite proxies `/api` → `127.0.0.1:9001`.
   page's subtree and assets (its PDF, uploads its blocks reference, its own
   `source_url` through the proxy) — root listing, backlinks, other pages, and
   folder export are refused (403). Rows minted by the old doc-keyed model
-  (`page_id` NULL) are resolved to their page and backfilled on first use.
+  (`page_id` NULL) were backfilled once by `gamma/migrate.py` (see
+  [user_db.md](user_db.md)); auth treats a row without `page_id` as dead.
 - **Share permissions** (`shares.audience` / `role` / `allowed_users`,
   `auth.share_access`) are Notion-shaped and additive: the owner INVITES
   people (`users: [{name, role}]`, stored as `carol:edit,dave:view`) who get
@@ -32,7 +33,7 @@ else; in dev, Vite proxies `/api` → `127.0.0.1:9001`.
   `edit` shares (never valid with `anyone`) let `require_writer` resolve the
   owner for the block writers — `POST /blocks`, `PUT /blocks/{id}`,
   `DELETE /blocks/{id}`, `PUT /blocks/{id}/children`, `POST /blocks/{id}/reorder`,
-  `POST /upload-image` — each of which confines the touched blocks to the
+  `POST /upload-image`, `POST /upload-file` — each of which confines the touched blocks to the
   shared page (no new pages, no deleting/moving the page itself, no changes to
   the page root's properties). Everything else stays session-only.
   Keep that read/write + scope distinction when adding endpoints.
@@ -72,8 +73,8 @@ else; in dev, Vite proxies `/api` → `127.0.0.1:9001`.
 ### Blocks (`blocks.py`) — the core data model
 | Method | Path | Purpose |
 |---|---|---|
-| GET/POST | `/blocks/by-doc/{doc_id}` | blocks of a PDF page |
-| GET | `/blocks/{id}/children`, `/{id}/subtree`, `/{id}/backlinks` | tree reads |
+| GET/POST | `/blocks/by-doc/{doc_id}` | lookup / create the page BY ATTACHMENT — the page whose PDF is `doc_id` (POST creates it: `{default_title, source_url?, original_filename?}`); the PDF-ingest + extension-dedup path. Text-only pages come from `POST /pages` |
+| GET | `/blocks/{id}/children`, `/{id}/subtree`, `/{id}/backlinks` | tree reads; the root listing (`/blocks/root/children`) additionally gives every page a `preview` — the first ~240 chars of its first non-highlight child blocks joined with ` · ` (one window query, `""` when empty) |
 | POST/PUT/DELETE | `/blocks`, `/blocks/{id}` | CRUD |
 | PUT | `/blocks/{id}/children` | replace the whole subtree (delete + reinsert; triggers orphan-upload cleanup) |
 | POST | `/blocks/{id}/reorder` | sibling reorder |
@@ -83,13 +84,24 @@ else; in dev, Vite proxies `/api` → `127.0.0.1:9001`.
 Route order matters: the static-prefix routes (`by-doc`, `children`,
 `subtree`) must stay registered before `/blocks/{block_id}`.
 
+### Pages (`pages.py`) — page first, PDF as an action on it
+| Method | Path | Purpose |
+|---|---|---|
+| POST | `/pages` | create a text-only root page: body `{title?, folder?}` (title defaults to `Untitled`, `folder` → `properties.folder`) → the block dict |
+| POST | `/pages/{page_id}/attachment` | attach a PDF to a page that has none: body `{doc_id?, source_url?, original_filename?}` (at least one of `doc_id`/`source_url`; `doc_id` is shape-validated only — a URL-opened PDF's id is the URL hash and the proxy fetches it lazily, like `by-doc`; `source_url` defaults to `/api/uploads/<doc_id>.pdf`). While the title is still automatic (`Untitled`/empty) it becomes the file name / URL tail and is marked `auto_title`. → the updated block. 400 bad input / not a root page, 404 unknown page, 409 `{"detail": "page already has an attachment"}`, 409 `{"detail": "attachment belongs to another page", "page_id"}` |
+| DELETE | `/pages/{page_id}/attachment` | drop `doc_id`/`source_url`/`original_filename` (highlights keep their `pdf_position`; the orphan sweep deletes the file unless another page references it) → `{ok, block, removed_uploads}`; 404 when the page has no attachment |
+
+All session-only (`require_user`): a share token never creates pages or
+touches a page's attachment. `GET /pages/{id}/export*` live in `export.py`.
+
 ### PDFs & uploads (`pdf.py`, `uploads.py`, `shares.py`)
 | Method | Path | Purpose |
 |---|---|---|
 | POST | `/resolve-pdf` | URL/arXiv/DOI → fetchable PDF (citation_pdf_url sniffing, Unpaywall OA fallback) |
 | GET | `/pdf` | proxy/download a PDF (`save=1` caches it server-side) |
-| POST | `/uploads`, `/upload-image` | store files (content-hash names, dedup'd; quota-gated) |
-| GET | `/uploads/{filename}` | serve stored files |
+| POST | `/uploads`, `/upload-image` | store a PDF / an image (content-hash names, dedup'd; quota-gated) |
+| POST | `/upload-file` | store any allowed file for a block to reference as `[name](/api/uploads/<hash>.<ext>)`: md, txt, csv, json, tex, bib, py, ipynb, html, docx, xlsx, pptx, zip, plus images (routed like `/upload-image`) and PDFs; extension from the uploaded name; same hashing + limits → `{url, name, size, already_existed}`; 400 for anything else |
+| GET | `/uploads/{filename}` | serve stored files with their media type; pdf / images / txt / md render inline, everything else is `Content-Disposition: attachment` (html additionally sandboxed like svg) |
 | GET | `/quota` | effective limits + usage for the session user |
 | POST | `/share/{page_id}` | create the page's share link (defaults `anyone`/`view`; optional body `{audience, role, users}` applies to a NEW link) or return the existing one unchanged — root blocks only (400 otherwise) |
 | GET/PUT/DELETE | `/share-settings/{page_id}` | owner: read settings (`{token: null}` when unshared) / change `audience`, `role`, `users` (`["carol"]` or `[{name, role}]`; validated: `edit`+`anyone` → 400, unknown usernames or roles → 400; the token stays) / stop sharing (the token dies) |

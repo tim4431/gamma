@@ -20,7 +20,7 @@ import { ContextMenu, MenuItem, MenuLabel, MenuSelect, SubMenuItem } from "./men
 import {
   ActivityIcon, AlertCircleIcon, ArrowLeftIcon, ArrowUpDownIcon, BookIcon, CheckIcon, CopyIcon, DatabaseIcon, DownloadIcon, ExportIcon,
   ExternalLinkIcon, EyeIcon, EyeOffIcon, FileGlyph, FileIcon, FileTextIcon, FitWidthIcon, FolderGlyph,
-  FolderIcon, FolderOpenIcon, FolderPlusIcon, GlobeIcon, HomeIcon, ImportIcon, InfoIcon, LabelGlyph, LabelIcon,
+  FilePlusIcon, PaperclipIcon, FolderIcon, FolderOpenIcon, FolderPlusIcon, GlobeIcon, HomeIcon, ImportIcon, InfoIcon, LabelGlyph, LabelIcon,
   LanguagesIcon, LanguagesOffIcon, LinkIcon, LogOutIcon, MaximizeIcon, MenuIcon, MinimizeIcon, PenIcon, PinIcon, PlusIcon,
   RectSelectIcon, SearchIcon, SettingsIcon, ShieldIcon, SparklesIcon, TextCursorIcon, TrashIcon, TypeIcon, UploadIcon,
   UserIcon, UsersIcon, XIcon, ZoomInIcon, ZoomOutIcon,
@@ -66,7 +66,9 @@ import {
   findPageForUrl,
   formatRelativeTime,
   friendlyApiError,
-  getPdfPageTitle,
+  pageAttachment,
+  pageKindLabel,
+  defaultPageTitle,
   metadataToDraft,
   normalizeLinkInput,
   parseFolderTags,
@@ -1136,7 +1138,7 @@ export default function App() {
   function dropOnLabel(e, name, onPages = (ids) => addPagesToLabel(ids, name)) {
     e.preventDefault();
     setFolderDragOver(null);
-    if (droppedFolderPaths(e)) { setStatus("Folders can’t carry labels — drop papers instead."); return; }
+    if (droppedFolderPaths(e)) { setStatus("Folders can’t carry labels — drop pages instead."); return; }
     const ids = droppedPageIds(e);
     if (ids) onPages(ids);
   }
@@ -1174,11 +1176,11 @@ export default function App() {
       return;
     }
     const n = members.length;
-    const papers = `${n} paper${n === 1 ? "" : "s"}`;
+    const papers = `${n} page${n === 1 ? "" : "s"}`;
     setConfirmBox({
       title: "Delete folder",
       message: `Delete “${path}”? It contains ${papers}. Keep ${n === 1 ? "it" : "them"} in the library (only the folder goes away), or delete ${n === 1 ? "it and its" : "them and their"} notes too — papers linked into other folders are deleted as well.`,
-      confirmLabel: "Keep papers",
+      confirmLabel: "Keep pages",
       onConfirm: async () => {
         for (const b of members) {
           try { await writePageFolders(b.id, parseFolderTags(b.properties?.folder).filter((t) => !inPath(t))); } catch {}
@@ -1552,6 +1554,19 @@ export default function App() {
         dbg("read-pos push FAILED:", err?.message || String(err));
       }
     }, READ_POS_PUSH_MS);
+  }
+  // Text-only pages remember their topmost visible block ("" = at the top)
+  // in the same synced map, with page 0 so the PDF restore path ignores it.
+  function recordNotePos(pageId, blockId) {
+    const u = prefsUserRef.current;
+    if (!u || !pageId) return;
+    const prev = readPosRef.current[pageId];
+    if (prev && prev.page === 0 && (prev.block || "") === (blockId || "")) return;
+    let at = new Date().toISOString();
+    if (prev?.at && prev.at >= at) at = new Date(new Date(prev.at).getTime() + 1).toISOString();
+    readPosRef.current = { ...readPosRef.current, [pageId]: { page: 0, block: blockId || "", at } };
+    try { localStorage.setItem(`gamma-read-pos:${u}`, JSON.stringify(readPosRef.current)); } catch {}
+    pushReadPosSoon(u);
   }
   function recordReadPos(blockId, page) {
     const u = prefsUserRef.current;
@@ -1949,7 +1964,7 @@ export default function App() {
         updateTransfer(prevId, { status: "active", info: "downloading…" });
         return;
       }
-      const name = (pdfTitle || decodeURIComponent((url.split("source_url=")[1] || url).split("/").pop() || "PDF")).slice(0, 60);
+      const name = (pageTitle || decodeURIComponent((url.split("source_url=")[1] || url).split("/").pop() || "PDF")).slice(0, 60);
       transferByUrlRef.current[url] = addTransfer({ name, kind: "download", info: "downloading…" });
     } else if (st.phase === "progress") {
       const id = transferByUrlRef.current[url];
@@ -2756,7 +2771,7 @@ export default function App() {
       // Auto-fill the page title from metadata when it's still the default filename
       // title — awaited so the library refetch below can't win the race and
       // resurrect the stale name in the link dialog / home list.
-      if (data.page_title && focusedBlockIdRef.current === block.id) setPdfTitle(data.page_title);
+      if (data.page_title && focusedBlockIdRef.current === block.id) setPageTitle(data.page_title);
       if (!data.cached) {
         setStatus(`Paper metadata found (${data.source === "ai" ? "AI-extracted" : data.source}).`);
         fetchHomeBlocks(); // keep the library's meta fresh for DOI-link matching
@@ -2807,7 +2822,7 @@ export default function App() {
           setPageMeta(data.meta || null);
           setPageBibtex(data.bibtex || "");
           setFocusedBlock({ ...block });
-          if (data.page_title) setPdfTitle(data.page_title);
+          if (data.page_title) setPageTitle(data.page_title);
         }
       } catch {} // task already marked failed by fetchMetadataRequest
     }
@@ -2878,7 +2893,7 @@ export default function App() {
     const targetId = blockArg?.id || focusedBlockId;
     if (!targetId || pptCiteBusy) return;
     setPptCiteBusy(true);
-    const taskId = addTransfer({ name: `Slide citation — ${(blockArg?.content || pdfTitle || "paper").slice(0, 48)}`, kind: "ai", info: "generating…" });
+    const taskId = addTransfer({ name: `Slide citation — ${(blockArg?.content || pageTitle || "paper").slice(0, 48)}`, kind: "ai", info: "generating…" });
     try {
       const data = await apiJson(`${API}/metadata/cite`, {
         method: "POST",
@@ -3068,15 +3083,15 @@ export default function App() {
   const [flashingId, setFlashingId] = useState(null);
   const [highlightMenu, setHighlightMenu] = useState(null); // { id, x, y } or null
   const [focusedId, setFocusedId] = useState(null);
-  const [pdfTitle, setPdfTitle] = useState("");
+  const [pageTitle, setPageTitle] = useState("");
   const [titleEditing, setTitleEditing] = useState(false);
   const [titleDraft, setTitleDraft] = useState("");
 
   useEffect(() => {
-    document.title = pdfTitle
-      ? `${pdfTitle} — Gamma`
+    document.title = pageTitle
+      ? `${pageTitle} — Gamma`
       : "Gamma — Annotate PDFs, Share Your Thinking";
-  }, [pdfTitle]);
+  }, [pageTitle]);
 
   const scrollToRef = useRef(() => {});
   const flashTimerRef = useRef(null);
@@ -3336,14 +3351,14 @@ export default function App() {
   // Keep the tab strip in sync with the open page.
   useEffect(() => {
     if (!focusedBlockId || shareMode || !prefsUserRef.current) return;
-    const title = (pdfTitle || "Untitled").slice(0, 60);
+    const title = (pageTitle || "Untitled").slice(0, 60);
     updateTabs((prev) => {
       const existing = prev.find((t) => t.id === focusedBlockId);
       if (existing && existing.title === title) return prev;
       if (existing) return prev.map((t) => (t.id === focusedBlockId ? { ...t, title } : t));
       return [...prev, { id: focusedBlockId, title }];
     });
-  }, [focusedBlockId, pdfTitle, shareMode]);
+  }, [focusedBlockId, pageTitle, shareMode]);
 
   // Persist session state on relevant changes (skip initial mount)
   const firstRenderRef = useRef(true);
@@ -3445,7 +3460,7 @@ export default function App() {
       method: "POST",
       headers: { "Content-Type": "application/json" },
       body: JSON.stringify({
-        default_title: defaultTitle || `PDF Notes - ${targetDocId}`,
+        default_title: defaultTitle || "Untitled",
         source_url: sourceUrl || null,
         original_filename: originalFilename || null,
       })
@@ -3455,8 +3470,8 @@ export default function App() {
   async function renameTitle(newTitle) {
     if (readOnly || !focusedBlockId) return;
     const trimmed = (newTitle || "").trim();
-    const finalTitle = trimmed || getPdfPageTitle(docId, inputUrl);
-    setPdfTitle(finalTitle);
+    const finalTitle = trimmed || defaultPageTitle(pageAttach);
+    setPageTitle(finalTitle);
     setFocusedBlock((b) => b ? { ...b, content: finalTitle } : b);
     try {
       await apiJson(`${API}/blocks/${focusedBlockId}`, {
@@ -3578,7 +3593,7 @@ export default function App() {
         setInputUrl(data.source_url);
         setFocusedBlockId(block.id);
         setFocusedBlock(block);
-        setPdfTitle(block.content || defaultTitle);
+        setPageTitle(block.content || defaultTitle);
         setSummary(block.properties?.summary || "");
         setCategory(block.properties?.category || "");
         setPageFolders(parseFolderTags(block.properties?.folder));
@@ -3632,7 +3647,7 @@ export default function App() {
       setInputUrl(data.source_url);
       setFocusedBlockId(block.id);
       setFocusedBlock(block);
-      setPdfTitle(block.content || pdfFile.name.replace('.pdf', ''));
+      setPageTitle(block.content || pdfFile.name.replace('.pdf', ''));
       setSummary(block.properties?.summary || "");
       setCategory(block.properties?.category || "");
       setPageFolders(parseFolderTags(block.properties?.folder));
@@ -3703,7 +3718,7 @@ export default function App() {
         transferByUrlRef.current[proxiedUrl] = taskId; // viewer's byte-level reporting takes over this row
       }
       // Resolve block + load children FIRST, before setPdfUrl, to avoid mid-render highlight race
-      const defaultTitle = getPdfPageTitle(resolvedDocId, finalUrl);
+      const defaultTitle = defaultPageTitle({ url: finalUrl });
       const block = await getOrCreateBlockForDoc(resolvedDocId, defaultTitle, finalUrl);
       updateTransfer(taskId, {
         name: (block.content || defaultTitle).slice(0, 60),
@@ -3714,7 +3729,7 @@ export default function App() {
       setInputUrl(finalUrl);
       setFocusedBlockId(block.id);
       setFocusedBlock(block);
-      setPdfTitle(block.content || defaultTitle);
+      setPageTitle(block.content || defaultTitle);
       setSummary(block.properties?.summary || "");
       setCategory(block.properties?.category || "");
       setPageFolders(parseFolderTags(block.properties?.folder));
@@ -3730,20 +3745,85 @@ export default function App() {
     }
   }
 
-  // "+" popover: a blank note page (no PDF) — created in the open folder, if any.
-  async function createNotePage() {
+  // "New page": a blank page in the open folder (if any), opened with its
+  // title ready to type. What the page carries (a PDF…) is attached on the
+  // page itself afterwards — creation never needs a file.
+  async function createPage(folder = folderFilter) {
     if (shareMode) return;
     setOpenPopover(null);
     try {
-      const created = await apiJson(`${API}/blocks`, {
+      const created = await apiJson(`${API}/pages`, {
         method: "POST",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ parent_id: "root", content: "New note", ...(folderFilter ? { properties: { folder: folderFilter } } : {}) }),
+        body: JSON.stringify({ title: "", ...(folder ? { folder } : {}) }),
       });
       await fetchHomeBlocks();
       await openBlock(created.id, { pushNav: true });
+      // Title first, Notion-style; the seeded first block waits for Enter.
+      pendingFocusRef.current = null;
+      setTitleDraft("");
+      setTitleEditing(true);
     } catch (err) {
       setStatus(`Create failed: ${err.message || err}`);
+    }
+  }
+
+  // Attach a PDF to the open page (one that carries none): upload the file or
+  // resolve the URL exactly like opening a new paper, then bind it to THIS
+  // page via POST /pages/{id}/attachment — no new page is created.
+  const [attachUrl, setAttachUrl] = useState("");
+  async function attachPdfToPage({ file, url }) {
+    const pageId = focusedBlockId;
+    if (!pageId || shareMode || pageAttach || (!file && !url)) return;
+    setOpenPopover(null);
+    setAttachUrl("");
+    setLoading(true);
+    const filename = file ? uploadLeafName(file, "upload.pdf") : "";
+    const taskId = addTransfer(file
+      ? { name: filename, kind: "upload", info: fmtBytes(file.size) }
+      : { name: url.slice(0, 60), kind: "download", info: "resolving…" });
+    try {
+      let body, viewerUrl;
+      if (file) {
+        if (!isPdfFile(file)) throw new Error("only PDF files can be attached — other files go into a block");
+        const form = new FormData();
+        form.append("file", file, filename);
+        const data = await apiJson(`${API}/uploads`, { method: "POST", body: form });
+        body = { doc_id: data.doc_id, source_url: data.source_url, original_filename: filename };
+        viewerUrl = data.source_url;
+      } else {
+        const resolved = await resolvePdfUrl(url, oaFallback);
+        const finalUrl = resolved.source_url;
+        const resolvedDocId = await getDocIdForUrl(finalUrl);
+        updateTransfer(taskId, { info: "checking link…" });
+        await probePdfUrl(finalUrl);
+        body = { doc_id: resolvedDocId, source_url: finalUrl };
+        viewerUrl = pdfProxyUrl(finalUrl, { save: pdfSaveLocal });
+      }
+      const block = await apiJson(`${API}/pages/${encodeURIComponent(pageId)}/attachment`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify(body),
+      });
+      updateTransfer(taskId, { status: "done", info: "attached" });
+      if (focusedBlockIdRef.current !== pageId) return; // navigated away meanwhile
+      setFocusedBlock(block);
+      setPageTitle(block.content || "");
+      setDocId(body.doc_id);
+      setInputUrl(body.source_url);
+      setPdfHidden(false);
+      setPdfUrl(viewerUrl);
+      setHomeBlocks((prev) => prev.map((b) => (b.id === pageId ? { ...b, ...block } : b)));
+      if (file) {
+        refreshQuota();
+        importEmbeddedAnnots(pageId, body.doc_id, true);
+      }
+      setStatus("PDF attached.");
+    } catch (err) {
+      updateTransfer(taskId, { status: "error", info: (err.message || "failed").slice(0, 60) });
+      setStatus(`Attach failed: ${err.message}`);
+    } finally {
+      setLoading(false);
     }
   }
 
@@ -3797,7 +3877,7 @@ export default function App() {
       suppressAutosaveRef.current = true;
       setFocusedBlockId(block?.id || "");
       setFocusedBlock(block || null);
-      setPdfTitle(block?.content || getPdfPageTitle(data.doc_id, src));
+      setPageTitle(block?.content || defaultPageTitle(pageAttachment(block)));
       setBlocks(childBlocks);
       setDocId(props.doc_id || data.doc_id || "");
       setInputUrl(src);
@@ -3831,15 +3911,16 @@ export default function App() {
       suppressAutosaveRef.current = true;
       setFocusedBlockId(blockId);
       setFocusedBlock(block);
-      setPdfTitle(block.content || "Untitled");
+      setPageTitle(block.content || "Untitled");
       setSummary(props.summary || "");
       setCategory(props.category || "");
       setPageFolders(parseFolderTags(props.folder));
       setDocId(props.doc_id || "");
 
       let openedPdfUrl = "";
-      if (props.source_url) {
-        const src = props.source_url;
+      const attachment = pageAttachment(block);
+      if (attachment) {
+        const src = attachment.url || `${API}/uploads/${attachment.id}.pdf`;
         const isLocal = src.startsWith("/api/");
         openedPdfUrl = isLocal ? src : pdfProxyUrl(src);
         setInputUrl(src);
@@ -3858,9 +3939,15 @@ export default function App() {
         }
       }
 
-      // Scroll notes panel to the most recently updated block, unless a
+      // Scroll notes panel to where the reader left off (text-only pages,
+      // "" = the top) or else to the most recently updated block, unless a
       // specific target was already queued (e.g. ?block=... deep link).
-      if (!pendingBlockScrollRef.current && childBlocks.length > 0) {
+      const notePos = !attachment ? readPosRef.current[blockId] : null;
+      if (!pendingBlockScrollRef.current && notePos && notePos.page === 0) {
+        if (notePos.block && flattenBlocks(childBlocks).some((b) => b.id === notePos.block)) {
+          pendingBlockScrollRef.current = notePos.block;
+        }
+      } else if (!pendingBlockScrollRef.current && childBlocks.length > 0) {
         let latest = null;
         for (const b of flattenBlocks(childBlocks)) {
           if (!latest || (b.updated_at || "") > (latest.updated_at || "")) latest = b;
@@ -3952,6 +4039,20 @@ export default function App() {
         while (keys.length > 80) delete pageLayoutsRef.current[keys.shift()];
         localStorage.setItem(`gamma-page-layouts:${prefsUserRef.current}`, JSON.stringify(pageLayoutsRef.current));
       } catch {}
+    }
+    // A page without a viewer keeps its place by block, not by PDF page.
+    if (focusedBlockId && !shareMode && !pageAttach) {
+      const list = document.querySelector(".sidebar .blockList");
+      if (list) {
+        let topId = "";
+        if (list.scrollTop > 8) {
+          const top = list.getBoundingClientRect().top + 4;
+          for (const row of list.querySelectorAll(".blockRowWrap[data-block-id]")) {
+            if (row.getBoundingClientRect().bottom > top) { topId = row.dataset.blockId || ""; break; }
+          }
+        }
+        recordNotePos(focusedBlockId, topId);
+      }
     }
     // Only record a position when the viewer is actually showing THIS page's
     // document: mid-load the scroller still holds the previous document (or a
@@ -4064,7 +4165,7 @@ export default function App() {
     setPdfUrl("");
     setDocId("");
     setInputUrl("");
-    setPdfTitle("");
+    setPageTitle("");
     setSummary("");
     setCategory("");
     setPageFolders([]);
@@ -4470,7 +4571,7 @@ export default function App() {
     if (!pdfUrl) { setStatus("No PDF open."); return; }
     setOpenPopover(null);
     const path = pdfUrl.startsWith(API) ? pdfUrl.slice(API.length) : pdfUrl;
-    const name = `${(pdfTitle || docId || "paper").replace(/[\\/:*?"<>|]/g, "_").slice(0, 80)}.pdf`;
+    const name = `${(pageTitle || docId || "paper").replace(/[\\/:*?"<>|]/g, "_").slice(0, 80)}.pdf`;
     await downloadExport(path, name);
   }
 
@@ -4481,7 +4582,7 @@ export default function App() {
     if (!docId || shareMode || aiTitleBusy) return;
     setAiTitleBusy(true);
     setStatus("Asking AI for the title…");
-    const taskId = addTransfer({ name: `AI title — ${(pdfTitle || "paper").slice(0, 48)}`, kind: "ai", info: "asking…" });
+    const taskId = addTransfer({ name: `AI title — ${(pageTitle || "paper").slice(0, 48)}`, kind: "ai", info: "asking…" });
     try {
       const data = await apiJson(`${API}/ai/chat`, {
         method: "POST",
@@ -4687,7 +4788,10 @@ export default function App() {
   }
 
   const visibleBlocks = useMemo(() => flattenBlocks(blocks), [blocks]);
-  const homeMode = !pdfUrl && !focusedBlockId && !shareMode;
+  // What the open page carries — THE switch for layout and page-level
+  // affordances (docs/dev/block_centric.md). pdfUrl is only the viewer's input.
+  const pageAttach = useMemo(() => pageAttachment(focusedBlock), [focusedBlock]);
+  const homeMode = !focusedBlockId && !shareMode;
 
   // --- structural undo -------------------------------------------------------
   // Snapshots of the page's block tree around structural edits (delete,
@@ -4757,9 +4861,9 @@ export default function App() {
   })();
   // Leaving home or changing folders drops the file-manager selection.
   useEffect(() => { clearSelection(); setHomeMenu(null); }, [folderFilter, categoryFilter, homeMode]);
-  // A page with no PDF — the owner's note pages and shared note pages alike —
+  // A page with no attachment — the owner's pages and shared pages alike —
   // puts the notes in the center instead of an empty viewer.
-  const pageOnly = !pdfUrl && !!focusedBlockId;
+  const pageOnly = !!focusedBlockId && !pageAttach;
   // Phone: navigating to another page (or home) closes any overlay panel.
   useEffect(() => { setPhonePanel(null); }, [focusedBlockId, homeMode]);
   const pageBlocks = useMemo(() => {
@@ -4771,7 +4875,8 @@ export default function App() {
       properties: { quote: b.properties?.summary || "" },
       _pageId: b.id,
       _position: b.position,
-      _sourceUrl: b.properties?.source_url,
+      _attachment: pageAttachment(b),
+      _preview: b.preview || "",
       _folders: parseFolderTags(b.properties?.folder),
       _labels: parseFolderTags(b.properties?.category),
       _createdAt: b.created_at || "",
@@ -4918,13 +5023,17 @@ export default function App() {
   // "New folder" leads the listing wherever folders are listed — not inside a
   // label view or with the listing filtered to files or labels.
   const newFolderAllowed = !categoryFilter && homeKinds !== "files" && homeKinds !== "labels";
+  // "New page" is the first item of the listing itself (like "New folder") —
+  // Notion-style: creating a page needs no file. Not inside a label view
+  // (pages are created plain, then labelled) nor when only folders show.
+  const newPageAllowed = !categoryFilter && homeKinds !== "folders" && homeKinds !== "labels";
   // What an empty listing says — the view it is empty for, not the library.
   const homeEmptyText = categoryFilter
-    ? `Nothing is labelled “${categoryFilter}” here — drop a paper on a label to add it.`
+    ? `Nothing is labelled “${categoryFilter}” here — drop a page on a label to add it.`
     : homeKinds === "labels"
-      ? (folderFilter ? "No labels on the papers in this folder yet." : "No labels yet — add one from a paper’s label field.")
-      : folderFilter ? "This folder is empty — drag papers onto it from the library."
-        : "No pages yet — use the + button above to open a PDF or start a note page.";
+      ? (folderFilter ? "No labels on the pages in this folder yet." : "No labels yet — add one from a page’s label field.")
+      : folderFilter ? "This folder is empty — start a page here or drag pages onto it from the library."
+        : "No pages yet — start with “New page”, or open a PDF from the + button above.";
   // Timestamp shown on a library card follows the active sort: sorted by view
   // time → viewed (falling back to modified, same as the sort), by added →
   // created; modified otherwise (incl. Title A–Z).
@@ -5255,7 +5364,7 @@ export default function App() {
                 onBlur={() => { renameTitle(titleDraft); setTitleEditing(false); }}
                 onKeyDown={(e) => {
                   if (e.key === "Enter") { e.currentTarget.blur(); }
-                  else if (e.key === "Escape") { setTitleDraft(pdfTitle); setTitleEditing(false); }
+                  else if (e.key === "Escape") { setTitleDraft(pageTitle); setTitleEditing(false); }
                 }}
               />
             ) : (
@@ -5264,10 +5373,10 @@ export default function App() {
                 title={!readOnly && focusedBlockId ? "Click to rename" : undefined}
                 onClick={() => {
                   if (readOnly || !focusedBlockId) return;
-                  setTitleDraft(pdfTitle || (docId ? getPdfPageTitle(docId, inputUrl) : "Untitled"));
+                  setTitleDraft(pageTitle || "Untitled");
                   setTitleEditing(true);
                 }}
-              >{focusedBlockId ? (pdfTitle || (docId ? getPdfPageTitle(docId, inputUrl) : "Untitled")) : "PDF Notes"}</h3>
+              >{focusedBlockId ? (pageTitle || "Untitled") : "Notes"}</h3>
             )}
             {focusedBlockId && !shareMode ? (
               <div className="categoryFrontmatter">
@@ -5401,6 +5510,43 @@ export default function App() {
             </div>
             {!shareMode && focusedBlockId ? (
               <div className="pageActionCol">
+                {!pageAttach && !readOnly ? (
+                  <span data-popover="attach" style={{ position: "relative", display: "inline-flex" }}>
+                    <button
+                      className="pageActionBtn"
+                      title="Attach a PDF to this page — by URL, arXiv id or DOI, or upload a file"
+                      aria-label="Attach PDF"
+                      disabled={loading}
+                      onClick={() => setOpenPopover((p) => (p === "attach" ? null : "attach"))}
+                    ><PaperclipIcon size={15} /></button>
+                    {openPopover === "attach" ? (
+                      <div className="popover addPopover attachPopover">
+                        <div className="popoverTitle">Attach a PDF</div>
+                        <input
+                          autoFocus
+                          className="searchInput"
+                          value={attachUrl}
+                          onChange={(e) => setAttachUrl(e.target.value)}
+                          placeholder="PDF URL, arXiv id, or DOI — press Enter"
+                          onKeyDown={(e) => {
+                            if (e.key === "Enter" && attachUrl.trim() && !loading) attachPdfToPage({ url: attachUrl.trim() });
+                            else if (e.key === "Escape") setOpenPopover(null);
+                          }}
+                        />
+                        <label className="popoverItem" style={{ cursor: loading ? "not-allowed" : "pointer" }}>
+                          Upload a PDF…
+                          <input
+                            type="file"
+                            accept=".pdf,application/pdf"
+                            style={{ display: "none" }}
+                            disabled={loading}
+                            onChange={(e) => { const f = e.target.files?.[0]; e.target.value = ""; if (f) attachPdfToPage({ file: f }); }}
+                          />
+                        </label>
+                      </div>
+                    ) : null}
+                  </span>
+                ) : null}
                 {docId ? (
                   <span data-popover="meta" style={{ position: "relative", display: "inline-flex" }}>
                     <button
@@ -5632,7 +5778,7 @@ export default function App() {
                   title="Delete this page"
                   onClick={() => setConfirmBox({
                     title: "Delete page",
-                    message: `Delete "${pdfTitle || "this page"}" and all its notes? This can't be undone.`,
+                    message: `Delete "${pageTitle || "this page"}" and all its notes? This can't be undone.`,
                     confirmLabel: "Delete",
                     danger: true,
                     onConfirm: async () => {
@@ -5711,9 +5857,9 @@ export default function App() {
             {homeMode && recentViewedPages.length > 0 ? (
               <CardCarousel label="Recently viewed" className="recentsCarousel">
                 {recentViewedPages.map((b) => (
-                  <PageCard key={b._pageId} title={b.content} glyph={<FileGlyph isPdf={!!b._sourceUrl} />}
+                  <PageCard key={b._pageId} title={b.content} glyph={<FileGlyph isPdf={!!b._attachment} />} preview={b._preview}
                     snap={recentThumbs ? pageSnaps[b._pageId]?.img : null}
-                    kind={b._sourceUrl ? "PDF" : "Note"} time={formatRelativeTime(b._viewedAt)}
+                    kind={pageKindLabel(b._attachment)} time={formatRelativeTime(b._viewedAt)}
                     folders={b._folders} labels={b._labels} labelMode={fileLabels}
                     className={selectedPages.has(b._pageId) ? "selected" : ""}
                     onClick={() => openPage(b._pageId)}
@@ -5736,10 +5882,11 @@ export default function App() {
                     <PageCard
                       key={b._pageId}
                       className={selectedPages.has(b._pageId) ? "selected" : ""}
-                      glyph={<FileGlyph isPdf={!!b._sourceUrl} />}
+                      glyph={<FileGlyph isPdf={!!b._attachment} />}
+                      preview={b._preview}
                       title={b.content}
                       tip={`${b.content}\nClick to select · double-click to open`}
-                      kind={b._sourceUrl ? "PDF" : "Note"}
+                      kind={pageKindLabel(b._attachment)}
                       time={formatRelativeTime(b._updatedAt)}
                       folders={b._folders} labels={b._labels} labelMode={fileLabels}
                       draggable
@@ -5852,10 +5999,20 @@ export default function App() {
             ) : null}
             {homeMode && homeView === "grid" ? (
                 <>
-                  {homeItems.length === 0 && !newFolderOpen ? (
+                  {homeItems.length === 0 && !newFolderOpen && !newPageAllowed ? (
                     <div className="empty">{homeEmptyText}</div>
                   ) : null}
                   <div className="fileGrid" onClick={(e) => { if (e.target.classList.contains("fileGrid")) clearSelection(); }}>
+                    {newPageAllowed ? (
+                      <PageCard
+                        className="pageCardAdd"
+                        glyph={<FilePlusIcon className="tileGlyph" size={null} strokeWidth={1.5} />}
+                        title="New page"
+                        tip="Start a blank page here"
+                        labelMode={fileLabels}
+                        onClick={() => createPage()}
+                      />
+                    ) : null}
                     {!newFolderAllowed ? null : newFolderOpen ? (
                       <PageCard
                         className="pageCardAdd"
@@ -5895,7 +6052,7 @@ export default function App() {
                         className={`${dim} ${folderDragOver === l ? "dragOver" : ""} ${selectedLabels.has(l) ? "selected" : ""}`}
                         glyph={<LabelGlyph />}
                         title={l}
-                        tip="Click to select · double-click to open · drop a paper to label it"
+                        tip="Click to select · double-click to open · drop a page to label it"
                         kind="Label"
                         count={labelMeta[l]?.count || 0}
                         time={cardTime(item)}
@@ -5914,7 +6071,7 @@ export default function App() {
                         className={`${dim} ${folderDragOver === f ? "dragOver" : ""} ${selectedFolders.has(f) ? "selected" : ""}`}
                         glyph={<FolderGlyph />}
                         title={f.slice(f.lastIndexOf("/") + 1)}
-                        tip="Click to select · double-click to open · drop a paper or folder to move it in"
+                        tip="Click to select · double-click to open · drop a page or folder to move it in"
                         kind="Folder"
                         count={folderMeta[f]?.count || 0}
                         time={cardTime(item)}
@@ -5950,10 +6107,11 @@ export default function App() {
                         <PageCard
                           key={id}
                           className={`${dim} ${selectedPages.has(id) ? "selected" : ""}`}
-                          glyph={<FileGlyph isPdf={!!b._sourceUrl} />}
+                          glyph={<FileGlyph isPdf={!!b._attachment} />}
+                          preview={b._preview}
                           title={b.content}
                           tip={`${b.content}\nClick to select · double-click to open`}
-                          kind={b._sourceUrl ? "PDF" : "Note"}
+                          kind={pageKindLabel(b._attachment)}
                           time={cardTime(item)}
                           folders={b._folders} labels={b._labels} labelMode={fileLabels}
                           renameNode={isEditing ? (
@@ -5992,10 +6150,16 @@ export default function App() {
                 </>
             ) : homeMode && homeView === "list" ? (
                 <>
-                  {homeItems.length === 0 && !newFolderOpen ? (
+                  {homeItems.length === 0 && !newFolderOpen && !newPageAllowed ? (
                     <div className="empty">{homeEmptyText}</div>
                   ) : null}
                   <div className="fileList" onClick={(e) => { if (e.target.classList.contains("fileList")) clearSelection(); }}>
+                    {newPageAllowed ? (
+                      <button className="folderRow folderNewBtn" onClick={() => createPage()} title="Start a blank page here">
+                        <FilePlusIcon size={15} />
+                        <span className="folderName">New page</span>
+                      </button>
+                    ) : null}
                     {!newFolderAllowed ? null : newFolderOpen ? (
                       <div className="folderRow folderNewRow">
                         <FolderPlusIcon size={15} />
@@ -6030,7 +6194,7 @@ export default function App() {
                         onDragOver={(e) => { e.preventDefault(); setFolderDragOver(l); }}
                         onDragLeave={() => setFolderDragOver(null)}
                         onDrop={(e) => dropOnLabel(e, l)}
-                        title="Click to select · double-click to open · right-click to rename or delete · drop a paper to label it"
+                        title="Click to select · double-click to open · right-click to rename or delete · drop a page to label it"
                       >
                         <LabelIcon size={15} />
                         <span className="folderName">{l}</span>
@@ -6049,7 +6213,7 @@ export default function App() {
                         onDragOver={(e) => { e.preventDefault(); setFolderDragOver(f); }}
                         onDragLeave={() => setFolderDragOver(null)}
                         onDrop={(e) => dropOnFolder(e, f)}
-                        title="Click to select · double-click to open · right-click to rename or delete · drop a paper or folder to move it in"
+                        title="Click to select · double-click to open · right-click to rename or delete · drop a page or folder to move it in"
                       >
                         <FolderIcon size={15} />
                         {folderRenaming?.name === f ? (
@@ -6086,7 +6250,7 @@ export default function App() {
                           onContextMenu={openPageMenu(id, b.content)}
                           title={`${b.content}\nClick to select · double-click to open`}
                         >
-                          <span className="fileRowIcon"><FileGlyph isPdf={!!b._sourceUrl} /></span>
+                          <span className="fileRowIcon"><FileGlyph isPdf={!!b._attachment} /></span>
                           {isEditing ? (
                             <input
                               autoFocus
@@ -6104,7 +6268,7 @@ export default function App() {
                           )}
                           <CardLabels className="fileRowLabels" folders={b._folders} labels={b._labels}
                             mode={fileLabels} onLabelMenu={(l) => openTagMenu("label", l)} />
-                          <span className="fileRowKind">{b._sourceUrl ? "PDF" : "Note"}</span>
+                          <span className="fileRowKind">{pageKindLabel(b._attachment)}</span>
                           <button
                             className={`pinBtn fileRowPin ${isPinned ? "pinned" : ""}`}
                             title={isPinned ? "Unpin" : "Pin to top"}
@@ -6124,7 +6288,7 @@ export default function App() {
             (homeMode ? homeVisiblePages : visibleBlocks).length === 0 ? (
               <>
                 <div className="empty">{homeMode
-                  ? (folderFilter ? "This folder is empty — drag papers onto it from the library." : "No pages yet — use the + button above to open a PDF or start a note page.")
+                  ? (folderFilter ? "This folder is empty — start a page here or drag pages onto it from the library." : "No pages yet — start with “New page”, or open a PDF from the + button above.")
                   : "No blocks yet."}</div>
                 {addNoteButton}
               </>
@@ -6466,7 +6630,7 @@ export default function App() {
         <ChatDock
           {...common}
           onClose={() => (isPhone ? setPhonePanel(null) : setChatHidden(true))}
-          docId={docId} focusedBlockId={focusedBlockId} homeBlocks={homeBlocks} pdfTitle={pdfTitle}
+          docId={docId} focusedBlockId={focusedBlockId} homeBlocks={homeBlocks} pageTitle={pageTitle}
           openTabs={openTabs}
           pdfSelections={pdfSelections} setPdfSelections={setPdfSelections}
           chatImages={chatImages} setChatImages={setChatImages}
@@ -6546,7 +6710,7 @@ export default function App() {
       {openPopover === "menu" ? (
         <div className="popover menuPopover">
           <div className="popoverSection">Windows</div>
-          {!homeMode && pdfUrl ? (
+          {!homeMode && pageAttach ? (
             <button className="popoverItem" onClick={() => setPdfHidden((v) => !v)}>
               <span className="check">{!pdfHidden ? "✓" : ""}</span>
               <FileIcon className="popoverItemIcon" size={15} /> PDF
@@ -6607,7 +6771,7 @@ export default function App() {
         <button
           className={`iconBtn addBtn ${openPopover === "add" ? "activeIcon" : ""}`}
           onClick={() => setOpenPopover((p) => (p === "add" ? null : "add"))}
-          title="Add — open a PDF by URL, arXiv id or DOI, upload a file, or start a note page"
+          title="Add — a new page, a PDF by URL, arXiv id or DOI, or uploaded files"
           aria-label="Add"
         >
           <PlusIcon size={17} strokeWidth={2.2} />
@@ -6653,7 +6817,7 @@ export default function App() {
                 onChange={(e) => { const files = Array.from(e.target.files || []); e.target.value = ""; setOpenPopover(null); if (files.length) uploadFiles(files); }}
               />
             </label>
-            <button className="popoverItem" onClick={createNotePage}>New note page</button>
+            <button className="popoverItem" onClick={() => createPage()}>New page</button>
           </div>
         ) : null}
       </span>
@@ -7041,6 +7205,16 @@ export default function App() {
         const files = Array.from(e.dataTransfer.files || [])
           .filter((file) => isPdfFile(file) || isMarkdownFile(file));
         if (!files.length) return;
+        // Dropped on the open page: a single PDF becomes ITS attachment when
+        // it has none (the block rows take other files); the library view
+        // still imports drops as new pages.
+        if (focusedBlockId && !pageAttach && !readOnly && files.length === 1 && isPdfFile(files[0])
+            && !e.target.closest?.("[data-block-id], .blockEditor")) {
+          e.preventDefault();
+          attachPdfToPage({ file: files[0] });
+          return;
+        }
+        if (!homeMode) return;
         e.preventDefault();
         uploadFiles(files);
       }}
@@ -7096,7 +7270,7 @@ export default function App() {
           <button className="iconBtn homeBtn" disabled title="Home" aria-label="Home">
             <HomeIcon size={17} />
           </button>
-          <span className="readOnlyTitle">{pdfTitle}</span>
+          <span className="readOnlyTitle">{pageTitle}</span>
           {shareInfo ? (
             <span className="shareBadge"
               title={shareInfo.canEdit ? "Your edits save to the owner's page" : "Read-only share link"}>
@@ -7404,7 +7578,7 @@ export default function App() {
         <ExportDialog
           opts={exportOpts}
           setOpts={setExportOpts}
-          hasPdf={!!pdfUrl && !exportFolder}
+          hasPdf={!!pageAttach && !exportFolder}
           pdfStored={!!docId}
           folder={exportFolder}
           onCancel={() => setExportOpen(false)}
@@ -7908,7 +8082,7 @@ export default function App() {
                 const blk = flattenBlocks(blocks).find((b) => b.properties?.highlight_id === highlightMenu.id);
                 setRefPoint({
                   pageId: focusedBlockId,
-                  pageTitle: pdfTitle || "Untitled",
+                  pageTitle: pageTitle || "Untitled",
                   highlightId: highlightMenu.id,
                   quote: (h?.content?.text || "").slice(0, 200),
                 });

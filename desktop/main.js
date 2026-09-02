@@ -18,7 +18,7 @@
 // `data-theme` attribute the preload mirrors so the chrome paints in the
 // same theme.
 
-const { app, BaseWindow, WebContentsView, Menu, shell, ipcMain } = require('electron');
+const { app, BaseWindow, WebContentsView, Menu, shell, ipcMain, net, dialog } = require('electron');
 const path = require('path');
 const fs = require('fs');
 const os = require('os');
@@ -26,6 +26,7 @@ const { pathToFileURL } = require('url');
 
 const registry = require('./lib/registry');
 const sidecar = require('./lib/sidecar');
+const updater = require('./lib/updater');
 
 const SMOKE = process.argv.includes('--smoke');
 const BAR_H = 38;
@@ -56,6 +57,46 @@ let barExpanded = false;
 const allowedOrigins = new Set();
 // Test hook: records what would have opened externally.
 const externalOpens = [];
+
+// Remote reachability: a cached `/api/health` probe per remote workspace so
+// the launcher and the bar menu can show a dot like the local running one
+// (Gamma's health endpoint is public, no session needed). Probes run on
+// demand — launcher refresh, bar menu open — behind a short TTL, and their
+// results land asynchronously through pushState.
+const remoteHealth = new Map(); // id -> { ok: boolean, at: ms }
+const remoteProbes = new Map(); // id -> in-flight promise
+const HEALTH_TTL_MS = 20_000;
+const HEALTH_TIMEOUT_MS = 5_000;
+
+function probeRemotes(force) {
+  for (const ws of registry.load().workspaces) {
+    if (ws.type !== 'remote' || remoteProbes.has(ws.id)) continue;
+    const cached = remoteHealth.get(ws.id);
+    if (!force && cached && Date.now() - cached.at < HEALTH_TTL_MS) continue;
+    let target;
+    try {
+      target = new URL('/api/health', ws.url).href;
+    } catch {
+      continue;
+    }
+    const p = net
+      .fetch(target, { signal: AbortSignal.timeout(HEALTH_TIMEOUT_MS), cache: 'no-store' })
+      .then((r) => r.ok, () => false)
+      .then((ok) => remoteHealth.set(ws.id, { ok, at: Date.now() }))
+      .finally(() => {
+        remoteProbes.delete(ws.id);
+        pushState();
+      });
+    remoteProbes.set(ws.id, p);
+  }
+}
+
+// true / false once probed, null while unknown, undefined for local ones.
+function remoteReachable(ws) {
+  if (ws.type !== 'remote') return undefined;
+  const h = remoteHealth.get(ws.id);
+  return h ? h.ok : null;
+}
 
 function appInfo() {
   return {
@@ -217,12 +258,14 @@ function barState() {
     theme: currentTheme(),
     current,
     busy,
+    update: updater.state(),
     workspaces: state.workspaces.map((ws) => ({
       id: ws.id,
       name: ws.name,
       type: ws.type,
       url: ws.type === 'remote' ? ws.url : (sidecar.status(ws.id) || {}).url,
       running: ws.type === 'local' ? Boolean(sidecar.status(ws.id)) : undefined,
+      reachable: remoteReachable(ws),
     })),
   };
 }
@@ -235,6 +278,7 @@ function fullState() {
     workspaces: state.workspaces.map((ws) => ({
       ...ws,
       running: ws.type === 'local' ? Boolean(sidecar.status(ws.id)) : undefined,
+      reachable: remoteReachable(ws),
       sizeBytes: ws.type === 'local' ? registry.dirSize(ws.dataDir) : undefined,
       logPath: ws.type === 'local' ? path.join(app.getPath('userData'), 'logs', `${ws.id}.log`) : undefined,
     })),
@@ -309,6 +353,7 @@ async function openWorkspaceNow(id) {
     }
     allowedOrigins.add(new URL(url).origin);
     await content.webContents.loadURL(url);
+    if (ws.type === 'remote') remoteHealth.set(ws.id, { ok: true, at: Date.now() });
     current = { id: ws.id, name: ws.name, type: ws.type, url };
     registry.markOpened(ws.id);
     content.webContents.focus();
@@ -321,11 +366,41 @@ async function openWorkspaceNow(id) {
     return { url };
   } catch (e) {
     current = null;
+    if (ws.type === 'remote') remoteHealth.set(ws.id, { ok: false, at: Date.now() });
     throw e;
   } finally {
     busy = null;
     pushState();
   }
+}
+
+// Help → Check for Updates…: the only update flow that answers with a
+// dialog; the automatic checks stay silent (bar pill / launcher row).
+async function checkForUpdatesInteractive() {
+  const st = await updater.check();
+  const opts = { title: 'Gamma', message: '', buttons: ['OK'] };
+  if (st.status === 'unsupported') {
+    opts.message = 'Updates are not available in this build.';
+    opts.detail = st.error === 'dev build' ? 'Development build: update from git.' : String(st.error || '');
+  } else if (st.status === 'downloaded') {
+    opts.message = `Gamma ${st.version} is ready to install.`;
+    opts.detail = 'It installs when you restart.';
+    opts.buttons = ['Restart to update', 'Later'];
+  } else if (st.status === 'downloading') {
+    opts.message = `Downloading Gamma ${st.version}…`;
+    opts.detail = 'You will be offered a restart when it is ready.';
+  } else if (st.status === 'available') {
+    opts.message = `Gamma ${st.version} is available.`;
+    opts.detail = 'This build cannot update itself; the download page opens in your browser.';
+    opts.buttons = ['Download', 'Later'];
+  } else if (st.status === 'error') {
+    opts.message = 'Could not check for updates.';
+    opts.detail = String(st.error || '');
+  } else {
+    opts.message = `You are on the latest version (${st.current}).`;
+  }
+  const r = win ? await dialog.showMessageBox(win, opts) : await dialog.showMessageBox(opts);
+  if (r.response === 0 && opts.buttons.length > 1) updater.install();
 }
 
 // ----------------------------------------------------------------- menu -----
@@ -365,6 +440,13 @@ function buildMenu() {
       ],
     },
     { role: 'windowMenu' },
+    {
+      role: 'help',
+      submenu: [
+        { label: 'Check for Updates…', click: () => checkForUpdatesInteractive().catch(() => {}) },
+        { label: 'Gamma on GitHub', click: () => openExternal('https://github.com/tim4431/Gamma') },
+      ],
+    },
   ];
   Menu.setApplicationMenu(Menu.buildFromTemplate(template));
 }
@@ -383,8 +465,10 @@ function shellOnly(handler) {
 }
 
 function registerIpc() {
-  ipcMain.handle('shell:state', shellOnly(() => barState()));
-  ipcMain.handle('shell:list', shellOnly(() => fullState()));
+  ipcMain.handle('shell:state', shellOnly(() => { probeRemotes(); return barState(); }));
+  ipcMain.handle('shell:list', shellOnly(() => { probeRemotes(); return fullState(); }));
+  ipcMain.handle('shell:update-check', shellOnly(() => updater.check()));
+  ipcMain.handle('shell:update-install', shellOnly(() => updater.install()));
   ipcMain.handle('shell:add-local', shellOnly((name) => { const ws = registry.addLocal(name); buildMenu(); pushState(); return ws; }));
   ipcMain.handle('shell:add-remote', shellOnly((name, url) => { const ws = registry.addRemote(name, url); buildMenu(); pushState(); return ws; }));
   ipcMain.handle('shell:rename', shellOnly((id, name) => {
@@ -495,6 +579,7 @@ app.whenReady().then(async () => {
     return;
   }
   registerIpc();
+  updater.init({ onChange: () => pushState(), openExternal });
   buildMenu();
   createWindow();
   // Reopen where the user left off; the launcher is one click away in the bar.
@@ -531,6 +616,9 @@ if (process.env.GAMMA_SHELL_TEST) {
     current: () => current,
     theme: () => currentTheme(),
     externalOpens,
+    update: () => updater.state(),
+    remoteHealth,
+    probeRemotes,
     barExpanded: () => barExpanded,
     bounds: () => ({ bar: bar && bar.getBounds(), content: content && content.getBounds() }),
   };

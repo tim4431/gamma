@@ -27,9 +27,11 @@ Nine panes in four rail groups (`NAV_GROUPS` in
   filter incl. "Unverified AI" / "Needs attention", verified/text/index
   coverage tiles, click a title to open the paper, select-all works on the
   filtered view, and the batch fetch targets missing + unverified records)
-- **Reading** — PDF viewer (snap scrolling, embedded annotations, the
-  translated view's target language + model), Search
-  (auto-expand defaults), Notes (Enter behavior, note badges)
+- **Editor** — Notes (Enter behavior, note badges), Search (auto-expand
+  defaults), PDF viewer (snap scrolling, embedded annotations, the
+  translated view's target language + model) — the viewer is one pane of
+  the editor group, not a group of its own (the app is block-centric,
+  see [block_centric.md](block_centric.md))
 - **AI** — Provider and models (credentials, automatic subscription usage,
   provider model catalogs, metadata and dictation model choices, the login
   connection check — `gamma-ai-login-check`, default the free credential

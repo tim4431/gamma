@@ -4207,3 +4207,9 @@ button.pdfOutlineChevron:hover { background: rgba(128, 128, 128, 0.28); color: v
 /* secondary danger (e.g. the confirm dialog's alternative action): outlined red */
 .uiBtn.dangerBtn:not(.primary) { color: var(--danger); border-color: var(--danger-border); }
 .uiBtn.dangerBtn:not(.primary):hover:not(:disabled) { background: var(--danger-bg); border-color: var(--danger); color: var(--danger); }
+
+/* Page header "Attach a PDF" popover (docs/dev/block_centric.md, stage 1) and
+   the file chip a dropped non-image file renders as. */
+.attachPopover { min-width: 280px; }
+.attachPopover .popoverTitle { margin-bottom: 6px; }
+.fileChip svg { color: var(--text-muted); }

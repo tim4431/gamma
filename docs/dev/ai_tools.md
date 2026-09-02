@@ -16,7 +16,7 @@ shared `gamma/foldertags.py` rules; keep them in sync.
 
 | Tool | Permission | Scope | What it does |
 |---|---|---|---|
-| `list_pages` | List pages | folder | List the folder's pages: id, title, kind (pdf/note), folder paths, labels, cached metadata (first author, year, venue), last-update date |
+| `list_pages` | List pages | folder | List the folder's pages: id, title, attachments (`[pdf]` when the page carries a PDF, `[]` for text-only), folder paths, labels, cached metadata (first author, year, venue), last-update date |
 | `read_page` | Read papers & notes | folder + paper | Read one page: a windowed excerpt of the extracted PDF text plus the user's highlights and notes |
 | `read_block` | Read note blocks | folder + paper | Read a page's notes as an id-prefixed outline — the ids the editing tools take |
 | `search_pdfs` | Search PDF text | folder + paper | Full-text search over the reachable PDFs, snippets with page numbers |

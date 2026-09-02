@@ -55,11 +55,16 @@ of the current sort and the rest stay in place dimmed (`.homeDim`). A page
 matches on its title plus its folder/label chips; matching is
 case/diacritic-folded, every whitespace term must appear.
 
-New folder is the FIRST item of the listing itself, not a toolbar button (a
-`folderNewBtn` row / `pageCardAdd` tile that turns into its own name input in
-place — Enter or blur commits, Escape cancels); it is hidden while the folder
-is filtered to files-only, to labels, or inside a label view. The toolbar is
-search box → sort → kind → list/grid.
+**New page** and **New folder** are the FIRST items of the listing itself,
+not toolbar buttons. New page (`newPageAllowed`: not in a label view, not
+while only folders show) is a `pageCardAdd` tile / `folderNewBtn` row that
+creates a blank page in the open folder via `POST /api/pages` and opens it
+with the title ready to type — creating a page never needs a file; a PDF is
+attached on the page afterwards (the paperclip in the page header, or a PDF
+dropped on the open page). New folder is the same tile/row shape and turns
+into its own name input in place (Enter or blur commits, Escape cancels); it
+is hidden while the folder is filtered to files-only, to labels, or inside a
+label view. The toolbar is search box → sort → kind → list/grid.
 
 Search chips (Tab autosuggest) cover both kinds: label chips match exactly,
 folder chips match by prefix.
@@ -71,8 +76,12 @@ surface — the "Recently viewed" strip, the pinned strip, and the grid
 listing's files, folders AND labels: a cover over a bottom-stuck
 footer of title + folder/label chips + kind and relative time (library cards
 show the time matching the active sort — viewed/created/modified; the recents
-strip always shows viewed). Only the recents strip shows snapshot covers;
-library cards always use the glyph.
+strip always shows viewed). The kind is what the page carries
+(`pageKindLabel` — "PDF" or "Page"; never a note/paper dichotomy). Covers:
+the recents strip shows the snapshot when one exists (PDF pages capture
+one); a page without a snapshot shows a text preview of its first blocks
+(`preview` on the root listing, rendered as `.pageCardPreview`) on every card
+surface; only a page with neither falls back to the glyph.
 
 The card geometry lives on the card itself, not per surface: a 16/10 cover, two
 reserved title lines and one reserved chip line (`CardLabels` renders its span

@@ -11,6 +11,7 @@ from . import config
 from .auth import session_middleware
 from .db import DATA_SCHEMA, connect_users_db
 from .logbuf import log, setup_logging
+from .migrate import run_all as run_migrations
 from .routers import (
     admin,
     ai,
@@ -22,6 +23,7 @@ from .routers import (
     imports,
     links,
     metadata,
+    pages,
     pdf,
     prefs,
     search,
@@ -55,11 +57,19 @@ def _silence_windows_connection_reset():
 
 
 def _startup_maintenance():
-    """Ensure users.db exists, seed a fresh instance's first admin, prune
+    """Ensure users.db exists, seed a fresh instance's first admin, normalize
+    old data shapes (gamma/migrate.py — a no-op on a clean install), prune
     orphaned uploads, and apply lightweight schema upgrades to every per-user
     data.db (e.g. the chats table)."""
     connect_users_db().close()
     ensure_admin_seed()
+    try:
+        migrated = run_migrations()
+        if migrated.get("changed"):
+            log.info(f"[startup] normalized old data shapes: users={migrated['users']} "
+                     f"shares={migrated['shares']}")
+    except Exception as e:  # never keep the server from starting
+        log.warning(f"[startup] data normalization failed: {e}")
     if not config.USERS_DIR.exists():
         return
     for user_dir in config.USERS_DIR.iterdir():
@@ -102,6 +112,7 @@ def create_app() -> FastAPI:
     app.include_router(pdf.router)
     app.include_router(uploads.router)
     app.include_router(blocks.router)
+    app.include_router(pages.router)
     app.include_router(imports.router)
     app.include_router(export.router)
     app.include_router(links.router)

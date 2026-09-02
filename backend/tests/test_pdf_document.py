@@ -234,9 +234,11 @@ def test_page_titles_and_headings_become_bookmarks():
     assert titles == ["Paper one"] and nested == ["A section"]
 
 
-def test_math_and_cjk_are_drawn_as_vector_paths(guest):
+def test_math_and_cjk_are_selectable_type3_text(guest):
     """Same guarantee the note boxes give: nothing shows LaTeX source, and CJK
-    doesn't depend on the viewer having an Asian font."""
+    doesn't depend on the viewer having an Asian font. The glyph outlines go
+    in as Type 3 fonts, so the equation is real text — its characters come
+    back out of the extractor through the ToUnicode map."""
     from gamma import vector_text
 
     pdf = render_document([_page("Math", None, [
@@ -247,10 +249,37 @@ def test_math_and_cjk_are_drawn_as_vector_paths(guest):
     text = _text(pdf)
     assert "\\alpha" not in text and "\\frac" not in text and "$$" not in text
     assert "Bayes" in text and "inline" in text
-    if vector_text.cjk_font() is not None:
-        assert not any("一" <= c <= "鿿" for c in text)
     require_math_renderer()
-    assert _object_kinds(pdf).count(2) >= 10, "math should be typeset as vector paths"
+    assert "α" in text and "∑" in text, "math glyphs should extract as text"
+    assert b"/Type3" in pdf
+    # The title rule and the fraction bar are the only paths left on the page.
+    kinds = _object_kinds(pdf)
+    assert kinds.count(2) <= 3 and kinds.count(1) >= 10
+    if vector_text.cjk_font() is not None:
+        assert "公式" in text
+
+
+def test_type3_fonts_hold_each_glyph_once_and_map_back_to_unicode():
+    """One glyph program per distinct glyph — a repeated x is stored once —
+    with widths, an encoding and a ToUnicode CMap that all agree."""
+    from PyPDF2 import PdfReader
+
+    require_math_renderer()
+    pdf = render_document([_page("Glyphs", None, [_block("b1", r"$x + x + x$ and $\alpha$")])])
+    reader = PdfReader(io.BytesIO(pdf))
+    fonts = [f.get_object() for f in reader.pages[0]["/Resources"]["/Font"].values()]
+    type3 = [f for f in fonts if f.get("/Subtype") == "/Type3"]
+    assert len(type3) == 1
+    font = type3[0]
+    procs = font["/CharProcs"]
+    assert len(procs) == len(font["/Widths"]) == font["/LastChar"] == 3   # x, +, α
+    assert [float(v) for v in font["/FontMatrix"]] == [0.001, 0, 0, 0.001, 0, 0]
+    assert len(font["/Encoding"]["/Differences"]) == 4                    # start code + 3 names
+    cmap = font["/ToUnicode"].get_object().get_data().decode()
+    assert "<0078>" in cmap and "<002B>" in cmap and "<03B1>" in cmap
+    proc = procs["/g1"].get_object().get_data()
+    assert proc.split(b"\n")[0].endswith(b" d1") and proc.endswith(b"f")
+    assert _text(pdf).count("x") == 3
 
 
 def test_pasted_images_are_embedded(guest):

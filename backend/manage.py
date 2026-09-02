@@ -10,6 +10,7 @@ Usage:
   python manage.py list-users
   python manage.py reset-guest      # wipe guest data (auto-runs daily)
   python manage.py setup            # idempotent: create guest + repair missing per-user DBs
+  python manage.py migrate          # idempotent: normalize old data shapes (also runs at server start)
 
 Respects GAMMA_DATA_DIR (defaults to this directory).
 """
@@ -162,6 +163,18 @@ def setup():
     print("Setup complete.")
 
 
+def migrate():
+    """Run gamma/migrate.py's normalization pass and print what it touched."""
+    from gamma.migrate import run_all
+
+    summary = run_all()
+    for user, counts in summary["users"].items():
+        print(f"  {user}: " + ", ".join(f"{k}={v}" for k, v in counts.items()))
+    if summary["shares"]:
+        print("  shares: " + ", ".join(f"{k}={v}" for k, v in summary["shares"].items()))
+    print(f"Migration complete: {summary['changed']} row(s) changed.")
+
+
 def main():
     if len(sys.argv) < 2:
         print(__doc__)
@@ -199,6 +212,8 @@ def main():
         reset_guest()
     elif cmd == "setup":
         setup()
+    elif cmd == "migrate":
+        migrate()
     else:
         print(f"Unknown command: {cmd}")
         sys.exit(1)

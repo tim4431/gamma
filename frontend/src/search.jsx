@@ -391,8 +391,8 @@ export default function SearchPanel({
     openBlock(r.page_root_id || r.id);
   }
 
-  // ---- result grouping: titles → this paper (notes, then PDF text) →
-  // other notes → reference links → other papers' PDF content
+  // ---- result grouping: titles → this page (notes, then its PDF text) →
+  // other notes → reference links → other pages' PDF content
   const inScope = (pageId) => !labelPageIds || labelPageIds.has(pageId);
   const titleMatches = titleScoreOf
     ? homeBlocks
@@ -552,7 +552,7 @@ export default function SearchPanel({
                 {titleMatches.length || titlesExtra.length ? <div className="searchSection">Titles</div> : null}
                 {titleMatches.map((b) => titleRow(b, [b.properties?.category, b.properties?.folder].filter(Boolean).join(", ")))}
                 {titlesExtra.map(noteRow)}
-                {notesHere.length ? <div className="searchSection">Notes in this paper</div> : null}
+                {notesHere.length ? <div className="searchSection">Notes on this page</div> : null}
                 {notesHere.map(noteRow)}
                 {showPdfMatches && pdfMatches.length ? <div className="searchSection">This PDF</div> : null}
                 {(showPdfMatches ? pdfMatches : []).map((m, i) => (

@@ -63,10 +63,10 @@ const NAV_GROUPS = [
     ["general", "General", SettingsIcon],
     ["library", "Library", ListIcon],
   ]],
-  ["Reading", [
-    ["viewer", "PDF viewer", FileIcon],
-    ["search", "Search", SearchIcon],
+  ["Editor", [
     ["notes", "Notes", FileTextIcon],
+    ["search", "Search", SearchIcon],
+    ["viewer", "PDF viewer", FileIcon],
   ]],
   ["AI", [
     ["ai", "Provider and models", KeyIcon],
@@ -154,7 +154,7 @@ function GeneralSettings({ value }) {
   );
 }
 
-// --- Reading: PDF viewer + search + notes -----------------------------------
+// --- Editor: notes + search + PDF viewer -----------------------------------
 
 function ViewerSettings({ value }) {
   return (

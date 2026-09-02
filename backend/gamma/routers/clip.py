@@ -64,10 +64,12 @@ def url_doc_id(source_url: str) -> str:
 
 
 def find_page(conn, doi: str = "", arxiv_id: str = "", urls: tuple = ()) -> dict | None:
-    """The library page for a paper, by DOI, arXiv id, or any of its URLs.
-    Identifier matches come from the metadata cache (properties.meta) and
-    the source URL; URL matches from the proxy-cache hash, the stored
-    source_url, or the web page the extension saved it from (web_url)."""
+    """Lookup BY ATTACHMENT: the page whose PDF attachment is this paper, by
+    DOI, arXiv id, or any of its URLs — only pages carrying a ``doc_id`` are
+    candidates (a clip dedups against files, not titles). Identifier matches
+    come from the metadata cache (properties.meta) and the source URL; URL
+    matches from the proxy-cache hash, the stored source_url, or the web page
+    the extension saved it from (web_url)."""
     doi = (doi or "").lower()
     urls = tuple(u for u in urls if u)
     url_ids = {url_doc_id(u) for u in urls}
@@ -139,8 +141,10 @@ def _clean_title(title: str) -> str:
 
 
 def _default_title(doc_id: str, source_url: str) -> str:
+    """Automatic title for a clipped PDF: the URL's filename, else the doc id
+    (marked auto_title, so the metadata lookup may replace it)."""
     tail = urllib.parse.unquote((source_url or "").split("/")[-1]).strip()
-    return f"PDF Notes - {tail or doc_id}"
+    return tail or doc_id
 
 
 def _result(block: dict, existed: bool, note: str = "") -> dict:

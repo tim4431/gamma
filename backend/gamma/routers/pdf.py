@@ -261,11 +261,10 @@ def _share_allows_source(user: str, scope_page_id: str, source_url: str) -> bool
     page block."""
     with sqlite3.connect(user_db_path(user, "pages.db")) as conn:
         row = conn.execute(
-            "SELECT json_extract(properties, '$.source_url'), "
-            "json_extract(properties, '$.sourceUrl') FROM unified_blocks WHERE id = ?",
+            "SELECT json_extract(properties, '$.source_url') FROM unified_blocks WHERE id = ?",
             (scope_page_id,),
         ).fetchone()
-    return bool(row) and source_url in {v for v in row if v}
+    return bool(row and row[0]) and source_url == row[0]
 
 
 @router.get("/pdf")

@@ -9,7 +9,7 @@ from fastapi import HTTPException, Request
 from fastapi.responses import JSONResponse
 
 from .config import USERS_DB
-from .db import page_now, user_db_path
+from .db import page_now
 from .logbuf import log
 from .seed import reset_guest_data
 
@@ -178,22 +178,6 @@ def require_admin(request: Request) -> str:
     return user
 
 
-def _legacy_share_page(username: str, doc_id: str) -> str | None:
-    """Page root id for a share row minted when shares were keyed by PDF doc
-    id: the owner's page whose properties carry that doc_id, or None if the
-    document is gone."""
-    try:
-        with sqlite3.connect(user_db_path(username, "pages.db")) as conn:
-            row = conn.execute(
-                "SELECT id FROM unified_blocks WHERE parent_id = 'root' "
-                "AND json_extract(properties, '$.doc_id') = ?",
-                (doc_id,),
-            ).fetchone()
-    except sqlite3.Error:
-        return None
-    return row[0] if row else None
-
-
 SHARE_AUDIENCES = ("anyone", "users", "list")
 SHARE_ROLES = ("view", "edit")
 
@@ -215,9 +199,10 @@ def serialize_share_users(users: list[dict]) -> str:
 
 def share_lookup(token: str) -> dict | None:
     """The share row for a token as a dict ({token, username, doc_id, page_id,
-    audience, role, users}), or None. A row from before shares were keyed by
-    page (page_id NULL) is resolved to its page and backfilled here; one whose
-    document is gone stays unresolvable (None)."""
+    audience, role, users}), or None. Every row carries page_id: the ones
+    minted before shares were keyed by page were backfilled (or deleted) by
+    gamma/migrate.py, so a row without one is treated as dead. doc_id is
+    still returned (informational) until stage 3 drops the column."""
     if not token:
         return None
     with sqlite3.connect(str(USERS_DB)) as conn:
@@ -228,11 +213,6 @@ def share_lookup(token: str) -> dict | None:
         if not row:
             return None
         username, doc_id, page_id, audience, role, allowed = row
-        if not page_id and doc_id:
-            page_id = _legacy_share_page(username, doc_id)
-            if page_id:
-                conn.execute("UPDATE shares SET page_id = ? WHERE token = ?", (page_id, token))
-                conn.commit()
     if not page_id:
         return None
     return {

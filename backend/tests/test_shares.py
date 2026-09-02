@@ -93,8 +93,10 @@ def test_share_requires_a_session(anon, bob):
 
 def test_legacy_doc_keyed_share_row_still_resolves(bob, anon):
     """Rows minted before shares were keyed by page carry only doc_id; the
-    first use resolves them to the page and backfills page_id."""
+    one-time migration (gamma/migrate.py, run at every server start) resolves
+    them to their page and backfills page_id — auth itself no longer does."""
     from gamma.db import connect_users_db, page_now
+    from gamma.migrate import run_all
 
     page = make_page(bob, "Old paper", properties={"doc_id": "legacy_doc_1"})
     token = "legacy-token-abc"
@@ -104,6 +106,8 @@ def test_legacy_doc_keyed_share_row_still_resolves(bob, anon):
             (token, "bob_share", "legacy_doc_1", page_now()),
         )
         conn.commit()
+    assert anon.get(f"/api/share/{token}").status_code == 404  # dead until migrated
+    assert run_all()["shares"] == {"shares_backfilled": 1}
 
     r = anon.get(f"/api/share/{token}")
     assert r.status_code == 200, r.text
@@ -120,6 +124,7 @@ def test_legacy_doc_keyed_share_row_still_resolves(bob, anon):
 
 def test_legacy_row_for_a_deleted_document_is_dead(bob, anon):
     from gamma.db import connect_users_db, page_now
+    from gamma.migrate import run_all
 
     token = "legacy-token-gone"
     with connect_users_db() as conn:
@@ -129,6 +134,9 @@ def test_legacy_row_for_a_deleted_document_is_dead(bob, anon):
         )
         conn.commit()
     assert anon.get(f"/api/share/{token}").status_code == 404
+    assert run_all()["shares"] == {"shares_deleted": 1}  # unresolvable → removed
+    with connect_users_db() as conn:
+        assert conn.execute("SELECT 1 FROM shares WHERE token = ?", (token,)).fetchone() is None
     page = make_page(bob, "Unrelated")
     assert anon.get(f"/api/blocks/{page['id']}", params={"share": token}).status_code == 401
 

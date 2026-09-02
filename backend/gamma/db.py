@@ -57,7 +57,8 @@ USERS_SCHEMA = [
     # signed-in non-guest account), "list" (the usernames in allowed_users,
     # comma-separated). role: "view" or "edit" (edit never applies to anonymous
     # viewers — see gamma/auth.py share_access). Rows minted before shares were
-    # keyed by page carry only doc_id — auth backfills page_id on first use.
+    # keyed by page carried only doc_id; gamma/migrate.py backfilled page_id
+    # (the column stays nullable until stage 3 rebuilds the table).
     """CREATE TABLE IF NOT EXISTS shares (
         token TEXT PRIMARY KEY,
         username TEXT NOT NULL,
@@ -91,8 +92,8 @@ PAGES_SCHEMA = [
 ]
 
 # data.db = derived / regenerable data (chats, the pdf_fts search index which
-# is created lazily by routers/search.py). Old installs may still carry the
-# legacy `annotations` and per-user `shares` tables — harmless leftovers.
+# is created lazily by routers/search.py). The legacy `annotations` and
+# per-user `shares` tables are dropped by gamma/migrate.py.
 # prefs = small JSON UI state synced across browsers (open tabs, ...) — no
 # secrets: data.db is included verbatim in /api/export backups.
 DATA_SCHEMA = [

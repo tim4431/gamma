@@ -14,27 +14,46 @@ All state is SQLite + files on disk under a data directory (env
 - `users.db` — global: accounts (bcrypt, plus nullable per-user storage-limit
   override columns), session tokens, share tokens (`shares`: one per
   owner + `page_id` with `audience` anyone/users/list, `role` view/edit and
-  the comma-separated `allowed_users`; `doc_id` is informational, NULL
-  `page_id` marks a pre-page-keyed row that auth backfills on first use),
-  admin-tunable server settings (`settings` KV).
+  the comma-separated `allowed_users`; `doc_id` is informational — rows from
+  before shares were keyed by page had NULL `page_id` and were backfilled or
+  deleted once by the normalization pass below), admin-tunable server
+  settings (`settings` KV).
 - `users/<username>/pages.db` — the core data model: one `unified_blocks`
   table. Everything is a block (self-referential `parent_id`, fractional-index
   `position` strings like `a0`, `a0V` from the `fractional-indexing` package).
-  Root-level blocks (parent `'root'`) are pages; a page with a `doc_id`
-  property is a PDF page. Highlights are blocks with `highlight_id` /
+  Root-level blocks (parent `'root'`) are pages; a page may CARRY a PDF
+  attachment (`doc_id` / `source_url` / `original_filename`, read through
+  `blocks_store.page_attachment()`). Highlights are blocks with `highlight_id` /
   `pdf_position` in their JSON `properties` column; free notes are blocks
   without.
-- `users/<username>/data.db` — legacy `annotations` table + AI `chats` history
+- `users/<username>/data.db` — AI `chats` history
   + `prefs` (small JSON KV synced across browsers via `/api/prefs/{key}`, e.g.
   `open-tabs`, `recent-views`) + `page_snaps` (the recents-card cover
   thumbnails, synced via `/api/page-snaps` — too big for the prefs KV). The
   reserved `ai-settings` prefs key holds the user's AI provider entries — the
   generic prefs endpoints refuse the key; see [ai.md](ai.md) for how those
   entries are managed and read.
-- `users/<username>/uploads/` — PDFs and images, filenames are content
-  sha256[:24] (dedup).
+- `users/<username>/uploads/` — PDFs, images and generic file attachments
+  (`/api/upload-file`), filenames are content sha256[:24] + extension (dedup).
 
 `connect_users_db()` lazily ALTERs old `users.db` files to add new columns.
+
+## Startup normalization (`gamma/migrate.py`)
+
+There is no migration framework; old data shapes are rewritten by ONE
+idempotent pass that runs at every server start (`app._startup_maintenance`,
+logging a single line only when something changed) and by hand via
+`python manage.py migrate`. Every step SQL-filters (`LIKE`) for the old
+shape first, so a clean data directory costs one query per step and touches
+no row; `updated_at` moves only on rows actually rewritten. Steps:
+`properties.sourceUrl` → `source_url`; legacy `![a](u){:width N}` image
+sizes → `![a|N](u)`; `PDF Notes - <name>` titles without an `auto_title`
+marker → `<name>` + marker (so the metadata worker may still rename them);
+dropping the legacy per-user `annotations`/`shares` tables from `data.db`;
+backfilling `shares.page_id` from the owner's `pages.db` (rows whose document
+is gone are deleted). The read-side shims these replaced are gone — new code
+writes only the new shape. Roadmap and the remaining schema steps:
+[block_centric.md](block_centric.md).
 
 ## Auth model
 
@@ -65,7 +84,8 @@ multi-user instance would be a backdoor — those get a startup hint to run
 
 User CRUD: `create-user`, `set-password`, `set-admin`, `rename-user`,
 `delete-user`, `list-users`, `reset-guest`, `setup` (idempotent: guest account
-+ missing per-user DBs). `rename-user` updates users/sessions/shares rows and
++ missing per-user DBs), `migrate` (the normalization pass above, printing
+per-user counts). `rename-user` updates users/sessions/shares rows and
 moves the data dir — on Windows the move needs the server stopped (open SQLite
 handles lock the directory).
 

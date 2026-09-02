@@ -28,6 +28,17 @@ SUP, SUB = 1, -1
 # of an inline expression that pdf_notes typesets as vector paths.
 TEXT, MATH = "t", "m"
 
+# Image sizes are stored in the Obsidian dialect ``![alt|N](url)``. The legacy
+# Logseq ``![alt](url){:width N}`` suffix is normalized away by the one-time
+# migration pass (gamma/migrate.py) and on export; this is the ONE place that
+# knows the old syntax.
+LEGACY_WIDTH_RE = re.compile(r"(!\[[^\]]*)(\]\([^)]+\))\{:width\s+(\d+)\}")
+
+
+def obsidian_image_sizes(md: str) -> str:
+    """``![a](u){:width N}`` → ``![a|N](u)`` (text without the suffix is returned unchanged)."""
+    return LEGACY_WIDTH_RE.sub(lambda m: f"{m.group(1)}|{m.group(3)}{m.group(2)}", md or "")
+
 # LaTeX command → unicode. Every value here is either WinAnsi- or Symbol-font
 # encodable (see pdf_typeset.font_of), so it can actually be drawn.
 SYMBOLS = {

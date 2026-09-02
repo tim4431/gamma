@@ -67,9 +67,10 @@ or says it is a manual look (**manual**).
 |---|---|---|
 | 5.1 | A remote URL loads without auto-login (normal Gamma login), bar shows its name | auto: *remote workspace: a URL, loads without auto-login* |
 | 5.2 | Unreachable server → back on the launcher with the error text | auto: *unreachable remote falls back to the launcher with the error* |
-| 5.3 | Foreign URLs (`window.open`, `location` changes, `target=_blank` chips) open in the system browser; the window stays on the workspace | auto: *navigation guard: foreign URLs open outside, the window stays* |
-| 5.4 | ChatGPT-OAuth sign-in: the auth page opens in the system browser and the pasted callback URL completes it in Gamma | manual |
-| 5.5 | HTTPS remote with a self-signed cert shows Chromium's interstitial (expected: use a real cert) | manual |
+| 5.3 | Remote cards and bar-menu rows carry a reachability dot: green for a live server, red for a dead URL, dim until probed | auto: *remote reachability dot: on for the live server, off for a dead URL* |
+| 5.4 | Foreign URLs (`window.open`, `location` changes, `target=_blank` chips) open in the system browser; the window stays on the workspace | auto: *navigation guard: foreign URLs open outside, the window stays* |
+| 5.5 | ChatGPT-OAuth sign-in: the auth page opens in the system browser and the pasted callback URL completes it in Gamma | manual |
+| 5.6 | HTTPS remote with a self-signed cert shows Chromium's interstitial (expected: use a real cert) | manual |
 
 ## 6. Look and feel
 
@@ -82,22 +83,33 @@ or says it is a manual look (**manual**).
 | 6.5 | Alt reveals the native menu on Windows; accelerators work without it (Ctrl+R reload, Ctrl+Shift+I devtools, Ctrl+0/±) | manual |
 | 6.6 | Rename from the launcher updates the bar immediately | auto: *rename + remove from the launcher* + bar name via pushState |
 
-## 7. Release
+## 7. Updates
 
 | # | Check | How |
 |---|---|---|
-| 7.1 | `desktop/package.json` version bumped (the release tag is `v<version>`; an existing tag is refused) | manual |
-| 7.2 | `release` workflow: frontend build → freeze → frozen health check → electron-builder → packaged smoke, both OSes | CI |
-| 7.3 | Release page lists `Gamma-<v>-win-x64.exe`, `Gamma-<v>-mac-arm64.dmg`/`.zip`, `gamma-connector-<v>.zip` | manual on the release page |
-| 7.4 | Fresh machine: installer runs (SmartScreen *Run anyway*), first launch creates a workspace, no Python/Node needed | manual |
+| 7.1 | Dev tree / test harness: updater reports `unsupported`, the launcher's Updates row says so, no pill in the bar | auto: *updater: disabled under test, state exposed through the shell* |
+| 7.2 | Packaged app, no newer release: *Help → Check for Updates…* says *latest version*; the launcher row reads *Up to date* | manual |
+| 7.3 | Packaged app, offline: the row reads *Update check failed: …*, nothing else complains; *Try again* re-checks | manual |
+| 7.4 | Windows: install an older version, publish a newer release → within ~15 s of launch the bar shows *Restart to update* (row: *ready; installs when you restart*); clicking it quits, stops every sidecar, installs silently, and the relaunched app reports the new version | manual, needs a real release |
+| 7.5 | macOS (unsigned): same setup shows the *Update: <v>* pill; clicking opens the release page in the browser instead of installing | manual (build on a Mac) |
+
+## 8. Release
+
+| # | Check | How |
+|---|---|---|
+| 8.1 | `desktop/package.json` version bumped (the release tag is `v<version>`; an existing tag is refused) | manual |
+| 8.2 | `release` workflow: frontend build → freeze → frozen health check → electron-builder → signature verify → packaged smoke, both OSes | CI |
+| 8.3 | Release page lists `Gamma-<v>-win-x64.exe` (+ `.blockmap`, `latest.yml`), `Gamma-<v>-mac-arm64.dmg`/`.zip` (+ `latest-mac.yml`), `gamma-connector-<v>.zip`; the release is NOT a draft / pre-release (installed apps skip those) | manual on the release page |
+| 8.4 | Fresh machine: installer runs (unsigned: SmartScreen *Run anyway*; signed: no SmartScreen block, *Publisher* shows the cert subject in the UAC prompt), first launch creates a workspace, no Python/Node needed | manual |
+| 8.5 | Signed macOS build: `codesign --verify --deep --strict Gamma.app` and `spctl --assess --type execute Gamma.app` pass; a fresh download opens without the *damaged* dialog (the release job's *Verify signature* step covers this on the runner) | manual |
 
 ## Last run
 
 | Suite | Date | Result |
 |---|---|---|
-| `npm run e2e` (dev tree, Windows 11) | 2026-09-01 | 19/19 passed |
-| `npm run e2e:packaged` (frozen bundle, Windows 11) | 2026-09-01 | 19/19 passed |
+| `npm run e2e` (dev tree, Windows 11) | 2026-09-02 | 21/21 passed |
+| `npm run e2e:packaged` (frozen bundle, Windows 11) | 2026-09-02 | 21/21 passed |
 
 Manual items last looked at 2026-09-01 on Windows 11: 1.6, 2.4, 2.5, 6.2,
 6.4, 6.5 (screenshots of the bar + launcher in dark and light). Not yet
-exercised: 5.4, 5.5, 4.7, 4.8, everything macOS (6.3), 7.4.
+exercised: 5.5, 5.6, 4.7, 4.8, 7.2–7.5, everything macOS (6.3), 8.4, 8.5.

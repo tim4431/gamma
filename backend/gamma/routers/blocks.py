@@ -211,6 +211,9 @@ async def blocks_replace(payload: BlockReplaceRequest, request: Request):
 
 # Route order matters: static-prefix routes must come before /{block_id}
 
+# Lookup / create BY ATTACHMENT: the page whose PDF is `doc_id`. Text-only
+# pages are created by POST /api/pages (routers/pages.py).
+
 @router.get("/blocks/by-doc/{doc_id}")
 async def ub_get_by_doc(doc_id: str, request: Request):
     scope = share_scope_page(request)
@@ -230,8 +233,9 @@ async def ub_get_by_doc(doc_id: str, request: Request):
 
 @router.post("/blocks/by-doc/{doc_id}")
 async def ub_get_or_create_by_doc(doc_id: str, payload: UBByDocCreate, request: Request):
-    # Creates a page when absent — a write, so it requires a real session
-    # (never the ?share= read principal).
+    # The page carrying this PDF, created when absent (PDF ingest from the
+    # app and the extension) — a write, so it requires a real session (never
+    # the ?share= read principal).
     with sqlite3.connect(user_db_path(require_user(request), "pages.db")) as conn:
         return get_or_create_doc_page(
             conn, doc_id, payload.default_title, payload.source_url, payload.original_filename)
@@ -254,7 +258,44 @@ async def ub_get_children(block_id: str, request: Request):
             f"SELECT {BLOCK_COLUMNS} FROM unified_blocks WHERE parent_id = ? ORDER BY position ASC",
             (block_id,),
         ).fetchall()
-    return {"children": [block_to_dict(r) for r in rows]}
+        previews = _page_previews(conn) if block_id == "root" else None
+    children = [block_to_dict(r) for r in rows]
+    if previews is not None:
+        for child in children:
+            child["preview"] = previews.get(child["id"], "")
+    return {"children": children}
+
+
+PREVIEW_CHARS = 240
+_PREVIEW_BLOCKS = 5
+
+
+def _page_previews(conn) -> dict:
+    """{page_id: preview} for the library listing — the first ~PREVIEW_CHARS
+    characters of each page's first few non-highlight child blocks, joined
+    with " · ". One window query over all pages' direct children (the listing
+    is hot; never N+1). Pages without children are absent (→ "")."""
+    rows = conn.execute(
+        f"""
+        SELECT parent_id, content FROM (
+            SELECT c.parent_id, c.content,
+                   ROW_NUMBER() OVER (PARTITION BY c.parent_id ORDER BY c.position) AS rn
+            FROM unified_blocks c
+            JOIN unified_blocks p ON p.id = c.parent_id AND p.parent_id = 'root'
+            WHERE c.content != ''
+              AND json_extract(c.properties, '$.highlight_id') IS NULL
+        ) WHERE rn <= {_PREVIEW_BLOCKS}
+        ORDER BY parent_id, rn
+        """
+    ).fetchall()
+    previews: dict = {}
+    for page_id, content in rows:
+        current = previews.get(page_id, "")
+        if len(current) >= PREVIEW_CHARS:
+            continue
+        piece = " ".join((content or "").split())
+        previews[page_id] = (current + " · " + piece) if current else piece
+    return {k: v[:PREVIEW_CHARS] for k, v in previews.items()}
 
 
 @router.get("/blocks/{block_id}/subtree")

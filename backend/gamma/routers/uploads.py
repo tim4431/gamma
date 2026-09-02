@@ -1,4 +1,4 @@
-"""PDF/image uploads (content-hash deduped) and upload serving."""
+"""PDF / image / generic file uploads (content-hash deduped) and upload serving."""
 
 import sqlite3
 
@@ -11,12 +11,16 @@ from ..db import user_db_path, user_uploads_dir
 from ..server_settings import check_upload_allowed, usage_bytes, user_limits
 from ..storage import (
     ALLOWED_IMAGE_TYPES,
+    FILE_MEDIA_TYPES,
     IMAGE_EXTENSIONS,
-    IMAGE_MEDIA_TYPES,
+    INLINE_EXTENSIONS,
     content_digest,
+    display_filename,
     find_upload_file,
     is_pdf,
+    store_file,
     store_pdf,
+    upload_media_type,
 )
 
 router = APIRouter(prefix="/api", tags=["uploads"])
@@ -72,9 +76,37 @@ async def upload_image(request: Request, file: UploadFile = File(...)):
     }
 
 
+@router.post("/upload-file")
+async def upload_file(request: Request, file: UploadFile = File(...)):
+    """Store any allowed file (md/txt/csv/json/tex/bib/py/ipynb/html/docx/
+    xlsx/pptx/zip, plus images and PDFs) under its content hash for a block
+    to reference as ``[name](/api/uploads/<hash>.<ext>)``. The extension
+    comes from the uploaded name (images: from the declared type, same path
+    as /upload-image). → ``{url, name, size, already_existed}``."""
+    user = require_writer(request)
+    name = display_filename(file.filename, "file")
+    ext = ""
+    if file.content_type in ALLOWED_IMAGE_TYPES:
+        ext = IMAGE_EXTENSIONS[file.content_type]
+    else:
+        dot = name.rfind(".")
+        ext = name[dot:].lower() if dot > 0 else ""
+        if ext != ".pdf" and ext not in FILE_MEDIA_TYPES:
+            allowed = ", ".join(sorted(e.lstrip(".") for e in FILE_MEDIA_TYPES))
+            raise HTTPException(status_code=400,
+                                detail=f"unsupported file type {ext or '(none)'} — allowed: pdf, images, {allowed}")
+    contents = await file.read()
+    if ext == ".pdf" and not is_pdf(contents):
+        raise HTTPException(status_code=400, detail="not a valid PDF (missing %PDF header)")
+    filename, already_existed = store_file(user, contents, ext)
+    return {"url": f"/api/uploads/{filename}", "name": name, "size": len(contents),
+            "already_existed": already_existed}
+
+
 def _share_can_read_upload(user: str, scope_page_id: str, filename: str) -> bool:
     """A share link may read only its own page's PDF (``<doc_id>.pdf``) or a
-    file the page's subtree references (embedded images)."""
+    file the page's subtree references (embedded images, file chips — any
+    extension, matched textually)."""
     with sqlite3.connect(user_db_path(user, "pages.db")) as conn:
         doc = conn.execute(
             "SELECT json_extract(properties, '$.doc_id') FROM unified_blocks WHERE id = ?",
@@ -97,11 +129,8 @@ async def serve_upload(filename: str, request: Request):
         raise HTTPException(status_code=400, detail="invalid filename")
     stem = filename[:dot]
     ext = filename[dot:].lower()
-    if ext == ".pdf":
-        media_type = "application/pdf"
-    elif ext in IMAGE_MEDIA_TYPES:
-        media_type = IMAGE_MEDIA_TYPES[ext]
-    else:
+    media_type = upload_media_type(ext)
+    if not media_type:
         raise HTTPException(status_code=400, detail="unsupported file type")
     if not stem or not all(c in "0123456789abcdef" for c in stem):
         raise HTTPException(status_code=400, detail="invalid filename")
@@ -129,8 +158,11 @@ async def serve_upload(filename: str, request: Request):
     # origin (stored XSS). Force a download on direct navigation and sandbox it
     # if a browser renders it anyway; <img>/<object> embedding still works, so
     # inline note images are unaffected.
-    if ext == ".svg":
+    # Generic files (office, zip, html, …) download rather than render: html
+    # gets the svg treatment for the same reason.
+    if ext == ".svg" or ext not in INLINE_EXTENSIONS:
         headers["Content-Disposition"] = f'attachment; filename="{filename}"'
+    if ext in (".svg", ".html"):
         headers["Content-Security-Policy"] = "default-src 'none'; sandbox"
     return FileResponse(path, media_type=media_type, headers=headers)
 

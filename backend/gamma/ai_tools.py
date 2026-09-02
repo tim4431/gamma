@@ -37,7 +37,7 @@ import sqlite3
 from fractional_indexing import generate_key_between
 
 from .ai_context import page_report_section
-from .blocks_store import fetch_subtree, page_root_id
+from .blocks_store import fetch_subtree, page_attachment, page_root_id
 from .db import page_now, user_db_path
 from .foldertags import clean_path, parse_tags
 from .logbuf import log
@@ -245,9 +245,10 @@ def _run_list_pages(conn, user: str, scope: dict, args: dict):
             continue
         if title_q and title_q not in (content or "Untitled").lower():
             continue
+        attachment = page_attachment(props)
         bits = [f"id={page_id}",
                 f'title="{(content or "Untitled")[:120]}"',
-                "pdf" if props.get("doc_id") else "note"]
+                f"attachments=[{attachment['kind']}]" if attachment else "attachments=[]"]
         if tags:
             bits.append("folders=[" + ", ".join(tags) + "]")
         if page_labels:
@@ -617,9 +618,10 @@ TOOLS = [
         "spec": {
             "name": "list_pages",
             "description": (
-                "List the pages (papers and notes) in the folder the user is viewing, one "
-                "per line: id, title, kind (pdf/note), folder paths, labels, cached paper "
-                "metadata (first author, year, venue) and last-update date. Call this "
+                "List the pages in the folder the user is viewing, one per line: id, "
+                "title, attachments (`[pdf]` when the page carries a PDF, `[]` for a "
+                "text-only page), folder paths, labels, cached paper metadata (first "
+                "author, year, venue) and last-update date. Call this "
                 "before any other tool — never guess page ids. Prefer the filters over "
                 "listing everything: `label` (exact label, case-insensitive), `folder` "
                 "(a subfolder path), `title_contains` (title substring). "

@@ -10,7 +10,7 @@ import rehypeRaw from "rehype-raw";
 import { withLegacyAccessors } from "./logseqPdfModel";
 import { COLORS } from "./pdfViewer";
 import { handleMarkdownCopy } from "./widgets";
-import { FolderIcon, LinkIcon } from "./icons";
+import { FolderIcon, LinkIcon, PaperclipIcon } from "./icons";
 import {
   envCompletions, findMathAtCursor, insertionFor, latexCompletions,
   LatexAcPopup, MathLivePreview, mathTabJump,
@@ -174,6 +174,43 @@ function toggleTaskMarker(content, idx, checked) {
       return i === idx ? p1 + p2 + (checked ? "x" : " ") + p4 : m;
     },
   );
+}
+
+// A same-origin upload linked from a block (`[name](/api/uploads/<hash>.ext)`
+// — what a dropped non-image file becomes) renders as a file chip: no
+// preview fetch, opens/downloads in a new tab.
+function FileChip({ href, text }) {
+  const name = (text || "").trim() || decodeURIComponent(href.split("/").pop() || "file");
+  return (
+    <a
+      className="linkChip fileChip"
+      href={withShare(href)}
+      target="_blank"
+      rel="noreferrer"
+      title={name}
+      onMouseDown={(e) => e.stopPropagation()}
+      onClick={(e) => e.stopPropagation()}
+    >
+      <PaperclipIcon size={12} strokeWidth={2.2} />
+      <span className="linkChipText">{name}</span>
+    </a>
+  );
+}
+
+// POST /api/upload-file → {url, name} | null: any non-image file a block
+// accepts (drop). Server-side allowlist; a refusal surfaces as null.
+async function uploadOtherFile(file) {
+  if (!file) return null;
+  try {
+    const form = new FormData();
+    form.append("file", file);
+    const res = await fetch(withShare("/api/upload-file"), { method: "POST", body: form, credentials: "include" });
+    if (!res.ok) return null;
+    const data = await res.json();
+    return data?.url ? { url: data.url, name: data.name || file.name } : null;
+  } catch (_) {
+    return null;
+  }
 }
 
 // POST /api/upload-image → url | null; shared by the block row (drop, paste,
@@ -515,6 +552,9 @@ const BlockMarkdown = React.memo(function BlockMarkdown({ content, blockId, refL
           }
           if (/^https?:\/\//i.test(href || "")) {
             return <LinkChip href={href} text={textOf(children)} />;
+          }
+          if (/^\/api\/uploads\//.test(href || "") && !/\.(png|jpe?g|gif|webp|svg)(\?|$)/i.test(href)) {
+            return <FileChip href={href} text={textOf(children)} />;
           }
           return <a href={href} target="_blank" rel="noreferrer">{children}</a>;
         },
@@ -872,8 +912,10 @@ function BlockRow({
   function handleImageDragOver(e) {
     if (!e.dataTransfer?.types || !Array.from(e.dataTransfer.types).includes("Files")) return;
     if (!e.dataTransfer?.items) return;
-    const hasImage = Array.from(e.dataTransfer.items).some((item) => item.type?.startsWith("image/"));
-    if (!hasImage) return;
+    // Any file lands in the block: images inline, PDFs are the page's business
+    // (App attaches them), everything else becomes a file chip.
+    const hasFile = Array.from(e.dataTransfer.items).some((item) => item.kind === "file" && item.type !== "application/pdf");
+    if (!hasFile) return;
     e.preventDefault();
     e.dataTransfer.dropEffect = "copy";
     setImageDragOver(true);
@@ -895,8 +937,19 @@ function BlockRow({
     e.preventDefault();
     e.stopPropagation();
     setImageDragOver(false);
-    const url = await uploadImage(e.dataTransfer.files?.[0]);
-    if (url) onChangeText(block.id, (block.content || "") + "\n" + `![](${url})`);
+    const file = e.dataTransfer.files?.[0];
+    if (!file) return;
+    if (file.type?.startsWith("image/")) {
+      const url = await uploadImage(file);
+      if (url) onChangeText(block.id, (block.content || "") + "\n" + `![](${url})`);
+      return;
+    }
+    if (uploadingRef.current) return;
+    uploadingRef.current = true;
+    try {
+      const up = await uploadOtherFile(file);
+      if (up) onChangeText(block.id, `${block.content || ""}${block.content ? "\n" : ""}[${up.name.replace(/[\[\]]/g, "")}](${up.url})`);
+    } finally { uploadingRef.current = false; }
   }
 
   // A gamma block link pastes as mention chip / synced embed / plain URL;
@@ -1185,7 +1238,7 @@ function BlockRow({
 
         <div className="blockBody">
           <div className="blockMeta">
-            {block._pageId ? (block._sourceUrl ? "PDF annotation" : "regular note") : block.page ? `p.${block.page}` : "note"}
+            {block._pageId ? (block._attachment ? "PDF annotation" : "regular note") : block.page ? `p.${block.page}` : "note"}
             {block._folders?.map((f) => (
               <span key={f} className="folderTagBadge" title={`In folder ${f}`}>
                 <FolderIcon size={10} />
@@ -1381,12 +1434,12 @@ function BlockRow({
             <button
               type="button"
               className="blockLinkChip"
-              title={block.properties.link_url || "Open linked paper"}
+              title={block.properties.link_url || "Open linked page"}
               onClick={(e) => { e.stopPropagation(); onOpenLinkTarget?.(block); }}
             >
               <LinkIcon size={11} strokeWidth={2.4} />
               {block.properties.link_page_id
-                ? "linked paper"
+                ? "linked page"
                 : (block.properties.link_url || "").replace(/^https?:\/\//i, "").slice(0, 48)}
             </button>
           ) : null}

@@ -11,8 +11,20 @@
 #
 # Every installer bundles the frozen backend (PyInstaller) + built frontend,
 # so a released app is fully self-contained — no Python or Node needed.
-# macOS builds are unsigned (no Apple Developer ID): first launch needs
-# right-click -> Open, or `xattr -dr com.apple.quarantine /Applications/Gamma.app`.
+#
+# Code signing is optional and driven entirely by repository secrets
+# (desktop/electron-builder.js turns each piece on only when its secrets are
+# present, so a fork without them still builds — unsigned):
+#   Windows, Azure Trusted Signing:  AZURE_TENANT_ID, AZURE_CLIENT_ID,
+#     AZURE_CLIENT_SECRET (an Entra app registration with the "Trusted
+#     Signing Certificate Profile Signer" role), AZURE_SIGN_ENDPOINT
+#     (e.g. https://eus.codesigning.azure.net), AZURE_SIGN_ACCOUNT,
+#     AZURE_SIGN_PROFILE, optional AZURE_SIGN_PUBLISHER (cert subject, "CN=…").
+#   macOS, Developer ID + notarization:  MAC_CERT_P12 (base64 of the
+#     "Developer ID Application" .p12), MAC_CERT_PASSWORD, APPLE_ID,
+#     APPLE_APP_SPECIFIC_PASSWORD, APPLE_TEAM_ID.
+# Unsigned builds: Windows shows SmartScreen (More info -> Run anyway), macOS
+# refuses to open ("damaged") until `xattr -dr com.apple.quarantine`.
 
 name: release
 
@@ -66,8 +78,23 @@ jobs:
         os: [windows-latest, macos-latest]
     runs-on: ${{ matrix.os }}
     env:
-      # No signing certs configured; keep electron-builder from looking.
-      CSC_IDENTITY_AUTO_DISCOVERY: "false"
+      # Signing credentials (see the header). Empty secrets = unsigned build;
+      # electron-builder must then not go hunting for certs in the runner's
+      # keychain. CSC_LINK is macOS-only on purpose: on Windows electron-builder
+      # would read it as a signtool certificate and shadow Azure signing.
+      CSC_IDENTITY_AUTO_DISCOVERY: ${{ matrix.os == 'macos-latest' && secrets.MAC_CERT_P12 != '' }}
+      CSC_LINK: ${{ matrix.os == 'macos-latest' && secrets.MAC_CERT_P12 || '' }}
+      CSC_KEY_PASSWORD: ${{ matrix.os == 'macos-latest' && secrets.MAC_CERT_PASSWORD || '' }}
+      APPLE_ID: ${{ secrets.APPLE_ID }}
+      APPLE_APP_SPECIFIC_PASSWORD: ${{ secrets.APPLE_APP_SPECIFIC_PASSWORD }}
+      APPLE_TEAM_ID: ${{ secrets.APPLE_TEAM_ID }}
+      AZURE_TENANT_ID: ${{ secrets.AZURE_TENANT_ID }}
+      AZURE_CLIENT_ID: ${{ secrets.AZURE_CLIENT_ID }}
+      AZURE_CLIENT_SECRET: ${{ secrets.AZURE_CLIENT_SECRET }}
+      AZURE_SIGN_ENDPOINT: ${{ secrets.AZURE_SIGN_ENDPOINT }}
+      AZURE_SIGN_ACCOUNT: ${{ secrets.AZURE_SIGN_ACCOUNT }}
+      AZURE_SIGN_PROFILE: ${{ secrets.AZURE_SIGN_PROFILE }}
+      AZURE_SIGN_PUBLISHER: ${{ secrets.AZURE_SIGN_PUBLISHER }}
     steps:
       - uses: actions/checkout@v4
 
@@ -116,9 +143,34 @@ jobs:
 
       - name: Build desktop app
         working-directory: desktop
+        shell: bash
         run: |
+          if [ "$RUNNER_OS" = "Windows" ]; then
+            [ -n "$AZURE_CLIENT_ID" ] && echo "::notice::Windows: signing with Azure Trusted Signing" || echo "::warning::Windows: UNSIGNED build (no AZURE_* secrets)"
+          else
+            [ -n "$CSC_LINK" ] && echo "::notice::macOS: signing with Developer ID (notarize=$([ -n "$APPLE_ID" ] && echo yes || echo no))" || echo "::warning::macOS: UNSIGNED build (no MAC_CERT_P12 secret)"
+          fi
           npm ci
           npx electron-builder --publish never
+
+      - name: Verify signature
+        working-directory: desktop
+        shell: bash
+        run: |
+          if [ "$RUNNER_OS" = "Windows" ]; then
+            [ -z "$AZURE_CLIENT_ID" ] && exit 0
+            exe=$(ls dist/*.exe | head -1)
+            powershell -NoProfile -Command "\$s = Get-AuthenticodeSignature '$exe'; \$s | Format-List Status, StatusMessage, SignerCertificate; if (\$s.Status -ne 'Valid') { exit 1 }"
+          else
+            [ -z "$CSC_LINK" ] && exit 0
+            app=$(ls -d dist/mac*/Gamma.app | head -1)
+            codesign --verify --deep --strict --verbose=2 "$app"
+            codesign -d --entitlements - "$app/Contents/Resources/gamma-server/gamma-server" | head -20
+            if [ -n "$APPLE_ID" ]; then
+              spctl --assess --type execute --verbose=2 "$app"
+              xcrun stapler validate "$app"
+            fi
+          fi
 
       - name: Shell self-test (packaged app)
         working-directory: desktop
@@ -132,6 +184,8 @@ jobs:
             desktop/dist/*.exe
             desktop/dist/*.dmg
             desktop/dist/*.zip
+            desktop/dist/*.blockmap
+            desktop/dist/latest*.yml
           if-no-files-found: error
 
   extension:
@@ -170,6 +224,8 @@ jobs:
           EXT_VERSION: ${{ needs.meta.outputs.ext_version }}
           REPO: ${{ github.repository }}
           TAG: ${{ needs.meta.outputs.tag }}
+          WIN_SIGNED: ${{ secrets.AZURE_CLIENT_ID != '' }}
+          MAC_SIGNED: ${{ secrets.MAC_CERT_P12 != '' && secrets.APPLE_ID != '' }}
         run: |
           ls -la assets
           base="https://github.com/$REPO/releases/download/$TAG"
@@ -184,7 +240,11 @@ jobs:
             [ -n "$dmg" ] && echo "| macOS (Apple Silicon) | [$dmg]($base/$dmg) |"
             [ -n "$zipmac" ] && echo "| macOS (zip) | [$zipmac]($base/$zipmac) |"
             echo
-            echo "Self-contained: no Python or Node needed. Unsigned builds — Windows SmartScreen: *More info → Run anyway*; macOS: right-click → *Open* (or \`xattr -dr com.apple.quarantine /Applications/Gamma.app\`)."
+            echo -n "Self-contained: no Python or Node needed."
+            [ "$WIN_SIGNED" = "true" ] && echo -n " Windows build is code-signed (Azure Trusted Signing)." || echo -n " Windows build is unsigned — SmartScreen: *More info → Run anyway* (Edge: *… → Keep → Keep anyway*)."
+            [ "$MAC_SIGNED" = "true" ] && echo " macOS build is signed and notarized." || echo " macOS build is unsigned — if it says *damaged*, run \`xattr -dr com.apple.quarantine /Applications/Gamma.app\` once (or *Open Anyway* in System Settings → Privacy & Security)."
+            echo
+            echo "Installed apps update themselves from this page (Help → *Check for Updates…*; Windows installs on restart, macOS offers the download until builds are signed). The \`latest*.yml\` and \`.blockmap\` assets are that update feed."
             echo
             echo "## Browser extension $EXT_VERSION"
             echo

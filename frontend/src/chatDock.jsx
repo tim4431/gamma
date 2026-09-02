@@ -64,7 +64,7 @@ const toolCallText = (a) => {
 };
 
 export default function ChatDock({
-  docId, focusedBlockId, homeBlocks, pdfTitle, openTabs,
+  docId, focusedBlockId, homeBlocks, pageTitle, openTabs,
   pdfSelections, setPdfSelections,
   chatImages, setChatImages,
   chatModel, setChatModel, chatEffort, setChatEffort, chatSystem,
@@ -357,7 +357,7 @@ export default function ChatDock({
       ...(sendingPdf
         ? (chatDocs.length
             ? chatDocs.map((id) => homeBlocks.find((b) => b.id === id)?.content || "PDF")
-            : [pdfTitle || "current PDF"])
+            : [pageTitle || "current page"])
         : []),
     ];
     const userMsg = {
@@ -1115,21 +1115,23 @@ export default function ChatDock({
           <div className="reportModal docPickerModal" onClick={(e) => e.stopPropagation()}>
             <div className="reportModalTitle">Add papers to the chat</div>
             <div className="reportModalHint">
-              Selected papers (and optionally your notes) are sent with every question —
+              Selected pages (their PDF text, and optionally your notes) are sent with every question —
               pick a few and just ask for a report.
             </div>
             <input
               autoFocus
               className="searchInput"
-              placeholder="Search your papers…"
+              placeholder="Search your pages…"
               value={docPickerQuery}
               onChange={(e) => setDocPickerQuery(e.target.value)}
               onKeyDown={(e) => { if (e.key === "Escape") { e.preventDefault(); setDocPicker(false); } }}
             />
             <div className="reportPageList docPickerList">
               {(() => {
-                const papers = homeBlocks.filter((b) => b.properties?.doc_id);
-                if (!papers.length) return <div className="popoverHint">No PDFs yet — open or upload one first.</div>;
+                // Every page can be context — a page of notes as much as a
+                // paper; the server adds PDF text for pages that carry one.
+                const papers = homeBlocks;
+                if (!papers.length) return <div className="popoverHint">No pages yet — create one first.</div>;
                 const title = (b) => b.content || "Untitled";
                 const byRecency = (x, y) => (y.updated_at || "").localeCompare(x.updated_at || "");
                 const row = (b, badge) => (
@@ -1153,7 +1155,7 @@ export default function ChatDock({
                     .sort(byRecency);
                   return hits.length
                     ? hits.map((b) => row(b))
-                    : <div className="popoverHint">No papers match “{docPickerQuery.trim()}”.</div>;
+                    : <div className="popoverHint">No pages match “{docPickerQuery.trim()}”.</div>;
                 }
                 // No search: papers open as tabs first (the likely candidates),
                 // then the rest of the library by recency.
@@ -1176,7 +1178,7 @@ export default function ChatDock({
               <span className="attachName">Include my notes &amp; highlights</span>
             </label>
             {!chatDocs.length && docId ? (
-              <div className="popoverHint">Nothing selected — the currently open PDF is used.</div>
+              <div className="popoverHint">Nothing selected — the open page is used.</div>
             ) : null}
             <div className="reportModalBtns">
               {chatDocs.length ? (
