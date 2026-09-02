@@ -22,6 +22,8 @@ from ..ai_client import (
     call_ai as _call_ai,
     chatgpt_request as _chatgpt_request,
     open_ai as _open_ai,
+    partial_json_object as _partial_json_object,
+    partial_json_strings as _partial_json_strings,
     protocol as _protocol,
     read_reply as _read_reply,
     sse_deltas as _sse_deltas,
@@ -70,6 +72,11 @@ from ..logbuf import log
 from ..pdf_text import extract_text
 from ..textnorm import INDEX_VERSION
 
+# Note editors whose in-flight arguments the chat streams as "progress"
+# events: the notes panel types the markdown into the block as the model
+# writes it (see agent_events).
+_PREVIEW_TOOLS = {"edit_block", "create_block"}
+
 router = APIRouter(prefix="/api", tags=["ai"])
 
 # Reasoning-depth values accepted by both wire protocols (Anthropic
@@ -91,6 +98,13 @@ class AIChatRequest(BaseModel):
     history: list = Field(default_factory=list)  # [{role: "user"|"ai", text: str}, ...]
     model: str = ""       # model registry id ("provider:model"), must be in AI_MODELS
     selection: str = ""   # text the user selected in the PDF — focus the answer on it
+    # What the user pointed the message at inside the NOTES: the block their
+    # cursor is on (the agent's "this block"), blocks they attached as chips
+    # (ids — resolved server-side to id-labelled text so the agent can edit
+    # them), and note text they selected with Ctrl held (verbatim passages).
+    focus_block_id: str = ""
+    context_blocks: list = Field(default_factory=list)
+    note_passages: list = Field(default_factory=list)
     attach_pdf: bool = False  # send the PDF itself instead of extracted text
     effort: str = ""      # reasoning effort; empty = provider default (param omitted)
     system: str = ""      # custom system prompt; empty = built-in default
@@ -759,6 +773,7 @@ _TRANSLATE_PROMPT = (
 
 _TRANSLATE_MAX_TEXTS = 200      # paragraphs per request (a page is ~10–50)
 _TRANSLATE_MAX_CHARS = 60000    # total source chars per request
+_TRANSLATE_STREAM_INTERVAL = 0.05  # min seconds between streamed partial lines (~20 paints/s)
 # In-memory LRU: key (see _translate_key) → translated text. Process-wide,
 # never written to disk; a restart simply starts cold. The lock matters:
 # requests run in FastAPI's threadpool and the viewer fires several in
@@ -792,6 +807,10 @@ class AITranslateRequest(BaseModel):
     lang: str = "zh-CN"   # target language code (TRANSLATE_LANGS key)
     model: str = ""       # model registry id; "" = the user's default
     effort: str = ""      # reasoning effort; "" = provider default (param omitted)
+    # NDJSON stream: {"i": [indices], "text": partial} lines as the model
+    # writes each paragraph (the viewer types them into the page), then the
+    # same final {"translations", "model", "cached"} object as the plain reply.
+    stream: bool = False
 
 
 def _translate_key(user: str, lang: str, model: str, text: str) -> str:
@@ -848,25 +867,48 @@ def ai_translate(payload: AITranslateRequest, request: Request):
         if keys[i] not in hits and keys[i] not in queued and t.strip():
             queued.add(keys[i])
             miss.append(i)
-    if miss:
-        miss_texts = [texts[i] for i in miss]
-        system = _TRANSLATE_PROMPT.format(lang=TRANSLATE_LANGS[lang])
-        effort = _resolve_effort(payload.effort)
+    if not miss:
+        out = [hits.get(k, texts[i]) for i, k in enumerate(keys)]
+        final = {"translations": out, "model": entry["id"], "cached": True}
+        if not payload.stream:
+            return final
+        return StreamingResponse(iter([json.dumps(final) + "\n"]),
+                                 media_type="application/x-ndjson")
 
-        def call(batch):
-            # Output roughly tracks input length (CJK ≈ 1 token/char); the
-            # generous floor covers JSON overhead and reasoning models whose
-            # thinking spends from the same budget.
-            max_tokens = min(30000, 8000 + 2 * sum(len(t) for t in batch))
-            return _call_ai(
-                [{"role": "user", "content": json.dumps(batch, ensure_ascii=False)}],
-                system, entry, rt, effort=effort, max_tokens=max_tokens, timeout=180)
+    miss_texts = [texts[i] for i in miss]
+    system = _TRANSLATE_PROMPT.format(lang=TRANSLATE_LANGS[lang])
+    effort = _resolve_effort(payload.effort)
 
+    def user_turn(batch):
+        return [{"role": "user", "content": json.dumps(batch, ensure_ascii=False)}]
+
+    def budget(batch):
+        # Output roughly tracks input length (CJK ≈ 1 token/char); the
+        # generous floor covers JSON overhead and reasoning models whose
+        # thinking spends from the same budget.
+        return min(30000, 8000 + 2 * sum(len(t) for t in batch))
+
+    def call(batch):
+        return _call_ai(user_turn(batch), system, entry, rt, effort=effort,
+                        max_tokens=budget(batch), timeout=180)
+
+    def stream_call(batch):
+        """The same call, streamed: yields ("partial", text-so-far) as the
+        reply arrives, then ("reply", full text)."""
+        resp = _open_ai(user_turn(batch), system, entry, rt, effort=effort,
+                        max_tokens=budget(batch), timeout=180, stream=True)
+        acc = ""
         try:
-            reply = call(miss_texts)
-        except Exception as e:
-            log.warning(f"[ai_translate] {e}")
-            raise HTTPException(status_code=502, detail=f"translation failed: {e}")
+            for text in _sse_deltas(resp, _protocol(rt, entry)):
+                acc += text
+                yield ("partial", acc)
+        finally:
+            resp.close()
+        yield ("reply", acc)
+
+    def finish(reply):
+        """Parse the batch reply (salvaging a miscounted array paragraph by
+        paragraph), fill the cache, and build the final response object."""
         try:
             translated = _parse_translation_array(reply, len(miss_texts))
         except ValueError as e:
@@ -892,8 +934,49 @@ def ai_translate(payload: AITranslateRequest, request: Request):
             hits[keys[i]] = t
             if t and t != texts[i]:  # identity fallbacks stay uncached so a retry can improve them
                 _cache_put(keys[i], t)
-    out = [hits.get(k, texts[i]) for i, k in enumerate(keys)]
-    return {"translations": out, "model": entry["id"], "cached": not miss}
+        out = [hits.get(k, texts[i]) for i, k in enumerate(keys)]
+        return {"translations": out, "model": entry["id"], "cached": False}
+
+    if not payload.stream:
+        try:
+            reply = call(miss_texts)
+        except Exception as e:
+            log.warning(f"[ai_translate] {e}")
+            raise HTTPException(status_code=502, detail=f"translation failed: {e}")
+        return finish(reply)
+
+    # Streamed: element j of the batch reply belongs to every request index
+    # sharing its key (duplicates were collapsed into one upstream element).
+    slots = {}
+    for i, k in enumerate(keys):
+        if k in queued:
+            slots.setdefault(k, []).append(i)
+    targets = [slots[keys[i]] for i in miss]
+
+    def ndjson():
+        shown = {}  # j -> partial text already sent
+        last = 0.0
+        reply = ""
+        try:
+            for kind, data in stream_call(miss_texts):
+                if kind == "reply":
+                    reply = data
+                    break
+                now = time.monotonic()
+                if now - last < _TRANSLATE_STREAM_INTERVAL:
+                    continue
+                last = now
+                parts = _partial_json_strings(data)
+                for j, t in enumerate(parts[:len(miss_texts)]):
+                    if t and shown.get(j) != t:
+                        shown[j] = t
+                        yield json.dumps({"i": targets[j], "text": t}, ensure_ascii=False) + "\n"
+            yield json.dumps(finish(reply), ensure_ascii=False) + "\n"
+        except Exception as e:
+            log.warning(f"[ai_translate] {e}")
+            yield json.dumps({"error": f"translation failed: {e}"}) + "\n"
+
+    return StreamingResponse(ndjson(), media_type="application/x-ndjson")
 
 
 # --- Voice dictation ----------------------------------------------------------
@@ -1088,7 +1171,11 @@ def ai_chat(payload: AIChatRequest, request: Request):
     # The scope decides which tools exist; the permission toggles pick the
     # armed subset — an empty result (or no scope) is a plain chat.
     scope = {"type": payload.agent_scope, "folder": payload.folder,
-             "page_id": payload.page_id, "read_chars": payload.read_char_limit}
+             "page_id": payload.page_id, "read_chars": payload.read_char_limit,
+             # The agent prompt names the cursor block / attached chips so
+             # "this block" resolves without a read_block round-trip.
+             "focus_block_id": (payload.focus_block_id or "").strip()[:64],
+             "context_blocks": [str(b)[:64] for b in payload.context_blocks[:12]]}
     valid_scope = payload.agent_scope in ("folder", "page") and (
         payload.agent_scope != "page" or payload.page_id)
     tools = (agent_tools(payload.agent_scope, payload.permissions,
@@ -1133,9 +1220,13 @@ def ai_chat(payload: AIChatRequest, request: Request):
                 log.warning(f"[ai_chat] chatgpt rejected native PDF parts, retrying as text: {e}")
 
     def agent_events(first_resp):
-        """Organizer tool loop: yield ("delta", text) / ("action", dict) events.
-        Each round streams one provider turn; tool calls are executed here and
-        their results appended before the next round re-opens the provider."""
+        """Organizer tool loop: yield ("delta", text) / ("action", dict) /
+        ("progress", dict) events. Each round streams one provider turn; tool
+        calls are executed here and their results appended before the next
+        round re-opens the provider. A "progress" event previews a note
+        edit while the model is still writing it: the block being edited (or
+        the parent/sibling of the block being created) plus the markdown
+        streamed so far — the notes panel types it into the block live."""
         proto = _wire_protocol(rt, entry, tools)  # tools may reroute openai → /v1/responses
         messages, system, pdf_b64s = state["messages"], state["system"], state["pdf_b64s"]
         armed = {t["name"] for t in tools}  # only armed tools execute
@@ -1144,12 +1235,39 @@ def ai_chat(payload: AIChatRequest, request: Request):
         max_rounds = payload.tool_rounds or MAX_TOOL_ROUNDS
         for round_no in range(max_rounds):
             calls, text_parts = [], []
+            last_preview = {}  # call id -> content previewed so far (dedup)
             try:
                 for kind, data in _sse_events(resp, proto):
                     if kind == "text":
                         text_parts.append(data)
                         yield ("delta", data)
-                    else:
+                    elif kind == "tool_delta":
+                        name = _canonical_tool(data.get("name") or "")
+                        if name not in _PREVIEW_TOOLS or name not in armed:
+                            continue
+                        args = _partial_json_object(data.get("json") or "")
+                        target = args.get("block_id" if name == "edit_block" else "parent_id")
+                        content = args.get("content")
+                        if not target or content is None:
+                            continue  # nothing to point at (or say) yet
+                        if last_preview.get(data.get("id")) == content:
+                            continue
+                        last_preview[data.get("id")] = content
+                        progress = {"tool": name, "id": data.get("id") or "",
+                                    "content": content}
+                        if name == "edit_block":
+                            progress["block_id"] = target
+                            # append/prepend: the preview keeps the stored text
+                            # and types the addition in at the right end.
+                            mode = str(args.get("mode") or "replace").lower()
+                            if mode in ("append", "prepend"):
+                                progress["mode"] = mode
+                        else:
+                            progress["parent_id"] = target
+                            if args.get("after_id"):
+                                progress["after_id"] = args["after_id"]
+                        yield ("progress", progress)
+                    elif kind == "tool":
                         calls.append(data)
             finally:
                 resp.close()
@@ -1203,7 +1321,7 @@ def ai_chat(payload: AIChatRequest, request: Request):
                         if head:
                             yield head
                         for kind, data in agent_events(resp):
-                            yield json.dumps({"delta" if kind == "delta" else "action": data}) + "\n"
+                            yield json.dumps({kind: data}) + "\n"
                     except Exception as e:
                         log.warning(f"[ai_chat] agent stream error: {e}")
                         yield json.dumps({"error": f"AI call failed: {e}"}) + "\n"
@@ -1228,7 +1346,11 @@ def ai_chat(payload: AIChatRequest, request: Request):
             # non-stream callers and return the actions alongside the text.
             parts, actions = [], []
             for kind, data in agent_events(open_with_fallback(True)):
-                (parts if kind == "delta" else actions).append(data)
+                if kind == "delta":
+                    parts.append(data)
+                elif kind == "action":
+                    actions.append(data)
+                # "progress" previews only matter to a live UI
             return {"response": "".join(parts), "actions": actions,
                     "context": state.get("coverage") or []}
         with open_with_fallback(False) as resp2:

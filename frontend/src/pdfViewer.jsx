@@ -1068,9 +1068,13 @@ function PdfViewer({ url, highlights, pdfScaleValue, scrollRef, onJump, onHighli
           setPageTrans(pn, { key, paras, texts: [], done: true });
           continue;
         }
-        const st = { paras, out: new Array(texts.length).fill(undefined), remaining: 0 };
+        // busy: translate-indices whose request is in flight (the page
+        // shimmers those lines); partial: text streamed so far per index
+        // (typed onto the page ahead of the final text).
+        const st = { paras, out: new Array(texts.length).fill(undefined), remaining: 0,
+                     busy: new Set(), partial: {} };
         pageState.set(pn, st);
-        setPageTrans(pn, { key, paras, texts: [], done: false });
+        setPageTrans(pn, { key, paras, texts: [], done: false, queued: true });
         let start = 0, chars = 0;
         for (let i = 0; i < texts.length; i++) {
           chars += texts[i].length;
@@ -1100,17 +1104,29 @@ function PdfViewer({ url, highlights, pdfScaleValue, scrollRef, onJump, onHighli
           continue;
         }
         let res = null;
+        const st = pageState.get(c.pn);
+        const paint = (done) => setPageTrans(c.pn, {
+          key, paras: st.paras, texts: st.out.slice(), done, queued: !done,
+          busy: new Set(st.busy), partial: { ...st.partial },
+        });
+        for (let j = 0; j < c.texts.length; j++) st.busy.add(c.off + j);
+        paint(false);
+        const onPartial = (j, text) => {
+          if (job.aborted) return;
+          st.partial[c.off + j] = text;
+          paint(false);
+        };
         // One client-side retry per chunk (transient network/provider blips);
         // the server separately salvages miscounted model replies.
         for (let attempt = 0; attempt < 2 && !res && !job.aborted; attempt++) {
-          res = await Promise.resolve(cbRef.current.onTranslate?.(c.texts, job.ctl.signal)).catch(() => null);
+          res = await Promise.resolve(cbRef.current.onTranslate?.(c.texts, job.ctl.signal, onPartial)).catch(() => null);
         }
+        for (let j = 0; j < c.texts.length; j++) { st.busy.delete(c.off + j); delete st.partial[c.off + j]; }
         if (job.aborted) return;
         if (!res) { failed = true; return; }
-        const st = pageState.get(c.pn);
         res.forEach((t, j) => { st.out[c.off + j] = t; });
         st.remaining -= 1;
-        setPageTrans(c.pn, { key, paras: st.paras, texts: st.out.slice(), done: st.remaining === 0 });
+        paint(st.remaining === 0);
         doneChars += c.texts.reduce((n, t) => n + t.length, 0);
         // While segmentation is still running the denominator is a lower
         // bound, so cap displayed progress until the total is final.
@@ -1121,6 +1137,17 @@ function PdfViewer({ url, highlights, pdfScaleValue, scrollRef, onJump, onHighli
     await Promise.all(
       [producer()].concat(Array.from({ length: translateParallelRef.current }, worker)));
     transJobRef.current = null;
+    // Job over (finished, halted or failed): nothing is queued or in flight
+    // any more — drop the working indicators, keep whatever was translated.
+    setTransMap((prev) => {
+      const m = new Map(prev);
+      for (const [pn, e] of m) {
+        if (e.queued || e.busy?.size || (e.partial && Object.keys(e.partial).length)) {
+          m.set(pn, { ...e, queued: false, busy: null, partial: null });
+        }
+      }
+      return m;
+    });
     setTransStatus({ running: false, label, progress: totalChars ? doneChars / totalChars : 1 });
   }
 
@@ -1595,7 +1622,7 @@ function NoteBadge({ hlId, text, style, onClick, onContextMenu }) {
 // drawn at the original font size, shrunk in steps until it fits the box —
 // the page layout never reflows. The measured shrink loop runs a handful of
 // synchronous reflows per block; pages have tens of blocks, which is fine.
-function TransPara({ box, lines, baseSize, text }) {
+function TransPara({ box, lines, baseSize, text, streaming }) {
   const ref = useRef(null); // the text container (the fit-measured element)
   useLayoutEffect(() => {
     const el = ref.current;
@@ -1610,13 +1637,27 @@ function TransPara({ box, lines, baseSize, text }) {
     }
   }, [text, baseSize, box.width, box.height]);
   return (
-    <div className="pdfTransPara" style={{ left: box.left, top: box.top, width: box.width, height: box.height }}>
+    <div className={"pdfTransPara" + (streaming ? " streaming" : " landed")}
+      style={{ left: box.left, top: box.top, width: box.width, height: box.height }}>
       {lines.map((l, i) => (
         <div key={i} className="pdfTransMask" style={{ left: l.left, top: l.top, width: l.width, height: l.height }} />
       ))}
       <div ref={ref} className="pdfTransText" style={{ fontSize: baseSize }}>
         <span>{text}</span>
       </div>
+    </div>
+  );
+}
+
+// The working indicator over a paragraph whose translation has not arrived:
+// its original lines stay readable under a faint accent wash — shimmering
+// while the request is in flight, still while it is only queued.
+function TransPending({ lines, busy }) {
+  return (
+    <div className={"pdfTransPending" + (busy ? " busy" : "")}>
+      {lines.map((l, i) => (
+        <div key={i} className="pdfTransPendingLine" style={{ left: l.left, top: l.top, width: l.width, height: l.height }} />
+      ))}
     </div>
   );
 }
@@ -1822,7 +1863,13 @@ const PdfPage = React.memo(function PdfPage({ pageNumber, pdfDoc, scale, highlig
   // Whether translated text is on screen: gates the overlay and flips the
   // wrap class that makes the translation selectable instead of the
   // (invisible) original.
-  const transActive = transShown && !!transEntry && transEntry.texts.some(Boolean);
+  const transPartials = transEntry?.partial && Object.keys(transEntry.partial).length > 0;
+  const transActive = transShown && !!transEntry && (transEntry.texts.some(Boolean) || !!transPartials);
+  // Translation still arriving for this page: the overlay also renders the
+  // working indicators (and streamed partial text), even before any final
+  // text exists.
+  const transWorking = transShown && !!transEntry && !transEntry.done
+    && (transEntry.queued || transEntry.busy?.size > 0);
 
   return (
     <div ref={wrapRef} data-page={pageNumber} className={"pdfPageWrap" + (transActive ? " transShown" : "")}
@@ -1841,36 +1888,49 @@ const PdfPage = React.memo(function PdfPage({ pageNumber, pdfDoc, scale, highlig
           layer, so selecting the (invisible) original text still paints its
           selection highlight on top of the overlay. pointer-events: none —
           highlighting, links and search always act on the original. */}
-      {transActive ? (
+      {transActive || transWorking ? (
         <div className="pdfTransLayer">
           {(() => {
             let ti = -1;
             return transEntry.paras.map((p, i) => {
               if (!p.translate) return null;
               ti += 1;
-              const text = transEntry.texts[ti];
-              if (!text || text === p.text) return null; // still in flight, or untranslated — leave the original visible
+              const final = transEntry.texts[ti];
+              const partial = final ? null : transEntry.partial?.[ti];
+              const text = final || partial;
               const pad = 1.5;
               const lns = p.lines || [];
+              const box = {
+                left: p.x1 * scale - pad, top: p.y1 * scale - pad,
+                width: (p.x2 - p.x1) * scale + 2 * pad, height: (p.y2 - p.y1) * scale + 2 * pad,
+              };
+              const lines = lns.map((l, j) => {
+                // Fill the inter-line leading too: the original's line
+                // pitch exceeds the glyph-box height, and slivers of the
+                // original text otherwise peek through between masks.
+                const next = lns[j + 1];
+                const bottom = next && next.y1 - l.y2 < p.size * 1.2 ? next.y1 : l.y2;
+                return {
+                  left: (l.x1 - p.x1) * scale, top: (l.y1 - p.y1) * scale,
+                  width: (l.x2 - l.x1) * scale + 2 * pad,
+                  height: (bottom - l.y1) * scale + 2 * pad,
+                };
+              });
+              if (!text || text === p.text) {
+                // Nothing to show yet: the original stays visible, washed
+                // while its translation is queued or in flight.
+                if (!final && transWorking && (transEntry.busy?.has(ti) || transEntry.queued)) {
+                  return (
+                    <div key={i} className="pdfTransPara" style={box}>
+                      <TransPending lines={lines} busy={transEntry.busy?.has(ti)} />
+                    </div>
+                  );
+                }
+                return null;
+              }
               return (
-                <TransPara key={i}
-                  box={{
-                    left: p.x1 * scale - pad, top: p.y1 * scale - pad,
-                    width: (p.x2 - p.x1) * scale + 2 * pad, height: (p.y2 - p.y1) * scale + 2 * pad,
-                  }}
-                  lines={lns.map((l, j) => {
-                    // Fill the inter-line leading too: the original's line
-                    // pitch exceeds the glyph-box height, and slivers of the
-                    // original text otherwise peek through between masks.
-                    const next = lns[j + 1];
-                    const bottom = next && next.y1 - l.y2 < p.size * 1.2 ? next.y1 : l.y2;
-                    return {
-                      left: (l.x1 - p.x1) * scale, top: (l.y1 - p.y1) * scale,
-                      width: (l.x2 - l.x1) * scale + 2 * pad,
-                      height: (bottom - l.y1) * scale + 2 * pad,
-                    };
-                  })}
-                  baseSize={p.size * scale} text={text} />
+                <TransPara key={i} box={box} lines={lines}
+                  baseSize={p.size * scale} text={text} streaming={!final} />
               );
             });
           })()}

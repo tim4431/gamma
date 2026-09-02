@@ -167,3 +167,65 @@ def test_translate_unparseable_reply_degrades_to_original(carol, monkeypatch):
     r = carol.post("/api/ai/translate", json={"texts": ["another fresh paragraph"], "lang": "de"})
     assert r.status_code == 200
     assert r.json()["translations"] == ["besser:another fresh paragraph"]
+
+
+class _StreamResp:
+    """An Anthropic SSE reply whose text arrives in the given pieces."""
+    def __init__(self, pieces):
+        self._lines = [("data: " + json.dumps({"type": "content_block_delta",
+                                               "delta": {"type": "text_delta", "text": t}})
+                        + "\n").encode() for t in pieces] + [b"data: [DONE]\n"]
+
+    def __iter__(self):
+        return iter(self._lines)
+
+    def close(self):
+        pass
+
+
+def test_translate_streams_partials(carol, monkeypatch):
+    """stream: true answers NDJSON — a partial line per paragraph as the
+    model writes it (every request index sharing that source text), then the
+    same final object a plain call returns; the cache is filled the same way."""
+    import gamma.routers.ai as ai_mod
+    monkeypatch.setattr(ai_mod, "_TRANSLATE_STREAM_INTERVAL", 0)
+    opened = []
+
+    def fake_open(messages, system, entry, rt, **kw):
+        opened.append(json.loads(messages[-1]["content"]))
+        assert kw.get("stream") is True
+        return _StreamResp(['```json\n["第一', '段", "第', '二段"]\n```'])
+
+    monkeypatch.setattr(ai_mod, "_open_ai", fake_open)
+    r = carol.post("/api/ai/translate", json={
+        "texts": ["stream one", "stream two", "stream one"], "lang": "zh-CN", "stream": True})
+    assert r.status_code == 200, r.text
+    assert r.headers["content-type"].startswith("application/x-ndjson")
+    lines = [json.loads(l) for l in r.text.splitlines() if l.strip()]
+    assert opened == [["stream one", "stream two"]]  # duplicate collapsed upstream
+    assert lines[-1] == {"translations": ["第一段", "第二段", "第一段"],
+                         "model": lines[-1]["model"], "cached": False}
+    partials = lines[:-1]
+    assert partials[0] == {"i": [0, 2], "text": "第一"}  # both slots of the shared source
+    assert {"i": [0, 2], "text": "第一段"} in partials
+    assert {"i": [1], "text": "第"} in partials
+    # Cached now: the stream is just the final line, nothing goes upstream.
+    r = carol.post("/api/ai/translate", json={
+        "texts": ["stream two", "stream one"], "lang": "zh-CN", "stream": True})
+    assert r.status_code == 200
+    lines = [json.loads(l) for l in r.text.splitlines() if l.strip()]
+    assert lines == [{"translations": ["第二段", "第一段"], "model": lines[0]["model"], "cached": True}]
+    assert len(opened) == 1
+
+
+def test_translate_stream_reports_upstream_failure_in_band(carol, monkeypatch):
+    import gamma.routers.ai as ai_mod
+
+    def boom(*a, **kw):
+        raise RuntimeError("provider down")
+
+    monkeypatch.setattr(ai_mod, "_open_ai", boom)
+    r = carol.post("/api/ai/translate", json={"texts": ["fails"], "lang": "de", "stream": True})
+    assert r.status_code == 200
+    lines = [json.loads(l) for l in r.text.splitlines() if l.strip()]
+    assert lines == [{"error": "translation failed: provider down"}]

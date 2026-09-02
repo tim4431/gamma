@@ -21,7 +21,7 @@ import { filterSlashCommands, SlashMenuPopup } from "./slashMenu";
 import { remarkCallouts } from "./callouts";
 import { ContextMenu, MenuItem } from "./menus";
 import { API, apiJson, copyText, withShare } from "./utils";
-import { CopyIcon, ExportIcon, PlusIcon, Trash2Icon } from "./icons";
+import { CopyIcon, ExportIcon, MessageSquareIcon, PlusIcon, Trash2Icon } from "./icons";
 import {
   applyImageEdit, applyTableEdit, formatTables, htmlTableToMarkdown,
   MdImage, MdTableWrap, parseTable, scanTables, tsvToMarkdown,
@@ -671,9 +671,24 @@ function BlockRow({
   onBlockDrop,
   captureArea,
   docNonce,
+  aiMarks,
+  aiLive,
+  aiScan,
+  onAddToChat,
 }) {
   const ref = useRef(null);
   const clickPosRef = useRef(null);
+  // The AI agent's live footprint on this row (App.handleAgentEvent): a
+  // read/edit mark that lights the row up, and — while the agent is still
+  // writing an edit_block call for THIS block — the streamed text so far.
+  // A block the user is editing keeps its editor; the mark still shows.
+  const aiMark = aiMarks?.get(block.id) || null;
+  const aiText = aiLive?.tool === "edit_block" && aiLive.blockId === block.id && !block.editMode
+    ? joinBlockText(block.content || "", aiLive.content, aiLive.mode) : null;
+  // Whole-page read: every row rings once, staggered by its position, so
+  // the read visibly sweeps down the outline. A row with its own mark keeps
+  // that instead.
+  const scanIdx = !aiMark && aiScan ? aiScan.order.get(block.id) : undefined;
   // Identity-stable wrapper so the memoized BlockMarkdown never sees a fresh
   // callback (rowProps closures are rebuilt every App render) yet always
   // calls the latest one — same idiom as pdfViewer's stableCbs.
@@ -1136,7 +1151,8 @@ function BlockRow({
       }}
     >
       <div
-        className={`blockRow ${focusedId === block.id ? "focused" : ""}`}
+        className={`blockRow ${focusedId === block.id ? "focused" : ""}${aiMark ? ` ai-${aiMark.kind} aiMark${aiMark.n % 2}` : ""}${scanIdx != null ? ` ai-scan aiMark${aiScan.n % 2}` : ""}`}
+        style={scanIdx != null ? { animationDelay: `${Math.min(scanIdx * 45, 1600)}ms` } : undefined}
         onMouseDown={(e) => {
           if (e.button !== 0) return; // right-click is the context menu's
           if (e.target.closest("button, textarea, input, a")) return;
@@ -1145,11 +1161,25 @@ function BlockRow({
           // not just the little colored dot. Ctrl+click appends the quote to
           // the chat selection, same as clicking the highlight on the PDF.
           if (block.highlightId) onJump?.(block.highlightId, e.ctrlKey || e.metaKey);
+          // Ctrl on any other block: decided on click (below) — a Ctrl+drag
+          // selects note text for a chip instead, so the editor must not open
+          // and the selection must be allowed to start.
+          else if ((e.ctrlKey || e.metaKey) && onAddToChat && !block.editMode) return;
           if (!readOnly && !block.editMode) {
             clickPosRef.current = { x: e.clientX, y: e.clientY };
             e.preventDefault();
             onStartEdit(block.id, true);
           }
+        }}
+        onClick={(e) => {
+          // Ctrl+click attaches the block to the next chat message (a chip
+          // with its id, so the agent can edit it) — unless the gesture
+          // selected text, which App's mouseup turned into a note chip.
+          if (!(e.ctrlKey || e.metaKey) || !onAddToChat || block.highlightId || block.editMode) return;
+          if (e.target.closest("button, textarea, input, a")) return;
+          if (window.getSelection()?.toString().trim()) return;
+          e.preventDefault();
+          onAddToChat(block);
         }}
       >
         {hasChildren ? (
@@ -1373,6 +1403,13 @@ function BlockRow({
               }}
               placeholder="Type — '/' for commands"
             />
+          ) : aiText != null ? (
+            // The AI agent is writing this block's new text right now: show
+            // what it has streamed so far, with a caret, in place of the
+            // stored content (the tree reloads once the edit is applied).
+            <div className="blockRendered aiStreaming">
+              {aiText.trim() ? <BlockMarkdown content={aiText} blockId={block.id} refLabels={refLabels} /> : null}
+            </div>
           ) : (
             <div className="blockRendered" onCopy={handleMarkdownCopy}>
               {(block.content || "").trim() ? (
@@ -1555,6 +1592,13 @@ function SortableBlockRow({ block, ...rowProps }) {
               "Copied block as markdown",
             )}
           >Copy as markdown</MenuItem>
+          {block.id !== "root" && rowProps.onAddToChat ? (
+            <MenuItem
+              icon={MessageSquareIcon}
+              title="Attach this block (with its sub-blocks) to your next chat message — Ctrl+click a block does the same"
+              onClick={() => { setHandleMenu(null); rowProps.onAddToChat(block); }}
+            >Add to chat</MenuItem>
+          ) : null}
           {block.id !== "root" ? (
             <MenuItem
               icon={CopyIcon}
@@ -1583,22 +1627,79 @@ function SortableBlockRow({ block, ...rowProps }) {
   );
 }
 
-function BlockTree({ blocks, readOnly, rowProps, depth = 0 }) {
-  if (!blocks || blocks.length === 0) return null;
+// The stored text plus an addition the agent is appending/prepending (an
+// edit_block call with mode "append"/"prepend", previewed while it streams):
+// mirrors backend ai_tools.join_block_text — own line, blank line when either
+// side is a paragraph-level construct. Mode "replace" is just the new text.
+const BLOCKY_LINE = /^\s*(#{1,6}\s|[-*+]\s|\d+[.)]\s|>|\||```|\$\$|---)/;
+function joinBlockText(existing, addition, mode) {
+  if (mode !== "append" && mode !== "prepend") return addition;
+  const cur = (existing || "").replace(/\n+$/, "");
+  const add = (addition || "").replace(/^\n+|\n+$/g, "");
+  if (!cur) return add;
+  const [head, tail] = mode === "prepend" ? [add, cur] : [cur, add];
+  const sep = head.includes("\n") || tail.includes("\n") || BLOCKY_LINE.test(tail) || BLOCKY_LINE.test(head) ? "\n\n" : "\n";
+  return head + sep + tail;
+}
+
+// A block the AI agent is creating right now (a create_block call still
+// streaming): a read-only row at the position the block will take, typing
+// in the markdown as it arrives. Replaced by the real block when the call
+// lands and the tree reloads.
+function AiGhostRow({ content, depth }) {
+  return (
+    <div className="sortableBlockWrap aiGhostWrap" data-depth={depth}>
+      {/* Inert stand-ins for the "+" and ⋮⋮ handle columns, so the card
+          lines up with its siblings' cards. */}
+      <span className="addHandle" aria-hidden="true" style={{ visibility: "hidden", pointerEvents: "none" }} />
+      <span className="dragHandle" aria-hidden="true" style={{ visibility: "hidden", pointerEvents: "none" }} />
+      <div className="blockRowWrap">
+        <div className="blockRow ai-create aiMark0">
+          <span className="collapseSpacer" />
+          <span className="dotSlot dotSlotEmpty"><span className="noteBulletDot" /></span>
+          <div className="blockBody">
+            <div className="blockMeta">note</div>
+            <div className="blockRendered aiStreaming">
+              {content.trim() ? <BlockMarkdown content={content} blockId="ai-ghost" refLabels={{}} /> : null}
+            </div>
+          </div>
+        </div>
+      </div>
+    </div>
+  );
+}
+
+// `parentId` is the block whose children these are (the page root when
+// omitted: rowProps.rootId) — it places the agent's ghost row (rowProps.aiLive
+// for a create_block still streaming) under the right parent, after the
+// sibling the call names (at the end when it names none or an unknown one).
+function BlockTree({ blocks, readOnly, rowProps, depth = 0, parentId }) {
+  const live = rowProps.aiLive;
+  const ghost = live?.tool === "create_block" && live.parentId === (parentId ?? rowProps.rootId) ? live : null;
+  if ((!blocks || blocks.length === 0) && !ghost) return null;
+  const list = blocks || [];
+  let ghostAt = ghost ? list.length : -1;
+  if (ghost && ghost.afterId) {
+    const i = list.findIndex((b) => b.id === ghost.afterId);
+    if (i >= 0) ghostAt = i + 1;
+  }
+  const ghostRow = ghost ? <AiGhostRow key="ai-ghost" content={ghost.content || ""} depth={depth} /> : null;
   return (
     <>
-      {blocks.map((rawBlock) => { const block = withLegacyAccessors(rawBlock); return (
+      {ghostAt === 0 ? ghostRow : null}
+      {list.map((rawBlock, idx) => { const block = withLegacyAccessors(rawBlock); return (
         <React.Fragment key={block.id}>
           {!readOnly ? (
             <SortableBlockRow block={block} depth={depth} {...rowProps} />
           ) : (
             <BlockRow block={block} depth={depth} {...rowProps} />
           )}
-          {!block.collapsed && block.children && block.children.length > 0 ? (
+          {!block.collapsed && (block.children?.length > 0 || live?.parentId === block.id) ? (
             <div className="blockChildren">
-              <BlockTree blocks={block.children} readOnly={readOnly} rowProps={rowProps} depth={depth + 1} />
+              <BlockTree blocks={block.children} readOnly={readOnly} rowProps={rowProps} depth={depth + 1} parentId={block.id} />
             </div>
           ) : null}
+          {ghostAt === idx + 1 ? ghostRow : null}
         </React.Fragment>
       );})}
     </>

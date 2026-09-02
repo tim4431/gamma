@@ -15,6 +15,7 @@ import { defaultKeymap } from "@codemirror/commands";
 import { escapedAt, findMathAtCursor, renderKatex } from "./latexEditor";
 import { calloutType } from "./callouts";
 import { fenceInnerAt, highlightCode, makeCopyButton, scanFences } from "./codeHighlight";
+import { insertLink, isUrl, scanMarks, toggleMark } from "./mdMarks";
 
 // All CLOSED math spans in the text: [{from, to, display}] with from/to
 // including the delimiters. Same tokenizer as latexEditor's findMathAtCursor
@@ -294,26 +295,14 @@ function buildInlineDecos(state, labelsRef) {
     }).range(from, to));
   }
 
-  // Inline marks: [regex, delimiter length, class]. Matched in this order —
-  // code first (its content is literal), italic last (most false-positive
-  // prone). Delimiters are hidden and the inner text gets the mark class.
-  const INLINE = [
-    [/`([^`\n]+)`/g, 1, "cmInlineCode"],
-    [/==(?!\s)([^=\n]+?)(?<!\s)==/g, 2, "cmHighlight"],
-    [/\*\*(?!\s)([^*\n]+?)(?<!\s)\*\*/g, 2, "cmStrong"],
-    [/~~(?!\s)([^~\n]+?)(?<!\s)~~/g, 2, "cmStrike"],
-    [/(?<!\*)\*(?![\s*])([^*\n]+?)(?<![\s*])\*(?!\*)/g, 1, "cmEm"],
-  ];
-  for (const [re, dlen, cls] of INLINE) {
-    for (const m of text.matchAll(re)) {
-      const from = m.index, to = m.index + m[0].length;
-      if (overlapsClaimed(from, to)) continue;
-      claimed.push([from, to]);
-      if (touched(from, to)) continue;
-      ranges.push(Decoration.replace({}).range(from, from + dlen));
-      ranges.push(Decoration.mark({ class: cls }).range(from + dlen, to - dlen));
-      ranges.push(Decoration.replace({}).range(to - dlen, to));
-    }
+  // Inline marks (**bold** etc., table in mdMarks.js — shared with the
+  // formatting hotkeys): delimiters hidden, inner text gets the mark class.
+  for (const { marker, cls, from, to } of scanMarks(text, claimed)) {
+    if (touched(from, to)) continue;
+    const dlen = marker.length;
+    ranges.push(Decoration.replace({}).range(from, from + dlen));
+    ranges.push(Decoration.mark({ class: cls }).range(from + dlen, to - dlen));
+    ranges.push(Decoration.replace({}).range(to - dlen, to));
   }
 
   // [text](url): show just the text, link-styled. Images (![...]) stay raw —
@@ -584,6 +573,64 @@ const mathBracketBackspace = keymap.of([{
   },
 }]);
 
+// --- formatting hotkeys -------------------------------------------------------
+// Obsidian's bindings (Ctrl/Cmd+B bold, +I italic, +K link) plus the marks it
+// leaves unbound: Ctrl+E inline code (Notion's key), Ctrl+Shift+X strike,
+// Ctrl+Shift+H highlight. Toggle semantics live in mdMarks.toggleMark. Inside
+// math, a code fence or inline code the key is swallowed and does nothing —
+// letting it through would hand Ctrl+B to the browser (Firefox: bookmarks).
+const MARK_KEYS = [
+  ["Mod-b", "**"], ["Mod-i", "*"], ["Mod-e", "`"],
+  ["Mod-Shift-x", "~~"], ["Mod-Shift-h", "=="],
+];
+
+function markBlockedAt(doc, from, to, marker) {
+  if (fenceInnerAt(doc, from) || fenceInnerAt(doc, to)) return true;
+  if (scanMathSpans(doc).some((s) => s.from < to && from < s.to)) return true;
+  if (marker === "`") return false;
+  return scanMarks(doc).some((s) => s.marker === "`" && s.from < from && to < s.to);
+}
+
+function runToggleMark(view, marker) {
+  const doc = view.state.doc.toString();
+  const { from, to } = view.state.selection.main;
+  if (markBlockedAt(doc, from, to, marker)) return true;
+  const r = toggleMark(doc, from, to, marker);
+  if (r) view.dispatch({ changes: r.changes, selection: r.selection, userEvent: "input" });
+  return true;
+}
+
+function runInsertLink(view) {
+  const doc = view.state.doc.toString();
+  const { from, to } = view.state.selection.main;
+  if (markBlockedAt(doc, from, to, "")) return true;
+  const r = insertLink(doc, from, to);
+  view.dispatch({ changes: r.changes, selection: r.selection, userEvent: "input" });
+  // A URL on the clipboard fills the empty (…) slot — read asynchronously
+  // (and not at all on plain-HTTP origins, where navigator.clipboard is
+  // missing); only applied if the doc hasn't moved on meanwhile.
+  const slot = from + 1 + (to - from) + 2;
+  const expect = view.state.doc.toString();
+  navigator.clipboard?.readText?.().then((clip) => {
+    if (!isUrl(clip) || view.state.doc.toString() !== expect) return;
+    const url = clip.trim();
+    const label = to - from;
+    view.dispatch({
+      changes: { from: slot, insert: url },
+      selection: { anchor: label ? slot + url.length + 1 : from + 1 },
+      userEvent: "input",
+    });
+  }).catch(() => {});
+  return true;
+}
+
+const markHotkeys = keymap.of([
+  ...MARK_KEYS.map(([key, marker]) => ({
+    key, preventDefault: true, run: (view) => runToggleMark(view, marker),
+  })),
+  { key: "Mod-k", preventDefault: true, run: runInsertLink },
+]);
+
 const BlockCmEditor = React.forwardRef(function BlockCmEditor({
   value, onChange, onSelect, onKeyDown, onBlur, onPaste,
   placeholder, autoFocus, clickPos, dataBlockId, className, refLabels,
@@ -652,6 +699,7 @@ const BlockCmEditor = React.forwardRef(function BlockCmEditor({
         dollarBackspace,
         mathBracketPairing,
         mathBracketBackspace,
+        markHotkeys,
         keymap.of(defaultKeymap),
         cmPlaceholder(placeholder || ""),
         chipCompartment.of(inlineRenderField(labelsRef)),

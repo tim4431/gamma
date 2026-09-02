@@ -89,8 +89,13 @@ AGENT_PROMPT = (
     "page without asking again; ask first when the request is ambiguous. You "
     "cannot delete anything or edit labels. After making changes, finish with a "
     "short summary of what you changed. Your earlier tool calls and their results "
-    "stay in this conversation — don't repeat a call whose output you already "
-    "have; call again only when the library may have changed since."
+    "stay in this conversation so you remember what you already listed, read and "
+    "changed — but they are snapshots from earlier turns: the user edits their "
+    "notes between messages, and your own edits change what read_block returns. "
+    "When the user asks you to read, look at, check, show or quote something, or "
+    "before you edit a block, call the tool again and answer from that fresh "
+    "result — never from an earlier turn's output. Reuse old results only for "
+    "things that cannot have changed (e.g. a PDF's text you already read)."
 )
 
 
@@ -376,7 +381,10 @@ def _run_read_block(conn, user: str, scope: dict, args: dict):
     out = (head + "\n" + "\n".join(lines) + tail
            + "\nBlock ids are in [brackets] — pass them to edit_block/create_block/move_block.")
     what = f'“{page_title[:60]}”' if is_page else f'a block in “{page_title[:60]}”'
-    return out, {"kind": "read", "page_id": page_id, "summary": f"Read notes of {what}"}
+    # block_id lets the notes panel light up the block (or, for a page id,
+    # the whole outline) the agent is reading.
+    return out, {"kind": "read", "page_id": page_id, "block_id": block["id"],
+                 "summary": f"Read notes of {what}"}
 
 
 def _run_edit_block(conn, user: str, scope: dict, args: dict):
@@ -388,7 +396,17 @@ def _run_edit_block(conn, user: str, scope: dict, args: dict):
         return "error: that id is a page — page titles change via rename_page", None
     content = args.get("content")
     if not isinstance(content, str):
-        return "error: content must be a string (the block's full new markdown)", None
+        return "error: content must be a string (the block's markdown)", None
+    mode = str(args.get("mode") or "replace").strip().lower()
+    if mode not in EDIT_MODES:
+        return f"error: mode must be one of {', '.join(EDIT_MODES)}", None
+    if mode != "replace":
+        # Append/prepend never retype the existing text: the model sends only
+        # the addition, joined on its own line(s). A blank line keeps a new
+        # paragraph/heading/list/fence from gluing onto the existing text.
+        if not content.strip():
+            return "error: nothing to add — content is empty", None
+        content = join_block_text(block["content"] or "", content, mode)
     if len(content) > _BLOCK_CONTENT_MAX:
         return f"error: content too long (>{_BLOCK_CONTENT_MAX} chars)", None
     if content == block["content"]:
@@ -400,9 +418,33 @@ def _run_edit_block(conn, user: str, scope: dict, args: dict):
     # like the editor's PUT /children does.
     conn.execute("UPDATE unified_blocks SET updated_at = ? WHERE id = ?", (now, page_id))
     conn.commit()
-    return (f'ok — block [{block["id"]}] updated',
-            {"kind": "edit", "page_id": page_id,
-             "summary": f"Edited a note in “{page_title[:60]}”"})
+    verb = {"replace": "Edited", "append": "Appended to", "prepend": "Prepended to"}[mode]
+    return (f'ok — block [{block["id"]}] updated' + (f" ({mode})" if mode != "replace" else ""),
+            {"kind": "edit", "page_id": page_id, "block_id": block["id"], "mode": mode,
+             "summary": f"{verb} a note in “{page_title[:60]}”"})
+
+
+EDIT_MODES = ("replace", "append", "prepend")
+
+
+def join_block_text(existing: str, addition: str, mode: str) -> str:
+    """Existing block text plus an addition, appended or prepended on its own
+    line — with a blank line between when either side is a paragraph-level
+    construct (a heading, list, quote, table, fence or multi-line text), so
+    markdown keeps rendering as intended. Mirrored in frontend
+    blockTree.jsx (the streamed preview of an append)."""
+    existing = existing.rstrip("\n")
+    addition = addition.strip("\n")
+    if not existing:
+        return addition
+    if mode == "prepend":
+        head, tail = addition, existing
+    else:
+        head, tail = existing, addition
+    blocky = re.compile(r"^\s*(#{1,6}\s|[-*+]\s|\d+[.)]\s|>|\||```|\$\$|---)")
+    sep = ("\n\n" if ("\n" in head or "\n" in tail or blocky.match(tail) or blocky.match(head))
+           else "\n")
+    return head + sep + tail
 
 
 def _run_create_block(conn, user: str, scope: dict, args: dict):
@@ -425,7 +467,7 @@ def _run_create_block(conn, user: str, scope: dict, args: dict):
     conn.execute("UPDATE unified_blocks SET updated_at = ? WHERE id = ?", (now, page_id))
     conn.commit()
     return (f"ok — created block [{block_id}]",
-            {"kind": "create", "page_id": page_id,
+            {"kind": "create", "page_id": page_id, "block_id": block_id,
              "summary": f"Added a note in “{page_title[:60]}”"})
 
 
@@ -465,7 +507,7 @@ def _run_move_block(conn, user: str, scope: dict, args: dict):
     conn.commit()
     where = (f"page “{page_title[:60]}”" if page_id != src_page_id
              else f"“{page_title[:60]}”")
-    action = {"kind": "move", "page_id": page_id,
+    action = {"kind": "move", "page_id": page_id, "block_id": block["id"],
               "summary": f"Moved a note within {where}" if page_id == src_page_id
                          else f"Moved a note “{src_title[:40]}” → {where}"}
     if page_id != src_page_id:
@@ -738,16 +780,25 @@ TOOLS = [
         "spec": {
             "name": "edit_block",
             "description": (
-                "Replace one note block's markdown text. `content` is the block's "
-                "ENTIRE new text — include everything that should stay. Use exact "
-                "block ids from read_block (never page ids — titles change via "
-                "rename_page). Editing a highlight block changes its note text; the "
-                "highlighted PDF passage itself cannot be changed."),
+                "Change one note block's markdown text. `mode` \"replace\" (default) "
+                "makes `content` the block's ENTIRE new text — include everything that "
+                "should stay; \"append\" / \"prepend\" add `content` after / before the "
+                "existing text on its own line (send ONLY the addition — the existing "
+                "text is kept untouched, no read needed). Prefer append when asked to "
+                "add, extend, note something, or continue a block; use replace to "
+                "rewrite or fix. Use exact block ids from read_block (never page ids — "
+                "titles change via rename_page). Editing a highlight block changes its "
+                "note text; the highlighted PDF passage itself cannot be changed."),
             "parameters": {
                 "type": "object",
                 "properties": {"block_id": {"type": "string"},
+                               "mode": {"type": "string",
+                                        "enum": ["replace", "append", "prepend"],
+                                        "description": "replace (default), append or prepend"},
                                "content": {"type": "string",
-                                           "description": "the block's full new markdown"}},
+                                           "description": "replace: the block's full new "
+                                                          "markdown; append/prepend: only "
+                                                          "the text to add"}},
                 "required": ["block_id", "content"],
             },
         },
@@ -832,6 +883,16 @@ def agent_system(scope: dict, perms: dict | None = None, base: str = "") -> str:
         path = _scope_folder(scope)
         where = f'the folder "{path}"' if path else "the root of their library"
         text += f"The user is viewing {where}; only pages in it are reachable.\n"
+    focus = scope.get("focus_block_id")
+    if focus and focus != scope.get("page_id"):
+        text += (f'The user\'s cursor is on note block "{focus}" (its text is in the '
+                 'context): "this block", "here", "this note" refer to it — edit or '
+                 "extend it directly by that id, no read_block needed.\n")
+    chips = [b for b in (scope.get("context_blocks") or []) if b and b != scope.get("page_id")]
+    if chips:
+        text += ("The user attached these note blocks to the message (text in the "
+                 "context, ids in brackets): " + ", ".join(f'"{b}"' for b in chips)
+                 + ". A request to change/rewrite/expand them means those ids.\n")
     text += f"Available tools: {', '.join(names)}. Any other tool is disabled in the user's settings."
     if "read_page" in names or "search_library" in names:
         text += (

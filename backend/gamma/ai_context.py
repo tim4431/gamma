@@ -8,7 +8,7 @@ import re
 import sqlite3
 from urllib.request import Request as URLRequest
 
-from .blocks_store import fetch_subtree, page_attachment, page_for_doc
+from .blocks_store import fetch_subtree, page_attachment, page_for_doc, page_root_id
 from .db import pdf_upload_path, user_db_path
 from .foldertags import parse_tags
 from .logbuf import log
@@ -78,7 +78,8 @@ def parse_files(files: list) -> list[str]:
 
 
 def final_prompt(payload) -> str:
-    """Append the selected PDF passage to a user's current prompt."""
+    """Append the selected PDF passage(s) and selected note text to a user's
+    current prompt."""
     prompt = payload.prompt
     selection = (payload.selection or "").strip()[:MAX_SELECTION_CHARS]
     if selection:
@@ -88,7 +89,119 @@ def final_prompt(payload) -> str:
             'attachment (multiple passages are separated by "---"). '
             f'Answer specifically about them:\n"""\n{selection}\n"""'
         )
+    passages = [str(p).strip() for p in (getattr(payload, "note_passages", None) or [])
+                if str(p).strip()][:MAX_NOTE_PASSAGES]
+    if passages:
+        joined = "\n\n---\n\n".join(p[:MAX_NOTE_PASSAGE_CHARS] for p in passages)
+        prompt = (
+            f"{prompt}\n\n"
+            "The user has selected the following text in their own notes on this "
+            'page (multiple selections are separated by "---"). Answer specifically '
+            f'about it:\n"""\n{joined}\n"""'
+        )
     return prompt
+
+
+# Caps for what a message may point at inside the notes: attached blocks
+# (chips), selected note text, and the size of each in the prompt.
+MAX_CONTEXT_BLOCKS = 12
+MAX_NOTE_PASSAGES = 6
+MAX_NOTE_PASSAGE_CHARS = 4000
+MAX_BLOCK_SECTION_CHARS = 12_000
+
+
+def notes_focus_section(user: str, payload) -> str:
+    """The user's pointer into their notes, as one context section: the
+    block their cursor is on and the blocks they attached to this message,
+    each as ``[id] text`` with its sub-blocks indented — the same id-labelled
+    form ``read_block`` gives, so an agent can edit them straight away. Only
+    blocks of the request's context pages are served (a chip from another
+    page is silently dropped). Empty when there is nothing to point at."""
+    focus = str(getattr(payload, "focus_block_id", "") or "").strip()
+    chips = [str(b).strip() for b in (getattr(payload, "context_blocks", None) or [])
+             if str(b).strip()][:MAX_CONTEXT_BLOCKS]
+    if not focus and not chips:
+        return ""
+    pages = {str(p) for p in (payload.pages or []) if p}
+    if payload.page_id:
+        pages.add(payload.page_id)
+    if not pages:
+        return ""
+    out = []
+    try:
+        with sqlite3.connect(user_db_path(user, "pages.db")) as conn:
+            def outline(block_id: str, budget: int) -> str | None:
+                if page_root_id(conn, block_id) not in pages:
+                    return None
+                rows = fetch_subtree(conn, block_id)
+                if not rows:
+                    return None
+                by_parent: dict = {}
+                own = None
+                for row in rows:
+                    if row[0] == block_id:
+                        own = row
+                    else:
+                        by_parent.setdefault(row[1], []).append(row)
+                if own is None:
+                    return None
+                for children in by_parent.values():
+                    children.sort(key=lambda r: r[2])
+                lines, used = [], 0
+
+                def line(row, depth):
+                    try:
+                        props = json.loads(row[4] or "{}")
+                    except ValueError:
+                        props = {}
+                    text = (row[3] or "").strip() or "(empty)"
+                    quote = (props.get("quote") or "").strip()
+                    if quote:
+                        text = f'(highlight: "{quote[:200]}") {text}'
+                    pad = "  " * depth
+                    return pad + f"- [{row[0]}] " + text.replace("\n", "\n" + pad + "  ")
+
+                def walk(parent, depth):
+                    nonlocal used
+                    for row in by_parent.get(parent, []):
+                        entry = line(row, depth)
+                        if used + len(entry) > budget:
+                            lines.append("  " * depth + "- … (more sub-blocks not shown)")
+                            return
+                        used += len(entry)
+                        lines.append(entry)
+                        walk(row[0], depth + 1)
+
+                head = line(own, 0)
+                if len(head) > budget:
+                    head = head[:budget] + "…"
+                used = len(head)
+                lines.append(head)
+                walk(block_id, 1)
+                return "\n".join(lines)
+
+            if focus and focus not in pages:
+                text = outline(focus, 1500)
+                if text:
+                    out.append("The user's cursor is on this note block (\"this block\", "
+                               "\"here\" mean it):\n" + text)
+            if chips:
+                shown = []
+                budget = MAX_BLOCK_SECTION_CHARS
+                for block_id in chips:
+                    if block_id in pages:
+                        continue
+                    text = outline(block_id, max(500, budget // max(1, len(chips))))
+                    if text:
+                        shown.append(text)
+                if shown:
+                    out.append("Note blocks the user attached to this message (ids in "
+                               "brackets; edit them by id when asked to change them):\n"
+                               + "\n".join(shown))
+    except sqlite3.Error as error:
+        log.warning(f"[ai_chat] notes focus section failed: {error}")
+        return ""
+    return "\n\n".join(out)
 
 
 # Replayed tool results across the whole history share this char budget
@@ -97,6 +210,10 @@ def final_prompt(payload) -> str:
 # what stops the model from repeating work it already did.
 TOOL_REPLAY_BUDGET = 8000
 _ELIDED_RESULT = "(older result elided to save space — call the tool again if needed)"
+# Replayed results are snapshots: the notes may have been edited since (by
+# the user, or by the agent's own later calls). Saying so on every replayed
+# result stops the model from answering "read X" from a stale outline.
+_REPLAYED_NOTE = "[result from an earlier turn — notes may have changed since; call again before quoting or editing]\n"
 
 
 def _replayable(history_item: dict) -> list[dict]:
@@ -151,9 +268,9 @@ def build_messages(payload, context: str, with_tools: bool = False) -> list[dict
                     for j, a in enumerate(actions)]})
                 for j, a in enumerate(actions):
                     result = (_ELIDED_RESULT if j in elided.get(i, ())
-                              else str(a.get("result") or ""))
+                              else _REPLAYED_NOTE + str(a.get("result") or "(empty result)"))
                     messages.append({"role": "tool", "call_id": f"call_h{i}_{j}",
-                                     "content": result or "(empty result)"})
+                                     "content": result})
         if not content.strip():
             # An organizer reply can be tool actions with no prose; providers
             # (Anthropic especially) reject empty content blocks.
@@ -687,5 +804,11 @@ def gather_inputs(user: str, payload, allow_native: bool) -> tuple[list[str], st
                              "native_requested": True, **cover})
             if text:
                 context_sections.append(f"### {title}\n{text}")
+
+    # Where the user is pointing inside the notes (cursor block, attached
+    # block chips) — last, right before the question it belongs to.
+    focus_section = notes_focus_section(user, payload)
+    if focus_section:
+        context_sections.append(focus_section)
 
     return pdf_b64s, "\n\n---\n\n".join(context_sections), coverage

@@ -2074,6 +2074,9 @@ export default function App() {
         if (!inEditor && t && (t.tagName === "INPUT" || t.tagName === "TEXTAREA" || t.isContentEditable)) return;
         const redo = e.key.toLowerCase() === "y" || e.shiftKey;
         const applied = blockHistory.undo(redo, inEditor);
+        if (applied || inEditor || !t || t === document.body) {
+          setStatus(applied ? (redo ? "Redone." : "Undone.") : (redo ? "Nothing to redo." : "Nothing to undo."));
+        }
         // Always swallowed in an editor: the browser's native contenteditable
         // undo would otherwise mutate CodeMirror's DOM behind its back.
         if (inEditor || applied) e.preventDefault();
@@ -2108,8 +2111,7 @@ export default function App() {
     chatContextChars, setChatContextChars, metaContextChars, setMetaContextChars,
     multiContextChars, setMultiContextChars,
     toolRounds, setToolRounds, agentReadChars, setAgentReadChars, agentPerms, setAgentPerms,
-    agentEnabled, setAgentEnabled, folderToolsDefault, setFolderToolsDefault,
-    pdfToolsDefault, setPdfToolsDefault,
+    agentEnabled, setAgentEnabled,
     chatImgAutoClear, setChatImgAutoClear,
   } = useAppPrefs();
 
@@ -2500,6 +2502,26 @@ export default function App() {
       ? (prev.includes(part) || prev.length >= 6 ? prev : [...prev, part])
       : [part]);
   }
+  // Note chips for the next chat message — blocks attached with Ctrl+click /
+  // the ⋮⋮ menu's "Add to chat" ({kind: "block", id, text}; the server serves
+  // their live text with ids, so the agent can edit them) and note text
+  // selected with Ctrl held ({kind: "note", text}). Cleared on send, like
+  // pdfSelections; a page switch drops them (their ids belong to the page).
+  const [chatNotes, setChatNotes] = useState([]);
+  function addBlockToChat(block) {
+    if (!block?.id || block.id === "root") return;
+    const text = (block.content || "").trim() || (block.quote || "").trim() || "(empty block)";
+    setChatNotes((prev) => prev.some((n) => n.kind === "block" && n.id === block.id)
+      ? prev : prev.length >= 12 ? prev : [...prev, { kind: "block", id: block.id, text: text.slice(0, 4000) }]);
+    setStatus("Block attached to your next chat message.");
+  }
+  function addNoteSelection(text) {
+    const part = (text || "").trim().slice(0, 4000);
+    if (!part) return;
+    setChatNotes((prev) => prev.some((n) => n.kind === "note" && n.text === part) || prev.length >= 12
+      ? prev : [...prev, { kind: "note", text: part }]);
+  }
+  useEffect(() => { setChatNotes([]); }, [focusedBlockId]);
   // Figures pending send in the chat (data URLs) — pasted into the chat input
   // or captured by a Ctrl+drag area selection on the PDF. Lives here (not in
   // ChatDock) so the viewer can attach even while the chat window is closed.
@@ -2690,18 +2712,45 @@ export default function App() {
   // Returns null on failure (already surfaced on the status pill) — the
   // engine retries a chunk once before failing the job. `signal` is the
   // job's AbortController: halting cancels the requests still in flight.
-  async function translateChunk(texts, signal) {
+  // The server streams NDJSON: `{i: [indices], text}` as the model writes
+  // each paragraph (→ onPartial, the viewer types it onto the page), then
+  // the final `{translations}` object.
+  async function translateChunk(texts, signal, onPartial) {
     try {
-      const data = await apiJson(`${API}/ai/translate`, {
+      const res = await fetch(`${API}/ai/translate`, {
         method: "POST",
         headers: { "Content-Type": "application/json" },
+        credentials: "include",
         signal,
         body: JSON.stringify({
           texts, lang: translateLang,
           model: translateSendModel || "", effort: translateEffort || "",
+          stream: true,
         }),
       });
-      return data.translations || null;
+      if (!res.ok) {
+        let detail = `${res.status} ${res.statusText}`;
+        try { detail = (await res.json()).detail || detail; } catch {}
+        throw new Error(detail);
+      }
+      const reader = res.body.getReader();
+      const decoder = new TextDecoder();
+      let buf = "", final = null;
+      for (;;) {
+        const { done, value } = await reader.read();
+        if (done) break;
+        buf += decoder.decode(value, { stream: true });
+        const lines = buf.split("\n");
+        buf = lines.pop();
+        for (const line of lines) {
+          if (!line.trim()) continue;
+          const ev = JSON.parse(line);
+          if (ev.error) throw new Error(ev.error);
+          if (ev.translations) { final = ev; continue; }
+          if (ev.i && onPartial) for (const i of ev.i) onPartial(i, ev.text);
+        }
+      }
+      return final?.translations || null;
     } catch (err) {
       if (err.name !== "AbortError") setStatus(`Translation failed: ${err.message}`);
       return null;
@@ -2953,7 +3002,22 @@ export default function App() {
   // a plain click in the PDF clears it. Clicking into the chat keeps it.
   useEffect(() => {
     function onMouseUp(e) {
-      if (!viewerWrapRef.current?.contains(e.target)) return;
+      if (!viewerWrapRef.current?.contains(e.target)) {
+        // Notes: Ctrl+select rendered note text attaches it as a chip. Plain
+        // selection is left alone (people select notes to copy them), and
+        // selections inside an open editor are the editor's business.
+        if ((e.ctrlKey || e.metaKey) && e.target.closest?.(".blockList")
+            && !e.target.closest(".cm-editor, textarea, input")) {
+          setTimeout(() => {
+            const sel = window.getSelection();
+            const text = sel ? sel.toString().trim() : "";
+            const node = sel?.anchorNode;
+            const el = node?.nodeType === 3 ? node.parentElement : node;
+            if (text && el?.closest?.(".blockRendered")) addNoteSelection(text);
+          }, 10);
+        }
+        return;
+      }
       const additive = e.ctrlKey || e.metaKey;
       setTimeout(() => {
         const sel = window.getSelection();
@@ -3094,6 +3158,30 @@ export default function App() {
   const blockRefs = useRef({});
   const pendingFocusRef = useRef(null);
   const pendingBlockScrollRef = useRef(null);
+  // The AI agent's live footprint on the open page (handleAgentEvent):
+  // aiMarks lights up the blocks it reads/edits (id → {kind, n}), aiLive is
+  // the note edit it is still writing — streamed into the block (edit_block)
+  // or a ghost row (create_block) — and aiPageRead pulses the whole outline
+  // when it reads the page. All display-only; the tree itself reloads from
+  // the server when an edit is applied.
+  const [aiMarks, setAiMarks] = useState(() => new Map());
+  const [aiLive, setAiLive] = useState(null);
+  const [aiPageRead, setAiPageRead] = useState(0);
+  // A whole-page read sweeps the rows top to bottom: {n, order: id → index}
+  // (BlockRow staggers its ring by index). n alternates the animation name
+  // so back-to-back reads restart the sweep.
+  const [aiScan, setAiScan] = useState(null);
+  // The block row the cursor is on, for the chat's "Cursor" chip and
+  // focus_block_id (null on the home page / when no row is focused).
+  const focusedNote = useMemo(() => {
+    if (!focusedBlockId || !focusedId) return null;
+    const b = flattenBlocks(blocks).find((x) => x.id === focusedId);
+    if (!b) return null;
+    const text = (b.content || "").trim() || (b.properties?.quote || "").trim();
+    return { id: b.id, text: text || "(empty block)" };
+  }, [blocks, focusedId, focusedBlockId]);
+  const aiMarkTimersRef = useRef(new Map());
+  const aiMarkSeqRef = useRef(0);
   const autosaveTimerRef = useRef(null);
   const suppressAutosaveRef = useRef(true); // skip initial mount + doc loads
   const saveNowRef = useRef(false); // next autosave runs without the debounce (editor close)
@@ -3471,6 +3559,82 @@ export default function App() {
       return [];
     }
   }
+
+  // --- The AI agent's live footprint on the open page -----------------------
+  // ChatDock forwards every agent stream event as it arrives (not just at the
+  // end): a tool `action` (read/edit/create/move chips — the block it names
+  // lights up, an applied edit reloads the tree so the change shows while
+  // the agent carries on), a `progress` preview of an edit_block/create_block
+  // call still being written (the block types it in), and `done`.
+  function markAiBlock(id, kind, ttl) {
+    const n = ++aiMarkSeqRef.current;
+    setAiMarks((prev) => { const m = new Map(prev); m.set(id, { kind, n }); return m; });
+    const timers = aiMarkTimersRef.current;
+    clearTimeout(timers.get(id));
+    timers.set(id, setTimeout(() => {
+      timers.delete(id);
+      setAiMarks((prev) => { if (!prev.has(id)) return prev; const m = new Map(prev); m.delete(id); return m; });
+    }, ttl));
+  }
+  const AI_BLOCK_TOOLS = ["edit_block", "create_block", "move_block"];
+  function handleAgentEvent(ev) {
+    if (ev.type === "done") { setAiLive(null); return; }
+    if (!focusedBlockId) return;
+    const inTree = (id) => !!id && (id === focusedBlockId || flattenBlocks(blocksRef.current).some((b) => b.id === id));
+    if (ev.type === "progress") {
+      // Only blocks of THIS page can be previewed: an edit targets a block in
+      // the tree, a create a parent in it (the page id = a top-level block).
+      if (!inTree(ev.tool === "edit_block" ? ev.block_id : ev.parent_id)) return;
+      setAiLive({ tool: ev.tool, blockId: ev.block_id, parentId: ev.parent_id, afterId: ev.after_id, mode: ev.mode || "replace", content: ev.content || "" });
+      return;
+    }
+    const a = ev.action;
+    if (!a || a.error) return;
+    if (a.page_id !== focusedBlockId && a.src_page_id !== focusedBlockId) return;
+    if (a.kind === "read") {
+      if (a.block_id && a.block_id !== focusedBlockId) markAiBlock(a.block_id, "read", 2500);
+      else {
+        // Whole page read: sweep every row, top to bottom.
+        setAiPageRead(Date.now());
+        const order = new Map(flattenBlocks(blocksRef.current).map((b, i) => [b.id, i]));
+        setAiScan((prev) => ({ n: (prev?.n || 0) + 1, order }));
+        clearTimeout(aiMarkTimersRef.current.get("__scan"));
+        aiMarkTimersRef.current.set("__scan", setTimeout(() => setAiScan(null), 3200));
+      }
+      return;
+    }
+    if (!AI_BLOCK_TOOLS.includes(a.tool)) return;
+    // The edit landed: drop its preview, mark the block, and show the real
+    // change — unless the user typed meanwhile (their queued whole-subtree
+    // save wins, as in onNotesChange) or has an editor open (a reload would
+    // close it; the final onNotesChange reload catches up).
+    setAiLive((live) => (live && (live.tool === "create_block" || live.blockId === a.block_id) ? null : live));
+    if (a.block_id) markAiBlock(a.block_id, a.kind === "create" ? "create" : a.kind === "move" ? "move" : "edit", 6000);
+    if (pendingSaveRef.current) { flushPendingSave(); return; }
+    if (flattenBlocks(blocksRef.current).some((b) => b.editMode)) return;
+    loadBlocksForBlock(focusedBlockId).then(() => {
+      if (!a.block_id) return;
+      requestAnimationFrame(() => {
+        document.querySelector(`[data-block-id="${a.block_id}"]`)
+          ?.scrollIntoView({ block: "nearest", behavior: "smooth" });
+      });
+    });
+  }
+  const agentEventRef = useRef(null);
+  agentEventRef.current = handleAgentEvent;
+  useEffect(() => {
+    // Page switch: the marks belong to the old page.
+    setAiMarks(new Map());
+    setAiLive(null);
+    setAiScan(null);
+    for (const t of aiMarkTimersRef.current.values()) clearTimeout(t);
+    aiMarkTimersRef.current.clear();
+  }, [focusedBlockId]);
+  useEffect(() => {
+    if (!aiPageRead) return;
+    const t = setTimeout(() => setAiPageRead(0), 3300);
+    return () => clearTimeout(t);
+  }, [aiPageRead]);
 
   // The page carrying this document, created if the library has none
   // (lookup BY attachment — the dedup path for ingest, docs/dev/block_centric.md).
@@ -5799,7 +5963,7 @@ export default function App() {
 
           </div>}
 
-          <div className="blockList">
+          <div className={`blockList${aiPageRead ? " aiPageRead" : ""}`}>
             {!homeMode && backlinks.length > 0 ? (
               <div className="backlinksPanel">
                 <div className="backlinksLabel">Backlinks ({backlinks.length})</div>
@@ -6280,6 +6444,12 @@ export default function App() {
                 const rowProps = {
                   focusedId,
                   setFocusedId,
+                  // The AI agent's live footprint (handleAgentEvent); rootId
+                  // places a ghost row for a block being created at top level.
+                  aiMarks,
+                  aiLive,
+                  aiScan,
+                  rootId: focusedBlockId,
                   onJump: jumpToHighlightId,
                   onEnterAttachMode: readOnly ? null : setAttachModeBlockId,
                   onUnlinkHighlight: readOnly ? null : unlinkHighlightFromBlock,
@@ -6385,6 +6555,8 @@ export default function App() {
                     setBlocks(removeBlockTree(blocks, id));
                     setStatus("Block deleted — Ctrl+Z to undo.");
                   },
+                  // Attach a block to the next chat message (chip with its id).
+                  onAddToChat: shareMode ? null : addBlockToChat,
                   onDuplicate: (id) => {
                     if (readOnly) return;
                     const src = findBlock(blocks, id);
@@ -6522,6 +6694,7 @@ export default function App() {
           docId={docId} pageAttach={pageAttach} focusedBlockId={focusedBlockId} homeBlocks={homeBlocks} pageTitle={pageTitle}
           openTabs={openTabs}
           pdfSelections={pdfSelections} setPdfSelections={setPdfSelections}
+          chatNotes={chatNotes} setChatNotes={setChatNotes} focusedNote={focusedNote}
           chatImages={chatImages} setChatImages={setChatImages}
           chatModel={chatSendModel} setChatModel={setChatModel}
           chatEffort={chatEffort} setChatEffort={setChatEffort}
@@ -6534,8 +6707,9 @@ export default function App() {
           setStatus={setStatus}
           organizeFolder={!focusedBlockId && !shareMode ? folderFilter : null}
           toolRounds={toolRounds} agentReadChars={agentReadChars} agentPerms={agentPerms} setAgentPerms={setAgentPerms} agentSystem={agentSystem}
-          agentEnabled={agentEnabled} folderToolsDefault={folderToolsDefault} pdfToolsDefault={pdfToolsDefault}
+          agentEnabled={agentEnabled}
           onLibraryChange={fetchHomeBlocks}
+          onAgentEvent={(ev) => agentEventRef.current?.(ev)}
           onNotesChange={(pageIds) => {
             // The AI edited note blocks server-side. If the open page is among
             // them, reload its tree so the change appears — unless the user
@@ -7806,10 +7980,6 @@ export default function App() {
           setAgentPerms,
           agentEnabled,
           setAgentEnabled,
-          folderToolsDefault,
-          setFolderToolsDefault,
-          pdfToolsDefault,
-          setPdfToolsDefault,
           reset: () => {
             setChatContextChars(60000);
             setMetaContextChars(6000);

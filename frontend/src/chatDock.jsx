@@ -66,6 +66,10 @@ const toolCallText = (a) => {
 export default function ChatDock({
   docId, pageAttach, focusedBlockId, homeBlocks, pageTitle, openTabs,
   pdfSelections, setPdfSelections,
+  // Note chips ([{kind: "block", id, text} | {kind: "note", text}], App
+  // state like pdfSelections) and the block row the user's cursor is on —
+  // both ride with the next message so "this block" means something.
+  chatNotes, setChatNotes, focusedNote,
   chatImages, setChatImages,
   chatModel, setChatModel, chatEffort, setChatEffort, chatSystem,
   dictationModel, dictationLang,
@@ -81,7 +85,7 @@ export default function ChatDock({
   // toolRounds the round budget. When the AI applied changes, onLibraryChange
   // refreshes the home feed and onNotesChange reloads touched pages' notes.
   organizeFolder = null, toolRounds, agentReadChars, agentPerms, setAgentPerms, agentSystem,
-  agentEnabled, folderToolsDefault, pdfToolsDefault, onLibraryChange, onNotesChange,
+  agentEnabled, onLibraryChange, onNotesChange, onAgentEvent,
   onGrip, onGripDoubleClick, collapsed, onClose,
 }) {
   const [chatMessages, setChatMessages] = useState([]);
@@ -97,10 +101,11 @@ export default function ChatDock({
   // (POST /api/chats/folder-rename).
   const chatKey = focusedBlockId || (organizeFolder ? `home:${organizeFolder}` : "home");
   const folderChat = organizeFolder != null;
-  const settingsDefault = folderChat ? folderToolsDefault !== false : !!pdfToolsDefault;
-  // Conversation-local overrides. Switching pages/folders retains each
-  // conversation's choice for this session; New chat drops it back to the
-  // configured scope default.
+  // Every chat starts with tools on (the Settings "Enable tools" switch is the
+  // only global knob). Conversation-local overrides: switching pages/folders
+  // retains each conversation's choice for this session; New chat drops it
+  // back to on.
+  const settingsDefault = true;
   const [chatToolConfigs, setChatToolConfigs] = useState({});
   const chatToolConfig = chatToolConfigs[chatKey];
   const chatToolPerms = agentPerms || {};
@@ -134,6 +139,12 @@ export default function ChatDock({
           permissions: chatToolPerms, agent_system: agentSystem || "" }
       : {};
   };
+  // The block the user's cursor is on shows as a "Cursor" chip (like a PDF
+  // selection) and rides with the message as focus_block_id; its × leaves it
+  // out for that block until the cursor moves.
+  const [cursorOff, setCursorOff] = useState(null);
+  useEffect(() => { setCursorOff(null); }, [focusedNote?.id]);
+  const cursorChip = focusedNote && focusedNote.id !== cursorOff ? focusedNote : null;
   // Empty-state intro and input placeholder for an agent-enabled home chat.
   const agentScopeName = organizeFolder ? "this folder" : "your library";
   const agentIntro = organizeFolder == null || !toolsEnabled ? null
@@ -344,12 +355,20 @@ export default function ChatDock({
     if (!text || chatLoading) return;
     const selection = pdfSelections.join("\n\n---\n\n");
     setPdfSelections([]);
+    // Note chips: attached blocks go as ids (the server serves their current
+    // text, id-labelled, so the agent can edit them); selected note text as
+    // verbatim passages.
+    const notes = chatNotes || [];
+    setChatNotes?.([]);
+    const contextBlocks = notes.filter((n) => n.kind === "block").map((n) => n.id);
+    const notePassages = notes.filter((n) => n.kind === "note").map((n) => n.text);
     const images = chatImages;
     setChatImages([]);
     const files = chatFiles;
     setChatFiles([]);
     const prevMessages = baseMessages ?? chatMessages;
-    const shown = selection ? `${text}\n\n> ${selection.slice(0, 280)}${selection.length > 280 ? "…" : ""}` : text;
+    const quoted = [selection, ...notes.map((n) => n.text)].filter(Boolean).join("\n\n---\n\n");
+    const shown = quoted ? `${text}\n\n> ${quoted.slice(0, 280)}${quoted.length > 280 ? "…" : ""}` : text;
     // Names of PDFs that ride along with THIS message (displayed in the bubble)
     const sendingPdf = attachPdf && (chatDocs.length > 0 || !!pageAttach);
     const pdfNames = [
@@ -414,6 +433,9 @@ export default function ChatDock({
           history: prevMessages,
           model: chatModel || "",
           selection,
+          focus_block_id: cursorChip ? cursorChip.id : "",
+          context_blocks: contextBlocks,
+          note_passages: notePassages,
           attach_pdf: sendingPdf,
           effort: chatEffort || "",
           system: chatSystem || "",
@@ -446,7 +468,18 @@ export default function ChatDock({
           if (!line.trim()) continue;
           const ev = JSON.parse(line);
           if (ev.error) throw new Error(ev.error);
-          if (ev.action) { actions.push(ev.action); continue; }
+          if (ev.action) {
+            actions.push(ev.action);
+            // Live: the notes panel lights up the block the agent just
+            // read/edited (and reloads the tree for an applied edit).
+            onAgentEvent?.({ type: "action", action: ev.action });
+            continue;
+          }
+          if (ev.progress) {
+            // The agent is still WRITING a note edit — the block types it in.
+            onAgentEvent?.({ type: "progress", ...ev.progress });
+            continue;
+          }
           if (ev.context) { coverage = ev.context; continue; }
           acc += ev.delta || "";
         }
@@ -464,6 +497,7 @@ export default function ChatDock({
       setChatLoading(false);
       setChatLoadingKey("");
       chatAbortRef.current = null;
+      onAgentEvent?.({ type: "done" });
       // Agent tools changed the library — reload the home feed. Read-only
       // tool calls (list/read/search) render as chips but change nothing.
       if (actions.some((a) => MUTATING_KINDS.has(a.kind))) onLibraryChange?.();
@@ -954,10 +988,22 @@ export default function ChatDock({
           </div>
         ) : null}
       </div>
-      {pdfSelections.length ? (
+      {pdfSelections.length || chatNotes?.length || cursorChip ? (
         <div className="chatSelChips">
+          {cursorChip ? (
+            <div className="chatSelChip isCursor" title={`Your cursor is on this block — it rides with the message, so "this block" means it.\n${cursorChip.text}`}>
+              <span className="chatSelChipLabel">Cursor</span>
+              <span className="chatSelChipText">{cursorChip.text.slice(0, 140)}{cursorChip.text.length > 140 ? "…" : ""}</span>
+              <button
+                type="button"
+                className="uiClose uiCloseSm chatSelChipClose"
+                onClick={() => setCursorOff(cursorChip.id)}
+                title="Don't send the cursor block with this message"
+              >×</button>
+            </div>
+          ) : null}
           {pdfSelections.map((s, i) => (
-            <div key={i} className="chatSelChip" title={s}>
+            <div key={`p${i}`} className="chatSelChip" title={s}>
               <span className="chatSelChipLabel" title="Hold Ctrl while selecting in the PDF to add more passages">
                 {pdfSelections.length > 1 ? `Sel ${i + 1}` : "Selection"}
               </span>
@@ -967,6 +1013,21 @@ export default function ChatDock({
                 className="uiClose uiCloseSm chatSelChipClose"
                 onClick={() => setPdfSelections((prev) => prev.filter((_, j) => j !== i))}
                 title="Remove this passage"
+              >×</button>
+            </div>
+          ))}
+          {(chatNotes || []).map((n, i) => (
+            <div key={`n${i}`} className={`chatSelChip ${n.kind === "block" ? "isBlock" : "isNote"}`} title={n.text}>
+              <span className="chatSelChipLabel"
+                title={n.kind === "block" ? "A note block attached with Ctrl+click or the ⋮⋮ menu — the assistant gets its text and id" : "Text selected in your notes with Ctrl held"}>
+                {n.kind === "block" ? "Block" : "Note"}
+              </span>
+              <span className="chatSelChipText">{n.text.slice(0, 140)}{n.text.length > 140 ? "…" : ""}</span>
+              <button
+                type="button"
+                className="uiClose uiCloseSm chatSelChipClose"
+                onClick={() => setChatNotes?.((prev) => prev.filter((_, j) => j !== i))}
+                title={n.kind === "block" ? "Detach this block" : "Remove this passage"}
               >×</button>
             </div>
           ))}
@@ -1087,7 +1148,7 @@ export default function ChatDock({
           onKeyDown={(e) => {
             if (e.key === "Enter" && !e.shiftKey) { e.preventDefault(); sendChatMessage(); }
           }}
-          placeholder={chatFiles.length ? `Ask about the attached file${chatFiles.length > 1 ? "s" : ""}…` : chatImages.length ? "Ask about the pasted figure…" : (pdfSelections.length ? (pdfSelections.length > 1 ? `Ask about the ${pdfSelections.length} selected passages…` : "Ask about the selection…") : (chatDocs.length ? `Ask about ${chatDocs.length} selected PDF${chatDocs.length > 1 ? "s" : ""}…` : agentAsk || "Ask…"))}
+          placeholder={chatFiles.length ? `Ask about the attached file${chatFiles.length > 1 ? "s" : ""}…` : chatImages.length ? "Ask about the pasted figure…" : (pdfSelections.length ? (pdfSelections.length > 1 ? `Ask about the ${pdfSelections.length} selected passages…` : "Ask about the selection…") : chatNotes?.length ? (chatNotes.length > 1 ? `Ask about the ${chatNotes.length} attached notes…` : chatNotes[0].kind === "block" ? "Ask about the attached block…" : "Ask about the selected note…") : cursorChip ? "Ask about the block at your cursor…" : (chatDocs.length ? `Ask about ${chatDocs.length} selected PDF${chatDocs.length > 1 ? "s" : ""}…` : agentAsk || "Ask…"))}
         />
         {chatLoading ? (
           <button className="uiBtn chatCircleBtn chatStopBtn" type="button" onClick={stopChat} title="Stop generating" aria-label="Stop generating">
