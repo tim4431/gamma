@@ -93,9 +93,17 @@ current folder are kept. Both are reversible with another call.
 ### edit_block / create_block / move_block (both scopes, one permission)
 
 The note editors, all under the single "Edit note blocks" permission.
-`edit_block` replaces one block's entire markdown text (page roots are
-refused — titles go through `rename_page`; editing a highlight block edits its
-note text, never the anchored passage). `create_block` inserts a new block
+`edit_block` changes one block's markdown text: `mode` `replace` (default)
+makes `content` the block's entire new text, `append` / `prepend` add
+`content` after / before the existing text on its own line (a blank line when
+either side is a heading, list, quote, table, fence, display math or
+multi-line — `join_block_text`, mirrored in `blockTree.jsx` for the streamed
+preview), so the model sends only the addition and never retypes what is
+there; the spec tells it to prefer append for "add / extend / note that" and
+replace for rewrites. The action carries `mode` and its chip reads "Appended
+to" / "Prepended to" / "Edited". Page roots are refused — titles go through
+`rename_page`; editing a highlight block edits its note text, never the
+anchored passage. `create_block` inserts a new block
 under a page or block, after the sibling named by `after_id` (default: last).
 `move_block` re-parents/reorders a block with its subtree — cycle-checked, and
 cross-page moves (allowed when both pages are in scope) refuse subtrees

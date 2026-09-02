@@ -1257,6 +1257,11 @@ def ai_chat(payload: AIChatRequest, request: Request):
                                     "content": content}
                         if name == "edit_block":
                             progress["block_id"] = target
+                            # append/prepend: the preview keeps the stored text
+                            # and types the addition in at the right end.
+                            mode = str(args.get("mode") or "replace").lower()
+                            if mode in ("append", "prepend"):
+                                progress["mode"] = mode
                         else:
                             progress["parent_id"] = target
                             if args.get("after_id"):

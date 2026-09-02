@@ -684,7 +684,7 @@ function BlockRow({
   // A block the user is editing keeps its editor; the mark still shows.
   const aiMark = aiMarks?.get(block.id) || null;
   const aiText = aiLive?.tool === "edit_block" && aiLive.blockId === block.id && !block.editMode
-    ? aiLive.content : null;
+    ? joinBlockText(block.content || "", aiLive.content, aiLive.mode) : null;
   // Whole-page read: every row rings once, staggered by its position, so
   // the read visibly sweeps down the outline. A row with its own mark keeps
   // that instead.
@@ -1625,6 +1625,21 @@ function SortableBlockRow({ block, ...rowProps }) {
       <BlockRow block={block} {...rowProps} />
     </div>
   );
+}
+
+// The stored text plus an addition the agent is appending/prepending (an
+// edit_block call with mode "append"/"prepend", previewed while it streams):
+// mirrors backend ai_tools.join_block_text — own line, blank line when either
+// side is a paragraph-level construct. Mode "replace" is just the new text.
+const BLOCKY_LINE = /^\s*(#{1,6}\s|[-*+]\s|\d+[.)]\s|>|\||```|\$\$|---)/;
+function joinBlockText(existing, addition, mode) {
+  if (mode !== "append" && mode !== "prepend") return addition;
+  const cur = (existing || "").replace(/\n+$/, "");
+  const add = (addition || "").replace(/^\n+|\n+$/g, "");
+  if (!cur) return add;
+  const [head, tail] = mode === "prepend" ? [add, cur] : [cur, add];
+  const sep = head.includes("\n") || tail.includes("\n") || BLOCKY_LINE.test(tail) || BLOCKY_LINE.test(head) ? "\n\n" : "\n";
+  return head + sep + tail;
 }
 
 // A block the AI agent is creating right now (a create_block call still

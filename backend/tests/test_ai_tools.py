@@ -1123,7 +1123,10 @@ def test_build_messages_replays_tool_history():
     assert [c["name"] for c in calls] == ["list_pages", "rename_page"]
     assert calls[1]["arguments"] == {"page_id": "p1", "title": "New"}
     # Result turns pair with the synthesized call ids.
-    assert messages[2]["call_id"] == calls[0]["id"] and messages[2]["content"] == "Pages (2): …"
+    # Replayed results are flagged as snapshots from an earlier turn.
+    assert messages[2]["call_id"] == calls[0]["id"]
+    assert messages[2]["content"].endswith("\nPages (2): …")
+    assert messages[2]["content"].startswith("[result from an earlier turn")
     assert messages[4]["content"] == "Done."
     # Plain chats must not replay tool turns (providers reject them untooled).
     plain = build_messages(_payload(history), "", with_tools=False)
@@ -1170,7 +1173,7 @@ def test_build_messages_elides_old_results_over_budget():
     tool_turns = [m for m in messages if m["role"] == "tool"]
     assert len(tool_turns) == 2
     assert "elided" in tool_turns[0]["content"]  # older result dropped…
-    assert tool_turns[1]["content"] == big       # …newest kept in full
+    assert tool_turns[1]["content"].endswith(big)  # …newest kept in full (after the snapshot note)
 
 
 def test_anthropic_folds_user_turn_after_tool_only_reply():

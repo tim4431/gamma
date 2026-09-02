@@ -210,6 +210,10 @@ def notes_focus_section(user: str, payload) -> str:
 # what stops the model from repeating work it already did.
 TOOL_REPLAY_BUDGET = 8000
 _ELIDED_RESULT = "(older result elided to save space — call the tool again if needed)"
+# Replayed results are snapshots: the notes may have been edited since (by
+# the user, or by the agent's own later calls). Saying so on every replayed
+# result stops the model from answering "read X" from a stale outline.
+_REPLAYED_NOTE = "[result from an earlier turn — notes may have changed since; call again before quoting or editing]\n"
 
 
 def _replayable(history_item: dict) -> list[dict]:
@@ -264,9 +268,9 @@ def build_messages(payload, context: str, with_tools: bool = False) -> list[dict
                     for j, a in enumerate(actions)]})
                 for j, a in enumerate(actions):
                     result = (_ELIDED_RESULT if j in elided.get(i, ())
-                              else str(a.get("result") or ""))
+                              else _REPLAYED_NOTE + str(a.get("result") or "(empty result)"))
                     messages.append({"role": "tool", "call_id": f"call_h{i}_{j}",
-                                     "content": result or "(empty result)"})
+                                     "content": result})
         if not content.strip():
             # An organizer reply can be tool actions with no prose; providers
             # (Anthropic especially) reject empty content blocks.

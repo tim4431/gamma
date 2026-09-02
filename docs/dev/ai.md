@@ -253,7 +253,7 @@ notes panel shows where the agent is, not just what it did:
   `animation-delay` per row) — and breathes the list's left edge. An applied edit reloads the tree immediately (same guards as
   `onNotesChange`, plus: never while the user has a block editor open), so
   the change is visible while the agent carries on.
-- `{"progress": {tool, id, block_id | parent_id (+ after_id), content}}`
+- `{"progress": {tool, id, block_id (+ mode) | parent_id (+ after_id), content}}`
   lines preview an `edit_block`/`create_block` call the model is STILL
   WRITING: `ai_client.sse_events` yields `tool_delta` events (the raw
   argument JSON so far, on all three wires — Anthropic `input_json_delta`,
@@ -262,7 +262,9 @@ notes panel shows where the agent is, not just what it did:
   id and the `content` string out of the partial JSON
   (`ai_client.partial_json_object`: complete string values plus the one
   being written, decoded as far as it goes). The block then types the new
-  markdown in behind a caret in place of its stored text — or, for a
+  markdown in behind a caret in place of its stored text (an `append` /
+  `prepend` edit keeps the stored text and types the addition in at its end
+  / start) — or, for a
   create, a ghost row appears under the named parent after the named
   sibling — until the action lands and the reload swaps in the real block.
   Only armed edit/create tools are previewed; other tools' arguments are
@@ -278,7 +280,7 @@ tree, the undo history or autosave.
 On agent requests, `build_messages(..., with_tools=True)` (`ai_context.py`)
 replays each saved reply's recorded actions as assistant `tool_calls` +
 `role:"tool"` turns, so the model keeps prior tool results across turns
-instead of re-listing; results share `TOOL_REPLAY_BUDGET` chars newest-first
+instead of re-listing; every replayed result is prefixed with a "from an earlier turn — notes may have changed since; call again before quoting or editing" note (`_REPLAYED_NOTE`) and the base prompt says the same, so a request to read/show/check something is answered from a fresh call, not last turn's outline (the agent's own edits change what `read_block` returns); results share `TOOL_REPLAY_BUDGET` chars newest-first
 (older ones elided), and `_anthropic_messages` folds a plain user turn into a
 preceding tool_result turn to keep roles alternating. Plain chats never replay
 (providers reject tool blocks without tool defs). Renamed tools replay under
