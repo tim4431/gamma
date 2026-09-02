@@ -648,6 +648,7 @@ function BlockRow({
   onUnlinkHighlight,
   onOpenLinkTarget,
   onChangeText,
+  onCaret,
   onEnterSibling,
   enterNewNote,
   onAddChild,
@@ -1219,7 +1220,8 @@ function BlockRow({
               refLabels={refLabels}
               value={block.content || ""}
               onChange={(e) => {
-                onChangeText(block.id, e.target.value);
+                onChangeText(block.id, e.target.value, e.selectionBefore);
+                onCaret?.(block.id, e.target.selectionStart, e.target.selectionEnd);
                 const cursor = e.target.selectionStart;
                 const before = e.target.value.slice(0, cursor);
                 const match = before.match(/\[\[([^\]\n]*)$/);
@@ -1233,7 +1235,10 @@ function BlockRow({
                 updateSlashMenu(e.target, true);
                 setPasteMenu(null);
               }}
-              onSelect={(e) => { updateMathUi(e.target, false); updateSlashMenu(e.target, false); setPasteMenu(null); }}
+              onSelect={(e) => {
+                onCaret?.(block.id, e.target.selectionStart, e.target.selectionEnd);
+                updateMathUi(e.target, false); updateSlashMenu(e.target, false); setPasteMenu(null);
+              }}
               onBlur={() => {
                 onStartEdit(block.id, false);
                 setMathUi(null);

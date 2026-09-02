@@ -2066,13 +2066,17 @@ export default function App() {
         e.preventDefault();
         goBackNavRef.current?.();
       } else if ((e.ctrlKey || e.metaKey) && !e.altKey && ["z", "y"].includes(e.key.toLowerCase())) {
-        // Structural block undo/redo — only while no editor/input has focus
-        // (an open editor keeps CodeMirror's own history on Ctrl+Z).
+        // The page's one undo history — from a block editor too (it has no
+        // history of its own). Other inputs keep the browser's own undo.
+        if (e.isComposing) return;
         const t = document.activeElement;
-        if (t && (t.tagName === "INPUT" || t.tagName === "TEXTAREA" || t.isContentEditable
-          || t.closest?.(".cm-editor"))) return;
+        const inEditor = !!t?.closest?.(".cm-editor");
+        if (!inEditor && t && (t.tagName === "INPUT" || t.tagName === "TEXTAREA" || t.isContentEditable)) return;
         const redo = e.key.toLowerCase() === "y" || e.shiftKey;
-        if (blockHistory.undo(redo)) e.preventDefault();
+        const applied = blockHistory.undo(redo, inEditor);
+        // Always swallowed in an editor: the browser's native contenteditable
+        // undo would otherwise mutate CodeMirror's DOM behind its back.
+        if (inEditor || applied) e.preventDefault();
       } else if (e.key === "Escape") {
         setOpenPopover(null);
         setHomeMenu(null);
@@ -3093,14 +3097,32 @@ export default function App() {
   const autosaveTimerRef = useRef(null);
   const suppressAutosaveRef = useRef(true); // skip initial mount + doc loads
   const saveNowRef = useRef(false); // next autosave runs without the debounce (editor close)
-  // Structural undo (Ctrl+Z while no editor has focus): derived from the
-  // block tree's transitions, see blockHistory.js. Declared right after the
-  // load flag so its effect reads it before the autosave effect resets it.
+  // THE undo history (Ctrl+Z anywhere on the page, editors included):
+  // derived from the block tree's transitions, see blockHistory.js. Declared
+  // right after the load flag so its effect reads it before the autosave
+  // effect resets it.
+  const caretRef = useRef(null);         // {id, from, to} the open editor's live selection
+  const caretBeforeRef = useRef(null);   // {id, from, to} of the last editor change
+  const pendingCaretRef = useRef(null);  // caret to place once a restore has committed
   const blockHistory = useBlockHistory(blocks, setBlocks, {
     loadRef: suppressAutosaveRef,
     pageId: focusedBlockId,
     enabled: !readOnly && !!focusedBlockId,
+    caretRef,
+    caretBeforeRef,
+    onCaret: (caret) => { pendingCaretRef.current = caret; },
   });
+  // After a restore the kept-open editor has synced the new text (child
+  // effects run first); now put the cursor where the change was.
+  useEffect(() => {
+    const caret = pendingCaretRef.current;
+    if (!caret) return;
+    pendingCaretRef.current = null;
+    const ed = blockRefs.current[caret.id]?.current;
+    if (!ed) return;
+    ed.focus();
+    ed.setSelectionRange(caret.from, caret.to);
+  }, [blocks]);
 
   function registerRef(id, ref) {
     blockRefs.current[id] = ref;
@@ -6310,10 +6332,13 @@ export default function App() {
                   // the tree), where the closure's tree can be a render stale
                   // and would overwrite a structural change. Closing an editor
                   // saves right away (the autosave skips its debounce once).
-                  onChangeText: (id, text) => {
+                  onChangeText: (id, text, selectionBefore) => {
                     if (readOnly) return;
+                    caretBeforeRef.current = selectionBefore ? { id, ...selectionBefore } : null;
                     setBlocks((prev) => setBlockText(prev, id, text));
                   },
+                  // The open editor's selection, for the history's caret bookkeeping.
+                  onCaret: (id, from, to) => { caretRef.current = { id, from, to }; },
                   onStartEdit: (id, editMode) => {
                     if (readOnly) return;
                     if (editMode) pendingFocusRef.current = id;

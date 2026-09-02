@@ -11,7 +11,7 @@ import {
   Decoration, EditorView, WidgetType, keymap,
   placeholder as cmPlaceholder,
 } from "@codemirror/view";
-import { defaultKeymap, history, historyKeymap } from "@codemirror/commands";
+import { defaultKeymap } from "@codemirror/commands";
 import { escapedAt, findMathAtCursor, renderKatex } from "./latexEditor";
 import { calloutType } from "./callouts";
 import { fenceInnerAt, highlightCode, makeCopyButton, scanFences } from "./codeHighlight";
@@ -632,7 +632,9 @@ const BlockCmEditor = React.forwardRef(function BlockCmEditor({
       doc: value || "",
       extensions: [
         EditorView.lineWrapping,
-        history(),
+        // No history() here: undo is the page's one block history
+        // (blockHistory.js) — Ctrl+Z bubbles to the window listener, which
+        // restores the block's text and hands the caret back.
         // Our keydown runs before CM's keymaps so Enter/Tab/etc. keep the
         // outliner semantics from blockTree; anything not preventDefault-ed
         // falls through to the default editing keymap.
@@ -650,11 +652,16 @@ const BlockCmEditor = React.forwardRef(function BlockCmEditor({
         dollarBackspace,
         mathBracketPairing,
         mathBracketBackspace,
-        keymap.of([...historyKeymap, ...defaultKeymap]),
+        keymap.of(defaultKeymap),
         cmPlaceholder(placeholder || ""),
         chipCompartment.of(inlineRenderField(labelsRef)),
         EditorView.updateListener.of((u) => {
-          if (u.docChanged) cbRef.current.onChange?.({ target: api });
+          if (u.docChanged) {
+            // The selection the change started from — the history stores it
+            // with the entry so undo can put the cursor back there.
+            const s = u.startState.selection.main;
+            cbRef.current.onChange?.({ target: api, selectionBefore: { from: s.from, to: s.to } });
+          }
           else if (u.selectionSet) cbRef.current.onSelect?.({ target: api });
         }),
       ],
