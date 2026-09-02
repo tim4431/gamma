@@ -3092,6 +3092,7 @@ export default function App() {
   const pendingBlockScrollRef = useRef(null);
   const autosaveTimerRef = useRef(null);
   const suppressAutosaveRef = useRef(true); // skip initial mount + doc loads
+  const saveNowRef = useRef(false); // next autosave runs without the debounce (editor close)
   // Structural undo (Ctrl+Z while no editor has focus): derived from the
   // block tree's transitions, see blockHistory.js. Declared right after the
   // load flag so its effect reads it before the autosave effect resets it.
@@ -3184,7 +3185,8 @@ export default function App() {
     }
     if (autosaveTimerRef.current) clearTimeout(autosaveTimerRef.current);
     pendingSaveRef.current = { pageId: focusedBlockId, blocks };
-    autosaveTimerRef.current = setTimeout(savePending, 500);
+    autosaveTimerRef.current = setTimeout(savePending, saveNowRef.current ? 0 : 500);
+    saveNowRef.current = false;
     return () => {
       if (autosaveTimerRef.current) clearTimeout(autosaveTimerRef.current);
     };
@@ -6303,18 +6305,20 @@ export default function App() {
                       }
                     }
                   },
+                  // Functional updates: these two fire from editor lifecycle
+                  // (CodeMirror onChange, blur on unmount when a row moves in
+                  // the tree), where the closure's tree can be a render stale
+                  // and would overwrite a structural change. Closing an editor
+                  // saves right away (the autosave skips its debounce once).
                   onChangeText: (id, text) => {
                     if (readOnly) return;
-                    setBlocks(setBlockText(blocks, id, text));
+                    setBlocks((prev) => setBlockText(prev, id, text));
                   },
                   onStartEdit: (id, editMode) => {
                     if (readOnly) return;
                     if (editMode) pendingFocusRef.current = id;
-                    const next = setBlockEditMode(blocks, id, editMode);
-                    setBlocks(next);
-                    if (!editMode) {
-                      persistBlocks(next).catch((err) => setStatus(`Save failed: ${err.message}`));
-                    }
+                    else saveNowRef.current = true;
+                    setBlocks((prev) => setBlockEditMode(prev, id, editMode));
                   },
                   enterNewNote,
                   // `above` inserts before `id` instead (the "+" handle with
@@ -6349,8 +6353,10 @@ export default function App() {
                   },
                   onDelete: (id) => {
                     if (readOnly) return;
+                    // Eager server delete; 404 = never saved yet, the next
+                    // autosave PUT settles it either way.
                     apiJson(`${API}/blocks/${id}`, { method: "DELETE" })
-                      .catch((err) => setStatus(`Delete failed: ${err}`));
+                      .catch((err) => { if (err.status !== 404) setStatus(`Delete failed: ${err.message}`); });
                     setBlocks(removeBlockTree(blocks, id));
                     setStatus("Block deleted — Ctrl+Z to undo.");
                   },
