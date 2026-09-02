@@ -10,9 +10,10 @@ copy-paste.
 
 1. Register at <https://chrome.google.com/webstore/devconsole> (pay the fee,
    verify the account e-mail).
-2. Build the zip: push a tag `extension-vX.Y.Z` (X.Y.Z = `manifest.json`'s
-   `version`) — the `Release the browser extension` workflow attaches
-   `gamma-connector-X.Y.Z.zip` to a GitHub release. Or locally:
+2. Build the zip: run the `release` GitHub workflow (Actions tab → release
+   → Run workflow) — it attaches `gamma-connector-X.Y.Z.zip` (X.Y.Z =
+   `manifest.json`'s `version`) to the GitHub Release next to the desktop
+   installers. Or locally:
    `cd extension && zip -r ../gamma-connector.zip . -x STORE.md README.md`.
 3. Dashboard → **New item** → upload the zip.
 4. Fill in the listing (below), upload screenshots (1280×800 or 640×400:

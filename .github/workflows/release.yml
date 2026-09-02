@@ -1,0 +1,212 @@
+# One GitHub Release for everything a user installs: the desktop app
+# (Windows installer + macOS dmg) and the browser extension zip. No tag
+# ritual — run it from the Actions tab (workflow_dispatch) and it creates the
+# `v<version>` tag + release itself from the ref you ran it on. The Docker
+# image is a separate workflow (docker.yml, on every push to main); the
+# release notes just point at it.
+#
+# Version = desktop/package.json "version" (override with the input). The
+# extension zip carries its own manifest.json version. Re-running for a
+# version that already has a tag is refused: bump the version instead.
+#
+# Every installer bundles the frozen backend (PyInstaller) + built frontend,
+# so a released app is fully self-contained — no Python or Node needed.
+# macOS builds are unsigned (no Apple Developer ID): first launch needs
+# right-click -> Open, or `xattr -dr com.apple.quarantine /Applications/Gamma.app`.
+
+name: release
+
+on:
+  workflow_dispatch:
+    inputs:
+      version:
+        description: "Release version (blank = desktop/package.json)"
+        required: false
+        default: ""
+      prerelease:
+        description: "Mark as pre-release"
+        type: boolean
+        default: false
+      publish:
+        description: "Create the GitHub Release (off = build artifacts only)"
+        type: boolean
+        default: true
+
+jobs:
+  meta:
+    runs-on: ubuntu-latest
+    outputs:
+      version: ${{ steps.v.outputs.version }}
+      tag: ${{ steps.v.outputs.tag }}
+      ext_version: ${{ steps.v.outputs.ext_version }}
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+      - id: v
+        shell: bash
+        run: |
+          version="${{ inputs.version }}"
+          [ -z "$version" ] && version=$(node -p "require('./desktop/package.json').version")
+          ext_version=$(node -p "require('./extension/manifest.json').version")
+          echo "version=$version" >> "$GITHUB_OUTPUT"
+          echo "tag=v$version" >> "$GITHUB_OUTPUT"
+          echo "ext_version=$ext_version" >> "$GITHUB_OUTPUT"
+          if [ "${{ inputs.publish }}" = "true" ] && git rev-parse -q --verify "refs/tags/v$version" >/dev/null; then
+            echo "tag v$version already exists — bump desktop/package.json (or pass a new version)" >&2
+            exit 1
+          fi
+          echo "Releasing Gamma $version (extension $ext_version) from $GITHUB_SHA"
+
+  desktop:
+    needs: meta
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [windows-latest, macos-latest]
+    runs-on: ${{ matrix.os }}
+    env:
+      # No signing certs configured; keep electron-builder from looking.
+      CSC_IDENTITY_AUTO_DISCOVERY: "false"
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+
+      - name: Pin the app version
+        if: inputs.version != ''
+        working-directory: desktop
+        shell: bash
+        run: npm version "${{ needs.meta.outputs.version }}" --no-git-tag-version --allow-same-version
+
+      - name: Build frontend
+        working-directory: frontend
+        run: |
+          npm ci
+          npm run build
+
+      - name: Install backend deps
+        run: |
+          python -m pip install --upgrade pip
+          pip install -r backend/requirements.txt pyinstaller
+
+      - name: Freeze backend
+        run: python desktop/build_backend.py
+
+      - name: Smoke-test frozen backend
+        shell: bash
+        run: |
+          BIN=desktop/dist-backend/gamma-server/gamma-server
+          [ "$RUNNER_OS" = "Windows" ] && BIN="$BIN.exe"
+          "$BIN" --port 9317 --data-dir "$RUNNER_TEMP/gamma-smoke" &
+          SERVER_PID=$!
+          for i in $(seq 1 120); do
+            if curl -fsS http://127.0.0.1:9317/api/health >/dev/null 2>&1; then
+              echo "healthy"; kill $SERVER_PID; exit 0
+            fi
+            sleep 1
+          done
+          echo "frozen server never became healthy"; kill $SERVER_PID; exit 1
+
+      - name: Build desktop app
+        working-directory: desktop
+        run: |
+          npm ci
+          npx electron-builder --publish never
+
+      - name: Shell self-test (packaged app)
+        working-directory: desktop
+        shell: bash
+        run: node test/smoke.js --packaged
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: desktop-${{ matrix.os }}
+          path: |
+            desktop/dist/*.exe
+            desktop/dist/*.dmg
+            desktop/dist/*.zip
+          if-no-files-found: error
+
+  extension:
+    needs: meta
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: Zip the extension
+        run: |
+          cd extension
+          zip -r "../gamma-connector-${{ needs.meta.outputs.ext_version }}.zip" . -x "STORE.md" "README.md" "*.DS_Store"
+          cd ..
+          unzip -l "gamma-connector-${{ needs.meta.outputs.ext_version }}.zip"
+      - uses: actions/upload-artifact@v4
+        with:
+          name: extension
+          path: gamma-connector-*.zip
+          if-no-files-found: error
+
+  publish:
+    needs: [meta, desktop, extension]
+    if: inputs.publish
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/download-artifact@v4
+        with:
+          path: assets
+          merge-multiple: true
+      - name: Release notes
+        shell: bash
+        env:
+          VERSION: ${{ needs.meta.outputs.version }}
+          EXT_VERSION: ${{ needs.meta.outputs.ext_version }}
+          REPO: ${{ github.repository }}
+          TAG: ${{ needs.meta.outputs.tag }}
+        run: |
+          ls -la assets
+          base="https://github.com/$REPO/releases/download/$TAG"
+          asset() { ls assets | grep -E "$1" | head -1; }
+          exe=$(asset '\.exe$'); dmg=$(asset '\.dmg$'); zipmac=$(asset 'mac.*\.zip$|darwin.*\.zip$'); ext=$(asset '^gamma-connector-.*\.zip$')
+          {
+            echo "## Desktop app $VERSION"
+            echo
+            echo "| Platform | Download |"
+            echo "|---|---|"
+            [ -n "$exe" ] && echo "| Windows 10/11 (x64) | [$exe]($base/$exe) |"
+            [ -n "$dmg" ] && echo "| macOS (Apple Silicon) | [$dmg]($base/$dmg) |"
+            [ -n "$zipmac" ] && echo "| macOS (zip) | [$zipmac]($base/$zipmac) |"
+            echo
+            echo "Self-contained: no Python or Node needed. Unsigned builds — Windows SmartScreen: *More info → Run anyway*; macOS: right-click → *Open* (or \`xattr -dr com.apple.quarantine /Applications/Gamma.app\`)."
+            echo
+            echo "## Browser extension $EXT_VERSION"
+            echo
+            [ -n "$ext" ] && echo "[$ext]($base/$ext) — unzip, then \`chrome://extensions\` → *Developer mode* → *Load unpacked*. Works in Chrome, Edge and other Chromium browsers."
+            echo
+            echo "## Server (Docker)"
+            echo
+            echo '```bash'
+            echo "docker run -d --name gamma -p 9001:9001 -v gamma-data:/data ghcr.io/${REPO,,}:latest"
+            echo '```'
+            echo
+            echo "The image is built from \`main\` by the separate Docker workflow; \`latest\` always tracks the newest merge."
+            echo
+          } > notes.md
+          cat notes.md
+      - uses: softprops/action-gh-release@v2
+        with:
+          tag_name: ${{ needs.meta.outputs.tag }}
+          target_commitish: ${{ github.sha }}
+          name: Gamma ${{ needs.meta.outputs.version }}
+          body_path: notes.md
+          generate_release_notes: true
+          prerelease: ${{ inputs.prerelease }}
+          files: assets/*
+          fail_on_unmatched_files: true

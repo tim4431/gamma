@@ -60,6 +60,14 @@ The **Gamma Connector** extension ([extension/](./extension/)) saves the paper y
 
 ## Install
 
+### Downloads
+
+Everything a user installs is on the [**Releases**](https://github.com/tim4431/Gamma/releases/latest) page:
+
+- **Desktop app** (Windows installer, macOS dmg) — a self-contained Gamma with local libraries on your disk, no Docker, Python, or Node. It also opens any Gamma server you host (the NAS, a VPS) as another workspace and switches between them from the toolbar. Details: [desktop/](./desktop/). Builds are unsigned: Windows SmartScreen → *More info → Run anyway*; macOS → right-click → *Open*.
+- **Gamma Connector** browser extension (`gamma-connector-<version>.zip`) — unzip, then `chrome://extensions` → *Developer mode* → *Load unpacked*.
+- **Server** — the Docker image below, built from `main` on every merge.
+
 ### Quickstart
 
 ```bash

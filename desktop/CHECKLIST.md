@@ -1,0 +1,103 @@
+# Desktop QA checklist
+
+What to verify before cutting a release, and how much of it the suite does
+for you. Run the automated part on the packaged build (that is what ships):
+
+```bash
+python desktop/build_backend.py && cd desktop && npm run pack && npm run e2e:packaged
+```
+
+`npm run e2e` runs the same suite on the dev tree (sidecars from
+`backend/venv`, frontend from `frontend/dist`) in ~3 min; `--continue` keeps
+going after a failure, `--keep` leaves the temp profile behind for a look.
+The suite uses a throwaway userData profile, so your real workspaces are
+never touched. Each item below names the e2e step that covers it (**auto**)
+or says it is a manual look (**manual**).
+
+## 1. Lifecycle
+
+| # | Check | How |
+|---|---|---|
+| 1.1 | First start shows the launcher; the shell bar reads *Workspaces*; layout is bar 38 px + content below | auto: *first start shows the launcher + shell bar* |
+| 1.2 | Create a local workspace → card appears, data dir created under `workspaces/<id>` | auto: *create a local workspace from the launcher* |
+| 1.3 | Open it → sidecar starts on a free `127.0.0.1` port, Gamma loads, silent admin login lands, bar shows the name + reload button | auto: *open it: sidecar starts, Gamma loads, auto-login lands* |
+| 1.4 | Quit → every sidecar process is gone (no orphan `gamma-server.exe`/python), window bounds saved | auto: *quit: every sidecar stops, window bounds persist* |
+| 1.5 | Relaunch → the last workspace reopens by itself, data intact, chrome already in the persisted theme | auto: *relaunch reopens the last workspace with its data intact* |
+| 1.6 | *Reopen last workspace at launch* switched off → launcher at start | manual (toggle in the launcher, restart) |
+| 1.7 | Cold start of the frozen server stays well under the 60 s health budget on a slow disk | manual: watch the *Starting …* status; `logs/<id>.log` has the uvicorn banner |
+
+## 2. Switching workspaces (the reason the shell bar exists)
+
+| # | Check | How |
+|---|---|---|
+| 2.1 | Bar dropdown lists every workspace with running dots, check on the current one, *All workspaces…* | auto: *second workspace; switch from the shell bar while Alpha keeps running* |
+| 2.2 | Switching to another local workspace starts its sidecar; the first one keeps running | auto (same step) |
+| 2.3 | Switching back is instant and hits the same server process (no restart, session still valid) | auto: *switch back to Alpha: instant, same server, no restart* |
+| 2.4 | The dropdown closes on choose / outside click / Esc, and the bar shrinks back to 38 px | auto (bar height asserted) + manual feel |
+| 2.5 | `Ctrl/Cmd+Shift+L` and the *All workspaces…* item go to the launcher | auto: *launcher lists sizes …* uses the menu item; accelerator manual |
+| 2.6 | A workspace added while another is open shows up in the dropdown | auto (Beta is added mid-session) |
+
+## 3. Storage (per-workspace `GAMMA_DATA_DIR`)
+
+| # | Check | How |
+|---|---|---|
+| 3.1 | Layout: `users.db`, `users/admin/pages.db`, `users/admin/data.db`, `users/admin/uploads/` | auto: *data dir has the standard GAMMA_DATA_DIR layout* |
+| 3.2 | An uploaded PDF lands in `uploads/` under its content-hash name, exactly once | auto: *upload a PDF + create a paper page with a math note* |
+| 3.3 | Launcher shows size on disk per local workspace + the *last opened* badge | auto: *launcher lists sizes, last-opened badge …* |
+| 3.4 | Remove → *keep files* leaves the folder; *delete everything* removes it (only ever under the shell's own `workspaces/`) | auto (remove) + manual (check the folder) |
+| 3.5 | Two workspaces never share state (separate DBs, uploads, sessions) | auto: Beta starts empty; Alpha's page only appears after the import |
+| 3.6 | Storage limits still apply per server (Settings → Users in Gamma) | manual, Gamma's own feature |
+
+## 4. Export / import inside a workspace
+
+| # | Check | How |
+|---|---|---|
+| 4.1 | Page export in every mode returns 200 with content: `readable`, `notes-pdf`, `logseq-graph`, `zotero-rdf`, `gamma` | auto: *page exports in every mode* |
+| 4.2 | `notes-pdf` and `export-pdf` (annotated PDF) are real PDFs — the frozen bundle carries PyPDF2, pypdfium2's native lib and the ziamath/ziafont fonts | auto (same step; `%PDF` magic asserted) |
+| 4.3 | Markdown import creates a page | auto: *markdown import creates a page* |
+| 4.4 | Backup zip (*Export my data*) downloads through the browser download path into a file | auto: *backup zip downloads through the browser download path* |
+| 4.5 | Save dialog appears for downloads in the real app (tests bypass it via `GAMMA_SHELL_DOWNLOAD_DIR`) | manual |
+| 4.6 | *Import data* restores the backup into another workspace, uploads included | auto: *import the Alpha backup into Beta* |
+| 4.7 | Drag-and-drop a PDF / `<input type=file>` uploads work in the Electron window | manual |
+| 4.8 | Zotero RDF and Logseq imports | manual (need real export files) |
+
+## 5. Remote workspaces + navigation guard
+
+| # | Check | How |
+|---|---|---|
+| 5.1 | A remote URL loads without auto-login (normal Gamma login), bar shows its name | auto: *remote workspace: a URL, loads without auto-login* |
+| 5.2 | Unreachable server → back on the launcher with the error text | auto: *unreachable remote falls back to the launcher with the error* |
+| 5.3 | Foreign URLs (`window.open`, `location` changes, `target=_blank` chips) open in the system browser; the window stays on the workspace | auto: *navigation guard: foreign URLs open outside, the window stays* |
+| 5.4 | ChatGPT-OAuth sign-in: the auth page opens in the system browser and the pasted callback URL completes it in Gamma | manual |
+| 5.5 | HTTPS remote with a self-signed cert shows Chromium's interstitial (expected: use a real cert) | manual |
+
+## 6. Look and feel
+
+| # | Check | How |
+|---|---|---|
+| 6.1 | Chrome follows Gamma's theme (dark/light/sepia/gray) live and persists it | auto: *theme mirror* |
+| 6.2 | Windows: title-bar overlay controls recolor with the theme; the bar stops where they begin; the bar area drags the window | manual |
+| 6.3 | macOS: traffic lights sit in the bar (`hiddenInset`), bar padded past them | manual (build on a Mac) |
+| 6.4 | Launcher and bar use Gamma's tokens/controls/icons (no emoji, no bespoke colors) | manual: compare with Settings in Gamma |
+| 6.5 | Alt reveals the native menu on Windows; accelerators work without it (Ctrl+R reload, Ctrl+Shift+I devtools, Ctrl+0/±) | manual |
+| 6.6 | Rename from the launcher updates the bar immediately | auto: *rename + remove from the launcher* + bar name via pushState |
+
+## 7. Release
+
+| # | Check | How |
+|---|---|---|
+| 7.1 | `desktop/package.json` version bumped (the release tag is `v<version>`; an existing tag is refused) | manual |
+| 7.2 | `release` workflow: frontend build → freeze → frozen health check → electron-builder → packaged smoke, both OSes | CI |
+| 7.3 | Release page lists `Gamma-<v>-win-x64.exe`, `Gamma-<v>-mac-arm64.dmg`/`.zip`, `gamma-connector-<v>.zip` | manual on the release page |
+| 7.4 | Fresh machine: installer runs (SmartScreen *Run anyway*), first launch creates a workspace, no Python/Node needed | manual |
+
+## Last run
+
+| Suite | Date | Result |
+|---|---|---|
+| `npm run e2e` (dev tree, Windows 11) | 2026-09-01 | 19/19 passed |
+| `npm run e2e:packaged` (frozen bundle, Windows 11) | 2026-09-01 | 19/19 passed |
+
+Manual items last looked at 2026-09-01 on Windows 11: 1.6, 2.4, 2.5, 6.2,
+6.4, 6.5 (screenshots of the bar + launcher in dark and light). Not yet
+exercised: 5.4, 5.5, 4.7, 4.8, everything macOS (6.3), 7.4.

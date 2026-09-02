@@ -184,6 +184,6 @@ without `page_id` it uses/creates the root page flagged `properties.web_clips
 ## Not done yet
 
 - Firefox build (`background.scripts` + `webextension-polyfill`), Web Store
-  listing, release zip in CI.
+  listing (the release zip is built by `.github/workflows/release.yml`).
 - Detection is client-side only for the badge; `find_page` scans every root
   page per lookup (fine for personal libraries, index it if that changes).

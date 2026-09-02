@@ -12,7 +12,7 @@ import {
   placeholder as cmPlaceholder,
 } from "@codemirror/view";
 import { defaultKeymap, history, historyKeymap } from "@codemirror/commands";
-import { findMathAtCursor, renderKatex } from "./latexEditor";
+import { escapedAt, findMathAtCursor, renderKatex } from "./latexEditor";
 import { calloutType } from "./callouts";
 import { fenceInnerAt, highlightCode, makeCopyButton, scanFences } from "./codeHighlight";
 
@@ -26,7 +26,7 @@ function scanMathSpans(text) {
   const spans = [];
   let m, open = null;
   while ((m = re.exec(text))) {
-    if (text[m.index - 1] === "\\") continue;
+    if (escapedAt(text, m.index)) continue;
     const tok = { i: m.index, len: m[0].length };
     if (!open) {
       open = tok;
@@ -527,13 +527,6 @@ const dollarBackspace = keymap.of([{
 // empty pair deletes both.
 const BRACKET_PAIRS = { "(": ")", "[": "]", "{": "}" };
 const BRACKET_CLOSERS = new Set([")", "]", "}"]);
-
-// Odd run of backslashes right before pos → the next char is escaped.
-function escapedAt(doc, pos) {
-  let n = 0;
-  while (doc[pos - 1 - n] === "\\") n++;
-  return n % 2 === 1;
-}
 
 const mathBracketPairing = EditorView.inputHandler.of((view, from, to, insert) => {
   const close = BRACKET_PAIRS[insert];
