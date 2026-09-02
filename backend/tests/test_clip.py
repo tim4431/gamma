@@ -128,14 +128,54 @@ def test_clip_dedups_by_doi_and_adds_folder(guest, upstream, meta_calls):
     assert props["folder"] == "b, a/deeper"
 
 
-def test_clip_dead_link_leaves_no_page(guest, upstream, meta_calls):
+def test_clip_without_pdf_creates_web_page(guest, upstream, meta_calls):
+    """No resolvable PDF → a page carrying the tab as web_url (title from the
+    tab), the selection as its first block; never a page with a broken PDF
+    attachment. Re-clipping the same URL finds that page and appends."""
     url = "https://example.org/not-a-paper"
-    r = guest.post("/api/clip", json={"source_url": url, "title": "Ghost"})
-    assert r.status_code == 400
-    assert "PDF" in r.json()["detail"]
-    with sqlite3.connect(user_db_path("guest", "pages.db")) as conn:
-        assert not conn.execute("SELECT 1 FROM unified_blocks WHERE content = 'Ghost'").fetchone()
-    assert meta_calls == []
+    r = guest.post("/api/clip", json={"source_url": url, "title": "Ghost",
+                                      "selection": "a striking claim", "folder": "web", "labels": ["blog"]})
+    assert r.status_code == 200, r.text
+    body = r.json()
+    assert body["doc_id"] == "" and body["existed"] is False
+    assert body["title"] == "Ghost" and body["open_url"] == f"/?block={body['block_id']}"
+    assert body["note"].startswith("No PDF found")
+    title, props = _props(body["block_id"])
+    assert title == "Ghost" and props["web_url"] == url
+    assert "doc_id" not in props and "source_url" not in props and "auto_title" not in props
+    assert props["folder"] == "web" and props["category"] == "blog"
+    kids = guest.get(f"/api/blocks/{body['block_id']}/children").json()["children"]
+    assert [k["content"] for k in kids] == ["> a striking claim\n— [Ghost](https://example.org/not-a-paper)"]
+    assert meta_calls == []  # nothing identifies a paper → no metadata lookup
+    # The badge finds it; a second clip of the tab is a dedup + append.
+    lk = guest.get("/api/library/lookup", params={"url": url})
+    assert lk.status_code == 200 and lk.json()["block_id"] == body["block_id"]
+    r2 = guest.post("/api/clip", json={"source_url": url, "title": "Ghost", "selection": "another",
+                                       "folder": "web/later"})
+    assert r2.json()["existed"] is True and r2.json()["block_id"] == body["block_id"]
+    kids = guest.get(f"/api/blocks/{body['block_id']}/children").json()["children"]
+    assert len(kids) == 2 and kids[-1]["content"].startswith("> another")
+    assert _props(body["block_id"])[1]["folder"] == "web/later"
+    # No tab title: the URL names the page. A DOI on the page still starts the lookup.
+    r3 = guest.post("/api/clip", json={"source_url": "https://pub.example/articles/deep-dive",
+                                       "doi": "10.5555/paywalled.1"})
+    assert r3.status_code == 200 and r3.json()["title"] == "deep-dive"
+    assert meta_calls == [("guest", r3.json()["block_id"], "10.5555/paywalled.1", "")]
+    # Nothing at all to save is still a 400.
+    assert guest.post("/api/clip", json={}).status_code == 400
+
+
+def test_clip_dead_pdf_link_falls_back_to_web_page(guest, upstream, meta_calls):
+    """The detector said PDF, the link is dead: same web-page outcome, and no
+    page carries the dead URL as an attachment."""
+    r = guest.post("/api/clip", json={"source_url": "https://example.org/articles/dead",
+                                      "pdf_url": "https://example.org/articles/dead-file", "title": "Dead"})
+    assert r.status_code == 200, r.text
+    _, props = _props(r.json()["block_id"])
+    assert props == {"web_url": "https://example.org/articles/dead"}
+    assert "PDF" in r.json()["note"]
+    # Without a tab URL or title there is nothing to make a page from: still a 400.
+    assert guest.post("/api/clip", json={"pdf_url": "https://example.org/articles/dead-file-2"}).status_code == 400
 
 
 def test_clip_no_copy_probes_only(guest, upstream, meta_calls):

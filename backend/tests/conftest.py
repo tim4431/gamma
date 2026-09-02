@@ -21,6 +21,16 @@ from fastapi.testclient import TestClient
 
 
 @pytest.fixture(autouse=True)
+def _no_upload_grace(monkeypatch):
+    """Orphan cleanup skips files younger than storage.UPLOAD_GRACE_S (the
+    upload→attach window). Tests upload and delete within milliseconds, so
+    the suite runs with no grace; test_pages covers the grace itself."""
+    from gamma import storage
+    monkeypatch.setattr(storage, "UPLOAD_GRACE_S", 0)
+    yield
+
+
+@pytest.fixture(autouse=True)
 def _reset_ratelimit():
     """The whole suite shares one TestClient source IP, so the per-IP login
     throttle would trip mid-run. Clear counters before each test — production

@@ -1,4 +1,6 @@
-"""PDF attachments, extracted document context, and common chat messages."""
+"""Chat context assembly: pages from the user's knowledge base (title,
+properties, notes and — when the page carries a PDF attachment — the
+document's text), native PDF attachments, and the common message shapes."""
 
 import base64
 import json
@@ -6,8 +8,9 @@ import re
 import sqlite3
 from urllib.request import Request as URLRequest
 
-from .blocks_store import fetch_subtree
-from .db import pdf_upload_path, user_db_path, user_uploads_dir
+from .blocks_store import fetch_subtree, page_attachment, page_for_doc
+from .db import pdf_upload_path, user_db_path
+from .foldertags import parse_tags
 from .logbuf import log
 from .net_guard import guarded_urlopen
 from .pdf_text import PDF_EXTRACT_FAILED, extract_pages, extract_text, extract_text_pages, page_count
@@ -19,6 +22,24 @@ MAX_ATTACH_PDF_BYTES = 15 * 1024 * 1024
 # Cap on the selected-PDF-passages payload a chat request may carry — the
 # prompt copy (final_prompt) and the context locator (gather_inputs) share it.
 MAX_SELECTION_CHARS = 24_000
+
+# Renamed agent tools: old name → current. Saved chats replay their recorded
+# tool calls by name (build_messages), so a chat that ran before a rename
+# must still replay — and a model that copies the old name from that history
+# must still be served (ai_tools.run_agent_tool resolves through this map).
+DEPRECATED_TOOLS = {"search_pdfs": "search_library"}
+
+# What precedes the page context in the user turn. The wording matters: an
+# unlabelled "here is the text" reads as the whole document, and the model
+# answers detail questions from memory (docs/dev/ai_context.md).
+CONTEXT_INTRO = (
+    "Context — pages from the user's knowledge base. Each page gives its title, "
+    "properties and the user's notes; a page that carries a PDF attachment also "
+    "gives the document's text, which is often an excerpt (see its label).")
+
+
+def canonical_tool(name: str) -> str:
+    return DEPRECATED_TOOLS.get(name, name)
 
 
 def parse_images(images: list) -> list[tuple[str, str]]:
@@ -63,8 +84,8 @@ def final_prompt(payload) -> str:
     if selection:
         prompt = (
             f"{prompt}\n\n"
-            "The user has selected the following passage(s) from the document "
-            '(multiple passages are separated by "---"). '
+            "The user has selected the following passage(s) from the page's PDF "
+            'attachment (multiple passages are separated by "---"). '
             f'Answer specifically about them:\n"""\n{selection}\n"""'
         )
     return prompt
@@ -125,7 +146,8 @@ def build_messages(payload, context: str, with_tools: bool = False) -> list[dict
                 # order the turn actually happened in. Synthetic call ids only
                 # need to pair within this one request.
                 messages.append({"role": "assistant", "content": "", "tool_calls": [
-                    {"id": f"call_h{i}_{j}", "name": a["tool"], "arguments": a.get("args") or {}}
+                    {"id": f"call_h{i}_{j}", "name": canonical_tool(a["tool"]),
+                     "arguments": a.get("args") or {}}
                     for j, a in enumerate(actions)]})
                 for j, a in enumerate(actions):
                     result = (_ELIDED_RESULT if j in elided.get(i, ())
@@ -137,12 +159,12 @@ def build_messages(payload, context: str, with_tools: bool = False) -> list[dict
             # (Anthropic especially) reject empty content blocks.
             continue
         if role == "user" and context and not context_used:
-            content = f"Here is the PDF text:\n\n{context}\n\nUser question: {content}"
+            content = f"{CONTEXT_INTRO}\n\n{context}\n\nUser question: {content}"
             context_used = True
         messages.append({"role": role, "content": content})
     content = final_prompt(payload)
     if context and not context_used:
-        content = f"Here is the PDF text:\n\n{context}\n\nUser question: {content}"
+        content = f"{CONTEXT_INTRO}\n\n{context}\n\nUser question: {content}"
     messages.append({"role": "user", "content": content})
     return messages
 
@@ -160,7 +182,7 @@ def _download_pdf_from_source(user: str, doc_id: str, pdf_path) -> None:
         if not row:
             return
         properties = json.loads(row[0] or "{}")
-        source = properties.get("source_url") or properties.get("sourceUrl") or ""
+        source = properties.get("source_url") or ""
         if not source:
             return
         request = URLRequest(
@@ -236,27 +258,21 @@ _MAP_LINE_CHARS = 80
 
 def ensure_indexed(user: str, doc_id: str) -> bool:
     """Kick the background indexer for a paper the search index doesn't hold
-    at the current version. Returns True when the paper is already current.
-
-    A paper chat needs the index for its document map and search_pdfs, but
-    until now only a search_pdfs call started indexing — a fresh paper whose
-    chat only ever used read_page (or ran with tools off) never got indexed,
-    so the map never appeared and the model kept paging blind."""
+    at the current version, so a page chat's document map and search_library
+    exist by the next turn even when the model never calls search. Returns
+    True when the paper is already current."""
     # Local import: keep gamma.* module load free of the routers package.
-    from .routers.search import _ensure_schema, _index_missing_async
-    from .textnorm import INDEX_VERSION
+    from .pdf_index import pdf_missing
+    from .routers.search import _index_missing_async
     try:
         with sqlite3.connect(user_db_path(user, "data.db")) as connection:
-            _ensure_schema(connection)
-            current = connection.execute(
-                "SELECT 1 FROM pdf_fts_docs WHERE doc_id = ? AND ver = ?",
-                (doc_id, INDEX_VERSION)).fetchone()
+            missing = pdf_missing(connection, [doc_id])
     except sqlite3.OperationalError as e:
         log.warning(f"[ai_context] index check for {doc_id} failed: {e}")
         return False
-    if current:
+    if not missing:
         return True
-    _index_missing_async(user, [doc_id])
+    _index_missing_async(user, missing)
     return False
 
 
@@ -440,9 +456,48 @@ def selection_context(user: str, doc_id: str, selection: str, budget: int) -> st
     return "\n\n".join(sections) if windows else None
 
 
+def page_properties_line(properties: dict) -> str:
+    """One line describing what a page carries and how it is filed —
+    folders, labels, cached metadata (authors, year, venue, DOI/arXiv), web
+    source, attachment — so the model can tell a paper from a note about one.
+    "" when the page has none of it."""
+    properties = properties or {}
+    bits = []
+    folders = parse_tags(properties.get("folder"))
+    if folders:
+        bits.append("folders: " + ", ".join(folders))
+    labels = parse_tags(properties.get("category"))
+    if labels:
+        bits.append("labels: " + ", ".join(labels))
+    meta = properties.get("meta") or {}
+    if isinstance(meta, dict):
+        authors = [str(a).strip() for a in (meta.get("authors") or []) if str(a).strip()]
+        if authors:
+            shown = ", ".join(authors[:6]) + (" et al." if len(authors) > 6 else "")
+            bits.append(f"authors: {shown}")
+        for key, label in (("year", "year"), ("venue", "venue"), ("doi", "doi"), ("arxiv_id", "arXiv")):
+            if meta.get(key):
+                bits.append(f"{label}: {str(meta[key])[:120]}")
+    if properties.get("web_url"):
+        bits.append(f"web source: {str(properties['web_url'])[:200]}")
+    attachment = page_attachment(properties)
+    if attachment:
+        name = f" ({attachment['name']})" if attachment.get("name") else ""
+        bits.append(f"attachment: PDF{name}")
+    return ("Properties: " + "; ".join(bits)) if bits else ""
+
+
 def page_report_section(connection, user: str, page_id: str, pdf_budget: int,
-                        pdf_offset: int = 0, pdf_page: int = 1) -> str | None:
-    """Render a page's PDF excerpt, highlights, and nested notes as context."""
+                        pdf_offset: int = 0, pdf_page: int = 1,
+                        document_text: str | None = None,
+                        include_notes: bool = True) -> str | None:
+    """Render one page as context: title, properties, the attachment's text
+    (a windowed excerpt of ``pdf_budget`` chars from ``pdf_offset`` /
+    ``pdf_page`` — read_page's shape — or ``document_text`` when the caller
+    already built it), then the user's highlights and nested notes. A page
+    without an attachment is its notes: they are always included; for a
+    page with a PDF, ``include_notes=False`` leaves them out (the chat's
+    "include my notes" switch). None when the page doesn't exist."""
     rows = fetch_subtree(connection, page_id)
     if not rows:
         return None
@@ -457,6 +512,8 @@ def page_report_section(connection, user: str, page_id: str, pdf_budget: int,
         children.sort(key=lambda row: row[2])
 
     properties = json.loads(root[4] or "{}")
+    attachment = page_attachment(properties)
+    doc_id = attachment["id"] if attachment else ""
     highlights: list[str] = []
     notes: list[str] = []
 
@@ -474,13 +531,19 @@ def page_report_section(connection, user: str, page_id: str, pdf_budget: int,
                 notes.append("  " * depth + f"- {content}")
             walk(row[0], depth + 1)
 
-    walk(page_id, 0)
+    if include_notes or not doc_id:
+        walk(page_id, 0)
     sections = [f"### {root[3] or 'Untitled'}"]
+    props_line = page_properties_line(properties)
+    if props_line:
+        sections.append(props_line)
     if properties.get("summary"):
         sections.append(f"Summary: {properties['summary']}")
-    if properties.get("doc_id") and pdf_budget > 0:
-        excerpt, next_offset, seen = pdf_excerpt(
-            user, properties["doc_id"], pdf_budget, pdf_offset, pdf_page)
+    if document_text is not None:
+        if document_text:
+            sections.append(f"Document text:\n{document_text}")
+    elif doc_id and pdf_budget > 0:
+        excerpt, next_offset, seen = pdf_excerpt(user, doc_id, pdf_budget, pdf_offset, pdf_page)
         at_page = f"pdf_page={pdf_page}, " if pdf_page > 1 else ""
         if excerpt:
             where = ([f"from PDF page {pdf_page}"] if pdf_page > 1 else []) + \
@@ -502,19 +565,33 @@ def page_report_section(connection, user: str, page_id: str, pdf_budget: int,
         sections.append("User's highlighted passages:\n" + "\n".join(highlights))
     if notes:
         sections.append("User's notes:\n" + "\n".join(notes))
+    elif not doc_id and not highlights:
+        sections.append("User's notes: (this page has no notes yet)")
     return "\n\n".join(sections)
 
 
 def gather_inputs(user: str, payload, allow_native: bool) -> tuple[list[str], str, list[dict]]:
-    """Collect native PDF attachments and extracted text for a chat request.
+    """Collect the chat's context: native PDF attachments and the text
+    sections for the request's pages.
+
+    The pages come from ``payload.pages`` (several — a report across pages,
+    each getting an even share of ``multi_context_char_limit``) or, when that
+    is empty, the one page of ``payload.page_id`` with the full
+    ``context_char_limit`` (``payload.doc_id`` alone is the compatibility
+    input: it resolves to the page carrying that PDF, and a doc no page
+    carries contributes nothing). Every page contributes its
+    title, properties and notes; a page with a PDF attachment adds the
+    document's text (or the file itself when ``attach_pdf`` and the provider
+    takes it) and hides the notes unless ``include_notes`` — a page without
+    one IS its notes, so they always go.
 
     The third value is the coverage report the chat streams back as its
-    first `{"context": [...]}` line — one entry per document: ``{"title",
-    "doc_id", "native" (the file itself went), "native_requested" (the user
-    asked for that; requested but not native = the provider refused it and
-    text went instead), "partial", "chars", "pages", "pages_shown"}`` — so
-    the UI can say "the model saw pages 1–9 of 22" instead of leaving the
-    user to guess."""
+    first `{"context": [...]}` line — one entry per page: ``{"title",
+    "doc_id" ("" for a page without a PDF), "native" (the file itself went),
+    "native_requested" (the user asked for that; requested but not native =
+    the provider refused it and text went instead), "partial", "chars",
+    "pages", "pages_shown"}`` — so the UI can say "the model saw pages 1–9
+    of 22" instead of leaving the user to guess."""
     pdf_b64s = []
     context_sections = []
     coverage = []
@@ -526,70 +603,73 @@ def gather_inputs(user: str, payload, allow_native: bool) -> tuple[list[str], st
                          "native_requested": bool(payload.attach_pdf), **(cover or none)})
 
     page_ids = [str(page) for page in (payload.pages or []) if page][:6]
-    if page_ids:
-        text_budget = max(1, payload.multi_context_char_limit // len(page_ids))
+    single = not page_ids
+    with sqlite3.connect(user_db_path(user, "pages.db")) as connection:
+        if single:
+            page_id = str(getattr(payload, "page_id", "") or "")
+            if not page_id or not connection.execute(
+                    "SELECT 1 FROM unified_blocks WHERE id = ? AND parent_id = 'root'",
+                    (page_id,)).fetchone():
+                row = page_for_doc(connection, payload.doc_id)
+                page_id = row[0] if row else ""
+            page_ids = [page_id] if page_id else []
+        text_budget = (payload.context_char_limit if single
+                       else max(1, payload.multi_context_char_limit // max(1, len(page_ids))))
         total_b64 = 0
-        with sqlite3.connect(user_db_path(user, "pages.db")) as connection:
-            for page_id in page_ids:
-                row = connection.execute(
-                    "SELECT content, properties FROM unified_blocks WHERE id = ?",
-                    (page_id,),
-                ).fetchone()
-                if not row:
-                    continue
-                title = row[0] or "Untitled"
-                properties = json.loads(row[1] or "{}")
-                doc_id = properties.get("doc_id") or ""
-                attached = False
-                if doc_id and attach:
-                    data = load_pdf_b64(user, doc_id)
-                    if data and total_b64 + len(data) < 20_000_000:
-                        pdf_b64s.append(data)
-                        total_b64 += len(data)
-                        attached = True
-                if doc_id and attached:
-                    report(title, doc_id, True)
-                elif doc_id:
-                    text, cover = head_context(user, doc_id, limit=text_budget)
+        for page_id in page_ids:
+            row = connection.execute(
+                "SELECT content, properties FROM unified_blocks WHERE id = ?", (page_id,),
+            ).fetchone()
+            if not row:
+                continue
+            title = row[0] or "Untitled"
+            properties = json.loads(row[1] or "{}")
+            attachment = page_attachment(properties)
+            doc_id = attachment["id"] if attachment else ""
+            document_text = ""
+            attached = False
+            if doc_id and attach:
+                data = load_pdf_b64(user, doc_id)
+                if data and total_b64 + len(data) < 20_000_000:
+                    pdf_b64s.append(data)
+                    total_b64 += len(data)
+                    attached = True
+            if doc_id and single:
+                # Index the paper (background) so the map and search_library
+                # exist for the next turn — the first chat on a fresh paper
+                # otherwise runs without them for as long as the model never
+                # calls search.
+                ensure_indexed(user, doc_id)
+            if doc_id and attached:
+                report(title, doc_id, True)
+            elif doc_id:
+                selection = ((payload.selection or "").strip()[:MAX_SELECTION_CHARS]
+                             if single else "")
+                # With a selection, center the budget on the selected
+                # passages (located by page) instead of the start of the
+                # paper; fall back to the plain head excerpt when nothing
+                # could be located.
+                document_text = (selection_context(user, doc_id, selection, text_budget)
+                                 if selection else None)
+                if document_text:
+                    # Selection-centred context: the budget went to windows
+                    # around the passages, so there is no head page span.
+                    report(title, doc_id, False,
+                           {**none, "partial": True, "chars": len(document_text), "selection": True})
+                else:
+                    document_text, cover = head_context(user, doc_id, limit=text_budget)
                     report(title, doc_id, False, cover)
-                    if text:
-                        context_sections.append(f"### {title}\n{text}")
-                if payload.include_notes:
-                    section = page_report_section(connection, user, page_id, 0)
-                    if section:
-                        context_sections.append(section)
-    elif payload.doc_id:
-        if attach:
-            data = load_pdf_b64(user, payload.doc_id)
-            if data:
-                pdf_b64s.append(data)
-                report(_doc_title(user, payload.doc_id), payload.doc_id, True)
-        # Index the paper (background) so the map and search_pdfs exist for
-        # the next turn — the first chat on a fresh paper otherwise runs
-        # without them for as long as the model never calls search_pdfs.
-        ensure_indexed(user, payload.doc_id)
-        if not pdf_b64s:
-            # With a selection, center the budget on the selected passages
-            # (located by page) instead of the start of the paper; fall back
-            # to the plain head excerpt when nothing could be located.
-            selection = (payload.selection or "").strip()[:MAX_SELECTION_CHARS]
-            text = (selection_context(user, payload.doc_id, selection,
-                                      payload.context_char_limit)
-                    if selection else None)
-            if text:
-                # Selection-centred context: the budget went to windows
-                # around the passages, so there is no head page span.
-                report(_doc_title(user, payload.doc_id), payload.doc_id, False,
-                       {**none, "partial": True, "chars": len(text), "selection": True})
-            else:
-                text, cover = head_context(user, payload.doc_id, limit=payload.context_char_limit)
-                report(_doc_title(user, payload.doc_id), payload.doc_id, False, cover)
-            if text:
-                context_sections.append(text)
-            # Only for a paper chat with tools: the map is worth its tokens
+            section = page_report_section(connection, user, page_id, 0,
+                                          document_text=document_text or "",
+                                          include_notes=bool(payload.include_notes))
+            if section:
+                context_sections.append(section)
+                if not doc_id:
+                    report(title, "", False, {**none, "chars": len(section)})
+            # Only for a page chat with tools: the map is worth its tokens
             # when the model can act on it (read_page), not in plain chat.
-            if getattr(payload, "agent_scope", "") == "page":
-                outline = document_map(user, payload.doc_id)
+            if doc_id and single and getattr(payload, "agent_scope", "") == "page":
+                outline = document_map(user, doc_id)
                 if outline:
                     context_sections.append(outline)
 
@@ -609,15 +689,3 @@ def gather_inputs(user: str, payload, allow_native: bool) -> tuple[list[str], st
                 context_sections.append(f"### {title}\n{text}")
 
     return pdf_b64s, "\n\n---\n\n".join(context_sections), coverage
-
-
-def _doc_title(user: str, doc_id: str) -> str:
-    """The library title of a paper, "" when the doc isn't a page."""
-    try:
-        with sqlite3.connect(user_db_path(user, "pages.db")) as connection:
-            row = connection.execute(
-                "SELECT content FROM unified_blocks WHERE parent_id = 'root' "
-                "AND json_extract(properties, '$.doc_id') = ? LIMIT 1", (doc_id,)).fetchone()
-        return (row[0] or "") if row else ""
-    except sqlite3.Error:
-        return ""

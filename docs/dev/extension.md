@@ -24,6 +24,8 @@ and text selections. Server side: `gamma/routers/clip.py`. No build step
    *Clip selection to Gamma* (selection → a `> quote — [title](url)` block
    under the paper matching this tab, else under a "Web clips" note page).
    Results arrive as a notification whose click opens the page.
+   A page with no PDF at all still saves: it becomes a page of its own
+   carrying the tab as `web_url` (see the pipeline below).
 4. **Already in the library** — ✓ badge; the popup offers *Open in Gamma*
    and *Add to another folder…* instead of a duplicate save.
 5. **Ctrl+Shift+S** saves the current page with the default folder.
@@ -94,9 +96,10 @@ closing; progress is written to the tab state and the popup renders it):
 
 ```
 PDF tab?  fetch bytes in the browser → %PDF check → POST /api/uploads → doc_id   (best-effort)
-POST /api/clip { source_url, pdf_url, doi, arxiv_id, doc_id?, title, folder, labels, allow_oa, save_copy }
+POST /api/clip { source_url, pdf_url, doi, arxiv_id, doc_id?, title, selection?, folder, labels, allow_oa, save_copy }
   └─ 400 and no doc_id yet? → fetch bytes in the browser → POST /api/uploads → retry /api/clip with doc_id
 → { block_id, doc_id, title, existed, open_url, folder, labels, note? }
+   doc_id "" = no PDF: the clip became a page with properties.web_url
 ```
 
 Browser-side downloads are automatic, no checkbox: PDF tabs upload their bytes
@@ -126,8 +129,18 @@ Server side (`clip.py`, sync `def` — it downloads):
    headers; the file lands at `uploads/<sha256(url)[:24]>.pdf`, the same id
    `/api/pdf?save=1` would use, so the app's viewer finds it. Over the storage
    limit → not stored, `note` says so, the page proxies on open. `save_copy:
-   false` → headers-only probe. A dead or HTML link is a 400 here and **no
-   page is created** (the `openPdf` invariant). With `doc_id` (uploaded bytes)
+   false` → headers-only probe. A dead or HTML link never creates a page with
+   a broken attachment (the `openPdf` invariant) — instead the clip takes the
+   **web-page path** (`_clip_web_page`): a page titled from the tab (else the
+   URL's last segment / host) with `properties.web_url = source_url`, no
+   `doc_id`/`source_url`, the request's `selection` (if any) as its first
+   `> quote — [title](url)` block, folder/labels applied, `doc_id: ""` and a
+   `note` in the response. A request that names no PDF at all (no `pdf_url`,
+   DOI, arXiv id or uploaded bytes — *Save page to Gamma* on a blog post)
+   skips the resolver and goes there directly. Re-clipping the same URL finds
+   that page (`find_web_page`: `web_url` match on attachment-less pages) and
+   only files it / appends the new selection. Only a request with nothing at
+   all (no URL, title or selection) is a 400. With `doc_id` (uploaded bytes)
    this step is skipped; the file must exist.
 4. **Page** — `blocks_store.get_or_create_doc_page()` (extracted from
    `POST /api/blocks/by-doc`) with `default_title = citation_title`, so
@@ -141,14 +154,18 @@ Server side (`clip.py`, sync `def` — it downloads):
    ride along as trusted hints (they come from the publisher page's own meta
    tags, so the lookup resolves them directly instead of re-mining the PDF
    text); arXiv/DOI paths need no AI provider. Skipped when `meta` already
-   exists or `fetch_metadata: false`.
+   exists or `fetch_metadata: false`. A web-page clip starts it only when a
+   DOI/arXiv id was detected (the lookup needs no PDF for those — a note about
+   a paywalled paper still gets its citation).
 
 Companions: `GET /api/library/lookup?doi=&arxiv_id=&url=` (404 when absent;
-identifiers are also extracted from `url`), `GET /api/library/folders` →
-`{folders, labels}` (folder paths plus their ancestors), `POST /api/clip/note
-{text, source_url, title, page_id?}` (appends with `generate_key_between`;
-without `page_id` it uses/creates the root page flagged `properties.web_clips
-= 1`). All session-only (`require_user`).
+identifiers are also extracted from `url`; web-clip pages match by
+`web_url`), `GET /api/library/folders` → `{folders, labels}` (folder paths
+plus their ancestors), `POST /api/clip/note {text, source_url, title,
+page_id?}` — the explicit "clip selection INTO a page" append path (with
+`generate_key_between`; without `page_id` it uses/creates the root page
+flagged `properties.web_clips = 1`), as opposed to `/api/clip`'s "make a page
+of this tab". All session-only (`require_user`).
 
 ## Auth and permissions
 
@@ -169,8 +186,9 @@ without `page_id` it uses/creates the root page flagged `properties.web_clips
 ## Testing
 
 - `backend/tests/test_clip.py` — the endpoints with faked upstream fetches
-  (dedup + folder refinement, dead link → no page, `doc_id` path, `save_copy`,
-  lookup by arXiv version / DOI / web_url, folders, clip notes, 401s).
+  (dedup + folder refinement, no PDF / dead link → web-page path with
+  selection + re-clip dedup, `doc_id` path, `save_copy`, lookup by arXiv
+  version / DOI / web_url, folders, clip notes, 401s).
 - End-to-end recipe (not checked in): Playwright `launchPersistentContext`
   with `--load-extension=extension --headless=new` on the cached ms-playwright
   Chromium, a throwaway backend (`GAMMA_DATA_DIR`, `GAMMA_ADMIN_USER/PASSWORD`,

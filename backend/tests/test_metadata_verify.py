@@ -5,7 +5,6 @@ publisher PDFs without a page-1 identifier, and AI-extracted output is
 verified — fabricated identifiers are dropped instead of stored.
 """
 
-import pytest
 from conftest import make_page
 
 from gamma.routers import metadata

@@ -12,11 +12,11 @@ def _index_rows(user, doc_id, pages):
     text, current version — otherwise the endpoint schedules a re-index that
     would race the test and delete these rows)."""
     from gamma.db import user_db_path
-    from gamma.routers.search import _ensure_schema
+    from gamma.pdf_index import ensure_schema
     from gamma.textnorm import INDEX_VERSION, normalize_text
 
     with sqlite3.connect(user_db_path(user, "data.db")) as conn:
-        _ensure_schema(conn)
+        ensure_schema(conn)
         conn.execute("DELETE FROM pdf_fts WHERE doc_id = ?", (doc_id,))
         conn.executemany("INSERT INTO pdf_fts (doc_id, page, content) VALUES (?, ?, ?)",
                          [(doc_id, p, normalize_text(text)) for p, text in pages])
@@ -56,12 +56,12 @@ def test_pdf_search_is_separator_tolerant(guest):
 
 def test_stale_index_version_counts_as_missing(guest):
     from gamma.db import user_db_path
-    from gamma.routers.search import _ensure_schema
+    from gamma.pdf_index import ensure_schema
 
     user = guest.get("/api/session").json()["user"]
     make_page(guest, "Stale paper", properties={"doc_id": "ftsdoc003"})
     with sqlite3.connect(user_db_path(user, "data.db")) as conn:
-        _ensure_schema(conn)
+        ensure_schema(conn)
         conn.execute("INSERT OR REPLACE INTO pdf_fts_docs (doc_id, indexed_at, pages, ver) "
                      "VALUES ('ftsdoc003', '2025', 1, 0)")  # pre-normalization row
         conn.commit()

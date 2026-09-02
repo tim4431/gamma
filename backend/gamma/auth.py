@@ -178,50 +178,160 @@ def require_admin(request: Request) -> str:
     return user
 
 
-def share_grant(request: Request):
-    """(owner_username, doc_id) if the request carries a valid ?share=<token>,
-    else None. Cached on request.state so repeat calls in one request are free.
+SHARE_AUDIENCES = ("anyone", "users", "list")
+SHARE_ROLES = ("view", "edit")
 
-    This is the ONLY unauthenticated read path: a share token is minted per
-    document and names its owner, so access is scoped to that one document — the
-    old ?user= fallback trusted any username and leaked whole accounts.
+
+def parse_share_users(raw: str) -> list[dict]:
+    """``allowed_users`` ("carol:edit,dave" — a missing role means view) →
+    [{"name", "role"}]."""
+    users = []
+    for item in (raw or "").split(","):
+        name, _, role = item.strip().partition(":")
+        if name:
+            users.append({"name": name, "role": role if role in SHARE_ROLES else "view"})
+    return users
+
+
+def serialize_share_users(users: list[dict]) -> str:
+    return ",".join(f"{u['name']}:{u['role']}" for u in users)
+
+
+def share_lookup(token: str) -> dict | None:
+    """The share row for a token as a dict ({token, username, page_id,
+    audience, role, users}), or None. Every row carries page_id: the ones
+    minted before shares were keyed by page were backfilled (or deleted) by
+    gamma/migrate.py, so a row without one is treated as dead. The vestigial
+    ``shares.doc_id`` column is never read (the page's attachment is what
+    counts — blocks_store.page_attachment); ``migrate.drop_shares_doc_id``
+    removes it once every deployed binary stopped writing it."""
+    if not token:
+        return None
+    with sqlite3.connect(str(USERS_DB)) as conn:
+        row = conn.execute(
+            "SELECT username, page_id, audience, role, allowed_users "
+            "FROM shares WHERE token = ?", (token,)
+        ).fetchone()
+        if not row:
+            return None
+        username, page_id, audience, role, allowed = row
+    if not page_id:
+        return None
+    return {
+        "token": token, "username": username, "page_id": page_id,
+        "audience": audience if audience in SHARE_AUDIENCES else "anyone",
+        "role": role if role in SHARE_ROLES else "view",
+        "users": parse_share_users(allowed),
+    }
+
+
+def share_access(share: dict, request: Request):
+    """What this request's viewer may do with a share: ("edit" | "view", "")
+    when allowed, else (None, "login" | "forbidden").
+
+    Notion-style and additive: the owner always edits their own page; a
+    signed-in account the owner INVITED (``users``) gets its own per-person
+    role regardless of general access; everyone else goes through the general
+    access gate — ``anyone`` needs no session (and is always view-only),
+    ``users`` admits any signed-in non-guest account with the share's role,
+    ``list`` admits nobody beyond the invited. Guests count as not signed in.
+    """
+    viewer = request.state.user
+    if viewer and viewer == share["username"]:
+        return "edit", ""
+    signed_in = bool(viewer) and not request.state.is_guest
+    if signed_in:
+        for invited in share["users"]:
+            if invited["name"] == viewer:
+                return invited["role"], ""
+    audience = share["audience"]
+    if audience == "anyone":
+        return "view", ""
+    if not signed_in:
+        return None, "login"
+    if audience == "list":
+        return None, "forbidden"
+    return share["role"], ""
+
+
+def share_grant(request: Request):
+    """(owner_username, page_id, level) for a valid, permitted ?share=<token>
+    on this request, else None. Cached on request.state.
+
+    This is the ONLY read path besides the session itself: a share token is
+    minted per page and names its owner, so access is scoped to that one
+    page's subtree — the old ?user= fallback trusted any username and leaked
+    whole accounts. When a token is present it takes precedence over the
+    session for choosing WHOSE data is read (a signed-in visitor sees the
+    owner's page, not their own), while the session still decides whether the
+    audience gate lets them in.
     """
     cached = getattr(request.state, "_share_grant", "unset")
     if cached != "unset":
         return cached
-    token = request.query_params.get("share")
     grant = None
+    token = request.query_params.get("share")
     if token:
-        with sqlite3.connect(str(USERS_DB)) as conn:
-            row = conn.execute(
-                "SELECT username, doc_id FROM shares WHERE token = ?", (token,)
-            ).fetchone()
-        if row:
-            grant = (row[0], row[1])
+        share = share_lookup(token)
+        if share:
+            level, _reason = share_access(share, request)
+            if level:
+                grant = (share["username"], share["page_id"], level)
     request.state._share_grant = grant
     return grant
 
 
-def share_scope_doc(request: Request):
-    """The doc id a read is confined to, or None for a full-access session user.
+def _share_denied(request: Request) -> HTTPException:
+    """The right status for a ?share= request that share_grant refused: 401
+    when signing in could help, 403 when the viewer is signed in but not
+    allowed (or the token is unknown — indistinguishable to outsiders)."""
+    if request.state.user and not request.state.is_guest:
+        return HTTPException(status_code=403, detail="not accessible via this share link")
+    return HTTPException(status_code=401)
 
-    Read endpoints pass this to blocks_store.assert_block_in_doc so a share
-    token can only reach its own document's subtree and assets.
+
+def share_scope_page(request: Request):
+    """The page id a request is confined to, or None for a full-access session
+    user. Any request carrying ?share= is scoped — even a signed-in one.
+
+    Read endpoints pass this to blocks_store.assert_block_in_page so a share
+    token can only reach its own page's subtree and assets.
     """
-    if request.state.user:
+    if not request.query_params.get("share"):
         return None
     grant = share_grant(request)
-    return grant[1] if grant else None
+    if not grant:
+        raise _share_denied(request)
+    return grant[1]
 
 
 def resolve_user(request: Request) -> str:
-    """Return the user whose data to read: the session user, or the owner named
-    by a valid ?share=<token>. Read-only endpoints only; callers that can serve
-    a share view must also enforce share_scope_doc()."""
+    """Return the user whose data to READ: the owner named by a ?share=<token>
+    when one is present (and permits this viewer), else the session user.
+    Read-only endpoints only; callers that can serve a share view must also
+    enforce share_scope_page()."""
+    if request.query_params.get("share"):
+        grant = share_grant(request)
+        if grant:
+            return grant[0]
+        raise _share_denied(request)
     user = request.state.user
     if user:
         return user
-    grant = share_grant(request)
-    if grant:
-        return grant[0]
     raise HTTPException(status_code=401)
+
+
+def require_writer(request: Request) -> str:
+    """Return the user whose data to WRITE: the share owner when the request's
+    ?share= token grants edit, else the session user. Endpoints that accept
+    share editors must additionally confine every touched block to
+    share_scope_page() — the token never reaches the rest of the account."""
+    if request.query_params.get("share"):
+        grant = share_grant(request)
+        if not grant:
+            raise _share_denied(request)
+        if grant[2] != "edit":
+            raise HTTPException(status_code=403, detail="this share link is view-only")
+        return grant[0]
+    return require_user(request)
+

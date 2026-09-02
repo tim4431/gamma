@@ -42,6 +42,7 @@ from ..ai_tools import (
 )
 from ..ai_context import (
     build_messages as _build_messages,
+    canonical_tool as _canonical_tool,
     extract_pdf_context as _extract_pdf_context,
     gather_inputs as _gather_inputs,
     parse_files as _parse_files,
@@ -79,6 +80,13 @@ EFFORT_LEVELS = {"minimal", "low", "medium", "high", "xhigh", "max"}
 
 class AIChatRequest(BaseModel):
     prompt: str
+    # Context is PAGES from the user's knowledge base: `pages` (several — a
+    # report across pages) or, when empty, the one page of `page_id` (the
+    # open page; its PDF attachment, if any, is derived server-side via
+    # blocks_store.page_attachment). `doc_id` is the compatibility input:
+    # it resolves to the page carrying that PDF (blocks_store.page_for_doc)
+    # and does nothing when no page does — send `page_id`; nothing new may
+    # depend on `doc_id`.
     doc_id: str = ""
     history: list = Field(default_factory=list)  # [{role: "user"|"ai", text: str}, ...]
     model: str = ""       # model registry id ("provider:model"), must be in AI_MODELS
@@ -86,16 +94,19 @@ class AIChatRequest(BaseModel):
     attach_pdf: bool = False  # send the PDF itself instead of extracted text
     effort: str = ""      # reasoning effort; empty = provider default (param omitted)
     system: str = ""      # custom system prompt; empty = built-in default
-    pages: list = Field(default_factory=list)  # page block ids for multi-PDF chat / reports
-    include_notes: bool = False  # also include the user's highlights + notes for those pages
+    pages: list = Field(default_factory=list)  # page ids for multi-page chat / reports
+    # Also include the user's highlights + notes for pages that carry a PDF
+    # (a page without one is its notes — they always go).
+    include_notes: bool = False
     images: list = Field(default_factory=list)  # pasted figures as data URLs
     files: list = Field(default_factory=list)  # uploaded PDFs as {name, data} data URLs
     stream: bool = False  # NDJSON stream of {"delta": …} lines instead of one JSON body
     # Agent chat (gamma/ai_tools.py): agent_scope declares what this chat's
     # tools reach — "folder" (the home/folder view; `folder` is the path,
-    # "" = library root) or "page" (the per-paper chat; `page_id` is the
-    # focused page — read tools only). "" = plain chat. Every tool call comes
-    # back as an {"action": …} NDJSON line alongside the text deltas.
+    # "" = library root) or "page" (the per-page chat; `page_id` is the
+    # focused page — read tools + note editors). "" = plain chat (page_id
+    # still names the context page). Every tool call comes back as an
+    # {"action": …} NDJSON line alongside the text deltas.
     # `permissions` is the Settings → Assistant per-tool map ({list, read,
     # search, rename, move}; missing key = allowed) — everything off degrades
     # to a plain chat. agent_system overrides the base agent prompt (the
@@ -167,22 +178,27 @@ def pdf_text_status(doc_id: str, request: Request, preview: int = 0):
         return {"found": True, "ok": False, "chars": 0, **index}
 
 
-# The grounding clause is deliberate: the document text below this prompt is
+# The grounding clause is deliberate: a PDF's text below this prompt is
 # usually a small head excerpt of a long paper, and without being told so the
 # model answers detail questions from its memory of similar papers — inventing
 # plausible, wrong numbers and attributing them to the user's paper. Scoped to
-# claims ABOUT the paper, so background explanations still work.
+# claims ABOUT the pages and their documents, so background explanations
+# still work.
 _SYSTEM_PROMPT = (
-    "You are a research assistant helping the user understand a PDF they are reading. "
-    "The document text you are given is usually an EXCERPT, not the whole paper. "
-    "Anything you state as being in THIS paper — a number, a parameter, a method, a "
-    "result — must come from text you have actually read here. Never fill such a gap "
-    "from your knowledge of similar papers: a value you half-remember from elsewhere "
-    "is worse than no answer. If the text you have does not contain it, say so plainly "
-    "(and look it up first if you have tools). General background the user asks you to "
-    "explain is fine to answer from your own knowledge — just make clear it is "
-    "background, not something this paper states. Be concise, and cite the PDF page "
-    "for specific values you attribute to the paper.")
+    "You are a research assistant working inside the user's knowledge base in Gamma: "
+    "pages of nested notes, some of which carry a PDF attachment (a paper, a book, "
+    "lecture notes). The context you are given is one or more of those pages — each "
+    "with its title, properties, the user's own notes and highlights, and, for a page "
+    "with a PDF, the document's extracted text, which is usually an EXCERPT, not the "
+    "whole document. Anything you state as being in THESE pages or their documents — "
+    "a number, a parameter, a method, a result — must come from text you have actually "
+    "read here. Never fill such a gap from your knowledge of similar papers: a value "
+    "you half-remember from elsewhere is worse than no answer. If the text you have "
+    "does not contain it, say so plainly (and look it up first if you have tools). "
+    "General background the user asks you to explain is fine to answer from your own "
+    "knowledge — just make clear it is background, not something these pages state. "
+    "Be concise; when you cite a specific value from a PDF, give its PDF page number, "
+    "and say when something comes from the user's notes rather than the document.")
 
 # Default prompt for AI-based metadata extraction (used when neither an arXiv id
 # nor a DOI identifies the paper). Editable per-user in the frontend prompt editor.
@@ -1142,22 +1158,24 @@ def ai_chat(payload: AIChatRequest, request: Request):
             messages.append({"role": "assistant", "content": "".join(text_parts),
                              "tool_calls": calls})
             for call in calls:
-                if call["name"] not in armed:
+                # A model copying a renamed tool out of replayed history still
+                # names the current one here (ai_context.DEPRECATED_TOOLS).
+                name = _canonical_tool(call["name"])
+                if name not in armed:
                     result = ("error: tool not enabled — the user's permission "
                               "settings do not allow it")
-                    action = tool_action("error", f'{call["name"]} — blocked by permissions',
-                                         call["name"], call["arguments"], result, error=True)
-                elif call["name"] in MUTATING_TOOLS and actions >= MAX_TOOL_ACTIONS:
+                    action = tool_action("error", f'{name} — blocked by permissions',
+                                         name, call["arguments"], result, error=True)
+                elif name in MUTATING_TOOLS and actions >= MAX_TOOL_ACTIONS:
                     result = ("error: change limit for one message reached — "
                               "stop and tell the user")
-                    action = tool_action("error", f'{call["name"]} — change limit reached',
-                                         call["name"], call["arguments"], result, error=True)
+                    action = tool_action("error", f'{name} — change limit reached',
+                                         name, call["arguments"], result, error=True)
                 else:
-                    result, action = run_agent_tool(user, scope,
-                                                    call["name"], call["arguments"])
+                    result, action = run_agent_tool(user, scope, name, call["arguments"])
                 # Reads and failures render as chips too, but only applied
                 # mutations count against the change budget.
-                if call["name"] in MUTATING_TOOLS and not action.get("error"):
+                if name in MUTATING_TOOLS and not action.get("error"):
                     actions += 1
                 yield ("action", action)
                 messages.append({"role": "tool", "call_id": call["id"], "content": result})

@@ -40,22 +40,25 @@ function CardLabels({ folders, labels, mode = "both", onLabelMenu, className = "
   );
 }
 
-// The one home-library card: a cover (page snapshot when available, else the
-// file/folder glyph) over a bottom-stuck footer of title + labels + kind/time.
+// The one home-library card: a cover (page snapshot when available, else a
+// text preview of the page's first blocks, else the file/folder glyph) over a
+// bottom-stuck footer of title + labels + kind/time.
 // Used by every card surface — both carousels, the pinned strip and the grid
 // listing — and it renders the SAME geometry everywhere; the container only
 // decides the width (fixed in a carousel, fluid grid track in .fileGrid).
 // Purely presentational: click/drag/context-menu handlers arrive via
 // rootProps, overlay buttons (pin, remove ×) and rename inputs as nodes.
 function PageCard({
-  glyph, snap, title, tip, renameNode, kind, count, time,
+  glyph, snap, preview, title, tip, renameNode, kind, count, time,
   folders, labels, labelMode, onLabelMenu,
   className = "", children, ...rootProps
 }) {
   return (
     <div className={`pageCard ${className}`} title={tip || title} {...rootProps}>
       <div className="pageCardCover">
-        {snap ? <img src={snap} alt="" draggable={false} /> : glyph}
+        {snap ? <img src={snap} alt="" draggable={false} />
+          : preview ? <div className="pageCardPreview" aria-hidden="true">{preview}</div>
+          : glyph}
       </div>
       <div className="pageCardBody">
         {renameNode || <div className="pageCardTitle">{title || "Untitled"}</div>}

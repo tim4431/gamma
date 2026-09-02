@@ -1,5 +1,5 @@
 // End-to-end check of the desktop shell — the executable half of
-// CHECKLIST.md. Drives the real app (dev tree by default, the packaged build
+// docs/checklist.md. Drives the real app (dev tree by default, the packaged build
 // with --packaged) through Playwright's Electron driver over a throwaway
 // profile, so the real registry, cookies and workspaces are never touched.
 //
@@ -360,6 +360,51 @@ async function main() {
       assert.equal(cur.type, 'remote');
       await waitFor(async () => (await bar.textContent('#wsName')).trim() === 'Alpha by URL', 'bar shows remote');
       return cur.url;
+    });
+
+    await step('remote reachability dot: on for the live server, off for a dead URL', async () => {
+      await bar.click('#wsBtn');
+      await bar.click('#menuLauncher');
+      await waitFor(() => isLauncher(content.url()), 'launcher shown');
+      // The live one was just opened (recorded reachable) and gets re-probed
+      // on the launcher's refresh.
+      const live = content.locator('.card', { hasText: 'Alpha by URL' }).first();
+      await live.locator('.dot.on').waitFor({ timeout: 15_000 });
+      const port = await closedPort();
+      const id = await hook(app, (s, url) => s.registry.addRemote('Dead dot', url).id, `http://127.0.0.1:${port}`);
+      try {
+        await hook(app, (s) => s.probeRemotes(true));
+        const dead = content.locator('.card', { hasText: 'Dead dot' }).first();
+        await dead.locator('.dot.off').waitFor({ timeout: 15_000 });
+        assert.equal(await dead.locator('.dot').getAttribute('title'), 'server unreachable');
+        // Same dots in the bar's dropdown.
+        await bar.click('#wsBtn');
+        await bar.locator(`#menu .item[data-id="${id}"] .dot.off`).waitFor({ timeout: 10_000 });
+        await bar.locator(`#menu .item[data-id="${ids.remote}"] .dot.on`).waitFor({ timeout: 10_000 });
+        await bar.keyboard.press('Escape');
+        await waitFor(async () => (await bar.evaluate(() => document.getElementById('menu').hidden)), 'menu closed');
+        const health = await hook(app, (s) => Object.fromEntries([...s.remoteHealth].map(([k, v]) => [k, v.ok])));
+        assert.equal(health[ids.remote], true);
+        assert.equal(health[id], false);
+        return `live=on dead=off (probe cache ${Object.keys(health).length} entries)`;
+      } finally {
+        await hook(app, (s, id) => s.registry.remove(id, {}), id);
+      }
+    });
+
+    await step('updater: disabled under test, state exposed through the shell', async () => {
+      const u = await hook(app, (s) => s.update());
+      assert.equal(u.status, 'unsupported', JSON.stringify(u));
+      assert.equal(u.error, 'disabled');
+      assert.equal(typeof u.current, 'string');
+      const st = await content.evaluate(() => gammaShell.state());
+      assert.equal(st.update.status, 'unsupported', 'bar state carries the updater');
+      await waitFor(() => isLauncher(content.url()), 'still on the launcher');
+      const row = await content.textContent('#updText');
+      assert(/Not available in this build/.test(row), row);
+      assert(await content.locator('#btnUpdate').isHidden(), 'no check button when unsupported');
+      assert(await bar.locator('#btnUpdate').isHidden(), 'no update pill in the bar');
+      return `${u.status} (${u.error}), v${u.current}`;
     });
 
     await step('unreachable remote falls back to the launcher with the error', async () => {

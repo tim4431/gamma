@@ -832,7 +832,7 @@ body {
 :is([data-theme="light"], [data-theme="sepia"], [data-theme="gray"]) :is(.hljs-meta, .hljs-selector-id, .hljs-selector-class, .hljs-name) { color: #116329; }
 :is([data-theme="light"], [data-theme="sepia"], [data-theme="gray"]) .hljs-deletion { color: #e51400; }
 
-.blockRowWrap.imageDragOver > .blockRow {
+.blockRowWrap.fileDragOver > .blockRow {
   outline: 2px dashed var(--drag-accent);
   outline-offset: -2px;
   border-radius: 8px;
@@ -1136,26 +1136,17 @@ body {
   font-style: italic;
 }
 
-/* Ghost "+ New note" row under the block tree — the mouse path to a fresh
-   top-level note (the keyboard path is Enter/Shift+Enter, Settings → Notes). */
-.addNoteBtn {
-  display: block;
-  width: 100%;
-  text-align: left;
-  margin: 2px 0 12px;
-  padding: 5px 10px;
-  background: none;
-  border: none;
-  border-radius: 6px;
-  color: var(--text-muted);
-  font: inherit;
-  font-size: 12.5px;
-  cursor: pointer;
+/* Click zone under the block tree — Notion-style "click below to write".
+   Invisible under a non-empty tree; on an empty page it shows the invite. */
+.notesTail {
+  min-height: 48px;
+  cursor: text;
 }
 
-.addNoteBtn:hover {
-  background: var(--bg-hover);
-  color: var(--text-primary);
+.notesTail.isEmpty {
+  padding: 5px 10px;
+  color: var(--text-muted);
+  font-style: italic;
 }
 
 /* [[ref]] chip: a quiet Notion-style page mention — accent text on a faint
@@ -1363,9 +1354,10 @@ body {
   }
 }
 
-/* --- drag-and-drop overlay for PDF uploads --- */
+/* --- drag-and-drop overlay: the library imports files, a page without an
+   attachment takes a PDF (data-drop on .app says which) --- */
 .app.dragOver::after {
-  content: "Drop PDF to upload";
+  content: "Drop files to import";
   position: fixed;
   inset: 0;
   background: rgba(40, 80, 160, 0.2);
@@ -1378,6 +1370,10 @@ body {
   justify-content: center;
   pointer-events: none;
   z-index: 9999;
+}
+
+.app.dragOver[data-drop="attach"]::after {
+  content: "Drop PDF to attach to this page";
 }
 
 /* --- inline-editable title --- */
@@ -1428,9 +1424,27 @@ body {
   align-items: flex-start;
   gap: 0;
 }
-/* Notion-like handle: invisible at rest, appears on row hover, and gets a
-   rounded pill background when hovered itself (it's also a click target for
-   the block menu). Sits fully outside the row card — no overlap. */
+/* Notion-like handles: "+" (add a block) then ⋮⋮ (drag / menu). Invisible at
+   rest, appear on row hover, and get a rounded pill background when hovered
+   themselves. Sit fully outside the row card — no overlap. */
+.sortableBlockWrap > .addHandle {
+  flex: 0 0 auto;
+  width: 18px;
+  height: 22px;
+  padding: 0;
+  margin-top: 1px;
+  border-radius: 4px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  background: transparent;
+  border: none;
+  color: var(--text-muted);
+  cursor: pointer;
+  opacity: 0;
+  transition: opacity 120ms ease, color 120ms ease, background 120ms ease;
+  user-select: none;
+}
 .sortableBlockWrap > .dragHandle {
   flex: 0 0 auto;
   width: 16px;
@@ -1456,10 +1470,14 @@ body {
 }
 .sortableBlockWrap:hover > .dragHandle,
 .sortableBlockWrap:focus-within > .dragHandle,
-.sortableBlockWrap:has(:hover) > .dragHandle {
+.sortableBlockWrap:has(:hover) > .dragHandle,
+.sortableBlockWrap:hover > .addHandle,
+.sortableBlockWrap:focus-within > .addHandle,
+.sortableBlockWrap:has(:hover) > .addHandle {
   opacity: 1;
 }
-.sortableBlockWrap > .dragHandle:hover {
+.sortableBlockWrap > .dragHandle:hover,
+.sortableBlockWrap > .addHandle:hover {
   background: var(--bg-subtle);
   color: var(--text-bright);
 }
@@ -1483,10 +1501,6 @@ body {
   background: var(--text-dim);
   opacity: 0.6;
 }
-.pageBulletBtn { color: var(--text-bright); }
-.pageBulletBtn:hover { color: var(--accent-bright); }
-.pageBulletDot { display: inline-block; width: 10px; height: 10px; border-radius: 999px; background: currentColor; }
-
 /* Logseq-style depth guide lines (one per depth level) */
 .sortableBlockWrap[data-depth] { position: relative; }
 .sortableBlockWrap[data-depth]::before {
@@ -2077,11 +2091,35 @@ button.pdfOutlineChevron:hover { background: rgba(128, 128, 128, 0.28); color: v
   gap: 6px;
 }
 .popover .popoverItem:hover { background: var(--bg-hover); }
+.popover .popoverItem[aria-disabled="true"] { cursor: not-allowed; opacity: 0.6; }
+/* Wrapper that anchors a popover under its trigger button. */
+.popoverAnchor { position: relative; display: inline-flex; }
 .popover .check { display: inline-block; width: 14px; color: var(--accent-dark); font-weight: 700; }
 .topbar .iconBtn.activeIcon { background: var(--bg-hover); color: var(--text-primary); }
 /* Fixed width: the BibTeX pre would otherwise stretch the popover to its
    longest line — it scrolls inside instead. */
-.sharePopover { width: 320px; }
+.sharePopover { width: 384px; }
+/* Share popover (Notion-shaped): invite row › people entries › "General
+   access" entry › footer. Entries are avatar · name+sub · trailing control;
+   every control is a shared class (aiKeyInput, uiBtn, MenuSelect, uiClose). */
+.shareInvite { display: flex; gap: 6px; align-items: center; padding: 2px 4px 4px; }
+.shareInvite .aiKeyInput { flex: 1; min-width: 0; margin: 0; }
+.shareEntry { display: flex; align-items: center; gap: 10px; padding: 5px 4px; min-height: 40px; }
+.shareEntry .uiSelectBtn { flex-shrink: 0; }
+.shareEntry .uiClose { flex-shrink: 0; }
+.shareAvatar {
+  width: 30px; height: 30px; border-radius: 50%; flex-shrink: 0;
+  display: inline-flex; align-items: center; justify-content: center;
+  font-size: 13px; font-weight: 600;
+  background: var(--accent-bg); color: var(--accent-bright); border: 1px solid var(--border);
+}
+.shareAvatar.shareAvatarIcon { background: var(--bg-subtle); color: var(--text-secondary); }
+.shareEntryMain { flex: 1; min-width: 0; display: flex; flex-direction: column; align-items: flex-start; gap: 1px; }
+.shareEntryName { font-size: 13px; font-weight: 500; color: var(--text-primary); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; max-width: 100%; }
+.shareEntrySub { font-size: 11px; color: var(--text-muted); white-space: nowrap; }
+.shareEntryStatic { font-size: 12px; color: var(--text-muted); white-space: nowrap; padding: 0 6px; }
+.shareFooter { display: flex; align-items: center; justify-content: space-between; gap: 8px; padding: 6px 4px 2px; margin-top: 4px; border-top: 1px solid var(--border-subtle); }
+.shareError { color: var(--danger); }
 .shareRow { display: flex; align-items: center; gap: 6px; }
 .shareRow input {
   flex: 1;
@@ -2649,6 +2687,8 @@ button.pdfOutlineChevron:hover { background: rgba(128, 128, 128, 0.28); color: v
   padding: 0;
 }
 .pageActionBtn:disabled { opacity: 0.6; cursor: default; }
+.pageActionBtn.active { color: var(--text-primary); }
+.attachFileName { display: flex; align-items: center; gap: 6px; padding: 4px 10px 8px; word-break: break-all; }
 .pageActionBtn.pageDeleteBtn:hover { color: #d05050; }
 /* Unverified (AI-extracted) metadata: red "!" pinned to the metadata button */
 .metaWarnDot {
@@ -4163,3 +4203,9 @@ button.pdfOutlineChevron:hover { background: rgba(128, 128, 128, 0.28); color: v
 /* secondary danger (e.g. the confirm dialog's alternative action): outlined red */
 .uiBtn.dangerBtn:not(.primary) { color: var(--danger); border-color: var(--danger-border); }
 .uiBtn.dangerBtn:not(.primary):hover:not(:disabled) { background: var(--danger-bg); border-color: var(--danger); color: var(--danger); }
+
+/* Page header "Attach a PDF" popover (docs/dev/block_centric.md, stage 1) and
+   the file chip a dropped non-image file renders as. */
+.attachPopover { min-width: 280px; }
+.attachPopover .popoverTitle { margin-bottom: 6px; }
+.fileChip svg { color: var(--text-muted); }

@@ -406,10 +406,12 @@ def test_render_notes_draws_math_and_images(guest):
     assert "weight" in text and "over" in text
     assert "\\phi" not in text and "\\frac" not in text and src not in text
     assert 3 in kinds, "the note's image should be drawn as a page image"
-    # Glyph outlines, not text objects: the box chrome is 4 paths, the rest are
-    # the typeset α/∑/fraction bar.
+    # The glyphs are Type 3 text, so they extract as characters; the box
+    # chrome (4 paths) and the fraction bar are all that is drawn as paths.
     require_math_renderer()
-    assert kinds.count(2) >= 10, "math should be typeset as vector paths"
+    assert "ϕ" in text and "∑" in text, "math glyphs should extract as text"
+    assert b"/Type3" in out
+    assert kinds.count(2) <= 6
 
 
 def test_render_notes_draws_cjk_without_relying_on_the_viewer():
@@ -432,13 +434,12 @@ def test_render_notes_draws_cjk_without_relying_on_the_viewer():
     finally:
         doc.close()
     assert "Bayes" in text
-    has_cjk_text = any("一" <= c <= "鿿" for c in text)
+    assert any("一" <= c <= "鿿" for c in text), "the characters stay text either way"
     if vector_text.cjk_font() is not None:
-        # 4 paths of box chrome + one filled outline per character.
-        assert kinds.count(2) >= 4 + 3, "CJK should be drawn as glyph outlines"
-        assert not has_cjk_text, "outlines, so the glyphs are no longer text"
-    else:                      # no CJK font on this box: CID font fallback
-        assert has_cjk_text
+        # The outlines travel inside a Type 3 font: text, and no viewer font
+        # needed. Only the 4 paths of box chrome remain.
+        assert b"/Type3" in out
+        assert kinds.count(2) <= 4, "CJK glyphs should be text, not paths"
 
 
 def test_render_notes_falls_back_when_math_renderer_is_missing(monkeypatch):

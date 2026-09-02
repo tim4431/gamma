@@ -4,7 +4,7 @@ quoting, image validation, PDF annotation extraction."""
 import io
 
 from gamma.routers.metadata import _find_doi_candidates, _build_bibtex
-from gamma.routers.search import _fts_query
+from gamma.block_index import fts_query
 from gamma.routers.ai import _parse_images
 
 
@@ -33,11 +33,11 @@ def test_build_bibtex_arxiv():
 
 
 def test_fts_query_quotes_and_prefixes():
-    assert _fts_query("atom imaging") == '"atom" "imaging"*'
-    assert _fts_query('say "hi"') == '"say" """hi"""*'  # embedded quotes doubled
-    assert _fts_query("  ") == ""
+    assert fts_query("atom imaging") == '"atom" "imaging"*'
+    assert fts_query('say "hi"') == '"say" """hi"""*'  # embedded quotes doubled
+    assert fts_query("  ") == ""
     # Queries are normalized like the index: "3,000" and "3000" are the same
-    assert _fts_query("3,000") == _fts_query("3000") == '"3000"*'
+    assert fts_query("3,000") == fts_query("3000") == '"3000"*'
 
 
 def test_normalize_text():

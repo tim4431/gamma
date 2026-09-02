@@ -1,7 +1,9 @@
 """Uploaded-file helpers: media types, content-hash storage, lookup, orphan
 cleanup."""
 
+import time
 import hashlib
+import urllib.parse
 from pathlib import Path
 
 from .db import user_uploads_dir
@@ -10,6 +12,43 @@ from .server_settings import check_upload_allowed
 ALLOWED_IMAGE_TYPES = {"image/png", "image/jpeg", "image/gif", "image/webp", "image/svg+xml"}
 IMAGE_EXTENSIONS = {"image/png": ".png", "image/jpeg": ".jpg", "image/gif": ".gif", "image/webp": ".webp", "image/svg+xml": ".svg"}
 IMAGE_MEDIA_TYPES = {".png": "image/png", ".jpg": "image/jpeg", ".jpeg": "image/jpeg", ".gif": "image/gif", ".webp": "image/webp", ".svg": "image/svg+xml"}
+
+# Generic (non-image, non-PDF) attachments blocks may reference as
+# ``[name](/api/uploads/<hash>.<ext>)`` chips. Extension → media type; the
+# extension allowlist for POST /api/upload-file is this table's keys plus the
+# image types above and ``.pdf``.
+FILE_MEDIA_TYPES = {
+    ".md": "text/markdown; charset=utf-8",
+    ".txt": "text/plain; charset=utf-8",
+    ".csv": "text/csv; charset=utf-8",
+    ".json": "application/json",
+    ".tex": "application/x-tex",
+    ".bib": "application/x-bibtex",
+    ".py": "text/x-python; charset=utf-8",
+    ".ipynb": "application/x-ipynb+json",
+    ".html": "text/html; charset=utf-8",
+    ".docx": "application/vnd.openxmlformats-officedocument.wordprocessingml.document",
+    ".xlsx": "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+    ".pptx": "application/vnd.openxmlformats-officedocument.presentationml.presentation",
+    ".zip": "application/zip",
+}
+# Served inline (rendered by the browser on navigation); everything else gets
+# ``Content-Disposition: attachment``. An SVG opened as a top-level document
+# would run its inline <script> in this origin (stored XSS), so it downloads
+# like html — <img>/<object> embedding still works, inline note images are
+# unaffected. SANDBOXED_EXTENSIONS additionally get a sandboxing CSP in case
+# a browser renders them anyway.
+INLINE_EXTENSIONS = {".pdf", ".txt", ".md", *(e for e in IMAGE_MEDIA_TYPES if e != ".svg")}
+SANDBOXED_EXTENSIONS = {".svg", ".html"}
+
+
+def upload_media_type(ext: str) -> str | None:
+    """Media type for a stored upload's extension (lowercase, with the dot),
+    or None when Gamma never stores that kind of file."""
+    if ext == ".pdf":
+        return "application/pdf"
+    return IMAGE_MEDIA_TYPES.get(ext) or FILE_MEDIA_TYPES.get(ext)
+
 
 # Upload filenames are the content sha256 truncated to this many hex chars
 # (long enough that collisions stay theoretical, short enough to read in logs).
@@ -26,6 +65,15 @@ def display_filename(name: str, fallback: str = "") -> str:
     raw = str(name or "").replace("\x00", "").strip().replace("\\", "/")
     leaf = raw.rsplit("/", 1)[-1].strip()
     return (leaf or fallback)[:500]
+
+
+def url_filename(url: str) -> str:
+    """The display name a URL suggests for the file behind it: its last path
+    segment, unquoted, without query or fragment — "" when the URL has no
+    path (a bare host). Reduced through :func:`display_filename`."""
+    parts = urllib.parse.urlsplit(str(url or "").strip())
+    tail = urllib.parse.unquote(parts.path.rstrip("/").split("/")[-1]).strip()
+    return display_filename(tail)
 
 
 def is_pdf(data: bytes) -> bool:
@@ -53,6 +101,21 @@ def store_pdf(user: str, data: bytes) -> tuple[str, str, bool]:
     return doc_id, f"/api/uploads/{doc_id}.pdf", already_existed
 
 
+def store_file(user: str, data: bytes, ext: str) -> tuple[str, bool]:
+    """Store any upload under its content hash as ``<sha24><ext>`` (``ext``
+    lowercase with the dot, already validated by the caller). Returns
+    ``(filename, already_existed)``; storage limits gate new bytes only."""
+    uploads = user_uploads_dir(user)
+    uploads.mkdir(parents=True, exist_ok=True)
+    filename = f"{content_digest(data)}{ext}"
+    target = uploads / filename
+    already_existed = target.exists()
+    if not already_existed:
+        check_upload_allowed(user, len(data))
+        target.write_bytes(data)
+    return filename, already_existed
+
+
 def find_upload_file(filename: str, user: str) -> Path | None:
     """The uploaded file `filename` in `user`'s uploads dir, or None.
 
@@ -69,13 +132,30 @@ def find_upload_file(filename: str, user: str) -> Path | None:
     return path if path.is_file() else None
 
 
+UPLOAD_GRACE_S = 15 * 60
+
+
 def cleanup_orphan_uploads(conn, uploads_dir: Path):
-    """Delete files in uploads_dir that are no longer referenced by any block in conn."""
+    """Delete files in uploads_dir that are no longer referenced by any block
+    in conn. Extension-agnostic: a file survives when its stem is some page's
+    ``doc_id`` (the PDF attachment) or any block's content/properties mention
+    ``/api/uploads/<filename>`` (images, generic file chips).
+
+    Files younger than ``UPLOAD_GRACE_S`` are left alone: an upload is stored
+    BEFORE the block/page that references it is written (upload → attach, or
+    upload → insert chip), and an autosave of some other page landing in that
+    window used to delete the freshly stored file."""
     if not uploads_dir.exists():
         return []
     removed = []
+    now = time.time()
     for f in uploads_dir.iterdir():
         if not f.is_file():
+            continue
+        try:
+            if now - f.stat().st_mtime < UPLOAD_GRACE_S:
+                continue
+        except OSError:
             continue
         filename = f.name
         stem = f.stem

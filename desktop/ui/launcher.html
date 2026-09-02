@@ -97,6 +97,13 @@
       </div>
       <div class="switch" id="swOpenLast" role="switch"></div>
     </div>
+    <div class="setRow">
+      <div>
+        <div class="l">Updates</div>
+        <div class="d" id="updText"></div>
+      </div>
+      <button class="uiBtn sm" id="btnUpdate"></button>
+    </div>
   </div>
 
   <details id="advanced">
@@ -224,7 +231,10 @@
       info.className = 'info';
       const name = document.createElement('div');
       name.className = 'name';
-      if (ws.type === 'local') { const d = document.createElement('span'); d.className = 'dot' + (ws.running ? ' on' : ''); d.title = ws.running ? 'server running' : 'stopped'; name.appendChild(d); }
+      const d = document.createElement('span');
+      if (ws.type === 'local') { d.className = 'dot' + (ws.running ? ' on' : ''); d.title = ws.running ? 'server running' : 'stopped'; }
+      else { d.className = 'dot' + (ws.reachable === true ? ' on' : ws.reachable === false ? ' off' : ''); d.title = ws.reachable === true ? 'server reachable' : ws.reachable === false ? 'server unreachable' : 'checking…'; }
+      name.appendChild(d);
       const t = document.createElement('span'); t.className = 'text'; t.textContent = ws.name; name.appendChild(t);
       const badge = document.createElement('span'); badge.className = 'badge'; badge.textContent = ws.type === 'local' ? 'local' : 'remote'; name.appendChild(badge);
       if (state.lastOpened === ws.id) { const l = document.createElement('span'); l.className = 'badge last'; l.textContent = 'last opened'; name.appendChild(l); }
@@ -286,6 +296,7 @@
     }
 
     $('swOpenLast').classList.toggle('on', Boolean(state.settings.openLastOnLaunch));
+    renderUpdate(state.update || {});
     $('setPython').value = state.settings.pythonPath || '';
     $('setBackend').value = state.settings.backendDir || '';
     $('setStatic').value = state.settings.staticDir || '';
@@ -298,6 +309,53 @@
   }
 
   const cleanErr = (e) => String(e && e.message || e).replace(/^Error invoking remote method '[^']*': (Error: )?/, '');
+
+  // The Updates row mirrors lib/updater.js's state machine. Automatic checks
+  // stay silent; this row is where a user sees what happened and can act.
+  function renderUpdate(u) {
+    const text = $('updText');
+    const btn = $('btnUpdate');
+    btn.hidden = false;
+    btn.disabled = false;
+    btn.className = 'uiBtn sm';
+    btn.textContent = 'Check for updates';
+    btn.onclick = () => gammaShell.updateCheck();
+    switch (u.status) {
+      case 'unsupported':
+        text.textContent = u.error === 'dev build' ? 'Development build: update from git.' : 'Not available in this build.';
+        btn.hidden = true;
+        break;
+      case 'checking':
+        text.textContent = 'Checking…';
+        btn.disabled = true;
+        break;
+      case 'up-to-date':
+        text.textContent = `Up to date (${u.current}).`;
+        break;
+      case 'available':
+        text.textContent = `Gamma ${u.version} is available. This build cannot update itself; the download page opens in your browser.`;
+        btn.className = 'uiBtn sm primary';
+        btn.textContent = `Download ${u.version}`;
+        btn.onclick = () => gammaShell.updateInstall();
+        break;
+      case 'downloading':
+        text.textContent = `Downloading Gamma ${u.version}… ${u.percent || 0}%`;
+        btn.disabled = true;
+        break;
+      case 'downloaded':
+        text.textContent = `Gamma ${u.version} is ready; it installs when you restart.`;
+        btn.className = 'uiBtn sm primary';
+        btn.textContent = 'Restart to update';
+        btn.onclick = () => gammaShell.updateInstall();
+        break;
+      case 'error':
+        text.textContent = `Update check failed: ${u.error || 'unknown error'}`;
+        btn.textContent = 'Try again';
+        break;
+      default:
+        text.textContent = 'Checks automatically after launch and every few hours; updates install on restart.';
+    }
+  }
 
   async function openWs(ws, btn) {
     if (busy) return;

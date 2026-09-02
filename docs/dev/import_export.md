@@ -5,7 +5,7 @@ PDF annotations, Logseq graphs, Zotero libraries, Markdown export, the notes
 typeset as their own PDF, and the annotated-PDF writer. Code: `gamma/routers/imports.py`, `gamma/zotero_import.py`,
 `gamma/zotero_export.py`, `gamma/logseq_import.py`, `gamma/markdown_export.py`, `gamma/pdf_export.py`,
 `gamma/pdf_notes.py`, `gamma/pdf_document.py`, `gamma/pdf_typeset.py`,
-`gamma/note_markup.py`, `gamma/vector_text.py`,
+`gamma/note_markup.py`, `gamma/vector_text.py`, `gamma/pdf_glyphs.py`,
 `gamma/pdf_image.py`; frontend dialogs in
 [widgets.jsx](../../frontend/src/widgets.jsx).
 
@@ -239,26 +239,57 @@ Notes are markdown, so `gamma/note_markup.py` splits each one into text spans
 display-math items and image items first; markdown emphasis/links/code are
 stripped.
 
-### Vector text (math and CJK)
+### Vector text (math and CJK) → Type 3 fonts
 
-`gamma/vector_text.py` draws what the base-14 fonts can't, as vector paths:
-`math()` typesets LaTeX with ziamath, `glyphs()` renders CJK per character with
-ziafont (a *plain .ttf* — ziafont can't open the .ttc collections most CJK font
+`gamma/vector_text.py` lays out what the base-14 fonts can't: `math()`
+typesets LaTeX with ziamath, `glyphs()` shapes CJK per character with ziafont
+(a *plain .ttf* — ziafont can't open the .ttc collections most CJK font
 packages ship, hence `fonts-droid-fallback` in the Dockerfile; without it CJK
 falls back to the non-embedded CID font, which pdf.js renders as latin
-gibberish). Both libraries emit plain glyph *outlines* (M/L/Q/Z paths + rects)
-once `config.svg2 = False` — otherwise glyphs come wrapped in a `<symbol>`
-whose own viewBox rescales them ~1.5×, so `_svg_ops` refuses any
-`<symbol>`/`<use>`/`transform` rather than drawing it at the wrong size. It
-also honours each shape's `fill`/`stroke`/`fill-rule`: `\boxed{}` is a
-*stroked, unfilled* rect, and painting it solid turns the whole equation into a
-black slab. SVG's y-down axis matches the display frame, so ops drop in with a
-translate/scale; inline math and CJK sit on the text baseline (the viewBox
-origin *is* the baseline), `$$…$$` gets a centred row, and a box that had to
-shrink an equation or picture loses to a wider candidate. When ziamath is
-missing or chokes, `note_markup.latex_spans` falls back to a unicode
-approximation (`\frac{a}{b}` → `a/b`, unknown commands keep their name so
-`\sin` works) — tests cover both fallbacks.
+gibberish). Both return a `Drawing`: the **glyph placements** (which ziafont
+glyph, standing for which character, at which baseline point and size) and,
+separately, path ops for the non-glyph shapes (fraction bars, radical
+vincula, `\boxed{}` frames). ziamath is never asked for SVG — a flattened
+`<path>` has lost the glyph's identity — but for its layout tree, which
+`_walk` traverses exactly as ziamath's own `draw()` would (`nodexy` offsets,
+phantoms skipped, stretched delimiters split into the MATH-assembly parts
+they are built from); only the bar/box/strike leaves draw into a scratch SVG
+that becomes path ops. `_paint` honours each shape's `fill`/`stroke`/`fill-rule`:
+`\boxed{}` is a *stroked, unfilled* rect, and painting it solid turns the whole
+equation into a black slab. SVG's y-down axis matches the display frame, so
+positions drop in with a translate/scale; inline math and CJK sit on the text
+baseline, `$$…$$` gets a centred row, and a box that had to shrink an
+equation or picture loses to a wider candidate.
+
+`gamma/pdf_glyphs.py` turns the placements into text. One `GlyphFonts` per
+document builds **Type 3 fonts** — fonts whose glyph programs are PDF path
+operators — from the same outlines: each distinct glyph is one `CharProc`
+stored once per document (in the source font's own units, `FontMatrix` =
+1/unitsPerEm, so one program serves every size), `Widths` come from the font's
+advances, and a `/ToUnicode` CMap maps each code back to the character the
+layout said it drew (the font's cmap as fallback), so the equation is
+selectable, searchable and copies out as `α`, `∑`, `x`. `draw()` emits the
+glyphs of a drawing as `Tf`/`TJ` runs — consecutive glyphs on one baseline
+become a single `TJ` whose adjustments carry the exact layout positions — and
+allocates codes as it meets new glyphs; a font takes 255 codes (single-byte),
+then a second resource (`GmT30`, `GmT31`, …) opens. Font dictionaries are
+allocated as indirect objects up front so pages (including the overlays
+`pdf_notes` merges mid-way) can reference them, and `finalize()` fills them
+in before the writer serialises — both writers call it last. Glyph programs
+use `d1` (shape-only), so they take the fill colour in force where they are
+shown. Nothing is rasterised and no font file is shipped; compared with
+drawing every occurrence as filled paths the file shrinks (a repeated glyph
+costs two bytes) and the text layer appears; every writer that draws MATH
+spans owns a `GlyphFonts`, there is no path-only fallback.
+
+Known upstream limit: ziamath 0.13 stretches `\left(…\right)` around a
+`\sum`/`\int` with a runaway MATH-assembly (hundreds of extender parts, a
+parenthesis ~2000 pt tall); `_pieces` refuses an assembly of more than
+`MAX_ASSEMBLY_PARTS`, so such an expression takes the text fallback instead
+of a page-tall bracket. When ziamath is missing or chokes,
+`note_markup.latex_spans` falls back to a unicode approximation
+(`\frac{a}{b}` → `a/b`, unknown commands keep their name so `\sin` works) —
+tests cover both fallbacks.
 
 ### Images
 
@@ -275,7 +306,10 @@ Text is a hand-built content stream merged with `merge_page` using three fonts
 every viewer has: Helvetica (WinAnsi), Symbol (Greek/math —
 `pdf_typeset.SYMBOL` holds codes AND advance widths measured from the font
 itself; every `note_markup.SYMBOLS` value must be drawable by one of the three,
-which a test enforces), and a non-embedded STSong-Light CID font for CJK.
+which a test enforces), and a non-embedded STSong-Light CID font for CJK —
+plus the per-document Type 3 fonts above for typeset math and CJK outlines.
 Deliberately no reportlab/Pillow dependency. PyPDF2 leaves merged content
 inline in the page dict; it must be re-added as an indirect object or the file
-is unreadable.
+is unreadable. The document writer's page streams and every glyph program are
+Flate-compressed (`flate_encode`); the overlay streams `merge_page` produces
+stay as PyPDF2 leaves them.

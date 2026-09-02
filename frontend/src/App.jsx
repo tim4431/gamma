@@ -1,7 +1,7 @@
 import React, { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState } from "react";
 import { Panel, PanelGroup, PanelResizeHandle } from "react-resizable-panels";
 import PdfViewer, { COLORS, clampZoom } from "./pdfViewer";
-import { API, apiJson, makeId, fmtBytes, getDocIdForUrl, isPdfFile, isMarkdownFile, isUnverifiedPaperMeta, importZoteroZip, resolvePdfUrl, pdfProxyUrl, probePdfUrl, setExpectedUser, getExpectedUser, usePersistedState, usePersistedFlag, copyText, copyRich } from "./utils";
+import { API, apiJson, withShare, makeId, fmtBytes, getDocIdForUrl, isPdfFile, isMarkdownFile, isUnverifiedPaperMeta, importZoteroZip, resolvePdfUrl, pdfProxyUrl, probePdfUrl, setExpectedUser, getExpectedUser, usePersistedState, usePersistedFlag, copyText, copyRich } from "./utils";
 import {
   BlockDropIndicator,
   ChatMarkdown,
@@ -20,9 +20,9 @@ import { ContextMenu, MenuItem, MenuLabel, MenuSelect, SubMenuItem } from "./men
 import {
   ActivityIcon, AlertCircleIcon, ArrowLeftIcon, ArrowUpDownIcon, BookIcon, CheckIcon, CopyIcon, DatabaseIcon, DownloadIcon, ExportIcon,
   ExternalLinkIcon, EyeIcon, EyeOffIcon, FileGlyph, FileIcon, FileTextIcon, FitWidthIcon, FolderGlyph,
-  FolderIcon, FolderOpenIcon, FolderPlusIcon, HomeIcon, ImportIcon, InfoIcon, LabelGlyph, LabelIcon,
+  FilePlusIcon, PaperclipIcon, FolderIcon, FolderOpenIcon, FolderPlusIcon, GlobeIcon, HomeIcon, ImportIcon, InfoIcon, LabelGlyph, LabelIcon,
   LanguagesIcon, LanguagesOffIcon, LinkIcon, LogOutIcon, MaximizeIcon, MenuIcon, MinimizeIcon, PenIcon, PinIcon, PlusIcon,
-  RectSelectIcon, SearchIcon, SettingsIcon, SparklesIcon, TextCursorIcon, TrashIcon, TypeIcon, UploadIcon,
+  RectSelectIcon, SearchIcon, SettingsIcon, ShieldIcon, SparklesIcon, TextCursorIcon, TrashIcon, TypeIcon, UploadIcon,
   UserIcon, UsersIcon, XIcon, ZoomInIcon, ZoomOutIcon,
 } from "./icons";
 
@@ -52,11 +52,11 @@ import {
   normalizeBlocks,
   cloneBlocks,
   findBlock,
-  insertSiblingAfter,
 } from "./logseqPdfModel";
 import { loadSession, saveSession, clearSession } from "./sessionState";
-import { AuthLoading, LoginPage, SessionConflictPage } from "./LoginPage";
+import { AuthLoading, LoginPage, SessionConflictPage, ShareBlockedPage } from "./LoginPage";
 import { THEMES, TRANSLATE_LANGS, useAppPrefs } from "./prefs";
+import { useBlockHistory } from "./blockHistory.js";
 import SettingsDialog from "./settings";
 import { QuotaMeter } from "./settingsKit";
 import {
@@ -66,7 +66,10 @@ import {
   findPageForUrl,
   formatRelativeTime,
   friendlyApiError,
-  getPdfPageTitle,
+  pageAttachment,
+  attachmentSource,
+  pageKindLabel,
+  defaultPageTitle,
   metadataToDraft,
   normalizeLinkInput,
   parseFolderTags,
@@ -269,10 +272,17 @@ export default function App() {
   const initialBlockId = params.get("block") || params.get("page") || "";
   const initialCategory = params.get("category") || "";
   const initialFolder = params.get("folder") || "";
-  const readOnly = Boolean(initialShare);
+  // shareMode: this tab shows a page through a ?share= link — no account of
+  // its own, no library, no chat, no prefs sync. readOnly: the block tree
+  // can't be edited; every share view starts read-only and stays so unless
+  // the link resolves with edit rights (Share → "They can: Edit notes").
+  const shareMode = Boolean(initialShare);
+  const [readOnly, setReadOnly] = useState(shareMode);
+  const [shareInfo, setShareInfo] = useState(null); // resolved share: {owner, role, canEdit, audience, viewer}
+  const [shareGate, setShareGate] = useState(null); // "login" | "forbidden" | "missing" while the share can't open
 
   // Auth state: null=loading, false=logged out, {user, is_guest}=logged in
-  const [authUser, setAuthUser] = useState(readOnly ? {user:"_public"} : null);
+  const [authUser, setAuthUser] = useState(shareMode ? {user:"_public"} : null);
   const [loginUser, setLoginUser] = useState("");
   const [loginPass, setLoginPass] = useState("");
   const [loginError, setLoginError] = useState("");
@@ -299,7 +309,7 @@ export default function App() {
   // tab that logged in, and a session re-check when this tab regains focus
   // (throttled — alt-tab flapping must not hammer the server).
   useEffect(() => {
-    if (readOnly || !sessionUser) return;
+    if (shareMode || !sessionUser) return;
     function conflict(who) {
       if (who && who !== sessionUser) setSessionConflict(who);
       else if (!who) setAuthUser(false); // logged out elsewhere → login page
@@ -323,7 +333,7 @@ export default function App() {
       window.removeEventListener("storage", onStorage);
       window.removeEventListener("focus", onFocus);
     };
-  }, [sessionUser, readOnly]);
+  }, [sessionUser, shareMode]);
 
   async function checkSession() {
     try {
@@ -343,15 +353,18 @@ export default function App() {
   // uploads; the Settings displays fetch their own fresh copy.
   const [quotaInfo, setQuotaInfo] = useState(null); // {max_upload_mb, quota_mb, used_bytes}
   const refreshQuota = useCallback(() => {
-    if (readOnly) return;
+    if (shareMode) return;
     apiJson(`${API}/quota`).then(setQuotaInfo).catch(() => {});
-  }, [readOnly]);
+  }, [shareMode]);
   useEffect(() => {
-    if (authUser?.user && !readOnly) refreshQuota();
+    if (authUser?.user && !shareMode) refreshQuota();
     else setQuotaInfo(null);
-  }, [authUser?.user, readOnly, refreshQuota]);
+  }, [authUser?.user, shareMode, refreshQuota]);
 
-  async function doLogin(e) {
+  // `then` runs after a successful sign-in; the default re-reads the session
+  // rather than hand-building the auth state — it carries flags login
+  // doesn't return (is_admin).
+  async function doLogin(e, then = checkSession) {
     e?.preventDefault();
     setLoginError("");
     try {
@@ -362,9 +375,7 @@ export default function App() {
         credentials: "include",
       });
       if (!res.ok) { setLoginError("Invalid credentials"); return; }
-      // Re-read the session rather than hand-building the auth state — it
-      // carries flags login doesn't return (is_admin).
-      await checkSession();
+      await then();
     } catch { setLoginError("Login failed"); }
   }
 
@@ -378,6 +389,15 @@ export default function App() {
       const data = await res.json();
       setAuthUser({ user: data.username, is_guest: true });
     } catch { setLoginError("Guest login failed"); }
+  }
+
+  // A share link that needs an account (signed-in users / specific people):
+  // sign in right here, then resolve the link again with the new session.
+  const doShareLogin = (e) => doLogin(e, async () => { setShareGate(null); await resolveShare(initialShare); });
+  async function shareSwitchAccount() {
+    try { await fetch(`${API}/logout`, { method: "POST", credentials: "include" }); } catch {}
+    setLoginUser(""); setLoginPass(""); setLoginError("");
+    setShareGate("login");
   }
 
   // Download an /api/export backup zip. Fetched by hand (not a plain link
@@ -554,8 +574,8 @@ export default function App() {
   }
 
   useEffect(() => {
-    if (!readOnly) checkSession();
-  }, [readOnly]);
+    if (!shareMode) checkSession();
+  }, [shareMode]);
 
   const [inputUrl, setInputUrl] = useState(initialUrl); // current page's source URL (shown in page properties)
   const [addUrl, setAddUrl] = useState(""); // "+" popover: URL to open
@@ -630,14 +650,14 @@ export default function App() {
   // account switch.
   useEffect(() => {
     const u = authUser?.user;
-    if (!u || readOnly) {
+    if (!u || shareMode) {
       // Losing the session (logout button, expiry in another tab) must fully
       // close the workspace: a stale focusedBlockId would get merged into the
       // NEXT account's tab strip (applyServerTabs keeps the on-screen page) and
       // pushed to their server prefs, and the nav-back stack would reopen this
       // account's pages. Guarded on a previous user so the initial
       // session-loading render doesn't wipe the deep link / saved session.
-      if (prefsUserRef.current && !readOnly) {
+      if (prefsUserRef.current && !shareMode) {
         // Local teardown only: there is no authenticated account to refresh.
         goHome(false);
         setNavStack([]);
@@ -722,7 +742,7 @@ export default function App() {
       }
       appearanceLoadedRef.current = true;
     }).catch(() => {});
-  }, [authUser?.user, readOnly]);
+  }, [authUser?.user, shareMode]);
 
   // Write a page's tag-list property ("folder" nests on "/", "category" is
   // flat) — both serialize as a comma-separated list, so neither character
@@ -1106,7 +1126,7 @@ export default function App() {
   function dropOnLabel(e, name, onPages = (ids) => addPagesToLabel(ids, name)) {
     e.preventDefault();
     setFolderDragOver(null);
-    if (droppedFolderPaths(e)) { setStatus("Folders can’t carry labels — drop papers instead."); return; }
+    if (droppedFolderPaths(e)) { setStatus("Folders can’t carry labels — drop pages instead."); return; }
     const ids = droppedPageIds(e);
     if (ids) onPages(ids);
   }
@@ -1144,11 +1164,11 @@ export default function App() {
       return;
     }
     const n = members.length;
-    const papers = `${n} paper${n === 1 ? "" : "s"}`;
+    const papers = `${n} page${n === 1 ? "" : "s"}`;
     setConfirmBox({
       title: "Delete folder",
-      message: `Delete “${path}”? It contains ${papers}. Keep ${n === 1 ? "it" : "them"} in the library (only the folder goes away), or delete ${n === 1 ? "it and its" : "them and their"} notes too — papers linked into other folders are deleted as well.`,
-      confirmLabel: "Keep papers",
+      message: `Delete “${path}”? It contains ${papers}. Keep ${n === 1 ? "it" : "them"} in the library (only the folder goes away), or delete ${n === 1 ? "it and its" : "them and their"} notes too — pages linked into other folders are deleted as well.`,
+      confirmLabel: "Keep pages",
       onConfirm: async () => {
         for (const b of members) {
           try { await writePageFolders(b.id, parseFolderTags(b.properties?.folder).filter((t) => !inPath(t))); } catch {}
@@ -1522,6 +1542,19 @@ export default function App() {
         dbg("read-pos push FAILED:", err?.message || String(err));
       }
     }, READ_POS_PUSH_MS);
+  }
+  // Text-only pages remember their topmost visible block ("" = at the top)
+  // in the same synced map, with page 0 so the PDF restore path ignores it.
+  function recordNotePos(pageId, blockId) {
+    const u = prefsUserRef.current;
+    if (!u || !pageId) return;
+    const prev = readPosRef.current[pageId];
+    if (prev && prev.page === 0 && (prev.block || "") === (blockId || "")) return;
+    let at = new Date().toISOString();
+    if (prev?.at && prev.at >= at) at = new Date(new Date(prev.at).getTime() + 1).toISOString();
+    readPosRef.current = { ...readPosRef.current, [pageId]: { page: 0, block: blockId || "", at } };
+    try { localStorage.setItem(`gamma-read-pos:${u}`, JSON.stringify(readPosRef.current)); } catch {}
+    pushReadPosSoon(u);
   }
   function recordReadPos(blockId, page) {
     const u = prefsUserRef.current;
@@ -1919,7 +1952,7 @@ export default function App() {
         updateTransfer(prevId, { status: "active", info: "downloading…" });
         return;
       }
-      const name = (pdfTitle || decodeURIComponent((url.split("source_url=")[1] || url).split("/").pop() || "PDF")).slice(0, 60);
+      const name = (pageTitle || decodeURIComponent((url.split("source_url=")[1] || url).split("/").pop() || "PDF")).slice(0, 60);
       transferByUrlRef.current[url] = addTransfer({ name, kind: "download", info: "downloading…" });
     } else if (st.phase === "progress") {
       const id = transferByUrlRef.current[url];
@@ -1954,7 +1987,15 @@ export default function App() {
     document.addEventListener("pointerdown", onDown);
     return () => document.removeEventListener("pointerdown", onDown);
   }, [openPopover]);
-  const [shareUrl, setShareUrl] = useState("");
+  // The owner's share of the open page: null = not loaded, {token: null} =
+  // not shared, else {token, audience, role, users}. The link is derived.
+  const [shareSettings, setShareSettings] = useState(null);
+  const [shareInviteDraft, setShareInviteDraft] = useState("");
+  const [shareError, setShareError] = useState("");
+  const [shareUrlShown, setShareUrlShown] = useState(false); // fallback when the clipboard is unavailable
+  const shareUrl = shareSettings?.token
+    ? `${window.location.origin}${window.location.pathname}?share=${shareSettings.token}`
+    : "";
   const [shareCopied, flashShareCopied, resetShareCopied] = useCopied();
   // Workspace search lives in search.jsx (SearchPanel); App only holds what
   // the PDF viewer needs from it: the match highlights and the search hook.
@@ -1974,7 +2015,7 @@ export default function App() {
   // button appears even if the work was kicked off elsewhere), fast while
   // the popover is open or indexing is known to run.
   useEffect(() => {
-    if (!authUser?.user || readOnly) return;
+    if (!authUser?.user || shareMode) return;
     let cancelled = false;
     const refresh = () => apiJson(`${API}/tasks`)
       .then((d) => {
@@ -1987,7 +2028,7 @@ export default function App() {
     const fast = openPopover === "downloads" || indexTask?.active;
     const t = setInterval(refresh, fast ? 2000 : 8000);
     return () => { cancelled = true; clearInterval(t); };
-  }, [openPopover, authUser?.user, readOnly, indexTask?.active]);
+  }, [openPopover, authUser?.user, shareMode, indexTask?.active]);
 
   // Every folder path in use (from page tags + manually created empties),
   // plus all ancestor prefixes — "readout" exists once "readout/destructive"
@@ -2031,7 +2072,7 @@ export default function App() {
         if (t && (t.tagName === "INPUT" || t.tagName === "TEXTAREA" || t.isContentEditable
           || t.closest?.(".cm-editor"))) return;
         const redo = e.key.toLowerCase() === "y" || e.shiftKey;
-        if (blockUndoRef.current?.(redo)) e.preventDefault();
+        if (blockHistory.undo(redo)) e.preventDefault();
       } else if (e.key === "Escape") {
         setOpenPopover(null);
         setHomeMenu(null);
@@ -2072,7 +2113,7 @@ export default function App() {
   // The loaded gate keeps a session that hasn't pulled yet from overwriting
   // the server copy with its stale local cache.
   useEffect(() => {
-    if (!prefsUserRef.current || readOnly || !appearanceLoadedRef.current) return;
+    if (!prefsUserRef.current || shareMode || !appearanceLoadedRef.current) return;
     const payload = { theme, pdfDark: pdfDarkPage };
     const snap = JSON.stringify(payload);
     if (appearanceSyncRef.current === snap) return;
@@ -2082,8 +2123,7 @@ export default function App() {
       headers: { "Content-Type": "application/json" },
       body: JSON.stringify({ value: payload }),
     }).catch(() => {});
-  }, [theme, pdfDarkPage, authUser?.user, readOnly]);
-  const pageTitleSaveTimerRef = useRef(null);
+  }, [theme, pdfDarkPage, authUser?.user, shareMode]);
   const viewerWrapRef = useRef(null);
   const pdfRetryRef = useRef(null); // set by PdfViewer: re-runs a failed load (pill's Retry button)
   const appRef = useRef(null);
@@ -2144,7 +2184,7 @@ export default function App() {
   useEffect(() => {
     aiProviderSyncRef.current = null;
     const u = authUser?.user;
-    if (!u || readOnly) return;
+    if (!u || shareMode) return;
     const local = aiProvider;
     apiJson(`${API}/prefs/ai-provider`).then((d) => {
       if (prefsUserRef.current !== u) return;
@@ -2164,16 +2204,16 @@ export default function App() {
         aiProviderSyncRef.current = "";
       }
     }).catch(() => {});
-  }, [authUser?.user, readOnly]);
+  }, [authUser?.user, shareMode]);
   useEffect(() => {
-    if (aiProviderSyncRef.current === null || aiProviderSyncRef.current === aiProvider || readOnly) return;
+    if (aiProviderSyncRef.current === null || aiProviderSyncRef.current === aiProvider || shareMode) return;
     aiProviderSyncRef.current = aiProvider;
     apiJson(`${API}/prefs/ai-provider`, {
       method: "PUT",
       headers: { "Content-Type": "application/json" },
       body: JSON.stringify({ value: aiProvider }),
     }).catch(() => {});
-  }, [aiProvider, readOnly]);
+  }, [aiProvider, shareMode]);
   // Last model picked per key, so switching keys and back restores the pick
   // (a workspace-wide memory — the chat model is never per-PDF).
   const chatModelMemRef = useRef(null);
@@ -2283,14 +2323,14 @@ export default function App() {
     } catch {}
   }
   useEffect(() => {
-    if (!authUser?.user || authUser.is_guest || readOnly) return;
+    if (!authUser?.user || authUser.is_guest || shareMode) return;
     // Delayed so the server-synced active-provider pick can land first.
     const timer = setTimeout(checkAiHealth, 1500);
     return () => clearTimeout(timer);
-  }, [authUser?.user, readOnly]);
+  }, [authUser?.user, shareMode]);
   // Entering the AI pane always refetches the masked key list.
   useEffect(() => {
-    if (settingsOpen === "ai" && authUser?.user && !readOnly) loadAiKeys();
+    if (settingsOpen === "ai" && authUser?.user && !shareMode) loadAiKeys();
   }, [settingsOpen]);
 
   function openAiKeysEditor() {
@@ -2538,7 +2578,7 @@ export default function App() {
     }
   }
   useEffect(() => {
-    if (openPopover !== "meta" || !docId || readOnly) { setPdfTextInfo(null); return; }
+    if (openPopover !== "meta" || !docId || shareMode) { setPdfTextInfo(null); return; }
     checkPdfText();
   }, [openPopover, docId]);
 
@@ -2571,8 +2611,7 @@ export default function App() {
       setFocusedBlock((prev) => prev && prev.id === blockId
         ? { ...prev, properties: { ...prev.properties, meta: data.meta, bibtex: data.bibtex, ppt_cite: "", meta_error: undefined } }
         : prev);
-      if (data.meta?.title && (focusedBlock?.properties?.auto_title === focusedBlock?.content
-          || /^PDF Notes - /.test(focusedBlock?.content || ""))) {
+      if (data.meta?.title && focusedBlock?.properties?.auto_title === focusedBlock?.content) {
         await renameTitle(data.meta.title);
       }
       fetchHomeBlocks(); // keep the library's meta fresh for DOI-link matching
@@ -2718,7 +2757,7 @@ export default function App() {
       // Auto-fill the page title from metadata when it's still the default filename
       // title — awaited so the library refetch below can't win the race and
       // resurrect the stale name in the link dialog / home list.
-      if (data.page_title && focusedBlockIdRef.current === block.id) setPdfTitle(data.page_title);
+      if (data.page_title && focusedBlockIdRef.current === block.id) setPageTitle(data.page_title);
       if (!data.cached) {
         setStatus(`Paper metadata found (${data.source === "ai" ? "AI-extracted" : data.source}).`);
         fetchHomeBlocks(); // keep the library's meta fresh for DOI-link matching
@@ -2741,7 +2780,7 @@ export default function App() {
   // server may replace its original-filename title only while the automatic
   // title marker still matches, so an in-flight lookup cannot undo a rename.
   function queueMetadataForUploads(uploaded) {
-    if (readOnly || !metaAutoFetch) return;
+    if (shareMode || !metaAutoFetch) return;
     const pending = uploaded.filter(({ block }) => block?.id
       && !block.properties?.meta && !block.properties?.meta_error
       && !attemptedMetaRef.current.has(block.id));
@@ -2750,7 +2789,7 @@ export default function App() {
   }
 
   async function fetchMetadataForUploads(uploaded) {
-    if (readOnly || !metaAutoFetch) return;
+    if (shareMode || !metaAutoFetch) return;
     let completed = 0;
     for (const { block } of uploaded) {
       if (!block?.id || block.properties?.meta) continue;
@@ -2769,20 +2808,21 @@ export default function App() {
           setPageMeta(data.meta || null);
           setPageBibtex(data.bibtex || "");
           setFocusedBlock({ ...block });
-          if (data.page_title) setPdfTitle(data.page_title);
+          if (data.page_title) setPageTitle(data.page_title);
         }
       } catch {} // task already marked failed by fetchMetadataRequest
     }
     if (completed) fetchHomeBlocks();
   }
 
-  // When a paper is opened/uploaded, fetch its metadata in the background
-  // (arXiv → DOI → AI on the server). Cached in the page's properties.
+  // Metadata is a page property: show it on any page that has it; a page with
+  // a PDF attachment additionally fetches it in the background (arXiv → DOI →
+  // AI on the server) and caches it in the page's properties.
   useEffect(() => {
     setPptCite("");
     resetCopied();
     const b = focusedBlock;
-    if (readOnly || !b?.id || !b.properties?.doc_id) { setPageMeta(null); setPageBibtex(""); return; }
+    if (shareMode || !b?.id || (!b.properties?.meta && !pageAttachment(b))) { setPageMeta(null); setPageBibtex(""); return; }
     if (b.properties.meta) {
       setPageMeta(b.properties.meta);
       setPageBibtex(b.properties.bibtex || "");
@@ -2840,7 +2880,7 @@ export default function App() {
     const targetId = blockArg?.id || focusedBlockId;
     if (!targetId || pptCiteBusy) return;
     setPptCiteBusy(true);
-    const taskId = addTransfer({ name: `Slide citation — ${(blockArg?.content || pdfTitle || "paper").slice(0, 48)}`, kind: "ai", info: "generating…" });
+    const taskId = addTransfer({ name: `Slide citation — ${(blockArg?.content || pageTitle || "paper").slice(0, 48)}`, kind: "ai", info: "generating…" });
     try {
       const data = await apiJson(`${API}/metadata/cite`, {
         method: "POST",
@@ -2886,7 +2926,7 @@ export default function App() {
   }
 
   useEffect(() => {
-    if (!authUser?.user || readOnly) return;
+    if (!authUser?.user || shareMode) return;
     refreshAiModels();
   }, [authUser]);
 
@@ -2975,7 +3015,7 @@ export default function App() {
   }
 
   useEffect(() => {
-    if (authUser?.user && !readOnly) fetchHomeBlocks();
+    if (authUser?.user && !shareMode) fetchHomeBlocks();
   }, [authUser]);
 
   useEffect(() => {
@@ -3030,15 +3070,15 @@ export default function App() {
   const [flashingId, setFlashingId] = useState(null);
   const [highlightMenu, setHighlightMenu] = useState(null); // { id, x, y } or null
   const [focusedId, setFocusedId] = useState(null);
-  const [pdfTitle, setPdfTitle] = useState("");
+  const [pageTitle, setPageTitle] = useState("");
   const [titleEditing, setTitleEditing] = useState(false);
   const [titleDraft, setTitleDraft] = useState("");
 
   useEffect(() => {
-    document.title = pdfTitle
-      ? `${pdfTitle} — Gamma`
+    document.title = pageTitle
+      ? `${pageTitle} — Gamma`
       : "Gamma — Annotate PDFs, Share Your Thinking";
-  }, [pdfTitle]);
+  }, [pageTitle]);
 
   const scrollToRef = useRef(() => {});
   const flashTimerRef = useRef(null);
@@ -3052,6 +3092,15 @@ export default function App() {
   const pendingBlockScrollRef = useRef(null);
   const autosaveTimerRef = useRef(null);
   const suppressAutosaveRef = useRef(true); // skip initial mount + doc loads
+  const saveNowRef = useRef(false); // next autosave runs without the debounce (editor close)
+  // Structural undo (Ctrl+Z while no editor has focus): derived from the
+  // block tree's transitions, see blockHistory.js. Declared right after the
+  // load flag so its effect reads it before the autosave effect resets it.
+  const blockHistory = useBlockHistory(blocks, setBlocks, {
+    loadRef: suppressAutosaveRef,
+    pageId: focusedBlockId,
+    enabled: !readOnly && !!focusedBlockId,
+  });
 
   function registerRef(id, ref) {
     blockRefs.current[id] = ref;
@@ -3095,7 +3144,7 @@ export default function App() {
       } catch { if (!cancelled) setBacklinks([]); }
     })();
     return () => { cancelled = true; };
-  }, [focusedBlockId, readOnly]);
+  }, [focusedBlockId, shareMode]);
 
   // Queued autosave. The debounce timer used to be silently cancelled when
   // navigation replaced the block tree — a highlight made within 500 ms of
@@ -3136,7 +3185,8 @@ export default function App() {
     }
     if (autosaveTimerRef.current) clearTimeout(autosaveTimerRef.current);
     pendingSaveRef.current = { pageId: focusedBlockId, blocks };
-    autosaveTimerRef.current = setTimeout(savePending, 500);
+    autosaveTimerRef.current = setTimeout(savePending, saveNowRef.current ? 0 : 500);
+    saveNowRef.current = false;
     return () => {
       if (autosaveTimerRef.current) clearTimeout(autosaveTimerRef.current);
     };
@@ -3148,7 +3198,7 @@ export default function App() {
       if (!p) return;
       pendingSaveRef.current = null;
       try {
-        fetch(`${API}/blocks/${p.pageId}/children`, {
+        fetch(withShare(`${API}/blocks/${p.pageId}/children`), {
           method: "PUT",
           headers: { "Content-Type": "application/json" },
           body: JSON.stringify({ blocks: p.blocks }),
@@ -3175,7 +3225,6 @@ export default function App() {
     }
     const blockId = findHighlightBlockId(blocks);
     if (!blockId) return;
-    pushUndo(blocks);
     const nextBlocks = removeBlockTree(blocks, blockId);
     setBlocks(nextBlocks);
     // persistBlocks will fire via autosave; no need to duplicate.
@@ -3291,21 +3340,21 @@ export default function App() {
   // in the deps re-fires it once login resolves — a page opened by direct URL
   // shows before the session check finishes, and the first run skips.
   useEffect(() => {
-    if (!focusedBlockId || readOnly || !prefsUserRef.current) return;
+    if (!focusedBlockId || shareMode || !prefsUserRef.current) return;
     pushRecentView(focusedBlockId);
-  }, [focusedBlockId, readOnly, sessionUser]);
+  }, [focusedBlockId, shareMode, sessionUser]);
 
   // Keep the tab strip in sync with the open page.
   useEffect(() => {
-    if (!focusedBlockId || readOnly || !prefsUserRef.current) return;
-    const title = (pdfTitle || "Untitled").slice(0, 60);
+    if (!focusedBlockId || shareMode || !prefsUserRef.current) return;
+    const title = (pageTitle || "Untitled").slice(0, 60);
     updateTabs((prev) => {
       const existing = prev.find((t) => t.id === focusedBlockId);
       if (existing && existing.title === title) return prev;
       if (existing) return prev.map((t) => (t.id === focusedBlockId ? { ...t, title } : t));
       return [...prev, { id: focusedBlockId, title }];
     });
-  }, [focusedBlockId, pdfTitle, readOnly]);
+  }, [focusedBlockId, pageTitle, shareMode]);
 
   // Persist session state on relevant changes (skip initial mount)
   const firstRenderRef = useRef(true);
@@ -3332,7 +3381,7 @@ export default function App() {
   const trackPauseReasonRef = useRef(""); // last logged pause reason (debug log)
   useEffect(() => {
     recordScrollPageRef.current = (n) => {
-      const reason = readOnly ? "readonly"
+      const reason = shareMode ? "readonly"
         : !focusedBlockId ? "no-focused-block"
         : !pdfUrl ? "no-pdf-url"
         : pdfRenderedUrlRef.current !== pdfUrl ? "doc-not-rendered"
@@ -3363,7 +3412,7 @@ export default function App() {
   useEffect(() => {
     captureSnapRef.current = (id) => {
       if (!recentThumbs) return false;
-      if (readOnly || !id || id !== focusedBlockId || !pdfUrl || pdfHidden) return false;
+      if (shareMode || !id || id !== focusedBlockId || !pdfUrl || pdfHidden) return false;
       if (pdfRenderedUrlRef.current !== pdfUrl) return false;
       if (restoringForRef.current === focusedBlockId || coarseRestorePendingRef.current) return false;
       const img = captureViewerSnapshot();
@@ -3376,7 +3425,7 @@ export default function App() {
   // (re)renders until a capture sticks. The scroll-settle path above keeps it
   // fresh afterwards.
   useEffect(() => {
-    if (!recentThumbs || !pdfUrl || pdfHidden || readOnly || !focusedBlockId) return;
+    if (!recentThumbs || !pdfUrl || pdfHidden || shareMode || !focusedBlockId) return;
     const id = focusedBlockId;
     let tries = 0, timer = null;
     const attempt = () => {
@@ -3385,7 +3434,7 @@ export default function App() {
     };
     timer = setTimeout(attempt, 1500);
     return () => { if (timer) clearTimeout(timer); };
-  }, [pdfUrl, pdfHidden, focusedBlockId, readOnly, recentThumbs]);
+  }, [pdfUrl, pdfHidden, focusedBlockId, shareMode, recentThumbs]);
 
   async function loadBlocksForBlock(blockId) {
     try {
@@ -3401,24 +3450,61 @@ export default function App() {
     }
   }
 
-  async function getOrCreateBlockForDoc(targetDocId, defaultTitle, sourceUrl, originalFilename = "") {
-    if (!targetDocId) throw new Error("docId required");
-    return await apiJson(`${API}/blocks/by-doc/${targetDocId}`, {
+  // The page carrying this document, created if the library has none
+  // (lookup BY attachment — the dedup path for ingest, docs/dev/block_centric.md).
+  async function getOrCreateBlockForDoc(src) {
+    if (!src?.doc_id) throw new Error("docId required");
+    return await apiJson(`${API}/blocks/by-doc/${src.doc_id}`, {
       method: "POST",
       headers: { "Content-Type": "application/json" },
       body: JSON.stringify({
-        default_title: defaultTitle || `PDF Notes - ${targetDocId}`,
-        source_url: sourceUrl || null,
-        original_filename: originalFilename || null,
+        default_title: defaultPageTitle({ url: src.source_url, name: src.original_filename }),
+        source_url: src.source_url || null,
+        original_filename: src.original_filename || null,
       })
     });
+  }
+
+  // ONE way to bring a PDF in — for a new page (openPdf / uploadFiles) or
+  // an existing one (attachPdfToPage): upload the file, or resolve the URL
+  // (arXiv / DOI / publisher page → direct link) and hash it into a doc_id,
+  // checking that a link the library does not know yet really serves a PDF
+  // before any page is bound to it (a dead link must not leave an empty page
+  // behind; a document already in the library stays openable even once its
+  // source has gone). Returns the attachment properties plus the viewer URL.
+  async function resolvePdfSource({ file, url }, taskId) {
+    if (file) {
+      const filename = uploadLeafName(file, "upload.pdf");
+      const form = new FormData();
+      form.append("file", file, filename);
+      const data = await apiJson(`${API}/uploads`, { method: "POST", body: form });
+      return { doc_id: data.doc_id, source_url: data.source_url, original_filename: filename,
+        viewerUrl: data.source_url, note: "" };
+    }
+    // Uploaded PDFs are already hosted locally — no external resolve or proxy.
+    if (url.startsWith(`${API}/uploads/`)) {
+      const m = url.match(/\/([0-9a-f]+)\.pdf$/);
+      const doc_id = m ? m[1] : await getDocIdForUrl(url);
+      return { doc_id, source_url: url, original_filename: "", viewerUrl: `${API}/uploads/${doc_id}.pdf`, note: "" };
+    }
+    const resolved = await resolvePdfUrl(url, oaFallback);
+    const source_url = resolved.source_url;
+    const doc_id = await getDocIdForUrl(source_url);
+    const known = await apiJson(`${API}/blocks/by-doc/${doc_id}`).catch(() => null);
+    if (!known) {
+      updateTransfer(taskId, { info: "checking link…" });
+      await probePdfUrl(source_url);
+    }
+    const viewerUrl = pdfProxyUrl(source_url, { save: pdfSaveLocal });
+    transferByUrlRef.current[viewerUrl] = taskId; // the viewer's byte-level reporting takes over this row
+    return { doc_id, source_url, original_filename: "", viewerUrl, note: resolved.note || "" };
   }
 
   async function renameTitle(newTitle) {
     if (readOnly || !focusedBlockId) return;
     const trimmed = (newTitle || "").trim();
-    const finalTitle = trimmed || getPdfPageTitle(docId, inputUrl);
-    setPdfTitle(finalTitle);
+    const finalTitle = trimmed || defaultPageTitle(pageAttach);
+    setPageTitle(finalTitle);
     setFocusedBlock((b) => b ? { ...b, content: finalTitle } : b);
     try {
       await apiJson(`${API}/blocks/${focusedBlockId}`, {
@@ -3443,22 +3529,16 @@ export default function App() {
   }
 
   async function uploadOnePdf(file, folder = "") {
-    const filename = uploadLeafName(file, "upload.pdf");
-    const transferId = addTransfer({ name: filename, kind: "upload", info: fmtBytes(file.size) });
-    const form = new FormData();
-    form.append("file", file, filename);
-    let data;
+    const transferId = addTransfer({ name: uploadLeafName(file, "upload.pdf"), kind: "upload", info: fmtBytes(file.size) });
+    let src;
     try {
-      data = await apiJson(`${API}/uploads`, { method: "POST", body: form });
+      src = await resolvePdfSource({ file }, transferId);
     } catch (err) {
       updateTransfer(transferId, { status: "error", info: "failed" });
       throw err;
     }
     updateTransfer(transferId, { status: "done", info: fmtBytes(file.size) });
-    const defaultTitle = filename || `${data.doc_id}.pdf`;
-    const block = await getOrCreateBlockForDoc(
-      data.doc_id, defaultTitle, data.source_url, filename || defaultTitle,
-    );
+    const block = await getOrCreateBlockForDoc(src);
     if (folder) {
       const tags = parseFolderTags(block.properties?.folder);
       if (!tags.includes(folder)) {
@@ -3470,8 +3550,8 @@ export default function App() {
       }
     }
     // If the file carries embedded annotations (SumatraPDF etc.), pull them in
-    importEmbeddedAnnots(block.id, data.doc_id, true);
-    return { data, block, defaultTitle };
+    importEmbeddedAnnots(block.id, src.doc_id, true);
+    return { src, block };
   }
 
   async function importOneMarkdown(file, folder = "") {
@@ -3491,7 +3571,7 @@ export default function App() {
   }
 
   async function uploadFiles(fileList) {
-    if (readOnly) return;
+    if (shareMode) return;
     // Accepts Files (picker/drop) or {file, folder} pairs (dropped-folder walk);
     // the directory picker's Files carry the path in webkitRelativePath instead.
     // With a folder open in the library view, uploads land inside it.
@@ -3532,22 +3612,10 @@ export default function App() {
       const pdfDone = done.filter((item) => item.kind === "pdf");
       if (pdfDone.length) refreshQuota();
       if (items.length === 1 && done.length && done[0].kind === "pdf") {
-        // Single upload keeps the old behavior: open the paper directly
-        // (bypass openPdf's URL-resolution path).
-        const { data, block, defaultTitle } = done[0];
-        await loadBlocksForBlock(block.id);
-        setDocId(data.doc_id);
-        setInputUrl(data.source_url);
-        setFocusedBlockId(block.id);
-        setFocusedBlock(block);
-        setPdfTitle(block.content || defaultTitle);
-        setSummary(block.properties?.summary || "");
-        setCategory(block.properties?.category || "");
-        setPageFolders(parseFolderTags(block.properties?.folder));
-        setPdfUrl(data.source_url);
-        const newUrl = `${window.location.pathname}?block=${encodeURIComponent(block.id)}`;
-        window.history.replaceState({}, "", newUrl);
-        setStatus(`Uploaded ${items[0].filename} (${data.doc_id})`);
+        // A single upload opens its page right away.
+        const { src, block } = done[0];
+        await openBlock(block.id, { viewerUrl: src.viewerUrl });
+        setStatus(`Uploaded ${items[0].filename} (${src.doc_id})`);
       } else if (items.length === 1 && done.length) {
         await fetchHomeBlocks();
         await openBlock(done[0].data.block_id, { pushNav: true });
@@ -3568,7 +3636,7 @@ export default function App() {
   }
 
   async function importLogseq(files) {
-    if (readOnly) return;
+    if (shareMode) return;
     const all = Array.from(files);
     const pdfFile = all.find((f) => f.name.endsWith('.pdf'));
     const ednFile = all.find((f) => f.name.endsWith('.edn'));
@@ -3587,21 +3655,10 @@ export default function App() {
       const resp = await fetch(`${API}/import/logseq`, { method: "POST", body: form, credentials: "include" });
       if (!resp.ok) throw new Error(await resp.text());
       const data = await resp.json();
-      // Block was already created by the import endpoint; just load it.
-      const block = await getOrCreateBlockForDoc(data.doc_id, pdfFile.name.replace('.pdf', ''), data.source_url);
-      await loadBlocksForBlock(block.id);
-      setDocId(data.doc_id);
-      setInputUrl(data.source_url);
-      setFocusedBlockId(block.id);
-      setFocusedBlock(block);
-      setPdfTitle(block.content || pdfFile.name.replace('.pdf', ''));
-      setSummary(block.properties?.summary || "");
-      setCategory(block.properties?.category || "");
-      setPageFolders(parseFolderTags(block.properties?.folder));
-      setPdfUrl(data.source_url);
+      // The import endpoint already created the page; look it up and open it.
+      const block = await getOrCreateBlockForDoc({ doc_id: data.doc_id, source_url: data.source_url, original_filename: pdfFile.name });
       await fetchHomeBlocks();
-      const newUrl = `${window.location.pathname}?block=${encodeURIComponent(block.id)}`;
-      window.history.replaceState({}, "", newUrl);
+      await openBlock(block.id);
       setStatus(`Imported ${data.imported} highlights from ${pdfFile.name}`);
     } catch (err) {
       setStatus(`Import failed: ${err.message}`);
@@ -3615,7 +3672,7 @@ export default function App() {
   // folders, tags labels, notes child blocks; the reader annotations ride
   // inside the exported PDFs, so strip works exactly like for "this PDF".
   async function importZotero(file, strip = embAnnots === "strip") {
-    if (readOnly) return;
+    if (shareMode) return;
     const taskId = addTransfer({ name: `Zotero import — ${file.name.slice(0, 48)}`, kind: "import", info: "importing…" });
     setStatus("Importing Zotero library — this can take a while for big exports…");
     try {
@@ -3630,60 +3687,22 @@ export default function App() {
     }
   }
 
+  // Open a PDF by URL: resolve it, find or create its page, open that page.
   async function openPdf(sourceUrl) {
-    if (!sourceUrl || readOnly) return;
-    leaveCurrentPage();
+    if (!sourceUrl || shareMode) return;
     setLoading(true);
     setStatus("Opening PDF...");
     // Visible from the moment Enter is pressed — resolve can take seconds.
     const taskId = addTransfer({ name: sourceUrl.slice(0, 60), kind: "download", info: "resolving…" });
     try {
-      // Uploaded PDFs are already hosted locally — skip external resolve and proxy.
-      const isUpload = sourceUrl.startsWith("/api/uploads/") || sourceUrl.startsWith(`${API}/uploads/`);
-      let finalUrl, resolvedDocId, proxiedUrl, pdfNote = "";
-      if (isUpload) {
-        finalUrl = sourceUrl;
-        // filename is "<doc_id>.pdf" — serve straight from the uploads route
-        const m = sourceUrl.match(/\/([0-9a-f]+)\.pdf$/);
-        resolvedDocId = m ? m[1] : await getDocIdForUrl(sourceUrl);
-        proxiedUrl = `${API}/uploads/${resolvedDocId}.pdf`;
-      } else {
-        const resolved = await resolvePdfUrl(sourceUrl, oaFallback);
-        finalUrl = resolved.source_url;
-        pdfNote = resolved.note || "";
-        resolvedDocId = await getDocIdForUrl(finalUrl);
-        proxiedUrl = pdfProxyUrl(finalUrl, { save: pdfSaveLocal });
-        // A new paper must download before it gets a page — otherwise a dead
-        // link leaves behind an empty page that only ever repeats the error.
-        // Papers already in the library skip the check: an existing page stays
-        // openable even once its source has gone away.
-        const known = await apiJson(`${API}/blocks/by-doc/${resolvedDocId}`).catch(() => null);
-        if (!known) {
-          updateTransfer(taskId, { info: "checking link…" });
-          await probePdfUrl(finalUrl);
-        }
-        transferByUrlRef.current[proxiedUrl] = taskId; // viewer's byte-level reporting takes over this row
-      }
-      // Resolve block + load children FIRST, before setPdfUrl, to avoid mid-render highlight race
-      const defaultTitle = getPdfPageTitle(resolvedDocId, finalUrl);
-      const block = await getOrCreateBlockForDoc(resolvedDocId, defaultTitle, finalUrl);
+      const src = await resolvePdfSource({ url: sourceUrl }, taskId);
+      const block = await getOrCreateBlockForDoc(src);
       updateTransfer(taskId, {
-        name: (block.content || defaultTitle).slice(0, 60),
-        ...(isUpload ? { status: "done", info: "local file" } : { info: "downloading…" }),
+        name: (block.content || "Untitled").slice(0, 60),
+        ...(src.viewerUrl.startsWith(`${API}/uploads/`) ? { status: "done", info: "local file" } : { info: "downloading…" }),
       });
-      const nextBlocks = await loadBlocksForBlock(block.id);
-      setDocId(resolvedDocId);
-      setInputUrl(finalUrl);
-      setFocusedBlockId(block.id);
-      setFocusedBlock(block);
-      setPdfTitle(block.content || defaultTitle);
-      setSummary(block.properties?.summary || "");
-      setCategory(block.properties?.category || "");
-      setPageFolders(parseFolderTags(block.properties?.folder));
-      setPdfUrl(proxiedUrl);
-      const newUrl = `${window.location.pathname}?block=${encodeURIComponent(block.id)}`;
-      window.history.replaceState({}, "", newUrl);
-      setStatus(pdfNote || `Loaded ${resolvedDocId}`);
+      await openBlock(block.id, { viewerUrl: src.viewerUrl });
+      setStatus(src.note || `Loaded ${src.doc_id}`);
     } catch (err) {
       updateTransfer(taskId, { status: "error", info: (err.message || "failed").slice(0, 60) });
       setStatus(`Open failed: ${err.message}`);
@@ -3692,47 +3711,139 @@ export default function App() {
     }
   }
 
-  // "+" popover: a blank note page (no PDF) — created in the open folder, if any.
-  async function createNotePage() {
-    if (readOnly) return;
+  // "New page": a blank page in the open folder (if any), opened with its
+  // title ready to type. What the page carries (a PDF…) is attached on the
+  // page itself afterwards — creation never needs a file.
+  async function createPage(folder = folderFilter) {
+    if (shareMode) return;
     setOpenPopover(null);
     try {
-      const created = await apiJson(`${API}/blocks`, {
+      const created = await apiJson(`${API}/pages`, {
         method: "POST",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ parent_id: "root", content: "New note", ...(folderFilter ? { properties: { folder: folderFilter } } : {}) }),
+        body: JSON.stringify({ title: "", ...(folder ? { folder } : {}) }),
       });
       await fetchHomeBlocks();
-      await openBlock(created.id, { pushNav: true });
+      await openBlock(created.id, { pushNav: true, focusTitle: true });
+      setTitleDraft("");
+      setTitleEditing(true);
     } catch (err) {
       setStatus(`Create failed: ${err.message || err}`);
     }
+  }
+
+  // Attach a PDF to the open page (one that carries none): the same ingest
+  // as opening a new PDF, then bound to THIS page via POST
+  // /pages/{id}/attachment — no new page is created.
+  const [attachUrl, setAttachUrl] = useState("");
+  async function attachPdfToPage({ file, url }) {
+    const pageId = focusedBlockId;
+    if (!pageId || shareMode || pageAttach || (!file && !url)) return;
+    if (file && !isPdfFile(file)) { setStatus("Only PDF files can be attached — other files go into a block."); return; }
+    setOpenPopover(null);
+    setAttachUrl("");
+    setLoading(true);
+    const taskId = addTransfer(file
+      ? { name: uploadLeafName(file, "upload.pdf"), kind: "upload", info: fmtBytes(file.size) }
+      : { name: url.slice(0, 60), kind: "download", info: "resolving…" });
+    try {
+      const { viewerUrl, note, ...src } = await resolvePdfSource({ file, url }, taskId);
+      await apiJson(`${API}/pages/${encodeURIComponent(pageId)}/attachment`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify(src),
+      });
+      updateTransfer(taskId, { status: "done", info: "attached" });
+      if (file) {
+        refreshQuota();
+        importEmbeddedAnnots(pageId, src.doc_id, true);
+      }
+      fetchHomeBlocks();
+      if (focusedBlockIdRef.current !== pageId) return; // navigated away meanwhile
+      await openBlock(pageId, { viewerUrl });
+      setPdfHidden(false);
+      setStatus(note || "PDF attached.");
+    } catch (err) {
+      if (err.status === 409 && err.data?.page_id) {
+        // The library already holds this PDF on another page — the page is
+        // the unit, so open that one rather than duplicating the file.
+        updateTransfer(taskId, { status: "done", info: "already in library" });
+        setStatus("That PDF is already attached to another page — opening it.");
+        setLoading(false);
+        openBlock(err.data.page_id, { pushNav: true });
+        return;
+      }
+      updateTransfer(taskId, { status: "error", info: (err.message || "failed").slice(0, 60) });
+      setStatus(`Attach failed: ${err.message}`);
+    } finally {
+      setLoading(false);
+    }
+  }
+
+  // Drop the page's PDF: the notes stay (highlights keep their positions as
+  // blocks); the file goes unless another page still carries it.
+  function detachPdfFromPage() {
+    const pageId = focusedBlockId;
+    if (!pageId || !pageAttach || readOnly) return;
+    setOpenPopover(null);
+    setConfirmBox({
+      title: "Detach PDF",
+      message: `Remove "${pageAttach.name || defaultPageTitle(pageAttach)}" from this page? The notes and highlights stay as blocks; the file is deleted unless another page uses it. This can't be undone.`,
+      confirmLabel: "Detach",
+      danger: true,
+      onConfirm: async () => {
+        try {
+          await apiJson(`${API}/pages/${encodeURIComponent(pageId)}/attachment`, { method: "DELETE" });
+          fetchHomeBlocks();
+          if (focusedBlockIdRef.current === pageId) await openBlock(pageId);
+          setStatus("PDF detached.");
+        } catch (err) {
+          setStatus(`Detach failed: ${err.message}`);
+        }
+      },
+    });
   }
 
   async function resolveShare(token) {
     setLoading(true);
     setStatus("Resolving share link...");
     try {
-      const data = await apiJson(`${API}/share/${token}`);
-      shareOwnerRef.current = data.username || "";
-      shareTokenRef.current = token;
-      // Read access rides on the share token itself (scoped to this one
-      // document), never a bare ?user= (which used to grant whole-account reads).
-      const shareParam = `?share=${encodeURIComponent(token)}`;
+      // Resolved by hand: the status code says whether signing in would help
+      // (401 → login gate, 403 → not on the list, 404 → gone).
+      const res = await fetch(`${API}/share/${encodeURIComponent(token)}`, { credentials: "include" });
+      if (!res.ok) {
+        if (res.status === 403) {
+          // Name the account that was refused so the message makes sense.
+          try {
+            const sess = await (await fetch(`${API}/session`, { credentials: "include" })).json();
+            setShareInfo({ viewer: sess?.user || "" });
+          } catch {}
+        }
+        setShareGate(res.status === 401 ? "login" : res.status === 403 ? "forbidden" : "missing");
+        setStatus("");
+        return;
+      }
+      const data = await res.json();
+      setShareGate(null);
+      setShareInfo({ owner: data.username || "", role: data.role || "view", canEdit: Boolean(data.can_edit),
+                     audience: data.audience || "anyone", viewer: data.viewer || "" });
 
+      // The share names a page block directly (PDF pages and note pages
+      // alike). Read access rides on the token, which apiJson appends to every
+      // API call in a share view (utils.withShare) — never a bare ?user=.
       let block = null;
-      try { block = await apiJson(`${API}/blocks/by-doc/${data.doc_id}${shareParam}`); } catch {}
+      try { block = await apiJson(`${API}/blocks/${encodeURIComponent(data.page_id)}`); } catch {}
 
       let childBlocks = [];
       if (block) {
         try {
-          const subtreeData = await apiJson(`${API}/blocks/${block.id}/subtree${shareParam}`);
+          const subtreeData = await apiJson(`${API}/blocks/${block.id}/subtree`);
           childBlocks = normalizeBlocks(subtreeData.block?.children || []);
         } catch {}
       }
 
       const props = block?.properties || {};
-      const src = props.source_url || props.sourceUrl || "";
+      const src = attachmentSource(pageAttachment(block));
       const isLocal = src.startsWith("/api/");
       const proxiedUrl = isLocal
         ? `${src}${src.includes("?") ? "&" : "?"}share=${encodeURIComponent(token)}`
@@ -3741,12 +3852,15 @@ export default function App() {
       suppressAutosaveRef.current = true;
       setFocusedBlockId(block?.id || "");
       setFocusedBlock(block || null);
-      setPdfTitle(block?.content || getPdfPageTitle(data.doc_id, src));
+      setPageTitle(block?.content || defaultPageTitle(pageAttachment(block)));
       setBlocks(childBlocks);
-      setDocId(data.doc_id);
+      setDocId(props.doc_id || data.doc_id || "");
       setInputUrl(src);
       setPdfUrl(proxiedUrl);
-      setStatus("Loaded shared doc.");
+      // Edit rights arrive with the share; the autosave effect's suppress flag
+      // (set above) swallows the first blocks change either way.
+      setReadOnly(!data.can_edit);
+      setStatus(data.can_edit ? `Shared by ${data.username} — your edits save to their page.` : "Loaded shared page.");
     } catch (err) {
       setStatus(`Share open failed: ${err.message}`);
     } finally {
@@ -3755,7 +3869,7 @@ export default function App() {
   }
 
   async function openBlock(blockId, opts) {
-    if (!blockId || readOnly) return;
+    if (!blockId || shareMode) return;
     // Back records LINK jumps only — callers opt in via {pushNav: true}.
     // Plain navigation (library, search, tabs, home) never pushes.
     if (opts?.pushNav && blockId !== focusedBlockId) pushNav();
@@ -3772,17 +3886,17 @@ export default function App() {
       suppressAutosaveRef.current = true;
       setFocusedBlockId(blockId);
       setFocusedBlock(block);
-      setPdfTitle(block.content || "Untitled");
+      setPageTitle(block.content || "Untitled");
       setSummary(props.summary || "");
       setCategory(props.category || "");
       setPageFolders(parseFolderTags(props.folder));
       setDocId(props.doc_id || "");
 
       let openedPdfUrl = "";
-      if (props.source_url) {
-        const src = props.source_url;
-        const isLocal = src.startsWith("/api/");
-        openedPdfUrl = isLocal ? src : pdfProxyUrl(src);
+      const attachment = pageAttachment(block);
+      if (attachment) {
+        const src = attachmentSource(attachment);
+        openedPdfUrl = opts?.viewerUrl || (src.startsWith("/api/") ? src : pdfProxyUrl(src));
         setInputUrl(src);
         setPdfUrl(openedPdfUrl);
         setBlocks(childBlocks);
@@ -3792,16 +3906,24 @@ export default function App() {
         if (childBlocks.length === 0 && !readOnly) {
           const seedId = makeId();
           suppressAutosaveRef.current = true;
-          pendingFocusRef.current = seedId;
-          setBlocks([{ id: seedId, content: "", children: [], collapsed: false, editMode: true, properties: {} }]);
+          // A page created from "New page" gets the title first (Notion-
+          // style); the seed block waits for Enter there.
+          if (!opts?.focusTitle) pendingFocusRef.current = seedId;
+          setBlocks([{ id: seedId, content: "", children: [], collapsed: false, editMode: !opts?.focusTitle, properties: {} }]);
         } else {
           setBlocks(childBlocks);
         }
       }
 
-      // Scroll notes panel to the most recently updated block, unless a
+      // Scroll notes panel to where the reader left off (text-only pages,
+      // "" = the top) or else to the most recently updated block, unless a
       // specific target was already queued (e.g. ?block=... deep link).
-      if (!pendingBlockScrollRef.current && childBlocks.length > 0) {
+      const notePos = !attachment ? readPosRef.current[blockId] : null;
+      if (!pendingBlockScrollRef.current && notePos && notePos.page === 0) {
+        if (notePos.block && flattenBlocks(childBlocks).some((b) => b.id === notePos.block)) {
+          pendingBlockScrollRef.current = notePos.block;
+        }
+      } else if (!pendingBlockScrollRef.current && childBlocks.length > 0) {
         let latest = null;
         for (const b of flattenBlocks(childBlocks)) {
           if (!latest || (b.updated_at || "") > (latest.updated_at || "")) latest = b;
@@ -3872,17 +3994,17 @@ export default function App() {
   const pageLayoutsRef = useRef({});
   const panelGroupRefs = useRef({}); // group key -> react-resizable-panels imperative handle
   useEffect(() => {
-    if (!authUser?.user || readOnly) return;
+    if (!authUser?.user || shareMode) return;
     try { pageLayoutsRef.current = JSON.parse(localStorage.getItem(`gamma-page-layouts:${authUser.user}`) || "{}"); }
     catch { pageLayoutsRef.current = {}; }
-  }, [authUser?.user, readOnly]);
+  }, [authUser?.user, shareMode]);
   const restoreTokenRef = useRef(0);   // bumped on navigation — kills in-flight restore loops
   const restoringForRef = useRef(null); // block whose restore hasn't landed yet
   const pdfRenderedUrlRef = useRef(""); // url of the document whose pages are in the DOM
   const pendingRestoreRef = useRef(null); // {url, entry, blockId, token} applied pre-paint on "rendered"
   function captureScrollPos() {
     // The page's window layout travels with it — including panel size ratios.
-    if (focusedBlockId && !readOnly && prefsUserRef.current) {
+    if (focusedBlockId && !shareMode && prefsUserRef.current) {
       const sizes = {};
       for (const [k, h] of Object.entries(panelGroupRefs.current)) {
         try { if (h) sizes[k] = h.getLayout(); } catch {}
@@ -3893,6 +4015,20 @@ export default function App() {
         while (keys.length > 80) delete pageLayoutsRef.current[keys.shift()];
         localStorage.setItem(`gamma-page-layouts:${prefsUserRef.current}`, JSON.stringify(pageLayoutsRef.current));
       } catch {}
+    }
+    // A page without a viewer keeps its place by block, not by PDF page.
+    if (focusedBlockId && !shareMode && !pageAttach) {
+      const list = document.querySelector(".sidebar .blockList");
+      if (list) {
+        let topId = "";
+        if (list.scrollTop > 8) {
+          const top = list.getBoundingClientRect().top + 4;
+          for (const row of list.querySelectorAll(".blockRowWrap[data-block-id]")) {
+            if (row.getBoundingClientRect().bottom > top) { topId = row.dataset.blockId || ""; break; }
+          }
+        }
+        recordNotePos(focusedBlockId, topId);
+      }
     }
     // Only record a position when the viewer is actually showing THIS page's
     // document: mid-load the scroller still holds the previous document (or a
@@ -4005,7 +4141,7 @@ export default function App() {
     setPdfUrl("");
     setDocId("");
     setInputUrl("");
-    setPdfTitle("");
+    setPageTitle("");
     setSummary("");
     setCategory("");
     setPageFolders([]);
@@ -4106,7 +4242,7 @@ export default function App() {
   // properties.folder with the same refinement rule as addPagesToFolder.
   function addPageFolderTag(raw) {
     const path = cleanFolderPath(raw);
-    if (!path || !focusedBlockId || readOnly || pageFolders.includes(path)) return;
+    if (!path || !focusedBlockId || shareMode || pageFolders.includes(path)) return;
     const next = addFolderTag(pageFolders, path);
     setPageFolders(next);
     updateExtraFolders((prev) => prev.filter((f) => f !== path));
@@ -4114,7 +4250,7 @@ export default function App() {
   }
 
   function removePageFolderTag(path) {
-    if (!focusedBlockId || readOnly) return;
+    if (!focusedBlockId || shareMode) return;
     const next = pageFolders.filter((t) => t !== path);
     if (next.length === pageFolders.length) return;
     setPageFolders(next);
@@ -4154,7 +4290,7 @@ export default function App() {
   }
 
   async function saveCategory(newValue) {
-    if (!focusedBlockId || readOnly) return;
+    if (!focusedBlockId || shareMode) return;
     try {
       await apiJson(`${API}/blocks/${focusedBlockId}`, {
         method: "PUT",
@@ -4168,23 +4304,82 @@ export default function App() {
     }
   }
 
-  async function fetchShareLink() {
-    if (!pdfUrl || readOnly) return;
+  // Share popover (owner). Opening it only LOADS the state — a page is not
+  // published until "Create link"; settings changes save immediately and the
+  // token never changes until "Stop sharing".
+  function applyShareSettings(data) {
+    setShareSettings(data);
+    setShareError("");
+  }
+  async function loadShareSettings() {
+    if (!focusedBlockId || shareMode || homeMode) return;
+    setShareSettings(null);
     try {
-      const data = await apiJson(`${API}/share/${docId}`, {
-        method: "POST",
-        credentials: "include",
-      });
-      setShareUrl(`${window.location.origin}${window.location.pathname}?share=${data.token}`);
+      applyShareSettings(await apiJson(`${API}/share-settings/${encodeURIComponent(focusedBlockId)}`));
       resetShareCopied();
     } catch (err) {
       setStatus(`Share failed: ${err.message}`);
     }
   }
+  async function createShareLink() {
+    if (!focusedBlockId || shareMode) return;
+    try {
+      applyShareSettings(await apiJson(`${API}/share/${encodeURIComponent(focusedBlockId)}`, { method: "POST" }));
+      resetShareCopied();
+    } catch (err) {
+      setStatus(`Share failed: ${err.message}`);
+    }
+  }
+  async function updateShareSettings(patch) {
+    if (!focusedBlockId || !shareSettings?.token) return;
+    try {
+      applyShareSettings(await apiJson(`${API}/share-settings/${encodeURIComponent(focusedBlockId)}`, {
+        method: "PUT",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify(patch),
+      }));
+    } catch (err) {
+      setShareError(err.message); // e.g. "unknown user(s): …" — shown in the popover
+    }
+  }
+  // People: invitations are additive to general access (Notion-style) —
+  // each invited account carries its own view/edit.
+  async function inviteShareUsers(e) {
+    e?.preventDefault();
+    const names = shareInviteDraft.split(/[,\s;]+/).map((u) => u.trim()).filter(Boolean);
+    if (!names.length) return;
+    const current = shareSettings?.users || [];
+    const users = [...current, ...names.filter((n) => !current.some((u) => u.name === n)).map((name) => ({ name, role: "view" }))];
+    await updateShareSettings({ users });
+    setShareInviteDraft("");
+  }
+  function setShareUserRole(name, role) {
+    updateShareSettings({ users: (shareSettings?.users || []).map((u) => u.name === name ? { ...u, role } : u) });
+  }
+  function removeShareUser(name) {
+    updateShareSettings({ users: (shareSettings?.users || []).filter((u) => u.name !== name) });
+  }
+  async function stopSharing() {
+    if (!focusedBlockId || !shareSettings?.token) return;
+    try {
+      await apiJson(`${API}/share-settings/${encodeURIComponent(focusedBlockId)}`, { method: "DELETE" });
+      applyShareSettings({ token: null, page_id: focusedBlockId });
+      setStatus("Sharing stopped — the old link no longer opens.");
+    } catch (err) {
+      setStatus(`Stop sharing failed: ${err.message}`);
+    }
+  }
+  // One line under the general-access row: who that row admits.
+  const shareGeneralSub = shareSettings?.audience === "anyone"
+    ? "No login needed — view only"
+    : shareSettings?.audience === "users"
+      ? "Any signed-in account on this server"
+      : "Nobody beyond the people invited above";
 
   async function copyShareLink() {
-    if (await copyText(shareUrl)) flashShareCopied();
-    else setStatus("Copy failed — copy the link manually.");
+    if (await copyText(shareUrl)) { flashShareCopied(); return; }
+    setShareUrlShown(true); // no clipboard (plain-HTTP origins) — show it to select by hand
+    setStatus("Copy failed — select the link in the popover instead.");
   }
 
   // Download the current page as Markdown. The server returns a bare .md, or a
@@ -4194,13 +4389,10 @@ export default function App() {
   // instead of silently swapping the SPA for an error page.
   async function downloadExport(path, fallbackName) {
     setStatus("Exporting page…");
-    // Shared (read-only) views: every export carries the scoped share token, so
-    // the backend confines it to this document — applied here so no call site
-    // can forget it.
-    const shareQ = shareTokenQuery();
-    if (shareQ && !path.includes("share=")) path += (path.includes("?") ? "&" : "?") + shareQ;
+    // Shared views: withShare puts the scoped token on the export URL, so the
+    // backend confines it to this page.
     try {
-      const res = await fetch(`${API}${path}`, { credentials: "include" });
+      const res = await fetch(withShare(`${API}${path}`), { credentials: "include" });
       if (!res.ok) {
         let detail = "";
         try { detail = (await res.json()).detail || ""; } catch { /* not JSON */ }
@@ -4232,10 +4424,6 @@ export default function App() {
 
   // Shared (read-only) view — exports and asset fetches carry the scoped share
   // token (?share=), which the backend validates and confines to this document.
-  const shareOwnerRef = useRef("");
-  const shareTokenRef = useRef("");
-  const shareTokenQuery = () =>
-    readOnly && shareTokenRef.current ? `share=${encodeURIComponent(shareTokenRef.current)}` : "";
 
   // Run what the import dialog was configured to do. Logseq needs files, so
   // its button opens the picker and the import starts once they're chosen.
@@ -4289,7 +4477,7 @@ export default function App() {
           const p = await apiJson(`${API}/folders/export-progress`);
           if (p.active && p.total) {
             const pct = Math.round((p.done / p.total) * 100);
-            setStatus(`Exporting “${exportFolder}” — ${p.done}/${p.total} papers (${pct}%)…`);
+            setStatus(`Exporting “${exportFolder}” — ${p.done}/${p.total} pages (${pct}%)…`);
           }
         } catch { /* progress is best-effort */ }
       }, 500);
@@ -4352,7 +4540,7 @@ export default function App() {
     if (!pdfUrl) { setStatus("No PDF open."); return; }
     setOpenPopover(null);
     const path = pdfUrl.startsWith(API) ? pdfUrl.slice(API.length) : pdfUrl;
-    const name = `${(pdfTitle || docId || "paper").replace(/[\\/:*?"<>|]/g, "_").slice(0, 80)}.pdf`;
+    const name = `${(pageTitle || docId || "paper").replace(/[\\/:*?"<>|]/g, "_").slice(0, 80)}.pdf`;
     await downloadExport(path, name);
   }
 
@@ -4360,10 +4548,10 @@ export default function App() {
   const [aiTitleBusy, setAiTitleBusy] = useState(false);
   const [sourceDraft, setSourceDraft] = useState(""); // edit buffer for the source-PDF popover
   async function aiFillTitle() {
-    if (!docId || readOnly || aiTitleBusy) return;
+    if (!docId || shareMode || aiTitleBusy) return;
     setAiTitleBusy(true);
     setStatus("Asking AI for the title…");
-    const taskId = addTransfer({ name: `AI title — ${(pdfTitle || "paper").slice(0, 48)}`, kind: "ai", info: "asking…" });
+    const taskId = addTransfer({ name: `AI title — ${(pageTitle || "paper").slice(0, 48)}`, kind: "ai", info: "asking…" });
     try {
       const data = await apiJson(`${API}/ai/chat`, {
         method: "POST",
@@ -4569,41 +4757,10 @@ export default function App() {
   }
 
   const visibleBlocks = useMemo(() => flattenBlocks(blocks), [blocks]);
-  const homeMode = !pdfUrl && !focusedBlockId && !readOnly;
-
-  // --- structural undo -------------------------------------------------------
-  // Snapshots of the page's block tree around structural edits (delete,
-  // indent/outdent, drag-move, duplicate, paste-as-blocks). Ctrl+Z restores
-  // one while no editor has focus — in-editor undo stays CodeMirror's own.
-  // The restored tree persists through the normal autosave PUT, which
-  // re-inserts server-side even after an eager DELETE.
-  const undoStackRef = useRef([]);
-  const redoStackRef = useRef([]);
-  const blockUndoRef = useRef(null); // read by the once-mounted key listener
-  // A snapshot belongs to the page it was taken on — never restore across.
-  useEffect(() => { undoStackRef.current = []; redoStackRef.current = []; }, [focusedBlockId]);
-  function undoSnapshot(tree) {
-    // editMode stripped: restoring must not pop editors open.
-    const strip = (list) => (list || []).map((b) => ({ ...b, editMode: false, children: strip(b.children) }));
-    return strip(cloneBlocks(tree));
-  }
-  function pushUndo(tree) {
-    undoStackRef.current.push(undoSnapshot(tree));
-    if (undoStackRef.current.length > 100) undoStackRef.current.shift();
-    redoStackRef.current = [];
-  }
-  // Assigned every render so the once-mounted key listener sees fresh state.
-  blockUndoRef.current = (redo) => {
-    if (readOnly || homeMode || !focusedBlockId) return false;
-    const from = redo ? redoStackRef.current : undoStackRef.current;
-    const to = redo ? undoStackRef.current : redoStackRef.current;
-    const snap = from.pop();
-    if (!snap) return false;
-    to.push(undoSnapshot(blocks));
-    setBlocks(snap);
-    setStatus(redo ? "Redone." : "Undone.");
-    return true;
-  };
+  // What the open page carries — THE switch for layout and page-level
+  // affordances (docs/dev/block_centric.md). pdfUrl is only the viewer's input.
+  const pageAttach = useMemo(() => pageAttachment(focusedBlock), [focusedBlock]);
+  const homeMode = !focusedBlockId && !shareMode;
 
   // Move a block subtree to the end of another page: sync any queued edits
   // first, re-parent server-side (reorder carries parent_id), then drop it
@@ -4623,8 +4780,7 @@ export default function App() {
       });
       // Older snapshots still contain the block; restoring one would put the
       // same id in two pages. A cross-page move is not undoable.
-      undoStackRef.current = [];
-      redoStackRef.current = [];
+      blockHistory.clear();
       setBlocks((prev) => removeBlockTree(prev, blockId));
       setStatus(`Moved to "${title}".`);
     } catch (err) {
@@ -4639,28 +4795,26 @@ export default function App() {
   })();
   // Leaving home or changing folders drops the file-manager selection.
   useEffect(() => { clearSelection(); setHomeMenu(null); }, [folderFilter, categoryFilter, homeMode]);
-  const pageOnly = !pdfUrl && !!focusedBlockId && !readOnly;
+  // A page with no attachment — the owner's pages and shared pages alike —
+  // puts the notes in the center instead of an empty viewer.
+  const pageOnly = !!focusedBlockId && !pageAttach;
   // Phone: navigating to another page (or home) closes any overlay panel.
   useEffect(() => { setPhonePanel(null); }, [focusedBlockId, homeMode]);
   const pageBlocks = useMemo(() => {
     return homeBlocks.map((b) => ({
       id: b.id,
       content: b.content || "Untitled",
-      children: [],
-      collapsed: false,
-      properties: { quote: b.properties?.summary || "" },
       _pageId: b.id,
-      _position: b.position,
-      _sourceUrl: b.properties?.source_url,
+      _attachment: pageAttachment(b),
+      _preview: b.preview || "",
       _folders: parseFolderTags(b.properties?.folder),
       _labels: parseFolderTags(b.properties?.category),
       _createdAt: b.created_at || "",
       _updatedAt: b.updated_at || "",
       _pinned: b.properties?.pinned || "",
       _isEmpty: !b.content,
-      editMode: homeEditingId === b.id,
     }));
-  }, [homeBlocks, homeEditingId]);
+  }, [homeBlocks]);
   // Folders shown at the current level: the next path segment of every known
   // path under folderFilter ("" = root → top-level segments).
   const childFolders = useMemo(() => {
@@ -4798,13 +4952,17 @@ export default function App() {
   // "New folder" leads the listing wherever folders are listed — not inside a
   // label view or with the listing filtered to files or labels.
   const newFolderAllowed = !categoryFilter && homeKinds !== "files" && homeKinds !== "labels";
+  // "New page" is the first item of the listing itself (like "New folder") —
+  // Notion-style: creating a page needs no file. Not inside a label view
+  // (pages are created plain, then labelled) nor when only folders show.
+  const newPageAllowed = !categoryFilter && homeKinds !== "folders" && homeKinds !== "labels";
   // What an empty listing says — the view it is empty for, not the library.
   const homeEmptyText = categoryFilter
-    ? `Nothing is labelled “${categoryFilter}” here — drop a paper on a label to add it.`
+    ? `Nothing is labelled “${categoryFilter}” here — drop a page on a label to add it.`
     : homeKinds === "labels"
-      ? (folderFilter ? "No labels on the papers in this folder yet." : "No labels yet — add one from a paper’s label field.")
-      : folderFilter ? "This folder is empty — drag papers onto it from the library."
-        : "No pages yet — use the + button above to open a PDF or start a note page.";
+      ? (folderFilter ? "No labels on the pages in this folder yet." : "No labels yet — add one from a page’s label field.")
+      : folderFilter ? "This folder is empty — start a page here or drag pages onto it from the library."
+        : "No pages yet — start with “New page”, or open a PDF from the + button above.";
   // Timestamp shown on a library card follows the active sort: sorted by view
   // time → viewed (falling back to modified, same as the sort), by added →
   // created; modified otherwise (incl. Title A–Z).
@@ -5062,6 +5220,24 @@ export default function App() {
     return () => document.removeEventListener('scroll', onScroll, { capture: true });
   }, [pdfUrl, pdfHidden]);
 
+  // A share link that can't open yet: sign in (signed-in / specific-people
+  // shares), or explain why not.
+  if (shareMode && shareGate) {
+    return shareGate === "login" ? (
+      <LoginPage
+        username={loginUser}
+        password={loginPass}
+        error={loginError}
+        onUsernameChange={setLoginUser}
+        onPasswordChange={setLoginPass}
+        onSubmit={doShareLogin}
+        subtitle="Sign in to open this shared page"
+      />
+    ) : (
+      <ShareBlockedPage reason={shareGate} viewer={shareInfo?.viewer || ""} onSwitchAccount={shareSwitchAccount} />
+    );
+  }
+
   // Login page state
   if (authUser === null) return <AuthLoading />;
 
@@ -5090,17 +5266,29 @@ export default function App() {
     );
   }
 
-  // "+ New note" under the block tree (also the whole empty state's action):
-  // append an empty top-level note and start editing it.
-  function addRootNote() {
+  // Notion-style tail under the block tree: clicking the empty space below
+  // the last block starts writing there — in the last block if it is still
+  // empty, else in a fresh top-level one. On an empty page the zone carries
+  // the invitation text; the per-row "+" handle covers inserting mid-page.
+  function editTail() {
     if (readOnly) return;
+    const last = blocks[blocks.length - 1];
+    if (last && !last.content && !(last.children || []).length) {
+      pendingFocusRef.current = last.id;
+      setBlocks(setBlockEditMode(blocks, last.id, true));
+      setFocusedId(last.id);
+      return;
+    }
     const { blocks: next, newId } = addRootBlock(blocks);
     pendingFocusRef.current = newId;
     setBlocks(next);
     setFocusedId(newId);
   }
-  const addNoteButton = !homeMode && !readOnly && focusedBlockId ? (
-    <button className="addNoteBtn" title="Add a note at the end" onClick={addRootNote}>+ New note</button>
+  const notesTail = !homeMode && !readOnly && focusedBlockId ? (
+    <div className={"notesTail" + (blocks.length ? "" : " isEmpty")}
+      onMouseDown={(e) => { e.preventDefault(); editTail(); }}>
+      {blocks.length ? null : "Click to start writing"}
+    </div>
   ) : null;
 
   // The notes window - docked via notesDock, or filling the center when no PDF is shown.
@@ -5116,8 +5304,16 @@ export default function App() {
                 onChange={(e) => setTitleDraft(e.target.value)}
                 onBlur={() => { renameTitle(titleDraft); setTitleEditing(false); }}
                 onKeyDown={(e) => {
-                  if (e.key === "Enter") { e.currentTarget.blur(); }
-                  else if (e.key === "Escape") { setTitleDraft(pdfTitle); setTitleEditing(false); }
+                  if (e.key === "Enter") {
+                    e.currentTarget.blur();
+                    // On a fresh page, Enter continues into its empty first block.
+                    const first = blocksRef.current?.[0];
+                    if (blocksRef.current?.length === 1 && first && !first.content && !first.editMode) {
+                      pendingFocusRef.current = first.id;
+                      setBlocks((prev) => prev.map((b, i) => (i === 0 ? { ...b, editMode: true } : b)));
+                    }
+                  }
+                  else if (e.key === "Escape") { setTitleDraft(pageTitle); setTitleEditing(false); }
                 }}
               />
             ) : (
@@ -5126,12 +5322,12 @@ export default function App() {
                 title={!readOnly && focusedBlockId ? "Click to rename" : undefined}
                 onClick={() => {
                   if (readOnly || !focusedBlockId) return;
-                  setTitleDraft(pdfTitle || (docId ? getPdfPageTitle(docId, inputUrl) : "Untitled"));
+                  setTitleDraft(pageTitle || "Untitled");
                   setTitleEditing(true);
                 }}
-              >{focusedBlockId ? (pdfTitle || (docId ? getPdfPageTitle(docId, inputUrl) : "Untitled")) : "PDF Notes"}</h3>
+              >{focusedBlockId ? (pageTitle || "Untitled") : "Notes"}</h3>
             )}
-            {focusedBlockId && !readOnly ? (
+            {focusedBlockId && !shareMode ? (
               <div className="categoryFrontmatter">
                 <span className="categoryIcon" title="Labels">
                   <LabelIcon size={13} />
@@ -5261,10 +5457,62 @@ export default function App() {
               </div>
             ) : null}
             </div>
-            {!readOnly && focusedBlockId ? (
+            {!shareMode && focusedBlockId ? (
               <div className="pageActionCol">
-                {docId ? (
-                  <span data-popover="meta" style={{ position: "relative", display: "inline-flex" }}>
+                {pageAttach || !readOnly ? (
+                  <span data-popover="attach" className="popoverAnchor">
+                    <button
+                      className={`pageActionBtn ${pageAttach ? "active" : ""}`}
+                      title={pageAttach
+                        ? `Attachment: ${pageAttach.name || defaultPageTitle(pageAttach)}`
+                        : "Attach a PDF to this page — by URL, arXiv id or DOI, or upload a file"}
+                      aria-label={pageAttach ? "Attachment" : "Attach PDF"}
+                      disabled={loading}
+                      onClick={() => setOpenPopover((p) => (p === "attach" ? null : "attach"))}
+                    ><PaperclipIcon size={15} /></button>
+                    {openPopover === "attach" && pageAttach ? (
+                      <div className="popover addPopover attachPopover">
+                        <div className="popoverTitle">Attachment</div>
+                        <div className="popoverHint attachFileName" title={attachmentSource(pageAttach)}>
+                          <PaperclipIcon size={13} /> {pageAttach.name || defaultPageTitle(pageAttach)}
+                        </div>
+                        <button className="popoverItem" onClick={() => { setPdfHidden((h) => !h); setOpenPopover(null); }}>
+                          {pdfHidden ? "Show the PDF" : "Hide the PDF"}
+                        </button>
+                        {!readOnly ? (
+                          <button className="popoverItem" onClick={detachPdfFromPage}>Detach the PDF…</button>
+                        ) : null}
+                      </div>
+                    ) : openPopover === "attach" ? (
+                      <div className="popover addPopover attachPopover">
+                        <div className="popoverTitle">Attach a PDF</div>
+                        <input
+                          autoFocus
+                          className="searchInput"
+                          value={attachUrl}
+                          onChange={(e) => setAttachUrl(e.target.value)}
+                          placeholder="PDF URL, arXiv id, or DOI — press Enter"
+                          onKeyDown={(e) => {
+                            if (e.key === "Enter" && attachUrl.trim() && !loading) attachPdfToPage({ url: attachUrl.trim() });
+                            else if (e.key === "Escape") setOpenPopover(null);
+                          }}
+                        />
+                        <label className="popoverItem" aria-disabled={loading || undefined}>
+                          Upload a PDF…
+                          <input
+                            type="file"
+                            accept=".pdf,application/pdf"
+                            style={{ display: "none" }}
+                            disabled={loading}
+                            onChange={(e) => { const f = e.target.files?.[0]; e.target.value = ""; if (f) attachPdfToPage({ file: f }); }}
+                          />
+                        </label>
+                      </div>
+                    ) : null}
+                  </span>
+                ) : null}
+                {pageAttach || pageMeta ? (
+                  <span data-popover="meta" className="popoverAnchor">
                     <button
                       className="pageActionBtn"
                       title={metaBusy
@@ -5445,6 +5693,7 @@ export default function App() {
                             <button className="uiBtn primary" onClick={saveMetaEdits}>Save metadata</button>
                           </div>
                         ) : null}
+                        {pageAttach ? <>
                         <div className="popoverDivider" />
                         <div className="popoverSection">Source file</div>
                         <div className="shareRow">
@@ -5485,6 +5734,7 @@ export default function App() {
                             >Replace source</button>
                           </div>
                         ) : null}
+                        </> : null}
                       </div>
                     ) : null}
                   </span>
@@ -5494,7 +5744,7 @@ export default function App() {
                   title="Delete this page"
                   onClick={() => setConfirmBox({
                     title: "Delete page",
-                    message: `Delete "${pdfTitle || "this page"}" and all its notes? This can't be undone.`,
+                    message: `Delete "${pageTitle || "this page"}" and all its notes? This can't be undone.`,
                     confirmLabel: "Delete",
                     danger: true,
                     onConfirm: async () => {
@@ -5573,9 +5823,9 @@ export default function App() {
             {homeMode && recentViewedPages.length > 0 ? (
               <CardCarousel label="Recently viewed" className="recentsCarousel">
                 {recentViewedPages.map((b) => (
-                  <PageCard key={b._pageId} title={b.content} glyph={<FileGlyph isPdf={!!b._sourceUrl} />}
+                  <PageCard key={b._pageId} title={b.content} glyph={<FileGlyph isPdf={!!b._attachment} />} preview={b._preview}
                     snap={recentThumbs ? pageSnaps[b._pageId]?.img : null}
-                    kind={b._sourceUrl ? "PDF" : "Note"} time={formatRelativeTime(b._viewedAt)}
+                    kind={pageKindLabel(b._attachment)} time={formatRelativeTime(b._viewedAt)}
                     folders={b._folders} labels={b._labels} labelMode={fileLabels}
                     className={selectedPages.has(b._pageId) ? "selected" : ""}
                     onClick={() => openPage(b._pageId)}
@@ -5598,10 +5848,11 @@ export default function App() {
                     <PageCard
                       key={b._pageId}
                       className={selectedPages.has(b._pageId) ? "selected" : ""}
-                      glyph={<FileGlyph isPdf={!!b._sourceUrl} />}
+                      glyph={<FileGlyph isPdf={!!b._attachment} />}
+                      preview={b._preview}
                       title={b.content}
                       tip={`${b.content}\nClick to select · double-click to open`}
-                      kind={b._sourceUrl ? "PDF" : "Note"}
+                      kind={pageKindLabel(b._attachment)}
                       time={formatRelativeTime(b._updatedAt)}
                       folders={b._folders} labels={b._labels} labelMode={fileLabels}
                       draggable
@@ -5635,7 +5886,7 @@ export default function App() {
                         const parent = folderFilter.includes("/") ? folderFilter.slice(0, folderFilter.lastIndexOf("/")) : "";
                         dropOnFolder(e, parent, (ids) => removePagesFromFolder(ids, folderFilter));
                       }}
-                      title="Back — or drop a paper or folder here to move it out of this folder"
+                      title="Back — or drop a page or folder here to move it out of this folder"
                     >
                       <ArrowLeftIcon size={14} />
                       <span className="folderName">{folderFilter.includes("/") ? folderFilter.slice(0, folderFilter.lastIndexOf("/")) : "All files"}</span>
@@ -5652,7 +5903,7 @@ export default function App() {
                       onDragOver={(e) => { e.preventDefault(); setFolderDragOver("__label_up__"); }}
                       onDragLeave={() => setFolderDragOver(null)}
                       onDrop={(e) => dropOnLabel(e, categoryFilter, (ids) => removePagesFromLabel(ids, categoryFilter))}
-                      title="Back — or drop a paper here to take this label off it"
+                      title="Back — or drop a page here to take this label off it"
                     >
                       <ArrowLeftIcon size={14} />
                       <span className="folderName">{folderFilter || "All files"}</span>
@@ -5718,6 +5969,16 @@ export default function App() {
                     <div className="empty">{homeEmptyText}</div>
                   ) : null}
                   <div className="fileGrid" onClick={(e) => { if (e.target.classList.contains("fileGrid")) clearSelection(); }}>
+                    {newPageAllowed ? (
+                      <PageCard
+                        className="pageCardAdd"
+                        glyph={<FilePlusIcon className="tileGlyph" size={null} strokeWidth={1.5} />}
+                        title="New page"
+                        tip="Start a blank page here"
+                        labelMode={fileLabels}
+                        onClick={() => createPage()}
+                      />
+                    ) : null}
                     {!newFolderAllowed ? null : newFolderOpen ? (
                       <PageCard
                         className="pageCardAdd"
@@ -5757,7 +6018,7 @@ export default function App() {
                         className={`${dim} ${folderDragOver === l ? "dragOver" : ""} ${selectedLabels.has(l) ? "selected" : ""}`}
                         glyph={<LabelGlyph />}
                         title={l}
-                        tip="Click to select · double-click to open · drop a paper to label it"
+                        tip="Click to select · double-click to open · drop a page to label it"
                         kind="Label"
                         count={labelMeta[l]?.count || 0}
                         time={cardTime(item)}
@@ -5776,7 +6037,7 @@ export default function App() {
                         className={`${dim} ${folderDragOver === f ? "dragOver" : ""} ${selectedFolders.has(f) ? "selected" : ""}`}
                         glyph={<FolderGlyph />}
                         title={f.slice(f.lastIndexOf("/") + 1)}
-                        tip="Click to select · double-click to open · drop a paper or folder to move it in"
+                        tip="Click to select · double-click to open · drop a page or folder to move it in"
                         kind="Folder"
                         count={folderMeta[f]?.count || 0}
                         time={cardTime(item)}
@@ -5812,10 +6073,11 @@ export default function App() {
                         <PageCard
                           key={id}
                           className={`${dim} ${selectedPages.has(id) ? "selected" : ""}`}
-                          glyph={<FileGlyph isPdf={!!b._sourceUrl} />}
+                          glyph={<FileGlyph isPdf={!!b._attachment} />}
+                          preview={b._preview}
                           title={b.content}
                           tip={`${b.content}\nClick to select · double-click to open`}
-                          kind={b._sourceUrl ? "PDF" : "Note"}
+                          kind={pageKindLabel(b._attachment)}
                           time={cardTime(item)}
                           folders={b._folders} labels={b._labels} labelMode={fileLabels}
                           renameNode={isEditing ? (
@@ -5852,12 +6114,18 @@ export default function App() {
                     </button>
                   ) : null}
                 </>
-            ) : homeMode && homeView === "list" ? (
+            ) : homeMode ? (
                 <>
                   {homeItems.length === 0 && !newFolderOpen ? (
                     <div className="empty">{homeEmptyText}</div>
                   ) : null}
                   <div className="fileList" onClick={(e) => { if (e.target.classList.contains("fileList")) clearSelection(); }}>
+                    {newPageAllowed ? (
+                      <button className="folderRow folderNewBtn" onClick={() => createPage()} title="Start a blank page here">
+                        <FilePlusIcon size={15} />
+                        <span className="folderName">New page</span>
+                      </button>
+                    ) : null}
                     {!newFolderAllowed ? null : newFolderOpen ? (
                       <div className="folderRow folderNewRow">
                         <FolderPlusIcon size={15} />
@@ -5892,7 +6160,7 @@ export default function App() {
                         onDragOver={(e) => { e.preventDefault(); setFolderDragOver(l); }}
                         onDragLeave={() => setFolderDragOver(null)}
                         onDrop={(e) => dropOnLabel(e, l)}
-                        title="Click to select · double-click to open · right-click to rename or delete · drop a paper to label it"
+                        title="Click to select · double-click to open · right-click to rename or delete · drop a page to label it"
                       >
                         <LabelIcon size={15} />
                         <span className="folderName">{l}</span>
@@ -5911,7 +6179,7 @@ export default function App() {
                         onDragOver={(e) => { e.preventDefault(); setFolderDragOver(f); }}
                         onDragLeave={() => setFolderDragOver(null)}
                         onDrop={(e) => dropOnFolder(e, f)}
-                        title="Click to select · double-click to open · right-click to rename or delete · drop a paper or folder to move it in"
+                        title="Click to select · double-click to open · right-click to rename or delete · drop a page or folder to move it in"
                       >
                         <FolderIcon size={15} />
                         {folderRenaming?.name === f ? (
@@ -5948,7 +6216,7 @@ export default function App() {
                           onContextMenu={openPageMenu(id, b.content)}
                           title={`${b.content}\nClick to select · double-click to open`}
                         >
-                          <span className="fileRowIcon"><FileGlyph isPdf={!!b._sourceUrl} /></span>
+                          <span className="fileRowIcon"><FileGlyph isPdf={!!b._attachment} /></span>
                           {isEditing ? (
                             <input
                               autoFocus
@@ -5966,7 +6234,7 @@ export default function App() {
                           )}
                           <CardLabels className="fileRowLabels" folders={b._folders} labels={b._labels}
                             mode={fileLabels} onLabelMenu={(l) => openTagMenu("label", l)} />
-                          <span className="fileRowKind">{b._sourceUrl ? "PDF" : "Note"}</span>
+                          <span className="fileRowKind">{pageKindLabel(b._attachment)}</span>
                           <button
                             className={`pinBtn fileRowPin ${isPinned ? "pinned" : ""}`}
                             title={isPinned ? "Unpin" : "Pin to top"}
@@ -5983,17 +6251,11 @@ export default function App() {
                   ) : null}
                 </>
             ) : (
-            (homeMode ? homeVisiblePages : visibleBlocks).length === 0 ? (
-              <>
-                <div className="empty">{homeMode
-                  ? (folderFilter ? "This folder is empty — drag papers onto it from the library." : "No pages yet — use the + button above to open a PDF or start a note page.")
-                  : "No blocks yet."}</div>
-                {addNoteButton}
-              </>
+            visibleBlocks.length === 0 ? (
+              notesTail || <div className="empty">No blocks yet.</div>
             ) : (
               (() => {
                 const rowProps = {
-                  homeMode,
                   focusedId,
                   setFocusedId,
                   onJump: jumpToHighlightId,
@@ -6043,61 +6305,27 @@ export default function App() {
                       }
                     }
                   },
-                  onPageOpen: handlePageClick,
-                  onPageContext: (pageBlock, e) => openPageMenu(pageBlock._pageId, pageBlock.content)(e),
-                  selectedPageIds: selectedPages,
+                  // Functional updates: these two fire from editor lifecycle
+                  // (CodeMirror onChange, blur on unmount when a row moves in
+                  // the tree), where the closure's tree can be a render stale
+                  // and would overwrite a structural change. Closing an editor
+                  // saves right away (the autosave skips its debounce once).
                   onChangeText: (id, text) => {
                     if (readOnly) return;
-                    if (homeMode) {
-                      setHomeBlocks((prev) => prev.map((b) => b.id === id ? { ...b, content: text } : b));
-                      if (pageTitleSaveTimerRef.current) clearTimeout(pageTitleSaveTimerRef.current);
-                      pageTitleSaveTimerRef.current = setTimeout(() => {
-                        apiJson(`${API}/blocks/${id}`, {
-                          method: "PUT",
-                          headers: { "Content-Type": "application/json" },
-                          body: JSON.stringify({ content: text }),
-                        }).catch((err) => setStatus(`Rename failed: ${err}`));
-                      }, 500);
-                      return;
-                    }
-                    setBlocks(setBlockText(blocks, id, text));
+                    setBlocks((prev) => setBlockText(prev, id, text));
                   },
                   onStartEdit: (id, editMode) => {
                     if (readOnly) return;
-                    if (homeMode) {
-                      if (editMode) pendingFocusRef.current = id;
-                      setHomeEditingId(editMode ? id : null);
-                      return;
-                    }
                     if (editMode) pendingFocusRef.current = id;
-                    const next = setBlockEditMode(blocks, id, editMode);
-                    setBlocks(next);
-                    if (!editMode) {
-                      persistBlocks(next).catch((err) => setStatus(`Save failed: ${err.message}`));
-                    }
+                    else saveNowRef.current = true;
+                    setBlocks((prev) => setBlockEditMode(prev, id, editMode));
                   },
                   enterNewNote,
-                  onEnterSibling: (id) => {
+                  // `above` inserts before `id` instead (the "+" handle with
+                  // Alt held).
+                  onEnterSibling: (id, { above = false } = {}) => {
                     if (readOnly) return;
-                    if (homeMode) {
-                      const idx = pageBlocks.findIndex((b) => b.id === id);
-                      if (idx < 0) return;
-                      const before = pageBlocks[idx]._position || null;
-                      const after = pageBlocks[idx + 1]?._position || null;
-                      apiJson(`${API}/blocks`, {
-                        method: "POST",
-                        headers: { "Content-Type": "application/json" },
-                        body: JSON.stringify({ parent_id: "root", content: "", before, after }),
-                      })
-                        .then((created) => fetchHomeBlocks().then(() => {
-                          pendingFocusRef.current = created.id;
-                          setHomeEditingId(created.id);
-                          setFocusedId(created.id);
-                        }))
-                        .catch((err) => setStatus(`Create failed: ${err}`));
-                      return;
-                    }
-                    const { blocks: next, newId } = addSiblingBlock(blocks, id);
+                    const { blocks: next, newId } = addSiblingBlock(blocks, id, { above });
                     pendingFocusRef.current = newId;
                     setBlocks(next);
                     setFocusedId(newId);
@@ -6110,17 +6338,13 @@ export default function App() {
                     setFocusedId(newId);
                   },
                   onIndent: (id) => {
-                    if (readOnly || homeMode) return;
-                    const next = indentBlock(blocks, id);
-                    if (next !== blocks) pushUndo(blocks);
-                    setBlocks(next);
+                    if (readOnly) return;
+                    setBlocks(indentBlock(blocks, id));
                     setFocusedId(id);
                   },
                   onOutdent: (id) => {
-                    if (readOnly || homeMode) return;
-                    const next = outdentBlock(blocks, id);
-                    if (next !== blocks) pushUndo(blocks);
-                    setBlocks(next);
+                    if (readOnly) return;
+                    setBlocks(outdentBlock(blocks, id));
                     setFocusedId(id);
                   },
                   onToggle: (id) => {
@@ -6129,37 +6353,17 @@ export default function App() {
                   },
                   onDelete: (id) => {
                     if (readOnly) return;
-                    if (homeMode) {
-                      // Deleting a page also removes its stored PDF (if no
-                      // other page references it) — always confirm.
-                      const pg = homeBlocks.find((b) => b.id === id);
-                      setConfirmBox({
-                        title: "Delete page",
-                        message: `Delete "${(pg?.content || "this page").slice(0, 80)}" with all its notes${pg?.properties?.doc_id ? " and its stored PDF file" : ""}? This can't be undone.`,
-                        confirmLabel: "Delete",
-                        danger: true,
-                        onConfirm: () => {
-                          apiJson(`${API}/blocks/${id}`, { method: "DELETE" })
-                            .then(() => {
-                              updateTabs((prev) => prev.filter((t) => t.id !== id));
-                              fetchHomeBlocks();
-                            })
-                            .catch((err) => setStatus(`Delete failed: ${err.message}`));
-                        },
-                      });
-                      return;
-                    }
-                    pushUndo(blocks);
+                    // Eager server delete; 404 = never saved yet, the next
+                    // autosave PUT settles it either way.
                     apiJson(`${API}/blocks/${id}`, { method: "DELETE" })
-                      .catch((err) => setStatus(`Delete failed: ${err}`));
+                      .catch((err) => { if (err.status !== 404) setStatus(`Delete failed: ${err.message}`); });
                     setBlocks(removeBlockTree(blocks, id));
                     setStatus("Block deleted — Ctrl+Z to undo.");
                   },
                   onDuplicate: (id) => {
-                    if (readOnly || homeMode) return;
+                    if (readOnly) return;
                     const src = findBlock(blocks, id);
                     if (!src) return;
-                    pushUndo(blocks);
                     // Fresh ids all the way down; PDF anchoring stays with the
                     // original — a copy with the same highlight_id/position
                     // would draw a duplicate highlight on the page (same rule
@@ -6170,27 +6374,19 @@ export default function App() {
                       return { ...b, id: makeId(), editMode: false, properties: props,
                         children: (b.children || []).map(clone) };
                     };
-                    setBlocks(insertSiblingAfter(blocks, id, clone(src)));
+                    setBlocks(insertSibling(blocks, id, clone(src), true));
                     setStatus("Block duplicated.");
                   },
                   onMoveToPage: async (id) => {
-                    if (readOnly || homeMode) return;
+                    if (readOnly) return;
                     try {
                       const d = await apiJson(`${API}/blocks/root/children`);
                       const pages = (d.children || []).filter((p) => p.id !== focusedBlockId);
                       setMoveBlockDialog({ blockId: id, query: "", pages });
                     } catch (err) { setStatus(`Could not list pages: ${err.message}`); }
                   },
-                  // Hover-tool edits (table ops, image resize/caption/delete)
-                  // snapshot before writing so Ctrl+Z covers them too.
-                  onSnapshot: () => {
-                    if (!readOnly && !homeMode) pushUndo(blocks);
-                  },
                   onPasteBlocks: (id, nodes) => {
-                    if (readOnly || homeMode || !nodes?.length) return;
-                    // Undo restores the paste-as-text state (the closure tree
-                    // still carries the pasted text; its removal is queued).
-                    pushUndo(blocks);
+                    if (readOnly || !nodes?.length) return;
                     const toBlock = (n) => ({
                       id: makeId(), content: n.content || "", properties: {},
                       collapsed: false, editMode: false,
@@ -6204,7 +6400,7 @@ export default function App() {
                     setBlocks((prev) => {
                       let out = prev;
                       for (let i = created.length - 1; i >= 0; i--) {
-                        out = insertSiblingAfter(out, id, created[i]);
+                        out = insertSibling(out, id, created[i], true);
                       }
                       return out;
                     });
@@ -6236,25 +6432,6 @@ export default function App() {
                     _dragState.dropTarget = null;
                     const sourceId = e.dataTransfer.getData("text/plain");
                     if (!sourceId || !dt || sourceId === dt.targetId || readOnly) return;
-                    if (homeMode) {
-                      const pages = [...pageBlocks];
-                      const srcIdx = pages.findIndex((b) => b.id === sourceId);
-                      const tgtIdx = pages.findIndex((b) => b.id === dt.targetId);
-                      if (srcIdx < 0 || tgtIdx < 0 || srcIdx === tgtIdx) return;
-                      const remaining = pages.filter((_, i) => i !== srcIdx);
-                      const adjTgt = tgtIdx > srcIdx ? tgtIdx - 1 : tgtIdx;
-                      const dropIdx = dt.above ? adjTgt : adjTgt + 1;
-                      const before = remaining[dropIdx - 1]?._position ?? null;
-                      const after = remaining[dropIdx]?._position ?? null;
-                      const pageId = pages[srcIdx]._pageId;
-                      if (!pageId) return;
-                      apiJson(`${API}/blocks/${pageId}/reorder`, {
-                        method: "POST",
-                        headers: { "Content-Type": "application/json" },
-                        body: JSON.stringify({ before, after }),
-                      }).then(() => fetchHomeBlocks()).catch((err) => setStatus(`Reorder failed: ${err}`));
-                      return;
-                    }
                     if (isDescendant(blocks, sourceId, dt.targetId)) return;
                     const extracted = extractBlock(blocks, sourceId);
                     if (!extracted) return;
@@ -6272,23 +6449,14 @@ export default function App() {
                       if (!ancestorId) return;
                       next = insertSibling(remaining, ancestorId, sourceBlock, !dt.above);
                     } else { return; }
-                    if (next) { pushUndo(blocks); setBlocks(next); }
+                    if (next) setBlocks(next);
                     _dragState.draggingId = null;
                   },
                 };
                 return (
                   <>
-                    <BlockTree blocks={homeMode ? homeVisiblePages : blocks} readOnly={readOnly} rowProps={rowProps} />
-                    {addNoteButton}
-                    {homeMode && homeItems.length > homeVisibleItems.length ? (
-                      <button
-                        ref={loadMoreRef}
-                        className="loadMoreBtn"
-                        onClick={() => setHomeShowCount((c) => c + HOME_PAGE_CHUNK)}
-                      >
-                        Showing {homeVisibleItems.length} of {homeItems.length} — load more
-                      </button>
-                    ) : null}
+                    <BlockTree blocks={blocks} readOnly={readOnly} rowProps={rowProps} />
+                    {notesTail}
                     <BlockDropIndicator target={dropTarget} />
                   </>
                 );
@@ -6304,7 +6472,7 @@ export default function App() {
   const centerNotes = pdfHidden || homeMode || pageOnly;
   const winVisible = {
     notes: Boolean(notesWindow) && !centerNotes,
-    chat: !readOnly && !chatHidden,
+    chat: !shareMode && !chatHidden,
   };
   function renderWindow(id) {
     // Phone: windows are full-screen overlays — no dock dragging or collapsing,
@@ -6326,7 +6494,7 @@ export default function App() {
         <ChatDock
           {...common}
           onClose={() => (isPhone ? setPhonePanel(null) : setChatHidden(true))}
-          docId={docId} focusedBlockId={focusedBlockId} homeBlocks={homeBlocks} pdfTitle={pdfTitle}
+          docId={docId} pageAttach={pageAttach} focusedBlockId={focusedBlockId} homeBlocks={homeBlocks} pageTitle={pageTitle}
           openTabs={openTabs}
           pdfSelections={pdfSelections} setPdfSelections={setPdfSelections}
           chatImages={chatImages} setChatImages={setChatImages}
@@ -6339,7 +6507,7 @@ export default function App() {
           aiHealth={aiHealth} dismissAiHealth={() => setAiHealth(null)}
           openPopover={openPopover} setOpenPopover={setOpenPopover}
           setStatus={setStatus}
-          organizeFolder={!focusedBlockId && !readOnly ? folderFilter : null}
+          organizeFolder={!focusedBlockId && !shareMode ? folderFilter : null}
           toolRounds={toolRounds} agentReadChars={agentReadChars} agentPerms={agentPerms} setAgentPerms={setAgentPerms} agentSystem={agentSystem}
           agentEnabled={agentEnabled} folderToolsDefault={folderToolsDefault} pdfToolsDefault={pdfToolsDefault}
           onLibraryChange={fetchHomeBlocks}
@@ -6406,7 +6574,7 @@ export default function App() {
       {openPopover === "menu" ? (
         <div className="popover menuPopover">
           <div className="popoverSection">Windows</div>
-          {!homeMode && pdfUrl ? (
+          {!homeMode && pageAttach ? (
             <button className="popoverItem" onClick={() => setPdfHidden((v) => !v)}>
               <span className="check">{!pdfHidden ? "✓" : ""}</span>
               <FileIcon className="popoverItemIcon" size={15} /> PDF
@@ -6446,7 +6614,7 @@ export default function App() {
                   setExportOpen(true);
                 }}
                 title={homeMode
-                  ? `Download the “${folderFilter}” folder — every paper in it as Markdown, a Logseq graph, a Zotero library, or a Gamma export`
+                  ? `Download the “${folderFilter}” folder — every page in it as Markdown, a Logseq graph, a Zotero library, or a Gamma export`
                   : "Download this page — the PDF with highlights and notes, Markdown, a Logseq graph, a Zotero library, or a Gamma export"}
               >
                 <ExportIcon className="popoverItemIcon" size={15} />
@@ -6463,11 +6631,11 @@ export default function App() {
   // the tab row is too narrow to hold both, and thumbs reach the bottom.
   const topbarActions = (
     <>
-      <span data-popover="add" style={{ position: "relative", display: "inline-flex" }}>
+      <span data-popover="add" className="popoverAnchor">
         <button
           className={`iconBtn addBtn ${openPopover === "add" ? "activeIcon" : ""}`}
           onClick={() => setOpenPopover((p) => (p === "add" ? null : "add"))}
-          title="Add — open a PDF by URL, arXiv id or DOI, upload a file, or start a note page"
+          title="Add — a new page, a PDF by URL, arXiv id or DOI, or uploaded files"
           aria-label="Add"
         >
           <PlusIcon size={17} strokeWidth={2.2} />
@@ -6513,11 +6681,11 @@ export default function App() {
                 onChange={(e) => { const files = Array.from(e.target.files || []); e.target.value = ""; setOpenPopover(null); if (files.length) uploadFiles(files); }}
               />
             </label>
-            <button className="popoverItem" onClick={createNotePage}>New note page</button>
+            <button className="popoverItem" onClick={() => createPage()}>New page</button>
           </div>
         ) : null}
       </span>
-      <span data-popover="downloads" style={{ position: "relative", display: "inline-flex" }}>
+      <span data-popover="downloads" className="popoverAnchor">
           <button
             className={`iconBtn transferBtn ${openPopover === "downloads" ? "activeIcon" : ""}`}
             onClick={() => setOpenPopover((p) => (p === "downloads" ? null : "downloads"))}
@@ -6610,14 +6778,14 @@ export default function App() {
         docNonce={pdfDocNonce}
         onFindMarks={setFindMarks}
       />
-      {pdfUrl && !homeMode ? (
-        <span data-popover="share" style={{ position: "relative", display: "inline-flex" }}>
+      {focusedBlockId && !homeMode ? (
+        <span data-popover="share" className="popoverAnchor">
           <button
             className={`iconBtn ${openPopover === "share" ? "activeIcon" : ""}`}
             onClick={() => {
               const opening = openPopover !== "share";
               setOpenPopover(opening ? "share" : null);
-              if (opening) fetchShareLink();
+              if (opening) loadShareSettings();
             }}
             disabled={loading}
             title="Share"
@@ -6628,21 +6796,114 @@ export default function App() {
           {openPopover === "share" ? (
             <div className="popover sharePopover">
               <div className="popoverTitle">Share this page</div>
-              <div className="popoverHint">Anyone with the link can view the PDF, highlights, and notes — read-only, no login.</div>
-              {shareUrl ? (
-                <div className="shareRow">
-                  <input readOnly value={shareUrl} onFocus={(e) => e.target.select()} />
-                  <button
-                    className="chatMsgActionBtn"
-                    onClick={copyShareLink}
-                    title="Copy link"
-                    aria-label="Copy share link"
-                  >
-                    {shareCopied ? <CheckIcon size={13} /> : <CopyIcon size={13} />}
-                  </button>
-                </div>
+              {shareSettings === null ? (
+                <div className="popoverHint">Loading…</div>
+              ) : !shareSettings.token ? (
+                <>
+                  <div className="popoverHint">
+                    Not shared yet. Create a link, then invite people or open it up — read-only or editable.
+                  </div>
+                  <div className="shareFooter">
+                    <span />
+                    <button type="button" className="uiBtn sm primary" onClick={createShareLink}>
+                      <LinkIcon size={13} />Create link
+                    </button>
+                  </div>
+                </>
               ) : (
-                <div className="popoverHint">Creating link…</div>
+                <>
+                  <form className="shareInvite" onSubmit={inviteShareUsers}>
+                    <input
+                      className="aiKeyInput"
+                      value={shareInviteDraft}
+                      placeholder="Invite by username, comma-separated"
+                      spellCheck={false}
+                      autoComplete="off"
+                      onChange={(e) => { setShareInviteDraft(e.target.value); if (shareError) setShareError(""); }}
+                    />
+                    <button type="submit" className="uiBtn sm primary" disabled={!shareInviteDraft.trim()}>Invite</button>
+                  </form>
+                  {shareError ? <div className="popoverHint shareError">{shareError}</div> : null}
+                  <div className="shareEntry">
+                    <span className="shareAvatar" aria-hidden="true">
+                      {authUser?.is_guest ? <UserIcon size={14} /> : (authUser?.user || "?").charAt(0).toUpperCase()}
+                    </span>
+                    <span className="shareEntryMain">
+                      <span className="shareEntryName">{authUser?.user}<span className="uiTag">you</span></span>
+                      <span className="shareEntrySub">Owner</span>
+                    </span>
+                    <span className="shareEntryStatic">Full access</span>
+                  </div>
+                  {(shareSettings.users || []).map((u) => (
+                    <div className="shareEntry" key={u.name}>
+                      <span className="shareAvatar" aria-hidden="true">{u.name.charAt(0).toUpperCase()}</span>
+                      <span className="shareEntryMain">
+                        <span className="shareEntryName">{u.name}</span>
+                        <span className="shareEntrySub">Invited · signs in to open</span>
+                      </span>
+                      <MenuSelect
+                        label={`What ${u.name} may do`}
+                        value={u.role}
+                        onChange={(v) => setShareUserRole(u.name, v)}
+                        options={[["view", "Can view"], ["edit", "Can edit"]]}
+                      />
+                      <button
+                        type="button"
+                        className="uiClose uiCloseSm"
+                        title={`Remove ${u.name}`}
+                        aria-label={`Remove ${u.name}`}
+                        onClick={() => removeShareUser(u.name)}
+                      >×</button>
+                    </div>
+                  ))}
+                  <div className="popoverSection">General access</div>
+                  <div className="shareEntry">
+                    <span className="shareAvatar shareAvatarIcon" aria-hidden="true">
+                      {shareSettings.audience === "anyone" ? <GlobeIcon size={15} />
+                        : shareSettings.audience === "users" ? <UsersIcon size={15} />
+                          : <ShieldIcon size={15} />}
+                    </span>
+                    <span className="shareEntryMain">
+                      <MenuSelect
+                        label="Who can open the link"
+                        value={shareSettings.audience}
+                        onChange={(v) => updateShareSettings(v === "anyone" ? { audience: v, role: "view" } : { audience: v })}
+                        options={[
+                          ["anyone", "Anyone with the link"],
+                          ["users", "Signed-in users"],
+                          ["list", "Only people invited"],
+                        ]}
+                      />
+                      <span className="shareEntrySub">{shareGeneralSub}</span>
+                    </span>
+                    {shareSettings.audience === "users" ? (
+                      <MenuSelect
+                        label="What they may do"
+                        value={shareSettings.role}
+                        onChange={(v) => updateShareSettings({ role: v })}
+                        options={[["view", "Can view"], ["edit", "Can edit"]]}
+                      />
+                    ) : shareSettings.audience === "anyone" ? (
+                      <span className="shareEntryStatic" title="Editing needs a signed-in editor — invite people or choose signed-in users">Can view</span>
+                    ) : (
+                      <span className="shareEntryStatic">Invite only</span>
+                    )}
+                  </div>
+                  <div className="shareFooter">
+                    <button type="button" className="uiBtn sm danger" onClick={stopSharing}
+                      title="The link stops working; sharing again makes a new one">Stop sharing</button>
+                    <button type="button" className={`uiBtn sm ${shareCopied ? "on" : ""}`} onClick={copyShareLink}
+                      title={shareUrl}>
+                      {shareCopied ? <CheckIcon size={13} /> : <LinkIcon size={13} />}
+                      {shareCopied ? "Copied" : "Copy link"}
+                    </button>
+                  </div>
+                  {shareUrlShown ? (
+                    <div className="shareRow">
+                      <input readOnly value={shareUrl} onFocus={(e) => e.target.select()} />
+                    </div>
+                  ) : null}
+                </>
               )}
               {(pageMeta || pageBibtex) ? (
                 <>
@@ -6698,7 +6959,7 @@ export default function App() {
         </span>
       ) : null}
       {authUser?.user && (
-        <span data-popover="user" style={{ position: "relative", display: "inline-flex" }}>
+        <span data-popover="user" className="popoverAnchor">
           <button
             className={`iconBtn ${openPopover === "user" ? "activeIcon" : ""}`}
             onClick={() => {
@@ -6779,20 +7040,21 @@ export default function App() {
   return (
     <div
       ref={appRef}
-      className={`app layout-horizontal ${readOnly ? "readOnlyMode" : ""} ${pseudoFullscreen ? "pseudoFullscreen" : ""} ${isPhone ? "phoneUI" : ""}`}
-      onDragOver={readOnly ? undefined : (e) => {
+      className={`app layout-horizontal ${pseudoFullscreen ? "pseudoFullscreen" : ""} ${isPhone ? "phoneUI" : ""}`}
+      data-drop={homeMode ? "upload" : !pageAttach && !readOnly ? "attach" : undefined}
+      onDragOver={shareMode ? undefined : (e) => {
         if (!e.dataTransfer || !Array.from(e.dataTransfer.types || []).includes("Files")) return;
         e.preventDefault();
-        if (e.target.closest(".blockRowWrap")) {
-          appRef.current?.classList.remove("dragOver");
-        } else {
-          appRef.current?.classList.add("dragOver");
-        }
+        // The overlay only where a drop does something: the library imports
+        // files, a page without an attachment takes a PDF; block rows take
+        // files themselves.
+        const dropHere = (homeMode || (!pageAttach && !readOnly)) && !e.target.closest(".blockRowWrap");
+        appRef.current?.classList.toggle("dragOver", dropHere);
       }}
-      onDragLeave={readOnly ? undefined : (e) => {
+      onDragLeave={shareMode ? undefined : (e) => {
         if (e.currentTarget === e.target) appRef.current?.classList.remove("dragOver");
       }}
-      onDrop={readOnly ? undefined : (e) => {
+      onDrop={shareMode ? undefined : (e) => {
         appRef.current?.classList.remove("dragOver");
         if (!e.dataTransfer) return;
         // Grab entries synchronously — the DataTransfer is neutered once the
@@ -6808,11 +7070,20 @@ export default function App() {
         const files = Array.from(e.dataTransfer.files || [])
           .filter((file) => isPdfFile(file) || isMarkdownFile(file));
         if (!files.length) return;
+        // Dropped on the open page: a single PDF becomes ITS attachment when
+        // it has none (the block rows take other files); the library view
+        // still imports drops as new pages.
+        if (focusedBlockId && !pageAttach && !readOnly && files.length === 1 && isPdfFile(files[0])) {
+          e.preventDefault();
+          attachPdfToPage({ file: files[0] });
+          return;
+        }
+        if (!homeMode) return;
         e.preventDefault();
         uploadFiles(files);
       }}
     >
-      {!readOnly ? (
+      {!shareMode ? (
         <>
           <div className="topbar">
             <button
@@ -6863,7 +7134,13 @@ export default function App() {
           <button className="iconBtn homeBtn" disabled title="Home" aria-label="Home">
             <HomeIcon size={17} />
           </button>
-          <span className="readOnlyTitle">{pdfTitle}</span>
+          <span className="readOnlyTitle">{pageTitle}</span>
+          {shareInfo ? (
+            <span className="uiTag"
+              title={shareInfo.canEdit ? "Your edits save to the owner's page" : "Read-only share link"}>
+              {shareInfo.canEdit ? "Can edit" : "View only"}{shareInfo.owner ? ` · shared by ${shareInfo.owner}` : ""}
+            </span>
+          ) : null}
           {renderOverflowMenu(true)}
         </div>
       )}
@@ -6952,7 +7229,7 @@ export default function App() {
               <button className="pdfFitWidthBtn" onClick={() => zoomTo("page-width")} title="Fit to width" aria-label="Fit to width">
                 <FitWidthIcon size={15} />
               </button>
-              {translateEnabled && !readOnly ? (
+              {translateEnabled && !shareMode ? (
                 <button
                   className={pdfTransState.running || (pdfTransState.pages > 0 && pdfTransState.shown) ? "modeActive" : ""}
                   onClick={(e) => {
@@ -6988,10 +7265,10 @@ export default function App() {
                       : <LanguagesIcon size={15} />}
                 </button>
               ) : null}
-              {translateEnabled && !readOnly && pdfTransState.running ? (
+              {translateEnabled && !shareMode && pdfTransState.running ? (
                 <div className="pdfTransPct">{Math.round(pdfTransState.progress * 100)}%</div>
               ) : null}
-              {isPhone && !readOnly ? (
+              {isPhone && !shareMode ? (
                 <button
                   className={areaSelectMode ? "modeActive" : ""}
                   onClick={() => setAreaSelectMode((v) => !v)}
@@ -7026,10 +7303,10 @@ export default function App() {
               darkPage={pdfDarkPage}
               translateKey={`${translateLang}|${translateSendModel}`}
               translateParallel={translateParallel}
-              onTranslate={readOnly ? undefined : translateChunk}
+              onTranslate={shareMode ? undefined : translateChunk}
               translateCtlRef={pdfTranslateCtl}
               onTranslateState={handleTranslateState}
-              areaMode={areaSelectMode && isPhone && !readOnly}
+              areaMode={areaSelectMode && isPhone && !shareMode}
               pdfScaleValue={pdfScale} scrollRef={scrollToRef}
               searchRef={pdfSearchRef}
               captureRef={pdfCaptureRef}
@@ -7104,15 +7381,15 @@ export default function App() {
       {isPhone && winVisible.notes && (phonePanel === "notes" || phoneSeen.current.notes) ? (
         <div className={`phonePanel ${phonePanel === "notes" ? "" : "phonePanelHidden"}`}>{renderWindow("notes")}</div>
       ) : null}
-      {isPhone && !readOnly && (phonePanel === "chat" || phoneSeen.current.chat) ? (
+      {isPhone && !shareMode && (phonePanel === "chat" || phoneSeen.current.chat) ? (
         <div className={`phonePanel ${phonePanel === "chat" ? "" : "phonePanelHidden"}`}>{renderWindow("chat")}</div>
       ) : null}
       </div>
-      {isPhone && (!centerNotes || !readOnly) ? (
+      {isPhone && (!centerNotes || !shareMode) ? (
         // Phone: one bottom bar — view tabs on the left, the topbar's action
         // buttons on the right. Icon-only, because both groups share the row.
         <div className="phoneBottomBar">
-          <div className={`phoneTabBar ${readOnly ? "" : "hasActions"}`}>
+          <div className={`phoneTabBar ${shareMode ? "" : "hasActions"}`}>
             <button
               className={`phoneTab ${phonePanel === null || (phonePanel === "notes" && centerNotes) ? "active" : ""}`}
               onClick={() => setPhonePanel(null)}
@@ -7133,7 +7410,7 @@ export default function App() {
                 <span>Notes</span>
               </button>
             ) : null}
-            {!readOnly ? (
+            {!shareMode ? (
               <button
                 className={`phoneTab ${phonePanel === "chat" ? "active" : ""}`}
                 onClick={() => setPhonePanel((p) => (p === "chat" ? null : "chat"))}
@@ -7146,7 +7423,7 @@ export default function App() {
             ) : null}
           </div>
           {/* keeps the .topbar class so every ".topbar X" style still applies */}
-          {!readOnly ? <div className="topbar phoneActions">{topbarActions}</div> : null}
+          {!shareMode ? <div className="topbar phoneActions">{topbarActions}</div> : null}
         </div>
       ) : null}
       {dockPreview ? (
@@ -7165,7 +7442,7 @@ export default function App() {
         <ExportDialog
           opts={exportOpts}
           setOpts={setExportOpts}
-          hasPdf={!!pdfUrl && !exportFolder}
+          hasPdf={!!pageAttach && !exportFolder}
           pdfStored={!!docId}
           folder={exportFolder}
           onCancel={() => setExportOpen(false)}
@@ -7304,11 +7581,11 @@ export default function App() {
       {linkDialog ? (
         <div className="reportOverlay" onClick={() => setLinkDialog(null)}>
           <div className="reportModal confirmModal" onClick={(e) => e.stopPropagation()}>
-            <div className="reportModalTitle">{linkDialog.editBlockId ? "Change reference link" : "Link reference to a paper"}</div>
+            <div className="reportModalTitle">{linkDialog.editBlockId ? "Change reference link" : "Link reference to a page"}</div>
             {linkDialog.content?.text ? (
               <div className="reportModalHint linkRefQuote">“{linkDialog.content.text.slice(0, 160)}{linkDialog.content.text.length > 160 ? "…" : ""}”</div>
             ) : null}
-            <div className="reportModalHint">Paste a DOI, arXiv id, or URL — or pick one of your papers. The selection becomes a clickable link on the PDF.</div>
+            <div className="reportModalHint">Paste a DOI, arXiv id, or URL — or pick one of your pages. The selection becomes a clickable link on the PDF.</div>
             <div className="shareRow">
               <input
                 autoFocus
@@ -7341,15 +7618,15 @@ export default function App() {
                 </button>
               </>
             ) : null}
-            <div className="popoverSection">Your papers (best match first)</div>
+            <div className="popoverSection">Your pages (best match first)</div>
             <div className="reportPageList">
               {(() => {
                 const cands = homeBlocks
-                  .filter((b) => b.properties?.doc_id && b.id !== focusedBlockId)
+                  .filter((b) => b.id !== focusedBlockId)
                   .map((b) => ({ b, score: scorePaperMatch(linkDialog.content?.text || "", b) }))
                   .sort((x, y) => y.score - x.score
                     || (y.b.updated_at || "").localeCompare(x.b.updated_at || ""));
-                if (!cands.length) return <div className="popoverHint">No other PDFs in your library yet.</div>;
+                if (!cands.length) return <div className="popoverHint">No other pages in your library yet.</div>;
                 return cands.map(({ b, score }) => (
                   <button key={b.id} className="reportPageItem linkPageItem" onClick={() => createLinkHighlight({ pageId: b.id })}>
                     <span className="reportPageName">{b.content || "Untitled"}</span>
@@ -7571,7 +7848,7 @@ export default function App() {
                     id="folders"
                     icon={FolderIcon}
                     label="Move to folder"
-                    title="A paper can sit in several folders — this adds it to the one you pick (same as dragging it onto the folder)."
+                    title="A page can sit in several folders — this adds it to the one you pick (same as dragging it onto the folder)."
                   >
                     {folderMenuPaths.length ? folderMenuPaths.map((f) => (
                       <MenuItem
@@ -7610,7 +7887,7 @@ export default function App() {
                 <MenuItem icon={PenIcon} onClick={() => { setHomeMenu(null); setFolderRenaming({ name: homeMenu.name, draft: homeMenu.name }); }}>Rename</MenuItem>
                 <MenuItem
                   icon={ExportIcon}
-                  title="Download every paper in this folder — Markdown, a Logseq graph, a Zotero library, or a Gamma export"
+                  title="Download every page in this folder — Markdown, a Logseq graph, a Zotero library, or a Gamma export"
                   onClick={() => { const name = homeMenu.name; setHomeMenu(null); setExportFolder(name); setExportOpen(true); }}
                 >Export…</MenuItem>
                 <MenuItem icon={TrashIcon} danger onClick={() => { setHomeMenu(null); deleteFolderByName(homeMenu.name); }}>Delete</MenuItem>
@@ -7649,7 +7926,7 @@ export default function App() {
                 setHighlightMenu(null);
               }}
             >
-              {highlights.find((x) => x.id === highlightMenu.id)?.linkTarget ? "Change link…" : "Link to paper…"}
+              {highlights.find((x) => x.id === highlightMenu.id)?.linkTarget ? "Change link…" : "Link to page…"}
             </button>
             {highlights.find((x) => x.id === highlightMenu.id)?.linkTarget?.url ? (
               <button
@@ -7669,7 +7946,7 @@ export default function App() {
                 const blk = flattenBlocks(blocks).find((b) => b.properties?.highlight_id === highlightMenu.id);
                 setRefPoint({
                   pageId: focusedBlockId,
-                  pageTitle: pdfTitle || "Untitled",
+                  pageTitle: pageTitle || "Untitled",
                   highlightId: highlightMenu.id,
                   quote: (h?.content?.text || "").slice(0, 200),
                 });

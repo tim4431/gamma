@@ -20,6 +20,12 @@ def clean_path(path: str) -> str:
     return "/".join(s for s in (clean_segment(p) for p in (path or "").split("/")) if s)
 
 
+def path_within(tag: str, folder: str) -> bool:
+    """True when folder path ``tag`` is ``folder`` itself or filed below it —
+    the one rule for "is this page in that folder" (scopes, search, listing)."""
+    return tag == folder or tag.startswith(folder + "/")
+
+
 def add_tag(tags: list[str], path: str) -> list[str]:
     """addFolderTag: keep the other tags (a page may live in several folders),
     but refine away ancestors of the new path — filing "readout" into

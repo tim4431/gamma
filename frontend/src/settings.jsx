@@ -63,10 +63,10 @@ const NAV_GROUPS = [
     ["general", "General", SettingsIcon],
     ["library", "Library", ListIcon],
   ]],
-  ["Reading", [
-    ["viewer", "PDF viewer", FileIcon],
-    ["search", "Search", SearchIcon],
+  ["Editor", [
     ["notes", "Notes", FileTextIcon],
+    ["search", "Search", SearchIcon],
+    ["viewer", "PDF viewer", FileIcon],
   ]],
   ["AI", [
     ["ai", "Provider and models", KeyIcon],
@@ -124,7 +124,7 @@ function GeneralSettings({ value }) {
           onChange={value.setPdfDarkPage}
         />
       </Section>
-      <Section title="Papers">
+      <Section title="PDFs">
         <Toggle
           icon={CloudDownloadIcon}
           label="Open-access fallback"
@@ -154,7 +154,7 @@ function GeneralSettings({ value }) {
   );
 }
 
-// --- Reading: PDF viewer + search + notes -----------------------------------
+// --- Editor: notes + search + PDF viewer -----------------------------------
 
 function ViewerSettings({ value }) {
   return (
@@ -281,9 +281,9 @@ function SearchSettings({ value }) {
         />
         <Toggle
           icon={PaperIcon}
-          label="While reading a paper"
+          label="On a page"
           hint="Off: search opens as a compact browser-style find bar"
-          title="In a paper, Ctrl+F defaults to the compact find bar (match counter and next/previous only). Turn on to open with the full grouped result lists instead."
+          title="On a page, Ctrl+F defaults to the compact find bar (match counter and next/previous only). Turn on to open with the full grouped result lists instead."
           checked={value.searchDetailsPaper}
           onChange={value.setSearchDetailsPaper}
         />
@@ -855,17 +855,17 @@ function PromptsSettings({ value }) {
 
 // The agent's capabilities, one toggle per permission (see docs/dev/ai_tools.md).
 // [key, icon, label, hint, scopes] — scopes says which chats offer it
-// ("folder" = library/folder chat, "page" = paper chat). Exported because the
+// ("folder" = library/folder chat, "page" = page chat). Exported because the
 // chat header's ⚙ popover renders the same rows, editing the same stored map.
 export const AGENT_PERM_ROWS = [
   ["list", ListIcon, "List pages",
    "See the folder's page titles, labels and metadata", ["folder"]],
-  ["read", BookIcon, "Read papers & notes",
-   "Read a paper's text plus your highlights and notes", ["folder", "page"]],
+  ["read", BookIcon, "Read pages",
+   "Read a page's PDF text plus your highlights and notes", ["folder", "page"]],
   ["block_read", OutlineIcon, "Read note blocks",
    "Read a page's note outline with block ids", ["folder", "page"]],
-  ["search", SearchIcon, "Search PDF text",
-   "Full-text search across the folder's PDFs", ["folder", "page"]],
+  ["search", SearchIcon, "Search",
+   "Full-text search across the folder's notes and PDFs", ["folder", "page"]],
   ["rename", PenIcon, "Rename pages", "Change page titles on request", ["folder"]],
   ["move", FolderIcon, "Move pages",
    "File pages into folders (a new path creates the folder)", ["folder"]],

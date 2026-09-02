@@ -10,7 +10,7 @@ import rehypeRaw from "rehype-raw";
 import { withLegacyAccessors } from "./logseqPdfModel";
 import { COLORS } from "./pdfViewer";
 import { handleMarkdownCopy } from "./widgets";
-import { FolderIcon, LinkIcon } from "./icons";
+import { LinkIcon, PaperclipIcon } from "./icons";
 import {
   envCompletions, findMathAtCursor, insertionFor, latexCompletions,
   LatexAcPopup, MathLivePreview, mathTabJump,
@@ -20,8 +20,8 @@ import { fenceInnerAt, highlightCode, makeCopyButton, scanFences } from "./codeH
 import { filterSlashCommands, SlashMenuPopup } from "./slashMenu";
 import { remarkCallouts } from "./callouts";
 import { ContextMenu, MenuItem } from "./menus";
-import { API, apiJson, copyText } from "./utils";
-import { CopyIcon, ExportIcon, Trash2Icon } from "./icons";
+import { API, apiJson, copyText, withShare } from "./utils";
+import { CopyIcon, ExportIcon, PlusIcon, Trash2Icon } from "./icons";
 import {
   applyImageEdit, applyTableEdit, formatTables, htmlTableToMarkdown,
   MdImage, MdTableWrap, parseTable, scanTables, tsvToMarkdown,
@@ -176,19 +176,52 @@ function toggleTaskMarker(content, idx, checked) {
   );
 }
 
-// POST /api/upload-image → url | null; shared by the block row (drop, paste,
-// /image) and the embed card's paste handler.
-async function uploadImageFile(file) {
-  if (!file || !file.type?.startsWith("image/")) return null;
+// A same-origin upload linked from a block (`[name](/api/uploads/<hash>.ext)`
+// — what a dropped non-image file becomes) renders as a file chip: no
+// preview fetch, opens/downloads in a new tab.
+function FileChip({ href, text }) {
+  const name = (text || "").trim() || decodeURIComponent(href.split("/").pop() || "file");
+  return (
+    <a
+      className="linkChip fileChip"
+      href={withShare(href)}
+      target="_blank"
+      rel="noreferrer"
+      title={name}
+      onMouseDown={(e) => e.stopPropagation()}
+      onClick={(e) => e.stopPropagation()}
+    >
+      <PaperclipIcon size={12} strokeWidth={2.2} />
+      <span className="linkChipText">{name}</span>
+    </a>
+  );
+}
+
+// Multipart POST of one file → the JSON reply, or null on refusal/failure
+// (server-side allowlists; callers treat null as "nothing inserted").
+async function postFile(endpoint, file) {
   try {
     const form = new FormData();
     form.append("file", file);
-    const res = await fetch("/api/upload-image", { method: "POST", body: form, credentials: "include" });
-    if (!res.ok) return null;
-    return (await res.json()).url;
+    const res = await fetch(withShare(endpoint), { method: "POST", body: form, credentials: "include" });
+    return res.ok ? await res.json() : null;
   } catch (_) {
     return null;
   }
+}
+
+// POST /api/upload-file → {url, name} | null: any non-image file a block
+// accepts (drop).
+async function uploadOtherFile(file) {
+  const data = file ? await postFile("/api/upload-file", file) : null;
+  return data?.url ? { url: data.url, name: data.name || file.name } : null;
+}
+
+// POST /api/upload-image → url | null; shared by the block row (drop, paste,
+// /image) and the embed card's paste handler.
+async function uploadImageFile(file) {
+  if (!file?.type?.startsWith("image/")) return null;
+  return (await postFile("/api/upload-image", file))?.url || null;
 }
 
 // Live LaTeX aids while the caret sits inside $...$ / $$...$$: the floating
@@ -516,6 +549,9 @@ const BlockMarkdown = React.memo(function BlockMarkdown({ content, blockId, refL
           if (/^https?:\/\//i.test(href || "")) {
             return <LinkChip href={href} text={textOf(children)} />;
           }
+          if (/^\/api\/uploads\//.test(href || "") && !/\.(png|jpe?g|gif|webp|svg)(\?|$)/i.test(href)) {
+            return <FileChip href={href} text={textOf(children)} />;
+          }
           return <a href={href} target="_blank" rel="noreferrer">{children}</a>;
         },
         pre: CodePre,
@@ -611,15 +647,11 @@ function BlockRow({
   onEnterAttachMode,
   onUnlinkHighlight,
   onOpenLinkTarget,
-  onPageOpen,
-  onPageContext,
-  selectedPageIds,
   onChangeText,
   onEnterSibling,
   enterNewNote,
   onAddChild,
   onPasteBlocks,
-  onSnapshot,
   onIndent,
   onOutdent,
   onToggle,
@@ -633,7 +665,6 @@ function BlockRow({
   onFetchRefs,
   onCacheRef,
   highlightColors,
-  homeMode,
   onBlockDragOver,
   onBlockDragLeave,
   onBlockDrop,
@@ -682,7 +713,6 @@ function BlockRow({
   imageEditRef.current = (idx, action, payload) => {
     const newVal = applyImageEdit(block.content || "", idx, action, payload);
     if (newVal != null && newVal !== block.content) {
-      onSnapshot?.();               // hover-tool edits join the Ctrl+Z stack
       onChangeText(block.id, newVal);
     }
   };
@@ -691,7 +721,6 @@ function BlockRow({
   tableEditRef.current = (idx, op) => {
     const newVal = applyTableEdit(block.content || "", idx, op);
     if (newVal != null && newVal !== block.content) {
-      onSnapshot?.();
       onChangeText(block.id, newVal);
     }
   };
@@ -721,7 +750,7 @@ function BlockRow({
   const [pasteMenu, setPasteMenu] = useState(null);
   const [pasteIdx, setPasteIdx] = useState(0);
   const [searchResults, setSearchResults] = useState([]);
-  const [imageDragOver, setImageDragOver] = useState(false);
+  const [fileDragOver, setFileDragOver] = useState(false);
   const uploadingRef = useRef(false);
 
   useEffect(() => {
@@ -869,18 +898,20 @@ function BlockRow({
   const isHighlight = !!block.highlightId;
   const hasChildren = (block.children?.length || 0) > 0;
 
-  function handleImageDragOver(e) {
+  function handleFileDragOver(e) {
     if (!e.dataTransfer?.types || !Array.from(e.dataTransfer.types).includes("Files")) return;
     if (!e.dataTransfer?.items) return;
-    const hasImage = Array.from(e.dataTransfer.items).some((item) => item.type?.startsWith("image/"));
-    if (!hasImage) return;
+    // Any file lands in the block: images inline, PDFs are the page's business
+    // (App attaches them), everything else becomes a file chip.
+    const hasFile = Array.from(e.dataTransfer.items).some((item) => item.kind === "file" && item.type !== "application/pdf");
+    if (!hasFile) return;
     e.preventDefault();
     e.dataTransfer.dropEffect = "copy";
-    setImageDragOver(true);
+    setFileDragOver(true);
   }
 
-  function handleImageDragLeave(e) {
-    if (!e.currentTarget.contains(e.relatedTarget)) setImageDragOver(false);
+  function handleFileDragLeave(e) {
+    if (!e.currentTarget.contains(e.relatedTarget)) setFileDragOver(false);
   }
 
   async function uploadImage(file) {
@@ -891,12 +922,23 @@ function BlockRow({
     } finally { uploadingRef.current = false; }
   }
 
-  async function handleImageDrop(e) {
+  async function handleFileDrop(e) {
     e.preventDefault();
     e.stopPropagation();
-    setImageDragOver(false);
-    const url = await uploadImage(e.dataTransfer.files?.[0]);
-    if (url) onChangeText(block.id, (block.content || "") + "\n" + `![](${url})`);
+    setFileDragOver(false);
+    const file = e.dataTransfer.files?.[0];
+    if (!file) return;
+    if (file.type?.startsWith("image/")) {
+      const url = await uploadImage(file);
+      if (url) onChangeText(block.id, (block.content || "") + "\n" + `![](${url})`);
+      return;
+    }
+    if (uploadingRef.current) return;
+    uploadingRef.current = true;
+    try {
+      const up = await uploadOtherFile(file);
+      if (up) onChangeText(block.id, `${block.content || ""}${block.content ? "\n" : ""}[${up.name.replace(/[\[\]]/g, "")}](${up.url})`);
+    } finally { uploadingRef.current = false; }
   }
 
   // A gamma block link pastes as mention chip / synced embed / plain URL;
@@ -1028,9 +1070,9 @@ function BlockRow({
       }
       // Structured text — spreadsheet cells (strict TSV) or a multi-line
       // outline — pastes as-is and offers the chooser, same pattern as URLs.
-      const tsvMd = ta && !homeMode ? tsvToMarkdown(text) : null;
+      const tsvMd = ta ? tsvToMarkdown(text) : null;
       const multiline = text.split("\n").filter((l) => l.trim()).length >= 2;
-      if (ta && ta.view && !homeMode && onPasteBlocks && (tsvMd || multiline)) {
+      if (ta && ta.view && onPasteBlocks && (tsvMd || multiline)) {
         e.preventDefault();
         const start = ta.selectionStart;
         ta.view?.dispatch({
@@ -1071,33 +1113,29 @@ function BlockRow({
   }
 
   return (
-    <div className={`blockRowWrap${imageDragOver ? " imageDragOver" : ""}`} data-block-id={block.id}
+    <div className={`blockRowWrap${fileDragOver ? " fileDragOver" : ""}`} data-block-id={block.id}
       onDragOver={(e) => {
         if (Array.from(e.dataTransfer?.types || []).includes("Files")) {
-          handleImageDragOver(e);
+          handleFileDragOver(e);
           return;
         }
         onBlockDragOver?.(e, block);
       }}
       onDragLeave={(e) => {
         if (e.currentTarget.contains(e.relatedTarget)) return;
-        handleImageDragLeave(e);
+        handleFileDragLeave(e);
         onBlockDragLeave?.();
       }}
       onDrop={(e) => {
         if (Array.from(e.dataTransfer?.types || []).includes("Files")) {
-          handleImageDrop(e);
+          handleFileDrop(e);
           return;
         }
         onBlockDrop?.(e, block);
       }}
     >
       <div
-        className={`blockRow ${focusedId === block.id ? "focused" : ""} ${homeMode && selectedPageIds?.has(block._pageId) ? "pageSelected" : ""}`}
-        onContextMenu={homeMode && block._pageId && onPageContext ? (e) => {
-          e.preventDefault();
-          onPageContext(block, e);
-        } : undefined}
+        className={`blockRow ${focusedId === block.id ? "focused" : ""}`}
         onMouseDown={(e) => {
           if (e.button !== 0) return; // right-click is the context menu's
           if (e.target.closest("button, textarea, input, a")) return;
@@ -1106,23 +1144,12 @@ function BlockRow({
           // not just the little colored dot. Ctrl+click appends the quote to
           // the chat selection, same as clicking the highlight on the PDF.
           if (block.highlightId) onJump?.(block.highlightId, e.ctrlKey || e.metaKey);
-          // Home page cards open on CLICK, not mousedown — mousedown may be
-          // the start of a drag onto a folder, and navigating away mid-drag
-          // would unmount the drop target.
-          if (homeMode && block._pageId) {
-            e.preventDefault();
-            return;
-          }
           if (!readOnly && !block.editMode) {
             clickPosRef.current = { x: e.clientX, y: e.clientY };
             e.preventDefault();
             onStartEdit(block.id, true);
           }
         }}
-        onClick={homeMode && block._pageId && typeof onPageOpen === "function" ? (e) => {
-          if (e.target.closest("button, textarea, input, a")) return;
-          if (!block.editMode) onPageOpen(block, e);
-        } : undefined}
       >
         {hasChildren ? (
           <button
@@ -1173,25 +1200,13 @@ function BlockRow({
               >⊕</button>
             ) : null}
           </>
-        ) : block._pageId && typeof onPageOpen === "function" ? (
-          <button
-            className="collapseBtn dotSlot pageBulletBtn"
-            onClick={(e) => { e.stopPropagation(); onPageOpen(block); }}
-            title="Open page"
-          ><span className="pageBulletDot" /></button>
         ) : (
           <span className="dotSlot dotSlotEmpty"><span className="noteBulletDot" /></span>
         )}
 
         <div className="blockBody">
           <div className="blockMeta">
-            {block._pageId ? (block._sourceUrl ? "PDF annotation" : "regular note") : block.page ? `p.${block.page}` : "note"}
-            {block._folders?.map((f) => (
-              <span key={f} className="folderTagBadge" title={`In folder ${f}`}>
-                <FolderIcon size={10} />
-                {f}
-              </span>
-            ))}
+            {block.page ? `p.${block.page}` : "note"}
           </div>
 
           {!readOnly && block.editMode ? (
@@ -1295,9 +1310,7 @@ function BlockRow({
                 }
                 // Which Enter starts a new note is a preference (Settings →
                 // Notes); the other one falls through to a plain line break.
-                // Page-title rows on the home library always create on Enter —
-                // a line break inside a title makes no sense.
-                const newNoteKey = block._pageId || enterNewNote ? !e.shiftKey : e.shiftKey;
+                const newNoteKey = enterNewNote ? !e.shiftKey : e.shiftKey;
                 if (e.key === "Enter" && newNoteKey) {
                   e.preventDefault();
                   onEnterSibling(block.id);
@@ -1381,12 +1394,12 @@ function BlockRow({
             <button
               type="button"
               className="blockLinkChip"
-              title={block.properties.link_url || "Open linked paper"}
+              title={block.properties.link_url || "Open linked page"}
               onClick={(e) => { e.stopPropagation(); onOpenLinkTarget?.(block); }}
             >
               <LinkIcon size={11} strokeWidth={2.4} />
               {block.properties.link_page_id
-                ? "linked paper"
+                ? "linked page"
                 : (block.properties.link_url || "").replace(/^https?:\/\//i, "").slice(0, 48)}
             </button>
           ) : null}
@@ -1490,8 +1503,26 @@ function SortableBlockRow({ block, ...rowProps }) {
     rowProps.onStatus?.(msg);
   };
 
+  // Notion's "+": a new empty block below this one (Alt+click: above) — the
+  // same path as Enter.
+  function onAddClick(e) {
+    e.preventDefault();
+    e.stopPropagation();
+    rowProps.onEnterSibling?.(block.id, { above: e.altKey });
+  }
+
   return (
     <div className="sortableBlockWrap" data-block-id={block.id} data-depth={depth}>
+      {block.id !== "root" && rowProps.onEnterSibling && !rowProps.readOnly ? (
+        <button
+          type="button"
+          className="addHandle"
+          onClick={onAddClick}
+          onMouseDown={(e) => e.preventDefault()}
+          aria-label="Add a block below (Alt+click: above)"
+          title={"Click to add a block below\nAlt+click to add above"}
+        ><PlusIcon size={15} strokeWidth={2} /></button>
+      ) : null}
       <span
         className="dragHandle"
         draggable="true"
@@ -1519,14 +1550,14 @@ function SortableBlockRow({ block, ...rowProps }) {
               "Copied block as markdown",
             )}
           >Copy as markdown</MenuItem>
-          {!rowProps.homeMode && block.id !== "root" ? (
+          {block.id !== "root" ? (
             <MenuItem
               icon={CopyIcon}
               title="Insert a copy below (sub-blocks included; highlight anchors are not copied)"
               onClick={() => { setHandleMenu(null); rowProps.onDuplicate?.(block.id); }}
             >Duplicate</MenuItem>
           ) : null}
-          {!rowProps.homeMode && block.id !== "root" ? (
+          {block.id !== "root" ? (
             <MenuItem
               icon={ExportIcon}
               title="Move this block and its sub-blocks to the end of another page"

@@ -20,7 +20,7 @@ from fastapi import APIRouter, HTTPException, Request
 from fastapi.responses import RedirectResponse, StreamingResponse
 from pydantic import BaseModel
 
-from ..auth import require_user, resolve_user, share_scope_doc
+from ..auth import require_user, resolve_user, share_scope_page
 from ..db import user_db_path, user_uploads_dir
 from ..logbuf import log
 from ..net_guard import guarded_urlopen
@@ -256,23 +256,21 @@ def download_pdf(source_url: str, want_bytes: bool = True) -> tuple[str, bytes]:
         resp.close()
 
 
-def _share_allows_source(user: str, scope_doc_id: str, source_url: str) -> bool:
+def _share_allows_source(user: str, scope_page_id: str, source_url: str) -> bool:
     """A share link may only proxy the exact source URL recorded on its own
-    document's page block."""
+    page block."""
     with sqlite3.connect(user_db_path(user, "pages.db")) as conn:
         row = conn.execute(
-            "SELECT json_extract(properties, '$.source_url'), "
-            "json_extract(properties, '$.sourceUrl') FROM unified_blocks "
-            "WHERE json_extract(properties, '$.doc_id') = ?",
-            (scope_doc_id,),
+            "SELECT json_extract(properties, '$.source_url') FROM unified_blocks WHERE id = ?",
+            (scope_page_id,),
         ).fetchone()
-    return bool(row) and source_url in {v for v in row if v}
+    return bool(row and row[0]) and source_url == row[0]
 
 
 @router.get("/pdf")
 def proxy_pdf(source_url: str, request: Request):
     user = resolve_user(request)
-    scope = share_scope_doc(request)
+    scope = share_scope_page(request)
     if scope is not None and not _share_allows_source(user, scope, source_url):
         raise HTTPException(status_code=403, detail="not accessible via this share link")
     uploads = user_uploads_dir(user)

@@ -64,7 +64,7 @@ const toolCallText = (a) => {
 };
 
 export default function ChatDock({
-  docId, focusedBlockId, homeBlocks, pdfTitle, openTabs,
+  docId, pageAttach, focusedBlockId, homeBlocks, pageTitle, openTabs,
   pdfSelections, setPdfSelections,
   chatImages, setChatImages,
   chatModel, setChatModel, chatEffort, setChatEffort, chatSystem,
@@ -120,8 +120,8 @@ export default function ChatDock({
   const agentReads = perm("list") || perm("read") || perm("block_read") || perm("search");
   const agentWrites = perm("rename") || perm("move") || perm("block_edit");
   // Agent fields riding on /api/ai/chat ({} = plain chat): folder chats reach
-  // the folder's pages, paper chats get the read + note-block tools for their
-  // own paper.
+  // the folder's pages, page chats get the read + note-block tools for their
+  // own page.
   const agentPayload = () => {
     if (!toolsEnabled) return {};
     const scope = organizeFolder != null && (agentReads || agentWrites)
@@ -138,9 +138,9 @@ export default function ChatDock({
   const agentScopeName = organizeFolder ? "this folder" : "your library";
   const agentIntro = organizeFolder == null || !toolsEnabled ? null
     : agentWrites
-      ? `Ask AI anything — it can ${agentReads ? "read, search and " : ""}organize ${agentScopeName} (rename papers, file them into folders${perm("block_edit") ? ", edit notes" : ""})…`
+      ? `Ask AI anything — it can ${agentReads ? "read, search and " : ""}organize ${agentScopeName} (rename pages, file them into folders${perm("block_edit") ? ", edit notes" : ""})…`
       : agentReads
-        ? `Ask AI across ${organizeFolder ? "this folder's papers" : "your library"} — it can read, search and summarize them…`
+        ? `Ask AI across ${organizeFolder ? "this folder's pages" : "your library"} — it can read, search and summarize them…`
         : null;
   const agentAsk = agentIntro ? (agentWrites ? `Ask, or organize ${agentScopeName}…` : `Ask across ${agentScopeName}…`) : null;
   const chatKeyRef = useRef(chatKey);
@@ -184,7 +184,7 @@ export default function ChatDock({
   const [chatDocs, setChatDocs] = useState([]);
   const [chatIncludeNotes, setChatIncludeNotes] = useState(false);
   const [chatFiles, setChatFiles] = useState([]); // uploaded PDFs ({name, data}) pending send
-  const [docPicker, setDocPicker] = useState(false); // "Add papers" modal
+  const [docPicker, setDocPicker] = useState(false); // "Add pages" modal
   const [docPickerQuery, setDocPickerQuery] = useState("");
   const fileInputRef = useRef(null);
   const chatScrollRef = useRef(null);
@@ -310,7 +310,7 @@ export default function ChatDock({
     return () => window.removeEventListener("keydown", onKey);
   }, []);
 
-  // Escape closes the paper-picker modal wherever focus is.
+  // Escape closes the page-picker modal wherever focus is.
   useEffect(() => {
     if (!docPicker) return;
     function onKey(e) { if (e.key === "Escape") setDocPicker(false); }
@@ -351,13 +351,13 @@ export default function ChatDock({
     const prevMessages = baseMessages ?? chatMessages;
     const shown = selection ? `${text}\n\n> ${selection.slice(0, 280)}${selection.length > 280 ? "…" : ""}` : text;
     // Names of PDFs that ride along with THIS message (displayed in the bubble)
-    const sendingPdf = attachPdf && (chatDocs.length > 0 || !!docId);
+    const sendingPdf = attachPdf && (chatDocs.length > 0 || !!pageAttach);
     const pdfNames = [
       ...files.map((f) => f.name),
       ...(sendingPdf
         ? (chatDocs.length
             ? chatDocs.map((id) => homeBlocks.find((b) => b.id === id)?.content || "PDF")
-            : [pdfTitle || "current PDF"])
+            : [pageTitle || "current page"])
         : []),
     ];
     const userMsg = {
@@ -410,7 +410,7 @@ export default function ChatDock({
         signal: ctrl.signal,
         body: JSON.stringify({
           prompt: text,
-          doc_id: docId || "",
+          page_id: focusedBlockId || "",
           history: prevMessages,
           model: chatModel || "",
           selection,
@@ -666,7 +666,7 @@ export default function ChatDock({
           const currentId = models.some((m) => m.id === chatModel) ? chatModel : models[0].id;
           const currentModel = models.find((m) => m.id === currentId);
           return (
-            <span data-popover="chatsettings" style={{ position: "relative", display: "inline-flex" }}>
+            <span data-popover="chatsettings" className="popoverAnchor">
               <button type="button" className={`ctlBtn ${settingsOpen ? "modeActive" : ""}`}
                 onClick={() => setOpenPopover((p) => (p === "chatsettings" ? null : "chatsettings"))}
                 title={`Chat settings — ${currentModel?.model || "model"}${chatEffort ? `, effort: ${chatEffort}` : ""}, context ${chatContextChars.toLocaleString()} chars`}
@@ -697,10 +697,10 @@ export default function ChatDock({
                       ...(aiInfo.efforts || ["low", "medium", "high"]).map((ef) => [ef, ef]),
                     ]}
                   />
-                  <div className="popoverSection">Context per paper · {approxPages(chatContextChars)}</div>
+                  <div className="popoverSection">Context per page · {approxPages(chatContextChars)}</div>
                   <CharSlider value={chatContextChars} onChange={setChatContextChars} />
                   <div className="popoverHint">
-                    Extracted PDF text sent with each message. The multi-paper total and the agent's read window are in Settings → Assistant.
+                    Extracted PDF text sent with each message. The multi-page total and the agent's read window are in Settings → Assistant.
                   </div>
                   <div className="popoverSection">Tools</div>
                   <label className="chatToolPermRow" title={agentEnabled
@@ -1018,12 +1018,12 @@ export default function ChatDock({
           </>
         ) : (
         <>
-        <span data-popover="chatdocs" style={{ position: "relative", display: "inline-flex" }}>
+        <span data-popover="chatdocs" className="popoverAnchor">
           <button
             type="button"
             className={`chatAttachToggle chatPlusBtn ${(chatDocs.length || chatIncludeNotes) ? "on" : ""}`}
             onClick={() => setOpenPopover((p) => (p === "chatdocs" ? null : "chatdocs"))}
-            title="Add photos & files, or papers from your library"
+            title="Add photos & files, or pages from your library"
             aria-label="Add attachments or chat context"
           >
             +{chatDocs.length ? <span className="chatPlusCount">{chatDocs.length}</span> : null}
@@ -1043,8 +1043,8 @@ export default function ChatDock({
                 <span className="chatPlusMenuIcon">
                   <BookIcon size={15} />
                 </span>
-                <span className="chatPlusMenuLabel">Add papers from library</span>
-                <span className="chatPlusMenuHint">{chatDocs.length ? `${chatDocs.length} selected` : "Search your papers"}</span>
+                <span className="chatPlusMenuLabel">Add pages from library</span>
+                <span className="chatPlusMenuHint">{chatDocs.length ? `${chatDocs.length} selected` : "Search your pages"}</span>
               </button>
             </div>
           ) : null}
@@ -1060,7 +1060,7 @@ export default function ChatDock({
         <button
           type="button"
           className={`chatAttachToggle chatPdfToggle ${attachPdf ? "on" : ""}`}
-          disabled={!docId && !chatDocs.length}
+          disabled={!pageAttach && !chatDocs.length}
           onClick={() => { attachPdfManualRef.current = true; setAttachPdf((v) => !v); }}
           title={!nativePdf
             ? `${attachPdf ? "On, but: " : ""}${nativePdfNote}`
@@ -1113,23 +1113,25 @@ export default function ChatDock({
       {docPicker ? (
         <div className="reportOverlay" onClick={() => setDocPicker(false)}>
           <div className="reportModal docPickerModal" onClick={(e) => e.stopPropagation()}>
-            <div className="reportModalTitle">Add papers to the chat</div>
+            <div className="reportModalTitle">Add pages to the chat</div>
             <div className="reportModalHint">
-              Selected papers (and optionally your notes) are sent with every question —
+              Selected pages (their PDF text, and optionally your notes) are sent with every question —
               pick a few and just ask for a report.
             </div>
             <input
               autoFocus
               className="searchInput"
-              placeholder="Search your papers…"
+              placeholder="Search your pages…"
               value={docPickerQuery}
               onChange={(e) => setDocPickerQuery(e.target.value)}
               onKeyDown={(e) => { if (e.key === "Escape") { e.preventDefault(); setDocPicker(false); } }}
             />
             <div className="reportPageList docPickerList">
               {(() => {
-                const papers = homeBlocks.filter((b) => b.properties?.doc_id);
-                if (!papers.length) return <div className="popoverHint">No PDFs yet — open or upload one first.</div>;
+                // Every page can be context — a page of notes as much as a
+                // paper; the server adds PDF text for pages that carry one.
+                const pages = homeBlocks;
+                if (!pages.length) return <div className="popoverHint">No pages yet — create one first.</div>;
                 const title = (b) => b.content || "Untitled";
                 const byRecency = (x, y) => (y.updated_at || "").localeCompare(x.updated_at || "");
                 const row = (b, badge) => (
@@ -1148,18 +1150,18 @@ export default function ChatDock({
                 const q = docPickerQuery.trim().toLowerCase();
                 if (q) {
                   const words = q.split(/\s+/);
-                  const hits = papers
+                  const hits = pages
                     .filter((b) => { const t = title(b).toLowerCase(); return words.every((w) => t.includes(w)); })
                     .sort(byRecency);
                   return hits.length
                     ? hits.map((b) => row(b))
-                    : <div className="popoverHint">No papers match “{docPickerQuery.trim()}”.</div>;
+                    : <div className="popoverHint">No pages match “{docPickerQuery.trim()}”.</div>;
                 }
-                // No search: papers open as tabs first (the likely candidates),
+                // No search: pages open as tabs first (the likely candidates),
                 // then the rest of the library by recency.
                 const tabIds = (openTabs || []).map((t) => t.id);
-                const inTabs = tabIds.map((id) => papers.find((b) => b.id === id)).filter(Boolean);
-                const rest = papers.filter((b) => !tabIds.includes(b.id)).sort(byRecency);
+                const inTabs = tabIds.map((id) => pages.find((b) => b.id === id)).filter(Boolean);
+                const rest = pages.filter((b) => !tabIds.includes(b.id)).sort(byRecency);
                 return (
                   <>
                     {inTabs.length ? <div className="popoverSection">Open tabs</div> : null}
@@ -1176,7 +1178,7 @@ export default function ChatDock({
               <span className="attachName">Include my notes &amp; highlights</span>
             </label>
             {!chatDocs.length && docId ? (
-              <div className="popoverHint">Nothing selected — the currently open PDF is used.</div>
+              <div className="popoverHint">Nothing selected — the open page is used.</div>
             ) : null}
             <div className="reportModalBtns">
               {chatDocs.length ? (

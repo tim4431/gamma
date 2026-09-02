@@ -11,7 +11,7 @@ the Windows installer, the macOS dmg/zip, and the Gamma Connector zip. It
 creates the `v<version>` tag itself from the ref it runs on — nobody pushes
 tags by hand any more. The Docker image is a separate workflow
 (`docker.yml`, every push to `main`); the release notes only link to it.
-Pipeline details: [desktop/README.md](../../../desktop/README.md).
+Pipeline details: [desktop/docs/release.md](../../../desktop/docs/release.md).
 
 **Never commit or merge on your own.** This skill only dispatches the
 workflow on work that is already committed and pushed; getting the work
@@ -58,8 +58,16 @@ there is the `push_merge` skill.
    and a NEW version; don't reuse one that already has a tag.
 
 5. **Report**: link the release (`gh release view v<version> --json url`)
-   and remind the user of the end-user caveats: Windows SmartScreen
-   "More info → Run anyway" (unsigned), macOS Gatekeeper "Open Anyway" in
-   Privacy & Security (unsigned + un-notarized, Apple Silicon only), and
+   and report whether the builds were signed: the desktop job logs a
+   `::warning::` per platform when the signing secrets are missing (see
+   the workflow header / [desktop/docs/release.md](../../../desktop/docs/release.md)
+   for the secret names) and the release notes say so. Installed apps
+   pick the release up by themselves (electron-updater reads the
+   `latest*.yml` assets), so never mark a normal release as pre-release
+   or leave it a draft — clients skip those.
+   For UNSIGNED builds remind the user of the end-user caveats: Windows
+   SmartScreen "More info → Run anyway" (Edge download shelf: … → Keep →
+   Keep anyway), macOS "damaged" until `xattr -dr com.apple.quarantine`
+   or "Open Anyway" in Privacy & Security. In all cases remind them
    that the Chrome Web Store upload of the extension zip is still manual
    ([extension/STORE.md](../../../extension/STORE.md)).

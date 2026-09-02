@@ -7,10 +7,11 @@ subtrees the export driver walks (a note page, a paper's notes, or a whole
 folder of them) and lays them out as a real PDF: title and metadata, nested
 bullets, headings, quotes, code, tables of pasted images, typeset math.
 
-Nothing is embedded and no imaging or PDF-generation library is used:
+No font file is embedded and no imaging or PDF-generation library is used:
 ``pdf_typeset`` measures and draws with the fonts every viewer has built in,
-``vector_text`` turns LaTeX and CJK into vector paths, and ``pdf_image`` embeds
-the pasted uploads as image XObjects — the same three the note boxes use.
+``vector_text`` + ``pdf_glyphs`` turn LaTeX and CJK into Type 3 text built
+from glyph outlines, and ``pdf_image`` embeds the pasted uploads as image
+XObjects — the same machinery the note boxes use.
 
 Blocks carry markdown, so each block's content is parsed twice over: into
 *chunks* (headings, paragraphs, quotes, list items, todos, fenced code, rules,
@@ -33,6 +34,7 @@ from . import vector_text
 from .logbuf import log
 from .note_markup import MATH, TEXT, latex_spans
 from .pdf_export import parse_css_color
+from .pdf_glyphs import GlyphFonts
 from .pdf_image import XObjectStore
 from .pdf_typeset import (
     BOLD,
@@ -316,6 +318,7 @@ class _Canvas:
     def __init__(self, writer: PdfWriter, uploads_dir=None, resolve_ref=None):
         self.writer = writer
         self.images = XObjectStore(writer, uploads_dir)
+        self.glyphs = GlyphFonts(writer)
         self.resolve_ref = resolve_ref   # [[id]] → {content, page_title} | None
         self.pages = []
         self.outline = []          # (title, page index, level) → PDF bookmarks
@@ -378,7 +381,8 @@ class _Canvas:
                 if todo is not None:
                     self._checkbox(todo, x, self.y + ascent, size)
             draw_spans(ops, x + indent, self.y + ascent, line, size, color=color,
-                       fonts=self.page["fonts"], links=self.page["links"])
+                       fonts=self.page["fonts"], links=self.page["links"],
+                       glyphs=self.glyphs)
             self.y += height
 
     def _bullet(self, marker, x: float, base: float, size: float):
@@ -437,7 +441,7 @@ class _Canvas:
         if not drawn:                    # no ziamath, or it choked: approximate
             self.paragraph(plain(latex_spans(tex)), x, width, size)
             return
-        ops, w, h, _ascent = drawn
+        drawing, w, h, _ascent = drawn
         scale = min(1.0, width / w) if w else 1.0
         cap = PAGE_H - MARGIN_TOP - MARGIN_BOTTOM
         if h * scale > cap:              # a page-taller equation is shrunk, not clipped
@@ -445,7 +449,7 @@ class _Canvas:
         self.need(h * scale)
         self.page["ops"].append(b"q %s 0 0 %s %s %s cm" % (
             num(scale), num(scale), num(x + max(0.0, (width - w * scale) / 2)), num(self.y)))
-        self.page["ops"].append(ops)
+        self.page["ops"].append(self.glyphs.draw(drawing))
         self.page["ops"].append(b"Q")
         self.y += h * scale + IMAGE_GAP
 
@@ -482,7 +486,8 @@ class _Canvas:
             yy = self.y + CODE_PAD_Y
             for offset, wline in flat[i:i + n]:
                 draw_spans(ops, x + CODE_PAD_X + offset, yy + ascent, wline, size,
-                           fonts=self.page["fonts"], links=self.page["links"])
+                           fonts=self.page["fonts"], links=self.page["links"],
+                           glyphs=self.glyphs)
                 yy += line_h
             self.y += seg_h
             i += n
@@ -536,7 +541,8 @@ class _Canvas:
                              else (inner - lw) / 2 if aligns[c] == "center" else 0.0)
                     draw_spans(ops, cx + TABLE_PAD_X + indent + max(0.0, shift),
                                ly + ascent, line, size,
-                               fonts=self.page["fonts"], links=self.page["links"])
+                               fonts=self.page["fonts"], links=self.page["links"],
+                               glyphs=self.glyphs)
                     ly += h
                 ops.append(b"%s %s %s RG 0.6 w %s %s %s %s re S" % (
                     num(TABLE_BORDER[0]), num(TABLE_BORDER[1]), num(TABLE_BORDER[2]),
@@ -562,6 +568,8 @@ class _Canvas:
     def write(self):
         """Flush the pages into the writer and return its PDF bytes."""
         total = len(self.pages)
+        self.glyphs.finalize()
+        glyph_fonts = self.glyphs.resources()
         for n, page in enumerate(self.pages):
             self._footer(page, n + 1, total)
             # add_blank_page returns the page it was handed, not the clone that
@@ -573,9 +581,10 @@ class _Canvas:
             stream = DecodedStreamObject()
             stream.set_data(body)
             # Streams must be indirect objects or the file is unreadable.
-            pdf_page[NameObject("/Contents")] = self.writer._add_object(stream)
-            resources = DictionaryObject({
-                NameObject("/Font"): font_resources(sorted(page["fonts"]))})
+            pdf_page[NameObject("/Contents")] = self.writer._add_object(stream.flate_encode())
+            fonts = font_resources(sorted(page["fonts"]))
+            fonts.update({NameObject("/" + name): ref for name, ref in glyph_fonts.items()})
+            resources = DictionaryObject({NameObject("/Font"): fonts})
             if page["xobjects"]:
                 resources[NameObject("/XObject")] = DictionaryObject(
                     {NameObject("/" + name): ref for name, ref in page["xobjects"].items()})

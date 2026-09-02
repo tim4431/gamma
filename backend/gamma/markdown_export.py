@@ -13,6 +13,7 @@ import re
 from urllib.parse import quote as urlquote
 
 from .blocks_store import block_to_dict
+from .note_markup import obsidian_image_sizes
 
 # rgba → Logseq colour name, the inverse of logseq_import._LOGSEQ_COLORS (using
 # the canonical name for each distinct rgba we emit). Used by the Logseq graph
@@ -92,15 +93,6 @@ def render_readable(page, highlights=True, notes=True, resolve_ref=None, page_fi
                                resolve_ref, page_file, page["id"])
 
     return "\n".join(lines).rstrip() + "\n"
-
-
-# Image sizes export in the Obsidian dialect: legacy Logseq
-# ``![a](u){:width N}`` becomes ``![a|N](u)`` (new notes already carry it).
-_LEGACY_WIDTH_RE = re.compile(r"(!\[[^\]]*)(\]\([^)]+\))\{:width\s+(\d+)\}")
-
-
-def obsidian_image_sizes(md: str) -> str:
-    return _LEGACY_WIDTH_RE.sub(lambda m: f"{m.group(1)}|{m.group(3)}{m.group(2)}", md or "")
 
 
 # [[id]] mention / ![[id]] synced-block embed — the same id charset the

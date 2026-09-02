@@ -28,6 +28,7 @@ from ..ai_context import pdf_excerpt as _pdf_excerpt
 from ..ai_context import pdf_path as _pdf_path
 from ..ai_settings import ai_runtime, require_ai_runtime
 from ..auth import require_user
+from ..blocks_store import page_attachment
 from ..db import page_now, user_db_path, user_uploads_dir
 from ..logbuf import log
 from ..pdf_text import PDF_EXTRACT_FAILED
@@ -371,12 +372,11 @@ def _save_props(user: str, block_id: str, updates: dict | None = None, remove: t
         for key in remove:
             props.pop(key, None)
         # Rename only while the current title still matches the server-side
-        # automatic-title marker. The legacy prefix keeps old pages eligible;
-        # an explicit PUT title edit clears auto_title in blocks.py.
-        rename = bool(auto_title and (
-            (props.get("auto_title") and props.get("auto_title") == content)
-            or (not props.get("auto_title") and content.startswith("PDF Notes - "))
-        ))
+        # automatic-title marker (an explicit PUT title edit clears auto_title
+        # in blocks.py; pages from before the marker existed were given one by
+        # gamma/migrate.py).
+        rename = bool(auto_title and props.get("auto_title")
+                      and props.get("auto_title") == content)
         if rename:
             props.pop("auto_title", None)
             conn.execute(
@@ -394,11 +394,14 @@ def _save_props(user: str, block_id: str, updates: dict | None = None, remove: t
 
 @router.get("/metadata/status")
 def metadata_status(request: Request):
-    """Library-wide health for the Settings "Paper metadata" pane: which papers
+    """Library-wide health for the Settings "Paper metadata" pane: which pages
     have metadata, which yielded extractable text, and whether the search index
-    covers them. Text/index state comes from the FTS index (data.db) — pages=0
-    rows are recorded extraction failures, ver != INDEX_VERSION means stale;
-    papers the index never saw report text_chars = null (unknown until indexed)."""
+    covers them. Listed: every page with a PDF attachment, plus pages that carry
+    ``properties.meta`` without one (a note about a paper whose PDF you don't
+    own — it still cites; ``has_file`` is false, index fields stay unknown).
+    Text/index state comes from the FTS index (data.db) — pages=0 rows are
+    recorded extraction failures, ver != INDEX_VERSION means stale; papers the
+    index never saw report text_chars = null (unknown until indexed)."""
     user = require_user(request)
     with sqlite3.connect(user_db_path(user, "pages.db")) as conn:
         rows = conn.execute(
@@ -419,9 +422,10 @@ def metadata_status(request: Request):
     papers = []
     for block_id, content, props_json, updated_at in rows:
         props = json.loads(props_json or "{}")
-        doc_id = props.get("doc_id") or ""
-        if not doc_id and not (props.get("source_url") or props.get("sourceUrl")):
-            continue  # plain note page, not a paper
+        attachment = page_attachment(props)
+        if not attachment and not props.get("meta"):
+            continue  # a plain note page: nothing to fetch metadata or text for
+        doc_id = attachment["id"] if attachment else ""
         entry = index.get(doc_id)
         meta = props.get("meta") or None
         papers.append({
@@ -473,7 +477,7 @@ def fetch_page_metadata(user: str, block_id: str, prompt: str = "", model: str =
                 "source": props["meta"].get("source", ""), "cached": True}
 
     doc_id = props.get("doc_id") or ""
-    source_url = props.get("source_url") or props.get("sourceUrl") or ""
+    source_url = props.get("source_url") or ""
     # Identifier sources trusted without a title check: the stored source URL,
     # the web page the extension clipped from, and the detector hints.
     hints = "\n".join(filter(None, [

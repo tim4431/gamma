@@ -21,12 +21,20 @@ def test_status_lists_papers_not_notes(guest):
         "meta_error": {"at": "2026-01-01T00:00:00Z", "detail": "no arXiv id, DOI, or AI match"},
     })
     note = make_page(guest, "Plain note page")
+    cited = make_page(guest, "Notes on a paper I don't own", properties={
+        "meta": {"title": "Remote Paper", "doi": "10.1/remote"},
+    })
 
     r = guest.get("/api/metadata/status")
     assert r.status_code == 200
     ids = [p["id"] for p in r.json()["papers"]]
     assert with_meta["id"] in ids and failed["id"] in ids
     assert note["id"] not in ids
+    # metadata without an attachment still lists (it can cite), with no file
+    assert cited["id"] in ids
+    p3 = _paper(r, cited["id"])
+    assert p3["has_file"] is False and p3["doc_id"] == "" and p3["has_meta"] is True
+    assert p3["title"] == "Remote Paper" and p3["text_chars"] is None
 
     p1 = _paper(r, with_meta["id"])
     assert p1["has_meta"] is True

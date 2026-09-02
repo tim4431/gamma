@@ -51,10 +51,26 @@ USERS_SCHEMA = [
         guest_date TEXT,
         created_at TEXT NOT NULL
     )""",
+    # Share links, one per (owner, page). page_id is the shared page's root
+    # block. doc_id is vestigial: always written as "" and never read (the
+    # page's attachment is what counts — blocks_store.page_attachment); it
+    # goes with the hand-run migrate.drop_shares_doc_id, which rebuilds the
+    # table without it (shares_has_doc_id tells the writers which shape they
+    # have). audience: who may open the link — "anyone" (no login), "users"
+    # (any signed-in non-guest account), "list" (the usernames in
+    # allowed_users, comma-separated). role: "view" or "edit" (edit never
+    # applies to anonymous viewers — see gamma/auth.py share_access). Rows
+    # minted before shares were keyed by page carried only doc_id;
+    # gamma/migrate.py backfilled page_id (the column stays nullable until
+    # the rebuild).
     """CREATE TABLE IF NOT EXISTS shares (
         token TEXT PRIMARY KEY,
         username TEXT NOT NULL,
         doc_id TEXT NOT NULL,
+        page_id TEXT,
+        audience TEXT NOT NULL DEFAULT 'anyone',
+        role TEXT NOT NULL DEFAULT 'view',
+        allowed_users TEXT NOT NULL DEFAULT '',
         created_at TEXT NOT NULL
     )""",
     # Server-wide admin-tunable settings (see gamma/server_settings.py) — a
@@ -80,8 +96,8 @@ PAGES_SCHEMA = [
 ]
 
 # data.db = derived / regenerable data (chats, the pdf_fts search index which
-# is created lazily by routers/search.py). Old installs may still carry the
-# legacy `annotations` and per-user `shares` tables — harmless leftovers.
+# is created lazily by routers/search.py). The legacy `annotations` and
+# per-user `shares` tables are dropped by gamma/migrate.py.
 # prefs = small JSON UI state synced across browsers (open tabs, ...) — no
 # secrets: data.db is included verbatim in /api/export backups.
 DATA_SCHEMA = [
@@ -167,6 +183,12 @@ def delete_page_snap(username: str, page_id: str):
         db.commit()
 
 
+def shares_has_doc_id(conn: sqlite3.Connection) -> bool:
+    """Whether the ``shares`` table still carries its vestigial ``doc_id``
+    column (NOT NULL, no default — writers must supply "" while it exists)."""
+    return any(r[1] == "doc_id" for r in conn.execute("PRAGMA table_info(shares)"))
+
+
 def connect_users_db() -> sqlite3.Connection:
     """Open the global users.db, creating the schema if needed."""
     USERS_DB.parent.mkdir(parents=True, exist_ok=True)
@@ -183,6 +205,15 @@ def connect_users_db() -> sqlite3.Connection:
         # per-user storage-limit overrides; NULL = inherit the server default
         conn.execute("ALTER TABLE users ADD COLUMN max_upload_mb INTEGER")
         conn.execute("ALTER TABLE users ADD COLUMN quota_mb INTEGER")
+    share_cols = [r[1] for r in conn.execute("PRAGMA table_info(shares)")]
+    if "page_id" not in share_cols:
+        # shares used to be keyed by PDF doc id; they are keyed by page now
+        conn.execute("ALTER TABLE shares ADD COLUMN page_id TEXT")
+    if "audience" not in share_cols:
+        # per-share permissions; older rows keep the original "anyone, view"
+        conn.execute("ALTER TABLE shares ADD COLUMN audience TEXT NOT NULL DEFAULT 'anyone'")
+        conn.execute("ALTER TABLE shares ADD COLUMN role TEXT NOT NULL DEFAULT 'view'")
+        conn.execute("ALTER TABLE shares ADD COLUMN allowed_users TEXT NOT NULL DEFAULT ''")
     conn.commit()
     return conn
 

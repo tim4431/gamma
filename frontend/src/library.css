@@ -88,6 +88,23 @@
 /* Snapshots are light PDF pages — tone them down a notch on a dark card. */
 [data-theme="dark"] .pageCardCover img { filter: brightness(0.9); }
 .pageCardCover .tileGlyph { width: 34px; height: 34px; }
+/* Text-only pages have no screenshot to show — the cover is the page's first
+   lines instead (server-side `preview` on the listing), Notion-style. */
+.pageCardPreview {
+  align-self: stretch;
+  width: 100%;
+  padding: 9px 11px;
+  font-size: 10.5px;
+  line-height: 1.4;
+  color: var(--text-muted);
+  text-align: left;
+  overflow: hidden;
+  display: -webkit-box;
+  -webkit-line-clamp: 6;
+  -webkit-box-orient: vertical;
+  word-break: break-word;
+  mask-image: linear-gradient(to bottom, #000 70%, transparent);
+}
 .pageCard:hover .fileGlyph, .pageCard.selected .fileGlyph { color: var(--accent); }
 .pageCardBody {
   display: flex;
@@ -182,12 +199,7 @@
 .folderRow svg { color: var(--accent); flex-shrink: 0; }
 .folderRow.labelRow svg { color: var(--text-secondary); }
 .folderRow:hover { background: var(--bg-block); }
-/* --- home file-manager: selection + context menu --- */
-.blockRow.pageSelected {
-  background: var(--accent-bg-light);
-  outline: 1px solid var(--accent-dark);
-  border-radius: 6px;
-}
+/* --- home file-manager: context menu --- */
 :is(.pageCard, .folderRow).dragOver {
   background: var(--accent-bg);
   border-color: var(--accent-dark);

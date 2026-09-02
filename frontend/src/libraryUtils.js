@@ -39,10 +39,39 @@ export function formatRelativeTime(iso, now = Date.now()) {
   return `${Math.floor(days / 365)}y ago`;
 }
 
-export function getPdfPageTitle(docId, sourceUrl) {
-  const tail = (sourceUrl || "").split("/").pop() || "";
-  const cleaned = decodeURIComponent(tail).trim();
-  return cleaned ? `PDF Notes - ${cleaned}` : `PDF Notes - ${docId}`;
+// The page's attachment — today the single PDF slot (`properties.doc_id` +
+// `source_url` / `original_filename`). Every "what does this page carry"
+// decision (layout, card badge, gating, copy) reads THIS, never the raw
+// properties, so a later `properties.attachments` list is a drop-in
+// (docs/dev/block_centric.md). Null for a page that is only blocks.
+export function pageAttachment(block) {
+  const p = block?.properties || {};
+  if (!p.doc_id && !p.source_url) return null;
+  return { kind: "pdf", id: p.doc_id || "", url: p.source_url || "", name: p.original_filename || "" };
+}
+
+// Where the attachment's file is fetched from: its source URL (a local
+// upload already points at /api/uploads/…), else the stored copy by hash.
+export function attachmentSource(attachment) {
+  if (!attachment) return "";
+  return attachment.url || (attachment.id ? `/api/uploads/${attachment.id}.pdf` : "");
+}
+
+// What a card/row says a page is: the attachment kind, else just a page.
+export function pageKindLabel(attachment) {
+  return attachment ? "PDF" : "Page";
+}
+
+// Title for a page whose title is empty: the attachment's file name or URL
+// tail, else "Untitled". (The old "PDF Notes - …" prefix is gone; existing
+// pages were normalized by `manage.py migrate`.)
+export function defaultPageTitle(attachment) {
+  if (!attachment) return "Untitled";
+  if (attachment.name) return attachment.name;
+  const tail = (attachment.url || "").split("/").pop() || "";
+  let cleaned = tail;
+  try { cleaned = decodeURIComponent(tail); } catch {}
+  return cleaned.trim() || "Untitled";
 }
 
 export function metadataToDraft(metadata) {

@@ -18,6 +18,7 @@ already exists. Bespoke CSS classes are for **layout only**.
 | `MenuSelect` / `ActionMenu` ([menus.jsx](../../frontend/src/menus.jsx)) | every dropdown: Codex-style pill trigger + checkmarked `ContextMenu`. No native `<select>` anywhere |
 | `MenuItem` / `MenuLabel` / `SubMenuItem` ([menus.jsx](../../frontend/src/menus.jsx)) | every row inside a menu: icon column + ellipsizing label (+ `danger`, `trailing`). `SubMenuItem` is the nested flyout — hover-opened, safe-triangle guarded |
 | `categoryTag`, `uiTag` | chips and small badges |
+| `popoverAnchor` | the `position: relative; inline-flex` wrapper every popover trigger sits in (`data-popover="…"` on the same element) — never inline that style |
 
 ### Menus and submenus
 
@@ -52,6 +53,19 @@ Destructive affordances all read from one set of tokens — `--danger`,
 `--danger-bg`, `--danger-border` — so the solid confirm button, the outlined
 secondary, `.uiBtn.danger` and a menu's `danger` row are the same red in both
 themes. Never hardcode a red.
+
+### The share popover
+
+`.sharePopover` (App.jsx, the topbar link button) is the one place a page is
+published, shaped like Notion's share sheet but built only from the shared
+controls: an invite row (`aiKeyInput` + `uiBtn sm primary`), people entries
+(`.shareEntry`: `.shareAvatar` initial · name + one-line sub · a `MenuSelect`
+for Can view / Can edit · `uiClose` remove), a "General access" entry whose
+avatar is the audience glyph and whose `MenuSelect` picks Anyone with the
+link / Signed-in users / Only people invited, and a `.shareFooter` with Stop
+sharing (`uiBtn sm danger`) left and Copy link right. The `.share*` classes
+are layout only. The read-only view shows the counterpart `.shareBadge`
+("Can edit · shared by …") in its top bar.
 
 ## Settings primitives
 
