@@ -221,6 +221,7 @@ function buildInlineDecos(state, labelsRef) {
     const dlen = s.display ? 2 : 1;
     if (touched(s.from, s.to)) {
       rawMath.push({ from: s.from + dlen, to: s.to - dlen });
+      ranges.push(Decoration.mark({ class: "cmMathRaw" }).range(s.from, s.to));
       continue;
     }
     const tex = text.slice(s.from + dlen, s.to - dlen);
@@ -234,6 +235,8 @@ function buildInlineDecos(state, labelsRef) {
       && !mathSpans.some((s) => um.start >= s.from && um.end <= s.to)
       && !fences.some((f) => um.start >= f.from && um.start < f.to)) {
       rawMath.push({ from: um.start, to: um.end });
+      ranges.push(Decoration.mark({ class: "cmMathRaw" })
+        .range(um.start - (um.display ? 2 : 1), um.end));
     }
   }
 
@@ -515,6 +518,79 @@ const dollarBackspace = keymap.of([{
   },
 }]);
 
+// --- bracket auto-pairing inside math ----------------------------------------
+// VSCode-like, scoped to $...$/$$...$$ spans (prose and code-fence brackets
+// stay plain characters): typing ( [ { closes the pair with the caret
+// between — "\{" pairs LaTeX-style with "\}" — typing a closer over an
+// existing one steps past it instead of doubling, a selection gets wrapped
+// (and stays selected, ready for the next wrap), and Backspace between an
+// empty pair deletes both.
+const BRACKET_PAIRS = { "(": ")", "[": "]", "{": "}" };
+const BRACKET_CLOSERS = new Set([")", "]", "}"]);
+
+// Odd run of backslashes right before pos → the next char is escaped.
+function escapedAt(doc, pos) {
+  let n = 0;
+  while (doc[pos - 1 - n] === "\\") n++;
+  return n % 2 === 1;
+}
+
+const mathBracketPairing = EditorView.inputHandler.of((view, from, to, insert) => {
+  const close = BRACKET_PAIRS[insert];
+  if (!close && !BRACKET_CLOSERS.has(insert)) return false;
+  const doc = view.state.doc.toString();
+  if (fenceInnerAt(doc, from)) return false;
+  const seg = findMathAtCursor(doc, from);
+  if (!seg) return false;
+  const sel = view.state.selection.main;
+  if (!sel.empty) {
+    if (!close || sel.to > seg.end) return false;
+    view.dispatch({
+      changes: [{ from: sel.from, insert }, { from: sel.to, insert: close }],
+      selection: { anchor: sel.from + 1, head: sel.to + 1 },
+      userEvent: "input.type",
+    });
+    return true;
+  }
+  if (escapedAt(doc, from)) {
+    if (insert !== "{") return false;          // literal \) \] \} etc.
+    view.dispatch({
+      changes: { from, insert: "{\\}" },
+      selection: { anchor: from + 1 },
+      userEvent: "input.type",
+    });
+    return true;
+  }
+  if (!close) {                                // a closer: type over
+    if (doc[from] !== insert) return false;
+    view.dispatch({ selection: { anchor: from + 1 }, userEvent: "select" });
+    return true;
+  }
+  view.dispatch({
+    changes: { from, to, insert: insert + close },
+    selection: { anchor: from + 1 },
+    userEvent: "input.type",
+  });
+  return true;
+});
+
+const mathBracketBackspace = keymap.of([{
+  key: "Backspace",
+  run: (view) => {
+    const sel = view.state.selection.main;
+    if (!sel.empty) return false;
+    const doc = view.state.doc.toString();
+    if (fenceInnerAt(doc, sel.head) || !findMathAtCursor(doc, sel.head)) return false;
+    const esc = doc.slice(sel.head - 2, sel.head + 2) === "\\{\\}";
+    if (!esc && BRACKET_PAIRS[doc[sel.head - 1]] !== doc[sel.head]) return false;
+    view.dispatch({
+      changes: { from: sel.head - (esc ? 2 : 1), to: sel.head + (esc ? 2 : 1) },
+      userEvent: "delete.backward",
+    });
+    return true;
+  },
+}]);
+
 const BlockCmEditor = React.forwardRef(function BlockCmEditor({
   value, onChange, onSelect, onKeyDown, onBlur, onPaste,
   placeholder, autoFocus, clickPos, dataBlockId, className, refLabels,
@@ -579,6 +655,8 @@ const BlockCmEditor = React.forwardRef(function BlockCmEditor({
         })),
         dollarPairing,
         dollarBackspace,
+        mathBracketPairing,
+        mathBracketBackspace,
         keymap.of([...historyKeymap, ...defaultKeymap]),
         cmPlaceholder(placeholder || ""),
         chipCompartment.of(inlineRenderField(labelsRef)),

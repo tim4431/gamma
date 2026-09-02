@@ -716,6 +716,12 @@ body {
   cursor: text;
 }
 
+/* Raw $math$ source under edit reads as code: monospace, slightly smaller. */
+.blockEditorCm .cmMathRaw {
+  font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
+  font-size: 0.9em;
+}
+
 /* --- bracket pair colorization in raw $math$ (VSCode-style) --------------- */
 :root {
   --bracket-1: #ffd700;
@@ -4001,7 +4007,7 @@ button.pdfOutlineChevron:hover { background: rgba(128, 128, 128, 0.28); color: v
 .mathPreviewTip {
   position: fixed;
   z-index: var(--z-refpopup);
-  max-width: 432px;
+  max-width: calc(100vw - 16px);
   padding: 6px 12px;
   overflow: hidden;
   pointer-events: none;
