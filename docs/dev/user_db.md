@@ -14,10 +14,11 @@ All state is SQLite + files on disk under a data directory (env
 - `users.db` — global: accounts (bcrypt, plus nullable per-user storage-limit
   override columns), session tokens, share tokens (`shares`: one per
   owner + `page_id` with `audience` anyone/users/list, `role` view/edit and
-  the comma-separated `allowed_users`; `doc_id` is informational — rows from
-  before shares were keyed by page had NULL `page_id` and were backfilled or
-  deleted once by the normalization pass below), admin-tunable server
-  settings (`settings` KV).
+  the comma-separated `allowed_users`; the `doc_id` column is vestigial —
+  never read, written as `""` while it exists, dropped by the hand-run
+  `migrate --drop-share-doc-id` below; rows from before shares were keyed by
+  page had NULL `page_id` and were backfilled or deleted once by the
+  normalization pass), admin-tunable server settings (`settings` KV).
 - `users/<username>/pages.db` — the core data model: one `unified_blocks`
   table. Everything is a block (self-referential `parent_id`, fractional-index
   `position` strings like `a0`, `a0V` from the `fractional-indexing` package).
@@ -29,10 +30,15 @@ All state is SQLite + files on disk under a data directory (env
 - `users/<username>/data.db` — AI `chats` history
   + `prefs` (small JSON KV synced across browsers via `/api/prefs/{key}`, e.g.
   `open-tabs`, `recent-views`) + `page_snaps` (the recents-card cover
-  thumbnails, synced via `/api/page-snaps` — too big for the prefs KV). The
-  reserved `ai-settings` prefs key holds the user's AI provider entries — the
-  generic prefs endpoints refuse the key; see [ai.md](ai.md) for how those
-  entries are managed and read.
+  thumbnails, synced via `/api/page-snaps` — too big for the prefs KV) + the
+  two lazily built FTS5 search indexes: `pdf_fts`/`pdf_fts_docs` (extracted
+  PDF text per page, `routers/search.py`) and `block_fts`/`block_fts_meta`
+  (every non-root block's content keyed by its page root, rebuilt per page
+  when the page changed — `gamma/block_index.py`). Both are derived data,
+  rebuilt on demand; their rows are pruned when pages go. The reserved
+  `ai-settings` prefs key holds the user's AI provider entries — the generic
+  prefs endpoints refuse the key; see [ai.md](ai.md) for how those entries
+  are managed and read.
 - `users/<username>/uploads/` — PDFs, images and generic file attachments
   (`/api/upload-file`), filenames are content sha256[:24] + extension (dedup).
 
@@ -54,6 +60,18 @@ backfilling `shares.page_id` from the owner's `pages.db` (rows whose document
 is gone are deleted). The read-side shims these replaced are gone — new code
 writes only the new shape. Roadmap and the remaining schema steps:
 [block_centric.md](block_centric.md).
+
+One step is deliberately NOT in the automatic pass: `python manage.py migrate
+--drop-share-doc-id` (`migrate.drop_shares_doc_id`) rebuilds the global
+`shares` table without its vestigial `doc_id` column (a table rebuild, so it
+works on any SQLite version; idempotent — a no-op once the column is gone).
+No code reads the column any more, and `create_share` inserts it as `""`
+only while `PRAGMA table_info` still lists it, so the server works either
+way — but an OLDER binary would fail to INSERT into the rebuilt table
+(`NOT NULL`, no default). Run it by hand only after every deployment that
+touches the data directory (the Docker image on the NAS, the desktop
+sidecar) has shipped code with this change; `db.py` keeps creating the old
+shape for fresh installs until then.
 
 ## Auth model
 
@@ -85,7 +103,8 @@ multi-user instance would be a backdoor — those get a startup hint to run
 User CRUD: `create-user`, `set-password`, `set-admin`, `rename-user`,
 `delete-user`, `list-users`, `reset-guest`, `setup` (idempotent: guest account
 + missing per-user DBs), `migrate` (the normalization pass above, printing
-per-user counts). `rename-user` updates users/sessions/shares rows and
+per-user counts; `--drop-share-doc-id` additionally runs the one-way shares
+schema step). `rename-user` updates users/sessions/shares rows and
 moves the data dir — on Windows the move needs the server stopped (open SQLite
 handles lock the directory).
 

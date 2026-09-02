@@ -111,14 +111,20 @@ def _page_for_doc(username: str, doc_id: str) -> str | None:
     return row[0] if row else None
 
 
+def _shares_has_doc_id(conn: sqlite3.Connection) -> bool:
+    return any(r[1] == "doc_id" for r in conn.execute("PRAGMA table_info(shares)"))
+
+
 def normalize_users_db(conn: sqlite3.Connection) -> dict:
     """Backfill ``shares.page_id`` for rows minted when shares were keyed by
     PDF doc id; rows whose document is gone are deleted (they could never
-    resolve). ``shares.doc_id`` itself stays until stage 3.
+    resolve). Once ``drop_shares_doc_id`` removed the column, an unkeyed row
+    has nothing left to resolve through and is deleted.
     Returns ``{"shares_backfilled": n, "shares_deleted": n}``."""
     counts = {"shares_backfilled": 0, "shares_deleted": 0}
+    doc_col = "doc_id" if _shares_has_doc_id(conn) else "''"
     rows = conn.execute(
-        "SELECT token, username, doc_id FROM shares WHERE page_id IS NULL OR page_id = ''"
+        f"SELECT token, username, {doc_col} FROM shares WHERE page_id IS NULL OR page_id = ''"
     ).fetchall()
     for token, username, doc_id in rows:
         page_id = _page_for_doc(username, doc_id) if doc_id else None
@@ -130,6 +136,52 @@ def normalize_users_db(conn: sqlite3.Connection) -> dict:
             counts["shares_deleted"] += 1
     conn.commit()
     return counts
+
+
+# The shares table without its vestigial doc_id column — what
+# drop_shares_doc_id rebuilds to. Mirrors USERS_SCHEMA minus that column;
+# db.py keeps creating the old shape until this step has shipped everywhere.
+_SHARES_WITHOUT_DOC_ID = """CREATE TABLE shares_new (
+        token TEXT PRIMARY KEY,
+        username TEXT NOT NULL,
+        page_id TEXT,
+        audience TEXT NOT NULL DEFAULT 'anyone',
+        role TEXT NOT NULL DEFAULT 'view',
+        allowed_users TEXT NOT NULL DEFAULT '',
+        created_at TEXT NOT NULL
+    )"""
+
+
+def drop_shares_doc_id(conn: sqlite3.Connection | None = None) -> bool:
+    """Stage 3 (docs/dev/block_centric.md): rebuild the global ``shares``
+    table without ``doc_id``. Deliberately NOT part of ``run_all()`` — run by
+    hand (``python manage.py migrate --drop-share-doc-id``) only after every
+    deployed binary (Docker image, desktop sidecar) ships code that no
+    longer reads the column and inserts without it, since an older server
+    would fail to INSERT (NOT NULL, no default). Idempotent: returns False
+    when the column is already gone. A table rebuild rather than
+    ``ALTER TABLE DROP COLUMN`` so it works on any SQLite version."""
+    own = conn is None
+    if own:
+        conn = connect_users_db()
+    try:
+        if not _shares_has_doc_id(conn):
+            return False
+        # Unkeyed rows can't survive without doc_id to resolve through.
+        normalize_users_db(conn)
+        conn.execute("DROP TABLE IF EXISTS shares_new")
+        conn.execute(_SHARES_WITHOUT_DOC_ID)
+        conn.execute(
+            "INSERT INTO shares_new (token, username, page_id, audience, role, allowed_users, created_at) "
+            "SELECT token, username, page_id, audience, role, allowed_users, created_at FROM shares")
+        conn.execute("DROP TABLE shares")
+        conn.execute("ALTER TABLE shares_new RENAME TO shares")
+        conn.commit()
+        log.info("[migrate] dropped shares.doc_id")
+        return True
+    finally:
+        if own:
+            conn.close()
 
 
 def run_all() -> dict:

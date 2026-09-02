@@ -1,10 +1,12 @@
-"""Library-wide full-text search over PDF contents.
+"""Library-wide full-text search: notes (block_fts) and PDF contents (pdf_fts).
 
-Backed by SQLite FTS5 (per-user, in data.db): each paper's text is extracted
-once into the index, so searching ~1000 papers is a millisecond-range query
-instead of opening a thousand PDFs. Missing papers are indexed lazily by a
-background thread the first time a search runs; the response reports how many
-are still pending so the UI can hint that results are incomplete.
+Both indexes are SQLite FTS5 tables in the per-user data.db. The PDF one is
+built here: each paper's text is extracted once, so searching ~1000 papers is
+a millisecond-range query instead of opening a thousand PDFs; missing papers
+are indexed lazily by a background thread the first time a search runs, and
+the response reports how many are still pending so the UI can hint that
+results are incomplete. The notes index lives in gamma.block_index (rebuilt
+per page, synchronously, when a page changed since its last build).
 
 Extraction prefers pypdfium2 (PDFium — proper word spacing and unicode) and
 falls back to PyPDF2. Text is stored in normalized form (see gamma.textnorm)
@@ -14,18 +16,25 @@ at search time. Bumping textnorm.INDEX_VERSION re-indexes everything lazily.
 Positions are deliberately NOT stored here: the frontend re-finds the matched
 text with pdf.js (the engine that renders the page) when a hit is opened, so
 highlight rects always agree with what's on screen.
+
+``GET /api/search`` is the one endpoint over both indexes (hits carry
+``source: "notes" | "pdf"``); ``/pdf-search`` is the PDF-only predecessor the
+frontend still uses.
 """
 
-import re
+import json
 import sqlite3
 import threading
 
 from fastapi import APIRouter, Request
 from pydantic import BaseModel
 
+from .. import block_index
 from ..ai_context import pdf_path as _pdf_path
 from ..auth import require_user
+from ..block_index import fts_query
 from ..db import page_now, user_db_path
+from ..foldertags import clean_path, parse_tags
 from ..logbuf import log
 from ..pdf_text import extract_pages
 from ..textnorm import INDEX_VERSION, normalize_text
@@ -135,6 +144,8 @@ def search_reindex(request: Request, payload: ReindexRequest | None = None):
             conn.execute("UPDATE pdf_fts_docs SET ver = 0")
             conn.commit()
     started = doc_ids and _index_missing_async(user, doc_ids)
+    if not wanted:
+        block_index.mark_all_dirty(user)  # notes rebuild on the next search
     return {"scheduled": len(doc_ids) if started else 0,
             "busy": bool(doc_ids) and not started}
 
@@ -149,16 +160,79 @@ def background_tasks(request: Request):
         return {"indexing": {**prog, "active": bool(t and t.is_alive())}}
 
 
-def _fts_query(q: str) -> str:
-    """User text → safe FTS5 MATCH: AND of quoted terms, prefix on the last.
-    Normalized first so "3,000" and "3000" build the same query the index
-    stores."""
-    terms = [t for t in re.split(r"\s+", normalize_text(q)) if t]
-    if not terms:
-        return ""
-    quoted = ['"' + t.replace('"', '""') + '"' for t in terms]
-    quoted[-1] += "*"
-    return " ".join(quoted)
+_fts_query = fts_query  # shared with the block index (gamma.block_index)
+
+
+def _library_pages(conn, scope: str = "") -> dict:
+    """{page_id: {"title", "doc_id"}} for the root pages a search reaches:
+    the whole library, or — with ``scope`` a folder path — the pages filed in
+    that folder or below it (properties.folder, gamma.foldertags rules)."""
+    path = clean_path(scope or "")
+    pages = {}
+    for page_id, content, props_raw in conn.execute(
+            "SELECT id, content, properties FROM unified_blocks WHERE parent_id = 'root'"):
+        try:
+            props = json.loads(props_raw or "{}")
+        except ValueError:
+            props = {}
+        if path and not any(t == path or t.startswith(path + "/")
+                            for t in parse_tags(props.get("folder"))):
+            continue
+        pages[page_id] = {"title": content or "Untitled",
+                          "doc_id": str(props.get("doc_id") or "")}
+    return pages
+
+
+@router.get("/search")
+def library_search(request: Request, q: str = "", limit: int = 20, scope: str = ""):
+    """One search over the user's knowledge base: notes (block_fts) and the
+    text of PDF attachments (pdf_fts). Owner-only, like /pdf-search. Results
+    are notes first (bm25 order), then PDF hits, each capped at ``limit``;
+    ``indexing`` counts what is still being built (note pages waiting for a
+    rebuild batch + PDFs the background extractor hasn't reached)."""
+    user = require_user(request)
+    q = (q or "").strip()
+    limit = max(1, min(int(limit or 20), 100))
+    if not q:
+        return {"results": [], "indexing": 0}
+    match = fts_query(q)
+    with sqlite3.connect(user_db_path(user, "pages.db")) as conn:
+        pages = _library_pages(conn, scope)
+        # Notes: rebuild what changed (synchronous, batch-capped), then query.
+        pending = block_index.refresh(user, conn, list(pages)) if pages else 0
+    docs = {info["doc_id"]: page_id for page_id, info in pages.items() if info["doc_id"]}
+    results = []
+    missing: list = []
+    with sqlite3.connect(user_db_path(user, "data.db")) as conn:
+        _ensure_schema(conn)
+        for block_id, page_id, snippet in block_index.search_blocks(conn, match, limit, set(pages)):
+            results.append({"source": "notes", "block_id": block_id, "page_id": page_id,
+                            "title": pages[page_id]["title"], "snippet": snippet})
+        if docs:
+            current = {r[0] for r in conn.execute(
+                "SELECT doc_id FROM pdf_fts_docs WHERE ver = ?", (INDEX_VERSION,)).fetchall()}
+            missing = [d for d in docs if d not in current]
+            if missing:
+                _index_missing_async(user, missing)
+            found = 0
+            if match:
+                try:
+                    cur = conn.execute(
+                        "SELECT doc_id, page, snippet(pdf_fts, 2, '', '', '…', 14) FROM pdf_fts "
+                        "WHERE pdf_fts MATCH ? ORDER BY rank LIMIT ?", (match, limit * 3))
+                    for doc_id, page, snippet in cur:
+                        page_id = docs.get(doc_id)  # skips out-of-scope / deleted docs
+                        if not page_id:
+                            continue
+                        results.append({"source": "pdf", "block_id": page_id, "page_id": page_id,
+                                        "doc_id": doc_id, "title": pages[page_id]["title"],
+                                        "page": page, "snippet": snippet})
+                        found += 1
+                        if found >= limit:
+                            break
+                except sqlite3.OperationalError:
+                    pass  # malformed MATCH — treat as no results
+    return {"results": results, "indexing": pending + len(missing)}
 
 
 @router.get("/pdf-search")

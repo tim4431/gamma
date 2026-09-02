@@ -394,11 +394,14 @@ def _save_props(user: str, block_id: str, updates: dict | None = None, remove: t
 
 @router.get("/metadata/status")
 def metadata_status(request: Request):
-    """Library-wide health for the Settings "Paper metadata" pane: which papers
+    """Library-wide health for the Settings "Paper metadata" pane: which pages
     have metadata, which yielded extractable text, and whether the search index
-    covers them. Text/index state comes from the FTS index (data.db) — pages=0
-    rows are recorded extraction failures, ver != INDEX_VERSION means stale;
-    papers the index never saw report text_chars = null (unknown until indexed)."""
+    covers them. Listed: every page with a PDF attachment, plus pages that carry
+    ``properties.meta`` without one (a note about a paper whose PDF you don't
+    own — it still cites; ``has_file`` is false, index fields stay unknown).
+    Text/index state comes from the FTS index (data.db) — pages=0 rows are
+    recorded extraction failures, ver != INDEX_VERSION means stale; papers the
+    index never saw report text_chars = null (unknown until indexed)."""
     user = require_user(request)
     with sqlite3.connect(user_db_path(user, "pages.db")) as conn:
         rows = conn.execute(
@@ -419,8 +422,8 @@ def metadata_status(request: Request):
     papers = []
     for block_id, content, props_json, updated_at in rows:
         props = json.loads(props_json or "{}")
-        if not page_attachment(props):
-            continue  # nothing to fetch metadata or text for
+        if not page_attachment(props) and not props.get("meta"):
+            continue  # a plain note page: nothing to fetch metadata or text for
         doc_id = props.get("doc_id") or ""
         entry = index.get(doc_id)
         meta = props.get("meta") or None

@@ -21,7 +21,9 @@ from ..blocks_store import (
     flatten_tree,
     get_or_create_doc_page,
     last_child_position,
+    page_root_id,
 )
+from .. import block_index
 from ..db import connect_data_db, page_now, user_db_path, user_uploads_dir
 from ..logbuf import log
 from ..markdown_export import build_tree
@@ -190,7 +192,8 @@ async def blocks_replace(payload: BlockReplaceRequest, request: Request):
     replacement = payload.replacement if payload.regex else payload.replacement.replace("\\", "\\\\")
     now = page_now()
     changed = 0
-    with sqlite3.connect(user_db_path(require_user(request), "pages.db")) as conn:
+    user = require_user(request)
+    with sqlite3.connect(user_db_path(user, "pages.db")) as conn:
         rows = conn.execute(
             "SELECT id, content FROM unified_blocks WHERE content != '' AND id != 'root'"
         ).fetchall()
@@ -206,6 +209,8 @@ async def blocks_replace(payload: BlockReplaceRequest, request: Request):
                 )
                 changed += 1
         conn.commit()
+    if changed:
+        block_index.mark_all_dirty(user)
     return {"ok": True, "changed": changed}
 
 
@@ -379,6 +384,8 @@ async def ub_create_block(payload: UBCreateRequest, request: Request):
              json.dumps(payload.properties), now, now),
         )
         conn.commit()
+        if payload.parent_id != "root":
+            block_index.mark_page_dirty(user, page_root_id(conn, block_id))
     return {
         "id": block_id, "parent_id": payload.parent_id, "position": new_pos,
         "content": payload.content, "properties": payload.properties,
@@ -420,6 +427,8 @@ async def ub_update_block(block_id: str, payload: UBUpdateRequest, request: Requ
         values.append(block_id)
         conn.execute(f"UPDATE unified_blocks SET {', '.join(sets)} WHERE id = ?", values)
         conn.commit()
+        if payload.content is not None:
+            block_index.mark_page_dirty(user, page_root_id(conn, block_id))
     return {"ok": True, "updated_at": now}
 
 
@@ -431,6 +440,8 @@ def _purge_derived_data(user: str, conn, deleted_ids: list):
         live_docs = {r[0] for r in conn.execute(
             "SELECT json_extract(properties, '$.doc_id') FROM unified_blocks "
             "WHERE json_extract(properties, '$.doc_id') IS NOT NULL").fetchall()}
+        live_pages = [r[0] for r in conn.execute(
+            "SELECT id FROM unified_blocks WHERE parent_id = 'root'").fetchall()]
         with connect_data_db(user) as ddb:
             _ensure_schema(ddb)
             ddb.executemany("DELETE FROM chats WHERE block_id = ?", [(i,) for i in deleted_ids])
@@ -438,6 +449,7 @@ def _purge_derived_data(user: str, conn, deleted_ids: list):
             for d in stale:
                 ddb.execute("DELETE FROM pdf_fts WHERE doc_id = ?", (d,))
                 ddb.execute("DELETE FROM pdf_fts_docs WHERE doc_id = ?", (d,))
+            block_index.prune(ddb, live_pages)
             ddb.commit()
     except Exception as e:
         log.warning(f"[blocks] derived-data cleanup failed: {e}")
@@ -455,11 +467,14 @@ async def ub_delete_block(block_id: str, request: Request):
         if not conn.execute("SELECT 1 FROM unified_blocks WHERE id = ?", (block_id,)).fetchone():
             raise HTTPException(status_code=404, detail="block not found")
         assert_block_in_page(conn, block_id, scope)
+        page_id = page_root_id(conn, block_id)
         deleted_ids = [r[0] for r in fetch_subtree(conn, block_id)]
         delete_subtree(conn, block_id)
         conn.commit()
         removed = cleanup_orphan_uploads(conn, user_uploads_dir(user))
         _purge_derived_data(user, conn, deleted_ids)
+        if page_id != block_id:
+            block_index.mark_page_dirty(user, page_id)  # a page's own rows were just pruned
     return {"ok": True, "id": block_id, "removed_uploads": removed}
 
 
@@ -486,6 +501,9 @@ async def ub_put_children(block_id: str, payload: UBPutChildrenRequest, request:
         conn.execute("UPDATE unified_blocks SET updated_at = ? WHERE id = ?", (now, block_id))
         conn.commit()
         removed = cleanup_orphan_uploads(conn, user_uploads_dir(user))
+        # The page root's updated_at already re-fingerprints the notes index
+        # when block_id is the page; a nested target needs the explicit mark.
+        block_index.mark_page_dirty(user, page_root_id(conn, block_id))
     return {"ok": True, "count": len(rows), "updated_at": now, "removed_uploads": removed}
 
 
@@ -508,6 +526,7 @@ async def ub_reorder_block(block_id: str, payload: UBReorderRequest, request: Re
             new_pos = generate_key_between(payload.before, payload.after)
         except Exception as e:
             raise HTTPException(status_code=400, detail=f"invalid before/after: {e}")
+        src_page = page_root_id(conn, block_id)
         sets = ["position = ?", "updated_at = ?"]
         values: list = [new_pos, page_now()]
         if payload.parent_id is not None:
@@ -516,4 +535,8 @@ async def ub_reorder_block(block_id: str, payload: UBReorderRequest, request: Re
         values.append(block_id)
         conn.execute(f"UPDATE unified_blocks SET {', '.join(sets)} WHERE id = ?", values)
         conn.commit()
+        if payload.parent_id is not None:
+            # A cross-page move re-keys the block's index rows on both pages.
+            block_index.mark_page_dirty(user, src_page)
+            block_index.mark_page_dirty(user, page_root_id(conn, block_id))
     return {"ok": True, "id": block_id, "position": new_pos}

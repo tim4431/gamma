@@ -17,6 +17,7 @@ The token confines reads (and edit writes) to that page's subtree and assets
 (gamma/auth.py share_grant / share_scope_page).
 """
 
+import json
 import secrets
 import sqlite3
 
@@ -25,6 +26,7 @@ from pydantic import BaseModel
 
 from ..auth import (SHARE_AUDIENCES, SHARE_ROLES, require_user, serialize_share_users,
                     share_access, share_lookup)
+from ..blocks_store import page_attachment
 from ..db import connect_users_db, page_now, user_db_path
 
 router = APIRouter(prefix="/api", tags=["shares"])
@@ -49,18 +51,38 @@ def _owned_share(user: str, page_id: str) -> dict | None:
     return share_lookup(row[0]) if row else None
 
 
-def _page_doc_id(user: str, page_id: str) -> str:
-    """The page's doc_id ("" for a note page); 404/400 when it isn't a page."""
+def _require_page(user: str, page_id: str) -> None:
+    """404/400 unless page_id is one of the user's root pages."""
     with sqlite3.connect(user_db_path(user, "pages.db")) as conn:
         row = conn.execute(
-            "SELECT parent_id, json_extract(properties, '$.doc_id') FROM unified_blocks WHERE id = ?",
-            (page_id,),
-        ).fetchone()
+            "SELECT parent_id FROM unified_blocks WHERE id = ?", (page_id,)).fetchone()
     if not row:
         raise HTTPException(status_code=404, detail="page not found")
     if row[0] != "root":
         raise HTTPException(status_code=400, detail="only pages can be shared")
-    return row[1] or ""
+
+
+def _page_doc_id(owner: str, page_id: str) -> str:
+    """The id of the shared page's PDF attachment ("" without one) — derived
+    from the page, never from the vestigial ``shares.doc_id`` column, so the
+    viewer's response keeps its ``doc_id`` field while the column goes."""
+    try:
+        with sqlite3.connect(user_db_path(owner, "pages.db")) as conn:
+            row = conn.execute(
+                "SELECT properties FROM unified_blocks WHERE id = ?", (page_id,)).fetchone()
+    except (sqlite3.Error, ValueError):
+        return ""
+    if not row:
+        return ""
+    try:
+        attachment = page_attachment(json.loads(row[0] or "{}"))
+    except ValueError:
+        return ""
+    return attachment["id"] if attachment else ""
+
+
+def _shares_has_doc_id(conn) -> bool:
+    return any(r[1] == "doc_id" for r in conn.execute("PRAGMA table_info(shares)"))
 
 
 def _validated(owner: str, current: dict, payload: ShareSettings) -> dict:
@@ -102,7 +124,7 @@ async def create_share(page_id: str, request: Request, payload: ShareSettings | 
     exists, return it unchanged so re-sharing never invalidates a link already
     sent around. An optional body applies settings to a NEW link only."""
     user = require_user(request)
-    doc_id = _page_doc_id(user, page_id)
+    _require_page(user, page_id)
     existing = _owned_share(user, page_id)
     if existing:
         return _settings(existing)
@@ -110,11 +132,17 @@ async def create_share(page_id: str, request: Request, payload: ShareSettings | 
                         payload or ShareSettings())
     token = secrets.token_urlsafe(12)
     with connect_users_db() as conn:
+        # shares.doc_id is vestigial (NOT NULL, never read): written as ""
+        # while the column exists, omitted once migrate.drop_shares_doc_id ran.
+        columns = ["token", "username", "page_id", "audience", "role", "allowed_users", "created_at"]
+        values = [token, user, page_id, fields["audience"], fields["role"],
+                  serialize_share_users(fields["users"]), page_now()]
+        if _shares_has_doc_id(conn):
+            columns.insert(2, "doc_id")
+            values.insert(2, "")
         conn.execute(
-            "INSERT INTO shares (token, username, doc_id, page_id, audience, role, allowed_users, created_at) "
-            "VALUES (?, ?, ?, ?, ?, ?, ?, ?)",
-            (token, user, doc_id, page_id, fields["audience"], fields["role"],
-             serialize_share_users(fields["users"]), page_now()),
+            f"INSERT INTO shares ({', '.join(columns)}) VALUES ({', '.join('?' * len(columns))})",
+            values,
         )
         conn.commit()
     return _settings(share_lookup(token))
@@ -125,7 +153,7 @@ async def get_share_settings(page_id: str, request: Request):
     """The owner's view of a page's share: its settings, or ``{"token": null}``
     when the page isn't shared."""
     user = require_user(request)
-    _page_doc_id(user, page_id)
+    _require_page(user, page_id)
     share = _owned_share(user, page_id)
     return _settings(share) if share else {"token": None, "page_id": page_id}
 
@@ -161,7 +189,8 @@ async def delete_share(page_id: str, request: Request):
 async def get_share(token: str, request: Request):
     """Resolve a link for the viewer: 404 unknown, 401 when signing in could
     grant access, 403 when this signed-in account isn't allowed. Otherwise the
-    page plus what this viewer may do (``can_edit``)."""
+    page plus what this viewer may do (``can_edit``). ``doc_id`` is the
+    page's PDF attachment id ("" without one), derived from the page."""
     share = share_lookup(token)
     if not share:
         raise HTTPException(status_code=404, detail="share not found")
@@ -170,6 +199,7 @@ async def get_share(token: str, request: Request):
         if reason == "login":
             raise HTTPException(status_code=401, detail="sign in to open this shared page")
         raise HTTPException(status_code=403, detail="this page is shared with specific people only")
-    return {"page_id": share["page_id"], "doc_id": share["doc_id"], "username": share["username"],
+    return {"page_id": share["page_id"], "doc_id": _page_doc_id(share["username"], share["page_id"]),
+            "username": share["username"],
             "audience": share["audience"], "role": share["role"], "can_edit": level == "edit",
             "viewer": request.state.user or ""}

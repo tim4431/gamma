@@ -73,21 +73,21 @@ ALL_PERMS = ("list", "read", "block_read", "search", "rename", "move", "block_ed
 
 def test_registry_scopes_and_permissions():
     assert [t["name"] for t in agent_tools("folder")] == [
-        "list_pages", "read_page", "read_block", "search_pdfs", "rename_page",
+        "list_pages", "read_page", "read_block", "search_library", "rename_page",
         "move_page", "edit_block", "create_block", "move_block"]
     # Paper chats never rename/move pages; the note-block tools exist there.
     assert [t["name"] for t in agent_tools("page")] == [
-        "read_page", "read_block", "search_pdfs",
+        "read_page", "read_block", "search_library",
         "edit_block", "create_block", "move_block"]
     assert agent_tools("") == []  # plain chat
     assert [t["name"] for t in agent_tools(
         "folder", {"rename": False, "move": False, "block_edit": False})] == [
-        "list_pages", "read_page", "read_block", "search_pdfs"]
+        "list_pages", "read_page", "read_block", "search_library"]
     names = [t["name"] for t in agent_tools("folder", {"search": False})]
-    assert "search_pdfs" not in names and "read_page" in names
+    assert "search_library" not in names and "read_page" in names
     # One permission gates all three note-editing tools.
     names = [t["name"] for t in agent_tools("page", {"block_edit": False})]
-    assert names == ["read_page", "read_block", "search_pdfs"]
+    assert names == ["read_page", "read_block", "search_library"]
     assert agent_tools("folder", {k: False for k in ALL_PERMS}) == []
     assert agent_tools("folder", None) == ALL_TOOLS  # missing map = everything on
 
@@ -98,7 +98,7 @@ def test_agent_system_mentions_scope_and_armed_tools():
     page_text = agent_system({"type": "page", "page_id": "p1"},
                              {"search": False, "block_edit": False})
     assert 'page_id "p1"' in page_text
-    assert "read_page" in page_text and "search_pdfs" not in page_text
+    assert "read_page" in page_text and "search_library" not in page_text
     assert "suggest them" in page_text  # no write tools armed
     # With note editing armed, the editing guidance replaces the read-only line.
     edit_text = agent_system({"type": "page", "page_id": "p1"})
@@ -236,7 +236,7 @@ def test_read_page_pdf_offset_pages_through_long_documents(org, monkeypatch):
 
 
 def test_read_page_pdf_page_jumps_to_a_search_hit(org, monkeypatch):
-    """pdf_page starts the excerpt at that PDF page (the shape search_pdfs
+    """pdf_page starts the excerpt at that PDF page (the shape search_library
     hits come in), so the agent can read around a match with a small window."""
     from gamma.pdf_text import extract_text
 
@@ -430,10 +430,10 @@ def test_move_block_rules(notes):
 
 def test_block_tools_gated_by_permissions():
     armed = {t["name"] for t in agent_tools("page", {"block_read": False, "block_edit": False})}
-    assert armed == {"read_page", "search_pdfs"}
+    assert armed == {"read_page", "search_library"}
 
 
-def test_search_pdfs_scoped_snippets(org):
+def test_search_library_scoped_snippets(org):
     import sqlite3 as sq
     from gamma.db import page_now, user_db_path
     from gamma.routers.search import _ensure_schema
@@ -448,14 +448,63 @@ def test_search_pdfs_scoped_snippets(org):
         db.execute("INSERT OR REPLACE INTO pdf_fts_docs (doc_id, indexed_at, pages, ver) "
                    "VALUES (?, ?, 1, ?)", (doc, page_now(), INDEX_VERSION))
         db.commit()
-    text, action = run_agent_tool("organizer", _folder("readout"), "search_pdfs",
+    text, action = run_agent_tool("organizer", _folder("readout"), "search_library",
                                   {"query": "error correction"})
     assert action["kind"] == "search" and "1 hit" in action["summary"]
-    assert "p.3" in text and "cat qubits" in text
+    assert 'PDF "' in text and "p.3" in text and "cat qubits" in text
     assert "not indexed" not in text  # everything in scope is stamped current
-    # A folder without PDF papers has nothing to search.
-    text, _ = run_agent_tool("organizer", _folder("cooling"), "search_pdfs", {"query": "cat"})
-    assert text == "No PDF papers are reachable from this chat."
+    # A folder whose pages carry no PDF is searched by notes alone.
+    r = c.post("/api/blocks", json={"parent_id": "root", "content": "text only",
+                                    "properties": {"folder": "textonly"}})
+    assert r.status_code == 200
+    text, _ = run_agent_tool("organizer", _folder("textonly"), "search_library", {"query": "cat"})
+    assert text.startswith("No notes or PDF text match") and "not answer from your own knowledge" in text
+    c.delete(f"/api/blocks/{r.json()['id']}")
+    # A folder with no pages at all says so.
+    text, _ = run_agent_tool("organizer", _folder("nowhere"), "search_library", {"query": "cat"})
+    assert text == "No pages are reachable from this chat."
+
+
+def test_search_library_finds_notes_and_pdf_text(org):
+    """Notes hits (block ids, from block_fts) come before PDF hits (page
+    numbers, from pdf_fts); a page without a PDF is searchable by its notes,
+    and the note index follows edits without any explicit rebuild."""
+    c, ids = org
+    title_a, title_b = _props(c, ids["a"])["content"], _props(c, ids["b"])["content"]
+    r = c.post("/api/blocks", json={"parent_id": ids["b"],
+                                    "content": "cat qubits need bias-preserving gates"})
+    assert r.status_code == 200
+    note_block = r.json()["id"]
+    text, action = run_agent_tool("organizer", _folder("readout"), "search_library",
+                                  {"query": "cat qubits"})
+    assert action["kind"] == "search" and "2 hits" in action["summary"]
+    lines = [l for l in text.splitlines() if l.startswith("- ")]
+    assert lines[0].startswith(f'- note [{note_block}] in "{title_b}"')
+    assert f"(page_id {ids['b']})" in lines[0] and "bias-preserving" in lines[0]
+    assert lines[1].startswith(f'- PDF "{title_a}" p.3')
+    # The page chat of the note-only page reaches its own notes, nothing else.
+    text, _ = run_agent_tool("organizer", {"type": "page", "page_id": ids["b"]},
+                             "search_library", {"query": "cat qubits"})
+    assert f"[{note_block}]" in text and "p.3" not in text
+    # Editing the note re-indexes it on the next search.
+    assert c.put(f"/api/blocks/{note_block}", json={"content": "zebra crossings"}).status_code == 200
+    text, _ = run_agent_tool("organizer", _folder("readout"), "search_library", {"query": "zebra"})
+    assert f"[{note_block}]" in text
+    text, _ = run_agent_tool("organizer", _folder("readout"), "search_library",
+                             {"query": "bias-preserving"})
+    assert f"[{note_block}]" not in text
+    c.delete(f"/api/blocks/{note_block}")
+
+
+def test_deprecated_search_pdfs_still_dispatches(org):
+    """Old chats saved `search_pdfs` calls; a model copying that name out of
+    the replayed history is served by search_library, under the new name."""
+    c, ids = org
+    text, action = run_agent_tool("organizer", _folder("readout"), "search_pdfs",
+                                  {"query": "cat qubits"})
+    assert action["tool"] == "search_library" and action["kind"] == "search"
+    assert "p.3" in text
+    assert "search_pdfs" not in [t["name"] for t in agent_tools("folder")]  # never offered
 
 
 def test_page_scope_reaches_only_its_paper(org):
@@ -467,7 +516,7 @@ def test_page_scope_reaches_only_its_paper(org):
     text, _ = run_agent_tool("organizer", scope, "read_page", {"page_id": ids["b"]})
     assert text.startswith("error")
     # Search covers only this paper's PDF (seeded in the FTS test above).
-    text, action = run_agent_tool("organizer", scope, "search_pdfs", {"query": "cat qubits"})
+    text, action = run_agent_tool("organizer", scope, "search_library", {"query": "cat qubits"})
     assert "p.3" in text and action["kind"] == "search"
 
 
@@ -717,7 +766,7 @@ def test_chat_page_scope_arms_read_tools(org, monkeypatch):
                                      "agent_scope": "page", "page_id": ids["a"], "stream": True})
     assert r.status_code == 200
     assert [t["name"] for t in seen["tools"]] == [
-        "read_page", "read_block", "search_pdfs",
+        "read_page", "read_block", "search_library",
         "edit_block", "create_block", "move_block"]
     assert f'page_id "{ids["a"]}"' in seen["system"]
     lines = [json.loads(l) for l in r.text.splitlines() if l.strip()]
@@ -727,7 +776,7 @@ def test_chat_page_scope_arms_read_tools(org, monkeypatch):
 
 def test_paper_chat_kicks_indexing_for_unindexed_doc(org, monkeypatch):
     """A paper chat (tools on or off) starts background indexing for a paper
-    the FTS index doesn't hold, so the document map and search_pdfs exist by
+    the FTS index doesn't hold, so the document map and search_library exist by
     the next turn instead of only after the model happens to call search."""
     c, ids = org
     import gamma.ai_context as ctx
@@ -829,6 +878,56 @@ def test_chat_reports_context_coverage(org, monkeypatch):
     assert r.status_code == 200 and r.json()["context"][0]["partial"] is True
 
 
+def test_chat_context_from_text_only_page(org, monkeypatch):
+    """A page without a PDF is its notes: naming it by page_id (no doc_id)
+    puts its title, properties and note tree into the context — even with
+    include_notes off — framed as a page of the knowledge base."""
+    c, ids = org
+    import gamma.routers.ai as ai_mod
+
+    assert c.post("/api/ai/providers",
+                  json={"protocol": "anthropic", "api_key": "sk-test-key-123",
+                        "models": "claude-solo"}).status_code == 200
+    page = c.post("/api/pages", json={"title": "Reading plan", "folder": "plans"}).json()
+    r = c.post("/api/blocks", json={"parent_id": page["id"], "content": "read the cat-qubit review"})
+    top = r.json()
+    c.post("/api/blocks", json={"parent_id": top["id"], "content": "focus on bias-preserving gates"})
+    seen = {}
+
+    def fake_open(messages, system, entry, rt, pdf_b64s=None, **kw):
+        seen["messages"], seen["system"] = messages, system
+        return _FakeResp([{"type": "content_block_delta",
+                           "delta": {"type": "text_delta", "text": "ok"}}])
+
+    monkeypatch.setattr(ai_mod, "_open_ai", fake_open)
+    r = c.post("/api/ai/chat", json={"prompt": "what should I read?", "page_id": page["id"],
+                                     "include_notes": False, "stream": True})
+    assert r.status_code == 200, r.text
+    user_turn = seen["messages"][-1]["content"]
+    assert user_turn.startswith("Context — pages from the user's knowledge base")
+    assert "### Reading plan" in user_turn and "folders: plans" in user_turn
+    assert "- read the cat-qubit review" in user_turn
+    assert "  - focus on bias-preserving gates" in user_turn  # nesting kept
+    assert "Here is the PDF text" not in user_turn and "EXCERPT" not in user_turn
+    assert user_turn.rstrip().endswith("User question: what should I read?")
+    assert "knowledge base" in seen["system"]  # the built-in prompt applies to page context
+    lines = [json.loads(l) for l in r.text.splitlines() if l.strip()]
+    (cover,) = lines[0]["context"]
+    assert cover["title"] == "Reading plan" and cover["doc_id"] == "" and cover["partial"] is False
+
+    # Several pages: a text-only page contributes its notes next to a PDF page.
+    r = c.post("/api/ai/chat", json={"prompt": "compare", "pages": [page["id"], ids["a"]],
+                                     "stream": True})
+    assert r.status_code == 200
+    user_turn = seen["messages"][-1]["content"]
+    title_a = _props(c, ids["a"])["content"]
+    assert "### Reading plan" in user_turn and "- read the cat-qubit review" in user_turn
+    assert f"### {title_a}" in user_turn and "attachment: PDF" in user_turn
+    titles = [e["title"] for e in [json.loads(l) for l in r.text.splitlines() if l.strip()][0]["context"]]
+    assert titles == ["Reading plan", title_a]
+    c.delete(f"/api/blocks/{page['id']}")
+
+
 def test_models_flag_native_pdf_capability(org):
     """The chat UI keys the PDF button's default on native_pdf: API-key
     providers take the file, the ChatGPT sign-in (Codex backend) does not."""
@@ -880,7 +979,7 @@ def test_chat_permissions_gate_tools_and_execution(org, monkeypatch):
                                                      "block_edit": False}})
     assert r.status_code == 200
     assert [t["name"] for t in seen["tools"]] == [
-        "list_pages", "read_page", "read_block", "search_pdfs"]
+        "list_pages", "read_page", "read_block", "search_library"]
     assert seen["blocked"].startswith("error: tool not enabled")
     assert _props(c, ids["a"])["content"] == before  # nothing was renamed
 
@@ -995,6 +1094,16 @@ def test_build_messages_replay_edge_cases():
     roles = [m["role"] for m in messages]
     assert roles == ["user", "assistant", "tool", "user", "assistant", "user"]
     assert not messages[4].get("tool_calls")
+
+
+def test_build_messages_replays_renamed_tools_under_current_name():
+    history = [
+        {"role": "user", "text": "where is X"},
+        {"role": "ai", "text": "p.3", "actions": [
+            {"kind": "search", "tool": "search_pdfs", "args": {"query": "x"}, "result": "hit"}]},
+    ]
+    messages = build_messages(_payload(history), "", with_tools=True)
+    assert messages[1]["tool_calls"][0]["name"] == "search_library"
 
 
 def test_build_messages_elides_old_results_over_budget():

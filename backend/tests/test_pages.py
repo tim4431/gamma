@@ -273,3 +273,20 @@ def test_root_listing_carries_a_text_preview(guest):
     # only the root listing carries previews
     kids = guest.get(f"/api/blocks/{page['id']}/children").json()["children"]
     assert all("preview" not in k for k in kids)
+
+
+def test_orphan_cleanup_spares_fresh_uploads(guest, monkeypatch):
+    """A file is stored BEFORE the page/block referencing it is written; an
+    autosave of another page in that window must not sweep it."""
+    from gamma import storage
+    from gamma.db import user_uploads_dir
+    monkeypatch.setattr(storage, "UPLOAD_GRACE_S", 15 * 60)
+    up = guest.post("/api/uploads", files={"file": ("fresh.pdf", io.BytesIO(PDF_BYTES + b"fresh"), "application/pdf")}).json()
+    path = user_uploads_dir("guest") / f"{up['doc_id']}.pdf"
+    assert path.is_file()
+    stray = guest.post("/api/blocks", json={"parent_id": "root", "content": "stray"}).json()
+    assert guest.delete(f"/api/blocks/{stray['id']}").json()["removed_uploads"] == []
+    assert path.is_file()
+    monkeypatch.setattr(storage, "UPLOAD_GRACE_S", 0)
+    guest.delete(f"/api/blocks/{guest.post('/api/blocks', json={'parent_id': 'root', 'content': 'x'}).json()['id']}")
+    assert not path.exists()

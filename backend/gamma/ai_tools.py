@@ -4,8 +4,8 @@ Every chat has a *scope* deciding what its tools can touch:
 
 - ``{"type": "folder", "folder": path}`` — the home/folder chat; tools reach
   the pages in that folder ("" = the whole library).
-- ``{"type": "page", "page_id": id}`` — the per-paper chat; tools reach only
-  that paper.
+- ``{"type": "page", "page_id": id}`` — the per-page chat; tools reach only
+  that page.
 
 Each TOOLS entry declares its wire spec, the Settings permission key
 (Settings → Assistant → Folder agent), the scopes it exists in, whether it
@@ -13,16 +13,20 @@ mutates, and its executor — so arming a chat is one filter
 (:func:`agent_tools`) and dispatch is one lookup (:func:`run_agent_tool`),
 with the in-scope check shared by every executor.
 
-Reads: list the pages (folder scope only); read a paper (extracted PDF text
-plus the user's highlights and notes); read a page's note outline with block
-ids; full-text-search PDF contents via the existing FTS index.  Writes: rename
-pages and file them into (sub)folders (folder scope only); edit, create and
-move note blocks (both scopes, under their own permission).  Deliberately NOT
-offered under any permission: deleting anything, rewriting flat labels, or
-touching pages outside the scope — and every successful call is streamed back
-to the UI as an ``action`` event so the user sees exactly what the agent did.  The human-facing description lives
-in ``docs/dev/ai_tools.md``; the base role prompt (AGENT_PROMPT) is user-editable in the
-prompt editor, the scope/permission lines are appended mechanically.
+Reads: list the pages (folder scope only); read a page (its notes and
+highlights, plus the extracted text of its PDF attachment when it has one);
+read a page's note outline with block ids; full-text-search the reachable
+pages' notes and PDF text via the two FTS indexes.  Writes: rename pages and
+file them into (sub)folders (folder scope only); edit, create and move note
+blocks (both scopes, under their own permission).  Deliberately NOT offered
+under any permission: deleting anything, rewriting flat labels, or touching
+pages outside the scope — and every successful call is streamed back to the
+UI as an ``action`` event so the user sees exactly what the agent did.  The
+human-facing description lives in ``docs/dev/ai_tools.md``; the base role
+prompt (AGENT_PROMPT) is user-editable in the prompt editor, the
+scope/permission lines are appended mechanically.  Renamed tools stay
+callable under their old name (``ai_context.DEPRECATED_TOOLS``) so saved
+chats replay.
 
 Folder semantics mirror ``frontend/src/libraryUtils.js``: ``properties.folder``
 is a comma-separated list of ``/``-nested paths, folders exist only through the
@@ -36,7 +40,7 @@ import sqlite3
 
 from fractional_indexing import generate_key_between
 
-from .ai_context import page_report_section
+from .ai_context import DEPRECATED_TOOLS, canonical_tool, page_report_section
 from .blocks_store import fetch_subtree, page_attachment, page_root_id
 from .db import page_now, user_db_path
 from .foldertags import clean_path, parse_tags
@@ -73,17 +77,20 @@ _RELAX_MAX_TERMS = 3
 # Base role prompt — the user-editable part (prompt editor, "Library agent");
 # agent_system() appends the mechanical scope/permission lines to it.
 AGENT_PROMPT = (
-    "You are also the user's library agent in Gamma, their PDF/notes library. "
-    "Pages carry nested folder paths ('/' nests; a page may be in several folders) "
-    "and flat labels; folders appear the moment a page is filed into them. Never "
-    "guess page ids. Use the reading tools to answer questions about the papers "
-    "themselves — e.g. to compare papers or write a summary. When asked to "
-    "organize, apply an explicit bulk instruction (e.g. a naming scheme) to every "
-    "matching page without asking again; ask first when the request is ambiguous. "
-    "You cannot delete anything or edit labels. After making changes, finish with "
-    "a short summary of what you changed. Your earlier tool calls and their "
-    "results stay in this conversation — don't repeat a call whose output you "
-    "already have; call again only when the library may have changed since."
+    "You are also the user's library agent in Gamma, their knowledge base of pages: "
+    "each page is an outline of notes, and some pages carry a PDF attachment (a "
+    "paper, a book, lecture notes). Pages carry nested folder paths ('/' nests; a "
+    "page may be in several folders) and flat labels; folders appear the moment a "
+    "page is filed into them. Never guess page ids. Use the reading tools to answer "
+    "questions about the pages themselves — their notes as much as their PDFs — "
+    "e.g. to compare papers or write a summary; cite a PDF by its page number and "
+    "say when something comes from the user's own notes. When asked to organize, "
+    "apply an explicit bulk instruction (e.g. a naming scheme) to every matching "
+    "page without asking again; ask first when the request is ambiguous. You "
+    "cannot delete anything or edit labels. After making changes, finish with a "
+    "short summary of what you changed. Your earlier tool calls and their results "
+    "stay in this conversation — don't repeat a call whose output you already "
+    "have; call again only when the library may have changed since."
 )
 
 
@@ -128,24 +135,32 @@ def _load_scoped_page(conn, scope: dict, args: dict):
     return (page_id, row[1] or "Untitled", props, tags), None
 
 
-def _scope_docs(conn, scope: dict) -> dict:
-    """doc_id → title for every PDF paper the scope can reach."""
+def _scope_pages(conn, scope: dict) -> dict:
+    """page_id → ``(title, doc_id)`` for every page the scope can reach
+    (doc_id "" when the page carries no PDF)."""
     if scope.get("type") == "page":
         loaded, error = _load_scoped_page(conn, scope, {"page_id": scope.get("page_id")})
         if error:
             return {}
-        _, title, props, _ = loaded
-        return {props["doc_id"]: title} if props.get("doc_id") else {}
-    docs = {}
-    for _, content, props_raw in conn.execute(
+        page_id, title, props, _ = loaded
+        attachment = page_attachment(props)
+        return {page_id: (title, attachment["id"] if attachment else "")}
+    pages = {}
+    for page_id, content, props_raw in conn.execute(
             "SELECT id, content, properties FROM unified_blocks WHERE parent_id = 'root'"):
         try:
             props = json.loads(props_raw or "{}")
         except ValueError:
             continue
-        if props.get("doc_id") and _page_in_scope(scope, "", parse_tags(props.get("folder"))):
-            docs[props["doc_id"]] = content or "Untitled"
-    return docs
+        if _page_in_scope(scope, page_id, parse_tags(props.get("folder"))):
+            attachment = page_attachment(props)
+            pages[page_id] = (content or "Untitled", attachment["id"] if attachment else "")
+    return pages
+
+
+def _scope_docs(conn, scope: dict) -> dict:
+    """doc_id → title for every PDF attachment the scope can reach."""
+    return {doc_id: title for title, doc_id in _scope_pages(conn, scope).values() if doc_id}
 
 
 def _load_scoped_block(conn, scope: dict, block_id) -> tuple:
@@ -483,10 +498,13 @@ def _run_move_block(conn, user: str, scope: dict, args: dict):
     return f'ok — block [{block["id"]}] moved', action
 
 
-def _run_search_pdfs(conn, user: str, scope: dict, args: dict):
-    """FTS snippets from the in-scope papers' PDF text (same index and query
-    rules as /api/pdf-search); un-indexed papers are kicked to the background
-    indexer and reported so the model knows results may be incomplete."""
+def _run_search_library(conn, user: str, scope: dict, args: dict):
+    """FTS snippets from the in-scope pages: their notes (block_fts, rebuilt
+    for changed pages first) and the text of their PDF attachments (pdf_fts —
+    same index and query rules as /api/search). Notes hits come first, with
+    block ids the note tools take; PDF hits carry page numbers. Un-indexed
+    PDFs are kicked to the background indexer and reported so the model
+    knows results may be incomplete."""
     query = str(args.get("query") or "").strip()
     if not query:
         return "error: empty query", None
@@ -494,17 +512,27 @@ def _run_search_pdfs(conn, user: str, scope: dict, args: dict):
         limit = max(1, min(int(args.get("limit") or 12), 30))
     except (TypeError, ValueError):
         limit = 12
-    docs = _scope_docs(conn, scope)
-    if not docs:
-        return ("No PDF papers are reachable from this chat.",
-                {"kind": "search", "summary": f"Searched PDFs for “{query[:60]}” — no papers"})
+    pages = _scope_pages(conn, scope)
+    if not pages:
+        return ("No pages are reachable from this chat.",
+                {"kind": "search", "summary": f"Searched library for “{query[:60]}” — no pages"})
+    docs = {doc_id: title for title, doc_id in pages.values() if doc_id}
     # Local import: keep gamma.* module load free of the routers package.
-    from .routers.search import _ensure_schema, _fts_query, _index_missing_async
+    from .block_index import fts_query, refresh, search_blocks
+    from .routers.search import _ensure_schema, _index_missing_async
+
+    pending = refresh(user, conn, list(pages))
 
     def fts(database, text):
-        match = _fts_query(text)
+        match = fts_query(text)
         found = []
-        if match:
+        if not match:
+            return found
+        for block_id, page_id, snippet in search_blocks(database, match, limit, set(pages)):
+            found.append(f'- note [{block_id}] in "{pages[page_id][0][:80]}" '
+                         f"(page_id {page_id}): {snippet}")
+        if docs:
+            hits = 0
             try:
                 for doc_id, page, snippet in database.execute(
                         "SELECT doc_id, page, snippet(pdf_fts, 2, '', '', '…', 14) FROM pdf_fts "
@@ -512,21 +540,24 @@ def _run_search_pdfs(conn, user: str, scope: dict, args: dict):
                     title = docs.get(doc_id)
                     if not title:
                         continue  # out-of-scope or deleted paper
-                    found.append(f'- "{title[:80]}" p.{page}: {snippet}')
-                    if len(found) >= limit:
+                    found.append(f'- PDF "{title[:80]}" p.{page}: {snippet}')
+                    hits += 1
+                    if hits >= limit:
                         break
             except sqlite3.OperationalError:
                 pass  # malformed MATCH — treat as no results
         return found
 
     relaxed = ""
+    missing: list = []
     with sqlite3.connect(user_db_path(user, "data.db")) as database:
         _ensure_schema(database)
-        current = {r[0] for r in database.execute(
-            "SELECT doc_id FROM pdf_fts_docs WHERE ver = ?", (INDEX_VERSION,))}
-        missing = [d for d in docs if d not in current]
-        if missing:
-            _index_missing_async(user, missing)
+        if docs:
+            current = {r[0] for r in database.execute(
+                "SELECT doc_id FROM pdf_fts_docs WHERE ver = ?", (INDEX_VERSION,))}
+            missing = [d for d in docs if d not in current]
+            if missing:
+                _index_missing_async(user, missing)
         lines = fts(database, query)
         if not lines:
             # The MATCH ANDs every term, and agents write long natural-language
@@ -545,22 +576,25 @@ def _run_search_pdfs(conn, user: str, scope: dict, args: dict):
                     relaxed = " ".join(terms[:keep])
                     break
     if lines and relaxed:
-        out = (f'No page contains all of "{query}". Closest hits for '
+        out = (f'Nothing contains all of "{query}". Closest hits for '
                f'"{relaxed}" ({len(lines)}) — verify them by reading before '
                "trusting them:\n" + "\n".join(lines))
     elif lines:
-        out = f'PDF text matches for "{query}" ({len(lines)}):\n' + "\n".join(lines)
+        out = (f'Matches for "{query}" ({len(lines)}; notes first, then PDF text):\n'
+               + "\n".join(lines))
     else:
-        out = (f'No PDF text matches for "{query}" or any part of it. Try the exact '
-               "words the paper would use, or read the likely pages directly. If you "
-               "still cannot find it, tell the user it is not in this document — do "
+        out = (f'No notes or PDF text match "{query}" or any part of it. Try the exact '
+               "words the page would use, or read the likely pages directly. If you "
+               "still cannot find it, tell the user it is not in their pages — do "
                "not answer from your own knowledge.")
     if missing:
-        out += (f"\n({len(missing)} paper(s) not indexed yet — indexing started, "
+        out += (f"\n({len(missing)} PDF(s) not indexed yet — indexing started, "
                 "search again shortly for complete results)")
+    if pending:
+        out += f"\n({pending} page(s) of notes still indexing — search again shortly)"
     about = "≈" if relaxed else ""
     return out, {"kind": "search",
-                 "summary": f"Searched PDFs for “{query[:60]}” — "
+                 "summary": f"Searched library for “{query[:60]}” — "
                             f"{about}{len(lines)} hit{'s' if len(lines) != 1 else ''}"}
 
 
@@ -645,17 +679,19 @@ TOOLS = [
         "spec": {
             "name": "read_page",
             "description": (
-                "Read one page this chat can reach: an excerpt of the paper's extracted "
-                "PDF text plus the user's highlighted passages and notes. Use it to answer "
-                "questions about specific papers or to write summaries/reports across "
-                "several. `pdf_chars` sets how much document text to include (default "
-                "{read_default}, up to {read_cap}; 0 = notes only — ask only for what "
-                "you need). A long paper doesn't fit in one call: `pdf_page` (1-based) "
-                "starts the excerpt at that PDF page — pass a search_pdfs hit's page "
-                "number to read around the match — and `pdf_offset` starts it that "
-                "many characters further in; when more text remains the excerpt ends "
-                "by naming the next offset, so keep calling to read as far as you "
-                "need."),
+                "Read one page this chat can reach: its title and properties, the "
+                "user's highlighted passages and notes, and — when the page carries a "
+                "PDF attachment — an excerpt of the attachment's extracted text. A page "
+                "without an attachment returns its notes (they are its content). Use it "
+                "to answer questions about specific pages or to write summaries/reports "
+                "across several. `pdf_chars` sets how much attachment text to include "
+                "(default {read_default}, up to {read_cap}; 0 = notes only — ask only "
+                "for what you need). A long document doesn't fit in one call: "
+                "`pdf_page` (1-based) starts the excerpt at that PDF page — pass a "
+                "search_library hit's page number to read around the match — and "
+                "`pdf_offset` starts it that many characters further in; when more "
+                "text remains the excerpt ends by naming the next offset, so keep "
+                "calling to read as far as you need."),
             "parameters": {
                 "type": "object",
                 "properties": {**_PAGE_ID_ARG, "pdf_chars": {"type": "integer"},
@@ -684,17 +720,19 @@ TOOLS = [
         },
     },
     {
-        "perm": "search", "kind": "search", "scopes": ("folder", "page"), "mutating": False, "run": _run_search_pdfs,
+        "perm": "search", "kind": "search", "scopes": ("folder", "page"), "mutating": False, "run": _run_search_library,
         "spec": {
-            "name": "search_pdfs",
+            "name": "search_library",
             "description": (
-                "Full-text search over the PDF contents of the papers this chat can reach "
-                "(pre-built index; snippets with page numbers). Matching is literal — a "
-                "page must contain every word of the query — so prefer 2-4 words the "
-                "page would actually use. When nothing matches all words, the closest "
-                "hits for a subset of them are returned, clearly labelled. Use it to "
-                "find where a topic is discussed, then read_page with pdf_page set to "
-                "a hit's page number to read the passage in context."),
+                "Full-text search over the pages this chat can reach: the user's notes "
+                "(hits name the block id and its page) and the text of PDF attachments "
+                "(hits name the PDF page number). Pre-built index; snippets. Matching is "
+                "literal — a note or PDF page must contain every word of the query — so "
+                "prefer 2-4 words the text would actually use. When nothing matches all "
+                "words, the closest hits for a subset of them are returned, clearly "
+                "labelled. Use it to find where a topic is discussed, then read_page "
+                "(with pdf_page set to a PDF hit's page number) or read_block (a note "
+                "hit's block id) to read the passage in context."),
             "parameters": {
                 "type": "object",
                 "properties": {
@@ -794,6 +832,11 @@ TOOLS = [
 ]
 
 _BY_NAME = {t["spec"]["name"]: t for t in TOOLS}
+# Deprecated names stay dispatchable (never offered) so a model copying an
+# old name out of replayed history is still served, not refused.
+for _old, _new in DEPRECATED_TOOLS.items():
+    if _new in _BY_NAME:
+        _BY_NAME[_old] = _BY_NAME[_new]
 MUTATING_TOOLS = {t["spec"]["name"] for t in TOOLS if t["mutating"]}
 
 
@@ -831,23 +874,28 @@ def agent_system(scope: dict, perms: dict | None = None, base: str = "") -> str:
         where = f'the folder "{path}"' if path else "the root of their library"
         text += f"The user is viewing {where}; only pages in it are reachable.\n"
     text += f"Available tools: {', '.join(names)}. Any other tool is disabled in the user's settings."
-    if "read_page" in names or "search_pdfs" in names:
+    if "read_page" in names or "search_library" in names:
         text += (
-            "\nFor any question about a paper's details — a number, a parameter, a "
-            "method, a figure — look the answer up with the tools before answering, "
-            "even if you think you know it: the excerpt in this conversation is only "
-            "part of the document.")
-        if "search_pdfs" in names:
+            "\nFor any question about what a page or its PDF says — a number, a "
+            "parameter, a method, a figure — look the answer up with the tools before "
+            "answering, even if you think you know it: the context in this "
+            "conversation is only part of the user's pages, and a PDF excerpt is "
+            "only part of the document.")
+        if "search_library" in names:
             text += (
-                " search_pdfs is literal keyword matching, so use words that would "
-                "appear on the page; if it finds nothing, retry with fewer or "
-                "different words rather than concluding the paper is silent."
-                + (" Follow a hit with read_page(pdf_page=N) and read neighbouring "
-                   "pages if the answer looks incomplete."
+                " search_library is literal keyword matching over the notes and the "
+                "PDF text, so use words that would appear there; if it finds nothing, "
+                "retry with fewer or different words rather than concluding the pages "
+                "are silent."
+                + (" Follow a PDF hit with read_page(pdf_page=N) and read neighbouring "
+                   "pages if the answer looks incomplete"
+                   + ("; follow a note hit with read_block(block_id)." if "read_block" in names else ".")
                    if "read_page" in names else ""))
         text += (
-            " Report only what you actually read; if you cannot find it, say it is "
-            "not in the document — never present a value from memory as the paper's.")
+            " Report only what you actually read, and say whether it comes from the "
+            "user's notes or from a PDF (with its page number); if you cannot find "
+            "it, say it is not in their pages — never present a value from memory as "
+            "the document's.")
     if "edit_block" in names or "create_block" in names or "move_block" in names:
         text += (
             "\nNote editing: call read_block first and use its exact block ids. "
@@ -886,8 +934,10 @@ def run_agent_tool(user: str, scope: dict, name: str, args: dict) -> tuple[str, 
     action is the ``{kind, summary, tool, args, result}`` UI event for EVERY
     call (reads and failures included), so nothing the agent does is invisible.
     Failures carry ``error: True``; the executors' own actions are enriched
-    with the same raw-call fields.
+    with the same raw-call fields. A deprecated name runs its current tool
+    and the action carries the current name.
     """
+    name = canonical_tool(name)
     tool = _BY_NAME.get(name)
     args = args if isinstance(args, dict) else {}
     if not tool or (scope.get("type") or "") not in tool["scopes"]:

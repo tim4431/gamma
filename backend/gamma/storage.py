@@ -1,6 +1,7 @@
 """Uploaded-file helpers: media types, content-hash storage, lookup, orphan
 cleanup."""
 
+import time
 import hashlib
 from pathlib import Path
 
@@ -117,16 +118,30 @@ def find_upload_file(filename: str, user: str) -> Path | None:
     return path if path.is_file() else None
 
 
+UPLOAD_GRACE_S = 15 * 60
+
+
 def cleanup_orphan_uploads(conn, uploads_dir: Path):
     """Delete files in uploads_dir that are no longer referenced by any block
     in conn. Extension-agnostic: a file survives when its stem is some page's
     ``doc_id`` (the PDF attachment) or any block's content/properties mention
-    ``/api/uploads/<filename>`` (images, generic file chips)."""
+    ``/api/uploads/<filename>`` (images, generic file chips).
+
+    Files younger than ``UPLOAD_GRACE_S`` are left alone: an upload is stored
+    BEFORE the block/page that references it is written (upload → attach, or
+    upload → insert chip), and an autosave of some other page landing in that
+    window used to delete the freshly stored file."""
     if not uploads_dir.exists():
         return []
     removed = []
+    now = time.time()
     for f in uploads_dir.iterdir():
         if not f.is_file():
+            continue
+        try:
+            if now - f.stat().st_mtime < UPLOAD_GRACE_S:
+                continue
+        except OSError:
             continue
         filename = f.name
         stem = f.stem

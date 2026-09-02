@@ -50,22 +50,33 @@ Backend
 - `blocks_store.get_or_create_doc_page` + `GET/POST /blocks/by-doc/{doc_id}`
   are the only "open-or-create page" path; the lookup key is the PDF hash.
   Note pages are created by a bare `POST /blocks {parent_id:"root"}`.
-- `clip.find_page` / `GET /library/lookup` scan only pages with `doc_id`; a
-  web clip without a PDF lands in a hard-coded "Web clips" page.
-- `search.py`: the only FTS index is `pdf_fts(doc_id, page, content)`;
+- ~~`clip.find_page` / `GET /library/lookup` scan only pages with `doc_id`; a
+  web clip without a PDF lands in a hard-coded "Web clips" page.~~ A clip
+  with no PDF makes a `web_url` page (stage 3); `find_page` stays the
+  by-attachment dedup, `find_web_page` covers the rest. `/clip/note` keeps
+  "Web clips" as the explicit append target.
+- ~~`search.py`: the only FTS index is `pdf_fts(doc_id, page, content)`;
   `/pdf-search` returns nothing for users without PDFs; there is no block FTS
-  (`/block-search` is a Python scan).
-- `ai_context.py`: context is framed as "Here is the PDF text"; a page with no
-  `doc_id` contributes only via `include_notes`. `AIChatRequest` takes both
+  (`/block-search` is a Python scan).~~ `block_fts` + `GET /api/search`
+  (stage 2). `/pdf-search` and `/block-search` remain until the frontend
+  switches.
+- ~~`ai_context.py`: context is framed as "Here is the PDF text"; a page with
+  no `doc_id` contributes only via `include_notes`. `AIChatRequest` takes both
   `doc_id` and `pages`. `ai_tools.search_pdfs` searches PDF text only;
   `list_pages` tags pages `pdf`/`note`; `read_page` args are `pdf_*`.
-  System prompts: "helping the user understand a PDF they are reading".
-- `shares.doc_id` is `NOT NULL` and still returned to the client (vestigial
-  since shares were re-keyed by page).
+  System prompts: "helping the user understand a PDF they are reading".~~
+  Stage 2: pages are the unit of context, `doc_id` is a compatibility input
+  resolving to its page, `search_library` searches both indexes. `read_page`'s
+  `pdf_*` argument names stay (documented as attachment text).
+- ~~`shares.doc_id` is `NOT NULL` and still returned to the client (vestigial
+  since shares were re-keyed by page).~~ Never read any more; the response's
+  `doc_id` is derived from the page. The column itself goes with the hand-run
+  `migrate --drop-share-doc-id` (stage 3, after the release ships).
 - `export-pdf` 400s without `doc_id` (correct — that format IS the PDF); the
   dialog already falls back to notes-as-PDF.
-- `metadata/status` skips pages with neither `doc_id` nor `source_url`
-  (now via `page_attachment()` — correct until stage 3 widens it).
+- ~~`metadata/status` skips pages with neither `doc_id` nor `source_url`
+  (now via `page_attachment()` — correct until stage 3 widens it).~~ Lists
+  pages with `properties.meta` too (`has_file: false`).
 - ~~`POST /uploads` rejects non-PDF; `upload-image` is the only other file
   path.~~ `POST /upload-file` takes the allowlist (stage 1).
 - ~~`clip._default_title` and `metadata._save_props` still know the
@@ -127,9 +138,13 @@ Global `users.db`
 - Backfill `shares.page_id` for rows minted when shares were keyed by PDF
   (resolve through the owner's pages.db; rows whose document is gone are
   deleted — they could never resolve).
-- Stage 3: drop `shares.doc_id` (rebuild the table; SQLite `DROP COLUMN`
-  needs 3.35+). Only after the Docker image and desktop release both ship
-  code that no longer writes it, since an older binary would fail to INSERT.
+- Stage 3: drop `shares.doc_id` — `migrate.drop_shares_doc_id()` (a table
+  rebuild, any SQLite version; idempotent), exposed as `python manage.py
+  migrate --drop-share-doc-id` and deliberately NOT called from `run_all()`.
+  Run it by hand only after the Docker image and desktop release both ship
+  code that no longer reads it and inserts without it (this change), since
+  an older binary would fail to INSERT (`NOT NULL`, no default). `db.py`
+  keeps creating the old shape for fresh installs until then.
 
 Status (2026-09-02): `gamma/migrate.py` is in place with every step above
 except the stage-3/4 schema ones (`run_all()` at startup + `manage.py
@@ -170,7 +185,8 @@ attachment, `pageTitle` state, "Untitled" fallback, copy sweep, Settings group
 ### Stage 1 — page-first creation, PDF as an action on a page
 *(frontend done 2026-09-02: New page tile/row + `createPage()`, the page
 header paperclip → `attachPdfToPage()` (URL/arXiv/DOI or upload; a PDF
-dropped on an attachment-less open page attaches too), non-image files
+dropped on an attachment-less open page attaches too; a PDF another page
+already carries → the 409 opens THAT page instead of duplicating), non-image files
 dropped on a block upload via `/api/upload-file` and render as a `FileChip`,
 text-preview covers, text-only pages remember their top block in the synced
 read-position map as `{page: 0, block}`.)*
@@ -204,36 +220,82 @@ read-position map as `{page: 0, block}`.)*
   non-highlight child blocks, ~240 chars, one window query).
 - Chat dock page picker lists ALL pages; copy "Search your pages…".
 
+Verified 2026-09-02 at the real UI (isolated server + Playwright): new page →
+title first → Enter into the first block; paperclip upload attaches and the
+viewer renders; duplicate attach opens the owning page; dropped `.txt`
+renders a file chip; cards say Page/PDF with text-preview covers; the chat
+picker lists every page. Found and fixed on the way: orphan-upload cleanup
+raced the upload→attach window (see `storage.UPLOAD_GRACE_S`).
+
 ### Stage 2 — search and AI read the whole knowledge base
+*(backend done 2026-09-02; frontend pending.)*
 - Add `block_fts(block_id, page_id, content)` (FTS5, same `textnorm`
   normalization, maintained on block writes) next to `pdf_fts`; one
   `/api/search` returning hits with `source: "notes" | "pdf"`, page id, and
   for PDF hits the page number. `/pdf-search` and `/block-search` become
-  thin wrappers, then are removed from the frontend.
+  thin wrappers, then are removed from the frontend. — **done (backend)**:
+  `gamma/block_index.py` (`block_fts` + `block_fts_meta(page_id,
+  updated_at, ver)` in data.db; rebuilt lazily per page when the page
+  root's `updated_at` moved, the version bumped, or a block writer called
+  `mark_page_dirty`; pruned with the page), `GET /api/search?q=&limit=&scope=`
+  in `routers/search.py` (notes first by bm25, then PDF; `scope` = folder
+  path; response shape in [api.md](api.md)). `/pdf-search` and
+  `/block-search` are untouched until the frontend switches.
 - Search panel groups: titles → this page (notes, then its PDF) → other
   pages → PDF text; "This PDF" only when the open page has one.
 - `AIChatRequest`: drop `doc_id`; `pages` + `page_id` only, attachment
   derived server-side. `ai_context.build_messages` frames context as
   "pages from the user's knowledge base"; a page section = title,
-  properties, notes, and (if attached) PDF excerpts.
+  properties, notes, and (if attached) PDF excerpts. — **done (backend)**:
+  `pages`/`page_id` are canonical (`gather_inputs` derives the attachment via
+  `page_attachment`; a page without one always contributes its notes);
+  `doc_id` is still accepted and resolves to its page (`page_for_doc`) for
+  older clients — the frontend should stop sending it. `CONTEXT_INTRO` +
+  `page_report_section` (title, `page_properties_line`, document text,
+  highlights, notes); the long-paper machinery (excerpt label, document map,
+  search relaxation, page cap) is unchanged.
 - Tools: `search_pdfs` → `search_library` (blocks + PDF text, `source`
   field); `list_pages` reports `attachments: ["pdf"]` instead of a kind;
   `read_page` args `pdf_page/pdf_chars/pdf_offset` keep working but are
   documented as "attachment text". System prompts rewritten around
-  pages. Update `docs/dev/ai*.md` in the same change.
+  pages. Update `docs/dev/ai*.md` in the same change. — **done (backend)**:
+  `search_library` (notes hits carry block ids, PDF hits page numbers;
+  `search_pdfs` kept as a replay/dispatch alias via
+  `ai_context.DEPRECATED_TOOLS`), prompts in `routers/ai.py` +
+  `ai_tools.py`. The Settings permission label "Search PDF text" is the
+  frontend's to rename (key stays `search`).
+
+*(frontend status 2026-09-02: the Ctrl+F panel keeps `/block-search` (fuzzy /
+regex over notes, library-wide) + `/pdf-search`; `/api/search` serves the AI
+tools and is verified with curl (notes + pdf hits). Settings pane label
+"Search PDF text" → "Search".)*
 
 ### Stage 3 — the page as a document
+*(backend bits done 2026-09-02 — see the inventory above; frontend pending.)*
 - Page header: title, labels, an "Attachments" row (PDF chip opens/toggles
   the viewer, web source chip, other files) and metadata (DOI/arXiv/authors
   from `properties.meta`) available on ANY page — a note about a paper you
   do not own the PDF of can still cite. Metadata popover no longer gated on
   `docId`; `metadata/status` covers pages with `meta` or `source_url` too.
+  — **done (backend)**: `metadata/status` lists pages with `meta` and no
+  attachment (`has_file: false`).
 - Extension clip without a PDF creates a page with `web_url` (title from the
   tab) instead of appending to "Web clips"; keep "clip selection into page"
-  as the append path.
-- Drop `shares.doc_id` (one-time backfill already keyed by page).
+  as the append path. — **done (backend)**: `clip._clip_web_page` (+
+  `selection` on the request, `find_web_page` dedup); `/clip/note` unchanged.
+  The extension itself does not send `selection` on a page save yet.
+- Drop `shares.doc_id` (one-time backfill already keyed by page). — **done
+  (backend, gated)**: nothing reads the column; `migrate.drop_shares_doc_id`
+  / `manage.py migrate --drop-share-doc-id` drops it by hand after the
+  release ships (see "One-time cleanup" above).
 - Read-position / scroll restore for text-only pages (top block id), so
   reopening any page lands where you were.
+
+*(frontend status 2026-09-02: text-only pages remember their top block
+(done, stage 1 note). NOT done yet: the metadata popover is still gated on
+the attachment (`docId`) and the page header has no attachments row — the
+paperclip covers "attach", not "list/remove"; `DELETE /pages/{id}/attachment`
+exists on the backend without a UI.)*
 
 ### Stage 4 — beyond one PDF per page (optional, later)
 - `properties.attachments: [{id, kind, name, source_url}]` with the primary

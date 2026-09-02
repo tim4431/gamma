@@ -1043,7 +1043,7 @@ export default function ChatDock({
                 <span className="chatPlusMenuIcon">
                   <BookIcon size={15} />
                 </span>
-                <span className="chatPlusMenuLabel">Add papers from library</span>
+                <span className="chatPlusMenuLabel">Add pages from library</span>
                 <span className="chatPlusMenuHint">{chatDocs.length ? `${chatDocs.length} selected` : "Search your papers"}</span>
               </button>
             </div>

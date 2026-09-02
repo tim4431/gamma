@@ -864,7 +864,7 @@ export const AGENT_PERM_ROWS = [
    "Read a paper's text plus your highlights and notes", ["folder", "page"]],
   ["block_read", OutlineIcon, "Read note blocks",
    "Read a page's note outline with block ids", ["folder", "page"]],
-  ["search", SearchIcon, "Search PDF text",
+  ["search", SearchIcon, "Search",
    "Full-text search across the folder's PDFs", ["folder", "page"]],
   ["rename", PenIcon, "Rename pages", "Change page titles on request", ["folder"]],
   ["move", FolderIcon, "Move pages",

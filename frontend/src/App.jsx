@@ -3758,9 +3758,7 @@ export default function App() {
         body: JSON.stringify({ title: "", ...(folder ? { folder } : {}) }),
       });
       await fetchHomeBlocks();
-      await openBlock(created.id, { pushNav: true });
-      // Title first, Notion-style; the seeded first block waits for Enter.
-      pendingFocusRef.current = null;
+      await openBlock(created.id, { pushNav: true, focusTitle: true });
       setTitleDraft("");
       setTitleEditing(true);
     } catch (err) {
@@ -3820,6 +3818,15 @@ export default function App() {
       }
       setStatus("PDF attached.");
     } catch (err) {
+      if (err.status === 409 && err.data?.page_id) {
+        // The library already holds this PDF on another page — the page is
+        // the unit, so open that one rather than duplicating the file.
+        updateTransfer(taskId, { status: "done", info: "already in library" });
+        setStatus("That PDF is already attached to another page — opening it.");
+        setLoading(false);
+        openBlock(err.data.page_id, { pushNav: true });
+        return;
+      }
       updateTransfer(taskId, { status: "error", info: (err.message || "failed").slice(0, 60) });
       setStatus(`Attach failed: ${err.message}`);
     } finally {
@@ -3932,8 +3939,10 @@ export default function App() {
         if (childBlocks.length === 0 && !readOnly) {
           const seedId = makeId();
           suppressAutosaveRef.current = true;
-          pendingFocusRef.current = seedId;
-          setBlocks([{ id: seedId, content: "", children: [], collapsed: false, editMode: true, properties: {} }]);
+          // A page created from "New page" gets the title first (Notion-
+          // style); the seed block waits for Enter there.
+          if (!opts?.focusTitle) pendingFocusRef.current = seedId;
+          setBlocks([{ id: seedId, content: "", children: [], collapsed: false, editMode: !opts?.focusTitle, properties: {} }]);
         } else {
           setBlocks(childBlocks);
         }
@@ -5363,7 +5372,15 @@ export default function App() {
                 onChange={(e) => setTitleDraft(e.target.value)}
                 onBlur={() => { renameTitle(titleDraft); setTitleEditing(false); }}
                 onKeyDown={(e) => {
-                  if (e.key === "Enter") { e.currentTarget.blur(); }
+                  if (e.key === "Enter") {
+                    e.currentTarget.blur();
+                    // On a fresh page, Enter continues into its empty first block.
+                    const first = blocksRef.current?.[0];
+                    if (blocksRef.current?.length === 1 && first && !first.content && !first.editMode) {
+                      pendingFocusRef.current = first.id;
+                      setBlocks((prev) => prev.map((b, i) => (i === 0 ? { ...b, editMode: true } : b)));
+                    }
+                  }
                   else if (e.key === "Escape") { setTitleDraft(pageTitle); setTitleEditing(false); }
                 }}
               />

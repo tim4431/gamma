@@ -11,6 +11,8 @@ Usage:
   python manage.py reset-guest      # wipe guest data (auto-runs daily)
   python manage.py setup            # idempotent: create guest + repair missing per-user DBs
   python manage.py migrate          # idempotent: normalize old data shapes (also runs at server start)
+  python manage.py migrate --drop-share-doc-id   # + drop the vestigial shares.doc_id column (by hand only,
+                                                 #   after every deployed binary stopped writing it)
 
 Respects GAMMA_DATA_DIR (defaults to this directory).
 """
@@ -163,9 +165,13 @@ def setup():
     print("Setup complete.")
 
 
-def migrate():
-    """Run gamma/migrate.py's normalization pass and print what it touched."""
-    from gamma.migrate import run_all
+def migrate(drop_share_doc_id: bool = False):
+    """Run gamma/migrate.py's normalization pass and print what it touched.
+    ``--drop-share-doc-id`` additionally rebuilds the global shares table
+    without its vestigial doc_id column — a one-way schema step that is never
+    part of the automatic pass; run it only once every deployed Gamma binary
+    ships code that no longer writes the column (docs/dev/user_db.md)."""
+    from gamma.migrate import drop_shares_doc_id, run_all
 
     summary = run_all()
     for user, counts in summary["users"].items():
@@ -173,6 +179,11 @@ def migrate():
     if summary["shares"]:
         print("  shares: " + ", ".join(f"{k}={v}" for k, v in summary["shares"].items()))
     print(f"Migration complete: {summary['changed']} row(s) changed.")
+    if drop_share_doc_id:
+        if drop_shares_doc_id():
+            print("  shares: dropped the doc_id column")
+        else:
+            print("  shares: doc_id column already gone")
 
 
 def main():
@@ -213,7 +224,7 @@ def main():
     elif cmd == "setup":
         setup()
     elif cmd == "migrate":
-        migrate()
+        migrate(drop_share_doc_id="--drop-share-doc-id" in sys.argv[2:])
     else:
         print(f"Unknown command: {cmd}")
         sys.exit(1)

@@ -204,13 +204,20 @@ const isMarkdownFile = (f) => /\.(?:md|markdown)$/i.test(f.name || "")
   || /^(?:text\/markdown|text\/x-markdown)$/i.test(f.type || "");
 
 // FastAPI errors come as {"detail": "..."} — show the human message, not raw JSON.
+// The thrown Error carries `status` and the parsed JSON body as `data`, so
+// callers can act on structured conflicts (e.g. a 409 naming another page).
 async function apiError(r) {
   const text = await r.text().catch(() => "");
+  let err;
   try {
     const j = JSON.parse(text);
-    if (typeof j?.detail === "string") return new Error(j.detail);
-  } catch {}
-  return new Error(text || `HTTP ${r.status}`);
+    err = new Error(typeof j?.detail === "string" ? j.detail : text || `HTTP ${r.status}`);
+    err.data = j;
+  } catch {
+    err = new Error(text || `HTTP ${r.status}`);
+  }
+  err.status = r.status;
+  return err;
 }
 
 // The share view (/?share=<token>): every same-origin API call carries the

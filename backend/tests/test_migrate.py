@@ -5,7 +5,7 @@ else, and a second run is a no-op with zero counts."""
 import json
 import sqlite3
 
-from conftest import make_page, make_user
+from conftest import login, make_page, make_user
 from gamma.db import PAGES_SCHEMA, connect_users_db, page_now, user_db_path
 from gamma.migrate import (normalize_data_db, normalize_pages_db, normalize_users_db,
                            run_all)
@@ -123,6 +123,42 @@ def test_users_db_backfills_or_deletes_doc_keyed_shares(guest):
         rows = dict(conn.execute("SELECT token, page_id FROM shares WHERE username = 'mig_owner'"))
         assert rows == {"mig-ok": "owner_page", "mig-keyed": "owner_page"}
         assert normalize_users_db(conn) == {"shares_backfilled": 0, "shares_deleted": 0}
+
+
+def test_drop_shares_doc_id_rebuilds_table_once(guest):
+    """The stage-3 schema step: by hand only (never in run_all), idempotent,
+    and the share endpoints keep working without the column."""
+    from gamma.migrate import drop_shares_doc_id
+
+    make_user("drop_owner", "pw")
+    owner = login("drop_owner", "pw")
+    page = make_page(owner, "Shared", properties={"doc_id": "drop_doc_1"})
+    token = owner.post(f"/api/share/{page['id']}").json()["token"]
+    with connect_users_db() as conn:
+        assert "doc_id" in [r[1] for r in conn.execute("PRAGMA table_info(shares)")]
+        # An unkeyed row that can't resolve goes with the column; the keyed one survives.
+        conn.execute("INSERT INTO shares (token, username, doc_id, page_id, created_at) "
+                     "VALUES ('drop-unkeyed', 'drop_owner', 'vanished', NULL, ?)", (page_now(),))
+        conn.commit()
+        assert drop_shares_doc_id(conn) is True
+        cols = [r[1] for r in conn.execute("PRAGMA table_info(shares)")]
+        assert "doc_id" not in cols and "page_id" in cols and "allowed_users" in cols
+        assert conn.execute("SELECT page_id FROM shares WHERE token = ?", (token,)).fetchone() == (page["id"],)
+        assert not conn.execute("SELECT 1 FROM shares WHERE token = 'drop-unkeyed'").fetchone()
+        assert drop_shares_doc_id(conn) is False  # already gone: a no-op
+        assert normalize_users_db(conn) == {"shares_backfilled": 0, "shares_deleted": 0}
+    # Reads and the adaptive INSERT work without the column.
+    r = owner.get(f"/api/share/{token}")
+    assert r.status_code == 200 and r.json()["doc_id"] == "drop_doc_1"  # derived from the page
+    other = make_page(owner, "Plain")
+    r = owner.post(f"/api/share/{other['id']}")
+    assert r.status_code == 200, r.text
+    assert owner.get(f"/api/share/{r.json()['token']}").json()["doc_id"] == ""
+    assert run_all()["shares"] == {}
+    # Put the column back so the rest of the suite sees the shipped schema.
+    with connect_users_db() as conn:
+        conn.execute("ALTER TABLE shares ADD COLUMN doc_id TEXT NOT NULL DEFAULT ''")
+        conn.commit()
 
 
 def test_run_all_reports_only_what_changed(guest):

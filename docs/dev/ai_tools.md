@@ -17,14 +17,14 @@ shared `gamma/foldertags.py` rules; keep them in sync.
 | Tool | Permission | Scope | What it does |
 |---|---|---|---|
 | `list_pages` | List pages | folder | List the folder's pages: id, title, attachments (`[pdf]` when the page carries a PDF, `[]` for text-only), folder paths, labels, cached metadata (first author, year, venue), last-update date |
-| `read_page` | Read papers & notes | folder + paper | Read one page: a windowed excerpt of the extracted PDF text plus the user's highlights and notes |
-| `read_block` | Read note blocks | folder + paper | Read a page's notes as an id-prefixed outline — the ids the editing tools take |
-| `search_pdfs` | Search PDF text | folder + paper | Full-text search over the reachable PDFs, snippets with page numbers |
+| `read_page` | Read pages | folder + page | Read one page: title, properties, the user's highlights and notes, and — when it carries a PDF — a windowed excerpt of the attachment's extracted text |
+| `read_block` | Read note blocks | folder + page | Read a page's notes as an id-prefixed outline — the ids the editing tools take |
+| `search_library` | Search library | folder + page | Full-text search over the reachable pages' notes AND PDF text; hits carry a `source` (note hits: block id + page, PDF hits: page number). `search_pdfs` is its deprecated alias (replay only) |
 | `rename_page` | Rename pages | folder | Change a page's title |
 | `move_page` | Move pages | folder | File a page into a (sub)folder |
-| `edit_block` | Edit note blocks | folder + paper | Replace one note block's markdown text |
-| `create_block` | Edit note blocks | folder + paper | Add a note block under a page or block, optionally after a sibling |
-| `move_block` | Edit note blocks | folder + paper | Re-parent/reorder a note block (with its subtree) |
+| `edit_block` | Edit note blocks | folder + page | Replace one note block's markdown text |
+| `create_block` | Edit note blocks | folder + page | Add a note block under a page or block, optionally after a sibling |
+| `move_block` | Edit note blocks | folder + page | Re-parent/reorder a note block (with its subtree) |
 
 ### list_pages (folder only)
 
@@ -34,25 +34,37 @@ the cheap way to learn how a library is organized before acting on it.
 
 ### read_page (both scopes)
 
-Returns a `page_report_section`: an excerpt of the extracted document text
-plus the page's highlights and nested notes. `pdf_chars` sizes the excerpt per
-call, capped by the Settings → Assistant "Read window" preference
-(`gamma-ai-read-chars` → request `read_char_limit`, riding in the scope dict
-as `read_chars`; default cap 20 000 — `agent_tools` formats the effective cap
-into the armed spec so the model knows what it may ask for). `pdf_page` starts
-the excerpt at a 1-based PDF page (extract_text's `start_page` — how a
-`search_pdfs` hit is followed up), and `pdf_offset` windows onward from there;
-while text remains, the excerpt names the next offset, so long papers are read
-in successive windows.
+Returns a `page_report_section`: the page's title, a properties line
+(folders, labels, cached metadata, web source, attachment), an excerpt of the
+attachment's extracted text when the page carries a PDF, then the page's
+highlights and nested notes. A page without an attachment returns its notes —
+they are its content. `pdf_chars` sizes the excerpt per call, capped by the
+Settings → Assistant "Read window" preference (`gamma-ai-read-chars` →
+request `read_char_limit`, riding in the scope dict as `read_chars`; default
+cap 20 000 — `agent_tools` formats the effective cap into the armed spec so
+the model knows what it may ask for). `pdf_page` starts the excerpt at a
+1-based PDF page (extract_text's `start_page` — how a `search_library` PDF
+hit is followed up), and `pdf_offset` windows onward from there; while text
+remains, the excerpt names the next offset, so long documents are read in
+successive windows. The `pdf_*` names stay for compatibility; they mean
+"attachment text".
 
-### search_pdfs (both scopes)
+### search_library (both scopes)
 
-In-scope FTS snippets via the `routers/search.py` helpers (the same index and
-query rules as Ctrl+F); un-indexed papers are kicked to the background indexer
-and reported so the model knows results may be incomplete. The MATCH ANDs
-every term, so a zero-hit query is retried with only its longest words and the
-result labelled approximate — otherwise the strict query reads as "the paper
-is silent" and the model answers from memory.
+One query over both FTS indexes for the in-scope pages: the notes index
+(`gamma/block_index.py` — refreshed for changed pages before the query, so an
+edit made a moment ago is found) and the PDF index (`routers/search.py`
+helpers — the same indexes and query rules as `GET /api/search` / Ctrl+F).
+Note hits come first as `- note [block_id] in "title" (page_id …): snippet`
+— ids `read_block` and the editors take — then PDF hits as `- PDF "title"
+p.N: snippet`. Un-indexed PDFs are kicked to the background indexer and
+reported (as are note pages waiting for a rebuild batch) so the model knows
+results may be incomplete. The MATCH ANDs every term, so a zero-hit query is
+retried with only its longest words and the result labelled approximate —
+otherwise the strict query reads as "the pages are silent" and the model
+answers from memory. `search_pdfs` (the pre-Stage-2 name) is kept only as a
+dispatch alias for replayed chats — see "Replay across turns" in
+[ai.md](ai.md).
 
 ### read_block (both scopes)
 
@@ -90,9 +102,11 @@ unwanted block is emptied or left for the user.
 
 Typical uses: *"rename these to AuthorYear style"*, *"file the readout papers
 into a subfolder"*, *"which of these papers measure T1? summarize the
-approaches"*, *"tidy my notes on this paper into sections"* — and in a paper
-chat, *"where does this paper define the protocol?"* (it searches inside the
-PDF and quotes page numbers) or *"add a summary block to my notes"*.
+approaches"*, *"where did I note something about bias-preserving gates?"*
+(a notes hit with its block id), *"tidy my notes on this page into
+sections"* — and in a page chat, *"where does this paper define the
+protocol?"* (it searches inside the PDF and quotes page numbers) or *"add a
+summary block to my notes"*.
 
 ## Guardrails
 

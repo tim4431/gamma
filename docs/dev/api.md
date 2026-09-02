@@ -105,14 +105,23 @@ touches a page's attachment. `GET /pages/{id}/export*` live in `export.py`.
 | GET | `/quota` | effective limits + usage for the session user |
 | POST | `/share/{page_id}` | create the page's share link (defaults `anyone`/`view`; optional body `{audience, role, users}` applies to a NEW link) or return the existing one unchanged — root blocks only (400 otherwise) |
 | GET/PUT/DELETE | `/share-settings/{page_id}` | owner: read settings (`{token: null}` when unshared) / change `audience`, `role`, `users` (`["carol"]` or `[{name, role}]`; validated: `edit`+`anyone` → 400, unknown usernames or roles → 400; the token stays) / stop sharing (the token dies) |
-| GET | `/share/{token}` | resolve a link for this viewer → `{page_id, doc_id, username, audience, role, can_edit, viewer}`; 404 unknown, 401 sign in first, 403 signed in but not allowed |
+| GET | `/share/{token}` | resolve a link for this viewer → `{page_id, doc_id, username, audience, role, can_edit, viewer}` (`doc_id` = the page's PDF attachment id via `page_attachment`, `""` without one — the vestigial `shares.doc_id` column is never read); 404 unknown, 401 sign in first, 403 signed in but not allowed |
 
-### Search (`search.py`)
+### Search (`search.py`, `gamma/block_index.py`)
 | Method | Path | Purpose |
 |---|---|---|
-| GET | `/pdf-search` | FTS5 over extracted PDF text (built lazily in background) |
-| POST | `/search-reindex` | full rebuild, or just `doc_ids` from the body |
+| GET | `/search?q=&limit=&scope=` | one search over the knowledge base: notes (`block_fts`) + PDF text (`pdf_fts`). `scope` = `""` (library) or a folder path (that folder and its subfolders). → `{"results": [...], "indexing": n}`; results are notes hits first (bm25 order) then PDF hits, each capped at `limit` (default 20, max 100). A notes hit is `{"source": "notes", "block_id", "page_id", "title", "snippet"}` (`block_id` = the matched block, `page_id` its page root, `title` the page's); a PDF hit is `{"source": "pdf", "block_id", "page_id", "doc_id", "title", "page", "snippet"}` (`block_id` = `page_id` = the page carrying the PDF, `page` the 1-based PDF page). `indexing` = note pages still waiting for a rebuild batch + PDFs the background extractor hasn't reached. Owner-only |
+| GET | `/pdf-search` | the PDF-only predecessor (same `pdf_fts` index; hits `{block_id, doc_id, title, page, snippet}`) — the frontend still uses it |
+| POST | `/search-reindex` | full rebuild (PDF text re-extracted in the background, every note page stamped stale for the next search), or just `doc_ids` from the body |
 | GET | `/tasks` | background task progress (indexing, downloads) |
+
+The notes index is rebuilt lazily per page: a search first refreshes every
+page whose `block_fts_meta` row is missing, older than `textnorm.INDEX_VERSION`,
+or no longer matches the page root's `updated_at`; the block writers that
+change a child without touching the root (`POST /blocks`, `PUT /blocks/{id}`,
+`DELETE /blocks/{id}`, `PUT /blocks/{id}/children` on a nested block, a
+re-parenting `reorder`, `blocks-replace`) call `block_index.mark_page_dirty`.
+Deleting a page prunes its rows (`_purge_derived_data`).
 
 ### Link previews (`links.py`)
 | Method | Path | Purpose |
@@ -122,10 +131,10 @@ touches a page's attachment. `GET /pages/{id}/export*` live in `export.py`.
 ### Browser extension (`clip.py`) — see [extension.md](extension.md)
 | Method | Path | Purpose |
 |---|---|---|
-| POST | `/clip` | one-shot "save this paper": dedup by DOI/arXiv/URL → resolve → fetch + store (`save_copy`) → page (`get_or_create_doc_page`) → folder/labels → metadata in a background thread. Body: `source_url, pdf_url, doi, arxiv_id, doc_id (pre-uploaded bytes), title, folder, labels, allow_oa, save_copy`. Returns `{block_id, doc_id, title, existed, open_url, note?}`; a dead link is a 400 and creates no page |
-| GET | `/library/lookup?doi=&arxiv_id=&url=` | is this paper in the library (`properties.meta`, `source_url`, `web_url`, URL hash)? 404 when not |
+| POST | `/clip` | one-shot "save this page": dedup by DOI/arXiv/URL → resolve → fetch + store (`save_copy`) → page (`get_or_create_doc_page`) → folder/labels → metadata in a background thread. Body: `source_url, pdf_url, doi, arxiv_id, doc_id (pre-uploaded bytes), title, selection, folder, labels, allow_oa, save_copy`. Returns `{block_id, doc_id, title, existed, open_url, folder, labels, note?}`. **No PDF resolvable** (a plain web page, or a dead/HTML link) → a page titled from `title` (else the URL tail) with `properties.web_url = source_url` and the `selection` (if any) as its first `> quote — [title](url)` block; `doc_id` is `""` and `note` says so. Re-clipping that URL finds the page (`find_web_page`, by `web_url` on attachment-less pages), files it and appends the new selection. Only a request with nothing at all (no URL, title or selection) is a 400 |
+| GET | `/library/lookup?doi=&arxiv_id=&url=` | is this page in the library (`properties.meta`, `source_url`, `web_url`, URL hash — web-clip pages by `web_url`)? 404 when not |
 | GET | `/library/folders` | `{folders, labels}` in use (folder paths include their ancestors) — the popup's pickers |
-| POST | `/clip/note` | append `> quote — [title](url)` as the last block of `page_id`, or of the "Web clips" page (created on first use) |
+| POST | `/clip/note` | the explicit "clip into page" append: `> quote — [title](url)` as the last block of `page_id`, or of the "Web clips" page (created on first use) |
 
 All four are session-only (`require_user`), never share-token readable.
 
@@ -135,12 +144,12 @@ All four are session-only (`require_user`), never share-token readable.
 | POST | `/metadata/fetch` | resolve a paper (arXiv → DOI → AI extraction), cache meta + BibTeX on the page |
 | POST | `/metadata/update` | save hand-edited fields (rebuilds BibTeX) |
 | POST | `/metadata/cite` | BibTeX → PPT-style citation via AI |
-| GET | `/metadata/status` | library-wide health table (feeds Settings → Library) |
+| GET | `/metadata/status` | library-wide health table (feeds Settings → Library): every page with a PDF attachment plus pages carrying `properties.meta` without one (`has_file: false`) |
 
 ### AI (`ai.py`) — all config is per-user GUI entries, no env API keys
 | Method | Path | Purpose |
 |---|---|---|
-| POST | `/ai/chat` | chat; NDJSON stream of `{context}` (first line: per-document coverage — native/text, pages shown of total) then `{delta}`/`{action}`/`{error}`; carries model id, effort, context, images, files, and the agent scope (see [ai.md](ai.md)) |
+| POST | `/ai/chat` | chat; NDJSON stream of `{context}` (first line: per-page coverage — native/text, pages shown of total; `doc_id` `""` for a page without a PDF) then `{delta}`/`{action}`/`{error}`; context is `pages` (several) or `page_id` (one — its PDF attachment derived server-side; `doc_id` accepted for older clients only), plus model id, effort, images, files, and the agent scope (see [ai.md](ai.md)) |
 | GET | `/ai/models` | model registry (each model carries `native_pdf`: whether its provider accepts the PDF file itself) + default prompts (feeds the model switchers and prompt editor) |
 | GET | `/ai/settings` | masked provider list (key hints only) |
 | POST/PUT/DELETE | `/ai/providers[/{id}]` | manage provider entries |

@@ -198,25 +198,27 @@ def serialize_share_users(users: list[dict]) -> str:
 
 
 def share_lookup(token: str) -> dict | None:
-    """The share row for a token as a dict ({token, username, doc_id, page_id,
+    """The share row for a token as a dict ({token, username, page_id,
     audience, role, users}), or None. Every row carries page_id: the ones
     minted before shares were keyed by page were backfilled (or deleted) by
-    gamma/migrate.py, so a row without one is treated as dead. doc_id is
-    still returned (informational) until stage 3 drops the column."""
+    gamma/migrate.py, so a row without one is treated as dead. The vestigial
+    ``shares.doc_id`` column is never read (the page's attachment is what
+    counts — blocks_store.page_attachment); ``migrate.drop_shares_doc_id``
+    removes it once every deployed binary stopped writing it."""
     if not token:
         return None
     with sqlite3.connect(str(USERS_DB)) as conn:
         row = conn.execute(
-            "SELECT username, doc_id, page_id, audience, role, allowed_users "
+            "SELECT username, page_id, audience, role, allowed_users "
             "FROM shares WHERE token = ?", (token,)
         ).fetchone()
         if not row:
             return None
-        username, doc_id, page_id, audience, role, allowed = row
+        username, page_id, audience, role, allowed = row
     if not page_id:
         return None
     return {
-        "token": token, "username": username, "doc_id": doc_id or "", "page_id": page_id,
+        "token": token, "username": username, "page_id": page_id,
         "audience": audience if audience in SHARE_AUDIENCES else "anyone",
         "role": role if role in SHARE_ROLES else "view",
         "users": parse_share_users(allowed),

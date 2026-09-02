@@ -81,23 +81,36 @@ retry as extracted text if the backend rejects them.
 Completions API. Requests carry a model-registry id, optional `effort`
 (→ Anthropic `output_config.effort` / OpenAI `reasoning_effort`; omitted unless
 set — some models reject it), optional `system` override, pasted `images`
-(data URLs → native image content parts), and `pages`/`include_notes` for
-multi-paper context. `stream: true` (the chat UI's mode) returns NDJSON lines
-of `{"delta"}`/`{"error"}` parsed from the provider's SSE; upstream failures
+(data URLs → native image content parts), and the context PAGES: `pages`
+(several — a report across pages) or, when empty, the one page of `page_id`
+(the open page). A page's PDF attachment is derived server-side
+(`blocks_store.page_attachment`) — `doc_id` is still accepted for older
+clients and resolves to the page carrying that PDF, but nothing new may
+depend on it. `stream: true` (the chat UI's mode) returns NDJSON lines of
+`{"delta"}`/`{"error"}` parsed from the provider's SSE; upstream failures
 before the first byte still return normal HTTP errors.
 
-Context is extracted text by default (a head excerpt labelled as such when the
-document doesn't fit — see [ai_context.md](ai_context.md)), or the PDF itself
-as a native document/file content part when the request sets `attach_pdf`; the
-built-in chat system prompt grounds paper claims in text actually read (the
-model must look details up or say they're absent, never fill gaps from memory).
+Context is *pages from the user's knowledge base* (`ai_context.gather_inputs`
+→ `page_report_section`): each page contributes its title, a properties line
+(folders, labels, cached metadata, web source, attachment) and its notes
+tree; a page that carries a PDF adds the document's extracted text (a head
+excerpt labelled as such when the document doesn't fit — see
+[ai_context.md](ai_context.md)), or the PDF itself as a native document/file
+content part when the request sets `attach_pdf`, and shows its notes only
+with `include_notes`. A page without an attachment IS its notes, so they
+always go — `include_notes` only means "also add my notes/highlights for PDF
+pages". The built-in chat system prompt frames the model as working inside
+that knowledge base and grounds claims about the pages in text actually read
+(look details up or say they're absent, never fill gaps from memory; cite a
+PDF by page number, say when something comes from the user's notes).
 
 Whatever went to the model is reported back: the stream's first line is
 `{"context": [...]}` (non-stream: a `context` field) with one entry per
-document — `title`, `doc_id`, `native` (the file itself was sent),
-`native_requested`, `partial`, `chars`, `pages`, `pages_shown` (uploaded
-`files` are reported the same way, and get the single-paper budget when they
-fall back to text). The chat saves it on the reply and shows a chip only when
+page — `title`, `doc_id` (`""` for a page without a PDF), `native` (the file
+itself was sent), `native_requested`, `partial`, `chars`, `pages`,
+`pages_shown` (uploaded `files` are reported the same way, and get the
+single-page budget when they fall back to text). The chat saves it on the
+reply and shows a chip only when
 it matters: "Model saw pages 1–9 of 22" for a truncated paper, "PDF file not
 accepted — sent as text" when the file was requested but the provider took
 text instead. `/api/ai/models` marks each model `native_pdf` (false for
@@ -133,9 +146,9 @@ What it can reach depends on where the chat is opened — every chat declares an
 
 - `"folder"` — the home/folder chat (`folder` = current path, `""` = root):
   tools reach the pages in that folder.
-- `"page"` — the paper chat (`page_id` = the focused page): tools reach only
-  that paper — the reading tools plus the note-block editors; the page-level
-  organizers (list/rename/move) don't exist there.
+- `"page"` — the page chat (`page_id` = the focused page, with or without a
+  PDF): tools reach only that page — the reading tools plus the note-block
+  editors; the page-level organizers (list/rename/move) don't exist there.
 
 The request also carries `permissions` (the effective per-chat tool choices,
 initially based on Settings → Assistant → Folder agent — localStorage JSON
@@ -159,10 +172,11 @@ header's ⚙ popover also carries a Tools section — the per-chat switch plus t
 same per-tool permission rows Settings shows (filtered to the chat's scope,
 editing the same stored map; `AGENT_PERM_ROWS` in `settings.jsx`).
 
-One permission per capability: List pages, Read papers & notes, Read note
-blocks, Search PDF text, Rename pages, Move pages, and Edit note blocks (one
-toggle arming `edit_block`/`create_block`/`move_block` together). Folder scope
-offers all of them; PDF scope exposes the reading tools and the note-block
+One permission per capability: List pages, Read pages, Read note blocks,
+Search library (`search_library` — notes and PDF text; the stored key is
+still `search`), Rename pages, Move pages, and Edit note blocks (one toggle
+arming `edit_block`/`create_block`/`move_block` together). Folder scope
+offers all of them; page scope exposes the reading tools and the note-block
 editors. Plus:
 
 - **Tool rounds** (`gamma-ai-tool-rounds` → request `tool_rounds`, default 32,
@@ -201,7 +215,13 @@ replays each saved reply's recorded actions as assistant `tool_calls` +
 instead of re-listing; results share `TOOL_REPLAY_BUDGET` chars newest-first
 (older ones elided), and `_anthropic_messages` folds a plain user turn into a
 preceding tool_result turn to keep roles alternating. Plain chats never replay
-(providers reject tool blocks without tool defs).
+(providers reject tool blocks without tool defs). Renamed tools replay under
+their current name (`ai_context.DEPRECATED_TOOLS`, e.g. the saved
+`search_pdfs` chips of old chats become `search_library` calls), and a model
+that copies the old name out of that history is still served: the agent loop
+and `run_agent_tool` canonicalize the name before the permission check and
+dispatch, and the resulting action chip carries the current name. Old names
+are never offered as tools.
 
 OpenAI-protocol calls that carry tools are rerouted to the platform
 `/v1/responses` (`wire_protocol`) — gpt-5.x rejects function tools on chat
