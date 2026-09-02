@@ -51,10 +51,15 @@ USERS_SCHEMA = [
         guest_date TEXT,
         created_at TEXT NOT NULL
     )""",
+    # Read-only share links, one per (owner, page). page_id is the shared page's
+    # root block; doc_id is informational (the page's PDF, "" for a note page).
+    # Rows minted before shares were keyed by page carry only doc_id — the auth
+    # layer backfills page_id on first use (gamma/auth.py share_grant).
     """CREATE TABLE IF NOT EXISTS shares (
         token TEXT PRIMARY KEY,
         username TEXT NOT NULL,
         doc_id TEXT NOT NULL,
+        page_id TEXT,
         created_at TEXT NOT NULL
     )""",
     # Server-wide admin-tunable settings (see gamma/server_settings.py) — a
@@ -183,6 +188,10 @@ def connect_users_db() -> sqlite3.Connection:
         # per-user storage-limit overrides; NULL = inherit the server default
         conn.execute("ALTER TABLE users ADD COLUMN max_upload_mb INTEGER")
         conn.execute("ALTER TABLE users ADD COLUMN quota_mb INTEGER")
+    share_cols = [r[1] for r in conn.execute("PRAGMA table_info(shares)")]
+    if "page_id" not in share_cols:
+        # shares used to be keyed by PDF doc id; they are keyed by page now
+        conn.execute("ALTER TABLE shares ADD COLUMN page_id TEXT")
     conn.commit()
     return conn
 

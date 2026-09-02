@@ -121,24 +121,15 @@ def page_root_id(conn, block_id: str) -> str | None:
     return None
 
 
-def block_doc_id(conn, block_id: str) -> str | None:
-    row = conn.execute(
-        "SELECT json_extract(properties, '$.doc_id') FROM unified_blocks WHERE id = ?",
-        (block_id,),
-    ).fetchone()
-    return row[0] if row and row[0] else None
-
-
-def assert_block_in_doc(conn, block_id: str, scope_doc_id) -> None:
-    """For a share-scoped request (scope_doc_id set), raise 403 unless block_id
-    lives inside the page identified by scope_doc_id. No-op for full-access
-    session users (scope_doc_id is None)."""
-    if scope_doc_id is None:
+def assert_block_in_page(conn, block_id: str, scope_page_id) -> None:
+    """For a share-scoped request (scope_page_id set), raise 403 unless block_id
+    is the shared page or lives inside it. No-op for full-access session users
+    (scope_page_id is None)."""
+    if scope_page_id is None:
         return
     from fastapi import HTTPException
 
-    root = page_root_id(conn, block_id)
-    if not root or block_doc_id(conn, root) != scope_doc_id:
+    if page_root_id(conn, block_id) != scope_page_id:
         raise HTTPException(status_code=403, detail="not accessible via this share link")
 
 

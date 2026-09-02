@@ -9,7 +9,7 @@ from fastapi import HTTPException, Request
 from fastapi.responses import JSONResponse
 
 from .config import USERS_DB
-from .db import page_now
+from .db import page_now, user_db_path
 from .logbuf import log
 from .seed import reset_guest_data
 
@@ -178,35 +178,63 @@ def require_admin(request: Request) -> str:
     return user
 
 
-def share_grant(request: Request):
-    """(owner_username, doc_id) if the request carries a valid ?share=<token>,
-    else None. Cached on request.state so repeat calls in one request are free.
+def _legacy_share_page(username: str, doc_id: str) -> str | None:
+    """Page root id for a share row minted when shares were keyed by PDF doc
+    id: the owner's page whose properties carry that doc_id, or None if the
+    document is gone."""
+    try:
+        with sqlite3.connect(user_db_path(username, "pages.db")) as conn:
+            row = conn.execute(
+                "SELECT id FROM unified_blocks WHERE parent_id = 'root' "
+                "AND json_extract(properties, '$.doc_id') = ?",
+                (doc_id,),
+            ).fetchone()
+    except sqlite3.Error:
+        return None
+    return row[0] if row else None
+
+
+def share_grant(request: Request, token: str | None = None):
+    """(owner_username, page_id) if the request carries a valid ?share=<token>
+    (or ``token`` is passed explicitly), else None. Cached on request.state so
+    repeat calls in one request are free.
 
     This is the ONLY unauthenticated read path: a share token is minted per
-    document and names its owner, so access is scoped to that one document — the
-    old ?user= fallback trusted any username and leaked whole accounts.
+    page and names its owner, so access is scoped to that one page's subtree —
+    the old ?user= fallback trusted any username and leaked whole accounts.
+    Rows from before shares were keyed by page carry only a doc_id; those are
+    resolved to their page on first use and the row is backfilled.
     """
+    explicit = token is not None
     cached = getattr(request.state, "_share_grant", "unset")
-    if cached != "unset":
+    if cached != "unset" and not explicit:
         return cached
-    token = request.query_params.get("share")
+    if not explicit:
+        token = request.query_params.get("share")
     grant = None
     if token:
         with sqlite3.connect(str(USERS_DB)) as conn:
             row = conn.execute(
-                "SELECT username, doc_id FROM shares WHERE token = ?", (token,)
+                "SELECT username, doc_id, page_id FROM shares WHERE token = ?", (token,)
             ).fetchone()
-        if row:
-            grant = (row[0], row[1])
-    request.state._share_grant = grant
+            if row and not row[2] and row[1]:
+                page_id = _legacy_share_page(row[0], row[1])
+                if page_id:
+                    conn.execute("UPDATE shares SET page_id = ? WHERE token = ?", (page_id, token))
+                    conn.commit()
+                    row = (row[0], row[1], page_id)
+        if row and row[2]:
+            grant = (row[0], row[2])
+    if not explicit:
+        request.state._share_grant = grant
     return grant
 
 
-def share_scope_doc(request: Request):
-    """The doc id a read is confined to, or None for a full-access session user.
+def share_scope_page(request: Request):
+    """The page id a read is confined to, or None for a full-access session user.
 
-    Read endpoints pass this to blocks_store.assert_block_in_doc so a share
-    token can only reach its own document's subtree and assets.
+    Read endpoints pass this to blocks_store.assert_block_in_page so a share
+    token can only reach its own page's subtree and assets.
     """
     if request.state.user:
         return None
@@ -217,7 +245,7 @@ def share_scope_doc(request: Request):
 def resolve_user(request: Request) -> str:
     """Return the user whose data to read: the session user, or the owner named
     by a valid ?share=<token>. Read-only endpoints only; callers that can serve
-    a share view must also enforce share_scope_doc()."""
+    a share view must also enforce share_scope_page()."""
     user = request.state.user
     if user:
         return user

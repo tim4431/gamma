@@ -70,19 +70,19 @@ async def upload_image(request: Request, file: UploadFile = File(...)):
     }
 
 
-def _share_can_read_upload(user: str, scope_doc_id: str, filename: str) -> bool:
-    """A share link may read only its own document's PDF (``<doc_id>.pdf``) or a
-    file its subtree references (embedded images)."""
-    if filename == f"{scope_doc_id}.pdf":
-        return True
+def _share_can_read_upload(user: str, scope_page_id: str, filename: str) -> bool:
+    """A share link may read only its own page's PDF (``<doc_id>.pdf``) or a
+    file the page's subtree references (embedded images)."""
     with sqlite3.connect(user_db_path(user, "pages.db")) as conn:
-        root = conn.execute(
-            "SELECT id FROM unified_blocks WHERE json_extract(properties, '$.doc_id') = ?",
-            (scope_doc_id,),
+        doc = conn.execute(
+            "SELECT json_extract(properties, '$.doc_id') FROM unified_blocks WHERE id = ?",
+            (scope_page_id,),
         ).fetchone()
-        if not root:
+        if not doc:
             return False
-        rows = fetch_subtree(conn, root[0])
+        if doc[0] and filename == f"{doc[0]}.pdf":
+            return True
+        rows = fetch_subtree(conn, scope_page_id)
     needle = f"/api/uploads/{filename}"
     return any(needle in (r[3] or "") or needle in (r[4] or "") for r in rows)
 
@@ -105,15 +105,15 @@ async def serve_upload(filename: str, request: Request):
         raise HTTPException(status_code=400, detail="invalid filename")
 
     # Resolve who may read this: the session user (their own dir), or a valid
-    # ?share= token scoped to its one document. No bare ?user= access.
+    # ?share= token scoped to its one page. No bare ?user= access.
     user = request.state.user
-    scope_doc_id = None
+    scope_page_id = None
     if not user:
         grant = share_grant(request)
         if not grant:
             raise HTTPException(status_code=401)
-        user, scope_doc_id = grant
-    if scope_doc_id is not None and not _share_can_read_upload(user, scope_doc_id, filename):
+        user, scope_page_id = grant
+    if scope_page_id is not None and not _share_can_read_upload(user, scope_page_id, filename):
         raise HTTPException(status_code=403, detail="not accessible via this share link")
 
     path = find_upload_file(filename, user)

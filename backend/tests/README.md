@@ -5,6 +5,7 @@ In-process API tests — FastAPI `TestClient` against a throwaway data dir. No s
 ```
 conftest.py             throwaway GAMMA_DATA_DIR + client/auth fixtures
 test_auth.py            login / sessions / share-token access
+test_shares.py          page-keyed share links: note pages, legacy doc-keyed rows, asset/proxy scope
 test_blocks.py          block tree CRUD, positions, subtree replace
 test_search_export.py   search + export
 test_units.py           pure helpers (positions, parsers)

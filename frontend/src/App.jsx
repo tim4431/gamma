@@ -3720,8 +3720,9 @@ export default function App() {
       // document), never a bare ?user= (which used to grant whole-account reads).
       const shareParam = `?share=${encodeURIComponent(token)}`;
 
+      // The share names a page block directly (PDF pages and note pages alike).
       let block = null;
-      try { block = await apiJson(`${API}/blocks/by-doc/${data.doc_id}${shareParam}`); } catch {}
+      try { block = await apiJson(`${API}/blocks/${encodeURIComponent(data.page_id)}${shareParam}`); } catch {}
 
       let childBlocks = [];
       if (block) {
@@ -3743,10 +3744,10 @@ export default function App() {
       setFocusedBlock(block || null);
       setPdfTitle(block?.content || getPdfPageTitle(data.doc_id, src));
       setBlocks(childBlocks);
-      setDocId(data.doc_id);
+      setDocId(props.doc_id || data.doc_id || "");
       setInputUrl(src);
       setPdfUrl(proxiedUrl);
-      setStatus("Loaded shared doc.");
+      setStatus("Loaded shared page.");
     } catch (err) {
       setStatus(`Share open failed: ${err.message}`);
     } finally {
@@ -4169,9 +4170,9 @@ export default function App() {
   }
 
   async function fetchShareLink() {
-    if (!pdfUrl || readOnly) return;
+    if (!focusedBlockId || readOnly || homeMode) return;
     try {
-      const data = await apiJson(`${API}/share/${docId}`, {
+      const data = await apiJson(`${API}/share/${encodeURIComponent(focusedBlockId)}`, {
         method: "POST",
         credentials: "include",
       });
@@ -4639,7 +4640,9 @@ export default function App() {
   })();
   // Leaving home or changing folders drops the file-manager selection.
   useEffect(() => { clearSelection(); setHomeMenu(null); }, [folderFilter, categoryFilter, homeMode]);
-  const pageOnly = !pdfUrl && !!focusedBlockId && !readOnly;
+  // A page with no PDF — the owner's note pages and shared note pages alike —
+  // puts the notes in the center instead of an empty viewer.
+  const pageOnly = !pdfUrl && !!focusedBlockId;
   // Phone: navigating to another page (or home) closes any overlay panel.
   useEffect(() => { setPhonePanel(null); }, [focusedBlockId, homeMode]);
   const pageBlocks = useMemo(() => {
@@ -6610,7 +6613,7 @@ export default function App() {
         docNonce={pdfDocNonce}
         onFindMarks={setFindMarks}
       />
-      {pdfUrl && !homeMode ? (
+      {focusedBlockId && !homeMode ? (
         <span data-popover="share" style={{ position: "relative", display: "inline-flex" }}>
           <button
             className={`iconBtn ${openPopover === "share" ? "activeIcon" : ""}`}
@@ -6628,7 +6631,11 @@ export default function App() {
           {openPopover === "share" ? (
             <div className="popover sharePopover">
               <div className="popoverTitle">Share this page</div>
-              <div className="popoverHint">Anyone with the link can view the PDF, highlights, and notes — read-only, no login.</div>
+              <div className="popoverHint">
+                {pdfUrl
+                  ? "Anyone with the link can view the PDF, highlights, and notes — read-only, no login."
+                  : "Anyone with the link can view these notes — read-only, no login."}
+              </div>
               {shareUrl ? (
                 <div className="shareRow">
                   <input readOnly value={shareUrl} onFocus={(e) => e.target.select()} />

@@ -9,11 +9,11 @@ from fastapi import APIRouter, HTTPException, Request
 from fractional_indexing import generate_key_between
 from pydantic import BaseModel
 
-from ..auth import require_user, resolve_user, share_scope_doc
+from ..auth import require_user, resolve_user, share_scope_page
 from ..blocks_store import (
     BLOCK_COLUMNS,
     ancestor_chains,
-    assert_block_in_doc,
+    assert_block_in_page,
     block_to_dict,
     delete_children,
     delete_subtree,
@@ -213,14 +213,16 @@ async def blocks_replace(payload: BlockReplaceRequest, request: Request):
 
 @router.get("/blocks/by-doc/{doc_id}")
 async def ub_get_by_doc(doc_id: str, request: Request):
-    scope = share_scope_doc(request)
-    if scope is not None and doc_id != scope:
-        raise HTTPException(status_code=403, detail="not accessible via this share link")
+    scope = share_scope_page(request)
     with sqlite3.connect(user_db_path(resolve_user(request), "pages.db")) as conn:
         row = conn.execute(
             f"SELECT {BLOCK_COLUMNS} FROM unified_blocks WHERE json_extract(properties, '$.doc_id') = ?",
             (doc_id,),
         ).fetchone()
+    # A share may only learn about its own page — refuse before revealing
+    # whether any other doc id exists.
+    if scope is not None and (not row or row[0] != scope):
+        raise HTTPException(status_code=403, detail="not accessible via this share link")
     if not row:
         raise HTTPException(status_code=404, detail="block not found for doc_id")
     return block_to_dict(row)
@@ -237,7 +239,7 @@ async def ub_get_or_create_by_doc(doc_id: str, payload: UBByDocCreate, request: 
 
 @router.get("/blocks/{block_id}/children")
 async def ub_get_children(block_id: str, request: Request):
-    scope = share_scope_doc(request)
+    scope = share_scope_page(request)
     if scope is not None and block_id == "root":
         # A share link may not enumerate the owner's library root.
         raise HTTPException(status_code=403, detail="not accessible via this share link")
@@ -245,7 +247,7 @@ async def ub_get_children(block_id: str, request: Request):
         if block_id != "root":
             if not conn.execute("SELECT 1 FROM unified_blocks WHERE id = ?", (block_id,)).fetchone():
                 raise HTTPException(status_code=404, detail="block not found")
-        assert_block_in_doc(conn, block_id, scope)
+        assert_block_in_page(conn, block_id, scope)
         if block_id == "root":
             _repair_upload_path_titles(conn)
         rows = conn.execute(
@@ -257,9 +259,9 @@ async def ub_get_children(block_id: str, request: Request):
 
 @router.get("/blocks/{block_id}/subtree")
 async def ub_get_subtree(block_id: str, request: Request):
-    scope = share_scope_doc(request)
+    scope = share_scope_page(request)
     with sqlite3.connect(user_db_path(resolve_user(request), "pages.db")) as conn:
-        assert_block_in_doc(conn, block_id, scope)
+        assert_block_in_page(conn, block_id, scope)
         rows = fetch_subtree(conn, block_id)
     if not rows:
         raise HTTPException(status_code=404, detail="block not found")
@@ -271,7 +273,7 @@ async def ub_get_backlinks(block_id: str, request: Request):
     """Return all blocks that reference `block_id` via [[block_id]] syntax."""
     # Backlinks span the whole library by nature, so a per-document share link
     # can't use them without leaking other pages.
-    if share_scope_doc(request) is not None:
+    if share_scope_page(request) is not None:
         raise HTTPException(status_code=403, detail="not accessible via this share link")
     with sqlite3.connect(user_db_path(resolve_user(request), "pages.db")) as conn:
         rows = conn.execute(
@@ -299,9 +301,9 @@ async def ub_get_backlinks(block_id: str, request: Request):
 
 @router.get("/blocks/{block_id}")
 async def ub_get_block(block_id: str, request: Request):
-    scope = share_scope_doc(request)
+    scope = share_scope_page(request)
     with sqlite3.connect(user_db_path(resolve_user(request), "pages.db")) as conn:
-        assert_block_in_doc(conn, block_id, scope)
+        assert_block_in_page(conn, block_id, scope)
         row = conn.execute(
             f"SELECT {BLOCK_COLUMNS} FROM unified_blocks WHERE id = ?",
             (block_id,),

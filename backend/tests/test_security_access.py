@@ -44,23 +44,27 @@ def test_user_param_does_not_grant_writes(client, alice):
     assert r.status_code == 401
 
 
-# --- share token is scoped to its one document ------------------------------
+# --- share token is scoped to its one page ----------------------------------
+# (the share model itself — note pages, legacy rows, assets — is in test_shares.py)
 
-def test_share_token_reads_only_its_document(client, alice):
+def test_share_token_reads_only_its_page(client, alice):
     from fastapi.testclient import TestClient
     from gamma.app import app
 
     shared = make_page(alice, "Shared paper", properties={"doc_id": "shared_doc"})
     other = make_page(alice, "Other private", properties={"doc_id": "other_doc"})
-    token = alice.post("/api/share/shared_doc").json()["token"]
+    token = alice.post(f"/api/share/{shared['id']}").json()["token"]
 
     anon = TestClient(app)
-    # the shared document is reachable
-    assert anon.get("/api/blocks/by-doc/shared_doc", params={"share": token}).status_code == 200
+    # the shared page is reachable — by id and by its PDF's doc id
+    assert anon.get(f"/api/blocks/{shared['id']}", params={"share": token}).status_code == 200
     assert anon.get(f"/api/blocks/{shared['id']}/subtree", params={"share": token}).status_code == 200
+    assert anon.get("/api/blocks/by-doc/shared_doc", params={"share": token}).status_code == 200
     # everything else is not
-    assert anon.get("/api/blocks/by-doc/other_doc", params={"share": token}).status_code == 403
+    assert anon.get(f"/api/blocks/{other['id']}", params={"share": token}).status_code == 403
     assert anon.get(f"/api/blocks/{other['id']}/subtree", params={"share": token}).status_code == 403
+    assert anon.get("/api/blocks/by-doc/other_doc", params={"share": token}).status_code == 403
+    assert anon.get("/api/blocks/by-doc/no_such_doc", params={"share": token}).status_code == 403
     assert anon.get("/api/blocks/root/children", params={"share": token}).status_code == 403
     assert anon.get(f"/api/blocks/{shared['id']}/backlinks", params={"share": token}).status_code == 403
 

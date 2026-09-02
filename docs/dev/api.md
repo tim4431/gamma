@@ -10,12 +10,16 @@ else; in dev, Vite proxies `/api` → `127.0.0.1:9001`.
 - Share tokens (`?share=<token>`) are the ONLY unauthenticated **read** path.
   `resolve_user` returns the session user, or the owner named by a valid
   `?share=` token — there is no `?user=` fallback (it used to trust any
-  username and leaked whole accounts). A share is scoped to one document:
-  read endpoints that can serve a share view also call `share_scope_doc()` and
-  `blocks_store.assert_block_in_doc()`, so a token can only reach its own
-  document's subtree and assets — root listing, backlinks, other docs, and
-  folder export are refused (403). Keep that read/write + scope distinction when
-  adding endpoints.
+  username and leaked whole accounts). A share is keyed by PAGE (the root
+  block — so note pages without a PDF share exactly like papers; the PDF is
+  just the page's `doc_id`/`source_url`) and scoped to it: read endpoints that
+  can serve a share view also call `share_scope_page()` and
+  `blocks_store.assert_block_in_page()`, so a token can only reach its own
+  page's subtree and assets (its PDF, uploads its blocks reference, its own
+  `source_url` through the proxy) — root listing, backlinks, other pages, and
+  folder export are refused (403). Rows minted by the old doc-keyed model
+  (`page_id` NULL) are resolved to their page and backfilled on first use.
+  Keep that read/write + scope distinction when adding endpoints.
 - Outbound fetches of user-supplied URLs (PDF proxy/resolver, AI PDF
   re-download) go through `gamma.net_guard.guarded_urlopen`, which blocks
   non-http(s) schemes (`file:`, `ftp:`, …) and hosts that resolve to
@@ -71,7 +75,8 @@ Route order matters: the static-prefix routes (`by-doc`, `children`,
 | POST | `/uploads`, `/upload-image` | store files (content-hash names, dedup'd; quota-gated) |
 | GET | `/uploads/{filename}` | serve stored files |
 | GET | `/quota` | effective limits + usage for the session user |
-| POST/GET | `/share/{doc_id}`, `/share/{token}` | create/resolve read-only share links |
+| POST | `/share/{page_id}` | create (or return the existing) read-only share link for a page — root blocks only (400 otherwise) |
+| GET | `/share/{token}` | resolve a link → `{page_id, doc_id, username}` (`doc_id` is `""` for a note page) |
 
 ### Search (`search.py`)
 | Method | Path | Purpose |
