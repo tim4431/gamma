@@ -9,7 +9,7 @@ from fastapi import APIRouter, HTTPException, Request
 from fractional_indexing import generate_key_between
 from pydantic import BaseModel
 
-from ..auth import require_user, resolve_user, share_scope_page
+from ..auth import require_user, require_writer, resolve_user, share_scope_page
 from ..blocks_store import (
     BLOCK_COLUMNS,
     ancestor_chains,
@@ -317,10 +317,16 @@ async def ub_get_block(block_id: str, request: Request):
 async def ub_create_block(payload: UBCreateRequest, request: Request):
     block_id = secrets.token_urlsafe(9)
     now = page_now()
-    with sqlite3.connect(user_db_path(require_user(request), "pages.db")) as conn:
+    user = require_writer(request)
+    scope = share_scope_page(request)
+    if scope is not None and payload.parent_id == "root":
+        # A share editor may add blocks inside the shared page, never new pages.
+        raise HTTPException(status_code=403, detail="not accessible via this share link")
+    with sqlite3.connect(user_db_path(user, "pages.db")) as conn:
         if payload.parent_id != "root":
             if not conn.execute("SELECT 1 FROM unified_blocks WHERE id = ?", (payload.parent_id,)).fetchone():
                 raise HTTPException(status_code=404, detail="parent block not found")
+            assert_block_in_page(conn, payload.parent_id, scope)
         try:
             new_pos = generate_key_between(payload.before, payload.after)
         except Exception as e:
@@ -342,12 +348,19 @@ async def ub_create_block(payload: UBCreateRequest, request: Request):
 @router.put("/blocks/{block_id}")
 async def ub_update_block(block_id: str, payload: UBUpdateRequest, request: Request):
     now = page_now()
-    with sqlite3.connect(user_db_path(require_user(request), "pages.db")) as conn:
+    user = require_writer(request)
+    scope = share_scope_page(request)
+    if scope is not None and block_id == scope and payload.properties is not None:
+        # The page's properties (PDF source, folders, metadata) stay the
+        # owner's; share editors may still rename it (content).
+        raise HTTPException(status_code=403, detail="share editors cannot change page settings")
+    with sqlite3.connect(user_db_path(user, "pages.db")) as conn:
         row = conn.execute(
             "SELECT content, properties FROM unified_blocks WHERE id = ?", (block_id,)
         ).fetchone()
         if not row:
             raise HTTPException(status_code=404, detail="block not found")
+        assert_block_in_page(conn, block_id, scope)
         sets = ["updated_at = ?"]
         values: list = [now]
         existing = json.loads(row[1] or "{}")
@@ -393,10 +406,14 @@ def _purge_derived_data(user: str, conn, deleted_ids: list):
 async def ub_delete_block(block_id: str, request: Request):
     if block_id == "root":
         raise HTTPException(status_code=400, detail="cannot delete root block")
-    user = require_user(request)
+    user = require_writer(request)
+    scope = share_scope_page(request)
+    if scope is not None and block_id == scope:
+        raise HTTPException(status_code=403, detail="share editors cannot delete the shared page")
     with sqlite3.connect(user_db_path(user, "pages.db")) as conn:
         if not conn.execute("SELECT 1 FROM unified_blocks WHERE id = ?", (block_id,)).fetchone():
             raise HTTPException(status_code=404, detail="block not found")
+        assert_block_in_page(conn, block_id, scope)
         deleted_ids = [r[0] for r in fetch_subtree(conn, block_id)]
         delete_subtree(conn, block_id)
         conn.commit()
@@ -411,10 +428,12 @@ async def ub_put_children(block_id: str, payload: UBPutChildrenRequest, request:
     now = page_now()
     rows: list = []
     flatten_tree(payload.blocks, block_id, rows, now)
-    user = require_user(request)
+    user = require_writer(request)
+    scope = share_scope_page(request)
     with sqlite3.connect(user_db_path(user, "pages.db")) as conn:
         if not conn.execute("SELECT 1 FROM unified_blocks WHERE id = ?", (block_id,)).fetchone():
             raise HTTPException(status_code=404, detail="block not found")
+        assert_block_in_page(conn, block_id, scope)
         delete_children(conn, block_id)
         for r in rows:
             conn.execute(
@@ -433,9 +452,17 @@ async def ub_put_children(block_id: str, payload: UBPutChildrenRequest, request:
 async def ub_reorder_block(block_id: str, payload: UBReorderRequest, request: Request):
     if block_id == "root":
         raise HTTPException(status_code=400, detail="cannot reorder root block")
-    with sqlite3.connect(user_db_path(require_user(request), "pages.db")) as conn:
+    user = require_writer(request)
+    scope = share_scope_page(request)
+    if scope is not None and (block_id == scope or payload.parent_id == "root"):
+        # Share editors rearrange inside the page; the page itself stays put.
+        raise HTTPException(status_code=403, detail="not accessible via this share link")
+    with sqlite3.connect(user_db_path(user, "pages.db")) as conn:
         if not conn.execute("SELECT 1 FROM unified_blocks WHERE id = ?", (block_id,)).fetchone():
             raise HTTPException(status_code=404, detail="block not found")
+        assert_block_in_page(conn, block_id, scope)
+        if payload.parent_id is not None:
+            assert_block_in_page(conn, payload.parent_id, scope)
         try:
             new_pos = generate_key_between(payload.before, payload.after)
         except Exception as e:

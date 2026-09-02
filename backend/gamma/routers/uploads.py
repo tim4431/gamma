@@ -5,7 +5,7 @@ import sqlite3
 from fastapi import APIRouter, File, HTTPException, Request, UploadFile
 from fastapi.responses import FileResponse
 
-from ..auth import require_user, share_grant
+from ..auth import require_user, require_writer, share_grant
 from ..blocks_store import fetch_subtree
 from ..db import user_db_path, user_uploads_dir
 from ..server_settings import check_upload_allowed, usage_bytes, user_limits
@@ -50,7 +50,9 @@ async def upload_pdf(request: Request, file: UploadFile = File(...)):
 
 @router.post("/upload-image")
 async def upload_image(request: Request, file: UploadFile = File(...)):
-    user = require_user(request)
+    # Share editors' images land in the owner's uploads (and count against the
+    # owner's quota) — they are referenced from the owner's page.
+    user = require_writer(request)
     uploads = user_uploads_dir(user)
     uploads.mkdir(parents=True, exist_ok=True)
     if file.content_type not in ALLOWED_IMAGE_TYPES:
@@ -108,11 +110,11 @@ async def serve_upload(filename: str, request: Request):
     # ?share= token scoped to its one page. No bare ?user= access.
     user = request.state.user
     scope_page_id = None
-    if not user:
+    if request.query_params.get("share") or not user:
         grant = share_grant(request)
         if not grant:
             raise HTTPException(status_code=401)
-        user, scope_page_id = grant
+        user, scope_page_id, _level = grant
     if scope_page_id is not None and not _share_can_read_upload(user, scope_page_id, filename):
         raise HTTPException(status_code=403, detail="not accessible via this share link")
 

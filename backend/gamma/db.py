@@ -51,15 +51,21 @@ USERS_SCHEMA = [
         guest_date TEXT,
         created_at TEXT NOT NULL
     )""",
-    # Read-only share links, one per (owner, page). page_id is the shared page's
-    # root block; doc_id is informational (the page's PDF, "" for a note page).
-    # Rows minted before shares were keyed by page carry only doc_id — the auth
-    # layer backfills page_id on first use (gamma/auth.py share_grant).
+    # Share links, one per (owner, page). page_id is the shared page's root
+    # block; doc_id is informational (the page's PDF, "" for a note page).
+    # audience: who may open the link — "anyone" (no login), "users" (any
+    # signed-in non-guest account), "list" (the usernames in allowed_users,
+    # comma-separated). role: "view" or "edit" (edit never applies to anonymous
+    # viewers — see gamma/auth.py share_access). Rows minted before shares were
+    # keyed by page carry only doc_id — auth backfills page_id on first use.
     """CREATE TABLE IF NOT EXISTS shares (
         token TEXT PRIMARY KEY,
         username TEXT NOT NULL,
         doc_id TEXT NOT NULL,
         page_id TEXT,
+        audience TEXT NOT NULL DEFAULT 'anyone',
+        role TEXT NOT NULL DEFAULT 'view',
+        allowed_users TEXT NOT NULL DEFAULT '',
         created_at TEXT NOT NULL
     )""",
     # Server-wide admin-tunable settings (see gamma/server_settings.py) — a
@@ -192,6 +198,11 @@ def connect_users_db() -> sqlite3.Connection:
     if "page_id" not in share_cols:
         # shares used to be keyed by PDF doc id; they are keyed by page now
         conn.execute("ALTER TABLE shares ADD COLUMN page_id TEXT")
+    if "audience" not in share_cols:
+        # per-share permissions; older rows keep the original "anyone, view"
+        conn.execute("ALTER TABLE shares ADD COLUMN audience TEXT NOT NULL DEFAULT 'anyone'")
+        conn.execute("ALTER TABLE shares ADD COLUMN role TEXT NOT NULL DEFAULT 'view'")
+        conn.execute("ALTER TABLE shares ADD COLUMN allowed_users TEXT NOT NULL DEFAULT ''")
     conn.commit()
     return conn
 

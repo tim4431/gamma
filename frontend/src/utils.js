@@ -213,8 +213,19 @@ async function apiError(r) {
   return new Error(text || `HTTP ${r.status}`);
 }
 
+// The share view (/?share=<token>): every same-origin API call carries the
+// token, so reads — and, when the link grants editing, writes — resolve to
+// the sharing owner's page rather than the visitor's own account. Callers
+// that already put a share= on the URL are left alone.
+const SHARE_TOKEN = new URLSearchParams(window.location.search).get("share") || "";
+function withShare(url) {
+  if (!SHARE_TOKEN || typeof url !== "string" || !url.startsWith(`${API}/`)) return url;
+  if (/[?&]share=/.test(url)) return url;
+  return `${url}${url.includes("?") ? "&" : "?"}share=${encodeURIComponent(SHARE_TOKEN)}`;
+}
+
 async function apiJson(url, options = {}) {
-  const r = await fetch(url, { ...options, credentials: "include" });
+  const r = await fetch(withShare(url), { ...options, credentials: "include" });
   if (r.status === 401) {
     const isShareView = new URLSearchParams(window.location.search).get("share");
     if (!isShareView) {
@@ -278,4 +289,4 @@ async function probePdfUrl(sourceUrl) {
   try { await r.body?.cancel(); } catch {}
 }
 
-export { API, makeId, fmtBytes, sha256, getDocIdForUrl, isPdfFile, isMarkdownFile, isUnverifiedPaperMeta, apiJson, importZoteroZip, resolvePdfUrl, pdfProxyUrl, probePdfUrl, setExpectedUser, getExpectedUser, usePersistedState, usePersistedFlag, copyText, copyRich };
+export { API, makeId, fmtBytes, sha256, getDocIdForUrl, isPdfFile, isMarkdownFile, isUnverifiedPaperMeta, apiJson, withShare, importZoteroZip, resolvePdfUrl, pdfProxyUrl, probePdfUrl, setExpectedUser, getExpectedUser, usePersistedState, usePersistedFlag, copyText, copyRich };

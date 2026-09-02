@@ -239,11 +239,13 @@ function makeNewBlock({ parentId = null, properties = {} } = {}) {
   };
 }
 
-export function addSiblingBlock(blocks, id) {
+// New empty sibling next to `id` — below by default (Enter), above with
+// `above` (the row's "+" handle with Alt held, Notion-style).
+export function addSiblingBlock(blocks, id, { above = false } = {}) {
   const info = getParentInfo(blocks, id);
   const newBlock = makeNewBlock({ parentId: info?.parent?.id || null });
   return {
-    blocks: insertSiblingAfter(blocks, id, newBlock),
+    blocks: insertSibling(blocks, id, newBlock, !above),
     newId: newBlock.id
   };
 }

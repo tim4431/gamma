@@ -1,7 +1,7 @@
 import React, { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState } from "react";
 import { Panel, PanelGroup, PanelResizeHandle } from "react-resizable-panels";
 import PdfViewer, { COLORS, clampZoom } from "./pdfViewer";
-import { API, apiJson, makeId, fmtBytes, getDocIdForUrl, isPdfFile, isMarkdownFile, isUnverifiedPaperMeta, importZoteroZip, resolvePdfUrl, pdfProxyUrl, probePdfUrl, setExpectedUser, getExpectedUser, usePersistedState, usePersistedFlag, copyText, copyRich } from "./utils";
+import { API, apiJson, withShare, makeId, fmtBytes, getDocIdForUrl, isPdfFile, isMarkdownFile, isUnverifiedPaperMeta, importZoteroZip, resolvePdfUrl, pdfProxyUrl, probePdfUrl, setExpectedUser, getExpectedUser, usePersistedState, usePersistedFlag, copyText, copyRich } from "./utils";
 import {
   BlockDropIndicator,
   ChatMarkdown,
@@ -20,9 +20,9 @@ import { ContextMenu, MenuItem, MenuLabel, MenuSelect, SubMenuItem } from "./men
 import {
   ActivityIcon, AlertCircleIcon, ArrowLeftIcon, ArrowUpDownIcon, BookIcon, CheckIcon, CopyIcon, DatabaseIcon, DownloadIcon, ExportIcon,
   ExternalLinkIcon, EyeIcon, EyeOffIcon, FileGlyph, FileIcon, FileTextIcon, FitWidthIcon, FolderGlyph,
-  FolderIcon, FolderOpenIcon, FolderPlusIcon, HomeIcon, ImportIcon, InfoIcon, LabelGlyph, LabelIcon,
+  FolderIcon, FolderOpenIcon, FolderPlusIcon, GlobeIcon, HomeIcon, ImportIcon, InfoIcon, LabelGlyph, LabelIcon,
   LanguagesIcon, LanguagesOffIcon, LinkIcon, LogOutIcon, MaximizeIcon, MenuIcon, MinimizeIcon, PenIcon, PinIcon, PlusIcon,
-  RectSelectIcon, SearchIcon, SettingsIcon, SparklesIcon, TextCursorIcon, TrashIcon, TypeIcon, UploadIcon,
+  RectSelectIcon, SearchIcon, SettingsIcon, ShieldIcon, SparklesIcon, TextCursorIcon, TrashIcon, TypeIcon, UploadIcon,
   UserIcon, UsersIcon, XIcon, ZoomInIcon, ZoomOutIcon,
 } from "./icons";
 
@@ -55,7 +55,7 @@ import {
   insertSiblingAfter,
 } from "./logseqPdfModel";
 import { loadSession, saveSession, clearSession } from "./sessionState";
-import { AuthLoading, LoginPage, SessionConflictPage } from "./LoginPage";
+import { AuthLoading, LoginPage, SessionConflictPage, ShareBlockedPage } from "./LoginPage";
 import { THEMES, TRANSLATE_LANGS, useAppPrefs } from "./prefs";
 import SettingsDialog from "./settings";
 import { QuotaMeter } from "./settingsKit";
@@ -269,10 +269,17 @@ export default function App() {
   const initialBlockId = params.get("block") || params.get("page") || "";
   const initialCategory = params.get("category") || "";
   const initialFolder = params.get("folder") || "";
-  const readOnly = Boolean(initialShare);
+  // shareMode: this tab shows a page through a ?share= link — no account of
+  // its own, no library, no chat, no prefs sync. readOnly: the block tree
+  // can't be edited; every share view starts read-only and stays so unless
+  // the link resolves with edit rights (Share → "They can: Edit notes").
+  const shareMode = Boolean(initialShare);
+  const [readOnly, setReadOnly] = useState(shareMode);
+  const [shareInfo, setShareInfo] = useState(null); // resolved share: {owner, role, canEdit, audience, viewer}
+  const [shareGate, setShareGate] = useState(null); // "login" | "forbidden" | "missing" while the share can't open
 
   // Auth state: null=loading, false=logged out, {user, is_guest}=logged in
-  const [authUser, setAuthUser] = useState(readOnly ? {user:"_public"} : null);
+  const [authUser, setAuthUser] = useState(shareMode ? {user:"_public"} : null);
   const [loginUser, setLoginUser] = useState("");
   const [loginPass, setLoginPass] = useState("");
   const [loginError, setLoginError] = useState("");
@@ -299,7 +306,7 @@ export default function App() {
   // tab that logged in, and a session re-check when this tab regains focus
   // (throttled — alt-tab flapping must not hammer the server).
   useEffect(() => {
-    if (readOnly || !sessionUser) return;
+    if (shareMode || !sessionUser) return;
     function conflict(who) {
       if (who && who !== sessionUser) setSessionConflict(who);
       else if (!who) setAuthUser(false); // logged out elsewhere → login page
@@ -323,7 +330,7 @@ export default function App() {
       window.removeEventListener("storage", onStorage);
       window.removeEventListener("focus", onFocus);
     };
-  }, [sessionUser, readOnly]);
+  }, [sessionUser, shareMode]);
 
   async function checkSession() {
     try {
@@ -343,13 +350,13 @@ export default function App() {
   // uploads; the Settings displays fetch their own fresh copy.
   const [quotaInfo, setQuotaInfo] = useState(null); // {max_upload_mb, quota_mb, used_bytes}
   const refreshQuota = useCallback(() => {
-    if (readOnly) return;
+    if (shareMode) return;
     apiJson(`${API}/quota`).then(setQuotaInfo).catch(() => {});
-  }, [readOnly]);
+  }, [shareMode]);
   useEffect(() => {
-    if (authUser?.user && !readOnly) refreshQuota();
+    if (authUser?.user && !shareMode) refreshQuota();
     else setQuotaInfo(null);
-  }, [authUser?.user, readOnly, refreshQuota]);
+  }, [authUser?.user, shareMode, refreshQuota]);
 
   async function doLogin(e) {
     e?.preventDefault();
@@ -378,6 +385,29 @@ export default function App() {
       const data = await res.json();
       setAuthUser({ user: data.username, is_guest: true });
     } catch { setLoginError("Guest login failed"); }
+  }
+
+  // A share link that needs an account (signed-in users / specific people):
+  // sign in right here, then resolve the link again with the new session.
+  async function doShareLogin(e) {
+    e?.preventDefault();
+    setLoginError("");
+    try {
+      const res = await fetch(`${API}/login`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ username: loginUser, password: loginPass }),
+        credentials: "include",
+      });
+      if (!res.ok) { setLoginError("Invalid credentials"); return; }
+      setShareGate(null);
+      await resolveShare(initialShare);
+    } catch { setLoginError("Login failed"); }
+  }
+  async function shareSwitchAccount() {
+    try { await fetch(`${API}/logout`, { method: "POST", credentials: "include" }); } catch {}
+    setLoginUser(""); setLoginPass(""); setLoginError("");
+    setShareGate("login");
   }
 
   // Download an /api/export backup zip. Fetched by hand (not a plain link
@@ -554,8 +584,8 @@ export default function App() {
   }
 
   useEffect(() => {
-    if (!readOnly) checkSession();
-  }, [readOnly]);
+    if (!shareMode) checkSession();
+  }, [shareMode]);
 
   const [inputUrl, setInputUrl] = useState(initialUrl); // current page's source URL (shown in page properties)
   const [addUrl, setAddUrl] = useState(""); // "+" popover: URL to open
@@ -630,14 +660,14 @@ export default function App() {
   // account switch.
   useEffect(() => {
     const u = authUser?.user;
-    if (!u || readOnly) {
+    if (!u || shareMode) {
       // Losing the session (logout button, expiry in another tab) must fully
       // close the workspace: a stale focusedBlockId would get merged into the
       // NEXT account's tab strip (applyServerTabs keeps the on-screen page) and
       // pushed to their server prefs, and the nav-back stack would reopen this
       // account's pages. Guarded on a previous user so the initial
       // session-loading render doesn't wipe the deep link / saved session.
-      if (prefsUserRef.current && !readOnly) {
+      if (prefsUserRef.current && !shareMode) {
         // Local teardown only: there is no authenticated account to refresh.
         goHome(false);
         setNavStack([]);
@@ -722,7 +752,7 @@ export default function App() {
       }
       appearanceLoadedRef.current = true;
     }).catch(() => {});
-  }, [authUser?.user, readOnly]);
+  }, [authUser?.user, shareMode]);
 
   // Write a page's tag-list property ("folder" nests on "/", "category" is
   // flat) — both serialize as a comma-separated list, so neither character
@@ -1954,7 +1984,15 @@ export default function App() {
     document.addEventListener("pointerdown", onDown);
     return () => document.removeEventListener("pointerdown", onDown);
   }, [openPopover]);
-  const [shareUrl, setShareUrl] = useState("");
+  // The owner's share of the open page: null = not loaded, {token: null} =
+  // not shared, else {token, audience, role, users}. The link is derived.
+  const [shareSettings, setShareSettings] = useState(null);
+  const [shareInviteDraft, setShareInviteDraft] = useState("");
+  const [shareError, setShareError] = useState("");
+  const [shareUrlShown, setShareUrlShown] = useState(false); // fallback when the clipboard is unavailable
+  const shareUrl = shareSettings?.token
+    ? `${window.location.origin}${window.location.pathname}?share=${shareSettings.token}`
+    : "";
   const [shareCopied, flashShareCopied, resetShareCopied] = useCopied();
   // Workspace search lives in search.jsx (SearchPanel); App only holds what
   // the PDF viewer needs from it: the match highlights and the search hook.
@@ -1974,7 +2012,7 @@ export default function App() {
   // button appears even if the work was kicked off elsewhere), fast while
   // the popover is open or indexing is known to run.
   useEffect(() => {
-    if (!authUser?.user || readOnly) return;
+    if (!authUser?.user || shareMode) return;
     let cancelled = false;
     const refresh = () => apiJson(`${API}/tasks`)
       .then((d) => {
@@ -1987,7 +2025,7 @@ export default function App() {
     const fast = openPopover === "downloads" || indexTask?.active;
     const t = setInterval(refresh, fast ? 2000 : 8000);
     return () => { cancelled = true; clearInterval(t); };
-  }, [openPopover, authUser?.user, readOnly, indexTask?.active]);
+  }, [openPopover, authUser?.user, shareMode, indexTask?.active]);
 
   // Every folder path in use (from page tags + manually created empties),
   // plus all ancestor prefixes — "readout" exists once "readout/destructive"
@@ -2072,7 +2110,7 @@ export default function App() {
   // The loaded gate keeps a session that hasn't pulled yet from overwriting
   // the server copy with its stale local cache.
   useEffect(() => {
-    if (!prefsUserRef.current || readOnly || !appearanceLoadedRef.current) return;
+    if (!prefsUserRef.current || shareMode || !appearanceLoadedRef.current) return;
     const payload = { theme, pdfDark: pdfDarkPage };
     const snap = JSON.stringify(payload);
     if (appearanceSyncRef.current === snap) return;
@@ -2082,7 +2120,7 @@ export default function App() {
       headers: { "Content-Type": "application/json" },
       body: JSON.stringify({ value: payload }),
     }).catch(() => {});
-  }, [theme, pdfDarkPage, authUser?.user, readOnly]);
+  }, [theme, pdfDarkPage, authUser?.user, shareMode]);
   const pageTitleSaveTimerRef = useRef(null);
   const viewerWrapRef = useRef(null);
   const pdfRetryRef = useRef(null); // set by PdfViewer: re-runs a failed load (pill's Retry button)
@@ -2144,7 +2182,7 @@ export default function App() {
   useEffect(() => {
     aiProviderSyncRef.current = null;
     const u = authUser?.user;
-    if (!u || readOnly) return;
+    if (!u || shareMode) return;
     const local = aiProvider;
     apiJson(`${API}/prefs/ai-provider`).then((d) => {
       if (prefsUserRef.current !== u) return;
@@ -2164,16 +2202,16 @@ export default function App() {
         aiProviderSyncRef.current = "";
       }
     }).catch(() => {});
-  }, [authUser?.user, readOnly]);
+  }, [authUser?.user, shareMode]);
   useEffect(() => {
-    if (aiProviderSyncRef.current === null || aiProviderSyncRef.current === aiProvider || readOnly) return;
+    if (aiProviderSyncRef.current === null || aiProviderSyncRef.current === aiProvider || shareMode) return;
     aiProviderSyncRef.current = aiProvider;
     apiJson(`${API}/prefs/ai-provider`, {
       method: "PUT",
       headers: { "Content-Type": "application/json" },
       body: JSON.stringify({ value: aiProvider }),
     }).catch(() => {});
-  }, [aiProvider, readOnly]);
+  }, [aiProvider, shareMode]);
   // Last model picked per key, so switching keys and back restores the pick
   // (a workspace-wide memory — the chat model is never per-PDF).
   const chatModelMemRef = useRef(null);
@@ -2283,14 +2321,14 @@ export default function App() {
     } catch {}
   }
   useEffect(() => {
-    if (!authUser?.user || authUser.is_guest || readOnly) return;
+    if (!authUser?.user || authUser.is_guest || shareMode) return;
     // Delayed so the server-synced active-provider pick can land first.
     const timer = setTimeout(checkAiHealth, 1500);
     return () => clearTimeout(timer);
-  }, [authUser?.user, readOnly]);
+  }, [authUser?.user, shareMode]);
   // Entering the AI pane always refetches the masked key list.
   useEffect(() => {
-    if (settingsOpen === "ai" && authUser?.user && !readOnly) loadAiKeys();
+    if (settingsOpen === "ai" && authUser?.user && !shareMode) loadAiKeys();
   }, [settingsOpen]);
 
   function openAiKeysEditor() {
@@ -2538,7 +2576,7 @@ export default function App() {
     }
   }
   useEffect(() => {
-    if (openPopover !== "meta" || !docId || readOnly) { setPdfTextInfo(null); return; }
+    if (openPopover !== "meta" || !docId || shareMode) { setPdfTextInfo(null); return; }
     checkPdfText();
   }, [openPopover, docId]);
 
@@ -2741,7 +2779,7 @@ export default function App() {
   // server may replace its original-filename title only while the automatic
   // title marker still matches, so an in-flight lookup cannot undo a rename.
   function queueMetadataForUploads(uploaded) {
-    if (readOnly || !metaAutoFetch) return;
+    if (shareMode || !metaAutoFetch) return;
     const pending = uploaded.filter(({ block }) => block?.id
       && !block.properties?.meta && !block.properties?.meta_error
       && !attemptedMetaRef.current.has(block.id));
@@ -2750,7 +2788,7 @@ export default function App() {
   }
 
   async function fetchMetadataForUploads(uploaded) {
-    if (readOnly || !metaAutoFetch) return;
+    if (shareMode || !metaAutoFetch) return;
     let completed = 0;
     for (const { block } of uploaded) {
       if (!block?.id || block.properties?.meta) continue;
@@ -2782,7 +2820,7 @@ export default function App() {
     setPptCite("");
     resetCopied();
     const b = focusedBlock;
-    if (readOnly || !b?.id || !b.properties?.doc_id) { setPageMeta(null); setPageBibtex(""); return; }
+    if (shareMode || !b?.id || !b.properties?.doc_id) { setPageMeta(null); setPageBibtex(""); return; }
     if (b.properties.meta) {
       setPageMeta(b.properties.meta);
       setPageBibtex(b.properties.bibtex || "");
@@ -2886,7 +2924,7 @@ export default function App() {
   }
 
   useEffect(() => {
-    if (!authUser?.user || readOnly) return;
+    if (!authUser?.user || shareMode) return;
     refreshAiModels();
   }, [authUser]);
 
@@ -2975,7 +3013,7 @@ export default function App() {
   }
 
   useEffect(() => {
-    if (authUser?.user && !readOnly) fetchHomeBlocks();
+    if (authUser?.user && !shareMode) fetchHomeBlocks();
   }, [authUser]);
 
   useEffect(() => {
@@ -3095,7 +3133,7 @@ export default function App() {
       } catch { if (!cancelled) setBacklinks([]); }
     })();
     return () => { cancelled = true; };
-  }, [focusedBlockId, readOnly]);
+  }, [focusedBlockId, shareMode]);
 
   // Queued autosave. The debounce timer used to be silently cancelled when
   // navigation replaced the block tree — a highlight made within 500 ms of
@@ -3148,7 +3186,7 @@ export default function App() {
       if (!p) return;
       pendingSaveRef.current = null;
       try {
-        fetch(`${API}/blocks/${p.pageId}/children`, {
+        fetch(withShare(`${API}/blocks/${p.pageId}/children`), {
           method: "PUT",
           headers: { "Content-Type": "application/json" },
           body: JSON.stringify({ blocks: p.blocks }),
@@ -3291,13 +3329,13 @@ export default function App() {
   // in the deps re-fires it once login resolves — a page opened by direct URL
   // shows before the session check finishes, and the first run skips.
   useEffect(() => {
-    if (!focusedBlockId || readOnly || !prefsUserRef.current) return;
+    if (!focusedBlockId || shareMode || !prefsUserRef.current) return;
     pushRecentView(focusedBlockId);
-  }, [focusedBlockId, readOnly, sessionUser]);
+  }, [focusedBlockId, shareMode, sessionUser]);
 
   // Keep the tab strip in sync with the open page.
   useEffect(() => {
-    if (!focusedBlockId || readOnly || !prefsUserRef.current) return;
+    if (!focusedBlockId || shareMode || !prefsUserRef.current) return;
     const title = (pdfTitle || "Untitled").slice(0, 60);
     updateTabs((prev) => {
       const existing = prev.find((t) => t.id === focusedBlockId);
@@ -3305,7 +3343,7 @@ export default function App() {
       if (existing) return prev.map((t) => (t.id === focusedBlockId ? { ...t, title } : t));
       return [...prev, { id: focusedBlockId, title }];
     });
-  }, [focusedBlockId, pdfTitle, readOnly]);
+  }, [focusedBlockId, pdfTitle, shareMode]);
 
   // Persist session state on relevant changes (skip initial mount)
   const firstRenderRef = useRef(true);
@@ -3332,7 +3370,7 @@ export default function App() {
   const trackPauseReasonRef = useRef(""); // last logged pause reason (debug log)
   useEffect(() => {
     recordScrollPageRef.current = (n) => {
-      const reason = readOnly ? "readonly"
+      const reason = shareMode ? "readonly"
         : !focusedBlockId ? "no-focused-block"
         : !pdfUrl ? "no-pdf-url"
         : pdfRenderedUrlRef.current !== pdfUrl ? "doc-not-rendered"
@@ -3363,7 +3401,7 @@ export default function App() {
   useEffect(() => {
     captureSnapRef.current = (id) => {
       if (!recentThumbs) return false;
-      if (readOnly || !id || id !== focusedBlockId || !pdfUrl || pdfHidden) return false;
+      if (shareMode || !id || id !== focusedBlockId || !pdfUrl || pdfHidden) return false;
       if (pdfRenderedUrlRef.current !== pdfUrl) return false;
       if (restoringForRef.current === focusedBlockId || coarseRestorePendingRef.current) return false;
       const img = captureViewerSnapshot();
@@ -3376,7 +3414,7 @@ export default function App() {
   // (re)renders until a capture sticks. The scroll-settle path above keeps it
   // fresh afterwards.
   useEffect(() => {
-    if (!recentThumbs || !pdfUrl || pdfHidden || readOnly || !focusedBlockId) return;
+    if (!recentThumbs || !pdfUrl || pdfHidden || shareMode || !focusedBlockId) return;
     const id = focusedBlockId;
     let tries = 0, timer = null;
     const attempt = () => {
@@ -3385,7 +3423,7 @@ export default function App() {
     };
     timer = setTimeout(attempt, 1500);
     return () => { if (timer) clearTimeout(timer); };
-  }, [pdfUrl, pdfHidden, focusedBlockId, readOnly, recentThumbs]);
+  }, [pdfUrl, pdfHidden, focusedBlockId, shareMode, recentThumbs]);
 
   async function loadBlocksForBlock(blockId) {
     try {
@@ -3491,7 +3529,7 @@ export default function App() {
   }
 
   async function uploadFiles(fileList) {
-    if (readOnly) return;
+    if (shareMode) return;
     // Accepts Files (picker/drop) or {file, folder} pairs (dropped-folder walk);
     // the directory picker's Files carry the path in webkitRelativePath instead.
     // With a folder open in the library view, uploads land inside it.
@@ -3568,7 +3606,7 @@ export default function App() {
   }
 
   async function importLogseq(files) {
-    if (readOnly) return;
+    if (shareMode) return;
     const all = Array.from(files);
     const pdfFile = all.find((f) => f.name.endsWith('.pdf'));
     const ednFile = all.find((f) => f.name.endsWith('.edn'));
@@ -3615,7 +3653,7 @@ export default function App() {
   // folders, tags labels, notes child blocks; the reader annotations ride
   // inside the exported PDFs, so strip works exactly like for "this PDF".
   async function importZotero(file, strip = embAnnots === "strip") {
-    if (readOnly) return;
+    if (shareMode) return;
     const taskId = addTransfer({ name: `Zotero import — ${file.name.slice(0, 48)}`, kind: "import", info: "importing…" });
     setStatus("Importing Zotero library — this can take a while for big exports…");
     try {
@@ -3631,7 +3669,7 @@ export default function App() {
   }
 
   async function openPdf(sourceUrl) {
-    if (!sourceUrl || readOnly) return;
+    if (!sourceUrl || shareMode) return;
     leaveCurrentPage();
     setLoading(true);
     setStatus("Opening PDF...");
@@ -3694,7 +3732,7 @@ export default function App() {
 
   // "+" popover: a blank note page (no PDF) — created in the open folder, if any.
   async function createNotePage() {
-    if (readOnly) return;
+    if (shareMode) return;
     setOpenPopover(null);
     try {
       const created = await apiJson(`${API}/blocks`, {
@@ -3713,21 +3751,38 @@ export default function App() {
     setLoading(true);
     setStatus("Resolving share link...");
     try {
-      const data = await apiJson(`${API}/share/${token}`);
+      // Resolved by hand: the status code says whether signing in would help
+      // (401 → login gate, 403 → not on the list, 404 → gone).
+      const res = await fetch(`${API}/share/${encodeURIComponent(token)}`, { credentials: "include" });
+      if (!res.ok) {
+        if (res.status === 403) {
+          // Name the account that was refused so the message makes sense.
+          try {
+            const sess = await (await fetch(`${API}/session`, { credentials: "include" })).json();
+            setShareInfo({ viewer: sess?.user || "" });
+          } catch {}
+        }
+        setShareGate(res.status === 401 ? "login" : res.status === 403 ? "forbidden" : "missing");
+        setStatus("");
+        return;
+      }
+      const data = await res.json();
+      setShareGate(null);
       shareOwnerRef.current = data.username || "";
       shareTokenRef.current = token;
-      // Read access rides on the share token itself (scoped to this one
-      // document), never a bare ?user= (which used to grant whole-account reads).
-      const shareParam = `?share=${encodeURIComponent(token)}`;
+      setShareInfo({ owner: data.username || "", role: data.role || "view", canEdit: Boolean(data.can_edit),
+                     audience: data.audience || "anyone", viewer: data.viewer || "" });
 
-      // The share names a page block directly (PDF pages and note pages alike).
+      // The share names a page block directly (PDF pages and note pages
+      // alike). Read access rides on the token, which apiJson appends to every
+      // API call in a share view (utils.withShare) — never a bare ?user=.
       let block = null;
-      try { block = await apiJson(`${API}/blocks/${encodeURIComponent(data.page_id)}${shareParam}`); } catch {}
+      try { block = await apiJson(`${API}/blocks/${encodeURIComponent(data.page_id)}`); } catch {}
 
       let childBlocks = [];
       if (block) {
         try {
-          const subtreeData = await apiJson(`${API}/blocks/${block.id}/subtree${shareParam}`);
+          const subtreeData = await apiJson(`${API}/blocks/${block.id}/subtree`);
           childBlocks = normalizeBlocks(subtreeData.block?.children || []);
         } catch {}
       }
@@ -3747,7 +3802,10 @@ export default function App() {
       setDocId(props.doc_id || data.doc_id || "");
       setInputUrl(src);
       setPdfUrl(proxiedUrl);
-      setStatus("Loaded shared page.");
+      // Edit rights arrive with the share; the autosave effect's suppress flag
+      // (set above) swallows the first blocks change either way.
+      setReadOnly(!data.can_edit);
+      setStatus(data.can_edit ? `Shared by ${data.username} — your edits save to their page.` : "Loaded shared page.");
     } catch (err) {
       setStatus(`Share open failed: ${err.message}`);
     } finally {
@@ -3756,7 +3814,7 @@ export default function App() {
   }
 
   async function openBlock(blockId, opts) {
-    if (!blockId || readOnly) return;
+    if (!blockId || shareMode) return;
     // Back records LINK jumps only — callers opt in via {pushNav: true}.
     // Plain navigation (library, search, tabs, home) never pushes.
     if (opts?.pushNav && blockId !== focusedBlockId) pushNav();
@@ -3873,17 +3931,17 @@ export default function App() {
   const pageLayoutsRef = useRef({});
   const panelGroupRefs = useRef({}); // group key -> react-resizable-panels imperative handle
   useEffect(() => {
-    if (!authUser?.user || readOnly) return;
+    if (!authUser?.user || shareMode) return;
     try { pageLayoutsRef.current = JSON.parse(localStorage.getItem(`gamma-page-layouts:${authUser.user}`) || "{}"); }
     catch { pageLayoutsRef.current = {}; }
-  }, [authUser?.user, readOnly]);
+  }, [authUser?.user, shareMode]);
   const restoreTokenRef = useRef(0);   // bumped on navigation — kills in-flight restore loops
   const restoringForRef = useRef(null); // block whose restore hasn't landed yet
   const pdfRenderedUrlRef = useRef(""); // url of the document whose pages are in the DOM
   const pendingRestoreRef = useRef(null); // {url, entry, blockId, token} applied pre-paint on "rendered"
   function captureScrollPos() {
     // The page's window layout travels with it — including panel size ratios.
-    if (focusedBlockId && !readOnly && prefsUserRef.current) {
+    if (focusedBlockId && !shareMode && prefsUserRef.current) {
       const sizes = {};
       for (const [k, h] of Object.entries(panelGroupRefs.current)) {
         try { if (h) sizes[k] = h.getLayout(); } catch {}
@@ -4107,7 +4165,7 @@ export default function App() {
   // properties.folder with the same refinement rule as addPagesToFolder.
   function addPageFolderTag(raw) {
     const path = cleanFolderPath(raw);
-    if (!path || !focusedBlockId || readOnly || pageFolders.includes(path)) return;
+    if (!path || !focusedBlockId || shareMode || pageFolders.includes(path)) return;
     const next = addFolderTag(pageFolders, path);
     setPageFolders(next);
     updateExtraFolders((prev) => prev.filter((f) => f !== path));
@@ -4115,7 +4173,7 @@ export default function App() {
   }
 
   function removePageFolderTag(path) {
-    if (!focusedBlockId || readOnly) return;
+    if (!focusedBlockId || shareMode) return;
     const next = pageFolders.filter((t) => t !== path);
     if (next.length === pageFolders.length) return;
     setPageFolders(next);
@@ -4155,7 +4213,7 @@ export default function App() {
   }
 
   async function saveCategory(newValue) {
-    if (!focusedBlockId || readOnly) return;
+    if (!focusedBlockId || shareMode) return;
     try {
       await apiJson(`${API}/blocks/${focusedBlockId}`, {
         method: "PUT",
@@ -4169,23 +4227,82 @@ export default function App() {
     }
   }
 
-  async function fetchShareLink() {
-    if (!focusedBlockId || readOnly || homeMode) return;
+  // Share popover (owner). Opening it only LOADS the state — a page is not
+  // published until "Create link"; settings changes save immediately and the
+  // token never changes until "Stop sharing".
+  function applyShareSettings(data) {
+    setShareSettings(data);
+    setShareError("");
+  }
+  async function loadShareSettings() {
+    if (!focusedBlockId || shareMode || homeMode) return;
+    setShareSettings(null);
     try {
-      const data = await apiJson(`${API}/share/${encodeURIComponent(focusedBlockId)}`, {
-        method: "POST",
-        credentials: "include",
-      });
-      setShareUrl(`${window.location.origin}${window.location.pathname}?share=${data.token}`);
+      applyShareSettings(await apiJson(`${API}/share-settings/${encodeURIComponent(focusedBlockId)}`));
       resetShareCopied();
     } catch (err) {
       setStatus(`Share failed: ${err.message}`);
     }
   }
+  async function createShareLink() {
+    if (!focusedBlockId || shareMode) return;
+    try {
+      applyShareSettings(await apiJson(`${API}/share/${encodeURIComponent(focusedBlockId)}`, { method: "POST" }));
+      resetShareCopied();
+    } catch (err) {
+      setStatus(`Share failed: ${err.message}`);
+    }
+  }
+  async function updateShareSettings(patch) {
+    if (!focusedBlockId || !shareSettings?.token) return;
+    try {
+      applyShareSettings(await apiJson(`${API}/share-settings/${encodeURIComponent(focusedBlockId)}`, {
+        method: "PUT",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify(patch),
+      }));
+    } catch (err) {
+      setShareError(err.message); // e.g. "unknown user(s): …" — shown in the popover
+    }
+  }
+  // People: invitations are additive to general access (Notion-style) —
+  // each invited account carries its own view/edit.
+  async function inviteShareUsers(e) {
+    e?.preventDefault();
+    const names = shareInviteDraft.split(/[,\s;]+/).map((u) => u.trim()).filter(Boolean);
+    if (!names.length) return;
+    const current = shareSettings?.users || [];
+    const users = [...current, ...names.filter((n) => !current.some((u) => u.name === n)).map((name) => ({ name, role: "view" }))];
+    await updateShareSettings({ users });
+    setShareInviteDraft("");
+  }
+  function setShareUserRole(name, role) {
+    updateShareSettings({ users: (shareSettings?.users || []).map((u) => u.name === name ? { ...u, role } : u) });
+  }
+  function removeShareUser(name) {
+    updateShareSettings({ users: (shareSettings?.users || []).filter((u) => u.name !== name) });
+  }
+  async function stopSharing() {
+    if (!focusedBlockId || !shareSettings?.token) return;
+    try {
+      await apiJson(`${API}/share-settings/${encodeURIComponent(focusedBlockId)}`, { method: "DELETE" });
+      applyShareSettings({ token: null, page_id: focusedBlockId });
+      setStatus("Sharing stopped — the old link no longer opens.");
+    } catch (err) {
+      setStatus(`Stop sharing failed: ${err.message}`);
+    }
+  }
+  // One line under the general-access row: who that row admits.
+  const shareGeneralSub = shareSettings?.audience === "anyone"
+    ? "No login needed — view only"
+    : shareSettings?.audience === "users"
+      ? "Any signed-in account on this server"
+      : "Nobody beyond the people invited above";
 
   async function copyShareLink() {
-    if (await copyText(shareUrl)) flashShareCopied();
-    else setStatus("Copy failed — copy the link manually.");
+    if (await copyText(shareUrl)) { flashShareCopied(); return; }
+    setShareUrlShown(true); // no clipboard (plain-HTTP origins) — show it to select by hand
+    setStatus("Copy failed — select the link in the popover instead.");
   }
 
   // Download the current page as Markdown. The server returns a bare .md, or a
@@ -4236,7 +4353,7 @@ export default function App() {
   const shareOwnerRef = useRef("");
   const shareTokenRef = useRef("");
   const shareTokenQuery = () =>
-    readOnly && shareTokenRef.current ? `share=${encodeURIComponent(shareTokenRef.current)}` : "";
+    shareMode && shareTokenRef.current ? `share=${encodeURIComponent(shareTokenRef.current)}` : "";
 
   // Run what the import dialog was configured to do. Logseq needs files, so
   // its button opens the picker and the import starts once they're chosen.
@@ -4361,7 +4478,7 @@ export default function App() {
   const [aiTitleBusy, setAiTitleBusy] = useState(false);
   const [sourceDraft, setSourceDraft] = useState(""); // edit buffer for the source-PDF popover
   async function aiFillTitle() {
-    if (!docId || readOnly || aiTitleBusy) return;
+    if (!docId || shareMode || aiTitleBusy) return;
     setAiTitleBusy(true);
     setStatus("Asking AI for the title…");
     const taskId = addTransfer({ name: `AI title — ${(pdfTitle || "paper").slice(0, 48)}`, kind: "ai", info: "asking…" });
@@ -4570,7 +4687,7 @@ export default function App() {
   }
 
   const visibleBlocks = useMemo(() => flattenBlocks(blocks), [blocks]);
-  const homeMode = !pdfUrl && !focusedBlockId && !readOnly;
+  const homeMode = !pdfUrl && !focusedBlockId && !shareMode;
 
   // --- structural undo -------------------------------------------------------
   // Snapshots of the page's block tree around structural edits (delete,
@@ -5065,6 +5182,24 @@ export default function App() {
     return () => document.removeEventListener('scroll', onScroll, { capture: true });
   }, [pdfUrl, pdfHidden]);
 
+  // A share link that can't open yet: sign in (signed-in / specific-people
+  // shares), or explain why not.
+  if (shareMode && shareGate) {
+    return shareGate === "login" ? (
+      <LoginPage
+        username={loginUser}
+        password={loginPass}
+        error={loginError}
+        onUsernameChange={setLoginUser}
+        onPasswordChange={setLoginPass}
+        onSubmit={doShareLogin}
+        subtitle="Sign in to open this shared page"
+      />
+    ) : (
+      <ShareBlockedPage reason={shareGate} viewer={shareInfo?.viewer || ""} onSwitchAccount={shareSwitchAccount} />
+    );
+  }
+
   // Login page state
   if (authUser === null) return <AuthLoading />;
 
@@ -5134,7 +5269,7 @@ export default function App() {
                 }}
               >{focusedBlockId ? (pdfTitle || (docId ? getPdfPageTitle(docId, inputUrl) : "Untitled")) : "PDF Notes"}</h3>
             )}
-            {focusedBlockId && !readOnly ? (
+            {focusedBlockId && !shareMode ? (
               <div className="categoryFrontmatter">
                 <span className="categoryIcon" title="Labels">
                   <LabelIcon size={13} />
@@ -5264,7 +5399,7 @@ export default function App() {
               </div>
             ) : null}
             </div>
-            {!readOnly && focusedBlockId ? (
+            {!shareMode && focusedBlockId ? (
               <div className="pageActionCol">
                 {docId ? (
                   <span data-popover="meta" style={{ position: "relative", display: "inline-flex" }}>
@@ -6080,13 +6215,15 @@ export default function App() {
                     }
                   },
                   enterNewNote,
-                  onEnterSibling: (id) => {
+                  // `above` inserts before `id` instead (the "+" handle with
+                  // Alt held).
+                  onEnterSibling: (id, { above = false } = {}) => {
                     if (readOnly) return;
                     if (homeMode) {
                       const idx = pageBlocks.findIndex((b) => b.id === id);
                       if (idx < 0) return;
-                      const before = pageBlocks[idx]._position || null;
-                      const after = pageBlocks[idx + 1]?._position || null;
+                      const before = (above ? pageBlocks[idx - 1]?._position : pageBlocks[idx]._position) || null;
+                      const after = (above ? pageBlocks[idx]._position : pageBlocks[idx + 1]?._position) || null;
                       apiJson(`${API}/blocks`, {
                         method: "POST",
                         headers: { "Content-Type": "application/json" },
@@ -6100,7 +6237,7 @@ export default function App() {
                         .catch((err) => setStatus(`Create failed: ${err}`));
                       return;
                     }
-                    const { blocks: next, newId } = addSiblingBlock(blocks, id);
+                    const { blocks: next, newId } = addSiblingBlock(blocks, id, { above });
                     pendingFocusRef.current = newId;
                     setBlocks(next);
                     setFocusedId(newId);
@@ -6307,7 +6444,7 @@ export default function App() {
   const centerNotes = pdfHidden || homeMode || pageOnly;
   const winVisible = {
     notes: Boolean(notesWindow) && !centerNotes,
-    chat: !readOnly && !chatHidden,
+    chat: !shareMode && !chatHidden,
   };
   function renderWindow(id) {
     // Phone: windows are full-screen overlays — no dock dragging or collapsing,
@@ -6342,7 +6479,7 @@ export default function App() {
           aiHealth={aiHealth} dismissAiHealth={() => setAiHealth(null)}
           openPopover={openPopover} setOpenPopover={setOpenPopover}
           setStatus={setStatus}
-          organizeFolder={!focusedBlockId && !readOnly ? folderFilter : null}
+          organizeFolder={!focusedBlockId && !shareMode ? folderFilter : null}
           toolRounds={toolRounds} agentReadChars={agentReadChars} agentPerms={agentPerms} setAgentPerms={setAgentPerms} agentSystem={agentSystem}
           agentEnabled={agentEnabled} folderToolsDefault={folderToolsDefault} pdfToolsDefault={pdfToolsDefault}
           onLibraryChange={fetchHomeBlocks}
@@ -6620,7 +6757,7 @@ export default function App() {
             onClick={() => {
               const opening = openPopover !== "share";
               setOpenPopover(opening ? "share" : null);
-              if (opening) fetchShareLink();
+              if (opening) loadShareSettings();
             }}
             disabled={loading}
             title="Share"
@@ -6631,25 +6768,114 @@ export default function App() {
           {openPopover === "share" ? (
             <div className="popover sharePopover">
               <div className="popoverTitle">Share this page</div>
-              <div className="popoverHint">
-                {pdfUrl
-                  ? "Anyone with the link can view the PDF, highlights, and notes — read-only, no login."
-                  : "Anyone with the link can view these notes — read-only, no login."}
-              </div>
-              {shareUrl ? (
-                <div className="shareRow">
-                  <input readOnly value={shareUrl} onFocus={(e) => e.target.select()} />
-                  <button
-                    className="chatMsgActionBtn"
-                    onClick={copyShareLink}
-                    title="Copy link"
-                    aria-label="Copy share link"
-                  >
-                    {shareCopied ? <CheckIcon size={13} /> : <CopyIcon size={13} />}
-                  </button>
-                </div>
+              {shareSettings === null ? (
+                <div className="popoverHint">Loading…</div>
+              ) : !shareSettings.token ? (
+                <>
+                  <div className="popoverHint">
+                    Not shared yet. Create a link, then invite people or open it up — read-only or editable.
+                  </div>
+                  <div className="shareFooter">
+                    <span />
+                    <button type="button" className="uiBtn sm primary" onClick={createShareLink}>
+                      <LinkIcon size={13} />Create link
+                    </button>
+                  </div>
+                </>
               ) : (
-                <div className="popoverHint">Creating link…</div>
+                <>
+                  <form className="shareInvite" onSubmit={inviteShareUsers}>
+                    <input
+                      className="aiKeyInput"
+                      value={shareInviteDraft}
+                      placeholder="Invite by username, comma-separated"
+                      spellCheck={false}
+                      autoComplete="off"
+                      onChange={(e) => { setShareInviteDraft(e.target.value); if (shareError) setShareError(""); }}
+                    />
+                    <button type="submit" className="uiBtn sm primary" disabled={!shareInviteDraft.trim()}>Invite</button>
+                  </form>
+                  {shareError ? <div className="popoverHint shareError">{shareError}</div> : null}
+                  <div className="shareEntry">
+                    <span className="shareAvatar" aria-hidden="true">
+                      {authUser?.is_guest ? <UserIcon size={14} /> : (authUser?.user || "?").charAt(0).toUpperCase()}
+                    </span>
+                    <span className="shareEntryMain">
+                      <span className="shareEntryName">{authUser?.user}<span className="uiTag">you</span></span>
+                      <span className="shareEntrySub">Owner</span>
+                    </span>
+                    <span className="shareEntryStatic">Full access</span>
+                  </div>
+                  {(shareSettings.users || []).map((u) => (
+                    <div className="shareEntry" key={u.name}>
+                      <span className="shareAvatar" aria-hidden="true">{u.name.charAt(0).toUpperCase()}</span>
+                      <span className="shareEntryMain">
+                        <span className="shareEntryName">{u.name}</span>
+                        <span className="shareEntrySub">Invited · signs in to open</span>
+                      </span>
+                      <MenuSelect
+                        label={`What ${u.name} may do`}
+                        value={u.role}
+                        onChange={(v) => setShareUserRole(u.name, v)}
+                        options={[["view", "Can view"], ["edit", "Can edit"]]}
+                      />
+                      <button
+                        type="button"
+                        className="uiClose uiCloseSm"
+                        title={`Remove ${u.name}`}
+                        aria-label={`Remove ${u.name}`}
+                        onClick={() => removeShareUser(u.name)}
+                      >×</button>
+                    </div>
+                  ))}
+                  <div className="popoverSection">General access</div>
+                  <div className="shareEntry">
+                    <span className="shareAvatar shareAvatarIcon" aria-hidden="true">
+                      {shareSettings.audience === "anyone" ? <GlobeIcon size={15} />
+                        : shareSettings.audience === "users" ? <UsersIcon size={15} />
+                          : <ShieldIcon size={15} />}
+                    </span>
+                    <span className="shareEntryMain">
+                      <MenuSelect
+                        label="Who can open the link"
+                        value={shareSettings.audience}
+                        onChange={(v) => updateShareSettings(v === "anyone" ? { audience: v, role: "view" } : { audience: v })}
+                        options={[
+                          ["anyone", "Anyone with the link"],
+                          ["users", "Signed-in users"],
+                          ["list", "Only people invited"],
+                        ]}
+                      />
+                      <span className="shareEntrySub">{shareGeneralSub}</span>
+                    </span>
+                    {shareSettings.audience === "users" ? (
+                      <MenuSelect
+                        label="What they may do"
+                        value={shareSettings.role}
+                        onChange={(v) => updateShareSettings({ role: v })}
+                        options={[["view", "Can view"], ["edit", "Can edit"]]}
+                      />
+                    ) : shareSettings.audience === "anyone" ? (
+                      <span className="shareEntryStatic" title="Editing needs a signed-in editor — invite people or choose signed-in users">Can view</span>
+                    ) : (
+                      <span className="shareEntryStatic">Invite only</span>
+                    )}
+                  </div>
+                  <div className="shareFooter">
+                    <button type="button" className="uiBtn sm danger" onClick={stopSharing}
+                      title="The link stops working; sharing again makes a new one">Stop sharing</button>
+                    <button type="button" className={`uiBtn sm ${shareCopied ? "on" : ""}`} onClick={copyShareLink}
+                      title={shareUrl}>
+                      {shareCopied ? <CheckIcon size={13} /> : <LinkIcon size={13} />}
+                      {shareCopied ? "Copied" : "Copy link"}
+                    </button>
+                  </div>
+                  {shareUrlShown ? (
+                    <div className="shareRow">
+                      <input readOnly value={shareUrl} onFocus={(e) => e.target.select()} />
+                    </div>
+                  ) : null}
+                </>
               )}
               {(pageMeta || pageBibtex) ? (
                 <>
@@ -6786,8 +7012,8 @@ export default function App() {
   return (
     <div
       ref={appRef}
-      className={`app layout-horizontal ${readOnly ? "readOnlyMode" : ""} ${pseudoFullscreen ? "pseudoFullscreen" : ""} ${isPhone ? "phoneUI" : ""}`}
-      onDragOver={readOnly ? undefined : (e) => {
+      className={`app layout-horizontal ${shareMode ? "readOnlyMode" : ""} ${pseudoFullscreen ? "pseudoFullscreen" : ""} ${isPhone ? "phoneUI" : ""}`}
+      onDragOver={shareMode ? undefined : (e) => {
         if (!e.dataTransfer || !Array.from(e.dataTransfer.types || []).includes("Files")) return;
         e.preventDefault();
         if (e.target.closest(".blockRowWrap")) {
@@ -6796,10 +7022,10 @@ export default function App() {
           appRef.current?.classList.add("dragOver");
         }
       }}
-      onDragLeave={readOnly ? undefined : (e) => {
+      onDragLeave={shareMode ? undefined : (e) => {
         if (e.currentTarget === e.target) appRef.current?.classList.remove("dragOver");
       }}
-      onDrop={readOnly ? undefined : (e) => {
+      onDrop={shareMode ? undefined : (e) => {
         appRef.current?.classList.remove("dragOver");
         if (!e.dataTransfer) return;
         // Grab entries synchronously — the DataTransfer is neutered once the
@@ -6819,7 +7045,7 @@ export default function App() {
         uploadFiles(files);
       }}
     >
-      {!readOnly ? (
+      {!shareMode ? (
         <>
           <div className="topbar">
             <button
@@ -6871,6 +7097,12 @@ export default function App() {
             <HomeIcon size={17} />
           </button>
           <span className="readOnlyTitle">{pdfTitle}</span>
+          {shareInfo ? (
+            <span className="shareBadge"
+              title={shareInfo.canEdit ? "Your edits save to the owner's page" : "Read-only share link"}>
+              {shareInfo.canEdit ? "Can edit" : "View only"}{shareInfo.owner ? ` · shared by ${shareInfo.owner}` : ""}
+            </span>
+          ) : null}
           {renderOverflowMenu(true)}
         </div>
       )}
@@ -6959,7 +7191,7 @@ export default function App() {
               <button className="pdfFitWidthBtn" onClick={() => zoomTo("page-width")} title="Fit to width" aria-label="Fit to width">
                 <FitWidthIcon size={15} />
               </button>
-              {translateEnabled && !readOnly ? (
+              {translateEnabled && !shareMode ? (
                 <button
                   className={pdfTransState.running || (pdfTransState.pages > 0 && pdfTransState.shown) ? "modeActive" : ""}
                   onClick={(e) => {
@@ -6995,10 +7227,10 @@ export default function App() {
                       : <LanguagesIcon size={15} />}
                 </button>
               ) : null}
-              {translateEnabled && !readOnly && pdfTransState.running ? (
+              {translateEnabled && !shareMode && pdfTransState.running ? (
                 <div className="pdfTransPct">{Math.round(pdfTransState.progress * 100)}%</div>
               ) : null}
-              {isPhone && !readOnly ? (
+              {isPhone && !shareMode ? (
                 <button
                   className={areaSelectMode ? "modeActive" : ""}
                   onClick={() => setAreaSelectMode((v) => !v)}
@@ -7033,10 +7265,10 @@ export default function App() {
               darkPage={pdfDarkPage}
               translateKey={`${translateLang}|${translateSendModel}`}
               translateParallel={translateParallel}
-              onTranslate={readOnly ? undefined : translateChunk}
+              onTranslate={shareMode ? undefined : translateChunk}
               translateCtlRef={pdfTranslateCtl}
               onTranslateState={handleTranslateState}
-              areaMode={areaSelectMode && isPhone && !readOnly}
+              areaMode={areaSelectMode && isPhone && !shareMode}
               pdfScaleValue={pdfScale} scrollRef={scrollToRef}
               searchRef={pdfSearchRef}
               captureRef={pdfCaptureRef}
@@ -7111,15 +7343,15 @@ export default function App() {
       {isPhone && winVisible.notes && (phonePanel === "notes" || phoneSeen.current.notes) ? (
         <div className={`phonePanel ${phonePanel === "notes" ? "" : "phonePanelHidden"}`}>{renderWindow("notes")}</div>
       ) : null}
-      {isPhone && !readOnly && (phonePanel === "chat" || phoneSeen.current.chat) ? (
+      {isPhone && !shareMode && (phonePanel === "chat" || phoneSeen.current.chat) ? (
         <div className={`phonePanel ${phonePanel === "chat" ? "" : "phonePanelHidden"}`}>{renderWindow("chat")}</div>
       ) : null}
       </div>
-      {isPhone && (!centerNotes || !readOnly) ? (
+      {isPhone && (!centerNotes || !shareMode) ? (
         // Phone: one bottom bar — view tabs on the left, the topbar's action
         // buttons on the right. Icon-only, because both groups share the row.
         <div className="phoneBottomBar">
-          <div className={`phoneTabBar ${readOnly ? "" : "hasActions"}`}>
+          <div className={`phoneTabBar ${shareMode ? "" : "hasActions"}`}>
             <button
               className={`phoneTab ${phonePanel === null || (phonePanel === "notes" && centerNotes) ? "active" : ""}`}
               onClick={() => setPhonePanel(null)}
@@ -7140,7 +7372,7 @@ export default function App() {
                 <span>Notes</span>
               </button>
             ) : null}
-            {!readOnly ? (
+            {!shareMode ? (
               <button
                 className={`phoneTab ${phonePanel === "chat" ? "active" : ""}`}
                 onClick={() => setPhonePanel((p) => (p === "chat" ? null : "chat"))}
@@ -7153,7 +7385,7 @@ export default function App() {
             ) : null}
           </div>
           {/* keeps the .topbar class so every ".topbar X" style still applies */}
-          {!readOnly ? <div className="topbar phoneActions">{topbarActions}</div> : null}
+          {!shareMode ? <div className="topbar phoneActions">{topbarActions}</div> : null}
         </div>
       ) : null}
       {dockPreview ? (

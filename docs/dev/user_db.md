@@ -13,9 +13,10 @@ All state is SQLite + files on disk under a data directory (env
 
 - `users.db` — global: accounts (bcrypt, plus nullable per-user storage-limit
   override columns), session tokens, share tokens (`shares`: one per
-  owner + `page_id`; `doc_id` is informational, NULL `page_id` marks a
-  pre-page-keyed row that auth backfills on first use), admin-tunable server
-  settings (`settings` KV).
+  owner + `page_id` with `audience` anyone/users/list, `role` view/edit and
+  the comma-separated `allowed_users`; `doc_id` is informational, NULL
+  `page_id` marks a pre-page-keyed row that auth backfills on first use),
+  admin-tunable server settings (`settings` KV).
 - `users/<username>/pages.db` — the core data model: one `unified_blocks`
   table. Everything is a block (self-referential `parent_id`, fractional-index
   `position` strings like `a0`, `a0V` from the `fractional-indexing` package).
@@ -39,12 +40,15 @@ All state is SQLite + files on disk under a data directory (env
 
 `session` cookie → middleware resolves `request.state.user`. Guest account data
 is wiped and re-seeded daily (checked lazily in the middleware). Share tokens
-allow unauthenticated read access to ONE page (any page — paper or plain
-notes): endpoints that support shared views resolve the user from the share
-token as fallback (`resolve_user`) and confine reads to the page's subtree
-(`share_scope_page` + `assert_block_in_page`); write endpoints require the
-session (`require_user`). Keep that distinction when touching endpoints. Full
-endpoint/auth table: [api.md](api.md).
+grant access to ONE page (any page — paper or plain notes) for the audience
+the owner chose: endpoints that support shared views resolve the user from
+the share token (`resolve_user` — the token wins over the visitor's own
+session for choosing whose data is read) and confine reads to the page's
+subtree (`share_scope_page` + `assert_block_in_page`); write endpoints require
+the session (`require_user`), except the block writers, which accept an
+`edit` share through `require_writer` under the same page scope. Keep that
+distinction when touching endpoints. Full endpoint/auth table:
+[api.md](api.md).
 
 ## First-run seeding
 

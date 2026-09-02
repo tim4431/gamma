@@ -19,6 +19,22 @@ else; in dev, Vite proxies `/api` → `127.0.0.1:9001`.
   `source_url` through the proxy) — root listing, backlinks, other pages, and
   folder export are refused (403). Rows minted by the old doc-keyed model
   (`page_id` NULL) are resolved to their page and backfilled on first use.
+- **Share permissions** (`shares.audience` / `role` / `allowed_users`,
+  `auth.share_access`) are Notion-shaped and additive: the owner INVITES
+  people (`users: [{name, role}]`, stored as `carol:edit,dave:view`) who get
+  in with their own `view`/`edit` whatever general access says; everyone else
+  goes through general access — `audience` `anyone` (no session, always view),
+  `users` (any signed-in non-guest account, with the share's `role`), `list`
+  (nobody beyond the invited). When a request carries `?share=`, the token decides
+  WHOSE data is read (the owner's — a signed-in visitor sees the owner's page,
+  not their own library) while the session decides whether the audience gate
+  admits them; a refused token is 401 when signing in could help, else 403.
+  `edit` shares (never valid with `anyone`) let `require_writer` resolve the
+  owner for the block writers — `POST /blocks`, `PUT /blocks/{id}`,
+  `DELETE /blocks/{id}`, `PUT /blocks/{id}/children`, `POST /blocks/{id}/reorder`,
+  `POST /upload-image` — each of which confines the touched blocks to the
+  shared page (no new pages, no deleting/moving the page itself, no changes to
+  the page root's properties). Everything else stays session-only.
   Keep that read/write + scope distinction when adding endpoints.
 - Outbound fetches of user-supplied URLs (PDF proxy/resolver, AI PDF
   re-download) go through `gamma.net_guard.guarded_urlopen`, which blocks
@@ -75,8 +91,9 @@ Route order matters: the static-prefix routes (`by-doc`, `children`,
 | POST | `/uploads`, `/upload-image` | store files (content-hash names, dedup'd; quota-gated) |
 | GET | `/uploads/{filename}` | serve stored files |
 | GET | `/quota` | effective limits + usage for the session user |
-| POST | `/share/{page_id}` | create (or return the existing) read-only share link for a page — root blocks only (400 otherwise) |
-| GET | `/share/{token}` | resolve a link → `{page_id, doc_id, username}` (`doc_id` is `""` for a note page) |
+| POST | `/share/{page_id}` | create the page's share link (defaults `anyone`/`view`; optional body `{audience, role, users}` applies to a NEW link) or return the existing one unchanged — root blocks only (400 otherwise) |
+| GET/PUT/DELETE | `/share-settings/{page_id}` | owner: read settings (`{token: null}` when unshared) / change `audience`, `role`, `users` (`["carol"]` or `[{name, role}]`; validated: `edit`+`anyone` → 400, unknown usernames or roles → 400; the token stays) / stop sharing (the token dies) |
+| GET | `/share/{token}` | resolve a link for this viewer → `{page_id, doc_id, username, audience, role, can_edit, viewer}`; 404 unknown, 401 sign in first, 403 signed in but not allowed |
 
 ### Search (`search.py`)
 | Method | Path | Purpose |

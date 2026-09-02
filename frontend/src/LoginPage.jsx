@@ -49,10 +49,11 @@ export function LoginPage({
   onPasswordChange,
   onSubmit,
   onGuestLogin,
+  subtitle,
 }) {
   return (
     <AuthShell>
-      <p className="loginSubtitle">Annotate PDFs, Share Your Thinking</p>
+      <p className="loginSubtitle">{subtitle || "Annotate PDFs, Share Your Thinking"}</p>
       <form onSubmit={onSubmit}>
         <input
           type="text"
@@ -73,10 +74,31 @@ export function LoginPage({
         <button type="submit" className="loginBtn" disabled={!username.trim() || !password.trim()}>
           Log in
         </button>
-        <button type="button" className="loginGuestBtn" onClick={onGuestLogin}>
-          Continue as guest
-        </button>
+        {onGuestLogin ? (
+          <button type="button" className="loginGuestBtn" onClick={onGuestLogin}>
+            Continue as guest
+          </button>
+        ) : null}
       </form>
+    </AuthShell>
+  );
+}
+
+// A share link this visitor can't open: unknown/turned off, or shared with
+// specific people that don't include the signed-in account.
+export function ShareBlockedPage({ reason, viewer, onSwitchAccount }) {
+  const missing = reason !== "forbidden";
+  return (
+    <AuthShell>
+      <p className="loginSubtitle">{missing ? "This link doesn't work" : "Not shared with you"}</p>
+      <p className="loginConflictText">
+        {missing
+          ? "The share link doesn't exist or its owner turned sharing off."
+          : `This page is shared with specific people only${viewer ? `, and ${viewer} isn't one of them` : ""}. Ask the owner to add your username.`}
+      </p>
+      {!missing && onSwitchAccount ? (
+        <button type="button" className="loginBtn" onClick={onSwitchAccount}>Sign in as someone else</button>
+      ) : null}
     </AuthShell>
   );
 }

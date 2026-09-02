@@ -20,8 +20,8 @@ import { fenceInnerAt, highlightCode, makeCopyButton, scanFences } from "./codeH
 import { filterSlashCommands, SlashMenuPopup } from "./slashMenu";
 import { remarkCallouts } from "./callouts";
 import { ContextMenu, MenuItem } from "./menus";
-import { API, apiJson, copyText } from "./utils";
-import { CopyIcon, ExportIcon, Trash2Icon } from "./icons";
+import { API, apiJson, copyText, withShare } from "./utils";
+import { CopyIcon, ExportIcon, PlusIcon, Trash2Icon } from "./icons";
 import {
   applyImageEdit, applyTableEdit, formatTables, htmlTableToMarkdown,
   MdImage, MdTableWrap, parseTable, scanTables, tsvToMarkdown,
@@ -183,7 +183,7 @@ async function uploadImageFile(file) {
   try {
     const form = new FormData();
     form.append("file", file);
-    const res = await fetch("/api/upload-image", { method: "POST", body: form, credentials: "include" });
+    const res = await fetch(withShare("/api/upload-image"), { method: "POST", body: form, credentials: "include" });
     if (!res.ok) return null;
     return (await res.json()).url;
   } catch (_) {
@@ -1490,8 +1490,26 @@ function SortableBlockRow({ block, ...rowProps }) {
     rowProps.onStatus?.(msg);
   };
 
+  // Notion's "+": a new empty block below this one (Alt+click: above); the
+  // same path as Enter, so on the home library it creates a new page row.
+  function onAddClick(e) {
+    e.preventDefault();
+    e.stopPropagation();
+    rowProps.onEnterSibling?.(block.id, { above: e.altKey });
+  }
+
   return (
     <div className="sortableBlockWrap" data-block-id={block.id} data-depth={depth}>
+      {block.id !== "root" && rowProps.onEnterSibling ? (
+        <button
+          type="button"
+          className="addHandle"
+          onClick={onAddClick}
+          onMouseDown={(e) => e.preventDefault()}
+          aria-label="Add a block below (Alt+click: above)"
+          title={"Click to add a block below\nAlt+click to add above"}
+        ><PlusIcon size={15} strokeWidth={2} /></button>
+      ) : null}
       <span
         className="dragHandle"
         draggable="true"
