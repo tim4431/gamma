@@ -34,6 +34,10 @@ function createWindow() {
     width: 1360,
     height: 900,
     icon: path.join(__dirname, 'build', 'icon.png'),
+    // No in-window menu-bar header on Windows/Linux; Alt reveals it and all
+    // accelerators (Ctrl+Shift+L launcher) still work. macOS keeps its
+    // system menu bar untouched.
+    autoHideMenuBar: true,
     webPreferences: {
       preload: path.join(__dirname, 'preload.js'),
       contextIsolation: true,
