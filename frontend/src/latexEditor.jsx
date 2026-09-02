@@ -107,19 +107,34 @@ for (const [name, ins, sample] of [
   ["left|", "\\left|  \\right|", "\\left|\\,\\right|"],
   ["left\\langle", "\\left\\langle  \\right\\rangle", "\\left\\langle\\,\\right\\rangle"],
 ]) CATALOG.push({ name, ins, sample, alias: "left" });
-// Environments: full \begin/\end snippet, caret inside. "begin" also matches.
-for (const name of [
-  "pmatrix", "bmatrix", "vmatrix", "Vmatrix", "Bmatrix", "matrix",
-  "cases", "aligned", "gathered", "array",
+// Environments: full \begin/\end snippet, caret inside (multi-line when the
+// span is display math — see insertionFor). "begin" also matches, and typing
+// "\begin{" completes on the environment name itself (see useMathUi).
+// `arg` is a mandatory argument some environments carry (array's col spec).
+// align/gather/equation-family samples render via their inner twins — the
+// top-level environments error outside display mode.
+const ALIGNED_SAMPLE = "\\begin{aligned}a&=b\\\\&=c\\end{aligned}";
+const GATHERED_SAMPLE = "\\begin{gathered}ab\\\\c\\end{gathered}";
+for (const [name, arg, sample] of [
+  ["aligned", null, ALIGNED_SAMPLE],
+  ["align", null, ALIGNED_SAMPLE],
+  ["cases", null, "\\begin{cases}a\\\\b\\end{cases}"],
+  ["pmatrix"], ["bmatrix"], ["matrix"],
+  ["vmatrix"], ["Vmatrix"], ["Bmatrix"], ["smallmatrix"],
+  ["rcases", null, "\\begin{rcases}a\\\\b\\end{rcases}"],
+  ["align*", null, ALIGNED_SAMPLE],
+  ["split", null, ALIGNED_SAMPLE],
+  ["gathered", null, GATHERED_SAMPLE],
+  ["gather", null, GATHERED_SAMPLE],
+  ["equation", null, "\\square"],
+  ["array", "{cc}", "\\begin{array}{cc}a&b\\\\c&d\\end{array}"],
 ]) CATALOG.push({
   name,
-  ins: `\\begin{${name}}  \\end{${name}}`,
+  env: true,
+  arg: arg || "",
+  ins: `\\begin{${name}}${arg || ""}  \\end{${name}}`,
   alias: "begin",
-  sample: name === "cases"
-    ? "\\begin{cases}a\\\\b\\end{cases}"
-    : name.endsWith("matrix")
-      ? `\\begin{${name}}a&b\\\\c&d\\end{${name}}`
-      : "\\square",
+  sample: sample || `\\begin{${name}}a&b\\\\c&d\\end{${name}}`,
 });
 
 // --- matching / insertion --------------------------------------------------
@@ -139,9 +154,24 @@ export function latexCompletions(query, limit = 8) {
   return out.slice(0, limit).map((x) => x[2]);
 }
 
+// Environment-name completions for the "\begin{prefix" trigger: every
+// environment when the prefix is empty (the popup doubles as a menu), prefix
+// matches otherwise.
+export function envCompletions(prefix, limit = 12) {
+  const q = prefix.toLowerCase();
+  return CATALOG.filter((c) => c.env && c.name.toLowerCase().startsWith(q))
+    .slice(0, limit);
+}
+
 // What accepting a completion types, and where the caret lands within it
 // (snippets mark the caret spot with a double space, like "\left(  \right)").
-export function insertionFor(c) {
+// Environments accepted inside $$ display math insert the multi-line form,
+// caret alone on the middle line.
+export function insertionFor(c, display) {
+  if (c.env && display) {
+    const open = `\\begin{${c.name}}${c.arg}\n`;
+    return { text: `${open}\n\\end{${c.name}}`, caret: open.length };
+  }
   if (c.ins) {
     const gap = c.ins.indexOf("  ");
     return { text: c.ins, caret: gap >= 0 ? gap + 1 : c.ins.length };
@@ -177,6 +207,62 @@ export function findMathAtCursor(value, cursor) {
     if (end === -1) end = value.length;
     if (cursor >= start && cursor <= end) {
       return { start, end, display: open.len === 2 };
+    }
+  }
+  return null;
+}
+
+// Snippet-style Tab navigation inside raw math (Overleaf-like). Forward:
+// hop into the next {…} argument group — its content selected placeholder-
+// style, so typing replaces it — else out past the run of closing braces,
+// else out of the math span itself. Backward: hop into the nearest group
+// opened before the caret. Returns a {anchor, head} selection, or null when
+// the caret isn't in math / there's nowhere to go (callers fall through to
+// the outliner's block indent).
+export function mathTabJump(value, cursor, dir) {
+  const seg = findMathAtCursor(value, cursor);
+  if (!seg) return null;
+  const braceAt = (p, ch) => value[p] === ch && value[p - 1] !== "\\";
+  // The group's content span: opener position -> [start, end] (end clamped
+  // to the math span when the group is still unclosed).
+  const groupContent = (p) => {
+    let depth = 1, q = p + 1;
+    while (q < seg.end && depth > 0) {
+      if (braceAt(q, "{")) depth++;
+      else if (braceAt(q, "}")) depth--;
+      if (depth > 0) q++;
+    }
+    return [p + 1, depth === 0 ? q : seg.end];
+  };
+  // \begin{...}/\end{...} name groups are structure, not argument slots.
+  const isEnvName = (p) =>
+    /\\(begin|end)$/.test(value.slice(Math.max(seg.start, p - 6), p));
+  if (dir > 0) {
+    for (let p = cursor; p < seg.end; p++) {
+      if (braceAt(p, "{")) {
+        const [from, to] = groupContent(p);
+        if (isEnvName(p)) { p = to; continue; }
+        return { anchor: from, head: to };
+      }
+    }
+    for (let p = cursor; p < seg.end; p++) {
+      if (braceAt(p, "}")) {
+        let q = p + 1;
+        while (q < seg.end && braceAt(q, "}")) q++;
+        return { anchor: q, head: q };
+      }
+    }
+    const dlen = seg.display ? 2 : 1;
+    if (value.slice(seg.end, seg.end + dlen) === "$".repeat(dlen)) {
+      const out = seg.end + dlen;
+      if (cursor < out) return { anchor: out, head: out };
+    }
+    return null;
+  }
+  for (let p = cursor - 2; p >= seg.start; p--) {
+    if (braceAt(p, "{") && !isEnvName(p)) {
+      const [from, to] = groupContent(p);
+      return { anchor: from, head: to };
     }
   }
   return null;
@@ -301,7 +387,9 @@ export function LatexAcPopup({ items, selected, anchor, onPick }) {
             onClick={() => onPick(c)}
           >
             <span className="latexAcGlyph" dangerouslySetInnerHTML={{ __html: glyph || "" }} />
-            <span className="latexAcName">\{c.name}{"{}".repeat(c.args || 0)}</span>
+            <span className="latexAcName">
+              {c.env ? `\\begin{${c.name}}${c.arg}` : `\\${c.name}${"{}".repeat(c.args || 0)}`}
+            </span>
           </button>
         );
       })}

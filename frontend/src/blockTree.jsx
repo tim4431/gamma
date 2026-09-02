@@ -12,8 +12,8 @@ import { COLORS } from "./pdfViewer";
 import { handleMarkdownCopy } from "./widgets";
 import { FolderIcon, LinkIcon } from "./icons";
 import {
-  findMathAtCursor, insertionFor, latexCompletions,
-  LatexAcPopup, MathLivePreview,
+  envCompletions, findMathAtCursor, insertionFor, latexCompletions,
+  LatexAcPopup, MathLivePreview, mathTabJump,
 } from "./latexEditor";
 import { BlockCmEditor, scanMathSpans } from "./blockCmEditor";
 import { fenceInnerAt, highlightCode, makeCopyButton, scanFences } from "./codeHighlight";
@@ -211,7 +211,11 @@ function useMathUi() {
     // pop the menu. Caret moves (typing=false) keep an already-open popup
     // only while the caret stays on the same trigger; React fires onSelect
     // right after onChange for a keystroke, so this must not wipe it.
-    const m = ta.value.slice(seg.start, cursor).match(/\\([a-zA-Z]+)$/);
+    // "\begin{name" (even with the } already typed) completes environment
+    // names instead — accepting replaces the whole \begin{… with the snippet.
+    const before = ta.value.slice(seg.start, cursor);
+    const mEnv = before.match(/\\begin\{([a-zA-Z*]*)\}?$/);
+    const m = mEnv ? null : before.match(/\\([a-zA-Z]+)$/);
     const next = {
       tex: ta.value.slice(seg.start, seg.end),
       display: seg.display,
@@ -219,9 +223,10 @@ function useMathUi() {
       ac: null,
     };
     setMathUi((prev) => {
-      const start = m ? cursor - m[0].length : -1;
-      if (m && (typing || prev?.ac?.start === start)) {
-        const items = latexCompletions(m[1]);
+      const trig = mEnv || m;
+      const start = trig ? cursor - trig[0].length : -1;
+      if (trig && (typing || prev?.ac?.start === start)) {
+        const items = mEnv ? envCompletions(mEnv[1]) : latexCompletions(m[1]);
         if (items.length) next.ac = { start, items };
       }
       return next;
@@ -263,8 +268,11 @@ function BlockEmbedCard({ refId, refBlock, refLabels, onBlockRefClick, onEmbedEd
     const ta = editorRef.current;
     if (!ta || !mathUi?.ac) return;
     const { start } = mathUi.ac;
-    const { text, caret } = insertionFor(c);
-    setDraft(ta.value.slice(0, start) + text + ta.value.slice(ta.selectionStart));
+    const { text, caret } = insertionFor(c, mathUi.display);
+    let end = ta.selectionStart;
+    // "\begin{" auto-closed to "\begin{|}": the snippet replaces that } too.
+    if (c.env && ta.value[end] === "}" && !ta.value.slice(start, end).endsWith("}")) end++;
+    setDraft(ta.value.slice(0, start) + text + ta.value.slice(end));
     setMathUi(null);
     requestAnimationFrame(() => {
       try { ta.setSelectionRange(start + caret, start + caret); } catch (_) {}
@@ -370,6 +378,20 @@ function BlockEmbedCard({ refId, refBlock, refLabels, onBlockRefClick, onEmbedEd
                 if (e.key === "ArrowUp") { e.preventDefault(); setMathAcIdx((i) => Math.max(i - 1, 0)); return; }
                 if (e.key === "Tab" || e.key === "Enter") { e.preventDefault(); acceptLatexAc(mathUi.ac.items[mathAcIdx]); return; }
                 if (e.key === "Escape") { e.preventDefault(); setMathUi((u) => (u ? { ...u, ac: null } : null)); return; }
+              }
+              // Same math Tab-hop as the block editor (no indent to fall
+              // through to here — an unhandled Tab just moves focus).
+              if (e.key === "Tab" && editorRef.current) {
+                const ta = editorRef.current;
+                const origin = e.shiftKey ? ta.selectionStart : ta.selectionEnd;
+                const jump = !fenceInnerAt(ta.value, origin)
+                  && mathTabJump(ta.value, origin, e.shiftKey ? -1 : 1);
+                if (jump) {
+                  e.preventDefault();
+                  ta.setSelectionRange(jump.anchor, jump.head);
+                  updateMathUi(ta, false);
+                  return;
+                }
               }
               // Escape saves and exits, same as blurring a normal block.
               if (e.key === "Escape") { e.preventDefault(); save(); }
@@ -747,8 +769,11 @@ function BlockRow({
     const ta = ref.current;
     if (!ta || !mathUi?.ac) return;
     const { start } = mathUi.ac;
-    const { text, caret } = insertionFor(c);
-    const newVal = ta.value.slice(0, start) + text + ta.value.slice(ta.selectionStart);
+    const { text, caret } = insertionFor(c, mathUi.display);
+    let end = ta.selectionStart;
+    // "\begin{" auto-closed to "\begin{|}": the snippet replaces that } too.
+    if (c.env && ta.value[end] === "}" && !ta.value.slice(start, end).endsWith("}")) end++;
+    const newVal = ta.value.slice(0, start) + text + ta.value.slice(end);
     onChangeText(block.id, newVal);
     setMathUi(null);
     requestAnimationFrame(() => {
@@ -1229,6 +1254,22 @@ function BlockRow({
                   if (e.key === "ArrowUp") { e.preventDefault(); setMathAcIdx((i) => Math.max(i - 1, 0)); return; }
                   if (e.key === "Tab" || e.key === "Enter") { e.preventDefault(); acceptLatexAc(mathUi.ac.items[mathAcIdx]); return; }
                   if (e.key === "Escape") { e.preventDefault(); setMathUi((u) => u ? { ...u, ac: null } : null); return; }
+                }
+                // Tab inside raw math (popup closed) hops between argument
+                // groups snippet-style — \frac{1|}{} lands in the second {} —
+                // Shift+Tab hops back. Only when there's somewhere to go;
+                // otherwise Tab falls through to the outliner's indent.
+                if (e.key === "Tab" && ref.current) {
+                  const ta = ref.current;
+                  const origin = e.shiftKey ? ta.selectionStart : ta.selectionEnd;
+                  const jump = !fenceInnerAt(ta.value, origin)
+                    && mathTabJump(ta.value, origin, e.shiftKey ? -1 : 1);
+                  if (jump) {
+                    e.preventDefault();
+                    ta.setSelectionRange(jump.anchor, jump.head);
+                    updateMathUi(ta, false);
+                    return;
+                  }
                 }
                 // Inside a ``` fence the outliner keys turn code-editor:
                 // any Enter is a line break (never a new note) and Tab
