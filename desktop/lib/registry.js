@@ -4,6 +4,11 @@
 // Local workspaces also remember the admin credentials the shell generated on
 // first run — the server's one-time password print would otherwise be lost in
 // the hidden sidecar console.
+//
+// Besides the list the file keeps a little shell UX state: the workspace
+// opened last (reopened at launch when `openLastOnLaunch`), the theme the
+// Gamma page last reported (so the launcher/shell bar paint in it before any
+// workspace is loaded), and the window bounds.
 
 const fs = require('fs');
 const path = require('path');
@@ -12,9 +17,19 @@ const crypto = require('crypto');
 const FILE = 'workspaces.json';
 
 const DEFAULTS = {
-  // Overrides for dev mode; empty strings mean "auto-detect the repo layout".
-  settings: { pythonPath: '', backendDir: '', staticDir: '' },
+  settings: {
+    // Overrides for dev mode; empty strings mean "auto-detect the repo layout".
+    pythonPath: '',
+    backendDir: '',
+    staticDir: '',
+    // Reopen the last workspace at launch instead of showing the launcher.
+    openLastOnLaunch: true,
+    // Last data-theme the Gamma page reported ('' = never seen → dark).
+    lastTheme: '',
+  },
   workspaces: [],
+  lastOpened: null,
+  windowBounds: null,
 };
 
 let userDataDir = null;
@@ -34,6 +49,8 @@ function load() {
     return {
       settings: { ...DEFAULTS.settings, ...(raw.settings || {}) },
       workspaces: Array.isArray(raw.workspaces) ? raw.workspaces : [],
+      lastOpened: raw.lastOpened || null,
+      windowBounds: raw.windowBounds || null,
     };
   } catch {
     return JSON.parse(JSON.stringify(DEFAULTS));
@@ -58,11 +75,12 @@ function addLocal(name) {
   const id = newId();
   const ws = {
     id,
-    name: name || 'Local workspace',
+    name: (name || '').trim() || 'Local workspace',
     type: 'local',
     dataDir: path.join(userDataDir, 'workspaces', id),
     adminUser: 'admin',
     adminPassword: newPassword(),
+    createdAt: new Date().toISOString(),
   };
   fs.mkdirSync(ws.dataDir, { recursive: true });
   state.workspaces.push(ws);
@@ -81,11 +99,15 @@ function addRemote(name, url) {
     throw new Error('Workspace URL must be http:// or https://');
   }
   const state = load();
+  if (state.workspaces.some((w) => w.type === 'remote' && w.url === parsed.origin)) {
+    throw new Error(`${parsed.origin} is already a workspace`);
+  }
   const ws = {
     id: newId(),
-    name: name || parsed.host,
+    name: (name || '').trim() || parsed.host,
     type: 'remote',
     url: parsed.origin,
+    createdAt: new Date().toISOString(),
   };
   state.workspaces.push(ws);
   save(state);
@@ -96,11 +118,23 @@ function get(id) {
   return load().workspaces.find((w) => w.id === id) || null;
 }
 
+function rename(id, name) {
+  const state = load();
+  const ws = state.workspaces.find((w) => w.id === id);
+  if (!ws) throw new Error('Unknown workspace');
+  const clean = (name || '').trim();
+  if (!clean) throw new Error('Name cannot be empty');
+  ws.name = clean;
+  save(state);
+  return ws;
+}
+
 function remove(id, { deleteData = false } = {}) {
   const state = load();
   const ws = state.workspaces.find((w) => w.id === id);
   if (!ws) return;
   state.workspaces = state.workspaces.filter((w) => w.id !== id);
+  if (state.lastOpened === id) state.lastOpened = null;
   save(state);
   if (deleteData && ws.type === 'local' && ws.dataDir) {
     // Guard: only ever delete directories we created under our own userData.
@@ -110,6 +144,21 @@ function remove(id, { deleteData = false } = {}) {
       fs.rmSync(resolved, { recursive: true, force: true });
     }
   }
+}
+
+// Remember which workspace is open (reopened at next launch).
+function markOpened(id) {
+  const state = load();
+  const ws = state.workspaces.find((w) => w.id === id);
+  if (!ws) return;
+  ws.lastOpenedAt = new Date().toISOString();
+  state.lastOpened = id;
+  save(state);
+}
+
+function getLastOpened() {
+  const state = load();
+  return state.workspaces.find((w) => w.id === state.lastOpened) || null;
 }
 
 function getSettings() {
@@ -123,4 +172,42 @@ function setSettings(patch) {
   return state.settings;
 }
 
-module.exports = { init, load, get, addLocal, addRemote, remove, getSettings, setSettings };
+function getWindowBounds() {
+  return load().windowBounds;
+}
+
+function setWindowBounds(bounds) {
+  const state = load();
+  state.windowBounds = bounds;
+  save(state);
+}
+
+// Bytes on disk under a local workspace's data dir (SQLite files + uploads).
+// Synchronous walk; libraries are at most a few thousand files.
+function dirSize(dir) {
+  let total = 0;
+  const walk = (d) => {
+    let entries;
+    try {
+      entries = fs.readdirSync(d, { withFileTypes: true });
+    } catch {
+      return;
+    }
+    for (const e of entries) {
+      const p = path.join(d, e.name);
+      if (e.isDirectory()) walk(p);
+      else if (e.isFile()) {
+        try {
+          total += fs.statSync(p).size;
+        } catch {}
+      }
+    }
+  };
+  walk(dir);
+  return total;
+}
+
+module.exports = {
+  init, load, get, addLocal, addRemote, rename, remove, markOpened, getLastOpened,
+  getSettings, setSettings, getWindowBounds, setWindowBounds, dirSize,
+};

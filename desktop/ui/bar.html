@@ -1,0 +1,185 @@
+<!doctype html>
+<html>
+<head>
+<meta charset="utf-8" />
+<link rel="stylesheet" href="theme.css" />
+<style>
+  /* The page is transparent: only the strip and the open menu paint. While
+     the menu is open the view is enlarged over the content; a click on the
+     see-through area closes it. */
+  html, body { background: transparent; height: 100%; overflow: hidden; }
+  .bar {
+    position: relative;
+    height: 38px;
+    display: flex;
+    align-items: center;
+    gap: 6px;
+    padding: 0 8px;
+    background: var(--bg-surface);
+    border-bottom: 1px solid var(--border);
+    -webkit-app-region: drag;
+    /* Windows/Linux: stop where the overlaid window controls begin. */
+    width: env(titlebar-area-width, 100%);
+  }
+  body[data-platform="darwin"] .bar { padding-left: 80px; width: 100%; }
+  .bar > * { -webkit-app-region: no-drag; }
+  .bar .drag { -webkit-app-region: drag; flex: 1; height: 100%; }
+  .mark { display: flex; align-items: center; margin-right: 2px; }
+  .mark svg { width: 20px; height: 20px; }
+  .wsBtn {
+    display: inline-flex; align-items: center; gap: 7px;
+    height: 28px; padding: 0 9px 0 8px;
+    border: 1px solid transparent; border-radius: 8px;
+    background: transparent; color: var(--text-primary);
+    font: inherit; font-weight: 600; cursor: pointer; max-width: 320px;
+  }
+  .wsBtn:hover, .wsBtn.open { background: var(--bg-hover); border-color: var(--border); }
+  .wsBtn .name { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+  .wsBtn .kind { color: var(--text-muted); display: inline-flex; }
+  .wsBtn .kind svg { width: 15px; height: 15px; }
+  .wsBtn .chev { color: var(--text-dim); display: inline-flex; }
+  .wsBtn .chev svg { width: 13px; height: 13px; }
+  .status { display: inline-flex; align-items: center; gap: 7px; color: var(--text-muted); font-size: 12px; margin-left: 4px; }
+  .status:empty { display: none; }
+
+  .menu {
+    position: absolute; top: 36px; left: 34px; min-width: 260px; max-width: 360px;
+    background: var(--bg-elevated); border: 1px solid var(--border);
+    border-radius: var(--radius-surface); box-shadow: var(--shadow-surface);
+    padding: 5px; z-index: 2;
+  }
+  body[data-platform="darwin"] .menu { left: 106px; }
+  .menu[hidden] { display: none; }
+  .item {
+    display: flex; align-items: center; gap: 9px; width: 100%;
+    padding: 6px 9px; border: none; border-radius: 6px; background: transparent;
+    color: var(--text-primary); font: inherit; text-align: left; cursor: pointer;
+  }
+  .item:hover { background: var(--bg-hover); }
+  .item .ico { color: var(--text-muted); display: inline-flex; flex-shrink: 0; }
+  .item .ico svg { width: 15px; height: 15px; }
+  .item .label { flex: 1; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+  .item .sub { color: var(--text-dim); font-size: 11px; margin-left: 6px; }
+  .item .check { color: var(--accent); display: inline-flex; width: 14px; }
+  .item .check svg { width: 14px; height: 14px; }
+  .item.current { font-weight: 600; }
+  .sep { height: 1px; background: var(--border); margin: 5px 4px; }
+  .menuLabel { color: var(--text-dim); font-size: 11px; padding: 4px 9px 2px; text-transform: uppercase; letter-spacing: 0.04em; }
+</style>
+</head>
+<body>
+<div class="bar" id="bar">
+  <div class="mark" title="Gamma">
+    <svg viewBox="0 0 32 32" fill="none" xmlns="http://www.w3.org/2000/svg">
+      <rect width="32" height="32" rx="7" fill="#1e1e1c"/>
+      <path d="M 6 16 C 9 10.5 13 10.5 16 16 C 19 21.5 23 21.5 26 16" stroke="#e8a020" stroke-width="1.2" fill="none" opacity="0.6" stroke-linecap="round"/>
+      <path d="M 6 16 C 9 21.5 13 21.5 16 16 C 19 10.5 23 10.5 26 16" stroke="#e8a020" stroke-width="1.2" fill="none" opacity="0.6" stroke-linecap="round"/>
+      <path d="M 6 4  Q 2 16 6 28" stroke="#e8a020" stroke-width="1.8" fill="none" stroke-linecap="round" opacity="0.9"/>
+      <path d="M 26 4 Q 30 16 26 28" stroke="#e8a020" stroke-width="1.8" fill="none" stroke-linecap="round" opacity="0.9"/>
+      <rect x="9" y="8" width="13" height="3" rx="0.8" fill="#eeebe4"/>
+      <rect x="9" y="8" width="3" height="15" rx="0.8" fill="#eeebe4"/>
+    </svg>
+  </div>
+  <button class="wsBtn" id="wsBtn" title="Switch workspace">
+    <span class="kind" id="wsKind"></span>
+    <span class="name" id="wsName">Workspaces</span>
+    <span class="chev"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="m6 9 6 6 6-6"/></svg></span>
+  </button>
+  <span class="status" id="status"></span>
+  <div class="drag"></div>
+  <button class="ctlBtn" id="btnReload" title="Reload (Ctrl+R)" hidden>
+    <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M21 12a9 9 0 1 1-2.64-6.36"/><path d="M21 3v6h-6"/></svg>
+  </button>
+</div>
+<div class="menu" id="menu" hidden></div>
+
+<script>
+  const ICONS = {
+    local: '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><ellipse cx="12" cy="5" rx="8" ry="3"/><path d="M4 5v6c0 1.66 3.58 3 8 3s8-1.34 8-3V5"/><path d="M4 11v6c0 1.66 3.58 3 8 3s8-1.34 8-3v-6"/></svg>',
+    remote: '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="9"/><path d="M3 12h18"/><path d="M12 3a14 14 0 0 1 0 18a14 14 0 0 1 0-18"/></svg>',
+    grid: '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect x="3" y="3" width="7" height="7" rx="1.5"/><rect x="14" y="3" width="7" height="7" rx="1.5"/><rect x="3" y="14" width="7" height="7" rx="1.5"/><rect x="14" y="14" width="7" height="7" rx="1.5"/></svg>',
+    check: '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.4" stroke-linecap="round" stroke-linejoin="round"><path d="M20 6 9 17l-5-5"/></svg>',
+    plus: '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M12 5v14"/><path d="M5 12h14"/></svg>',
+  };
+  const $ = (id) => document.getElementById(id);
+  document.body.dataset.platform = gammaShell.platform;
+  let state = { workspaces: [], current: null, busy: null, theme: '' };
+  let open = false;
+
+  function render() {
+    document.documentElement.setAttribute('data-theme', state.theme || 'dark');
+    const cur = state.current;
+    $('wsName').textContent = cur ? cur.name : 'Workspaces';
+    $('wsKind').innerHTML = cur ? ICONS[cur.type] || '' : ICONS.grid;
+    $('btnReload').hidden = !cur;
+    const st = $('status');
+    st.innerHTML = '';
+    if (state.busy) {
+      const s = document.createElement('span'); s.className = 'spin';
+      st.appendChild(s);
+      st.appendChild(document.createTextNode(state.busy));
+    }
+    renderMenu();
+  }
+
+  function renderMenu() {
+    const menu = $('menu');
+    menu.innerHTML = '';
+    const label = document.createElement('div');
+    label.className = 'menuLabel';
+    label.textContent = 'Workspaces';
+    menu.appendChild(label);
+    for (const ws of state.workspaces) {
+      const isCur = state.current && state.current.id === ws.id;
+      const b = document.createElement('button');
+      b.className = 'item' + (isCur ? ' current' : '');
+      b.dataset.id = ws.id;
+      b.innerHTML = `<span class="ico">${ICONS[ws.type] || ''}</span><span class="label"></span>` +
+        (ws.type === 'local' ? `<span class="dot ${ws.running ? 'on' : ''}" title="${ws.running ? 'server running' : 'stopped'}"></span>` : '<span class="sub">remote</span>') +
+        `<span class="check">${isCur ? ICONS.check : ''}</span>`;
+      b.querySelector('.label').textContent = ws.name;
+      b.onclick = () => { closeMenu(); if (!isCur) gammaShell.open(ws.id).catch(() => {}); };
+      menu.appendChild(b);
+    }
+    if (!state.workspaces.length) {
+      const e = document.createElement('div');
+      e.className = 'menuLabel';
+      e.textContent = 'none yet';
+      menu.appendChild(e);
+    }
+    const sep = document.createElement('div'); sep.className = 'sep'; menu.appendChild(sep);
+    const all = document.createElement('button');
+    all.className = 'item';
+    all.id = 'menuLauncher';
+    all.innerHTML = `<span class="ico">${ICONS.plus}</span><span class="label">All workspaces…</span><span class="sub">Ctrl+Shift+L</span>`;
+    all.onclick = () => { closeMenu(); gammaShell.launcher(); };
+    menu.appendChild(all);
+  }
+
+  function openMenu() {
+    open = true;
+    $('wsBtn').classList.add('open');
+    $('menu').hidden = false;
+    gammaShell.barExpand(true);
+    // Fresh list on every open (workspaces added since the last push).
+    gammaShell.state().then((s) => { state = s; render(); });
+  }
+  function closeMenu() {
+    if (!open) return;
+    open = false;
+    $('wsBtn').classList.remove('open');
+    $('menu').hidden = true;
+    gammaShell.barExpand(false);
+  }
+  $('wsBtn').onclick = (e) => { e.stopPropagation(); open ? closeMenu() : openMenu(); };
+  $('menu').onclick = (e) => e.stopPropagation();
+  document.addEventListener('click', closeMenu);
+  document.addEventListener('keydown', (e) => { if (e.key === 'Escape') closeMenu(); });
+  window.addEventListener('blur', closeMenu);
+  $('btnReload').onclick = () => gammaShell.reload();
+
+  gammaShell.onState((s) => { state = s; render(); });
+  gammaShell.state().then((s) => { state = s; render(); });
+</script>
+</body>
+</html>

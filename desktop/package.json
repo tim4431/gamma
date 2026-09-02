@@ -1,22 +1,27 @@
 {
   "name": "gamma-desktop",
-  "version": "0.1.0",
+  "version": "0.2.0",
   "description": "Gamma desktop shell: opens local and remote Gamma workspaces",
   "main": "main.js",
   "private": true,
   "scripts": {
     "start": "electron .",
-    "smoke": "electron . --smoke",
+    "smoke": "node test/smoke.js",
+    "smoke:packaged": "node test/smoke.js --packaged",
+    "e2e": "node test/e2e.js",
+    "e2e:packaged": "node test/e2e.js --packaged",
     "pack": "electron-builder --dir",
     "dist": "electron-builder"
   },
   "devDependencies": {
     "electron": "^38.0.0",
-    "electron-builder": "^26.0.12"
+    "electron-builder": "^26.0.12",
+    "playwright-core": "^1.55.0"
   },
   "build": {
     "appId": "io.github.tim4431.gamma",
     "productName": "Gamma",
+    "artifactName": "Gamma-${version}-${os}-${arch}.${ext}",
     "directories": {
       "output": "dist"
     },
@@ -24,7 +29,7 @@
       "main.js",
       "preload.js",
       "lib/**",
-      "launcher/**",
+      "ui/**",
       "build/icon.png",
       "package.json"
     ],

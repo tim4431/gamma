@@ -1,0 +1,356 @@
+<!doctype html>
+<html>
+<head>
+<meta charset="utf-8" />
+<title>Gamma — Workspaces</title>
+<link rel="stylesheet" href="theme.css" />
+<style>
+  html, body { background: var(--bg-page); height: 100%; }
+  body { overflow-y: auto; }
+  .wrap { max-width: 680px; margin: 0 auto; padding: 40px 28px 64px; }
+  .head { display: flex; align-items: center; gap: 14px; margin-bottom: 6px; }
+  .head svg { width: 40px; height: 40px; flex-shrink: 0; }
+  h1 { font-size: 21px; margin: 0; letter-spacing: -0.01em; }
+  .sub { color: var(--text-muted); margin: 0 0 26px; }
+  .sectionTitle { display: flex; align-items: center; gap: 8px; color: var(--text-muted); font-size: 11px; font-weight: 600; text-transform: uppercase; letter-spacing: 0.05em; margin: 22px 0 8px; }
+  .cards { display: flex; flex-direction: column; gap: 8px; }
+  .card {
+    background: var(--bg-card); border: 1px solid var(--border); border-radius: var(--radius-surface);
+    padding: 12px 14px; display: flex; align-items: center; gap: 12px;
+  }
+  .card:hover { border-color: var(--border-light); }
+  .card .kind { width: 34px; height: 34px; border-radius: 9px; background: var(--bg-elevated); border: 1px solid var(--border); display: flex; align-items: center; justify-content: center; color: var(--text-muted); flex-shrink: 0; }
+  .card .kind svg { width: 17px; height: 17px; }
+  .card .info { flex: 1; min-width: 0; }
+  .card .name { font-weight: 600; font-size: 14px; display: flex; align-items: center; gap: 8px; }
+  .card .name .text { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+  .badge { font-size: 10.5px; font-weight: 500; color: var(--text-muted); border: 1px solid var(--border); border-radius: 99px; padding: 1px 7px; flex-shrink: 0; }
+  .badge.last { color: var(--accent); border-color: var(--accent-bg); background: var(--accent-bg-light); }
+  .card .detail { color: var(--text-muted); font-size: 11.5px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; margin-top: 2px; }
+  .card .detail .sep { margin: 0 6px; color: var(--text-dim); }
+  .card .actions { display: flex; align-items: center; gap: 2px; flex-shrink: 0; }
+  .card .actions .uiBtn { margin-right: 6px; }
+  .adders { display: flex; gap: 8px; margin-top: 12px; }
+  .status { margin-top: 16px; color: var(--text-muted); min-height: 20px; font-size: 12px; }
+  .status.err { color: var(--danger); white-space: pre-wrap; -webkit-user-select: text; user-select: text; }
+  .empty { color: var(--text-muted); text-align: center; padding: 30px 16px; border: 1px dashed var(--border-light); border-radius: var(--radius-surface); }
+  .empty b { color: var(--text-secondary); }
+
+  dialog {
+    background: var(--bg-elevated); color: var(--text-primary); border: 1px solid var(--border);
+    border-radius: var(--radius-surface); box-shadow: var(--shadow-surface); padding: 20px; width: 400px; max-width: 90vw;
+  }
+  dialog::backdrop { background: rgba(0, 0, 0, 0.4); }
+  dialog h3 { margin: 0 0 12px; font-size: 14px; }
+  dialog p { margin: 0 0 8px; color: var(--text-muted); font-size: 12px; }
+  dialog label { display: block; color: var(--text-muted); font-size: 11.5px; margin: 10px 0 4px; }
+  dialog .row { display: flex; justify-content: flex-end; gap: 8px; margin-top: 18px; }
+  .creds { font: 12px/1.7 ui-monospace, Consolas, Menlo, monospace; background: var(--bg-input); border: 1px solid var(--border); border-radius: var(--radius-control); padding: 8px 10px; -webkit-user-select: text; user-select: text; white-space: pre; }
+
+  .settings { background: var(--bg-card); border: 1px solid var(--border); border-radius: var(--radius-surface); padding: 12px 14px; }
+  .setRow { display: flex; align-items: center; justify-content: space-between; gap: 12px; padding: 6px 0; }
+  .setRow .l { font-size: 13px; }
+  .setRow .d { color: var(--text-muted); font-size: 11.5px; margin-top: 1px; }
+  .switch { position: relative; width: 34px; height: 20px; border-radius: 99px; background: var(--bg-active); border: 1px solid var(--border-light); cursor: pointer; flex-shrink: 0; transition: background 0.15s; }
+  .switch::after { content: ''; position: absolute; top: 2px; left: 2px; width: 14px; height: 14px; border-radius: 50%; background: #fff; transition: left 0.15s; box-shadow: 0 1px 2px rgba(0,0,0,0.3); }
+  .switch.on { background: var(--accent); border-color: var(--accent); }
+  .switch.on::after { left: 16px; }
+  details { margin-top: 14px; color: var(--text-muted); }
+  details summary { cursor: pointer; font-size: 12px; }
+  details .settings { margin-top: 8px; }
+  details label { display: block; font-size: 11.5px; margin: 8px 0 3px; }
+  details .row { margin-top: 12px; display: flex; justify-content: space-between; align-items: center; gap: 10px; }
+  .foot { margin-top: 26px; color: var(--text-dim); font-size: 11px; display: flex; justify-content: space-between; }
+</style>
+</head>
+<body>
+<div class="wrap">
+  <div class="head">
+    <svg viewBox="0 0 32 32" fill="none" xmlns="http://www.w3.org/2000/svg">
+      <rect width="32" height="32" rx="7" fill="#1e1e1c"/>
+      <path d="M 6 16 C 9 10.5 13 10.5 16 16 C 19 21.5 23 21.5 26 16" stroke="#e8a020" stroke-width="1.2" fill="none" opacity="0.6" stroke-linecap="round"/>
+      <path d="M 6 16 C 9 21.5 13 21.5 16 16 C 19 10.5 23 10.5 26 16" stroke="#e8a020" stroke-width="1.2" fill="none" opacity="0.6" stroke-linecap="round"/>
+      <path d="M 6 4  Q 2 16 6 28" stroke="#e8a020" stroke-width="1.8" fill="none" stroke-linecap="round" opacity="0.9"/>
+      <path d="M 26 4 Q 30 16 26 28" stroke="#e8a020" stroke-width="1.8" fill="none" stroke-linecap="round" opacity="0.9"/>
+      <rect x="9" y="8" width="13" height="3" rx="0.8" fill="#eeebe4"/>
+      <rect x="9" y="8" width="3" height="15" rx="0.8" fill="#eeebe4"/>
+    </svg>
+    <div>
+      <h1>Workspaces</h1>
+    </div>
+  </div>
+  <p class="sub">A workspace is a Gamma server: a local library kept on this computer, or one you host elsewhere. Switch between them any time from the toolbar.</p>
+
+  <div class="cards" id="cards"></div>
+  <div class="adders">
+    <button class="uiBtn primary" id="btnAddLocal"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M12 5v14"/><path d="M5 12h14"/></svg>New local workspace</button>
+    <button class="uiBtn" id="btnAddRemote"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="9"/><path d="M3 12h18"/><path d="M12 3a14 14 0 0 1 0 18a14 14 0 0 1 0-18"/></svg>Add remote server…</button>
+  </div>
+  <div class="status" id="status"></div>
+
+  <div class="sectionTitle">Settings</div>
+  <div class="settings">
+    <div class="setRow">
+      <div>
+        <div class="l">Reopen the last workspace at launch</div>
+        <div class="d">Off: start on this page every time.</div>
+      </div>
+      <div class="switch" id="swOpenLast" role="switch"></div>
+    </div>
+  </div>
+
+  <details id="advanced">
+    <summary>Advanced: run local workspaces from a source checkout</summary>
+    <div class="settings">
+      <label>Python executable (blank = auto-detect)</label>
+      <input class="uiInput mono" id="setPython" spellcheck="false" />
+      <label>Backend directory</label>
+      <input class="uiInput mono" id="setBackend" spellcheck="false" />
+      <label>Frontend dist directory</label>
+      <input class="uiInput mono" id="setStatic" spellcheck="false" />
+      <div class="row">
+        <span id="detected" style="font-size:11px"></span>
+        <button class="uiBtn sm" id="btnSaveSettings">Save</button>
+      </div>
+    </div>
+  </details>
+
+  <div class="foot"><span id="version"></span><span id="userData" style="-webkit-user-select:text;user-select:text"></span></div>
+</div>
+
+<dialog id="dlgLocal">
+  <h3>New local workspace</h3>
+  <p>A fresh library stored on this computer. The shell runs its server for you and signs you in.</p>
+  <label>Name</label>
+  <input class="uiInput" id="localName" placeholder="My library" />
+  <div class="row">
+    <button class="uiBtn" onclick="dlgLocal.close()">Cancel</button>
+    <button class="uiBtn primary" id="btnCreateLocal">Create</button>
+  </div>
+</dialog>
+
+<dialog id="dlgRemote">
+  <h3>Add remote server</h3>
+  <p>A Gamma you host elsewhere (NAS, VPS). You sign in with that server's accounts.</p>
+  <label>Server URL</label>
+  <input class="uiInput mono" id="remoteUrl" placeholder="https://gamma.example.com  or  http://192.168.1.10:9001" spellcheck="false" />
+  <label>Name (optional)</label>
+  <input class="uiInput" id="remoteName" placeholder="Home server" />
+  <div class="row">
+    <button class="uiBtn" onclick="dlgRemote.close()">Cancel</button>
+    <button class="uiBtn primary" id="btnCreateRemote">Add</button>
+  </div>
+</dialog>
+
+<dialog id="dlgRename">
+  <h3>Rename workspace</h3>
+  <input class="uiInput" id="renameName" />
+  <div class="row">
+    <button class="uiBtn" onclick="dlgRename.close()">Cancel</button>
+    <button class="uiBtn primary" id="btnRename">Rename</button>
+  </div>
+</dialog>
+
+<dialog id="dlgCreds">
+  <h3>Local workspace credentials</h3>
+  <p>The shell created this admin account and signs you in automatically. You only need it to open the workspace from a browser, or to add more users in Gamma's settings.</p>
+  <div class="creds" id="credsText"></div>
+  <div class="row"><button class="uiBtn primary" onclick="dlgCreds.close()">Close</button></div>
+</dialog>
+
+<dialog id="dlgRemove">
+  <h3 id="removeTitle">Remove workspace</h3>
+  <p id="removeText"></p>
+  <div class="row">
+    <button class="uiBtn" onclick="dlgRemove.close()">Cancel</button>
+    <button class="uiBtn" id="btnRemoveKeep">Remove, keep files</button>
+    <button class="uiBtn danger" id="btnRemoveWipe">Delete everything</button>
+  </div>
+</dialog>
+
+<script>
+  const ICONS = {
+    local: '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><ellipse cx="12" cy="5" rx="8" ry="3"/><path d="M4 5v6c0 1.66 3.58 3 8 3s8-1.34 8-3V5"/><path d="M4 11v6c0 1.66 3.58 3 8 3s8-1.34 8-3v-6"/></svg>',
+    remote: '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="9"/><path d="M3 12h18"/><path d="M12 3a14 14 0 0 1 0 18a14 14 0 0 1 0-18"/></svg>',
+    key: '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M21 2l-2 2m-7.61 7.61a5.5 5.5 0 1 1-7.778 7.778 5.5 5.5 0 0 1 7.777-7.777zm0 0L15.5 7.5m0 0l3 3L22 7l-3-3m-3.5 3.5L19 4"/></svg>',
+    folder: '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M20 20a2 2 0 0 0 2-2V8a2 2 0 0 0-2-2h-7.9a2 2 0 0 1-1.69-.9L9.6 3.9A2 2 0 0 0 7.93 3H4a2 2 0 0 0-2 2v13a2 2 0 0 0 2 2Z"/></svg>',
+    log: '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z"/><path d="M14 2v6h6"/><path d="M8 13h8"/><path d="M8 17h8"/></svg>',
+    pencil: '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M17 3a2.85 2.83 0 1 1 4 4L7.5 20.5 2 22l1.5-5.5Z"/><path d="m15 5 4 4"/></svg>',
+    trash: '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M3 6h18"/><path d="M19 6v14a2 2 0 0 1-2 2H7a2 2 0 0 1-2-2V6"/><path d="M8 6V4a2 2 0 0 1 2-2h4a2 2 0 0 1 2 2v2"/></svg>',
+  };
+  const $ = (id) => document.getElementById(id);
+  const statusEl = $('status');
+  let busy = false;
+  let state = null;
+
+  function setStatus(text, isErr) {
+    statusEl.textContent = text || '';
+    statusEl.className = 'status' + (isErr ? ' err' : '');
+  }
+  function fmtBytes(n) {
+    if (!n) return '0 B';
+    const u = ['B', 'KB', 'MB', 'GB'];
+    let i = 0;
+    while (n >= 1024 && i < u.length - 1) { n /= 1024; i++; }
+    return (i ? n.toFixed(n >= 10 ? 0 : 1) : n) + ' ' + u[i];
+  }
+  function iconBtn(icon, title, onClick, cls) {
+    const b = document.createElement('button');
+    b.className = 'ctlBtn' + (cls ? ' ' + cls : '');
+    b.title = title;
+    b.innerHTML = ICONS[icon];
+    b.onclick = onClick;
+    return b;
+  }
+
+  async function refresh() {
+    state = await gammaShell.list();
+    document.documentElement.setAttribute('data-theme', state.theme || 'dark');
+    const cards = $('cards');
+    cards.innerHTML = '';
+    if (!state.workspaces.length) {
+      cards.innerHTML = '<div class="empty"><b>No workspaces yet.</b><br>Create a local one to keep a library on this computer, or add the address of a Gamma server you already run.</div>';
+    }
+    for (const ws of state.workspaces) {
+      const card = document.createElement('div');
+      card.className = 'card';
+      card.dataset.id = ws.id;
+      const kind = document.createElement('div');
+      kind.className = 'kind';
+      kind.innerHTML = ICONS[ws.type];
+      card.appendChild(kind);
+
+      const info = document.createElement('div');
+      info.className = 'info';
+      const name = document.createElement('div');
+      name.className = 'name';
+      if (ws.type === 'local') { const d = document.createElement('span'); d.className = 'dot' + (ws.running ? ' on' : ''); d.title = ws.running ? 'server running' : 'stopped'; name.appendChild(d); }
+      const t = document.createElement('span'); t.className = 'text'; t.textContent = ws.name; name.appendChild(t);
+      const badge = document.createElement('span'); badge.className = 'badge'; badge.textContent = ws.type === 'local' ? 'local' : 'remote'; name.appendChild(badge);
+      if (state.lastOpened === ws.id) { const l = document.createElement('span'); l.className = 'badge last'; l.textContent = 'last opened'; name.appendChild(l); }
+      info.appendChild(name);
+      const detail = document.createElement('div');
+      detail.className = 'detail';
+      if (ws.type === 'local') {
+        detail.textContent = fmtBytes(ws.sizeBytes) + ' on disk';
+        const s = document.createElement('span'); s.className = 'sep'; s.textContent = '·'; detail.appendChild(s);
+        detail.appendChild(document.createTextNode(ws.dataDir));
+      } else {
+        detail.textContent = ws.url;
+      }
+      detail.title = ws.type === 'local' ? ws.dataDir : ws.url;
+      info.appendChild(detail);
+      card.appendChild(info);
+
+      const actions = document.createElement('div');
+      actions.className = 'actions';
+      const openBtn = document.createElement('button');
+      openBtn.className = 'uiBtn primary sm';
+      openBtn.textContent = 'Open';
+      openBtn.onclick = () => openWs(ws, openBtn);
+      actions.appendChild(openBtn);
+      actions.appendChild(iconBtn('pencil', 'Rename', () => {
+        $('renameName').value = ws.name;
+        $('btnRename').onclick = async () => {
+          try { await gammaShell.rename(ws.id, $('renameName').value); $('dlgRename').close(); refresh(); }
+          catch (e) { setStatus(cleanErr(e), true); }
+        };
+        $('dlgRename').showModal();
+        $('renameName').select();
+      }));
+      if (ws.type === 'local') {
+        actions.appendChild(iconBtn('key', 'Show credentials', () => {
+          $('credsText').textContent = `username: ${ws.adminUser}\npassword: ${ws.adminPassword}\nserver:   ${ws.url || '(starts when opened)'}`;
+          $('dlgCreds').showModal();
+        }));
+        actions.appendChild(iconBtn('folder', 'Open data folder', () => gammaShell.revealData(ws.id)));
+        actions.appendChild(iconBtn('log', 'Show server log', () => gammaShell.revealLog(ws.id)));
+      }
+      actions.appendChild(iconBtn('trash', 'Remove workspace', () => {
+        $('removeTitle').textContent = `Remove "${ws.name}"?`;
+        if (ws.type === 'local') {
+          $('removeText').textContent = `"Delete everything" also erases its data folder (${fmtBytes(ws.sizeBytes)}: the library, notes and PDFs). "Keep files" only forgets the workspace; the folder stays on disk.`;
+          $('btnRemoveKeep').hidden = false;
+          $('btnRemoveWipe').textContent = 'Delete everything';
+        } else {
+          $('removeText').textContent = 'The server itself is not touched; only the entry here is removed.';
+          $('btnRemoveKeep').hidden = true;
+          $('btnRemoveWipe').textContent = 'Remove';
+        }
+        $('btnRemoveKeep').onclick = async () => { $('dlgRemove').close(); await gammaShell.remove(ws.id, {}); refresh(); };
+        $('btnRemoveWipe').onclick = async () => { $('dlgRemove').close(); await gammaShell.remove(ws.id, { deleteData: ws.type === 'local' }); refresh(); };
+        $('dlgRemove').showModal();
+      }, 'danger'));
+      card.appendChild(actions);
+      cards.appendChild(card);
+    }
+
+    $('swOpenLast').classList.toggle('on', Boolean(state.settings.openLastOnLaunch));
+    $('setPython').value = state.settings.pythonPath || '';
+    $('setBackend').value = state.settings.backendDir || '';
+    $('setStatic').value = state.settings.staticDir || '';
+    $('setPython').placeholder = state.detected.pythonPath;
+    $('setBackend').placeholder = state.detected.backendDir;
+    $('setStatic').placeholder = state.detected.staticDir;
+    $('detected').textContent = state.packaged ? 'Packaged app: the bundled server is used unless a Python path is set.' : 'Dev mode: repo auto-detected.';
+    $('version').textContent = `Gamma desktop ${state.version}${state.packaged ? '' : ' (dev)'}`;
+    $('userData').textContent = state.userDataDir;
+  }
+
+  const cleanErr = (e) => String(e && e.message || e).replace(/^Error invoking remote method '[^']*': (Error: )?/, '');
+
+  async function openWs(ws, btn) {
+    if (busy) return;
+    busy = true;
+    btn.disabled = true;
+    setStatus(ws.type === 'local' ? `Starting ${ws.name}…` : `Connecting to ${ws.name}…`);
+    try {
+      await gammaShell.open(ws.id);
+    } catch (e) {
+      setStatus(cleanErr(e), true);
+      busy = false;
+      btn.disabled = false;
+    }
+  }
+
+  $('btnAddLocal').onclick = () => { $('localName').value = ''; $('dlgLocal').showModal(); $('localName').focus(); };
+  $('btnCreateLocal').onclick = async () => {
+    $('dlgLocal').close();
+    await gammaShell.addLocal($('localName').value.trim());
+    refresh();
+  };
+  $('localName').addEventListener('keydown', (e) => { if (e.key === 'Enter') $('btnCreateLocal').click(); });
+  $('btnAddRemote').onclick = () => { $('remoteUrl').value = ''; $('remoteName').value = ''; $('dlgRemote').showModal(); $('remoteUrl').focus(); };
+  $('btnCreateRemote').onclick = async () => {
+    try {
+      await gammaShell.addRemote($('remoteName').value.trim(), $('remoteUrl').value.trim());
+      $('dlgRemote').close();
+      setStatus('');
+      refresh();
+    } catch (e) {
+      setStatus(cleanErr(e), true);
+    }
+  };
+  $('remoteUrl').addEventListener('keydown', (e) => { if (e.key === 'Enter') $('btnCreateRemote').click(); });
+  $('renameName').addEventListener('keydown', (e) => { if (e.key === 'Enter') $('btnRename').click(); });
+  $('swOpenLast').onclick = async () => {
+    await gammaShell.setSettings({ openLastOnLaunch: !state.settings.openLastOnLaunch });
+    refresh();
+  };
+  $('btnSaveSettings').onclick = async () => {
+    await gammaShell.setSettings({
+      pythonPath: $('setPython').value.trim(),
+      backendDir: $('setBackend').value.trim(),
+      staticDir: $('setStatic').value.trim(),
+    });
+    setStatus('Settings saved.');
+    refresh();
+  };
+
+  const err = new URLSearchParams(location.search).get('error');
+  if (err) setStatus(err, true);
+  gammaShell.onState(() => refresh());
+  refresh();
+</script>
+</body>
+</html>

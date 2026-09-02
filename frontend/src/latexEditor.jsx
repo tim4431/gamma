@@ -180,14 +180,26 @@ export function insertionFor(c, display) {
   return { text, caret: c.args ? c.name.length + 2 : text.length };
 }
 
+// Odd run of backslashes right before pos → the char at pos is escaped
+// ("\$" is a literal dollar, "\\$" is a line break followed by a real "$").
+export function escapedAt(text, pos) {
+  let n = 0;
+  while (text[pos - 1 - n] === "\\") n++;
+  return n % 2 === 1;
+}
+
 // The math span (inside $...$ / $$...$$) containing the caret, if any.
 // An unclosed opener still counts — that's exactly the live-typing case —
 // previewing to end-of-line for $ and end-of-text for $$.
+// A "$" the caret sits right in front of is never an escaped one: "$\|$" is
+// the auto-paired closer with a \command being started before it, not a
+// literal dollar — reading it as "\$" would swallow the closer and preview
+// the whole rest of the line as math.
 export function findMathAtCursor(value, cursor) {
   const re = /\$\$?/g;
   let m, open = null;
   while ((m = re.exec(value))) {
-    if (value[m.index - 1] === "\\") continue; // escaped \$
+    if (m.index !== cursor && escapedAt(value, m.index)) continue;
     const tok = { i: m.index, len: m[0].length };
     if (!open) {
       if (tok.i >= cursor) return null;
@@ -350,7 +362,10 @@ export function useCaretAnchored(anchor, preferAbove, deps) {
 // Overleaf-style floating preview of the math span under the caret. Sits
 // above the caret line (below when there's no room), never intercepts the mouse.
 export function MathLivePreview({ tex, display, anchor }) {
-  const html = tex.trim() ? renderKatex(tex, display) : null;
+  // A trailing lone backslash is a \command being typed — render what's
+  // before it instead of flashing KaTeX's red error for the half keystroke.
+  const src = escapedAt(tex, tex.length) ? tex.slice(0, -1) : tex;
+  const html = src.trim() ? renderKatex(src, display) : null;
   const [ref, style] = useCaretAnchored(anchor, true, [tex, display]);
   if (!html) return null;
   return (

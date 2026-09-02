@@ -1,3 +1,8 @@
+# Server image only. Runs on every push to main (`latest`) — independent of
+# release.yml, which builds the desktop installers + extension zip into a
+# GitHub Release and creates `v*` tags with GITHUB_TOKEN (those never
+# re-trigger workflows, so a hand-pushed `v*` tag is the only way to get a
+# semver-tagged image here).
 name: Build and publish Docker image
 
 on:
