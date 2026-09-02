@@ -376,7 +376,10 @@ def _run_read_block(conn, user: str, scope: dict, args: dict):
     out = (head + "\n" + "\n".join(lines) + tail
            + "\nBlock ids are in [brackets] — pass them to edit_block/create_block/move_block.")
     what = f'“{page_title[:60]}”' if is_page else f'a block in “{page_title[:60]}”'
-    return out, {"kind": "read", "page_id": page_id, "summary": f"Read notes of {what}"}
+    # block_id lets the notes panel light up the block (or, for a page id,
+    # the whole outline) the agent is reading.
+    return out, {"kind": "read", "page_id": page_id, "block_id": block["id"],
+                 "summary": f"Read notes of {what}"}
 
 
 def _run_edit_block(conn, user: str, scope: dict, args: dict):
@@ -401,7 +404,7 @@ def _run_edit_block(conn, user: str, scope: dict, args: dict):
     conn.execute("UPDATE unified_blocks SET updated_at = ? WHERE id = ?", (now, page_id))
     conn.commit()
     return (f'ok — block [{block["id"]}] updated',
-            {"kind": "edit", "page_id": page_id,
+            {"kind": "edit", "page_id": page_id, "block_id": block["id"],
              "summary": f"Edited a note in “{page_title[:60]}”"})
 
 
@@ -425,7 +428,7 @@ def _run_create_block(conn, user: str, scope: dict, args: dict):
     conn.execute("UPDATE unified_blocks SET updated_at = ? WHERE id = ?", (now, page_id))
     conn.commit()
     return (f"ok — created block [{block_id}]",
-            {"kind": "create", "page_id": page_id,
+            {"kind": "create", "page_id": page_id, "block_id": block_id,
              "summary": f"Added a note in “{page_title[:60]}”"})
 
 
@@ -465,7 +468,7 @@ def _run_move_block(conn, user: str, scope: dict, args: dict):
     conn.commit()
     where = (f"page “{page_title[:60]}”" if page_id != src_page_id
              else f"“{page_title[:60]}”")
-    action = {"kind": "move", "page_id": page_id,
+    action = {"kind": "move", "page_id": page_id, "block_id": block["id"],
               "summary": f"Moved a note within {where}" if page_id == src_page_id
                          else f"Moved a note “{src_title[:40]}” → {where}"}
     if page_id != src_page_id:
@@ -832,6 +835,16 @@ def agent_system(scope: dict, perms: dict | None = None, base: str = "") -> str:
         path = _scope_folder(scope)
         where = f'the folder "{path}"' if path else "the root of their library"
         text += f"The user is viewing {where}; only pages in it are reachable.\n"
+    focus = scope.get("focus_block_id")
+    if focus and focus != scope.get("page_id"):
+        text += (f'The user\'s cursor is on note block "{focus}" (its text is in the '
+                 'context): "this block", "here", "this note" refer to it — edit or '
+                 "extend it directly by that id, no read_block needed.\n")
+    chips = [b for b in (scope.get("context_blocks") or []) if b and b != scope.get("page_id")]
+    if chips:
+        text += ("The user attached these note blocks to the message (text in the "
+                 "context, ids in brackets): " + ", ".join(f'"{b}"' for b in chips)
+                 + ". A request to change/rewrite/expand them means those ids.\n")
     text += f"Available tools: {', '.join(names)}. Any other tool is disabled in the user's settings."
     if "read_page" in names or "search_library" in names:
         text += (

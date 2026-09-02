@@ -9,7 +9,11 @@ key, allowed scopes, mutating flag, and executor — so arming a chat is one
 filter (`agent_tools`), dispatch is one lookup (`run_agent_tool`), and the
 in-scope check (`_load_scoped_page`/`_scope_pages`: folder = tag prefix match
 via `foldertags.path_within`, page = id equality) is shared by every
-executor. Folder semantics mirror
+executor. When the request names a cursor block (`focus_block_id`) or attached block
+chips (`context_blocks`), `agent_system` adds one line each so "this block" /
+"these" resolve to ids without a `read_block` round-trip — their text is
+already in the context (see "Pointing the chat at notes" in [ai.md](ai.md)).
+Folder semantics mirror
 [frontend/src/libraryUtils.js](../../frontend/src/libraryUtils.js) via the
 shared `gamma/foldertags.py` rules; keep them in sync.
 
@@ -98,8 +102,11 @@ cross-page moves (allowed when both pages are in scope) refuse subtrees
 containing highlight blocks, whose PDF anchors are tied to their own paper.
 All three touch the page root's `updated_at` (like the editor's autosave PUT)
 so the home feed reorders, and their UI actions carry `page_id` (moves across
-pages also `src_page_id`) — the frontend reloads the open page's block tree
-when it was touched. There is still no delete under any permission: an
+pages also `src_page_id`) and `block_id` (the edited/moved block, the created
+block's new id; `read_block` actions carry it too) — the frontend reloads the
+open page's block tree when it was touched and lights the block up, and the
+edit/create calls are previewed in the block while the model is still writing
+them (see "Watching the agent work" in [ai.md](ai.md)). There is still no delete under any permission: an
 unwanted block is emptied or left for the user.
 
 Typical uses: *"rename these to AuthorYear style"*, *"file the readout papers

@@ -133,6 +133,36 @@ normalized-text match (`_locate_passage`, page-seam aware) and spends the
 budget on a small head slice plus windows starting at those pages, labeled with
 their page numbers; unlocatable selections fall back to the plain head excerpt.
 
+### Pointing the chat at notes
+
+Three more request fields say what the message is *about* inside the notes
+(all optional, all resolved server-side against the request's context pages):
+
+- `focus_block_id` — the block row the user's cursor is on (`focusedId` in
+  `App.jsx` → `focusedNote`, shown in the chat as a "Cursor" chip like a PDF
+  selection and sent with every message; the chip's × leaves it out until
+  the cursor moves to another block). Its text and sub-blocks go
+  into the context as an id-labelled outline ("The user's cursor is on this
+  note block …"), and the agent prompt says "this block"/"here" mean that id,
+  so *"expand this"* edits the right block without a `read_block` first.
+- `context_blocks` — ids of blocks the user attached as chips: Ctrl+click a
+  block row, or the ⋮⋮ handle menu's **Add to chat** (`onAddToChat` →
+  `chatNotes` in App). Each is served as `[id] text` with its subtree
+  indented (`ai_context.notes_focus_section`, same form as `read_block`), and
+  the agent prompt lists the ids, so *"rewrite these"* means them. Capped at
+  12 chips / 12k chars; ids outside the context pages and page ids are
+  dropped silently.
+- `note_passages` — text selected in the rendered notes with Ctrl held (the
+  mouseup handler in App.jsx; plain selection is left alone so copying stays
+  quiet; selections inside an open editor are ignored). Appended to the
+  prompt like PDF passages ("selected the following text in their own
+  notes"), 6 × 4000 chars.
+
+Chips render in the composer's chip strip next to PDF passages ("Block" /
+"Note" labels), clear on send, and are dropped on a page switch — the ids
+belong to the page. Highlight cards keep their older behaviour: Ctrl+click
+sends the quote as a PDF passage, not a block chip.
+
 Reasoning models burn invisible tokens — keep `max_tokens` generous (empty
 responses raise with the finish reason). `/api/ai/models` feeds the chat
 panel's switchers and the prompt editor (four editable prompts: chat system,
@@ -164,12 +194,11 @@ scope) = plain chat.
 
 ### Permissions and knobs (Settings → Assistant)
 
-The overall **Enable tools** switch (`gamma-ai-agent-enabled`, default on)
-disables tool use everywhere. The "Folder chats"/"PDF chats" toggles set each
-scope's per-chat default (`gamma-ai-folder-tools-default` /
-`gamma-ai-pdf-tools-default`; folder on, PDF off). The Tools
+The single **Enable tools** switch (`gamma-ai-agent-enabled`, default on)
+governs tool use in every chat; there is no per-scope (folder vs. PDF)
+default any more — every chat starts with tools on. The Tools
 button (sliders icon) in each folder/PDF chat header toggles the configured tool set for that
-chat only. New chat resets the switch to the Settings default. The chat
+chat only. New chat resets the switch back to on. The chat
 header's ⚙ popover also carries a Tools section — the per-chat switch plus the
 same per-tool permission rows Settings shows (filtered to the chat's scope,
 editing the same stored map; `AGENT_PERM_ROWS` in `settings.jsx`).
@@ -208,6 +237,41 @@ output the model got; only applied mutations count against
 the note-block tools' actions carry `page_id`/`src_page_id` so the frontend
 reloads the open page's block tree when the AI touched it (`onNotesChange`;
 skipped when the user typed during the reply — their queued autosave wins).
+
+### Watching the agent work (live footprint)
+
+The chat forwards every stream event to the app AS IT ARRIVES
+(`onAgentEvent` in `chatDock.jsx` → `handleAgentEvent` in `App.jsx`), so the
+notes panel shows where the agent is, not just what it did:
+
+- Actions of `read_block`/`edit_block`/`create_block`/`move_block` carry the
+  `block_id` they touched. On the open page a read block pulses an accent
+  ring for a moment; an edited/created/moved block gets an accent tint that
+  fades over a few seconds and is scrolled into view; a whole-page read
+  (`read_page`, or `read_block` on the page id) sweeps the outline — every
+  row rings once, staggered top to bottom (`aiScan` → inline
+  `animation-delay` per row) — and breathes the list's left edge. An applied edit reloads the tree immediately (same guards as
+  `onNotesChange`, plus: never while the user has a block editor open), so
+  the change is visible while the agent carries on.
+- `{"progress": {tool, id, block_id | parent_id (+ after_id), content}}`
+  lines preview an `edit_block`/`create_block` call the model is STILL
+  WRITING: `ai_client.sse_events` yields `tool_delta` events (the raw
+  argument JSON so far, on all three wires — Anthropic `input_json_delta`,
+  chat-completions `tool_calls[].function.arguments`, Responses
+  `response.function_call_arguments.delta`) and the loop reads the target
+  id and the `content` string out of the partial JSON
+  (`ai_client.partial_json_object`: complete string values plus the one
+  being written, decoded as far as it goes). The block then types the new
+  markdown in behind a caret in place of its stored text — or, for a
+  create, a ghost row appears under the named parent after the named
+  sibling — until the action lands and the reload swaps in the real block.
+  Only armed edit/create tools are previewed; other tools' arguments are
+  never streamed. Non-stream callers never see progress lines.
+
+Everything is display-only: marks and previews live in App state
+(`aiMarks`, `aiLive`, `aiPageRead` → `rowProps` → `BlockRow`/`BlockTree`),
+clear on page switch and when the reply ends, and never enter the block
+tree, the undo history or autosave.
 
 ### Replay across turns
 
@@ -257,6 +321,22 @@ retry, and the server salvages a miscounted model reply ("expected 5, got
 4") by re-translating that batch paragraph by paragraph, concurrently — a
 paragraph that still fails comes back verbatim (shown as original, uncached)
 instead of failing the request.
+
+The viewer requests `stream: true`: the reply is NDJSON — `{"i": [request
+indices], "text": partial}` lines as the model writes each paragraph
+(`ai_client.partial_json_strings` reads the complete elements of the
+half-written JSON array plus the one in progress; throttled to ~20/s,
+`_TRANSLATE_STREAM_INTERVAL`; an element maps to every request index that
+shares its source text), then the same final `{translations, model, cached}`
+object a plain call returns (`stream: false`, the default, still answers in
+one JSON body; the salvage path is unchanged and never streams; an upstream
+failure mid-stream is an in-band `{"error"}` line). On the page, paragraphs
+whose translation is queued get a faint accent wash over their original
+lines, in-flight ones shimmer, streamed text types onto the page behind a
+caret (masking the original as soon as there is something to show) and a
+landed paragraph fades in — `TransPending`/`TransPara` in `pdfViewer.jsx`,
+driven by the entry's `queued`/`busy`/`partial` fields, which the job clears
+when it ends, halts or fails.
 
 Geometry never leaves the client: `frontend/src/pdfTranslate.js` segments
 pdf.js text runs into paragraph blocks (columns via whitespace-river

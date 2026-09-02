@@ -36,7 +36,7 @@ Nine panes in four rail groups (`NAV_GROUPS` in
   provider model catalogs, metadata and dictation model choices, the login
   connection check — `gamma-ai-login-check`, default the free credential
   ping — in [settingsAi.jsx](../../frontend/src/settingsAi.jsx)),
-  Assistant (Tools: the master switch + folder/PDF per-chat defaults; Tool
+  Assistant (Tools: the single master switch; Tool
   configuration: per-tool permissions, tool rounds, agent read window; context
   budgets — the chat header's ⚙ popover edits the model, reasoning effort, the
   single-paper context budget and the per-tool permissions in place; same

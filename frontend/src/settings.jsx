@@ -895,25 +895,9 @@ function AssistantSettings({ value }) {
           icon={SparklesIcon}
           label="Enable tools"
           hint="Allow chat to use reading, search and organization tools"
-          title="Master switch for AI tool use. Off makes both PDF and folder chats plain chat regardless of their per-chat selection; your tool configuration is preserved."
+          title="Master switch for AI tool use in every chat. Off makes every chat plain chat regardless of its per-chat selection; your tool configuration is preserved."
           checked={value.agentEnabled}
           onChange={value.setAgentEnabled}
-        />
-        <Toggle
-          icon={FolderIcon}
-          label="Folder chats"
-          hint="New folder/library chats start with tools on"
-          title="Starting state of the Tools button in library and folder chats. You can override it for the current conversation from the chat header."
-          checked={value.folderToolsDefault}
-          onChange={value.setFolderToolsDefault}
-        />
-        <Toggle
-          icon={PaperIcon}
-          label="PDF chats"
-          hint="New paper chats start with tools on"
-          title="Starting state of the Tools button in a paper chat. Off keeps PDF chat as a plain context chat until you enable tools from its header."
-          checked={value.pdfToolsDefault}
-          onChange={value.setPdfToolsDefault}
         />
       </Section>
       <Section title="Tool configuration">

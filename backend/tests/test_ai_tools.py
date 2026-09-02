@@ -611,9 +611,34 @@ def test_sse_events_anthropic_tool_use():
         {"type": "content_block_stop"},
     )
     events = list(sse_events(stream, "anthropic"))
+    # Argument deltas stream as they arrive (the raw JSON so far) so the UI
+    # can preview a long argument; the parsed call follows at block stop.
     assert events == [("text", "ok "),
+                      ("tool_delta", {"id": "t1", "name": "rename_page", "json": '{"page_id": "p1",'}),
+                      ("tool_delta", {"id": "t1", "name": "rename_page",
+                                      "json": '{"page_id": "p1", "title": "T"}'}),
                       ("tool", {"id": "t1", "name": "rename_page",
                                 "arguments": {"page_id": "p1", "title": "T"}})]
+
+
+def test_partial_tool_args_preview():
+    from gamma.ai_client import partial_json_object, partial_json_strings
+    # A streaming edit_block call: the id is complete, the content half-written.
+    raw = '{"block_id": "b1", "content": "## Summary\\nThe paper sho'
+    assert partial_json_object(raw) == {"block_id": "b1", "content": "## Summary\nThe paper sho"}
+    # A trailing lone backslash / half escape is dropped, not an error.
+    assert partial_json_object('{"a": "x\\')["a"] == "x"
+    assert partial_json_object('{"a": "x\\u00')["a"] == "x"
+    assert partial_json_object('{"a": "x\\\\')["a"] == "x\\"
+    # Non-string values are skipped, later keys still read.
+    assert partial_json_object('{"n": 3, "after_id": "z", "content": "hi') == {"after_id": "z", "content": "hi"}
+    assert partial_json_object("") == {}
+    assert partial_json_object('{"content": "ab"}') == {"content": "ab"}
+    # Translation replies: a JSON array of strings, possibly fenced.
+    assert partial_json_strings('```json\n["第一段", "第二') == ["第一段", "第二"]
+    assert partial_json_strings('["a", "b"]') == ["a", "b"]
+    assert partial_json_strings('["a", null, "b"]') == ["a"]
+    assert partial_json_strings("Sure: [") == []
 
 
 def test_sse_events_openai_tool_calls_accumulate():
@@ -624,8 +649,30 @@ def test_sse_events_openai_tool_calls_accumulate():
             {"index": 0, "function": {"arguments": 'id": "p2", "folder": "x"}'}}]}, "finish_reason": "tool_calls"}]},
     )
     events = list(sse_events(stream, "openai"))
-    assert events == [("tool", {"id": "c9", "name": "move_page",
+    assert events == [("tool_delta", {"id": "c9", "name": "move_page", "json": '{"page_'}),
+                      ("tool_delta", {"id": "c9", "name": "move_page",
+                                      "json": '{"page_id": "p2", "folder": "x"}'}),
+                      ("tool", {"id": "c9", "name": "move_page",
                                 "arguments": {"page_id": "p2", "folder": "x"}})]
+
+
+def test_sse_events_responses_argument_deltas():
+    stream = _sse(
+        {"type": "response.output_item.added", "item": {
+            "type": "function_call", "id": "fc_1", "call_id": "f3", "name": "edit_block"}},
+        {"type": "response.function_call_arguments.delta", "item_id": "fc_1", "delta": '{"block_id": "b",'},
+        {"type": "response.function_call_arguments.delta", "item_id": "fc_1", "delta": ' "content": "x"}'},
+        {"type": "response.output_item.done", "item": {
+            "type": "function_call", "id": "fc_1", "call_id": "f3", "name": "edit_block",
+            "arguments": '{"block_id": "b", "content": "x"}'}},
+        {"type": "response.completed", "response": {"status": "completed"}},
+    )
+    events = list(sse_events(stream, "chatgpt"))
+    assert events == [("tool_delta", {"id": "f3", "name": "edit_block", "json": '{"block_id": "b",'}),
+                      ("tool_delta", {"id": "f3", "name": "edit_block",
+                                      "json": '{"block_id": "b", "content": "x"}'}),
+                      ("tool", {"id": "f3", "name": "edit_block",
+                                "arguments": {"block_id": "b", "content": "x"}})]
 
 
 def test_sse_events_chatgpt_function_call_item():
@@ -1171,3 +1218,132 @@ def test_chat_agent_history_replay_reaches_provider(org, monkeypatch):
     r = c.post("/api/ai/chat", json={"prompt": "hello", "history": history, "stream": True})
     assert r.status_code == 200
     assert all(not m.get("tool_calls") and m["role"] != "tool" for m in seen["messages"])
+
+
+def test_chat_agent_streams_edit_preview(notes, monkeypatch):
+    """A streamed edit_block call is previewed as "progress" lines — the block
+    it targets plus the markdown written so far — before its action lands
+    (the notes panel types the text into the block live); the action names
+    the block it changed. Other tools' arguments are never previewed."""
+    c, ids = notes
+    import gamma.routers.ai as ai_mod
+    assert c.post("/api/ai/providers",
+                  json={"protocol": "anthropic", "api_key": "sk-test-key-123",
+                        "models": "claude-solo"}).status_code == 200
+
+    opened = []
+
+    def fake_open(messages, system, entry, rt, pdf_b64s=None, **kw):
+        opened.append(1)
+        if len(opened) == 1:
+            return _FakeResp([
+                {"type": "content_block_start", "content_block":
+                    {"type": "tool_use", "id": "t1", "name": "read_block"}},
+                {"type": "content_block_delta", "delta": {"type": "input_json_delta",
+                    "partial_json": json.dumps({"block_id": ids["page"]})}},
+                {"type": "content_block_stop"},
+            ])
+        if len(opened) == 2:
+            return _FakeResp([
+                {"type": "content_block_start", "content_block":
+                    {"type": "tool_use", "id": "t2", "name": "edit_block"}},
+                {"type": "content_block_delta", "delta": {"type": "input_json_delta",
+                    "partial_json": '{"block_id": "' + ids["top"] + '", "content": "## Idea\\nfirst'}},
+                {"type": "content_block_delta", "delta": {"type": "input_json_delta",
+                    "partial_json": ' half"}'}},
+                {"type": "content_block_stop"},
+            ])
+        return _FakeResp([{"type": "content_block_delta",
+                           "delta": {"type": "text_delta", "text": "Done."}}])
+
+    monkeypatch.setattr(ai_mod, "_open_ai", fake_open)
+    r = c.post("/api/ai/chat", json={
+        "prompt": "rewrite the first idea", "agent_scope": "page",
+        "page_id": ids["page"], "stream": True,
+    })
+    assert r.status_code == 200, r.text
+    lines = [json.loads(l) for l in r.text.splitlines() if l.strip()]
+    progress = [l["progress"] for l in lines if "progress" in l]
+    actions = [l["action"] for l in lines if "action" in l]
+    assert len(opened) == 3
+    # The read is a chip naming the page (no preview — only editors stream).
+    assert actions[0]["tool"] == "read_block" and actions[0]["block_id"] == ids["page"]
+    # The edit previewed twice — once per argument delta, the text so far —
+    # and the preview comes BEFORE the action.
+    assert [p["content"] for p in progress] == ["## Idea\nfirst", "## Idea\nfirst half"]
+    assert all(p["tool"] == "edit_block" and p["block_id"] == ids["top"] and p["id"] == "t2"
+               for p in progress)
+    order = [next(k for k in ("progress", "action", "delta") if k in l) for l in lines
+             if any(k in l for k in ("progress", "action", "delta"))]
+    assert order.index("progress") < order.index("action", 1)
+    assert actions[1]["kind"] == "edit" and actions[1]["block_id"] == ids["top"]
+    assert _props(c, ids["top"])["content"] == "## Idea\nfirst half"
+    # Non-stream callers get text + actions only.
+    opened.clear()
+    r = c.post("/api/ai/chat", json={
+        "prompt": "again", "agent_scope": "page", "page_id": ids["page"]})
+    assert r.status_code == 200, r.text
+    assert set(r.json()) == {"response", "actions", "context"}
+    assert [a["tool"] for a in r.json()["actions"]] == ["read_block", "edit_block"]
+    assert "progress" not in r.text
+
+
+def test_notes_focus_section_and_agent_prompt(notes):
+    """The cursor block and attached block chips reach the model as an
+    id-labelled outline (sub-blocks indented), scoped to the context page —
+    page ids and foreign ids are dropped — and the agent prompt names them."""
+    from types import SimpleNamespace
+    from gamma.ai_context import notes_focus_section
+    c, ids = notes
+    # Own blocks: earlier tests move/edit the shared fixture ones.
+    top = c.post("/api/blocks", json={"parent_id": ids["page"], "content": "focus idea"}).json()["id"]
+    child = c.post("/api/blocks", json={"parent_id": top, "content": "focus detail"}).json()["id"]
+    other = c.post("/api/blocks", json={"parent_id": ids["page"], "content": "attached thread"}).json()["id"]
+    payload = SimpleNamespace(focus_block_id=top, page_id=ids["page"], pages=[],
+                              context_blocks=[other, ids["page"], "nope", ids["hl"]])
+    section = notes_focus_section("organizer", payload)
+    assert "cursor is on this note block" in section
+    assert f"- [{top}] focus idea" in section
+    assert f"  - [{child}] focus detail" in section   # sub-block, indented
+    assert "attached to this message" in section
+    assert f"[{other}] attached thread" in section
+    assert f'[{ids["hl"]}] (highlight: "measured T1 of 300' in section
+    assert f'[{ids["page"]}]' not in section and "nope" not in section
+    # Nothing to point at → no section; a chip from a page outside the
+    # context is dropped (the section is scoped to the request's pages).
+    assert notes_focus_section("organizer", SimpleNamespace(
+        focus_block_id="", page_id=ids["page"], pages=[], context_blocks=[])) == ""
+    assert notes_focus_section("organizer", SimpleNamespace(
+        focus_block_id="", page_id=ids["a"], pages=[], context_blocks=[other])) == ""
+    text = agent_system({"type": "page", "page_id": ids["page"], "focus_block_id": top,
+                         "context_blocks": [other, ids["page"]]})
+    assert f'cursor is on note block "{top}"' in text
+    assert f'"{other}"' in text and f'"{ids["page"]}".' not in text
+
+
+def test_chat_carries_notes_focus(notes, monkeypatch):
+    c, ids = notes
+    import gamma.routers.ai as ai_mod
+    assert c.post("/api/ai/providers",
+                  json={"protocol": "anthropic", "api_key": "sk-test-key-123",
+                        "models": "claude-solo"}).status_code == 200
+    seen = {}
+
+    def fake_open(messages, system, entry, rt, pdf_b64s=None, **kw):
+        seen["messages"], seen["system"] = messages, system
+        return _FakeResp([{"type": "content_block_delta",
+                           "delta": {"type": "text_delta", "text": "ok"}}])
+
+    monkeypatch.setattr(ai_mod, "_open_ai", fake_open)
+    top = c.post("/api/blocks", json={"parent_id": ids["page"], "content": "cursor block"}).json()["id"]
+    other = c.post("/api/blocks", json={"parent_id": ids["page"], "content": "chip block"}).json()["id"]
+    r = c.post("/api/ai/chat", json={
+        "prompt": "expand this", "agent_scope": "page", "page_id": ids["page"],
+        "focus_block_id": top, "context_blocks": [other],
+        "note_passages": ["a selected sentence"]})
+    assert r.status_code == 200, r.text
+    user_turn = seen["messages"][-1]["content"]
+    assert f"- [{top}] cursor block" in user_turn and f"[{other}] chip block" in user_turn
+    assert "selected the following text in their own notes" in user_turn
+    assert "a selected sentence" in user_turn
+    assert f'cursor is on note block "{top}"' in seen["system"]
