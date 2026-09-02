@@ -6,38 +6,63 @@
 
 // Matched in this order — code first (its content is literal), italic last
 // (most false-positive prone). Openers/closers may not hug whitespace, and a
-// span never crosses a line break.
+// span never crosses a line break. Marks nest: "**a *b* c**" is bold with an
+// italic inside, "*a **b** c*" the reverse, and "***x***" is
+// bold+italic in one — its `layers` are what Ctrl+B / Ctrl+I peel off.
 export const INLINE_MARKS = [
   { marker: "`", cls: "cmInlineCode", re: /`([^`\n]+)`/g },
   { marker: "==", cls: "cmHighlight", re: /==(?!\s)([^=\n]+?)(?<!\s)==/g },
-  { marker: "**", cls: "cmStrong", re: /\*\*(?!\s)([^*\n]+?)(?<!\s)\*\*/g },
+  { marker: "***", cls: "cmStrong cmEm", layers: ["**", "*"],
+    re: /\*\*\*(?![\s*])([^*\n]+?)(?<![\s*])\*\*\*/g },
+  { marker: "**", cls: "cmStrong", re: /\*\*(?![\s*])((?:[^*\n]|\*(?!\*))+?)(?<![\s*])\*\*/g },
   { marker: "~~", cls: "cmStrike", re: /~~(?!\s)([^~\n]+?)(?<!\s)~~/g },
-  { marker: "*", cls: "cmEm", re: /(?<!\*)\*(?![\s*])([^*\n]+?)(?<![\s*])\*(?!\*)/g },
+  { marker: "*", cls: "cmEm", re: /(?<!\*)\*(?![\s*])((?:[^*\n]|\*\*)+?)(?<![\s*])\*(?!\*)/g },
 ];
 
 // Every inline-mark span in text: [{marker, cls, from, to}], from/to
-// including the delimiters. `claimed` ([[from, to], …]) holds ranges already
-// taken by higher-priority constructs (fences, math, refs); spans overlapping
-// one are skipped and accepted spans are pushed onto it, so the caller's
-// later scans (links) see them too.
+// including the delimiters, outer spans before the spans nested in them.
+// `claimed` ([[from, to], …]) holds ranges already taken by higher-priority
+// constructs (fences, math, refs); spans overlapping one are skipped and
+// accepted spans are pushed onto it, so the caller's later scans (links) see
+// them too. Two inline spans may overlap only by proper nesting — one sits
+// inside the other's content — and nothing nests inside inline code.
 export function scanMarks(text, claimed = []) {
   const spans = [];
   const overlaps = (from, to) => claimed.some(([a, b]) => from < b && to > a);
+  const nestsWith = (s, from, to, L) => {
+    if (!(from < s.to && to > s.from)) return true;           // disjoint
+    const sL = s.marker.length;
+    if (s.marker === "`") return false;
+    if (from >= s.from + sL && to <= s.to - sL) return true;  // inside s
+    return s.from >= from + L && s.to <= to - L;              // s inside us
+  };
   for (const mark of INLINE_MARKS) {
+    const L = mark.marker.length;
     for (const m of text.matchAll(mark.re)) {
       const from = m.index, to = m.index + m[0].length;
       if (overlaps(from, to)) continue;
-      claimed.push([from, to]);
-      spans.push({ marker: mark.marker, cls: mark.cls, from, to });
+      if (!spans.every((s) => nestsWith(s, from, to, L))) continue;
+      spans.push({ marker: mark.marker, cls: mark.cls, layers: mark.layers, from, to });
     }
   }
-  return spans;
+  for (const s of spans) claimed.push([s.from, s.to]);
+  return spans.sort((a, b) => a.from - b.from || b.to - a.to);
 }
 
-// The span of `marker` whose range contains [from, to] (delimiters included,
-// boundaries inclusive — the caret right after "**bold**" still counts).
+// Whether a span carries `marker` — directly, or as one layer of "***".
+const hasLayer = (mark, marker) =>
+  mark.marker === marker || (mark.layers || []).includes(marker);
+
+// The innermost span carrying `marker` whose range contains [from, to]
+// (delimiters included, boundaries inclusive — the caret right after
+// "**bold**" still counts).
 function enclosingMark(spans, marker, from, to) {
-  return spans.find((s) => s.marker === marker && s.from <= from && to <= s.to) || null;
+  let best = null;
+  for (const s of spans) {
+    if (!hasLayer(s, marker) || s.from > from || to > s.to) continue;
+    if (!best || s.from >= best.from) best = s;
+  }
+  return best;
 }
 
 // Toggle `marker` on the selection [from, to] of text, Obsidian-style.
