@@ -406,7 +406,8 @@ def draw_spans(ops, x: float, base: float, spans, size: float,
     used, ``links`` the ``(x0, y0, x1, y1, href)`` boxes of LINK spans so the
     caller can turn them into /Link annotations, and ``glyphs`` (the
     document's ``pdf_glyphs.GlyphFonts``) draws math and CJK as Type 3 text —
-    without one they degrade to filled outlines."""
+    required whenever the spans hold MATH (plain-text callers — bullets,
+    footers — may omit it)."""
     ascent, height = line_metrics(spans, size)
     # Glyph-only drawings that follow each other on the line (a run of CJK
     # characters, each its own span so lines can break between them, or an
@@ -425,7 +426,7 @@ def draw_spans(ops, x: float, base: float, spans, size: float,
     for kind, payload, level, style in spans:
         if kind == MATH:
             drawing, w, _h, asc = payload
-            if glyphs is not None and not drawing.shapes:
+            if not drawing.shapes:
                 top = base - asc
                 pending.extend(vector_text.Placed(
                     g.glyph, g.char, x - drawing.vx + g.x, top - drawing.vy + g.y, g.size)
@@ -434,8 +435,7 @@ def draw_spans(ops, x: float, base: float, spans, size: float,
                 continue
             flush()
             ops.append(b"q 1 0 0 1 %s %s cm" % (num(x), num(base - asc)))
-            ops.append(glyphs.draw(drawing) if glyphs is not None
-                       else vector_text.outlines(drawing))
+            ops.append(glyphs.draw(drawing))
             ops.append(b"Q")
             x += w
             continue

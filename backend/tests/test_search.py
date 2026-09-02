@@ -10,10 +10,10 @@ from gamma.textnorm import INDEX_VERSION, normalize_text
 
 
 def _index_pdf(user, doc_id, pages):
-    from gamma.routers.search import _ensure_schema
+    from gamma.pdf_index import ensure_schema
 
     with sqlite3.connect(user_db_path(user, "data.db")) as conn:
-        _ensure_schema(conn)
+        ensure_schema(conn)
         conn.execute("DELETE FROM pdf_fts WHERE doc_id = ?", (doc_id,))
         conn.executemany("INSERT INTO pdf_fts (doc_id, page, content) VALUES (?, ?, ?)",
                          [(doc_id, p, normalize_text(text)) for p, text in pages])

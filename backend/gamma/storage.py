@@ -3,6 +3,7 @@ cleanup."""
 
 import time
 import hashlib
+import urllib.parse
 from pathlib import Path
 
 from .db import user_uploads_dir
@@ -32,9 +33,13 @@ FILE_MEDIA_TYPES = {
     ".zip": "application/zip",
 }
 # Served inline (rendered by the browser on navigation); everything else gets
-# ``Content-Disposition: attachment`` — html in particular must never render
-# in this origin (stored XSS), same as svg.
-INLINE_EXTENSIONS = {".pdf", ".txt", ".md", *IMAGE_MEDIA_TYPES}
+# ``Content-Disposition: attachment``. An SVG opened as a top-level document
+# would run its inline <script> in this origin (stored XSS), so it downloads
+# like html — <img>/<object> embedding still works, inline note images are
+# unaffected. SANDBOXED_EXTENSIONS additionally get a sandboxing CSP in case
+# a browser renders them anyway.
+INLINE_EXTENSIONS = {".pdf", ".txt", ".md", *(e for e in IMAGE_MEDIA_TYPES if e != ".svg")}
+SANDBOXED_EXTENSIONS = {".svg", ".html"}
 
 
 def upload_media_type(ext: str) -> str | None:
@@ -60,6 +65,15 @@ def display_filename(name: str, fallback: str = "") -> str:
     raw = str(name or "").replace("\x00", "").strip().replace("\\", "/")
     leaf = raw.rsplit("/", 1)[-1].strip()
     return (leaf or fallback)[:500]
+
+
+def url_filename(url: str) -> str:
+    """The display name a URL suggests for the file behind it: its last path
+    segment, unquoted, without query or fragment — "" when the URL has no
+    path (a bare host). Reduced through :func:`display_filename`."""
+    parts = urllib.parse.urlsplit(str(url or "").strip())
+    tail = urllib.parse.unquote(parts.path.rstrip("/").split("/")[-1]).strip()
+    return display_filename(tail)
 
 
 def is_pdf(data: bytes) -> bool:

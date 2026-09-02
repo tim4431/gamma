@@ -7,8 +7,9 @@ around them. The registry lives in `gamma/ai_tools.py`; the surrounding wiring
 Every tool is one `TOOLS` entry declaring its wire spec, Settings permission
 key, allowed scopes, mutating flag, and executor — so arming a chat is one
 filter (`agent_tools`), dispatch is one lookup (`run_agent_tool`), and the
-in-scope check (`_load_scoped_page`/`_scope_docs`: folder = tag prefix match,
-page = id equality) is shared by every executor. Folder semantics mirror
+in-scope check (`_load_scoped_page`/`_scope_pages`: folder = tag prefix match
+via `foldertags.path_within`, page = id equality) is shared by every
+executor. Folder semantics mirror
 [frontend/src/libraryUtils.js](../../frontend/src/libraryUtils.js) via the
 shared `gamma/foldertags.py` rules; keep them in sync.
 
@@ -53,8 +54,9 @@ successive windows. The `pdf_*` names stay for compatibility; they mean
 
 One query over both FTS indexes for the in-scope pages: the notes index
 (`gamma/block_index.py` — refreshed for changed pages before the query, so an
-edit made a moment ago is found) and the PDF index (`routers/search.py`
-helpers — the same indexes and query rules as `GET /api/search` / Ctrl+F).
+edit made a moment ago is found) and the PDF index (`gamma/pdf_index.py`
+`pdf_missing`/`search_pdf` — the same indexes and query rules as
+`GET /api/search` / Ctrl+F).
 Note hits come first as `- note [block_id] in "title" (page_id …): snippet`
 — ids `read_block` and the editors take — then PDF hits as `- PDF "title"
 p.N: snippet`. Un-indexed PDFs are kicked to the background indexer and

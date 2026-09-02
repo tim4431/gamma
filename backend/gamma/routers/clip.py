@@ -37,7 +37,7 @@ from ..db import page_now, safe_doc_id, user_db_path, user_uploads_dir
 from ..foldertags import add_tag, clean_path, clean_segment, parse_tags
 from ..logbuf import log
 from ..server_settings import can_store
-from ..storage import DIGEST_CHARS
+from ..storage import DIGEST_CHARS, url_filename
 from .metadata import fetch_page_metadata
 from .pdf import download_pdf, resolve_source
 
@@ -160,19 +160,11 @@ def _clean_title(title: str) -> str:
     return re.sub(r"\s+", " ", (title or "").replace("\x00", "")).strip()[:500]
 
 
-def _default_title(doc_id: str, source_url: str) -> str:
-    """Automatic title for a clipped PDF: the URL's filename, else the doc id
-    (marked auto_title, so the metadata lookup may replace it)."""
-    tail = urllib.parse.unquote((source_url or "").split("/")[-1]).strip()
-    return tail or doc_id
-
-
 def _web_title(url: str) -> str:
-    """Automatic title for a web clip without a tab title: the URL's last
-    path segment, else its host, else "Untitled" (create_page's default)."""
-    parts = urllib.parse.urlsplit((url or "").strip())
-    tail = urllib.parse.unquote(parts.path.rstrip("/").split("/")[-1]).strip()
-    return tail or parts.netloc or ""
+    """Automatic title for a web clip without a tab title: the URL's file
+    name (last path segment), else its host, else "Untitled" (create_page's
+    default)."""
+    return url_filename(url) or urllib.parse.urlsplit((url or "").strip()).netloc
 
 
 def _quote_content(text: str, source_url: str, title: str) -> str:
@@ -315,8 +307,9 @@ def clip(payload: ClipRequest, request: Request):
 
     # 3. The page, filed and tagged.
     with sqlite3.connect(db_path) as conn:
-        block = get_or_create_doc_page(
-            conn, doc_id, title or _default_title(doc_id, page_source), page_source)
+        # No tab title: the page is named after the URL's file name, else the
+        # doc id (attachment_props), marked auto_title for the metadata lookup.
+        block = get_or_create_doc_page(conn, doc_id, title, page_source)
         props = dict(block.get("properties") or {})
         if source_url and not props.get("web_url") and source_url != page_source:
             props["web_url"] = source_url

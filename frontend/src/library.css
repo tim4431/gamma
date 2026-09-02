@@ -199,12 +199,7 @@
 .folderRow svg { color: var(--accent); flex-shrink: 0; }
 .folderRow.labelRow svg { color: var(--text-secondary); }
 .folderRow:hover { background: var(--bg-block); }
-/* --- home file-manager: selection + context menu --- */
-.blockRow.pageSelected {
-  background: var(--accent-bg-light);
-  outline: 1px solid var(--accent-dark);
-  border-radius: 6px;
-}
+/* --- home file-manager: context menu --- */
 :is(.pageCard, .folderRow).dragOver {
   background: var(--accent-bg);
   border-color: var(--accent-dark);

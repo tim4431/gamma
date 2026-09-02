@@ -3,7 +3,6 @@ and the ``notes-pdf`` export mode end to end."""
 
 import io
 
-import pytest
 from conftest import make_page, require_math_renderer
 
 from gamma.note_markup import MATH, TEXT

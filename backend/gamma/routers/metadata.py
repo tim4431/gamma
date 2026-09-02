@@ -422,9 +422,10 @@ def metadata_status(request: Request):
     papers = []
     for block_id, content, props_json, updated_at in rows:
         props = json.loads(props_json or "{}")
-        if not page_attachment(props) and not props.get("meta"):
+        attachment = page_attachment(props)
+        if not attachment and not props.get("meta"):
             continue  # a plain note page: nothing to fetch metadata or text for
-        doc_id = props.get("doc_id") or ""
+        doc_id = attachment["id"] if attachment else ""
         entry = index.get(doc_id)
         meta = props.get("meta") or None
         papers.append({

@@ -27,7 +27,7 @@ from pydantic import BaseModel
 from ..auth import (SHARE_AUDIENCES, SHARE_ROLES, require_user, serialize_share_users,
                     share_access, share_lookup)
 from ..blocks_store import page_attachment
-from ..db import connect_users_db, page_now, user_db_path
+from ..db import connect_users_db, page_now, shares_has_doc_id, user_db_path
 
 router = APIRouter(prefix="/api", tags=["shares"])
 
@@ -79,10 +79,6 @@ def _page_doc_id(owner: str, page_id: str) -> str:
     except ValueError:
         return ""
     return attachment["id"] if attachment else ""
-
-
-def _shares_has_doc_id(conn) -> bool:
-    return any(r[1] == "doc_id" for r in conn.execute("PRAGMA table_info(shares)"))
 
 
 def _validated(owner: str, current: dict, payload: ShareSettings) -> dict:
@@ -137,7 +133,7 @@ async def create_share(page_id: str, request: Request, payload: ShareSettings | 
         columns = ["token", "username", "page_id", "audience", "role", "allowed_users", "created_at"]
         values = [token, user, page_id, fields["audience"], fields["role"],
                   serialize_share_users(fields["users"]), page_now()]
-        if _shares_has_doc_id(conn):
+        if shares_has_doc_id(conn):
             columns.insert(2, "doc_id")
             values.insert(2, "")
         conn.execute(

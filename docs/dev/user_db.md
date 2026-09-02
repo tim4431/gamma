@@ -32,7 +32,8 @@ All state is SQLite + files on disk under a data directory (env
   `open-tabs`, `recent-views`) + `page_snaps` (the recents-card cover
   thumbnails, synced via `/api/page-snaps` — too big for the prefs KV) + the
   two lazily built FTS5 search indexes: `pdf_fts`/`pdf_fts_docs` (extracted
-  PDF text per page, `routers/search.py`) and `block_fts`/`block_fts_meta`
+  PDF text per page — schema + queries `gamma/pdf_index.py`, extraction
+  `routers/search.py`) and `block_fts`/`block_fts_meta`
   (every non-root block's content keyed by its page root, rebuilt per page
   when the page changed — `gamma/block_index.py`). Both are derived data,
   rebuilt on demand; their rows are pruned when pages go. The reserved

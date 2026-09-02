@@ -84,9 +84,11 @@ set — some models reject it), optional `system` override, pasted `images`
 (data URLs → native image content parts), and the context PAGES: `pages`
 (several — a report across pages) or, when empty, the one page of `page_id`
 (the open page). A page's PDF attachment is derived server-side
-(`blocks_store.page_attachment`) — `doc_id` is still accepted for older
-clients and resolves to the page carrying that PDF, but nothing new may
-depend on it. `stream: true` (the chat UI's mode) returns NDJSON lines of
+(`blocks_store.page_attachment`) — `doc_id` is still accepted as a
+compatibility input: it resolves to the page carrying that PDF
+(`blocks_store.page_for_doc`) and does nothing when no page does; send
+`page_id`, nothing new may depend on `doc_id`. `stream: true` (the chat UI's
+mode) returns NDJSON lines of
 `{"delta"}`/`{"error"}` parsed from the provider's SSE; upstream failures
 before the first byte still return normal HTTP errors.
 

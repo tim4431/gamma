@@ -107,11 +107,11 @@ touches a page's attachment. `GET /pages/{id}/export*` live in `export.py`.
 | GET/PUT/DELETE | `/share-settings/{page_id}` | owner: read settings (`{token: null}` when unshared) / change `audience`, `role`, `users` (`["carol"]` or `[{name, role}]`; validated: `edit`+`anyone` → 400, unknown usernames or roles → 400; the token stays) / stop sharing (the token dies) |
 | GET | `/share/{token}` | resolve a link for this viewer → `{page_id, doc_id, username, audience, role, can_edit, viewer}` (`doc_id` = the page's PDF attachment id via `page_attachment`, `""` without one — the vestigial `shares.doc_id` column is never read); 404 unknown, 401 sign in first, 403 signed in but not allowed |
 
-### Search (`search.py`, `gamma/block_index.py`)
+### Search (`search.py`, `gamma/block_index.py`, `gamma/pdf_index.py`)
 | Method | Path | Purpose |
 |---|---|---|
 | GET | `/search?q=&limit=&scope=` | one search over the knowledge base: notes (`block_fts`) + PDF text (`pdf_fts`). `scope` = `""` (library) or a folder path (that folder and its subfolders). → `{"results": [...], "indexing": n}`; results are notes hits first (bm25 order) then PDF hits, each capped at `limit` (default 20, max 100). A notes hit is `{"source": "notes", "block_id", "page_id", "title", "snippet"}` (`block_id` = the matched block, `page_id` its page root, `title` the page's); a PDF hit is `{"source": "pdf", "block_id", "page_id", "doc_id", "title", "page", "snippet"}` (`block_id` = `page_id` = the page carrying the PDF, `page` the 1-based PDF page). `indexing` = note pages still waiting for a rebuild batch + PDFs the background extractor hasn't reached. Owner-only |
-| GET | `/pdf-search` | the PDF-only predecessor (same `pdf_fts` index; hits `{block_id, doc_id, title, page, snippet}`) — the frontend still uses it |
+| GET | `/pdf-search` | the PDF-only predecessor (same `pdf_fts` index; hits `{block_id, doc_id, title, page, snippet}`) — the Ctrl+F panel's library group still uses it (with `/block-search` for notes: fuzzy/regex + flags that FTS does not offer) |
 | POST | `/search-reindex` | full rebuild (PDF text re-extracted in the background, every note page stamped stale for the next search), or just `doc_ids` from the body |
 | GET | `/tasks` | background task progress (indexing, downloads) |
 
@@ -121,7 +121,11 @@ or no longer matches the page root's `updated_at`; the block writers that
 change a child without touching the root (`POST /blocks`, `PUT /blocks/{id}`,
 `DELETE /blocks/{id}`, `PUT /blocks/{id}/children` on a nested block, a
 re-parenting `reorder`, `blocks-replace`) call `block_index.mark_page_dirty`.
-Deleting a page prunes its rows (`_purge_derived_data`).
+Deleting a page or detaching its PDF prunes its rows (`block_index.purge_page_data`,
+which also drops the `pdf_fts` rows of papers no page carries and the deleted
+blocks' chats). The `pdf_fts` schema and its shared queries (`pdf_missing`,
+`search_pdf`) live in `gamma/pdf_index.py`; extraction and the background
+indexer in `search.py`.
 
 ### Link previews (`links.py`)
 | Method | Path | Purpose |
@@ -149,7 +153,7 @@ All four are session-only (`require_user`), never share-token readable.
 ### AI (`ai.py`) — all config is per-user GUI entries, no env API keys
 | Method | Path | Purpose |
 |---|---|---|
-| POST | `/ai/chat` | chat; NDJSON stream of `{context}` (first line: per-page coverage — native/text, pages shown of total; `doc_id` `""` for a page without a PDF) then `{delta}`/`{action}`/`{error}`; context is `pages` (several) or `page_id` (one — its PDF attachment derived server-side; `doc_id` accepted for older clients only), plus model id, effort, images, files, and the agent scope (see [ai.md](ai.md)) |
+| POST | `/ai/chat` | chat; NDJSON stream of `{context}` (first line: per-page coverage — native/text, pages shown of total; `doc_id` `""` for a page without a PDF) then `{delta}`/`{action}`/`{error}`; context is `pages` (several) or `page_id` (one — its PDF attachment derived server-side; `doc_id` is accepted as a compatibility input and resolves to its page), plus model id, effort, images, files, and the agent scope (see [ai.md](ai.md)) |
 | GET | `/ai/models` | model registry (each model carries `native_pdf`: whether its provider accepts the PDF file itself) + default prompts (feeds the model switchers and prompt editor) |
 | GET | `/ai/settings` | masked provider list (key hints only) |
 | POST/PUT/DELETE | `/ai/providers[/{id}]` | manage provider entries |

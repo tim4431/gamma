@@ -6,7 +6,8 @@ import secrets
 from fractional_indexing import generate_key_between, generate_n_keys_between
 
 from .db import page_now
-from .storage import display_filename
+from .foldertags import clean_path, parse_tags, path_within
+from .storage import display_filename, url_filename
 
 BLOCK_COLUMNS = "id, parent_id, position, content, properties, created_at, updated_at"
 
@@ -188,6 +189,57 @@ def page_attachment(props: dict | None) -> dict | None:
             "name": str(props.get("original_filename") or "")}
 
 
+def page_for_doc(conn, doc_id: str, columns: str = "id"):
+    """Lookup BY ATTACHMENT: the row (``columns`` of it) of the root page
+    whose PDF attachment is ``doc_id``, or None. The one query for "which
+    page carries this PDF" — root pages only, a nested block never counts."""
+    if not doc_id:
+        return None
+    return conn.execute(
+        f"SELECT {columns} FROM unified_blocks WHERE parent_id = 'root' "
+        "AND json_extract(properties, '$.doc_id') = ? LIMIT 1", (doc_id,)).fetchone()
+
+
+def root_pages(conn, folder: str = "") -> dict:
+    """{page_id: {"title", "doc_id"}} for the root pages a library-wide
+    operation reaches: every page, or — with ``folder`` a path — the pages
+    filed in that folder or below it (properties.folder, gamma.foldertags
+    rules). ``doc_id`` is "" for a page without a PDF."""
+    path = clean_path(folder or "")
+    pages = {}
+    for page_id, content, props_raw in conn.execute(
+            "SELECT id, content, properties FROM unified_blocks WHERE parent_id = 'root'"):
+        try:
+            props = json.loads(props_raw or "{}")
+        except ValueError:
+            props = {}
+        if path and not any(path_within(t, path) for t in parse_tags(props.get("folder"))):
+            continue
+        attachment = page_attachment(props)
+        pages[page_id] = {"title": content or "Untitled",
+                          "doc_id": attachment["id"] if attachment else ""}
+    return pages
+
+
+def attachment_props(doc_id: str, source_url: str = "", original_filename: str = "") -> tuple[dict, str]:
+    """What attaching a PDF writes on a page: ``({doc_id?, source_url?,
+    original_filename?}, automatic title)``. The title is the upload's file
+    name (its leaf — a browser may leak a relative path), else the URL's
+    file name, else the doc id; callers store it as ``auto_title`` too, the
+    compare-and-swap marker metadata_fetch replaces (an explicit rename
+    clears it first — ub_update_block). Both creation paths (by-doc ingest,
+    POST /pages/{id}/attachment) go through here so the rules match."""
+    original = display_filename(original_filename)
+    props = {}
+    if doc_id:
+        props["doc_id"] = doc_id
+    if source_url:
+        props["source_url"] = source_url
+    if original:
+        props["original_filename"] = original
+    return props, original or url_filename(source_url) or doc_id
+
+
 def create_page(conn, title: str, props: dict | None = None) -> dict:
     """Insert a new root page (last in the library) and return its block
     dict. Commits. The one code path that mints pages: POST /api/pages and
@@ -217,25 +269,25 @@ def get_or_create_doc_page(conn, doc_id: str, default_title: str = "",
     (PDF ingest from the app) and the extension's /api/clip (dedup). Pages
     without a PDF are created by POST /api/pages (create_page).
 
-    On an existing page this opportunistically backfills the source/filename
-    markers; auto_title is only set when the page still carries the exact
-    title this call considers automatic, so a re-upload can never mark a
-    user's custom title as replaceable by the metadata worker."""
-    row = conn.execute(
-        f"SELECT {BLOCK_COLUMNS} FROM unified_blocks WHERE json_extract(properties, '$.doc_id') = ?",
-        (doc_id,),
-    ).fetchone()
+    The automatic title is the upload's file name, else ``default_title``
+    (the caller's — a clip's tab title), else what ``attachment_props``
+    derives (URL file name, doc id). On an existing page this
+    opportunistically backfills the source/filename markers; auto_title is
+    only set when the page still carries the exact title this call considers
+    automatic, so a re-upload can never mark a user's custom title as
+    replaceable by the metadata worker."""
+    attachment, auto = attachment_props(doc_id, source_url or "", original_filename or "")
+    original = attachment.get("original_filename", "")
+    title = original or (default_title or "").strip() or auto
+    row = page_for_doc(conn, doc_id, BLOCK_COLUMNS)
     if row:
         props = json.loads(row[4] or "{}")
         changed = False
-        if source_url and not props.get("source_url"):
-            props["source_url"] = source_url
-            changed = True
-        original = display_filename(original_filename)
-        if original and not props.get("original_filename"):
-            props["original_filename"] = original
-            changed = True
-        if not props.get("auto_title") and row[3] == (default_title or "").strip():
+        for key in ("source_url", "original_filename"):
+            if attachment.get(key) and not props.get(key):
+                props[key] = attachment[key]
+                changed = True
+        if not props.get("auto_title") and row[3] == title:
             props["auto_title"] = row[3]
             changed = True
         if changed:
@@ -247,17 +299,4 @@ def get_or_create_doc_page(conn, doc_id: str, default_title: str = "",
             conn.commit()
             row = (*row[:4], json.dumps(props), *row[5:])
         return block_to_dict(row)
-
-    original = display_filename(original_filename)
-    # Upload callers provide original_filename; its leaf is the authoritative
-    # automatic title even if a browser leaked a relative path into the default.
-    title = original or (default_title or "").strip() or "Untitled"
-    # auto_title is a compare-and-swap marker consumed by metadata_fetch:
-    # metadata may replace this value, but an explicit rename clears the
-    # marker first (see ub_update_block in routers/blocks.py).
-    props = {"doc_id": doc_id, "auto_title": title}
-    if source_url:
-        props["source_url"] = source_url
-    if original:
-        props["original_filename"] = original
-    return create_page(conn, title, props)
+    return create_page(conn, title, {**attachment, "auto_title": title})

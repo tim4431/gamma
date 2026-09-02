@@ -41,11 +41,11 @@ import sqlite3
 from fractional_indexing import generate_key_between
 
 from .ai_context import DEPRECATED_TOOLS, canonical_tool, page_report_section
-from .blocks_store import fetch_subtree, page_attachment, page_root_id
+from .blocks_store import fetch_subtree, page_attachment, page_root_id, root_pages
 from .db import page_now, user_db_path
-from .foldertags import clean_path, parse_tags
+from .foldertags import add_tag, clean_path, parse_tags, path_within
 from .logbuf import log
-from .textnorm import INDEX_VERSION
+from .pdf_index import pdf_missing, search_pdf
 
 # Runaway guards for the tool loop, not workload caps: MAX_TOOL_ACTIONS bounds
 # the real work (mutations only), while the round limit stops a loop that
@@ -94,18 +94,7 @@ AGENT_PROMPT = (
 )
 
 
-# --- folder-tag helpers (shared rules live in gamma/foldertags.py) -------------
-
-def _add_tag(tags: list[str], path: str) -> list[str]:
-    """addFolderTag: keep other tags, but refine away ancestors of the new path."""
-    return [t for t in tags if t != path and not path.startswith(t + "/")] + [path]
-
-
-def _in_scope(tag: str, scope_path: str) -> bool:
-    return tag == scope_path or tag.startswith(scope_path + "/")
-
-
-# --- scope ---------------------------------------------------------------------
+# --- scope (folder rules: gamma/foldertags.py) ---------------------------------
 
 def _scope_folder(scope: dict) -> str:
     return clean_path(scope.get("folder") or "")
@@ -115,7 +104,7 @@ def _page_in_scope(scope: dict, page_id: str, tags: list[str]) -> bool:
     if scope.get("type") == "page":
         return page_id == scope.get("page_id")
     path = _scope_folder(scope)
-    return not path or any(_in_scope(t, path) for t in tags)
+    return not path or any(path_within(t, path) for t in tags)
 
 
 def _load_scoped_page(conn, scope: dict, args: dict):
@@ -136,31 +125,17 @@ def _load_scoped_page(conn, scope: dict, args: dict):
 
 
 def _scope_pages(conn, scope: dict) -> dict:
-    """page_id → ``(title, doc_id)`` for every page the scope can reach
-    (doc_id "" when the page carries no PDF)."""
+    """{page_id: {"title", "doc_id"}} for every page the scope can reach
+    (doc_id "" when the page carries no PDF) — the one page of a page scope,
+    else the library / folder listing (blocks_store.root_pages)."""
     if scope.get("type") == "page":
         loaded, error = _load_scoped_page(conn, scope, {"page_id": scope.get("page_id")})
         if error:
             return {}
         page_id, title, props, _ = loaded
         attachment = page_attachment(props)
-        return {page_id: (title, attachment["id"] if attachment else "")}
-    pages = {}
-    for page_id, content, props_raw in conn.execute(
-            "SELECT id, content, properties FROM unified_blocks WHERE parent_id = 'root'"):
-        try:
-            props = json.loads(props_raw or "{}")
-        except ValueError:
-            continue
-        if _page_in_scope(scope, page_id, parse_tags(props.get("folder"))):
-            attachment = page_attachment(props)
-            pages[page_id] = (content or "Untitled", attachment["id"] if attachment else "")
-    return pages
-
-
-def _scope_docs(conn, scope: dict) -> dict:
-    """doc_id → title for every PDF attachment the scope can reach."""
-    return {doc_id: title for title, doc_id in _scope_pages(conn, scope).values() if doc_id}
+        return {page_id: {"title": title, "doc_id": attachment["id"] if attachment else ""}}
+    return root_pages(conn, _scope_folder(scope))
 
 
 def _load_scoped_block(conn, scope: dict, block_id) -> tuple:
@@ -231,7 +206,7 @@ def _run_list_pages(conn, user: str, scope: dict, args: dict):
     label = str(args.get("label") or "").strip().lower()
     title_q = str(args.get("title_contains") or "").strip().lower()
     sub = clean_path(str(args.get("folder") or ""))
-    if path and sub and not _in_scope(sub, path):
+    if path and sub and not path_within(sub, path):
         sub = f"{path}/{sub}"  # relative folder filters resolve inside the scope
     want_labels = bool(args.get("list_labels"))
     label_counts: dict[str, int] = {}
@@ -256,7 +231,7 @@ def _run_list_pages(conn, user: str, scope: dict, args: dict):
             continue
         if label and label not in (lab.lower() for lab in page_labels):
             continue
-        if sub and not any(_in_scope(t, sub) for t in tags):
+        if sub and not any(path_within(t, sub) for t in tags):
             continue
         if title_q and title_q not in (content or "Untitled").lower():
             continue
@@ -516,10 +491,10 @@ def _run_search_library(conn, user: str, scope: dict, args: dict):
     if not pages:
         return ("No pages are reachable from this chat.",
                 {"kind": "search", "summary": f"Searched library for “{query[:60]}” — no pages"})
-    docs = {doc_id: title for title, doc_id in pages.values() if doc_id}
+    docs = {info["doc_id"]: info["title"] for info in pages.values() if info["doc_id"]}
     # Local import: keep gamma.* module load free of the routers package.
     from .block_index import fts_query, refresh, search_blocks
-    from .routers.search import _ensure_schema, _index_missing_async
+    from .routers.search import _index_missing_async
 
     pending = refresh(user, conn, list(pages))
 
@@ -528,34 +503,18 @@ def _run_search_library(conn, user: str, scope: dict, args: dict):
         found = []
         if not match:
             return found
-        for block_id, page_id, snippet in search_blocks(database, match, limit, set(pages)):
-            found.append(f'- note [{block_id}] in "{pages[page_id][0][:80]}" '
+        for block_id, page_id, snippet in search_blocks(database, match, limit, pages):
+            found.append(f'- note [{block_id}] in "{pages[page_id]["title"][:80]}" '
                          f"(page_id {page_id}): {snippet}")
-        if docs:
-            hits = 0
-            try:
-                for doc_id, page, snippet in database.execute(
-                        "SELECT doc_id, page, snippet(pdf_fts, 2, '', '', '…', 14) FROM pdf_fts "
-                        "WHERE pdf_fts MATCH ? ORDER BY rank LIMIT ?", (match, limit * 4)):
-                    title = docs.get(doc_id)
-                    if not title:
-                        continue  # out-of-scope or deleted paper
-                    found.append(f'- PDF "{title[:80]}" p.{page}: {snippet}')
-                    hits += 1
-                    if hits >= limit:
-                        break
-            except sqlite3.OperationalError:
-                pass  # malformed MATCH — treat as no results
+        for doc_id, page, snippet in search_pdf(database, match, limit, docs):
+            found.append(f'- PDF "{docs[doc_id][:80]}" p.{page}: {snippet}')
         return found
 
     relaxed = ""
     missing: list = []
     with sqlite3.connect(user_db_path(user, "data.db")) as database:
-        _ensure_schema(database)
         if docs:
-            current = {r[0] for r in database.execute(
-                "SELECT doc_id FROM pdf_fts_docs WHERE ver = ?", (INDEX_VERSION,))}
-            missing = [d for d in docs if d not in current]
+            missing = pdf_missing(database, docs)
             if missing:
                 _index_missing_async(user, missing)
         lines = fts(database, query)
@@ -622,12 +581,12 @@ def _run_move_page(conn, user: str, scope: dict, args: dict):
     page_id, title, props, tags = loaded
     path = _scope_folder(scope)
     target = clean_path(str(args.get("folder") or ""))
-    if path and target and not _in_scope(target, path):
+    if path and target and not path_within(target, path):
         target = f"{path}/{target}"  # relative paths land inside the scope
     elif path and not target:
         target = path
-    kept = [t for t in tags if path and not _in_scope(t, path)]
-    new_tags = _add_tag(kept, target) if target else kept
+    kept = [t for t in tags if path and not path_within(t, path)]
+    new_tags = add_tag(kept, target) if target else kept
     if new_tags == tags:
         return "ok — page is already there", None
     props["folder"] = ", ".join(new_tags)

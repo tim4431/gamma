@@ -3,15 +3,15 @@
 Every page is a root block; a paper's PDF is just a doc_id/source_url on it.
 Shares follow the block model: a token names one page and confines reads (and
 edit writes) to that page's subtree and assets — so note pages without any PDF
-share exactly like papers. Rows minted by the old doc-keyed model are resolved
-to their page on first use.
+share exactly like papers. Rows minted by the old doc-keyed model were keyed
+by page once, by ``migrate.run_all`` (server start / ``manage.py migrate``);
+a row still without a page is dead (tests/test_migrate.py covers the pass).
 
 Permissions: audience (anyone / signed-in users / a list of usernames) gates
 who may open the link; role (view / edit) says what they may do. Editing is
 scoped to the page's block tree and needs a signed-in editor.
 """
 
-import sqlite3
 
 import pytest
 from fastapi.testclient import TestClient
@@ -156,6 +156,20 @@ def test_share_reads_only_assets_its_page_references(bob, anon):
     assert anon.get(url, params={"share": t_with}).status_code == 200
     assert anon.get(url, params={"share": t_without}).status_code == 403
     assert anon.get(url).status_code == 401
+
+
+def test_upload_share_refusals_match_the_other_read_endpoints(bob, carol, anon):
+    """A wrong or unknown share token on an asset gets auth._share_denied's
+    statuses like every other read endpoint: 403 for a signed-in visitor,
+    401 for an anonymous one (signing in could help)."""
+    png = (b"\x89PNG\r\n\x1a\n" + b"\x00" * 64)
+    url = bob.post("/api/upload-image", files={"file": ("b.png", png, "image/png")}).json()["url"]
+    page = make_page(bob, "Without the image")
+    token = bob.post(f"/api/share/{page['id']}").json()["token"]
+    assert carol.get(url, params={"share": token}).status_code == 403     # not this page's asset
+    assert carol.get(url, params={"share": "no-such-token"}).status_code == 403
+    assert anon.get(url, params={"share": "no-such-token"}).status_code == 401
+    assert carol.get(url).status_code == 404                               # her own uploads: absent
 
 
 def test_pdf_proxy_only_serves_the_pages_own_source(bob, anon):

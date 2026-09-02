@@ -20,12 +20,11 @@ from ..blocks_store import (
     fetch_subtree,
     flatten_tree,
     get_or_create_doc_page,
-    last_child_position,
+    page_for_doc,
     page_root_id,
 )
 from .. import block_index
-from ..db import connect_data_db, page_now, user_db_path, user_uploads_dir
-from ..logbuf import log
+from ..db import page_now, user_db_path, user_uploads_dir
 from ..markdown_export import build_tree
 from ..storage import cleanup_orphan_uploads, display_filename
 from ..textnorm import fuzzy_pattern
@@ -223,10 +222,7 @@ async def blocks_replace(payload: BlockReplaceRequest, request: Request):
 async def ub_get_by_doc(doc_id: str, request: Request):
     scope = share_scope_page(request)
     with sqlite3.connect(user_db_path(resolve_user(request), "pages.db")) as conn:
-        row = conn.execute(
-            f"SELECT {BLOCK_COLUMNS} FROM unified_blocks WHERE json_extract(properties, '$.doc_id') = ?",
-            (doc_id,),
-        ).fetchone()
+        row = page_for_doc(conn, doc_id, BLOCK_COLUMNS)
     # A share may only learn about its own page — refuse before revealing
     # whether any other doc id exists.
     if scope is not None and (not row or row[0] != scope):
@@ -432,29 +428,6 @@ async def ub_update_block(block_id: str, payload: UBUpdateRequest, request: Requ
     return {"ok": True, "updated_at": now}
 
 
-def _purge_derived_data(user: str, conn, deleted_ids: list):
-    """Chats and search-index rows tied to deleted pages don't clean themselves —
-    sweep them so data.db doesn't accumulate orphans."""
-    try:
-        from .search import _ensure_schema  # local import: search imports ai, keep module load acyclic
-        live_docs = {r[0] for r in conn.execute(
-            "SELECT json_extract(properties, '$.doc_id') FROM unified_blocks "
-            "WHERE json_extract(properties, '$.doc_id') IS NOT NULL").fetchall()}
-        live_pages = [r[0] for r in conn.execute(
-            "SELECT id FROM unified_blocks WHERE parent_id = 'root'").fetchall()]
-        with connect_data_db(user) as ddb:
-            _ensure_schema(ddb)
-            ddb.executemany("DELETE FROM chats WHERE block_id = ?", [(i,) for i in deleted_ids])
-            stale = [r[0] for r in ddb.execute("SELECT doc_id FROM pdf_fts_docs").fetchall() if r[0] not in live_docs]
-            for d in stale:
-                ddb.execute("DELETE FROM pdf_fts WHERE doc_id = ?", (d,))
-                ddb.execute("DELETE FROM pdf_fts_docs WHERE doc_id = ?", (d,))
-            block_index.prune(ddb, live_pages)
-            ddb.commit()
-    except Exception as e:
-        log.warning(f"[blocks] derived-data cleanup failed: {e}")
-
-
 @router.delete("/blocks/{block_id}")
 async def ub_delete_block(block_id: str, request: Request):
     if block_id == "root":
@@ -472,7 +445,7 @@ async def ub_delete_block(block_id: str, request: Request):
         delete_subtree(conn, block_id)
         conn.commit()
         removed = cleanup_orphan_uploads(conn, user_uploads_dir(user))
-        _purge_derived_data(user, conn, deleted_ids)
+        block_index.purge_page_data(user, conn, deleted_ids)
         if page_id != block_id:
             block_index.mark_page_dirty(user, page_id)  # a page's own rows were just pruned
     return {"ok": True, "id": block_id, "removed_uploads": removed}
@@ -503,7 +476,9 @@ async def ub_put_children(block_id: str, payload: UBPutChildrenRequest, request:
         removed = cleanup_orphan_uploads(conn, user_uploads_dir(user))
         # The page root's updated_at already re-fingerprints the notes index
         # when block_id is the page; a nested target needs the explicit mark.
-        block_index.mark_page_dirty(user, page_root_id(conn, block_id))
+        page_id = page_root_id(conn, block_id)
+        if page_id != block_id:
+            block_index.mark_page_dirty(user, page_id)
     return {"ok": True, "count": len(rows), "updated_at": now, "removed_uploads": removed}
 
 

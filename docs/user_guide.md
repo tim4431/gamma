@@ -4,7 +4,7 @@ A quick tour of everything you can do. For install instructions see the [README]
 
 ## Getting started
 
-- **Add a paper**: click **+** in the topbar and paste any link (arXiv, DOI, or a publisher page — Gamma finds the PDF), or upload PDFs, or just **drag files or whole folders into the window** (subfolders become library folders). "New note page" creates a page without a PDF.
+- **Add a paper**: click **+** in the topbar and paste any link (arXiv, DOI, or a publisher page — Gamma finds the PDF), or upload PDFs, or just **drag files or whole folders into the window** (subfolders become library folders). "New page" creates a page without a PDF; the paperclip on a page attaches (or later detaches) one.
 - **Log in as guest** to try things out — guest data resets daily.
 - On open, each paper's title/authors/venue are fetched automatically (arXiv → DOI → AI).
 

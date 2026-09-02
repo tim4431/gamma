@@ -185,22 +185,6 @@ def _shape_ops(svg):
     return b"\n".join(ops)
 
 
-def outlines(drawing: Drawing) -> bytes:
-    """The drawing as pure path ops — every glyph as a filled outline at its
-    place, for a caller without a document to register Type 3 fonts in."""
-    ops = [header(drawing)]
-    if drawing.shapes:
-        ops.append(drawing.shapes)
-    for glyph, _char, x, y, size in drawing.glyphs:
-        el = glyph.svgpath(x, y, scale_factor=size / glyph.DFLT_SIZE_PT)
-        if el is None:
-            continue
-        for path in ([el] if el.tag == "path" else el.iter("path")):
-            if path_ops(path.get("d") or "", ops):
-                ops.append(b"f")
-    return b"\n".join(ops)
-
-
 # --- math --------------------------------------------------------------------
 
 def _pieces(node, x: float, y: float):

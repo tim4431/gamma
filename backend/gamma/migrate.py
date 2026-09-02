@@ -16,7 +16,8 @@ import json
 import sqlite3
 
 from . import config
-from .db import connect_users_db, page_now, user_db_path
+from .blocks_store import page_for_doc
+from .db import connect_users_db, page_now, shares_has_doc_id, user_db_path
 from .logbuf import log
 from .note_markup import LEGACY_WIDTH_RE, obsidian_image_sizes
 
@@ -103,16 +104,10 @@ def _page_for_doc(username: str, doc_id: str) -> str | None:
     """The owner's root page carrying PDF ``doc_id``, or None."""
     try:
         with sqlite3.connect(user_db_path(username, "pages.db")) as conn:
-            row = conn.execute(
-                "SELECT id FROM unified_blocks WHERE parent_id = 'root' "
-                "AND json_extract(properties, '$.doc_id') = ?", (doc_id,)).fetchone()
+            row = page_for_doc(conn, doc_id)
     except (sqlite3.Error, ValueError):
         return None
     return row[0] if row else None
-
-
-def _shares_has_doc_id(conn: sqlite3.Connection) -> bool:
-    return any(r[1] == "doc_id" for r in conn.execute("PRAGMA table_info(shares)"))
 
 
 def normalize_users_db(conn: sqlite3.Connection) -> dict:
@@ -122,7 +117,7 @@ def normalize_users_db(conn: sqlite3.Connection) -> dict:
     has nothing left to resolve through and is deleted.
     Returns ``{"shares_backfilled": n, "shares_deleted": n}``."""
     counts = {"shares_backfilled": 0, "shares_deleted": 0}
-    doc_col = "doc_id" if _shares_has_doc_id(conn) else "''"
+    doc_col = "doc_id" if shares_has_doc_id(conn) else "''"
     rows = conn.execute(
         f"SELECT token, username, {doc_col} FROM shares WHERE page_id IS NULL OR page_id = ''"
     ).fetchall()
@@ -165,7 +160,7 @@ def drop_shares_doc_id(conn: sqlite3.Connection | None = None) -> bool:
     if own:
         conn = connect_users_db()
     try:
-        if not _shares_has_doc_id(conn):
+        if not shares_has_doc_id(conn):
             return False
         # Unkeyed rows can't survive without doc_id to resolve through.
         normalize_users_db(conn)

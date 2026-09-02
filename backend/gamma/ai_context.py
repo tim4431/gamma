@@ -8,8 +8,8 @@ import re
 import sqlite3
 from urllib.request import Request as URLRequest
 
-from .blocks_store import fetch_subtree, page_attachment
-from .db import pdf_upload_path, user_db_path, user_uploads_dir
+from .blocks_store import fetch_subtree, page_attachment, page_for_doc
+from .db import pdf_upload_path, user_db_path
 from .foldertags import parse_tags
 from .logbuf import log
 from .net_guard import guarded_urlopen
@@ -258,27 +258,21 @@ _MAP_LINE_CHARS = 80
 
 def ensure_indexed(user: str, doc_id: str) -> bool:
     """Kick the background indexer for a paper the search index doesn't hold
-    at the current version. Returns True when the paper is already current.
-
-    A page chat needs the index for its document map and search_library, but
-    until now only a search call started indexing — a fresh paper whose chat
-    only ever used read_page (or ran with tools off) never got indexed, so
-    the map never appeared and the model kept paging blind."""
+    at the current version, so a page chat's document map and search_library
+    exist by the next turn even when the model never calls search. Returns
+    True when the paper is already current."""
     # Local import: keep gamma.* module load free of the routers package.
-    from .routers.search import _ensure_schema, _index_missing_async
-    from .textnorm import INDEX_VERSION
+    from .pdf_index import pdf_missing
+    from .routers.search import _index_missing_async
     try:
         with sqlite3.connect(user_db_path(user, "data.db")) as connection:
-            _ensure_schema(connection)
-            current = connection.execute(
-                "SELECT 1 FROM pdf_fts_docs WHERE doc_id = ? AND ver = ?",
-                (doc_id, INDEX_VERSION)).fetchone()
+            missing = pdf_missing(connection, [doc_id])
     except sqlite3.OperationalError as e:
         log.warning(f"[ai_context] index check for {doc_id} failed: {e}")
         return False
-    if current:
+    if not missing:
         return True
-    _index_missing_async(user, [doc_id])
+    _index_missing_async(user, missing)
     return False
 
 
@@ -576,18 +570,6 @@ def page_report_section(connection, user: str, page_id: str, pdf_budget: int,
     return "\n\n".join(sections)
 
 
-def page_for_doc(connection, doc_id: str) -> str | None:
-    """The root page whose PDF attachment is ``doc_id`` (lookup BY
-    attachment — the compatibility path for requests that still name a
-    document instead of a page), or None."""
-    if not doc_id:
-        return None
-    row = connection.execute(
-        "SELECT id FROM unified_blocks WHERE parent_id = 'root' "
-        "AND json_extract(properties, '$.doc_id') = ? LIMIT 1", (doc_id,)).fetchone()
-    return row[0] if row else None
-
-
 def gather_inputs(user: str, payload, allow_native: bool) -> tuple[list[str], str, list[dict]]:
     """Collect the chat's context: native PDF attachments and the text
     sections for the request's pages.
@@ -595,8 +577,9 @@ def gather_inputs(user: str, payload, allow_native: bool) -> tuple[list[str], st
     The pages come from ``payload.pages`` (several — a report across pages,
     each getting an even share of ``multi_context_char_limit``) or, when that
     is empty, the one page of ``payload.page_id`` with the full
-    ``context_char_limit`` (``payload.doc_id`` alone still resolves to the
-    page carrying that PDF, for older clients). Every page contributes its
+    ``context_char_limit`` (``payload.doc_id`` alone is the compatibility
+    input: it resolves to the page carrying that PDF, and a doc no page
+    carries contributes nothing). Every page contributes its
     title, properties and notes; a page with a PDF attachment adds the
     document's text (or the file itself when ``attach_pdf`` and the provider
     takes it) and hides the notes unless ``include_notes`` — a page without
@@ -621,16 +604,14 @@ def gather_inputs(user: str, payload, allow_native: bool) -> tuple[list[str], st
 
     page_ids = [str(page) for page in (payload.pages or []) if page][:6]
     single = not page_ids
-    legacy_doc = ""  # a doc_id no page carries: text-only compatibility path
     with sqlite3.connect(user_db_path(user, "pages.db")) as connection:
         if single:
             page_id = str(getattr(payload, "page_id", "") or "")
             if not page_id or not connection.execute(
                     "SELECT 1 FROM unified_blocks WHERE id = ? AND parent_id = 'root'",
                     (page_id,)).fetchone():
-                page_id = page_for_doc(connection, payload.doc_id)
-                if not page_id and payload.doc_id:
-                    legacy_doc = payload.doc_id
+                row = page_for_doc(connection, payload.doc_id)
+                page_id = row[0] if row else ""
             page_ids = [page_id] if page_id else []
         text_budget = (payload.context_char_limit if single
                        else max(1, payload.multi_context_char_limit // max(1, len(page_ids))))
@@ -691,20 +672,6 @@ def gather_inputs(user: str, payload, allow_native: bool) -> tuple[list[str], st
                 outline = document_map(user, doc_id)
                 if outline:
                     context_sections.append(outline)
-    if legacy_doc:
-        # A document that is no page (an older client naming a doc_id whose
-        # page is gone): the PDF text alone, as before pages became the unit.
-        if attach:
-            data = load_pdf_b64(user, legacy_doc)
-            if data:
-                pdf_b64s.append(data)
-                report("", legacy_doc, True)
-        ensure_indexed(user, legacy_doc)
-        if not pdf_b64s:
-            text, cover = head_context(user, legacy_doc, limit=payload.context_char_limit)
-            report("", legacy_doc, False, cover)
-            if text:
-                context_sections.append(text)
 
     names = [str(f.get("name") or "") for f in (payload.files or []) if isinstance(f, dict)]
     for index, data in enumerate(parse_files(payload.files)):

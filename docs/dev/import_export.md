@@ -279,8 +279,8 @@ in before the writer serialises — both writers call it last. Glyph programs
 use `d1` (shape-only), so they take the fill colour in force where they are
 shown. Nothing is rasterised and no font file is shipped; compared with
 drawing every occurrence as filled paths the file shrinks (a repeated glyph
-costs two bytes) and the text layer appears. `vector_text.outlines()` keeps
-the old path form for a caller without a document to register fonts in.
+costs two bytes) and the text layer appears; every writer that draws MATH
+spans owns a `GlyphFonts`, there is no path-only fallback.
 
 Known upstream limit: ziamath 0.13 stretches `\left(…\right)` around a
 `\sum`/`\int` with a runaway MATH-assembly (hundreds of extender parts, a

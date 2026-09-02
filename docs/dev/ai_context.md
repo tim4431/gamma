@@ -3,8 +3,8 @@
 How the AI chat gets a page's content, why that used to fail on long papers,
 and the measurements behind the current design. Code: `gamma/ai_context.py`
 (context assembly), `gamma/ai_tools.py` (agent tools), `gamma/pdf_text.py`
-(extraction), `gamma/routers/search.py` + `gamma/block_index.py` (FTS
-indexes).
+(extraction), `gamma/pdf_index.py` + `gamma/block_index.py` (FTS indexes;
+`gamma/routers/search.py` extracts PDFs into the former).
 
 ## What a page contributes
 

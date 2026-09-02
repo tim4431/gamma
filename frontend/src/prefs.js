@@ -122,7 +122,7 @@ export function useAppPrefs() {
   // --- Search (Settings → Reading) ---
   // Whether the search popover's result-detail lists start expanded, one
   // default per place. Home page: expanded unless turned off — with no open
-  // PDF the compact find bar shows nothing. Paper view: compact unless on.
+  // PDF the compact find bar shows nothing. Page view: compact unless on.
   const [searchDetailsHome, setSearchDetailsHome] = usePersistedFlag("gamma-search-details-home", true);
   const [searchDetailsPaper, setSearchDetailsPaper] = usePersistedFlag("gamma-search-details", false);
 

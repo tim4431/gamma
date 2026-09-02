@@ -832,7 +832,7 @@ body {
 :is([data-theme="light"], [data-theme="sepia"], [data-theme="gray"]) :is(.hljs-meta, .hljs-selector-id, .hljs-selector-class, .hljs-name) { color: #116329; }
 :is([data-theme="light"], [data-theme="sepia"], [data-theme="gray"]) .hljs-deletion { color: #e51400; }
 
-.blockRowWrap.imageDragOver > .blockRow {
+.blockRowWrap.fileDragOver > .blockRow {
   outline: 2px dashed var(--drag-accent);
   outline-offset: -2px;
   border-radius: 8px;
@@ -1136,26 +1136,17 @@ body {
   font-style: italic;
 }
 
-/* Ghost "+ New note" row under the block tree — the mouse path to a fresh
-   top-level note (the keyboard path is Enter/Shift+Enter, Settings → Notes). */
-.addNoteBtn {
-  display: block;
-  width: 100%;
-  text-align: left;
-  margin: 2px 0 12px;
-  padding: 5px 10px;
-  background: none;
-  border: none;
-  border-radius: 6px;
-  color: var(--text-muted);
-  font: inherit;
-  font-size: 12.5px;
-  cursor: pointer;
+/* Click zone under the block tree — Notion-style "click below to write".
+   Invisible under a non-empty tree; on an empty page it shows the invite. */
+.notesTail {
+  min-height: 48px;
+  cursor: text;
 }
 
-.addNoteBtn:hover {
-  background: var(--bg-hover);
-  color: var(--text-primary);
+.notesTail.isEmpty {
+  padding: 5px 10px;
+  color: var(--text-muted);
+  font-style: italic;
 }
 
 /* [[ref]] chip: a quiet Notion-style page mention — accent text on a faint
@@ -1363,9 +1354,10 @@ body {
   }
 }
 
-/* --- drag-and-drop overlay for PDF uploads --- */
+/* --- drag-and-drop overlay: the library imports files, a page without an
+   attachment takes a PDF (data-drop on .app says which) --- */
 .app.dragOver::after {
-  content: "Drop PDF to upload";
+  content: "Drop files to import";
   position: fixed;
   inset: 0;
   background: rgba(40, 80, 160, 0.2);
@@ -1378,6 +1370,10 @@ body {
   justify-content: center;
   pointer-events: none;
   z-index: 9999;
+}
+
+.app.dragOver[data-drop="attach"]::after {
+  content: "Drop PDF to attach to this page";
 }
 
 /* --- inline-editable title --- */
@@ -1505,10 +1501,6 @@ body {
   background: var(--text-dim);
   opacity: 0.6;
 }
-.pageBulletBtn { color: var(--text-bright); }
-.pageBulletBtn:hover { color: var(--accent-bright); }
-.pageBulletDot { display: inline-block; width: 10px; height: 10px; border-radius: 999px; background: currentColor; }
-
 /* Logseq-style depth guide lines (one per depth level) */
 .sortableBlockWrap[data-depth] { position: relative; }
 .sortableBlockWrap[data-depth]::before {
@@ -2099,6 +2091,9 @@ button.pdfOutlineChevron:hover { background: rgba(128, 128, 128, 0.28); color: v
   gap: 6px;
 }
 .popover .popoverItem:hover { background: var(--bg-hover); }
+.popover .popoverItem[aria-disabled="true"] { cursor: not-allowed; opacity: 0.6; }
+/* Wrapper that anchors a popover under its trigger button. */
+.popoverAnchor { position: relative; display: inline-flex; }
 .popover .check { display: inline-block; width: 14px; color: var(--accent-dark); font-weight: 700; }
 .topbar .iconBtn.activeIcon { background: var(--bg-hover); color: var(--text-primary); }
 /* Fixed width: the BibTeX pre would otherwise stretch the popover to its
@@ -2125,7 +2120,6 @@ button.pdfOutlineChevron:hover { background: rgba(128, 128, 128, 0.28); color: v
 .shareEntryStatic { font-size: 12px; color: var(--text-muted); white-space: nowrap; padding: 0 6px; }
 .shareFooter { display: flex; align-items: center; justify-content: space-between; gap: 8px; padding: 6px 4px 2px; margin-top: 4px; border-top: 1px solid var(--border-subtle); }
 .shareError { color: var(--danger); }
-.shareBadge { font-size: 11px; color: var(--text-muted); margin-left: 8px; white-space: nowrap; }
 .shareRow { display: flex; align-items: center; gap: 6px; }
 .shareRow input {
   flex: 1;
@@ -2693,6 +2687,8 @@ button.pdfOutlineChevron:hover { background: rgba(128, 128, 128, 0.28); color: v
   padding: 0;
 }
 .pageActionBtn:disabled { opacity: 0.6; cursor: default; }
+.pageActionBtn.active { color: var(--text-primary); }
+.attachFileName { display: flex; align-items: center; gap: 6px; padding: 4px 10px 8px; word-break: break-all; }
 .pageActionBtn.pageDeleteBtn:hover { color: #d05050; }
 /* Unverified (AI-extracted) metadata: red "!" pinned to the metadata button */
 .metaWarnDot {

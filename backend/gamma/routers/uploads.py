@@ -5,7 +5,7 @@ import sqlite3
 from fastapi import APIRouter, File, HTTPException, Request, UploadFile
 from fastapi.responses import FileResponse
 
-from ..auth import require_user, require_writer, share_grant
+from ..auth import require_user, require_writer, resolve_user, share_scope_page
 from ..blocks_store import fetch_subtree
 from ..db import user_db_path, user_uploads_dir
 from ..server_settings import check_upload_allowed, usage_bytes, user_limits
@@ -14,6 +14,7 @@ from ..storage import (
     FILE_MEDIA_TYPES,
     IMAGE_EXTENSIONS,
     INLINE_EXTENSIONS,
+    SANDBOXED_EXTENSIONS,
     content_digest,
     display_filename,
     find_upload_file,
@@ -135,15 +136,11 @@ async def serve_upload(filename: str, request: Request):
     if not stem or not all(c in "0123456789abcdef" for c in stem):
         raise HTTPException(status_code=400, detail="invalid filename")
 
-    # Resolve who may read this: the session user (their own dir), or a valid
-    # ?share= token scoped to its one page. No bare ?user= access.
-    user = request.state.user
-    scope_page_id = None
-    if request.query_params.get("share") or not user:
-        grant = share_grant(request)
-        if not grant:
-            raise HTTPException(status_code=401)
-        user, scope_page_id, _level = grant
+    # Who may read this: the session user (their own dir), or — with a
+    # ?share= token — its owner, confined to the shared page's own assets.
+    # Same resolution and refusal statuses as every other read endpoint.
+    user = resolve_user(request)
+    scope_page_id = share_scope_page(request)
     if scope_page_id is not None and not _share_can_read_upload(user, scope_page_id, filename):
         raise HTTPException(status_code=403, detail="not accessible via this share link")
 
@@ -154,15 +151,13 @@ async def serve_upload(filename: str, request: Request):
     # so a given name can never serve different bytes — cache hard for a month.
     headers = {"Cache-Control": "public, max-age=2592000, immutable",
                "X-Content-Type-Options": "nosniff"}
-    # An SVG opened as a top-level document runs its inline <script> in this
-    # origin (stored XSS). Force a download on direct navigation and sandbox it
-    # if a browser renders it anyway; <img>/<object> embedding still works, so
-    # inline note images are unaffected.
-    # Generic files (office, zip, html, …) download rather than render: html
-    # gets the svg treatment for the same reason.
-    if ext == ".svg" or ext not in INLINE_EXTENSIONS:
+    # Only images, PDFs and plain text render on direct navigation; generic
+    # files (office, zip, …) download, and so do svg/html — scriptable in this
+    # origin (stored XSS) — which are sandboxed too in case a browser renders
+    # them anyway (storage.INLINE_EXTENSIONS / SANDBOXED_EXTENSIONS).
+    if ext not in INLINE_EXTENSIONS:
         headers["Content-Disposition"] = f'attachment; filename="{filename}"'
-    if ext in (".svg", ".html"):
+    if ext in SANDBOXED_EXTENSIONS:
         headers["Content-Security-Policy"] = "default-src 'none'; sandbox"
     return FileResponse(path, media_type=media_type, headers=headers)
 

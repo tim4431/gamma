@@ -50,6 +50,13 @@ export function pageAttachment(block) {
   return { kind: "pdf", id: p.doc_id || "", url: p.source_url || "", name: p.original_filename || "" };
 }
 
+// Where the attachment's file is fetched from: its source URL (a local
+// upload already points at /api/uploads/…), else the stored copy by hash.
+export function attachmentSource(attachment) {
+  if (!attachment) return "";
+  return attachment.url || (attachment.id ? `/api/uploads/${attachment.id}.pdf` : "");
+}
+
 // What a card/row says a page is: the attachment kind, else just a page.
 export function pageKindLabel(attachment) {
   return attachment ? "PDF" : "Page";

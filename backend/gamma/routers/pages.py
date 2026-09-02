@@ -11,18 +11,24 @@ rule as PUT /blocks/{id} under a share).
 
 import json
 import sqlite3
-import urllib.parse
 
 from fastapi import APIRouter, HTTPException, Request
 from fastapi.responses import JSONResponse
 from pydantic import BaseModel
 
+from .. import block_index
 from ..auth import require_user
-from ..blocks_store import BLOCK_COLUMNS, block_to_dict, create_page, page_attachment
+from ..blocks_store import (
+    BLOCK_COLUMNS,
+    attachment_props,
+    block_to_dict,
+    create_page,
+    page_attachment,
+    page_for_doc,
+)
 from ..db import page_now, safe_doc_id, user_db_path, user_uploads_dir
 from ..foldertags import clean_path
-from ..storage import cleanup_orphan_uploads, display_filename
-from .blocks import _purge_derived_data
+from ..storage import cleanup_orphan_uploads
 
 router = APIRouter(prefix="/api", tags=["pages"])
 
@@ -48,11 +54,6 @@ def _load_page(conn, page_id: str):
     if row[1] != "root":
         raise HTTPException(status_code=400, detail="not a page (only root blocks carry attachments)")
     return block_to_dict(row)
-
-
-def _url_tail(url: str) -> str:
-    tail = urllib.parse.unquote((url or "").split("?")[0].rstrip("/").split("/")[-1]).strip()
-    return display_filename(tail)
 
 
 @router.post("/pages")
@@ -96,23 +97,18 @@ async def attach_pdf(page_id: str, payload: AttachRequest, request: Request):
         if page_attachment(props):
             raise HTTPException(status_code=409, detail="page already has an attachment")
         if doc_id:
-            other = conn.execute(
-                "SELECT id FROM unified_blocks WHERE parent_id = 'root' "
-                "AND json_extract(properties, '$.doc_id') = ? AND id != ?",
-                (doc_id, page_id)).fetchone()
+            other = page_for_doc(conn, doc_id)  # this page has none, so any hit is another
             if other:
                 return JSONResponse(status_code=409, content={
                     "detail": "attachment belongs to another page", "page_id": other[0]})
-            props["doc_id"] = doc_id
+        attachment, auto = attachment_props(doc_id, source_url, payload.original_filename)
+        props.update(attachment)
         props["source_url"] = source_url or f"/api/uploads/{doc_id}.pdf"
-        original = display_filename(payload.original_filename)
-        if original:
-            props["original_filename"] = original
         content = page["content"]
         if not content.strip() or content.strip() == "Untitled":
             # Same marker semantics as get_or_create_doc_page: metadata may
             # replace an automatic title, an explicit rename clears the marker.
-            content = original or _url_tail(source_url) or doc_id or content
+            content = auto or content
             props["auto_title"] = content
         now = page_now()
         conn.execute(
@@ -141,6 +137,6 @@ async def detach_pdf(page_id: str, request: Request):
                      (json.dumps(props), now, page_id))
         conn.commit()
         removed = cleanup_orphan_uploads(conn, user_uploads_dir(user))
-        _purge_derived_data(user, conn, [])
+        block_index.purge_page_data(user, conn, [])
     return {"ok": True, "block": {**page, "properties": props, "updated_at": now},
             "removed_uploads": removed}

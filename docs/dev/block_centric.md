@@ -82,25 +82,29 @@ Backend
 - ~~`clip._default_title` and `metadata._save_props` still know the
   "PDF Notes - " auto-title prefix.~~ Gone (migrated, stage 0).
 
-Frontend
-- `App.jsx`: `homeMode = !pdfUrl && …`, `pageOnly = !pdfUrl && !!focusedBlockId`,
-  `centerNotes`, `.main.pdfHidden` — mode is derived from `pdfUrl`.
-- `pdfTitle` is really the page title (document.title, notes header, share
-  topbar, chat chip, delete confirm) and falls back to "PDF Notes".
-- Snapshot capture, scroll restore and read-position sync are gated on
-  `pdfUrl`; note pages never get a recents cover.
-- New page creation only lives in the "+" popover ("New note page"); the
-  library grid has "New folder" but no "New page" tile; empty state says
-  "open a PDF or start a note page".
-- Cards: `kind = _sourceUrl ? "PDF" : "Note"`; tooltips say "paper"
-  throughout; link chips say "linked paper".
-- Chat dock page picker: `homeBlocks.filter(b => b.properties?.doc_id)` —
-  note pages cannot be attached as context; copy says "Search your papers".
-- Search panel groups "this paper" / "This PDF"; library hits only from
-  `/pdf-search`.
-- Settings nav group "Reading" (viewer / search / notes).
-- Metadata popover shown only when `docId`, although `properties.meta` is a
-  page property.
+Frontend (all cleared 2026-09-02 except the search panel)
+- ~~`App.jsx`: mode derived from `pdfUrl`.~~ `pageAttach =
+  pageAttachment(focusedBlock)` is the switch; `pdfUrl` is the viewer's input.
+- ~~`pdfTitle` falls back to "PDF Notes".~~ `pageTitle`, "Untitled".
+- ~~Snapshot / read position gated on `pdfUrl`.~~ Text-only pages remember
+  their top block; covers are text previews.
+- ~~No "New page" tile.~~ Tile/row + the "+" popover, both `createPage()`.
+- ~~Cards say PDF/Note, tooltips "paper".~~ `pageKindLabel`, copy says page.
+- ~~Chat picker lists only PDF pages; chat sends `doc_id`.~~ Every page;
+  the request carries `page_id` (the page is the unit of context).
+- Search panel: the Ctrl+F panel keeps `/block-search` + `/pdf-search` —
+  deliberately (fuzzy/regex + case/word flags that FTS bm25 does not offer);
+  `/api/search` serves the AI tools. Group copy says "Other PDFs".
+- ~~Settings nav group "Reading".~~ "Editor".
+- ~~Metadata popover gated on `docId`.~~ Shown on any page with `meta` or an
+  attachment; only the "Source file" rows need the attachment.
+- The PDF ingest is ONE path: `resolvePdfSource({file|url})` → either
+  `by-doc` (open/upload as a new page, dedup by attachment) or
+  `POST /pages/{id}/attachment`; both then `openBlock()` the page. The
+  paperclip popover lists the attachment (show/hide the viewer, detach via
+  `DELETE /pages/{id}/attachment`).
+- The home library only renders cards (grid/list); the block tree is only
+  ever a page's notes — the old "page rows in the block tree" path is gone.
 
 Already generalized (build on these): `?block=` deep link, `[[ref]]`,
 `![[embed]]`, backlinks, `link_page_id`, page-keyed shares/chats/snapshots/
@@ -175,7 +179,9 @@ attachment, `pageTitle` state, "Untitled" fallback, copy sweep, Settings group
   set from the attachment. Rename `pdfTitle → pageTitle`, `docId` stays as
   the attachment id.
 - Fallback title "Untitled" everywhere; retire the "PDF Notes - " prefix. —
-  **done (backend)**: `clip._default_title` is the URL tail / doc id,
+  **done (backend)**: a PDF's automatic title is
+  `blocks_store.attachment_props` (file name, else the URL's file name —
+  `storage.url_filename` — else the doc id) on both creation paths,
   `create_page` defaults to "Untitled", old rows were migrated (no
   recogniser left).
 - Copy sweep: "paper" → "page" except where a PDF is genuinely meant
@@ -237,7 +243,11 @@ raced the upload→attach window (see `storage.UPLOAD_GRACE_S`).
   `gamma/block_index.py` (`block_fts` + `block_fts_meta(page_id,
   updated_at, ver)` in data.db; rebuilt lazily per page when the page
   root's `updated_at` moved, the version bumped, or a block writer called
-  `mark_page_dirty`; pruned with the page), `GET /api/search?q=&limit=&scope=`
+  `mark_page_dirty`; pruned with the page), `gamma/pdf_index.py` (the
+  `pdf_fts` schema plus the two queries every consumer shares —
+  `pdf_missing`, `search_pdf`; extraction stays in `routers/search.py`),
+  `blocks_store.root_pages` (the one library/folder page scan the search,
+  `/pdf-search`, reindex and the agent's scope share), `GET /api/search?q=&limit=&scope=`
   in `routers/search.py` (notes first by bm25, then PDF; `scope` = folder
   path; response shape in [api.md](api.md)). `/pdf-search` and
   `/block-search` are untouched until the frontend switches.
@@ -249,8 +259,11 @@ raced the upload→attach window (see `storage.UPLOAD_GRACE_S`).
   properties, notes, and (if attached) PDF excerpts. — **done (backend)**:
   `pages`/`page_id` are canonical (`gather_inputs` derives the attachment via
   `page_attachment`; a page without one always contributes its notes);
-  `doc_id` is still accepted and resolves to its page (`page_for_doc`) for
-  older clients — the frontend should stop sending it. `CONTEXT_INTRO` +
+  `doc_id` is still accepted as a compatibility input: it resolves to its
+  page (`blocks_store.page_for_doc`), and a doc no page carries contributes
+  nothing (the app cannot produce one — `block_index.purge_page_data`
+  drops a page's index rows with the page) — the frontend should send
+  `page_id`. `CONTEXT_INTRO` +
   `page_report_section` (title, `page_properties_line`, document text,
   highlights, notes); the long-paper machinery (excerpt label, document map,
   search relaxation, page cap) is unchanged.
@@ -266,9 +279,10 @@ raced the upload→attach window (see `storage.UPLOAD_GRACE_S`).
   frontend's to rename (key stays `search`).
 
 *(frontend status 2026-09-02: the Ctrl+F panel keeps `/block-search` (fuzzy /
-regex over notes, library-wide) + `/pdf-search`; `/api/search` serves the AI
-tools and is verified with curl (notes + pdf hits). Settings pane label
-"Search PDF text" → "Search".)*
+regex over notes, library-wide) + `/pdf-search` on purpose — see the
+inventory; `/api/search` serves the AI tools and is verified with curl (notes
++ pdf hits). The chat sends `page_id`. Settings pane label "Search PDF text"
+→ "Search".)*
 
 ### Stage 3 — the page as a document
 *(backend bits done 2026-09-02 — see the inventory above; frontend pending.)*
@@ -292,10 +306,10 @@ tools and is verified with curl (notes + pdf hits). Settings pane label
   reopening any page lands where you were.
 
 *(frontend status 2026-09-02: text-only pages remember their top block
-(done, stage 1 note). NOT done yet: the metadata popover is still gated on
-the attachment (`docId`) and the page header has no attachments row — the
-paperclip covers "attach", not "list/remove"; `DELETE /pages/{id}/attachment`
-exists on the backend without a UI.)*
+(stage 1 note); the metadata popover shows on any page with `meta`; the
+paperclip popover is the attachments row — file name, show/hide the viewer,
+detach (`DELETE /pages/{id}/attachment`). The extension still does not send
+`selection` on a page save.)*
 
 ### Stage 4 — beyond one PDF per page (optional, later)
 - `properties.attachments: [{id, kind, name, source_url}]` with the primary

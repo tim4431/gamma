@@ -132,24 +132,16 @@ def test_markdown_blocks_endpoint_caps_size(guest):
 
 
 def test_markdown_blocks_keeps_display_math_whole(guest):
-    """Multi-line $$ math stays one block even when its rows look like list
+    r"""Multi-line $$ math stays one block even when its rows look like list
     items or numbered lines (a shattered \begin{array} never renders)."""
-    text = (
-        "Result:\n"
-        "$$\n"
-        "\begin{aligned}\n"
-        "- x + y &= 3 \\\n"
-        "1. & \text{numbered-looking row} \\\n"
-        "\end{aligned}\n"
-        "$$\n"
-        "Done."
-    )
+    math = r"""$$
+\begin{aligned}
+- x + y &= 3 \\
+1. & \text{numbered-looking row} \\
+\end{aligned}
+$$"""
+    text = "Result:\n" + math + "\nDone."
     r = guest.post("/api/markdown-blocks", json={"text": text})
     assert r.status_code == 200, r.text
     tree = r.json()["blocks"]
-    assert [b["content"] for b in tree] == [
-        "Result:",
-        "$$\n\begin{aligned}\n- x + y &= 3 \\\n"
-        "1. & \text{numbered-looking row} \\\n\end{aligned}\n$$",
-        "Done.",
-    ]
+    assert [b["content"] for b in tree] == ["Result:", math, "Done."]

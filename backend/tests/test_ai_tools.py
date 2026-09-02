@@ -436,13 +436,13 @@ def test_block_tools_gated_by_permissions():
 def test_search_library_scoped_snippets(org):
     import sqlite3 as sq
     from gamma.db import page_now, user_db_path
-    from gamma.routers.search import _ensure_schema
+    from gamma.pdf_index import ensure_schema
     from gamma.textnorm import INDEX_VERSION
 
     c, ids = org
     doc = "d" * 24  # page a's doc_id
     with sq.connect(user_db_path("organizer", "data.db")) as db:
-        _ensure_schema(db)
+        ensure_schema(db)
         db.execute("INSERT INTO pdf_fts (doc_id, page, content) VALUES (?, ?, ?)",
                    (doc, 3, "quantum error correction with cat qubits"))
         db.execute("INSERT OR REPLACE INTO pdf_fts_docs (doc_id, indexed_at, pages, ver) "
@@ -783,6 +783,7 @@ def test_paper_chat_kicks_indexing_for_unindexed_doc(org, monkeypatch):
     import gamma.routers.ai as ai_mod
     import gamma.routers.search as search_mod
     from gamma.db import page_now, user_db_path
+    from gamma.pdf_index import ensure_schema
     from gamma.textnorm import INDEX_VERSION
 
     # A provider so the chat runs (idempotent: earlier tests may have added one).
@@ -795,14 +796,16 @@ def test_paper_chat_kicks_indexing_for_unindexed_doc(org, monkeypatch):
     monkeypatch.setattr(ai_mod, "_open_ai", lambda *a, **kw: _FakeResp([
         {"type": "content_block_delta", "delta": {"type": "text_delta", "text": "ok"}}]))
     doc = "e" * 24
+    fresh = c.post("/api/blocks", json={"parent_id": "root", "content": "fresh paper",
+                                        "properties": {"doc_id": doc}}).json()["id"]
     # Plain (tools off) chat still kicks it — the index is what a later
     # tools-on turn needs, and it costs one query to check.
-    r = c.post("/api/ai/chat", json={"prompt": "hi", "doc_id": doc, "stream": True})
+    r = c.post("/api/ai/chat", json={"prompt": "hi", "page_id": fresh, "stream": True})
     assert r.status_code == 200 and '"delta": "ok"' in r.text
     assert kicked == [("organizer", [doc])]
     # Already indexed at the current version: nothing to kick.
     with __import__("sqlite3").connect(user_db_path("organizer", "data.db")) as db:
-        search_mod._ensure_schema(db)
+        ensure_schema(db)
         db.execute("INSERT OR REPLACE INTO pdf_fts_docs (doc_id, indexed_at, pages, ver) "
                    "VALUES (?, ?, 1, ?)", (doc, page_now(), INDEX_VERSION))
         db.commit()

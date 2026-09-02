@@ -52,11 +52,11 @@ import {
   normalizeBlocks,
   cloneBlocks,
   findBlock,
-  insertSiblingAfter,
 } from "./logseqPdfModel";
 import { loadSession, saveSession, clearSession } from "./sessionState";
 import { AuthLoading, LoginPage, SessionConflictPage, ShareBlockedPage } from "./LoginPage";
 import { THEMES, TRANSLATE_LANGS, useAppPrefs } from "./prefs";
+import { useBlockHistory } from "./blockHistory.js";
 import SettingsDialog from "./settings";
 import { QuotaMeter } from "./settingsKit";
 import {
@@ -67,6 +67,7 @@ import {
   formatRelativeTime,
   friendlyApiError,
   pageAttachment,
+  attachmentSource,
   pageKindLabel,
   defaultPageTitle,
   metadataToDraft,
@@ -360,7 +361,10 @@ export default function App() {
     else setQuotaInfo(null);
   }, [authUser?.user, shareMode, refreshQuota]);
 
-  async function doLogin(e) {
+  // `then` runs after a successful sign-in; the default re-reads the session
+  // rather than hand-building the auth state — it carries flags login
+  // doesn't return (is_admin).
+  async function doLogin(e, then = checkSession) {
     e?.preventDefault();
     setLoginError("");
     try {
@@ -371,9 +375,7 @@ export default function App() {
         credentials: "include",
       });
       if (!res.ok) { setLoginError("Invalid credentials"); return; }
-      // Re-read the session rather than hand-building the auth state — it
-      // carries flags login doesn't return (is_admin).
-      await checkSession();
+      await then();
     } catch { setLoginError("Login failed"); }
   }
 
@@ -391,21 +393,7 @@ export default function App() {
 
   // A share link that needs an account (signed-in users / specific people):
   // sign in right here, then resolve the link again with the new session.
-  async function doShareLogin(e) {
-    e?.preventDefault();
-    setLoginError("");
-    try {
-      const res = await fetch(`${API}/login`, {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ username: loginUser, password: loginPass }),
-        credentials: "include",
-      });
-      if (!res.ok) { setLoginError("Invalid credentials"); return; }
-      setShareGate(null);
-      await resolveShare(initialShare);
-    } catch { setLoginError("Login failed"); }
-  }
+  const doShareLogin = (e) => doLogin(e, async () => { setShareGate(null); await resolveShare(initialShare); });
   async function shareSwitchAccount() {
     try { await fetch(`${API}/logout`, { method: "POST", credentials: "include" }); } catch {}
     setLoginUser(""); setLoginPass(""); setLoginError("");
@@ -1179,7 +1167,7 @@ export default function App() {
     const papers = `${n} page${n === 1 ? "" : "s"}`;
     setConfirmBox({
       title: "Delete folder",
-      message: `Delete “${path}”? It contains ${papers}. Keep ${n === 1 ? "it" : "them"} in the library (only the folder goes away), or delete ${n === 1 ? "it and its" : "them and their"} notes too — papers linked into other folders are deleted as well.`,
+      message: `Delete “${path}”? It contains ${papers}. Keep ${n === 1 ? "it" : "them"} in the library (only the folder goes away), or delete ${n === 1 ? "it and its" : "them and their"} notes too — pages linked into other folders are deleted as well.`,
       confirmLabel: "Keep pages",
       onConfirm: async () => {
         for (const b of members) {
@@ -2084,7 +2072,7 @@ export default function App() {
         if (t && (t.tagName === "INPUT" || t.tagName === "TEXTAREA" || t.isContentEditable
           || t.closest?.(".cm-editor"))) return;
         const redo = e.key.toLowerCase() === "y" || e.shiftKey;
-        if (blockUndoRef.current?.(redo)) e.preventDefault();
+        if (blockHistory.undo(redo)) e.preventDefault();
       } else if (e.key === "Escape") {
         setOpenPopover(null);
         setHomeMenu(null);
@@ -2136,7 +2124,6 @@ export default function App() {
       body: JSON.stringify({ value: payload }),
     }).catch(() => {});
   }, [theme, pdfDarkPage, authUser?.user, shareMode]);
-  const pageTitleSaveTimerRef = useRef(null);
   const viewerWrapRef = useRef(null);
   const pdfRetryRef = useRef(null); // set by PdfViewer: re-runs a failed load (pill's Retry button)
   const appRef = useRef(null);
@@ -2624,8 +2611,7 @@ export default function App() {
       setFocusedBlock((prev) => prev && prev.id === blockId
         ? { ...prev, properties: { ...prev.properties, meta: data.meta, bibtex: data.bibtex, ppt_cite: "", meta_error: undefined } }
         : prev);
-      if (data.meta?.title && (focusedBlock?.properties?.auto_title === focusedBlock?.content
-          || /^PDF Notes - /.test(focusedBlock?.content || ""))) {
+      if (data.meta?.title && focusedBlock?.properties?.auto_title === focusedBlock?.content) {
         await renameTitle(data.meta.title);
       }
       fetchHomeBlocks(); // keep the library's meta fresh for DOI-link matching
@@ -2829,13 +2815,14 @@ export default function App() {
     if (completed) fetchHomeBlocks();
   }
 
-  // When a paper is opened/uploaded, fetch its metadata in the background
-  // (arXiv → DOI → AI on the server). Cached in the page's properties.
+  // Metadata is a page property: show it on any page that has it; a page with
+  // a PDF attachment additionally fetches it in the background (arXiv → DOI →
+  // AI on the server) and caches it in the page's properties.
   useEffect(() => {
     setPptCite("");
     resetCopied();
     const b = focusedBlock;
-    if (shareMode || !b?.id || !b.properties?.doc_id) { setPageMeta(null); setPageBibtex(""); return; }
+    if (shareMode || !b?.id || (!b.properties?.meta && !pageAttachment(b))) { setPageMeta(null); setPageBibtex(""); return; }
     if (b.properties.meta) {
       setPageMeta(b.properties.meta);
       setPageBibtex(b.properties.bibtex || "");
@@ -3105,6 +3092,14 @@ export default function App() {
   const pendingBlockScrollRef = useRef(null);
   const autosaveTimerRef = useRef(null);
   const suppressAutosaveRef = useRef(true); // skip initial mount + doc loads
+  // Structural undo (Ctrl+Z while no editor has focus): derived from the
+  // block tree's transitions, see blockHistory.js. Declared right after the
+  // load flag so its effect reads it before the autosave effect resets it.
+  const blockHistory = useBlockHistory(blocks, setBlocks, {
+    loadRef: suppressAutosaveRef,
+    pageId: focusedBlockId,
+    enabled: !readOnly && !!focusedBlockId,
+  });
 
   function registerRef(id, ref) {
     blockRefs.current[id] = ref;
@@ -3228,7 +3223,6 @@ export default function App() {
     }
     const blockId = findHighlightBlockId(blocks);
     if (!blockId) return;
-    pushUndo(blocks);
     const nextBlocks = removeBlockTree(blocks, blockId);
     setBlocks(nextBlocks);
     // persistBlocks will fire via autosave; no need to duplicate.
@@ -3454,17 +3448,54 @@ export default function App() {
     }
   }
 
-  async function getOrCreateBlockForDoc(targetDocId, defaultTitle, sourceUrl, originalFilename = "") {
-    if (!targetDocId) throw new Error("docId required");
-    return await apiJson(`${API}/blocks/by-doc/${targetDocId}`, {
+  // The page carrying this document, created if the library has none
+  // (lookup BY attachment — the dedup path for ingest, docs/dev/block_centric.md).
+  async function getOrCreateBlockForDoc(src) {
+    if (!src?.doc_id) throw new Error("docId required");
+    return await apiJson(`${API}/blocks/by-doc/${src.doc_id}`, {
       method: "POST",
       headers: { "Content-Type": "application/json" },
       body: JSON.stringify({
-        default_title: defaultTitle || "Untitled",
-        source_url: sourceUrl || null,
-        original_filename: originalFilename || null,
+        default_title: defaultPageTitle({ url: src.source_url, name: src.original_filename }),
+        source_url: src.source_url || null,
+        original_filename: src.original_filename || null,
       })
     });
+  }
+
+  // ONE way to bring a PDF in — for a new page (openPdf / uploadFiles) or
+  // an existing one (attachPdfToPage): upload the file, or resolve the URL
+  // (arXiv / DOI / publisher page → direct link) and hash it into a doc_id,
+  // checking that a link the library does not know yet really serves a PDF
+  // before any page is bound to it (a dead link must not leave an empty page
+  // behind; a document already in the library stays openable even once its
+  // source has gone). Returns the attachment properties plus the viewer URL.
+  async function resolvePdfSource({ file, url }, taskId) {
+    if (file) {
+      const filename = uploadLeafName(file, "upload.pdf");
+      const form = new FormData();
+      form.append("file", file, filename);
+      const data = await apiJson(`${API}/uploads`, { method: "POST", body: form });
+      return { doc_id: data.doc_id, source_url: data.source_url, original_filename: filename,
+        viewerUrl: data.source_url, note: "" };
+    }
+    // Uploaded PDFs are already hosted locally — no external resolve or proxy.
+    if (url.startsWith(`${API}/uploads/`)) {
+      const m = url.match(/\/([0-9a-f]+)\.pdf$/);
+      const doc_id = m ? m[1] : await getDocIdForUrl(url);
+      return { doc_id, source_url: url, original_filename: "", viewerUrl: `${API}/uploads/${doc_id}.pdf`, note: "" };
+    }
+    const resolved = await resolvePdfUrl(url, oaFallback);
+    const source_url = resolved.source_url;
+    const doc_id = await getDocIdForUrl(source_url);
+    const known = await apiJson(`${API}/blocks/by-doc/${doc_id}`).catch(() => null);
+    if (!known) {
+      updateTransfer(taskId, { info: "checking link…" });
+      await probePdfUrl(source_url);
+    }
+    const viewerUrl = pdfProxyUrl(source_url, { save: pdfSaveLocal });
+    transferByUrlRef.current[viewerUrl] = taskId; // the viewer's byte-level reporting takes over this row
+    return { doc_id, source_url, original_filename: "", viewerUrl, note: resolved.note || "" };
   }
 
   async function renameTitle(newTitle) {
@@ -3496,22 +3527,16 @@ export default function App() {
   }
 
   async function uploadOnePdf(file, folder = "") {
-    const filename = uploadLeafName(file, "upload.pdf");
-    const transferId = addTransfer({ name: filename, kind: "upload", info: fmtBytes(file.size) });
-    const form = new FormData();
-    form.append("file", file, filename);
-    let data;
+    const transferId = addTransfer({ name: uploadLeafName(file, "upload.pdf"), kind: "upload", info: fmtBytes(file.size) });
+    let src;
     try {
-      data = await apiJson(`${API}/uploads`, { method: "POST", body: form });
+      src = await resolvePdfSource({ file }, transferId);
     } catch (err) {
       updateTransfer(transferId, { status: "error", info: "failed" });
       throw err;
     }
     updateTransfer(transferId, { status: "done", info: fmtBytes(file.size) });
-    const defaultTitle = filename || `${data.doc_id}.pdf`;
-    const block = await getOrCreateBlockForDoc(
-      data.doc_id, defaultTitle, data.source_url, filename || defaultTitle,
-    );
+    const block = await getOrCreateBlockForDoc(src);
     if (folder) {
       const tags = parseFolderTags(block.properties?.folder);
       if (!tags.includes(folder)) {
@@ -3523,8 +3548,8 @@ export default function App() {
       }
     }
     // If the file carries embedded annotations (SumatraPDF etc.), pull them in
-    importEmbeddedAnnots(block.id, data.doc_id, true);
-    return { data, block, defaultTitle };
+    importEmbeddedAnnots(block.id, src.doc_id, true);
+    return { src, block };
   }
 
   async function importOneMarkdown(file, folder = "") {
@@ -3585,22 +3610,10 @@ export default function App() {
       const pdfDone = done.filter((item) => item.kind === "pdf");
       if (pdfDone.length) refreshQuota();
       if (items.length === 1 && done.length && done[0].kind === "pdf") {
-        // Single upload keeps the old behavior: open the paper directly
-        // (bypass openPdf's URL-resolution path).
-        const { data, block, defaultTitle } = done[0];
-        await loadBlocksForBlock(block.id);
-        setDocId(data.doc_id);
-        setInputUrl(data.source_url);
-        setFocusedBlockId(block.id);
-        setFocusedBlock(block);
-        setPageTitle(block.content || defaultTitle);
-        setSummary(block.properties?.summary || "");
-        setCategory(block.properties?.category || "");
-        setPageFolders(parseFolderTags(block.properties?.folder));
-        setPdfUrl(data.source_url);
-        const newUrl = `${window.location.pathname}?block=${encodeURIComponent(block.id)}`;
-        window.history.replaceState({}, "", newUrl);
-        setStatus(`Uploaded ${items[0].filename} (${data.doc_id})`);
+        // A single upload opens its page right away.
+        const { src, block } = done[0];
+        await openBlock(block.id, { viewerUrl: src.viewerUrl });
+        setStatus(`Uploaded ${items[0].filename} (${src.doc_id})`);
       } else if (items.length === 1 && done.length) {
         await fetchHomeBlocks();
         await openBlock(done[0].data.block_id, { pushNav: true });
@@ -3640,21 +3653,10 @@ export default function App() {
       const resp = await fetch(`${API}/import/logseq`, { method: "POST", body: form, credentials: "include" });
       if (!resp.ok) throw new Error(await resp.text());
       const data = await resp.json();
-      // Block was already created by the import endpoint; just load it.
-      const block = await getOrCreateBlockForDoc(data.doc_id, pdfFile.name.replace('.pdf', ''), data.source_url);
-      await loadBlocksForBlock(block.id);
-      setDocId(data.doc_id);
-      setInputUrl(data.source_url);
-      setFocusedBlockId(block.id);
-      setFocusedBlock(block);
-      setPageTitle(block.content || pdfFile.name.replace('.pdf', ''));
-      setSummary(block.properties?.summary || "");
-      setCategory(block.properties?.category || "");
-      setPageFolders(parseFolderTags(block.properties?.folder));
-      setPdfUrl(data.source_url);
+      // The import endpoint already created the page; look it up and open it.
+      const block = await getOrCreateBlockForDoc({ doc_id: data.doc_id, source_url: data.source_url, original_filename: pdfFile.name });
       await fetchHomeBlocks();
-      const newUrl = `${window.location.pathname}?block=${encodeURIComponent(block.id)}`;
-      window.history.replaceState({}, "", newUrl);
+      await openBlock(block.id);
       setStatus(`Imported ${data.imported} highlights from ${pdfFile.name}`);
     } catch (err) {
       setStatus(`Import failed: ${err.message}`);
@@ -3683,60 +3685,22 @@ export default function App() {
     }
   }
 
+  // Open a PDF by URL: resolve it, find or create its page, open that page.
   async function openPdf(sourceUrl) {
     if (!sourceUrl || shareMode) return;
-    leaveCurrentPage();
     setLoading(true);
     setStatus("Opening PDF...");
     // Visible from the moment Enter is pressed — resolve can take seconds.
     const taskId = addTransfer({ name: sourceUrl.slice(0, 60), kind: "download", info: "resolving…" });
     try {
-      // Uploaded PDFs are already hosted locally — skip external resolve and proxy.
-      const isUpload = sourceUrl.startsWith("/api/uploads/") || sourceUrl.startsWith(`${API}/uploads/`);
-      let finalUrl, resolvedDocId, proxiedUrl, pdfNote = "";
-      if (isUpload) {
-        finalUrl = sourceUrl;
-        // filename is "<doc_id>.pdf" — serve straight from the uploads route
-        const m = sourceUrl.match(/\/([0-9a-f]+)\.pdf$/);
-        resolvedDocId = m ? m[1] : await getDocIdForUrl(sourceUrl);
-        proxiedUrl = `${API}/uploads/${resolvedDocId}.pdf`;
-      } else {
-        const resolved = await resolvePdfUrl(sourceUrl, oaFallback);
-        finalUrl = resolved.source_url;
-        pdfNote = resolved.note || "";
-        resolvedDocId = await getDocIdForUrl(finalUrl);
-        proxiedUrl = pdfProxyUrl(finalUrl, { save: pdfSaveLocal });
-        // A new paper must download before it gets a page — otherwise a dead
-        // link leaves behind an empty page that only ever repeats the error.
-        // Papers already in the library skip the check: an existing page stays
-        // openable even once its source has gone away.
-        const known = await apiJson(`${API}/blocks/by-doc/${resolvedDocId}`).catch(() => null);
-        if (!known) {
-          updateTransfer(taskId, { info: "checking link…" });
-          await probePdfUrl(finalUrl);
-        }
-        transferByUrlRef.current[proxiedUrl] = taskId; // viewer's byte-level reporting takes over this row
-      }
-      // Resolve block + load children FIRST, before setPdfUrl, to avoid mid-render highlight race
-      const defaultTitle = defaultPageTitle({ url: finalUrl });
-      const block = await getOrCreateBlockForDoc(resolvedDocId, defaultTitle, finalUrl);
+      const src = await resolvePdfSource({ url: sourceUrl }, taskId);
+      const block = await getOrCreateBlockForDoc(src);
       updateTransfer(taskId, {
-        name: (block.content || defaultTitle).slice(0, 60),
-        ...(isUpload ? { status: "done", info: "local file" } : { info: "downloading…" }),
+        name: (block.content || "Untitled").slice(0, 60),
+        ...(src.viewerUrl.startsWith(`${API}/uploads/`) ? { status: "done", info: "local file" } : { info: "downloading…" }),
       });
-      const nextBlocks = await loadBlocksForBlock(block.id);
-      setDocId(resolvedDocId);
-      setInputUrl(finalUrl);
-      setFocusedBlockId(block.id);
-      setFocusedBlock(block);
-      setPageTitle(block.content || defaultTitle);
-      setSummary(block.properties?.summary || "");
-      setCategory(block.properties?.category || "");
-      setPageFolders(parseFolderTags(block.properties?.folder));
-      setPdfUrl(proxiedUrl);
-      const newUrl = `${window.location.pathname}?block=${encodeURIComponent(block.id)}`;
-      window.history.replaceState({}, "", newUrl);
-      setStatus(pdfNote || `Loaded ${resolvedDocId}`);
+      await openBlock(block.id, { viewerUrl: src.viewerUrl });
+      setStatus(src.note || `Loaded ${src.doc_id}`);
     } catch (err) {
       updateTransfer(taskId, { status: "error", info: (err.message || "failed").slice(0, 60) });
       setStatus(`Open failed: ${err.message}`);
@@ -3766,57 +3730,37 @@ export default function App() {
     }
   }
 
-  // Attach a PDF to the open page (one that carries none): upload the file or
-  // resolve the URL exactly like opening a new paper, then bind it to THIS
-  // page via POST /pages/{id}/attachment — no new page is created.
+  // Attach a PDF to the open page (one that carries none): the same ingest
+  // as opening a new PDF, then bound to THIS page via POST
+  // /pages/{id}/attachment — no new page is created.
   const [attachUrl, setAttachUrl] = useState("");
   async function attachPdfToPage({ file, url }) {
     const pageId = focusedBlockId;
     if (!pageId || shareMode || pageAttach || (!file && !url)) return;
+    if (file && !isPdfFile(file)) { setStatus("Only PDF files can be attached — other files go into a block."); return; }
     setOpenPopover(null);
     setAttachUrl("");
     setLoading(true);
-    const filename = file ? uploadLeafName(file, "upload.pdf") : "";
     const taskId = addTransfer(file
-      ? { name: filename, kind: "upload", info: fmtBytes(file.size) }
+      ? { name: uploadLeafName(file, "upload.pdf"), kind: "upload", info: fmtBytes(file.size) }
       : { name: url.slice(0, 60), kind: "download", info: "resolving…" });
     try {
-      let body, viewerUrl;
-      if (file) {
-        if (!isPdfFile(file)) throw new Error("only PDF files can be attached — other files go into a block");
-        const form = new FormData();
-        form.append("file", file, filename);
-        const data = await apiJson(`${API}/uploads`, { method: "POST", body: form });
-        body = { doc_id: data.doc_id, source_url: data.source_url, original_filename: filename };
-        viewerUrl = data.source_url;
-      } else {
-        const resolved = await resolvePdfUrl(url, oaFallback);
-        const finalUrl = resolved.source_url;
-        const resolvedDocId = await getDocIdForUrl(finalUrl);
-        updateTransfer(taskId, { info: "checking link…" });
-        await probePdfUrl(finalUrl);
-        body = { doc_id: resolvedDocId, source_url: finalUrl };
-        viewerUrl = pdfProxyUrl(finalUrl, { save: pdfSaveLocal });
-      }
-      const block = await apiJson(`${API}/pages/${encodeURIComponent(pageId)}/attachment`, {
+      const { viewerUrl, note, ...src } = await resolvePdfSource({ file, url }, taskId);
+      await apiJson(`${API}/pages/${encodeURIComponent(pageId)}/attachment`, {
         method: "POST",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify(body),
+        body: JSON.stringify(src),
       });
       updateTransfer(taskId, { status: "done", info: "attached" });
-      if (focusedBlockIdRef.current !== pageId) return; // navigated away meanwhile
-      setFocusedBlock(block);
-      setPageTitle(block.content || "");
-      setDocId(body.doc_id);
-      setInputUrl(body.source_url);
-      setPdfHidden(false);
-      setPdfUrl(viewerUrl);
-      setHomeBlocks((prev) => prev.map((b) => (b.id === pageId ? { ...b, ...block } : b)));
       if (file) {
         refreshQuota();
-        importEmbeddedAnnots(pageId, body.doc_id, true);
+        importEmbeddedAnnots(pageId, src.doc_id, true);
       }
-      setStatus("PDF attached.");
+      fetchHomeBlocks();
+      if (focusedBlockIdRef.current !== pageId) return; // navigated away meanwhile
+      await openBlock(pageId, { viewerUrl });
+      setPdfHidden(false);
+      setStatus(note || "PDF attached.");
     } catch (err) {
       if (err.status === 409 && err.data?.page_id) {
         // The library already holds this PDF on another page — the page is
@@ -3832,6 +3776,30 @@ export default function App() {
     } finally {
       setLoading(false);
     }
+  }
+
+  // Drop the page's PDF: the notes stay (highlights keep their positions as
+  // blocks); the file goes unless another page still carries it.
+  function detachPdfFromPage() {
+    const pageId = focusedBlockId;
+    if (!pageId || !pageAttach || readOnly) return;
+    setOpenPopover(null);
+    setConfirmBox({
+      title: "Detach PDF",
+      message: `Remove "${pageAttach.name || defaultPageTitle(pageAttach)}" from this page? The notes and highlights stay as blocks; the file is deleted unless another page uses it. This can't be undone.`,
+      confirmLabel: "Detach",
+      danger: true,
+      onConfirm: async () => {
+        try {
+          await apiJson(`${API}/pages/${encodeURIComponent(pageId)}/attachment`, { method: "DELETE" });
+          fetchHomeBlocks();
+          if (focusedBlockIdRef.current === pageId) await openBlock(pageId);
+          setStatus("PDF detached.");
+        } catch (err) {
+          setStatus(`Detach failed: ${err.message}`);
+        }
+      },
+    });
   }
 
   async function resolveShare(token) {
@@ -3855,8 +3823,6 @@ export default function App() {
       }
       const data = await res.json();
       setShareGate(null);
-      shareOwnerRef.current = data.username || "";
-      shareTokenRef.current = token;
       setShareInfo({ owner: data.username || "", role: data.role || "view", canEdit: Boolean(data.can_edit),
                      audience: data.audience || "anyone", viewer: data.viewer || "" });
 
@@ -3875,7 +3841,7 @@ export default function App() {
       }
 
       const props = block?.properties || {};
-      const src = props.source_url || props.sourceUrl || "";
+      const src = attachmentSource(pageAttachment(block));
       const isLocal = src.startsWith("/api/");
       const proxiedUrl = isLocal
         ? `${src}${src.includes("?") ? "&" : "?"}share=${encodeURIComponent(token)}`
@@ -3927,9 +3893,8 @@ export default function App() {
       let openedPdfUrl = "";
       const attachment = pageAttachment(block);
       if (attachment) {
-        const src = attachment.url || `${API}/uploads/${attachment.id}.pdf`;
-        const isLocal = src.startsWith("/api/");
-        openedPdfUrl = isLocal ? src : pdfProxyUrl(src);
+        const src = attachmentSource(attachment);
+        openedPdfUrl = opts?.viewerUrl || (src.startsWith("/api/") ? src : pdfProxyUrl(src));
         setInputUrl(src);
         setPdfUrl(openedPdfUrl);
         setBlocks(childBlocks);
@@ -4422,13 +4387,10 @@ export default function App() {
   // instead of silently swapping the SPA for an error page.
   async function downloadExport(path, fallbackName) {
     setStatus("Exporting page…");
-    // Shared (read-only) views: every export carries the scoped share token, so
-    // the backend confines it to this document — applied here so no call site
-    // can forget it.
-    const shareQ = shareTokenQuery();
-    if (shareQ && !path.includes("share=")) path += (path.includes("?") ? "&" : "?") + shareQ;
+    // Shared views: withShare puts the scoped token on the export URL, so the
+    // backend confines it to this page.
     try {
-      const res = await fetch(`${API}${path}`, { credentials: "include" });
+      const res = await fetch(withShare(`${API}${path}`), { credentials: "include" });
       if (!res.ok) {
         let detail = "";
         try { detail = (await res.json()).detail || ""; } catch { /* not JSON */ }
@@ -4460,10 +4422,6 @@ export default function App() {
 
   // Shared (read-only) view — exports and asset fetches carry the scoped share
   // token (?share=), which the backend validates and confines to this document.
-  const shareOwnerRef = useRef("");
-  const shareTokenRef = useRef("");
-  const shareTokenQuery = () =>
-    shareMode && shareTokenRef.current ? `share=${encodeURIComponent(shareTokenRef.current)}` : "";
 
   // Run what the import dialog was configured to do. Logseq needs files, so
   // its button opens the picker and the import starts once they're chosen.
@@ -4517,7 +4475,7 @@ export default function App() {
           const p = await apiJson(`${API}/folders/export-progress`);
           if (p.active && p.total) {
             const pct = Math.round((p.done / p.total) * 100);
-            setStatus(`Exporting “${exportFolder}” — ${p.done}/${p.total} papers (${pct}%)…`);
+            setStatus(`Exporting “${exportFolder}” — ${p.done}/${p.total} pages (${pct}%)…`);
           }
         } catch { /* progress is best-effort */ }
       }, 500);
@@ -4802,40 +4760,6 @@ export default function App() {
   const pageAttach = useMemo(() => pageAttachment(focusedBlock), [focusedBlock]);
   const homeMode = !focusedBlockId && !shareMode;
 
-  // --- structural undo -------------------------------------------------------
-  // Snapshots of the page's block tree around structural edits (delete,
-  // indent/outdent, drag-move, duplicate, paste-as-blocks). Ctrl+Z restores
-  // one while no editor has focus — in-editor undo stays CodeMirror's own.
-  // The restored tree persists through the normal autosave PUT, which
-  // re-inserts server-side even after an eager DELETE.
-  const undoStackRef = useRef([]);
-  const redoStackRef = useRef([]);
-  const blockUndoRef = useRef(null); // read by the once-mounted key listener
-  // A snapshot belongs to the page it was taken on — never restore across.
-  useEffect(() => { undoStackRef.current = []; redoStackRef.current = []; }, [focusedBlockId]);
-  function undoSnapshot(tree) {
-    // editMode stripped: restoring must not pop editors open.
-    const strip = (list) => (list || []).map((b) => ({ ...b, editMode: false, children: strip(b.children) }));
-    return strip(cloneBlocks(tree));
-  }
-  function pushUndo(tree) {
-    undoStackRef.current.push(undoSnapshot(tree));
-    if (undoStackRef.current.length > 100) undoStackRef.current.shift();
-    redoStackRef.current = [];
-  }
-  // Assigned every render so the once-mounted key listener sees fresh state.
-  blockUndoRef.current = (redo) => {
-    if (readOnly || homeMode || !focusedBlockId) return false;
-    const from = redo ? redoStackRef.current : undoStackRef.current;
-    const to = redo ? undoStackRef.current : redoStackRef.current;
-    const snap = from.pop();
-    if (!snap) return false;
-    to.push(undoSnapshot(blocks));
-    setBlocks(snap);
-    setStatus(redo ? "Redone." : "Undone.");
-    return true;
-  };
-
   // Move a block subtree to the end of another page: sync any queued edits
   // first, re-parent server-side (reorder carries parent_id), then drop it
   // locally — this page's next autosave PUT no longer contains the block, and
@@ -4854,8 +4778,7 @@ export default function App() {
       });
       // Older snapshots still contain the block; restoring one would put the
       // same id in two pages. A cross-page move is not undoable.
-      undoStackRef.current = [];
-      redoStackRef.current = [];
+      blockHistory.clear();
       setBlocks((prev) => removeBlockTree(prev, blockId));
       setStatus(`Moved to "${title}".`);
     } catch (err) {
@@ -4879,11 +4802,7 @@ export default function App() {
     return homeBlocks.map((b) => ({
       id: b.id,
       content: b.content || "Untitled",
-      children: [],
-      collapsed: false,
-      properties: { quote: b.properties?.summary || "" },
       _pageId: b.id,
-      _position: b.position,
       _attachment: pageAttachment(b),
       _preview: b.preview || "",
       _folders: parseFolderTags(b.properties?.folder),
@@ -4892,9 +4811,8 @@ export default function App() {
       _updatedAt: b.updated_at || "",
       _pinned: b.properties?.pinned || "",
       _isEmpty: !b.content,
-      editMode: homeEditingId === b.id,
     }));
-  }, [homeBlocks, homeEditingId]);
+  }, [homeBlocks]);
   // Folders shown at the current level: the next path segment of every known
   // path under folderFilter ("" = root → top-level segments).
   const childFolders = useMemo(() => {
@@ -5346,17 +5264,29 @@ export default function App() {
     );
   }
 
-  // "+ New note" under the block tree (also the whole empty state's action):
-  // append an empty top-level note and start editing it.
-  function addRootNote() {
+  // Notion-style tail under the block tree: clicking the empty space below
+  // the last block starts writing there — in the last block if it is still
+  // empty, else in a fresh top-level one. On an empty page the zone carries
+  // the invitation text; the per-row "+" handle covers inserting mid-page.
+  function editTail() {
     if (readOnly) return;
+    const last = blocks[blocks.length - 1];
+    if (last && !last.content && !(last.children || []).length) {
+      pendingFocusRef.current = last.id;
+      setBlocks(setBlockEditMode(blocks, last.id, true));
+      setFocusedId(last.id);
+      return;
+    }
     const { blocks: next, newId } = addRootBlock(blocks);
     pendingFocusRef.current = newId;
     setBlocks(next);
     setFocusedId(newId);
   }
-  const addNoteButton = !homeMode && !readOnly && focusedBlockId ? (
-    <button className="addNoteBtn" title="Add a note at the end" onClick={addRootNote}>+ New note</button>
+  const notesTail = !homeMode && !readOnly && focusedBlockId ? (
+    <div className={"notesTail" + (blocks.length ? "" : " isEmpty")}
+      onMouseDown={(e) => { e.preventDefault(); editTail(); }}>
+      {blocks.length ? null : "Click to start writing"}
+    </div>
   ) : null;
 
   // The notes window - docked via notesDock, or filling the center when no PDF is shown.
@@ -5527,16 +5457,31 @@ export default function App() {
             </div>
             {!shareMode && focusedBlockId ? (
               <div className="pageActionCol">
-                {!pageAttach && !readOnly ? (
-                  <span data-popover="attach" style={{ position: "relative", display: "inline-flex" }}>
+                {pageAttach || !readOnly ? (
+                  <span data-popover="attach" className="popoverAnchor">
                     <button
-                      className="pageActionBtn"
-                      title="Attach a PDF to this page — by URL, arXiv id or DOI, or upload a file"
-                      aria-label="Attach PDF"
+                      className={`pageActionBtn ${pageAttach ? "active" : ""}`}
+                      title={pageAttach
+                        ? `Attachment: ${pageAttach.name || defaultPageTitle(pageAttach)}`
+                        : "Attach a PDF to this page — by URL, arXiv id or DOI, or upload a file"}
+                      aria-label={pageAttach ? "Attachment" : "Attach PDF"}
                       disabled={loading}
                       onClick={() => setOpenPopover((p) => (p === "attach" ? null : "attach"))}
                     ><PaperclipIcon size={15} /></button>
-                    {openPopover === "attach" ? (
+                    {openPopover === "attach" && pageAttach ? (
+                      <div className="popover addPopover attachPopover">
+                        <div className="popoverTitle">Attachment</div>
+                        <div className="popoverHint attachFileName" title={attachmentSource(pageAttach)}>
+                          <PaperclipIcon size={13} /> {pageAttach.name || defaultPageTitle(pageAttach)}
+                        </div>
+                        <button className="popoverItem" onClick={() => { setPdfHidden((h) => !h); setOpenPopover(null); }}>
+                          {pdfHidden ? "Show the PDF" : "Hide the PDF"}
+                        </button>
+                        {!readOnly ? (
+                          <button className="popoverItem" onClick={detachPdfFromPage}>Detach the PDF…</button>
+                        ) : null}
+                      </div>
+                    ) : openPopover === "attach" ? (
                       <div className="popover addPopover attachPopover">
                         <div className="popoverTitle">Attach a PDF</div>
                         <input
@@ -5550,7 +5495,7 @@ export default function App() {
                             else if (e.key === "Escape") setOpenPopover(null);
                           }}
                         />
-                        <label className="popoverItem" style={{ cursor: loading ? "not-allowed" : "pointer" }}>
+                        <label className="popoverItem" aria-disabled={loading || undefined}>
                           Upload a PDF…
                           <input
                             type="file"
@@ -5564,8 +5509,8 @@ export default function App() {
                     ) : null}
                   </span>
                 ) : null}
-                {docId ? (
-                  <span data-popover="meta" style={{ position: "relative", display: "inline-flex" }}>
+                {pageAttach || pageMeta ? (
+                  <span data-popover="meta" className="popoverAnchor">
                     <button
                       className="pageActionBtn"
                       title={metaBusy
@@ -5746,6 +5691,7 @@ export default function App() {
                             <button className="uiBtn primary" onClick={saveMetaEdits}>Save metadata</button>
                           </div>
                         ) : null}
+                        {pageAttach ? <>
                         <div className="popoverDivider" />
                         <div className="popoverSection">Source file</div>
                         <div className="shareRow">
@@ -5786,6 +5732,7 @@ export default function App() {
                             >Replace source</button>
                           </div>
                         ) : null}
+                        </> : null}
                       </div>
                     ) : null}
                   </span>
@@ -5937,7 +5884,7 @@ export default function App() {
                         const parent = folderFilter.includes("/") ? folderFilter.slice(0, folderFilter.lastIndexOf("/")) : "";
                         dropOnFolder(e, parent, (ids) => removePagesFromFolder(ids, folderFilter));
                       }}
-                      title="Back — or drop a paper or folder here to move it out of this folder"
+                      title="Back — or drop a page or folder here to move it out of this folder"
                     >
                       <ArrowLeftIcon size={14} />
                       <span className="folderName">{folderFilter.includes("/") ? folderFilter.slice(0, folderFilter.lastIndexOf("/")) : "All files"}</span>
@@ -5954,7 +5901,7 @@ export default function App() {
                       onDragOver={(e) => { e.preventDefault(); setFolderDragOver("__label_up__"); }}
                       onDragLeave={() => setFolderDragOver(null)}
                       onDrop={(e) => dropOnLabel(e, categoryFilter, (ids) => removePagesFromLabel(ids, categoryFilter))}
-                      title="Back — or drop a paper here to take this label off it"
+                      title="Back — or drop a page here to take this label off it"
                     >
                       <ArrowLeftIcon size={14} />
                       <span className="folderName">{folderFilter || "All files"}</span>
@@ -6016,7 +5963,7 @@ export default function App() {
             ) : null}
             {homeMode && homeView === "grid" ? (
                 <>
-                  {homeItems.length === 0 && !newFolderOpen && !newPageAllowed ? (
+                  {homeItems.length === 0 && !newFolderOpen ? (
                     <div className="empty">{homeEmptyText}</div>
                   ) : null}
                   <div className="fileGrid" onClick={(e) => { if (e.target.classList.contains("fileGrid")) clearSelection(); }}>
@@ -6165,9 +6112,9 @@ export default function App() {
                     </button>
                   ) : null}
                 </>
-            ) : homeMode && homeView === "list" ? (
+            ) : homeMode ? (
                 <>
-                  {homeItems.length === 0 && !newFolderOpen && !newPageAllowed ? (
+                  {homeItems.length === 0 && !newFolderOpen ? (
                     <div className="empty">{homeEmptyText}</div>
                   ) : null}
                   <div className="fileList" onClick={(e) => { if (e.target.classList.contains("fileList")) clearSelection(); }}>
@@ -6302,17 +6249,11 @@ export default function App() {
                   ) : null}
                 </>
             ) : (
-            (homeMode ? homeVisiblePages : visibleBlocks).length === 0 ? (
-              <>
-                <div className="empty">{homeMode
-                  ? (folderFilter ? "This folder is empty — start a page here or drag pages onto it from the library." : "No pages yet — start with “New page”, or open a PDF from the + button above.")
-                  : "No blocks yet."}</div>
-                {addNoteButton}
-              </>
+            visibleBlocks.length === 0 ? (
+              notesTail || <div className="empty">No blocks yet.</div>
             ) : (
               (() => {
                 const rowProps = {
-                  homeMode,
                   focusedId,
                   setFocusedId,
                   onJump: jumpToHighlightId,
@@ -6362,32 +6303,12 @@ export default function App() {
                       }
                     }
                   },
-                  onPageOpen: handlePageClick,
-                  onPageContext: (pageBlock, e) => openPageMenu(pageBlock._pageId, pageBlock.content)(e),
-                  selectedPageIds: selectedPages,
                   onChangeText: (id, text) => {
                     if (readOnly) return;
-                    if (homeMode) {
-                      setHomeBlocks((prev) => prev.map((b) => b.id === id ? { ...b, content: text } : b));
-                      if (pageTitleSaveTimerRef.current) clearTimeout(pageTitleSaveTimerRef.current);
-                      pageTitleSaveTimerRef.current = setTimeout(() => {
-                        apiJson(`${API}/blocks/${id}`, {
-                          method: "PUT",
-                          headers: { "Content-Type": "application/json" },
-                          body: JSON.stringify({ content: text }),
-                        }).catch((err) => setStatus(`Rename failed: ${err}`));
-                      }, 500);
-                      return;
-                    }
                     setBlocks(setBlockText(blocks, id, text));
                   },
                   onStartEdit: (id, editMode) => {
                     if (readOnly) return;
-                    if (homeMode) {
-                      if (editMode) pendingFocusRef.current = id;
-                      setHomeEditingId(editMode ? id : null);
-                      return;
-                    }
                     if (editMode) pendingFocusRef.current = id;
                     const next = setBlockEditMode(blocks, id, editMode);
                     setBlocks(next);
@@ -6400,24 +6321,6 @@ export default function App() {
                   // Alt held).
                   onEnterSibling: (id, { above = false } = {}) => {
                     if (readOnly) return;
-                    if (homeMode) {
-                      const idx = pageBlocks.findIndex((b) => b.id === id);
-                      if (idx < 0) return;
-                      const before = (above ? pageBlocks[idx - 1]?._position : pageBlocks[idx]._position) || null;
-                      const after = (above ? pageBlocks[idx]._position : pageBlocks[idx + 1]?._position) || null;
-                      apiJson(`${API}/blocks`, {
-                        method: "POST",
-                        headers: { "Content-Type": "application/json" },
-                        body: JSON.stringify({ parent_id: "root", content: "", before, after }),
-                      })
-                        .then((created) => fetchHomeBlocks().then(() => {
-                          pendingFocusRef.current = created.id;
-                          setHomeEditingId(created.id);
-                          setFocusedId(created.id);
-                        }))
-                        .catch((err) => setStatus(`Create failed: ${err}`));
-                      return;
-                    }
                     const { blocks: next, newId } = addSiblingBlock(blocks, id, { above });
                     pendingFocusRef.current = newId;
                     setBlocks(next);
@@ -6431,17 +6334,13 @@ export default function App() {
                     setFocusedId(newId);
                   },
                   onIndent: (id) => {
-                    if (readOnly || homeMode) return;
-                    const next = indentBlock(blocks, id);
-                    if (next !== blocks) pushUndo(blocks);
-                    setBlocks(next);
+                    if (readOnly) return;
+                    setBlocks(indentBlock(blocks, id));
                     setFocusedId(id);
                   },
                   onOutdent: (id) => {
-                    if (readOnly || homeMode) return;
-                    const next = outdentBlock(blocks, id);
-                    if (next !== blocks) pushUndo(blocks);
-                    setBlocks(next);
+                    if (readOnly) return;
+                    setBlocks(outdentBlock(blocks, id));
                     setFocusedId(id);
                   },
                   onToggle: (id) => {
@@ -6450,37 +6349,15 @@ export default function App() {
                   },
                   onDelete: (id) => {
                     if (readOnly) return;
-                    if (homeMode) {
-                      // Deleting a page also removes its stored PDF (if no
-                      // other page references it) — always confirm.
-                      const pg = homeBlocks.find((b) => b.id === id);
-                      setConfirmBox({
-                        title: "Delete page",
-                        message: `Delete "${(pg?.content || "this page").slice(0, 80)}" with all its notes${pg?.properties?.doc_id ? " and its stored PDF file" : ""}? This can't be undone.`,
-                        confirmLabel: "Delete",
-                        danger: true,
-                        onConfirm: () => {
-                          apiJson(`${API}/blocks/${id}`, { method: "DELETE" })
-                            .then(() => {
-                              updateTabs((prev) => prev.filter((t) => t.id !== id));
-                              fetchHomeBlocks();
-                            })
-                            .catch((err) => setStatus(`Delete failed: ${err.message}`));
-                        },
-                      });
-                      return;
-                    }
-                    pushUndo(blocks);
                     apiJson(`${API}/blocks/${id}`, { method: "DELETE" })
                       .catch((err) => setStatus(`Delete failed: ${err}`));
                     setBlocks(removeBlockTree(blocks, id));
                     setStatus("Block deleted — Ctrl+Z to undo.");
                   },
                   onDuplicate: (id) => {
-                    if (readOnly || homeMode) return;
+                    if (readOnly) return;
                     const src = findBlock(blocks, id);
                     if (!src) return;
-                    pushUndo(blocks);
                     // Fresh ids all the way down; PDF anchoring stays with the
                     // original — a copy with the same highlight_id/position
                     // would draw a duplicate highlight on the page (same rule
@@ -6491,27 +6368,19 @@ export default function App() {
                       return { ...b, id: makeId(), editMode: false, properties: props,
                         children: (b.children || []).map(clone) };
                     };
-                    setBlocks(insertSiblingAfter(blocks, id, clone(src)));
+                    setBlocks(insertSibling(blocks, id, clone(src), true));
                     setStatus("Block duplicated.");
                   },
                   onMoveToPage: async (id) => {
-                    if (readOnly || homeMode) return;
+                    if (readOnly) return;
                     try {
                       const d = await apiJson(`${API}/blocks/root/children`);
                       const pages = (d.children || []).filter((p) => p.id !== focusedBlockId);
                       setMoveBlockDialog({ blockId: id, query: "", pages });
                     } catch (err) { setStatus(`Could not list pages: ${err.message}`); }
                   },
-                  // Hover-tool edits (table ops, image resize/caption/delete)
-                  // snapshot before writing so Ctrl+Z covers them too.
-                  onSnapshot: () => {
-                    if (!readOnly && !homeMode) pushUndo(blocks);
-                  },
                   onPasteBlocks: (id, nodes) => {
-                    if (readOnly || homeMode || !nodes?.length) return;
-                    // Undo restores the paste-as-text state (the closure tree
-                    // still carries the pasted text; its removal is queued).
-                    pushUndo(blocks);
+                    if (readOnly || !nodes?.length) return;
                     const toBlock = (n) => ({
                       id: makeId(), content: n.content || "", properties: {},
                       collapsed: false, editMode: false,
@@ -6525,7 +6394,7 @@ export default function App() {
                     setBlocks((prev) => {
                       let out = prev;
                       for (let i = created.length - 1; i >= 0; i--) {
-                        out = insertSiblingAfter(out, id, created[i]);
+                        out = insertSibling(out, id, created[i], true);
                       }
                       return out;
                     });
@@ -6557,25 +6426,6 @@ export default function App() {
                     _dragState.dropTarget = null;
                     const sourceId = e.dataTransfer.getData("text/plain");
                     if (!sourceId || !dt || sourceId === dt.targetId || readOnly) return;
-                    if (homeMode) {
-                      const pages = [...pageBlocks];
-                      const srcIdx = pages.findIndex((b) => b.id === sourceId);
-                      const tgtIdx = pages.findIndex((b) => b.id === dt.targetId);
-                      if (srcIdx < 0 || tgtIdx < 0 || srcIdx === tgtIdx) return;
-                      const remaining = pages.filter((_, i) => i !== srcIdx);
-                      const adjTgt = tgtIdx > srcIdx ? tgtIdx - 1 : tgtIdx;
-                      const dropIdx = dt.above ? adjTgt : adjTgt + 1;
-                      const before = remaining[dropIdx - 1]?._position ?? null;
-                      const after = remaining[dropIdx]?._position ?? null;
-                      const pageId = pages[srcIdx]._pageId;
-                      if (!pageId) return;
-                      apiJson(`${API}/blocks/${pageId}/reorder`, {
-                        method: "POST",
-                        headers: { "Content-Type": "application/json" },
-                        body: JSON.stringify({ before, after }),
-                      }).then(() => fetchHomeBlocks()).catch((err) => setStatus(`Reorder failed: ${err}`));
-                      return;
-                    }
                     if (isDescendant(blocks, sourceId, dt.targetId)) return;
                     const extracted = extractBlock(blocks, sourceId);
                     if (!extracted) return;
@@ -6593,23 +6443,14 @@ export default function App() {
                       if (!ancestorId) return;
                       next = insertSibling(remaining, ancestorId, sourceBlock, !dt.above);
                     } else { return; }
-                    if (next) { pushUndo(blocks); setBlocks(next); }
+                    if (next) setBlocks(next);
                     _dragState.draggingId = null;
                   },
                 };
                 return (
                   <>
-                    <BlockTree blocks={homeMode ? homeVisiblePages : blocks} readOnly={readOnly} rowProps={rowProps} />
-                    {addNoteButton}
-                    {homeMode && homeItems.length > homeVisibleItems.length ? (
-                      <button
-                        ref={loadMoreRef}
-                        className="loadMoreBtn"
-                        onClick={() => setHomeShowCount((c) => c + HOME_PAGE_CHUNK)}
-                      >
-                        Showing {homeVisibleItems.length} of {homeItems.length} — load more
-                      </button>
-                    ) : null}
+                    <BlockTree blocks={blocks} readOnly={readOnly} rowProps={rowProps} />
+                    {notesTail}
                     <BlockDropIndicator target={dropTarget} />
                   </>
                 );
@@ -6647,7 +6488,7 @@ export default function App() {
         <ChatDock
           {...common}
           onClose={() => (isPhone ? setPhonePanel(null) : setChatHidden(true))}
-          docId={docId} focusedBlockId={focusedBlockId} homeBlocks={homeBlocks} pageTitle={pageTitle}
+          docId={docId} pageAttach={pageAttach} focusedBlockId={focusedBlockId} homeBlocks={homeBlocks} pageTitle={pageTitle}
           openTabs={openTabs}
           pdfSelections={pdfSelections} setPdfSelections={setPdfSelections}
           chatImages={chatImages} setChatImages={setChatImages}
@@ -6767,7 +6608,7 @@ export default function App() {
                   setExportOpen(true);
                 }}
                 title={homeMode
-                  ? `Download the “${folderFilter}” folder — every paper in it as Markdown, a Logseq graph, a Zotero library, or a Gamma export`
+                  ? `Download the “${folderFilter}” folder — every page in it as Markdown, a Logseq graph, a Zotero library, or a Gamma export`
                   : "Download this page — the PDF with highlights and notes, Markdown, a Logseq graph, a Zotero library, or a Gamma export"}
               >
                 <ExportIcon className="popoverItemIcon" size={15} />
@@ -6784,7 +6625,7 @@ export default function App() {
   // the tab row is too narrow to hold both, and thumbs reach the bottom.
   const topbarActions = (
     <>
-      <span data-popover="add" style={{ position: "relative", display: "inline-flex" }}>
+      <span data-popover="add" className="popoverAnchor">
         <button
           className={`iconBtn addBtn ${openPopover === "add" ? "activeIcon" : ""}`}
           onClick={() => setOpenPopover((p) => (p === "add" ? null : "add"))}
@@ -6838,7 +6679,7 @@ export default function App() {
           </div>
         ) : null}
       </span>
-      <span data-popover="downloads" style={{ position: "relative", display: "inline-flex" }}>
+      <span data-popover="downloads" className="popoverAnchor">
           <button
             className={`iconBtn transferBtn ${openPopover === "downloads" ? "activeIcon" : ""}`}
             onClick={() => setOpenPopover((p) => (p === "downloads" ? null : "downloads"))}
@@ -6932,7 +6773,7 @@ export default function App() {
         onFindMarks={setFindMarks}
       />
       {focusedBlockId && !homeMode ? (
-        <span data-popover="share" style={{ position: "relative", display: "inline-flex" }}>
+        <span data-popover="share" className="popoverAnchor">
           <button
             className={`iconBtn ${openPopover === "share" ? "activeIcon" : ""}`}
             onClick={() => {
@@ -7112,7 +6953,7 @@ export default function App() {
         </span>
       ) : null}
       {authUser?.user && (
-        <span data-popover="user" style={{ position: "relative", display: "inline-flex" }}>
+        <span data-popover="user" className="popoverAnchor">
           <button
             className={`iconBtn ${openPopover === "user" ? "activeIcon" : ""}`}
             onClick={() => {
@@ -7193,15 +7034,16 @@ export default function App() {
   return (
     <div
       ref={appRef}
-      className={`app layout-horizontal ${shareMode ? "readOnlyMode" : ""} ${pseudoFullscreen ? "pseudoFullscreen" : ""} ${isPhone ? "phoneUI" : ""}`}
+      className={`app layout-horizontal ${pseudoFullscreen ? "pseudoFullscreen" : ""} ${isPhone ? "phoneUI" : ""}`}
+      data-drop={homeMode ? "upload" : !pageAttach && !readOnly ? "attach" : undefined}
       onDragOver={shareMode ? undefined : (e) => {
         if (!e.dataTransfer || !Array.from(e.dataTransfer.types || []).includes("Files")) return;
         e.preventDefault();
-        if (e.target.closest(".blockRowWrap")) {
-          appRef.current?.classList.remove("dragOver");
-        } else {
-          appRef.current?.classList.add("dragOver");
-        }
+        // The overlay only where a drop does something: the library imports
+        // files, a page without an attachment takes a PDF; block rows take
+        // files themselves.
+        const dropHere = (homeMode || (!pageAttach && !readOnly)) && !e.target.closest(".blockRowWrap");
+        appRef.current?.classList.toggle("dragOver", dropHere);
       }}
       onDragLeave={shareMode ? undefined : (e) => {
         if (e.currentTarget === e.target) appRef.current?.classList.remove("dragOver");
@@ -7225,8 +7067,7 @@ export default function App() {
         // Dropped on the open page: a single PDF becomes ITS attachment when
         // it has none (the block rows take other files); the library view
         // still imports drops as new pages.
-        if (focusedBlockId && !pageAttach && !readOnly && files.length === 1 && isPdfFile(files[0])
-            && !e.target.closest?.("[data-block-id], .blockEditor")) {
+        if (focusedBlockId && !pageAttach && !readOnly && files.length === 1 && isPdfFile(files[0])) {
           e.preventDefault();
           attachPdfToPage({ file: files[0] });
           return;
@@ -7289,7 +7130,7 @@ export default function App() {
           </button>
           <span className="readOnlyTitle">{pageTitle}</span>
           {shareInfo ? (
-            <span className="shareBadge"
+            <span className="uiTag"
               title={shareInfo.canEdit ? "Your edits save to the owner's page" : "Read-only share link"}>
               {shareInfo.canEdit ? "Can edit" : "View only"}{shareInfo.owner ? ` · shared by ${shareInfo.owner}` : ""}
             </span>
@@ -7734,11 +7575,11 @@ export default function App() {
       {linkDialog ? (
         <div className="reportOverlay" onClick={() => setLinkDialog(null)}>
           <div className="reportModal confirmModal" onClick={(e) => e.stopPropagation()}>
-            <div className="reportModalTitle">{linkDialog.editBlockId ? "Change reference link" : "Link reference to a paper"}</div>
+            <div className="reportModalTitle">{linkDialog.editBlockId ? "Change reference link" : "Link reference to a page"}</div>
             {linkDialog.content?.text ? (
               <div className="reportModalHint linkRefQuote">“{linkDialog.content.text.slice(0, 160)}{linkDialog.content.text.length > 160 ? "…" : ""}”</div>
             ) : null}
-            <div className="reportModalHint">Paste a DOI, arXiv id, or URL — or pick one of your papers. The selection becomes a clickable link on the PDF.</div>
+            <div className="reportModalHint">Paste a DOI, arXiv id, or URL — or pick one of your pages. The selection becomes a clickable link on the PDF.</div>
             <div className="shareRow">
               <input
                 autoFocus
@@ -7771,15 +7612,15 @@ export default function App() {
                 </button>
               </>
             ) : null}
-            <div className="popoverSection">Your papers (best match first)</div>
+            <div className="popoverSection">Your pages (best match first)</div>
             <div className="reportPageList">
               {(() => {
                 const cands = homeBlocks
-                  .filter((b) => b.properties?.doc_id && b.id !== focusedBlockId)
+                  .filter((b) => b.id !== focusedBlockId)
                   .map((b) => ({ b, score: scorePaperMatch(linkDialog.content?.text || "", b) }))
                   .sort((x, y) => y.score - x.score
                     || (y.b.updated_at || "").localeCompare(x.b.updated_at || ""));
-                if (!cands.length) return <div className="popoverHint">No other PDFs in your library yet.</div>;
+                if (!cands.length) return <div className="popoverHint">No other pages in your library yet.</div>;
                 return cands.map(({ b, score }) => (
                   <button key={b.id} className="reportPageItem linkPageItem" onClick={() => createLinkHighlight({ pageId: b.id })}>
                     <span className="reportPageName">{b.content || "Untitled"}</span>
@@ -8001,7 +7842,7 @@ export default function App() {
                     id="folders"
                     icon={FolderIcon}
                     label="Move to folder"
-                    title="A paper can sit in several folders — this adds it to the one you pick (same as dragging it onto the folder)."
+                    title="A page can sit in several folders — this adds it to the one you pick (same as dragging it onto the folder)."
                   >
                     {folderMenuPaths.length ? folderMenuPaths.map((f) => (
                       <MenuItem
@@ -8040,7 +7881,7 @@ export default function App() {
                 <MenuItem icon={PenIcon} onClick={() => { setHomeMenu(null); setFolderRenaming({ name: homeMenu.name, draft: homeMenu.name }); }}>Rename</MenuItem>
                 <MenuItem
                   icon={ExportIcon}
-                  title="Download every paper in this folder — Markdown, a Logseq graph, a Zotero library, or a Gamma export"
+                  title="Download every page in this folder — Markdown, a Logseq graph, a Zotero library, or a Gamma export"
                   onClick={() => { const name = homeMenu.name; setHomeMenu(null); setExportFolder(name); setExportOpen(true); }}
                 >Export…</MenuItem>
                 <MenuItem icon={TrashIcon} danger onClick={() => { setHomeMenu(null); deleteFolderByName(homeMenu.name); }}>Delete</MenuItem>
@@ -8079,7 +7920,7 @@ export default function App() {
                 setHighlightMenu(null);
               }}
             >
-              {highlights.find((x) => x.id === highlightMenu.id)?.linkTarget ? "Change link…" : "Link to paper…"}
+              {highlights.find((x) => x.id === highlightMenu.id)?.linkTarget ? "Change link…" : "Link to page…"}
             </button>
             {highlights.find((x) => x.id === highlightMenu.id)?.linkTarget?.url ? (
               <button

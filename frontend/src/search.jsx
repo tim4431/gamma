@@ -443,7 +443,7 @@ export default function SearchPanel({
   );
 
   return (
-    <span data-popover="search" style={{ position: "relative", display: "inline-flex" }}>
+    <span data-popover="search" className="popoverAnchor">
       <button
         className={`iconBtn ${open ? "activeIcon" : ""}`}
         onClick={() => onOpenChange(!open)}
@@ -460,7 +460,7 @@ export default function SearchPanel({
               onClick={() => setShowDetails((v) => !v)}
               title={showDetails
                 ? "Collapse result details (compact find — the default is in Settings → Search)"
-                : "Expand result details: titles, notes, and other papers"}
+                : "Expand result details: titles, notes, and other pages"}
               aria-label="Toggle result details"
             >
               {showDetails
@@ -570,10 +570,10 @@ export default function SearchPanel({
                 {linkHits.length ? <div className="searchSection">Reference links</div> : null}
                 {linkHits.map(noteRow)}
                 {libElsewhere.length || libIndexing ? (
-                  <div className="searchSection">{focusedBlockId ? "Other papers" : "Library PDFs"}</div>
+                  <div className="searchSection">{focusedBlockId ? "Other PDFs" : "Library PDFs"}</div>
                 ) : null}
                 {libIndexing ? (
-                  <div className="searchHint">Indexing {libIndexing} paper{libIndexing === 1 ? "" : "s"} in the background — results will fill in shortly.</div>
+                  <div className="searchHint">Indexing {libIndexing} PDF{libIndexing === 1 ? "" : "s"} in the background — results will fill in shortly.</div>
                 ) : null}
                 {libElsewhere.map((r, i) => (
                   <button

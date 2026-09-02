@@ -83,9 +83,10 @@ class AIChatRequest(BaseModel):
     # Context is PAGES from the user's knowledge base: `pages` (several — a
     # report across pages) or, when empty, the one page of `page_id` (the
     # open page; its PDF attachment, if any, is derived server-side via
-    # blocks_store.page_attachment). `doc_id` is accepted for older clients
-    # only — it resolves to the page carrying that PDF; nothing new may
-    # depend on it.
+    # blocks_store.page_attachment). `doc_id` is the compatibility input:
+    # it resolves to the page carrying that PDF (blocks_store.page_for_doc)
+    # and does nothing when no page does — send `page_id`; nothing new may
+    # depend on `doc_id`.
     doc_id: str = ""
     history: list = Field(default_factory=list)  # [{role: "user"|"ai", text: str}, ...]
     model: str = ""       # model registry id ("provider:model"), must be in AI_MODELS

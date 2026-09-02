@@ -97,22 +97,6 @@ export function removeBlockTree(blocks, id) {
   return out;
 }
 
-export function insertSiblingAfter(blocks, id, newBlock) {
-  const out = [];
-  for (const b of blocks || []) {
-    if (b.id === id) {
-      out.push(b);
-      out.push(newBlock);
-    } else {
-      out.push({
-        ...b,
-        children: insertSiblingAfter(b.children || [], id, newBlock)
-      });
-    }
-  }
-  return out;
-}
-
 export function appendChild(blocks, id, newBlock) {
   return (blocks || []).map((b) => {
     if (b.id === id) {
@@ -250,8 +234,8 @@ export function addSiblingBlock(blocks, id, { above = false } = {}) {
   };
 }
 
-// Append a fresh empty note at the end of the top level (the notes panel's
-// "+ New note" button — works even when the page has no blocks yet).
+// Append a fresh empty block at the end of the top level (clicking the
+// space under the last block — works even when the page has no blocks yet).
 export function addRootBlock(blocks) {
   const newBlock = makeNewBlock();
   return {
