@@ -7,6 +7,8 @@ let tab = null;
 let state = null;
 let picker = { folders: [], labels: [] };  // from GET /api/library/folders
 let folderValue = "";                      // "" = library root, "__new__" = the new-folder input
+let labelTags = [];                        // committed label chips; #labels holds the fragment being typed
+let labelSelIdx = -1;                      // keyboard selection in the label suggestion menu
 
 async function send(msg) {
   const r = await chrome.runtime.sendMessage(msg);
@@ -107,7 +109,11 @@ async function fillPickers(settings) {
   folderValue = picker.folders.includes(remembered) ? remembered : "";
   renderFolderBtn();
   show("folder-new-row", false);
-  $("labels").value = (settings.labels || []).join(", ");
+  // Prefill the options-page default labels only — the last save's labels are
+  // deliberately not remembered (doSave persists just the folder).
+  labelTags = [...new Set((settings.labels || []).map((s) => String(s).trim()).filter(Boolean))];
+  renderLabelTags();
+  $("labels").value = "";
 }
 
 function renderFolderBtn() {
@@ -151,24 +157,58 @@ function openFolderMenu() {
   show("folder-menu");
 }
 
-// Suggestions for the fragment after the last comma; picking one completes it.
+// Labels are the app's categoryTag chips: typing "," or Enter commits the
+// fragment as a chip, Backspace on an empty input removes the last one, and
+// the suggestion menu (existing library labels) completes the fragment.
+function addLabelTag(name) {
+  const t = (name || "").trim();
+  if (t && !labelTags.some((l) => l.toLowerCase() === t.toLowerCase())) labelTags.push(t);
+  renderLabelTags();
+}
+
+function renderLabelTags() {
+  const box = $("labels-box");
+  const input = $("labels");
+  for (const chip of box.querySelectorAll(".categoryTag")) chip.remove();
+  for (const t of labelTags) {
+    const chip = document.createElement("span");
+    chip.className = "categoryTag";
+    chip.appendChild(document.createTextNode(t));
+    const x = document.createElement("button");
+    x.type = "button"; x.className = "uiClose"; x.tabIndex = -1; x.textContent = "×"; x.title = `Remove "${t}"`;
+    x.addEventListener("mousedown", (e) => e.preventDefault());
+    x.addEventListener("click", () => { labelTags = labelTags.filter((l) => l !== t); renderLabelTags(); updateLabelMenu(); });
+    chip.appendChild(x);
+    box.insertBefore(chip, input);
+  }
+}
+
+function labelSuggestions() {
+  const frag = $("labels").value.trim().toLowerCase();
+  const chosen = new Set(labelTags.map((l) => l.toLowerCase()));
+  return picker.labels.filter((l) => !chosen.has(l.toLowerCase()) && l.toLowerCase().includes(frag)).slice(0, 8);
+}
+
 function updateLabelMenu() {
   const menu = $("label-menu");
-  const raw = $("labels").value;
-  const cut = raw.lastIndexOf(",");
-  const head = cut >= 0 ? raw.slice(0, cut + 1) : "";
-  const frag = raw.slice(cut + 1).trim().toLowerCase();
-  const chosen = new Set(head.split(",").map((s) => s.trim().toLowerCase()).filter(Boolean));
-  const items = picker.labels.filter((l) => !chosen.has(l.toLowerCase()) && l.toLowerCase().includes(frag)).slice(0, 8);
+  const items = labelSuggestions();
+  if (labelSelIdx >= items.length) labelSelIdx = items.length - 1;
   menu.innerHTML = "";
   if (!items.length) { show("label-menu", false); return; }
-  for (const l of items) {
-    menu.appendChild(menuRow(l, "tag", false, () => {
-      $("labels").value = (head ? head.replace(/\s*$/, " ") : "") + l + ", ";
+  items.forEach((l, i) => {
+    const row = menuRow(l, "tag", false, () => {
+      addLabelTag(l);
+      $("labels").value = ""; labelSelIdx = -1;
       $("labels").focus();
       updateLabelMenu();
-    }));
-  }
+    });
+    if (i === labelSelIdx) row.classList.add("selected");
+    row.addEventListener("mouseenter", () => {
+      labelSelIdx = i;
+      [...menu.children].forEach((el, j) => el.classList.toggle("selected", j === i));
+    });
+    menu.appendChild(row);
+  });
   show("label-menu");
 }
 
@@ -177,7 +217,9 @@ function chosenFolder() {
 }
 
 function chosenLabels() {
-  return $("labels").value.split(",").map((s) => s.trim()).filter(Boolean);
+  const frag = $("labels").value.trim();  // count an uncommitted fragment too
+  return frag && !labelTags.some((l) => l.toLowerCase() === frag.toLowerCase())
+    ? [...labelTags, frag] : [...labelTags];
 }
 
 // ---------- actions ----------
@@ -196,7 +238,9 @@ async function doSave({ candidate, force } = {}) {
     // <all_urls> is already granted and this resolves silently.
     const fetchUrl = c.pdf_url || (c.is_pdf_tab ? c.source_url : "");
     if (fetchUrl) { try { await chrome.permissions.request({ origins: [originPattern(new URL(fetchUrl).origin)] }); } catch {} }
-    await setSettings({ folder, labels });
+    // Remember the folder for next time; labels are per-paper, so they are
+    // NOT persisted — the next popup starts from the options-page defaults.
+    await setSettings({ folder });
     const out = await send({ type: "save", tabId: tab.id, candidate: c, folder, labels, source_url: force ? (tab && tab.url) : undefined });
     show("progress", false);
     const r = $("result");
@@ -284,9 +328,36 @@ document.addEventListener("DOMContentLoaded", async () => {
   $("login-btn").onclick = doLogin;
   $("offline-retry").onclick = () => refresh(true);
   $("folder-btn").onclick = () => { $("folder-menu").classList.contains("hidden") ? openFolderMenu() : show("folder-menu", false); };
-  $("labels").addEventListener("input", updateLabelMenu);
+  $("labels-box").addEventListener("pointerdown", (e) => {
+    if (e.target === $("labels-box")) { e.preventDefault(); $("labels").focus(); }
+  });
+  $("labels").addEventListener("input", () => {
+    const val = $("labels").value;
+    if (val.includes(",")) {
+      const parts = val.split(",");
+      for (const p of parts.slice(0, -1)) addLabelTag(p);
+      $("labels").value = parts[parts.length - 1].trimStart();
+    }
+    labelSelIdx = -1;
+    updateLabelMenu();
+  });
+  $("labels").addEventListener("keydown", (e) => {
+    const items = labelSuggestions();
+    if (e.key === "ArrowDown" && items.length) {
+      e.preventDefault(); labelSelIdx = Math.min(labelSelIdx + 1, items.length - 1); updateLabelMenu();
+    } else if (e.key === "ArrowUp" && !$("label-menu").classList.contains("hidden")) {
+      e.preventDefault(); labelSelIdx = Math.max(labelSelIdx - 1, -1); updateLabelMenu();
+    } else if (e.key === "Enter") {
+      e.preventDefault();
+      addLabelTag(labelSelIdx >= 0 && labelSelIdx < items.length ? items[labelSelIdx] : $("labels").value);
+      $("labels").value = ""; labelSelIdx = -1;
+      updateLabelMenu();
+    } else if (e.key === "Backspace" && !$("labels").value && labelTags.length) {
+      labelTags.pop(); renderLabelTags(); updateLabelMenu();
+    }
+  });
   $("labels").addEventListener("focus", updateLabelMenu);
-  $("labels").addEventListener("blur", () => show("label-menu", false));
+  $("labels").addEventListener("blur", () => { labelSelIdx = -1; show("label-menu", false); });
   document.addEventListener("pointerdown", (e) => {
     if (!e.target.closest("#folder-wrap")) show("folder-menu", false);
     if (!e.target.closest("#labels-wrap")) show("label-menu", false);

@@ -208,6 +208,22 @@ async def import_markdown(request: Request, file: UploadFile = File(...),
             "folder": clean_folder}
 
 
+class MarkdownBlocksRequest(BaseModel):
+    text: str
+
+
+@router.post("/markdown-blocks")
+async def markdown_blocks(payload: MarkdownBlocksRequest, request: Request):
+    """Parse markdown text into a ``{content, children}`` block tree — the
+    editor's "paste as blocks" helper, same parser as the .md file import.
+    Nothing is stored; the client inserts the tree through its normal
+    tree-edit/autosave path."""
+    require_user(request)
+    if len(payload.text.encode("utf-8", errors="ignore")) > MAX_MARKDOWN_BYTES:
+        raise HTTPException(status_code=413, detail="text exceeds 5 MB")
+    return {"blocks": md_to_blocks(payload.text)}
+
+
 # --- Annotations embedded in the PDF file itself ------------------------------
 # SumatraPDF ("save annotations"), Acrobat, Preview etc. write standard PDF
 # annotation objects. Convert markup annotations to Gamma highlight blocks.

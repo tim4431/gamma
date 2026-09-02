@@ -56,6 +56,20 @@ export const MessageSquareIcon = (p) => (
 export const SearchIcon = (p) => (
   <Icon {...p}><circle cx="11" cy="11" r="7" /><path d="m21 21-4.3-4.3" /></Icon>
 );
+// A frame with a caption bar under it — "add caption" on images.
+export const CaptionIcon = (p) => (
+  <Icon {...p}><rect x="3" y="3" width="18" height="13" rx="2" /><path d="M6 20h12" /></Icon>
+);
+// Text-alignment trio — the table column menu's segmented chooser.
+export const AlignLeftIcon = (p) => (
+  <Icon {...p}><path d="M3 6h18" /><path d="M3 12h12" /><path d="M3 18h15" /></Icon>
+);
+export const AlignCenterIcon = (p) => (
+  <Icon {...p}><path d="M3 6h18" /><path d="M6 12h12" /><path d="M5 18h14" /></Icon>
+);
+export const AlignRightIcon = (p) => (
+  <Icon {...p}><path d="M3 6h18" /><path d="M9 12h12" /><path d="M6 18h15" /></Icon>
+);
 export const LinkIcon = (p) => (
   <Icon {...p}><path d="M10 13a5 5 0 0 0 7.54.54l3-3a5 5 0 0 0-7.07-7.07l-1.72 1.71" /><path d="M14 11a5 5 0 0 0-7.54-.54l-3 3a5 5 0 0 0 7.07 7.07l1.71-1.71" /></Icon>
 );

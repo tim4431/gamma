@@ -737,6 +737,11 @@ body {
 .blockEditorCm .cmBk1 { color: var(--bracket-2); }
 .blockEditorCm .cmBk2 { color: var(--bracket-3); }
 .blockEditorCm .cmBkErr { color: var(--bracket-err); text-decoration: underline wavy var(--bracket-err); }
+/* The \command the caret sits on, inside raw math. */
+.blockEditorCm .cmMathCmdActive {
+  background: var(--bracket-active-bg);
+  border-radius: 2px;
+}
 /* The innermost pair enclosing the caret. */
 .blockEditorCm .cmBkActive {
   background: var(--bracket-active-bg);
@@ -920,20 +925,185 @@ body {
   margin: 0 0 2px;
 }
 .blockRendered blockquote.callout p:last-child { margin-bottom: 0; }
+/* Every note table renders inside MdTableWrap (mdTools.jsx): the wrapper owns
+   scrolling and, when editable, hosts the hover controls — "+" strips on the
+   right/bottom edges and the column/row handle pills. */
 .blockRendered table {
-  display: block;
-  max-width: 100%;
-  overflow-x: auto;
   border-collapse: collapse;
-  margin: 6px 0;
   font-size: 0.95em;
 }
 .blockRendered :is(th, td) {
   border: 1px solid var(--border);
   padding: 3px 8px;
   text-align: left;
+  min-width: 36px;
 }
+/* An empty cell has no line box and would collapse to padding-only height
+   (freshly added rows/columns) — force one so it sits at text height. */
+.blockRendered :is(th, td):empty::after { content: "\00a0"; }
 .blockRendered th { background: var(--bg-block); font-weight: 600; }
+.mdTableWrap {
+  position: relative;
+  width: fit-content;
+  max-width: 100%;
+  margin: 6px 0;
+}
+.mdTableScroll { overflow-x: auto; }
+/* Reserve the gutters the strips live in so they don't overlap neighbors. */
+.mdTableEditable { margin-right: 14px; margin-bottom: 14px; }
+.mdTableAdd {
+  position: absolute;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  padding: 0;
+  border: 1px dashed var(--border);
+  background: var(--bg-input);
+  color: var(--text-dim);
+  border-radius: 6px;
+  font-size: 12px;
+  line-height: 1;
+  cursor: pointer;
+  opacity: 0;
+  transition: opacity 0.12s;
+}
+.mdTableWrap:hover .mdTableAdd { opacity: 1; }
+.mdTableAdd:hover { background: var(--bg-subtle); color: var(--text-bright); border-style: solid; }
+.mdTableAddCol { top: 0; bottom: 0; right: -13px; width: 11px; }
+.mdTableAddRow { left: 0; right: 0; bottom: -13px; height: 11px; }
+.mdTableHandle {
+  position: absolute;
+  z-index: 4;
+  padding: 0;
+  border: 1px solid var(--border);
+  background: var(--bg-elevated);
+  color: var(--text-secondary);
+  border-radius: 6px;
+  line-height: 1;
+  font-size: 11px;
+  cursor: grab;
+  touch-action: none;
+  box-shadow: 0 1px 4px rgba(0, 0, 0, 0.15);
+}
+.mdTableHandle:active { cursor: grabbing; }
+/* Drop indicator while a handle pill is being dragged. */
+.mdTableDropLine {
+  position: absolute;
+  z-index: 6;
+  background: var(--accent);
+  border-radius: 1px;
+  pointer-events: none;
+}
+/* The column menu's alignment chooser row (a settingsKit Segmented). */
+.mdTableAlignRow { display: flex; justify-content: center; padding: 6px 10px 5px; }
+.mdTableColHandle { top: -7px; transform: translateX(-50%); width: 22px; height: 13px; }
+.mdTableRowHandle { left: -8px; transform: translateY(-50%); width: 13px; height: 22px; }
+.mdTableHandle:hover { color: var(--text-bright); background: var(--bg-subtle); }
+/* The in-place cell editor: an input laid exactly over the clicked cell.
+   Tab/Shift-Tab move between cells, Enter commits, Esc cancels. */
+.mdTableCellInput {
+  position: absolute;
+  z-index: 5;
+  box-sizing: border-box;
+  padding: 2px 7px;
+  font: inherit;
+  font-size: 0.95em;
+  color: var(--text-primary);
+  background: var(--bg-input);
+  border: 1.5px solid var(--accent);
+  border-radius: 3px;
+  outline: none;
+}
+
+/* Images (MdImage): hover toolbar pill, right-edge resize grip, alt text
+   shown as a caption line, click-to-zoom lightbox. */
+.mdImgWrap {
+  position: relative;
+  display: inline-block;
+  max-width: 100%;
+  vertical-align: top;
+}
+.mdImgFrame {
+  position: relative;
+  display: inline-block;
+  max-width: 100%;
+}
+.mdImgFrame .mdImg { display: block; cursor: zoom-in; }
+.mdImgTools {
+  position: absolute;
+  top: 6px;
+  right: 6px;
+  display: inline-flex;
+  align-items: center;
+  gap: 1px;
+  padding: 3px;
+  background: var(--bg-elevated);
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  box-shadow: 0 2px 8px rgba(0, 0, 0, 0.15);
+  opacity: 0;
+  pointer-events: none;
+  transition: opacity 0.12s;
+}
+.mdImgFrame:hover .mdImgTools { opacity: 1; pointer-events: auto; }
+.mdImgTools a.ctlBtn { text-decoration: none; }
+.mdImgTools .ctlBtn.danger:hover { background: rgba(224, 92, 92, 0.15); color: #e05c5c; }
+.mdImgResize {
+  position: absolute;
+  top: 50%;
+  right: -3px;
+  transform: translateY(-50%);
+  width: 6px;
+  height: 42px;
+  max-height: 70%;
+  border-radius: 4px;
+  background: var(--accent);
+  opacity: 0;
+  cursor: ew-resize;
+  touch-action: none;
+  transition: opacity 0.12s;
+}
+.mdImgFrame:hover .mdImgResize { opacity: 0.55; }
+.mdImgResize:hover, .mdImgResize:active { opacity: 0.9; }
+.mdImgCaption {
+  display: block;
+  margin: 2px 0 4px;
+  font-size: 12px;
+  color: var(--text-secondary);
+  text-align: center;
+}
+.mdImgCaptionInput {
+  display: block;
+  width: min(100%, 360px);
+  margin: 2px 0 4px;
+  padding: 3px 8px;
+  font: inherit;
+  font-size: 12px;
+  color: var(--text-primary);
+  background: var(--bg-input);
+  border: 1px solid var(--border);
+  border-radius: 6px;
+  outline: none;
+}
+.mdImgCaptionInput:focus { border-color: var(--accent); }
+.mdLightbox {
+  position: fixed;
+  inset: 0;
+  z-index: 1500;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  background: rgba(0, 0, 0, 0.75);
+  cursor: zoom-out;
+}
+.mdLightbox img {
+  max-width: 94vw;
+  max-height: 90vh;
+  border-radius: 8px;
+  box-shadow: 0 8px 40px rgba(0, 0, 0, 0.5);
+}
+.mdLightboxCaption { margin-top: 10px; font-size: 13px; color: #ddd; }
 .blockRendered .katex-display { margin: 6px 0; overflow-x: auto; overflow-y: hidden; }
 /* GFM task items: hide the list bullet, the checkbox is the marker. */
 .blockRendered li:has(> .mdTaskCheckbox) { list-style: none; margin-left: -18px; }
@@ -2511,9 +2681,23 @@ button.pdfOutlineChevron:hover { background: rgba(128, 128, 128, 0.28); color: v
   border-top: 1px solid var(--border);
   overflow: hidden;
 }
-/* Chat settings popover (header ⚙): model, effort, context slider */
+/* Chat settings popover (header ⚙): model, effort, context slider, tools */
 .chatSettingsPop { min-width: 250px; }
 .chatSettingsPop .setSlider { padding: 0 4px; }
+/* One tool-permission checkbox row (layout only — shared look via popover) */
+.chatToolPermRow {
+  display: flex;
+  align-items: center;
+  gap: 7px;
+  padding: 3px 6px;
+  font-size: 12px;
+  cursor: pointer;
+  border-radius: 6px;
+  user-select: none;
+}
+.chatToolPermRow:hover { background: color-mix(in srgb, var(--accent-dark) 8%, transparent); }
+.chatToolPermRow input { margin: 0; }
+.chatToolPermRow svg { flex: none; opacity: 0.75; }
 .chatMessages {
   flex: 1;
   overflow-y: auto;
@@ -3949,6 +4133,9 @@ button.pdfOutlineChevron:hover { background: rgba(128, 128, 128, 0.28); color: v
 .importSteps .setStep { margin-bottom: 10px; }
 .importSteps .setStepBody { display: none; }
 .confirmMessage { font-size: 12px; color: var(--text-secondary); line-height: 1.5; }
+/* Move-block dialog: the page list scrolls; rows are the shared ctxMenuItem. */
+.moveBlockList { display: flex; flex-direction: column; max-height: 300px; overflow-y: auto; margin-top: 2px; }
+.moveBlockList .ctxMenuItem { border-radius: 6px; }
 /* Three actions (Cancel / Fetch / Open in browser) don't fit the 420px confirm
    width — they wrapped onto two rows. */
 .linkPromptModal { width: min(520px, calc(100vw - 32px)); }

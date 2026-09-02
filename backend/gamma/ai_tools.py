@@ -14,13 +14,13 @@ mutates, and its executor — so arming a chat is one filter
 with the in-scope check shared by every executor.
 
 Reads: list the pages (folder scope only); read a paper (extracted PDF text
-plus the user's highlights and notes); full-text-search PDF contents via the
-existing FTS index.  Writes (folder scope only): rename pages; file them into
-(sub)folders.  Deliberately NOT offered under any permission: deleting
-anything, editing note/highlight content, rewriting flat labels, or touching
-pages outside the scope — every mutation is reversible with another tool call,
-and every successful call is streamed back to the UI as an ``action`` event so
-the user sees exactly what the agent did.  The human-facing description lives
+plus the user's highlights and notes); read a page's note outline with block
+ids; full-text-search PDF contents via the existing FTS index.  Writes: rename
+pages and file them into (sub)folders (folder scope only); edit, create and
+move note blocks (both scopes, under their own permission).  Deliberately NOT
+offered under any permission: deleting anything, rewriting flat labels, or
+touching pages outside the scope — and every successful call is streamed back
+to the UI as an ``action`` event so the user sees exactly what the agent did.  The human-facing description lives
 in ``docs/dev/ai_tools.md``; the base role prompt (AGENT_PROMPT) is user-editable in the
 prompt editor, the scope/permission lines are appended mechanically.
 
@@ -31,9 +31,13 @@ tags in use, and ``properties.category`` holds the flat labels.
 
 import json
 import re
+import secrets
 import sqlite3
 
+from fractional_indexing import generate_key_between
+
 from .ai_context import page_report_section
+from .blocks_store import fetch_subtree, page_root_id
 from .db import page_now, user_db_path
 from .foldertags import clean_path, parse_tags
 from .logbuf import log
@@ -56,6 +60,11 @@ READ_CHARS_CAP = 20000
 READ_CHARS_MAX = 1_000_000  # sanity ceiling, matches the settings slider's range
 _DETAIL_CAP = 4000      # chars of a tool's output kept for the chat's expandable chip
 _ARG_CAP = 400          # chars per argument value in that chip
+# read_block outlines: chars of one block's content shown per line (the
+# requested block itself is never truncated), and the most markdown one
+# edit_block/create_block call may write.
+_NOTE_SNIPPET = 500
+_BLOCK_CONTENT_MAX = 100_000
 # The zero-hit search retry: drop glue words shorter than this, keep at most
 # this many of the longest remaining terms.
 _RELAX_MIN_TERM_LEN = 3
@@ -137,6 +146,62 @@ def _scope_docs(conn, scope: dict) -> dict:
         if props.get("doc_id") and _page_in_scope(scope, "", parse_tags(props.get("folder"))):
             docs[props["doc_id"]] = content or "Untitled"
     return docs
+
+
+def _load_scoped_block(conn, scope: dict, block_id) -> tuple:
+    """Fetch any block (a page root or a nested note block) and enforce the
+    scope via the page it lives in. Returns
+    ``((row_dict, page_id, page_title), error)`` — exactly one side is set."""
+    block_id = str(block_id or "").strip()
+    row = conn.execute(
+        "SELECT id, parent_id, position, content, properties FROM unified_blocks WHERE id = ?",
+        (block_id,),
+    ).fetchone()
+    if not row:
+        return None, "error: no such block — use exact ids from read_block/list_pages"
+    page_id = block_id if row[1] == "root" else page_root_id(conn, block_id)
+    loaded, error = _load_scoped_page(conn, scope, {"page_id": page_id})
+    if error:
+        return None, "error: block is outside this chat's scope"
+    _, page_title, _, _ = loaded
+    try:
+        props = json.loads(row[4] or "{}")
+    except ValueError:
+        props = {}
+    block = {"id": row[0], "parent_id": row[1], "position": row[2],
+             "content": row[3] or "", "properties": props}
+    return (block, page_id, page_title), None
+
+
+def _sibling_position(conn, parent_id: str, after_id, block_id: str = "") -> tuple:
+    """Position for a (re)inserted child of parent_id: after `after_id` when
+    given (it must be a child of the same parent), else appended at the end.
+    Returns ``(position, error)``; block_id is excluded from the neighbour
+    lookup so moving a block after its current predecessor works."""
+    if after_id:
+        row = conn.execute(
+            "SELECT position FROM unified_blocks WHERE id = ? AND parent_id = ?",
+            (str(after_id), parent_id),
+        ).fetchone()
+        if not row:
+            return None, "error: after_id is not a child of that parent"
+        nxt = conn.execute(
+            "SELECT position FROM unified_blocks WHERE parent_id = ? AND position > ? "
+            "AND id != ? ORDER BY position LIMIT 1",
+            (parent_id, row[0], block_id),
+        ).fetchone()
+        lo, hi = row[0], nxt[0] if nxt else None
+    else:
+        # Append at the end; a moving block is excluded so re-appending a block
+        # already sitting last doesn't step past its own position.
+        row = conn.execute(
+            "SELECT position FROM unified_blocks WHERE parent_id = ? AND id != ? "
+            "ORDER BY position DESC LIMIT 1", (parent_id, block_id)).fetchone()
+        lo, hi = (row[0] if row else None), None
+    try:
+        return generate_key_between(lo, hi), None
+    except Exception as e:
+        return None, f"error: could not place the block: {e}"
 
 
 # --- executors -----------------------------------------------------------------
@@ -254,6 +319,167 @@ def _run_read_page(conn, user: str, scope: dict, args: dict):
     if not section:
         return f'"{title}" has no readable content', None
     return section, {"kind": "read", "page_id": page_id, "summary": f"Read “{title[:60]}”"}
+
+
+def _run_read_block(conn, user: str, scope: dict, args: dict):
+    """The note outline under a block (or a whole page), every line prefixed
+    with its block id — the ids the editing tools take. The requested block's
+    own text is never truncated; children are snipped per line and the listing
+    stops at the read budget."""
+    loaded, error = _load_scoped_block(conn, scope, args.get("block_id"))
+    if error:
+        return error, None
+    block, page_id, page_title = loaded
+    rows = fetch_subtree(conn, block["id"])
+    by_parent: dict = {}
+    for row in rows:
+        if row[0] != block["id"]:
+            by_parent.setdefault(row[1], []).append(row)
+    for children in by_parent.values():
+        children.sort(key=lambda row: row[2])
+
+    def line(block_id, content, props, depth, full=False):
+        quote = (props.get("quote") or "").strip()
+        text = (content or "").strip()
+        if not full and len(text) > _NOTE_SNIPPET:
+            text = (text[:_NOTE_SNIPPET]
+                    + f'… [truncated — read_block(block_id="{block_id}") for the full text]')
+        bits = [f"[{block_id}]"]
+        if quote:
+            bits.append(f'(highlight: "{quote[:200]}")')
+        bits.append(text or "(empty)")
+        pad = "  " * depth
+        return pad + "- " + "\n".join(
+            l if i == 0 else pad + "  " + l
+            for i, l in enumerate(" ".join(bits).split("\n")))
+
+    budget = _read_cap(scope.get("read_chars"))
+    lines, used, skipped = [], 0, 0
+
+    def walk(parent, depth):
+        nonlocal used, skipped
+        for row in by_parent.get(parent, []):
+            try:
+                props = json.loads(row[4] or "{}")
+            except ValueError:
+                props = {}
+            entry = line(row[0], row[3], props, depth)
+            if used + len(entry) > budget:
+                skipped += len(fetch_subtree(conn, row[0]))  # block + descendants
+                continue
+            used += len(entry)
+            lines.append(entry)
+            walk(row[0], depth + 1)
+
+    is_page = block["parent_id"] == "root"
+    if is_page:
+        head = f'Note outline of page "{page_title}" (page_id {page_id}):'
+    else:
+        head = (f'Block [{block["id"]}] in page "{page_title}" (page_id {page_id}):\n'
+                + line(block["id"], block["content"], block["properties"], 0, full=True))
+    walk(block["id"], 0 if is_page else 1)
+    if not lines and is_page:
+        lines = ["(no notes on this page yet)"]
+    tail = (f"\n(+{skipped} more block(s) not shown — read_block a nested id to continue)"
+            if skipped else "")
+    out = (head + "\n" + "\n".join(lines) + tail
+           + "\nBlock ids are in [brackets] — pass them to edit_block/create_block/move_block.")
+    what = f'“{page_title[:60]}”' if is_page else f'a block in “{page_title[:60]}”'
+    return out, {"kind": "read", "page_id": page_id, "summary": f"Read notes of {what}"}
+
+
+def _run_edit_block(conn, user: str, scope: dict, args: dict):
+    loaded, error = _load_scoped_block(conn, scope, args.get("block_id"))
+    if error:
+        return error, None
+    block, page_id, page_title = loaded
+    if block["parent_id"] == "root":
+        return "error: that id is a page — page titles change via rename_page", None
+    content = args.get("content")
+    if not isinstance(content, str):
+        return "error: content must be a string (the block's full new markdown)", None
+    if len(content) > _BLOCK_CONTENT_MAX:
+        return f"error: content too long (>{_BLOCK_CONTENT_MAX} chars)", None
+    if content == block["content"]:
+        return "ok — the block already says that", None
+    now = page_now()
+    conn.execute("UPDATE unified_blocks SET content = ?, updated_at = ? WHERE id = ?",
+                 (content, now, block["id"]))
+    # The page root's timestamp drives the home feed's ordering — touch it
+    # like the editor's PUT /children does.
+    conn.execute("UPDATE unified_blocks SET updated_at = ? WHERE id = ?", (now, page_id))
+    conn.commit()
+    return (f'ok — block [{block["id"]}] updated',
+            {"kind": "edit", "page_id": page_id,
+             "summary": f"Edited a note in “{page_title[:60]}”"})
+
+
+def _run_create_block(conn, user: str, scope: dict, args: dict):
+    loaded, error = _load_scoped_block(conn, scope, args.get("parent_id"))
+    if error:
+        return error.replace("no such block", "no such parent block"), None
+    parent, page_id, page_title = loaded
+    content = str(args.get("content") or "")
+    if len(content) > _BLOCK_CONTENT_MAX:
+        return f"error: content too long (>{_BLOCK_CONTENT_MAX} chars)", None
+    position, error = _sibling_position(conn, parent["id"], args.get("after_id"))
+    if error:
+        return error, None
+    block_id = secrets.token_urlsafe(9)
+    now = page_now()
+    conn.execute(
+        "INSERT INTO unified_blocks (id, parent_id, position, content, properties, "
+        "created_at, updated_at) VALUES (?, ?, ?, ?, '{}', ?, ?)",
+        (block_id, parent["id"], position, content, now, now))
+    conn.execute("UPDATE unified_blocks SET updated_at = ? WHERE id = ?", (now, page_id))
+    conn.commit()
+    return (f"ok — created block [{block_id}]",
+            {"kind": "create", "page_id": page_id,
+             "summary": f"Added a note in “{page_title[:60]}”"})
+
+
+def _run_move_block(conn, user: str, scope: dict, args: dict):
+    loaded, error = _load_scoped_block(conn, scope, args.get("block_id"))
+    if error:
+        return error, None
+    block, src_page_id, src_title = loaded
+    if block["parent_id"] == "root":
+        return "error: that id is a page — pages move between folders via move_page", None
+    loaded, error = _load_scoped_block(conn, scope, args.get("parent_id"))
+    if error:
+        return error.replace("no such block", "no such parent block"), None
+    parent, page_id, page_title = loaded
+    subtree_ids = {row[0] for row in fetch_subtree(conn, block["id"])}
+    if parent["id"] in subtree_ids:
+        return "error: cannot move a block into itself or its own children", None
+    if page_id != src_page_id:
+        # Highlight blocks anchor to a PDF region of their own paper; on
+        # another page that anchor points into the wrong document.
+        rows = fetch_subtree(conn, block["id"])
+        if any("highlight_id" in (row[4] or "") for row in rows):
+            return ("error: highlight blocks are anchored to their paper — "
+                    "they can only move within the same page"), None
+    position, error = _sibling_position(conn, parent["id"], args.get("after_id"),
+                                        block["id"])
+    if error:
+        return error, None
+    if parent["id"] == block["parent_id"] and args.get("after_id") in (block["id"], None) \
+            and position == block["position"]:
+        return "ok — the block is already there", None
+    now = page_now()
+    conn.execute("UPDATE unified_blocks SET parent_id = ?, position = ?, updated_at = ? "
+                 "WHERE id = ?", (parent["id"], position, now, block["id"]))
+    conn.execute("UPDATE unified_blocks SET updated_at = ? WHERE id IN (?, ?)",
+                 (now, src_page_id, page_id))
+    conn.commit()
+    where = (f"page “{page_title[:60]}”" if page_id != src_page_id
+             else f"“{page_title[:60]}”")
+    action = {"kind": "move", "page_id": page_id,
+              "summary": f"Moved a note within {where}" if page_id == src_page_id
+                         else f"Moved a note “{src_title[:40]}” → {where}"}
+    if page_id != src_page_id:
+        action["src_page_id"] = src_page_id
+    return f'ok — block [{block["id"]}] moved', action
 
 
 def _run_search_pdfs(conn, user: str, scope: dict, args: dict):
@@ -438,6 +664,24 @@ TOOLS = [
         },
     },
     {
+        "perm": "block_read", "kind": "read", "scopes": ("folder", "page"), "mutating": False, "run": _run_read_block,
+        "spec": {
+            "name": "read_block",
+            "description": (
+                "Read the user's notes as an outline of blocks, each line prefixed "
+                "with its block id. `block_id` may be a page id (the whole page's "
+                "notes) or any block id from an earlier call (that block in full plus "
+                "its subtree). Always call this before editing, creating or moving "
+                "blocks — the editing tools take these exact ids."),
+            "parameters": {
+                "type": "object",
+                "properties": {"block_id": {"type": "string",
+                                            "description": "a page id or block id"}},
+                "required": ["block_id"],
+            },
+        },
+    },
+    {
         "perm": "search", "kind": "search", "scopes": ("folder", "page"), "mutating": False, "run": _run_search_pdfs,
         "spec": {
             "name": "search_pdfs",
@@ -487,6 +731,61 @@ TOOLS = [
                 "type": "object",
                 "properties": {**_PAGE_ID_ARG, "folder": {"type": "string"}},
                 "required": ["page_id", "folder"],
+            },
+        },
+    },
+    {
+        "perm": "block_edit", "kind": "edit", "scopes": ("folder", "page"), "mutating": True, "run": _run_edit_block,
+        "spec": {
+            "name": "edit_block",
+            "description": (
+                "Replace one note block's markdown text. `content` is the block's "
+                "ENTIRE new text — include everything that should stay. Use exact "
+                "block ids from read_block (never page ids — titles change via "
+                "rename_page). Editing a highlight block changes its note text; the "
+                "highlighted PDF passage itself cannot be changed."),
+            "parameters": {
+                "type": "object",
+                "properties": {"block_id": {"type": "string"},
+                               "content": {"type": "string",
+                                           "description": "the block's full new markdown"}},
+                "required": ["block_id", "content"],
+            },
+        },
+    },
+    {
+        "perm": "block_edit", "kind": "create", "scopes": ("folder", "page"), "mutating": True, "run": _run_create_block,
+        "spec": {
+            "name": "create_block",
+            "description": (
+                "Add a new note block. `parent_id` is a page id (top-level note) or a "
+                "block id (nested child); `after_id` optionally names the sibling to "
+                "insert after (default: last). One block = one outline bullet — for "
+                "several bullets, create several blocks. Returns the new block's id."),
+            "parameters": {
+                "type": "object",
+                "properties": {"parent_id": {"type": "string"},
+                               "content": {"type": "string"},
+                               "after_id": {"type": "string"}},
+                "required": ["parent_id", "content"],
+            },
+        },
+    },
+    {
+        "perm": "block_edit", "kind": "move", "scopes": ("folder", "page"), "mutating": True, "run": _run_move_block,
+        "spec": {
+            "name": "move_block",
+            "description": (
+                "Move a note block (with its children) under a new parent. "
+                "`parent_id` is a page id or block id this chat can reach; `after_id` "
+                "optionally names the sibling to land after (default: last). "
+                "Highlight blocks can move only within their own page."),
+            "parameters": {
+                "type": "object",
+                "properties": {"block_id": {"type": "string"},
+                               "parent_id": {"type": "string"},
+                               "after_id": {"type": "string"}},
+                "required": ["block_id", "parent_id"],
             },
         },
     },
@@ -547,8 +846,15 @@ def agent_system(scope: dict, perms: dict | None = None, base: str = "") -> str:
         text += (
             " Report only what you actually read; if you cannot find it, say it is "
             "not in the document — never present a value from memory as the paper's.")
+    if "edit_block" in names or "create_block" in names or "move_block" in names:
+        text += (
+            "\nNote editing: call read_block first and use its exact block ids. "
+            "edit_block replaces a block's whole text — preserve everything the user "
+            "didn't ask to change. You cannot delete blocks; if one should go, empty "
+            "it or tell the user to delete it. Only change notes the user asked you "
+            "to change.")
     if not any(n in MUTATING_TOOLS for n in names):
-        text += " Renaming and moving pages is not available here — suggest changes instead of attempting them."
+        text += " Making changes is not available here — suggest them instead of attempting them."
     return text
 
 

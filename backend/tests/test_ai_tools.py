@@ -4,6 +4,7 @@ protocol, tool-call SSE parsing, and the /api/ai/chat agent loop end-to-end
 with a faked provider."""
 
 import json
+import re
 
 import bcrypt
 import pytest
@@ -67,27 +68,41 @@ def _props(c, block_id):
 
 # --- registry ----------------------------------------------------------------
 
+ALL_PERMS = ("list", "read", "block_read", "search", "rename", "move", "block_edit")
+
+
 def test_registry_scopes_and_permissions():
     assert [t["name"] for t in agent_tools("folder")] == [
-        "list_pages", "read_page", "search_pdfs", "rename_page", "move_page"]
-    # Paper chats get the read tools only — never rename/move.
-    assert [t["name"] for t in agent_tools("page")] == ["read_page", "search_pdfs"]
+        "list_pages", "read_page", "read_block", "search_pdfs", "rename_page",
+        "move_page", "edit_block", "create_block", "move_block"]
+    # Paper chats never rename/move pages; the note-block tools exist there.
+    assert [t["name"] for t in agent_tools("page")] == [
+        "read_page", "read_block", "search_pdfs",
+        "edit_block", "create_block", "move_block"]
     assert agent_tools("") == []  # plain chat
-    assert [t["name"] for t in agent_tools("folder", {"rename": False, "move": False})] == [
-        "list_pages", "read_page", "search_pdfs"]
+    assert [t["name"] for t in agent_tools(
+        "folder", {"rename": False, "move": False, "block_edit": False})] == [
+        "list_pages", "read_page", "read_block", "search_pdfs"]
     names = [t["name"] for t in agent_tools("folder", {"search": False})]
     assert "search_pdfs" not in names and "read_page" in names
-    assert agent_tools("folder", {k: False for k in ("list", "read", "search", "rename", "move")}) == []
+    # One permission gates all three note-editing tools.
+    names = [t["name"] for t in agent_tools("page", {"block_edit": False})]
+    assert names == ["read_page", "read_block", "search_pdfs"]
+    assert agent_tools("folder", {k: False for k in ALL_PERMS}) == []
     assert agent_tools("folder", None) == ALL_TOOLS  # missing map = everything on
 
 
 def test_agent_system_mentions_scope_and_armed_tools():
     text = agent_system(_folder("readout"))
     assert '"readout"' in text and "rename_page" in text
-    page_text = agent_system({"type": "page", "page_id": "p1"}, {"search": False})
+    page_text = agent_system({"type": "page", "page_id": "p1"},
+                             {"search": False, "block_edit": False})
     assert 'page_id "p1"' in page_text
     assert "read_page" in page_text and "search_pdfs" not in page_text
-    assert "suggest changes" in page_text  # no write tools in page scope
+    assert "suggest them" in page_text  # no write tools armed
+    # With note editing armed, the editing guidance replaces the read-only line.
+    edit_text = agent_system({"type": "page", "page_id": "p1"})
+    assert "Note editing" in edit_text and "suggest them" not in edit_text
     # The base role prompt is user-replaceable; the mechanical lines stay.
     custom = agent_system(_folder(""), None, "Be terse.")
     assert custom.startswith("Be terse.") and "Available tools" in custom
@@ -281,6 +296,141 @@ def test_read_window_cap_is_user_tunable(org, monkeypatch):
     spec = next(t for t in agent_tools("folder") if t["name"] == "read_page")
     assert "up to 20000" in spec["description"]
     assert "{read_cap}" not in spec["description"]  # template never leaks
+
+
+# --- note-block tools --------------------------------------------------------
+
+@pytest.fixture(scope="module")
+def notes(org):
+    """A page with a small note tree (plus a highlight) for the block tools."""
+    c, ids = org
+    last_pos: dict = {}  # per-parent, so siblings get real fractional order
+
+    def block(parent, content, props=None):
+        r = c.post("/api/blocks", json={"parent_id": parent, "content": content,
+                                        "properties": props or {},
+                                        "before": last_pos.get(parent)})
+        assert r.status_code == 200, r.text
+        last_pos[parent] = r.json()["position"]
+        return r.json()["id"]
+    page = block("root", "notes playground")
+    r = c.put(f"/api/blocks/{page}", json={"properties": {"folder": "sandbox"}})
+    assert r.status_code == 200
+    top = block(page, "top-level idea")
+    child = block(top, "supporting detail")
+    other = block(page, "second thread")
+    hl = block(page, "why this matters",
+               {"highlight_id": "h1", "quote": "measured T1 of 300 µs"})
+    return c, {**ids, "page": page, "top": top, "child": child,
+               "other": other, "hl": hl}
+
+
+def _children(c, parent):
+    r = c.get(f"/api/blocks/{parent}/children")
+    assert r.status_code == 200
+    return [b["id"] for b in r.json()["children"]]
+
+
+def test_read_block_outline_with_ids(notes):
+    c, ids = notes
+    scope = _folder("sandbox")
+    text, action = run_agent_tool("organizer", scope, "read_block", {"block_id": ids["page"]})
+    assert action["kind"] == "read" and action["page_id"] == ids["page"]
+    for key in ("top", "child", "other", "hl"):
+        assert f"[{ids[key]}]" in text
+    assert '(highlight: "measured T1 of 300 µs")' in text
+    assert text.index(ids["top"]) < text.index(ids["child"])  # nesting in order
+    assert "edit_block" in text  # the footer teaches the editing tools
+    # A nested block id reads that subtree only, the block's own text in full.
+    text, _ = run_agent_tool("organizer", scope, "read_block", {"block_id": ids["top"]})
+    assert "top-level idea" in text and ids["child"] in text
+    assert ids["other"] not in text
+    # Scope rules match the page tools.
+    text, _ = run_agent_tool("organizer", _folder("readout"), "read_block",
+                             {"block_id": ids["top"]})
+    assert text.startswith("error")
+    text, _ = run_agent_tool("organizer", scope, "read_block", {"block_id": "nope"})
+    assert text.startswith("error: no such block")
+
+
+def test_edit_block(notes):
+    c, ids = notes
+    scope = _folder("sandbox")
+    text, action = run_agent_tool("organizer", scope, "edit_block",
+                                  {"block_id": ids["child"], "content": "sharper detail"})
+    assert text.startswith("ok"), text
+    assert action["kind"] == "edit" and action["page_id"] == ids["page"]
+    assert _props(c, ids["child"])["content"] == "sharper detail"
+    # Page roots are refused — titles go through rename_page.
+    text, _ = run_agent_tool("organizer", scope, "edit_block",
+                             {"block_id": ids["page"], "content": "x"})
+    assert "rename_page" in text
+    # No-op edit mutates nothing but still shows as a non-error chip.
+    text, action = run_agent_tool("organizer", scope, "edit_block",
+                                  {"block_id": ids["child"], "content": "sharper detail"})
+    assert text.startswith("ok") and not action.get("error")
+
+
+def test_create_block_placement(notes):
+    c, ids = notes
+    scope = _folder("sandbox")
+    text, action = run_agent_tool("organizer", scope, "create_block",
+                                  {"parent_id": ids["page"], "content": "appended note"})
+    assert action["kind"] == "create" and action["page_id"] == ids["page"]
+    new_last = re.search(r"\[([^\]]+)\]", text).group(1)
+    assert _children(c, ids["page"])[-1] == new_last
+    # after_id inserts between siblings.
+    text, _ = run_agent_tool("organizer", scope, "create_block",
+                             {"parent_id": ids["page"], "content": "wedged in",
+                              "after_id": ids["top"]})
+    wedged = re.search(r"\[([^\]]+)\]", text).group(1)
+    order = _children(c, ids["page"])
+    assert order.index(wedged) == order.index(ids["top"]) + 1
+    # A bad anchor is refused, not guessed.
+    text, _ = run_agent_tool("organizer", scope, "create_block",
+                             {"parent_id": ids["page"], "content": "x",
+                              "after_id": ids["child"]})
+    assert "after_id" in text and text.startswith("error")
+
+
+def test_move_block_rules(notes):
+    c, ids = notes
+    scope = _folder("sandbox")
+    # Reparent under a sibling.
+    text, action = run_agent_tool("organizer", scope, "move_block",
+                                  {"block_id": ids["other"], "parent_id": ids["top"]})
+    assert text.startswith("ok"), text
+    assert action["kind"] == "move" and action["page_id"] == ids["page"]
+    assert _children(c, ids["top"])[-1] == ids["other"]
+    # Into its own subtree → refused.
+    text, _ = run_agent_tool("organizer", scope, "move_block",
+                             {"block_id": ids["top"], "parent_id": ids["other"]})
+    assert "into itself" in text
+    # Page roots don't move this way.
+    text, _ = run_agent_tool("organizer", scope, "move_block",
+                             {"block_id": ids["page"], "parent_id": ids["top"]})
+    assert "move_page" in text
+    # Highlights stay on their page; plain blocks may cross pages in scope.
+    r = c.post("/api/blocks", json={"parent_id": "root", "content": "second page",
+                                    "properties": {"folder": "sandbox"}})
+    page2 = r.json()["id"]
+    text, _ = run_agent_tool("organizer", scope, "move_block",
+                             {"block_id": ids["hl"], "parent_id": page2})
+    assert "anchored" in text
+    text, action = run_agent_tool("organizer", scope, "move_block",
+                                  {"block_id": ids["child"], "parent_id": page2})
+    assert text.startswith("ok")
+    assert action["page_id"] == page2 and action["src_page_id"] == ids["page"]
+    assert _children(c, page2) == [ids["child"]]
+    # A page outside the scope can't receive blocks.
+    text, _ = run_agent_tool("organizer", _folder("sandbox"), "move_block",
+                             {"block_id": ids["child"], "parent_id": ids["a"]})
+    assert text.startswith("error")
+
+
+def test_block_tools_gated_by_permissions():
+    armed = {t["name"] for t in agent_tools("page", {"block_read": False, "block_edit": False})}
+    assert armed == {"read_page", "search_pdfs"}
 
 
 def test_search_pdfs_scoped_snippets(org):
@@ -566,7 +716,9 @@ def test_chat_page_scope_arms_read_tools(org, monkeypatch):
     r = c.post("/api/ai/chat", json={"prompt": "what do my notes say?",
                                      "agent_scope": "page", "page_id": ids["a"], "stream": True})
     assert r.status_code == 200
-    assert [t["name"] for t in seen["tools"]] == ["read_page", "search_pdfs"]
+    assert [t["name"] for t in seen["tools"]] == [
+        "read_page", "read_block", "search_pdfs",
+        "edit_block", "create_block", "move_block"]
     assert f'page_id "{ids["a"]}"' in seen["system"]
     lines = [json.loads(l) for l in r.text.splitlines() if l.strip()]
     reads = [l["action"] for l in lines if "action" in l]
@@ -724,9 +876,11 @@ def test_chat_permissions_gate_tools_and_execution(org, monkeypatch):
     before = _props(c, ids["a"])["content"]
     r = c.post("/api/ai/chat", json={"prompt": "rename stuff", "agent_scope": "folder",
                                      "folder": "readout", "stream": True,
-                                     "permissions": {"rename": False, "move": False}})
+                                     "permissions": {"rename": False, "move": False,
+                                                     "block_edit": False}})
     assert r.status_code == 200
-    assert [t["name"] for t in seen["tools"]] == ["list_pages", "read_page", "search_pdfs"]
+    assert [t["name"] for t in seen["tools"]] == [
+        "list_pages", "read_page", "read_block", "search_pdfs"]
     assert seen["blocked"].startswith("error: tool not enabled")
     assert _props(c, ids["a"])["content"] == before  # nothing was renamed
 
@@ -734,8 +888,7 @@ def test_chat_permissions_gate_tools_and_execution(org, monkeypatch):
     seen.clear()
     r = c.post("/api/ai/chat", json={"prompt": "hi", "agent_scope": "folder", "folder": "readout",
                                      "stream": True,
-                                     "permissions": {k: False for k in
-                                                     ("list", "read", "search", "rename", "move")}})
+                                     "permissions": {k: False for k in ALL_PERMS}})
     assert r.status_code == 200
     assert seen["tools"] is None
 

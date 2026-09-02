@@ -35,7 +35,10 @@ export const TRANSLATE_LANGS = [
 
 // Folder-agent per-tool permissions (Settings → Assistant → Folder agent).
 // Missing keys mean allowed, so new tools default on for existing users.
-const AGENT_PERMS_DEFAULT = { list: true, read: true, search: true, rename: true, move: true };
+const AGENT_PERMS_DEFAULT = {
+  list: true, read: true, block_read: true, search: true,
+  rename: true, move: true, block_edit: true,
+};
 const AGENT_PERMS_CODEC = {
   parse: (raw) => {
     try {

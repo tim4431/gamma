@@ -11,8 +11,10 @@ into blocks and how they nest:
   dropped (every block already renders as a bullet), numbered markers stay;
 - indented continuation lines become a child block of their list item;
 - everything else groups into one block per paragraph (consecutive non-blank
-  lines — which also keeps quote runs, tables and ``$$`` math together);
-- fenced code blocks are kept whole, fences included.
+  lines — which also keeps quote runs and tables together);
+- fenced code blocks and multi-line ``$$`` display math are kept whole,
+  delimiters included (a math row like ``- x + y &= 3 \\`` must not be
+  mistaken for a list item).
 """
 
 import re
@@ -93,6 +95,22 @@ def md_to_blocks(text: str) -> list:
             while i < len(lines):
                 buf.append(lines[i].rstrip())
                 if lines[i].strip().startswith(fence):
+                    i += 1
+                    break
+                i += 1
+            add(lists[-1][1] if lists else headings[-1][1], "\n".join(buf))
+            continue
+
+        # Multi-line $$ display math is kept whole like a fence — its rows
+        # would otherwise hit the list rule (`- x + y &= 3 \\`, `1. & ...`)
+        # and shatter the formula across blocks.
+        if stripped.startswith("$$") and "$$" not in stripped[2:]:
+            flush_para()
+            buf = [stripped]
+            i += 1
+            while i < len(lines):
+                buf.append(lines[i].strip())
+                if "$$" in lines[i]:
                     i += 1
                     break
                 i += 1

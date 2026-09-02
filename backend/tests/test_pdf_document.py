@@ -118,6 +118,42 @@ def test_callout_header_becomes_a_bold_quote_line():
     assert got[0]["spans"][0][3].bits == BOLD
 
 
+def test_chunks_parse_a_gfm_table():
+    got = chunks("| Name | Value |\n| :--- | ---: |\n| alpha | 1 |\n| beta | 2 |")
+    assert [c["kind"] for c in got] == ["table"]
+    table = got[0]
+    assert table["aligns"] == ["left", "right"]
+    assert len(table["rows"]) == 3
+    assert table["rows"][0][0][0][1] == "Name" and table["rows"][0][0][0][3].bits == BOLD
+    assert table["rows"][1][0][0][1] == "alpha"
+
+
+def test_pipes_without_a_delimiter_row_stay_prose():
+    got = chunks("a | b | c\nplain line")
+    assert all(c["kind"] == "text" for c in got)
+
+
+def test_image_width_suffix_is_parsed_not_printed():
+    got = chunks("![shot](/api/uploads/ab12.png){:width 240}")
+    imgs = [c for c in got if c["kind"] == "image"]
+    assert imgs and imgs[0]["px_w"] == 240
+    assert not any("width" in str(c.get("spans", "")) for c in got if c["kind"] == "text")
+
+
+def test_obsidian_pipe_width_is_parsed_and_kept_out_of_the_alt():
+    got = chunks("![my caption|240](/api/uploads/ab12.png) and ![plain](/api/uploads/cd34.png)")
+    imgs = [c for c in got if c["kind"] == "image"]
+    assert imgs[0]["px_w"] == 240 and imgs[0]["alt"] == "my caption"
+    assert imgs[1]["px_w"] is None and imgs[1]["alt"] == "plain"
+
+
+def test_embed_becomes_its_own_chunk():
+    got = chunks("before ![[abc-123]] after")
+    kinds = [c["kind"] for c in got]
+    assert kinds == ["text", "embed", "text"]
+    assert got[1]["id"] == "abc-123"
+
+
 # --- the renderer ------------------------------------------------------------
 
 def test_render_document_writes_title_notes_and_quotes():
@@ -236,6 +272,55 @@ def test_unresolvable_image_falls_back_to_its_alt_text():
     assert "the figure" in _text(pdf)
 
 
+def test_tables_render_as_a_grid_without_pipe_source():
+    pdf = render_document([_page("Table", None, [
+        _block("b1", "| Name | Value |\n| --- | ---: |\n| alpha | 1 |\n| a much longer cell that wraps | 2 |")])])
+    text = _text(pdf)
+    assert "Name" in text and "alpha" in text and "longer cell" in text
+    assert "|" not in text and "---" not in text
+
+
+def test_long_tables_break_pages_and_repeat_the_header():
+    rows = "\n".join(f"| row {n} | value {n} |" for n in range(120))
+    pdf = render_document([_page("Long table", None, [
+        _block("b1", f"| Col A | Col B |\n| --- | --- |\n{rows}")])])
+    assert "row 3" in _text(pdf, 1)
+    assert "Col A" in _text(pdf, 2), "the header should repeat on the next page"
+
+
+def test_refs_and_embeds_resolve_through_the_resolver():
+    targets = {
+        "src-1": {"content": "the synced note body\nsecond line", "page_title": "Origin page"},
+        "ref-1": {"content": "referenced first line\nmore", "page_title": "Origin page"},
+    }
+    pdf = render_document([_page("Embeds", None, [
+        _block("b1", "see [[ref-1]] and:\n![[src-1]]")])],
+        resolve_ref=targets.get)
+    text = _text(pdf)
+    assert "referenced first line" in text and "more" not in text
+    assert "the synced note body" in text and "second line" in text
+    assert "from Origin page" in text
+    assert "src-1" not in text and "ref-1" not in text
+
+
+def test_nested_embeds_degrade_to_references():
+    targets = {
+        "outer": {"content": "outer body ![[inner]]", "page_title": "P"},
+        "inner": {"content": "inner body", "page_title": "P"},
+    }
+    pdf = render_document([_page("Nested", None, [_block("b1", "![[outer]]")])],
+                          resolve_ref=targets.get)
+    text = _text(pdf)
+    assert "outer body" in text
+    # The inner embed renders as a reference label, not its full card.
+    assert "inner body" in text and "from P" in text
+
+
+def test_unresolved_embed_keeps_the_reference_look():
+    pdf = render_document([_page("Missing embed", None, [_block("b1", "![[gone-404]]")])])
+    assert "gone-404" in _text(pdf)
+
+
 # --- the export endpoints ----------------------------------------------------
 
 def test_export_notes_pdf_endpoint_on_a_note_page(guest):
@@ -279,6 +364,24 @@ def test_folder_notes_pdf_export_is_one_document(guest):
     assert r.headers["content-type"] == "application/pdf"
     titles = _text(r.content, 1) + _text(r.content, 2)
     assert "Folder page one" in titles and "Folder page two" in titles
+
+
+def test_export_notes_pdf_resolves_cross_page_embeds(guest):
+    source = make_page(guest, "Source page")
+    r = guest.put(f"/api/blocks/{source['id']}/children", json={"blocks": [
+        {"id": "emb-src", "content": "the shared finding", "properties": {}, "children": []}]})
+    assert r.status_code == 200, r.text
+    target = make_page(guest, "Target page")
+    r = guest.put(f"/api/blocks/{target['id']}/children", json={"blocks": [
+        {"id": "emb-use", "content": "context: ![[emb-src]] and a ref [[emb-src]]",
+         "properties": {}, "children": []}]})
+    assert r.status_code == 200, r.text
+
+    r = guest.get(f"/api/pages/{target['id']}/export", params={"mode": "notes-pdf"})
+    assert r.status_code == 200, r.text
+    text = _text(r.content)
+    assert "the shared finding" in text and "from Source page" in text
+    assert "emb-src" not in text
 
 
 def test_unknown_export_mode_is_rejected(guest):

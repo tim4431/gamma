@@ -58,7 +58,9 @@
         <div class="row hidden" id="folder-new-row"><span class="lbl"></span><input id="folder-new" class="field" type="text" placeholder="new folder, e.g. reading/2026"></div>
         <div class="row"><label for="labels">Labels</label>
           <div class="selectWrap" id="labels-wrap">
-            <input id="labels" class="field" type="text" placeholder="comma-separated" autocomplete="off">
+            <div id="labels-box" class="field tagField">
+              <input id="labels" class="tagInput" type="text" placeholder="add label…" autocomplete="off">
+            </div>
             <div id="label-menu" class="ctxMenu hidden" role="menu"></div>
           </div>
         </div>

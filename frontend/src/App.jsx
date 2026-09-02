@@ -49,7 +49,10 @@ import {
   insertChild,
   addHighlightAsBlock,
   blocksToHighlights,
-  normalizeBlocks
+  normalizeBlocks,
+  cloneBlocks,
+  findBlock,
+  insertSiblingAfter,
 } from "./logseqPdfModel";
 import { loadSession, saveSession, clearSession } from "./sessionState";
 import { AuthLoading, LoginPage, SessionConflictPage } from "./LoginPage";
@@ -2021,6 +2024,14 @@ export default function App() {
       } else if (e.altKey && e.key === "ArrowLeft") {
         e.preventDefault();
         goBackNavRef.current?.();
+      } else if ((e.ctrlKey || e.metaKey) && !e.altKey && ["z", "y"].includes(e.key.toLowerCase())) {
+        // Structural block undo/redo — only while no editor/input has focus
+        // (an open editor keeps CodeMirror's own history on Ctrl+Z).
+        const t = document.activeElement;
+        if (t && (t.tagName === "INPUT" || t.tagName === "TEXTAREA" || t.isContentEditable
+          || t.closest?.(".cm-editor"))) return;
+        const redo = e.key.toLowerCase() === "y" || e.shiftKey;
+        if (blockUndoRef.current?.(redo)) e.preventDefault();
       } else if (e.key === "Escape") {
         setOpenPopover(null);
         setHomeMenu(null);
@@ -2476,6 +2487,7 @@ export default function App() {
   }
   // Styled in-app dialogs replacing window.confirm / link decisions.
   const [confirmBox, setConfirmBox] = useState(null); // {title, message, confirmLabel, danger, onConfirm, altLabel, altDanger, onAlt}
+  const [moveBlockDialog, setMoveBlockDialog] = useState(null); // {blockId, query, pages}
   const [linkPrompt, setLinkPrompt] = useState(null); // external URL clicked inside the PDF
   const [linkDialog, setLinkDialog] = useState(null); // {position, content} — creating a manual reference link
   const [linkDialogInput, setLinkDialogInput] = useState("");
@@ -3163,6 +3175,7 @@ export default function App() {
     }
     const blockId = findHighlightBlockId(blocks);
     if (!blockId) return;
+    pushUndo(blocks);
     const nextBlocks = removeBlockTree(blocks, blockId);
     setBlocks(nextBlocks);
     // persistBlocks will fire via autosave; no need to duplicate.
@@ -4557,6 +4570,73 @@ export default function App() {
 
   const visibleBlocks = useMemo(() => flattenBlocks(blocks), [blocks]);
   const homeMode = !pdfUrl && !focusedBlockId && !readOnly;
+
+  // --- structural undo -------------------------------------------------------
+  // Snapshots of the page's block tree around structural edits (delete,
+  // indent/outdent, drag-move, duplicate, paste-as-blocks). Ctrl+Z restores
+  // one while no editor has focus — in-editor undo stays CodeMirror's own.
+  // The restored tree persists through the normal autosave PUT, which
+  // re-inserts server-side even after an eager DELETE.
+  const undoStackRef = useRef([]);
+  const redoStackRef = useRef([]);
+  const blockUndoRef = useRef(null); // read by the once-mounted key listener
+  // A snapshot belongs to the page it was taken on — never restore across.
+  useEffect(() => { undoStackRef.current = []; redoStackRef.current = []; }, [focusedBlockId]);
+  function undoSnapshot(tree) {
+    // editMode stripped: restoring must not pop editors open.
+    const strip = (list) => (list || []).map((b) => ({ ...b, editMode: false, children: strip(b.children) }));
+    return strip(cloneBlocks(tree));
+  }
+  function pushUndo(tree) {
+    undoStackRef.current.push(undoSnapshot(tree));
+    if (undoStackRef.current.length > 100) undoStackRef.current.shift();
+    redoStackRef.current = [];
+  }
+  // Assigned every render so the once-mounted key listener sees fresh state.
+  blockUndoRef.current = (redo) => {
+    if (readOnly || homeMode || !focusedBlockId) return false;
+    const from = redo ? redoStackRef.current : undoStackRef.current;
+    const to = redo ? undoStackRef.current : redoStackRef.current;
+    const snap = from.pop();
+    if (!snap) return false;
+    to.push(undoSnapshot(blocks));
+    setBlocks(snap);
+    setStatus(redo ? "Redone." : "Undone.");
+    return true;
+  };
+
+  // Move a block subtree to the end of another page: sync any queued edits
+  // first, re-parent server-side (reorder carries parent_id), then drop it
+  // locally — this page's next autosave PUT no longer contains the block, and
+  // since it already lives under the target page that PUT can't delete it.
+  async function doMoveBlock(blockId, page) {
+    setMoveBlockDialog(null);
+    const title = (page.content || "Untitled").slice(0, 60);
+    try {
+      await persistBlocks(blocks);
+      const kids = await apiJson(`${API}/blocks/${page.id}/children`);
+      const last = (kids.children || []).slice(-1)[0]?.position || null;
+      await apiJson(`${API}/blocks/${blockId}/reorder`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ parent_id: page.id, before: last, after: null }),
+      });
+      // Older snapshots still contain the block; restoring one would put the
+      // same id in two pages. A cross-page move is not undoable.
+      undoStackRef.current = [];
+      redoStackRef.current = [];
+      setBlocks((prev) => removeBlockTree(prev, blockId));
+      setStatus(`Moved to "${title}".`);
+    } catch (err) {
+      setStatus(`Move failed: ${err.message}`);
+    }
+  }
+  const movePageMatches = (() => {
+    if (!moveBlockDialog) return [];
+    const q = moveBlockDialog.query.trim().toLowerCase();
+    const all = moveBlockDialog.pages;
+    return (q ? all.filter((p) => (p.content || "").toLowerCase().includes(q)) : all).slice(0, 12);
+  })();
   // Leaving home or changing folders drops the file-manager selection.
   useEffect(() => { clearSelection(); setHomeMenu(null); }, [folderFilter, categoryFilter, homeMode]);
   const pageOnly = !pdfUrl && !!focusedBlockId && !readOnly;
@@ -5292,10 +5372,14 @@ export default function App() {
                               <span className="metaKey">Source</span>
                               <span
                                 className={metaUnverifiedPaper ? "metaVal metaValWarn" : "metaVal"}
-                                title={metaUnverifiedPaper ? "Extracted by AI from the PDF text and not confirmed by arXiv/Crossref — fields may be wrong, verify before citing" : undefined}
+                                title={metaUnverifiedPaper
+                                  ? "Extracted by AI from the PDF text and not confirmed by arXiv/Crossref — fields may be wrong, verify before citing"
+                                  : pageMeta.source === "ai"
+                                    ? "Not a published paper, so there is no registry record to verify against"
+                                    : undefined}
                               >
                                 {metaUnverifiedPaper ? "AI-extracted — verify before citing"
-                                  : pageMeta.source === "ai" ? `AI-extracted (${pageMeta.kind || "document"} — not a published paper, so no registry to check against)`
+                                  : pageMeta.source === "ai" ? `AI-extracted (${pageMeta.kind || "document"})`
                                     : pageMeta.source === "manual" ? "edited by hand"
                                       : pageMeta.source}
                               </span>
@@ -6028,12 +6112,14 @@ export default function App() {
                   onIndent: (id) => {
                     if (readOnly || homeMode) return;
                     const next = indentBlock(blocks, id);
+                    if (next !== blocks) pushUndo(blocks);
                     setBlocks(next);
                     setFocusedId(id);
                   },
                   onOutdent: (id) => {
                     if (readOnly || homeMode) return;
                     const next = outdentBlock(blocks, id);
+                    if (next !== blocks) pushUndo(blocks);
                     setBlocks(next);
                     setFocusedId(id);
                   },
@@ -6063,9 +6149,66 @@ export default function App() {
                       });
                       return;
                     }
+                    pushUndo(blocks);
                     apiJson(`${API}/blocks/${id}`, { method: "DELETE" })
                       .catch((err) => setStatus(`Delete failed: ${err}`));
                     setBlocks(removeBlockTree(blocks, id));
+                    setStatus("Block deleted — Ctrl+Z to undo.");
+                  },
+                  onDuplicate: (id) => {
+                    if (readOnly || homeMode) return;
+                    const src = findBlock(blocks, id);
+                    if (!src) return;
+                    pushUndo(blocks);
+                    // Fresh ids all the way down; PDF anchoring stays with the
+                    // original — a copy with the same highlight_id/position
+                    // would draw a duplicate highlight on the page (same rule
+                    // as linkHighlightToBlock). The quote text is kept.
+                    const clone = (b) => {
+                      const { highlight_id, pdf_position, imported_annot, annot_stripped,
+                        ...props } = b.properties || {};
+                      return { ...b, id: makeId(), editMode: false, properties: props,
+                        children: (b.children || []).map(clone) };
+                    };
+                    setBlocks(insertSiblingAfter(blocks, id, clone(src)));
+                    setStatus("Block duplicated.");
+                  },
+                  onMoveToPage: async (id) => {
+                    if (readOnly || homeMode) return;
+                    try {
+                      const d = await apiJson(`${API}/blocks/root/children`);
+                      const pages = (d.children || []).filter((p) => p.id !== focusedBlockId);
+                      setMoveBlockDialog({ blockId: id, query: "", pages });
+                    } catch (err) { setStatus(`Could not list pages: ${err.message}`); }
+                  },
+                  // Hover-tool edits (table ops, image resize/caption/delete)
+                  // snapshot before writing so Ctrl+Z covers them too.
+                  onSnapshot: () => {
+                    if (!readOnly && !homeMode) pushUndo(blocks);
+                  },
+                  onPasteBlocks: (id, nodes) => {
+                    if (readOnly || homeMode || !nodes?.length) return;
+                    // Undo restores the paste-as-text state (the closure tree
+                    // still carries the pasted text; its removal is queued).
+                    pushUndo(blocks);
+                    const toBlock = (n) => ({
+                      id: makeId(), content: n.content || "", properties: {},
+                      collapsed: false, editMode: false,
+                      children: (n.children || []).map(toBlock),
+                    });
+                    const created = nodes.map(toBlock);
+                    // Siblings after the pasting block (its own editor stays
+                    // open, so its content is never rewritten under it).
+                    // Functional: the paste handler dispatched the text removal
+                    // in this same tick, so `blocks` here is one update behind.
+                    setBlocks((prev) => {
+                      let out = prev;
+                      for (let i = created.length - 1; i >= 0; i--) {
+                        out = insertSiblingAfter(out, id, created[i]);
+                      }
+                      return out;
+                    });
+                    setStatus(`Pasted ${nodes.length} block${nodes.length === 1 ? "" : "s"}.`);
                   },
                   onStatus: (msg) => setStatus(msg),
                   onBlockDragOver: (e, block) => {
@@ -6129,7 +6272,7 @@ export default function App() {
                       if (!ancestorId) return;
                       next = insertSibling(remaining, ancestorId, sourceBlock, !dt.above);
                     } else { return; }
-                    if (next) setBlocks(next);
+                    if (next) { pushUndo(blocks); setBlocks(next); }
                     _dragState.draggingId = null;
                   },
                 };
@@ -6197,9 +6340,18 @@ export default function App() {
           openPopover={openPopover} setOpenPopover={setOpenPopover}
           setStatus={setStatus}
           organizeFolder={!focusedBlockId && !readOnly ? folderFilter : null}
-          toolRounds={toolRounds} agentReadChars={agentReadChars} agentPerms={agentPerms} agentSystem={agentSystem}
+          toolRounds={toolRounds} agentReadChars={agentReadChars} agentPerms={agentPerms} setAgentPerms={setAgentPerms} agentSystem={agentSystem}
           agentEnabled={agentEnabled} folderToolsDefault={folderToolsDefault} pdfToolsDefault={pdfToolsDefault}
           onLibraryChange={fetchHomeBlocks}
+          onNotesChange={(pageIds) => {
+            // The AI edited note blocks server-side. If the open page is among
+            // them, reload its tree so the change appears — unless the user
+            // typed during the reply: their queued (whole-subtree) save wins,
+            // and reloading now would drop those keystrokes.
+            if (!focusedBlockId || !pageIds.includes(focusedBlockId)) return;
+            if (pendingSaveRef.current) { flushPendingSave(); return; }
+            loadBlocksForBlock(focusedBlockId);
+          }}
         />
       );
     }
@@ -7074,6 +7226,38 @@ export default function App() {
                 disabled={!labelRenaming.draft.trim()}
                 onClick={() => renameLabel(labelRenaming.name, labelRenaming.draft)}
               >Rename</button>
+            </div>
+          </div>
+        </div>
+      ) : null}
+      {moveBlockDialog ? (
+        <div className="reportOverlay" onClick={() => setMoveBlockDialog(null)}>
+          <div className="reportModal confirmModal" onClick={(e) => e.stopPropagation()}>
+            <div className="reportModalTitle">Move block to page</div>
+            <div className="reportModalHint confirmMessage">The block and its sub-blocks move to the end of the chosen page.</div>
+            <div className="shareRow">
+              <input
+                autoFocus
+                placeholder="Filter pages…"
+                value={moveBlockDialog.query}
+                onChange={(e) => setMoveBlockDialog((s) => ({ ...s, query: e.target.value }))}
+                onKeyDown={(e) => {
+                  if (e.key === "Escape") setMoveBlockDialog(null);
+                  else if (e.key === "Enter" && movePageMatches.length) {
+                    doMoveBlock(moveBlockDialog.blockId, movePageMatches[0]);
+                  }
+                }}
+              />
+            </div>
+            <div className="moveBlockList">
+              {movePageMatches.map((p) => (
+                <MenuItem key={p.id} icon={FileTextIcon} onClick={() => doMoveBlock(moveBlockDialog.blockId, p)}>
+                  {p.content || "Untitled"}
+                </MenuItem>
+              ))}
+              {!movePageMatches.length ? (
+                <div className="confirmMessage">No matching page.</div>
+              ) : null}
             </div>
           </div>
         </div>

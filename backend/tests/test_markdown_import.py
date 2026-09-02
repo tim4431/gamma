@@ -106,3 +106,50 @@ def test_markdown_upload_rejects_non_utf8(guest):
     )
     assert r.status_code == 400
     assert "UTF-8" in r.json()["detail"]
+
+
+def test_markdown_blocks_endpoint_parses_without_storing(guest):
+    """POST /api/markdown-blocks: the paste-as-blocks helper returns the parsed
+    tree and writes nothing."""
+    r = guest.post("/api/markdown-blocks", json={
+        "text": "# Head\n\n- pasted-first\n  - pasted-nested\n- pasted-second"})
+    assert r.status_code == 200, r.text
+    tree = r.json()["blocks"]
+    assert tree[0]["content"] == "# Head"
+    items = tree[0]["children"]
+    assert [b["content"] for b in items] == ["pasted-first", "pasted-second"]
+    assert items[0]["children"][0]["content"] == "pasted-nested"
+
+    with sqlite3.connect(user_db_path("guest", "pages.db")) as conn:
+        n = conn.execute("SELECT COUNT(*) FROM unified_blocks "
+                         "WHERE content LIKE 'pasted-%'").fetchone()[0]
+    assert n == 0
+
+
+def test_markdown_blocks_endpoint_caps_size(guest):
+    r = guest.post("/api/markdown-blocks", json={"text": "x" * (5 * 1024 * 1024 + 10)})
+    assert r.status_code == 413
+
+
+def test_markdown_blocks_keeps_display_math_whole(guest):
+    """Multi-line $$ math stays one block even when its rows look like list
+    items or numbered lines (a shattered \begin{array} never renders)."""
+    text = (
+        "Result:\n"
+        "$$\n"
+        "\begin{aligned}\n"
+        "- x + y &= 3 \\\n"
+        "1. & \text{numbered-looking row} \\\n"
+        "\end{aligned}\n"
+        "$$\n"
+        "Done."
+    )
+    r = guest.post("/api/markdown-blocks", json={"text": text})
+    assert r.status_code == 200, r.text
+    tree = r.json()["blocks"]
+    assert [b["content"] for b in tree] == [
+        "Result:",
+        "$$\n\begin{aligned}\n- x + y &= 3 \\\n"
+        "1. & \text{numbered-looking row} \\\n\end{aligned}\n$$",
+        "Done.",
+    ]

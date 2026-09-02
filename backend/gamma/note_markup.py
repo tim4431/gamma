@@ -72,7 +72,11 @@ _TRANSPARENT = {"text", "textrm", "textbf", "textit", "mathrm", "mathbf",
                 "boldsymbol", "operatorname", "mbox", "hbox", "bm", "pmb",
                 "overline", "underline", "tilde", "hat", "bar", "vec", "dot"}
 
-_IMG_RE = re.compile(r"!\[([^\]]*)\]\(\s*([^)\s]+)[^)]*\)")
+# The optional size — Obsidian's ``![alt|300](url)`` pipe or the legacy
+# Logseq ``{:width N}`` suffix — is consumed so it never leaks into the note
+# text (boxes size images to fit themselves; the hint is display-only).
+_IMG_RE = re.compile(r"!\[([^\]]*)\]\(\s*([^)\s]+)[^)]*\)(?:\{:width\s+\d+\})?")
+_ALT_WIDTH_RE = re.compile(r"\|\d+(?:x\d+)?$")
 _LINK_RE = re.compile(r"\[([^\]]*)\]\(\s*([^)\s]+)[^)]*\)")
 _MATH_RE = re.compile(
     r"\$\$(.+?)\$\$"          # display $$ … $$
@@ -257,7 +261,8 @@ def parse_note(text: str):
             for m in _IMG_RE.finditer(raw):
                 add_spans([(TEXT, _plain(raw[pos:m.start()]), 0)])
                 flush()
-                items.append({"kind": "image", "src": m.group(2), "alt": m.group(1)})
+                items.append({"kind": "image", "src": m.group(2),
+                              "alt": _ALT_WIDTH_RE.sub("", m.group(1))})
                 pos = m.end()
             add_spans([(TEXT, _plain(raw[pos:]), 0)])
 

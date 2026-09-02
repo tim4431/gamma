@@ -21,12 +21,17 @@ import { filterSlashCommands, SlashMenuPopup } from "./slashMenu";
 import { remarkCallouts } from "./callouts";
 import { ContextMenu, MenuItem } from "./menus";
 import { API, apiJson, copyText } from "./utils";
-import { Trash2Icon } from "./icons";
+import { CopyIcon, ExportIcon, Trash2Icon } from "./icons";
+import {
+  applyImageEdit, applyTableEdit, formatTables, htmlTableToMarkdown,
+  MdImage, MdTableWrap, parseTable, scanTables, tsvToMarkdown,
+} from "./mdTools";
 
 // Module-level ref for native HTML5 drag-and-drop (shared with App's drop handlers)
 const _dragState = { draggingId: null, dropTarget: null };
 
-// Source → markdown the renderer understands: {:width} images, ![[embeds]],
+// Source → markdown the renderer understands: sized images (Obsidian
+// ![alt|300] and legacy Logseq {:width}), ![[embeds]],
 // [[refs]] and ==highlights== rewritten OUTSIDE math and inline-code spans
 // (a "==" inside $...$ must stay LaTeX). `nested` is the inside-an-embed
 // render: embeds degrade to ref chips so transclusion can't recurse.
@@ -43,6 +48,25 @@ function applyOutsideSpans(text, spans, fn) {
 }
 
 function mdPreprocess(content, nested) {
+  // The editor centres every $$…$$ on its own row (cmMathDisplay); remark-math
+  // only does that when the fences sit alone on their lines (same-line content
+  // becomes "meta" and is dropped — raw source in the rendered view). So a
+  // display span standing alone on its line(s) is reshaped to that block form
+  // (blank-line separated, KaTeX display mode → centred like the editor); one
+  // embedded mid-sentence collapses onto one line instead, which remark-math
+  // reads as inline math and the sentence stays intact.
+  const displays = scanMathSpans(content).filter((s) => s.display);
+  for (let i = displays.length - 1; i >= 0; i--) {
+    const s = displays[i];
+    const before = content.slice(0, s.from);
+    const after = content.slice(s.to);
+    const tex = content.slice(s.from + 2, s.to - 2).trim();
+    if (/(^|\n)[ \t]*$/.test(before) && /^[ \t]*(\n|$)/.test(after)) {
+      content = `${before.replace(/[ \t]+$/, "")}\n\n$$\n${tex}\n$$\n\n${after.replace(/^[ \t]+/, "")}`;
+    } else if (content.slice(s.from, s.to).includes("\n")) {
+      content = `${before}$$ ${tex.replace(/\s*\n\s*/g, " ")} $$${after}`;
+    }
+  }
   const spans = scanMathSpans(content).map((s) => ({ from: s.from, to: s.to }));
   // ``` fences claim first (sorted by from, earlier span wins in
   // applyOutsideSpans) — a [[ref]] or == inside code must stay literal.
@@ -51,7 +75,9 @@ function mdPreprocess(content, nested) {
     spans.push({ from: m.index, to: m.index + m[0].length });
   }
   return applyOutsideSpans(content, spans, (seg) => seg
+    // Sized images: legacy Logseq {:width N} first, then Obsidian ![alt|300].
     .replace(/!\[([^\]]*)\]\(([^)]+)\)\{:width\s+(\d+)\}/g, '<img src="$2" alt="$1" width="$3" />')
+    .replace(/!\[([^\]|]*)\|(\d+)(?:x\d+)?\]\(([^)]+)\)/g, '<img src="$3" alt="$1" width="$2" />')
     .replace(/!\[\[([a-zA-Z0-9_-]+)\]\]/g, nested ? "[$1](blockref:$1)" : "[$1](blockembed:$1)")
     .replace(/\[\[([a-zA-Z0-9_-]+)\]\]/g, "[$1](blockref:$1)")
     .replace(/==([^=\n]+?)==/g, "<mark>$1</mark>"));
@@ -136,20 +162,177 @@ function LinkChip({ href, text }) {
   );
 }
 
+// Flip the nth task checkbox marker in markdown source (list task items only —
+// the regex mirrors what remark-gfm turns into checkboxes). Shared by the
+// block row and the embed card.
+function toggleTaskMarker(content, idx, checked) {
+  let i = -1;
+  return (content || "").replace(
+    /(^|\n)([ \t]*(?:[-*+]|\d+\.)[ \t]+\[)([ xX])(\])/g,
+    (m, p1, p2, p3, p4) => {
+      i += 1;
+      return i === idx ? p1 + p2 + (checked ? "x" : " ") + p4 : m;
+    },
+  );
+}
+
+// POST /api/upload-image → url | null; shared by the block row (drop, paste,
+// /image) and the embed card's paste handler.
+async function uploadImageFile(file) {
+  if (!file || !file.type?.startsWith("image/")) return null;
+  try {
+    const form = new FormData();
+    form.append("file", file);
+    const res = await fetch("/api/upload-image", { method: "POST", body: form, credentials: "include" });
+    if (!res.ok) return null;
+    return (await res.json()).url;
+  } catch (_) {
+    return null;
+  }
+}
+
+// Live LaTeX aids while the caret sits inside $...$ / $$...$$: the floating
+// preview plus \command autocomplete state — shared by the block editor and
+// the embed card's in-place editor. Recomputed on every edit AND caret move
+// (the preview must track the caret); the autocomplete only OPENS on typing.
+function useMathUi() {
+  const [mathUi, setMathUi] = useState(null);
+  const [mathAcIdx, setMathAcIdx] = useState(0);
+
+  function updateMathUi(ta, typing) {
+    const cursor = ta.selectionStart;
+    if (cursor !== ta.selectionEnd) { setMathUi(null); return; }
+    // A "$" inside a ``` fence is code (shell vars), never math.
+    const seg = fenceInnerAt(ta.value, cursor) ? null : findMathAtCursor(ta.value, cursor);
+    if (!seg) { setMathUi(null); return; }
+    // \command autocomplete: a backslash-word ending at the caret, only
+    // inside math (a bare "\" in prose — file paths — must not trigger it),
+    // and only opened by TYPING — clicking into an existing formula must not
+    // pop the menu. Caret moves (typing=false) keep an already-open popup
+    // only while the caret stays on the same trigger; React fires onSelect
+    // right after onChange for a keystroke, so this must not wipe it.
+    const m = ta.value.slice(seg.start, cursor).match(/\\([a-zA-Z]+)$/);
+    const next = {
+      tex: ta.value.slice(seg.start, seg.end),
+      display: seg.display,
+      anchor: ta.caretCoords(cursor),
+      ac: null,
+    };
+    setMathUi((prev) => {
+      const start = m ? cursor - m[0].length : -1;
+      if (m && (typing || prev?.ac?.start === start)) {
+        const items = latexCompletions(m[1]);
+        if (items.length) next.ac = { start, items };
+      }
+      return next;
+    });
+    if (typing) setMathAcIdx(0);
+  }
+
+  return { mathUi, setMathUi, mathAcIdx, setMathAcIdx, updateMathUi };
+}
+
 // ![[id]] transclusion: the referenced block's content rendered in a card.
-// With onEmbedEdit (not read-only), clicking the card edits the SOURCE block
-// in place, Notion-synced-block style — the edit lands on the source on
-// blur, so every other copy re-renders it. The page-title footer jumps to
-// the source; in read-only views the whole card is the jump link.
+// With onEmbedEdit (not read-only), the synced position is a full editing
+// surface for the SOURCE block, Notion-synced-block style: checkboxes, image
+// hover tools and table editing on the rendered card write straight through,
+// and clicking the text edits the raw source in place — with the same live
+// math preview + \command autocomplete and image/table paste as a normal
+// block editor. Every edit lands on the source, so all copies re-render.
+// The page-title footer jumps to the source; in read-only views the whole
+// card is the jump link.
 function BlockEmbedCard({ refId, refBlock, refLabels, onBlockRefClick, onEmbedEdit }) {
   const [draft, setDraft] = useState(null); // non-null while editing in place
+  const { mathUi, setMathUi, mathAcIdx, setMathAcIdx, updateMathUi } = useMathUi();
+  const editorRef = useRef(null);
   const editable = !!onEmbedEdit && refBlock?.content != null;
+
   const save = () => {
+    setMathUi(null);
     setDraft((d) => {
-      if (d != null && d !== refBlock.content) onEmbedEdit(refId, d);
+      if (d != null) {
+        // Same pretty-print-on-close as leaving a normal raw editor.
+        const pretty = formatTables(d) ?? d;
+        if (pretty !== refBlock.content) onEmbedEdit(refId, pretty);
+      }
       return null;
     });
   };
+
+  function acceptLatexAc(c) {
+    const ta = editorRef.current;
+    if (!ta || !mathUi?.ac) return;
+    const { start } = mathUi.ac;
+    const { text, caret } = insertionFor(c);
+    setDraft(ta.value.slice(0, start) + text + ta.value.slice(ta.selectionStart));
+    setMathUi(null);
+    requestAnimationFrame(() => {
+      try { ta.setSelectionRange(start + caret, start + caret); } catch (_) {}
+      ta.focus();
+      updateMathUi(ta, false);
+    });
+  }
+
+  // Paste while editing: an image uploads and inserts at the caret, a
+  // clipboard that IS one html table becomes a markdown table; plain text
+  // stays CM's native paste.
+  async function handlePaste(e) {
+    const ta = editorRef.current;
+    if (!ta) return;
+    const file = Array.from(e.clipboardData?.items || [])
+      .find((it) => it.type?.startsWith("image/"))?.getAsFile();
+    if (file) {
+      e.preventDefault();
+      const start = ta.selectionStart, end = ta.selectionEnd;
+      const url = await uploadImageFile(file);
+      if (!url) return;
+      const md = `![](${url})`;
+      ta.view?.dispatch({
+        changes: { from: start, to: end, insert: md },
+        selection: { anchor: start + md.length },
+        userEvent: "input",
+      });
+      return;
+    }
+    const html = e.clipboardData?.getData("text/html") || "";
+    if (/<table[\s>]/i.test(html)) {
+      const md = htmlTableToMarkdown(html);
+      if (md) {
+        e.preventDefault();
+        const start = ta.selectionStart, end = ta.selectionEnd;
+        const val = ta.value || "";
+        const lead = start > 0 && val[start - 1] !== "\n" ? "\n" : "";
+        const trail = end < val.length && val[end] !== "\n" ? "\n" : "";
+        ta.view?.dispatch({
+          changes: { from: start, to: end, insert: lead + md + trail },
+          selection: { anchor: start + lead.length + md.length },
+          userEvent: "input",
+        });
+      }
+    }
+  }
+
+  // In-place tools on the rendered card write through to the source — same
+  // source transforms as a normal block, identity-stable for the memo.
+  const toolsRef = useRef({});
+  toolsRef.current = {
+    task: (idx, checked) => {
+      const v = toggleTaskMarker(refBlock?.content || "", idx, checked);
+      if (v !== refBlock?.content) onEmbedEdit?.(refId, v);
+    },
+    img: (idx, action, payload) => {
+      const v = applyImageEdit(refBlock?.content || "", idx, action, payload);
+      if (v != null && v !== refBlock?.content) onEmbedEdit?.(refId, v);
+    },
+    tbl: (idx, op) => {
+      const v = applyTableEdit(refBlock?.content || "", idx, op);
+      if (v != null && v !== refBlock?.content) onEmbedEdit?.(refId, v);
+    },
+  };
+  const stableTask = useRef((i, c) => toolsRef.current.task(i, c)).current;
+  const stableImg = useRef((i, a, p) => toolsRef.current.img(i, a, p)).current;
+  const stableTbl = useRef((i, o) => toolsRef.current.tbl(i, o)).current;
+
   return (
     <span
       className={`blockEmbedCard${draft != null ? " editing" : ""}`}
@@ -161,6 +344,9 @@ function BlockEmbedCard({ refId, refBlock, refLabels, onBlockRefClick, onEmbedEd
         e.preventDefault();
         e.stopPropagation();
         if (draft != null) return;
+        // A click an inner tool already handled (checkbox, table cell or
+        // handle, image toolbar, a link) must not ALSO open the raw editor.
+        if (editable && e.target.closest?.(".mdTableWrap, .mdImgWrap, .mdTaskCheckbox, a, button, input")) return;
         if (editable) setDraft(refBlock.content);
         else onBlockRefClick?.(refId);
       }}
@@ -168,24 +354,46 @@ function BlockEmbedCard({ refId, refBlock, refLabels, onBlockRefClick, onEmbedEd
       <span className="blockEmbedBody">
         {draft != null ? (
           <BlockCmEditor
+            ref={editorRef}
             autoFocus
             className="blockEditor blockEditorCm"
             value={draft}
             refLabels={refLabels}
-            onChange={(e) => setDraft(e.target.value)}
+            onChange={(e) => { setDraft(e.target.value); updateMathUi(e.target, true); }}
+            onSelect={(e) => updateMathUi(e.target, false)}
             onBlur={save}
+            onPaste={handlePaste}
             onKeyDown={(e) => {
+              if (mathUi?.ac) {
+                const n = mathUi.ac.items.length;
+                if (e.key === "ArrowDown") { e.preventDefault(); setMathAcIdx((i) => Math.min(i + 1, n - 1)); return; }
+                if (e.key === "ArrowUp") { e.preventDefault(); setMathAcIdx((i) => Math.max(i - 1, 0)); return; }
+                if (e.key === "Tab" || e.key === "Enter") { e.preventDefault(); acceptLatexAc(mathUi.ac.items[mathAcIdx]); return; }
+                if (e.key === "Escape") { e.preventDefault(); setMathUi((u) => (u ? { ...u, ac: null } : null)); return; }
+              }
               // Escape saves and exits, same as blurring a normal block.
               if (e.key === "Escape") { e.preventDefault(); save(); }
             }}
             placeholder="Edit the source note…"
           />
         ) : refBlock?.content ? (
-          <BlockMarkdown content={refBlock.content} refLabels={refLabels} onBlockRefClick={onBlockRefClick} nested />
+          <BlockMarkdown content={refBlock.content} blockId={`embed:${refId}`} refLabels={refLabels}
+            onBlockRefClick={onBlockRefClick} nested
+            onTaskToggle={editable ? stableTask : undefined}
+            onImageEdit={editable ? stableImg : undefined}
+            onTableEdit={editable ? stableTbl : undefined} />
         ) : (
           <span className="blockPlaceholder">embedded note…</span>
         )}
       </span>
+      {draft != null && mathUi ? (
+        <>
+          <MathLivePreview tex={mathUi.tex} display={mathUi.display} anchor={mathUi.anchor} />
+          {mathUi.ac ? (
+            <LatexAcPopup items={mathUi.ac.items} selected={mathAcIdx} anchor={mathUi.anchor} onPick={acceptLatexAc} />
+          ) : null}
+        </>
+      ) : null}
       {refBlock?.page_title ? (
         <span
           className="blockEmbedSrc"
@@ -231,12 +439,17 @@ function CodePre({ children }) {
 // labels are resolved by the caller so the comparison here stays a string
 // check. onBlockRefClick/onTaskToggle are deliberately excluded from the
 // comparison — the caller passes identity-stable wrappers.
-const BlockMarkdown = React.memo(function BlockMarkdown({ content, refLabels, onBlockRefClick, onTaskToggle, onEmbedEdit, nested }) {
+const BlockMarkdown = React.memo(function BlockMarkdown({ content, blockId, refLabels, onBlockRefClick, onTaskToggle, onEmbedEdit, onImageEdit, onTableEdit, nested }) {
   // GFM task-list checkboxes render in document order; this counter maps the
   // nth rendered checkbox back to the nth `[ ]`/`[x]` marker in the source so
   // clicking one toggles the right marker. Reset per render — the whole
   // element tree is rebuilt whenever this component re-renders.
-  let taskIdx = -1;
+  // imgIdx/tableIdx do the same for images and tables (mdTools scans the
+  // source with matching rules, so the nth rendered one is the nth scanned).
+  let taskIdx = -1, imgIdx = -1, tableIdx = -1;
+  // Source-order table list; entries inside blockquotes are editable:false
+  // (they still consume an index so the mapping stays aligned).
+  const tableInfo = useMemo(() => scanTables(content || ""), [content]);
   return (
     <ReactMarkdown
       // remark-breaks: a single Enter inside a note renders as a real line
@@ -284,6 +497,25 @@ const BlockMarkdown = React.memo(function BlockMarkdown({ content, refLabels, on
           return <a href={href} target="_blank" rel="noreferrer">{children}</a>;
         },
         pre: CodePre,
+        img: ({ node, src, alt, width }) => {
+          imgIdx += 1;
+          return <MdImage src={src} alt={alt} width={width} idx={imgIdx} onEdit={onImageEdit} />;
+        },
+        table: ({ node, children }) => {
+          tableIdx += 1;
+          const info = tableInfo[tableIdx];
+          const editable = !!(info?.editable && onTableEdit);
+          return (
+            <MdTableWrap
+              idx={tableIdx}
+              onEdit={editable ? onTableEdit : undefined}
+              model={editable ? parseTable(content.slice(info.from, info.to)) : null}
+              editKey={editable ? `${blockId}:${tableIdx}` : null}
+            >
+              {children}
+            </MdTableWrap>
+          );
+        },
         input: ({ node, type, checked, disabled, ...props }) => {
           if (type !== "checkbox") return <input type={type} {...props} />;
           taskIdx += 1;
@@ -364,6 +596,8 @@ function BlockRow({
   onEnterSibling,
   enterNewNote,
   onAddChild,
+  onPasteBlocks,
+  onSnapshot,
   onIndent,
   onOutdent,
   onToggle,
@@ -397,14 +631,7 @@ function BlockRow({
   // what remark-gfm turns into checkboxes).
   const taskToggleRef = useRef(null);
   taskToggleRef.current = (idx, checked) => {
-    let i = -1;
-    const newVal = (block.content || "").replace(
-      /(^|\n)([ \t]*(?:[-*+]|\d+\.)[ \t]+\[)([ xX])(\])/g,
-      (m, p1, p2, p3, p4) => {
-        i += 1;
-        return i === idx ? p1 + p2 + (checked ? "x" : " ") + p4 : m;
-      },
-    );
+    const newVal = toggleTaskMarker(block.content || "", idx, checked);
     if (newVal !== block.content) onChangeText(block.id, newVal);
   };
   const stableTaskToggle = useRef((idx, checked) => taskToggleRef.current?.(idx, checked)).current;
@@ -426,6 +653,27 @@ function BlockRow({
     }
   };
   const stableEmbedEdit = useRef((id, c) => embedEditRef.current?.(id, c)).current;
+  // Hover tools on rendered images/tables (mdTools): edits are text
+  // transforms on the nth construct in this block's source. A null result
+  // means the scan couldn't locate it — no-op rather than corrupt.
+  const imageEditRef = useRef(null);
+  imageEditRef.current = (idx, action, payload) => {
+    const newVal = applyImageEdit(block.content || "", idx, action, payload);
+    if (newVal != null && newVal !== block.content) {
+      onSnapshot?.();               // hover-tool edits join the Ctrl+Z stack
+      onChangeText(block.id, newVal);
+    }
+  };
+  const stableImageEdit = useRef((i, a, p) => imageEditRef.current?.(i, a, p)).current;
+  const tableEditRef = useRef(null);
+  tableEditRef.current = (idx, op) => {
+    const newVal = applyTableEdit(block.content || "", idx, op);
+    if (newVal != null && newVal !== block.content) {
+      onSnapshot?.();
+      onChangeText(block.id, newVal);
+    }
+  };
+  const stableTableEdit = useRef((i, o) => tableEditRef.current?.(i, o)).current;
   // Resolve [[ref]] chip labels here (cheap per render) so BlockMarkdown's
   // memo can compare them as strings instead of depending on allBlocks,
   // whose identity changes on every edit.
@@ -439,11 +687,8 @@ function BlockRow({
   }, [block.content, allBlocks, refCache]);
   const [refPopup, setRefPopup] = useState(null); // { query, rect }
   const [refSelectedIdx, setRefSelectedIdx] = useState(0);
-  // Live LaTeX aids while the caret sits inside $...$ / $$...$$:
-  // { tex, display, anchor, ac: { start, items } | null }. Recomputed on every
-  // edit AND caret move (onSelect) — the preview must track the caret.
-  const [mathUi, setMathUi] = useState(null);
-  const [mathAcIdx, setMathAcIdx] = useState(0);
+  // Live LaTeX aids (preview + \command autocomplete) — the shared hook.
+  const { mathUi, setMathUi, mathAcIdx, setMathAcIdx, updateMathUi } = useMathUi();
   // "/" command menu: { start, query, items, anchor }. Opened only by TYPING
   // the slash (caret moves just keep or close it), suppressed inside math.
   const [slashMenu, setSlashMenu] = useState(null);
@@ -496,36 +741,6 @@ function BlockRow({
       ta.setSelectionRange(newCursor, newCursor);
       ta.focus();
     });
-  }
-
-  function updateMathUi(ta, typing) {
-    const cursor = ta.selectionStart;
-    if (cursor !== ta.selectionEnd) { setMathUi(null); return; }
-    // A "$" inside a ``` fence is code (shell vars), never math.
-    const seg = fenceInnerAt(ta.value, cursor) ? null : findMathAtCursor(ta.value, cursor);
-    if (!seg) { setMathUi(null); return; }
-    // \command autocomplete: a backslash-word ending at the caret, only
-    // inside math (a bare "\" in prose — file paths — must not trigger it),
-    // and only opened by TYPING — clicking into an existing formula must not
-    // pop the menu. Caret moves (typing=false) keep an already-open popup
-    // only while the caret stays on the same trigger; React fires onSelect
-    // right after onChange for a keystroke, so this must not wipe it.
-    const m = ta.value.slice(seg.start, cursor).match(/\\([a-zA-Z]+)$/);
-    const next = {
-      tex: ta.value.slice(seg.start, seg.end),
-      display: seg.display,
-      anchor: ta.caretCoords(cursor),
-      ac: null,
-    };
-    setMathUi((prev) => {
-      const start = m ? cursor - m[0].length : -1;
-      if (m && (typing || prev?.ac?.start === start)) {
-        const items = latexCompletions(m[1]);
-        if (items.length) next.ac = { start, items };
-      }
-      return next;
-    });
-    if (typing) setMathAcIdx(0);
   }
 
   function acceptLatexAc(c) {
@@ -613,6 +828,18 @@ function BlockRow({
   useEffect(() => {
     if (block.editMode) clickPosRef.current = null;
   }, [block.editMode]);
+  // Leaving raw editing pretty-prints any tables in the block. Watched on the
+  // editMode transition (not the editor's onBlur — switching blocks
+  // preventDefaults the mousedown, so the editor unmounts without a blur).
+  const wasEditingRef = useRef(false);
+  useEffect(() => {
+    if (wasEditingRef.current && !block.editMode && !readOnly) {
+      const formatted = formatTables(block.content || "");
+      if (formatted != null) onChangeText(block.id, formatted);
+    }
+    wasEditingRef.current = !!block.editMode;
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [block.editMode]);
 
   const isHighlight = !!block.highlightId;
   const hasChildren = (block.children?.length || 0) > 0;
@@ -632,17 +859,10 @@ function BlockRow({
   }
 
   async function uploadImage(file) {
-    if (!file || !file.type.startsWith("image/")) return null;
     if (uploadingRef.current) return null;
     uploadingRef.current = true;
     try {
-      const form = new FormData();
-      form.append("file", file);
-      const res = await fetch("/api/upload-image", { method: "POST", body: form, credentials: "include" });
-      if (!res.ok) return null;
-      return (await res.json()).url;
-    } catch (_) {
-      return null;
+      return await uploadImageFile(file);
     } finally { uploadingRef.current = false; }
   }
 
@@ -687,7 +907,33 @@ function BlockRow({
       ta.focus();
     };
     if (item.make) {
-      doReplace(item.make());
+      let text = item.make();
+      if (item.block) {
+        // A block-level construct (a table) must start and end on its own
+        // line — pad like the direct html-table paste does.
+        const val = ta.value || "";
+        if (pm.start > 0 && val[pm.start - 1] !== "\n") text = "\n" + text;
+        if (pm.end < val.length && val[pm.end] !== "\n") text += "\n";
+      }
+      doReplace(text);
+    } else if (item.name === "blocks") {
+      // Parse server-side (same parser as the .md file import), remove the
+      // pasted text from this block, then hand the tree to App to insert.
+      apiJson(`${API}/markdown-blocks`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ text: pm.url }),
+      }).then((d) => {
+        const nodes = d?.blocks || [];
+        if (!nodes.length) return;
+        if (ta.value.slice(pm.start, pm.end) !== pm.url) return; // edited since
+        ta.view?.dispatch({
+          changes: { from: pm.start, to: pm.end, insert: "" },
+          selection: { anchor: pm.start },
+          userEvent: "input",
+        });
+        onPasteBlocks?.(block.id, nodes);
+      }).catch(() => {});
     } else if (item.name === "titled") {
       fetch(`/api/link-preview?url=${encodeURIComponent(pm.url)}`)
         .then((r) => (r.ok ? r.json() : null))
@@ -700,7 +946,7 @@ function BlockRow({
         })
         .catch(() => {});
     }
-    // "url": keep the pasted text as-is
+    // "url" / "text": keep the pasted text as-is
   }
 
   // Paste an image (screenshot) while editing → upload it and insert the
@@ -710,8 +956,30 @@ function BlockRow({
     const file = Array.from(e.clipboardData?.items || [])
       .find((it) => it.type?.startsWith("image/"))?.getAsFile();
     if (!file) {
-      const text = (e.clipboardData?.getData("text/plain") || "").trim();
       const ta = ref.current;
+      // A clipboard that IS one html table (Excel / Sheets / a copied
+      // rendered table) pastes as a markdown table.
+      const html = e.clipboardData?.getData("text/html") || "";
+      if (ta && /<table[\s>]/i.test(html)) {
+        const md = htmlTableToMarkdown(html);
+        if (md) {
+          e.preventDefault();
+          const start = ta.selectionStart, end = ta.selectionEnd;
+          const val = ta.value || "";
+          const lead = start > 0 && val[start - 1] !== "\n" ? "\n" : "";
+          const trail = end < val.length && val[end] !== "\n" ? "\n" : "";
+          const insert = lead + md + trail;
+          ta.view?.dispatch({
+            changes: { from: start, to: end, insert },
+            selection: { anchor: start + lead.length + md.length },
+            userEvent: "input",
+          });
+          return;
+        }
+      }
+      // CRLF must not reach a CodeMirror dispatch — the state rejects "\r",
+      // which would swallow the paste after preventDefault already fired.
+      const text = (e.clipboardData?.getData("text/plain") || "").replace(/\r\n?/g, "\n").trim();
       if (ta && /^https?:\/\/\S+$/i.test(text)) {
         e.preventDefault();
         const start = ta.selectionStart;
@@ -729,6 +997,30 @@ function BlockRow({
         // After the onChange the dispatch just fired (it clears pasteMenu).
         requestAnimationFrame(() => {
           setPasteMenu({ start, end: start + text.length, url: text, items: pasteAsItems(blockId), anchor });
+          setPasteIdx(0);
+        });
+        return;
+      }
+      // Structured text — spreadsheet cells (strict TSV) or a multi-line
+      // outline — pastes as-is and offers the chooser, same pattern as URLs.
+      const tsvMd = ta && !homeMode ? tsvToMarkdown(text) : null;
+      const multiline = text.split("\n").filter((l) => l.trim()).length >= 2;
+      if (ta && ta.view && !homeMode && onPasteBlocks && (tsvMd || multiline)) {
+        e.preventDefault();
+        const start = ta.selectionStart;
+        ta.view?.dispatch({
+          changes: { from: start, to: ta.selectionEnd, insert: text },
+          selection: { anchor: start + text.length },
+          userEvent: "input",
+        });
+        const items = [
+          ...(tsvMd ? [{ name: "table", glyph: "▦", label: "Table", hint: "markdown table", block: true, make: () => tsvMd }] : []),
+          { name: "text", glyph: "¶", label: "Text", hint: "keep in this block" },
+          { name: "blocks", glyph: "≡", label: "Blocks", hint: "split into nested blocks" },
+        ];
+        const anchor = ta.caretCoords(start);
+        requestAnimationFrame(() => {
+          setPasteMenu({ start, end: start + text.length, url: text, items, anchor });
           setPasteIdx(0);
         });
       }
@@ -940,9 +1232,15 @@ function BlockRow({
                 }
                 // Inside a ``` fence the outliner keys turn code-editor:
                 // any Enter is a line break (never a new note) and Tab
-                // indents with spaces instead of nesting the block.
-                if ((e.key === "Enter" || (e.key === "Tab" && !e.shiftKey)) && ref.current
-                  && fenceInnerAt(ref.current.value, ref.current.selectionStart)) {
+                // indents with spaces instead of nesting the block. Enter
+                // inside $$ display math (closed, or still open while being
+                // typed) is a line break too — a multi-line \begin{array}
+                // would otherwise split into a new note on every row.
+                const inFence = (e.key === "Enter" || (e.key === "Tab" && !e.shiftKey))
+                  && ref.current && fenceInnerAt(ref.current.value, ref.current.selectionStart);
+                const inDisplayMath = !inFence && e.key === "Enter" && ref.current
+                  && !!findMathAtCursor(ref.current.value, ref.current.selectionStart)?.display;
+                if (inFence || inDisplayMath) {
                   const ta = ref.current;
                   const selStart = ta.selectionStart, selEnd = ta.selectionEnd;
                   e.preventDefault();
@@ -1019,9 +1317,11 @@ function BlockRow({
           ) : (
             <div className="blockRendered" onCopy={handleMarkdownCopy}>
               {(block.content || "").trim() ? (
-                <BlockMarkdown content={block.content || ""} refLabels={refLabels} onBlockRefClick={stableRefClick}
+                <BlockMarkdown content={block.content || ""} blockId={block.id} refLabels={refLabels} onBlockRefClick={stableRefClick}
                   onTaskToggle={readOnly ? undefined : stableTaskToggle}
-                  onEmbedEdit={readOnly ? undefined : stableEmbedEdit} />
+                  onEmbedEdit={readOnly ? undefined : stableEmbedEdit}
+                  onImageEdit={readOnly ? undefined : stableImageEdit}
+                  onTableEdit={readOnly ? undefined : stableTableEdit} />
               ) : (
                 <div className="blockPlaceholder">(empty)</div>
               )}
@@ -1104,6 +1404,16 @@ function BlockRow({
   );
 }
 
+// Block subtree → a markdown outline: each block one "- " bullet (extra
+// content lines hang under it), children indented two spaces deeper.
+function subtreeMarkdown(b, depth) {
+  const indent = "  ".repeat(depth);
+  const own = (b.content || "").split("\n")
+    .map((l, i) => (i === 0 ? `${indent}- ` : `${indent}  `) + l)
+    .join("\n");
+  return [own, ...(b.children || []).map((c) => subtreeMarkdown(c, depth + 1))].join("\n");
+}
+
 function SortableBlockRow({ block, ...rowProps }) {
   const depth = rowProps.depth || 0;
   // Notion-style handle: drag moves the block, a plain click opens the block
@@ -1160,6 +1470,28 @@ function SortableBlockRow({ block, ...rowProps }) {
               "Block link copied — paste into a note for mention / synced block",
             )}
           >Copy link to block</MenuItem>
+          <MenuItem
+            icon={CopyIcon}
+            title="Copy this block's markdown source (sub-blocks become an indented list)"
+            onClick={() => copy(
+              block.children?.length ? subtreeMarkdown(block, 0) : block.content || "",
+              "Copied block as markdown",
+            )}
+          >Copy as markdown</MenuItem>
+          {!rowProps.homeMode && block.id !== "root" ? (
+            <MenuItem
+              icon={CopyIcon}
+              title="Insert a copy below (sub-blocks included; highlight anchors are not copied)"
+              onClick={() => { setHandleMenu(null); rowProps.onDuplicate?.(block.id); }}
+            >Duplicate</MenuItem>
+          ) : null}
+          {!rowProps.homeMode && block.id !== "root" ? (
+            <MenuItem
+              icon={ExportIcon}
+              title="Move this block and its sub-blocks to the end of another page"
+              onClick={() => { setHandleMenu(null); rowProps.onMoveToPage?.(block.id); }}
+            >Move to page…</MenuItem>
+          ) : null}
           {block.id !== "root" ? (
             <MenuItem
               icon={Trash2Icon}
