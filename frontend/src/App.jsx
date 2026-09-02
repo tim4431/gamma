@@ -2074,6 +2074,9 @@ export default function App() {
         if (!inEditor && t && (t.tagName === "INPUT" || t.tagName === "TEXTAREA" || t.isContentEditable)) return;
         const redo = e.key.toLowerCase() === "y" || e.shiftKey;
         const applied = blockHistory.undo(redo, inEditor);
+        if (applied || inEditor || !t || t === document.body) {
+          setStatus(applied ? (redo ? "Redone." : "Undone.") : (redo ? "Nothing to redo." : "Nothing to undo."));
+        }
         // Always swallowed in an editor: the browser's native contenteditable
         // undo would otherwise mutate CodeMirror's DOM behind its back.
         if (inEditor || applied) e.preventDefault();
