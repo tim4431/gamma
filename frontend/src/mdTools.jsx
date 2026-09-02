@@ -396,7 +396,7 @@ export function MdImage({ src, alt, width, idx, onEdit }) {
             if (e.key === "Enter") commitCaption(caption);
             else if (e.key === "Escape") setCaption(null);
           }}
-          onBlur={() => commitCaption(caption)}
+          onBlur={() => { if (document.hasFocus()) commitCaption(caption); }}
         />
       ) : alt ? (
         <span className="mdImgCaption">{alt}</span>
@@ -648,7 +648,9 @@ export function MdTableWrap({ idx, onEdit, model, editKey, children }) {
             else if (e.key === "Escape") { e.preventDefault(); _tableEditSession.delete(editKey); setCellEdit(null); }
             else if (e.key === "Tab") { e.preventDefault(); commitCell(nextCell(cellEdit, e.shiftKey)); }
           }}
-          onBlur={() => commitCell(null)}
+          // Window-level blur (Alt+Tab) keeps the cell session; the browser
+          // refocuses the input when the app returns.
+          onBlur={() => { if (document.hasFocus()) commitCell(null); }}
         />
       ) : null}
       {onEdit ? (

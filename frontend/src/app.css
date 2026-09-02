@@ -737,6 +737,11 @@ body {
 .blockEditorCm .cmBk1 { color: var(--bracket-2); }
 .blockEditorCm .cmBk2 { color: var(--bracket-3); }
 .blockEditorCm .cmBkErr { color: var(--bracket-err); text-decoration: underline wavy var(--bracket-err); }
+/* The \command the caret sits on, inside raw math. */
+.blockEditorCm .cmMathCmdActive {
+  background: var(--bracket-active-bg);
+  border-radius: 2px;
+}
 /* The innermost pair enclosing the caret. */
 .blockEditorCm .cmBkActive {
   background: var(--bracket-active-bg);
@@ -2676,9 +2681,23 @@ button.pdfOutlineChevron:hover { background: rgba(128, 128, 128, 0.28); color: v
   border-top: 1px solid var(--border);
   overflow: hidden;
 }
-/* Chat settings popover (header ⚙): model, effort, context slider */
+/* Chat settings popover (header ⚙): model, effort, context slider, tools */
 .chatSettingsPop { min-width: 250px; }
 .chatSettingsPop .setSlider { padding: 0 4px; }
+/* One tool-permission checkbox row (layout only — shared look via popover) */
+.chatToolPermRow {
+  display: flex;
+  align-items: center;
+  gap: 7px;
+  padding: 3px 6px;
+  font-size: 12px;
+  cursor: pointer;
+  border-radius: 6px;
+  user-select: none;
+}
+.chatToolPermRow:hover { background: color-mix(in srgb, var(--accent-dark) 8%, transparent); }
+.chatToolPermRow input { margin: 0; }
+.chatToolPermRow svg { flex: none; opacity: 0.75; }
 .chatMessages {
   flex: 1;
   overflow-y: auto;

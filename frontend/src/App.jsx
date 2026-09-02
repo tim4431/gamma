@@ -6340,9 +6340,18 @@ export default function App() {
           openPopover={openPopover} setOpenPopover={setOpenPopover}
           setStatus={setStatus}
           organizeFolder={!focusedBlockId && !readOnly ? folderFilter : null}
-          toolRounds={toolRounds} agentReadChars={agentReadChars} agentPerms={agentPerms} agentSystem={agentSystem}
+          toolRounds={toolRounds} agentReadChars={agentReadChars} agentPerms={agentPerms} setAgentPerms={setAgentPerms} agentSystem={agentSystem}
           agentEnabled={agentEnabled} folderToolsDefault={folderToolsDefault} pdfToolsDefault={pdfToolsDefault}
           onLibraryChange={fetchHomeBlocks}
+          onNotesChange={(pageIds) => {
+            // The AI edited note blocks server-side. If the open page is among
+            // them, reload its tree so the change appears — unless the user
+            // typed during the reply: their queued (whole-subtree) save wins,
+            // and reloading now would drop those keystrokes.
+            if (!focusedBlockId || !pageIds.includes(focusedBlockId)) return;
+            if (pendingSaveRef.current) { flushPendingSave(); return; }
+            loadBlocksForBlock(focusedBlockId);
+          }}
         />
       );
     }

@@ -134,7 +134,8 @@ What it can reach depends on where the chat is opened — every chat declares an
 - `"folder"` — the home/folder chat (`folder` = current path, `""` = root):
   tools reach the pages in that folder.
 - `"page"` — the paper chat (`page_id` = the focused page): tools reach only
-  that paper, and only the reading tools exist there.
+  that paper — the reading tools plus the note-block editors; the page-level
+  organizers (list/rename/move) don't exist there.
 
 The request also carries `permissions` (the effective per-chat tool choices,
 initially based on Settings → Assistant → Folder agent — localStorage JSON
@@ -153,11 +154,16 @@ disables tool use everywhere. The "Folder chats"/"PDF chats" toggles set each
 scope's per-chat default (`gamma-ai-folder-tools-default` /
 `gamma-ai-pdf-tools-default`; folder on, PDF off). The Tools
 button (sliders icon) in each folder/PDF chat header toggles the configured tool set for that
-chat only. New chat resets the switch to the Settings default.
+chat only. New chat resets the switch to the Settings default. The chat
+header's ⚙ popover also carries a Tools section — the per-chat switch plus the
+same per-tool permission rows Settings shows (filtered to the chat's scope,
+editing the same stored map; `AGENT_PERM_ROWS` in `settings.jsx`).
 
-One default permission per tool: List pages, Read papers & notes, Search PDF
-text, Rename pages, Move pages. Folder scope offers all five; PDF scope exposes
-only the two reading tools. Plus:
+One permission per capability: List pages, Read papers & notes, Read note
+blocks, Search PDF text, Rename pages, Move pages, and Edit note blocks (one
+toggle arming `edit_block`/`create_block`/`move_block` together). Folder scope
+offers all of them; PDF scope exposes the reading tools and the note-block
+editors. Plus:
 
 - **Tool rounds** (`gamma-ai-tool-rounds` → request `tool_rounds`, default 32,
   user-tunable 1–100) — provider round-trips one message may use.
@@ -178,11 +184,14 @@ the server executes them → results go back → repeat until it answers.
 
 Every tool call streams back as an
 `{"action": {kind, summary, tool, args, result}}` NDJSON line (kinds
-list/read/search/rename/move, plus `error` with `error: true` for
+list/read/search/rename/move/edit/create, plus `error` with `error: true` for
 failed/blocked calls) that the chat renders as a chip and saves in the message
 — clicking a chip expands the arguments and the (truncated, `_DETAIL_CAP`)
-output the model got; only applied rename/move count against
-`MAX_TOOL_ACTIONS` and trigger the home-feed refresh (`onLibraryChange`).
+output the model got; only applied mutations count against
+`MAX_TOOL_ACTIONS` and trigger the home-feed refresh (`onLibraryChange`), and
+the note-block tools' actions carry `page_id`/`src_page_id` so the frontend
+reloads the open page's block tree when the AI touched it (`onNotesChange`;
+skipped when the user typed during the reply — their queued autosave wins).
 
 ### Replay across turns
 

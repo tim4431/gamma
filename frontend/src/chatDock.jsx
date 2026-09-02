@@ -8,13 +8,14 @@ import { API, apiJson, copyText, isPdfFile } from "./utils";
 import { DockWindow, ChatMarkdown, AutoGrowTextarea, useCopied } from "./widgets";
 import { MenuSelect } from "./menus";
 import { CharSlider, approxPages } from "./settingsKit";
+import { AGENT_PERM_ROWS } from "./settings";
 import { AlertCircleIcon, ArrowUpIcon, BookIcon, CheckIcon, ChevronDownIcon, ChevronUpIcon, CopyIcon, FileIcon, FolderIcon, InfoIcon, ListIcon, MicIcon, PaperclipIcon, PencilIcon, PlusIcon, SearchIcon, SettingsIcon, SlidersIcon, StopIcon, XIcon } from "./icons";
 
 // Folder-agent tool chips: icon per action kind; rename/move are the kinds
 // that changed the library (they trigger the home-feed refresh). Every chip
 // carries the raw call the server ran (tool/args/result, both truncated), so
 // clicking one expands the arguments and the output the model saw.
-const ACTION_ICONS = { rename: PencilIcon, move: FolderIcon, search: SearchIcon, read: BookIcon, list: ListIcon, error: XIcon };
+const ACTION_ICONS = { rename: PencilIcon, move: FolderIcon, search: SearchIcon, read: BookIcon, list: ListIcon, edit: PencilIcon, create: PlusIcon, error: XIcon };
 // What the model was given for a reply, per document — streamed by
 // /api/ai/chat as its first line and saved on the message. Shown only when
 // it matters: the paper was truncated, or the PDF file was requested but the
@@ -52,7 +53,10 @@ function ContextCoverage({ items }) {
   );
 }
 
-const MUTATING_KINDS = new Set(["rename", "move"]);
+const MUTATING_KINDS = new Set(["rename", "move", "edit", "create"]);
+// The note-block mutators: their actions carry the page id(s) they touched,
+// so the open page's block tree can reload and show the change.
+const BLOCK_TOOLS = new Set(["edit_block", "create_block", "move_block"]);
 const toolCallText = (a) => {
   const args = Object.entries(a.args || {}).map(([k, v]) => `${k}: ${v}`).join(", ");
   const head = `${a.tool || a.kind}(${args})`;
@@ -72,11 +76,12 @@ export default function ChatDock({
   setStatus,
   // Home/folder view: the folder path being viewed ("" = library root) —
   // enables the folder-agent tools; null in the paper view. agentPerms is the
-  // Settings per-tool permission map ({list, read, search, rename, move}) and
+  // Settings per-tool permission map ({list, read, block_read, search, rename,
+  // move, block_edit}; setAgentPerms edits it from the ⚙ popover) and
   // toolRounds the round budget. When the AI applied changes, onLibraryChange
-  // refreshes the home feed.
-  organizeFolder = null, toolRounds, agentReadChars, agentPerms, agentSystem,
-  agentEnabled, folderToolsDefault, pdfToolsDefault, onLibraryChange,
+  // refreshes the home feed and onNotesChange reloads touched pages' notes.
+  organizeFolder = null, toolRounds, agentReadChars, agentPerms, setAgentPerms, agentSystem,
+  agentEnabled, folderToolsDefault, pdfToolsDefault, onLibraryChange, onNotesChange,
   onGrip, onGripDoubleClick, collapsed, onClose,
 }) {
   const [chatMessages, setChatMessages] = useState([]);
@@ -112,16 +117,16 @@ export default function ChatDock({
     return next;
   });
   // What the agent may do here after applying the chat-local switches.
-  const agentReads = perm("list") || perm("read") || perm("search");
-  const agentWrites = perm("rename") || perm("move");
+  const agentReads = perm("list") || perm("read") || perm("block_read") || perm("search");
+  const agentWrites = perm("rename") || perm("move") || perm("block_edit");
   // Agent fields riding on /api/ai/chat ({} = plain chat): folder chats reach
-  // the folder's pages, paper chats get the read tools (read_page /
-  // search_pdfs) for their own paper.
+  // the folder's pages, paper chats get the read + note-block tools for their
+  // own paper.
   const agentPayload = () => {
     if (!toolsEnabled) return {};
     const scope = organizeFolder != null && (agentReads || agentWrites)
       ? { agent_scope: "folder", folder: organizeFolder }
-      : focusedBlockId && (perm("read") || perm("search"))
+      : focusedBlockId && (perm("read") || perm("block_read") || perm("search") || perm("block_edit"))
         ? { agent_scope: "page", page_id: focusedBlockId }
         : null;
     return scope
@@ -133,7 +138,7 @@ export default function ChatDock({
   const agentScopeName = organizeFolder ? "this folder" : "your library";
   const agentIntro = organizeFolder == null || !toolsEnabled ? null
     : agentWrites
-      ? `Ask AI anything — it can ${agentReads ? "read, search and " : ""}organize ${agentScopeName} (rename papers, file them into folders)…`
+      ? `Ask AI anything — it can ${agentReads ? "read, search and " : ""}organize ${agentScopeName} (rename papers, file them into folders${perm("block_edit") ? ", edit notes" : ""})…`
       : agentReads
         ? `Ask AI across ${organizeFolder ? "this folder's papers" : "your library"} — it can read, search and summarize them…`
         : null;
@@ -459,9 +464,15 @@ export default function ChatDock({
       setChatLoading(false);
       setChatLoadingKey("");
       chatAbortRef.current = null;
-      // Agent tools renamed/moved pages — reload the home feed. Read-only
+      // Agent tools changed the library — reload the home feed. Read-only
       // tool calls (list/read/search) render as chips but change nothing.
       if (actions.some((a) => MUTATING_KINDS.has(a.kind))) onLibraryChange?.();
+      // Note-block edits carry the page(s) they touched, so the open page's
+      // block tree can reload and show the change.
+      const notePages = [...new Set(actions
+        .filter((a) => !a.error && BLOCK_TOOLS.has(a.tool))
+        .flatMap((a) => [a.page_id, a.src_page_id].filter(Boolean)))];
+      if (notePages.length) onNotesChange?.(notePages);
     }
   }
 
@@ -691,6 +702,26 @@ export default function ChatDock({
                   <div className="popoverHint">
                     Extracted PDF text sent with each message. The multi-paper total and the agent's read window are in Settings → Assistant.
                   </div>
+                  <div className="popoverSection">Tools</div>
+                  <label className="chatToolPermRow" title={agentEnabled
+                    ? "Same as the Tools button — on for this conversation only"
+                    : "Agent tools are disabled in Settings → Assistant"}>
+                    <input type="checkbox" checked={toolsEnabled} disabled={!agentEnabled}
+                      onChange={toggleToolsForChat} />
+                    <SlidersIcon size={13} />
+                    <span>Enable tools for this chat</span>
+                  </label>
+                  {AGENT_PERM_ROWS
+                    .filter((row) => (row[4] || []).includes(folderChat ? "folder" : "page"))
+                    .map(([key, Icon, label, hint]) => (
+                      <label key={key} className="chatToolPermRow"
+                        title={`${hint}. Shared with Settings → Assistant — applies to every chat.`}>
+                        <input type="checkbox" checked={perm(key)}
+                          onChange={(e) => setAgentPerms?.((p) => ({ ...p, [key]: e.target.checked }))} />
+                        <Icon size={13} />
+                        <span>{label}</span>
+                      </label>
+                    ))}
                 </div>
               ) : null}
             </span>

@@ -34,8 +34,10 @@ import {
   MonitorIcon,
   MoonIcon,
   MoveVerticalIcon,
+  OutlineIcon,
   PaperIcon,
   PenIcon,
+  PencilIcon,
   RectSelectIcon,
   RefreshIcon,
   ScissorsIcon,
@@ -851,17 +853,24 @@ function PromptsSettings({ value }) {
   );
 }
 
-// The folder agent's capabilities, one toggle per tool (see docs/dev/ai_tools.md).
-const AGENT_PERM_ROWS = [
+// The agent's capabilities, one toggle per permission (see docs/dev/ai_tools.md).
+// [key, icon, label, hint, scopes] — scopes says which chats offer it
+// ("folder" = library/folder chat, "page" = paper chat). Exported because the
+// chat header's ⚙ popover renders the same rows, editing the same stored map.
+export const AGENT_PERM_ROWS = [
   ["list", ListIcon, "List pages",
-   "See the folder's page titles, labels and metadata"],
+   "See the folder's page titles, labels and metadata", ["folder"]],
   ["read", BookIcon, "Read papers & notes",
-   "Read a paper's text plus your highlights and notes"],
+   "Read a paper's text plus your highlights and notes", ["folder", "page"]],
+  ["block_read", OutlineIcon, "Read note blocks",
+   "Read a page's note outline with block ids", ["folder", "page"]],
   ["search", SearchIcon, "Search PDF text",
-   "Full-text search across the folder's PDFs"],
-  ["rename", PenIcon, "Rename pages", "Change page titles on request"],
+   "Full-text search across the folder's PDFs", ["folder", "page"]],
+  ["rename", PenIcon, "Rename pages", "Change page titles on request", ["folder"]],
   ["move", FolderIcon, "Move pages",
-   "File pages into folders (a new path creates the folder)"],
+   "File pages into folders (a new path creates the folder)", ["folder"]],
+  ["block_edit", PencilIcon, "Edit note blocks",
+   "Edit, create and move note blocks on request (never deletes)", ["folder", "page"]],
 ];
 
 function AssistantSettings({ value }) {

@@ -14,7 +14,7 @@ import {
 import { defaultKeymap, history, historyKeymap } from "@codemirror/commands";
 import { findMathAtCursor, renderKatex } from "./latexEditor";
 import { calloutType } from "./callouts";
-import { highlightCode, makeCopyButton, scanFences } from "./codeHighlight";
+import { fenceInnerAt, highlightCode, makeCopyButton, scanFences } from "./codeHighlight";
 
 // All CLOSED math spans in the text: [{from, to, display}] with from/to
 // including the delimiters. Same tokenizer as latexEditor's findMathAtCursor
@@ -268,6 +268,16 @@ function buildInlineDecos(state, labelsRef) {
       ranges.push(Decoration.mark({ class: cls }).range(pr.close, pr.close + 1));
     }
     for (const p of loose) ranges.push(Decoration.mark({ class: "cmBkErr" }).range(p, p + 1));
+    // The \command the caret sits on lights up, like the active bracket pair.
+    if (sel.empty) {
+      for (const m of text.slice(r.from, r.to).matchAll(/\\[a-zA-Z]+/g)) {
+        const from = r.from + m.index, to = from + m[0].length;
+        if (sel.head >= from && sel.head <= to) {
+          ranges.push(Decoration.mark({ class: "cmMathCmdActive" }).range(from, to));
+          break;
+        }
+      }
+    }
   }
 
   for (const m of text.matchAll(/!?\[\[([a-zA-Z0-9_-]+)\]\]/g)) {
@@ -438,6 +448,73 @@ function inlineRenderField(labelsRef) {
 // exactly like it talked to the textarea (value / selectionStart / focus /
 // setSelectionRange / getBoundingClientRect), plus caretCoords(index) which
 // replaces the hidden-mirror caret measurement.
+// --- "$" auto-pairing --------------------------------------------------------
+// Typing "$" closes the pair ("$|$"); typing "$" again inside the fresh empty
+// pair upgrades it to display math ("$$|$$"); with text selected "$" wraps it;
+// a "$" typed right before an existing "$" types over instead of doubling the
+// closer. Inside ``` code a "$" is a shell variable and an escaped "\$" a
+// literal dollar — both stay plain.
+// A caret between two dollars is textually ambiguous: "$|$" could be the
+// fresh pair the previous keystroke auto-closed (where another "$" should
+// upgrade to "$$|$$") or the two CLOSERS of "$$…$$" being typed over (where
+// doubling them would corrupt the formula). Only the auto-close itself knows,
+// so it leaves a marker that the very next "$" at the same spot consumes.
+const _freshPair = new WeakMap(); // view → {pos, len}
+
+const dollarPairing = EditorView.inputHandler.of((view, from, to, insert) => {
+  if (insert !== "$") return false;
+  const doc = view.state.doc.toString();
+  if (fenceInnerAt(doc, from) || doc[from - 1] === "\\") return false;
+  const sel = view.state.selection.main;
+  if (!sel.empty) {
+    view.dispatch({
+      changes: [{ from: sel.from, insert: "$" }, { from: sel.to, insert: "$" }],
+      selection: { anchor: sel.from + 1, head: sel.to + 1 },
+      userEvent: "input.type",
+    });
+    return true;
+  }
+  const next = doc[from];
+  const fp = _freshPair.get(view);
+  if (doc[from - 1] === "$" && next === "$"
+    && fp && fp.pos === from && fp.len === doc.length) {
+    _freshPair.delete(view);
+    view.dispatch({                          // fresh "$|$" → "$$|$$"
+      changes: [{ from, insert: "$" }, { from: from + 1, insert: "$" }],
+      selection: { anchor: from + 1 },
+      userEvent: "input.type",
+    });
+    return true;
+  }
+  if (next === "$") {                        // type over an existing closer
+    view.dispatch({ selection: { anchor: from + 1 }, userEvent: "select" });
+    return true;
+  }
+  view.dispatch({
+    changes: { from, to, insert: "$$" },
+    selection: { anchor: from + 1 },
+    userEvent: "input.type",
+  });
+  _freshPair.set(view, { pos: from + 1, len: view.state.doc.length });
+  return true;
+});
+
+// Backspace between the dollars of an empty pair deletes both — "$$|$$"
+// steps down to "$|$" first, then to nothing.
+const dollarBackspace = keymap.of([{
+  key: "Backspace",
+  run: (view) => {
+    const sel = view.state.selection.main;
+    if (!sel.empty) return false;
+    if (view.state.doc.sliceString(sel.head - 1, sel.head + 1) !== "$$") return false;
+    view.dispatch({
+      changes: { from: sel.head - 1, to: sel.head + 1 },
+      userEvent: "delete.backward",
+    });
+    return true;
+  },
+}]);
+
 const BlockCmEditor = React.forwardRef(function BlockCmEditor({
   value, onChange, onSelect, onKeyDown, onBlur, onPaste,
   placeholder, autoFocus, clickPos, dataBlockId, className, refLabels,
@@ -493,8 +570,15 @@ const BlockCmEditor = React.forwardRef(function BlockCmEditor({
         Prec.highest(EditorView.domEventHandlers({
           keydown: (e) => { cbRef.current.onKeyDown?.(e); return e.defaultPrevented; },
           paste: (e) => { cbRef.current.onPaste?.(e); return e.defaultPrevented; },
-          blur: () => { cbRef.current.onBlur?.(); },
+          // Alt+Tab / app switch blurs the element too, but it stays
+          // document.activeElement and the browser refocuses it on return —
+          // only a blur while the window itself has focus (clicking away)
+          // closes the editing session. Content is safe either way: every
+          // keystroke already went through onChange → debounced autosave.
+          blur: () => { if (document.hasFocus()) cbRef.current.onBlur?.(); },
         })),
+        dollarPairing,
+        dollarBackspace,
         keymap.of([...historyKeymap, ...defaultKeymap]),
         cmPlaceholder(placeholder || ""),
         chipCompartment.of(inlineRenderField(labelsRef)),
