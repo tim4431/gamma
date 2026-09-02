@@ -5,14 +5,15 @@
 // previous committed tree:
 //   - loads (the caller flagged the transition with `loadRef`, the same flag
 //     that stops the autosave) and undo/redo applications are never recorded;
-//   - typing inside an open editor (content of a block whose editMode is on),
-//     opening/closing editors and collapse toggles are not edits — in-editor
-//     undo stays CodeMirror's own;
+//   - opening/closing editors and collapse toggles are not edits;
 //   - everything else (add/delete/move/indent, property changes such as a
-//     highlight colour or link, content rewritten from the rendered view —
-//     checkboxes, table cells, image size) pushes the previous tree.
-// Consecutive content-only edits of the same block within EDIT_MERGE_MS
-// collapse into one entry, so a drag or a run of quick toggles undoes as one.
+//     highlight colour or link, any content change — typing, checkboxes,
+//     table cells, image size) pushes the previous tree.
+// Consecutive content-only edits of the same block merge into one entry:
+// for as long as the block's editor stays open (one editing session = one
+// entry, so leaving a block and pressing Ctrl+Z retracts what was typed
+// there — inside the editor Ctrl+Z is still CodeMirror's fine-grained
+// history), and otherwise within EDIT_MERGE_MS (a drag, a run of toggles).
 //
 // The block-tree helpers never mutate in place, so the previous tree is kept
 // by reference; editMode is stripped when a snapshot is restored so undoing
@@ -48,9 +49,7 @@ function classify(prev, next) {
     const a = prev[i], b = next[i];
     if (a === b) continue;
     if (a.id !== b.id) return true;
-    if (a.content !== b.content && !a.editMode && !b.editMode) {
-      only = only === null ? a.id : true;
-    }
+    if (a.content !== b.content) only = only === null ? a.id : true;
     if (!propsEqual(a.properties, b.properties)) return true;
     const sub = classify(a.children || [], b.children || []);
     if (sub === true) return true;
@@ -58,6 +57,14 @@ function classify(prev, next) {
     if (only === true) return true;
   }
   return only;
+}
+
+function isEditing(list, id) {
+  for (const b of list || []) {
+    if (b.id === id) return !!b.editMode;
+    if (isEditing(b.children, id)) return true;
+  }
+  return false;
 }
 
 function stripEditMode(list) {
@@ -88,13 +95,21 @@ export function useBlockHistory(blocks, setBlocks, { loadRef, pageId, enabled })
     if (intent === "undo") { s.redo.push(prev); return; }
     if (intent === "redo") { s.undo.push(prev); return; }
     const kind = classify(prev, blocks);
-    if (kind === null) return;
-    const now = Date.now();
-    if (kind !== true && s.lastEdit?.id === kind && now - s.lastEdit.at < EDIT_MERGE_MS) {
-      s.lastEdit.at = now;
+    if (kind === null) {
+      // The editor of the block being merged into closed: the session ends.
+      if (s.lastEdit?.editing && !isEditing(blocks, s.lastEdit.id)) s.lastEdit = null;
       return;
     }
-    s.lastEdit = kind === true ? null : { id: kind, at: now };
+    const now = Date.now();
+    if (kind !== true && s.lastEdit?.id === kind) {
+      const editing = isEditing(blocks, kind);
+      if ((s.lastEdit.editing && editing) || now - s.lastEdit.at < EDIT_MERGE_MS) {
+        s.lastEdit.at = now;
+        s.lastEdit.editing = editing;
+        return;
+      }
+    }
+    s.lastEdit = kind === true ? null : { id: kind, at: now, editing: isEditing(blocks, kind) };
     s.undo.push(prev);
     if (s.undo.length > MAX_ENTRIES) s.undo.shift();
     s.redo = [];
