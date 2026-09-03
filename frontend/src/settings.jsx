@@ -2,7 +2,7 @@ import React from "react";
 import { API, apiJson, fmtBytes, copyText, isUnverifiedPaperMeta } from "./utils";
 import { MenuSelect } from "./menus";
 import {
-  PaneHead, Section, Row, Toggle, Segmented, UnitInput, CharSlider, approxPages,
+  PaneHead, Section, Row, Toggle, Segmented, ToggleGroup, UnitInput, CharSlider, approxPages,
   Stat, Empty, QuotaMeter,
 } from "./settingsKit";
 import { AiSettings } from "./settingsAi";
@@ -853,25 +853,50 @@ function PromptsSettings({ value }) {
   );
 }
 
-// The agent's capabilities, one toggle per permission (see docs/dev/ai_tools.md).
-// [key, icon, label, hint, scopes] — scopes says which chats offer it
-// ("folder" = library/folder chat, "page" = page chat). Exported because the
-// chat header's ⚙ popover renders the same rows, editing the same stored map.
+// The agent's capabilities, one chip per permission (see docs/dev/ai_tools.md).
+// [key, icon, label, hint, scopes, short] — scopes says which agent scopes
+// offer it ("folder" = library/folder chat, "page" = page chat), short is
+// the chip name in the ToggleGroup.
 export const AGENT_PERM_ROWS = [
   ["list", ListIcon, "List pages",
-   "See the folder's page titles, labels and metadata", ["folder"]],
+   "See the folder's page titles, labels and metadata", ["folder"], "List"],
   ["read", BookIcon, "Read pages",
-   "Read a page's PDF text plus your highlights and notes", ["folder", "page"]],
+   "Read a page's PDF text plus your highlights and notes", ["folder", "page"], "Read"],
   ["block_read", OutlineIcon, "Read note blocks",
-   "Read a page's note outline with block ids", ["folder", "page"]],
+   "Read a page's note outline with block ids", ["folder", "page"], "Blocks"],
   ["search", SearchIcon, "Search",
-   "Full-text search across the folder's notes and PDFs", ["folder", "page"]],
-  ["rename", PenIcon, "Rename pages", "Change page titles on request", ["folder"]],
+   "Full-text search across the folder's notes and PDFs", ["folder", "page"], "Search"],
+  ["rename", PenIcon, "Rename pages", "Change page titles on request", ["folder"], "Rename"],
   ["move", FolderIcon, "Move pages",
-   "File pages into folders (a new path creates the folder)", ["folder"]],
+   "File pages into folders (a new path creates the folder)", ["folder"], "Move"],
   ["block_edit", PencilIcon, "Edit note blocks",
-   "Edit, create and move note blocks on request (never deletes)", ["folder", "page"]],
+   "Edit, create and move note blocks on request (never deletes)", ["folder", "page"], "Edit"],
 ];
+
+// The three chat kinds, each with its own permission map (prefs.js
+// CHAT_KINDS): [kind, icon, label, hint, agent scope].
+export const CHAT_KIND_ROWS = [
+  ["folder", FolderIcon, "Folder chat", "Home and folder views — the library organizer", "folder"],
+  ["pdf", FileTextIcon, "PDF chat", "A page with a PDF attached", "page"],
+  ["notes", OutlineIcon, "Notes chat", "A page of notes without a PDF", "page"],
+];
+
+// One chat kind's tool chips (a ToggleGroup) bound to the stored permission
+// map — the Settings pane and the chat header's ⚙ popover render this same
+// control over the same map, so a change in one is the change in the other.
+export function AgentToolPicker({ kind, perms, setPerms, disabled }) {
+  const scope = CHAT_KIND_ROWS.find((r) => r[0] === kind)?.[4] || "page";
+  const map = perms?.[kind] || {};
+  const rows = AGENT_PERM_ROWS.filter((r) => r[4].includes(scope));
+  return (
+    <ToggleGroup
+      disabled={disabled}
+      options={rows.map(([key, Icon, label, hint, , short]) => [key, short, Icon, `${label} — ${hint}`])}
+      selected={rows.filter(([key]) => map[key] !== false).map(([key]) => key)}
+      onToggle={(key, on) => setPerms((p) => ({ ...p, [kind]: { ...(p?.[kind] || {}), [key]: on } }))}
+    />
+  );
+}
 
 function AssistantSettings({ value }) {
   const shared = "Extracted PDF text is measured in characters. Larger budgets can improve answers but cost more tokens.";
@@ -901,13 +926,11 @@ function AssistantSettings({ value }) {
         />
       </Section>
       <Section title="Tool configuration">
-        {AGENT_PERM_ROWS.map(([key, icon, label, hint]) => (
-          <Toggle
-            key={key} icon={icon} label={label} hint={hint}
-            title={`Allowed whenever a chat's Tools switch is on. ${hint}. Whatever tools return is sent to your configured AI provider; every tool call is shown in the reply.`}
-            checked={value.agentPerms?.[key] !== false}
-            onChange={(v) => value.setAgentPerms((p) => ({ ...p, [key]: v }))}
-          />
+        {CHAT_KIND_ROWS.map(([kind, icon, label, hint]) => (
+          <Row key={kind} icon={icon} label={label} hint={hint}
+            title={`The tools a ${label.toLowerCase()} may use whenever its Tools switch is on — click a chip to allow or forbid it. Whatever tools return is sent to your configured AI provider; every tool call is shown in the reply.`}>
+            <AgentToolPicker kind={kind} perms={value.agentPerms} setPerms={value.setAgentPerms} />
+          </Row>
         ))}
         <Row icon={RefreshIcon} label="Tool rounds"
           hint="AI ↔ tool round-trips per message"

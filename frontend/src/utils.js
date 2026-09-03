@@ -296,4 +296,22 @@ async function probePdfUrl(sourceUrl) {
   try { await r.body?.cancel(); } catch {}
 }
 
-export { API, makeId, fmtBytes, sha256, getDocIdForUrl, isPdfFile, isMarkdownFile, isUnverifiedPaperMeta, apiJson, withShare, importZoteroZip, resolvePdfUrl, pdfProxyUrl, probePdfUrl, setExpectedUser, getExpectedUser, usePersistedState, usePersistedFlag, copyText, copyRich };
+// Read an NDJSON response as it arrives: `onBatch(events)` once per network
+// chunk with the JSON objects of the lines it completed (a trailing partial
+// line waits for its rest). Throwing from onBatch ends the read.
+async function readNdjson(res, onBatch) {
+  const reader = res.body.getReader();
+  const decoder = new TextDecoder();
+  let buf = "";
+  for (;;) {
+    const { done, value } = await reader.read();
+    if (done) break;
+    buf += decoder.decode(value, { stream: true });
+    const lines = buf.split("\n");
+    buf = lines.pop();
+    const events = lines.filter((l) => l.trim()).map((l) => JSON.parse(l));
+    if (events.length) onBatch(events);
+  }
+}
+
+export { API, makeId, fmtBytes, sha256, getDocIdForUrl, isPdfFile, isMarkdownFile, isUnverifiedPaperMeta, apiJson, withShare, importZoteroZip, resolvePdfUrl, pdfProxyUrl, probePdfUrl, setExpectedUser, getExpectedUser, usePersistedState, usePersistedFlag, copyText, copyRich, readNdjson };

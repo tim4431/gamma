@@ -1555,25 +1555,29 @@ function SortableBlockRow({ block, ...rowProps }) {
 
   return (
     <div className="sortableBlockWrap" data-block-id={block.id} data-depth={depth}>
-      {block.id !== "root" && rowProps.onEnterSibling && !rowProps.readOnly ? (
-        <button
-          type="button"
-          className="addHandle"
-          onClick={onAddClick}
-          onMouseDown={(e) => e.preventDefault()}
-          aria-label="Add a block below (Alt+click: above)"
-          title={"Click to add a block below\nAlt+click to add above"}
-        ><PlusIcon size={15} strokeWidth={2} /></button>
-      ) : null}
-      <span
-        className="dragHandle"
-        draggable="true"
-        onDragStart={onDragStart}
-        onDragEnd={onDragEnd}
-        onClick={onHandleClick}
-        aria-label="Drag to move, click for menu"
-        title="Drag to move · click for menu"
-      >⋮⋮</span>
+      {/* One narrow gutter column: ⋮⋮ (drag / menu) with the "+" (add a
+          block) sitting right under it, shown only while the row is hovered. */}
+      <span className="rowHandles">
+        <span
+          className="dragHandle"
+          draggable="true"
+          onDragStart={onDragStart}
+          onDragEnd={onDragEnd}
+          onClick={onHandleClick}
+          aria-label="Drag to move, click for menu"
+          title="Drag to move · click for menu"
+        >⋮⋮</span>
+        {block.id !== "root" && rowProps.onEnterSibling && !rowProps.readOnly ? (
+          <button
+            type="button"
+            className="addHandle"
+            onClick={onAddClick}
+            onMouseDown={(e) => e.preventDefault()}
+            aria-label="Add a block below (Alt+click: above)"
+            title={"Click to add a block below\nAlt+click to add above"}
+          ><PlusIcon size={15} strokeWidth={2} /></button>
+        ) : null}
+      </span>
       {handleMenu ? (
         <ContextMenu x={handleMenu.x} y={handleMenu.y} onClose={() => setHandleMenu(null)}>
           <MenuItem
@@ -1649,10 +1653,8 @@ function joinBlockText(existing, addition, mode) {
 function AiGhostRow({ content, depth }) {
   return (
     <div className="sortableBlockWrap aiGhostWrap" data-depth={depth}>
-      {/* Inert stand-ins for the "+" and ⋮⋮ handle columns, so the card
-          lines up with its siblings' cards. */}
-      <span className="addHandle" aria-hidden="true" style={{ visibility: "hidden", pointerEvents: "none" }} />
-      <span className="dragHandle" aria-hidden="true" style={{ visibility: "hidden", pointerEvents: "none" }} />
+      {/* Inert stand-in for the handle column (hidden in CSS). */}
+      <span className="rowHandles" aria-hidden="true"><span className="dragHandle" /></span>
       <div className="blockRowWrap">
         <div className="blockRow ai-create aiMark0">
           <span className="collapseSpacer" />

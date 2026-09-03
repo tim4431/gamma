@@ -32,7 +32,8 @@ the original is still embedded).
 
 The ⋮ menu's single "Import…" entry → `ImportDialog` in `widgets.jsx`: the
 export dialog's counterpart — pick a source (annotations embedded in this PDF,
-a Logseq .pdf + .edn, or a Zotero library .zip), flip the strip switch (applies
+a Logseq .pdf + .edn, a Zotero library .zip, Markdown notes — one `.md` or a
+`.zip` such as a Notion export, or a Gamma export .zip), flip the strip switch (applies
 to embedded annotations, including the ones inside Zotero's exported PDFs),
 confirm. Zotero is the default source (a numbered step guide reusing
 settingsKit's `Step`); with a PDF open, that PDF's own annotations win. Nothing
@@ -42,14 +43,69 @@ setting stays the standing policy.
 ## Plain Markdown uploads
 
 The add menu's file picker, directory picker, and whole-window file drop all
-accept `.md` / `.markdown` alongside PDFs. `POST /api/import/markdown` decodes
+accept `.md` / `.markdown` alongside PDFs, and the Import dialog's "Markdown
+notes" source takes one `.md` too. `POST /api/import/markdown` decodes
 UTF-8 (5 MB cap), reduces any browser-supplied relative upload path to its
 filename leaf, uses a YAML-frontmatter `title` or that filename's stem as the
-note-page title, and converts the document into nested Gamma blocks through
+note-page title (a front-matter `folder:` files the page below the upload's
+folder), and converts the document into nested Gamma blocks through
 `gamma/markdown_import.py`. Headings and indented lists retain hierarchy;
 paragraphs, fenced code, math and other Markdown stay as raw block content for
-the normal editor renderer. In mixed folder uploads, Markdown note pages and
-PDF pages receive the same subfolder labels; unsupported files are skipped.
+the normal editor renderer. Lines indented under a list item continue that
+item — directly below it, or after a blank line when aligned with the item's
+text — which is how the Markdown export writes a multi-line block (a fence or
+`$$` opened that way swallows its lines, blank ones included); text indented
+deeper after a blank line becomes a child block, which is how Notion exports a
+toggle's content. In mixed folder uploads, Markdown note pages and PDF pages
+receive the same subfolder labels; unsupported files are skipped.
+
+## Markdown zips: Notion exports, Gamma exports, zipped notes
+
+`POST /api/import/markdown-zip` (Import dialog → "Markdown notes", pick a
+`.zip`; `gamma/markdown_zip_import.py`) turns a zip of `.md` files into one
+page per file. One logic covers Notion's Export → "Markdown & CSV" (with
+subpages), Gamma's own Markdown export and any zipped folder of notes,
+because the three only differ in naming conventions:
+
+- **Title**: front-matter `title`, else the leading `# H1` (stripped from
+  the body — Notion and Gamma both write one), else the filename with
+  Notion's `Title <32-hex id>` suffix removed.
+- **Folders**: directories become folder labels, ids stripped. Notion puts
+  a page's subpages (and its images) in a folder named after the page, so
+  the Notion page tree becomes the folder tree. A front-matter `folder:`
+  wins over the directory; the dialog's target folder (the open library
+  folder) prefixes everything. One common root directory (a zipped folder)
+  and Notion's `Export-<uuid>/` wrappers are dropped; Notion's `Part-N.zip`
+  members (big exports) are read in place.
+- **Links**: a relative link to another `.md` in the zip becomes a
+  `[[page]]` mention of the page it produced (Notion's percent-encoded
+  `[Sub](Parent%20<id>/Sub%20<id>.md)`, Gamma's `[label](Page-id.md)` and
+  `*(from [title](file.md))*` alike); a link or image pointing at a bundled
+  file uploads it (`store_file`, content-hash dedup, storage limits per file
+  — an over-limit file is a warning and the link stays as typed) and points
+  at `/api/uploads/…`. Other links stay as typed.
+- **Notion specifics**: a database `Name <id>.csv` becomes a page holding
+  the table (`_all.csv` preferred when both exist — it has every row; capped
+  at 500 rows × 40 columns) and its row pages `Name <id>/Row <id>.md` land in
+  the folder of that name; `<aside>` callouts become `> [!info]` callouts;
+  the row pages' `Property: value` lines stay as text.
+- **Gamma specifics**: the front matter's `source:` restores the PDF when it
+  is bundled (`assets/<sha>.pdf` → `doc_id`/`source_url`, the page becomes a
+  paper again) or the remote URL when it isn't; `doi`/`authors`/`year` →
+  `properties.meta` (`source: manual`), the ```` ```bibtex ```` block →
+  `properties.bibtex`. Highlights come back as their quote blocks, not as
+  positioned highlights — the Gamma format (`?mode=gamma`) is the lossless
+  route; Markdown is for notes and for other apps.
+- **Idempotent**: a `.md` already imported (same bytes — `markdown_import`
+  digest — or the same `notion_id`) is skipped, and links to it resolve to
+  the existing page, so re-importing an export adds nothing.
+
+The report (`pages_created`, `pages_skipped`, `assets_stored`,
+`links_resolved`, `notion`, `pages`, `warnings`) feeds the status line;
+warnings go to the browser console. To make the round trip work the
+Markdown export writes the page's folder label into the front matter
+(`folder:`), relative to the exported folder — a folder export's root pages
+carry none — so importing the zip into a folder rebuilds the same tree there.
 
 ## Zotero library import
 
@@ -139,7 +195,9 @@ text lives in the `EXPORT_SWITCH_TEXT` table), remembered in `localStorage`
 (`gamma-export-opts`). The switches are query flags on two endpoints:
 `/pages/{id}/export?mode=readable&highlights=&notes=&pdf=` (Markdown,
 `render_readable` in `markdown_export.py`; dropping highlights keeps a
-highlight block's own text as a plain bullet; image sizes export in the
+highlight block's own text as a plain bullet; the front matter carries the
+page's folder label relative to the exported folder so the zip re-imports
+into the same tree; image sizes export in the
 Obsidian dialect — `obsidian_image_sizes` rewrites any legacy `{:width N}`
 to `![alt|N](url)`. Block links resolve against the export set
 (`resolve_block_links` + `_MarkdownBuilder.begin`'s page-id → filename map):

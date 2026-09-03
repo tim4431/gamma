@@ -252,7 +252,8 @@ class _MarkdownBuilder(_Builder):
     def add_page(self, n, rows, page):
         md, page_assets = collect_and_rewrite(
             render_readable(page, highlights=self.opts["highlights"], notes=self.opts["notes"],
-                            resolve_ref=self.resolve_ref, page_file=self.filenames.get),
+                            resolve_ref=self.resolve_ref, page_file=self.filenames.get,
+                            folder_scope=self.opts.get("folder_scope")),
             include_pdf=self.opts["pdf"])
         self.assets |= page_assets
         arcname = self.filenames.get(page["id"]) \

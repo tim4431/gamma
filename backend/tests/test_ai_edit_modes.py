@@ -1,8 +1,8 @@
 """edit_block modes: replace (default), append, prepend — the addition is
 joined on its own line, existing text untouched, and the action says which."""
-import json
 
 import pytest
+from conftest import login, make_user
 
 from gamma.ai_tools import join_block_text, run_agent_tool
 
@@ -25,22 +25,8 @@ USER = "modes_user"
 @pytest.fixture(scope="module")
 def page(client):
     """A non-guest user (the tools take a username) with one page."""
-    import bcrypt
-    from fastapi.testclient import TestClient
-    from gamma.app import app
-    from gamma.db import connect_users_db, page_now
-    from gamma.seed import create_user_dbs
-
-    with connect_users_db() as conn:
-        if not conn.execute("SELECT 1 FROM users WHERE username = ?", (USER,)).fetchone():
-            conn.execute(
-                "INSERT INTO users (username, password_hash, is_guest, created_at) VALUES (?, ?, 0, ?)",
-                (USER, bcrypt.hashpw(b"pw", bcrypt.gensalt()).decode(), page_now()),
-            )
-            conn.commit()
-    create_user_dbs(USER)
-    c = TestClient(app)
-    assert c.post("/api/login", json={"username": USER, "password": "pw"}).status_code == 200
+    make_user(USER, "pw")
+    c = login(USER, "pw")
     r = c.post("/api/blocks", json={"parent_id": "root", "content": "modes page",
                                     "properties": {"folder": "modes"}})
     assert r.status_code == 200, r.text

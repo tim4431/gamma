@@ -503,6 +503,7 @@ function ImportDialog({ hasPdf, stripDefault, busy, onCancel, onImport }) {
     annots: "Highlights, notes and boxes saved inside this PDF (a Gamma export, SumatraPDF, Acrobat…) become regular blocks. Importing twice adds nothing — each annotation is matched to the block it already made.",
     logseq: "Pick a Logseq .pdf and its .edn (a .md of notes is optional). The paper and its highlights land in your library as a new page.",
     gamma: "A zip made by another Gamma's Export → Gamma format (a full backup works too). Its pages, files and chats merge into your library — nothing existing is touched, and re-importing the same zip adds nothing.",
+    markdown: "A single .md becomes a note page. A .zip of Markdown — Notion's Export → Markdown & CSV (subpages included), a Gamma Markdown export, or any zipped folder of notes — becomes one page per file: folders become folder labels, links between the notes become mentions, images and files come along. Notes already imported are skipped.",
   };
 
   return (
@@ -516,6 +517,7 @@ function ImportDialog({ hasPdf, stripDefault, busy, onCancel, onImport }) {
             options={[
               ...(hasPdf ? [["annots", "Annotations in this PDF"]] : []),
               ["zotero", "Zotero library (.zip)"],
+              ["markdown", "Markdown notes (.md or .zip, Notion export)"],
               ["logseq", "Logseq highlights (.pdf + .edn)"],
               ["gamma", "Gamma export (.zip)"],
             ]}
@@ -551,7 +553,7 @@ function ImportDialog({ hasPdf, stripDefault, busy, onCancel, onImport }) {
             className="uiBtn primary" disabled={busy}
             onClick={() => onImport(stripApplies ? { source: src, strip } : { source: src })}
           >
-            {src === "annots" ? "Import" : src === "logseq" ? "Choose files…" : "Choose .zip…"}
+            {src === "annots" ? "Import" : src === "logseq" ? "Choose files…" : src === "markdown" ? "Choose file…" : "Choose .zip…"}
           </button>
         </div>
       </div>

@@ -80,6 +80,10 @@ Settings panes are built only from
   stages) or `Field` (caption + hint + one control), closed by a
   `.reportModalBtns` footer.
 - Shared controls: `Segmented` (joined pills for exclusive choices),
+  `ToggleGroup` (its multi-select counterpart: a wrapping row of small
+  icon + short-name chips, each an independent on/off — `uiBtn sm` with the
+  shared `on` state; the agent's per-tool permissions in Settings and in the
+  chat's ⚙ popover are one of these, never a column of checkboxes),
   `UnitInput` (number + unit suffix — units never live in labels),
   `CharSlider` (log-scaled character budget), `Stat`, `Empty`, `QuotaMeter`.
 

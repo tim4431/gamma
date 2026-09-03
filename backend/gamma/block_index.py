@@ -188,6 +188,7 @@ def purge_page_data(user: str, pages_conn: sqlite3.Connection, deleted_ids) -> N
         with connect_data_db(user) as ddb:
             pdf_index.ensure_schema(ddb)
             ddb.executemany("DELETE FROM chats WHERE block_id = ?", [(i,) for i in deleted_ids])
+            ddb.executemany("DELETE FROM chat_history WHERE bucket = ?", [(i,) for i in deleted_ids])
             stale = [r[0] for r in ddb.execute("SELECT doc_id FROM pdf_fts_docs").fetchall()
                      if r[0] not in live_docs]
             for d in stale:

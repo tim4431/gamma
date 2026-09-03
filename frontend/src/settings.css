@@ -144,6 +144,14 @@
 .segGroup .uiBtn:last-child { border-radius: 0 8px 8px 0; }
 .segGroup .uiBtn + .uiBtn { margin-left: -1px; }
 .segGroup .uiBtn.on { z-index: 1; }
+/* ToggleGroup: independent on/off chips (multi-select). Layout only — the
+   chips are plain uiBtn sm with the shared .on state. */
+.toggleGroup { display: inline-flex; flex-wrap: wrap; justify-content: flex-end; gap: 4px; }
+.toggleGroup .uiBtn { padding: 4px 9px; min-height: 26px; }
+/* A chip row's control column is capped so a long set wraps onto a second
+   line instead of squeezing the label + hint column. */
+.setRow:has(> .toggleGroup) { grid-template-columns: 28px minmax(0, 1fr) minmax(0, 340px); }
+.setRow > .toggleGroup { justify-self: end; }
 
 /* --- card: a full-width block that is a reading, not a control --- */
 .setCard {
