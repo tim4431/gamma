@@ -6736,7 +6736,7 @@ export default function App() {
           openAiKeysEditor={openAiKeysEditor}
           aiHealth={aiHealth} dismissAiHealth={() => setAiHealth(null)}
           openPopover={openPopover} setOpenPopover={setOpenPopover}
-          setStatus={setStatus}
+          setStatus={setStatus} askConfirm={setConfirmBox}
           organizeFolder={!focusedBlockId && !shareMode ? folderFilter : null}
           toolRounds={toolRounds} agentReadChars={agentReadChars} agentPerms={agentPerms} setAgentPerms={setAgentPerms} agentSystem={agentSystem}
           agentEnabled={agentEnabled}

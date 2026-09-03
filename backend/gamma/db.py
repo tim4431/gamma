@@ -101,7 +101,14 @@ PAGES_SCHEMA = [
 # prefs = small JSON UI state synced across browsers (open tabs, ...) — no
 # secrets: data.db is included verbatim in /api/export backups.
 DATA_SCHEMA = [
+    # chats = the ACTIVE conversation per bucket (page id / "home" /
+    # "home:<folder>"); `title` is added lazily below (older DBs lack it).
     "CREATE TABLE IF NOT EXISTS chats (block_id TEXT PRIMARY KEY, messages TEXT NOT NULL, updated_at TEXT NOT NULL)",
+    # chat_history = earlier conversations of a bucket ("New chat" archives
+    # the active one here; opening an entry swaps it back into `chats`).
+    "CREATE TABLE IF NOT EXISTS chat_history (id TEXT PRIMARY KEY, bucket TEXT NOT NULL, "
+    "title TEXT NOT NULL DEFAULT '', messages TEXT NOT NULL, created_at TEXT NOT NULL, updated_at TEXT NOT NULL)",
+    "CREATE INDEX IF NOT EXISTS chat_history_bucket ON chat_history (bucket, updated_at)",
     "CREATE TABLE IF NOT EXISTS prefs (key TEXT PRIMARY KEY, value TEXT NOT NULL, updated_at TEXT NOT NULL)",
     # page_snaps = the recents-card cover thumbnails (small JPEG data URLs
     # captured client-side from the rendered viewer), synced across devices.
@@ -118,6 +125,10 @@ def connect_data_db(username: str) -> sqlite3.Connection:
     conn = sqlite3.connect(str(USERS_DIR / username / "data.db"))
     for stmt in DATA_SCHEMA:
         conn.execute(stmt)
+    # Additive column on the pre-existing chats table (SQLite has no
+    # ADD COLUMN IF NOT EXISTS): the active conversation's user-given title.
+    if "title" not in {r[1] for r in conn.execute("PRAGMA table_info(chats)")}:
+        conn.execute("ALTER TABLE chats ADD COLUMN title TEXT NOT NULL DEFAULT ''")
     return conn
 
 

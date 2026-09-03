@@ -2805,6 +2805,34 @@ button.pdfOutlineChevron:hover { background: rgba(128, 128, 128, 0.28); color: v
 /* Chat settings popover (header ⚙): model, effort, context slider, tools */
 .chatSettingsPop { min-width: 250px; }
 .chatSettingsPop .setSlider { padding: 0 4px; }
+.chatToolPicker { padding: 2px 4px; }
+.chatToolPicker .toggleGroup { justify-content: flex-start; }
+/* Chat history popover (header clock): search box over the bucket's earlier
+   conversations; the active one leads, highlighted. Layout only — rows are
+   plain hover rows, actions are ctlBtn icons, rename is an aiKeyInput. */
+.chatHistoryPop { width: 300px; max-width: 80vw; }
+.chatHistoryPop .searchInput { padding: 6px 9px; font-size: 12px; }
+.chatHistList { display: flex; flex-direction: column; gap: 1px; max-height: 320px; overflow-y: auto; }
+.chatHistRow {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  min-height: 30px;
+  padding: 3px 4px 3px 8px;
+  border-radius: 6px;
+  font-size: 12px;
+  color: var(--text-primary);
+  cursor: pointer;
+}
+.chatHistRow:hover, .chatHistRow:focus-visible { background: var(--bg-hover); outline: none; }
+.chatHistRow.active { background: var(--accent-bg); font-weight: 600; cursor: default; }
+.chatHistTitle { flex: 1; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.chatHistAge { flex: none; font-size: 11px; color: var(--text-dim); padding-right: 4px; }
+.chatHistActs { flex: none; display: none; }
+.chatHistRow:hover .chatHistActs, .chatHistRow:focus-within .chatHistActs { display: flex; }
+.chatHistRow:hover .chatHistAge, .chatHistRow:focus-within .chatHistAge { display: none; }
+.chatHistRow.renaming { padding: 2px; cursor: default; }
+.chatHistRow.renaming .aiKeyInput { width: 100%; font-size: 12px; }
 /* One tool-permission checkbox row (layout only — shared look via popover) */
 .chatToolPermRow {
   display: flex;

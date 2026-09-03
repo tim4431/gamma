@@ -182,9 +182,8 @@ What it can reach depends on where the chat is opened — every chat declares an
   PDF): tools reach only that page — the reading tools plus the note-block
   editors; the page-level organizers (list/rename/move) don't exist there.
 
-The request also carries `permissions` (the effective per-chat tool choices,
-initially based on Settings → Assistant → Folder agent — localStorage JSON
-`gamma-ai-agent-perms`, missing key = allowed, so new tools default on) and
+The request also carries `permissions` (the tool map of the chat's KIND —
+see below; missing key = allowed, so new tools default on) and
 optional `agent_system` (custom base
 prompt; the Prompts pane's "Library agent" entry, default
 `ai_tools.AGENT_PROMPT` via `/api/ai/models`). The scope and permission lines
@@ -197,17 +196,33 @@ scope) = plain chat.
 The single **Enable tools** switch (`gamma-ai-agent-enabled`, default on)
 governs tool use in every chat; every chat starts with tools on. The Tools
 button (sliders icon) in each folder/PDF chat header toggles the configured tool set for that
-chat only. New chat resets the switch back to on. The chat
-header's ⚙ popover also carries a Tools section — the per-chat switch plus the
-same per-tool permission rows Settings shows (filtered to the chat's scope,
-editing the same stored map; `AGENT_PERM_ROWS` in `settings.jsx`).
+chat only. New chat resets the switch back to on.
+
+Which tools a chat may use is configured per chat KIND — there are three
+(`CHAT_KINDS` in `prefs.js`, `CHAT_KIND_ROWS` in `settings.jsx`):
+
+- **Folder chat** — the home/folder view (`agent_scope: "folder"`).
+- **PDF chat** — a page with a PDF attached (`agent_scope: "page"`).
+- **Notes chat** — a page without one (`agent_scope: "page"`).
+
+Settings → Assistant → Tool configuration shows one row per kind whose
+control is a `ToggleGroup` of icon + short-name chips (List, Read, Blocks,
+Search, Rename, Move, Edit — folder scope offers all, page scope the reading
+tools and the note-block editors); clicking a chip allows or forbids that
+tool for every chat of the kind. The stored map is localStorage JSON
+`gamma-ai-agent-perms` = `{folder, pdf, notes}` → `{list, read, block_read,
+search, rename, move, block_edit}` (a pre-kind flat map is applied to every
+kind on read). The chat header's ⚙ popover carries the same picker for the
+kind of the chat it is opened in (`AgentToolPicker` in `settings.jsx`,
+bound to the same map), so a change in either place is the same change.
+`ChatDock` derives its kind from its props (`organizeFolder` set → folder;
+else `pageAttach` → pdf; else notes) and sends that kind's map as the
+request's `permissions`.
 
 One permission per capability: List pages, Read pages, Read note blocks,
 Search library (`search_library` — notes and PDF text; the stored key is
-still `search`), Rename pages, Move pages, and Edit note blocks (one toggle
-arming `edit_block`/`create_block`/`move_block` together). Folder scope
-offers all of them; page scope exposes the reading tools and the note-block
-editors. Plus:
+still `search`), Rename pages, Move pages, and Edit note blocks (one chip
+arming `edit_block`/`create_block`/`move_block` together). Plus:
 
 - **Tool rounds** (`gamma-ai-tool-rounds` → request `tool_rounds`, default 32,
   user-tunable 1–100) — provider round-trips one message may use.
@@ -378,3 +393,35 @@ keys, and folder rename/move/delete calls `POST /api/chats/folder-rename`
 bucket exists when ChatDock reloads (a destination holding a real conversation
 wins; empty save-echo rows are overwritten) — folder conversations follow
 renames and moves, and are deleted with their folder.
+
+### Chat history
+
+Each bucket keeps its earlier conversations. `chats` (data.db) holds the
+one ACTIVE conversation per bucket — what the panel shows and autosaves —
+plus a `title` column (added lazily by `connect_data_db`); `chat_history`
+holds the archived ones (`id, bucket, title, messages, created_at,
+updated_at`). Routes: `gamma/routers/chats.py`, prefix `/api/chat-history`.
+
+- **New chat** (+ in the header) no longer deletes: it POSTs
+  `/chat-history/archive` `{bucket, messages, title}` — the client's copy of
+  the conversation, so a reply still inside the 500 ms autosave debounce is
+  kept — which files it into history (title = the user's, else the first
+  user message's first non-quote line, `derive_title`) and clears the active
+  row. An empty conversation archives to nothing.
+- The **History** button (clock icon) opens a popover listing the active
+  conversation first (highlighted, "now") and then the bucket's archived
+  ones newest-first (`GET /chat-history?bucket=`; title, age, message count
+  in the tooltip), with a search box filtering on title + first message.
+  Clicking an entry POSTs `/chat-history/{id}/open` with the current
+  conversation: the current one is archived, the entry becomes the active
+  row and leaves history — a conversation is always in exactly one place.
+  Hover actions: rename (inline `aiKeyInput`; the active chat's title goes
+  through `PUT /chats/{key}` `{messages, title}`, an entry's through
+  `PUT /chat-history/{id}`; the autosave never sends a title so it can't
+  roll a rename back) and delete (confirm dialog, `DELETE
+  /chat-history/{id}`; the active conversation has no delete — start a new
+  chat instead).
+- History follows its bucket: `POST /chats/folder-rename` rewrites entry
+  buckets along with the active rows, and `purge_page_data` drops a deleted
+  page's entries. The gamma export/import and the account-merge path copy
+  only the active `chats` rows, not history.

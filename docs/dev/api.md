@@ -169,8 +169,12 @@ All four are session-only (`require_user`), never share-token readable.
 ### Chats (`chats.py`, prefix `/api/chats`)
 | Method | Path | Purpose |
 |---|---|---|
-| GET/PUT/DELETE | `/chats/{key:path}` | chat history per bucket: page id, `home`, or `home:<folder>` (hence `:path`) |
-| POST | `/chats/folder-rename` | migrate folder buckets on rename/move/delete (`{src, dst}`, dst `""` deletes) |
+| GET/PUT/DELETE | `/chats/{key:path}` | the ACTIVE conversation per bucket: page id, `home`, or `home:<folder>` (hence `:path`); GET → `{messages, title}`, PUT `{messages, title?}` (title omitted = keep) |
+| POST | `/chats/folder-rename` | migrate folder buckets (active + history) on rename/move/delete (`{src, dst}`, dst `""` deletes) |
+| GET | `/chat-history?bucket=` | the bucket's archived conversations, newest first (`{sessions: [{id, title, preview, count, created_at, updated_at}]}`) |
+| POST | `/chat-history/archive` | "New chat": file `{bucket, messages, title}` into history and clear the active row (→ `{id}`, null when empty) |
+| POST | `/chat-history/{id}/open` | make an entry the active conversation; the body's `{bucket, messages, title}` (the current one) is archived first (→ `{messages, title}`) |
+| PUT/DELETE | `/chat-history/{id}` | rename (`{title}`) / delete an archived conversation |
 
 ### Import & export (`imports.py`, `export.py`)
 | Method | Path | Purpose |

@@ -79,6 +79,30 @@ export function Segmented({ value, onChange, options }) {
   );
 }
 
+// A row of small icon + short-name chips, each an independent on/off switch
+// (the multi-select counterpart of Segmented): the agent's per-tool
+// permissions, any "which of these" choice. `options` are
+// [value, label, Icon, tooltip]; `selected` lists the values that are on.
+// Chips wrap when the row is narrow, so it fits a settings row's control
+// slot and a chat popover alike.
+export function ToggleGroup({ selected, onToggle, options, disabled }) {
+  const on = new Set(selected || []);
+  return (
+    <span className="toggleGroup" role="group">
+      {options.map(([val, label, Icon, tip]) => (
+        <button
+          key={val} type="button" title={tip || label} disabled={disabled}
+          className={`uiBtn sm ${on.has(val) ? "on" : ""}`}
+          aria-pressed={on.has(val)}
+          onClick={() => onToggle(val, !on.has(val))}
+        >
+          {Icon ? <Icon size={13} /> : null}{label}
+        </button>
+      ))}
+    </span>
+  );
+}
+
 // Centered popup dialog opened from inside the settings modal — same shape as
 // the PDF export dialog (reportModal), stacked above the settings overlay.
 // Every editor dialog is composed the same way: SubDialog › .settingsForm ›

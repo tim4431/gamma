@@ -8,8 +8,32 @@ import { API, apiJson, copyText, isPdfFile, readNdjson } from "./utils";
 import { DockWindow, ChatMarkdown, AutoGrowTextarea, useCopied } from "./widgets";
 import { MenuSelect } from "./menus";
 import { CharSlider, approxPages } from "./settingsKit";
-import { AGENT_PERM_ROWS } from "./settings";
-import { AlertCircleIcon, ArrowUpIcon, BookIcon, CheckIcon, ChevronDownIcon, ChevronUpIcon, CopyIcon, FileIcon, FolderIcon, InfoIcon, ListIcon, MicIcon, PaperclipIcon, PencilIcon, PlusIcon, SearchIcon, SettingsIcon, SlidersIcon, StopIcon, XIcon } from "./icons";
+import { AgentToolPicker, CHAT_KIND_ROWS } from "./settings";
+import { AlertCircleIcon, ArrowUpIcon, BookIcon, CheckIcon, ChevronDownIcon, ChevronUpIcon, CopyIcon, FileIcon, FolderIcon, HistoryIcon, InfoIcon, ListIcon, MicIcon, PaperclipIcon, PencilIcon, PlusIcon, SearchIcon, SettingsIcon, SlidersIcon, StopIcon, TrashIcon, XIcon } from "./icons";
+
+const JSON_HEADERS = { "Content-Type": "application/json" };
+
+// A conversation's display name when the user never named it: the first
+// user message's first non-quote line (mirrors derive_title in
+// gamma/routers/chats.py, which names entries when they are archived).
+function deriveTitle(messages) {
+  const first = (messages || []).find((m) => m.role === "user");
+  const line = (first?.text || "").split("\n").map((l) => l.trim()).find((l) => l && !l.startsWith(">"));
+  return (line || "").replace(/\s+/g, " ").slice(0, 80);
+}
+
+// Compact age for a history row: "now", "5m", "3h", "2d", "4mo", "1y".
+function relAge(iso) {
+  const ms = Date.now() - Date.parse(iso || "");
+  if (!Number.isFinite(ms) || ms < 60000) return "now";
+  const m = Math.floor(ms / 60000);
+  if (m < 60) return `${m}m`;
+  const h = Math.floor(m / 60);
+  if (h < 24) return `${h}h`;
+  const d = Math.floor(h / 24);
+  if (d < 30) return `${d}d`;
+  return d < 365 ? `${Math.floor(d / 30)}mo` : `${Math.floor(d / 365)}y`;
+}
 
 // Folder-agent tool chips: icon per action kind; rename/move are the kinds
 // that changed the library (they trigger the home-feed refresh). Every chip
@@ -90,12 +114,12 @@ export default function ChatDock({
   aiInfo, aiProvider, openAiKeysEditor,
   aiHealth, dismissAiHealth,
   openPopover, setOpenPopover,
-  setStatus,
+  setStatus, askConfirm,
   // Home/folder view: the folder path being viewed ("" = library root) —
   // enables the folder-agent tools; null in the paper view. agentPerms is the
-  // Settings per-tool permission map ({list, read, block_read, search, rename,
-  // move, block_edit}; setAgentPerms edits it from the ⚙ popover) and
-  // toolRounds the round budget. When the AI applied changes, onLibraryChange
+  // Settings per-chat-kind permission map ({folder, pdf, notes} → {list,
+  // read, block_read, search, rename, move, block_edit}; setAgentPerms edits
+  // it from the ⚙ popover) and toolRounds the round budget. When the AI applied changes, onLibraryChange
   // refreshes the home feed and onNotesChange reloads touched pages' notes.
   organizeFolder = null, toolRounds, agentReadChars, agentPerms, setAgentPerms, agentSystem,
   agentEnabled, onLibraryChange, onNotesChange, onAgentEvent,
@@ -114,13 +138,18 @@ export default function ChatDock({
   // (POST /api/chats/folder-rename).
   const chatKey = focusedBlockId || (organizeFolder ? `home:${organizeFolder}` : "home");
   const folderChat = organizeFolder != null;
+  // Which of the three chat kinds this is — each has its own tool permission
+  // map in Settings → Assistant (prefs.js CHAT_KINDS): the folder chat, a
+  // page with a PDF, a page of notes.
+  const chatKind = folderChat ? "folder" : pageAttach ? "pdf" : "notes";
+  const chatKindLabel = CHAT_KIND_ROWS.find((r) => r[0] === chatKind)?.[2] || "Chat";
   // Every chat starts with tools on (the Settings "Enable tools" switch is the
   // only global knob). Conversation-local overrides: switching pages/folders
   // retains each conversation's choice for this session; New chat drops it
   // back to on.
   const [chatToolConfigs, setChatToolConfigs] = useState({});
   const chatToolConfig = chatToolConfigs[chatKey];
-  const chatToolPerms = agentPerms || {};
+  const chatToolPerms = agentPerms?.[chatKind] || {};
   const toolsRequested = chatToolConfig?.enabled ?? true;
   const toolsEnabled = !!agentEnabled && !!toolsRequested;
   const perm = (key) => chatToolPerms?.[key] !== false;
@@ -222,6 +251,26 @@ export default function ChatDock({
   // otherwise send through a stale conversation closure.
   const sendChatRef = useRef(null);
 
+  // The active conversation's user-given name ("" = derived from its first
+  // message). Renames go to the server directly; the autosave never sends
+  // it, so a debounced save can't roll a rename back.
+  const [chatTitle, setChatTitle] = useState("");
+
+  // Show a conversation that came from the server (bucket switch, or a
+  // history entry opened). PDF button: on until this document has been sent
+  // in THIS conversation, then off. Messages record the doc ids they carried
+  // (pdfDocs); older saves only have display names — treat any sent PDF as
+  // covering the current one.
+  function showLoaded(msgs, title) {
+    setChatMessages(msgs);
+    setChatTitle(title || "");
+    const sent = msgs.some((m) => m.pdfDocs
+      ? (docId && m.pdfDocs.includes(docId)) || m.pdfDocs.some((d) => chatDocs.includes(d))
+      : m.pdfs?.length);
+    attachPdfManualRef.current = false;
+    setAttachPdf(!sent && nativePdf);
+  }
+
   // Load chat from backend whenever the chat bucket changes.
   useEffect(() => {
     let cancelled = false;
@@ -230,18 +279,8 @@ export default function ChatDock({
       .then(r => r.ok ? r.json() : { messages: [] })
       .then(data => {
         if (cancelled) return;
-        const msgs = data.messages || [];
-        setChatMessages(msgs);
+        showLoaded(data.messages || [], data.title);
         chatLoadedForRef.current = chatKey;
-        // PDF button: on until this document has been sent in THIS
-        // conversation, then off. Messages record the doc ids they carried
-        // (pdfDocs); older saves only have display names — treat any sent
-        // PDF as covering the current one.
-        const sent = msgs.some((m) => m.pdfDocs
-          ? (docId && m.pdfDocs.includes(docId)) || m.pdfDocs.some((d) => chatDocs.includes(d))
-          : m.pdfs?.length);
-        attachPdfManualRef.current = false;
-        setAttachPdf(!sent && nativePdf);
       })
       .catch(() => { if (!cancelled) chatLoadedForRef.current = chatKey; });
     return () => { cancelled = true; };
@@ -262,16 +301,106 @@ export default function ChatDock({
     return () => clearTimeout(timer);
   }, [chatMessages, chatKey]);
 
-  function clearChat() {
+  // History: the bucket's earlier conversations (server `chat_history`).
+  // "New chat" archives the current one there instead of deleting it, and
+  // opening an entry swaps it with the current one. Both send the client's
+  // copy of the conversation, so a reply still sitting in the autosave
+  // debounce is kept. The list loads lazily when the popover opens and is
+  // dropped on any change (bucket switch, archive, open) so it re-fetches.
+  const [history, setHistory] = useState(null); // null = not loaded yet
+  const [historyQuery, setHistoryQuery] = useState("");
+  const [renaming, setRenaming] = useState(null); // {id: "" = the active chat | entry id, text}
+  const renameCancelRef = useRef(false);
+  const historyOpen = openPopover === "chathistory";
+  useEffect(() => { setHistory(null); setHistoryQuery(""); setRenaming(null); }, [chatKey]);
+  useEffect(() => {
+    if (!historyOpen || history != null) return;
+    let cancelled = false;
+    apiJson(`${API}/chat-history?bucket=${encodeURIComponent(chatKey)}`)
+      .then((data) => { if (!cancelled) setHistory(data.sessions || []); })
+      .catch((err) => { if (!cancelled) { setHistory([]); setStatus(`Chat history: ${err.message}`); } });
+    return () => { cancelled = true; };
+  }, [historyOpen, history, chatKey]);
+  const activeTitle = chatTitle || deriveTitle(chatMessages) || "Untitled";
+  const busyHere = chatLoading && chatLoadingKey === chatKey; // a reply is streaming into this conversation
+  const currentPayload = () => ({ bucket: chatKey, messages: chatMessages, title: chatTitle });
+
+  function newChat() {
+    if (busyHere) return;
+    const payload = currentPayload();
     setChatMessages([]);
+    setChatTitle("");
     attachPdfManualRef.current = false;
     setAttachPdf(nativePdf); // new chat: first question carries the full PDF again (where the provider takes it)
     resetToolConfig();
-    fetch(`${API}/chats/${encodeURIComponent(chatKey)}`, {
-      method: "DELETE",
-      credentials: "include",
-    }).catch(() => {});
+    setHistory(null);
+    apiJson(`${API}/chat-history/archive`, { method: "POST", headers: JSON_HEADERS, body: JSON.stringify(payload) })
+      .catch((err) => setStatus(`Couldn't keep the conversation in history: ${err.message}`));
   }
+
+  async function openHistory(id) {
+    if (busyHere) return;
+    try {
+      const data = await apiJson(`${API}/chat-history/${id}/open`,
+        { method: "POST", headers: JSON_HEADERS, body: JSON.stringify(currentPayload()) });
+      showLoaded(data.messages || [], data.title);
+      resetToolConfig();
+      setHistory(null);
+      setOpenPopover(null);
+      chatStickRef.current = true;
+    } catch (err) {
+      setStatus(`Couldn't open the conversation: ${err.message}`);
+    }
+  }
+
+  // Rename commits on blur (Enter just blurs; Escape flags a cancel first),
+  // so there is exactly one commit path for the input's disappearance.
+  async function commitRename() {
+    const edit = renaming;
+    setRenaming(null);
+    if (!edit || renameCancelRef.current) { renameCancelRef.current = false; return; }
+    const title = edit.text.trim();
+    try {
+      if (edit.id === "") {
+        setChatTitle(title);
+        await apiJson(`${API}/chats/${encodeURIComponent(chatKey)}`,
+          { method: "PUT", headers: JSON_HEADERS, body: JSON.stringify({ messages: chatMessages, title }) });
+      } else {
+        setHistory((prev) => (prev || []).map((s) => (s.id === edit.id ? { ...s, title } : s)));
+        await apiJson(`${API}/chat-history/${edit.id}`,
+          { method: "PUT", headers: JSON_HEADERS, body: JSON.stringify({ title }) });
+      }
+    } catch (err) {
+      setStatus(`Couldn't rename the conversation: ${err.message}`);
+    }
+  }
+
+  function deleteHistory(entry) {
+    const run = async () => {
+      setHistory((prev) => (prev || []).filter((s) => s.id !== entry.id));
+      try {
+        await apiJson(`${API}/chat-history/${entry.id}`, { method: "DELETE" });
+      } catch (err) {
+        setStatus(`Couldn't delete the conversation: ${err.message}`);
+        setHistory(null);
+      }
+    };
+    if (!askConfirm) { run(); return; }
+    askConfirm({
+      title: "Delete conversation",
+      message: `Delete “${entry.title || "Untitled"}” from this chat's history? This can't be undone.`,
+      confirmLabel: "Delete", danger: true, onConfirm: run,
+    });
+  }
+
+  // Rows of the history popover: the active conversation first, then the
+  // archived ones newest-first, filtered by the search box.
+  const historyRows = useMemo(() => {
+    const q = historyQuery.trim().toLowerCase();
+    const active = { id: "", title: activeTitle, preview: deriveTitle(chatMessages), updated_at: "", active: true };
+    const rows = [active, ...(history || [])];
+    return q ? rows.filter((s) => `${s.title} ${s.preview || ""}`.toLowerCase().includes(q)) : rows;
+  }, [history, historyQuery, activeTitle, chatMessages]);
 
   // Attach picked/pasted files: images join the pasted-figures row, PDFs
   // become one-shot native attachments (same as the library PDF button).
@@ -746,17 +875,12 @@ export default function ChatDock({
                     <SlidersIcon size={13} />
                     <span>Enable tools for this chat</span>
                   </label>
-                  {AGENT_PERM_ROWS
-                    .filter((row) => (row[4] || []).includes(folderChat ? "folder" : "page"))
-                    .map(([key, Icon, label, hint]) => (
-                      <label key={key} className="chatToolPermRow"
-                        title={`${hint}. Shared with Settings → Assistant — applies to every chat.`}>
-                        <input type="checkbox" checked={perm(key)}
-                          onChange={(e) => setAgentPerms?.((p) => ({ ...p, [key]: e.target.checked }))} />
-                        <Icon size={13} />
-                        <span>{label}</span>
-                      </label>
-                    ))}
+                  <div className="chatToolPicker">
+                    <AgentToolPicker kind={chatKind} perms={agentPerms} setPerms={setAgentPerms} disabled={!toolsEnabled} />
+                  </div>
+                  <div className="popoverHint">
+                    {chatKindLabel} tools — the same chips as Settings → Assistant, one set per chat kind.
+                  </div>
                 </div>
               ) : null}
             </span>
@@ -780,8 +904,71 @@ export default function ChatDock({
           title="Find in this conversation" aria-label="Find in this conversation">
           <SearchIcon size={15} />
         </button>
-        <button type="button" className="ctlBtn" onClick={clearChat}
-          title="New chat — start a fresh conversation (clears saved history)" aria-label="New chat">
+        <span data-popover="chathistory" className="popoverAnchor">
+          <button type="button" className={`ctlBtn ${historyOpen ? "modeActive" : ""}`}
+            onClick={() => setOpenPopover((p) => (p === "chathistory" ? null : "chathistory"))}
+            title={`Chat history — earlier conversations of ${folderChat ? "this folder" : "this page"}`}
+            aria-label="Chat history" aria-expanded={historyOpen}>
+            <HistoryIcon size={15} />
+          </button>
+          {historyOpen ? (
+            <div className="popover chatHistoryPop">
+              <input
+                autoFocus
+                className="searchInput"
+                value={historyQuery}
+                onChange={(e) => setHistoryQuery(e.target.value)}
+                placeholder="Search conversations…"
+                onKeyDown={(e) => { if (e.key === "Escape") { e.preventDefault(); setOpenPopover(null); } }}
+              />
+              <div className="chatHistList">
+                {historyRows.map((s) => renaming?.id === s.id ? (
+                  <div key={s.id} className="chatHistRow renaming">
+                    <input
+                      autoFocus
+                      className="aiKeyInput"
+                      value={renaming.text}
+                      placeholder="Conversation name"
+                      onChange={(e) => setRenaming({ id: s.id, text: e.target.value })}
+                      onKeyDown={(e) => {
+                        if (e.key === "Enter") { e.preventDefault(); e.currentTarget.blur(); }
+                        else if (e.key === "Escape") { e.preventDefault(); renameCancelRef.current = true; e.currentTarget.blur(); }
+                      }}
+                      onBlur={commitRename}
+                    />
+                  </div>
+                ) : (
+                  <div key={s.id} className={`chatHistRow${s.active ? " active" : ""}`}
+                    role="button" tabIndex={0}
+                    title={s.active ? "The conversation shown now" : `${s.preview || s.title}${s.count ? ` · ${s.count} messages` : ""}`}
+                    onClick={() => { if (!s.active) openHistory(s.id); }}
+                    onKeyDown={(e) => { if (e.key === "Enter" && !s.active) openHistory(s.id); }}>
+                    <span className="chatHistTitle">{s.title || "Untitled"}</span>
+                    <span className="chatHistAge">{s.active ? "now" : relAge(s.updated_at)}</span>
+                    <span className="ctlBtnRow chatHistActs" onClick={(e) => e.stopPropagation()}>
+                      <button type="button" className="ctlBtn" title="Rename" aria-label="Rename conversation"
+                        onClick={() => { renameCancelRef.current = false; setRenaming({ id: s.id, text: s.active ? chatTitle : s.title || "" }); }}>
+                        <PencilIcon size={13} />
+                      </button>
+                      {!s.active ? (
+                        <button type="button" className="ctlBtn" title="Delete" aria-label="Delete conversation"
+                          onClick={() => deleteHistory(s)}>
+                          <TrashIcon size={13} />
+                        </button>
+                      ) : null}
+                    </span>
+                  </div>
+                ))}
+                {history == null ? <div className="popoverHint">Loading…</div>
+                  : historyRows.length <= 1 && !historyQuery.trim() ? <div className="popoverHint">No earlier conversations — New chat keeps the current one here.</div>
+                  : !historyRows.length ? <div className="popoverHint">No conversation matches.</div>
+                  : null}
+              </div>
+            </div>
+          ) : null}
+        </span>
+        <button type="button" className="ctlBtn" onClick={newChat} disabled={busyHere}
+          title="New chat — keeps this conversation in history and starts a fresh one" aria-label="New chat">
           <PlusIcon size={16} />
         </button>
       </div>
