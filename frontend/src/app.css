@@ -1327,6 +1327,9 @@ body {
   60% { background: color-mix(in srgb, var(--accent) 14%, transparent); box-shadow: inset 3px 0 0 var(--accent); }
   100% { background: transparent; box-shadow: inset 3px 0 0 transparent; }
 }
+/* The ghost row's handle columns are inert stand-ins that keep its card
+   aligned with its siblings'. */
+.sortableBlockWrap.aiGhostWrap > .addHandle, .sortableBlockWrap.aiGhostWrap > .dragHandle { visibility: hidden; pointer-events: none; }
 .aiGhostWrap .blockRow { animation: none; background: color-mix(in srgb, var(--accent) 10%, transparent); box-shadow: inset 3px 0 0 var(--accent); }
 .blockRendered.aiStreaming { min-height: 1.45em; }
 .blockRendered.aiStreaming > :last-child { display: inline-block; margin-bottom: 0; }
@@ -3096,11 +3099,9 @@ button.pdfOutlineChevron:hover { background: rgba(128, 128, 128, 0.28); color: v
 .chatSelChipClose { margin-left: auto; }
 /* Note chips (attached blocks / selected note text) share the passage chip;
    only the label colour tells them apart from PDF passages. */
-.chatSelChip.isBlock .chatSelChipLabel { color: var(--accent); }
-.chatSelChip.isCursor .chatSelChipLabel { color: var(--accent); }
-.chatSelChip.isCursor .chatSelChipText { font-style: normal; }
+.chatSelChip.isBlock .chatSelChipLabel, .chatSelChip.isCursor .chatSelChipLabel { color: var(--accent); }
 .chatSelChip.isNote .chatSelChipLabel { color: var(--text-muted); }
-.chatSelChip.isBlock .chatSelChipText { font-style: normal; }
+.chatSelChip.isBlock .chatSelChipText, .chatSelChip.isCursor .chatSelChipText { font-style: normal; }
 /* attach-PDF toggle */
 .chatAttachToggle {
   display: inline-flex;

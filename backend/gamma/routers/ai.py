@@ -46,6 +46,7 @@ from ..ai_context import (
     build_messages as _build_messages,
     canonical_tool as _canonical_tool,
     extract_pdf_context as _extract_pdf_context,
+    MAX_CONTEXT_BLOCKS,
     gather_inputs as _gather_inputs,
     parse_files as _parse_files,
     parse_images as _parse_images,
@@ -1175,7 +1176,7 @@ def ai_chat(payload: AIChatRequest, request: Request):
              # The agent prompt names the cursor block / attached chips so
              # "this block" resolves without a read_block round-trip.
              "focus_block_id": (payload.focus_block_id or "").strip()[:64],
-             "context_blocks": [str(b)[:64] for b in payload.context_blocks[:12]]}
+             "context_blocks": [str(b)[:64] for b in payload.context_blocks[:MAX_CONTEXT_BLOCKS]]}
     valid_scope = payload.agent_scope in ("folder", "page") and (
         payload.agent_scope != "page" or payload.page_id)
     tools = (agent_tools(payload.agent_scope, payload.permissions,

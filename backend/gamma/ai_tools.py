@@ -387,6 +387,30 @@ def _run_read_block(conn, user: str, scope: dict, args: dict):
                  "summary": f"Read notes of {what}"}
 
 
+EDIT_MODES = ("replace", "append", "prepend")
+# Lines that start a paragraph-level construct: heading, list item, quote,
+# table row, fence, display math, rule.
+_BLOCKY_LINE = re.compile(r"^\s*(#{1,6}\s|[-*+]\s|\d+[.)]\s|>|\||```|\$\$|---)")
+
+
+def join_block_text(existing: str, addition: str, mode: str) -> str:
+    """Existing block text plus an addition, appended or prepended on its own
+    line — with a blank line between when either side is a paragraph-level
+    construct or multi-line, so markdown keeps rendering as intended.
+    Mirrored in frontend blockTree.jsx (the streamed preview of an append)."""
+    existing = existing.rstrip("\n")
+    addition = addition.strip("\n")
+    if not existing:
+        return addition
+    if mode == "prepend":
+        head, tail = addition, existing
+    else:
+        head, tail = existing, addition
+    blank = ("\n" in head or "\n" in tail
+             or _BLOCKY_LINE.match(tail) or _BLOCKY_LINE.match(head))
+    return head + ("\n\n" if blank else "\n") + tail
+
+
 def _run_edit_block(conn, user: str, scope: dict, args: dict):
     loaded, error = _load_scoped_block(conn, scope, args.get("block_id"))
     if error:
@@ -422,29 +446,6 @@ def _run_edit_block(conn, user: str, scope: dict, args: dict):
     return (f'ok — block [{block["id"]}] updated' + (f" ({mode})" if mode != "replace" else ""),
             {"kind": "edit", "page_id": page_id, "block_id": block["id"], "mode": mode,
              "summary": f"{verb} a note in “{page_title[:60]}”"})
-
-
-EDIT_MODES = ("replace", "append", "prepend")
-
-
-def join_block_text(existing: str, addition: str, mode: str) -> str:
-    """Existing block text plus an addition, appended or prepended on its own
-    line — with a blank line between when either side is a paragraph-level
-    construct (a heading, list, quote, table, fence or multi-line text), so
-    markdown keeps rendering as intended. Mirrored in frontend
-    blockTree.jsx (the streamed preview of an append)."""
-    existing = existing.rstrip("\n")
-    addition = addition.strip("\n")
-    if not existing:
-        return addition
-    if mode == "prepend":
-        head, tail = addition, existing
-    else:
-        head, tail = existing, addition
-    blocky = re.compile(r"^\s*(#{1,6}\s|[-*+]\s|\d+[.)]\s|>|\||```|\$\$|---)")
-    sep = ("\n\n" if ("\n" in head or "\n" in tail or blocky.match(tail) or blocky.match(head))
-           else "\n")
-    return head + sep + tail
 
 
 def _run_create_block(conn, user: str, scope: dict, args: dict):

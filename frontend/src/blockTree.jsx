@@ -1649,10 +1649,9 @@ function joinBlockText(existing, addition, mode) {
 function AiGhostRow({ content, depth }) {
   return (
     <div className="sortableBlockWrap aiGhostWrap" data-depth={depth}>
-      {/* Inert stand-ins for the "+" and ⋮⋮ handle columns, so the card
-          lines up with its siblings' cards. */}
-      <span className="addHandle" aria-hidden="true" style={{ visibility: "hidden", pointerEvents: "none" }} />
-      <span className="dragHandle" aria-hidden="true" style={{ visibility: "hidden", pointerEvents: "none" }} />
+      {/* Inert stand-ins for the "+" and ⋮⋮ handle columns (hidden in CSS). */}
+      <span className="addHandle" aria-hidden="true" />
+      <span className="dragHandle" aria-hidden="true" />
       <div className="blockRowWrap">
         <div className="blockRow ai-create aiMark0">
           <span className="collapseSpacer" />

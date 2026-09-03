@@ -4,7 +4,7 @@
 // App provides context (open paper, library, selections) and the model/effort/
 // prompt preferences it also needs elsewhere.
 import React, { useEffect, useMemo, useRef, useState } from "react";
-import { API, apiJson, copyText, isPdfFile } from "./utils";
+import { API, apiJson, copyText, isPdfFile, readNdjson } from "./utils";
 import { DockWindow, ChatMarkdown, AutoGrowTextarea, useCopied } from "./widgets";
 import { MenuSelect } from "./menus";
 import { CharSlider, approxPages } from "./settingsKit";
@@ -63,6 +63,19 @@ const toolCallText = (a) => {
   return [head, a.result].filter(Boolean).join("\n\n");
 };
 
+// One chip in the composer's strip: a PDF passage, the cursor block, an
+// attached block or selected note text. `kind` is the modifier class that
+// colours the label (isCursor / isBlock / isNote; none for a PDF passage).
+function SelChip({ kind, label, labelTitle, text, title, onRemove, removeTitle }) {
+  return (
+    <div className={`chatSelChip${kind ? ` ${kind}` : ""}`} title={title ?? text}>
+      <span className="chatSelChipLabel" title={labelTitle}>{label}</span>
+      <span className="chatSelChipText">{text.slice(0, 140)}{text.length > 140 ? "…" : ""}</span>
+      <button type="button" className="uiClose uiCloseSm chatSelChipClose" onClick={onRemove} title={removeTitle}>×</button>
+    </div>
+  );
+}
+
 export default function ChatDock({
   docId, pageAttach, focusedBlockId, homeBlocks, pageTitle, openTabs,
   pdfSelections, setPdfSelections,
@@ -105,16 +118,15 @@ export default function ChatDock({
   // only global knob). Conversation-local overrides: switching pages/folders
   // retains each conversation's choice for this session; New chat drops it
   // back to on.
-  const settingsDefault = true;
   const [chatToolConfigs, setChatToolConfigs] = useState({});
   const chatToolConfig = chatToolConfigs[chatKey];
   const chatToolPerms = agentPerms || {};
-  const toolsRequested = chatToolConfig?.enabled ?? settingsDefault;
+  const toolsRequested = chatToolConfig?.enabled ?? true;
   const toolsEnabled = !!agentEnabled && !!toolsRequested;
   const perm = (key) => chatToolPerms?.[key] !== false;
   const toggleToolsForChat = () => setChatToolConfigs((prev) => ({
     ...prev,
-    [chatKey]: { enabled: !(prev[chatKey]?.enabled ?? settingsDefault) },
+    [chatKey]: { enabled: !(prev[chatKey]?.enabled ?? true) },
   }));
   const resetToolConfig = () => setChatToolConfigs((prev) => {
     const next = { ...prev };
@@ -455,36 +467,25 @@ export default function ChatDock({
         throw new Error(detail);
       }
       // NDJSON stream: {"delta": "…"} per chunk, {"error": "…"} on failure.
-      const reader = res.body.getReader();
-      const decoder = new TextDecoder();
-      let buf = "";
-      for (;;) {
-        const { done, value } = await reader.read();
-        if (done) break;
-        buf += decoder.decode(value, { stream: true });
-        const lines = buf.split("\n");
-        buf = lines.pop(); // keep the trailing partial line
-        for (const line of lines) {
-          if (!line.trim()) continue;
-          const ev = JSON.parse(line);
+      await readNdjson(res, (events) => {
+        for (const ev of events) {
           if (ev.error) throw new Error(ev.error);
           if (ev.action) {
             actions.push(ev.action);
             // Live: the notes panel lights up the block the agent just
             // read/edited (and reloads the tree for an applied edit).
             onAgentEvent?.({ type: "action", action: ev.action });
-            continue;
-          }
-          if (ev.progress) {
-            // The agent is still WRITING a note edit — the block types it in.
+          } else if (ev.progress) {
+            // The agent is still writing a note edit — the block types it in.
             onAgentEvent?.({ type: "progress", ...ev.progress });
-            continue;
+          } else if (ev.context) {
+            coverage = ev.context;
+          } else {
+            acc += ev.delta || "";
           }
-          if (ev.context) { coverage = ev.context; continue; }
-          acc += ev.delta || "";
         }
         if (acc || actions.length) showReply(aiMsg({ partial: true }));
-      }
+      });
       showReply(aiMsg({ text: acc || (actions.length ? "" : "(no response)") }), true);
     } catch (err) {
       const stopped = err?.name === "AbortError";
@@ -991,45 +992,24 @@ export default function ChatDock({
       {pdfSelections.length || chatNotes?.length || cursorChip ? (
         <div className="chatSelChips">
           {cursorChip ? (
-            <div className="chatSelChip isCursor" title={`Your cursor is on this block — it rides with the message, so "this block" means it.\n${cursorChip.text}`}>
-              <span className="chatSelChipLabel">Cursor</span>
-              <span className="chatSelChipText">{cursorChip.text.slice(0, 140)}{cursorChip.text.length > 140 ? "…" : ""}</span>
-              <button
-                type="button"
-                className="uiClose uiCloseSm chatSelChipClose"
-                onClick={() => setCursorOff(cursorChip.id)}
-                title="Don't send the cursor block with this message"
-              >×</button>
-            </div>
+            <SelChip kind="isCursor" label="Cursor" text={cursorChip.text}
+              title={`Your cursor is on this block — it rides with the message, so "this block" means it.\n${cursorChip.text}`}
+              onRemove={() => setCursorOff(cursorChip.id)}
+              removeTitle="Don't send the cursor block with this message" />
           ) : null}
           {pdfSelections.map((s, i) => (
-            <div key={`p${i}`} className="chatSelChip" title={s}>
-              <span className="chatSelChipLabel" title="Hold Ctrl while selecting in the PDF to add more passages">
-                {pdfSelections.length > 1 ? `Sel ${i + 1}` : "Selection"}
-              </span>
-              <span className="chatSelChipText">{s.slice(0, 140)}{s.length > 140 ? "…" : ""}</span>
-              <button
-                type="button"
-                className="uiClose uiCloseSm chatSelChipClose"
-                onClick={() => setPdfSelections((prev) => prev.filter((_, j) => j !== i))}
-                title="Remove this passage"
-              >×</button>
-            </div>
+            <SelChip key={`p${i}`} text={s}
+              label={pdfSelections.length > 1 ? `Sel ${i + 1}` : "Selection"}
+              labelTitle="Hold Ctrl while selecting in the PDF to add more passages"
+              onRemove={() => setPdfSelections((prev) => prev.filter((_, j) => j !== i))}
+              removeTitle="Remove this passage" />
           ))}
           {(chatNotes || []).map((n, i) => (
-            <div key={`n${i}`} className={`chatSelChip ${n.kind === "block" ? "isBlock" : "isNote"}`} title={n.text}>
-              <span className="chatSelChipLabel"
-                title={n.kind === "block" ? "A note block attached with Ctrl+click or the ⋮⋮ menu — the assistant gets its text and id" : "Text selected in your notes with Ctrl held"}>
-                {n.kind === "block" ? "Block" : "Note"}
-              </span>
-              <span className="chatSelChipText">{n.text.slice(0, 140)}{n.text.length > 140 ? "…" : ""}</span>
-              <button
-                type="button"
-                className="uiClose uiCloseSm chatSelChipClose"
-                onClick={() => setChatNotes?.((prev) => prev.filter((_, j) => j !== i))}
-                title={n.kind === "block" ? "Detach this block" : "Remove this passage"}
-              >×</button>
-            </div>
+            <SelChip key={`n${i}`} kind={n.kind === "block" ? "isBlock" : "isNote"} text={n.text}
+              label={n.kind === "block" ? "Block" : "Note"}
+              labelTitle={n.kind === "block" ? "A note block attached with Ctrl+click or the ⋮⋮ menu — the assistant gets its text and id" : "Text selected in your notes with Ctrl held"}
+              onRemove={() => setChatNotes?.((prev) => prev.filter((_, j) => j !== i))}
+              removeTitle={n.kind === "block" ? "Detach this block" : "Remove this passage"} />
           ))}
         </div>
       ) : null}
@@ -1148,7 +1128,18 @@ export default function ChatDock({
           onKeyDown={(e) => {
             if (e.key === "Enter" && !e.shiftKey) { e.preventDefault(); sendChatMessage(); }
           }}
-          placeholder={chatFiles.length ? `Ask about the attached file${chatFiles.length > 1 ? "s" : ""}…` : chatImages.length ? "Ask about the pasted figure…" : (pdfSelections.length ? (pdfSelections.length > 1 ? `Ask about the ${pdfSelections.length} selected passages…` : "Ask about the selection…") : chatNotes?.length ? (chatNotes.length > 1 ? `Ask about the ${chatNotes.length} attached notes…` : chatNotes[0].kind === "block" ? "Ask about the attached block…" : "Ask about the selected note…") : cursorChip ? "Ask about the block at your cursor…" : (chatDocs.length ? `Ask about ${chatDocs.length} selected PDF${chatDocs.length > 1 ? "s" : ""}…` : agentAsk || "Ask…"))}
+          placeholder={
+            // Names what the message will be about, most specific attachment first.
+            chatFiles.length ? `Ask about the attached file${chatFiles.length > 1 ? "s" : ""}…`
+            : chatImages.length ? "Ask about the pasted figure…"
+            : pdfSelections.length > 1 ? `Ask about the ${pdfSelections.length} selected passages…`
+            : pdfSelections.length ? "Ask about the selection…"
+            : chatNotes?.length > 1 ? `Ask about the ${chatNotes.length} attached notes…`
+            : chatNotes?.length ? (chatNotes[0].kind === "block" ? "Ask about the attached block…" : "Ask about the selected note…")
+            : cursorChip ? "Ask about the block at your cursor…"
+            : chatDocs.length ? `Ask about ${chatDocs.length} selected PDF${chatDocs.length > 1 ? "s" : ""}…`
+            : agentAsk || "Ask…"
+          }
         />
         {chatLoading ? (
           <button className="uiBtn chatCircleBtn chatStopBtn" type="button" onClick={stopChat} title="Stop generating" aria-label="Stop generating">

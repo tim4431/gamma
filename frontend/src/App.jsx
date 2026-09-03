@@ -1,7 +1,7 @@
 import React, { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState } from "react";
 import { Panel, PanelGroup, PanelResizeHandle } from "react-resizable-panels";
 import PdfViewer, { COLORS, clampZoom } from "./pdfViewer";
-import { API, apiJson, withShare, makeId, fmtBytes, getDocIdForUrl, isPdfFile, isMarkdownFile, isUnverifiedPaperMeta, importZoteroZip, resolvePdfUrl, pdfProxyUrl, probePdfUrl, setExpectedUser, getExpectedUser, usePersistedState, usePersistedFlag, copyText, copyRich } from "./utils";
+import { API, apiJson, withShare, makeId, fmtBytes, getDocIdForUrl, isPdfFile, isMarkdownFile, isUnverifiedPaperMeta, importZoteroZip, resolvePdfUrl, pdfProxyUrl, probePdfUrl, setExpectedUser, getExpectedUser, usePersistedState, usePersistedFlag, copyText, copyRich, readNdjson } from "./utils";
 import {
   BlockDropIndicator,
   ChatMarkdown,
@@ -42,6 +42,7 @@ import {
   removeBlockTree,
   flattenBlocks,
   withLegacyAccessors,
+  blockQuote,
   isDescendant,
   findBlockContext,
   extractBlock,
@@ -194,6 +195,12 @@ const SNAP_QUALITY = 0.55;
 // snapshot cache prunes to the same count. The server-side snapshot store
 // keeps a few spares above this (PAGE_SNAPS_CAP = 30 in gamma/db.py).
 const RECENTS_CAP = 24;
+// Agent tools whose applied action changes the open page's block tree
+// (handleAgentEvent reloads it and lights the block up).
+const AI_BLOCK_TOOLS = ["edit_block", "create_block", "move_block"];
+// A block's text for a chat chip (cursor block, attached block): its note,
+// else its highlight quote.
+const blockChipText = (b) => (b.content || "").trim() || blockQuote(b).trim() || "(empty block)";
 function captureViewerSnapshot() {
   const scroller = document.querySelector(".pdfViewer");
   if (!scroller) return null;
@@ -2510,9 +2517,9 @@ export default function App() {
   const [chatNotes, setChatNotes] = useState([]);
   function addBlockToChat(block) {
     if (!block?.id || block.id === "root") return;
-    const text = (block.content || "").trim() || (block.quote || "").trim() || "(empty block)";
+    const text = blockChipText(block).slice(0, 4000);
     setChatNotes((prev) => prev.some((n) => n.kind === "block" && n.id === block.id)
-      ? prev : prev.length >= 12 ? prev : [...prev, { kind: "block", id: block.id, text: text.slice(0, 4000) }]);
+      ? prev : prev.length >= 12 ? prev : [...prev, { kind: "block", id: block.id, text }]);
     setStatus("Block attached to your next chat message.");
   }
   function addNoteSelection(text) {
@@ -2733,23 +2740,14 @@ export default function App() {
         try { detail = (await res.json()).detail || detail; } catch {}
         throw new Error(detail);
       }
-      const reader = res.body.getReader();
-      const decoder = new TextDecoder();
-      let buf = "", final = null;
-      for (;;) {
-        const { done, value } = await reader.read();
-        if (done) break;
-        buf += decoder.decode(value, { stream: true });
-        const lines = buf.split("\n");
-        buf = lines.pop();
-        for (const line of lines) {
-          if (!line.trim()) continue;
-          const ev = JSON.parse(line);
+      let final = null;
+      await readNdjson(res, (events) => {
+        for (const ev of events) {
           if (ev.error) throw new Error(ev.error);
-          if (ev.translations) { final = ev; continue; }
-          if (ev.i && onPartial) for (const i of ev.i) onPartial(i, ev.text);
+          else if (ev.translations) final = ev;
+          else if (ev.i && onPartial) for (const i of ev.i) onPartial(i, ev.text);
         }
-      }
+      });
       return final?.translations || null;
     } catch (err) {
       if (err.name !== "AbortError") setStatus(`Translation failed: ${err.message}`);
@@ -3161,24 +3159,20 @@ export default function App() {
   // The AI agent's live footprint on the open page (handleAgentEvent):
   // aiMarks lights up the blocks it reads/edits (id → {kind, n}), aiLive is
   // the note edit it is still writing — streamed into the block (edit_block)
-  // or a ghost row (create_block) — and aiPageRead pulses the whole outline
-  // when it reads the page. All display-only; the tree itself reloads from
-  // the server when an edit is applied.
+  // or a ghost row (create_block) — and aiScan is a whole-page read: the
+  // rows ring top to bottom ({n, order: id → index}; BlockRow staggers its
+  // ring by index, n alternates the animation name so back-to-back reads
+  // restart it) while the list's left edge pulses. All display-only; the
+  // tree itself reloads from the server when an edit is applied.
   const [aiMarks, setAiMarks] = useState(() => new Map());
   const [aiLive, setAiLive] = useState(null);
-  const [aiPageRead, setAiPageRead] = useState(0);
-  // A whole-page read sweeps the rows top to bottom: {n, order: id → index}
-  // (BlockRow staggers its ring by index). n alternates the animation name
-  // so back-to-back reads restart the sweep.
   const [aiScan, setAiScan] = useState(null);
   // The block row the cursor is on, for the chat's "Cursor" chip and
   // focus_block_id (null on the home page / when no row is focused).
   const focusedNote = useMemo(() => {
     if (!focusedBlockId || !focusedId) return null;
     const b = flattenBlocks(blocks).find((x) => x.id === focusedId);
-    if (!b) return null;
-    const text = (b.content || "").trim() || (b.properties?.quote || "").trim();
-    return { id: b.id, text: text || "(empty block)" };
+    return b ? { id: b.id, text: blockChipText(b) } : null;
   }, [blocks, focusedId, focusedBlockId]);
   const aiMarkTimersRef = useRef(new Map());
   const aiMarkSeqRef = useRef(0);
@@ -3576,7 +3570,6 @@ export default function App() {
       setAiMarks((prev) => { if (!prev.has(id)) return prev; const m = new Map(prev); m.delete(id); return m; });
     }, ttl));
   }
-  const AI_BLOCK_TOOLS = ["edit_block", "create_block", "move_block"];
   function handleAgentEvent(ev) {
     if (ev.type === "done") { setAiLive(null); return; }
     if (!focusedBlockId) return;
@@ -3595,7 +3588,6 @@ export default function App() {
       if (a.block_id && a.block_id !== focusedBlockId) markAiBlock(a.block_id, "read", 2500);
       else {
         // Whole page read: sweep every row, top to bottom.
-        setAiPageRead(Date.now());
         const order = new Map(flattenBlocks(blocksRef.current).map((b, i) => [b.id, i]));
         setAiScan((prev) => ({ n: (prev?.n || 0) + 1, order }));
         clearTimeout(aiMarkTimersRef.current.get("__scan"));
@@ -3630,11 +3622,6 @@ export default function App() {
     for (const t of aiMarkTimersRef.current.values()) clearTimeout(t);
     aiMarkTimersRef.current.clear();
   }, [focusedBlockId]);
-  useEffect(() => {
-    if (!aiPageRead) return;
-    const t = setTimeout(() => setAiPageRead(0), 3300);
-    return () => clearTimeout(t);
-  }, [aiPageRead]);
 
   // The page carrying this document, created if the library has none
   // (lookup BY attachment — the dedup path for ingest, docs/dev/block_centric.md).
@@ -5963,7 +5950,7 @@ export default function App() {
 
           </div>}
 
-          <div className={`blockList${aiPageRead ? " aiPageRead" : ""}`}>
+          <div className={`blockList${aiScan ? " aiPageRead" : ""}`}>
             {!homeMode && backlinks.length > 0 ? (
               <div className="backlinksPanel">
                 <div className="backlinksLabel">Backlinks ({backlinks.length})</div>
