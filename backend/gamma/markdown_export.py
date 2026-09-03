@@ -56,7 +56,8 @@ def _is_highlight(props):
 
 # --- readable rendering ------------------------------------------------------
 
-def render_readable(page, highlights=True, notes=True, resolve_ref=None, page_file=None):
+def render_readable(page, highlights=True, notes=True, resolve_ref=None, page_file=None,
+                    folder_scope=None):
     """Nested-bullet Markdown with a title, YAML front-matter and BibTeX block.
 
     ``highlights``/``notes`` are the export dialog's two switches: dropping
@@ -65,11 +66,19 @@ def render_readable(page, highlights=True, notes=True, resolve_ref=None, page_fi
     stay. ``resolve_ref`` (block id → {content, page_title, page_id} | None)
     and ``page_file`` (page id → exported filename | None) resolve [[refs]],
     ![[embeds]] and internal document links — see ``resolve_block_links``.
+    ``folder_scope`` is the folder a folder export was opened on: the page's
+    folder label is written relative to it (``folder:``), so importing the
+    zip into a folder rebuilds the same tree there.
     """
     props = page.get("properties") or {}
     title = (page.get("content") or "").strip() or "Untitled"
 
     fm = [f"title: {title}"]
+    folders = [t.strip() for t in (props.get("folder") or "").split(",") if t.strip()]
+    if folder_scope:
+        folders = [f[len(folder_scope) + 1:] for f in folders if f.startswith(folder_scope + "/")]
+    if folders:
+        fm.append(f"folder: {folders[0]}")
     if props.get("source_url"):
         fm.append(f"source: {props['source_url']}")
     meta = props.get("meta")

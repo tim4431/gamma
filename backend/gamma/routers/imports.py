@@ -20,7 +20,8 @@ from ..db import page_now, pdf_upload_path, user_db_path, user_uploads_dir
 from ..blocks_store import last_child_position
 from ..foldertags import clean_path, parse_tags
 from ..logbuf import log
-from ..markdown_import import md_to_blocks, split_frontmatter
+from ..markdown_import import MAX_MARKDOWN_BYTES, md_to_blocks, parse_frontmatter
+from ..markdown_zip_import import import_markdown_zip, insert_note_page
 from ..storage import content_digest, display_filename, is_pdf, store_pdf
 from ..logseq_import import (
     edn_highlight_position,
@@ -144,9 +145,6 @@ async def import_logseq(
 
 # --- Plain Markdown note import -----------------------------------------------
 
-MAX_MARKDOWN_BYTES = 5 * 1024 * 1024
-
-
 @router.post("/import/markdown")
 async def import_markdown(request: Request, file: UploadFile = File(...),
                           folder: str = Form("")):
@@ -166,46 +164,43 @@ async def import_markdown(request: Request, file: UploadFile = File(...),
         raise HTTPException(status_code=400, detail="Markdown file must be UTF-8")
 
     original = display_filename(file.filename, "note.md")
-    frontmatter_title, body = split_frontmatter(text)
+    fields, body = parse_frontmatter(text)
     fallback = re.sub(r"\.(?:md|markdown)$", "", original, flags=re.I).strip() or "Untitled note"
-    title = (frontmatter_title or fallback).strip()[:500]
+    title = (fields.get("title") or fallback).strip()[:500]
     tree = md_to_blocks(body)
-    clean_folder = clean_path(folder)
+    # The upload's folder, then a front-matter `folder:` below it (what
+    # Gamma's own Markdown export writes) — same rule as the zip import.
+    clean_folder = clean_path("/".join(p for p in (folder, fields.get("folder", "")) if p))
     props = {"original_filename": original, "markdown_import": content_digest(raw)}
     if clean_folder:
         props["folder"] = clean_folder
 
     now = page_now()
     page_id = secrets.token_urlsafe(9)
-    imported = 0
     with sqlite3.connect(user_db_path(user, "pages.db")) as conn:
-        pos = generate_key_between(last_child_position(conn, "root"), None)
-        conn.execute(
-            "INSERT INTO unified_blocks (id,parent_id,position,content,properties,created_at,updated_at) "
-            "VALUES (?,'root',?,?,?,?,?)",
-            (page_id, pos, title, json.dumps(props), now, now),
-        )
-        pending = [(page_id, tree)]
-        while pending:
-            parent_id, nodes = pending.pop()
-            if not nodes:
-                continue
-            positions = generate_n_keys_between(None, None, n=len(nodes))
-            for node, child_pos in zip(nodes, positions):
-                child_id = secrets.token_urlsafe(9)
-                conn.execute(
-                    "INSERT INTO unified_blocks (id,parent_id,position,content,properties,created_at,updated_at) "
-                    "VALUES (?,?,?,?,?,?,?)",
-                    (child_id, parent_id, child_pos, node.get("content", ""), "{}", now, now),
-                )
-                imported += 1
-                if node.get("children"):
-                    pending.append((child_id, node["children"]))
+        imported = insert_note_page(conn, page_id, title, props, tree, now)
         conn.commit()
 
     return {"ok": True, "block_id": page_id, "title": title,
             "original_filename": original, "imported": imported,
             "folder": clean_folder}
+
+
+@router.post("/import/markdown-zip")
+def import_markdown_zip_endpoint(request: Request, file: UploadFile = File(...),
+                                 folder: str = Form("")):
+    """A zip of Markdown notes → one page per .md (see markdown_zip_import):
+    Notion's Markdown & CSV export, a Gamma Markdown export, or any zipped
+    folder of notes. ``folder`` prefixes every page's folder label."""
+    user = require_user(request)
+    try:
+        zf = zipfile.ZipFile(file.file)
+    except zipfile.BadZipFile:
+        raise HTTPException(status_code=400, detail="not a zip file")
+    with zf, sqlite3.connect(user_db_path(user, "pages.db")) as conn:
+        report = import_markdown_zip(user, zf, conn, folder, page_now())
+        conn.commit()
+    return {"ok": True, **report}
 
 
 class MarkdownBlocksRequest(BaseModel):

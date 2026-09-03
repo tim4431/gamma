@@ -3860,6 +3860,35 @@ export default function App() {
     }
   }
 
+  // A zip of Markdown notes (Notion's Markdown & CSV export, a Gamma Markdown
+  // export, any zipped folder of .md): one page per note, into the open folder.
+  async function importMarkdownZip(file) {
+    if (shareMode) return;
+    const taskId = addTransfer({ name: `Markdown import — ${file.name.slice(0, 48)}`, kind: "import", info: "importing…" });
+    setStatus("Importing Markdown notes…");
+    const form = new FormData();
+    form.append("file", file);
+    form.append("folder", homeMode && folderFilter ? folderFilter : "");
+    try {
+      const data = await apiJson(`${API}/import/markdown-zip`, { method: "POST", body: form });
+      (data.warnings || []).forEach((w) => console.warn(`Markdown import: ${w.title} — ${w.reason}`));
+      const summary = [
+        `${data.pages_created} new page${data.pages_created === 1 ? "" : "s"}`,
+        data.pages_skipped ? `${data.pages_skipped} already imported` : "",
+        data.assets_stored ? `${data.assets_stored} file${data.assets_stored === 1 ? "" : "s"}` : "",
+        data.links_resolved ? `${data.links_resolved} link${data.links_resolved === 1 ? "" : "s"} between notes` : "",
+        data.warnings?.length ? `${data.warnings.length} issue${data.warnings.length === 1 ? "" : "s"} (details in the browser console)` : "",
+      ].filter(Boolean).join(" · ");
+      updateTransfer(taskId, { status: "done", info: `${data.pages_created} pages` });
+      setStatus(`${data.notion ? "Notion" : "Markdown"} import: ${summary}.`);
+      refreshQuota?.();
+      await fetchHomeBlocks();
+    } catch (err) {
+      updateTransfer(taskId, { status: "error", info: (err.message || "failed").slice(0, 60) });
+      setStatus(`Markdown import failed: ${err.message}`);
+    }
+  }
+
   // Open a PDF by URL: resolve it, find or create its page, open that page.
   async function openPdf(sourceUrl) {
     if (!sourceUrl || shareMode) return;
@@ -4612,6 +4641,22 @@ export default function App() {
       inp.type = "file";
       inp.accept = ".zip,application/zip";
       inp.onchange = () => { if (inp.files?.[0]) importZotero(inp.files[0], o.strip); };
+      inp.click();
+      return;
+    }
+    if (o.source === "markdown") {
+      // One .md goes through the plain upload path (same as dropping it); a
+      // .zip (Notion export, Gamma Markdown export, zipped notes) through
+      // the zip importer. Both land in the open folder, like uploads.
+      const inp = document.createElement("input");
+      inp.type = "file";
+      inp.accept = ".md,.markdown,.zip,text/markdown,application/zip";
+      inp.onchange = () => {
+        const f = inp.files?.[0];
+        if (!f) return;
+        if (/\.zip$/i.test(f.name)) importMarkdownZip(f);
+        else uploadFiles([f]);
+      };
       inp.click();
       return;
     }
