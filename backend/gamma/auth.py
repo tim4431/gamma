@@ -48,6 +48,24 @@ def _apply_security_headers(request: Request, response) -> None:
     h.setdefault("Content-Security-Policy", "frame-ancestors 'self'")
     if _is_https(request):
         h.setdefault("Strict-Transport-Security", "max-age=31536000; includeSubDomains")
+    _apply_share_cors(request, response)
+
+
+def _apply_share_cors(request: Request, response) -> None:
+    """Share reads are readable cross-origin, so another Gamma's frontend can
+    pull a shared page straight into its library (Import → share link, the
+    share view's "Add to my library"): a GET carrying ?share= or resolving
+    /api/share/{token} answers ``Access-Control-Allow-Origin: *``. Nothing
+    leaks that the token alone doesn't already grant: ``*`` makes browsers
+    refuse credentialed responses, so a cross-origin fetch arrives without a
+    session and only ``anyone`` shares open (a signed-in-only share answers
+    401 as it would to any stranger). Writes and every other endpoint keep the
+    browser's same-origin default."""
+    if request.method != "GET":
+        return
+    path = request.url.path
+    if request.query_params.get("share") or path.startswith("/api/share/"):
+        response.headers["Access-Control-Allow-Origin"] = "*"
 
 
 def _finish_request_log(request: Request, response, started: float, expected: str | None, reason: str = ""):
