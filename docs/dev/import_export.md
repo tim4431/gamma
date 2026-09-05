@@ -186,6 +186,31 @@ via the same upload/progress path as Settings → Restore backup (guests can't
 import). The dialog's three switches don't apply — a Gamma export is a 1:1
 copy, so they're pinned on.
 
+### Importing a shared page by link
+
+The same pipeline, without the zip ever touching disk: `importSharedPage` in
+`App.jsx` takes a share URL (`https://other/?share=<token>`), resolves the
+token against that origin's `/api/share/{token}`, fetches the page as
+`/api/pages/{id}/export?mode=gamma&share=<token>`, and hands the blob to
+`runBackupImport(…, "merge")` with `after.openPage` set — block ids survive
+the export, so the reload lands on `?page=<id>` in the importer's own
+library. The fetch is browser-side on purpose: the browser reaches a Gamma on
+the LAN or at `localhost` that the server's SSRF guard (`net_guard.py`) would
+rightly refuse. That works because share GETs answer
+`Access-Control-Allow-Origin: *` ([api.md](api.md)); with `*` the browser
+sends no cookies cross-origin, so only links open to `anyone` import from
+another Gamma, while a same-origin link also carries the session and
+invite-only ones work too. Two entry points: the topbar's "+" box — a pasted
+`<origin>/?share=<token>` is recognised by shape (`parseGammaShareLink`: the
+SPA root with a `share` query), shows a hint, and Enter imports instead of
+fetching a PDF; everything else typed there is still a paper — and the share
+view's topbar — a signed-in non-guest viewer gets "Add to my library" (the same
+function on `window.location.href`), the page's owner gets "Open in my
+library" instead (a plain jump to `?page=<id>`, since the page is already
+theirs). The remote must be recent enough to serve `mode=gamma` and the CORS
+header; an older one surfaces as "couldn't reach …" / "too old" in the
+status line and the transfer row.
+
 ## The Export dialog
 
 The ⋮ menu's single "Export…" entry → `ExportDialog` in `widgets.jsx`: one

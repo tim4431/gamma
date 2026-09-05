@@ -186,7 +186,10 @@ async def get_share(token: str, request: Request):
     """Resolve a link for the viewer: 404 unknown, 401 when signing in could
     grant access, 403 when this signed-in account isn't allowed. Otherwise the
     page plus what this viewer may do (``can_edit``). ``doc_id`` is the
-    page's PDF attachment id ("" without one), derived from the page."""
+    page's PDF attachment id ("" without one), derived from the page.
+    ``viewer`` / ``viewer_is_guest`` tell the share view whether to offer
+    "Open in my library" (the owner) or "Add to my library" (an account that
+    can import)."""
     share = share_lookup(token)
     if not share:
         raise HTTPException(status_code=404, detail="share not found")
@@ -198,4 +201,4 @@ async def get_share(token: str, request: Request):
     return {"page_id": share["page_id"], "doc_id": _page_doc_id(share["username"], share["page_id"]),
             "username": share["username"],
             "audience": share["audience"], "role": share["role"], "can_edit": level == "edit",
-            "viewer": request.state.user or ""}
+            "viewer": request.state.user or "", "viewer_is_guest": bool(request.state.is_guest)}

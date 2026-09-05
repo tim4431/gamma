@@ -3656,7 +3656,16 @@ button.pdfOutlineChevron:hover { background: rgba(128, 128, 128, 0.28); color: v
   white-space: nowrap;
   color: var(--text-secondary);
 }
-.transferInfo { flex-shrink: 0; font-size: 11px; color: var(--text-muted); }
+.transferInfo {
+  flex-shrink: 1;
+  min-width: 0;
+  max-width: 62%;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  font-size: 11px;
+  color: var(--text-muted);
+}
 .searchToggle.transferClearBtn { width: auto; padding: 0 8px; }
 
 /* --- global Back button (topbar) --- */

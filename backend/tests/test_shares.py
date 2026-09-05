@@ -381,3 +381,37 @@ def test_share_editor_images_land_in_the_owners_uploads(bob, carol):
     _share(bob, page["id"], role="view")
     r = carol.post("/api/upload-image", params={"share": token}, files={"file": ("g.png", png, "image/png")})
     assert r.status_code == 403
+
+
+def test_share_reads_are_cors_open_and_importable(bob, anon):
+    """Another Gamma imports a shared page browser-side: resolve the token,
+    fetch the page as a Gamma export, merge the zip into its own library. Share
+    GETs answer Access-Control-Allow-Origin: * for that; nothing else does."""
+    page = make_page(bob, "Shared across Gammas")
+    _child(bob, page["id"], "carried along")
+    token = bob.post(f"/api/share/{page['id']}").json()["token"]
+
+    resolved = anon.get(f"/api/share/{token}")
+    assert resolved.status_code == 200
+    assert resolved.headers.get("access-control-allow-origin") == "*"
+    assert resolved.json()["viewer"] == ""
+    assert resolved.json()["viewer_is_guest"] is False
+
+    zipped = anon.get(f"/api/pages/{page['id']}/export", params={"mode": "gamma", "share": token})
+    assert zipped.status_code == 200, zipped.text
+    assert zipped.headers.get("access-control-allow-origin") == "*"
+
+    # Writes and non-share reads keep the same-origin default.
+    assert "access-control-allow-origin" not in bob.get("/api/blocks/root/children").headers
+    assert "access-control-allow-origin" not in bob.post(f"/api/share/{page['id']}").headers
+
+    make_user("dana_share", "danapw1234567")
+    dana = login("dana_share", "danapw1234567")
+    r = dana.post("/api/import-data?mode=merge",
+                   files={"file": ("shared-page.zip", zipped.content, "application/zip")})
+    assert r.status_code == 200, r.text
+    assert r.json()["pages_added"] == 1
+    # Same block ids, so the link's page id opens straight in dana's library.
+    got = dana.get(f"/api/blocks/{page['id']}/subtree").json()["block"]
+    assert got["content"] == "Shared across Gammas"
+    assert [c["content"] for c in got["children"]] == ["carried along"]

@@ -20,6 +20,14 @@ else; in dev, Vite proxies `/api` → `127.0.0.1:9001`.
   folder export are refused (403). Rows minted by the old doc-keyed model
   (`page_id` NULL) were backfilled once by `gamma/migrate.py` (see
   [user_db.md](user_db.md)); auth treats a row without `page_id` as dead.
+- Share reads are readable **cross-origin**: a GET carrying `?share=` or
+  resolving `/share/{token}` answers `Access-Control-Allow-Origin: *`
+  (`auth._apply_share_cors`), so another Gamma's frontend can pull a shared
+  page into its own library browser-side (a share link pasted into the "+"
+  box, the share view's "Add to my library" —
+  [import_export.md](import_export.md)). `*` makes browsers drop credentials,
+  so a cross-origin fetch is a stranger's: only `anyone` links open that way.
+  Writes and every other endpoint keep the same-origin default.
 - **Share permissions** (`shares.audience` / `role` / `allowed_users`,
   `auth.share_access`) are Notion-shaped and additive: the owner INVITES
   people (`users: [{name, role}]`, stored as `carol:edit,dave:view`) who get
@@ -105,7 +113,7 @@ touches a page's attachment. `GET /pages/{id}/export*` live in `export.py`.
 | GET | `/quota` | effective limits + usage for the session user |
 | POST | `/share/{page_id}` | create the page's share link (defaults `anyone`/`view`; optional body `{audience, role, users}` applies to a NEW link) or return the existing one unchanged — root blocks only (400 otherwise) |
 | GET/PUT/DELETE | `/share-settings/{page_id}` | owner: read settings (`{token: null}` when unshared) / change `audience`, `role`, `users` (`["carol"]` or `[{name, role}]`; validated: `edit`+`anyone` → 400, unknown usernames or roles → 400; the token stays) / stop sharing (the token dies) |
-| GET | `/share/{token}` | resolve a link for this viewer → `{page_id, doc_id, username, audience, role, can_edit, viewer}` (`doc_id` = the page's PDF attachment id via `page_attachment`, `""` without one — the vestigial `shares.doc_id` column is never read); 404 unknown, 401 sign in first, 403 signed in but not allowed |
+| GET | `/share/{token}` | resolve a link for this viewer → `{page_id, doc_id, username, audience, role, can_edit, viewer, viewer_is_guest}` (`doc_id` = the page's PDF attachment id via `page_attachment`, `""` without one — the vestigial `shares.doc_id` column is never read; `viewer`/`viewer_is_guest` let the share view offer "Open in my library" to the owner or "Add to my library" to an account that can import); 404 unknown, 401 sign in first, 403 signed in but not allowed |
 
 ### Search (`search.py`, `gamma/block_index.py`, `gamma/pdf_index.py`)
 | Method | Path | Purpose |

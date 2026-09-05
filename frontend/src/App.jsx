@@ -472,7 +472,7 @@ export default function App() {
       setStatus(`Backup downloaded (${fmtBytes(blob.size)}).`);
     } catch (err) {
       clearInterval(zipPoll);
-      updateTransfer(tid, { status: "error", info: String(err.message || err).slice(0, 60) });
+      updateTransfer(tid, { status: "error", info: String(err.message || err) });
       postPill("backup", null);
       setStatus(`Export failed: ${err.message}`);
     }
@@ -519,7 +519,9 @@ export default function App() {
   // XMLHttpRequest instead of fetch: it reports upload progress, so a large
   // zip shows a percent while the bytes go up, then an indeterminate
   // "restoring/merging" hint while the server unzips and swaps the databases.
-  function runBackupImport(f, mode, target) {
+  // after.openPage: reload into that page instead of the home library (a
+  // shared page imported by link keeps its block id, so it opens directly).
+  function runBackupImport(f, mode, target, after = {}) {
     const merging = mode === "merge";
     const other = target && target !== authUser?.user ? target : null;
     const tid = addTransfer({ name: `${merging ? "Merge" : "Restore"} ${f.name}`.slice(0, 60), kind: "upload", info: "uploading…" });
@@ -553,10 +555,11 @@ export default function App() {
         // Another account's data changed, not this workspace's — nothing here
         // is stale, so stay put instead of throwing the session away.
         if (other) setStatus(`${merging ? "Merged into" : "Restored"} ${other}.`);
+        else if (after.openPage) window.location.href = `${window.location.pathname}?page=${encodeURIComponent(after.openPage)}`;
         else window.location.href = window.location.pathname; // fresh state, no stale ?block=
       } else {
         const msg = d.detail || xhr.statusText || "failed";
-        updateTransfer(tid, { status: "error", info: String(msg).slice(0, 60) });
+        updateTransfer(tid, { status: "error", info: String(msg) });
         setStatus(`Import failed: ${msg}`);
       }
     };
@@ -1976,7 +1979,7 @@ export default function App() {
       } else {
         updateTransfer(id, st.phase === "done"
           ? { status: "done", info: fmtBytes(st.bytes) }
-          : { status: "error", info: (st.detail || "failed").slice(0, 60) });
+          : { status: "error", info: st.detail || "failed" });
       }
     }
   }
@@ -2776,7 +2779,7 @@ export default function App() {
       updateTransfer(taskId, { status: "done", info: data.cached ? "cached" : data.source === "ai" ? "AI-extracted" : data.source || "" });
       return data;
     } catch (err) {
-      updateTransfer(taskId, { status: "error", info: (err.message || "failed").slice(0, 60) });
+      updateTransfer(taskId, { status: "error", info: (err.message || "failed") });
       throw err;
     } finally {
       setMetaFetchingIds((prev) => { const next = new Set(prev); next.delete(block.id); return next; });
@@ -2922,7 +2925,7 @@ export default function App() {
       }
       return res;
     } catch (err) {
-      updateTransfer(taskId, { status: "error", info: (err.message || "failed").slice(0, 60) });
+      updateTransfer(taskId, { status: "error", info: (err.message || "failed") });
       if (!silent) setStatus(`Annotation import failed: ${err.message}`);
     }
   }
@@ -2941,7 +2944,7 @@ export default function App() {
       updateTransfer(taskId, { status: "done", info: "" });
       if (focusedBlockIdRef.current === targetId) setPptCite(data.citation || "");
     } catch (err) {
-      updateTransfer(taskId, { status: "error", info: (err.message || "failed").slice(0, 60) });
+      updateTransfer(taskId, { status: "error", info: (err.message || "failed") });
       setStatus(`Citation failed: ${err.message}`);
     } finally {
       setPptCiteBusy(false);
@@ -3855,7 +3858,7 @@ export default function App() {
       refreshQuota?.();
       await fetchHomeBlocks();
     } catch (err) {
-      updateTransfer(taskId, { status: "error", info: (err.message || "failed").slice(0, 60) });
+      updateTransfer(taskId, { status: "error", info: (err.message || "failed") });
       setStatus(`Zotero import failed: ${err.message}`);
     }
   }
@@ -3884,7 +3887,7 @@ export default function App() {
       refreshQuota?.();
       await fetchHomeBlocks();
     } catch (err) {
-      updateTransfer(taskId, { status: "error", info: (err.message || "failed").slice(0, 60) });
+      updateTransfer(taskId, { status: "error", info: (err.message || "failed") });
       setStatus(`Markdown import failed: ${err.message}`);
     }
   }
@@ -3906,7 +3909,7 @@ export default function App() {
       await openBlock(block.id, { viewerUrl: src.viewerUrl });
       setStatus(src.note || `Loaded ${src.doc_id}`);
     } catch (err) {
-      updateTransfer(taskId, { status: "error", info: (err.message || "failed").slice(0, 60) });
+      updateTransfer(taskId, { status: "error", info: (err.message || "failed") });
       setStatus(`Open failed: ${err.message}`);
     } finally {
       setLoading(false);
@@ -3975,7 +3978,7 @@ export default function App() {
         openBlock(err.data.page_id, { pushNav: true });
         return;
       }
-      updateTransfer(taskId, { status: "error", info: (err.message || "failed").slice(0, 60) });
+      updateTransfer(taskId, { status: "error", info: (err.message || "failed") });
       setStatus(`Attach failed: ${err.message}`);
     } finally {
       setLoading(false);
@@ -4028,7 +4031,8 @@ export default function App() {
       const data = await res.json();
       setShareGate(null);
       setShareInfo({ owner: data.username || "", role: data.role || "view", canEdit: Boolean(data.can_edit),
-                     audience: data.audience || "anyone", viewer: data.viewer || "" });
+                     audience: data.audience || "anyone", viewer: data.viewer || "",
+                     viewerIsGuest: Boolean(data.viewer_is_guest) });
 
       // The share names a page block directly (PDF pages and note pages
       // alike). Read access rides on the token, which apiJson appends to every
@@ -4678,6 +4682,76 @@ export default function App() {
     inp.click();
   }
 
+  // A Gamma share link is "<origin>/?share=<token>": the SPA root with a
+  // share query and nothing else in the path. That shape separates it from an
+  // ordinary PDF/paper URL in the "+" box without a network round trip, so a
+  // PDF hosted at some site's "/?share=" would be the one false positive — and
+  // pasting it there does what the user meant either way (it opens as a PDF
+  // once the share resolution fails). Returns the parsed URL or null.
+  // Text pasted into the "+" box, reduced to what was meant: a link copied
+  // out of a chat arrives with the app's decorations around it ("[7:54 PM]
+  // https://…", trailing punctuation), so when the text contains an http(s)
+  // URL that URL is the input; an arXiv id or DOI has none and passes as is.
+  function cleanAddInput(text) {
+    const t = String(text || "").trim();
+    const m = t.match(/https?:\/\/[^\s<>"'\]\)]+/);
+    return m ? m[0] : t;
+  }
+
+  function parseGammaShareLink(text) {
+    let u;
+    try { u = new URL(cleanAddInput(text)); } catch { return null; }
+    if (!/^https?:$/.test(u.protocol) || !u.searchParams.get("share")) return null;
+    if (u.pathname !== "/" && !u.pathname.endsWith("/index.html")) return null;
+    return u;
+  }
+
+  // Import a page from a share link — another Gamma's or this server's — into
+  // this library. Browser-side on purpose: the browser can reach a Gamma on
+  // the LAN or at localhost that the server's SSRF guard would rightly
+  // refuse. The owner's Gamma answers share reads cross-origin, so with the
+  // token alone (no cookies — only "anyone" links open from another origin;
+  // a same-origin link also gets this session, so invite-only ones work
+  // here) the page is fetched as a Gamma export and merged through the same
+  // path as Import → Gamma export. Block ids survive, so the imported page
+  // opens by the id the link named.
+  async function importSharedPage(shareUrl) {
+    let origin = "", token = "";
+    try {
+      const u = new URL(shareUrl, window.location.href);
+      origin = u.origin;
+      token = u.searchParams.get("share") || "";
+    } catch {}
+    if (!token) { setStatus("That isn't a Gamma share link (no ?share= in it)."); return; }
+    const local = origin === window.location.origin;
+    const opts = { credentials: local ? "include" : "omit" };
+    const tid = addTransfer({ name: `Shared page from ${local ? "this Gamma" : new URL(origin).host}`.slice(0, 60), kind: "download", info: "resolving…" });
+    try {
+      let r;
+      try {
+        r = await fetch(`${origin}${API}/share/${encodeURIComponent(token)}`, opts);
+      } catch {
+        throw new Error(`couldn't reach ${origin} — is it up, and a Gamma recent enough to share across servers?`);
+      }
+      if (r.status === 401 || r.status === 403) {
+        throw new Error(local
+          ? "that link is shared with specific people only"
+          : "that link isn't open to anyone — only public share links can be imported from another Gamma");
+      }
+      if (!r.ok) throw new Error("share link not found");
+      const info = await r.json();
+      updateTransfer(tid, { info: "downloading…" });
+      r = await fetch(`${origin}${API}/pages/${encodeURIComponent(info.page_id)}/export?mode=gamma&share=${encodeURIComponent(token)}`, opts);
+      if (!r.ok) throw new Error(r.status === 404 ? "that Gamma is too old to export pages for another Gamma" : `export failed (${r.status})`);
+      const blob = await r.blob();
+      updateTransfer(tid, { status: "done", info: fmtBytes(blob.size) });
+      runBackupImport(new File([blob], "shared-page.zip", { type: "application/zip" }), "merge", null, { openPage: info.page_id });
+    } catch (err) {
+      updateTransfer(tid, { status: "error", info: String(err.message) });
+      setStatus(`Import failed: ${err.message}`);
+    }
+  }
+
   // Run what the export dialog was configured to do. Every format is one
   // endpoint with flags, except a PDF with both switches off — that is the
   // stored file itself, which the raw path serves without a round trip (and
@@ -4790,7 +4864,7 @@ export default function App() {
         setStatus("AI returned no title.");
       }
     } catch (err) {
-      updateTransfer(taskId, { status: "error", info: (err.message || "failed").slice(0, 60) });
+      updateTransfer(taskId, { status: "error", info: (err.message || "failed") });
       setStatus(`AI title failed: ${err.message}`);
     } finally {
       setAiTitleBusy(false);
@@ -5697,6 +5771,11 @@ export default function App() {
                         <button className="popoverItem" onClick={() => { setPdfHidden((h) => !h); setOpenPopover(null); }}>
                           {pdfHidden ? "Show the PDF" : "Hide the PDF"}
                         </button>
+                        {pdfUrl ? (
+                          <button className="popoverItem" onClick={exportRawPdf} title="Download the PDF file exactly as stored — no highlights or notes">
+                            Download the PDF
+                          </button>
+                        ) : null}
                         {!readOnly ? (
                           <button className="popoverItem" onClick={detachPdfFromPage}>Detach the PDF…</button>
                         ) : null}
@@ -6853,6 +6932,19 @@ export default function App() {
               </button>
             </>
           ) : null}
+          {!homeMode && pdfUrl ? (
+            <>
+              <div className="popoverDivider" />
+              <button
+                className="popoverItem"
+                onClick={exportRawPdf}
+                title="Download the PDF file exactly as stored — no highlights or notes"
+              >
+                <DownloadIcon className="popoverItemIcon" size={15} />
+                Download PDF
+              </button>
+            </>
+          ) : null}
         </div>
       ) : null}
     </PopoverAnchor>
@@ -6878,15 +6970,23 @@ export default function App() {
               className="searchInput"
               value={addUrl}
               onChange={(e) => setAddUrl(e.target.value)}
-              placeholder="PDF URL, arXiv id, or DOI — press Enter"
+              placeholder="PDF URL, arXiv id, DOI, or a Gamma share link — press Enter"
               onKeyDown={(e) => {
                 if (e.key === "Enter" && addUrl.trim() && !loading) {
                   setOpenPopover(null);
-                  openPdf(addUrl.trim());
+                  // A share link from another Gamma (or this one) brings the
+                  // whole page over; anything else is a paper to fetch.
+                  if (parseGammaShareLink(addUrl)) importSharedPage(cleanAddInput(addUrl));
+                  else openPdf(cleanAddInput(addUrl));
                   setAddUrl("");
                 }
               }}
             />
+            {parseGammaShareLink(addUrl) ? (
+              <div className="popoverHint">
+                A Gamma share link — Enter copies that page, with its blocks, highlights and PDF, into your library.
+              </div>
+            ) : null}
             <label className="popoverItem" style={{ cursor: loading ? "not-allowed" : "pointer" }}>
               Upload files…
               <input
@@ -6971,7 +7071,9 @@ export default function App() {
                 </div>
               ) : null}
               {transfers.map((t) => (
-                <div key={t.id} className="transferRow">
+                // The row clips long names and messages; hovering shows the
+                // whole thing (a failed import's full reason, a long URL).
+                <div key={t.id} className="transferRow" title={t.info ? `${t.name} — ${t.info}` : t.name}>
                   <span className={`transferStatus ${t.status}`}>
                     {t.status === "active" ? <span className="transferSpin inline" />
                       : t.status === "done"
@@ -6987,7 +7089,7 @@ export default function App() {
                           ? <FileIcon size={12} />
                           : <DownloadIcon size={12} />}
                   </span>
-                  <span className="transferName" title={t.name}>{t.name}</span>
+                  <span className="transferName">{t.name}</span>
                   <span className="transferInfo">{t.info || ""}</span>
                 </div>
               ))}
@@ -7371,6 +7473,21 @@ export default function App() {
               title={shareInfo.canEdit ? "Your edits save to the owner's page" : "Read-only share link"}>
               {shareInfo.canEdit ? "Can edit" : "View only"}{shareInfo.owner ? ` · shared by ${shareInfo.owner}` : ""}
             </span>
+          ) : null}
+          {shareInfo?.owner && shareInfo.viewer === shareInfo.owner ? (
+            // The owner landed on their own link: the page is theirs already.
+            <button
+              className="uiBtn sm"
+              title="This is your page — open it in your library instead of the shared view"
+              onClick={() => { window.location.href = `${window.location.pathname}?page=${encodeURIComponent(focusedBlockId)}`; }}
+            >Open in my library</button>
+          ) : shareInfo?.viewer && !shareInfo.viewerIsGuest && focusedBlockId ? (
+            <button
+              className="uiBtn sm"
+              disabled={loading}
+              title="Copy this page — blocks, highlights, its PDF and files — into your own library"
+              onClick={() => importSharedPage(window.location.href)}
+            >Add to my library</button>
           ) : null}
           {renderOverflowMenu(true)}
         </div>
