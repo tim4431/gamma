@@ -2783,6 +2783,19 @@ button.pdfOutlineChevron:hover { background: rgba(128, 128, 128, 0.28); color: v
   pointer-events: none;
 }
 .metaValWarn { color: var(--danger); }
+/* Provenance beside "Slide citation" in the share popover (same "!" dot, inline) */
+.citeSourceTag {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  margin-left: 8px;
+  font-size: 11px;
+  font-weight: 400;
+  color: var(--text-muted);
+}
+.citeSourceTag.warn { color: var(--danger); }
+.metaWarnDot.inline { position: static; display: inline-block; }
+.citeWarnHint { color: var(--danger); margin-bottom: 4px; }
 .sourcePopover { min-width: 300px; right: 0; }
 
 .searchResult.active { background: color-mix(in srgb, var(--accent-dark) 14%, transparent); }

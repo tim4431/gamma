@@ -84,6 +84,8 @@ export function metadataToDraft(metadata) {
     pages: metadata?.pages || "",
     doi: metadata?.doi || "",
     arxiv_id: metadata?.arxiv_id || "",
+    publisher: metadata?.publisher || "",
+    isbn: metadata?.isbn || "",
   };
 }
 
