@@ -68,7 +68,7 @@ module.exports = {
   // identity; a mismatch is rejected at upload. displayName must equal the
   // name reserved in the Store.
   appx: {
-    identityName: 'xwtim.Gamma PDF',
+    identityName: 'xwtim.GammaPDF',
     publisher: 'CN=2641C414-B740-42FF-BD24-6552C33A850A',
     publisherDisplayName: 'xwtim',
     displayName: 'Gamma PDF',
