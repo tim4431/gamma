@@ -5,7 +5,7 @@
 // `latest.yml` / `latest-mac.yml` (+ installer blockmaps) next to the
 // installers and the release workflow uploads them; electron-updater reads
 // the newest non-prerelease `v<version>` tag from `publish` in
-// electron-builder.js (baked into resources/app-update.yml).
+// electron-builder.cjs (baked into resources/app-update.yml).
 //
 // macOS: Squirrel.Mac refuses to install into an unsigned app ("Could not
 // get code signature for running application"), so while the mac builds are

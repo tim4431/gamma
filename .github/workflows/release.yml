@@ -13,7 +13,7 @@
 # so a released app is fully self-contained — no Python or Node needed.
 #
 # Code signing is optional and driven entirely by repository secrets
-# (desktop/electron-builder.js turns each piece on only when its secrets are
+# (desktop/electron-builder.cjs turns each piece on only when its secrets are
 # present, so a fork without them still builds — unsigned):
 #   Windows, Azure Trusted Signing:  AZURE_TENANT_ID, AZURE_CLIENT_ID,
 #     AZURE_CLIENT_SECRET (an Entra app registration with the "Trusted
@@ -149,9 +149,10 @@ jobs:
           done
           echo "frozen server never became healthy"; kill $SERVER_PID; exit 1
 
-      # Windows builds under PowerShell on purpose: `npx electron-builder`
-      # from a Git-Bash step on the Windows runner exits 0 without doing
-      # anything (no output, no dist/).
+      # Per-OS build steps: PowerShell on Windows (the runner default, as the
+      # first releases ran), bash on macOS where the signing env is exported.
+      # The config is electron-builder.cjs, never .js: cmd.exe would resolve
+      # `npx electron-builder` to that file via PATHEXT and build nothing.
       - name: Build desktop app (Windows)
         if: runner.os == 'Windows'
         working-directory: desktop

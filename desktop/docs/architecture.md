@@ -159,7 +159,7 @@ dialog (tests only); `GAMMA_SHELL_NO_UPDATE=1` disables the updater.
   (pythonPath/backendDir) → bundled frozen server (packaged app) →
   repo auto-detect (`backend/venv` + `frontend/dist`, dev mode).
 - `lib/updater.js` — the electron-updater wrapper described above.
-- `electron-builder.js` — the packaging config (targets, extra resources,
+- `electron-builder.cjs` — the packaging config (targets, extra resources,
   secret-gated signing, the update feed's `publish` block).
 - `backend_entry.py` — entry for the frozen server (`--port`, `--data-dir`;
   sets env before importing gamma, serves the bundled `frontend_dist`).

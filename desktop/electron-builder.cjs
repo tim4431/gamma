@@ -1,4 +1,8 @@
-// electron-builder config. Lives here instead of package.json "build" so the
+// electron-builder config (.cjs, NOT .js: on Windows cmd.exe resolves the
+// bare command `electron-builder` against the current directory first, and
+// PATHEXT includes .JS — `npx electron-builder` would run this file through
+// Windows Script Host and exit 0 without building). Lives here instead of
+// package.json "build" so the
 // signing pieces can depend on the environment: everything is UNSIGNED by
 // default (local `npm run dist`, forks, PRs) and switches on only when the
 // release workflow injects the credentials — see .github/workflows/release.yml

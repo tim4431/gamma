@@ -9,7 +9,7 @@ npm run e2e:packaged              # the suite against the frozen bundle
 npm run dist                      # real installer (NSIS .exe / .dmg + .zip)
 ```
 
-`electron-builder` (config: `electron-builder.js` — it replaced the
+`electron-builder` (config: `electron-builder.cjs` — it replaced the
 `package.json` `build` key so signing can depend on the environment) copies
 `dist-backend/gamma-server` into `resources/gamma-server`; a packaged app is
 fully self-contained (no Python, no Node on the user's machine). Installers
@@ -34,7 +34,7 @@ every push to `main`).
 
 ## Code signing (optional, secret-gated)
 
-Every signing piece in `electron-builder.js` switches on only when its
+Every signing piece in `electron-builder.cjs` switches on only when its
 credentials are present, so `npm run dist` locally and forks without certs
 still produce (unsigned) installers. The workflow feeds these repository
 secrets through:
@@ -77,7 +77,7 @@ darwin in `lib/updater.js` so macOS updates install in place.
 
 ## Microsoft Store
 
-The Store build is the `appx` target in `electron-builder.js`. Its `appx`
+The Store build is the `appx` target in `electron-builder.cjs`. Its `appx`
 block carries the product identity from Partner Center (*Apps and games →
 GammaPDF → Product management → Product identity*): `identityName`
 (`xwtim.GammaPDF`), `publisher` (`CN=<GUID>`), `publisherDisplayName`
@@ -163,7 +163,7 @@ registration linked to the Partner Center account.
 
 ## Auto-update feed
 
-`electron-builder.js` has `publish: { provider: 'github', owner, repo }`.
+`electron-builder.cjs` has `publish: { provider: 'github', owner, repo }`.
 That does two things and nothing else (the workflow still runs
 `--publish never`; it creates the GitHub Release itself):
 
