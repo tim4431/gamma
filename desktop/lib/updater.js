@@ -5,7 +5,7 @@
 // `latest.yml` / `latest-mac.yml` (+ installer blockmaps) next to the
 // installers and the release workflow uploads them; electron-updater reads
 // the newest non-prerelease `v<version>` tag from `publish` in
-// electron-builder.js (baked into resources/app-update.yml).
+// electron-builder.cjs (baked into resources/app-update.yml).
 //
 // macOS: Squirrel.Mac refuses to install into an unsigned app ("Could not
 // get code signature for running application"), so while the mac builds are
@@ -15,7 +15,9 @@
 // (electron-updater only verifies a publisher when one is configured).
 //
 // Nothing here runs in dev (`app.isPackaged` false: electron-updater needs
-// the packaged app-update.yml) or under the test harness.
+// the packaged app-update.yml), under the test harness, or in a Microsoft
+// Store install (`process.windowsStore`: the Store delivers updates and
+// there is no installer for electron-updater to run).
 
 const { app } = require('electron');
 
@@ -56,6 +58,10 @@ function init(opts = {}) {
   }
   if (!app.isPackaged) {
     set({ status: 'unsupported', error: 'dev build' });
+    return;
+  }
+  if (process.windowsStore) {
+    set({ status: 'unsupported', error: 'store' });
     return;
   }
   let mod;

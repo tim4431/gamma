@@ -286,6 +286,10 @@ function fullState() {
     lastOpened: state.lastOpened,
     detected: sidecar.detectDev(state.settings),
     userDataDir: app.getPath('userData'),
+    dataRoot: registry.dataRoot(state),
+    defaultDataRoot: registry.defaultDataRoot(),
+    // Names of the local workspaces a root change would move.
+    movable: registry.localsUnderRoot(state).map((w) => w.name),
   };
 }
 
@@ -381,7 +385,10 @@ async function checkForUpdatesInteractive() {
   const opts = { title: 'Gamma', message: '', buttons: ['OK'] };
   if (st.status === 'unsupported') {
     opts.message = 'Updates are not available in this build.';
-    opts.detail = st.error === 'dev build' ? 'Development build: update from git.' : String(st.error || '');
+    opts.detail =
+      st.error === 'dev build' ? 'Development build: update from git.'
+      : st.error === 'store' ? 'Installed from the Microsoft Store: updates arrive through the Store.'
+      : String(st.error || '');
   } else if (st.status === 'downloaded') {
     opts.message = `Gamma ${st.version} is ready to install.`;
     opts.detail = 'It installs when you restart.';
@@ -507,6 +514,27 @@ function registerIpc() {
     if (fs.existsSync(p)) shell.showItemInFolder(p);
   }));
   ipcMain.handle('shell:set-settings', shellOnly((patch) => registry.setSettings(patch)));
+  ipcMain.handle('shell:pick-folder', shellOnly(async (defaultPath) => {
+    const opts = { properties: ['openDirectory', 'createDirectory'], defaultPath: defaultPath || undefined };
+    const r = win ? await dialog.showOpenDialog(win, opts) : await dialog.showOpenDialog(opts);
+    return r.canceled ? null : r.filePaths[0] || null;
+  }));
+  // Storage root for local workspaces ('' = default). Moving needs the
+  // SQLite files closed, so every sidecar under the old root is stopped
+  // first; they restart on the next open. A local workspace that is open
+  // goes back to the launcher (its server is about to be killed).
+  ipcMain.handle('shell:set-data-root', shellOnly((dir, opts) => {
+    const move = !opts || opts.move !== false;
+    if (move) {
+      const moving = new Set(registry.localsUnderRoot().map((w) => w.id));
+      if (current && moving.has(current.id)) loadLauncher();
+      for (const id of moving) sidecar.stop(id);
+    }
+    const r = registry.setDataRoot(dir, { move });
+    buildMenu();
+    pushState();
+    return r;
+  }));
   ipcMain.handle('shell:bar-expand', shellOnly((on) => setBarExpanded(on)));
 
   // Theme mirror: the preload on http(s) pages reports data-theme changes.

@@ -47,6 +47,8 @@ or says it is a manual look (**manual**).
 | 3.4 | Remove → *keep files* leaves the folder; *delete everything* removes it (only ever under the shell's own `workspaces/`) | auto (remove) + manual (check the folder) |
 | 3.5 | Two workspaces never share state (separate DBs, uploads, sessions) | auto: Beta starts empty; Alpha's page only appears after the import |
 | 3.6 | Storage limits still apply per server (Settings → Users in Gamma) | manual, Gamma's own feature |
+| 3.7 | *Local workspace storage → Change…* + *Move data*: every local workspace lands under `<new root>/<id>`, old folders gone, sidecars restarted, library intact; *Use default* moves back | auto: *storage folder: change the root, existing workspaces move, data intact* (the picker itself is manual) |
+| 3.8 | *Only new workspaces* leaves existing ones in place; the next new workspace is created in the new root | manual |
 
 ## 4. Export / import inside a workspace
 

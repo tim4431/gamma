@@ -13,7 +13,7 @@
 # so a released app is fully self-contained — no Python or Node needed.
 #
 # Code signing is optional and driven entirely by repository secrets
-# (desktop/electron-builder.js turns each piece on only when its secrets are
+# (desktop/electron-builder.cjs turns each piece on only when its secrets are
 # present, so a fork without them still builds — unsigned):
 #   Windows, Azure Trusted Signing:  AZURE_TENANT_ID, AZURE_CLIENT_ID,
 #     AZURE_CLIENT_SECRET (an Entra app registration with the "Trusted
@@ -25,6 +25,10 @@
 #     APPLE_APP_SPECIFIC_PASSWORD, APPLE_TEAM_ID.
 # Unsigned builds: Windows shows SmartScreen (More info -> Run anyway), macOS
 # refuses to open ("damaged") until `xattr -dr com.apple.quarantine`.
+#
+# The Windows job also builds the Microsoft Store package (unsigned MSIX,
+# `store-windows` artifact) for manual upload to Partner Center; it is NOT a
+# release asset because nobody can install it before the Store signs it.
 
 name: release
 
@@ -80,11 +84,15 @@ jobs:
     env:
       # Signing credentials (see the header). Empty secrets = unsigned build;
       # electron-builder must then not go hunting for certs in the runner's
-      # keychain. CSC_LINK is macOS-only on purpose: on Windows electron-builder
-      # would read it as a signtool certificate and shadow Azure signing.
+      # keychain. The mac certificate is NOT exported as CSC_LINK here: an
+      # env entry always exists, and electron-builder treats an empty
+      # CSC_LINK as a certificate path ("… not a file"). The macOS build step
+      # exports CSC_LINK / CSC_KEY_PASSWORD only when MAC_CERT_P12 is set,
+      # which also keeps them away from Windows (there they would shadow
+      # Azure signing and the unsigned Store package).
       CSC_IDENTITY_AUTO_DISCOVERY: ${{ matrix.os == 'macos-latest' && secrets.MAC_CERT_P12 != '' }}
-      CSC_LINK: ${{ matrix.os == 'macos-latest' && secrets.MAC_CERT_P12 || '' }}
-      CSC_KEY_PASSWORD: ${{ matrix.os == 'macos-latest' && secrets.MAC_CERT_PASSWORD || '' }}
+      MAC_CERT_P12: ${{ secrets.MAC_CERT_P12 }}
+      MAC_CERT_PASSWORD: ${{ secrets.MAC_CERT_PASSWORD }}
       APPLE_ID: ${{ secrets.APPLE_ID }}
       APPLE_APP_SPECIFIC_PASSWORD: ${{ secrets.APPLE_APP_SPECIFIC_PASSWORD }}
       APPLE_TEAM_ID: ${{ secrets.APPLE_TEAM_ID }}
@@ -141,14 +149,31 @@ jobs:
           done
           echo "frozen server never became healthy"; kill $SERVER_PID; exit 1
 
-      - name: Build desktop app
+      # Per-OS build steps: PowerShell on Windows (the runner default, as the
+      # first releases ran), bash on macOS where the signing env is exported.
+      # The config is electron-builder.cjs, never .js: cmd.exe would resolve
+      # `npx electron-builder` to that file via PATHEXT and build nothing.
+      - name: Build desktop app (Windows)
+        if: runner.os == 'Windows'
+        working-directory: desktop
+        run: |
+          if ($env:AZURE_CLIENT_ID) { Write-Host "::notice::Windows: signing with Azure Trusted Signing" } else { Write-Host "::warning::Windows: UNSIGNED build (no AZURE_* secrets)" }
+          npm ci
+          if ($LASTEXITCODE) { exit $LASTEXITCODE }
+          npx electron-builder --publish never
+          if ($LASTEXITCODE) { exit $LASTEXITCODE }
+          Get-ChildItem dist
+
+      - name: Build desktop app (macOS)
+        if: runner.os == 'macOS'
         working-directory: desktop
         shell: bash
         run: |
-          if [ "$RUNNER_OS" = "Windows" ]; then
-            [ -n "$AZURE_CLIENT_ID" ] && echo "::notice::Windows: signing with Azure Trusted Signing" || echo "::warning::Windows: UNSIGNED build (no AZURE_* secrets)"
+          if [ -n "$MAC_CERT_P12" ]; then
+            echo "::notice::macOS: signing with Developer ID (notarize=$([ -n "$APPLE_ID" ] && echo yes || echo no))"
+            export CSC_LINK="$MAC_CERT_P12" CSC_KEY_PASSWORD="$MAC_CERT_PASSWORD"
           else
-            [ -n "$CSC_LINK" ] && echo "::notice::macOS: signing with Developer ID (notarize=$([ -n "$APPLE_ID" ] && echo yes || echo no))" || echo "::warning::macOS: UNSIGNED build (no MAC_CERT_P12 secret)"
+            echo "::warning::macOS: UNSIGNED build (no MAC_CERT_P12 secret)"
           fi
           npm ci
           npx electron-builder --publish never
@@ -162,7 +187,7 @@ jobs:
             exe=$(ls dist/*.exe | head -1)
             powershell -NoProfile -Command "\$s = Get-AuthenticodeSignature '$exe'; \$s | Format-List Status, StatusMessage, SignerCertificate; if (\$s.Status -ne 'Valid') { exit 1 }"
           else
-            [ -z "$CSC_LINK" ] && exit 0
+            [ -z "$MAC_CERT_P12" ] && exit 0
             app=$(ls -d dist/mac*/Gamma.app | head -1)
             codesign --verify --deep --strict --verbose=2 "$app"
             codesign -d --entitlements - "$app/Contents/Resources/gamma-server/gamma-server" | head -20
@@ -176,6 +201,33 @@ jobs:
         working-directory: desktop
         shell: bash
         run: node test/smoke.js --packaged
+
+      # Store package: deliberately unsigned (the AZURE_* env is blanked so
+      # electron-builder does not sign the exe/appx with the Trusted Signing
+      # cert — the manifest publisher must stay the Partner Center GUID), in
+      # its own output dir so it does not touch the installer or win-unpacked.
+      - name: Build Store package (MSIX)
+        if: runner.os == 'Windows'
+        working-directory: desktop
+        env:
+          AZURE_TENANT_ID: ""
+          AZURE_CLIENT_ID: ""
+          AZURE_CLIENT_SECRET: ""
+          AZURE_SIGN_ENDPOINT: ""
+          AZURE_SIGN_ACCOUNT: ""
+          AZURE_SIGN_PROFILE: ""
+          AZURE_SIGN_PUBLISHER: ""
+        run: |
+          npx electron-builder --win appx --publish never --config.directories.output=dist-store
+          if ($LASTEXITCODE) { exit $LASTEXITCODE }
+          Get-ChildItem dist-store
+
+      - uses: actions/upload-artifact@v4
+        if: runner.os == 'Windows'
+        with:
+          name: store-windows
+          path: desktop/dist-store/*.appx
+          if-no-files-found: error
 
       - uses: actions/upload-artifact@v4
         with:
@@ -217,6 +269,10 @@ jobs:
         with:
           path: assets
           merge-multiple: true
+      - name: Drop the Store package from the release assets
+        # Unsigned MSIX: only installable once the Store has signed it. It
+        # stays available as the `store-windows` workflow artifact.
+        run: rm -f assets/*.appx
       - name: Release notes
         shell: bash
         env:

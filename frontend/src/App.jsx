@@ -23,7 +23,7 @@ import {
   FilePlusIcon, PaperclipIcon, FolderIcon, FolderOpenIcon, FolderPlusIcon, GlobeIcon, HomeIcon, ImportIcon, InfoIcon, LabelGlyph, LabelIcon,
   LanguagesIcon, LanguagesOffIcon, LinkIcon, LogOutIcon, MaximizeIcon, MenuIcon, MinimizeIcon, PenIcon, PinIcon, PlusIcon,
   RectSelectIcon, SearchIcon, SettingsIcon, ShieldIcon, SparklesIcon, TextCursorIcon, TrashIcon, TypeIcon, UploadIcon,
-  UserIcon, UsersIcon, XIcon, ZoomInIcon, ZoomOutIcon,
+  ScissorsIcon, UserIcon, UsersIcon, XIcon, ZoomInIcon, ZoomOutIcon,
 } from "./icons";
 
 
@@ -5769,15 +5769,20 @@ export default function App() {
                           <PaperclipIcon size={13} /> {pageAttach.name || defaultPageTitle(pageAttach)}
                         </div>
                         <button className="popoverItem" onClick={() => { setPdfHidden((h) => !h); setOpenPopover(null); }}>
+                          {pdfHidden ? <EyeIcon className="popoverItemIcon" size={15} /> : <EyeOffIcon className="popoverItemIcon" size={15} />}
                           {pdfHidden ? "Show the PDF" : "Hide the PDF"}
                         </button>
                         {pdfUrl ? (
                           <button className="popoverItem" onClick={exportRawPdf} title="Download the PDF file exactly as stored — no highlights or notes">
+                            <DownloadIcon className="popoverItemIcon" size={15} />
                             Download the PDF
                           </button>
                         ) : null}
                         {!readOnly ? (
-                          <button className="popoverItem" onClick={detachPdfFromPage}>Detach the PDF…</button>
+                          <button className="popoverItem" onClick={detachPdfFromPage}>
+                            <ScissorsIcon className="popoverItemIcon" size={15} />
+                            Detach the PDF…
+                          </button>
                         ) : null}
                       </div>
                     ) : openPopover === "attach" ? (
