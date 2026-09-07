@@ -1,6 +1,6 @@
 {
   "name": "gamma-desktop",
-  "version": "0.2.0",
+  "version": "0.2.1",
   "description": "Gamma desktop shell: opens local and remote Gamma workspaces",
   "main": "main.js",
   "private": true,
