@@ -51,6 +51,8 @@
   .setRow { display: flex; align-items: center; justify-content: space-between; gap: 12px; padding: 6px 0; }
   .setRow .l { font-size: 13px; }
   .setRow .d { color: var(--text-muted); font-size: 11.5px; margin-top: 1px; }
+  .setRow .d.path { font: 11.5px/1.4 ui-monospace, Consolas, Menlo, monospace; word-break: break-all; -webkit-user-select: text; user-select: text; }
+  .setRow .btns { display: flex; gap: 6px; flex-shrink: 0; }
   .switch { position: relative; width: 34px; height: 20px; border-radius: 99px; background: var(--bg-active); border: 1px solid var(--border-light); cursor: pointer; flex-shrink: 0; transition: background 0.15s; }
   .switch::after { content: ''; position: absolute; top: 2px; left: 2px; width: 14px; height: 14px; border-radius: 50%; background: #fff; transition: left 0.15s; box-shadow: 0 1px 2px rgba(0,0,0,0.3); }
   .switch.on { background: var(--accent); border-color: var(--accent); }
@@ -99,6 +101,16 @@
     </div>
     <div class="setRow">
       <div>
+        <div class="l">Local workspace storage</div>
+        <div class="d path" id="dataRootText"></div>
+      </div>
+      <div class="btns">
+        <button class="uiBtn sm" id="btnDataRootReset" hidden>Use default</button>
+        <button class="uiBtn sm" id="btnDataRoot">Change…</button>
+      </div>
+    </div>
+    <div class="setRow">
+      <div>
         <div class="l">Updates</div>
         <div class="d" id="updText"></div>
       </div>
@@ -124,6 +136,18 @@
 
   <div class="foot"><span id="version"></span><span id="userData" style="-webkit-user-select:text;user-select:text"></span></div>
 </div>
+
+<dialog id="dlgDataRoot">
+  <h3>Change storage folder</h3>
+  <p>New folder:</p>
+  <div class="creds" id="dataRootNew"></div>
+  <p id="dataRootText2" style="margin-top:10px"></p>
+  <div class="row">
+    <button class="uiBtn" onclick="dlgDataRoot.close()">Cancel</button>
+    <button class="uiBtn" id="btnDataRootNewOnly">Only new workspaces</button>
+    <button class="uiBtn primary" id="btnDataRootMove">Move data</button>
+  </div>
+</dialog>
 
 <dialog id="dlgLocal">
   <h3>New local workspace</h3>
@@ -306,7 +330,39 @@
     $('detected').textContent = state.packaged ? 'Packaged app: the bundled server is used unless a Python path is set.' : 'Dev mode: repo auto-detected.';
     $('version').textContent = `Gamma desktop ${state.version}${state.packaged ? '' : ' (dev)'}`;
     $('userData').textContent = state.userDataDir;
+    $('dataRootText').textContent = state.dataRoot;
+    $('btnDataRootReset').hidden = !state.settings.dataRoot;
   }
+
+  // Storage root: pick a folder (or reset to the default), then choose
+  // whether the existing local workspaces move there too.
+  async function changeDataRoot(target) {
+    const movable = state.movable || [];
+    $('dataRootNew').textContent = target || state.defaultDataRoot;
+    $('dataRootText2').textContent = movable.length
+      ? `"Move data" copies ${movable.length === 1 ? 'the workspace' : `these ${movable.length} workspaces`} (${movable.join(', ')}) into the new folder — their servers restart, the old copies are deleted once the move succeeds. "Only new workspaces" leaves them where they are.`
+      : 'No local workspaces to move; new ones will be created here.';
+    $('btnDataRootMove').hidden = !movable.length;
+    const run = async (move) => {
+      $('dlgDataRoot').close();
+      setStatus(move && movable.length ? 'Moving workspace data…' : '');
+      try {
+        const r = await gammaShell.setDataRoot(target, { move });
+        setStatus(r.moved.length ? `Moved ${r.moved.join(', ')} to ${r.root}.` : `New local workspaces go to ${r.root}.`);
+      } catch (e) {
+        setStatus(cleanErr(e), true);
+      }
+      refresh();
+    };
+    $('btnDataRootMove').onclick = () => run(true);
+    $('btnDataRootNewOnly').onclick = () => run(false);
+    $('dlgDataRoot').showModal();
+  }
+  $('btnDataRoot').onclick = async () => {
+    const dir = await gammaShell.pickFolder(state.dataRoot);
+    if (dir) changeDataRoot(dir);
+  };
+  $('btnDataRootReset').onclick = () => changeDataRoot('');
 
   const cleanErr = (e) => String(e && e.message || e).replace(/^Error invoking remote method '[^']*': (Error: )?/, '');
 
@@ -322,7 +378,10 @@
     btn.onclick = () => gammaShell.updateCheck();
     switch (u.status) {
       case 'unsupported':
-        text.textContent = u.error === 'dev build' ? 'Development build: update from git.' : 'Not available in this build.';
+        text.textContent =
+          u.error === 'dev build' ? 'Development build: update from git.'
+          : u.error === 'store' ? 'Installed from the Microsoft Store: updates arrive through the Store.'
+          : 'Not available in this build.';
         btn.hidden = true;
         break;
       case 'checking':

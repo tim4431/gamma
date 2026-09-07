@@ -13,6 +13,12 @@
 //   an App Store Connect app-specific password. osx-sign walks the whole
 //   .app, so the frozen backend under Contents/Resources/gamma-server is
 //   signed with the same identity — nothing to configure per binary.
+// Microsoft Store: `npx electron-builder --win appx` makes an UNSIGNED MSIX
+//   (the `appx` block below carries the Partner Center identity); the Store
+//   signs it with Microsoft's certificate and delivers updates itself, so
+//   it must never be built with the Azure signing env present (the manifest
+//   publisher must stay the Partner Center GUID). The release workflow
+//   builds it as a separate artifact, never as a release download.
 
 const env = process.env;
 const has = (...keys) => keys.every((k) => env[k] && env[k].trim());
@@ -52,6 +58,20 @@ module.exports = {
   nsis: {
     oneClick: false,
     allowToChangeInstallationDirectory: true,
+  },
+  // Microsoft Store package (docs/release.md, "Microsoft Store"). The three
+  // identity values are copied verbatim from Partner Center → Product
+  // identity; a mismatch is rejected at upload. displayName must equal the
+  // name reserved in the Store.
+  appx: {
+    identityName: 'xwtim.Gamma PDF',
+    publisher: 'CN=2641C414-B740-42FF-BD24-6552C33A850A',
+    publisherDisplayName: 'xwtim',
+    displayName: 'Gamma PDF',
+    applicationId: 'Gamma',
+    languages: ['en-US'],
+    backgroundColor: '#1f1f1f',
+    showNameOnTiles: true,
   },
 
   mac: {

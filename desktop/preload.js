@@ -24,6 +24,8 @@ if (window.location.protocol === 'file:') {
     revealData: (id) => ipcRenderer.invoke('shell:reveal-data', id),
     revealLog: (id) => ipcRenderer.invoke('shell:reveal-log', id),
     setSettings: (patch) => ipcRenderer.invoke('shell:set-settings', patch),
+    pickFolder: (defaultPath) => ipcRenderer.invoke('shell:pick-folder', defaultPath),
+    setDataRoot: (dir, opts) => ipcRenderer.invoke('shell:set-data-root', dir, opts),
     barExpand: (on) => ipcRenderer.invoke('shell:bar-expand', on),
     updateCheck: () => ipcRenderer.invoke('shell:update-check'),
     updateInstall: () => ipcRenderer.invoke('shell:update-install'),

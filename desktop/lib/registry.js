@@ -9,6 +9,12 @@
 // opened last (reopened at launch when `openLastOnLaunch`), the theme the
 // Gamma page last reported (so the launcher/shell bar paint in it before any
 // workspace is loaded), and the window bounds.
+//
+// Local workspace data dirs live under ONE root, `<root>/<workspace id>`:
+// `settings.dataRoot` when set, else `<userData>/workspaces`. `setDataRoot`
+// switches the root and, on request, moves the existing workspaces there
+// (copy, verify, re-point the registry, then delete the originals — safe
+// across drives; callers stop the sidecars first).
 
 const fs = require('fs');
 const path = require('path');
@@ -26,6 +32,8 @@ const DEFAULTS = {
     openLastOnLaunch: true,
     // Last data-theme the Gamma page reported ('' = never seen → dark).
     lastTheme: '',
+    // Folder new local workspaces are created in ('' = <userData>/workspaces).
+    dataRoot: '',
   },
   workspaces: [],
   lastOpened: null,
@@ -62,6 +70,72 @@ function save(state) {
   fs.writeFileSync(filePath(), JSON.stringify(state, null, 2));
 }
 
+function defaultDataRoot() {
+  return path.join(userDataDir, 'workspaces');
+}
+
+// Where local workspaces are created now.
+function dataRoot(state = load()) {
+  return path.resolve(state.settings.dataRoot || defaultDataRoot());
+}
+
+function isUnder(dir, root) {
+  const norm = (s) => (process.platform === 'win32' ? path.resolve(s).toLowerCase() : path.resolve(s));
+  return norm(dir).startsWith(norm(root) + path.sep);
+}
+
+// The local workspaces whose data dir sits under the current root — the ones
+// a root change moves.
+function localsUnderRoot(state = load()) {
+  const root = dataRoot(state);
+  return state.workspaces.filter((w) => w.type === 'local' && w.dataDir && isUnder(w.dataDir, root));
+}
+
+// Change the storage root. `newRoot` '' resets to the default. With `move`
+// every local workspace under the old root is copied to `<newRoot>/<id>`;
+// only after ALL copies succeed does the registry switch over and the old
+// copies get deleted, so a failure (disk full, permissions) leaves everything
+// as it was. Returns { root, moved: [names] }.
+function setDataRoot(newRoot, { move = true } = {}) {
+  const state = load();
+  const oldRoot = dataRoot(state);
+  const target = newRoot ? path.resolve(newRoot) : '';
+  const targetRoot = target || path.resolve(defaultDataRoot());
+  if (targetRoot === oldRoot) return { root: targetRoot, moved: [] };
+  if (isUnder(targetRoot, oldRoot) || isUnder(oldRoot, targetRoot)) {
+    throw new Error('The new folder must not be inside the current one (or contain it).');
+  }
+  fs.mkdirSync(targetRoot, { recursive: true });
+  const moved = [];
+  if (move) {
+    const locals = localsUnderRoot(state);
+    for (const ws of locals) {
+      const dest = path.join(targetRoot, path.basename(ws.dataDir));
+      try {
+        if (fs.existsSync(dest)) throw new Error('already exists');
+        fs.cpSync(ws.dataDir, dest, { recursive: true, errorOnExist: true });
+        if (!fs.existsSync(path.join(dest, 'users.db')) && fs.existsSync(path.join(ws.dataDir, 'users.db'))) {
+          throw new Error('copy incomplete');
+        }
+      } catch (e) {
+        for (const m of moved) fs.rmSync(m.dest, { recursive: true, force: true });
+        fs.rmSync(dest, { recursive: true, force: true });
+        throw new Error(`Could not move "${ws.name}" to ${dest}: ${e.message}`);
+      }
+      moved.push({ ws, from: ws.dataDir, dest });
+    }
+    for (const m of moved) m.ws.dataDir = m.dest;
+  }
+  state.settings.dataRoot = target;
+  save(state);
+  for (const m of moved) {
+    try {
+      fs.rmSync(m.from, { recursive: true, force: true });
+    } catch {}
+  }
+  return { root: targetRoot, moved: moved.map((m) => m.ws.name) };
+}
+
 function newId() {
   return crypto.randomBytes(6).toString('hex');
 }
@@ -77,7 +151,7 @@ function addLocal(name) {
     id,
     name: (name || '').trim() || 'Local workspace',
     type: 'local',
-    dataDir: path.join(userDataDir, 'workspaces', id),
+    dataDir: path.join(dataRoot(state), id),
     adminUser: 'admin',
     adminPassword: newPassword(),
     createdAt: new Date().toISOString(),
@@ -137,10 +211,10 @@ function remove(id, { deleteData = false } = {}) {
   if (state.lastOpened === id) state.lastOpened = null;
   save(state);
   if (deleteData && ws.type === 'local' && ws.dataDir) {
-    // Guard: only ever delete directories we created under our own userData.
-    const root = path.join(userDataDir, 'workspaces');
+    // Guard: only ever delete directories we created — under the default
+    // root or the configured one — never an arbitrary folder.
     const resolved = path.resolve(ws.dataDir);
-    if (resolved.startsWith(root + path.sep)) {
+    if (isUnder(resolved, defaultDataRoot()) || isUnder(resolved, dataRoot(state))) {
       fs.rmSync(resolved, { recursive: true, force: true });
     }
   }
@@ -210,4 +284,5 @@ function dirSize(dir) {
 module.exports = {
   init, load, get, addLocal, addRemote, rename, remove, markOpened, getLastOpened,
   getSettings, setSettings, getWindowBounds, setWindowBounds, dirSize,
+  defaultDataRoot, dataRoot, localsUnderRoot, setDataRoot,
 };

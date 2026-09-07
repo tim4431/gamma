@@ -15,7 +15,9 @@
 // (electron-updater only verifies a publisher when one is configured).
 //
 // Nothing here runs in dev (`app.isPackaged` false: electron-updater needs
-// the packaged app-update.yml) or under the test harness.
+// the packaged app-update.yml), under the test harness, or in a Microsoft
+// Store install (`process.windowsStore`: the Store delivers updates and
+// there is no installer for electron-updater to run).
 
 const { app } = require('electron');
 
@@ -56,6 +58,10 @@ function init(opts = {}) {
   }
   if (!app.isPackaged) {
     set({ status: 'unsupported', error: 'dev build' });
+    return;
+  }
+  if (process.windowsStore) {
+    set({ status: 'unsupported', error: 'store' });
     return;
   }
   let mod;

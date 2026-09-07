@@ -25,6 +25,10 @@
 #     APPLE_APP_SPECIFIC_PASSWORD, APPLE_TEAM_ID.
 # Unsigned builds: Windows shows SmartScreen (More info -> Run anyway), macOS
 # refuses to open ("damaged") until `xattr -dr com.apple.quarantine`.
+#
+# The Windows job also builds the Microsoft Store package (unsigned MSIX,
+# `store-windows` artifact) for manual upload to Partner Center; it is NOT a
+# release asset because nobody can install it before the Store signs it.
 
 name: release
 
@@ -177,6 +181,33 @@ jobs:
         shell: bash
         run: node test/smoke.js --packaged
 
+      # Store package: deliberately unsigned (the AZURE_* env is blanked so
+      # electron-builder does not sign the exe/appx with the Trusted Signing
+      # cert — the manifest publisher must stay the Partner Center GUID), in
+      # its own output dir so it does not touch the installer or win-unpacked.
+      - name: Build Store package (MSIX)
+        if: runner.os == 'Windows'
+        working-directory: desktop
+        shell: bash
+        env:
+          AZURE_TENANT_ID: ""
+          AZURE_CLIENT_ID: ""
+          AZURE_CLIENT_SECRET: ""
+          AZURE_SIGN_ENDPOINT: ""
+          AZURE_SIGN_ACCOUNT: ""
+          AZURE_SIGN_PROFILE: ""
+          AZURE_SIGN_PUBLISHER: ""
+        run: |
+          npx electron-builder --win appx --publish never --config.directories.output=dist-store
+          ls -la dist-store
+
+      - uses: actions/upload-artifact@v4
+        if: runner.os == 'Windows'
+        with:
+          name: store-windows
+          path: desktop/dist-store/*.appx
+          if-no-files-found: error
+
       - uses: actions/upload-artifact@v4
         with:
           name: desktop-${{ matrix.os }}
@@ -217,6 +248,10 @@ jobs:
         with:
           path: assets
           merge-multiple: true
+      - name: Drop the Store package from the release assets
+        # Unsigned MSIX: only installable once the Store has signed it. It
+        # stays available as the `store-windows` workflow artifact.
+        run: rm -f assets/*.appx
       - name: Release notes
         shell: bash
         env:

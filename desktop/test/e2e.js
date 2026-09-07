@@ -492,6 +492,31 @@ async function main() {
       return names.join(', ');
     });
 
+    await step('storage folder: change the root, existing workspaces move, data intact', async () => {
+      const newRoot = path.join(profile, 'moved-root');
+      const before = await hook(app, (s) => s.registry.load().workspaces.filter((w) => w.type === 'local').map((w) => w.dataDir));
+      assert(before.length === 2, 'two local workspaces');
+      const r = await content.evaluate((dir) => gammaShell.setDataRoot(dir, { move: true }), newRoot);
+      assert.deepEqual(r.moved.sort(), ['Alpha', 'Beta renamed'], JSON.stringify(r));
+      const after = await hook(app, (s) => s.registry.load().workspaces.filter((w) => w.type === 'local').map((w) => w.dataDir));
+      for (const d of after) {
+        assert(d.startsWith(newRoot + path.sep), `moved: ${d}`);
+        assert(fs.existsSync(path.join(d, 'users.db')), `users.db in ${d}`);
+      }
+      for (const d of before) assert(!fs.existsSync(d), `old dir removed: ${d}`);
+      assert.equal(await hook(app, (s) => s.registry.getSettings().dataRoot), newRoot);
+      await waitFor(async () => (await content.textContent('#dataRootText')).trim() === newRoot, 'launcher shows the new root');
+      assert.equal(await content.isHidden('#btnDataRootReset'), false, 'reset button visible');
+      assert(!pidAlive(pids.alpha) && !pidAlive(pids.beta), 'old sidecars stopped for the move');
+      await hook(app, (s, id) => s.openWorkspace(id), ids.alpha);
+      await waitLoggedIn(content);
+      const titles = await rootTitles(content);
+      assert(titles.includes('E2E paper'), 'data intact after the move: ' + titles.join(' | '));
+      pids.alpha = await hook(app, (s, id) => s.sidecar.status(id).child.pid, ids.alpha);
+      pids.beta = null;
+      return `${r.moved.length} moved to ${newRoot}`;
+    });
+
     await step('quit: every sidecar stops, window bounds persist', async () => {
       await hook(app, (s, id) => s.openWorkspace(id), ids.alpha);
       await waitLoggedIn(content);
@@ -502,7 +527,7 @@ async function main() {
       const reg = JSON.parse(fs.readFileSync(path.join(profile, 'workspaces.json'), 'utf8'));
       assert(reg.windowBounds && reg.windowBounds.width > 0, 'bounds saved');
       assert.equal(reg.lastOpened, ids.alpha);
-      return `pids ${pids.alpha}, ${pids.beta} exited; bounds ${reg.windowBounds.width}x${reg.windowBounds.height}`;
+      return `pids ${live.join(', ')} exited; bounds ${reg.windowBounds.width}x${reg.windowBounds.height}`;
     });
 
     await step('relaunch reopens the last workspace with its data intact', async () => {

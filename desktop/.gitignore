@@ -4,3 +4,4 @@ dist-backend/
 build/pyi-work/
 build/gamma-server.spec
 __pycache__/
+dist-store/
