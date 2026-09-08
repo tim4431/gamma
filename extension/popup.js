@@ -78,12 +78,7 @@ async function showMain(st) {
   $("foot").textContent = `${hostOf(st.origin)} · ${st.user}`;
   setConn("ok", `Connected to ${st.origin} — signed in as ${st.user}`);
 
-  const kindLabel = { pdf: "PDF", arxiv: "arXiv", doi: "DOI", maybe: "possible paper", none: "" }[c.kind] || "";
-  const idText = c.arxiv_id ? `arXiv:${c.arxiv_id}` : c.doi ? `doi:${c.doi}` : "";
-  $("title").textContent = c.title || (c.kind === "none" ? (tab && tab.title) || "This page" : hostOf(c.pdf_url || c.source_url));
-  $("sub").innerHTML = "";
-  if (kindLabel) { const chip = document.createElement("span"); chip.className = "chip" + (c.kind === "maybe" ? " muted" : ""); chip.textContent = kindLabel; $("sub").appendChild(chip); }
-  $("sub").appendChild(document.createTextNode(idText || (c.pdf_url && c.kind === "pdf" ? (c.is_pdf_tab ? "this tab is a PDF" : "PDF available") : hostOf(c.source_url || ""))));
+  renderHead(st);
 
   $("dot").className = "dot " + (st.hit ? "ok" : c.kind === "none" ? "" : "on");
   show("existing", !!st.hit);
@@ -94,9 +89,37 @@ async function showMain(st) {
   if (st.saving) { show("progress"); $("progress-text").textContent = st.saving; } else show("progress", false);
   if (st.error) { $("result").className = "msg err"; $("result").textContent = st.error; show("result"); }
 
-  if (st.hit) $("title").textContent = st.hit.title || $("title").textContent;
-
   await fillPickers(st.settings);
+}
+
+// The head names the paper on THIS tab: the page's own title (meta tags),
+// else the registry record the worker previewed for the detected DOI /
+// arXiv id (a PDF tab has no meta tags), else the library page's title,
+// else the host. The identifier line shows what the detection rests on, the
+// third line the registry's authors · year · venue.
+function renderHead(st) {
+  const c = st.candidate || { kind: "none" };
+  const pv = st.preview || null;
+  const kindLabel = { pdf: "PDF", arxiv: "arXiv", doi: "DOI", maybe: "possible paper", none: "" }[c.kind] || "";
+  const idText = c.arxiv_id ? `arXiv:${c.arxiv_id}` : c.doi ? `doi:${c.doi}` : "";
+  const title = c.title || (pv && pv.title) || (st.hit && st.hit.title)
+    || (c.kind === "none" ? (tab && tab.title) || "This page" : hostOf(c.pdf_url || c.source_url));
+  $("title").textContent = title;
+  const sub = $("sub");
+  sub.innerHTML = "";
+  if (kindLabel) { const chip = document.createElement("span"); chip.className = "chip" + (c.kind === "maybe" ? " muted" : ""); chip.textContent = kindLabel; sub.appendChild(chip); }
+  sub.appendChild(document.createTextNode(idText || (c.pdf_url && c.kind === "pdf" ? (c.is_pdf_tab ? "this tab is a PDF" : "PDF available") : hostOf(c.source_url || ""))));
+  if (pv) {
+    const authors = pv.authors || [];
+    const who = authors.length > 3 ? `${authors[0]} et al.` : authors.join(", ");
+    const line = [who, pv.year, pv.venue].filter(Boolean).join(" · ");
+    if (line) { const el = document.createElement("div"); el.className = "meta"; el.textContent = line; el.title = authors.join(", "); sub.appendChild(el); }
+  }
+  // The library page may carry a different title (a stale or wrong metadata
+  // record) — say so instead of silently showing it as this paper's.
+  const norm = (t) => (t || "").toLowerCase().replace(/[^a-z0-9]+/g, " ").trim();
+  const libTitle = st.hit && st.hit.title || "";
+  $("existing-as").textContent = libTitle && norm(libTitle) !== norm(title) ? ` as “${libTitle}”` : "";
 }
 
 // ---------- folder + label pickers (MenuSelect / ctxMenu style, plain JS) ----------
@@ -377,6 +400,12 @@ document.addEventListener("DOMContentLoaded", async () => {
     if (!ch || !ch.newValue) return;
     const st = ch.newValue;
     if (st.saving) { show("progress"); $("progress-text").textContent = st.saving; }
+    // The registry preview lands after the popup opened — show it.
+    if (st.preview && state && !state.preview && state.candidate && st.candidate
+        && st.candidate.source_url === state.candidate.source_url) {
+      state = { ...state, preview: st.preview };
+      renderHead(state);
+    }
   });
   try {
     const settings = await getSettings();

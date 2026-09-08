@@ -353,9 +353,10 @@ def _fetch_arxiv(arxiv_id: str) -> dict | None:
         return None
 
 
-def _fetch_doi(doi: str) -> tuple[dict | None, str]:
+def _fetch_doi(doi: str, with_bibtex: bool = True) -> tuple[dict | None, str]:
     """Metadata via doi.org content negotiation (works for Crossref and DataCite),
-    plus the registrar's own BibTeX rendering."""
+    plus the registrar's own BibTeX rendering (a second round trip — skipped
+    by callers that only want the record, e.g. the extension's preview)."""
     url = f"https://doi.org/{urllib.parse.quote(doi)}"
     try:
         data = json.loads(_http_get(url, accept="application/vnd.citationstyles.csl+json"))
@@ -388,10 +389,11 @@ def _fetch_doi(doi: str) -> tuple[dict | None, str]:
         meta.update({"kind": "book", "publisher": str(data.get("publisher") or ""),
                      "isbn": str(isbns[0] if isinstance(isbns, list) and isbns else "")})
     bibtex = ""
-    try:
-        bibtex = _http_get(url, accept="application/x-bibtex").decode("utf-8", "replace").strip()
-    except Exception:
-        pass
+    if with_bibtex:
+        try:
+            bibtex = _http_get(url, accept="application/x-bibtex").decode("utf-8", "replace").strip()
+        except Exception:
+            pass
     return meta, bibtex
 
 

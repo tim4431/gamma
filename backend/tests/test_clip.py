@@ -1,5 +1,5 @@
 """The browser extension's endpoints: /api/clip (the one-shot "save this
-paper" ingest), /api/library/lookup + /folders (popup helpers), and
+paper" ingest), /api/library/lookup + /preview + /folders (popup helpers), and
 /api/clip/note (clipped selections). Upstream fetches are faked — no network,
 and the metadata thread is stubbed out."""
 
@@ -226,6 +226,59 @@ def test_lookup_by_arxiv_and_doi(guest, upstream, meta_calls):
     assert guest.get("/api/library/lookup", params={"doi": "10.9999/nope"}).status_code == 404
     assert guest.get("/api/library/lookup", params={"url": "https://example.org/unknown"}).status_code == 404
     assert guest.get("/api/library/lookup").status_code == 400
+
+
+def test_preview_resolves_identifier_to_registry_record(guest, monkeypatch):
+    """The popup's pre-save title: arXiv first, then doi.org; publisher path
+    suffixes are not part of the DOI; answers are cached per identifier."""
+    calls = []
+
+    def fake_arxiv(aid):
+        calls.append(("arxiv", aid))
+        return {"title": "Arx Paper", "authors": ["A. One", "B. Two"], "year": "2026",
+                "venue": "arXiv:" + aid, "doi": "", "arxiv_id": aid, "source": "arxiv"} if aid == "2601.01234" else None
+
+    def fake_doi(doi, with_bibtex=True):
+        calls.append(("doi", doi))
+        assert not with_bibtex  # the preview never needs the second round trip
+        if doi != "10.1103/physrevlett.115.137002":
+            return None, ""
+        return {"title": "Cavity State Manipulation", "authors": ["R. Heeres"], "year": "2015",
+                "venue": "Physical Review Letters", "volume": "115", "pages": "137002",
+                "doi": doi, "arxiv_id": "", "source": "doi"}, "@article{x}"
+
+    monkeypatch.setattr(clip_mod, "_fetch_arxiv", fake_arxiv)
+    monkeypatch.setattr(clip_mod, "_fetch_doi", fake_doi)
+    clip_mod._PREVIEW_CACHE.clear()
+
+    r = guest.get("/api/library/preview", params={"url": "https://journals.aps.org/prl/pdf/10.1103/PhysRevLett.115.137002"})
+    assert r.status_code == 200, r.text
+    assert r.json() == {"title": "Cavity State Manipulation", "authors": ["R. Heeres"], "year": "2015",
+                        "venue": "Physical Review Letters", "doi": "10.1103/physrevlett.115.137002",
+                        "arxiv_id": "", "source": "doi"}
+    # Same DOI behind a different publisher path → served from the cache.
+    r2 = guest.get("/api/library/preview", params={"doi": "10.1103/PhysRevLett.115.137002"})
+    assert r2.status_code == 200 and r2.json()["title"] == "Cavity State Manipulation"
+    assert calls == [("doi", "10.1103/physrevlett.115.137002")]
+
+    r = guest.get("/api/library/preview", params={"url": "https://arxiv.org/pdf/2601.01234v3"})
+    assert r.status_code == 200 and r.json()["title"] == "Arx Paper" and r.json()["arxiv_id"] == "2601.01234"
+    assert guest.get("/api/library/preview", params={"doi": "10.9999/nope"}).status_code == 404
+    assert "doi:10.9999/nope" not in clip_mod._PREVIEW_CACHE  # a miss may be a timeout — retried next time
+    assert guest.get("/api/library/preview", params={"url": "https://example.org/unknown"}).status_code == 400
+    assert guest.get("/api/library/preview").status_code == 400
+
+
+def test_norm_doi_strips_publisher_path_suffixes():
+    cases = {
+        "https://journals.aps.org/prl/pdf/10.1103/PhysRevLett.115.137002": "10.1103/physrevlett.115.137002",
+        "https://link.springer.com/content/pdf/10.1007/s11433-020-1234-5.pdf": "10.1007/s11433-020-1234-5",
+        "https://iopscience.iop.org/article/10.1088/1361-6633/ab1234/pdf": "10.1088/1361-6633/ab1234",
+        "https://www.science.org/doi/pdf/10.1126/science.abc1234?download=true": "10.1126/science.abc1234",
+        "https://doi.org/10.1000/xyz123.": "10.1000/xyz123",
+    }
+    for url, doi in cases.items():
+        assert clip_mod.norm_doi(url) == doi, url
 
 
 def test_folders_lists_ancestors_and_labels(guest, upstream, meta_calls):
