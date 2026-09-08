@@ -85,6 +85,10 @@ Settings panes are built only from
   shared `on` state; the agent's per-tool permissions in Settings and in the
   chat's ⚙ popover are one of these, never a column of checkboxes),
   `UnitInput` (number + unit suffix — units never live in labels),
+  `PasswordInput` (a password box with a show/hide eye — a `ctlBtn` over the
+  input's right edge, outside the Tab order; it wraps the input's own class,
+  so the login page uses it with `loginInput` and every secret field in
+  Settings — account passwords, API keys — with `aiKeyInput`),
   `CharSlider` (log-scaled character budget), `Stat`, `Empty`, `QuotaMeter`.
 
 ## Theme

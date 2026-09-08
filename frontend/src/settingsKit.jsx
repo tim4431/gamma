@@ -5,6 +5,7 @@
 // UI should reuse these; bespoke classes are for layout only.
 import React from "react";
 import { fmtBytes } from "./utils";
+import { EyeIcon, EyeOffIcon } from "./icons";
 
 export function PaneHead({ icon: Icon, title, children }) {
   return (
@@ -145,6 +146,29 @@ export function Field({ label, hint, children }) {
       </span>
       {children}
     </label>
+  );
+}
+
+// A password box with a show/hide eye at its right edge. `className` is the
+// input's own class (aiKeyInput in settings forms, loginInput on the login
+// page); everything else is passed through to the <input>. The eye is kept
+// out of the Tab order so Enter/Tab flow stays input → next control.
+export function PasswordInput({ className = "aiKeyInput", ...props }) {
+  const [shown, setShown] = React.useState(false);
+  return (
+    <span className="pwField">
+      <input {...props} className={className} type={shown ? "text" : "password"} />
+      <button
+        type="button" className="ctlBtn pwToggle" tabIndex={-1}
+        title={shown ? "Hide password" : "Show password"}
+        aria-label={shown ? "Hide password" : "Show password"}
+        aria-pressed={shown}
+        onMouseDown={(event) => event.preventDefault()} // keep the input's focus + caret
+        onClick={() => setShown((v) => !v)}
+      >
+        {shown ? <EyeOffIcon size={14} /> : <EyeIcon size={14} />}
+      </button>
+    </span>
   );
 }
 

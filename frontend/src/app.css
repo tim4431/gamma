@@ -2971,6 +2971,15 @@ button.pdfOutlineChevron:hover { background: rgba(128, 128, 128, 0.28); color: v
   margin-bottom: 6px;
 }
 .aiKeyInput:focus { border-color: var(--text-dim); }
+/* Password box with the show/hide eye (settingsKit PasswordInput): the input
+   keeps its own class; the wrapper only positions the ctlBtn over its right
+   edge and takes over the input's bottom margin so the eye stays centred. */
+.pwField { position: relative; display: block; }
+.pwField > input { width: 100%; margin-bottom: 0; padding-right: 34px; }
+.pwField > .pwToggle { position: absolute; right: 6px; top: 50%; transform: translateY(-50%); }
+.pwField:has(> .aiKeyInput) { margin-bottom: 6px; }
+.setField .pwField { margin-bottom: 0; }
+.loginCard .pwField { margin-bottom: 12px; }
 .aiKeysError { color: #e5534b; }
 .aiTestOk { color: #4caf50; }
 /* Uniform buttons for the settings modals (AI providers, prompt editor):

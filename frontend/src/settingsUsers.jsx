@@ -10,7 +10,7 @@
 import React from "react";
 import { API, apiJson } from "./utils";
 import { ActionMenu } from "./menus";
-import { PaneHead, SubDialog, Field, UnitInput, Empty, QuotaMeter } from "./settingsKit";
+import { PaneHead, SubDialog, Field, UnitInput, Empty, QuotaMeter, PasswordInput } from "./settingsKit";
 import {
   DatabaseIcon, ExportIcon, HardDriveIcon, ImportIcon, PenIcon, PlusIcon,
   ShieldIcon, Trash2Icon, UserIcon, UsersIcon,
@@ -236,8 +236,8 @@ export function UsersSettings({ value }) {
             />
           </Field>
           <Field label="New password" hint="blank keeps the current one">
-            <input
-              className="aiKeyInput" type="password" autoComplete="new-password"
+            <PasswordInput
+              autoComplete="new-password"
               value={edit.password}
               onChange={(e) => setEdit((f) => ({ ...f, password: e.target.value }))}
             />
@@ -379,8 +379,8 @@ export function UsersSettings({ value }) {
             />
           </Field>
           <Field label="Password">
-            <input
-              className="aiKeyInput" type="password" autoComplete="new-password"
+            <PasswordInput
+              autoComplete="new-password"
               value={addForm.password}
               onChange={(e) => setAddForm((f) => ({ ...f, password: e.target.value }))}
               onKeyDown={(e) => { if (e.key === "Enter") submitAdd(); }}

@@ -1,4 +1,5 @@
 import React from "react";
+import { PasswordInput } from "./settingsKit";
 
 function AuthShell({ children }) {
   return (
@@ -63,12 +64,12 @@ export function LoginPage({
           className="loginInput"
           autoFocus
         />
-        <input
-          type="password"
+        <PasswordInput
           value={password}
           onChange={(event) => onPasswordChange(event.target.value)}
           placeholder="Password"
           className="loginInput"
+          autoComplete="current-password"
         />
         {error ? <div className="loginError">{error}</div> : null}
         <button type="submit" className="loginBtn" disabled={!username.trim() || !password.trim()}>

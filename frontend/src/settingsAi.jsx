@@ -4,7 +4,7 @@
 import React from "react";
 import { parseFolderTags } from "./libraryUtils";
 import { MenuSelect } from "./menus";
-import { PaneHead, Section, SubDialog, Step, Field, Empty, PercentMeter, Row } from "./settingsKit";
+import { PaneHead, Section, SubDialog, Step, Field, Empty, PercentMeter, Row, PasswordInput } from "./settingsKit";
 import { GlobeIcon, KeyIcon, MicIcon, PaperIcon, PenIcon, RefreshIcon, SparklesIcon, Trash2Icon } from "./icons";
 
 const DICTATION_LANGS = [
@@ -118,8 +118,8 @@ function ProviderForm({ value, onCancel }) {
         ) : (
           <>
             <Field label="API key" hint={aiKeysForm.id ? "leave empty to keep the current one" : null}>
-              <input
-                className="aiKeyInput" type="password" autoComplete="new-password" spellCheck={false}
+              <PasswordInput
+                autoComplete="new-password" spellCheck={false}
                 placeholder="sk-…"
                 value={aiKeysForm.api_key}
                 onChange={(event) => setAiKeysForm((form) => ({ ...form, api_key: event.target.value }))}
