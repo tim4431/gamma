@@ -388,7 +388,6 @@ export default function ChatDock({
         setHistory(null);
       }
     };
-    if (!askConfirm) { run(); return; }
     askConfirm({
       title: "Delete conversation",
       message: `Delete “${entry.title || "Untitled"}” from this chat's history? This can't be undone.`,
@@ -574,7 +573,7 @@ export default function ChatDock({
         body: JSON.stringify({
           prompt: text,
           page_id: focusedBlockId || "",
-          history: prevMessages,
+          history: prevMessages.filter((m) => !m.error), // failed replies aren't answers
           model: chatModel || "",
           selection,
           focus_block_id: cursorChip ? cursorChip.id : "",
@@ -621,10 +620,15 @@ export default function ChatDock({
       showReply(aiMsg({ text: acc || (actions.length ? "" : "(no response)") }), true);
     } catch (err) {
       const stopped = err?.name === "AbortError";
+      // A reply that never started is an error bubble (`error: true`): shown
+      // and saved so the failure is visible after a reload, but rendered
+      // apart from answers and never replayed to the model as one. A reply
+      // cut off mid-stream keeps its text and just notes the failure.
       showReply(aiMsg({
         text: stopped
           ? (acc ? `${acc}\n\n*(stopped)*` : "*(stopped)*")
           : (acc ? `${acc}\n\n**Error:** ${err.message}` : `Error: ${err.message}`),
+        ...(!stopped && !acc ? { error: true } : {}),
       }), true);
     } finally {
       setChatLoading(false);
@@ -1100,7 +1104,7 @@ export default function ChatDock({
             return (
               <div key={i} className={`chatBubbleRow ${isUser ? "user" : "ai"}${isFindHit ? " findHit" : ""}`} data-msg-idx={i}>
                 <div className="chatMsgCol">
-                  <div className={`chatBubble ${isUser ? "user" : "ai"}`}>
+                  <div className={`chatBubble ${isUser ? "user" : "ai"}${m.error ? " error" : ""}`}>
                     {m.images?.length ? (
                       <div className="chatMsgImages">
                         {m.images.map((src, j) => <img key={j} src={src} className="chatMsgImage" alt="pasted figure" />)}

@@ -90,7 +90,11 @@ compatibility input: it resolves to the page carrying that PDF
 `page_id`, nothing new may depend on `doc_id`. `stream: true` (the chat UI's
 mode) returns NDJSON lines of
 `{"delta"}`/`{"error"}` parsed from the provider's SSE; upstream failures
-before the first byte still return normal HTTP errors.
+before the first byte still return normal HTTP errors. The client turns a
+failure with no reply text into an AI message carrying `error: true` — shown
+as an error bubble, saved with the chat so it survives a reload, but left out
+of the `history` it sends on later turns, and `build_messages` skips such
+items too should an older client send them.
 
 Context is *pages from the user's knowledge base* (`ai_context.gather_inputs`
 → `page_report_section`): each page contributes its title, a properties line
@@ -402,25 +406,25 @@ plus a `title` column (added lazily by `connect_data_db`); `chat_history`
 holds the archived ones (`id, bucket, title, messages, created_at,
 updated_at`). Routes: `gamma/routers/chats.py`, prefix `/api/chat-history`.
 
-- **New chat** (+ in the header) no longer deletes: it POSTs
-  `/chat-history/archive` `{bucket, messages, title}` — the client's copy of
-  the conversation, so a reply still inside the 500 ms autosave debounce is
-  kept — which files it into history (title = the user's, else the first
-  user message's first non-quote line, `derive_title`) and clears the active
-  row. An empty conversation archives to nothing.
+- **New chat** (+ in the header) archives the conversation: it POSTs
+  `/chat-history/archive` `{bucket, messages, title}`, which files it into
+  history and clears the active row. The title is the user's, else the first
+  user message's first non-quote line (`derive_title`). The client sends its
+  own copy of the messages, so a reply still inside the 500 ms autosave
+  debounce is kept. An empty conversation archives to nothing.
 - The **History** button (clock icon) opens a popover listing the active
   conversation first (highlighted, "now") and then the bucket's archived
   ones newest-first (`GET /chat-history?bucket=`; title, age, message count
   in the tooltip), with a search box filtering on title + first message.
   Clicking an entry POSTs `/chat-history/{id}/open` with the current
   conversation: the current one is archived, the entry becomes the active
-  row and leaves history — a conversation is always in exactly one place.
-  Hover actions: rename (inline `aiKeyInput`; the active chat's title goes
-  through `PUT /chats/{key}` `{messages, title}`, an entry's through
-  `PUT /chat-history/{id}`; the autosave never sends a title so it can't
-  roll a rename back) and delete (confirm dialog, `DELETE
-  /chat-history/{id}`; the active conversation has no delete — start a new
-  chat instead).
+  row and leaves history. A conversation is always in exactly one place.
+  - Rename: inline `aiKeyInput`. The active chat's title goes through
+    `PUT /chats/{key}` `{messages, title}`, an entry's through
+    `PUT /chat-history/{id}`. The autosave never sends a title, so it can't
+    roll a rename back.
+  - Delete: confirm dialog, then `DELETE /chat-history/{id}`. The active
+    conversation has no delete; start a new chat instead.
 - History follows its bucket: `POST /chats/folder-rename` rewrites entry
   buckets along with the active rows, and `purge_page_data` drops a deleted
   page's entries. The gamma export/import and the account-merge path copy

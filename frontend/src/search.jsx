@@ -165,7 +165,7 @@ export default function SearchPanel({
   open, onOpenChange,
   focusedBlockId, homeBlocks, allFolderPaths,
   openBlock, pendingBlockScrollRef,
-  pdfSearchRef, scrollToRef, setPdfHidden, docNonce,
+  pdfSearchRef, scrollToRef, cancelCoarseRestoreRef, setPdfHidden, docNonce,
   onFindMarks, detailsDefault,
 }) {
   const [query, setQuery] = useState("");
@@ -335,6 +335,9 @@ export default function SearchPanel({
             if (matches.length) {
               pendingFindRef.current = null;
               const idx = matches.findIndex((m) => m.page === pending.page);
+              // The paper opened cold, so its last-read restore may still be
+              // holding the viewport — the match owns it from here.
+              cancelCoarseRestoreRef?.current?.();
               gotoFind(idx >= 0 ? idx : 0, matches);
             }
           }
@@ -372,6 +375,7 @@ export default function SearchPanel({
       const go = () => {
         if (!pendingFindRef.current) return; // the exact-match jump already happened
         if (scrollToRef.current && document.querySelector("[data-page]")) {
+          cancelCoarseRestoreRef?.current?.();
           scrollToRef.current({
             position: {
               pageNumber: r.page,

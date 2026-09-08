@@ -39,7 +39,7 @@ from ..foldertags import add_tag, clean_path, clean_segment, parse_tags
 from ..logbuf import log
 from ..server_settings import can_store
 from ..storage import DIGEST_CHARS, url_filename
-from .metadata import _fetch_arxiv, _fetch_doi, fetch_page_metadata
+from .metadata import fetch_page_metadata, registry_record
 from .pdf import download_pdf, resolve_source
 
 router = APIRouter(prefix="/api", tags=["clip"])
@@ -352,26 +352,6 @@ def library_lookup(request: Request, doi: str = "", arxiv_id: str = "", url: str
 
 # Registry records are public and slow (doi.org / arXiv round trips); the
 # popup asks about the same tab on every open, so remember recent answers.
-_PREVIEW_CACHE: dict[str, dict] = {}
-_PREVIEW_CACHE_MAX = 200
-
-
-def _preview_record(doi: str, arxiv_id: str) -> dict | None:
-    """The registry record behind an identifier: arXiv first (its record
-    carries the published DOI too), then doi.org. None when neither answers."""
-    cache_key = f"arxiv:{arxiv_id}" if arxiv_id else f"doi:{doi}"
-    if cache_key in _PREVIEW_CACHE:
-        return _PREVIEW_CACHE[cache_key]
-    meta = _fetch_arxiv(arxiv_id) if arxiv_id else None
-    if not meta and doi:
-        meta, _ = _fetch_doi(doi, with_bibtex=False)
-    if meta:  # a registry timeout is transient — never remembered
-        if len(_PREVIEW_CACHE) >= _PREVIEW_CACHE_MAX:
-            _PREVIEW_CACHE.pop(next(iter(_PREVIEW_CACHE)))
-        _PREVIEW_CACHE[cache_key] = meta
-    return meta
-
-
 @router.get("/library/preview")
 def library_preview(request: Request, doi: str = "", arxiv_id: str = "", url: str = ""):
     """What paper is this identifier? The registry record (title, authors,
@@ -383,7 +363,7 @@ def library_preview(request: Request, doi: str = "", arxiv_id: str = "", url: st
     arxiv_id = norm_arxiv(arxiv_id) or norm_arxiv(url)
     if not (doi or arxiv_id):
         raise HTTPException(status_code=400, detail="doi or arxiv_id required")
-    meta = _preview_record(doi, arxiv_id)
+    meta = registry_record(doi, arxiv_id)
     if not meta:
         raise HTTPException(status_code=404, detail="no registry record")
     return {k: meta.get(k) or ("" if k != "authors" else []) for k in

@@ -65,12 +65,13 @@ The **content view** shows the launcher or the workspace. The launcher lists
 workspaces as cards (kind, running / reachable dot, size on disk, data dir /
 URL, *last opened* badge) with open / rename / credentials / data folder /
 server log / remove actions, then Settings: the *reopen last workspace at
-launch* switch, the *Local workspace storage* row (the folder new local
-workspaces are created in — *Change…* opens a folder picker, *Use default*
-appears once a custom folder is set; either way a dialog offers *Move data*,
-which relocates the existing local workspaces too, or *Only new
-workspaces*), the *Updates* row (status line + check / download / restart
-button), and the dev-mode server overrides.
+launch* switch, the *Local workspace storage* row, the *Updates* row (status
+line + check / download / restart button), and the dev-mode server
+overrides. The storage row shows the folder new local workspaces are created
+in. *Change…* opens a folder picker and *Use default* appears once a custom
+folder is set. Either one leads to a dialog with *Only new workspaces* and,
+when local workspaces exist under the current root, *Move data*, which
+relocates them too.
 
 **Theme.** The chrome paints in Gamma's own theme: the preload on workspace
 pages mirrors the page's `data-theme` attribute (`dark`/`light`/`sepia`/
@@ -110,26 +111,27 @@ copy under `%LOCALAPPDATA%\Packages\xwtim.GammaPDF_<hash>\LocalCache\Roaming`,
 which the Store uninstall deletes — [release.md](release.md#microsoft-store)):
 
 - `workspaces.json` — the registry: workspace list, `lastOpened`,
-  `windowBounds`, and `settings` (`openLastOnLaunch`, `lastTheme`, the
-  dev-mode `pythonPath`/`backendDir`/`staticDir` overrides). Local admin
+  `windowBounds`, and `settings` (`openLastOnLaunch`, `lastTheme`, `dataRoot`,
+  the dev-mode `pythonPath`/`backendDir`/`staticDir` overrides). Local admin
   credentials are stored in plaintext here — same trust level as the SQLite
   files next to it; acceptable for a per-OS-user desktop app.
 - `workspaces/<id>/` — local workspace data dirs (a standard `GAMMA_DATA_DIR`
   layout: `users.db`, `users/<name>/{pages.db,data.db,uploads/}`). This is
-  the default **storage root**; `settings.dataRoot` replaces it with any
+  the default **storage root**. `settings.dataRoot` replaces it with any
   folder (a drive with room, a synced folder, outside an MSIX package's
-  virtualized AppData). New local workspaces are created under the current
-  root as `<root>/<id>`; `registry.setDataRoot(dir, { move })` switches the
-  root and, with `move`, relocates every local workspace under the old root:
-  the shell stops their sidecars first (an open one returns to the
-  launcher), the registry copies each `<id>` dir (`fs.cpSync`, so it works
-  across drives), verifies `users.db` arrived, and only after every copy
-  succeeded re-points the entries and deletes the originals — a failure
-  midway rolls back the copies and leaves the registry untouched. The new
-  folder may not be inside the current one or contain it. Removing a
-  workspace offers *keep files* / *delete everything*; deletion is guarded
-  to directories under the default or the configured root only.
+  virtualized AppData), and new local workspaces are created under the
+  current root as `<root>/<id>`.
 - `logs/<id>.log` — captured stdout/stderr of each sidecar run.
+
+Changing the root is `registry.setDataRoot(dir, { move })`. With `move` it
+relocates every local workspace under the old root. The shell stops their
+sidecars first (an open one returns to the launcher). The registry copies
+each `<id>` dir with `fs.cpSync` (so it works across drives), and only after
+every copy succeeded re-points the entries and deletes the originals. A
+failure midway rolls back the copies and leaves the registry untouched. The
+new folder may not be inside the current one or contain it. Removing a
+workspace offers *keep files* / *delete everything*; deletion is guarded to
+directories under the default or the configured root only.
 
 `GAMMA_SHELL_USER_DATA=<dir>` relocates all of it (the tests use a temp
 profile); `GAMMA_SHELL_DOWNLOAD_DIR=<dir>` saves downloads there without the

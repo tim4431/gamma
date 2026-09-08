@@ -1,17 +1,17 @@
 // Renders the Microsoft Store listing art (Partner Center → Store listings →
 // Store logos / Store display images) from the logo mark in ../../logos.
-// Output: build/store/*.png. Run with `npm run store-art` (needs Playwright's
-// Chromium, the same one the e2e suite uses).
+// Output: build/store/*.png. Run with `npm run store-art` on Windows (it
+// needs Playwright's Chromium, the same one the e2e suite uses, and the
+// poster's wordmark font comes from Google Fonts, so it needs the network).
 'use strict';
 const fs = require('node:fs');
 const path = require('node:path');
 const { chromium } = require('playwright-core');
 
 const OUT = path.join(__dirname, 'store');
-// playwright-core pins a headless-shell build; fall back to any Chromium
-// Playwright has installed (set PLAYWRIGHT_CHROMIUM to override).
+// playwright-core pins a headless-shell build; use the newest full Chromium
+// Playwright has installed instead.
 function chromiumPath() {
-  if (process.env.PLAYWRIGHT_CHROMIUM) return process.env.PLAYWRIGHT_CHROMIUM;
   const root = path.join(process.env.LOCALAPPDATA || '', 'ms-playwright');
   if (!fs.existsSync(root)) return undefined;
   const dirs = fs.readdirSync(root).filter((d) => /^chromium-\d+$/.test(d)).sort().reverse();

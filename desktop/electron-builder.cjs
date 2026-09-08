@@ -74,7 +74,7 @@ module.exports = {
     displayName: 'Gamma PDF',
     applicationId: 'Gamma',
     languages: ['en-US'],
-    backgroundColor: '#1f1f1f',
+    backgroundColor: '#1e1e1c', // the logo tile's background (build/store-art.js BG)
     showNameOnTiles: true,
   },
 

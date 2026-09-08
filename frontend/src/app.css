@@ -1503,52 +1503,39 @@ body {
   height: 22px;
   margin-top: 1px;
 }
+/* Both handles: a flat 18px-wide hit box that appears on row hover. */
+.rowHandles > .addHandle,
+.rowHandles > .dragHandle {
+  width: 18px;
+  padding: 0;
+  border-radius: 4px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  background: transparent;
+  border: none;
+  color: var(--text-muted);
+  opacity: 0;
+  transition: opacity 120ms ease, color 120ms ease, background 120ms ease;
+  user-select: none;
+}
 .rowHandles > .addHandle {
   position: absolute;
   left: 0;
   top: 22px;
-  width: 18px;
   height: 18px;
-  padding: 0;
-  border-radius: 4px;
-  display: flex;
-  align-items: center;
-  justify-content: center;
-  background: transparent;
-  border: none;
-  color: var(--text-muted);
   cursor: pointer;
-  opacity: 0;
-  transition: opacity 120ms ease, color 120ms ease, background 120ms ease;
-  user-select: none;
 }
 .rowHandles > .dragHandle {
-  width: 18px;
   height: 22px;
-  padding: 0;
   margin-right: 0;
-  border-radius: 4px;
-  display: flex;
-  align-items: center;
-  justify-content: center;
-  background: transparent;
-  border: none;
-  color: var(--text-muted);
   font-size: 17px;
   font-weight: 700;
   line-height: 1;
   cursor: grab;
-  opacity: 0;
-  transition: opacity 120ms ease, color 120ms ease, background 120ms ease;
-  user-select: none;
   -webkit-user-drag: element;
 }
-.sortableBlockWrap:hover > .rowHandles > .dragHandle,
-.sortableBlockWrap:focus-within > .rowHandles > .dragHandle,
-.sortableBlockWrap:has(:hover) > .rowHandles > .dragHandle,
-.sortableBlockWrap:hover > .rowHandles > .addHandle,
-.sortableBlockWrap:focus-within > .rowHandles > .addHandle,
-.sortableBlockWrap:has(:hover) > .rowHandles > .addHandle {
+.sortableBlockWrap:is(:hover, :focus-within, :has(:hover)) > .rowHandles > :is(.dragHandle, .addHandle) {
   opacity: 1;
 }
 .rowHandles > .dragHandle:hover,
@@ -2900,6 +2887,12 @@ button.pdfOutlineChevron:hover { background: rgba(128, 128, 128, 0.28); color: v
   color: var(--text-secondary);
   border-bottom-left-radius: 4px;
   max-width: 96%;
+}
+/* A request that failed before any reply text arrived (message.error). */
+.chatBubble.ai.error {
+  background: var(--danger-bg);
+  border-color: var(--danger-border);
+  color: var(--danger);
 }
 .chatUserText { white-space: pre-wrap; }
 /* markdown inside AI bubbles */

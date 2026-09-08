@@ -4,6 +4,7 @@
 // chrome.storage.session so it survives the worker being put to sleep.
 
 import { api, ApiError, getSettings, serverOrigin, whoAmI } from "./api.js";
+import "./doi.js"; // defines globalThis.gammaDoiFromPath
 
 const ICON_ON = { 16: "icons/icon16.png", 32: "icons/icon32.png" };
 const ICON_OFF = { 16: "icons/icon16-off.png", 32: "icons/icon32-off.png" };
@@ -43,15 +44,9 @@ async function updateBadge(tabId, st) {
   } catch {}
 }
 
-// A DOI used as a path: doi.org/<doi>, Atypon/Wiley /doi/(abs|full|pdf)/<doi>,
-// and publisher PDF paths built on it — APS /prl/pdf/<doi>, Springer
-// /content/pdf/<doi>.pdf, IOP /article/<doi>/pdf. Mirrored in detect.js.
+// A DOI used as a URL path (the rule lives in doi.js, shared with detect.js).
 function doiFromUrl(url) {
-  let path = "";
-  try { path = decodeURIComponent(new URL(url).pathname); } catch { return ""; }
-  const m = path.match(/\/(10\.\d{4,9}\/.+)$/);
-  if (!m) return "";
-  return m[1].replace(/\/(?:e?pdf|full|abs(?:tract)?|meta|download)$/i, "").replace(/\.pdf$/i, "").replace(/[.,;)\]]+$/, "");
+  try { return globalThis.gammaDoiFromPath(new URL(url).pathname); } catch { return ""; }
 }
 
 // Tabs without a content script (Chrome's PDF viewer, restricted pages):

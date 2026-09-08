@@ -133,7 +133,7 @@ function GeneralSettings({ value }) {
           <Stepper
             value={value.uiScale}
             onChange={value.setUiScale}
-            min={UI_SCALE.min} max={UI_SCALE.max} step={UI_SCALE.step} reset={1}
+            min={UI_SCALE.min} max={UI_SCALE.max} step={UI_SCALE.step} reset={UI_SCALE.default}
             format={(v) => `${Math.round(v * 100)}%`}
           />
         </Row>
@@ -869,7 +869,7 @@ function PromptsSettings({ value }) {
 // [key, icon, label, hint, scopes, short] — scopes says which agent scopes
 // offer it ("folder" = library/folder chat, "page" = page chat), short is
 // the chip name in the ToggleGroup.
-export const AGENT_PERM_ROWS = [
+const AGENT_PERM_ROWS = [
   ["list", ListIcon, "List pages",
    "See the folder's page titles, labels and metadata", ["folder"], "List"],
   ["read", BookIcon, "Read pages",

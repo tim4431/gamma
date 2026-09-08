@@ -113,10 +113,7 @@ function setDataRoot(newRoot, { move = true } = {}) {
       const dest = path.join(targetRoot, path.basename(ws.dataDir));
       try {
         if (fs.existsSync(dest)) throw new Error('already exists');
-        fs.cpSync(ws.dataDir, dest, { recursive: true, errorOnExist: true });
-        if (!fs.existsSync(path.join(dest, 'users.db')) && fs.existsSync(path.join(ws.dataDir, 'users.db'))) {
-          throw new Error('copy incomplete');
-        }
+        fs.cpSync(ws.dataDir, dest, { recursive: true }); // throws on any failed file
       } catch (e) {
         for (const m of moved) fs.rmSync(m.dest, { recursive: true, force: true });
         fs.rmSync(dest, { recursive: true, force: true });

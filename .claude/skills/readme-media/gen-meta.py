@@ -1,8 +1,8 @@
 """Post-process for record-metadata.mjs: trim the download pre-roll, cut the
 dead waits (metadata fetch, citation regeneration), and apply a smooth camera
 zoom onto the right column where the metadata + share popovers live. The app
-itself is never zoomed. Run from the folder holding meta_zoom.json +
-video_meta_path.txt (the recorder's cwd)."""
+itself is never zoomed. Reads meta_zoom.json + video_meta_path.txt from the
+folder this script sits in, so copy it into the recorder's cwd first."""
 import glob, json, os, subprocess, sys
 
 SCRATCH = os.path.dirname(os.path.abspath(__file__))

@@ -20,16 +20,9 @@
     try { return decodeURIComponent(m[0]).replace(/[.,;)\]]+$/, ""); } catch { return m[0]; }
   }
 
-  // A DOI used as a path: doi.org/<doi>, Atypon/Wiley /doi/(abs|full|pdf)/<doi>,
-  // publisher PDF paths built on it (APS /prl/pdf/<doi>, Springer
-  // /content/pdf/<doi>.pdf, IOP /article/<doi>/pdf). Mirrors worker.js.
-  function doiFromPath(pathname) {
-    let path = pathname || "";
-    try { path = decodeURIComponent(path); } catch {}
-    const m = path.match(/\/(10\.\d{4,9}\/.+)$/);
-    if (!m) return "";
-    return m[1].replace(/\/(?:e?pdf|full|abs(?:tract)?|meta|download)$/i, "").replace(/\.pdf$/i, "").replace(/[.,;)\]]+$/, "");
-  }
+  // A DOI used as a URL path: doi.js (loaded before this script) holds the
+  // rule, shared with the worker.
+  const doiFromPath = globalThis.gammaDoiFromPath;
 
   function arxivFrom(text) {
     const m = (text || "").match(ARXIV_URL_RE) || (text || "").match(ARXIV_TEXT_RE);

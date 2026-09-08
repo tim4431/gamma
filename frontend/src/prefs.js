@@ -63,8 +63,9 @@ export const THEMES = ["system", "light", "dark", "sepia", "gray"];
 
 // Control size (Settings → General): a CSS `zoom` on every button and toggle
 // (app.css, `--ui-scale`) — the interface chrome, not the notes/chat text,
-// which Ctrl+scroll resizes in place per panel and never persists.
-export const UI_SCALE = { min: 0.7, max: 1.6, step: 0.1 };
+// which Ctrl+scroll resizes in place per panel and never persists. The
+// index.html pre-paint script repeats the bounds — keep them in step.
+export const UI_SCALE = { min: 0.7, max: 1.6, step: 0.1, default: 1 };
 
 export function useAppPrefs() {
   // --- Appearance (Settings → General) ---

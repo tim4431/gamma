@@ -202,10 +202,10 @@ export function UnitInput({ value, onChange, onCommit, unit, placeholder, min, o
 // `uiBtn sm iconSq` buttons around a tabular readout. `format` renders the
 // value (e.g. as a percentage); steps clamp to [min, max] and round away
 // float drift. Click the readout to jump back to `reset` when given.
-export function Stepper({ value, onChange, min, max, step, format, reset, title }) {
+export function Stepper({ value, onChange, min, max, step, format, reset }) {
   const clamp = (n) => Math.round(Math.min(max, Math.max(min, n)) * 1000) / 1000;
   return (
-    <span className="stepper" title={title}>
+    <span className="stepper">
       <button type="button" className="uiBtn sm iconSq" aria-label="Smaller"
         disabled={value <= min} onClick={() => onChange(clamp(value - step))}>−</button>
       <button type="button" className="stepperValue" disabled={reset == null || value === reset}

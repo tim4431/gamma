@@ -29,11 +29,11 @@ and text selections. Server side: `gamma/routers/clip.py`. No build step
 4. **Already in the library** — ✓ badge; the popup offers *Open in Gamma*
    and *Add to another folder…* instead of a duplicate save. When the
    library page's title differs from the paper the tab resolved to, the
-   notice says "Already in your library as “…”" — a stale or wrong metadata
-   record on that page shows up here instead of masquerading as this paper.
+   notice says "Already in your library as “…”", so a stale metadata record
+   on that page is visible rather than shown as this paper's title.
 5. **Preview before saving.** A PDF tab has no meta tags to read a title
    from, so for every detected DOI / arXiv id the worker asks
-   `GET /api/library/preview` for the registry record and the popup head
+   `GET /api/library/preview` for the registry record. The popup head then
    shows the paper's title plus authors · year · venue. The previewed title
    also names the new page on save (`auto_title`, so the metadata lookup may
    still replace it).
@@ -67,6 +67,7 @@ helpers — never re-implement it in the extension.
 |---|---|
 | `manifest.json` | MV3: module service worker, `<all_urls>` content script, popup, options, `save-to-gamma` command. `host_permissions: ["<all_urls>"]` — the same install warning the content script already carries, and it makes cookie-carrying fetches to the (user-configured) server origin and the PDF-from-tab fetch work without runtime permission prompts |
 | `worker.js` | per-tab state in `chrome.storage.session` (`tab:<id>` → `{candidate, hit, preview, auth, saving, error}`), badge/icon, `lookup` + `preview`, the save pipeline, context menus, keyboard command, notifications, and the message API (`get-state`, `save`, `clip-selection`, `auth-changed`, `open`) |
+| `doi.js` | the DOI-in-a-URL-path rule (`gammaDoiFromPath`), one file loaded by the content script and imported by the worker |
 | `detect.js` | content script (`document_idle`): identifier extraction, re-run on SPA URL changes; answers `get-detection` / `get-selection` / `fetch-pdf` (downloads a PDF from inside the page and relays it base64 — publisher bot checks that 403 the worker's fetch accept the page's own same-origin request) |
 | `api.js` | settings (`chrome.storage.sync`: `server, folder, labels, allowOa, saveCopy`), `api()` fetch wrapper (`credentials: "include"`, JSON `detail` → `ApiError{status}`), `login/logout/whoAmI` |
 | `popup.html/js/css` | setup (no server) → offline (server unreachable, with Retry) → sign-in → main view; the footer shows a connection dot (green signed in / amber signed out / red unreachable) beside `host · user` and an options gear (the app's SettingsIcon). The folder picker and label suggestions are plain-JS menus mirroring the app's MenuSelect/ctxMenu recipes; labels are the app's `categoryTag` chip input (comma/Enter commits a chip, Backspace removes, arrow keys + Enter pick a suggestion). Saving remembers the folder but not the labels — each popup prefills only the options-page default labels. `popup.css` copies the app's theme tokens (light/dark via `prefers-color-scheme`) — keep it in step with `app.css` when the control recipes change. `?tab=<id>` targets a specific tab when opened as a page (tests) |
@@ -85,7 +86,7 @@ helpers — never re-implement it in the extension.
 | Signal | Yields |
 |---|---|
 | `arxiv.org/abs|pdf/<id>` in the URL, `citation_arxiv_id` | `arxiv_id` (version stripped) |
-| a DOI used as a path — `doi.org/<doi>`, `/doi/…/10.…` (Atypon, Wiley), publisher PDF paths built on it (APS `/prl/pdf/<doi>`, Springer `/content/pdf/<doi>.pdf`, IOP `/article/<doi>/pdf`; the view/file suffix stripped, `doiFromUrl` / `doiFromPath`, one rule in both scripts) — then `citation_doi`, `dc.identifier`, `prism.doi`, JSON-LD `*Article` identifiers | `doi` |
+| a DOI used as a path — `doi.org/<doi>`, `/doi/…/10.…` (Atypon, Wiley), publisher PDF paths built on it (APS `/prl/pdf/<doi>`, Springer `/content/pdf/<doi>.pdf`, IOP `/article/<doi>/pdf`; the view/file suffix stripped by `doi.js`, the same rule as the server's `norm_doi`) — then `citation_doi`, `dc.identifier`, `prism.doi`, JSON-LD `*Article` identifiers | `doi` |
 | `contentType === application/pdf` / `.pdf` URL, `citation_pdf_url`, `<link rel=alternate type=application/pdf>` | `pdf_url` |
 | `citation_title`, JSON-LD headline, `dc.title`, `og:title`, `document.title` | `title` |
 | DOI regex over the first 30 k chars of visible text (only when nothing else matched) | `kind: "maybe"` |
@@ -99,14 +100,14 @@ Every detection triggers `GET /api/library/lookup` (skipped when signed out)
 and sets the badge: `PDF`/`arX`/`DOI` blue, `?` grey, `✓` green (in the
 library), `!` red (not signed in). A detection with a DOI or arXiv id then
 fetches `GET /api/library/preview` off the badge's critical path (doi.org
-can take a second or two) and stores the record as `preview`; a popup that
+can take a second or two) and stores the record as `preview`. A popup that
 is already open re-renders its head from `storage.onChanged`. State is
 cleared when the tab navigates.
 
-The popup head: the page's own title (meta tags) > the previewed registry
-title > the library page's title > the host; the chip + identifier line
-says what the detection rests on, and the registry's authors · year · venue
-sit under it.
+The popup head shows the first of: the page's own title (meta tags), the
+previewed registry title, the library page's title, the host. The chip +
+identifier line says what the detection rests on, and the registry's
+authors · year · venue sit under it.
 
 ## The save pipeline
 
@@ -177,15 +178,19 @@ Server side (`clip.py`, sync `def` — it downloads):
    DOI/arXiv id was detected (the lookup needs no PDF for those — a note about
    a paywalled paper still gets its citation).
 
-Companions: `GET /api/library/lookup?doi=&arxiv_id=&url=` (404 when absent;
-identifiers are also extracted from `url` — `norm_doi` also drops a
-publisher path suffix like `/pdf` or `.pdf` glued onto the DOI; web-clip
-pages match by `web_url`), `GET /api/library/preview?doi=&arxiv_id=&url=`
-(the registry record — `{title, authors, year, venue, doi, arxiv_id,
-source}` via `metadata._fetch_arxiv` then `_fetch_doi`; 404 when neither
-registry answers; a small in-memory cache keyed by identifier, the data is
-public), `GET /api/library/folders` → `{folders, labels}` (folder paths
-plus their ancestors), `POST /api/clip/note {text, source_url, title,
+Companions:
+
+- `GET /api/library/lookup?doi=&arxiv_id=&url=` — 404 when absent.
+  Identifiers are also extracted from `url` (`norm_doi` drops a publisher
+  path suffix like `/pdf` or `.pdf` glued onto the DOI); web-clip pages
+  match by `web_url`.
+- `GET /api/library/preview?doi=&arxiv_id=&url=` — the registry record
+  `{title, authors, year, venue, doi, arxiv_id, source}` from
+  `metadata.registry_record` (arXiv, then doi.org; a small in-memory cache,
+  the data is public). 404 when neither registry answers.
+- `GET /api/library/folders` → `{folders, labels}` (folder paths plus their
+  ancestors).
+- `POST /api/clip/note {text, source_url, title,
 page_id?}` — the explicit "clip selection INTO a page" append path (with
 `generate_key_between`; without `page_id` it uses/creates the root page
 flagged `properties.web_clips = 1`), as opposed to `/api/clip`'s "make a page

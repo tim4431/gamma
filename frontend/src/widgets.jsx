@@ -588,8 +588,8 @@ function BlockDropIndicator({ target }) {
 // shows for a moment after each change. `enabled` (a function, read live) can
 // hand the gesture back to the browser, e.g. on the home library.
 const TEXT_SCALE_MIN = 0.6, TEXT_SCALE_MAX = 2.5;
-function useTextScale({ base = 1, enabled } = {}) {
-  const [scale, setScale] = useState(base);
+function useTextScale({ enabled } = {}) {
+  const [scale, setScale] = useState(1);
   const [badge, setBadge] = useState(false);
   const enabledRef = useRef(enabled);
   enabledRef.current = enabled;
@@ -623,7 +623,7 @@ function useTextScale({ base = 1, enabled } = {}) {
   const badgeNode = badge ? (
     <div className="textScaleBadge" aria-live="polite"><span>{Math.round(scale * 100)}%</span></div>
   ) : null;
-  return { scale, ref, style: scale === 1 ? undefined : { "--text-scale": scale }, badge: badgeNode };
+  return { ref, style: scale === 1 ? undefined : { "--text-scale": scale }, badge: badgeNode };
 }
 
 export {

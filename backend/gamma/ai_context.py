@@ -254,6 +254,10 @@ def build_messages(payload, context: str, with_tools: bool = False) -> list[dict
     messages = []
     context_used = False
     for i, history_item in enumerate(history):
+        if history_item.get("error"):
+            # A reply that failed before it started (the client's error
+            # bubble) — not an answer the model gave, so never replayed.
+            continue
         role = "assistant" if history_item.get("role") == "ai" else "user"
         content = history_item.get("text", "")
         if with_tools:
