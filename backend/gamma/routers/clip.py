@@ -7,7 +7,8 @@ off the metadata lookup. When no PDF can be resolved the clip still becomes a
 page — one carrying the tab's URL as ``properties.web_url`` (and the clipped
 selection as its first block) instead of a PDF attachment. The companions are
 read-only helpers for the popup (``/api/library/lookup`` for the "already in
-your library" badge, ``/api/library/folders`` for the folder picker) and
+your library" badge, ``/api/library/preview`` for the paper's registry title
+before it is saved, ``/api/library/folders`` for the folder picker) and
 ``POST /api/clip/note`` for text selections appended into an existing page.
 Session-only — never share-token readable. Design: docs/dev/extension.md.
 """
@@ -38,7 +39,7 @@ from ..foldertags import add_tag, clean_path, clean_segment, parse_tags
 from ..logbuf import log
 from ..server_settings import can_store
 from ..storage import DIGEST_CHARS, url_filename
-from .metadata import fetch_page_metadata
+from .metadata import _fetch_arxiv, _fetch_doi, fetch_page_metadata
 from .pdf import download_pdf, resolve_source
 
 router = APIRouter(prefix="/api", tags=["clip"])
@@ -51,9 +52,17 @@ WEB_CLIPS_TITLE = "Web clips"
 
 # --- identifiers ---------------------------------------------------------------
 
+_DOI_PATH_TAIL_RE = re.compile(r"(?:/(?:e?pdf|full|abs(?:tract)?|meta|download))?(?:\.pdf)?$", re.I)
+
+
 def norm_doi(text: str) -> str:
+    """The first DOI in a string, lowercased. Publisher URLs build paths on
+    the DOI (APS ``/prl/pdf/<doi>``, Springer ``/content/pdf/<doi>.pdf``, IOP
+    ``/article/<doi>/pdf``) — the view/file suffix is not part of it."""
     m = _DOI_RE.search(urllib.parse.unquote(text or ""))
-    return m.group(1).rstrip(".,;)]}").lower() if m else ""
+    if not m:
+        return ""
+    return _DOI_PATH_TAIL_RE.sub("", m.group(1).rstrip(".,;)]}")).lower()
 
 
 def norm_arxiv(text: str) -> str:
@@ -339,6 +348,46 @@ def library_lookup(request: Request, doi: str = "", arxiv_id: str = "", url: str
     if not block:
         raise HTTPException(status_code=404, detail="not in library")
     return _result(block, existed=True)
+
+
+# Registry records are public and slow (doi.org / arXiv round trips); the
+# popup asks about the same tab on every open, so remember recent answers.
+_PREVIEW_CACHE: dict[str, dict] = {}
+_PREVIEW_CACHE_MAX = 200
+
+
+def _preview_record(doi: str, arxiv_id: str) -> dict | None:
+    """The registry record behind an identifier: arXiv first (its record
+    carries the published DOI too), then doi.org. None when neither answers."""
+    cache_key = f"arxiv:{arxiv_id}" if arxiv_id else f"doi:{doi}"
+    if cache_key in _PREVIEW_CACHE:
+        return _PREVIEW_CACHE[cache_key]
+    meta = _fetch_arxiv(arxiv_id) if arxiv_id else None
+    if not meta and doi:
+        meta, _ = _fetch_doi(doi, with_bibtex=False)
+    if meta:  # a registry timeout is transient — never remembered
+        if len(_PREVIEW_CACHE) >= _PREVIEW_CACHE_MAX:
+            _PREVIEW_CACHE.pop(next(iter(_PREVIEW_CACHE)))
+        _PREVIEW_CACHE[cache_key] = meta
+    return meta
+
+
+@router.get("/library/preview")
+def library_preview(request: Request, doi: str = "", arxiv_id: str = "", url: str = ""):
+    """What paper is this identifier? The registry record (title, authors,
+    year, venue) for the popup to show before anything is saved — a PDF tab
+    has no meta tags to read a title from. 404 when the registry has nothing."""
+    require_user(request)
+    url = (url or "").strip()
+    doi = norm_doi(doi) or norm_doi(url)
+    arxiv_id = norm_arxiv(arxiv_id) or norm_arxiv(url)
+    if not (doi or arxiv_id):
+        raise HTTPException(status_code=400, detail="doi or arxiv_id required")
+    meta = _preview_record(doi, arxiv_id)
+    if not meta:
+        raise HTTPException(status_code=404, detail="no registry record")
+    return {k: meta.get(k) or ("" if k != "authors" else []) for k in
+            ("title", "authors", "year", "venue", "doi", "arxiv_id", "source")}
 
 
 @router.get("/library/folders")

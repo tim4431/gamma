@@ -615,7 +615,7 @@ body {
   border: none;
   outline: none;
   font: inherit;
-  font-size: 15px;
+  font-size: calc(15px * var(--text-scale, 1));
   line-height: 1.45;
   padding: 0;
 }
@@ -628,7 +628,7 @@ body {
 .blockEditorCm .cm-editor.cm-focused { outline: none; }
 .blockEditorCm .cm-scroller {
   font-family: inherit;
-  font-size: 15px;
+  font-size: calc(15px * var(--text-scale, 1));
   line-height: 1.45;
   overflow: visible; /* auto-grow with content, no inner scrollbars */
 }
@@ -840,7 +840,7 @@ body {
 
 .blockRendered {
   color: var(--text-primary);
-  font-size: 15px;
+  font-size: calc(15px * var(--text-scale, 1));
   line-height: 1.45;
   white-space: normal;
   cursor: text;
@@ -2783,6 +2783,19 @@ button.pdfOutlineChevron:hover { background: rgba(128, 128, 128, 0.28); color: v
   pointer-events: none;
 }
 .metaValWarn { color: var(--danger); }
+/* Provenance beside "Slide citation" in the share popover (same "!" dot, inline) */
+.citeSourceTag {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  margin-left: 8px;
+  font-size: 11px;
+  font-weight: 400;
+  color: var(--text-muted);
+}
+.citeSourceTag.warn { color: var(--danger); }
+.metaWarnDot.inline { position: static; display: inline-block; }
+.citeWarnHint { color: var(--danger); margin-bottom: 4px; }
 .sourcePopover { min-width: 300px; right: 0; }
 
 .searchResult.active { background: color-mix(in srgb, var(--accent-dark) 14%, transparent); }
@@ -2869,9 +2882,9 @@ button.pdfOutlineChevron:hover { background: rgba(128, 128, 128, 0.28); color: v
 .chatBubbleRow.ai { justify-content: flex-start; }
 .chatBubble {
   max-width: 88%;
-  border-radius: 12px;
+  border-radius: calc(12px * var(--text-scale, 1));
   padding: 6px 10px;
-  font-size: 12px;
+  font-size: calc(12px * var(--text-scale, 1));
   line-height: 1.5;
   overflow-wrap: break-word;
   min-width: 0;
@@ -2958,11 +2971,55 @@ button.pdfOutlineChevron:hover { background: rgba(128, 128, 128, 0.28); color: v
   margin-bottom: 6px;
 }
 .aiKeyInput:focus { border-color: var(--text-dim); }
+/* Password box with the show/hide eye (settingsKit PasswordInput): the input
+   keeps its own class; the wrapper only positions the ctlBtn over its right
+   edge and takes over the input's bottom margin so the eye stays centred. */
+.pwField { position: relative; display: block; }
+.pwField > input { width: 100%; margin-bottom: 0; padding-right: 34px; }
+.pwField > .pwToggle { position: absolute; right: 6px; top: 50%; transform: translateY(-50%); }
+.pwField:has(> .aiKeyInput) { margin-bottom: 6px; }
+.setField .pwField { margin-bottom: 0; }
+.loginCard .pwField { margin-bottom: 12px; }
 .aiKeysError { color: #e5534b; }
 .aiTestOk { color: #4caf50; }
 /* Uniform buttons for the settings modals (AI providers, prompt editor):
    ghost by default, .primary for the main action, .danger for destructive,
    .sm for inline row actions. */
+/* --- Control size (Settings → General) ---------------------------------
+   `--ui-scale` (index.html pre-paint, App.jsx afterwards) zooms every button
+   and toggle as one unit — box, text and SVG icon together — so rows simply
+   grow to fit. Buttons can't nest, but the class-based controls could sit
+   inside one another; the second rule keeps the zoom from compounding. */
+:where(button, .uiBtn, .ctlBtn, .uiClose, .switch) { zoom: var(--ui-scale, 1); }
+:where(button, .uiBtn, .ctlBtn, .uiClose, .switch) :where(button, .uiBtn, .ctlBtn, .uiClose, .switch) { zoom: 1; }
+
+/* --- Ctrl+scroll text size (useTextScale in widgets.jsx) ----------------
+   `--text-scale` sits on the notes list / chat transcript and multiplies
+   into their base font sizes (.blockRendered, .blockEditorCm, .chatBubble).
+   The badge is the panel's first child: a sticky zero-height row so it floats
+   over the content without taking space. */
+.textScaleBadge {
+  position: sticky;
+  top: 4px;
+  height: 0;
+  display: flex;
+  align-items: flex-start; /* not stretch: the row is zero-height, the pill keeps its own */
+  justify-content: flex-end;
+  padding-right: 28px; /* clears the row's collapse caret */
+  z-index: 5;
+  pointer-events: none;
+}
+.textScaleBadge > span {
+  background: var(--bg-elevated);
+  border: 1px solid var(--border);
+  color: var(--text-secondary);
+  border-radius: 999px;
+  padding: 3px 10px;
+  font-size: 12px;
+  font-variant-numeric: tabular-nums;
+  box-shadow: 0 2px 8px rgba(0, 0, 0, 0.15);
+}
+
 /* Buttons: VS-Code-settings-style rounded rects — soft radius, quiet border,
    faint lift, width from content. */
 .uiBtn {

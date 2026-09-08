@@ -223,10 +223,12 @@ METADATA_PROMPT = (
     'title (string), authors (list of "First Last" strings, in order), year (string), '
     "venue (journal or conference name; \"arXiv\" for preprints), volume (string), "
     "pages (string, e.g. \"173-179\"), doi (string), arxiv_id (string, e.g. \"1810.11086\"), "
+    "publisher (string; books only), isbn (string; books only, as printed), "
     'kind (string: "paper" for journal/conference articles and preprints; otherwise '
     '"notes", "slides", "thesis", "book", "report", or "other" — lecture notes, course '
-    "materials and problem sets are \"notes\"). "
-    "Use empty strings/lists for anything not stated in the text. Never invent a DOI or arXiv id."
+    "materials and problem sets are \"notes\"; a textbook or monograph, however old, is \"book\"). "
+    "For a book, title is the book's main title (no subtitle) and year the edition's copyright year. "
+    "Use empty strings/lists for anything not stated in the text. Never invent a DOI, arXiv id or ISBN."
 )
 
 # Default prompt for the minimal slide-deck citation. Editable in the frontend.
@@ -236,8 +238,10 @@ CITE_PROMPT = (
     "labeling italic and bold with markdown syntax correctly. Follow these examples exactly:\n"
     "Guo _et al._ arXiv **1810.11086** (2018).\n"
     "Schine _et al._, Nature **565**, 173–179 (2019)\n"
+    "Siegman, _Lasers_ (University Science Books, 1986)\n"
     "Use the journal name (abbreviated if long), bold volume, page range, and year in parentheses. "
-    "For preprints use the arXiv number in bold. If there is exactly one author, use their surname "
+    "For preprints use the arXiv number in bold. For a book (@book) use the italic title, then the "
+    "publisher and year in parentheses. If there is exactly one author, use their surname "
     "without _et al._; for two authors use \"Surname & Surname\"."
 )
 

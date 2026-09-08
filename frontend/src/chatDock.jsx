@@ -3,9 +3,9 @@
 // pasted figures, the "+" context picker, and the per-message PDF attach.
 // App provides context (open paper, library, selections) and the model/effort/
 // prompt preferences it also needs elsewhere.
-import React, { useEffect, useMemo, useRef, useState } from "react";
+import React, { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { API, apiJson, copyText, isPdfFile, readNdjson } from "./utils";
-import { DockWindow, ChatMarkdown, AutoGrowTextarea, useCopied } from "./widgets";
+import { DockWindow, ChatMarkdown, AutoGrowTextarea, useCopied, useTextScale } from "./widgets";
 import { MenuSelect } from "./menus";
 import { CharSlider, approxPages } from "./settingsKit";
 import { AgentToolPicker, CHAT_KIND_ROWS } from "./settings";
@@ -240,6 +240,9 @@ export default function ChatDock({
   const [docPickerQuery, setDocPickerQuery] = useState("");
   const fileInputRef = useRef(null);
   const chatScrollRef = useRef(null);
+  // Ctrl+scroll over the transcript: session-only text size (useTextScale).
+  const chatTextScale = useTextScale();
+  const chatScrollRefCb = useCallback((el) => { chatScrollRef.current = el; chatTextScale.ref(el); }, [chatTextScale.ref]);
   // Voice dictation (ChatGPT-style): mic records (live waveform), ■ transcribes
   // into the input via /api/ai/transcribe, ↑ transcribes and sends, × discards.
   const [dictation, setDictation] = useState(""); // "" | "rec" | "busy"
@@ -1020,7 +1023,8 @@ export default function ChatDock({
       ) : null}
       <div
         className="chatMessages"
-        ref={chatScrollRef}
+        ref={chatScrollRefCb}
+        style={chatTextScale.style}
         onScroll={(e) => {
           const el = e.currentTarget;
           const last = chatLastScrollTopRef.current;
@@ -1035,9 +1039,10 @@ export default function ChatDock({
         onWheel={(e) => {
           // Upward intent unsticks immediately — before any scroll event —
           // so an arriving delta can't yank the view back down first.
-          if (e.deltaY < 0) chatStickRef.current = false;
+          if (e.deltaY < 0 && !(e.ctrlKey || e.metaKey)) chatStickRef.current = false; // Ctrl+wheel resizes text, not scroll
         }}
       >
+        {chatTextScale.badge}
         {chatMessages.length === 0 ? (
           <div className="chatEmpty">
             {aiInfo && !aiInfo.enabled ? (

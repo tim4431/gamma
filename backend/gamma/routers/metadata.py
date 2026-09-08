@@ -1,14 +1,18 @@
 """Paper metadata + citations.
 
 Lookup order: arXiv API (id from the source URL or the PDF text) → DOI via
-doi.org content negotiation (Crossref/DataCite) → Crossref bibliographic
-search on the text head → AI extraction from the first pages as a last resort.
+doi.org content negotiation (Crossref/DataCite) → ISBN printed in the PDF via
+Open Library / Google Books (books) → Crossref bibliographic search on the
+text head → AI extraction from the first pages as a last resort, itself
+cross-checked against Crossref and, for books, the book registries.
 A registry record found via the *text* (not the source URL) is only trusted
 outright when its title actually appears in the PDF — the first DOI on page 1
 can belong to a cited paper, and AI output can be a plausible hallucination.
-There is deliberately no Google Scholar call — Scholar has no official API and
-scraping it violates its ToS. Results are cached on the page block
-(properties.meta / properties.bibtex).
+Whatever is stored carries ``meta.unverified`` so the UI can warn before the
+record ends up in a paper's bibliography. There is deliberately no Google
+Scholar call — Scholar has no official API and scraping it violates its ToS.
+Results are cached on the page block (properties.meta / properties.bibtex /
+properties.ppt_cite — the slide citation is generated in the same fetch).
 """
 
 import json
@@ -117,6 +121,208 @@ def _years_compatible(a, b) -> bool:
     return not ma or not mb or abs(int(ma.group()) - int(mb.group())) <= 1
 
 
+def _surname(author: str) -> str:
+    """Last alphabetic token of an author string ("Anthony E. Siegman" →
+    "siegman"), normalized like the text it is matched against."""
+    parts = re.findall(r"[a-z]+", normalize_text(author or "").lower())
+    return parts[-1] if parts and len(parts[-1]) >= 3 else ""
+
+
+def _record_in_text(meta: dict, text: str) -> bool:
+    """Book-strength evidence that a registry record describes this PDF: a
+    long title in the text (the paper rule), or — book titles are short
+    ("Lasers") — the whole title AND one author surname both in the head."""
+    if _title_in_text(meta.get("title", ""), text):
+        return True
+    # Title pages letter-space the title ("L A S E R S"); fold runs of
+    # single letters back into a word before matching.
+    head = re.sub(r"\b(?:[a-z0-9] ){2,}[a-z0-9]\b", lambda m: m.group().replace(" ", ""),
+                  _norm_match((text or "")[:SCAN_CHARS]))
+    head = f" {head} "
+    t = _norm_match(meta.get("title", ""))
+    if len(t) < 4 or f" {t} " not in head:
+        return False
+    return any(f" {s} " in head for s in map(_surname, meta.get("authors") or []) if s)
+
+
+# --- Books ------------------------------------------------------------------
+# Papers resolve through arXiv/DOI/Crossref; books mostly don't (Crossref only
+# knows DOI-registered ones, and an old textbook has neither). Two keyless
+# book registries cover them: Open Library and Google Books. Entry points: an
+# ISBN printed in the PDF (copyright page, back cover), or the AI-read title +
+# author of a book that predates ISBNs.
+
+_ISBN_RE = re.compile(r"ISBN(?:-1[03])?\s*[:：]?\s*([0-9][0-9Xx\s‐-―-]{8,22}[0-9Xx])", re.I)
+# Shorter than the paper registries: both book APIs are optional extras on a
+# path that has already tried arXiv/DOI, and Open Library can be slow or
+# unreachable from some networks — a fetch must not hang on them.
+_BOOK_API_TIMEOUT = 8
+
+
+def _isbn_valid(digits: str) -> bool:
+    if len(digits) == 10 and re.fullmatch(r"\d{9}[\dX]", digits):
+        return sum((10 - i) * (10 if c == "X" else int(c)) for i, c in enumerate(digits)) % 11 == 0
+    if len(digits) == 13 and digits.isdigit():
+        return sum((1 if i % 2 == 0 else 3) * int(c) for i, c in enumerate(digits)) % 10 == 0
+    return False
+
+
+def _find_isbns(text: str) -> list[str]:
+    """Checksum-valid ISBNs labelled "ISBN" in the text, reading order. Only
+    labelled ones — a bare 10/13-digit run is a phone number or a DOI tail.
+    Extraction glues the next number on ("ISBN 0-935702-11-3 1986"), so the
+    13- (978/979-prefixed) and 10-character prefixes are both tried."""
+    out: list[str] = []
+    for m in _ISBN_RE.finditer(text or ""):
+        digits = re.sub(r"[^0-9Xx]", "", m.group(1)).upper()
+        cands = ([digits[:13]] if digits[:3] in ("978", "979") else []) + [digits[:10]]
+        for cand in cands:
+            if _isbn_valid(cand) and cand not in out:
+                out.append(cand)
+                break
+        if len(out) >= 4:
+            break
+    return out
+
+
+def _book_record(title: str, authors: list, year, publisher: str, isbns: list,
+                 source: str, years: list | None = None) -> dict | None:
+    title = re.sub(r"\s+", " ", str(title or "")).strip()
+    if not title:
+        return None
+    ym = re.search(r"\d{4}", str(year or ""))
+    isbns = [re.sub(r"[^0-9Xx]", "", str(i)).upper() for i in (isbns or [])]
+    isbns = [i for i in isbns if _isbn_valid(i)]
+    return {
+        "title": title,
+        "authors": [str(a).strip() for a in (authors or []) if str(a).strip()],
+        "year": ym.group() if ym else "",
+        "venue": "", "volume": "", "pages": "",
+        "doi": "", "arxiv_id": "",
+        "publisher": re.sub(r"\s+", " ", str(publisher or "")).strip(),
+        # Edition-specific: only meaningful when the PDF in hand printed it
+        # (the ISBN step) — search hits keep the candidates in "isbns" and
+        # _pick_book_match adopts one only if the text contains it.
+        "isbn": "",
+        "isbns": isbns,
+        "years": [str(y) for y in (years or []) if str(y).strip()],
+        "kind": "book",
+        "source": source,
+    }
+
+
+def _gb_record(info: dict, source: str) -> dict | None:
+    """One Google Books volumeInfo → record. Subtitles stay separate (a
+    citation wants the main title)."""
+    return _book_record(
+        info.get("title"), info.get("authors") or [], info.get("publishedDate"),
+        info.get("publisher"),
+        [i.get("identifier") for i in (info.get("industryIdentifiers") or []) if str(i.get("type", "")).startswith("ISBN")],
+        source, years=[str(info.get("publishedDate") or "")[:4]])
+
+
+def _fetch_isbn(isbn: str) -> dict | None:
+    """Resolve one ISBN: Open Library's books API, then Google Books."""
+    try:
+        data = json.loads(_http_get(
+            f"https://openlibrary.org/api/books?bibkeys=ISBN:{isbn}&format=json&jscmd=data",
+            timeout=_BOOK_API_TIMEOUT,
+        )).get(f"ISBN:{isbn}") or {}
+    except Exception as e:
+        log.warning(f"[metadata] openlibrary isbn lookup failed: {e}")
+        data = {}
+    rec = _book_record(
+        data.get("title"), [a.get("name") for a in (data.get("authors") or [])],
+        data.get("publish_date"), (data.get("publishers") or [{}])[0].get("name"),
+        [isbn], "isbn") if data else None
+    if not rec:
+        try:
+            items = json.loads(_http_get(
+                "https://www.googleapis.com/books/v1/volumes?q=isbn:" + isbn,
+                timeout=_BOOK_API_TIMEOUT)).get("items") or []
+        except Exception as e:
+            log.warning(f"[metadata] google books isbn lookup failed: {e}")
+            items = []
+        rec = next((r for r in (_gb_record(it.get("volumeInfo") or {}, "isbn") for it in items) if r), None)
+    if rec:
+        rec["isbn"] = isbn
+        rec.pop("isbns", None)
+        rec.pop("years", None)
+    return rec
+
+
+def _book_search(title: str, author: str = "", rows: int = 5) -> list[dict]:
+    """Title(+author) search over Open Library then Google Books, candidates in
+    that order. Not trusted as-is — _pick_book_match decides."""
+    if not (title or "").strip():
+        return []
+    out: list[dict] = []
+    q = {"title": title[:200], "limit": str(rows),
+         "fields": "title,author_name,first_publish_year,publish_year,publisher,isbn"}
+    if author:
+        q["author"] = author[:100]
+    try:
+        docs = json.loads(_http_get("https://openlibrary.org/search.json?" + urllib.parse.urlencode(q),
+                                    timeout=_BOOK_API_TIMEOUT)).get("docs") or []
+    except Exception as e:
+        log.warning(f"[metadata] openlibrary search failed: {e}")
+        docs = []
+    for d in docs:
+        rec = _book_record(d.get("title"), d.get("author_name") or [], d.get("first_publish_year"),
+                           (d.get("publisher") or [""])[0], d.get("isbn") or [], "openlibrary",
+                           years=d.get("publish_year") or [])
+        if rec:
+            out.append(rec)
+    gq = f'intitle:"{title[:200]}"' + (f' inauthor:"{author[:100]}"' if author else "")
+    try:
+        items = json.loads(_http_get(
+            "https://www.googleapis.com/books/v1/volumes?maxResults=%d&q=%s" % (rows, urllib.parse.quote(gq)),
+            timeout=_BOOK_API_TIMEOUT,
+        )).get("items") or []
+    except Exception as e:
+        log.warning(f"[metadata] google books search failed: {e}")
+        items = []
+    for it in items:
+        rec = _gb_record(it.get("volumeInfo") or {}, "googlebooks")
+        if rec:
+            out.append(rec)
+    return out
+
+
+def _titles_alike(a: str, b: str) -> bool:
+    """Normalized titles near-identical, or one is the other plus a subtitle."""
+    if not a or not b:
+        return False
+    short, long_ = sorted((a, b), key=len)
+    return a == b or SequenceMatcher(None, a, b).ratio() >= 0.9 or (len(short) >= 15 and long_.startswith(short))
+
+
+def _pick_book_match(cands: list[dict], text: str, ai_meta: dict | None = None) -> dict | None:
+    """Accept a book-registry hit only on strong evidence: its title matches
+    the AI-read title AND an author surname agrees (both were read off the
+    PDF, the registry confirms they name a real book), or — without AI — the
+    title and an author appear in the text. The AI-read year wins over the
+    registry's first-publication year: it names the edition in hand. An ISBN
+    is adopted only when the PDF text prints it."""
+    ai_title = _norm_match((ai_meta or {}).get("title", ""))
+    ai_names = {s for s in map(_surname, (ai_meta or {}).get("authors") or []) if s}
+    ai_year = str((ai_meta or {}).get("year") or "").strip()
+    text_digits = re.sub(r"[^0-9Xx]", "", (text or "")[:SCAN_CHARS]).upper()
+    passes = ([lambda c: _titles_alike(_norm_match(c["title"]), ai_title)
+               and bool(ai_names & {s for s in map(_surname, c.get("authors") or []) if s})]
+              if ai_title else []) + [lambda c: _record_in_text(c, text)]
+    for accept in passes:
+        for cand in cands:
+            if not accept(cand):
+                continue
+            rec = {k: v for k, v in cand.items() if k not in ("isbns", "years")}
+            rec["isbn"] = next((i for i in cand.get("isbns") or [] if i in text_digits), "")
+            if ai_year:
+                rec["year"] = ai_year
+            return rec
+    return None
+
+
 def _fetch_arxiv(arxiv_id: str) -> dict | None:
     try:
         raw = _http_get(f"https://export.arxiv.org/api/query?id_list={urllib.parse.quote(arxiv_id)}")
@@ -147,9 +353,10 @@ def _fetch_arxiv(arxiv_id: str) -> dict | None:
         return None
 
 
-def _fetch_doi(doi: str) -> tuple[dict | None, str]:
+def _fetch_doi(doi: str, with_bibtex: bool = True) -> tuple[dict | None, str]:
     """Metadata via doi.org content negotiation (works for Crossref and DataCite),
-    plus the registrar's own BibTeX rendering."""
+    plus the registrar's own BibTeX rendering (a second round trip — skipped
+    by callers that only want the record, e.g. the extension's preview)."""
     url = f"https://doi.org/{urllib.parse.quote(doi)}"
     try:
         data = json.loads(_http_get(url, accept="application/vnd.citationstyles.csl+json"))
@@ -176,11 +383,17 @@ def _fetch_doi(doi: str) -> tuple[dict | None, str]:
         "arxiv_id": "",
         "source": "doi",
     }
+    if str(data.get("type") or "") in ("book", "monograph"):
+        # A DOI-registered book: keep it a book so BibTeX says @book.
+        isbns = data.get("ISBN") or []
+        meta.update({"kind": "book", "publisher": str(data.get("publisher") or ""),
+                     "isbn": str(isbns[0] if isinstance(isbns, list) and isbns else "")})
     bibtex = ""
-    try:
-        bibtex = _http_get(url, accept="application/x-bibtex").decode("utf-8", "replace").strip()
-    except Exception:
-        pass
+    if with_bibtex:
+        try:
+            bibtex = _http_get(url, accept="application/x-bibtex").decode("utf-8", "replace").strip()
+        except Exception:
+            pass
     return meta, bibtex
 
 
@@ -271,6 +484,14 @@ def _verify_ai_meta(meta: dict, text: str, hints: str = "") -> tuple[dict, str]:
     if cand:
         better, bib = _fetch_doi(cand["doi"])
         return (better or cand), bib
+    if meta.get("kind") in ("book", "other"):
+        # Crossref doesn't know most books. The AI read a title and an author
+        # off the title page — let the book registries confirm they name a
+        # real book (and supply publisher, canonical title, ISBN).
+        first_author = (meta.get("authors") or [""])[0]
+        cand = _pick_book_match(_book_search(meta.get("title", ""), first_author), text, ai_meta=meta)
+        if cand:
+            return cand, ""
     return meta, ""
 
 
@@ -310,6 +531,8 @@ def _ai_extract_meta(text: str, prompt: str, model: str, rt: dict) -> dict | Non
         "pages": str(data.get("pages") or "").strip(),
         "doi": str(data.get("doi") or "").strip(),
         "arxiv_id": str(data.get("arxiv_id") or "").strip(),
+        "publisher": str(data.get("publisher") or "").strip(),
+        "isbn": re.sub(r"[^0-9Xx]", "", str(data.get("isbn") or "")).upper(),
         "kind": kind if kind in _DOC_KINDS else "paper",
         "source": "ai",
     }
@@ -324,10 +547,15 @@ def _build_bibtex(meta: dict) -> str:
         "author": " and ".join(authors),
     }
     venue = meta.get("venue", "")
+    entry = "article"
     if meta.get("arxiv_id") and (not venue or venue.lower().startswith("arxiv")):
         fields["journal"] = f"arXiv preprint arXiv:{meta['arxiv_id']}"
         fields["eprint"] = meta["arxiv_id"]
         fields["archivePrefix"] = "arXiv"
+    elif meta.get("kind") == "book" or (meta.get("publisher") and not venue):
+        entry = "book"
+        fields["publisher"] = meta.get("publisher", "")
+        fields["isbn"] = meta.get("isbn", "")
     elif venue:
         fields["journal"] = venue
         fields["volume"] = meta.get("volume", "")
@@ -335,7 +563,17 @@ def _build_bibtex(meta: dict) -> str:
     fields["year"] = meta.get("year", "")
     fields["doi"] = meta.get("doi", "")
     body = ",\n".join(f"  {k} = {{{v}}}" for k, v in fields.items() if v)
-    return f"@article{{{key},\n{body}\n}}"
+    return f"@{entry}{{{key},\n{body}\n}}"
+
+
+def _make_ppt_cite(rt: dict, meta: dict | None, bibtex: str, prompt: str = "", model: str = "") -> str:
+    """The minimal slide-deck citation, one AI call over the BibTeX (else the
+    meta JSON). Shared by the metadata fetch (generated alongside the record)
+    and POST /metadata/cite (regenerate)."""
+    system = (prompt or CITE_PROMPT).strip()[:4000]
+    source = bibtex or json.dumps(meta, indent=2)
+    return _call_ai([{"role": "user", "content": source}], system,
+                    _resolve_model(rt, model), rt, max_tokens=4000, timeout=120).strip()
 
 
 def _load_page(user: str, block_id: str):
@@ -438,6 +676,9 @@ def metadata_status(request: Request):
             "has_meta": bool(meta),
             "meta_source": (meta or {}).get("source", ""),
             "meta_kind": (meta or {}).get("kind", ""),
+            # None for records stored before the flag existed — the client
+            # falls back to the source/kind rule (isUnverifiedPaperMeta).
+            "meta_unverified": (meta or {}).get("unverified"),
             "meta_error": (props.get("meta_error") or {}).get("detail", ""),
             "indexed": bool(entry and entry["ver"] == INDEX_VERSION),
             "index_stale": bool(entry and entry["ver"] != INDEX_VERSION),
@@ -452,6 +693,8 @@ class MetaFetchRequest(BaseModel):
     model: str = ""
     force: bool = False
     context_char_limit: int = Field(default=6000, ge=100, le=1_000_000)
+    cite_prompt: str = ""  # custom PPT-citation prompt for the citation generated alongside
+    cite_model: str = ""
 
 
 # Sync endpoints: external lookups + PyPDF2 text extraction run in the threadpool.
@@ -459,21 +702,26 @@ class MetaFetchRequest(BaseModel):
 def metadata_fetch(payload: MetaFetchRequest, request: Request):
     user = require_user(request)
     return fetch_page_metadata(user, payload.block_id, prompt=payload.prompt, model=payload.model,
-                               force=payload.force, context_char_limit=payload.context_char_limit)
+                               force=payload.force, context_char_limit=payload.context_char_limit,
+                               cite_prompt=payload.cite_prompt, cite_model=payload.cite_model)
 
 
 def fetch_page_metadata(user: str, block_id: str, prompt: str = "", model: str = "",
                         force: bool = False, context_char_limit: int = 6000,
-                        doi: str = "", arxiv_id: str = "") -> dict:
+                        doi: str = "", arxiv_id: str = "",
+                        cite_prompt: str = "", cite_model: str = "") -> dict:
     """The lookup behind POST /api/metadata/fetch, callable off-request (the
     extension's /api/clip runs it in a background thread). doi/arxiv_id are
     caller-supplied hints — the extension's detector reads them off the
     publisher page's own meta tags, so they are trusted like URL-derived ids.
-    Raises HTTPException(404) when nothing was found (after negative-caching
-    it)."""
+    A successful lookup also generates the slide citation (when AI is
+    configured) so it is ready the moment the metadata is — not the first
+    time someone opens the share popover. Raises HTTPException(404) when
+    nothing was found (after negative-caching it)."""
     content, props = _load_page(user, block_id)
     if props.get("meta") and not force:
         return {"meta": props["meta"], "bibtex": props.get("bibtex", ""),
+                "ppt_cite": props.get("ppt_cite", ""),
                 "source": props["meta"].get("source", ""), "cached": True}
 
     doc_id = props.get("doc_id") or ""
@@ -537,6 +785,24 @@ def fetch_page_metadata(user: str, block_id: str, prompt: str = "", model: str =
             meta, bibtex = fallback
 
     if not confirmed:
+        # Books: an ISBN printed in the PDF (copyright page, back cover) is
+        # the book's own far more often than a page-1 DOI is the paper's, but
+        # it is still confirmed only by the title (+ an author surname, book
+        # titles being short) in the text; otherwise it's a fallback like an
+        # unconfirmed DOI.
+        fallback = None
+        for isbn in _find_isbns(text + "\n" + tail):
+            m = _fetch_isbn(isbn)
+            if not m:
+                continue
+            if _record_in_text(m, text):
+                meta, bibtex, confirmed = m, "", True
+                break
+            fallback = fallback or m
+        if not confirmed and not meta and fallback:
+            meta, bibtex = fallback, ""
+
+    if not confirmed:
         # No trustworthy identifier — Crossref bibliographic search, accepted
         # only when the hit's exact title appears in the PDF. Deterministic,
         # and it keeps most publisher PDFs off the AI fallback. Queried with
@@ -562,6 +828,7 @@ def fetch_page_metadata(user: str, block_id: str, prompt: str = "", model: str =
             # Upgrade to a registry record where possible; drop identifiers
             # that resolve nowhere and aren't in the PDF (fabrications).
             meta, bibtex = _verify_ai_meta(meta, text + "\n" + tail, hints)
+            confirmed = meta.get("source") != "ai"
     if not meta:
         # Negative cache: remember the failed attempt on the page so clients
         # stop auto-retrying on every open. Manual ↻ (force) still retries,
@@ -572,13 +839,31 @@ def fetch_page_metadata(user: str, block_id: str, prompt: str = "", model: str =
 
     if not bibtex:
         bibtex = _build_bibtex(meta)
-    # ppt_cite is dropped because the metadata it was generated from changed
+    # Stored with the record so every surface can warn before it is cited:
+    # nothing tied the record to THIS document (an unconfirmed DOI/ISBN may
+    # belong to a cited work; AI output may be a plausible hallucination).
+    # AI-read non-papers (notes, slides…) have no registry to verify against,
+    # so they are not flagged — there's nothing a warning could ask for.
+    meta["unverified"] = (not confirmed
+                          and not (meta.get("source") == "ai" and (meta.get("kind") or "paper") != "paper"))
+    # The slide citation rides along: one AI call now, instead of on first
+    # share. A failure here never fails the fetch — /metadata/cite retries.
+    ppt_cite = ""
+    if rt["enabled"]:
+        try:
+            ppt_cite = _make_ppt_cite(rt, meta, bibtex, cite_prompt, cite_model)
+        except Exception as e:
+            log.warning(f"[metadata] slide citation failed: {e}")
     title = str(meta.get("title") or "").strip()
+    updates = {"meta": meta, "bibtex": bibtex}
+    if ppt_cite:
+        updates["ppt_cite"] = ppt_cite
     title_updated = _save_props(
-        user, block_id, {"meta": meta, "bibtex": bibtex},
-        remove=("meta_error", "ppt_cite"), auto_title=title,
+        user, block_id, updates,
+        # a stale citation (generated from the previous record) is dropped
+        remove=("meta_error",) + (() if ppt_cite else ("ppt_cite",)), auto_title=title,
     )
-    return {"meta": meta, "bibtex": bibtex, "source": meta.get("source", ""),
+    return {"meta": meta, "bibtex": bibtex, "ppt_cite": ppt_cite, "source": meta.get("source", ""),
             "cached": False, "title_updated": title_updated,
             "page_title": title if title_updated else ""}
 
@@ -594,7 +879,7 @@ def metadata_update(payload: MetaUpdateRequest, request: Request):
     the cached slide citation is invalidated. All-blank fields clear the
     cached metadata entirely."""
     user = require_user(request)
-    _load_page(user, payload.block_id)  # 404 before validating the edit
+    _, props = _load_page(user, payload.block_id)  # 404 before validating the edit
     m = payload.meta or {}
     authors = m.get("authors") or []
     if isinstance(authors, str):
@@ -608,8 +893,15 @@ def metadata_update(payload: MetaUpdateRequest, request: Request):
         "pages": str(m.get("pages") or "").strip()[:60],
         "doi": str(m.get("doi") or "").strip()[:200],
         "arxiv_id": str(m.get("arxiv_id") or "").strip()[:60],
+        "publisher": str(m.get("publisher") or "").strip()[:300],
+        "isbn": re.sub(r"[^0-9Xx]", "", str(m.get("isbn") or ""))[:13].upper(),
         "source": "manual",
     }
+    # The document kind survives a hand edit (a book stays @book); a hand
+    # edit is the user vouching for the record, so it is not "unverified".
+    kind = (props.get("meta") or {}).get("kind")
+    if kind in _DOC_KINDS:
+        meta["kind"] = kind
     # ppt_cite is stale (the metadata changed); meta_error is settled (or
     # reset) by the hand-edit either way
     stale = ("ppt_cite", "meta_error")
@@ -639,14 +931,10 @@ def metadata_cite(payload: CiteRequest, request: Request):
     bibtex = props.get("bibtex", "")
     if not meta and not bibtex:
         raise HTTPException(status_code=409, detail="no metadata yet — fetch metadata first")
-    system = (payload.prompt or CITE_PROMPT).strip()[:4000]
-    source = bibtex or json.dumps(meta, indent=2)
     try:
-        text = _call_ai([{"role": "user", "content": source}], system,
-                        _resolve_model(rt, payload.model), rt, max_tokens=4000, timeout=120)
+        citation = _make_ppt_cite(rt, meta, bibtex, payload.prompt, payload.model)
     except Exception as e:
         raise HTTPException(status_code=502, detail=f"AI call failed: {e}")
-    citation = text.strip()
     # cache alongside the rest of the metadata
     _save_props(user, payload.block_id, {"ppt_cite": citation})
     return {"citation": citation, "cached": False}

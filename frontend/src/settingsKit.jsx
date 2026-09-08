@@ -1,10 +1,11 @@
 // The building blocks every settings pane is composed from — and nothing
 // else: PaneHead › Section › Row/Toggle for the panes themselves, SubDialog ›
 // Step/Field for the editor dialogs they open, plus the small shared controls
-// (Segmented, UnitInput, CharSlider, Stat, Empty, QuotaMeter/PercentMeter). New settings
+// (Segmented, Stepper, UnitInput, CharSlider, Stat, Empty, QuotaMeter/PercentMeter). New settings
 // UI should reuse these; bespoke classes are for layout only.
 import React from "react";
 import { fmtBytes } from "./utils";
+import { EyeIcon, EyeOffIcon } from "./icons";
 
 export function PaneHead({ icon: Icon, title, children }) {
   return (
@@ -148,6 +149,29 @@ export function Field({ label, hint, children }) {
   );
 }
 
+// A password box with a show/hide eye at its right edge. `className` is the
+// input's own class (aiKeyInput in settings forms, loginInput on the login
+// page); everything else is passed through to the <input>. The eye is kept
+// out of the Tab order so Enter/Tab flow stays input → next control.
+export function PasswordInput({ className = "aiKeyInput", ...props }) {
+  const [shown, setShown] = React.useState(false);
+  return (
+    <span className="pwField">
+      <input {...props} className={className} type={shown ? "text" : "password"} />
+      <button
+        type="button" className="ctlBtn pwToggle" tabIndex={-1}
+        title={shown ? "Hide password" : "Show password"}
+        aria-label={shown ? "Hide password" : "Show password"}
+        aria-pressed={shown}
+        onMouseDown={(event) => event.preventDefault()} // keep the input's focus + caret
+        onClick={() => setShown((v) => !v)}
+      >
+        {shown ? <EyeOffIcon size={14} /> : <EyeIcon size={14} />}
+      </button>
+    </span>
+  );
+}
+
 // Number input with a fixed unit suffix, so "MB" never has to live in the
 // label text. Empty string means "inherit" wherever the caller says so.
 // Two modes: live (onChange fires per keystroke — for draft state the caller
@@ -170,6 +194,25 @@ export function UnitInput({ value, onChange, onCommit, unit, placeholder, min, o
         }}
       />
       <span className="unitSuffix">{unit}</span>
+    </span>
+  );
+}
+
+// A −/+ stepper for a small numeric range (the control size): two square
+// `uiBtn sm iconSq` buttons around a tabular readout. `format` renders the
+// value (e.g. as a percentage); steps clamp to [min, max] and round away
+// float drift. Click the readout to jump back to `reset` when given.
+export function Stepper({ value, onChange, min, max, step, format, reset, title }) {
+  const clamp = (n) => Math.round(Math.min(max, Math.max(min, n)) * 1000) / 1000;
+  return (
+    <span className="stepper" title={title}>
+      <button type="button" className="uiBtn sm iconSq" aria-label="Smaller"
+        disabled={value <= min} onClick={() => onChange(clamp(value - step))}>−</button>
+      <button type="button" className="stepperValue" disabled={reset == null || value === reset}
+        title={reset != null ? "Reset to default" : undefined}
+        onClick={() => reset != null && onChange(reset)}>{format ? format(value) : value}</button>
+      <button type="button" className="uiBtn sm iconSq" aria-label="Larger"
+        disabled={value >= max} onClick={() => onChange(clamp(value + step))}>+</button>
     </span>
   );
 }

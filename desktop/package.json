@@ -5,6 +5,7 @@
   "main": "main.js",
   "private": true,
   "scripts": {
+    "store-art": "node build/store-art.js",
     "start": "electron .",
     "smoke": "node test/smoke.js",
     "smoke:packaged": "node test/smoke.js --packaged",

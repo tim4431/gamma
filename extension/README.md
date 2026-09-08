@@ -33,8 +33,11 @@ Edge and other Chromium browsers load it the same way. Firefox needs a
 ## Use
 
 - On a paper's landing page or PDF tab the icon shows **PDF / arX / DOI**;
-  click it, pick a folder and labels, **Save to Gamma**. ✓ means the paper
-  is already in your library — clicking opens it.
+  click it, pick a folder and labels, **Save to Gamma**. The popup names the
+  paper (title, authors, year, venue looked up from the DOI / arXiv id when
+  the tab is a bare PDF). ✓ means the paper is already in your library —
+  clicking opens it; if that library page carries a different title, the
+  popup says so.
 - Paywalled PDF your browser can see (institutional login)? The bytes are
   uploaded from your browser automatically when the server can't fetch them
   itself.

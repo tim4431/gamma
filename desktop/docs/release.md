@@ -104,7 +104,11 @@ release asset: nobody can install it before the Store signs it).
 **Submit.** Partner Center → the product → *Submissions* → new submission →
 *Packages*: upload the `.appx`; fill the listing (screenshots, description),
 age rating, free pricing and a privacy-policy URL (mandatory because the
-app uses the network). The package version must increase per submission
+app uses the network). The listing's *Store logos* (9:16 poster art, 1:1
+box art) and *Store display images* (300/150/71 px app tile icons) are
+pre-rendered in `build/store/`; `npm run store-art` regenerates them from
+the logo mark with Playwright's Chromium (`build/store-art.js`).
+The package version must increase per submission
 (`package.json` `0.2.0` becomes `0.2.0.0`; the Store requires the fourth
 part to be 0, which electron-builder guarantees). Certification takes one
 to three days; the reviewer launches the app, so a fresh install must reach

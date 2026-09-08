@@ -1,7 +1,7 @@
 import React, { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState } from "react";
 import { Panel, PanelGroup, PanelResizeHandle } from "react-resizable-panels";
 import PdfViewer, { COLORS, clampZoom } from "./pdfViewer";
-import { API, apiJson, withShare, makeId, fmtBytes, getDocIdForUrl, isPdfFile, isMarkdownFile, isUnverifiedPaperMeta, importZoteroZip, resolvePdfUrl, pdfProxyUrl, probePdfUrl, setExpectedUser, getExpectedUser, usePersistedState, usePersistedFlag, copyText, copyRich, readNdjson } from "./utils";
+import { API, apiJson, withShare, makeId, fmtBytes, getDocIdForUrl, isPdfFile, isMarkdownFile, isUnverifiedPaperMeta, metaSourceInfo, importZoteroZip, resolvePdfUrl, pdfProxyUrl, probePdfUrl, setExpectedUser, getExpectedUser, usePersistedState, usePersistedFlag, copyText, copyRich, readNdjson } from "./utils";
 import {
   BlockDropIndicator,
   ChatMarkdown,
@@ -11,6 +11,7 @@ import {
   OpenTabs,
   PopoverAnchor,
   useCopied,
+  useTextScale,
 } from "./widgets";
 import { BlockTree, _dragState } from "./blockTree";
 import { CardLabels, KindToggle, ListFindBox, PageCard, ViewToggle } from "./fileBrowser";
@@ -675,6 +676,7 @@ export default function App() {
       prefsUserRef.current = "";
       setOpenTabs([]);
       setExtraFolders([]);
+      setPinnedFolders([]);
       setRecentViews([]);
       pageSnapsRef.current = {};
       setPageSnaps({});
@@ -697,6 +699,8 @@ export default function App() {
     try { localTabs = JSON.parse(localStorage.getItem(`gamma-tabs:${u}`) || "[]"); } catch {}
     setOpenTabs(Array.isArray(localTabs) ? localTabs : []);
     try { setExtraFolders(JSON.parse(localStorage.getItem(`gamma-extra-folders:${u}`) || "[]")); } catch { setExtraFolders([]); }
+    const cleanPins = (v) => (Array.isArray(v) ? v : []).filter((p) => p && typeof p.path === "string" && p.path);
+    try { setPinnedFolders(cleanPins(JSON.parse(localStorage.getItem(`gamma-pinned-folders:${u}`) || "[]"))); } catch { setPinnedFolders([]); }
     let localRecents = [];
     try { localRecents = JSON.parse(localStorage.getItem(`gamma-recent-views:${u}`) || "[]"); } catch {}
     if (!Array.isArray(localRecents)) localRecents = [];
@@ -721,11 +725,18 @@ export default function App() {
     Promise.allSettled([
       apiJson(`${API}/prefs/recent-views`),
       apiJson(`${API}/page-snaps`),
-    ]).then(([rv, sn]) => {
+      apiJson(`${API}/prefs/pinned-folders`),
+    ]).then(([rv, sn, pf]) => {
       if (prefsUserRef.current !== u) return;
       if (rv.status === "fulfilled") {
         if (rv.value.updated_at) applyServerRecents(u, rv.value.value, rv.value.updated_at);
         else if (localRecents.length) pushRecentsToServer(localRecents);
+      }
+      if (pf.status === "fulfilled" && pf.value.updated_at) {
+        // Server wins (last-write-wins list, like the recents queue).
+        const list = cleanPins(pf.value.value);
+        setPinnedFolders(list);
+        try { localStorage.setItem(`gamma-pinned-folders:${u}`, JSON.stringify(list)); } catch {}
       }
       if (sn.status === "fulfilled") {
         mergePageSnaps(sn.value.snaps, { heal: true });
@@ -960,6 +971,54 @@ export default function App() {
     });
   }
 
+  // Pinned folders — [{path, at}], most recently pinned first, shown in the
+  // same Pinned strip as pinned pages. Folders are label-derived (no block to
+  // carry a `pinned` property), so the list lives in the synced prefs KV
+  // (/api/prefs/pinned-folders — whole-list last-write-wins like the recents
+  // queue; localStorage is the instant-paint cache) and follows the folder
+  // rename/move/delete rewrites (applyFolderMap / deleteFolderByName).
+  const [pinnedFolders, setPinnedFolders] = useState([]);
+  const pinnedFoldersPushRef = useRef(null);
+  function updatePinnedFolders(updater) {
+    setPinnedFolders((prev) => {
+      const next = updater(prev);
+      if (next === prev) return prev;
+      const u = prefsUserRef.current;
+      if (u) { try { localStorage.setItem(`gamma-pinned-folders:${u}`, JSON.stringify(next)); } catch {} }
+      if (pinnedFoldersPushRef.current) clearTimeout(pinnedFoldersPushRef.current);
+      pinnedFoldersPushRef.current = setTimeout(async () => {
+        pinnedFoldersPushRef.current = null;
+        if (!prefsUserRef.current) return;
+        try {
+          await apiJson(`${API}/prefs/pinned-folders`, {
+            method: "PUT",
+            headers: { "Content-Type": "application/json" },
+            body: JSON.stringify({ value: next }),
+          });
+        } catch {}
+      }, 600);
+      return next;
+    });
+  }
+  function setFoldersPinned(paths, pinned) {
+    const at = new Date().toISOString();
+    updatePinnedFolders((prev) => {
+      const rest = prev.filter((p) => !paths.includes(p.path));
+      return pinned ? [...paths.map((path) => ({ path, at })), ...rest] : rest;
+    });
+  }
+  // Folder rewrites (rename/move/delete) carry the pins along; a path mapped
+  // to "" drops its entry.
+  function remapPinnedFolders(mapTag) {
+    updatePinnedFolders((prev) => {
+      const seen = new Set();
+      const next = prev
+        .map((p) => ({ ...p, path: mapTag(p.path) }))
+        .filter((p) => p.path && !seen.has(p.path) && seen.add(p.path));
+      return next.length === prev.length && next.every((p, i) => p.path === prev[i].path) ? prev : next;
+    });
+  }
+
   // Pin/unpin pages. Stored on the page (properties.pinned = ISO timestamp),
   // so it syncs across devices like folder tags. "" unpins.
   async function setPagesPinned(ids, pinned) {
@@ -1041,6 +1100,7 @@ export default function App() {
       try { await writePageFolders(b.id, next); } catch {}
     }
     updateExtraFolders((prev) => [...new Set(prev.map(mapTag))]);
+    remapPinnedFolders(mapTag);
     setPageFolders((prev) => [...new Set(prev.map(mapTag))]);
     const nextFilter = mapTag(folderFilter);
     if (nextFilter !== folderFilter) {
@@ -1154,6 +1214,7 @@ export default function App() {
     const cleanupAfter = async (statusMsg) => {
       await moveFolderChats([[path, ""]]); // drop the folder's chat buckets too
       updateExtraFolders((prev) => prev.filter((f) => !inPath(f)));
+      remapPinnedFolders((t) => (inPath(t) ? "" : t));
       setPageFolders((prev) => prev.filter((t) => !inPath(t)));
       if (folderFilter === path || folderFilter.startsWith(path + "/")) {
         const parent = path.includes("/") ? path.slice(0, path.lastIndexOf("/")) : "";
@@ -2104,7 +2165,7 @@ export default function App() {
   // Every localStorage-backed user preference (the Settings dialog's state)
   // lives in useAppPrefs (prefs.js) — one hook, one storage key per entry.
   const {
-    theme, setTheme, pdfDarkPage, setPdfDarkPage, recentThumbs, setRecentThumbs,
+    theme, setTheme, pdfDarkPage, setPdfDarkPage, uiScale, setUiScale, recentThumbs, setRecentThumbs,
     fileLabels, setFileLabels,
     oaFallback, setOaFallback, metaAutoFetch, setMetaAutoFetch, pdfSaveLocal, setPdfSaveLocal,
     snapVertical, setSnapVertical, embAnnots, setEmbAnnots,
@@ -2581,9 +2642,13 @@ export default function App() {
   const metaBusy = metaFetchingIds.has(focusedBlockId);
   // Unverified-paper warning (red "!") — shared predicate with the Settings →
   // Library status table, see isUnverifiedPaperMeta in utils.js.
-  const metaUnverifiedPaper = !!pageMeta && isUnverifiedPaperMeta(pageMeta.source, pageMeta.kind);
+  const metaUnverifiedPaper = !!pageMeta && isUnverifiedPaperMeta(pageMeta.source, pageMeta.kind, pageMeta.unverified);
+  const metaSrc = metaSourceInfo(pageMeta); // provenance wording shared with the share popover
   const [pptCite, setPptCite] = useState("");
   const [pptCiteBusy, setPptCiteBusy] = useState(false);
+  // Pages whose slide citation this session already asked for (one try per
+  // page — a failing AI call must not loop on every state change).
+  const attemptedCiteRef = useRef(new Set());
   const [metaPopPos, setMetaPopPos] = useState({ top: 0, right: 0 }); // fixed-position anchor for the metadata popover
   const [copiedKey, flashCopied, resetCopied] = useCopied(); // "bibtex" | "ppt" | "source"
   // Editable copy of the metadata fields shown in the popover. Kept as flat
@@ -2643,7 +2708,10 @@ export default function App() {
       if (focusedBlockIdRef.current !== blockId) return;
       setPageMeta(data.meta || null);
       setPageBibtex(data.bibtex || "");
-      setPptCite(""); // edited metadata invalidates the cached slide citation
+      // Edited metadata invalidates the cached slide citation; the citation
+      // effect regenerates it from the new record right away.
+      setPptCite("");
+      attemptedCiteRef.current.delete(blockId);
       setFocusedBlock((prev) => prev && prev.id === blockId
         ? { ...prev, properties: { ...prev.properties, meta: data.meta, bibtex: data.bibtex, ppt_cite: "", meta_error: undefined } }
         : prev);
@@ -2774,6 +2842,9 @@ export default function App() {
           model: metaFetchModel || "",
           force: !!force,
           context_char_limit: metaContextChars,
+          // the slide citation is generated in the same call
+          cite_prompt: citePrompt || "",
+          cite_model: chatSendModel || "",
         }),
       });
       updateTransfer(taskId, { status: "done", info: data.cached ? "cached" : data.source === "ai" ? "AI-extracted" : data.source || "" });
@@ -2794,7 +2865,10 @@ export default function App() {
       if (focusedBlockIdRef.current !== block.id) return;
       setPageMeta(data.meta || null);
       setPageBibtex(data.bibtex || "");
-      setPptCite(""); // fresh metadata invalidates the cached slide citation
+      // The slide citation arrives with the metadata; when it didn't (AI
+      // off, or that one call failed) the citation effect gets one retry.
+      setPptCite(data.ppt_cite || "");
+      if (!data.ppt_cite) attemptedCiteRef.current.delete(block.id);
       setFocusedBlock((prev) => prev && prev.id === block.id
         ? {
             ...prev,
@@ -2803,6 +2877,7 @@ export default function App() {
               ...prev.properties,
               meta: data.meta,
               bibtex: data.bibtex,
+              ppt_cite: data.ppt_cite || undefined,
               meta_error: undefined,
               ...(data.title_updated ? { auto_title: undefined } : {}),
             },
@@ -2816,9 +2891,6 @@ export default function App() {
         setStatus(`Paper metadata found (${data.source === "ai" ? "AI-extracted" : data.source}).`);
         fetchHomeBlocks(); // keep the library's meta fresh for DOI-link matching
       }
-      // The slide citation rides along with metadata — by the time the
-      // popover is opened it's already cached on the page.
-      if (data.meta || data.bibtex) makePptCitation(false, block);
     } catch (err) {
       if (focusedBlockIdRef.current === block.id) setStatus(`Metadata: ${err.message}`);
       // Mirror the server's negative-cache marker into the client copy —
@@ -2855,12 +2927,14 @@ export default function App() {
           ...block.properties,
           meta: data.meta,
           bibtex: data.bibtex,
+          ppt_cite: data.ppt_cite || undefined,
           meta_error: undefined,
           ...(data.title_updated ? { auto_title: undefined } : {}),
         };
         if (focusedBlockIdRef.current === block.id) {
           setPageMeta(data.meta || null);
           setPageBibtex(data.bibtex || "");
+          setPptCite(data.ppt_cite || "");
           setFocusedBlock({ ...block });
           if (data.page_title) setPageTitle(data.page_title);
         }
@@ -2951,13 +3025,16 @@ export default function App() {
     }
   }
 
-  // Opening the share popover generates the slide citation automatically
-  // (cached on the page afterwards — one AI call per paper).
+  // The slide citation is generated together with the metadata (server
+  // side, in the same fetch). Pages whose record predates that, whose
+  // citation call failed, or whose metadata was just edited get it here, on
+  // open — never first on opening the share popover. One attempt per page.
   useEffect(() => {
-    if (openPopover === "share" && (pageMeta || pageBibtex) && !pptCite && !pptCiteBusy) {
-      makePptCitation();
-    }
-  }, [openPopover, pageMeta]);
+    if (shareMode || !aiInfo?.enabled || !focusedBlockId || pptCite || pptCiteBusy) return;
+    if (!(pageMeta || pageBibtex) || attemptedCiteRef.current.has(focusedBlockId)) return;
+    attemptedCiteRef.current.add(focusedBlockId);
+    makePptCitation(false, { id: focusedBlockId, content: pageTitle });
+  }, [aiInfo?.enabled, focusedBlockId, pageMeta, pageBibtex, pptCite]);
 
   // Copy + tick feedback for the page popovers, keyed by which row was hit.
   async function copyFlash(kind, text) {
@@ -3432,6 +3509,11 @@ export default function App() {
     if (session.pdfHidden != null) setPdfHidden(session.pdfHidden);
     if (session.notesVisible != null) setNotesVisible(session.notesVisible);
   }, []);
+
+  // Control size (Settings → General): app.css zooms every button/toggle by it.
+  useEffect(() => {
+    document.documentElement.style.setProperty("--ui-scale", String(uiScale));
+  }, [uiScale]);
 
   // Theme: System tracks the OS preference live; Light/Dark pin it.
   useEffect(() => {
@@ -5053,6 +5135,11 @@ export default function App() {
   // affordances (docs/dev/block_centric.md). pdfUrl is only the viewer's input.
   const pageAttach = useMemo(() => pageAttachment(focusedBlock), [focusedBlock]);
   const homeMode = !focusedBlockId && !shareMode;
+  const homeModeRef = useRef(homeMode);
+  homeModeRef.current = homeMode;
+  // Ctrl+scroll over the notes: session-only text size (see useTextScale).
+  // Off on the home library — there the gesture stays the browser's zoom.
+  const notesTextScale = useTextScale({ enabled: () => !homeModeRef.current });
 
   // Move a block subtree to the end of another page: sync any queued edits
   // first, re-parent server-side (reorder carries parent_id), then drop it
@@ -5271,10 +5358,16 @@ export default function App() {
   // Pinned papers — shown as a favorites strip at the library root. Most
   // recently pinned first. Scrolls like the recents carousel: wheel pans it.
   const pinnedStripRef = useWheelPan();
-  const pinnedPages = useMemo(
-    () => pageBlocks.filter((b) => b._pinned).sort((a, b) => (b._pinned || "").localeCompare(a._pinned || "")),
-    [pageBlocks]
-  );
+  // Pinned folders join the same strip (a folder card, like the grid's),
+  // merged with the pages by pin time; a pin whose folder no longer exists
+  // (deleted on another device) simply doesn't show.
+  const pinnedItems = useMemo(() => {
+    const known = new Set(allFolderPaths);
+    return [
+      ...pinnedFolders.filter((p) => known.has(p.path)).map((p) => ({ kind: "folder", key: `f:${p.path}`, path: p.path, at: p.at || "" })),
+      ...pageBlocks.filter((b) => b._pinned).map((b) => ({ kind: "page", key: b._pageId, block: b, at: b._pinned })),
+    ].sort((a, b) => b.at.localeCompare(a.at));
+  }, [pinnedFolders, allFolderPaths, pageBlocks]);
   // Recently-viewed pages that still exist, most recent first (top shortcut bar).
   const recentViewedPages = useMemo(() => {
     const byId = new Map(pageBlocks.map((b) => [b._pageId, b]));
@@ -5870,16 +5963,23 @@ export default function App() {
                           >{metaBusy ? "…" : "↻"}</button>
                         </div>
                         <div className="metaTable">
-                          {[
-                            ["Title", "title"],
-                            ["Authors", "authors"],
-                            ["Venue", "venue"],
-                            ["Year", "year"],
-                            ["Volume", "volume"],
-                            ["Pages", "pages"],
-                            ["DOI", "doi"],
-                            ["arXiv", "arxiv_id"],
-                          ].map(([label, key]) => (
+                          {/* Books swap the journal fields for publisher +
+                              ISBN; a journal field that does carry a value
+                              stays visible either way. */}
+                          {(() => {
+                            const isBook = pageMeta?.kind === "book" || !!(metaDraft?.publisher || metaDraft?.isbn);
+                            const journal = [["Venue", "venue"], ["Volume", "volume"], ["Pages", "pages"]];
+                            return [
+                              ["Title", "title"],
+                              ["Authors", "authors"],
+                              ...(isBook
+                                ? [["Publisher", "publisher"], ["Year", "year"], ["ISBN", "isbn"],
+                                   ...journal.filter(([, k]) => metaDraft?.[k])]
+                                : [journal[0], ["Year", "year"], journal[1], journal[2]]),
+                              ["DOI", "doi"],
+                              ["arXiv", "arxiv_id"],
+                            ];
+                          })().map(([label, key]) => (
                             <div className="metaRow" key={key}>
                               <span className="metaKey">{label}</span>
                               <span className="metaVal metaValEdit">
@@ -5917,21 +6017,11 @@ export default function App() {
                               </span>
                             </div>
                           ))}
-                          {pageMeta?.source ? (
+                          {metaSrc ? (
                             <div className="metaRow">
                               <span className="metaKey">Source</span>
-                              <span
-                                className={metaUnverifiedPaper ? "metaVal metaValWarn" : "metaVal"}
-                                title={metaUnverifiedPaper
-                                  ? "Extracted by AI from the PDF text and not confirmed by arXiv/Crossref — fields may be wrong, verify before citing"
-                                  : pageMeta.source === "ai"
-                                    ? "Not a published paper, so there is no registry record to verify against"
-                                    : undefined}
-                              >
-                                {metaUnverifiedPaper ? "AI-extracted — verify before citing"
-                                  : pageMeta.source === "ai" ? `AI-extracted (${pageMeta.kind || "document"})`
-                                    : pageMeta.source === "manual" ? "edited by hand"
-                                      : pageMeta.source}
+                              <span className={metaSrc.warn ? "metaVal metaValWarn" : "metaVal"} title={metaSrc.hint}>
+                                {metaSrc.label}
                               </span>
                             </div>
                           ) : null}
@@ -6079,7 +6169,8 @@ export default function App() {
 
           </div>}
 
-          <div className={`blockList${aiScan ? " aiPageRead" : ""}`}>
+          <div className={`blockList${aiScan ? " aiPageRead" : ""}`} ref={notesTextScale.ref} style={notesTextScale.style}>
+            {notesTextScale.badge}
             {!homeMode && backlinks.length > 0 ? (
               <div className="backlinksPanel">
                 <div className="backlinksLabel">Backlinks ({backlinks.length})</div>
@@ -6142,11 +6233,37 @@ export default function App() {
                 ))}
               </CardCarousel>
             ) : null}
-            {homeMode && !categoryFilter && !folderFilter && pinnedPages.length > 0 ? (
+            {homeMode && !categoryFilter && !folderFilter && pinnedItems.length > 0 ? (
               <div className="pinnedSection">
                 <div className="pinnedLabel"><PinIcon filled size={12} /> Pinned</div>
                 <div className="pinnedStrip" ref={pinnedStripRef}>
-                  {pinnedPages.map((b) => (
+                  {pinnedItems.map((item) => item.kind === "folder" ? (() => { const f = item.path; return (
+                    <PageCard
+                      key={item.key}
+                      className={`${folderDragOver === f ? "dragOver" : ""} ${selectedFolders.has(f) ? "selected" : ""}`}
+                      glyph={<FolderGlyph />}
+                      title={f.slice(f.lastIndexOf("/") + 1)}
+                      tip={`${f}\nClick to select · double-click to open · drop a page or folder to move it in`}
+                      kind="Folder"
+                      count={folderMeta[f]?.count || 0}
+                      time={formatRelativeTime(folderMeta[f]?.updated)}
+                      labelMode={fileLabels}
+                      draggable
+                      onDragStart={(e) => { e.dataTransfer.setData("text/plain", FOLDER_DRAG + f); e.dataTransfer.effectAllowed = "move"; }}
+                      onClick={(e) => handleFolderClick(f, e)}
+                      onDoubleClick={() => openFolder(f)}
+                      onContextMenu={openTagMenu("folder", f)}
+                      onDragOver={(e) => { e.preventDefault(); setFolderDragOver(f); }}
+                      onDragLeave={() => setFolderDragOver(null)}
+                      onDrop={(e) => dropOnFolder(e, f)}
+                    >
+                      <button
+                        className="pinBtn tilePinBtn pinned"
+                        title="Unpin"
+                        onClick={(e) => { e.stopPropagation(); setFoldersPinned([f], false); }}
+                      ><PinIcon filled size={12} /></button>
+                    </PageCard>
+                  ); })() : (() => { const b = item.block; return (
                     <PageCard
                       key={b._pageId}
                       className={selectedPages.has(b._pageId) ? "selected" : ""}
@@ -6169,7 +6286,7 @@ export default function App() {
                         onClick={(e) => { e.stopPropagation(); setPagesPinned([b._pageId], false); }}
                       ><PinIcon filled size={12} /></button>
                     </PageCard>
-                  ))}
+                  ); })())}
                 </div>
               </div>
             ) : null}
@@ -7247,7 +7364,18 @@ export default function App() {
                 <>
                   <div className="popoverDivider" />
                   <div className="popoverSection citeSectionRow">
-                    <span>Slide citation</span>
+                    <span>
+                      Slide citation
+                      {/* Provenance right where the citation gets copied:
+                          a registry name, or a red "!" when nothing tied
+                          the record to this document. */}
+                      {metaSrc ? (
+                        <span className={`citeSourceTag${metaSrc.warn ? " warn" : ""}`} title={metaSrc.hint}>
+                          {metaSrc.warn ? <span className="metaWarnDot inline" aria-hidden="true">!</span> : null}
+                          {metaSrc.label}
+                        </span>
+                      ) : null}
+                    </span>
                     <button
                       className="searchToggle"
                       title="Regenerate the citation"
@@ -7255,6 +7383,9 @@ export default function App() {
                       onClick={() => makePptCitation(true)}
                     >{pptCiteBusy ? "…" : "↻"}</button>
                   </div>
+                  {metaSrc?.warn ? (
+                    <div className="popoverHint citeWarnHint">{metaSrc.hint}.</div>
+                  ) : null}
                   {pptCite ? (
                     <div className="pptCiteBox">
                       <div className="pptCitePreview"><ChatMarkdown text={pptCite} /></div>
@@ -8004,6 +8135,8 @@ export default function App() {
         papers={{
           theme,
           setTheme,
+          uiScale,
+          setUiScale,
           oaFallback,
           setOaFallback,
           metaAutoFetch,
@@ -8234,6 +8367,17 @@ export default function App() {
               <>
                 <MenuItem icon={FolderOpenIcon} onClick={() => { const name = homeMenu.name; setHomeMenu(null); if (!homeMode) goHome(); openFolder(name); }}>Open</MenuItem>
                 <MenuItem icon={PenIcon} onClick={() => { setHomeMenu(null); setFolderRenaming({ name: homeMenu.name, draft: homeMenu.name }); }}>Rename</MenuItem>
+                {(() => {
+                  // Like pages: acting on a selected folder acts on the whole selection
+                  const paths = selectedFolders.size > 1 && selectedFolders.has(homeMenu.name) ? [...selectedFolders] : [homeMenu.name];
+                  const allPinned = paths.every((p) => pinnedFolders.some((q) => q.path === p));
+                  return (
+                    <MenuItem icon={PinIcon} title="Pinned folders sit in the Pinned strip at the top of the library, on every device"
+                      onClick={() => { setHomeMenu(null); setFoldersPinned(paths, !allPinned); }}>
+                      {allPinned ? "Unpin" : paths.length > 1 ? `Pin ${paths.length} folders` : "Pin"}
+                    </MenuItem>
+                  );
+                })()}
                 <MenuItem
                   icon={ExportIcon}
                   title="Download every page in this folder — Markdown, a Logseq graph, a Zotero library, or a Gamma export"

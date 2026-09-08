@@ -95,6 +95,22 @@ The chips (`CardLabels`, also reused by the list rows) are display-only and
 gated by Settings → General → "File labels" (`gamma-home-file-labels`:
 off/labels/folders/both).
 
+## Pinned
+
+The Pinned strip at the library root holds pages and folders, most recently
+pinned first. A page pin is stored on the page (`properties.pinned` = ISO
+timestamp, `setPagesPinned`). A folder has no block of its own, so folder
+pins are a synced pref: `/api/prefs/pinned-folders` holds `[{path, at}]`,
+whole-list last-write-wins like the recents queue, with
+`gamma-pinned-folders:<user>` in localStorage as the instant-paint cache
+(`updatePinnedFolders` / `setFoldersPinned`). Pin/Unpin is on the folder
+context menu (acts on the folder selection when the clicked folder is part of
+one); the strip's folder card is the grid's folder card with an unpin button,
+and it is a drop target like any folder. Folder rewrites carry pins along:
+`applyFolderMap` (rename/move) and `deleteFolderByName` remap the list
+(`remapPinnedFolders`), and a pin whose path no longer exists in
+`allFolderPaths` is not shown.
+
 ## Recents and snapshots
 
 The recents queue itself syncs across devices (whole-list last-write-wins via

@@ -20,6 +20,32 @@ already exists. Bespoke CSS classes are for **layout only**.
 | `categoryTag`, `uiTag` | chips and small badges |
 | `popoverAnchor` | the `position: relative; inline-flex` wrapper every popover trigger sits in (`data-popover="…"` on the same element) — never inline that style |
 
+### Control size and text size
+
+Two separate size levers, deliberately not one "zoom":
+
+- **Control size** (Settings → General, `gamma-ui-scale`, a `Stepper` over
+  the `UI_SCALE` range in `prefs.js`, 70–160 % in 10 % steps) is a CSS
+  `zoom` on every button and toggle —
+  `:where(button, .uiBtn, .ctlBtn, .uiClose, .switch)` in `app.css` reads
+  `--ui-scale` off the root element. Zoom scales the box, its text and its
+  SVG icon as one unit, so rows and toolbars just grow to fit; a second rule
+  resets the zoom on a control nested in another so it never compounds.
+  `index.html` applies the stored value before first paint (like the theme),
+  App.jsx keeps the property in sync afterwards. Content — notes, PDF, chat
+  text — is untouched.
+- **Text size** is per panel and per session: Ctrl/⌘+scroll over the notes
+  list or the chat transcript. `useTextScale` (`widgets.jsx`) owns it — a
+  native non-passive wheel listener (React's `onWheel` can't
+  `preventDefault`, and the browser would zoom the page), ×1.1 per ~40 px of
+  accumulated delta (mouse notches and trackpad pinches both land on whole
+  steps), clamped 0.6–2.5, snapping back onto 100 %. The scale goes on the
+  panel as the `--text-scale` custom property, which the base font sizes
+  multiply in (`.blockRendered`, `.blockEditor`, `.blockEditorCm .cm-scroller`,
+  `.chatBubble`), and a transient `.textScaleBadge` pill (the panel's first
+  child, sticky, zero height) reads out the percentage. Nothing is stored:
+  reload resets it. On the home library the gesture is left to the browser.
+
 ### Menus and submenus
 
 Every cursor-anchored menu is a `ContextMenu`; every row inside one is a
@@ -85,6 +111,12 @@ Settings panes are built only from
   shared `on` state; the agent's per-tool permissions in Settings and in the
   chat's ⚙ popover are one of these, never a column of checkboxes),
   `UnitInput` (number + unit suffix — units never live in labels),
+  `Stepper` (−/+ around a readout for a small numeric range; the readout
+  click resets to the default),
+  `PasswordInput` (a password box with a show/hide eye — a `ctlBtn` over the
+  input's right edge, outside the Tab order; it wraps the input's own class,
+  so the login page uses it with `loginInput` and every secret field in
+  Settings — account passwords, API keys — with `aiKeyInput`),
   `CharSlider` (log-scaled character budget), `Stat`, `Empty`, `QuotaMeter`.
 
 ## Theme

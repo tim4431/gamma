@@ -1,13 +1,13 @@
 import React from "react";
-import { API, apiJson, fmtBytes, copyText, isUnverifiedPaperMeta } from "./utils";
+import { API, apiJson, fmtBytes, copyText, isUnverifiedPaperMeta, metaSourceInfo } from "./utils";
 import { MenuSelect } from "./menus";
 import {
-  PaneHead, Section, Row, Toggle, Segmented, ToggleGroup, UnitInput, CharSlider, approxPages,
+  PaneHead, Section, Row, Toggle, Segmented, Stepper, ToggleGroup, UnitInput, CharSlider, approxPages,
   Stat, Empty, QuotaMeter,
 } from "./settingsKit";
 import { AiSettings } from "./settingsAi";
 import { UsersSettings } from "./settingsUsers";
-import { TRANSLATE_LANGS } from "./prefs";
+import { TRANSLATE_LANGS, UI_SCALE } from "./prefs";
 import {
   ActivityIcon,
   BookIcon,
@@ -28,6 +28,7 @@ import {
   KeyIcon,
   LabelIcon,
   LanguagesIcon,
+  MaximizeIcon,
   LayoutIcon,
   ListIcon,
   MessageSquareIcon,
@@ -123,6 +124,19 @@ function GeneralSettings({ value }) {
           checked={value.pdfDarkPage}
           onChange={value.setPdfDarkPage}
         />
+        <Row
+          icon={MaximizeIcon}
+          label="Control size"
+          hint="Buttons and toggles; Ctrl+scroll resizes notes and chat text"
+          title="Scale of every button, icon button and toggle in the interface — for high-density screens or touch use. Text in the notes and the AI chat is sized separately: hold Ctrl (⌘ on Mac) and scroll over either panel to grow or shrink it for this session; that size isn't saved."
+        >
+          <Stepper
+            value={value.uiScale}
+            onChange={value.setUiScale}
+            min={UI_SCALE.min} max={UI_SCALE.max} step={UI_SCALE.step} reset={1}
+            format={(v) => `${Math.round(v * 100)}%`}
+          />
+        </Row>
       </Section>
       <Section title="PDFs">
         <Toggle
@@ -535,10 +549,11 @@ function MetaStatusSection({ value }) {
 
   const list = papers || [];
   const textOk = (p) => (p.text_chars ?? 0) >= 50; // same threshold as /api/pdf-text-status
-  // "Unverified": AI-extracted metadata claiming to be a paper — the same
-  // records the red "!" flags on the metadata button. Missing metadata and
-  // unverified records are what a batch (re)fetch can actually fix.
-  const unverifiedPaper = (p) => p.has_meta && isUnverifiedPaperMeta(p.meta_source, p.meta_kind);
+  // "Unverified": records nothing tied to their document (AI-extracted
+  // papers, unconfirmed identifiers) — the same ones the red "!" flags on the
+  // metadata button. Missing metadata and unverified records are what a
+  // batch (re)fetch can actually fix.
+  const unverifiedPaper = (p) => p.has_meta && isUnverifiedPaperMeta(p.meta_source, p.meta_kind, p.meta_unverified);
   const fetchable = (p) => !p.has_meta || unverifiedPaper(p);
   const noText = (p) => p.text_chars !== null && !textOk(p);
   const missing = list.filter((p) => !p.has_meta);
@@ -615,17 +630,14 @@ function MetaStatusSection({ value }) {
   const cell = (tone, text, title) => (
     <span className={`metaCell ${tone}`} title={title}><i className="setDot" />{text}</span>
   );
-  const metaCell = (p) => (
-    p.has_meta
-      ? p.meta_source === "ai"
-        ? (p.meta_kind || "paper") === "paper"
-          ? cell("bad", "AI", "AI-extracted, not confirmed by a registry — verify before citing")
-          : cell("muted", `AI (${p.meta_kind})`, "AI-extracted; not a published paper, so there is no registry record to verify against")
-        : cell("ok", p.meta_source || "yes", "Metadata resolved")
-      : p.meta_error
-        ? cell("bad", "failed", p.meta_error)
-        : cell("muted", "none", "No metadata yet")
-  );
+  const metaCell = (p) => {
+    if (!p.has_meta) {
+      return p.meta_error ? cell("bad", "failed", p.meta_error) : cell("muted", "none", "No metadata yet");
+    }
+    const src = metaSourceInfo({ source: p.meta_source, kind: p.meta_kind, unverified: p.meta_unverified });
+    if (!src) return cell("ok", "yes", "Metadata resolved");
+    return cell(src.warn ? "bad" : p.meta_source === "ai" ? "muted" : "ok", src.short, src.hint);
+  };
   // Text and index are separate columns: extraction state is only known once
   // the indexer has visited the doc, so an unindexed paper shows "unknown".
   const textCell = (p) => (

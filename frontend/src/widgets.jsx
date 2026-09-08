@@ -578,6 +578,54 @@ function BlockDropIndicator({ target }) {
   );
 }
 
+// Ctrl+scroll text size for a scrolling text panel (the notes list, the chat
+// transcript): a session-only scale — nothing is stored — applied as the
+// `--text-scale` custom property on the panel, which app.css multiplies into
+// the panel's base font sizes. Returns a callback ref for the panel (a native
+// non-passive wheel listener: React's onWheel can't preventDefault, and the
+// browser would zoom the whole page), the inline style to spread onto it,
+// and a badge to render as its first child — a transient "120%" pill that
+// shows for a moment after each change. `enabled` (a function, read live) can
+// hand the gesture back to the browser, e.g. on the home library.
+const TEXT_SCALE_MIN = 0.6, TEXT_SCALE_MAX = 2.5;
+function useTextScale({ base = 1, enabled } = {}) {
+  const [scale, setScale] = useState(base);
+  const [badge, setBadge] = useState(false);
+  const enabledRef = useRef(enabled);
+  enabledRef.current = enabled;
+  const accRef = useRef(0);
+  const badgeTimerRef = useRef(null);
+  const cleanupRef = useRef(null);
+  const ref = useCallback((el) => {
+    if (cleanupRef.current) { cleanupRef.current(); cleanupRef.current = null; }
+    if (!el) return;
+    function onWheel(e) {
+      if (!(e.ctrlKey || e.metaKey)) return;
+      if (enabledRef.current && !enabledRef.current()) return;
+      e.preventDefault();
+      // Mouse wheels send ±100 per notch (or 3 lines on Firefox), trackpad
+      // pinches a stream of small deltas: accumulate to one step per ~40px.
+      accRef.current += e.deltaMode === 1 ? e.deltaY * 33 : e.deltaY;
+      if (Math.abs(accRef.current) < 40) return;
+      const dir = accRef.current < 0 ? 1 : -1;
+      accRef.current = 0;
+      setScale((s) => {
+        const next = Math.round(Math.min(TEXT_SCALE_MAX, Math.max(TEXT_SCALE_MIN, s * (dir > 0 ? 1.1 : 1 / 1.1))) * 100) / 100;
+        return Math.abs(next - 1) < 0.03 ? 1 : next; // snap back onto 100%
+      });
+      setBadge(true);
+      clearTimeout(badgeTimerRef.current);
+      badgeTimerRef.current = setTimeout(() => setBadge(false), 1200);
+    }
+    el.addEventListener("wheel", onWheel, { passive: false });
+    cleanupRef.current = () => { el.removeEventListener("wheel", onWheel); clearTimeout(badgeTimerRef.current); };
+  }, []);
+  const badgeNode = badge ? (
+    <div className="textScaleBadge" aria-live="polite"><span>{Math.round(scale * 100)}%</span></div>
+  ) : null;
+  return { scale, ref, style: scale === 1 ? undefined : { "--text-scale": scale }, badge: badgeNode };
+}
+
 export {
   AutoGrowTextarea,
   BlockDropIndicator,
@@ -589,4 +637,5 @@ export {
   OpenTabs,
   PopoverAnchor,
   useCopied,
+  useTextScale,
 };

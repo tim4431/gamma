@@ -192,12 +192,43 @@ async function copyRich(html, plain) {
   return legacyCopy(plain, html);
 }
 
-// AI-extracted metadata that claims to be a paper never passed a registry
-// check — the UI flags it (red "!" on the metadata button, red cell in the
-// Settings → Library table) so nobody cites it unverified. Non-paper kinds
-// (notes, slides…) have no registry record to verify against, so no flag;
-// records cached before `kind` existed count as papers (the safe default).
-const isUnverifiedPaperMeta = (source, kind) => source === "ai" && (kind || "paper") === "paper";
+// Metadata that nothing tied to THIS document — the UI flags it (red "!" on
+// the metadata button and beside the slide citation, red cell in the
+// Settings → Library table) so nobody cites it unchecked. The server stores
+// `meta.unverified` (AI paper records; DOIs/ISBNs printed in the text whose
+// registry title isn't); records from before the flag existed fall back to
+// the old rule: AI-extracted and claiming to be a paper (non-paper kinds have
+// no registry to verify against; a missing kind counts as paper, the safe
+// default).
+const isUnverifiedPaperMeta = (source, kind, unverified = null) =>
+  unverified == null ? source === "ai" && (kind || "paper") === "paper" : !!unverified;
+
+// Where a page's metadata came from, worded once for every surface that
+// shows it: the metadata popover's Source row, the share popover's citation
+// header, the Settings → Library table (`short`). `warn` = cite with care.
+const META_SOURCE_NAMES = {
+  arxiv: "arXiv", doi: "doi.org", crossref: "Crossref search", isbn: "ISBN lookup",
+  openlibrary: "Open Library", googlebooks: "Google Books", manual: "edited by hand",
+};
+function metaSourceInfo(meta) {
+  if (!meta?.source) return null;
+  const kind = meta.kind || "paper";
+  const unverified = isUnverifiedPaperMeta(meta.source, kind, meta.unverified);
+  if (meta.source === "ai") {
+    return unverified
+      ? { label: "AI-extracted — unverified", short: "AI", warn: true,
+          hint: "Read by AI from the PDF text and not confirmed by any registry (arXiv, Crossref, Open Library) — fields may be wrong, verify before citing" }
+      : { label: `AI-extracted (${kind})`, short: `AI (${kind})`, warn: false,
+          hint: "Not a published paper, so there is no registry record to verify against" };
+  }
+  const name = META_SOURCE_NAMES[meta.source] || meta.source;
+  if (unverified) {
+    return { label: `${name} — unconfirmed`, short: `${name} ?`, warn: true,
+             hint: "Resolved from an identifier printed in the PDF, but the record's title isn't in the text — it may belong to a work this document cites. Verify before citing" };
+  }
+  return { label: name, short: name, warn: false,
+           hint: meta.source === "manual" ? "Fields edited by hand" : `Registry record via ${name}` };
+}
 
 const isPdfFile = (f) => f.type === "application/pdf" || /\.pdf$/i.test(f.name || "");
 const isMarkdownFile = (f) => /\.(?:md|markdown)$/i.test(f.name || "")
@@ -314,4 +345,4 @@ async function readNdjson(res, onBatch) {
   }
 }
 
-export { API, makeId, fmtBytes, sha256, getDocIdForUrl, isPdfFile, isMarkdownFile, isUnverifiedPaperMeta, apiJson, withShare, importZoteroZip, resolvePdfUrl, pdfProxyUrl, probePdfUrl, setExpectedUser, getExpectedUser, usePersistedState, usePersistedFlag, copyText, copyRich, readNdjson };
+export { API, makeId, fmtBytes, sha256, getDocIdForUrl, isPdfFile, isMarkdownFile, isUnverifiedPaperMeta, metaSourceInfo, apiJson, withShare, importZoteroZip, resolvePdfUrl, pdfProxyUrl, probePdfUrl, setExpectedUser, getExpectedUser, usePersistedState, usePersistedFlag, copyText, copyRich, readNdjson };

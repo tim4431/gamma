@@ -6,8 +6,9 @@ Where every setting lives, and how the Settings dialog is built.
 
 | Layer | Storage | Examples |
 |---|---|---|
-| Per browser | `localStorage`, one `gamma-*` key per preference, all declared in `useAppPrefs()` ([frontend/src/prefs.js](../../frontend/src/prefs.js)) | PDF viewer behavior, context budgets, agent permissions, prompts. Theme + flip-page-colors live here too but additionally sync per account (next row, `appearance` key) — localStorage is their instant-paint cache |
-| Per account, synced | `/api/prefs/{key}` (small JSON KV in the user's `data.db`) | open tabs (`open-tabs`), the recently-viewed queue (`recent-views`), active AI key (`ai-provider`), appearance (`appearance`: theme + flip page colors) — server wins on load, localStorage is the instant-paint cache. The recents-card cover thumbnails sync too, but through their own `/api/page-snaps` store (`page_snaps` table — over the prefs size cap) |
+| Per browser | `localStorage`, one `gamma-*` key per preference, all declared in `useAppPrefs()` ([frontend/src/prefs.js](../../frontend/src/prefs.js)) | PDF viewer behavior, context budgets, agent permissions, prompts, the control size (`gamma-ui-scale`, applied pre-paint by `index.html` like the theme). Theme + flip-page-colors live here too but additionally sync per account (next row, `appearance` key) — localStorage is their instant-paint cache |
+| Session only | React state, nothing stored | the Ctrl+scroll text size of the notes list and the chat transcript (`useTextScale` in [widgets.jsx](../../frontend/src/widgets.jsx)) — resets on reload |
+| Per account, synced | `/api/prefs/{key}` (small JSON KV in the user's `data.db`) | open tabs (`open-tabs`), the recently-viewed queue (`recent-views`), pinned folders (`pinned-folders`; pinned pages are a page property), active AI key (`ai-provider`), appearance (`appearance`: theme + flip page colors) — server wins on load, localStorage is the instant-paint cache. The recents-card cover thumbnails sync too, but through their own `/api/page-snaps` store (`page_snaps` table — over the prefs size cap) |
 | Per account, server-only | AI provider entries (keys/OAuth tokens) under the reserved `ai-settings` prefs key, managed via `/api/ai/providers*`; the browser only ever sees a masked hint | API keys, ChatGPT OAuth |
 | Server-wide (admin) | `settings` KV in `users.db` via `GET/PUT /api/admin/settings`, plus nullable per-user override columns | default max upload size, default storage quota |
 
@@ -21,7 +22,8 @@ Nine panes in four rail groups (`NAV_GROUPS` in
 [frontend/src/settings.jsx](../../frontend/src/settings.jsx)):
 
 - **Workspace** — General (theme incl. the Sepia/Gray eye-comfort modes and
-  flip page colors — both synced per account; paper-fetching prefs),
+  flip page colors — both synced per account; the control size — a −/+
+  `Stepper` (70–160 %) that zooms every button and toggle, see [ui-design.md](ui-design.md); paper-fetching prefs),
   Library (home-card thumbnails and folder/label chips, storage
   usage/limits, search index, per-paper metadata health table — status
   filter incl. "Unverified AI" / "Needs attention", verified/text/index

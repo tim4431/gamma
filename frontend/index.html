@@ -9,12 +9,15 @@
     <title>Gamma — Annotate PDFs, Share Your Thinking</title>
     <link rel="preload" href="/pdf.worker.min.mjs" as="worker" crossorigin="anonymous">
     <!-- A pinned theme (Settings → General) must win before the bundle loads,
-         or the splash flashes the OS color. App.jsx keeps the attribute in
-         sync (and handles "system") once React is up. -->
+         or the splash flashes the OS color; the control size likewise, or the
+         buttons jump once the bundle applies it. App.jsx keeps both in sync
+         (and handles "system") once React is up. -->
     <script>
       try {
         var t = localStorage.getItem("gamma-theme");
         if (t === "light" || t === "dark" || t === "sepia" || t === "gray") document.documentElement.setAttribute("data-theme", t);
+        var s = parseFloat(localStorage.getItem("gamma-ui-scale"));
+        if (s >= 0.5 && s <= 3) document.documentElement.style.setProperty("--ui-scale", s);
       } catch (e) {}
     </script>
     <style>
