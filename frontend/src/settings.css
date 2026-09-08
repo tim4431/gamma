@@ -144,6 +144,25 @@
 .segGroup .uiBtn:last-child { border-radius: 0 8px 8px 0; }
 .segGroup .uiBtn + .uiBtn { margin-left: -1px; }
 .segGroup .uiBtn.on { z-index: 1; }
+
+/* Stepper: −/+ around a readout; the readout is a quiet button (click = reset). */
+.stepper { display: inline-flex; align-items: center; gap: 2px; flex-shrink: 0; }
+.stepper .uiBtn { font-size: 15px; line-height: 1; }
+.stepperValue {
+  min-width: 52px;
+  padding: 0 6px;
+  background: none;
+  border: none;
+  color: var(--text-primary);
+  font: inherit;
+  font-size: 13px;
+  font-variant-numeric: tabular-nums;
+  text-align: center;
+  cursor: pointer;
+  border-radius: 6px;
+}
+.stepperValue:hover:not(:disabled) { background: var(--bg-hover); }
+.stepperValue:disabled { cursor: default; color: var(--text-primary); }
 /* ToggleGroup: independent on/off chips (multi-select). Layout only — the
    chips are plain uiBtn sm with the shared .on state. */
 .toggleGroup { display: inline-flex; flex-wrap: wrap; justify-content: flex-end; gap: 4px; }

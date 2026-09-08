@@ -1,7 +1,7 @@
 // The building blocks every settings pane is composed from — and nothing
 // else: PaneHead › Section › Row/Toggle for the panes themselves, SubDialog ›
 // Step/Field for the editor dialogs they open, plus the small shared controls
-// (Segmented, UnitInput, CharSlider, Stat, Empty, QuotaMeter/PercentMeter). New settings
+// (Segmented, Stepper, UnitInput, CharSlider, Stat, Empty, QuotaMeter/PercentMeter). New settings
 // UI should reuse these; bespoke classes are for layout only.
 import React from "react";
 import { fmtBytes } from "./utils";
@@ -194,6 +194,25 @@ export function UnitInput({ value, onChange, onCommit, unit, placeholder, min, o
         }}
       />
       <span className="unitSuffix">{unit}</span>
+    </span>
+  );
+}
+
+// A −/+ stepper for a small numeric range (the control size): two square
+// `uiBtn sm iconSq` buttons around a tabular readout. `format` renders the
+// value (e.g. as a percentage); steps clamp to [min, max] and round away
+// float drift. Click the readout to jump back to `reset` when given.
+export function Stepper({ value, onChange, min, max, step, format, reset, title }) {
+  const clamp = (n) => Math.round(Math.min(max, Math.max(min, n)) * 1000) / 1000;
+  return (
+    <span className="stepper" title={title}>
+      <button type="button" className="uiBtn sm iconSq" aria-label="Smaller"
+        disabled={value <= min} onClick={() => onChange(clamp(value - step))}>−</button>
+      <button type="button" className="stepperValue" disabled={reset == null || value === reset}
+        title={reset != null ? "Reset to default" : undefined}
+        onClick={() => reset != null && onChange(reset)}>{format ? format(value) : value}</button>
+      <button type="button" className="uiBtn sm iconSq" aria-label="Larger"
+        disabled={value >= max} onClick={() => onChange(clamp(value + step))}>+</button>
     </span>
   );
 }

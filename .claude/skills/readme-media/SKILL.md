@@ -71,23 +71,33 @@ Now :9002 is a pixel-identical, disposable copy of the showcase workspace.
 - After every screenshot, **Read the PNG back** and eyeball it: no empty
   panels, no "Loading…", no scrollbar mid-flight, highlights actually visible.
 
-## Shot list (maps 1:1 to README slots)
+## Shot list
+
+Stills (NOT referenced by the README — kept in `docs/screenshots/` for docs
+and marketing use; shot by [shoot-stills.mjs](./shoot-stills.mjs) at 1680×1000,
+DPR 1, light, on the enriched clone):
+
+| File | Content |
+|---|---|
+| `docs/screenshots/01-annotated-pdf.png` | atom-arrays paper on page 2 with the real highlight + its note, the note tree right, the chat below with one answered question |
+| `docs/screenshots/02-home.png` | home: recents strip (folder chips, "Ns ago"), folders `Quantum` / `ML`, listing |
+| `docs/screenshots/03-library-search.png` | the home search panel open with the grouped results for "error correction" |
+
+GIFs (map 1:1 to README slots):
 
 | File | Content | Route |
 |---|---|---|
 | `docs/demo-download-and-chat.gif` | open paper by URL (pasted) → drag-select the abstract sentence → ask the AI briefly, watch the answer stream (the README **hero** GIF, first image) | `:9001` |
 | `docs/demo-reference-links.gif` | atom-arrays paper, page 3: click the tiny "36" citation once → jumps to the reference → select just the "36." number → click its arXiv link → **Fetch into Gamma**. Recorded at normal scale; a smooth **camera zoom** (post-process, `gen-zoom.py`) magnifies the citation+reference — the page itself never zooms (README "Link and organize" section) | `:9001` |
-| `docs/demo-library.gif` | in the atom-arrays paper: Ctrl+F "error correction" → the wide grouped panel (Titles / Notes on this page / This PDF / Other notes / Other PDFs) → click the folder suggestion → chip narrows to one paper → click an Other-PDFs hit → the QEC paper opens with every match marked (README "Search everything"). Recorder [record-library.mjs](./record-library.mjs); needs the clone enriched with a few notes + folders (the demo export has none) | isolated |
+| `docs/demo-library.gif` | HOME page (user rule: the library search is shown from home, not inside a paper): recents strip + folders visible → topbar search → "error correction" → grouped panel (Titles / Notes incl. a `highlight`-badged block / Library PDFs across papers) with the folder suggestion row → click it → chip narrows to one paper, retype → click a "· p. 1" hit → the QEC paper opens with every match marked (README "Search everything"). Recorder [record-library.mjs](./record-library.mjs); needs the clone enriched with a few notes + folders (the demo export has none) | isolated |
 | `docs/demo-notes.gif` | bare page "Rabi oscillations": type a sentence with `**bold**`, `==highlight==` and a `[[ref]]` chip → Enter/Tab → `$$` display math typed with the `\command` autocomplete, Tab argument hops and the live preview tip → Shift+Tab → a `> [!note]` callout with inline math → click away, everything renders (README "Take notes"). Recorder [record-notes.mjs](./record-notes.mjs); the page is created once (`POST /api/pages`), emptied before each run (`PUT /api/blocks/{id}/children {"blocks":[]}`), UI zoom 1.25 + crop to the top 640 px | isolated (writes notes) |
 | `docs/demo-agent.gif` | home chat: "Organize my library …" → tool chips stream (List/Read/Move) → folders appear in the list (README "An agent in your library"). Recorder [record-agent.mjs](./record-agent.mjs) | isolated (the agent MOVES pages) |
 | `docs/demo-connector.gif` | arXiv abs page → extension popup (opened as a page via `?tab=`, composited as an overlay on a frozen arXiv frame) → Save to Gamma into a folder → Open in Gamma (README "Save from your browser"). Recorder [record-connector.mjs](./record-connector.mjs): persistent context + `--load-extension`, popup video cropped to 360px and ffmpeg-overlaid, 3 segments concat'd; [gen-conn.py](./gen-conn.py) does the compositing plus a zoompan camera zoom on the POPUP ONLY (arXiv stays full-view — user preference; zoom out into Gamma; palette pass must run separately from zoompan or ffmpeg OOMs) | isolated |
 | `docs/demo-metadata.gif` | open arXiv 2312.03982 by URL (pre-roll trimmed) → click ⓘ while the fetch is still running: the popover opens with every field "—" and "Fetching metadata…", then Title / Authors / Venue / Year / DOI fill in on camera and the tab title flips → Share popover: slide citation + BibTeX, Copy BibTeX / Copy slide citation (icons flip to ticks). No hand edits (user rule). Camera zoom onto the right column (README "Metadata & citations"). Recorder [record-metadata.mjs](./record-metadata.mjs) + [gen-meta.py](./gen-meta.py) (trim, zoompan) | isolated (adds a page; the recorder resets it) |
 
-GIF slots exist as HTML comments in README.md — when adding one, replace the
-comment with `![…](./docs/demo-*.gif)`. Each GIF has its own checked-in
-recorder next to this file: [record-download-and-chat.mjs](./record-download-and-chat.mjs),
-[record-reference-links.mjs](./record-reference-links.mjs) (paired with
-[gen-zoom.py](./gen-zoom.py), which applies its camera zoom).
+Each GIF has its own checked-in recorder next to this file (`record-*.mjs`,
+some paired with a `gen-*.py` post-process); a new GIF gets a new recorder and
+a `![…](./docs/demo-*.gif)` line in the README section it illustrates.
 
 ## Driving the UI (selectors that work)
 
@@ -187,6 +197,19 @@ it and writes the webm path to `video_*.txt`) and adapt.
   once). Close the chat dock with `[aria-label="Close Chat"]`. For legibility
   the recorder sets `document.documentElement.style.zoom = 1.25` — divide the
   fake cursor's `clientX/Y` by the zoom — and crops to the top 640 px.
+- **Home page + stills (record-library.mjs / shoot-stills.mjs)**: a bare `/`
+  restores the last open paper (server prefs) — click `[aria-label="Home"]`
+  and wait for `.recentsCarousel`. On home, plain Ctrl+F focuses
+  `.homeFindInput`; the grouped panel opens from the topbar
+  `[aria-label="Search"]` (or Ctrl+Shift+F); groups there are Titles / Notes /
+  Reference links / Library PDFs; force details on with
+  `localStorage gamma-search-details-home='1'`. Page chats persist server-side
+  (`/api/chats/{page_id}`) — DELETE before asking or the still shows every old
+  Q&A; an upstream timeout renders as an `Error:` AI bubble that a
+  length-stability poll mistakes for an answer (check `/^Error:/`, retry).
+  Highlights mount lazily per page: scroll the page in and wait for
+  `[data-page="N"] [data-hl-id]`. Restored block focus drops a "Cursor" chip
+  into the chat composer — click its × so the question isn't block-scoped.
 - **Library search (record-library.mjs)**: in-paper Ctrl+F opens the compact
   find bar by default — set `localStorage['gamma-search-details']='1'` in an
   init script (flags are `"1"/"0"`) or the grouped panel never renders; on the
@@ -277,8 +300,8 @@ FF=$(venv/Scripts/python.exe -c "import imageio_ffmpeg;print(imageio_ffmpeg.get_
 
 1. Confirm demo creds (memory/ask); real instance running on :9001; API login
    works and `/api/ai/models` shows `enabled:true`.
-2. Stills: none in the README any more (the two `docs/screenshots/` PNGs were
-   dropped 2026-09-07; everything is a GIF now).
+2. Stills: `shoot-stills.mjs` on the enriched clone (see the shot list) →
+   Read each PNG to verify → overwrite `docs/screenshots/`. Not in the README.
 3. GIFs: record against :9001 with the fake cursor (or clone to :9002 first if
    zero-mutation is required) → get `.webm` → pip-install `imageio-ffmpeg` →
    convert with speed-up + palette → Read a sampled frame → check size < 10 MB

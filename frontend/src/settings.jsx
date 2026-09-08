@@ -2,12 +2,12 @@ import React from "react";
 import { API, apiJson, fmtBytes, copyText, isUnverifiedPaperMeta, metaSourceInfo } from "./utils";
 import { MenuSelect } from "./menus";
 import {
-  PaneHead, Section, Row, Toggle, Segmented, ToggleGroup, UnitInput, CharSlider, approxPages,
+  PaneHead, Section, Row, Toggle, Segmented, Stepper, ToggleGroup, UnitInput, CharSlider, approxPages,
   Stat, Empty, QuotaMeter,
 } from "./settingsKit";
 import { AiSettings } from "./settingsAi";
 import { UsersSettings } from "./settingsUsers";
-import { TRANSLATE_LANGS } from "./prefs";
+import { TRANSLATE_LANGS, UI_SCALE } from "./prefs";
 import {
   ActivityIcon,
   BookIcon,
@@ -28,6 +28,7 @@ import {
   KeyIcon,
   LabelIcon,
   LanguagesIcon,
+  MaximizeIcon,
   LayoutIcon,
   ListIcon,
   MessageSquareIcon,
@@ -123,6 +124,19 @@ function GeneralSettings({ value }) {
           checked={value.pdfDarkPage}
           onChange={value.setPdfDarkPage}
         />
+        <Row
+          icon={MaximizeIcon}
+          label="Control size"
+          hint="Buttons and toggles; Ctrl+scroll resizes notes and chat text"
+          title="Scale of every button, icon button and toggle in the interface — for high-density screens or touch use. Text in the notes and the AI chat is sized separately: hold Ctrl (⌘ on Mac) and scroll over either panel to grow or shrink it for this session; that size isn't saved."
+        >
+          <Stepper
+            value={value.uiScale}
+            onChange={value.setUiScale}
+            min={UI_SCALE.min} max={UI_SCALE.max} step={UI_SCALE.step} reset={1}
+            format={(v) => `${Math.round(v * 100)}%`}
+          />
+        </Row>
       </Section>
       <Section title="PDFs">
         <Toggle

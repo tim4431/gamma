@@ -42,7 +42,7 @@ Ask the chat to tidy up: it can list, read, and search your papers, rename them,
 - **Labels** — flat, cross-cutting tags for facets like an author or a keyword; a paper can carry several, and each is one click to filter by.
 - **Folders** — a topic hierarchy that builds itself from the paths you use: drop a paper into `qc/neutral-atom` and you get a **qc** folder with a **neutral-atom** subfolder — add `qc/superconducting` and the sibling appears, no need to hand-create each level as its own tag. Storage stays flat, so one paper can live in several folders.
 
-![Ctrl+F searches notes, highlights, and every PDF's text at once; narrow by folder, then open a hit with the match lit up on the page](./docs/demo-library.gif)
+![From the home page, one search finds titles, notes, highlights, and every PDF's text at once; a folder chip narrows it, and opening a hit lights the matches up on the page](./docs/demo-library.gif)
 
 - **Search everything** — `Ctrl+F` searches across notes, highlights, and the full text of every PDF at once, with match-case / whole-word / regex toggles. Narrow the scope with chips for **both** labels (exact match, e.g. an author) and folders (prefix match, so `qc` pulls in everything beneath it). Matching is forgiving: "3000" finds "3,000-qubit" across a line break.
 

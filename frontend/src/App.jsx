@@ -11,6 +11,7 @@ import {
   OpenTabs,
   PopoverAnchor,
   useCopied,
+  useTextScale,
 } from "./widgets";
 import { BlockTree, _dragState } from "./blockTree";
 import { CardLabels, KindToggle, ListFindBox, PageCard, ViewToggle } from "./fileBrowser";
@@ -2164,7 +2165,7 @@ export default function App() {
   // Every localStorage-backed user preference (the Settings dialog's state)
   // lives in useAppPrefs (prefs.js) — one hook, one storage key per entry.
   const {
-    theme, setTheme, pdfDarkPage, setPdfDarkPage, recentThumbs, setRecentThumbs,
+    theme, setTheme, pdfDarkPage, setPdfDarkPage, uiScale, setUiScale, recentThumbs, setRecentThumbs,
     fileLabels, setFileLabels,
     oaFallback, setOaFallback, metaAutoFetch, setMetaAutoFetch, pdfSaveLocal, setPdfSaveLocal,
     snapVertical, setSnapVertical, embAnnots, setEmbAnnots,
@@ -3508,6 +3509,11 @@ export default function App() {
     if (session.pdfHidden != null) setPdfHidden(session.pdfHidden);
     if (session.notesVisible != null) setNotesVisible(session.notesVisible);
   }, []);
+
+  // Control size (Settings → General): app.css zooms every button/toggle by it.
+  useEffect(() => {
+    document.documentElement.style.setProperty("--ui-scale", String(uiScale));
+  }, [uiScale]);
 
   // Theme: System tracks the OS preference live; Light/Dark pin it.
   useEffect(() => {
@@ -5129,6 +5135,11 @@ export default function App() {
   // affordances (docs/dev/block_centric.md). pdfUrl is only the viewer's input.
   const pageAttach = useMemo(() => pageAttachment(focusedBlock), [focusedBlock]);
   const homeMode = !focusedBlockId && !shareMode;
+  const homeModeRef = useRef(homeMode);
+  homeModeRef.current = homeMode;
+  // Ctrl+scroll over the notes: session-only text size (see useTextScale).
+  // Off on the home library — there the gesture stays the browser's zoom.
+  const notesTextScale = useTextScale({ enabled: () => !homeModeRef.current });
 
   // Move a block subtree to the end of another page: sync any queued edits
   // first, re-parent server-side (reorder carries parent_id), then drop it
@@ -6158,7 +6169,8 @@ export default function App() {
 
           </div>}
 
-          <div className={`blockList${aiScan ? " aiPageRead" : ""}`}>
+          <div className={`blockList${aiScan ? " aiPageRead" : ""}`} ref={notesTextScale.ref} style={notesTextScale.style}>
+            {notesTextScale.badge}
             {!homeMode && backlinks.length > 0 ? (
               <div className="backlinksPanel">
                 <div className="backlinksLabel">Backlinks ({backlinks.length})</div>
@@ -8123,6 +8135,8 @@ export default function App() {
         papers={{
           theme,
           setTheme,
+          uiScale,
+          setUiScale,
           oaFallback,
           setOaFallback,
           metaAutoFetch,

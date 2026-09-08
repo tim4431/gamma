@@ -61,6 +61,11 @@ const AGENT_PERMS_CODEC = {
 
 export const THEMES = ["system", "light", "dark", "sepia", "gray"];
 
+// Control size (Settings → General): a CSS `zoom` on every button and toggle
+// (app.css, `--ui-scale`) — the interface chrome, not the notes/chat text,
+// which Ctrl+scroll resizes in place per panel and never persists.
+export const UI_SCALE = { min: 0.7, max: 1.6, step: 0.1 };
+
 export function useAppPrefs() {
   // --- Appearance (Settings → General) ---
   // Theme: "system" follows the OS; "light"/"dark"/"sepia" pin it. "sepia" is
@@ -74,6 +79,14 @@ export function useAppPrefs() {
   });
   // Flip page colors: display-only inverted (night) rendering of the PDF canvas.
   const [pdfDarkPage, setPdfDarkPage] = usePersistedFlag("gamma-pdf-dark", false);
+  // Control size: index.html applies the stored value before first paint,
+  // App.jsx keeps `--ui-scale` on the root in sync afterwards.
+  const [uiScale, setUiScale] = usePersistedState("gamma-ui-scale", 1, {
+    parse: (raw) => {
+      const n = Number.parseFloat(raw);
+      return Number.isFinite(n) && n >= UI_SCALE.min && n <= UI_SCALE.max ? Math.round(n * 100) / 100 : undefined;
+    },
+  });
   // Recently-viewed cards on the home page (only — library cards always use
   // the glyph): cover thumbnails (a snapshot of the PDF at the last-read
   // spot). Off shows the file icon instead and stops capturing new ones.
@@ -193,8 +206,8 @@ export function useAppPrefs() {
   const [chatImgAutoClear, setChatImgAutoClear] = usePersistedFlag("gamma-chat-img-autoclear", false);
 
   return {
-    theme, setTheme, pdfDarkPage, setPdfDarkPage, recentThumbs, setRecentThumbs,
-    fileLabels, setFileLabels,
+    theme, setTheme, pdfDarkPage, setPdfDarkPage, uiScale, setUiScale,
+    recentThumbs, setRecentThumbs, fileLabels, setFileLabels,
     oaFallback, setOaFallback, metaAutoFetch, setMetaAutoFetch, pdfSaveLocal, setPdfSaveLocal,
     snapVertical, setSnapVertical, embAnnots, setEmbAnnots,
     translateEnabled, setTranslateEnabled,
