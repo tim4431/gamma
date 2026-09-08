@@ -75,13 +75,13 @@ Now :9002 is a pixel-identical, disposable copy of the showcase workspace.
 
 | File | Content | Route |
 |---|---|---|
-| `docs/screenshots/01-annotated-pdf.png` | paper with visible highlights + note tree + AI chat showing an answered question | `/?page=<id>` |
-| `docs/screenshots/02-home-carousels.png` | home: recently-viewed row, folders, recents feed | `/` |
 | `docs/demo-download-and-chat.gif` | open paper by URL (pasted) → drag-select the abstract sentence → ask the AI briefly, watch the answer stream (the README **hero** GIF, first image) | `:9001` |
 | `docs/demo-reference-links.gif` | atom-arrays paper, page 3: click the tiny "36" citation once → jumps to the reference → select just the "36." number → click its arXiv link → **Fetch into Gamma**. Recorded at normal scale; a smooth **camera zoom** (post-process, `gen-zoom.py`) magnifies the citation+reference — the page itself never zooms (README "Link and organize" section) | `:9001` |
-| `docs/demo-library.gif` | drag a paper into a folder, then Ctrl+F lighting up matches | isolated |
+| `docs/demo-library.gif` | in the atom-arrays paper: Ctrl+F "error correction" → the wide grouped panel (Titles / Notes on this page / This PDF / Other notes / Other PDFs) → click the folder suggestion → chip narrows to one paper → click an Other-PDFs hit → the QEC paper opens with every match marked (README "Search everything"). Recorder [record-library.mjs](./record-library.mjs); needs the clone enriched with a few notes + folders (the demo export has none) | isolated |
+| `docs/demo-notes.gif` | bare page "Rabi oscillations": type a sentence with `**bold**`, `==highlight==` and a `[[ref]]` chip → Enter/Tab → `$$` display math typed with the `\command` autocomplete, Tab argument hops and the live preview tip → Shift+Tab → a `> [!note]` callout with inline math → click away, everything renders (README "Take notes"). Recorder [record-notes.mjs](./record-notes.mjs); the page is created once (`POST /api/pages`), emptied before each run (`PUT /api/blocks/{id}/children {"blocks":[]}`), UI zoom 1.25 + crop to the top 640 px | isolated (writes notes) |
 | `docs/demo-agent.gif` | home chat: "Organize my library …" → tool chips stream (List/Read/Move) → folders appear in the list (README "An agent in your library"). Recorder [record-agent.mjs](./record-agent.mjs) | isolated (the agent MOVES pages) |
 | `docs/demo-connector.gif` | arXiv abs page → extension popup (opened as a page via `?tab=`, composited as an overlay on a frozen arXiv frame) → Save to Gamma into a folder → Open in Gamma (README "Save from your browser"). Recorder [record-connector.mjs](./record-connector.mjs): persistent context + `--load-extension`, popup video cropped to 360px and ffmpeg-overlaid, 3 segments concat'd; [gen-conn.py](./gen-conn.py) does the compositing plus a zoompan camera zoom on the POPUP ONLY (arXiv stays full-view — user preference; zoom out into Gamma; palette pass must run separately from zoompan or ffmpeg OOMs) | isolated |
+| `docs/demo-metadata.gif` | open arXiv 2312.03982 by URL (pre-roll trimmed) → click ⓘ while the fetch is still running: the popover opens with every field "—" and "Fetching metadata…", then Title / Authors / Venue / Year / DOI fill in on camera and the tab title flips → Share popover: slide citation + BibTeX, Copy BibTeX / Copy slide citation (icons flip to ticks). No hand edits (user rule). Camera zoom onto the right column (README "Metadata & citations"). Recorder [record-metadata.mjs](./record-metadata.mjs) + [gen-meta.py](./gen-meta.py) (trim, zoompan) | isolated (adds a page; the recorder resets it) |
 
 GIF slots exist as HTML comments in README.md — when adding one, replace the
 comment with `![…](./docs/demo-*.gif)`. Each GIF has its own checked-in
@@ -172,6 +172,56 @@ it and writes the webm path to `video_*.txt`) and adapt.
   `[data-page="1"]` may be unmounted; don't detect the fetched paper by diffing
   page-1 text (false negative). Poll `location.search`'s `block` param instead —
   it changes to the new paper's id when `openPdf` runs.
+- **Notes editor (record-notes.mjs)**: write LaTeX-heavy recorders with the
+  Write tool (heredocs mangle `\\`). Enter-makes-a-block is a pref: set
+  `localStorage 'gamma-enter-new-note' = '1'` in the init script (default is
+  Shift+Enter). The block editor is `.blockEditorCm`; Tab / Shift+Tab re-parent
+  the row and CLOSE the editor in headless — re-open it by dispatching a
+  synthetic `mousedown` on `.blockRow.focused`. Escape only closes popups; end
+  by clicking empty page space and waiting for `.blockEditorCm` to detach.
+  Autocomplete `.latexAcPopup` / `.latexAcItem`, preview tip `.mathPreviewTip`
+  (Tab/Enter accept; a trailing space dismisses it — needed before a Tab that
+  should hop to the next `{}`; type `\left(` not `\left`+Tab, which gives
+  `\leftarrow`). `[[` popup `.refPopup .refPopupEntry` (Enter inserts the raw
+  id, which renders as a chip once the caret moves off — type the next char at
+  once). Close the chat dock with `[aria-label="Close Chat"]`. For legibility
+  the recorder sets `document.documentElement.style.zoom = 1.25` — divide the
+  fake cursor's `clientX/Y` by the zoom — and crops to the top 640 px.
+- **Library search (record-library.mjs)**: in-paper Ctrl+F opens the compact
+  find bar by default — set `localStorage['gamma-search-details']='1'` in an
+  init script (flags are `"1"/"0"`) or the grouped panel never renders; on the
+  home page plain Ctrl+F focuses `.homeFindInput`, Ctrl+Shift+F opens the panel.
+  Panel `.searchPopover`, input `.searchInput`, headers `.searchSection`, rows
+  `.searchResult` (library PDF rows carry `title="Open … at page N — …"`), chip
+  suggestions `.categorySuggestionItem` (confirm on **mousedown**; only offered
+  when the query is a substring of a folder/label name; confirming CLEARS the
+  query, retype it), chips `.searchChip`, PDF marks `.pdfFindMark` (`.active`).
+  Wait for `.searchSection:has-text("Other PDFs")` and for the `Searching…`
+  `.searchHint` to vanish. After opening a hit the URL is `?block=<id>`; the old
+  paper's marks linger until the new one renders — wait for a mark inside a
+  painted `[data-page="1"]`. A stored read position (`/api/prefs/read-pos`)
+  races the pinned jump: reset it to page 1 (newer `at`) before recording.
+  `POST /api/blocks` via curl on Windows mangles non-ASCII bodies — seed
+  UTF-8 JSON from Python.
+- **Metadata (record-metadata.mjs)**: ⓘ in the Notes header is
+  `[aria-label="Paper metadata"]` → `.metaPopover`; fields are
+  `.metaRow` (`.metaKey` label + `input.metaInput`), Enter saves, Tab hops
+  fields. **Catching the fetch on camera is a race**: arXiv + cite land
+  ~1.4 s after the text layer appears, so park the cursor on ⓘ during the
+  download and click ~0.35 s after `[data-page="1"] .textLayer span`, no
+  settle beats. The ↻ re-fetch is a weak fallback (old values stay in the
+  fields, only ↻ turns to "…"): if a run reports the fields already filled,
+  delete the page and re-run instead. **Copy BibTeX / slide citation live in
+  the SHARE popover** (`[aria-label="Share"]` → `.sharePopover`,
+  `[aria-label="Copy BibTeX"]` / `[aria-label="Copy slide citation"]`;
+  feedback = icon flips to a tick for 1.5 s, no toast;
+  `context.grantPermissions(['clipboard-read','clipboard-write'])`). Poll
+  `GET /api/blocks/{id}` until `properties.ppt_cite` is non-empty before
+  opening Share, or it reads "Generating…". `[data-page="1"] .textLayer span`
+  fires ~0.4 s before the canvas paints and the "Loaded" toast lingers ~0.7 s:
+  stamp the GIF start ~750 ms later. A `trim`+`concat` segment list in one
+  `filter_complex` cuts static waits cleanly before `zoompan` (use post-cut
+  times in the zoom expression).
 - **House style used**: `colorScheme:'light'`, viewport `1440×900`,
   `deviceScaleFactor:2`, `slowMo:60`, ~0.5–1 s beats between steps.
 
@@ -227,8 +277,8 @@ FF=$(venv/Scripts/python.exe -c "import imageio_ffmpeg;print(imageio_ffmpeg.get_
 
 1. Confirm demo creds (memory/ask); real instance running on :9001; API login
    works and `/api/ai/models` shows `enabled:true`.
-2. Stills: curl login → Playwright script (cookie inject, light, 1680×1000) →
-   shoot 01/02 → Read each PNG to verify → overwrite `docs/screenshots/`.
+2. Stills: none in the README any more (the two `docs/screenshots/` PNGs were
+   dropped 2026-09-07; everything is a GIF now).
 3. GIFs: record against :9001 with the fake cursor (or clone to :9002 first if
    zero-mutation is required) → get `.webm` → pip-install `imageio-ffmpeg` →
    convert with speed-up + palette → Read a sampled frame → check size < 10 MB

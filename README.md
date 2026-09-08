@@ -12,14 +12,23 @@
 
 ![Open a paper by URL, highlight the abstract, and ask the AI to explain it](./docs/demo-download-and-chat.gif)
 
-Open a paper by pasting any link (arXiv, DOI, or a publisher page — Gamma finds the PDF) or drag the file in. Then:
+Open a paper by pasting any link (arXiv, DOI, or a publisher page — Gamma finds the PDF, and falls back to a legal open-access copy via Unpaywall when the DOI is paywalled) or drag the file in. Then:
 
-- **Highlight** — select text or drag a box around a figure, pick a color, add a comment. Each highlight becomes a block.
-- **Outliner notes** — highlights and free notes are the same kind of block: nest them, drag-reorder, `[[link]]` between them, write markdown + math. Click a note to jump the PDF to it (and back).
+- **Highlight** — select text or drag a box around a figure, pick a color, add a comment. Each highlight becomes a block. Highlights already saved in the file by SumatraPDF, Acrobat, or Preview are imported as blocks too.
 - **Ask the AI** — chat about the open paper (or pick several at once) with Anthropic or OpenAI models, or just sign in with your ChatGPT subscription — no API key. Paste figures, dictate by voice, or attach the whole PDF so the model sees tables and plots.
 - **Dockable panels** — drag any window's grip to the left, right, or bottom; double-click to collapse.
 
-## An agent in your library
+## ✍️ Take notes
+
+![Typing in a note: markdown renders as you go, a LaTeX equation previews live with command autocomplete, then renders in place](./docs/demo-notes.gif)
+
+Highlights and free notes are the same kind of block, so a paper's notes and a plain page are edited the same way:
+
+- **Outliner** — Enter for a new block, Tab / Shift+Tab to nest, drag to reorder, one undo history for the whole page.
+- **Live preview, Obsidian-style** — markdown, `$…$` / `$$…$$` math, code fences, callouts, and tables render in place while the block you're on stays raw. Math gets bracket-pair coloring, `\command` autocomplete, and Tab hops between `{}` arguments.
+- **Link and embed** — `[[page]]` mentions, `![[block]]` embeds that edit the source in place, and a "/" menu for everything else. Click a highlight block to jump the PDF to it (and back).
+
+## 🤖 An agent in your library
 
 ![Ask the chat to organize the library, tool calls stream by, and the papers get filed into topic folders](./docs/demo-agent.gif)
 
@@ -32,29 +41,27 @@ Ask the chat to tidy up: it can list, read, and search your papers, rename them,
 - **Reference links** — citations in the PDF are clickable: jump to the reference, unwind jumps across documents with a global **← Back**, and fetch a cited arXiv/DOI paper into your library in one click. You can also link a citation to a paper you already have.
 - **Labels** — flat, cross-cutting tags for facets like an author or a keyword; a paper can carry several, and each is one click to filter by.
 - **Folders** — a topic hierarchy that builds itself from the paths you use: drop a paper into `qc/neutral-atom` and you get a **qc** folder with a **neutral-atom** subfolder — add `qc/superconducting` and the sibling appears, no need to hand-create each level as its own tag. Storage stays flat, so one paper can live in several folders.
+
+![Ctrl+F searches notes, highlights, and every PDF's text at once; narrow by folder, then open a hit with the match lit up on the page](./docs/demo-library.gif)
+
 - **Search everything** — `Ctrl+F` searches across notes, highlights, and the full text of every PDF at once, with match-case / whole-word / regex toggles. Narrow the scope with chips for **both** labels (exact match, e.g. an author) and folders (prefix match, so `qc` pulls in everything beneath it). Matching is forgiving: "3000" finds "3,000-qubit" across a line break.
 
-<!-- Demo GIF slot ➜ record: dragging a paper into a folder, then a Ctrl+F search lighting up matches. Save as docs/demo-library.gif -->
+![A freshly opened paper resolves its title, authors, and venue; one click copies BibTeX or a slide-ready citation](./docs/demo-metadata.gif)
 
-## Save from your browser
+- **Metadata & citations** — on open, each paper is resolved (arXiv → DOI → AI) so the title, authors, and venue auto-fill; any field can be hand-edited in the popover. One click copies BibTeX or a slide-ready citation that pastes into PowerPoint with real italics.
+
+## 🌐 Save from your browser
 
 ![On an arXiv page, the Gamma Connector popup saves the paper into a folder, then opens it in Gamma](./docs/demo-connector.gif)
 
 The **Gamma Connector** extension ([extension/](./extension/)) saves the paper you're reading in one click — PDF, metadata, folder, and labels — straight from the arXiv / DOI / publisher tab. Right-click clips a link or a text selection into your notes.
 
----
+## Also
 
-## A closer look
-
-![PDF with highlights, the note tree, and AI chat side by side](./docs/screenshots/01-annotated-pdf.png)
-
-![Home page with folders, a Recently viewed row, and the recents feed](./docs/screenshots/02-home-carousels.png)
-
-- **Metadata & citations** — on open, each paper is resolved (arXiv → DOI → AI) so the title, authors, and venue auto-fill; any field can be hand-edited in the popover. One click copies BibTeX or a slide-ready citation that pastes into PowerPoint with real italics.
+- **Share a page** — send a link to an annotated paper; invite people with view or edit rights, or open it to anyone with the link.
 - **Tabs follow you** — open tabs sync to your account, so another browser or device picks up right where you left off.
-- **Import existing annotations** — highlights already saved in the file by SumatraPDF, Acrobat, or Preview are imported as blocks. Logseq PDF exports import too.
-- **Open access fallback** — a paywalled DOI falls back to a legal open-access copy (via Unpaywall) when one exists.
-- **Export** — download a zip of all your data (SQLite snapshots + every upload) from the account menu.
+- **Import** — Logseq PDF exports and Zotero libraries come in as pages with their annotations.
+- **Export** — download a zip of all your data (SQLite snapshots + every upload) from the account menu, and restore it on another instance.
 
 ---
 
@@ -179,7 +186,7 @@ A single service: a **FastAPI** backend that also serves the built **React** fro
 
 - **Everything is a block.** Highlights and free notes are rows in one `unified_blocks` table (self-referential `parent_id`, fractional-index `position`). Root-level blocks are pages; a page with a PDF is a paper.
 - **Per-user isolation.** `users.db` holds accounts and tokens; each user gets their own `pages.db` and `uploads/` folder under `GAMMA_DATA_DIR`.
-- **View modes come from the URL** (no router lib): `/` home · `/?page=<id>` a page · `/?block=<id>` jump to a block · `/?share=<token>` public read-only.
+- **View modes come from the URL** (no router lib): `/` home · `/?page=<id>` a page · `/?block=<id>` jump to a block · `/?share=<token>` a shared page.
 
 <details>
 <summary><b>Inspired by Logseq</b></summary>
