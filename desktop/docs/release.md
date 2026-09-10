@@ -87,6 +87,20 @@ mismatch in any of them is rejected at upload. The Store ID is
 `showNameOnTiles` and `backgroundColor`, the Start-menu tile colour, which
 matches the logo tile's `#1e1e1c`.
 
+**Package assets.** electron-builder takes the MSIX's tile images from
+`build/appx/` (matched by directory name): `Square44x44Logo` (taskbar /
+Start list, plus `targetsize-N` and `_altform-unplated` variants),
+`Square150x150Logo`, `Wide310x150Logo`, `SmallTile`, `LargeTile`,
+`StoreLogo`, `SplashScreen`, each with `.scale-125/150/200/400` variants
+(their presence makes electron-builder run `makepri`, so Windows picks a
+sharp one per DPI). The tiles are the bare mark on a transparent plate,
+coloured by `backgroundColor`; the 44 px logo is the rounded app icon.
+`npm run store-art` renders all of them from the logo mark (same script as
+the listing art below). **The folder must exist**: without it
+electron-builder ships its own `SampleAppx.*` placeholders and
+certification fails policy 10.1.1.11 ("tile icons include a default
+image").
+
 **Build.** Windows only (electron-builder fetches `makeappx`/`signtool`
 itself, no Windows SDK needed):
 
@@ -106,12 +120,18 @@ signs it.
 
 **Submit.** Partner Center → the product → *Submissions* → new submission →
 *Packages*: upload the `.appx`; fill the listing (screenshots, description),
-age rating, free pricing and a privacy-policy URL (mandatory because the
-app uses the network). The listing's *Store logos* (9:16 poster art, 1:1
-box art) and *Store display images* (300/150/71 px app tile icons) are
-pre-rendered in `build/store/`; `npm run store-art` regenerates them from
-the logo mark with Playwright's Chromium (`build/store-art.js`, Windows
-only, and online: the poster's wordmark font comes from Google Fonts).
+age rating, free pricing and the privacy-policy URL (mandatory because the
+app uses the network). The policy is the repo's
+[`PRIVACY.md`](../../PRIVACY.md), so the URL is
+`https://github.com/tim4431/Gamma/blob/main/PRIVACY.md`; it has to be
+Gamma's own policy, naming the app and its developer, or certification
+fails policy 10.5.1 ("privacy policy is for an unrelated company"). The
+listing's *Store logos* (9:16 poster art, 1:1 box art) and *Store display
+images* (300/150/71 px app tile icons) are pre-rendered in `build/store/`;
+`npm run store-art` regenerates them, together with the package assets in
+`build/appx/`, from the logo mark with Playwright's Chromium
+(`build/store-art.js`, Windows only, and online: the poster's wordmark
+font comes from Google Fonts).
 The package version must increase per submission
 (`package.json` `<version>` becomes `<version>.0`; the Store requires the
 fourth part to be 0, which electron-builder guarantees). Certification takes one
