@@ -144,10 +144,15 @@ export function latexCompletions(query, limit = 8) {
   const q = query.toLowerCase();
   const out = [];
   for (const c of CATALOG) {
+    // Tiers: exact → the query already spells the whole command and the
+    // name only adds a delimiter ("left" → `left(` before `leftarrow`) →
+    // other prefix matches → case-insensitive prefix → alias. Ties keep
+    // catalog order.
+    const letters = (c.name.match(/^[a-zA-Z]+/) || [""])[0];
     const tier = c.name === query ? 0
-      : c.name.startsWith(query) ? 1
-        : c.name.toLowerCase().startsWith(q) ? 2
-          : c.alias && c.alias.startsWith(q) ? 3 : -1;
+      : c.name.startsWith(query) ? (letters === query ? 1 : 2)
+        : c.name.toLowerCase().startsWith(q) ? 3
+          : c.alias && c.alias.startsWith(q) ? 4 : -1;
     if (tier >= 0) out.push([tier, out.length, c]);
   }
   out.sort((a, b) => a[0] - b[0] || a[1] - b[1]);

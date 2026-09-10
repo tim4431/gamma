@@ -52,11 +52,11 @@ folder), and converts the document into nested Gamma blocks through
 `gamma/markdown_import.py`. Headings and indented lists retain hierarchy;
 paragraphs, fenced code, math and other Markdown stay as raw block content for
 the normal editor renderer. Lines indented under a list item continue that
-item — directly below it, or after a blank line when aligned with the item's
-text — which is how the Markdown export writes a multi-line block (a fence or
-`$$` opened that way swallows its lines, blank ones included); text indented
-deeper after a blank line becomes a child block, which is how Notion exports a
-toggle's content. In mixed folder uploads, Markdown note pages and PDF pages
+item, whether directly below it or after a blank line when aligned with the
+item's text. That is how the Markdown export writes a multi-line block, and a
+fence or `$$` opened that way swallows its lines, blank ones included. Text
+indented deeper after a blank line becomes a child block, which is how Notion
+exports a toggle's content. In mixed folder uploads, Markdown note pages and PDF pages
 receive the same subfolder labels; unsupported files are skipped.
 
 ## Markdown zips: Notion exports, Gamma exports, zipped notes
@@ -100,9 +100,10 @@ because the three only differ in naming conventions:
   digest — or the same `notion_id`) is skipped, and links to it resolve to
   the existing page, so re-importing an export adds nothing.
 
-The report (`pages_created`, `pages_skipped`, `assets_stored`,
-`links_resolved`, `notion`, `pages`, `warnings`) feeds the status line;
-warnings go to the browser console. To make the round trip work the
+The report's counts (`pages_created`, `pages_skipped`, `assets_stored`,
+`links_resolved`, `notion`) feed the status line, `warnings` go to the
+browser console, and `pages` lists up to 200 created pages (`id`, `title`,
+`folder`) for API callers. To make the round trip work the
 Markdown export writes the page's folder label into the front matter
 (`folder:`), relative to the exported folder — a folder export's root pages
 carry none — so importing the zip into a folder rebuilds the same tree there.
@@ -195,19 +196,23 @@ token against that origin's `/api/share/{token}`, fetches the page as
 `runBackupImport(…, "merge")` with `after.openPage` set — block ids survive
 the export, so the reload lands on `?page=<id>` in the importer's own
 library. The fetch is browser-side on purpose: the browser reaches a Gamma on
-the LAN or at `localhost` that the server's SSRF guard (`net_guard.py`) would
-rightly refuse. That works because share GETs answer
+the LAN or at `localhost` that the server's SSRF guard (`net_guard.py`)
+refuses. That works because share GETs answer
 `Access-Control-Allow-Origin: *` ([api.md](api.md)); with `*` the browser
 sends no cookies cross-origin, so only links open to `anyone` import from
 another Gamma, while a same-origin link also carries the session and
-invite-only ones work too. Two entry points: the topbar's "+" box — a pasted
-`<origin>/?share=<token>` is recognised by shape (`parseGammaShareLink`: the
-SPA root with a `share` query), shows a hint, and Enter imports instead of
-fetching a PDF; everything else typed there is still a paper — and the share
-view's topbar — a signed-in non-guest viewer gets "Add to my library" (the same
-function on `window.location.href`), the page's owner gets "Open in my
-library" instead (a plain jump to `?page=<id>`, since the page is already
-theirs). The remote must be recent enough to serve `mode=gamma` and the CORS
+invite-only ones work too. Two entry points:
+
+- The topbar's "+" box: a pasted `<origin>/?share=<token>` is recognised by
+  shape (`parseGammaShareLink`: the SPA root with a `share` query), shows a
+  hint, and Enter imports instead of fetching a PDF. Everything else typed
+  there is still a paper.
+- The share view's topbar: a signed-in non-guest viewer gets "Add to my
+  library" (the same function on `window.location.href`). The page's owner
+  gets "Open in my library" instead, a plain jump to `?page=<id>`, since the
+  page is already theirs.
+
+The remote must be recent enough to serve `mode=gamma` and the CORS
 header; an older one surfaces as "couldn't reach …" / "too old" in the
 status line and the transfer row.
 

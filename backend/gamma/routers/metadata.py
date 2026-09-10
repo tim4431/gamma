@@ -251,13 +251,14 @@ def _fetch_isbn(isbn: str) -> dict | None:
     return rec
 
 
-def _book_search(title: str, author: str = "", rows: int = 5) -> list[dict]:
-    """Title(+author) search over Open Library then Google Books, candidates in
-    that order. Not trusted as-is — _pick_book_match decides."""
+def _book_search(title: str, author: str = "") -> list[dict]:
+    """Title(+author) search over Open Library then Google Books, up to five
+    candidates each in that order. Not trusted as-is — _pick_book_match
+    decides."""
     if not (title or "").strip():
         return []
     out: list[dict] = []
-    q = {"title": title[:200], "limit": str(rows),
+    q = {"title": title[:200], "limit": "5",
          "fields": "title,author_name,first_publish_year,publish_year,publisher,isbn"}
     if author:
         q["author"] = author[:100]
@@ -321,6 +322,28 @@ def _pick_book_match(cands: list[dict], text: str, ai_meta: dict | None = None) 
                 rec["year"] = ai_year
             return rec
     return None
+
+
+_REGISTRY_CACHE: dict[str, dict] = {}
+_REGISTRY_CACHE_MAX = 200
+
+
+def registry_record(doi: str, arxiv_id: str) -> dict | None:
+    """The registry record behind an identifier: arXiv first (its record
+    carries the published DOI too), then doi.org. None when neither answers.
+    Hits are cached in memory (the data is public); a registry timeout is
+    transient and never remembered. Serves the extension's preview."""
+    cache_key = f"arxiv:{arxiv_id}" if arxiv_id else f"doi:{doi}"
+    if cache_key in _REGISTRY_CACHE:
+        return _REGISTRY_CACHE[cache_key]
+    meta = _fetch_arxiv(arxiv_id) if arxiv_id else None
+    if not meta and doi:
+        meta, _ = _fetch_doi(doi, with_bibtex=False)
+    if meta:
+        if len(_REGISTRY_CACHE) >= _REGISTRY_CACHE_MAX:
+            _REGISTRY_CACHE.pop(next(iter(_REGISTRY_CACHE)))
+        _REGISTRY_CACHE[cache_key] = meta
+    return meta
 
 
 def _fetch_arxiv(arxiv_id: str) -> dict | None:

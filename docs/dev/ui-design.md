@@ -35,16 +35,17 @@ Two separate size levers, deliberately not one "zoom":
   App.jsx keeps the property in sync afterwards. Content — notes, PDF, chat
   text — is untouched.
 - **Text size** is per panel and per session: Ctrl/⌘+scroll over the notes
-  list or the chat transcript. `useTextScale` (`widgets.jsx`) owns it — a
-  native non-passive wheel listener (React's `onWheel` can't
-  `preventDefault`, and the browser would zoom the page), ×1.1 per ~40 px of
-  accumulated delta (mouse notches and trackpad pinches both land on whole
-  steps), clamped 0.6–2.5, snapping back onto 100 %. The scale goes on the
-  panel as the `--text-scale` custom property, which the base font sizes
-  multiply in (`.blockRendered`, `.blockEditor`, `.blockEditorCm .cm-scroller`,
-  `.chatBubble`), and a transient `.textScaleBadge` pill (the panel's first
-  child, sticky, zero height) reads out the percentage. Nothing is stored:
-  reload resets it. On the home library the gesture is left to the browser.
+  list or the chat transcript. `useTextScale` (`widgets.jsx`) owns it. It is
+  a native non-passive wheel listener, because React's `onWheel` can't
+  `preventDefault` and the browser would zoom the page. Each ~40 px of
+  accumulated delta is one ×1.1 step (mouse notches and trackpad pinches
+  both land on whole steps), clamped 0.6–2.5 and snapping back onto 100 %.
+  The scale goes on the panel as the `--text-scale` custom property, which
+  the base font sizes multiply in:
+  `.blockRendered`, `.blockEditor`, `.blockEditorCm .cm-scroller`, `.chatBubble`.
+  A transient `.textScaleBadge` pill (the panel's first child, sticky, zero
+  height) reads out the percentage. Nothing is stored: reload resets it. On
+  the home library the gesture is left to the browser.
 
 ### Menus and submenus
 

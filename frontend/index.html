@@ -17,7 +17,7 @@
         var t = localStorage.getItem("gamma-theme");
         if (t === "light" || t === "dark" || t === "sepia" || t === "gray") document.documentElement.setAttribute("data-theme", t);
         var s = parseFloat(localStorage.getItem("gamma-ui-scale"));
-        if (s >= 0.5 && s <= 3) document.documentElement.style.setProperty("--ui-scale", s);
+        if (s >= 0.7 && s <= 1.6) document.documentElement.style.setProperty("--ui-scale", s); // UI_SCALE in prefs.js
       } catch (e) {}
     </script>
     <style>

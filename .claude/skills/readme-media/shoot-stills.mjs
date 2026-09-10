@@ -45,13 +45,11 @@ for (const id of OTHERS) await openPaper(id);
 
 // 01 — annotated paper: highlight on page 2 in view, note tree, answered chat.
 // The page chat is persisted server-side — clear it so only this Q&A shows.
-await fetch(BASE + '/api/chats/' + ATOMS, { method: 'DELETE', headers: { Cookie: 'session=' + SESSION } }).catch(() => {});
+await fetch(BASE + '/api/chats/' + ATOMS, { method: 'DELETE', headers: { Cookie: 'session=' + SESSION } })
+  .catch((e) => console.log('SCRIPT: chat reset failed', e.message));
 await openPaper(ATOMS);
 // drop the "Cursor" context chip the restored block focus puts in the chat box
-await page.evaluate(() => {
-  const chip = [...document.querySelectorAll('.chatPanel *')].find(e => e.children.length === 0 && e.textContent.trim() === 'Cursor');
-  chip?.parentElement?.querySelector('button')?.click();
-});
+await page.click('.chatSelChip.isCursor .chatSelChipClose').catch(() => {});
 // pages are lazy: mount page 2 first, then centre the highlight overlay on it
 await page.evaluate(() => document.querySelector('[data-page="2"]')?.scrollIntoView({ block: 'start' }));
 await page.waitForSelector('[data-page="2"] [data-hl-id]', { timeout: 20000 }).catch(() => {});
@@ -74,13 +72,13 @@ for (let attempt = 0; attempt < 2 && !answered; attempt++) {   // one retry: the
       const st = await page.evaluate(() => {
         const el = document.querySelector('.chatBubbleRow.ai:last-of-type');
         const t = el ? el.innerText : '';
-        return { len: t.length, err: /^Error:/.test(t.trim()) };
+        return { len: t.length, err: !!el?.querySelector('.chatBubble.error') };
       });
       if (st.err) break;
       if (st.len > 40 && st.len === lastLen) { stable++; if (stable >= 4) { answered = true; break; } } else { stable = 0; }
       lastLen = st.len;
     }
-  } catch (e) { console.log('SCRIPT: no AI answer (' + e.message.split(String.fromCharCode(10))[0] + ')'); }
+  } catch (e) { console.log('SCRIPT: no AI answer (' + e.message.split('\n')[0] + ')'); }
   if (!answered) {
     console.log('SCRIPT: AI attempt ' + (attempt + 1) + ' failed (error bubble / timeout)');
     if (attempt === 0) await beat(3000);

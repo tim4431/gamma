@@ -54,26 +54,25 @@ def _clean_title(raw) -> str:
     return " ".join(str(raw or "").split())[:TITLE_MAX]
 
 
+def _first_user_text(messages: list) -> str:
+    for m in messages or []:
+        if isinstance(m, dict) and m.get("role") == "user":
+            return str(m.get("text") or m.get("content") or "")
+    return ""
+
+
 def derive_title(messages: list) -> str:
     """The first user message's first line, quotes stripped, for a
     conversation the user never named."""
-    for m in messages or []:
-        if not isinstance(m, dict) or m.get("role") != "user":
-            continue
-        text = str(m.get("text") or m.get("content") or "")
-        for line in text.splitlines():
-            line = line.strip()
-            if line and not line.startswith(">"):
-                return _clean_title(line[:TITLE_MAX])
-        break
+    for line in _first_user_text(messages).splitlines():
+        line = line.strip()
+        if line and not line.startswith(">"):
+            return _clean_title(line[:TITLE_MAX])
     return ""
 
 
 def _preview(messages: list) -> str:
-    for m in messages or []:
-        if isinstance(m, dict) and m.get("role") == "user":
-            return " ".join(str(m.get("text") or m.get("content") or "").split())[:120]
-    return ""
+    return " ".join(_first_user_text(messages).split())[:120]
 
 
 def _archive(database, bucket: str, messages: list, title: str) -> str | None:
@@ -158,15 +157,15 @@ async def get_chat(block_id: str, request: Request):
 async def save_chat(block_id: str, payload: ChatSaveRequest, request: Request):
     user = require_user(request)
     with connect_data_db(user) as database:
+        # A request without a title (the autosave) keeps the stored one.
         database.execute(
             "INSERT INTO chats (block_id, messages, updated_at, title) VALUES (?, ?, ?, ?) "
             "ON CONFLICT(block_id) DO UPDATE SET "
-            "messages = excluded.messages, updated_at = excluded.updated_at",
-            (block_id, json.dumps(payload.messages), page_now(), _clean_title(payload.title)),
+            "messages = excluded.messages, updated_at = excluded.updated_at, "
+            "title = CASE WHEN ? THEN excluded.title ELSE chats.title END",
+            (block_id, json.dumps(payload.messages), page_now(), _clean_title(payload.title),
+             payload.title is not None),
         )
-        if payload.title is not None:
-            database.execute("UPDATE chats SET title = ? WHERE block_id = ?",
-                             (_clean_title(payload.title), block_id))
         database.commit()
     return {"ok": True}
 

@@ -22,8 +22,8 @@
 // folders "Quantum/Neutral atoms" / "Quantum/Error correction" (the folder
 // name containing the query is what surfaces the "Tab adds a filter"
 // suggestion). Each paper should have been opened once so the recents strip
-// is populated. The QEC paper's stored read position must be page 1
-// (PUT /api/prefs/read-pos) or the restore scroll races the match jump.
+// is populated. (The match jump cancels the paper's last-read restore, so a
+// stored read position can't scroll the match away.)
 // Search details are forced on (`gamma-search-details*` = "1"; the paper
 // view's default is the compact find bar).
 import { chromium } from 'playwright';

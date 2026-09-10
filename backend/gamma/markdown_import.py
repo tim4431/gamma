@@ -54,12 +54,6 @@ def parse_frontmatter(text: str):
     return fields, text[match.end():]
 
 
-def split_frontmatter(text: str):
-    """Return (title_or_None, body) — only the ``title:`` field is read."""
-    fields, body = parse_frontmatter(text)
-    return fields.get("title") or None, body
-
-
 def _open_construct(content: str) -> bool:
     """True while ``content`` has an unclosed ``` fence or ``$$`` block, so the
     next lines belong to it whatever they look like."""

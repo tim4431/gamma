@@ -70,8 +70,8 @@ darwin in `lib/updater.js` so macOS updates install in place.
   release to point at, then one PR per version (automatable with
   `wingetcreate` in the workflow).
 - **Microsoft Store**: an MSIX the Store signs with Microsoft's certificate
-  — no SmartScreen, and the Store handles updates. Set up and wired in, see
-  *Microsoft Store* below.
+  — no SmartScreen, and the Store handles updates. Configured in
+  `electron-builder.cjs`; see *Microsoft Store* below.
 - **Homebrew cask** (macOS) does not help: brew leaves the quarantine
   attribute on; only signing + notarization fixes the *damaged* dialog.
 
@@ -83,7 +83,23 @@ GammaPDF → Product management → Product identity*): `identityName`
 (`xwtim.GammaPDF`), `publisher` (`CN=<GUID>`), `publisherDisplayName`
 (`xwtim`); `displayName` must equal the name reserved in the Store. A
 mismatch in any of them is rejected at upload. The Store ID is
-`9N8WGWR2J2MV`.
+`9N8WGWR2J2MV`. The same block sets `applicationId`, `languages`,
+`showNameOnTiles` and `backgroundColor`, the Start-menu tile colour, which
+matches the logo tile's `#1e1e1c`.
+
+**Package assets.** electron-builder takes the MSIX's tile images from
+`build/appx/` (matched by directory name): `Square44x44Logo` (taskbar /
+Start list, plus `targetsize-N` and `_altform-unplated` variants),
+`Square150x150Logo`, `Wide310x150Logo`, `SmallTile`, `LargeTile`,
+`StoreLogo`, `SplashScreen`, each with `.scale-125/150/200/400` variants
+(their presence makes electron-builder run `makepri`, so Windows picks a
+sharp one per DPI). The tiles are the bare mark on a transparent plate,
+coloured by `backgroundColor`; the 44 px logo is the rounded app icon.
+`npm run store-art` renders all of them from the logo mark (same script as
+the listing art below). **The folder must exist**: without it
+electron-builder ships its own `SampleAppx.*` placeholders and
+certification fails policy 10.1.1.11 ("tile icons include a default
+image").
 
 **Build.** Windows only (electron-builder fetches `makeappx`/`signtool`
 itself, no Windows SDK needed):
@@ -97,20 +113,28 @@ It logs *AppX is not signed (Windows Store only build)* and writes
 `dist-store/Gamma-<version>-win-x64.appx`. Unsigned is correct: the Store
 signs the package, and signing it locally would also change the manifest
 publisher to the certificate's subject. Never build it with the `AZURE_*`
-signing env present — the release workflow blanks those variables for this
-step and uploads the result as the `store-windows` workflow artifact (not a
-release asset: nobody can install it before the Store signs it).
+signing env present; the release workflow blanks those variables for this
+step. The workflow uploads the result as the `store-windows` workflow
+artifact, not a release asset, since nobody can install it before the Store
+signs it.
 
 **Submit.** Partner Center → the product → *Submissions* → new submission →
 *Packages*: upload the `.appx`; fill the listing (screenshots, description),
-age rating, free pricing and a privacy-policy URL (mandatory because the
-app uses the network). The listing's *Store logos* (9:16 poster art, 1:1
-box art) and *Store display images* (300/150/71 px app tile icons) are
-pre-rendered in `build/store/`; `npm run store-art` regenerates them from
-the logo mark with Playwright's Chromium (`build/store-art.js`).
+age rating, free pricing and the privacy-policy URL (mandatory because the
+app uses the network). The policy is the repo's
+[`PRIVACY.md`](../../PRIVACY.md), so the URL is
+`https://github.com/tim4431/Gamma/blob/main/PRIVACY.md`; it has to be
+Gamma's own policy, naming the app and its developer, or certification
+fails policy 10.5.1 ("privacy policy is for an unrelated company"). The
+listing's *Store logos* (9:16 poster art, 1:1 box art) and *Store display
+images* (300/150/71 px app tile icons) are pre-rendered in `build/store/`;
+`npm run store-art` regenerates them, together with the package assets in
+`build/appx/`, from the logo mark with Playwright's Chromium
+(`build/store-art.js`, Windows only, and online: the poster's wordmark
+font comes from Google Fonts).
 The package version must increase per submission
-(`package.json` `0.2.0` becomes `0.2.0.0`; the Store requires the fourth
-part to be 0, which electron-builder guarantees). Certification takes one
+(`package.json` `<version>` becomes `<version>.0`; the Store requires the
+fourth part to be 0, which electron-builder guarantees). Certification takes one
 to three days; the reviewer launches the app, so a fresh install must reach
 the launcher with no workspace configured.
 
@@ -123,12 +147,13 @@ the launcher with no workspace configured.
   local workspace's data dir under it, see
   [architecture.md](architecture.md#shell-state)) lands in
   `%LOCALAPPDATA%\Packages\xwtim.GammaPDF_<hash>\LocalCache\Roaming\gamma-desktop`.
-  Consequences: a Store install and an NSIS install never see each other's
-  workspaces, and **uninstalling the Store app deletes that folder**,
-  including local workspaces' PDFs and databases. The launcher's *Local
-  workspace storage* setting is the way out: pick a folder outside the
-  package (e.g. under *Documents*) and *Move data* relocates the existing
-  workspaces there ([architecture.md](architecture.md#shell-state)).
+  A Store install and an NSIS install never see each other's workspaces, and
+  **uninstalling the Store app deletes that folder**, including local
+  workspaces' PDFs and databases.
+- The launcher's *Local workspace storage* setting is the way out of that
+  folder: pick one outside the package (e.g. under *Documents*) and *Move
+  data* relocates the existing workspaces there
+  ([architecture.md](architecture.md#shell-state)).
 - The install directory (`C:\Program Files\WindowsApps\…`) is read-only.
   Fine for the onedir sidecar, which writes only to `GAMMA_DATA_DIR`.
   Loopback to `127.0.0.1` is unrestricted for full-trust packaged apps, so
@@ -153,8 +178,8 @@ Per build (`signtool` is in the Windows SDK, or under
 `~\AppData\Local\electron-builder\Cache\winCodeSign\…\windows-10\x64`):
 
 ```powershell
-signtool sign /fd SHA256 /f dev.pfx /p dev dist-store\Gamma-0.2.0-win-x64.appx
-Add-AppxPackage dist-store\Gamma-0.2.0-win-x64.appx
+signtool sign /fd SHA256 /f dev.pfx /p dev dist-store\Gamma-<version>-win-x64.appx
+Add-AppxPackage dist-store\Gamma-<version>-win-x64.appx
 Get-AppxPackage *GammaPDF* | Remove-AppxPackage   # before re-installing the same version
 ```
 

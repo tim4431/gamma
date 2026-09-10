@@ -1,17 +1,24 @@
-// Renders the Microsoft Store listing art (Partner Center → Store listings →
-// Store logos / Store display images) from the logo mark in ../../logos.
-// Output: build/store/*.png. Run with `npm run store-art` (needs Playwright's
-// Chromium, the same one the e2e suite uses).
+// Renders, from the logo mark in ../../logos:
+//  - the Microsoft Store listing art (Partner Center → Store listings →
+//    Store logos / Store display images) into build/store/*.png;
+//  - the MSIX package assets (tiles, taskbar icon, splash) into build/appx/,
+//    which electron-builder's appx target picks up by directory name. Without
+//    that folder it ships its own SampleAppx placeholders, and Store
+//    certification rejects the package (policy 10.1.1.11, "tile icons
+//    include a default image").
+// Run with `npm run store-art` on Windows (it needs Playwright's Chromium,
+// the same one the e2e suite uses, and the poster's wordmark font comes from
+// Google Fonts, so it needs the network).
 'use strict';
 const fs = require('node:fs');
 const path = require('node:path');
 const { chromium } = require('playwright-core');
 
 const OUT = path.join(__dirname, 'store');
-// playwright-core pins a headless-shell build; fall back to any Chromium
-// Playwright has installed (set PLAYWRIGHT_CHROMIUM to override).
+const APPX_OUT = path.join(__dirname, 'appx');
+// playwright-core pins a headless-shell build; use the newest full Chromium
+// Playwright has installed instead.
 function chromiumPath() {
-  if (process.env.PLAYWRIGHT_CHROMIUM) return process.env.PLAYWRIGHT_CHROMIUM;
   const root = path.join(process.env.LOCALAPPDATA || '', 'ms-playwright');
   if (!fs.existsSync(root)) return undefined;
   const dirs = fs.readdirSync(root).filter((d) => /^chromium-\d+$/.test(d)).sort().reverse();
@@ -86,6 +93,50 @@ function posterSvg(w, h) {
   </svg>`;
 }
 
+// Start-menu tile / splash: the bare mark on a TRANSPARENT canvas, so the
+// manifest's BackgroundColor (electron-builder.cjs appx.backgroundColor, = BG)
+// paints the plate and Windows can overlay the app name (ShowNameOnTiles).
+// `frac` is the mark's box as a fraction of the shorter side — Windows'
+// tile guidance keeps the glyph well inside the plate.
+function plateSvg(w, h, frac) {
+  const u = 64 / (frac * Math.min(w, h)); // viewBox units per pixel
+  const vw = w * u;
+  const vh = h * u;
+  return `<svg xmlns="http://www.w3.org/2000/svg" width="${w}" height="${h}" viewBox="${36 - vw / 2} ${36 - vh / 2} ${vw} ${vh}">
+    ${MARK}
+  </svg>`;
+}
+
+// MSIX assets. Names are the ones electron-builder's manifest references
+// (Square44x44Logo / Square150x150Logo / Wide310x150Logo / StoreLogo are
+// mandatory; SmallTile / LargeTile / SplashScreen are optional and only
+// declared when present). `.scale-N` / `.targetsize-N` variants make
+// electron-builder run makepri so Windows picks the sharp one per DPI; the
+// unqualified file is the scale-100 fallback. The 44px logo and its
+// targetsize variants are the icon Windows shows in the taskbar, Start list
+// and Alt+Tab, so they are the same rounded tile as build/icon.png;
+// `_altform-unplated` is that icon without the colored plate.
+const APPX_JOBS = [];
+const scaled = (name, w, h, make) => {
+  APPX_JOBS.push([`${name}.png`, w, h, make(w, h)]);
+  for (const pct of [125, 150, 200, 400]) {
+    const sw = Math.round((w * pct) / 100);
+    const sh = Math.round((h * pct) / 100);
+    APPX_JOBS.push([`${name}.scale-${pct}.png`, sw, sh, make(sw, sh)]);
+  }
+};
+scaled('Square44x44Logo', 44, 44, (w) => tileSvg(w));
+scaled('StoreLogo', 50, 50, (w) => tileSvg(w));
+scaled('SmallTile', 71, 71, (w, h) => plateSvg(w, h, 0.62));
+scaled('Square150x150Logo', 150, 150, (w, h) => plateSvg(w, h, 0.5));
+scaled('Wide310x150Logo', 310, 150, (w, h) => plateSvg(w, h, 0.5));
+scaled('LargeTile', 310, 310, (w, h) => plateSvg(w, h, 0.45));
+scaled('SplashScreen', 620, 300, (w, h) => plateSvg(w, h, 0.5));
+for (const px of [16, 20, 24, 30, 32, 36, 40, 48, 64, 256]) {
+  APPX_JOBS.push([`Square44x44Logo.targetsize-${px}.png`, px, px, tileSvg(px)]);
+  APPX_JOBS.push([`Square44x44Logo.targetsize-${px}_altform-unplated.png`, px, px, tileSvg(px)]);
+}
+
 const JOBS = [
   ['poster-720x1080.png', 720, 1080, posterSvg(720, 1080), false],
   ['poster-1440x2160.png', 1440, 2160, posterSvg(1440, 2160), false],
@@ -98,20 +149,23 @@ const JOBS = [
 
 (async () => {
   fs.mkdirSync(OUT, { recursive: true });
+  fs.mkdirSync(APPX_OUT, { recursive: true });
   const browser = await chromium.launch({ executablePath: chromiumPath() });
+  const render = async (dir, name, w, h, svg, transparent) => {
+    const page = await browser.newPage({ viewport: { width: w, height: h }, deviceScaleFactor: 1 });
+    await page.setContent(`<!doctype html><html><head>
+      <link rel="preconnect" href="https://fonts.gstatic.com">
+      <link href="https://fonts.googleapis.com/css2?family=Space+Grotesk:wght@400;600&display=swap" rel="stylesheet">
+      <style>html,body{margin:0;background:transparent}svg{display:block}</style>
+      </head><body>${svg}</body></html>`, { waitUntil: 'networkidle' });
+    await page.evaluate(() => document.fonts.ready);
+    await page.screenshot({ path: path.join(dir, name), omitBackground: transparent });
+    await page.close();
+    console.log(`${path.basename(dir)}/${name}  ${w}×${h}`);
+  };
   try {
-    for (const [name, w, h, svg, transparent] of JOBS) {
-      const page = await browser.newPage({ viewport: { width: w, height: h }, deviceScaleFactor: 1 });
-      await page.setContent(`<!doctype html><html><head>
-        <link rel="preconnect" href="https://fonts.gstatic.com">
-        <link href="https://fonts.googleapis.com/css2?family=Space+Grotesk:wght@400;600&display=swap" rel="stylesheet">
-        <style>html,body{margin:0;background:transparent}svg{display:block}</style>
-        </head><body>${svg}</body></html>`, { waitUntil: 'networkidle' });
-      await page.evaluate(() => document.fonts.ready);
-      await page.screenshot({ path: path.join(OUT, name), omitBackground: transparent });
-      await page.close();
-      console.log(`${name}  ${w}×${h}`);
-    }
+    for (const [name, w, h, svg, transparent] of JOBS) await render(OUT, name, w, h, svg, transparent);
+    for (const [name, w, h, svg] of APPX_JOBS) await render(APPX_OUT, name, w, h, svg, true);
   } finally {
     await browser.close();
   }

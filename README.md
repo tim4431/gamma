@@ -56,11 +56,11 @@ Ask the chat to tidy up: it can list, read, and search your papers, rename them,
 
 The **Gamma Connector** extension ([extension/](./extension/)) saves the paper you're reading in one click — PDF, metadata, folder, and labels — straight from the arXiv / DOI / publisher tab. Right-click clips a link or a text selection into your notes.
 
-## Also
+## Share, sync and move your data
 
 - **Share a page** — send a link to an annotated paper; invite people with view or edit rights, or open it to anyone with the link.
 - **Tabs follow you** — open tabs sync to your account, so another browser or device picks up right where you left off.
-- **Import** — Logseq PDF exports and Zotero libraries come in as pages with their annotations.
+- **Import** — Logseq PDF exports and Zotero libraries come in as pages with their annotations; Markdown folders and Notion exports come in as notes.
 - **Export** — download a zip of all your data (SQLite snapshots + every upload) from the account menu, and restore it on another instance.
 
 ---

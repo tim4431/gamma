@@ -12,6 +12,7 @@ import pytest
 from fastapi.testclient import TestClient
 
 import gamma.routers.clip as clip_mod
+import gamma.routers.metadata as metadata_mod
 import gamma.routers.pdf as pdf_mod
 from gamma.db import user_db_path, user_uploads_dir
 
@@ -247,9 +248,9 @@ def test_preview_resolves_identifier_to_registry_record(guest, monkeypatch):
                 "venue": "Physical Review Letters", "volume": "115", "pages": "137002",
                 "doi": doi, "arxiv_id": "", "source": "doi"}, "@article{x}"
 
-    monkeypatch.setattr(clip_mod, "_fetch_arxiv", fake_arxiv)
-    monkeypatch.setattr(clip_mod, "_fetch_doi", fake_doi)
-    clip_mod._PREVIEW_CACHE.clear()
+    monkeypatch.setattr(metadata_mod, "_fetch_arxiv", fake_arxiv)
+    monkeypatch.setattr(metadata_mod, "_fetch_doi", fake_doi)
+    metadata_mod._REGISTRY_CACHE.clear()
 
     r = guest.get("/api/library/preview", params={"url": "https://journals.aps.org/prl/pdf/10.1103/PhysRevLett.115.137002"})
     assert r.status_code == 200, r.text
@@ -264,7 +265,7 @@ def test_preview_resolves_identifier_to_registry_record(guest, monkeypatch):
     r = guest.get("/api/library/preview", params={"url": "https://arxiv.org/pdf/2601.01234v3"})
     assert r.status_code == 200 and r.json()["title"] == "Arx Paper" and r.json()["arxiv_id"] == "2601.01234"
     assert guest.get("/api/library/preview", params={"doi": "10.9999/nope"}).status_code == 404
-    assert "doi:10.9999/nope" not in clip_mod._PREVIEW_CACHE  # a miss may be a timeout — retried next time
+    assert "doi:10.9999/nope" not in metadata_mod._REGISTRY_CACHE  # a miss may be a timeout — retried next time
     assert guest.get("/api/library/preview", params={"url": "https://example.org/unknown"}).status_code == 400
     assert guest.get("/api/library/preview").status_code == 400
 

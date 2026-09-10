@@ -141,7 +141,7 @@
   <h3>Change storage folder</h3>
   <p>New folder:</p>
   <div class="creds" id="dataRootNew"></div>
-  <p id="dataRootText2" style="margin-top:10px"></p>
+  <p id="dataRootMoveNote"></p>
   <div class="row">
     <button class="uiBtn" onclick="dlgDataRoot.close()">Cancel</button>
     <button class="uiBtn" id="btnDataRootNewOnly">Only new workspaces</button>
@@ -339,8 +339,8 @@
   async function changeDataRoot(target) {
     const movable = state.movable || [];
     $('dataRootNew').textContent = target || state.defaultDataRoot;
-    $('dataRootText2').textContent = movable.length
-      ? `"Move data" copies ${movable.length === 1 ? 'the workspace' : `these ${movable.length} workspaces`} (${movable.join(', ')}) into the new folder — their servers restart, the old copies are deleted once the move succeeds. "Only new workspaces" leaves them where they are.`
+    $('dataRootMoveNote').textContent = movable.length
+      ? `"Move data" copies ${movable.length === 1 ? 'the workspace' : `these ${movable.length} workspaces`} (${movable.join(', ')}) into the new folder — their servers stop and start again the next time each is opened; the old copies are deleted once the move succeeds. "Only new workspaces" leaves them where they are.`
       : 'No local workspaces to move; new ones will be created here.';
     $('btnDataRootMove').hidden = !movable.length;
     const run = async (move) => {

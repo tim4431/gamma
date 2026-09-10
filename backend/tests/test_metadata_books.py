@@ -138,7 +138,7 @@ def test_ai_read_book_is_confirmed_by_the_registries(guest, monkeypatch):
     monkeypatch.setattr(metadata, "_crossref_search", lambda q, rows=5: [])
     searched = []
 
-    def fake_search(title, author="", rows=5):
+    def fake_search(title, author=""):
         searched.append((title, author))
         return [dict(OTHER_BOOK), dict(OL_HIT)]
     monkeypatch.setattr(metadata, "_book_search", fake_search)
@@ -163,7 +163,7 @@ def test_unconfirmed_ai_paper_is_flagged_but_notes_are_not(guest, monkeypatch):
     page = _paper_page(guest, "Some lecture text about lasers.", monkeypatch, ai_enabled=True)
     monkeypatch.setattr(metadata, "_resolve_model", lambda rt, m: "m")
     monkeypatch.setattr(metadata, "_crossref_search", lambda q, rows=5: [])
-    monkeypatch.setattr(metadata, "_book_search", lambda t, a="", rows=5: [])
+    monkeypatch.setattr(metadata, "_book_search", lambda t, a="": [])
     monkeypatch.setattr(metadata, "_call_ai",
                         lambda *a, **kw: '{"title": "A Study Of Lasers In Cavities", "authors": ["Q"], "kind": "paper"}')
     r = guest.post("/api/metadata/fetch", json={"block_id": page["id"]})

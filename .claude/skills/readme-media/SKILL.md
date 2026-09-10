@@ -90,10 +90,10 @@ GIFs (map 1:1 to README slots):
 | `docs/demo-download-and-chat.gif` | open paper by URL (pasted) → drag-select the abstract sentence → ask the AI briefly, watch the answer stream (the README **hero** GIF, first image) | `:9001` |
 | `docs/demo-reference-links.gif` | atom-arrays paper, page 3: click the tiny "36" citation once → jumps to the reference → select just the "36." number → click its arXiv link → **Fetch into Gamma**. Recorded at normal scale; a smooth **camera zoom** (post-process, `gen-zoom.py`) magnifies the citation+reference — the page itself never zooms (README "Link and organize" section) | `:9001` |
 | `docs/demo-library.gif` | HOME page (user rule: the library search is shown from home, not inside a paper): recents strip + folders visible → topbar search → "error correction" → grouped panel (Titles / Notes incl. a `highlight`-badged block / Library PDFs across papers) with the folder suggestion row → click it → chip narrows to one paper, retype → click a "· p. 1" hit → the QEC paper opens with every match marked (README "Search everything"). Recorder [record-library.mjs](./record-library.mjs); needs the clone enriched with a few notes + folders (the demo export has none) | isolated |
-| `docs/demo-notes.gif` | bare page "Rabi oscillations": type a sentence with `**bold**`, `==highlight==` and a `[[ref]]` chip → Enter/Tab → `$$` display math typed with the `\command` autocomplete, Tab argument hops and the live preview tip → Shift+Tab → a `> [!note]` callout with inline math → click away, everything renders (README "Take notes"). Recorder [record-notes.mjs](./record-notes.mjs); the page is created once (`POST /api/pages`), emptied before each run (`PUT /api/blocks/{id}/children {"blocks":[]}`), UI zoom 1.25 + crop to the top 640 px | isolated (writes notes) |
+| `docs/demo-notes.gif` | bare page "Rabi oscillations": type a sentence with `**bold**`, `==highlight==` and a `[[ref]]` chip → Enter/Tab → `$$` display math typed with the `\command` autocomplete, Tab argument hops and the live preview tip → Shift+Tab → a `> [!note]` callout with inline math → click away, everything renders (README "Take notes"). Recorder [record-notes.mjs](./record-notes.mjs); the page is created once (`POST /api/pages`), emptied before each run (`PUT /api/blocks/{id}/children {"blocks":[]}`), UI zoom 1.25 | isolated (writes notes) |
 | `docs/demo-agent.gif` | home chat: "Organize my library …" → tool chips stream (List/Read/Move) → folders appear in the list (README "An agent in your library"). Recorder [record-agent.mjs](./record-agent.mjs) | isolated (the agent MOVES pages) |
 | `docs/demo-connector.gif` | arXiv abs page → extension popup (opened as a page via `?tab=`, composited as an overlay on a frozen arXiv frame) → Save to Gamma into a folder → Open in Gamma (README "Save from your browser"). Recorder [record-connector.mjs](./record-connector.mjs): persistent context + `--load-extension`, popup video cropped to 360px and ffmpeg-overlaid, 3 segments concat'd; [gen-conn.py](./gen-conn.py) does the compositing plus a zoompan camera zoom on the POPUP ONLY (arXiv stays full-view — user preference; zoom out into Gamma; palette pass must run separately from zoompan or ffmpeg OOMs) | isolated |
-| `docs/demo-metadata.gif` | open arXiv 2312.03982 by URL (pre-roll trimmed) → click ⓘ while the fetch is still running: the popover opens with every field "—" and "Fetching metadata…", then Title / Authors / Venue / Year / DOI fill in on camera and the tab title flips → Share popover: slide citation + BibTeX, Copy BibTeX / Copy slide citation (icons flip to ticks). No hand edits (user rule). Camera zoom onto the right column (README "Metadata & citations"). Recorder [record-metadata.mjs](./record-metadata.mjs) + [gen-meta.py](./gen-meta.py) (trim, zoompan) | isolated (adds a page; the recorder resets it) |
+| `docs/demo-metadata.gif` | open arXiv 2312.03982 by URL (pre-roll trimmed) → click ⓘ while the fetch is still running: the popover opens with every field "—" and "Fetching metadata…", then Title / Authors / Venue / Year / DOI fill in on camera and the tab title flips → Share popover: slide citation + BibTeX, Copy BibTeX / Copy slide citation (icons flip to ticks). No hand edits (user rule). Camera zoom onto the right column (README "Metadata & citations"). Recorder [record-metadata.mjs](./record-metadata.mjs) + [gen-meta.py](./gen-meta.py) (trim, zoompan) | isolated (adds a page; delete it before each run) |
 
 Each GIF has its own checked-in recorder next to this file (`record-*.mjs`,
 some paired with a `gen-*.py` post-process); a new GIF gets a new recorder and
@@ -196,17 +196,18 @@ it and writes the webm path to `video_*.txt`) and adapt.
   id, which renders as a chip once the caret moves off — type the next char at
   once). Close the chat dock with `[aria-label="Close Chat"]`. For legibility
   the recorder sets `document.documentElement.style.zoom = 1.25` — divide the
-  fake cursor's `clientX/Y` by the zoom — and crops to the top 640 px.
+  fake cursor's `clientX/Y` by the zoom.
 - **Home page + stills (record-library.mjs / shoot-stills.mjs)**: a bare `/`
-  restores the last open paper (server prefs) — click `[aria-label="Home"]`
+  restores the last open paper (localStorage session, so only in a reused
+  browser profile) — click `[aria-label="Home"]`
   and wait for `.recentsCarousel`. On home, plain Ctrl+F focuses
   `.homeFindInput`; the grouped panel opens from the topbar
   `[aria-label="Search"]` (or Ctrl+Shift+F); groups there are Titles / Notes /
   Reference links / Library PDFs; force details on with
   `localStorage gamma-search-details-home='1'`. Page chats persist server-side
   (`/api/chats/{page_id}`) — DELETE before asking or the still shows every old
-  Q&A; an upstream timeout renders as an `Error:` AI bubble that a
-  length-stability poll mistakes for an answer (check `/^Error:/`, retry).
+  Q&A; an upstream timeout renders as a `.chatBubble.ai.error` bubble that a
+  length-stability poll mistakes for an answer (check for it, retry).
   Highlights mount lazily per page: scroll the page in and wait for
   `[data-page="N"] [data-hl-id]`. Restored block focus drops a "Cursor" chip
   into the chat composer — click its × so the question isn't block-scoped.
@@ -219,11 +220,12 @@ it and writes the webm path to `video_*.txt`) and adapt.
   suggestions `.categorySuggestionItem` (confirm on **mousedown**; only offered
   when the query is a substring of a folder/label name; confirming CLEARS the
   query, retype it), chips `.searchChip`, PDF marks `.pdfFindMark` (`.active`).
-  Wait for `.searchSection:has-text("Other PDFs")` and for the `Searching…`
-  `.searchHint` to vanish. After opening a hit the URL is `?block=<id>`; the old
-  paper's marks linger until the new one renders — wait for a mark inside a
-  painted `[data-page="1"]`. A stored read position (`/api/prefs/read-pos`)
-  races the pinned jump: reset it to page 1 (newer `at`) before recording.
+  Wait for `.searchSection:has-text("Library PDFs")` (`Other PDFs` when a
+  paper is open) and for the `Searching…` `.searchHint` to vanish. After
+  opening a hit the URL is `?block=<id>`; the old paper's marks linger until
+  the new one renders — wait for a mark inside a painted `[data-page="1"]`.
+  The pinned jump cancels the paper's last-read restore, so a stored read
+  position (`/api/prefs/read-pos`) can't scroll the match away.
   `POST /api/blocks` via curl on Windows mangles non-ASCII bodies — seed
   UTF-8 JSON from Python.
 - **Metadata (record-metadata.mjs)**: ⓘ in the Notes header is

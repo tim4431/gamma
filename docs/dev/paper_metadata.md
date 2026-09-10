@@ -49,17 +49,18 @@ AI output can be a plausible hallucination):
   resolved and, on success, replaced by the registry record; one that
   resolves nowhere and doesn't occur in the PDF is dropped as fabricated; the
   AI title is cross-checked against Crossref (≥0.92 title similarity +
-  compatible year upgrades it). When the AI classified the document as a
-  `book` (or `other`) and Crossref has nothing, the AI title + first author
-  go to the **book search** (`_book_search`: Open Library `search.json`,
-  then Google Books `intitle:/inauthor:`) and `_pick_book_match` accepts a
-  hit only when the titles are alike (≥0.9, or one is the other plus a
-  subtitle) *and* an author surname agrees — both were read off the title
-  page, the registry confirms they name a real book. The registry supplies
-  the canonical title, authors and publisher; the AI-read year stays (it
-  names the edition in hand, the registry's is the first publication); an
-  ISBN is adopted only if the PDF text prints it. Books that predate ISBNs
-  ("ancient" textbooks) resolve through exactly this path.
+  compatible year upgrades it).
+- **Book search.** When the AI classified the document as a `book` (or
+  `other`) and Crossref has nothing, the AI title + first author go to
+  `_book_search` (Open Library `search.json`, then Google Books
+  `intitle:/inauthor:`). `_pick_book_match` accepts a hit only when the
+  titles are alike (≥0.9, or one is the other plus a subtitle) *and* an
+  author surname agrees: both were read off the title page, and the
+  registry confirms they name a real book. The registry supplies the
+  canonical title, authors and publisher. The AI-read year stays, since it
+  names the edition in hand while the registry's is the first publication.
+  An ISBN is adopted only if the PDF text prints it, so books published
+  before ISBNs resolve through this path too.
 
 **Source and the unverified flag.** `meta.source` is `arxiv` / `doi` /
 `isbn` / `crossref` (search hit whose doi.org fetch failed) / `openlibrary`
@@ -94,7 +95,7 @@ citation).
 same fetch* as the metadata (`_make_ppt_cite`, one AI call over the BibTeX;
 the client passes its `cite_prompt`/`cite_model` prefs, `/api/clip` uses the
 defaults) and returned as `ppt_cite`, so it is ready the moment the record
-is — not the first time someone opens the share popover. A citation failure
+is. A citation failure
 never fails the fetch. `/api/metadata/cite` is the regenerate path (↻ in the
 share popover) and the fallback the client's citation effect uses on open
 for pages whose record predates this, whose citation call failed, or whose
@@ -108,8 +109,8 @@ adaptive batch retry (selected, else missing + unverified-AI; plus "Refetch
 all"/"Refetch shown" → sequential `metadata/fetch` with `force`).
 
 No Google Scholar — it has no API and blocks scraping. The book registries
-are keyless public APIs (Open Library; Google Books' anonymous quota is
-plenty for one library) — no config, like everything else here.
+(Open Library, Google Books' anonymous quota) are keyless public APIs;
+neither needs configuration.
 
 PDF uploads use the browser-provided original filename as their initial page
 title and enter a lazy sequential metadata queue after the upload UI completes.

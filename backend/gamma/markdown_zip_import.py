@@ -184,13 +184,12 @@ def _convert_asides(body: str) -> str:
     return _ASIDE_RE.sub(repl, body)
 
 
-def _csv_to_markdown(data: bytes):
-    """A Notion database CSV → GFM table (capped, cells pipe-escaped) and the
-    number of rows it holds."""
+def _csv_to_markdown(data: bytes) -> str:
+    """A Notion database CSV → GFM table (capped, cells pipe-escaped)."""
     text = data.decode("utf-8-sig", errors="replace")
     rows = [r for r in csv.reader(io.StringIO(text)) if any(c.strip() for c in r)]
     if not rows:
-        return "", 0
+        return ""
     width = min(max(len(r) for r in rows), MAX_TABLE_COLS)
 
     def cell(v):
@@ -203,15 +202,15 @@ def _csv_to_markdown(data: bytes):
     out += [line(r) for r in rows[1:MAX_TABLE_ROWS + 1]]
     if len(rows) - 1 > MAX_TABLE_ROWS:
         out.append(f"\n*… {len(rows) - 1 - MAX_TABLE_ROWS} more rows not shown*")
-    return "\n".join(out), len(rows) - 1
+    return "\n".join(out)
 
 
 # --- storing -----------------------------------------------------------------
 
-def insert_note_page(conn, page_id, title, props, tree, now, position=None) -> int:
-    """Insert a root page plus its ``{content, children}`` tree; returns the
-    number of note blocks written. ``position`` defaults to last-on-root."""
-    pos = position or generate_key_between(last_child_position(conn, "root"), None)
+def insert_note_page(conn, page_id, title, props, tree, now) -> int:
+    """Insert a root page (last on root) plus its ``{content, children}``
+    tree; returns the number of note blocks written."""
+    pos = generate_key_between(last_child_position(conn, "root"), None)
     conn.execute(
         "INSERT INTO unified_blocks (id,parent_id,position,content,properties,created_at,updated_at) "
         "VALUES (?,'root',?,?,?,?,?)",
@@ -238,7 +237,7 @@ def insert_note_page(conn, page_id, title, props, tree, now, position=None) -> i
 
 
 class _Plan:
-    __slots__ = ("entry", "page_id", "title", "folder", "body", "props", "existing", "csv_rows")
+    __slots__ = ("entry", "page_id", "title", "folder", "body", "props", "existing")
 
     def __init__(self, entry):
         self.entry = entry
@@ -248,7 +247,6 @@ class _Plan:
         self.body = ""
         self.props = {}
         self.existing = False
-        self.csv_rows = None
 
 
 def import_markdown_zip(user: str, zf: zipfile.ZipFile, conn, folder: str = "",
@@ -322,7 +320,7 @@ def import_markdown_zip(user: str, zf: zipfile.ZipFile, conn, folder: str = "",
         plan.folder = _dir_folder(e.path)
         if ext == ".csv":
             plan.title = clean_segment(_clean_stem(re.sub(r"_all$", "", stem)))[:500] or "Database"
-            plan.body, plan.csv_rows = _csv_to_markdown(raw)
+            plan.body = _csv_to_markdown(raw)
         else:
             try:
                 text = raw.decode("utf-8-sig")

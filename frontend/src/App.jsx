@@ -1,7 +1,7 @@
 import React, { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState } from "react";
 import { Panel, PanelGroup, PanelResizeHandle } from "react-resizable-panels";
 import PdfViewer, { COLORS, clampZoom } from "./pdfViewer";
-import { API, apiJson, withShare, makeId, fmtBytes, getDocIdForUrl, isPdfFile, isMarkdownFile, isUnverifiedPaperMeta, metaSourceInfo, importZoteroZip, resolvePdfUrl, pdfProxyUrl, probePdfUrl, setExpectedUser, getExpectedUser, usePersistedState, usePersistedFlag, copyText, copyRich, readNdjson } from "./utils";
+import { API, apiJson, withShare, makeId, fmtBytes, getDocIdForUrl, isPdfFile, isMarkdownFile, metaSourceInfo, importZoteroZip, resolvePdfUrl, pdfProxyUrl, probePdfUrl, setExpectedUser, getExpectedUser, usePersistedState, usePersistedFlag, copyText, copyRich, readNdjson } from "./utils";
 import {
   BlockDropIndicator,
   ChatMarkdown,
@@ -985,18 +985,7 @@ export default function App() {
       if (next === prev) return prev;
       const u = prefsUserRef.current;
       if (u) { try { localStorage.setItem(`gamma-pinned-folders:${u}`, JSON.stringify(next)); } catch {} }
-      if (pinnedFoldersPushRef.current) clearTimeout(pinnedFoldersPushRef.current);
-      pinnedFoldersPushRef.current = setTimeout(async () => {
-        pinnedFoldersPushRef.current = null;
-        if (!prefsUserRef.current) return;
-        try {
-          await apiJson(`${API}/prefs/pinned-folders`, {
-            method: "PUT",
-            headers: { "Content-Type": "application/json" },
-            body: JSON.stringify({ value: next }),
-          });
-        } catch {}
-      }, 600);
+      pushPrefSoon(pinnedFoldersPushRef, "pinned-folders", next);
       return next;
     });
   }
@@ -1348,6 +1337,11 @@ export default function App() {
   }
   const restoredPdfUrlRef = useRef(null);
   const coarseRestorePendingRef = useRef(false); // last-read jump not yet applied
+  // Something else is taking the viewport to its own target (a pinned search
+  // hit, a highlight deep link): calling this makes the coarse last-read
+  // jump stand down for the current document — its settle loop can't tell a
+  // programmatic scroll from layout drift and would fight it back.
+  const cancelCoarseRestoreRef = useRef(() => {});
   const [blocks, setBlocks] = useState([]);
   const [homeBlocks, setHomeBlocks] = useState([]);
   const [refCache, setRefCache] = useState({}); // { [blockId]: { content, page_title } }
@@ -1495,20 +1489,26 @@ export default function App() {
   // instant-paint cache — the index.html pre-paint script keeps reading it.
   const appearanceSyncRef = useRef("");      // JSON of the last state applied/pushed
   const appearanceLoadedRef = useRef(false); // gate: no pushes before a successful pull
-  function pushTabsToServer(tabs) {
-    if (tabsPushTimerRef.current) clearTimeout(tabsPushTimerRef.current);
-    tabsPushTimerRef.current = setTimeout(async () => {
-      tabsPushTimerRef.current = null;
+  // Debounced PUT of one synced pref (/api/prefs/<key>): quick successive
+  // changes collapse into the last value; `onSaved` gets the server reply.
+  // Shared by the open tabs, the recents queue and the pinned folders.
+  function pushPrefSoon(timerRef, key, value, onSaved) {
+    if (timerRef.current) clearTimeout(timerRef.current);
+    timerRef.current = setTimeout(async () => {
+      timerRef.current = null;
       if (!prefsUserRef.current) return;
       try {
-        const d = await apiJson(`${API}/prefs/open-tabs`, {
+        const d = await apiJson(`${API}/prefs/${key}`, {
           method: "PUT",
           headers: { "Content-Type": "application/json" },
-          body: JSON.stringify({ value: tabs }),
+          body: JSON.stringify({ value }),
         });
-        tabsSyncRef.current = d.updated_at || "";
+        onSaved?.(d);
       } catch {}
     }, 600);
+  }
+  function pushTabsToServer(tabs) {
+    pushPrefSoon(tabsPushTimerRef, "open-tabs", tabs, (d) => { tabsSyncRef.current = d.updated_at || ""; });
   }
   // Apply a server-side tabs state locally without echoing it back. A pending
   // local push is cancelled — the server copy applied here supersedes it (the
@@ -1766,19 +1766,7 @@ export default function App() {
   const recentsSyncRef = useRef("");  // updated_at of the last server state we applied/wrote
   const recentsPushTimerRef = useRef(null);
   function pushRecentsToServer(list) {
-    if (recentsPushTimerRef.current) clearTimeout(recentsPushTimerRef.current);
-    recentsPushTimerRef.current = setTimeout(async () => {
-      recentsPushTimerRef.current = null;
-      if (!prefsUserRef.current) return;
-      try {
-        const d = await apiJson(`${API}/prefs/recent-views`, {
-          method: "PUT",
-          headers: { "Content-Type": "application/json" },
-          body: JSON.stringify({ value: list }),
-        });
-        recentsSyncRef.current = d.updated_at || "";
-      } catch {}
-    }, 600);
+    pushPrefSoon(recentsPushTimerRef, "recent-views", list, (d) => { recentsSyncRef.current = d.updated_at || ""; });
   }
   function applyServerRecents(user, value, updatedAt) {
     recentsSyncRef.current = updatedAt || "";
@@ -2640,10 +2628,9 @@ export default function App() {
   // and doesn't spin for a fetch that belongs to a different page.
   const [metaFetchingIds, setMetaFetchingIds] = useState(() => new Set());
   const metaBusy = metaFetchingIds.has(focusedBlockId);
-  // Unverified-paper warning (red "!") — shared predicate with the Settings →
-  // Library status table, see isUnverifiedPaperMeta in utils.js.
-  const metaUnverifiedPaper = !!pageMeta && isUnverifiedPaperMeta(pageMeta.source, pageMeta.kind, pageMeta.unverified);
-  const metaSrc = metaSourceInfo(pageMeta); // provenance wording shared with the share popover
+  // Provenance wording shared with the share popover and the Settings →
+  // Library status table (utils.js); `warn` drives the red "!".
+  const metaSrc = metaSourceInfo(pageMeta);
   const [pptCite, setPptCite] = useState("");
   const [pptCiteBusy, setPptCiteBusy] = useState(false);
   // Pages whose slide citation this session already asked for (one try per
@@ -4764,12 +4751,6 @@ export default function App() {
     inp.click();
   }
 
-  // A Gamma share link is "<origin>/?share=<token>": the SPA root with a
-  // share query and nothing else in the path. That shape separates it from an
-  // ordinary PDF/paper URL in the "+" box without a network round trip, so a
-  // PDF hosted at some site's "/?share=" would be the one false positive — and
-  // pasting it there does what the user meant either way (it opens as a PDF
-  // once the share resolution fails). Returns the parsed URL or null.
   // Text pasted into the "+" box, reduced to what was meant: a link copied
   // out of a chat arrives with the app's decorations around it ("[7:54 PM]
   // https://…", trailing punctuation), so when the text contains an http(s)
@@ -4780,12 +4761,19 @@ export default function App() {
     return m ? m[0] : t;
   }
 
+  // A Gamma share link is "<origin>/?share=<token>": the SPA root with a
+  // share query and nothing else in the path. That shape separates it from an
+  // ordinary PDF/paper URL in the "+" box without a network round trip, so a
+  // PDF hosted at some site's "/?share=" would be the one false positive — and
+  // pasting it there does what the user meant either way (it opens as a PDF
+  // once the share resolution fails). Returns the cleaned link or null.
   function parseGammaShareLink(text) {
+    const link = cleanAddInput(text);
     let u;
-    try { u = new URL(cleanAddInput(text)); } catch { return null; }
+    try { u = new URL(link); } catch { return null; }
     if (!/^https?:$/.test(u.protocol) || !u.searchParams.get("share")) return null;
     if (u.pathname !== "/" && !u.pathname.endsWith("/index.html")) return null;
-    return u;
+    return link;
   }
 
   // Import a page from a share link — another Gamma's or this server's — into
@@ -5135,6 +5123,24 @@ export default function App() {
   // affordances (docs/dev/block_centric.md). pdfUrl is only the viewer's input.
   const pageAttach = useMemo(() => pageAttachment(focusedBlock), [focusedBlock]);
   const homeMode = !focusedBlockId && !shareMode;
+  // The props a folder card shares between the pinned strip and the library
+  // grid: glyph, title, count, selection/drag/drop behaviour and the context
+  // menu. Each site adds its own className, tip, time and extras.
+  function folderCardProps(f) {
+    return {
+      glyph: <FolderGlyph />,
+      title: f.slice(f.lastIndexOf("/") + 1),
+      kind: "Folder",
+      count: folderMeta[f]?.count || 0,
+      labelMode: fileLabels,
+      onDragStart: (e) => { e.dataTransfer.setData("text/plain", FOLDER_DRAG + f); e.dataTransfer.effectAllowed = "move"; },
+      onClick: (e) => handleFolderClick(f, e),
+      onContextMenu: openTagMenu("folder", f),
+      onDragOver: (e) => { e.preventDefault(); setFolderDragOver(f); },
+      onDragLeave: () => setFolderDragOver(null),
+      onDrop: (e) => dropOnFolder(e, f),
+    };
+  }
   const homeModeRef = useRef(homeMode);
   homeModeRef.current = homeMode;
   // Ctrl+scroll over the notes: session-only text size (see useTextScale).
@@ -5450,6 +5456,7 @@ export default function App() {
         if (hlId) scrollTarget = (highlights || []).find((x) => x.id === hlId);
       }
       if (scrollTarget && scrollToRef.current) {
+        cancelCoarseRestoreRef.current();
         scrollToRef.current({ position: scrollTarget.position });
         triggerFlash(scrollTarget.id);
       }
@@ -5479,6 +5486,13 @@ export default function App() {
     let cancelled = false;
     let tries = 0;
     const done = () => { coarseRestorePendingRef.current = false; };
+    cancelCoarseRestoreRef.current = () => {
+      if (cancelled) return;
+      dbg("restore: stood down — another jump owns the viewport");
+      cancelled = true;
+      restoredPdfUrlRef.current = pdfUrl;
+      done();
+    };
     const tryRestore = () => {
       if (cancelled) return;
       // Wait — uncounted — until THIS document's pages are in the DOM. No
@@ -5558,7 +5572,7 @@ export default function App() {
       settle();
     };
     tryRestore();
-    return () => { cancelled = true; done(); };
+    return () => { cancelled = true; done(); cancelCoarseRestoreRef.current = () => {}; };
   }, [pdfUrl, pdfHidden]);
 
   // Track PDF scroll position — feeds the page indicator and the synced
@@ -5912,8 +5926,8 @@ export default function App() {
                       className="pageActionBtn"
                       title={metaBusy
                         ? "Fetching paper metadata…"
-                        : metaUnverifiedPaper
-                          ? "Metadata was AI-extracted and could not be verified against a registry — check it before citing"
+                        : metaSrc?.warn
+                          ? metaSrc.hint
                           : "Paper metadata (authors, venue, DOI, source file…)"}
                       aria-label="Paper metadata"
                       onClick={(e) => {
@@ -5933,11 +5947,12 @@ export default function App() {
                           icon becomes a spinner while a fetch is running. */}
                       {metaBusy ? <span className="pillSpin" aria-hidden="true" /> : <InfoIcon size={15} />}
                     </button>
-                    {/* AI-extracted metadata never passed a registry check —
-                        flag it so nobody cites it unverified. Only for things
-                        that claim to be papers: course notes, slides etc.
+                    {/* Metadata nothing ties to this document (AI-extracted,
+                        or an identifier resolved but unconfirmed) — flag it
+                        so nobody cites it unverified. Only for things that
+                        claim to be papers: course notes, slides etc.
                         (meta.kind) have no registry record to verify against. */}
-                    {!metaBusy && metaUnverifiedPaper ? (
+                    {!metaBusy && metaSrc?.warn ? (
                       <span className="metaWarnDot" aria-hidden="true">!</span>
                     ) : null}
                     {openPopover === "meta" ? (
@@ -6240,22 +6255,12 @@ export default function App() {
                   {pinnedItems.map((item) => item.kind === "folder" ? (() => { const f = item.path; return (
                     <PageCard
                       key={item.key}
+                      {...folderCardProps(f)}
                       className={`${folderDragOver === f ? "dragOver" : ""} ${selectedFolders.has(f) ? "selected" : ""}`}
-                      glyph={<FolderGlyph />}
-                      title={f.slice(f.lastIndexOf("/") + 1)}
                       tip={`${f}\nClick to select · double-click to open · drop a page or folder to move it in`}
-                      kind="Folder"
-                      count={folderMeta[f]?.count || 0}
                       time={formatRelativeTime(folderMeta[f]?.updated)}
-                      labelMode={fileLabels}
                       draggable
-                      onDragStart={(e) => { e.dataTransfer.setData("text/plain", FOLDER_DRAG + f); e.dataTransfer.effectAllowed = "move"; }}
-                      onClick={(e) => handleFolderClick(f, e)}
                       onDoubleClick={() => openFolder(f)}
-                      onContextMenu={openTagMenu("folder", f)}
-                      onDragOver={(e) => { e.preventDefault(); setFolderDragOver(f); }}
-                      onDragLeave={() => setFolderDragOver(null)}
-                      onDrop={(e) => dropOnFolder(e, f)}
                     >
                       <button
                         className="pinBtn tilePinBtn pinned"
@@ -6453,14 +6458,10 @@ export default function App() {
                       if (item.kind === "folder") { const f = item.folder; return (
                       <PageCard
                         key={item.key}
+                        {...folderCardProps(f)}
                         className={`${dim} ${folderDragOver === f ? "dragOver" : ""} ${selectedFolders.has(f) ? "selected" : ""}`}
-                        glyph={<FolderGlyph />}
-                        title={f.slice(f.lastIndexOf("/") + 1)}
                         tip="Click to select · double-click to open · drop a page or folder to move it in"
-                        kind="Folder"
-                        count={folderMeta[f]?.count || 0}
                         time={cardTime(item)}
-                        labelMode={fileLabels}
                         renameNode={folderRenaming?.name === f ? (
                           <input
                             autoFocus
@@ -6475,13 +6476,7 @@ export default function App() {
                           />
                         ) : null}
                         draggable={folderRenaming?.name !== f}
-                        onDragStart={(e) => { e.dataTransfer.setData("text/plain", FOLDER_DRAG + f); e.dataTransfer.effectAllowed = "move"; }}
-                        onClick={(e) => handleFolderClick(f, e)}
                         onDoubleClick={() => { if (folderRenaming?.name !== f) openFolder(f); }}
-                        onContextMenu={openTagMenu("folder", f)}
-                        onDragOver={(e) => { e.preventDefault(); setFolderDragOver(f); }}
-                        onDragLeave={() => setFolderDragOver(null)}
-                        onDrop={(e) => dropOnFolder(e, f)}
                       />
                       ); }
                       const b = item.block;
@@ -7098,7 +7093,8 @@ export default function App() {
                   setOpenPopover(null);
                   // A share link from another Gamma (or this one) brings the
                   // whole page over; anything else is a paper to fetch.
-                  if (parseGammaShareLink(addUrl)) importSharedPage(cleanAddInput(addUrl));
+                  const shareLink = parseGammaShareLink(addUrl);
+                  if (shareLink) importSharedPage(shareLink);
                   else openPdf(cleanAddInput(addUrl));
                   setAddUrl("");
                 }
@@ -7229,6 +7225,7 @@ export default function App() {
         pendingBlockScrollRef={pendingBlockScrollRef}
         pdfSearchRef={pdfSearchRef}
         scrollToRef={scrollToRef}
+        cancelCoarseRestoreRef={cancelCoarseRestoreRef}
         setPdfHidden={setPdfHidden}
         docNonce={pdfDocNonce}
         onFindMarks={setFindMarks}

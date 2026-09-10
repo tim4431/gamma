@@ -523,8 +523,7 @@ function registerIpc() {
   // SQLite files closed, so every sidecar under the old root is stopped
   // first; they restart on the next open. A local workspace that is open
   // goes back to the launcher (its server is about to be killed).
-  ipcMain.handle('shell:set-data-root', shellOnly((dir, opts) => {
-    const move = !opts || opts.move !== false;
+  ipcMain.handle('shell:set-data-root', shellOnly((dir, { move = true } = {}) => {
     if (move) {
       const moving = new Set(registry.localsUnderRoot().map((w) => w.id));
       if (current && moving.has(current.id)) loadLauncher();
