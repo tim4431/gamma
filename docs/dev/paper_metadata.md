@@ -89,7 +89,8 @@ The fetch also kicks background search indexing for the paper
 document map and library-wide Ctrl+F shouldn't wait for the first search to
 discover it. `/api/metadata/update` saves hand-edited fields from the
 metadata popover (rebuilds BibTeX, source `manual`, invalidates the cached
-citation).
+citation). In the popover, the DOI and arXiv rows carry an open-on-registry
+link and a copy button for that URL beside the field.
 
 **Slide citation.** The PPT-style markdown citation is generated *in the
 same fetch* as the metadata (`_make_ppt_cite`, one AI call over the BibTeX;
@@ -117,7 +118,13 @@ title and enter a lazy sequential metadata queue after the upload UI completes.
 The page stores an `auto_title` compare-and-swap marker: a successful lookup may
 replace that filename with the paper title only while the page title still
 matches the marker. Any explicit rename clears it, so a slow lookup cannot
-overwrite the user's edit. The AI fallback model is selected in Settings →
+overwrite the user's edit. The fetch response always carries `page_title`,
+the page's title as it stands after the write (`title_updated` says whether
+*this* call did the rename): two lookups can race — the extension's
+background lookup after a clip and the one the app starts when the page is
+opened — and the loser still has to show the winner's rename, so the client
+(`mergeMetaResult` in App.jsx) takes the server's title over its own copy and
+drops the marker once the title has moved off it. The AI fallback model is selected in Settings →
 Providers; arXiv and DOI resolutions do not call that model.
 
 ## PDF resolution

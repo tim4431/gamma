@@ -137,7 +137,26 @@ function handleMarkdownCopy(e) {
   e.clipboardData.setData("text/html", holder.innerHTML);
 }
 
-const ChatMarkdown = React.memo(function ChatMarkdown({ text }) {
+// A link into this Gamma: "/?page=<id>" or "?block=<id>", relative or on
+// this origin. Returns the block id, else null.
+function gammaPageLink(href) {
+  if (!href) return null;
+  let path = href;
+  if (/^https?:\/\//i.test(href)) {
+    try {
+      const u = new URL(href);
+      if (u.origin !== window.location.origin) return null;
+      path = u.pathname + u.search;
+    } catch { return null; }
+  }
+  const m = path.match(/^\/?\?(?:page|block)=([^&#]+)/);
+  if (!m) return null;
+  try { return decodeURIComponent(m[1]); } catch { return null; }
+}
+
+// onOpenPage: opens a Gamma page link in place (the library agent links the
+// pages it found as /?page=<id>); Ctrl/Cmd-click still opens a new tab.
+const ChatMarkdown = React.memo(function ChatMarkdown({ text, onOpenPage }) {
   const normalized = useMemo(() => (text || "")
     .replace(/\\\[([\s\S]*?)\\\]/g, (_, m) => `\n$$\n${m}\n$$\n`)
     .replace(/\\\(([\s\S]*?)\\\)/g, (_, m) => `$${m}$`)
@@ -156,7 +175,21 @@ const ChatMarkdown = React.memo(function ChatMarkdown({ text }) {
         remarkPlugins={[remarkGfm, remarkMath]}
         rehypePlugins={[rehypeKatex]}
         components={{
-          a: ({ href, children }) => <a href={href} target="_blank" rel="noreferrer">{children}</a>,
+          a: ({ href, children }) => {
+            const pageId = onOpenPage ? gammaPageLink(href) : null;
+            if (pageId) {
+              return (
+                <a href={`?page=${encodeURIComponent(pageId)}`} className="chatPageLink"
+                  title="Open this page"
+                  onClick={(e) => {
+                    if (e.metaKey || e.ctrlKey) return;
+                    e.preventDefault();
+                    onOpenPage(pageId);
+                  }}>{children}</a>
+              );
+            }
+            return <a href={href} target="_blank" rel="noreferrer">{children}</a>;
+          },
         }}
       >
         {normalized}

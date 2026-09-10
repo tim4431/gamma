@@ -91,7 +91,7 @@ def test_migrated_auto_title_lets_metadata_rename(guest):
     page = make_page(guest, "PDF Notes - old.pdf", properties={"doc_id": "m" * 24})
     with sqlite3.connect(user_db_path("guest", "pages.db")) as conn:
         assert normalize_pages_db(conn)["pdf_notes_title"] == 1
-    assert _save_props("guest", page["id"], {"meta": {"title": "Real"}}, auto_title="Real Title") is True
+    assert _save_props("guest", page["id"], {"meta": {"title": "Real"}}, auto_title="Real Title") == (True, "Real Title")
     r = guest.get(f"/api/blocks/{page['id']}")
     assert r.json()["content"] == "Real Title" and "auto_title" not in r.json()["properties"]
 

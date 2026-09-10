@@ -185,3 +185,44 @@ def test_rename_during_metadata_fetch_wins(guest, monkeypatch):
     saved = guest.get(f"/api/blocks/{created['id']}").json()
     assert saved["content"] == "My deliberate title"
     assert saved["properties"]["meta"]["title"] == "Fetched Title"
+
+
+def test_fetch_reports_title_renamed_by_concurrent_lookup(guest, monkeypatch):
+    """Two lookups race (the extension's background one and the app's on
+    open): the loser must still report the page's current title — the
+    winner's rename — or the open page keeps showing the filename."""
+    from gamma.db import user_db_path
+    from gamma.routers import metadata
+
+    created = guest.post("/api/blocks/by-doc/filetitle3", json={
+        "default_title": "raced-paper.pdf",
+        "original_filename": "raced-paper.pdf",
+        "source_url": "https://arxiv.org/abs/2601.00001",
+    }).json()
+
+    def other_lookup_wins(_arxiv_id):
+        # What the winning lookup's _save_props leaves behind: the paper's
+        # title, marker cleared.
+        with sqlite3.connect(user_db_path("guest", "pages.db")) as conn:
+            row = conn.execute(
+                "SELECT properties FROM unified_blocks WHERE id=?", (created["id"],)
+            ).fetchone()
+            props = json.loads(row[0])
+            props.pop("auto_title", None)
+            conn.execute(
+                "UPDATE unified_blocks SET content=?, properties=? WHERE id=?",
+                ("Fetched Title", json.dumps(props), created["id"]),
+            )
+            conn.commit()
+        return ARXIV_META
+
+    monkeypatch.setattr(metadata, "_fetch_arxiv", other_lookup_wins)
+    r = guest.post("/api/metadata/fetch", json={"block_id": created["id"]})
+    assert r.status_code == 200, r.text
+    assert r.json()["title_updated"] is False
+    assert r.json()["page_title"] == "Fetched Title"
+
+    # The cached answer carries the title too.
+    r = guest.post("/api/metadata/fetch", json={"block_id": created["id"]})
+    assert r.json()["cached"] is True
+    assert r.json()["page_title"] == "Fetched Title"

@@ -3570,6 +3570,8 @@ button.pdfOutlineChevron:hover { background: rgba(128, 128, 128, 0.28); color: v
   cursor: pointer;
 }
 .chatToolActionHead.plain { cursor: default; }
+/* A reply's link to one of the user's pages (/?page=<id>) opens in place. */
+.chatPageLink { font-weight: 600; text-decoration: underline; text-decoration-style: dotted; text-underline-offset: 2px; }
 .chatToolActionHead:hover:not(.plain) { color: var(--text); }
 .chatToolAction.err .chatToolActionHead { color: var(--danger); }
 .chatToolActionHead svg { flex: none; }
