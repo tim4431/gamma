@@ -115,7 +115,8 @@ whole-list last-write-wins like the recents queue, with
 `gamma-pinned-folders:<user>` in localStorage as the instant-paint cache
 (`updatePinnedFolders` / `setFoldersPinned`). Pin/Unpin is on the folder
 context menu (acts on the folder selection when the clicked folder is part of
-one); the strip's folder card is the grid's folder card with an unpin button,
+one); a tab's right-click menu offers "Pin to library" for its page next to
+"Pin tab" (the tab-strip pin, a different thing); the strip's folder card is the grid's folder card with an unpin button,
 and it is a drop target like any folder. Folder rewrites carry pins along:
 `applyFolderMap` (rename/move) and `deleteFolderByName` remap the list
 (`remapPinnedFolders`), and a pin whose path no longer exists in

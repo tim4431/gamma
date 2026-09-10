@@ -8330,18 +8330,26 @@ export default function App() {
         } : null}
         diagnostics={{ statusBarVisible, setStatusBarVisible, sysLog, setStatus, isAdmin: !!authUser?.is_admin, debugLog, setDebugLog }}
       />
-      {tabMenu ? (
+      {tabMenu ? (() => {
+        // Two pins: the tab pin (this device's tab strip, synced with the
+        // tabs) and the library pin (the page's Pinned strip on the home
+        // page — properties.pinned, same as the home context menu).
+        const libPinned = !!homeBlocks.find((b) => b.id === tabMenu.id)?.properties?.pinned;
+        return (
         <ContextMenu x={tabMenu.x} y={tabMenu.y} onClose={() => setTabMenu(null)}>
-          <button className="ctxMenuItem ctxMenuItemIconed" onClick={() => { setTabMenu(null); toggleTabPinned(tabMenu.id); }}>
-            <span className="ctxMenuIcon"><PinIcon filled={!tabMenu.pinned} size={13} /></span>
+          <MenuItem icon={PinIcon} onClick={() => { setTabMenu(null); toggleTabPinned(tabMenu.id); }}>
             {tabMenu.pinned ? "Unpin tab" : "Pin tab"}
-          </button>
-          <button className="ctxMenuItem ctxMenuItemIconed" onClick={() => { setTabMenu(null); closeTab(tabMenu.id); }}>
-            <span className="ctxMenuIcon"><XIcon size={13} /></span>
+          </MenuItem>
+          <MenuItem icon={HomeIcon} title="Pinned pages sit in the Pinned strip at the top of the library, on every device"
+            onClick={() => { setTabMenu(null); setPagesPinned([tabMenu.id], !libPinned); }}>
+            {libPinned ? "Unpin from library" : "Pin to library"}
+          </MenuItem>
+          <MenuItem icon={XIcon} onClick={() => { setTabMenu(null); closeTab(tabMenu.id); }}>
             Close tab
-          </button>
+          </MenuItem>
         </ContextMenu>
-      ) : null}
+        );
+      })() : null}
       {homeMenu ? (
         <ContextMenu x={homeMenu.x} y={homeMenu.y} onClose={() => setHomeMenu(null)}>
             {homeMenu.kind === "page" ? (() => {
