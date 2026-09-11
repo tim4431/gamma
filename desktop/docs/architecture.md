@@ -175,9 +175,12 @@ dialog (tests only); `GAMMA_SHELL_NO_UPDATE=1` disables the updater.
   pypdfium2's native lib, ziamath/ziafont fonts, and `frontend/dist`).
   Handles conda-based interpreters by adding `<base>/Library/bin` to the
   DLL search path.
-- `build/icon.png` — app icon (512 px, the favicon mark; electron-builder
-  derives ico/icns and the Linux icon set). `build/entitlements.mac.plist` —
+- `assets/icon.png` — app icon (512 px, the favicon mark; electron-builder
+  derives ico/icns and the Linux icon set). `assets/entitlements.mac.plist` —
   hardened-runtime entitlements for signed mac builds.
+- `assets/appx/` and `assets/store/` — tracked Store package/listing images;
+  `scripts/store-art.js` regenerates them. The packager's build-resources
+  directory is `assets/`; `build/` holds generated PyInstaller intermediates.
 - `test/e2e.js` — the Playwright-driven end-to-end suite (see
   [checklist.md](checklist.md)). `test/smoke.js` — runs the app's `--smoke`
   self-test (dev or `--packaged`).

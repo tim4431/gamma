@@ -1,7 +1,7 @@
 <picture>
-  <source media="(prefers-color-scheme: dark)" srcset="./logos/gamma-logo-dark.svg">
-  <source media="(prefers-color-scheme: light)" srcset="./logos/gamma-logo-light.svg">
-  <img alt="Gamma" src="./logos/gamma-logo-light.svg" width="240">
+  <source media="(prefers-color-scheme: dark)" srcset="./docs/assets/branding/gamma-logo-dark.svg">
+  <source media="(prefers-color-scheme: light)" srcset="./docs/assets/branding/gamma-logo-light.svg">
+  <img alt="Gamma" src="./docs/assets/branding/gamma-logo-light.svg" width="240">
 </picture>
 
 # Gamma PDF Annotator
@@ -10,7 +10,7 @@
 
 ## 📄 Annotate & ask
 
-![Open a paper by URL, highlight the abstract, and ask the AI to explain it](./docs/demo-download-and-chat.gif)
+![Open a paper by URL, highlight the abstract, and ask the AI to explain it](./docs/assets/demos/demo-download-and-chat.gif)
 
 Open a paper by pasting any link (arXiv, DOI, or a publisher page — Gamma finds the PDF, and falls back to a legal open-access copy via Unpaywall when the DOI is paywalled) or drag the file in. Then:
 
@@ -20,7 +20,7 @@ Open a paper by pasting any link (arXiv, DOI, or a publisher page — Gamma find
 
 ## ✍️ Take notes
 
-![Typing in a note: markdown renders as you go, a LaTeX equation previews live with command autocomplete, then renders in place](./docs/demo-notes.gif)
+![Typing in a note: markdown renders as you go, a LaTeX equation previews live with command autocomplete, then renders in place](./docs/assets/demos/demo-notes.gif)
 
 Highlights and free notes are the same kind of block, so a paper's notes and a plain page are edited the same way:
 
@@ -30,29 +30,29 @@ Highlights and free notes are the same kind of block, so a paper's notes and a p
 
 ## 🤖 An agent in your library
 
-![Ask the chat to organize the library, tool calls stream by, and the papers get filed into topic folders](./docs/demo-agent.gif)
+![Ask the chat to organize the library, tool calls stream by, and the papers get filed into topic folders](./docs/assets/demos/demo-agent.gif)
 
 Ask the chat to tidy up: it can list, read, and search your papers, rename them, and file them into folders — every step shown as it runs, scoped to the folder you're in.
 
 ## 🔗 Link and organize
 
-![Follow a citation to its reference, then fetch the cited arXiv paper into Gamma with one click](./docs/demo-reference-links.gif)
+![Follow a citation to its reference, then fetch the cited arXiv paper into Gamma with one click](./docs/assets/demos/demo-reference-links.gif)
 
 - **Reference links** — citations in the PDF are clickable: jump to the reference, unwind jumps across documents with a global **← Back**, and fetch a cited arXiv/DOI paper into your library in one click. You can also link a citation to a paper you already have.
 - **Labels** — flat, cross-cutting tags for facets like an author or a keyword; a paper can carry several, and each is one click to filter by.
 - **Folders** — a topic hierarchy that builds itself from the paths you use: drop a paper into `qc/neutral-atom` and you get a **qc** folder with a **neutral-atom** subfolder — add `qc/superconducting` and the sibling appears, no need to hand-create each level as its own tag. Storage stays flat, so one paper can live in several folders.
 
-![From the home page, one search finds titles, notes, highlights, and every PDF's text at once; a folder chip narrows it, and opening a hit lights the matches up on the page](./docs/demo-library.gif)
+![From the home page, one search finds titles, notes, highlights, and every PDF's text at once; a folder chip narrows it, and opening a hit lights the matches up on the page](./docs/assets/demos/demo-library.gif)
 
 - **Search everything** — `Ctrl+F` searches across notes, highlights, and the full text of every PDF at once, with match-case / whole-word / regex toggles. Narrow the scope with chips for **both** labels (exact match, e.g. an author) and folders (prefix match, so `qc` pulls in everything beneath it). Matching is forgiving: "3000" finds "3,000-qubit" across a line break.
 
-![A freshly opened paper resolves its title, authors, and venue; one click copies BibTeX or a slide-ready citation](./docs/demo-metadata.gif)
+![A freshly opened paper resolves its title, authors, and venue; one click copies BibTeX or a slide-ready citation](./docs/assets/demos/demo-metadata.gif)
 
 - **Metadata & citations** — on open, each paper is resolved (arXiv → DOI → AI) so the title, authors, and venue auto-fill; any field can be hand-edited in the popover. One click copies BibTeX or a slide-ready citation that pastes into PowerPoint with real italics.
 
 ## 🌐 Save from your browser
 
-![On an arXiv page, the Gamma Connector popup saves the paper into a folder, then opens it in Gamma](./docs/demo-connector.gif)
+![On an arXiv page, the Gamma Connector popup saves the paper into a folder, then opens it in Gamma](./docs/assets/demos/demo-connector.gif)
 
 The **Gamma Connector** extension ([extension/](./extension/)) saves the paper you're reading in one click — PDF, metadata, folder, and labels — straight from the arXiv / DOI / publisher tab. Right-click clips a link or a text selection into your notes.
 
@@ -184,6 +184,8 @@ Multi-stage build: a Node stage compiles the frontend, the final Python image ru
 
 A single service: a **FastAPI** backend that also serves the built **React** frontend. In dev the two run separately with a Vite proxy. Per-folder notes live in [`backend/`](./backend/README.md) and [`frontend/`](./frontend/README.md) READMEs.
 
+For source and asset locations, see the [repository map](./docs/dev/repository.md).
+
 - **Everything is a block.** Highlights and free notes are rows in one `unified_blocks` table (self-referential `parent_id`, fractional-index `position`). Root-level blocks are pages; a page with a PDF is a paper.
 - **Per-user isolation.** `users.db` holds accounts and tokens; each user gets their own `pages.db` and `uploads/` folder under `GAMMA_DATA_DIR`.
 - **View modes come from the URL** (no router lib): `/` home · `/?page=<id>` a page · `/?block=<id>` jump to a block · `/?share=<token>` a shared page.
@@ -200,7 +202,7 @@ Gamma borrows the ideas from Logseq that fit PDF annotation: everything is a blo
 - Autosave is debounced at 500 ms; closing the tab within that window can lose the last keystroke.
 - No conflict handling for simultaneous edits across tabs/devices — last write wins.
 - Paywalled papers can't be fetched server-side; Gamma substitutes an open-access copy when one exists, otherwise download in your browser and drop the file in.
-- `src/App.jsx` is still one large component; decomposition is in progress.
+- `src/App.jsx` is still one large component; see the [decomposition plan](./docs/dev/frontend-refactor.md).
 
 ## License
 

@@ -1,5 +1,9 @@
 # src/
 
+The layout below describes the current code. The proposed feature folders,
+state ownership, and migration order are in the
+[App.jsx decomposition plan](../../docs/dev/frontend-refactor.md).
+
 ```
 main.jsx            React root
 App.jsx             application orchestration: routing, autosave, docking, home

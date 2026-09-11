@@ -6,8 +6,8 @@
 import { api, ApiError, getSettings, serverOrigin, whoAmI } from "./api.js";
 import "./doi.js"; // defines globalThis.gammaDoiFromPath
 
-const ICON_ON = { 16: "icons/icon16.png", 32: "icons/icon32.png" };
-const ICON_OFF = { 16: "icons/icon16-off.png", 32: "icons/icon32-off.png" };
+const ICON_ON = { 16: "assets/icons/icon16.png", 32: "assets/icons/icon32.png" };
+const ICON_OFF = { 16: "assets/icons/icon16-off.png", 32: "assets/icons/icon32-off.png" };
 const COLORS = { accent: "#3a7bd5", ok: "#2e8b5e", danger: "#c94a4a", muted: "#7a828e" };
 
 const ARXIV_RE = /arxiv\.org\/(?:abs|pdf)\/([0-9]{4}\.[0-9]{4,5})(?:v\d+)?/i;
@@ -287,7 +287,7 @@ async function notify(message, openUrl) {
   const id = `gamma-${Date.now()}`;
   if (openUrl) notifyTargets.set(id, openUrl);
   try {
-    await chrome.notifications.create(id, { type: "basic", iconUrl: "icons/icon128.png", title: "Gamma", message: String(message).slice(0, 300) });
+    await chrome.notifications.create(id, { type: "basic", iconUrl: "assets/icons/icon128.png", title: "Gamma", message: String(message).slice(0, 300) });
   } catch {}
 }
 

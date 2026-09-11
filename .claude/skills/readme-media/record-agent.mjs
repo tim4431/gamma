@@ -1,4 +1,4 @@
-// Records docs/demo-agent.gif source: home view, ask the chat to organize
+// Records docs/assets/demos/demo-agent.gif source: home view, ask the chat to organize
 // the library into folders, tool chips stream, folders appear in the list.
 import { chromium } from 'playwright';
 import fs from 'fs';

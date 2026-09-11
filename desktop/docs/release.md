@@ -57,7 +57,7 @@ secrets through:
 | Platform | Secrets | What it does |
 |---|---|---|
 | Windows | `AZURE_TENANT_ID`, `AZURE_CLIENT_ID`, `AZURE_CLIENT_SECRET`, `AZURE_SIGN_ENDPOINT`, `AZURE_SIGN_ACCOUNT`, `AZURE_SIGN_PROFILE`, optional `AZURE_SIGN_PUBLISHER` | [Azure Trusted Signing](https://learn.microsoft.com/azure/trusted-signing/) via electron-builder's `azureSignOptions`: signs `Gamma.exe`, the frozen `gamma-server.exe` and the NSIS installer. The three `AZURE_*` auth values are an Entra app registration (client secret) holding the *Trusted Signing Certificate Profile Signer* role on the account; endpoint is the region URL (e.g. `https://eus.codesigning.azure.net`), account/profile are the resource names, publisher the certificate subject (`CN=…`). |
-| macOS | `MAC_CERT_P12` (base64 of the *Developer ID Application* `.p12`: `base64 -i cert.p12 \| pbcopy`), `MAC_CERT_PASSWORD`, `APPLE_ID`, `APPLE_APP_SPECIFIC_PASSWORD`, `APPLE_TEAM_ID` | Developer ID signing (the macOS build step exports them as electron-builder's `CSC_LINK`/`CSC_KEY_PASSWORD` only when set — an empty `CSC_LINK` in the env is read as a certificate path and fails the build) with hardened runtime + `build/entitlements.mac.plist` (JIT + `disable-library-validation`, which the PyInstaller sidecar needs to load its Python extension modules; osx-sign walks the whole `.app`, so `Contents/Resources/gamma-server` is signed too), then notarization (`mac.notarize`) with an [app-specific password](https://support.apple.com/102654) and stapling. |
+| macOS | `MAC_CERT_P12` (base64 of the *Developer ID Application* `.p12`: `base64 -i cert.p12 \| pbcopy`), `MAC_CERT_PASSWORD`, `APPLE_ID`, `APPLE_APP_SPECIFIC_PASSWORD`, `APPLE_TEAM_ID` | Developer ID signing (the macOS build step exports them as electron-builder's `CSC_LINK`/`CSC_KEY_PASSWORD` only when set — an empty `CSC_LINK` in the env is read as a certificate path and fails the build) with hardened runtime + `assets/entitlements.mac.plist` (JIT + `disable-library-validation`, which the PyInstaller sidecar needs to load its Python extension modules; osx-sign walks the whole `.app`, so `Contents/Resources/gamma-server` is signed too), then notarization (`mac.notarize`) with an [app-specific password](https://support.apple.com/102654) and stapling. |
 
 Linux has no equivalent: a `.deb` file carries no signature (apt trusts
 repositories, not files), so the Linux build is neither signed nor warned
@@ -107,7 +107,8 @@ mismatch in any of them is rejected at upload. The Store ID is
 matches the logo tile's `#1e1e1c`.
 
 **Package assets.** electron-builder takes the MSIX's tile images from
-`build/appx/` (matched by directory name): `Square44x44Logo` (taskbar /
+`assets/appx/` (`directories.buildResources: 'assets'` in the packaging
+config, with `appx` matched by directory name): `Square44x44Logo` (taskbar /
 Start list, plus `targetsize-N` and `_altform-unplated` variants),
 `Square150x150Logo`, `Wide310x150Logo`, `SmallTile`, `LargeTile`,
 `StoreLogo`, `SplashScreen`, each with `.scale-125/150/200/400` variants
@@ -141,7 +142,7 @@ signs it.
 *Packages*: upload the `.appx`; fill the listing (screenshots, description),
 age rating, free pricing and the privacy-policy URL (mandatory because the
 app uses the network). The English listing text (description, feature
-bullets, search terms) is kept in [`build/store/listing.md`](../build/store/listing.md);
+bullets, search terms) is kept in [`assets/store/listing.md`](../assets/store/listing.md);
 paste the whole *Description* section, since a one-liner fails policy
 10.1.4.3 ("a few words or just the app title is not sufficient"). The policy is the repo's
 [`PRIVACY.md`](../../PRIVACY.md), so the URL is
@@ -149,10 +150,10 @@ paste the whole *Description* section, since a one-liner fails policy
 Gamma's own policy, naming the app and its developer, or certification
 fails policy 10.5.1 ("privacy policy is for an unrelated company"). The
 listing's *Store logos* (9:16 poster art, 1:1 box art) and *Store display
-images* (300/150/71 px app tile icons) are pre-rendered in `build/store/`;
+images* (300/150/71 px app tile icons) are pre-rendered in `assets/store/`;
 `npm run store-art` regenerates them, together with the package assets in
-`build/appx/`, from the logo mark with Playwright's Chromium
-(`build/store-art.js`, Windows only, and online: the poster's wordmark
+`assets/appx/`, from the logo mark with Playwright's Chromium
+(`scripts/store-art.js`, Windows only, and online: the poster's wordmark
 font comes from Google Fonts).
 The package version must increase per submission
 (`package.json` `<version>` becomes `<version>.0`; the Store requires the

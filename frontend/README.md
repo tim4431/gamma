@@ -9,7 +9,12 @@ npm run build    # → dist/  (FastAPI serves this in prod)
 ```
 
 - `src/` — app code, see src/README.md
-- `public/` — static assets served as-is (`favicon.svg`, `pdf.worker.min.mjs`)
+- `public/media/icons/` — app icons served as-is (`/media/icons/favicon.svg`)
+- `public/vendor/pdfjs/` — the legacy PDF worker, matching the installed `pdfjs-dist` version
+- `dist/assets/` — Vite-generated, content-hashed bundles; do not put unversioned public files here
 - `vite.config.js` — dev proxy + build config
 
 View modes are derived from the URL (no router lib): `/` home · `/?page=<id>` page · `/?share=<token>` public · `/?block=<id>` jump-to-block.
+
+Repository and asset locations: [docs/dev/repository.md](../docs/dev/repository.md).
+Planned application decomposition: [docs/dev/frontend-refactor.md](../docs/dev/frontend-refactor.md).

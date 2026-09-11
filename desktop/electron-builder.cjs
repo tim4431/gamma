@@ -46,8 +46,8 @@ module.exports = {
   // Nothing is ever published from here (the workflow runs --publish never
   // and creates the GitHub Release itself).
   publish: { provider: 'github', owner: 'tim4431', repo: 'Gamma', releaseType: 'release' },
-  directories: { output: 'dist' },
-  files: ['main.js', 'preload.js', 'lib/**', 'ui/**', 'build/icon.png', 'package.json'],
+  directories: { output: 'dist', buildResources: 'assets' },
+  files: ['main.js', 'preload.js', 'lib/**', 'ui/**', 'assets/icon.png', 'package.json'],
   extraResources: [{ from: 'dist-backend/gamma-server', to: 'gamma-server' }],
 
   win: {
@@ -80,7 +80,7 @@ module.exports = {
     displayName: 'Gamma PDF',
     applicationId: 'Gamma',
     languages: ['en-US'],
-    backgroundColor: '#1e1e1c', // the logo tile's background (build/store-art.js BG)
+    backgroundColor: '#1e1e1c', // the logo tile's background (scripts/store-art.js BG)
     showNameOnTiles: true,
   },
 
@@ -88,8 +88,8 @@ module.exports = {
     target: ['dmg', 'zip'],
     category: 'public.app-category.productivity',
     hardenedRuntime: true,
-    entitlements: 'build/entitlements.mac.plist',
-    entitlementsInherit: 'build/entitlements.mac.plist',
+    entitlements: 'assets/entitlements.mac.plist',
+    entitlementsInherit: 'assets/entitlements.mac.plist',
     gatekeeperAssess: false,
     notarize,
   },
@@ -99,7 +99,7 @@ module.exports = {
     // The binary and /usr/bin symlink (default would be the package name,
     // "gamma-desktop"); the install dir is /opt/Gamma (productName).
     executableName: 'gamma',
-    icon: 'build/icon.png',
+    icon: 'assets/icon.png',
     category: 'Office',
     synopsis: 'PDF annotation and notes',
     description: 'Gamma: highlight PDFs, keep notes as nested outliner blocks, share annotated copies. Opens local workspaces and remote Gamma servers.',

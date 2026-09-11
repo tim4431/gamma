@@ -12,6 +12,8 @@ Gamma is a self-hosted, Logseq-inspired PDF annotation server: highlight PDFs in
 
 Topic docs live in `docs/dev/` — **read the relevant one before working in that area**, and keep them in sync with code changes:
 
+- [docs/dev/repository.md](docs/dev/repository.md) — current source and asset locations, packaging inputs versus build outputs, and static asset cache rules.
+- [docs/dev/frontend-refactor.md](docs/dev/frontend-refactor.md) — proposed App.jsx decomposition, state ownership, logic cleanup, migration order, and validation; not yet implemented.
 - [docs/dev/block_centric.md](docs/dev/block_centric.md) — the block-centric product direction: target model (page = root block, PDF = attachment), inventory of remaining PDF-centric assumptions, staged roadmap. Read before generalizing any PDF-shaped feature.
 - [docs/dev/api.md](docs/dev/api.md) — every `/api/*` endpoint, grouped, plus the auth model.
 - [docs/dev/user_db.md](docs/dev/user_db.md) — the data directory and per-user DBs, auth middleware, seeding/first-run admin, `manage.py` CLI, user-management GUI, storage limits, the server log.

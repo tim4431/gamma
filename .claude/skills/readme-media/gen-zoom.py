@@ -3,7 +3,7 @@ import json, os, subprocess, sys
 SCRATCH = os.path.dirname(os.path.abspath(__file__))
 Z = json.load(open(os.path.join(SCRATCH, "links_zoom.json")))
 webm = open(os.path.join(SCRATCH, "video_links_path.txt")).read().strip()
-OUT = r"D:/Codes/Github/gamma/docs/demo-reference-links.gif"
+OUT = r"D:/Codes/Github/gamma/docs/assets/demos/demo-reference-links.gif"
 # the venv's imageio-ffmpeg static binary (full ffmpeg with the gif encoder)
 import glob
 FF = glob.glob(r"D:\Codes\Github\gamma\backend\venv\Lib\site-packages\imageio_ffmpeg\binaries\ffmpeg-win*.exe")[0]

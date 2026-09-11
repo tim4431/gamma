@@ -43,3 +43,9 @@ test harness; a packaged build reports *Development build* / *disabled* in
 the launcher's Updates row accordingly.
 
 Packaging and releasing: [docs/release.md](docs/release.md).
+
+Packaging inputs live in `assets/`: the app icon, macOS entitlements,
+`appx/` tiles, and `store/` listing artwork. `scripts/store-art.js` regenerates
+the Store images through `npm run store-art`. `build/` is for generated
+PyInstaller work/spec files; `dist/`, `dist-backend/`, and `dist-store/` hold
+build outputs. See the [repository map](../docs/dev/repository.md).

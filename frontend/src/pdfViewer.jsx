@@ -6,14 +6,14 @@ import React, { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useSta
 // modern build assumes (Promise.withResolvers is Safari 17.4+, and pdf.js
 // calls it the moment a loading task is created). Without it every iPad below
 // iOS 17.4 threw here at module scope and the whole app rendered blank.
-// public/pdf.worker.min.mjs is the matching legacy worker — keep both legacy.
+// public/vendor/pdfjs/pdf.worker.min.mjs is the matching legacy worker — keep both legacy.
 import * as pdfjsLib from "pdfjs-dist/legacy/build/pdf.mjs";
 import "pdfjs-dist/web/pdf_viewer.css";
 import { createPortal } from "react-dom";
 import { ChevronRightIcon, LinkIcon, MessageSquareIcon, OutlineIcon } from "./icons";
 import { segmentPage } from "./pdfTranslate";
 import { ChatMarkdown } from "./widgets";
-pdfjsLib.GlobalWorkerOptions.workerSrc = "/pdf.worker.min.mjs";
+pdfjsLib.GlobalWorkerOptions.workerSrc = "/vendor/pdfjs/pdf.worker.min.mjs";
 // Pre-warm the pdfjs worker so it downloads in parallel with later PDF fetches.
 // Guarded: a throw at module scope takes down every route, PDF or not.
 try {

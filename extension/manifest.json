@@ -35,8 +35,8 @@
     "default_popup": "popup.html",
     "default_title": "Save to Gamma",
     "default_icon": {
-      "16": "icons/icon16-off.png",
-      "32": "icons/icon32-off.png"
+      "16": "assets/icons/icon16-off.png",
+      "32": "assets/icons/icon32-off.png"
     }
   },
   "options_ui": {
@@ -44,10 +44,10 @@
     "open_in_tab": false
   },
   "icons": {
-    "16": "icons/icon16.png",
-    "32": "icons/icon32.png",
-    "48": "icons/icon48.png",
-    "128": "icons/icon128.png"
+    "16": "assets/icons/icon16.png",
+    "32": "assets/icons/icon32.png",
+    "48": "assets/icons/icon48.png",
+    "128": "assets/icons/icon128.png"
   },
   "commands": {
     "save-to-gamma": {

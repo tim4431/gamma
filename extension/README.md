@@ -55,5 +55,6 @@ Edge and other Chromium browsers load it the same way. Firefox needs a
 | `api.js` | settings in `chrome.storage.sync` + the fetch wrapper (cookie session, error parsing) |
 | `popup.html/js/css` | the popup (setup → offline → sign-in → save); styling mirrors the app's theme tokens and control recipes |
 | `options.html/js` | server, account, saving defaults |
+| `assets/icons/` | enabled/disabled toolbar icons, manifest icons, and notification icon |
 
 No build step: plain ES modules.
