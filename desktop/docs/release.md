@@ -140,7 +140,10 @@ signs it.
 **Submit.** Partner Center → the product → *Submissions* → new submission →
 *Packages*: upload the `.appx`; fill the listing (screenshots, description),
 age rating, free pricing and the privacy-policy URL (mandatory because the
-app uses the network). The policy is the repo's
+app uses the network). The English listing text (description, feature
+bullets, search terms) is kept in [`build/store/listing.md`](../build/store/listing.md);
+paste the whole *Description* section, since a one-liner fails policy
+10.1.4.3 ("a few words or just the app title is not sufficient"). The policy is the repo's
 [`PRIVACY.md`](../../PRIVACY.md), so the URL is
 `https://github.com/tim4431/Gamma/blob/main/PRIVACY.md`; it has to be
 Gamma's own policy, naming the app and its developer, or certification
