@@ -13,6 +13,10 @@
 // Flip IN_APP_INSTALL to `true` for darwin once the release workflow signs
 // and notarizes (docs/release.md); Windows NSIS updates work unsigned
 // (electron-updater only verifies a publisher when one is configured).
+// Linux (.deb): resources/package-type says `deb`, so electron-updater uses
+// its DebUpdater — the new .deb downloads in the background and *Restart to
+// update* installs it with `dpkg -i` through pkexec (a password prompt),
+// then relaunches. Reads `latest-linux.yml`.
 //
 // Nothing here runs in dev (`app.isPackaged` false: electron-updater needs
 // the packaged app-update.yml), under the test harness, or in a Microsoft

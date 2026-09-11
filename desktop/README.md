@@ -1,6 +1,6 @@
 # Gamma desktop (`desktop/`)
 
-The Windows/macOS app. It is deliberately a **thin shell**: Gamma's backend
+The Windows/macOS/Linux app. It is deliberately a **thin shell**: Gamma's backend
 and frontend are untouched — the shell is an Electron window plus a process
 manager, and the app the window shows always loads from the Gamma server it
 is connected to (exactly like a browser tab). No API-base plumbing, no CORS,

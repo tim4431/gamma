@@ -1,5 +1,6 @@
 # One GitHub Release for everything a user installs: the desktop app
-# (Windows installer + macOS dmg) and the browser extension zip. No tag
+# (Windows installer + macOS dmg + Debian/Ubuntu deb) and the browser
+# extension zip. No tag
 # ritual — run it from the Actions tab (workflow_dispatch) and it creates the
 # `v<version>` tag + release itself from the ref you ran it on. The Docker
 # image is a separate workflow (docker.yml, on every push to main); the
@@ -24,7 +25,10 @@
 #     "Developer ID Application" .p12), MAC_CERT_PASSWORD, APPLE_ID,
 #     APPLE_APP_SPECIFIC_PASSWORD, APPLE_TEAM_ID.
 # Unsigned builds: Windows shows SmartScreen (More info -> Run anyway), macOS
-# refuses to open ("damaged") until `xattr -dr com.apple.quarantine`.
+# refuses to open ("damaged") until `xattr -dr com.apple.quarantine`. The
+# Linux .deb has no signing at all (apt trusts repositories, not files);
+# the Linux job installs it on the runner and runs the smoke test from
+# /opt/Gamma to prove the package and its dependency list are sound.
 #
 # The Windows job also builds the Microsoft Store package (unsigned MSIX,
 # `store-windows` artifact) for manual upload to Partner Center; it is NOT a
@@ -79,7 +83,7 @@ jobs:
     strategy:
       fail-fast: false
       matrix:
-        os: [windows-latest, macos-latest]
+        os: [windows-latest, macos-latest, ubuntu-latest]
     runs-on: ${{ matrix.os }}
     env:
       # Signing credentials (see the header). Empty secrets = unsigned build;
@@ -178,6 +182,16 @@ jobs:
           npm ci
           npx electron-builder --publish never
 
+      # Linux: the .deb (electron-builder.cjs `linux`); nothing to sign.
+      - name: Build desktop app (Linux)
+        if: runner.os == 'Linux'
+        working-directory: desktop
+        shell: bash
+        run: |
+          npm ci
+          npx electron-builder --publish never
+          ls -la dist
+
       - name: Verify signature
         working-directory: desktop
         shell: bash
@@ -186,7 +200,7 @@ jobs:
             [ -z "$AZURE_CLIENT_ID" ] && exit 0
             exe=$(ls dist/*.exe | head -1)
             powershell -NoProfile -Command "\$s = Get-AuthenticodeSignature '$exe'; \$s | Format-List Status, StatusMessage, SignerCertificate; if (\$s.Status -ne 'Valid') { exit 1 }"
-          else
+          elif [ "$RUNNER_OS" = "macOS" ]; then
             [ -z "$MAC_CERT_P12" ] && exit 0
             app=$(ls -d dist/mac*/Gamma.app | head -1)
             codesign --verify --deep --strict --verbose=2 "$app"
@@ -197,10 +211,31 @@ jobs:
             fi
           fi
 
+      # Electron needs a display on Linux; the runner has none, so Xvfb.
       - name: Shell self-test (packaged app)
         working-directory: desktop
         shell: bash
-        run: node test/smoke.js --packaged
+        run: |
+          if [ "$RUNNER_OS" = "Linux" ]; then
+            command -v xvfb-run >/dev/null || { sudo apt-get update -qq && sudo apt-get install -y -qq xvfb; }
+            xvfb-run -a node test/smoke.js --packaged
+          else
+            node test/smoke.js --packaged
+          fi
+
+      # The actual deliverable: apt resolves the package's dependency list,
+      # the postinst sets up chrome-sandbox / the AppArmor profile, and the
+      # installed binary passes the same self-test with the sandbox ON.
+      - name: Install the .deb and self-test it
+        if: runner.os == 'Linux'
+        working-directory: desktop
+        shell: bash
+        run: |
+          sudo apt-get install -y ./dist/Gamma-*.deb
+          dpkg -s gamma-desktop | head -5
+          ls -la /opt/Gamma/gamma /opt/Gamma/resources/gamma-server/gamma-server /usr/bin/gamma
+          xvfb-run -a /opt/Gamma/gamma --smoke | tee smoke-installed.log
+          grep -q '^SMOKE {"ok":true' smoke-installed.log
 
       # Store package: deliberately unsigned (the AZURE_* env is blanked so
       # electron-builder does not sign the exe/appx with the Trusted Signing
@@ -236,6 +271,7 @@ jobs:
             desktop/dist/*.exe
             desktop/dist/*.dmg
             desktop/dist/*.zip
+            desktop/dist/*.deb
             desktop/dist/*.blockmap
             desktop/dist/latest*.yml
           if-no-files-found: error
@@ -286,7 +322,7 @@ jobs:
           ls -la assets
           base="https://github.com/$REPO/releases/download/$TAG"
           asset() { ls assets | grep -E "$1" | head -1; }
-          exe=$(asset '\.exe$'); dmg=$(asset '\.dmg$'); zipmac=$(asset 'mac.*\.zip$|darwin.*\.zip$'); ext=$(asset '^gamma-connector-.*\.zip$')
+          exe=$(asset '\.exe$'); dmg=$(asset '\.dmg$'); zipmac=$(asset 'mac.*\.zip$|darwin.*\.zip$'); deb=$(asset '\.deb$'); ext=$(asset '^gamma-connector-.*\.zip$')
           {
             echo "## Desktop app $VERSION"
             echo
@@ -295,12 +331,14 @@ jobs:
             [ -n "$exe" ] && echo "| Windows 10/11 (x64) | [$exe]($base/$exe) |"
             [ -n "$dmg" ] && echo "| macOS (Apple Silicon) | [$dmg]($base/$dmg) |"
             [ -n "$zipmac" ] && echo "| macOS (zip) | [$zipmac]($base/$zipmac) |"
+            [ -n "$deb" ] && echo "| Debian / Ubuntu (x64) | [$deb]($base/$deb) |"
             echo
             echo -n "Self-contained: no Python or Node needed."
             [ "$WIN_SIGNED" = "true" ] && echo -n " Windows build is code-signed (Azure Trusted Signing)." || echo -n " Windows build is unsigned — SmartScreen: *More info → Run anyway* (Edge: *… → Keep → Keep anyway*)."
-            [ "$MAC_SIGNED" = "true" ] && echo " macOS build is signed and notarized." || echo " macOS build is unsigned — if it says *damaged*, run \`xattr -dr com.apple.quarantine /Applications/Gamma.app\` once (or *Open Anyway* in System Settings → Privacy & Security)."
+            [ "$MAC_SIGNED" = "true" ] && echo -n " macOS build is signed and notarized." || echo -n " macOS build is unsigned — if it says *damaged*, run \`xattr -dr com.apple.quarantine /Applications/Gamma.app\` once (or *Open Anyway* in System Settings → Privacy & Security)."
+            [ -n "$deb" ] && echo " Linux: \`sudo apt install ./$deb\` (installs to \`/opt/Gamma\`, command \`gamma\`)." || echo
             echo
-            echo "Installed apps update themselves from this page (Help → *Check for Updates…*; Windows installs on restart, macOS offers the download until builds are signed). The \`latest*.yml\` and \`.blockmap\` assets are that update feed."
+            echo "Installed apps update themselves from this page (Help → *Check for Updates…*; Windows installs on restart, Linux asks for your password to run dpkg, macOS offers the download until builds are signed). The \`latest*.yml\` and \`.blockmap\` assets are that update feed."
             echo
             echo "## Browser extension $EXT_VERSION"
             echo

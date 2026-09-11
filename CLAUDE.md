@@ -22,7 +22,7 @@ Topic docs live in `docs/dev/` — **read the relevant one before working in tha
 - [docs/dev/import_export.md](docs/dev/import_export.md) — the Import/Export dialogs and pipelines: embedded PDF annotations, Zotero and Logseq imports, Markdown export, the notes-as-PDF document writer, the annotated-PDF writer, and the typesetting engine they share (fonts, vector math/CJK, images).
 - [docs/dev/home_library.md](docs/dev/home_library.md) — folder labels, the merged listing and sorts, the shared page card, recents strip + cover snapshots, the home context menu.
 - [docs/dev/extension.md](docs/dev/extension.md) — the Gamma Connector browser extension (`extension/`, MV3): detection, popup, the `/api/clip` ingest, auth via the shared session cookie.
-- [docs/dev/desktop.md](docs/dev/desktop.md) — the Windows/macOS desktop app (`desktop/`, Electron): the workspace model (local sidecar servers + remote URLs), launcher, sidecar lifecycle, PyInstaller freeze, the release workflow.
+- [docs/dev/desktop.md](docs/dev/desktop.md) — the Windows/macOS/Linux desktop app (`desktop/`, Electron): the workspace model (local sidecar servers + remote URLs), launcher, sidecar lifecycle, PyInstaller freeze, the release workflow.
 - [docs/dev/settings.md](docs/dev/settings.md) — where every setting is stored (localStorage / synced prefs / server), the Settings dialog's pane and file layout, storage limits.
 - [docs/dev/ui-design.md](docs/dev/ui-design.md) — the unified control classes, settings primitives, theme system, layout rules, frontend file map.
 - [docs/dev/debugging.md](docs/dev/debugging.md) — run/test/debug: commands, test suite, log surfaces, common gotchas.
