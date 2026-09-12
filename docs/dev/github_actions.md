@@ -128,6 +128,14 @@ so with a `::warning::`.
   a merge without a bump stays a build.
 - The Linux Electron steps need `xvfb-run`; the unpacked `linux-unpacked`
   dir needs `--no-sandbox` (the `.deb` postinst fixes that for installs).
+- Pin every action to a major that runs on the runner's current Node
+  (Node 24 as of 2026-09: `actions/checkout@v7`, `setup-node@v7`,
+  `setup-python@v7`, `upload-artifact@v7`, `download-artifact@v8`,
+  `softprops/action-gh-release@v3`, `docker/*` v4/v6/v7). A run annotated
+  "Node.js 20 is deprecated … forced to run on Node.js 24" means a pin fell
+  behind; check the action's `action.yml` `runs.using` at its latest tag.
+  The "UNSIGNED build" warnings are expected until the signing secrets
+  exist.
 - Validate YAML locally with the desktop tree's `js-yaml`
   (`node -e "require('js-yaml').load(require('fs').readFileSync(f,'utf8'))"`
   from `desktop/`), and keep this document, the `release` skill, and
