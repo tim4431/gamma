@@ -1,14 +1,16 @@
-# One GitHub Release for everything a user installs: the desktop app
-# (Windows installer + macOS dmg + Debian/Ubuntu deb) and the browser
-# extension zip. No tag
-# ritual — run it from the Actions tab (workflow_dispatch) and it creates the
-# `v<version>` tag + release itself from the ref you ran it on. The Docker
-# image is a separate workflow (docker.yml, on every push to main); the
-# release notes just point at it.
+# Desktop app: the Windows installer, macOS dmg/zip and Debian/Ubuntu deb,
+# published as the GitHub Release `v<version>` (version =
+# desktop/package.json). Overview of every workflow: docs/dev/github_actions.md.
 #
-# Version = desktop/package.json "version" (override with the input). The
-# extension zip carries its own manifest.json version. Re-running for a
-# version that already has a tag is refused: bump the version instead.
+# Runs on every push to main that touches the app or what it bundles
+# (desktop/, backend/, frontend/) and by hand from the Actions tab. Every run
+# builds and smoke-tests all three platforms; the GitHub Release is created
+# only when the `v<version>` tag does not exist yet. So a merge without a
+# version bump is a build check whose installers stay workflow artifacts,
+# and bumping desktop/package.json is what releases. The tag is created by
+# the release step itself — nobody pushes tags by hand. The browser
+# extension has its own workflow (extension.yml), the Docker image too
+# (docker.yml).
 #
 # Every installer bundles the frozen backend (PyInstaller) + built frontend,
 # so a released app is fully self-contained — no Python or Node needed.
@@ -34,9 +36,16 @@
 # `store-windows` artifact) for manual upload to Partner Center; it is NOT a
 # release asset because nobody can install it before the Store signs it.
 
-name: release
+name: desktop
 
 on:
+  push:
+    branches: [main]
+    paths:
+      - "desktop/**"
+      - "backend/**"
+      - "frontend/**"
+      - ".github/workflows/desktop.yml"
   workflow_dispatch:
     inputs:
       version:
@@ -44,13 +53,18 @@ on:
         required: false
         default: ""
       prerelease:
-        description: "Mark as pre-release"
+        description: "Mark as pre-release (installed apps ignore those)"
         type: boolean
         default: false
       publish:
-        description: "Create the GitHub Release (off = build artifacts only)"
+        description: "Create the GitHub Release when the tag is new (off = artifacts only)"
         type: boolean
         default: true
+
+# Two merges in a row queue instead of racing for the same tag.
+concurrency:
+  group: desktop-${{ github.ref }}
+  cancel-in-progress: false
 
 jobs:
   meta:
@@ -58,25 +72,30 @@ jobs:
     outputs:
       version: ${{ steps.v.outputs.version }}
       tag: ${{ steps.v.outputs.tag }}
-      ext_version: ${{ steps.v.outputs.ext_version }}
+      publish: ${{ steps.v.outputs.publish }}
     steps:
-      - uses: actions/checkout@v4
-        with:
-          fetch-depth: 0
+      - uses: actions/checkout@v7
       - id: v
         shell: bash
+        env:
+          IN_VERSION: ${{ inputs.version }}
+          IN_PUBLISH: ${{ inputs.publish }}
         run: |
-          version="${{ inputs.version }}"
+          version="$IN_VERSION"
           [ -z "$version" ] && version=$(node -p "require('./desktop/package.json').version")
-          ext_version=$(node -p "require('./extension/manifest.json').version")
-          echo "version=$version" >> "$GITHUB_OUTPUT"
-          echo "tag=v$version" >> "$GITHUB_OUTPUT"
-          echo "ext_version=$ext_version" >> "$GITHUB_OUTPUT"
-          if [ "${{ inputs.publish }}" = "true" ] && git rev-parse -q --verify "refs/tags/v$version" >/dev/null; then
-            echo "tag v$version already exists — bump desktop/package.json (or pass a new version)" >&2
-            exit 1
+          tag="v$version"
+          publish=true
+          if [ "$IN_PUBLISH" = "false" ]; then
+            publish=false
+            echo "::notice::publish=false — building artifacts only"
+          elif git ls-remote --exit-code --tags origin "refs/tags/$tag" >/dev/null 2>&1; then
+            publish=false
+            echo "::notice::tag $tag already exists — build only; bump desktop/package.json to release"
           fi
-          echo "Releasing Gamma $version (extension $ext_version) from $GITHUB_SHA"
+          echo "version=$version" >> "$GITHUB_OUTPUT"
+          echo "tag=$tag" >> "$GITHUB_OUTPUT"
+          echo "publish=$publish" >> "$GITHUB_OUTPUT"
+          echo "Gamma $version from $GITHUB_SHA (publish=$publish)"
 
   desktop:
     needs: meta
@@ -108,13 +127,13 @@ jobs:
       AZURE_SIGN_PROFILE: ${{ secrets.AZURE_SIGN_PROFILE }}
       AZURE_SIGN_PUBLISHER: ${{ secrets.AZURE_SIGN_PUBLISHER }}
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v7
 
-      - uses: actions/setup-node@v4
+      - uses: actions/setup-node@v7
         with:
           node-version: 22
 
-      - uses: actions/setup-python@v5
+      - uses: actions/setup-python@v7
         with:
           python-version: "3.12"
 
@@ -257,14 +276,15 @@ jobs:
           if ($LASTEXITCODE) { exit $LASTEXITCODE }
           Get-ChildItem dist-store
 
-      - uses: actions/upload-artifact@v4
+      - uses: actions/upload-artifact@v7
         if: runner.os == 'Windows'
         with:
           name: store-windows
           path: desktop/dist-store/*.appx
           if-no-files-found: error
+          retention-days: 30
 
-      - uses: actions/upload-artifact@v4
+      - uses: actions/upload-artifact@v7
         with:
           name: desktop-${{ matrix.os }}
           path: |
@@ -275,45 +295,25 @@ jobs:
             desktop/dist/*.blockmap
             desktop/dist/latest*.yml
           if-no-files-found: error
-
-  extension:
-    needs: meta
-    runs-on: ubuntu-latest
-    steps:
-      - uses: actions/checkout@v4
-      - name: Zip the extension
-        run: |
-          cd extension
-          zip -r "../gamma-connector-${{ needs.meta.outputs.ext_version }}.zip" . -x "STORE.md" "README.md" "*.DS_Store"
-          cd ..
-          unzip -l "gamma-connector-${{ needs.meta.outputs.ext_version }}.zip"
-      - uses: actions/upload-artifact@v4
-        with:
-          name: extension
-          path: gamma-connector-*.zip
-          if-no-files-found: error
+          retention-days: 14
 
   publish:
-    needs: [meta, desktop, extension]
-    if: inputs.publish
+    needs: [meta, desktop]
+    if: needs.meta.outputs.publish == 'true'
     runs-on: ubuntu-latest
     permissions:
       contents: write
     steps:
-      - uses: actions/checkout@v4
-      - uses: actions/download-artifact@v4
+      - uses: actions/checkout@v7
+      - uses: actions/download-artifact@v8
         with:
           path: assets
+          pattern: desktop-*
           merge-multiple: true
-      - name: Drop the Store package from the release assets
-        # Unsigned MSIX: only installable once the Store has signed it. It
-        # stays available as the `store-windows` workflow artifact.
-        run: rm -f assets/*.appx
       - name: Release notes
         shell: bash
         env:
           VERSION: ${{ needs.meta.outputs.version }}
-          EXT_VERSION: ${{ needs.meta.outputs.ext_version }}
           REPO: ${{ github.repository }}
           TAG: ${{ needs.meta.outputs.tag }}
           WIN_SIGNED: ${{ secrets.AZURE_CLIENT_ID != '' }}
@@ -322,7 +322,7 @@ jobs:
           ls -la assets
           base="https://github.com/$REPO/releases/download/$TAG"
           asset() { ls assets | grep -E "$1" | head -1; }
-          exe=$(asset '\.exe$'); dmg=$(asset '\.dmg$'); zipmac=$(asset 'mac.*\.zip$|darwin.*\.zip$'); deb=$(asset '\.deb$'); ext=$(asset '^gamma-connector-.*\.zip$')
+          exe=$(asset '\.exe$'); dmg=$(asset '\.dmg$'); zipmac=$(asset 'mac.*\.zip$|darwin.*\.zip$'); deb=$(asset '\.deb$')
           {
             echo "## Desktop app $VERSION"
             echo
@@ -340,9 +340,9 @@ jobs:
             echo
             echo "Installed apps update themselves from this page (Help → *Check for Updates…*; Windows installs on restart, Linux asks for your password to run dpkg, macOS offers the download until builds are signed). The \`latest*.yml\` and \`.blockmap\` assets are that update feed."
             echo
-            echo "## Browser extension $EXT_VERSION"
+            echo "## Browser extension"
             echo
-            [ -n "$ext" ] && echo "[$ext]($base/$ext) — unzip, then \`chrome://extensions\` → *Developer mode* → *Load unpacked*. Works in Chrome, Edge and other Chromium browsers."
+            echo "The Gamma Connector has its own releases, tagged \`extension-v<version>\`: [latest extension release](https://github.com/$REPO/releases?q=extension-v&expanded=true)."
             echo
             echo "## Server (Docker)"
             echo
@@ -354,13 +354,17 @@ jobs:
             echo
           } > notes.md
           cat notes.md
-      - uses: softprops/action-gh-release@v2
+      # make_latest keeps this release as the repository's "latest" — the
+      # installed apps' updater resolves /releases/latest, so an extension
+      # release (published with make_latest=false) must never take it over.
+      - uses: softprops/action-gh-release@v3
         with:
           tag_name: ${{ needs.meta.outputs.tag }}
           target_commitish: ${{ github.sha }}
           name: Gamma ${{ needs.meta.outputs.version }}
           body_path: notes.md
           generate_release_notes: true
-          prerelease: ${{ inputs.prerelease }}
+          prerelease: ${{ inputs.prerelease == true }}
+          make_latest: ${{ inputs.prerelease != true }}
           files: assets/*
           fail_on_unmatched_files: true

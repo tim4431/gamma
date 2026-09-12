@@ -22,30 +22,34 @@ Linux is a Debian/Ubuntu `.deb` for x64 (`linux` + `deb` blocks): it
 installs to `/opt/Gamma` with the binary `gamma` (also symlinked into
 `/usr/bin`; `executableName` in the config — the default would have been
 the package name `gamma-desktop`) and a desktop entry in the *Office*
-category. `sudo apt install ./Gamma-<version>-linux-x64.deb` pulls the
+category. `sudo apt install ./Gamma-<version>-linux-amd64.deb` pulls the
 runtime dependencies (GTK 3, NSS, …) that electron-builder lists in the
 package. The unpacked `dist/linux-unpacked` dir has no setuid
 `chrome-sandbox` (the deb's postinst sets that up, plus an AppArmor profile
 on Ubuntu ≥ 24.04), so `test/smoke.js` and `test/e2e.js` start it with
 `--no-sandbox`; on a headless machine wrap them in `xvfb-run -a`.
 
-## The `release` workflow
+## The `desktop` workflow
 
-**Releasing** is one workflow, `.github/workflows/release.yml`, run by hand
-from the Actions tab (or `gh workflow run release.yml --ref main`; the
-`release` skill wraps it). It builds Windows + macOS + Linux installers
+**Releasing** is `.github/workflows/desktop.yml`. It runs on every push to
+`main` that touches `desktop/`, `backend/` or `frontend/` (the app bundles
+all three) and by hand (`gh workflow run desktop.yml --ref main`; the
+`release` skill wraps it). Every run builds Windows + macOS + Linux
 (frontend build → backend freeze → frozen-server health check →
 electron-builder → signature verification → packaged `--smoke`; the Linux
 job additionally `apt install`s the `.deb` on the runner and runs the
-`--smoke` self-test from `/opt/Gamma/gamma`, sandbox on, under Xvfb), zips
-the browser extension,
-and publishes everything as ONE GitHub Release `Gamma <version>` — creating
-the `v<version>` tag itself, so no tags are pushed by hand. The version is
-`desktop/package.json`'s (bump it before releasing; a version that already
-has a tag is refused); the extension zip carries `extension/manifest.json`'s
-own version. Inputs: `version` override, `prerelease`, and `publish=false`
-for artifacts only. The Docker image is a separate workflow (`docker.yml`,
-every push to `main`).
+`--smoke` self-test from `/opt/Gamma/gamma`, sandbox on, under Xvfb). The
+GitHub Release `Gamma <version>` is created only when the `v<version>` tag
+does not exist yet — the workflow creates that tag itself, so no tags are
+pushed by hand. The version is `desktop/package.json`'s: bump it and merge,
+and the merge releases; a merge without a bump is a build check whose
+installers stay workflow artifacts for 14 days. Dispatch inputs: `version`
+override, `prerelease`, and `publish=false` to force build-only. The
+browser extension (`extension.yml`, releases tagged `extension-v<version>`,
+published with `make_latest: false` so the desktop release stays the
+repository's "latest" — the updater depends on that) and the Docker image
+(`docker.yml`) are separate workflows; all three side by side:
+[docs/dev/github_actions.md](../../docs/dev/github_actions.md).
 
 ## Code signing (optional, secret-gated)
 

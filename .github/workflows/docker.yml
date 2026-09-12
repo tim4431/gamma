@@ -1,8 +1,8 @@
 # Server image only. Runs on every push to main (`latest`) — independent of
-# release.yml, which builds the desktop installers + extension zip into a
-# GitHub Release and creates `v*` tags with GITHUB_TOKEN (those never
-# re-trigger workflows, so a hand-pushed `v*` tag is the only way to get a
-# semver-tagged image here).
+# desktop.yml / extension.yml, which build the installers and the extension
+# zip into their own GitHub Releases and create their tags with GITHUB_TOKEN
+# (those never re-trigger workflows, so a hand-pushed `v*` tag is the only
+# way to get a semver-tagged image here). Overview: docs/dev/github_actions.md.
 name: Build and publish Docker image
 
 on:
@@ -22,16 +22,16 @@ jobs:
       packages: write
     steps:
       - name: Checkout
-        uses: actions/checkout@v4
+        uses: actions/checkout@v7
 
       - name: Set up QEMU
-        uses: docker/setup-qemu-action@v3
+        uses: docker/setup-qemu-action@v4
 
       - name: Set up Docker Buildx
-        uses: docker/setup-buildx-action@v3
+        uses: docker/setup-buildx-action@v4
 
       - name: Log in to GitHub Container Registry
-        uses: docker/login-action@v3
+        uses: docker/login-action@v4
         with:
           registry: ghcr.io
           username: ${{ github.actor }}
@@ -39,7 +39,7 @@ jobs:
 
       - name: Extract metadata
         id: meta
-        uses: docker/metadata-action@v5
+        uses: docker/metadata-action@v6
         with:
           images: ${{ env.IMAGE_NAME }}
           tags: |
@@ -49,7 +49,7 @@ jobs:
             type=sha
 
       - name: Build and push
-        uses: docker/build-push-action@v6
+        uses: docker/build-push-action@v7
         with:
           context: .
           platforms: linux/amd64,linux/arm64

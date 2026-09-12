@@ -15,9 +15,11 @@ keep it in sync:**
   sidecar servers + remote URLs), the window (shell bar + content view),
   remote reachability probes, in-app updates, shell state on disk, the file
   map, invariants.
-- [docs/release.md](docs/release.md) — package, the `release` workflow,
+- [docs/release.md](docs/release.md) — package, the `desktop` workflow,
   code signing (Azure Trusted Signing / Apple notarization, secret-gated),
-  the auto-update feed, distribution alternatives (Store, winget).
+  the auto-update feed, distribution alternatives (Store, winget). The
+  repo's workflows side by side:
+  [docs/dev/github_actions.md](../docs/dev/github_actions.md).
 - [docs/checklist.md](docs/checklist.md) — the pre-release QA checklist and
   what `npm run e2e` / `npm run e2e:packaged` cover.
 

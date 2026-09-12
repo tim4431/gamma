@@ -10,8 +10,9 @@ nothing in `backend/` or `frontend/` needs to know about it:
   bar with the workspace switcher + content view), remote reachability
   probes, in-app updates, shell state, file map, invariants.
 - [desktop/docs/release.md](../../desktop/docs/release.md) — package, the
-  unified `release` workflow, secret-gated code signing, the auto-update
-  feed, distribution alternatives.
+  `desktop` workflow, secret-gated code signing, the auto-update feed,
+  distribution alternatives. All workflows side by side:
+  [github_actions.md](github_actions.md).
 - [desktop/docs/checklist.md](../../desktop/docs/checklist.md) — the
   pre-release QA checklist and what `npm run e2e` / `npm run e2e:packaged`
   cover.

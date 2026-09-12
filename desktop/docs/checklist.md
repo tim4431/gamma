@@ -101,10 +101,10 @@ or says it is a manual look (**manual**).
 
 | # | Check | How |
 |---|---|---|
-| 8.1 | `desktop/package.json` version bumped (the release tag is `v<version>`; an existing tag is refused) | manual |
-| 8.2 | `release` workflow: frontend build → freeze → frozen health check → electron-builder → signature verify → packaged smoke, all three OSes; Linux also installs the `.deb` and smokes `/opt/Gamma/gamma` | CI |
-| 8.3 | Release page lists `Gamma-<v>-win-x64.exe` (+ `.blockmap`, `latest.yml`), `Gamma-<v>-mac-arm64.dmg`/`.zip` (+ `latest-mac.yml`), `Gamma-<v>-linux-x64.deb` (+ `latest-linux.yml`), `gamma-connector-<v>.zip`; the release is NOT a draft / pre-release (installed apps skip those) | manual on the release page |
-| 8.4 | Fresh machine: installer runs (unsigned: SmartScreen *Run anyway*; signed: no SmartScreen block, *Publisher* shows the cert subject in the UAC prompt; Debian/Ubuntu: `sudo apt install ./Gamma-<v>-linux-x64.deb` pulls the deps), first launch creates a workspace, no Python/Node needed | manual |
+| 8.1 | `desktop/package.json` version bumped (the release tag is `v<version>`; with an existing tag the workflow only builds) | manual |
+| 8.2 | `desktop` workflow: frontend build → freeze → frozen health check → electron-builder → signature verify → packaged smoke, all three OSes; Linux also installs the `.deb` and smokes `/opt/Gamma/gamma` | CI |
+| 8.3 | Release page lists `Gamma-<v>-win-x64.exe` (+ `.blockmap`, `latest.yml`), `Gamma-<v>-mac-arm64.dmg`/`.zip` (+ `latest-mac.yml`), `Gamma-<v>-linux-amd64.deb` (+ `latest-linux.yml`); the release is NOT a draft / pre-release (installed apps skip those) and is marked *Latest* (an `extension-v*` release must never be) | manual on the release page |
+| 8.4 | Fresh machine: installer runs (unsigned: SmartScreen *Run anyway*; signed: no SmartScreen block, *Publisher* shows the cert subject in the UAC prompt; Debian/Ubuntu: `sudo apt install ./Gamma-<v>-linux-amd64.deb` pulls the deps), first launch creates a workspace, no Python/Node needed | manual |
 | 8.5 | Signed macOS build: `codesign --verify --deep --strict Gamma.app` and `spctl --assess --type execute Gamma.app` pass; a fresh download opens without the *damaged* dialog (the release job's *Verify signature* step covers this on the runner) | manual |
 
 ## Last run
