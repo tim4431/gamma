@@ -1,0 +1,102 @@
+# Browser extension (Gamma Connector): zips extension/ and publishes it as
+# the GitHub Release `extension-v<version>` (version =
+# extension/manifest.json). Overview of every workflow: docs/dev/github_actions.md.
+#
+# Runs on every push to main that touches extension/ and by hand. The
+# release is created only when that tag does not exist yet; otherwise the
+# zip is just a workflow artifact and bumping the manifest version is what
+# releases. It is published with make_latest=false so the repository's
+# "latest release" — what the desktop app's updater resolves — stays the
+# desktop release (desktop.yml). The Chrome Web Store upload of the zip is
+# still a manual step (extension/STORE.md).
+
+name: extension
+
+on:
+  push:
+    branches: [main]
+    paths:
+      - "extension/**"
+      - ".github/workflows/extension.yml"
+  workflow_dispatch:
+    inputs:
+      publish:
+        description: "Create the GitHub Release when the tag is new (off = artifact only)"
+        type: boolean
+        default: true
+
+concurrency:
+  group: extension-${{ github.ref }}
+  cancel-in-progress: false
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+    steps:
+      - uses: actions/checkout@v4
+
+      - id: v
+        shell: bash
+        env:
+          IN_PUBLISH: ${{ inputs.publish }}
+        run: |
+          version=$(node -p "require('./extension/manifest.json').version")
+          tag="extension-v$version"
+          publish=true
+          if [ "$IN_PUBLISH" = "false" ]; then
+            publish=false
+            echo "::notice::publish=false — building the zip only"
+          elif git ls-remote --exit-code --tags origin "refs/tags/$tag" >/dev/null 2>&1; then
+            publish=false
+            echo "::notice::tag $tag already exists — zip only; bump extension/manifest.json to release"
+          fi
+          echo "version=$version" >> "$GITHUB_OUTPUT"
+          echo "tag=$tag" >> "$GITHUB_OUTPUT"
+          echo "publish=$publish" >> "$GITHUB_OUTPUT"
+          echo "Gamma Connector $version from $GITHUB_SHA (publish=$publish)"
+
+      - name: Zip the extension
+        run: |
+          cd extension
+          zip -r "../gamma-connector-${{ steps.v.outputs.version }}.zip" . -x "STORE.md" "README.md" "*.DS_Store"
+          cd ..
+          unzip -l "gamma-connector-${{ steps.v.outputs.version }}.zip"
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: extension
+          path: gamma-connector-*.zip
+          if-no-files-found: error
+          retention-days: 14
+
+      - name: Release notes
+        if: steps.v.outputs.publish == 'true'
+        shell: bash
+        env:
+          VERSION: ${{ steps.v.outputs.version }}
+          REPO: ${{ github.repository }}
+          TAG: ${{ steps.v.outputs.tag }}
+        run: |
+          zip="gamma-connector-$VERSION.zip"
+          {
+            echo "## Gamma Connector $VERSION"
+            echo
+            echo "[$zip](https://github.com/$REPO/releases/download/$TAG/$zip) — unzip, then \`chrome://extensions\` → *Developer mode* → *Load unpacked*. Works in Chrome, Edge and other Chromium browsers."
+            echo
+            echo "The desktop app and server have their own releases: [latest Gamma release](https://github.com/$REPO/releases/latest)."
+            echo
+          } > notes.md
+          cat notes.md
+
+      - uses: softprops/action-gh-release@v2
+        if: steps.v.outputs.publish == 'true'
+        with:
+          tag_name: ${{ steps.v.outputs.tag }}
+          target_commitish: ${{ github.sha }}
+          name: Gamma Connector ${{ steps.v.outputs.version }}
+          body_path: notes.md
+          make_latest: false
+          files: gamma-connector-*.zip
+          fail_on_unmatched_files: true

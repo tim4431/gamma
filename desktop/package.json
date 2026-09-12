@@ -2,6 +2,8 @@
   "name": "gamma-desktop",
   "version": "0.2.1",
   "description": "Gamma desktop shell: opens local and remote Gamma workspaces",
+  "homepage": "https://github.com/tim4431/Gamma",
+  "author": "Tim <tim4431@users.noreply.github.com>",
   "main": "main.js",
   "private": true,
   "scripts": {
