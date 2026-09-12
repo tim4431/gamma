@@ -123,6 +123,8 @@ export default function ChatDock({
   // refreshes the home feed and onNotesChange reloads touched pages' notes.
   organizeFolder = null, toolRounds, agentReadChars, agentPerms, setAgentPerms, agentSystem,
   agentEnabled, onLibraryChange, onNotesChange, onAgentEvent,
+  // Opens a page the reply links to (/?page=<id>) in place.
+  onOpenPage,
   onGrip, onGripDoubleClick, collapsed, onClose,
 }) {
   const [chatMessages, setChatMessages] = useState([]);
@@ -1156,7 +1158,7 @@ export default function ChatDock({
                     ) : null}
                     {isUser
                       ? <div className="chatUserText">{m.text}</div>
-                      : <ChatMarkdown text={m.text} />}
+                      : <ChatMarkdown text={m.text} onOpenPage={onOpenPage} />}
                   </div>
                   <div className="chatMsgActions">
                     <button type="button" className="chatMsgActionBtn" title="Copy message"

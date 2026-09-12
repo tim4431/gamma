@@ -895,6 +895,15 @@ def agent_system(scope: dict, perms: dict | None = None, base: str = "") -> str:
                  "context, ids in brackets): " + ", ".join(f'"{b}"' for b in chips)
                  + ". A request to change/rewrite/expand them means those ids.\n")
     text += f"Available tools: {', '.join(names)}. Any other tool is disabled in the user's settings."
+    if any(n in names for n in ("list_pages", "read_page", "read_block", "search_library")):
+        # The chat renders /?page=<id> links as open-in-place; the ids come
+        # from the tool results (list_pages, search hits, read_* headers).
+        text += (
+            "\nWhen you point the user to one of their pages — a paper you found, a "
+            "page you read or changed — write it as a markdown link with the page "
+            "title as the text and /?page=<page_id> as the target, e.g. "
+            "[Optimal Displacement Sensing](/?page=abc123): the chat opens it in "
+            "place. Use only page ids the tools returned.")
     if "read_page" in names or "search_library" in names:
         text += (
             "\nFor any question about what a page or its PDF says — a number, a "

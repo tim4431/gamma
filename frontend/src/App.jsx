@@ -76,6 +76,9 @@ import {
   normalizeLinkInput,
   parseFolderTags,
   scorePaperMatch,
+  NO_LABEL,
+  NO_LABEL_TITLE,
+  labelTitle,
 } from "./libraryUtils";
 
 // PDF load phases that own a row in the background-transfers popover; every
@@ -128,7 +131,7 @@ try { const old = localStorage.getItem("gamma-home-kinds"); if (old && old !== "
 function homeUrlFor(folder, label) {
   const q = [];
   if (folder) q.push(`folder=${encodeURIComponent(folder)}`);
-  if (label) q.push(`category=${encodeURIComponent(label)}`);
+  if (label) q.push(label === NO_LABEL ? "unlabelled=1" : `category=${encodeURIComponent(label)}`);
   return q.length ? `/?${q.join("&")}` : "/";
 }
 
@@ -278,7 +281,7 @@ export default function App() {
   const initialUrl = params.get("src") || params.get("url") || "";
   const initialShare = params.get("share") || "";
   const initialBlockId = params.get("block") || params.get("page") || "";
-  const initialCategory = params.get("category") || "";
+  const initialCategory = params.get("unlabelled") ? NO_LABEL : (params.get("category") || "");
   const initialFolder = params.get("folder") || "";
   // shareMode: this tab shows a page through a ?share= link — no account of
   // its own, no library, no chat, no prefs sync. readOnly: the block tree
@@ -1062,6 +1065,12 @@ export default function App() {
     setStatus(changed ? `Labelled ${plural(changed)} “${name}”.` : `Already labelled “${name}”.`);
   }
 
+  // Strip every label (the "No label" tile's drop target).
+  async function clearPagesLabels(ids) {
+    const changed = await retagPages(ids, "category", (tags) => (tags.length ? [] : null));
+    setStatus(changed ? `Cleared the labels on ${plural(changed)}.` : "No labels to clear.");
+  }
+
   // Remove one label from pages (the label view's back-row drop target).
   async function removePagesFromLabel(ids, name) {
     await retagPages(ids, "category",
@@ -1182,7 +1191,7 @@ export default function App() {
 
   // Drop dispatch for label rows/tiles: pages get the label, folder drags are
   // ignored (a folder can't be "labelled" — its papers each carry their own).
-  function dropOnLabel(e, name, onPages = (ids) => addPagesToLabel(ids, name)) {
+  function dropOnLabel(e, name, onPages = (ids) => (name === NO_LABEL ? clearPagesLabels(ids) : addPagesToLabel(ids, name))) {
     e.preventDefault();
     setFolderDragOver(null);
     if (droppedFolderPaths(e)) { setStatus("Folders can’t carry labels — drop pages instead."); return; }
@@ -2844,6 +2853,20 @@ export default function App() {
     }
   }
 
+  // The page as the server left it after a metadata lookup: the record plus
+  // the page's CURRENT title. The title is the server's word, not "renamed by
+  // this call" — the extension's background lookup races the one the app
+  // starts when the page opens, and whichever loses still has to show the
+  // winner's rename. The automatic-title marker is gone once the title
+  // moved off it.
+  function mergeMetaResult(block, data) {
+    const content = data.page_title || block.content;
+    const props = { ...block.properties, meta: data.meta, bibtex: data.bibtex,
+      ppt_cite: data.ppt_cite || undefined, meta_error: undefined };
+    if (props.auto_title && props.auto_title !== content) props.auto_title = undefined;
+    return { ...block, content, properties: props };
+  }
+
   async function fetchMetadata(block, force) {
     if (!block?.id) return;
     if (force) setStatus("Refreshing paper metadata…");
@@ -2856,23 +2879,10 @@ export default function App() {
       // off, or that one call failed) the citation effect gets one retry.
       setPptCite(data.ppt_cite || "");
       if (!data.ppt_cite) attemptedCiteRef.current.delete(block.id);
-      setFocusedBlock((prev) => prev && prev.id === block.id
-        ? {
-            ...prev,
-            ...(data.page_title ? { content: data.page_title } : {}),
-            properties: {
-              ...prev.properties,
-              meta: data.meta,
-              bibtex: data.bibtex,
-              ppt_cite: data.ppt_cite || undefined,
-              meta_error: undefined,
-              ...(data.title_updated ? { auto_title: undefined } : {}),
-            },
-          }
-        : prev);
-      // Auto-fill the page title from metadata when it's still the default filename
-      // title — awaited so the library refetch below can't win the race and
-      // resurrect the stale name in the link dialog / home list.
+      setFocusedBlock((prev) => prev && prev.id === block.id ? mergeMetaResult(prev, data) : prev);
+      // The title follows the server (a filename title replaced by the
+      // paper's) — set before the library refetch below so a stale name can't
+      // resurface in the link dialog / home list.
       if (data.page_title && focusedBlockIdRef.current === block.id) setPageTitle(data.page_title);
       if (!data.cached) {
         setStatus(`Paper metadata found (${data.source === "ai" ? "AI-extracted" : data.source}).`);
@@ -2909,20 +2919,14 @@ export default function App() {
       try {
         const data = await fetchMetadataRequest(block);
         completed++;
-        if (data.page_title) block.content = data.page_title;
-        block.properties = {
-          ...block.properties,
-          meta: data.meta,
-          bibtex: data.bibtex,
-          ppt_cite: data.ppt_cite || undefined,
-          meta_error: undefined,
-          ...(data.title_updated ? { auto_title: undefined } : {}),
-        };
+        Object.assign(block, mergeMetaResult(block, data));
         if (focusedBlockIdRef.current === block.id) {
           setPageMeta(data.meta || null);
           setPageBibtex(data.bibtex || "");
           setPptCite(data.ppt_cite || "");
-          setFocusedBlock({ ...block });
+          // Merge into the live copy — the upload's block is a snapshot from
+          // before the page was opened (labels, folders edited since).
+          setFocusedBlock((prev) => prev && prev.id === block.id ? mergeMetaResult(prev, data) : prev);
           if (data.page_title) setPageTitle(data.page_title);
         }
       } catch {} // task already marked failed by fetchMetadataRequest
@@ -5266,11 +5270,15 @@ export default function App() {
   );
   // Per-label rollup over the pages in scope — the flat mirror of folderMeta,
   // so label tiles sort and count exactly like folder tiles.
+  // Pages carrying no label roll up under NO_LABEL, so the labels view can
+  // show what still needs filing (the entry exists only while there are any).
   const labelMeta = useMemo(() => {
     const m = {};
     for (const b of scopePages) {
       const v = viewedAtById.get(b._pageId) || "";
-      for (const l of new Set(b._labels)) {
+      const labels = new Set(b._labels);
+      if (!labels.size) labels.add(NO_LABEL);
+      for (const l of labels) {
         const meta = (m[l] ||= { count: 0, updated: "", created: "", viewed: "" });
         meta.count++;
         if (b._updatedAt > meta.updated) meta.updated = b._updatedAt;
@@ -5280,7 +5288,10 @@ export default function App() {
     }
     return m;
   }, [scopePages, viewedAtById]);
-  const scopeLabels = useMemo(() => Object.keys(labelMeta).sort((a, b) => a.localeCompare(b)), [labelMeta]);
+  const scopeLabels = useMemo(
+    () => Object.keys(labelMeta).filter((l) => l !== NO_LABEL).sort((a, b) => a.localeCompare(b)),
+    [labelMeta]
+  );
   // What the home list shows: containers and files as ONE sorted listing —
   // inside a folder → its subfolders + pages tagged exactly that path; at
   // root → top-level folders + EVERY page as a recents feed, loaded
@@ -5298,15 +5309,17 @@ export default function App() {
       _viewedAt: folderMeta[f]?.viewed || "",
     }));
     if (labelMode) {
-      for (const l of scopeLabels) {
+      // The "No label" catch-all rides along, pinned last after the sort.
+      for (const l of labelMeta[NO_LABEL] ? [...scopeLabels, NO_LABEL] : scopeLabels) {
         items.push({
-          kind: "label", key: `label:${l}`, label: l, _title: l,
+          kind: "label", key: `label:${l}`, label: l, _title: labelTitle(l),
           _updatedAt: labelMeta[l].updated, _createdAt: labelMeta[l].created,
           _viewedAt: labelMeta[l].viewed,
         });
       }
     }
-    const pages = categoryFilter ? scopePages.filter((b) => b._labels.includes(categoryFilter))
+    const pages = categoryFilter === NO_LABEL ? scopePages.filter((b) => !b._labels.length)
+      : categoryFilter ? scopePages.filter((b) => b._labels.includes(categoryFilter))
       : homeKinds === "folders" || labelMode ? []
       : scopePages;
     for (const b of pages) {
@@ -5323,6 +5336,8 @@ export default function App() {
       : homeSort === "viewed" ? (a, b) => ((b._viewedAt || "").localeCompare(a._viewedAt || "") || (b._updatedAt || "").localeCompare(a._updatedAt || ""))
       : (a, b) => (b._updatedAt || "").localeCompare(a._updatedAt || "");
     items.sort(cmp);
+    const none = items.findIndex((it) => it.kind === "label" && it.label === NO_LABEL);
+    if (none >= 0) items.push(...items.splice(none, 1));
     const match = makeFindMatcher(homeQuery);
     if (!match) return items;
     // A page also matches on its chips, so "cs229" surfaces its papers.
@@ -5342,7 +5357,9 @@ export default function App() {
   // (pages are created plain, then labelled) nor when only folders show.
   const newPageAllowed = !categoryFilter && homeKinds !== "folders" && homeKinds !== "labels";
   // What an empty listing says — the view it is empty for, not the library.
-  const homeEmptyText = categoryFilter
+  const homeEmptyText = categoryFilter === NO_LABEL
+    ? "Every page here carries a label."
+    : categoryFilter
     ? `Nothing is labelled “${categoryFilter}” here — drop a page on a label to add it.`
     : homeKinds === "labels"
       ? (folderFilter ? "No labels on the pages in this folder yet." : "No labels yet — add one from a page’s label field.")
@@ -6010,16 +6027,27 @@ export default function App() {
                                   }}
                                   placeholder="—"
                                 />
-                                {key === "doi" && metaDraft?.doi?.trim() ? (
-                                  <a className="metaLink" href={`https://doi.org/${metaDraft.doi.trim()}`} target="_blank" rel="noreferrer" title="Open on doi.org">
-                                    <ExternalLinkIcon size={11} />
-                                  </a>
-                                ) : null}
-                                {key === "arxiv_id" && metaDraft?.arxiv_id?.trim() ? (
-                                  <a className="metaLink" href={`https://arxiv.org/abs/${metaDraft.arxiv_id.trim()}`} target="_blank" rel="noreferrer" title="Open on arXiv">
-                                    <ExternalLinkIcon size={11} />
-                                  </a>
-                                ) : null}
+                                {/* Identifier rows: open the registry page, or copy its URL. */}
+                                {(key === "doi" || key === "arxiv_id") && metaDraft?.[key]?.trim() ? (() => {
+                                  const id = metaDraft[key].trim();
+                                  const url = key === "doi" ? `https://doi.org/${id}` : `https://arxiv.org/abs/${id}`;
+                                  const site = key === "doi" ? "doi.org" : "arXiv";
+                                  return (
+                                    <>
+                                      <a className="metaLink" href={url} target="_blank" rel="noreferrer" title={`Open on ${site}`}>
+                                        <ExternalLinkIcon size={11} />
+                                      </a>
+                                      <button
+                                        className="chatMsgActionBtn metaRowBtn"
+                                        title={`Copy the ${site} link`}
+                                        aria-label={`Copy ${site} link`}
+                                        onClick={() => copyFlash(key, url)}
+                                      >
+                                        {copiedKey === key ? <CheckIcon size={12} /> : <CopyIcon size={12} />}
+                                      </button>
+                                    </>
+                                  );
+                                })() : null}
                                 {key === "title" ? (
                                   <button
                                     className="searchToggle metaRowBtn"
@@ -6324,18 +6352,22 @@ export default function App() {
                     <div
                       className={`folderRow folderBackRow ${folderDragOver === "__label_up__" ? "dragOver" : ""}`}
                       onClick={closeLabel}
-                      onDragOver={(e) => { e.preventDefault(); setFolderDragOver("__label_up__"); }}
-                      onDragLeave={() => setFolderDragOver(null)}
-                      onDrop={(e) => dropOnLabel(e, categoryFilter, (ids) => removePagesFromLabel(ids, categoryFilter))}
-                      title="Back — or drop a page here to take this label off it"
+                      // Inside "No label" there is no label to take off — the
+                      // back row is plain navigation there.
+                      {...(categoryFilter === NO_LABEL ? { title: "Back" } : {
+                        onDragOver: (e) => { e.preventDefault(); setFolderDragOver("__label_up__"); },
+                        onDragLeave: () => setFolderDragOver(null),
+                        onDrop: (e) => dropOnLabel(e, categoryFilter, (ids) => removePagesFromLabel(ids, categoryFilter)),
+                        title: "Back — or drop a page here to take this label off it",
+                      })}
                     >
                       <ArrowLeftIcon size={14} />
                       <span className="folderName">{folderFilter || "All files"}</span>
-                      <span className="folderHint">drop here to remove this label</span>
+                      {categoryFilter === NO_LABEL ? null : <span className="folderHint">drop here to remove this label</span>}
                     </div>
                     ) : null}
                     <div className="folderCurrent">
-                      {categoryFilter ? <LabelIcon size={15} /> : <FolderOpenIcon size={15} />}
+                      {categoryFilter ? <LabelIcon size={15} strokeDasharray={categoryFilter === NO_LABEL ? "2 1.5" : undefined} /> : <FolderOpenIcon size={15} />}
                       {/* Breadcrumb: every path segment navigates to its level */}
                       {(folderFilter ? folderFilter.split("/") : []).map((seg, i, segs) => {
                         const prefix = segs.slice(0, i + 1).join("/");
@@ -6349,11 +6381,15 @@ export default function App() {
                       {categoryFilter ? (
                         <span>
                           {folderFilter ? <span className="crumbSep">/</span> : null}
+                          {categoryFilter === NO_LABEL ? (
+                            <span className="crumbBtn" title="Pages without any label">{NO_LABEL_TITLE}</span>
+                          ) : (
                           <button
                             className="crumbBtn"
                             title="Right-click to rename or delete this label"
                             onContextMenu={openTagMenu("label", categoryFilter)}
                           >{categoryFilter}</button>
+                          )}
                         </span>
                       ) : null}
                     </div>
@@ -6361,7 +6397,7 @@ export default function App() {
             ) : null}
             {homeMode ? (
               <div className="homeListBar">
-                <span className="homeListLabel">{categoryFilter ? "Labelled" : folderFilter ? "Contents" : "Library"}</span>
+                <span className="homeListLabel">{categoryFilter === NO_LABEL ? "Unlabelled" : categoryFilter ? "Labelled" : folderFilter ? "Contents" : "Library"}</span>
                 <span className="homeListSpacer" />
                 <ListFindBox value={homeQuery} onChange={setHomeQuery} />
                 <MenuSelect
@@ -6440,16 +6476,18 @@ export default function App() {
                       <PageCard
                         key={item.key}
                         className={`${dim} ${folderDragOver === l ? "dragOver" : ""} ${selectedLabels.has(l) ? "selected" : ""}`}
-                        glyph={<LabelGlyph />}
-                        title={l}
-                        tip="Click to select · double-click to open · drop a page to label it"
+                        glyph={<LabelGlyph dashed={l === NO_LABEL} />}
+                        title={labelTitle(l)}
+                        tip={l === NO_LABEL
+                          ? "Pages without any label · double-click to open · drop a page to clear its labels"
+                          : "Click to select · double-click to open · drop a page to label it"}
                         kind="Label"
                         count={labelMeta[l]?.count || 0}
                         time={cardTime(item)}
                         labelMode={fileLabels}
                         onClick={(e) => handleLabelClick(l, e)}
                         onDoubleClick={() => openLabel(l)}
-                        onContextMenu={openTagMenu("label", l)}
+                        onContextMenu={l === NO_LABEL ? undefined : openTagMenu("label", l)}
                         onDragOver={(e) => { e.preventDefault(); setFolderDragOver(l); }}
                         onDragLeave={() => setFolderDragOver(null)}
                         onDrop={(e) => dropOnLabel(e, l)}
@@ -6570,14 +6608,16 @@ export default function App() {
                         className={`folderRow labelRow ${dim} ${folderDragOver === l ? "dragOver" : ""} ${selectedLabels.has(l) ? "selected" : ""}`}
                         onClick={(e) => handleLabelClick(l, e)}
                         onDoubleClick={() => openLabel(l)}
-                        onContextMenu={openTagMenu("label", l)}
+                        onContextMenu={l === NO_LABEL ? undefined : openTagMenu("label", l)}
                         onDragOver={(e) => { e.preventDefault(); setFolderDragOver(l); }}
                         onDragLeave={() => setFolderDragOver(null)}
                         onDrop={(e) => dropOnLabel(e, l)}
-                        title="Click to select · double-click to open · right-click to rename or delete · drop a page to label it"
+                        title={l === NO_LABEL
+                          ? "Pages without any label · double-click to open · drop a page to clear its labels"
+                          : "Click to select · double-click to open · right-click to rename or delete · drop a page to label it"}
                       >
-                        <LabelIcon size={15} />
-                        <span className="folderName">{l}</span>
+                        <LabelIcon size={15} strokeDasharray={l === NO_LABEL ? "2 1.5" : undefined} />
+                        <span className="folderName">{labelTitle(l)}</span>
                         <span className="folderCount">{labelMeta[l]?.count || 0}</span>
                       </div>
                       ); }
@@ -6921,6 +6961,7 @@ export default function App() {
           onClose={() => (isPhone ? setPhonePanel(null) : setChatHidden(true))}
           docId={docId} pageAttach={pageAttach} focusedBlockId={focusedBlockId} homeBlocks={homeBlocks} pageTitle={pageTitle}
           openTabs={openTabs}
+          onOpenPage={(id) => openBlock(id, { pushNav: true })}
           pdfSelections={pdfSelections} setPdfSelections={setPdfSelections}
           chatNotes={chatNotes} setChatNotes={setChatNotes} focusedNote={focusedNote}
           chatImages={chatImages} setChatImages={setChatImages}
@@ -8289,18 +8330,26 @@ export default function App() {
         } : null}
         diagnostics={{ statusBarVisible, setStatusBarVisible, sysLog, setStatus, isAdmin: !!authUser?.is_admin, debugLog, setDebugLog }}
       />
-      {tabMenu ? (
+      {tabMenu ? (() => {
+        // Two pins: the tab pin (this device's tab strip, synced with the
+        // tabs) and the library pin (the page's Pinned strip on the home
+        // page — properties.pinned, same as the home context menu).
+        const libPinned = !!homeBlocks.find((b) => b.id === tabMenu.id)?.properties?.pinned;
+        return (
         <ContextMenu x={tabMenu.x} y={tabMenu.y} onClose={() => setTabMenu(null)}>
-          <button className="ctxMenuItem ctxMenuItemIconed" onClick={() => { setTabMenu(null); toggleTabPinned(tabMenu.id); }}>
-            <span className="ctxMenuIcon"><PinIcon filled={!tabMenu.pinned} size={13} /></span>
+          <MenuItem icon={PinIcon} onClick={() => { setTabMenu(null); toggleTabPinned(tabMenu.id); }}>
             {tabMenu.pinned ? "Unpin tab" : "Pin tab"}
-          </button>
-          <button className="ctxMenuItem ctxMenuItemIconed" onClick={() => { setTabMenu(null); closeTab(tabMenu.id); }}>
-            <span className="ctxMenuIcon"><XIcon size={13} /></span>
+          </MenuItem>
+          <MenuItem icon={HomeIcon} title="Pinned pages sit in the Pinned strip at the top of the library, on every device"
+            onClick={() => { setTabMenu(null); setPagesPinned([tabMenu.id], !libPinned); }}>
+            {libPinned ? "Unpin from library" : "Pin to library"}
+          </MenuItem>
+          <MenuItem icon={XIcon} onClick={() => { setTabMenu(null); closeTab(tabMenu.id); }}>
             Close tab
-          </button>
+          </MenuItem>
         </ContextMenu>
-      ) : null}
+        );
+      })() : null}
       {homeMenu ? (
         <ContextMenu x={homeMenu.x} y={homeMenu.y} onClose={() => setHomeMenu(null)}>
             {homeMenu.kind === "page" ? (() => {

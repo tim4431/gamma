@@ -97,7 +97,11 @@ Store install (`process.windowsStore`; the Store delivers those updates,
 see [release.md](release.md#microsoft-store)). On **Windows** the
 update installs on restart (`quitAndInstall`, silent NSIS run; unsigned
 builds are fine — electron-updater only verifies a publisher when one is
-configured). On **macOS** an unsigned app cannot self-update (Squirrel.Mac
+configured). On **Linux** (the `.deb`) the same flow runs through
+electron-updater's `DebUpdater` (chosen from `resources/package-type`): the
+new `.deb` downloads in the background and *Restart to update* installs it
+with `dpkg -i` under `pkexec`, so the user gets a password prompt, then the
+app relaunches. On **macOS** an unsigned app cannot self-update (Squirrel.Mac
 requires a valid signature), so the shell reports `available` instead of
 downloading and the pill / button opens the release page; `IN_APP_INSTALL`
 in `lib/updater.js` is the switch to flip once the builds are signed.
@@ -105,7 +109,8 @@ in `lib/updater.js` is the switch to flip once the builds are signed.
 ## Shell state
 
 Electron's userData dir (`%APPDATA%/gamma-desktop` /
-`~/Library/Application Support/gamma-desktop`; the app shows the path at the
+`~/Library/Application Support/gamma-desktop` / `~/.config/gamma-desktop`;
+the app shows the path at the
 bottom of the launcher; a Microsoft Store install gets the MSIX-virtualized
 copy under `%LOCALAPPDATA%\Packages\xwtim.GammaPDF_<hash>\LocalCache\Roaming`,
 which the Store uninstall deletes — [release.md](release.md#microsoft-store)):
@@ -170,9 +175,12 @@ dialog (tests only); `GAMMA_SHELL_NO_UPDATE=1` disables the updater.
   pypdfium2's native lib, ziamath/ziafont fonts, and `frontend/dist`).
   Handles conda-based interpreters by adding `<base>/Library/bin` to the
   DLL search path.
-- `build/icon.png` — app icon (512 px, the favicon mark; electron-builder
-  derives ico/icns). `build/entitlements.mac.plist` — hardened-runtime
-  entitlements for signed mac builds.
+- `assets/icon.png` — app icon (512 px, the favicon mark; electron-builder
+  derives ico/icns and the Linux icon set). `assets/entitlements.mac.plist` —
+  hardened-runtime entitlements for signed mac builds.
+- `assets/appx/` and `assets/store/` — tracked Store package/listing images;
+  `scripts/store-art.js` regenerates them. The packager's build-resources
+  directory is `assets/`; `build/` holds generated PyInstaller intermediates.
 - `test/e2e.js` — the Playwright-driven end-to-end suite (see
   [checklist.md](checklist.md)). `test/smoke.js` — runs the app's `--smoke`
   self-test (dev or `--packaged`).

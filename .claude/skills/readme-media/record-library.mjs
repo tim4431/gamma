@@ -1,4 +1,4 @@
-// Records docs/demo-library.gif source: from the HOME page, open the search
+// Records docs/assets/demos/demo-library.gif source: from the HOME page, open the search
 // panel (the topbar magnifier — plain Ctrl+F on home focuses the listing's own
 // find box; Ctrl+Shift+F would also open this panel), type a query that hits
 // titles, notes, a highlight and PDF text across the library at once, add a
@@ -14,7 +14,7 @@
 // m0 - 0.6 s, 1.2x speed-up, 12 fps, 1040 px, 128 colours, < 10 MB):
 //   ffmpeg -y -i <webm> -vf "trim=start=<m0-0.6>:end=<tEnd+0.2>,setpts=(PTS-STARTPTS)/1.2,
 //     fps=12,scale=1040:-1:flags=lanczos,split[s0][s1];[s0]palettegen=max_colors=128[p];
-//     [s1][p]paletteuse=dither=bayer:bayer_scale=3" -loop 0 docs/demo-library.gif
+//     [s1][p]paletteuse=dither=bayer:bayer_scale=3" -loop 0 docs/assets/demos/demo-library.gif
 //
 // Content prerequisites on the target instance (an isolated clone of the demo
 // workspace): the atom-arrays paper carries notes + a highlight mentioning

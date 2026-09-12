@@ -1,7 +1,7 @@
-// Renders, from the logo mark in ../../logos:
+// Renders, from the logo mark in ../../docs/assets/branding:
 //  - the Microsoft Store listing art (Partner Center → Store listings →
-//    Store logos / Store display images) into build/store/*.png;
-//  - the MSIX package assets (tiles, taskbar icon, splash) into build/appx/,
+//    Store logos / Store display images) into assets/store/*.png;
+//  - the MSIX package assets (tiles, taskbar icon, splash) into assets/appx/,
 //    which electron-builder's appx target picks up by directory name. Without
 //    that folder it ships its own SampleAppx placeholders, and Store
 //    certification rejects the package (policy 10.1.1.11, "tile icons
@@ -14,8 +14,8 @@ const fs = require('node:fs');
 const path = require('node:path');
 const { chromium } = require('playwright-core');
 
-const OUT = path.join(__dirname, 'store');
-const APPX_OUT = path.join(__dirname, 'appx');
+const OUT = path.join(__dirname, '..', 'assets', 'store');
+const APPX_OUT = path.join(__dirname, '..', 'assets', 'appx');
 // playwright-core pins a headless-shell build; use the newest full Chromium
 // Playwright has installed instead.
 function chromiumPath() {
@@ -30,7 +30,7 @@ function chromiumPath() {
 }
 const BG = '#1e1e1c';
 
-// The icon group of logos/gamma-logo-dark.svg (48×48 box at 12..60),
+// The icon group of docs/assets/branding/gamma-logo-dark.svg (48×48 box at 12..60),
 // without the tile clip so it can sit on a full-bleed background.
 const MARK = `
   <defs>
@@ -47,8 +47,8 @@ const MARK = `
   <rect x="21" y="20" width="26" height="5" rx="1.2" fill="#eeebe4"/>
   <rect x="21" y="20" width="5" height="28" rx="1.2" fill="#eeebe4"/>`;
 
-// App tile icon: the same rounded tile as build/icon.png — the favicon
-// geometry (frontend/public/favicon.svg) with the icon's heavier mirrors —
+// App tile icon: the same rounded tile as assets/icon.png — the favicon
+// geometry (frontend/public/media/icons/favicon.svg) with the icon's heavier mirrors —
 // so the Store tile matches the installed app's icon. Transparent corners.
 function tileSvg(px) {
   return `<svg xmlns="http://www.w3.org/2000/svg" width="${px}" height="${px}" viewBox="0 0 32 32">
@@ -114,7 +114,7 @@ function plateSvg(w, h, frac) {
 // electron-builder run makepri so Windows picks the sharp one per DPI; the
 // unqualified file is the scale-100 fallback. The 44px logo and its
 // targetsize variants are the icon Windows shows in the taskbar, Start list
-// and Alt+Tab, so they are the same rounded tile as build/icon.png;
+// and Alt+Tab, so they are the same rounded tile as assets/icon.png;
 // `_altform-unplated` is that icon without the colored plate.
 const APPX_JOBS = [];
 const scaled = (name, w, h, make) => {

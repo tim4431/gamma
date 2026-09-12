@@ -610,13 +610,18 @@ def _load_page(user: str, block_id: str):
 
 
 def _save_props(user: str, block_id: str, updates: dict | None = None, remove: tuple = (),
-                auto_title: str = "") -> bool:
+                auto_title: str = "") -> tuple[bool, str]:
     """Apply a delta to the page's properties, re-reading them inside the write.
 
     Lookups take seconds to minutes, and the user can label the page (which
     merges into properties via PUT /api/blocks/{id}) at any point during one.
     Writing back the dict we read before the lookup would silently drop that
-    label, so only the keys metadata owns are touched here."""
+    label, so only the keys metadata owns are touched here.
+
+    Returns ``(renamed, title)``: whether THIS write replaced the automatic
+    title, and the page's title as it stands after the write — which may
+    already be the paper's, renamed by a concurrent lookup (the extension's
+    background lookup races the one the app starts when the page opens)."""
     with sqlite3.connect(user_db_path(user, "pages.db")) as conn:
         # Serialize the read/merge/write. Whichever wins the lock first is
         # safe: a later explicit rename wins after this commit, while a rename
@@ -650,7 +655,7 @@ def _save_props(user: str, block_id: str, updates: dict | None = None, remove: t
                 (json.dumps(props), page_now(), block_id),
             )
         conn.commit()
-        return rename
+        return rename, (auto_title if rename else content)
 
 
 @router.get("/metadata/status")
@@ -745,7 +750,8 @@ def fetch_page_metadata(user: str, block_id: str, prompt: str = "", model: str =
     if props.get("meta") and not force:
         return {"meta": props["meta"], "bibtex": props.get("bibtex", ""),
                 "ppt_cite": props.get("ppt_cite", ""),
-                "source": props["meta"].get("source", ""), "cached": True}
+                "source": props["meta"].get("source", ""), "cached": True,
+                "title_updated": False, "page_title": content}
 
     doc_id = props.get("doc_id") or ""
     source_url = props.get("source_url") or ""
@@ -881,14 +887,16 @@ def fetch_page_metadata(user: str, block_id: str, prompt: str = "", model: str =
     updates = {"meta": meta, "bibtex": bibtex}
     if ppt_cite:
         updates["ppt_cite"] = ppt_cite
-    title_updated = _save_props(
+    title_updated, page_title = _save_props(
         user, block_id, updates,
         # a stale citation (generated from the previous record) is dropped
         remove=("meta_error",) + (() if ppt_cite else ("ppt_cite",)), auto_title=title,
     )
+    # page_title is ALWAYS the page's current title, not only when this call
+    # renamed it: a concurrent lookup may have done the rename first, and the
+    # client shows whatever comes back here.
     return {"meta": meta, "bibtex": bibtex, "ppt_cite": ppt_cite, "source": meta.get("source", ""),
-            "cached": False, "title_updated": title_updated,
-            "page_title": title if title_updated else ""}
+            "cached": False, "title_updated": title_updated, "page_title": page_title}
 
 
 class MetaUpdateRequest(BaseModel):

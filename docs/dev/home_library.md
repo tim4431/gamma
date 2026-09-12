@@ -49,6 +49,16 @@ same back row + breadcrumb, ending in a label crumb, and dropping a paper on
 its back row takes the label off. Inside a label there are only papers, so the
 KindToggle hides and the kind filter is ignored there.
 
+The labels listing ends with a **"No label"** pseudo-label (dashed tag glyph,
+pinned last regardless of sort, shown only while some page in scope carries
+no label): `labelMeta` rolls unlabelled pages up under the `NO_LABEL`
+sentinel from `libraryUtils.js` — a string containing a comma, which no real
+label can be since `parseFolderTags` splits on commas — and `labelTitle`
+turns it into the display name. Opening it (`?unlabelled=1` in the URL,
+`homeUrlFor`) lists the pages without any label; a paper dropped on its tile
+loses all its labels (`clearPagesLabels`). It has no rename/delete menu and
+its back row is plain navigation.
+
 A search box sits left of the sort pill (`ListFindBox`, live as you type, per
 view, not persisted). It never drops anything: matching items float to the top
 of the current sort and the rest stay in place dimmed (`.homeDim`). A page
@@ -105,7 +115,8 @@ whole-list last-write-wins like the recents queue, with
 `gamma-pinned-folders:<user>` in localStorage as the instant-paint cache
 (`updatePinnedFolders` / `setFoldersPinned`). Pin/Unpin is on the folder
 context menu (acts on the folder selection when the clicked folder is part of
-one); the strip's folder card is the grid's folder card with an unpin button,
+one); a tab's right-click menu offers "Pin to library" for its page next to
+"Pin tab" (the tab-strip pin, a different thing); the strip's folder card is the grid's folder card with an unpin button,
 and it is a drop target like any folder. Folder rewrites carry pins along:
 `applyFolderMap` (rename/move) and `deleteFolderByName` remap the list
 (`remapPinnedFolders`), and a pin whose path no longer exists in

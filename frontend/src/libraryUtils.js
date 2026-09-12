@@ -5,6 +5,14 @@ export function parseFolderTags(raw) {
   return (raw || "").split(",").map((value) => value.trim()).filter(Boolean);
 }
 
+// The library's "pages without a label" view is a pseudo-label: this sentinel
+// stands in for it wherever a label name flows (categoryFilter, the label
+// tiles, the per-view sort/kind pref keys). A real label can never contain a
+// comma — parseFolderTags splits on it — so it cannot collide with one.
+export const NO_LABEL = ",none";
+export const NO_LABEL_TITLE = "No label";
+export const labelTitle = (name) => (name === NO_LABEL ? NO_LABEL_TITLE : name);
+
 export function cleanFolderSegment(name) {
   return (name || "").replace(/[,/]/g, " ").replace(/\s+/g, " ").trim();
 }

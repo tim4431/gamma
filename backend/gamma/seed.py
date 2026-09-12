@@ -19,7 +19,7 @@ from .db import DATA_SCHEMA, PAGES_SCHEMA, connect_users_db, page_now
 from .logbuf import log
 
 # GitHub raw base for screenshots embedded in the guest welcome page.
-_SCREENSHOTS = "https://raw.githubusercontent.com/tim4431/Gamma/main/docs/screenshots"
+_SCREENSHOTS = "https://raw.githubusercontent.com/tim4431/Gamma/main/docs/assets/screenshots"
 
 
 def _welcome_blocks():
@@ -44,7 +44,7 @@ def _welcome_blocks():
         (figures_id, wid, generate_key_between("a0V", None), "## Insert figures", '{}'),
         (secrets.token_urlsafe(9), figures_id, "a0", "Drag any image file into a block to embed it. Gamma uploads it and inserts `![]()` markdown. Here is what the app looks like:", '{}'),
         (secrets.token_urlsafe(9), figures_id, generate_key_between("a0", None), f"![]({_SCREENSHOTS}/01-annotated-pdf.png)", '{}'),
-        (secrets.token_urlsafe(9), figures_id, generate_key_between("a0V", None), f"![]({_SCREENSHOTS}/02-home-carousels.png)", '{}'),
+        (secrets.token_urlsafe(9), figures_id, generate_key_between("a0V", None), f"![]({_SCREENSHOTS}/02-home.png)", '{}'),
         (guest_id, wid, generate_key_between("a1", None), "## Guest account", '{}'),
         (secrets.token_urlsafe(9), guest_id, "a0", "You are logged in as a **guest**. Your data resets each day at midnight UTC. To keep your work permanently, ask the admin to create an account for you.", '{}'),
         (md_id, wid, generate_key_between("a1V", None), "## Markdown formatting", '{}'),

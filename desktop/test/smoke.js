@@ -16,7 +16,7 @@ function packagedBinary() {
     path.join(dist, 'win-unpacked', 'Gamma.exe'),
     path.join(dist, 'mac-arm64', 'Gamma.app', 'Contents', 'MacOS', 'Gamma'),
     path.join(dist, 'mac', 'Gamma.app', 'Contents', 'MacOS', 'Gamma'),
-    path.join(dist, 'linux-unpacked', 'gamma-desktop'),
+    path.join(dist, 'linux-unpacked', 'gamma'), // linux.executableName in electron-builder.cjs
   ];
   const hit = candidates.find((p) => fs.existsSync(p));
   if (!hit) throw new Error(`no packaged app under ${dist} — run "npm run pack" first`);
@@ -29,6 +29,9 @@ let cmd, args;
 if (packaged) {
   cmd = packagedBinary();
   args = ['--smoke'];
+  // The unpacked Linux dir has no setuid chrome-sandbox (the .deb's postinst
+  // sets that up at install time), so Chromium refuses to start without this.
+  if (process.platform === 'linux') args.push('--no-sandbox');
 } else {
   cmd = require('electron'); // path to the electron binary
   args = [ROOT, '--smoke'];

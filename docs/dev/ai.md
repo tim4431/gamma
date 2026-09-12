@@ -193,7 +193,9 @@ prompt; the Prompts pane's "Library agent" entry, default
 `ai_tools.AGENT_PROMPT` via `/api/ai/models`). The scope and permission lines
 are always appended mechanically to the base prompt, so a custom prompt can
 change the agent's style but not widen its reach. Everything off (or no/invalid
-scope) = plain chat.
+scope) = plain chat. Among those mechanical lines: with a reading tool armed,
+the model is asked to link the pages it refers to as `[title](/?page=<id>)`,
+which the chat opens in place (details in [ai_tools.md](ai_tools.md)).
 
 ### Permissions and knobs (Settings → Assistant)
 

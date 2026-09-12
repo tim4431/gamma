@@ -84,6 +84,7 @@ or says it is a manual look (**manual**).
 | 6.4 | Launcher and bar use Gamma's tokens/controls/icons (no emoji, no bespoke colors) | manual: compare with Settings in Gamma |
 | 6.5 | Alt reveals the native menu on Windows; accelerators work without it (Ctrl+R reload, Ctrl+Shift+I devtools, Ctrl+0/±) | manual |
 | 6.6 | Rename from the launcher updates the bar immediately | auto: *rename + remove from the launcher* + bar name via pushState |
+| 6.7 | Linux: title-bar overlay controls as on Windows (6.2); the desktop entry shows the icon in the launcher/dock; `gamma` on PATH starts the app | manual (build on Linux) |
 
 ## 7. Updates
 
@@ -94,15 +95,16 @@ or says it is a manual look (**manual**).
 | 7.3 | Packaged app, offline: the row reads *Update check failed: …*, nothing else complains; *Try again* re-checks | manual |
 | 7.4 | Windows: install an older version, publish a newer release → within ~15 s of launch the bar shows *Restart to update* (row: *ready; installs when you restart*); clicking it quits, stops every sidecar, installs silently, and the relaunched app reports the new version | manual, needs a real release |
 | 7.5 | macOS (unsigned): same setup shows the *Update: <v>* pill; clicking opens the release page in the browser instead of installing | manual (build on a Mac) |
+| 7.6 | Linux (.deb): same setup as 7.4 shows *Restart to update*; clicking it opens a pkexec password prompt, `dpkg -i` runs, and the relaunched app reports the new version | manual, needs a real release |
 
 ## 8. Release
 
 | # | Check | How |
 |---|---|---|
 | 8.1 | `desktop/package.json` version bumped (the release tag is `v<version>`; an existing tag is refused) | manual |
-| 8.2 | `release` workflow: frontend build → freeze → frozen health check → electron-builder → signature verify → packaged smoke, both OSes | CI |
-| 8.3 | Release page lists `Gamma-<v>-win-x64.exe` (+ `.blockmap`, `latest.yml`), `Gamma-<v>-mac-arm64.dmg`/`.zip` (+ `latest-mac.yml`), `gamma-connector-<v>.zip`; the release is NOT a draft / pre-release (installed apps skip those) | manual on the release page |
-| 8.4 | Fresh machine: installer runs (unsigned: SmartScreen *Run anyway*; signed: no SmartScreen block, *Publisher* shows the cert subject in the UAC prompt), first launch creates a workspace, no Python/Node needed | manual |
+| 8.2 | `release` workflow: frontend build → freeze → frozen health check → electron-builder → signature verify → packaged smoke, all three OSes; Linux also installs the `.deb` and smokes `/opt/Gamma/gamma` | CI |
+| 8.3 | Release page lists `Gamma-<v>-win-x64.exe` (+ `.blockmap`, `latest.yml`), `Gamma-<v>-mac-arm64.dmg`/`.zip` (+ `latest-mac.yml`), `Gamma-<v>-linux-x64.deb` (+ `latest-linux.yml`), `gamma-connector-<v>.zip`; the release is NOT a draft / pre-release (installed apps skip those) | manual on the release page |
+| 8.4 | Fresh machine: installer runs (unsigned: SmartScreen *Run anyway*; signed: no SmartScreen block, *Publisher* shows the cert subject in the UAC prompt; Debian/Ubuntu: `sudo apt install ./Gamma-<v>-linux-x64.deb` pulls the deps), first launch creates a workspace, no Python/Node needed | manual |
 | 8.5 | Signed macOS build: `codesign --verify --deep --strict Gamma.app` and `spctl --assess --type execute Gamma.app` pass; a fresh download opens without the *damaged* dialog (the release job's *Verify signature* step covers this on the runner) | manual |
 
 ## Last run
@@ -114,4 +116,5 @@ or says it is a manual look (**manual**).
 
 Manual items last looked at 2026-09-01 on Windows 11: 1.6, 2.4, 2.5, 6.2,
 6.4, 6.5 (screenshots of the bar + launcher in dark and light). Not yet
-exercised: 5.5, 5.6, 4.7, 4.8, 7.2–7.5, everything macOS (6.3), 8.4, 8.5.
+exercised: 5.5, 5.6, 4.7, 4.8, 7.2–7.6, everything macOS (6.3), everything
+Linux beyond the CI smoke (6.7, 7.6), 8.4, 8.5.

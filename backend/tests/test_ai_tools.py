@@ -1350,3 +1350,11 @@ def test_chat_carries_notes_focus(notes, monkeypatch):
     assert "selected the following text in their own notes" in user_turn
     assert "a selected sentence" in user_turn
     assert f'cursor is on note block "{top}"' in seen["system"]
+
+
+def test_agent_system_tells_the_model_how_to_link_pages():
+    # The chat renders /?page=<id> links as open-in-place, so the prompt
+    # asks for that form wherever a reading tool hands the model page ids.
+    text = agent_system(_folder(""))
+    assert "/?page=<page_id>" in text
+    assert "Use only page ids the tools returned" in text

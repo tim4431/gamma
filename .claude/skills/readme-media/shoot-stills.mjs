@@ -1,4 +1,4 @@
-// Shoots the docs/screenshots/ stills (not referenced by the README; kept for
+// Shoots the docs/assets/screenshots/ stills (not referenced by the README; kept for
 // docs/marketing): 01 an annotated paper with the note tree and an answered
 // chat question, 02 the home page (folders, recents strip, listing), 03 the
 // home search panel with grouped library results.
@@ -14,7 +14,7 @@ import fs from 'fs';
 const SCRATCH = process.cwd();
 const SESSION = fs.readFileSync(SCRATCH + '/session.txt', 'utf8').trim();
 const BASE = 'http://127.0.0.1:9004';
-const OUT = process.env.STILLS_OUT || 'D:/Codes/Github/gamma/docs/screenshots';
+const OUT = process.env.STILLS_OUT || 'D:/Codes/Github/gamma/docs/assets/screenshots';
 const ATOMS = 'fy0-h_BqOHcH';         // the paper with the real highlight (page 2)
 const OTHERS = ['p8oNV3s3XNhC', 'BHuT16WnxdQb'];
 const QUESTION = 'What is the key idea of this paper in one sentence?';

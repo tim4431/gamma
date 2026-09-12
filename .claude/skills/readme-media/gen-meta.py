@@ -8,7 +8,7 @@ import glob, json, os, subprocess, sys
 SCRATCH = os.path.dirname(os.path.abspath(__file__))
 Z = json.load(open(os.path.join(SCRATCH, "meta_zoom.json")))
 webm = open(os.path.join(SCRATCH, "video_meta_path.txt")).read().strip()
-OUT = sys.argv[1] if len(sys.argv) > 1 else r"D:/Codes/Github/gamma/docs/demo-metadata.gif"
+OUT = sys.argv[1] if len(sys.argv) > 1 else r"D:/Codes/Github/gamma/docs/assets/demos/demo-metadata.gif"
 FF = glob.glob(r"D:\Codes\Github\gamma\backend\venv\Lib\site-packages\imageio_ffmpeg\binaries\ffmpeg-win*.exe")[0]
 
 vidW, vidH = Z["vidW"], Z["vidH"]

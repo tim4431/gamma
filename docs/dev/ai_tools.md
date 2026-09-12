@@ -13,6 +13,12 @@ executor. When the request names a cursor block (`focus_block_id`) or attached b
 chips (`context_blocks`), `agent_system` adds one line each so "this block" /
 "these" resolve to ids without a `read_block` round-trip — their text is
 already in the context (see "Pointing the chat at notes" in [ai.md](ai.md)).
+Whenever a reading tool is armed it also tells the model to point at a page
+as a markdown link `[title](/?page=<page_id>)` using ids from the tool
+results; `ChatMarkdown` (`widgets.jsx`) renders such same-origin
+`?page=`/`?block=` links as open-in-place (`onOpenPage` → `openBlock`,
+Ctrl/Cmd-click still opens a tab), so "find me the paper about X" ends in a
+clickable link to the page.
 Folder semantics mirror
 [frontend/src/libraryUtils.js](../../frontend/src/libraryUtils.js) via the
 shared `gamma/foldertags.py` rules; keep them in sync.

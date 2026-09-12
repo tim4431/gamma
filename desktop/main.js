@@ -148,7 +148,7 @@ function createWindow() {
     minHeight: 480,
     ...(saved && saved.width > 400 && saved.height > 300 ? saved : {}),
     title: 'Gamma',
-    icon: path.join(__dirname, 'build', 'icon.png'),
+    icon: path.join(__dirname, 'assets', 'icon.png'),
     backgroundColor: p.bg,
     // The shell bar is the title bar: frameless with the OS window controls
     // overlaid (Windows/Linux) or the traffic lights inset (macOS).

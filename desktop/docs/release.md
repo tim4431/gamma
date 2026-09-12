@@ -4,9 +4,9 @@
 
 ```bash
 python desktop/build_backend.py   # freeze backend (venv python; ~50 MB onedir)
-cd desktop && npm run pack        # unpacked app in dist/win-unpacked (fast test)
+cd desktop && npm run pack        # unpacked app in dist/{win,linux}-unpacked or dist/mac* (fast test)
 npm run e2e:packaged              # the suite against the frozen bundle
-npm run dist                      # real installer (NSIS .exe / .dmg + .zip)
+npm run dist                      # real installer (NSIS .exe / .dmg + .zip / .deb)
 ```
 
 `electron-builder` (config: `electron-builder.cjs` — it replaced the
@@ -14,16 +14,31 @@ npm run dist                      # real installer (NSIS .exe / .dmg + .zip)
 `dist-backend/gamma-server` into `resources/gamma-server`; a packaged app is
 fully self-contained (no Python, no Node on the user's machine). Installers
 are named `Gamma-<version>-<os>-<arch>.<ext>`; next to them land the
-update-feed files (`latest.yml` / `latest-mac.yml`, `*.blockmap`), see
-*Auto-update* below.
+update-feed files (`latest.yml` / `latest-mac.yml` / `latest-linux.yml`,
+`*.blockmap`), see *Auto-update* below. Each OS builds its own installer
+(no cross-building: the frozen backend is platform-specific).
+
+Linux is a Debian/Ubuntu `.deb` for x64 (`linux` + `deb` blocks): it
+installs to `/opt/Gamma` with the binary `gamma` (also symlinked into
+`/usr/bin`; `executableName` in the config — the default would have been
+the package name `gamma-desktop`) and a desktop entry in the *Office*
+category. `sudo apt install ./Gamma-<version>-linux-x64.deb` pulls the
+runtime dependencies (GTK 3, NSS, …) that electron-builder lists in the
+package. The unpacked `dist/linux-unpacked` dir has no setuid
+`chrome-sandbox` (the deb's postinst sets that up, plus an AppArmor profile
+on Ubuntu ≥ 24.04), so `test/smoke.js` and `test/e2e.js` start it with
+`--no-sandbox`; on a headless machine wrap them in `xvfb-run -a`.
 
 ## The `release` workflow
 
 **Releasing** is one workflow, `.github/workflows/release.yml`, run by hand
 from the Actions tab (or `gh workflow run release.yml --ref main`; the
-`release` skill wraps it). It builds Windows + macOS installers (frontend
-build → backend freeze → frozen-server health check → electron-builder →
-signature verification → packaged `--smoke`), zips the browser extension,
+`release` skill wraps it). It builds Windows + macOS + Linux installers
+(frontend build → backend freeze → frozen-server health check →
+electron-builder → signature verification → packaged `--smoke`; the Linux
+job additionally `apt install`s the `.deb` on the runner and runs the
+`--smoke` self-test from `/opt/Gamma/gamma`, sandbox on, under Xvfb), zips
+the browser extension,
 and publishes everything as ONE GitHub Release `Gamma <version>` — creating
 the `v<version>` tag itself, so no tags are pushed by hand. The version is
 `desktop/package.json`'s (bump it before releasing; a version that already
@@ -42,7 +57,11 @@ secrets through:
 | Platform | Secrets | What it does |
 |---|---|---|
 | Windows | `AZURE_TENANT_ID`, `AZURE_CLIENT_ID`, `AZURE_CLIENT_SECRET`, `AZURE_SIGN_ENDPOINT`, `AZURE_SIGN_ACCOUNT`, `AZURE_SIGN_PROFILE`, optional `AZURE_SIGN_PUBLISHER` | [Azure Trusted Signing](https://learn.microsoft.com/azure/trusted-signing/) via electron-builder's `azureSignOptions`: signs `Gamma.exe`, the frozen `gamma-server.exe` and the NSIS installer. The three `AZURE_*` auth values are an Entra app registration (client secret) holding the *Trusted Signing Certificate Profile Signer* role on the account; endpoint is the region URL (e.g. `https://eus.codesigning.azure.net`), account/profile are the resource names, publisher the certificate subject (`CN=…`). |
-| macOS | `MAC_CERT_P12` (base64 of the *Developer ID Application* `.p12`: `base64 -i cert.p12 \| pbcopy`), `MAC_CERT_PASSWORD`, `APPLE_ID`, `APPLE_APP_SPECIFIC_PASSWORD`, `APPLE_TEAM_ID` | Developer ID signing (the macOS build step exports them as electron-builder's `CSC_LINK`/`CSC_KEY_PASSWORD` only when set — an empty `CSC_LINK` in the env is read as a certificate path and fails the build) with hardened runtime + `build/entitlements.mac.plist` (JIT + `disable-library-validation`, which the PyInstaller sidecar needs to load its Python extension modules; osx-sign walks the whole `.app`, so `Contents/Resources/gamma-server` is signed too), then notarization (`mac.notarize`) with an [app-specific password](https://support.apple.com/102654) and stapling. |
+| macOS | `MAC_CERT_P12` (base64 of the *Developer ID Application* `.p12`: `base64 -i cert.p12 \| pbcopy`), `MAC_CERT_PASSWORD`, `APPLE_ID`, `APPLE_APP_SPECIFIC_PASSWORD`, `APPLE_TEAM_ID` | Developer ID signing (the macOS build step exports them as electron-builder's `CSC_LINK`/`CSC_KEY_PASSWORD` only when set — an empty `CSC_LINK` in the env is read as a certificate path and fails the build) with hardened runtime + `assets/entitlements.mac.plist` (JIT + `disable-library-validation`, which the PyInstaller sidecar needs to load its Python extension modules; osx-sign walks the whole `.app`, so `Contents/Resources/gamma-server` is signed too), then notarization (`mac.notarize`) with an [app-specific password](https://support.apple.com/102654) and stapling. |
+
+Linux has no equivalent: a `.deb` file carries no signature (apt trusts
+repositories, not files), so the Linux build is neither signed nor warned
+about, and a downloaded `.deb` installs without any prompt beyond sudo.
 
 The workflow prints a `::warning::` per platform when it builds unsigned,
 and a *Verify signature* step (`Get-AuthenticodeSignature` / `codesign
@@ -88,7 +107,8 @@ mismatch in any of them is rejected at upload. The Store ID is
 matches the logo tile's `#1e1e1c`.
 
 **Package assets.** electron-builder takes the MSIX's tile images from
-`build/appx/` (matched by directory name): `Square44x44Logo` (taskbar /
+`assets/appx/` (`directories.buildResources: 'assets'` in the packaging
+config, with `appx` matched by directory name): `Square44x44Logo` (taskbar /
 Start list, plus `targetsize-N` and `_altform-unplated` variants),
 `Square150x150Logo`, `Wide310x150Logo`, `SmallTile`, `LargeTile`,
 `StoreLogo`, `SplashScreen`, each with `.scale-125/150/200/400` variants
@@ -121,16 +141,19 @@ signs it.
 **Submit.** Partner Center → the product → *Submissions* → new submission →
 *Packages*: upload the `.appx`; fill the listing (screenshots, description),
 age rating, free pricing and the privacy-policy URL (mandatory because the
-app uses the network). The policy is the repo's
+app uses the network). The English listing text (description, feature
+bullets, search terms) is kept in [`assets/store/listing.md`](../assets/store/listing.md);
+paste the whole *Description* section, since a one-liner fails policy
+10.1.4.3 ("a few words or just the app title is not sufficient"). The policy is the repo's
 [`PRIVACY.md`](../../PRIVACY.md), so the URL is
 `https://github.com/tim4431/Gamma/blob/main/PRIVACY.md`; it has to be
 Gamma's own policy, naming the app and its developer, or certification
 fails policy 10.5.1 ("privacy policy is for an unrelated company"). The
 listing's *Store logos* (9:16 poster art, 1:1 box art) and *Store display
-images* (300/150/71 px app tile icons) are pre-rendered in `build/store/`;
+images* (300/150/71 px app tile icons) are pre-rendered in `assets/store/`;
 `npm run store-art` regenerates them, together with the package assets in
-`build/appx/`, from the logo mark with Playwright's Chromium
-(`build/store-art.js`, Windows only, and online: the poster's wordmark
+`assets/appx/`, from the logo mark with Playwright's Chromium
+(`scripts/store-art.js`, Windows only, and online: the poster's wordmark
 font comes from Google Fonts).
 The package version must increase per submission
 (`package.json` `<version>` becomes `<version>.0`; the Store requires the
@@ -198,9 +221,10 @@ That does two things and nothing else (the workflow still runs
 
 1. `resources/app-update.yml` is baked into the app, telling
    `electron-updater` where to look.
-2. `latest.yml` (Windows) / `latest-mac.yml` (macOS) and the installer
-   `.blockmap`s are written next to the installers; the workflow uploads
-   them as release assets alongside the `.exe` / `.dmg` / `.zip`.
+2. `latest.yml` (Windows) / `latest-mac.yml` (macOS) / `latest-linux.yml`
+   (Linux) and the installer `.blockmap`s are written next to the
+   installers; the workflow uploads them as release assets alongside the
+   `.exe` / `.dmg` / `.zip` / `.deb`.
 
 At run time (`lib/updater.js`; behavior in
 [architecture.md](architecture.md#in-app-updates)) the app resolves the
@@ -216,3 +240,7 @@ installer (differential via the blockmap when possible). Consequences:
   (electron-builder writes those names into the yml).
 - macOS reads `latest-mac.yml` and expects the `.zip` target (kept next to
   the `.dmg` for that reason).
+- Linux reads `latest-linux.yml`; the `.deb` target writes
+  `resources/package-type` = `deb`, which is how electron-updater picks its
+  `DebUpdater` (installs via `pkexec dpkg -i`, then relaunches). Without
+  that file it would assume an AppImage and fail.

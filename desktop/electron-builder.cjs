@@ -23,6 +23,12 @@
 //   it must never be built with the Azure signing env present (the manifest
 //   publisher must stay the Partner Center GUID). The release workflow
 //   builds it as a separate artifact, never as a release download.
+// Linux: a Debian/Ubuntu .deb (x64). Nothing to sign — apt trusts
+//   repositories, not package files, and a downloaded .deb installs with
+//   `apt install ./file.deb` without any warning. The deb's postinst fixes
+//   chrome-sandbox permissions / the Ubuntu 24.04 AppArmor profile, which is
+//   why the unpacked dir under dist/linux-unpacked needs --no-sandbox to run
+//   (test/smoke.js and test/e2e.js add it).
 
 const env = process.env;
 const has = (...keys) => keys.every((k) => env[k] && env[k].trim());
@@ -40,8 +46,8 @@ module.exports = {
   // Nothing is ever published from here (the workflow runs --publish never
   // and creates the GitHub Release itself).
   publish: { provider: 'github', owner: 'tim4431', repo: 'Gamma', releaseType: 'release' },
-  directories: { output: 'dist' },
-  files: ['main.js', 'preload.js', 'lib/**', 'ui/**', 'build/icon.png', 'package.json'],
+  directories: { output: 'dist', buildResources: 'assets' },
+  files: ['main.js', 'preload.js', 'lib/**', 'ui/**', 'assets/icon.png', 'package.json'],
   extraResources: [{ from: 'dist-backend/gamma-server', to: 'gamma-server' }],
 
   win: {
@@ -74,7 +80,7 @@ module.exports = {
     displayName: 'Gamma PDF',
     applicationId: 'Gamma',
     languages: ['en-US'],
-    backgroundColor: '#1e1e1c', // the logo tile's background (build/store-art.js BG)
+    backgroundColor: '#1e1e1c', // the logo tile's background (scripts/store-art.js BG)
     showNameOnTiles: true,
   },
 
@@ -82,9 +88,28 @@ module.exports = {
     target: ['dmg', 'zip'],
     category: 'public.app-category.productivity',
     hardenedRuntime: true,
-    entitlements: 'build/entitlements.mac.plist',
-    entitlementsInherit: 'build/entitlements.mac.plist',
+    entitlements: 'assets/entitlements.mac.plist',
+    entitlementsInherit: 'assets/entitlements.mac.plist',
     gatekeeperAssess: false,
     notarize,
+  },
+
+  linux: {
+    target: [{ target: 'deb', arch: ['x64'] }],
+    // The binary and /usr/bin symlink (default would be the package name,
+    // "gamma-desktop"); the install dir is /opt/Gamma (productName).
+    executableName: 'gamma',
+    icon: 'assets/icon.png',
+    category: 'Office',
+    synopsis: 'PDF annotation and notes',
+    description: 'Gamma: highlight PDFs, keep notes as nested outliner blocks, share annotated copies. Opens local workspaces and remote Gamma servers.',
+    // dpkg requires a maintainer; electron-builder otherwise wants
+    // package.json "author" with an email.
+    maintainer: 'Tim <tim4431@users.noreply.github.com>',
+  },
+  deb: {
+    // electron-updater picks its DebUpdater from resources/package-type,
+    // which this target writes; updates then run `dpkg -i` via pkexec/sudo.
+    packageCategory: 'editors',
   },
 };
