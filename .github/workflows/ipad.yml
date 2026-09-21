@@ -45,10 +45,13 @@ jobs:
       - name: Test on iPad simulator
         run: |
           set -o pipefail
+          # iOS 18.5 simulator misplaces libswiftWebKit for older deployment
+          # targets: https://bugs.webkit.org/show_bug.cgi?id=293831
+          # This override is simulator-only; the device app still targets 17.0.
           xcodebuild -project GammaIPad.xcodeproj -scheme GammaIPad -configuration Debug \
             -destination "platform=iOS Simulator,id=$IPAD_SIMULATOR" \
             -derivedDataPath build/simulator -resultBundlePath build/Tests.xcresult \
-            CODE_SIGNING_ALLOWED=NO test | tee build-test.log
+            CODE_SIGNING_ALLOWED=NO IPHONEOS_DEPLOYMENT_TARGET=18.4 test | tee build-test.log
       - name: Build unsigned iPad device app
         run: |
           set -o pipefail

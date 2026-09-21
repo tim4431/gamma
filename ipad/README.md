@@ -44,6 +44,13 @@ Artifacts are retained for 14 days:
 - `GammaIPad-unsigned-device.zip`: device `.app`, **not installable until signed**.
 - `GammaIPad-simulator.zip`: `.app` for the runner's Mac simulator architecture.
 - `GammaIPad-tests`: XCTest results and build logs, also on failure.
+- `GammaIPad-screenshots`: the rendered native editor captured by its test.
+
+The simulator build targets 18.4+ to work around the runner's iOS 18.5
+[WebKit loader bug](https://bugs.webkit.org/show_bug.cgi?id=293831). The
+unsigned device app retains its iPadOS 17.0 minimum. For local Xcode 16.4
+simulator runs, use the same deployment-target override or Apple's library
+path workaround linked above.
 
 This workflow needs no Apple account, signing secrets or provisioning profile.
 It does not publish an IPA, TestFlight build or App Store release. Installing
