@@ -348,7 +348,7 @@ async function fetchPdfData(url, onLoadState, isCancelled) {
 // inkPenTool what a stylus draws with when nothing is armed, inkFlash
 // {id, nonce} outlines a group after a jump; strokes and erasures report
 // back through onInkStroke / onInkErase, a click on ink through onInkJump.
-function PdfViewer({ url, citation = null, highlights, pdfScaleValue, scrollRef, onJump, onHighlightJump, onLinkHighlight, onSelectionFinished, onAreaSelection, onHighlightContext, searchRef, captureRef, onEffectiveScale, onZoomTo, findMarks, onExternalLink, onLinkContext, onBeforeLinkJump, onLoadState, retryRef, areaMode, hideEmbeddedAnnots, darkPage = false, translateKey = "", translateParallel = 3, onTranslate, translateCtlRef, onTranslateState, inkBlocks = EMPTY_MARKS, inkTool = null, inkPenTool = null, inkPenOnly = true, inkPressure = true, inkEraserMode = "stroke", inkEraserSize = 1, inkLassoMode = "free", inkSelection = null, inkFlash = null, onInkStroke, onInkErase, onInkErasePartial, onInkSelect, onInkAction, onInkMoveSelection, onInkJump }) {
+function PdfViewer({ url, citation = null, highlights, pdfScaleValue, scrollRef, onJump, onHighlightJump, onLinkHighlight, onSelectionFinished, onAreaSelection, onHighlightContext, searchRef, captureRef, nativeSnapshotRef, onEffectiveScale, onZoomTo, findMarks, onExternalLink, onLinkContext, onBeforeLinkJump, onLoadState, retryRef, areaMode, hideEmbeddedAnnots, darkPage = false, translateKey = "", translateParallel = 3, onTranslate, translateCtlRef, onTranslateState, inkBlocks = EMPTY_MARKS, inkTool = null, inkPenTool = null, inkPenOnly = true, inkPressure = true, inkEraserMode = "stroke", inkEraserSize = 1, inkLassoMode = "free", inkSelection = null, inkFlash = null, onInkStroke, onInkErase, onInkErasePartial, onInkSelect, onInkAction, onInkMoveSelection, onInkJump }) {
   const viewerRef = useRef(null);
   const [pdfDoc, setPdfDoc] = useState(null);
   const [numPages, setNumPages] = useState(0);
@@ -1090,6 +1090,26 @@ function PdfViewer({ url, citation = null, highlights, pdfScaleValue, scrollRef,
   // events don't re-render.
   const [curPage, setCurPage] = useState(1);
   const [pageInput, setPageInput] = useState(null); // non-null while the box is being edited
+  // Render the native editor's background in the SAME rotated scale-1
+  // coordinate space as web ink. No separate PDF coordinate conversion.
+  useEffect(() => {
+    if (!nativeSnapshotRef) return;
+    nativeSnapshotRef.current = pdfDoc ? async (requestedPage) => {
+      const pn = requestedPage || curPage;
+      const page = await pdfDoc.getPage(pn);
+      const base = page.getViewport({ scale: 1 });
+      const scale = Math.min(2, 4096 / Math.max(base.width, base.height), Math.sqrt(8_000_000 / (base.width * base.height)));
+      const vp = page.getViewport({ scale });
+      const canvas = document.createElement("canvas");
+      canvas.width = Math.ceil(vp.width); canvas.height = Math.ceil(vp.height);
+      try {
+        await page.render({ canvasContext: canvas.getContext("2d"), viewport: vp,
+          annotationMode: hideEmbeddedAnnots ? pdfjsLib.AnnotationMode.DISABLE : pdfjsLib.AnnotationMode.ENABLE }).promise;
+        return { page: pn, width: base.width, height: base.height, image: canvas.toDataURL("image/png") };
+      } finally { canvas.width = 0; canvas.height = 0; }
+    } : null;
+    return () => { nativeSnapshotRef.current = null; };
+  }, [pdfDoc, curPage, hideEmbeddedAnnots, nativeSnapshotRef]);
   const syncCurPage = () => {
     const v = viewerRef.current;
     if (!v || !numPages) return;

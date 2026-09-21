@@ -33,3 +33,10 @@ run-local.bat
 !/artifacts/README.md
 
 CLAUDE.md
+
+# Generated iPad projects and build output. Source and project.yml are tracked.
+/ipad/*.xcodeproj/
+/ipad/build/
+/ipad/project.local.yml
+/ipad/*.xcresult/
+/ipad/GammaIPad/Assets.xcassets/

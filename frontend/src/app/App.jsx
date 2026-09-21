@@ -66,6 +66,7 @@ import { McpAuthorization } from "../auth/McpConsent";
 import { THEMES, TRANSLATE_LANGS, useAppPrefs } from "./prefs";
 import { useBlockHistory } from "../editor/blockHistory.js";
 import { InkToolbar } from "../ink/InkLayer";
+import { NativeInkButton } from "../ink/NativeInkButton";
 import { MAX_STROKES, appendStroke, duplicateStrokes, eraseAt, newInk, removeStrokes, restyleStrokes, toolStyle, transformStrokes, translateStrokes } from "../ink/ink";
 import * as inkStore from "../ink/inkStore";
 import { usePageCollab } from "../collaboration/usePageCollab";
@@ -2311,6 +2312,7 @@ function LibraryApp() {
   const [pdfDocNonce, setPdfDocNonce] = useState(0); // bumped when a document finishes rendering
   const pdfSearchRef = useRef(null); // set by PdfViewer: async (RegExp) => [{page, snippet, rects, pageW, pageH}]
   const pdfCaptureRef = useRef(null); // set by PdfViewer: async (areaHighlight) => PNG data URL (re-crops the rect from the document)
+  const nativeSnapshotRef = useRef(null);
   // Stable wrapper for the notes tree's area-snapshot cards (a fresh function
   // every render would re-fire each card's crop effect). Resolves null until
   // the viewer has a document.
@@ -8673,6 +8675,12 @@ function LibraryApp() {
                   <PenIcon size={15} />
                 </button>
               ) : null}
+              {!shareMode && !readOnly ? <NativeInkButton
+                context={{ user: sessionUser, workspace: workspace?.id, pageId: focusedBlockId, pdfUrl, readOnly }}
+                snapshotRef={nativeSnapshotRef} selection={inkSelection} blocks={inkBlocks}
+                hasPending={() => collabRef.current.hasPending()}
+                onSaved={() => loadBlocksForBlock(focusedBlockId, { keepUi: true })} onStatus={setStatus}
+              /> : null}
               {isPhone && !shareMode ? (
                 <button
                   className={areaSelectMode ? "modeActive" : ""}
@@ -8750,7 +8758,7 @@ function LibraryApp() {
               onInkJump={showInkInNotes}
               pdfScaleValue={pdfScale} scrollRef={scrollToRef}
               searchRef={pdfSearchRef}
-              captureRef={pdfCaptureRef}
+              captureRef={pdfCaptureRef} nativeSnapshotRef={nativeSnapshotRef}
               findMarks={findMarks}
               onEffectiveScale={setPdfEffScale}
               onZoomTo={zoomTo}
