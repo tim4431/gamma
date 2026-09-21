@@ -45,6 +45,7 @@ struct InkDraft: Codable {
     var asCopy = false
     let baseInk: GammaInk
     var drawing: Data
+    var inkTypes: [String] = []
 }
 
 struct InkDraftStore {

@@ -39,8 +39,9 @@ final class InkEditorController: UIViewController, PKCanvasViewDelegate, UIScrol
         contextCanvas.maximumSupportedContentVersion = .version2
         // Register originals so unchanged strokes keep their precise JSON.
         let original = try codec.drawing(from: draft.baseInk)
-        canvas.drawing = draft.drawing.isEmpty ? original : try PKDrawing(data: draft.drawing)
+        canvas.drawing = draft.drawing.isEmpty ? original : try GammaInkCodec.recover(draft.drawing, inkTypes: draft.inkTypes)
         draft.drawing = canvas.drawing.dataRepresentation()
+        draft.inkTypes = canvas.drawing.strokes.map { $0.ink.inkType.rawValue }
         try store.write(draft)
         let backgroundCodec = GammaInkCodec()
         contextCanvas.drawing = PKDrawing(strokes: try request.background.flatMap { try backgroundCodec.drawing(from: $0).strokes })
@@ -162,6 +163,7 @@ final class InkEditorController: UIViewController, PKCanvasViewDelegate, UIScrol
     }
     private func persist() throws {
         draft.drawing = canvas.drawing.dataRepresentation()
+        draft.inkTypes = canvas.drawing.strokes.map { $0.ink.inkType.rawValue }
         try store.write(draft)
     }
     @objc private func close() {

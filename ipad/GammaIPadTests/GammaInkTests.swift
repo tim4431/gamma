@@ -15,7 +15,7 @@ final class GammaInkTests: XCTestCase {
         let drawing = try codec.drawing(from: ink)
         XCTAssertEqual(try codec.export(drawing, space: space), ink)
         // The binary recovery archive must not cause a second smoothing pass.
-        let recovered = try PKDrawing(data: drawing.dataRepresentation())
+        let recovered = try GammaInkCodec.recover(drawing.dataRepresentation(), inkTypes: drawing.strokes.map { $0.ink.inkType.rawValue })
         XCTAssertEqual(recovered.strokes.first?.ink.inkType, .monoline)
         XCTAssertEqual(try codec.export(recovered, space: space), ink)
         XCTAssertEqual(try codec.export(PKDrawing(strokes: [recovered.strokes[1]]), space: space).strokes.first?.id, "second")
@@ -38,9 +38,10 @@ final class GammaInkTests: XCTestCase {
             XCTAssertEqual(Double(output.pts[0]), 1000, accuracy: 5)
             XCTAssertEqual(Double(output.pts[1]), 2000, accuracy: 5)
             XCTAssertEqual(try codec.export(PKDrawing(strokes: [stroke]), space: space), ink)
-            let recovered = try PKDrawing(data: PKDrawing(strokes: [stroke]).dataRepresentation())
+            let recovered = try GammaInkCodec.recover(PKDrawing(strokes: [stroke]).dataRepresentation(), inkTypes: [type.rawValue])
             XCTAssertEqual(recovered.strokes.first?.ink.inkType, type)
             XCTAssertEqual(try codec.export(recovered, space: space), ink)
+            XCTAssertEqual(try GammaInkCodec().export(recovered, space: space), ink, "A relaunched app produces the same save payload")
         }
     }
     func testUnsupportedBrushCannotSilentlyBecomeAPen() async throws {
@@ -96,9 +97,11 @@ final class GammaInkTests: XCTestCase {
             ("Gamma · Handwriting" as NSString).draw(at: CGPoint(x: 40, y: 50),
                 withAttributes: [.font: UIFont.systemFont(ofSize: 24), .foregroundColor: UIColor.black])
         }
+        var visibleStroke = sample()
+        visibleStroke.pts = [10000, 14000, 200, 0, 45, 90, 20000, 8000, 800, 100, 50, 100]
         let request = InkRequest(requestId: "editorTest", user: "test", workspace: "lab", pageId: UUID().uuidString,
             document: "/api/uploads/test.pdf", blockId: "testInk", parentId: "page", expectedURL: nil,
-            existing: false, ink: GammaInk(space: space, strokes: [sample()]), background: [],
+            existing: false, ink: GammaInk(space: space, strokes: [visibleStroke]), background: [],
             image: "data:image/png;base64," + background.pngData()!.base64EncodedString())
         let controller = try InkEditorController(request: request, origin: "https://test.example/")
         let scene = try XCTUnwrap(UIApplication.shared.connectedScenes.first as? UIWindowScene)
@@ -112,7 +115,7 @@ final class GammaInkTests: XCTestCase {
             try? InkDraftStore().remove(request.draftKey(origin: "https://test.example/"))
         }
         controller.loadViewIfNeeded(); window.layoutIfNeeded(); controller.view.layoutIfNeeded()
-        try await Task.sleep(for: .milliseconds(300))
+        try await Task.sleep(for: .seconds(2))
         var received: [String: Any]?
         controller.onSave = { received = $0 }
         let button = try XCTUnwrap(controller.navigationItem.rightBarButtonItem)
@@ -128,5 +131,10 @@ final class GammaInkTests: XCTestCase {
         let attachment = XCTAttachment(image: screenshot)
         attachment.name = "Gamma iPad handwriting editor"; attachment.lifetime = .keepAlways
         add(attachment)
+        let drawing = try GammaInkCodec().drawing(from: request.ink)
+        let inkImage = drawing.image(from: CGRect(x: 0, y: 0, width: 612, height: 792), scale: 2)
+        let inkAttachment = XCTAttachment(image: inkImage)
+        inkAttachment.name = "PencilKit stroke rendering"; inkAttachment.lifetime = .keepAlways
+        add(inkAttachment)
     }
 }

@@ -93,10 +93,25 @@ func inkColor(_ text: String) throws -> UIColor {
 }
 
 // The open JSON remains authoritative. Unedited imported strokes are returned
-// byte-for-byte in their original representation, avoiding repeated smoothing.
+// with their original samples and IDs, avoiding repeated smoothing.
 @MainActor
 final class GammaInkCodec {
     private var originals: [String: [GammaStroke]] = [:]
+
+    static func recover(_ data: Data, inkTypes: [String]) throws -> PKDrawing {
+        let drawing = try PKDrawing(data: data)
+        guard drawing.strokes.count == inkTypes.count else { throw InkFailure("Damaged local brush metadata. The draft has been kept.") }
+        // iOS 18.5 can decode a programmatically constructed monoline stroke
+        // as a pen. Keep the type beside the opaque archive and restore it
+        // explicitly without resampling the native control points.
+        let supported: [PKInkingTool.InkType] = [.pen, .monoline, .marker]
+        return PKDrawing(strokes: try zip(drawing.strokes, inkTypes).map { stroke, name in
+            guard let type = supported.first(where: { $0.rawValue == name }) else { throw InkFailure("Unsupported draft brush.") }
+            if stroke.ink.inkType == type { return stroke }
+            return PKStroke(ink: PKInkingTool(type, color: stroke.ink.color).ink, path: stroke.path,
+                            transform: stroke.transform, mask: stroke.mask, randomSeed: stroke.randomSeed)
+        })
+    }
 
     static func fingerprint(_ stroke: PKStroke) throws -> String {
         // PKDrawing archives contain changing metadata. Hash the public stroke
@@ -159,8 +174,7 @@ final class GammaInkCodec {
             let type: PKInkingTool.InkType = s.tool == "highlighter" ? .marker : s.brush == "monoline" ? .monoline : .pen
             let color = try inkColor(s.color)
             let seed = SHA256.hash(data: Data(s.id.utf8)).prefix(4).reduce(UInt32(0)) { ($0 << 8) | UInt32($1) }
-            // The tool provides the current ink's rendering configuration,
-            // including the version metadata needed to archive monoline.
+            // Use the same ink configuration as the native toolbar.
             let nativeInk = PKInkingTool(type, color: color.withAlphaComponent(min(color.cgColor.alpha, s.opacity)), width: s.size).ink
             let stroke = PKStroke(ink: nativeInk,
                 path: PKStrokePath(controlPoints: points, creationDate: Date(timeIntervalSince1970: Double(s.t0 ?? 0) / 1000)),
