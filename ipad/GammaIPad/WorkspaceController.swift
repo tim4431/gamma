@@ -107,9 +107,12 @@ final class WorkspaceController: UIViewController, WKNavigationDelegate, WKUIDel
                 next.onClose = { [weak self] in self?.closeEditor() }
                 next.onSave = { [weak self] detail in
                     guard let self else { return }
-                    self.web.callAsyncJavaScript("window.dispatchEvent(new CustomEvent('gamma-native-ink-save', {detail}));",
-                        arguments: ["detail": detail], in: nil, contentWorld: .page) { [weak self] result in
-                        if case .failure(let error) = result { self?.editor?.failed("The workspace could not receive the drawing: \(error.localizedDescription)") }
+                    Task { @MainActor [weak self] in
+                        guard let self else { return }
+                        do {
+                            _ = try await self.web.callAsyncJavaScript("window.dispatchEvent(new CustomEvent('gamma-native-ink-save', {detail}));",
+                                arguments: ["detail": detail], in: nil, contentWorld: .page)
+                        } catch { self.editor?.failed("The workspace could not receive the drawing: \(error.localizedDescription)") }
                     }
                 }
                 let nav = UINavigationController(rootViewController: next)

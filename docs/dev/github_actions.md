@@ -13,6 +13,7 @@ is bumped or tagged by hand: versions are computed from the tags.
 | `docker` | `docker.yml` | every push to `main`; dispatched by the desktop release with a version | `ghcr.io/tim4431/gamma:latest`; plus `:<version>` and `:<major.minor>` when dispatched, linux/amd64 + arm64 |
 | `site` | `site.yml` | a push to `main` touching `sites/`, the artwork and demos it copies, or `PRIVACY.md`; or manual dispatch | gammapdf.com: `sites/dist` built and deployed as a Cloudflare Worker (static assets only; needs `CLOUDFLARE_API_TOKEN` + `CLOUDFLARE_ACCOUNT_ID`; [sites/README.md](../../sites/README.md)) |
 | `Codex plugin package` | `codex-plugin.yml` | PRs touching the plugin or its tooling, or manual dispatch | installer tests on Windows/macOS/Linux and preview plugin release assets (pins `checkout@v4`/`setup-python@v5`/`upload-artifact@v4`, older than the rule below) |
+| `iPad` | `ipad.yml` | relevant pushes to main/dev or `codex/ipad-*`, PRs, or manual dispatch | iPad simulator tests, simulator app and unsigned device app (14 days); no signing or publication; [iPad guide](../../ipad/README.md) |
 
 The `desktop` workflow also builds the versioned Codex plugin ZIP, its setup
 scripts for Windows and macOS/Linux, and checksums, and uploads them onto the

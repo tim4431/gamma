@@ -9,7 +9,7 @@ export function NativeInkButton({ context, snapshotRef, selection, blocks, hasPe
   const current = useRef(context);
   current.current = context;
   const [busy, setBusy] = useState(false);
-  useEffect(() => () => { current.current = null; }, []);
+  useEffect(() => { current.current = context; return () => { current.current = null; }; }, []);
   if (!hasNativeInk() || context.readOnly || !context.user || !context.workspace) return null;
   const open = async () => {
     if (busy) return;

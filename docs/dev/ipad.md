@@ -1,13 +1,15 @@
 # Gamma on the iPad (and other tablets)
 
-The iPad app is the web app installed to the home screen. There is no
-Swift client: the browser ink layer already gives Apple Pencil pressure,
-tilt, hover, palm rejection and Safari's touch-gesture handling
-([handwriting.md](handwriting.md)), and every other feature — the block
-editor, search, AI, sharing, workspaces — is the same React code the
-desktop shell hosts. The reasoning, and what the upstream fork's native
-PDFKit/PencilKit app was measured against, is in
-[research/ipad.md](../research/ipad.md).
+Gamma has two iPad entry points: the installed web app described below and
+an optional native client in [`ipad/`](../../ipad/README.md). The native client
+hosts the same web workspace and adds a focused PencilKit page editor. It
+saves the open `gamma-ink` format, uses the existing workspace permissions,
+and keeps local recovery drafts. Its unsigned macOS Actions build and device
+validation checklist are documented in the [iPad guide](../../ipad/README.md).
+
+The browser entry point remains available without Xcode or Apple signing.
+The original web-only decision is recorded in [research/ipad.md](../research/ipad.md);
+the new client follows the later decision to keep native input and open storage.
 
 ## What the user does
 
@@ -49,11 +51,8 @@ the viewer already carry.
 - **Pencil double-tap and squeeze** are not exposed to web content by
   iPadOS; Pencil hover is (a `pen` pointer with no buttons) and already
   shows the tool footprint.
-- **A native wrapper** (a `WKWebView` shell like the desktop's Electron
-  one) would only add App Store distribution and system share-sheet
-  integration. It stays out until distribution is a goal; the web app is
-  the product either way, as the desktop shell's black-box rule already
-  says ([desktop.md](desktop.md)).
+- The native client has its own PencilKit toolbar; the browser's Pencil
+  gesture limitations above still apply to the installed web app.
 
 ## Tests
 

@@ -209,6 +209,7 @@ Account credentials and private AI keys are never part of an export.
 Gamma is a web app; install it from the browser so it opens from an icon, full screen, pointed at your server.
 
 - **iPad / iPhone**: open your Gamma address in Safari, Share → **Add to Home Screen**. You may be asked to sign in once more (the installed app keeps its own cookies). The Apple Pencil writes on papers right away, with pressure, while fingers scroll and pinch.
+- **Native iPad client (build from source)**: the optional [iPad app](../ipad/README.md) opens the same workspace and adds a **Write with PencilKit** button for native handwriting. It saves editable ink to Gamma; unsigned GitHub Actions builds require Apple signing before installation on a device.
 - **Android**: Chrome → ⋮ → **Install app**.
 - **Windows / macOS / Linux**: in Chrome or Edge, the install icon at the right end of the address bar, or **Install Gamma** from the browser menu.
 
