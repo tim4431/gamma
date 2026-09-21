@@ -16,7 +16,9 @@ final class GammaInkTests: XCTestCase {
         XCTAssertEqual(try codec.export(drawing, space: space), ink)
         // The binary recovery archive must not cause a second smoothing pass.
         let recovered = try PKDrawing(data: drawing.dataRepresentation())
+        XCTAssertEqual(recovered.strokes.first?.ink.inkType, .monoline)
         XCTAssertEqual(try codec.export(recovered, space: space), ink)
+        XCTAssertEqual(try codec.export(PKDrawing(strokes: [recovered.strokes[1]]), space: space).strokes.first?.id, "second")
     }
     func testNewNativeBrushesExportEditableOpenStrokes() async throws {
         for type in [PKInkingTool.InkType.pen, .monoline, .marker] {
@@ -24,7 +26,7 @@ final class GammaInkTests: XCTestCase {
                             size: CGSize(width: 2, height: 2), opacity: 1, force: 0.2, azimuth: 0.5, altitude: 1),
                           PKStrokePoint(location: CGPoint(x: 50, y: 25), timeOffset: 0.1,
                             size: CGSize(width: 3, height: 3), opacity: 1, force: 0.8, azimuth: 0.6, altitude: 1)]
-            let stroke = PKStroke(ink: PKInk(type, color: .blue),
+            let stroke = PKStroke(ink: PKInkingTool(type, color: .blue, width: 2).ink,
                 path: PKStrokePath(controlPoints: points, creationDate: Date(timeIntervalSince1970: 100)))
             let codec = GammaInkCodec()
             let ink = try codec.export(PKDrawing(strokes: [stroke]), space: space)
@@ -36,6 +38,9 @@ final class GammaInkTests: XCTestCase {
             XCTAssertEqual(Double(output.pts[0]), 1000, accuracy: 5)
             XCTAssertEqual(Double(output.pts[1]), 2000, accuracy: 5)
             XCTAssertEqual(try codec.export(PKDrawing(strokes: [stroke]), space: space), ink)
+            let recovered = try PKDrawing(data: PKDrawing(strokes: [stroke]).dataRepresentation())
+            XCTAssertEqual(recovered.strokes.first?.ink.inkType, type)
+            XCTAssertEqual(try codec.export(recovered, space: space), ink)
         }
     }
     func testUnsupportedBrushCannotSilentlyBecomeAPen() async throws {
@@ -96,14 +101,18 @@ final class GammaInkTests: XCTestCase {
             existing: false, ink: GammaInk(space: space, strokes: [sample()]), background: [],
             image: "data:image/png;base64," + background.pngData()!.base64EncodedString())
         let controller = try InkEditorController(request: request, origin: "https://test.example/")
-        let window = UIWindow(frame: CGRect(x: 0, y: 0, width: 834, height: 1194))
+        let scene = try XCTUnwrap(UIApplication.shared.connectedScenes.first as? UIWindowScene)
+        let previous = scene.keyWindow
+        let window = UIWindow(windowScene: scene)
         window.rootViewController = UINavigationController(rootViewController: controller)
         window.makeKeyAndVisible()
         defer {
             window.isHidden = true
+            previous?.makeKeyAndVisible()
             try? InkDraftStore().remove(request.draftKey(origin: "https://test.example/"))
         }
         controller.loadViewIfNeeded(); window.layoutIfNeeded(); controller.view.layoutIfNeeded()
+        try await Task.sleep(for: .milliseconds(300))
         var received: [String: Any]?
         controller.onSave = { received = $0 }
         let button = try XCTUnwrap(controller.navigationItem.rightBarButtonItem)
@@ -114,7 +123,7 @@ final class GammaInkTests: XCTestCase {
         XCTAssertEqual(saved, request.ink)
         XCTAssertFalse(button.isEnabled, "Editing stays locked until the web save is acknowledged")
         let screenshot = UIGraphicsImageRenderer(bounds: window.bounds).image { _ in
-            window.drawHierarchy(in: window.bounds, afterScreenUpdates: true)
+            XCTAssertTrue(window.drawHierarchy(in: window.bounds, afterScreenUpdates: true))
         }
         let attachment = XCTAttachment(image: screenshot)
         attachment.name = "Gamma iPad handwriting editor"; attachment.lifetime = .keepAlways

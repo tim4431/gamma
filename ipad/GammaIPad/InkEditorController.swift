@@ -35,6 +35,8 @@ final class InkEditorController: UIViewController, PKCanvasViewDelegate, UIScrol
                              baseInk: request.ink, drawing: Data())
         }
         super.init(nibName: nil, bundle: nil)
+        canvas.maximumSupportedContentVersion = .version2
+        contextCanvas.maximumSupportedContentVersion = .version2
         // Register originals so unchanged strokes keep their precise JSON.
         let original = try codec.drawing(from: draft.baseInk)
         canvas.drawing = draft.drawing.isEmpty ? original : try PKDrawing(data: draft.drawing)

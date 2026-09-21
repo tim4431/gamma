@@ -98,8 +98,35 @@ func inkColor(_ text: String) throws -> UIColor {
 final class GammaInkCodec {
     private var originals: [String: [GammaStroke]] = [:]
 
-    static func fingerprint(_ stroke: PKStroke) -> String {
-        SHA256.hash(data: PKDrawing(strokes: [stroke]).dataRepresentation()).map { String(format: "%02x", $0) }.joined()
+    static func fingerprint(_ stroke: PKStroke) throws -> String {
+        // PKDrawing archives contain changing metadata. Hash the public stroke
+        // properties instead, tolerating subpixel archive rounding. A stable
+        // seed distinguishes coincident imported strokes with different IDs.
+        guard stroke.mask == nil else { throw InkFailure("Masked strokes cannot be saved as open ink.") }
+        var hash = SHA256()
+        hash.update(data: Data(stroke.ink.inkType.rawValue.utf8))
+        func add(_ numbers: [Double], precision: Double = 10_000) throws {
+            var data = Data()
+            for number in numbers {
+                guard number.isFinite, abs(number * precision) < 9e18 else { throw InkFailure("Invalid Pencil stroke.") }
+                var value = Int64((number * precision).rounded()).littleEndian
+                withUnsafeBytes(of: &value) { data.append(contentsOf: $0) }
+            }
+            hash.update(data: data)
+        }
+        var r: CGFloat = 0, g: CGFloat = 0, b: CGFloat = 0, a: CGFloat = 0
+        guard stroke.ink.color.getRed(&r, green: &g, blue: &b, alpha: &a) else { throw InkFailure("Unsupported Pencil color.") }
+        try add([Double(r), Double(g), Double(b), Double(a)])
+        let t = stroke.transform
+        try add([Double(t.a), Double(t.b), Double(t.c), Double(t.d), Double(t.tx), Double(t.ty)])
+        try add([stroke.path.creationDate.timeIntervalSince1970], precision: 1000)
+        try add([Double(stroke.randomSeed), Double(stroke.path.count)], precision: 1)
+        for point in stroke.path {
+            try add([Double(point.location.x), Double(point.location.y), point.timeOffset,
+                     Double(point.size.width), Double(point.size.height), Double(point.force),
+                     Double(point.opacity), Double(point.azimuth), Double(point.altitude)])
+        }
+        return hash.finalize().map { String(format: "%02x", $0) }.joined()
     }
 
     func drawing(from ink: GammaInk) throws -> PKDrawing {
@@ -131,9 +158,14 @@ final class GammaInkCodec {
             }
             let type: PKInkingTool.InkType = s.tool == "highlighter" ? .marker : s.brush == "monoline" ? .monoline : .pen
             let color = try inkColor(s.color)
-            let stroke = PKStroke(ink: PKInk(type, color: color.withAlphaComponent(min(color.cgColor.alpha, s.opacity))),
-                path: PKStrokePath(controlPoints: points, creationDate: Date(timeIntervalSince1970: Double(s.t0 ?? 0) / 1000)))
-            originals[Self.fingerprint(stroke), default: []].append(s)
+            let seed = SHA256.hash(data: Data(s.id.utf8)).prefix(4).reduce(UInt32(0)) { ($0 << 8) | UInt32($1) }
+            // The tool provides the current ink's rendering configuration,
+            // including the version metadata needed to archive monoline.
+            let nativeInk = PKInkingTool(type, color: color.withAlphaComponent(min(color.cgColor.alpha, s.opacity)), width: s.size).ink
+            let stroke = PKStroke(ink: nativeInk,
+                path: PKStrokePath(controlPoints: points, creationDate: Date(timeIntervalSince1970: Double(s.t0 ?? 0) / 1000)),
+                transform: .identity, mask: nil, randomSeed: seed)
+            originals[try Self.fingerprint(stroke), default: []].append(s)
             return stroke
         }
         return PKDrawing(strokes: strokes)
@@ -144,7 +176,7 @@ final class GammaInkCodec {
         var total = 0
         var used: [String: Int] = [:]
         let strokes = try drawing.strokes.map { stroke -> GammaStroke in
-            let key = Self.fingerprint(stroke)
+            let key = try Self.fingerprint(stroke)
             let index = used[key, default: 0]
             used[key] = index + 1
             if let matches = originals[key], index < matches.count {
