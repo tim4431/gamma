@@ -84,7 +84,8 @@ e2e `tests/e2e/scenarios/ink.mjs` and `inkEditing.mjs`.
 - Read-only views (workspace viewers, view shares) show ink without tools;
   edit shares draw.
 - On an iPad the same layer runs full screen once Gamma is added to the
-  home screen ([ipad.md](ipad.md)); there is no native drawing surface.
+  home screen ([ipad.md](ipad.md)). The optional [native iPad client](../../ipad/README.md)
+  adds a PencilKit page editor that saves this same open format.
 
 ## Model
 

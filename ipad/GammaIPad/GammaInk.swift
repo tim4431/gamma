@@ -158,6 +158,7 @@ final class GammaInkCodec {
             guard stroke.mask == nil, [.pen, .monoline, .marker].contains(stroke.ink.inkType) else {
                 throw InkFailure("This brush or erasure cannot be saved in Gamma's current ink format.")
             }
+            guard !stroke.path.isEmpty else { throw InkFailure("Empty Pencil stroke.") }
             let marker = stroke.ink.inkType == .marker
             let mono = stroke.ink.inkType == .monoline
             let transform = stroke.transform

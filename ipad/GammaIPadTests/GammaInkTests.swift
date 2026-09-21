@@ -9,7 +9,7 @@ final class GammaInkTests: XCTestCase {
         GammaStroke(id: id, tool: "pen", brush: "monoline", color: "#1d4ed8", size: 2, opacity: 1,
                     pen: true, t0: 100, ch: "xyptaz", pts: [1000, 2000, 200, 0, 45, 90, 3000, 0, 800, 16, 50, 100])
     }
-    func testUneditedImportPreservesEveryChannelAndID() throws {
+    func testUneditedImportPreservesEveryChannelAndID() async throws {
         let ink = GammaInk(space: space, strokes: [sample(), sample("second")])
         let codec = GammaInkCodec()
         let drawing = try codec.drawing(from: ink)
@@ -18,7 +18,7 @@ final class GammaInkTests: XCTestCase {
         let recovered = try PKDrawing(data: drawing.dataRepresentation())
         XCTAssertEqual(try codec.export(recovered, space: space), ink)
     }
-    func testNewNativeBrushesExportEditableOpenStrokes() throws {
+    func testNewNativeBrushesExportEditableOpenStrokes() async throws {
         for type in [PKInkingTool.InkType.pen, .monoline, .marker] {
             let points = [PKStrokePoint(location: CGPoint(x: 10, y: 20), timeOffset: 0,
                             size: CGSize(width: 2, height: 2), opacity: 1, force: 0.2, azimuth: 0.5, altitude: 1),
@@ -38,14 +38,14 @@ final class GammaInkTests: XCTestCase {
             XCTAssertEqual(try codec.export(PKDrawing(strokes: [stroke]), space: space), ink)
         }
     }
-    func testUnsupportedBrushCannotSilentlyBecomeAPen() throws {
+    func testUnsupportedBrushCannotSilentlyBecomeAPen() async throws {
         let point = PKStrokePoint(location: .zero, timeOffset: 0, size: CGSize(width: 2, height: 2),
                                   opacity: 1, force: 0.5, azimuth: 0, altitude: 1)
         let stroke = PKStroke(ink: PKInk(.pencil, color: .black),
                               path: PKStrokePath(controlPoints: [point], creationDate: Date()))
         XCTAssertThrowsError(try GammaInkCodec().export(PKDrawing(strokes: [stroke]), space: space))
     }
-    func testLegacyDefaultsAndBadChannels() throws {
+    func testLegacyDefaultsAndBadChannels() async throws {
         let json = #"{"id":"old","ch":"xy","pts":[100,200]}"#.data(using: .utf8)!
         let stroke = try JSONDecoder().decode(GammaStroke.self, from: json)
         XCTAssertEqual(stroke.tool, "pen")
@@ -55,7 +55,7 @@ final class GammaInkTests: XCTestCase {
         ink.strokes[0].ch = "xxy"
         XCTAssertThrowsError(try ink.validate())
     }
-    func testServerAddressesRejectCredentialsAndCrossOriginPorts() {
+    func testServerAddressesRejectCredentialsAndCrossOriginPorts() async {
         XCTAssertNotNil(ServerAddress.parse("https://gamma.example/"))
         XCTAssertNil(ServerAddress.parse("http://gamma.example"))
         XCTAssertNil(ServerAddress.parse("https://user:password@gamma.example"))
@@ -63,7 +63,7 @@ final class GammaInkTests: XCTestCase {
         XCTAssertFalse(ServerAddress.sameOrigin(URL(string: "https://gamma.example")!, URL(string: "https://gamma.example:444")!))
         XCTAssertTrue(ServerAddress.sameOrigin(URL(string: "https://gamma.example")!, URL(string: "https://gamma.example:443/path")!))
     }
-    func testDraftIsolationAndCorruptionAreExplicit() throws {
+    func testDraftIsolationAndCorruptionAreExplicit() async throws {
         let directory = FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString)
         defer { try? FileManager.default.removeItem(at: directory) }
         let store = try InkDraftStore(directory: directory)
@@ -82,5 +82,42 @@ final class GammaInkTests: XCTestCase {
         try Data("corrupt".utf8).write(to: directory.appendingPathComponent(key + ".json"))
         XCTAssertThrowsError(try store.read(key))
         XCTAssertThrowsError(try store.read("../escape"))
+    }
+
+    func testEditorRendersAndSendsOpenInkOnSave() async throws {
+        let renderer = UIGraphicsImageRenderer(size: CGSize(width: 612, height: 792))
+        let background = renderer.image { context in
+            UIColor.white.setFill(); context.fill(CGRect(x: 0, y: 0, width: 612, height: 792))
+            ("Gamma · Handwriting" as NSString).draw(at: CGPoint(x: 40, y: 50),
+                withAttributes: [.font: UIFont.systemFont(ofSize: 24), .foregroundColor: UIColor.black])
+        }
+        let request = InkRequest(requestId: "editorTest", user: "test", workspace: "lab", pageId: UUID().uuidString,
+            document: "/api/uploads/test.pdf", blockId: "testInk", parentId: "page", expectedURL: nil,
+            existing: false, ink: GammaInk(space: space, strokes: [sample()]), background: [],
+            image: "data:image/png;base64," + background.pngData()!.base64EncodedString())
+        let controller = try InkEditorController(request: request, origin: "https://test.example/")
+        let window = UIWindow(frame: CGRect(x: 0, y: 0, width: 834, height: 1194))
+        window.rootViewController = UINavigationController(rootViewController: controller)
+        window.makeKeyAndVisible()
+        defer {
+            window.isHidden = true
+            try? InkDraftStore().remove(request.draftKey(origin: "https://test.example/"))
+        }
+        controller.loadViewIfNeeded(); window.layoutIfNeeded(); controller.view.layoutIfNeeded()
+        var received: [String: Any]?
+        controller.onSave = { received = $0 }
+        let button = try XCTUnwrap(controller.navigationItem.rightBarButtonItem)
+        let action = try XCTUnwrap(button.action)
+        UIApplication.shared.sendAction(action, to: button.target, from: button, for: nil)
+        let object = try XCTUnwrap(received?["ink"])
+        let saved = try JSONDecoder().decode(GammaInk.self, from: JSONSerialization.data(withJSONObject: object))
+        XCTAssertEqual(saved, request.ink)
+        XCTAssertFalse(button.isEnabled, "Editing stays locked until the web save is acknowledged")
+        let screenshot = UIGraphicsImageRenderer(bounds: window.bounds).image { _ in
+            window.drawHierarchy(in: window.bounds, afterScreenUpdates: true)
+        }
+        let attachment = XCTAttachment(image: screenshot)
+        attachment.name = "Gamma iPad handwriting editor"; attachment.lifetime = .keepAlways
+        add(attachment)
     }
 }

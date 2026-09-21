@@ -25,6 +25,9 @@ export function NativeInkButton({ context, snapshotRef, selection, blocks, hasPe
       const target = selected ? await apiJson(`${API}/blocks/${selected.id}`) : null;
       const ink = target ? await inkStore.loadInk(target.properties.ink_url) : newInk(shot.page, shot.width, shot.height);
       if (!ink) throw new Error("Could not load this handwriting. Try again when connected.");
+      if (["page", "width", "height"].some((k) => ink.space[k] !== shot[k])) {
+        throw new Error("The PDF page dimensions changed. Reopen the document before editing this group.");
+      }
       const background = [];
       for (const block of blocks.filter((b) => b.id !== target?.id && b.properties.pdf_page === shot.page)) {
         const other = inkStore.inkFor(block) || await inkStore.loadInk(block.properties.ink_url);
@@ -52,7 +55,7 @@ export function NativeInkButton({ context, snapshotRef, selection, blocks, hasPe
     } catch (error) { onStatus(error.message || String(error)); }
     finally { setBusy(false); }
   };
-  return <button onClick={open} disabled={busy} title="Write with Apple Pencil; select one ink group to edit it" aria-label="Write with PencilKit">
+  return <button data-native-ink onClick={open} disabled={busy} title="Write with Apple Pencil; select one ink group to edit it" aria-label="Write with PencilKit">
     <PenIcon size={15} /><span style={{ fontSize: 10 }}>iPad</span>
   </button>;
 }

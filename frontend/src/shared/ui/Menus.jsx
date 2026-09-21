@@ -27,7 +27,7 @@ const SUB_TOP_NUDGE = -4;
 // ignoreRef: element whose pointerdowns must NOT dismiss the menu — the
 // dropdown trigger, so its own click can toggle instead of fighting the
 // outside-pointerdown dismissal.
-function ContextMenu({ x, y, onClose, className = "", anchorRight = false, ignoreRef, children }) {
+function ContextMenu({ x, y, onClose, className = "", anchorRight = false, ignoreRef, ignoreSelector, children }) {
   const ref = useRef(null);
   const [pos, setPos] = useState({ left: x, top: y });
   // Open flyout (SubMenuItem id) + the pointer-intent guard that keeps a
@@ -59,6 +59,7 @@ function ContextMenu({ x, y, onClose, className = "", anchorRight = false, ignor
     function onDown(e) {
       if (!ref.current || ref.current.contains(e.target)) return;
       if (ignoreRef?.current && ignoreRef.current.contains(e.target)) return;
+      if (ignoreSelector && e.target.closest?.(ignoreSelector)) return;
       onClose();
     }
     function onKey(e) { if (e.key === "Escape") { e.stopPropagation(); onClose(); } }
@@ -69,7 +70,7 @@ function ContextMenu({ x, y, onClose, className = "", anchorRight = false, ignor
       document.removeEventListener("pointerdown", onDown, true);
       document.removeEventListener("keydown", onKey);
     };
-  }, [onClose]);
+  }, [onClose, ignoreRef, ignoreSelector]);
 
   // Hovering anywhere in the menu that is NOT the open flyout (or its own
   // trigger) closes it — but only once the cursor stops aiming at it, so the

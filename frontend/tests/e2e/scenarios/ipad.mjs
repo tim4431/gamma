@@ -2,7 +2,68 @@
 // home-screen head tags, theme-color following the theme, and the
 // standalone-mode stylesheet. Chromium in a tablet-sized touch context —
 // emulation, not an iPad.
-export async function ipadScenarios({ server, browser, alice, step, until, assert, assertEq, assertNoProblems, openPage }) {
+import { waitForPdf } from "./pdf.mjs";
+
+export async function ipadScenarios({ server, browser, alice, makePdf, step, until, assert, assertEq, assertNoProblems, openPage }) {
+  await step("ipad: native handwriting bridge saves open ink and reopens the selected group", async () => {
+    const upload = await alice.upload("/api/uploads", makePdf([["PencilKit bridge page"]]), "ipad.pdf", "application/pdf");
+    const doc = await alice.api(`/api/blocks/by-doc/${upload.doc_id}`, { method: "POST", body: {
+      default_title: "iPad bridge", source_url: upload.source_url,
+    } });
+    const ctx = await alice.context(browser);
+    try {
+      // Exercise the real web button, PDF snapshot, identity headers and save
+      // endpoint. XCTest separately exercises Apple's drawing conversion.
+      await ctx.addInitScript(() => {
+        window.nativeMessages = [];
+        window.webkit = { messageHandlers: { gammaInk: { postMessage(message) {
+          window.nativeMessages.push(message);
+          if (message.action === "open") {
+            window.nativeRequest = message;
+            return new Promise((resolve) => { window.nativeClose = resolve; });
+          }
+          if (message.action === "saved") window.nativeClose({ closed: true });
+          return Promise.resolve({ ok: true });
+        } } } };
+      });
+      const page = await openPage(ctx, `${server.base}/?page=${doc.id}&ws=${alice.ws}`);
+      await waitForPdf(page, 1);
+      await page.getByRole("button", { name: "Write with PencilKit", exact: true }).click();
+      await page.waitForFunction(() => !!window.nativeRequest);
+      const request = await page.evaluate(() => window.nativeRequest);
+      assertEq(request.existing, false);
+      assertEq(request.workspace, alice.ws);
+      assertEq(request.pageId, doc.id);
+      assert(request.image.startsWith("data:image/png;base64,"), "a PDF background is sent in page coordinates");
+      assertEq(request.ink.space.page, 1);
+      await page.evaluate(() => {
+        const r = window.nativeRequest;
+        const ink = { ...r.ink, strokes: [{ id: "native", tool: "pen", brush: "monoline", color: "#1d4ed8",
+          size: 3, opacity: 1, pen: true, ch: "xyptaz", pts: [10000, 15000, 200, 0, 45, 90, 15000, 0, 800, 100, 50, 95] }] };
+        window.dispatchEvent(new CustomEvent("gamma-native-ink-save", { detail: {
+          requestId: r.requestId, blockId: r.blockId, expectedURL: null, ink,
+        } }));
+      });
+      await until(() => page.evaluate(() => window.nativeMessages.some((m) => m.action === "saved")));
+      const block = await alice.api(`/api/blocks/${request.blockId}`);
+      const ink = await alice.api(block.properties.ink_url);
+      assertEq(ink.strokes[0].brush, "monoline");
+      assertEq(ink.strokes[0].ch, "xyptaz");
+      await page.locator('[data-page="1"] .inkLayer path').first().waitFor();
+      await page.locator('[data-page="1"] .inkLayer path').first().click({ force: true });
+      await page.waitForSelector(".inkSelRect");
+      await page.evaluate(() => { window.nativeRequest = null; });
+      await page.getByRole("button", { name: "Write with PencilKit", exact: true }).click();
+      await page.waitForFunction(() => !!window.nativeRequest);
+      const edit = await page.evaluate(() => window.nativeRequest);
+      assertEq(edit.existing, true);
+      assertEq(edit.blockId, request.blockId);
+      assertEq(edit.expectedURL, block.properties.ink_url);
+      assertEq(edit.ink.strokes[0].brush, "monoline");
+      await page.evaluate(() => window.nativeClose({ closed: true }));
+      assertNoProblems(page);
+    } finally { await ctx.close(); }
+  });
   await step("ipad: install manifest, icons, status-bar colour and standalone mode", async () => {
     const ctx = await alice.context(browser, { hasTouch: true, deviceScaleFactor: 2, viewport: { width: 834, height: 1194 } });
     try {

@@ -180,6 +180,7 @@ final class InkEditorController: UIViewController, PKCanvasViewDelegate, UIScrol
     }
     private func setSaving(_ value: Bool) {
         saving = value; canvas.isUserInteractionEnabled = !value
+        view.isUserInteractionEnabled = !value
         navigationItem.leftBarButtonItem?.isEnabled = !value
         navigationItem.rightBarButtonItem?.isEnabled = !value
         tool.isEnabled = !value; width.isEnabled = !value

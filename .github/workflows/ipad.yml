@@ -74,3 +74,17 @@ jobs:
             ipad/build-*.log
           if-no-files-found: ignore
           retention-days: 14
+      - name: Export simulator screenshots
+        if: always()
+        run: |
+          if [ -d build/Tests.xcresult ]; then
+            xcrun xcresulttool export attachments --path build/Tests.xcresult --output-path build/attachments
+          fi
+      - name: Upload simulator screenshots
+        if: always()
+        uses: actions/upload-artifact@v7
+        with:
+          name: GammaIPad-screenshots
+          path: ipad/build/attachments
+          if-no-files-found: ignore
+          retention-days: 14

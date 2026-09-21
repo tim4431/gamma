@@ -631,7 +631,7 @@ function InkSelectionMenu({ wrapRef, box, width, strokes, onAction, onClose }) {
   }, [wrapRef, width, x0, y0, x1, y1, menuHeight]);
   if (!anchor) return null;
   const kinds = [...new Set(strokes.map((s) => s.tool))];
-  return <ContextMenu x={anchor.x} y={anchor.y} ignoreRef={wrapRef} onClose={onClose} className="inkEditMenu">
+  return <ContextMenu x={anchor.x} y={anchor.y} ignoreRef={wrapRef} ignoreSelector="[data-native-ink]" onClose={onClose} className="inkEditMenu">
     <InkTooltips contentRef={contentRef} role="toolbar" aria-label="Edit handwriting" onPointerDown={(e) => e.stopPropagation()}>
       <div className="inkEditRow">
         <button className={"ctlBtn" + (options === "color" ? " modeActive" : "")} aria-label="Color" title="Color" aria-expanded={options === "color"} onClick={() => setOptions(options === "color" ? null : "color")}><PaletteIcon aria-hidden="true" /></button>
