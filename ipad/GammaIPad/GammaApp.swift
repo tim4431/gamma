@@ -9,7 +9,12 @@ struct GammaApp: App {
 
 struct WorkspaceView: UIViewControllerRepresentable {
     func makeUIViewController(context: Context) -> UINavigationController {
-        UINavigationController(rootViewController: WorkspaceController())
+        #if DEBUG
+        if ProcessInfo.processInfo.arguments.contains("--ink-ui-test") {
+            return UINavigationController(rootViewController: InkPreview.controller())
+        }
+        #endif
+        return UINavigationController(rootViewController: WorkspaceController())
     }
     func updateUIViewController(_ controller: UINavigationController, context: Context) {}
 }

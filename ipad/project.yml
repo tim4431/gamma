@@ -18,6 +18,7 @@ targets:
     settings:
       base:
         PRODUCT_BUNDLE_IDENTIFIER: com.gamma.reader.ipad
+        TARGETED_DEVICE_FAMILY: "2"
         GENERATE_INFOPLIST_FILE: YES
         INFOPLIST_KEY_CFBundleDisplayName: Gamma
         INFOPLIST_KEY_UILaunchScreen_Generation: YES
@@ -38,12 +39,24 @@ targets:
       base:
         GENERATE_INFOPLIST_FILE: YES
         PRODUCT_BUNDLE_IDENTIFIER: com.gamma.reader.ipad.tests
+  GammaIPadUITests:
+    type: bundle.ui-testing
+    platform: iOS
+    sources: [GammaIPadUITests]
+    dependencies:
+      - target: GammaIPad
+    settings:
+      base:
+        GENERATE_INFOPLIST_FILE: YES
+        PRODUCT_BUNDLE_IDENTIFIER: com.gamma.reader.ipad.uitests
+        TEST_TARGET_NAME: GammaIPad
 schemes:
   GammaIPad:
     build:
       targets:
         GammaIPad: all
         GammaIPadTests: [test]
+        GammaIPadUITests: [test]
     test:
-      targets: [GammaIPadTests]
+      targets: [GammaIPadTests, GammaIPadUITests]
       gatherCoverageData: true
