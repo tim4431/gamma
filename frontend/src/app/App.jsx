@@ -2807,7 +2807,7 @@ function LibraryApp() {
   }
 
   function deleteAiProvider(p) {
-    const label = p.name || aiProtocolOf(p.protocol)?.label || p.protocol;
+    const label = p.label || p.protocol;
     setConfirmBox({
       title: "Remove AI key",
       message: `Remove the "${label}" key? AI requests through it will stop working. This cannot be undone.`,

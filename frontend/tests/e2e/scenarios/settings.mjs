@@ -88,6 +88,44 @@ export async function settingsScenarios(env) {
     } finally { await ctx.close(); }
   });
 
+  await step("settings: the DeepSeek preset is the OpenAI protocol at DeepSeek's endpoint", async () => {
+    const { ctx, page } = await setup();
+    try {
+      const calls = [];
+      await page.route("**/api/ai/model-catalog", async (route) => {
+        calls.push(route.request().postDataJSON());
+        await route.fulfill({ json: { models: ["deepseek-flash", "deepseek-v4-pro"] } });
+      });
+      await openSettings(page);
+      await nav(page, "Connections").click();
+      await page.getByRole("button", { name: "+ Add provider", exact: true }).click();
+      const dialog = page.getByRole("dialog", { name: "Add key", exact: true });
+      await dialog.getByRole("button", { name: "AI service", exact: true }).click();
+      await page.getByText("DeepSeek", { exact: true }).click();
+      // A preset's endpoint is fixed: no Base URL field to fill.
+      assertEq(await dialog.getByRole("textbox", { name: /Base URL/ }).count(), 0);
+      await dialog.locator('input[autocomplete="new-password"]').fill("sk-deepseek-e2e");
+      await dialog.getByRole("button", { name: "2 usable" }).waitFor();
+      assertEq(calls.at(-1).protocol, "openai");
+      assertEq(calls.at(-1).base_url, "https://api.deepseek.com");
+      const input = dialog.getByRole("combobox", { name: "Add a model" });
+      await input.click();
+      await page.getByRole("listbox", { name: "Available models" })
+        .getByRole("option", { name: "deepseek-flash", exact: true }).click();
+      await dialog.getByRole("button", { name: "Add key", exact: true }).click();
+      await until(() => dialog.count().then((n) => n === 0));
+      const saved = page.locator(".aiProvRow").filter({ hasText: "sk-deepseek-e2e".slice(-4) });
+      await saved.locator(".aiProvName").filter({ hasText: "DeepSeek" }).waitFor();
+      assertNoProblems(page);
+    } finally {
+      await ctx.close();
+      const info = await user.api("/api/ai/settings");
+      for (const p of info.providers.filter((p) => p.base_url === "https://api.deepseek.com")) {
+        await user.api(`/api/ai/providers/${p.id}`, { method: "DELETE" });
+      }
+    }
+  });
+
   await step("settings: manual OAuth connection automatically fetches models", async () => {
     const { ctx, page } = await setup();
     try {

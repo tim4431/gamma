@@ -11,9 +11,14 @@ loop runs, and what the user controls. The tools themselves are catalogued in
 ## Provider and models
 
 There are NO env API keys; providers are per-user GUI entries (Settings →
-Provider and models) stored under the reserved `ai-settings` prefs key in the user's
-`data.db` — a LIST of `{id, name, protocol, api_key, base_url, models}` managed
-via `POST/PUT/DELETE /api/ai/providers[/{id}]`. The generic prefs endpoints
+Provider and models) stored under the reserved account-wide `ai-settings` pref in
+`users.db` — a LIST of `{id, name, protocol, api_key, base_url, models}` managed
+via `POST/PUT/DELETE /api/ai/providers[/{id}]`. An entry offers exactly the
+models picked for it (from the provider's live listing in the form): there is
+no built-in default model, so an entry with none picked offers nothing and its
+Test button says so (migration step 15 wrote the old defaults into entries
+that had relied on them). A saved entry never switches between sign-in and
+API key (`PUT` with such a protocol is a 400). The generic prefs endpoints
 refuse the key; the only read path is the masked `GET /api/ai/settings` (last-4
 hint, never the key), guests can't write. `POST /api/ai/providers/{id}/test`
 probes an entry with a tiny live completion for the settings list's Test button
@@ -46,6 +51,21 @@ module-level config constants for credentials or model routing. Env vars set
 each protocol's administrator-controlled default base URL, including
 `GAMMA_AI_CHATGPT_BASE_URL`.
 
+Named services (`AI_SERVICES` in `gamma/config.py`, sent as `services` with the
+settings) are form presets: a protocol plus a fixed endpoint, listed in the
+form's service menu between the protocols and "Custom endpoint". DeepSeek is
+the `openai` protocol at `https://api.deepseek.com`. An entry made from one
+stores only protocol + base URL; `provider_label` recognizes the pair and
+names the entry after the service when it has no name of its own. The
+`openai` wire follows the endpoint (`is_openai_platform` in `ai_client.py`):
+only OpenAI itself gets `max_completion_tokens`, the Responses API for tool
+calls, and the gpt-/o-family filter on its model listing. Compatible servers
+get `max_tokens`, Chat Completions tools and their full listing (minus
+embedding/audio/image models). Anthropic subscription sign-in is deliberately
+absent: Anthropic's terms forbid third-party apps from routing requests
+through Free/Pro/Max plan credentials, so Claude is reached with a Console API
+key.
+
 The Provider and models pane also exposes `POST /api/ai/providers/{id}/usage`. For a
 ChatGPT OAuth entry it reads normalized subscription rate-limit windows
 (`used_percent`, `remaining_percent`, and reset time) without exposing the
@@ -73,7 +93,10 @@ localhost:1455 callback URL since nothing listens there; access tokens refresh
 lazily in `ai_runtime`). Its wire is the Responses API on
 `chatgpt.com/backend-api/codex` (stream-only SSE; non-stream callers join
 deltas), and PDF attachments go as native `input_file` parts with an automatic
-retry as extracted text if the backend rejects them.
+retry as extracted text if the backend rejects them. That retry applies to
+any provider that answers a native-PDF request with a 4xx other than
+401/403/429 (compatible servers may refuse `file` parts too). Anthropic has
+no `minimal` effort; `anthropic_request` sends `low` for it.
 
 Its model list (`POST /api/ai/model-catalog`) is Codex CLI's own listing call,
 `GET {base}/models?client_version=…`, made with the entry's token. The backend
@@ -82,7 +105,11 @@ newest Codex CLI release: npm's `latest` for `@openai/codex`, cached for 6 h
 (`_codex_client_version`; on a failed lookup the last good version, else a
 floor constant, with a retry after 10 min). No model names are hardcoded. A
 failed listing is a 502 the picker shows, and a fresh connect whose listing
-fails starts with no models.
+fails starts with no models. The sign-in `state` belongs to the account that
+started it. Token refreshes are serialized per account and re-read the
+entries first (`_refreshed_oauth` in `ai_settings.py`): OpenAI rotates refresh
+tokens, so of two parallel refreshes the second would fail and save stale
+tokens over the fresh ones.
 
 ## Chat endpoint
 

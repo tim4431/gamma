@@ -123,8 +123,43 @@ def test_second_provider_adds_its_models(alice):
     assert r.status_code == 200, r.text
     assert len(r.json()["providers"]) == 2
     models = alice.get("/api/ai/models").json()["models"]
-    # openai entry has no model list — its protocol default appears
-    assert [m["model"] for m in models] == ["claude-solo", "gpt-4o-mini"]
+    # The openai entry has no models picked — it offers none (there is no
+    # built-in default model), and the Test button says so instead of failing.
+    assert [m["model"] for m in models] == ["claude-solo"]
+    pid = r.json()["providers"][1]["id"]
+    body = alice.post(f"/api/ai/providers/{pid}/test").json()
+    assert body["ok"] is False and "no model" in body["error"]
+
+
+def test_deepseek_service_preset(alice, monkeypatch):
+    # DeepSeek is offered as a named service: the openai protocol at its
+    # endpoint. Such an entry is labelled DeepSeek, and its live model list is
+    # not narrowed to OpenAI's gpt-/o-families.
+    import gamma.routers.ai as ai_mod
+
+    g = alice.get("/api/ai/settings").json()
+    svc = next(s for s in g["services"] if s["id"] == "deepseek")
+    assert svc["protocol"] == "openai" and svc["base_url"] == "https://api.deepseek.com"
+
+    r = alice.post("/api/ai/providers", json={
+        "protocol": "openai", "api_key": "sk-deepseek-test-1234",
+        "base_url": svc["base_url"], "models": "deepseek-flash",
+    })
+    assert r.status_code == 200, r.text
+    entry = next(p for p in r.json()["providers"] if p["base_url"] == svc["base_url"])
+    assert entry["name"] == "" and entry["label"] == "DeepSeek"
+    models = alice.get("/api/ai/models").json()["models"]
+    assert any(m["model"] == "deepseek-flash" and m["provider_name"] == "DeepSeek" for m in models)
+
+    seen = {}
+    monkeypatch.setattr(ai_mod, "_model_catalog_json", lambda req: seen.update(url=req.full_url) or {
+        "data": [{"id": "deepseek-flash"}, {"id": "deepseek-v4-pro"}, {"id": "deepseek-embed"}]})
+    r = alice.post("/api/ai/model-catalog", json={"provider_id": entry["id"]})
+    assert r.status_code == 200, r.text
+    assert r.json()["models"] == ["deepseek-flash", "deepseek-v4-pro"]
+    assert seen["url"] == "https://api.deepseek.com/v1/models"
+
+    alice.delete(f"/api/ai/providers/{entry['id']}")
 
 
 def test_provider_validation(alice):

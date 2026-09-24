@@ -59,6 +59,7 @@ workspace's files), `db.SCHEMA_VERSION`, `manage.py migrate` / `backups`.
 | 12 | `sync_log_stats` | every workspace's `sync_log` gains `stats`, the git-style block counts of a row (JSON `{add, del, mod}`); older rows carry none |
 | 13 | `sync_conflict_base` | every workspace's `sync_conflicts` gains `base`, the text a merged block had before either side edited it (the resolver's diff view); older rows carry none |
 | 14 | `identities` | Adds the `identities` table (+ unique index per account) in `users.db`: the Gamma Cloud identity linked to an account ([cloud_accounts.md](cloud_accounts.md)) |
+| 15 | `ai_explicit_models` | AI provider entries (`user_prefs` key `ai-settings`) with no models picked get the default model they were implicitly using written in (anthropic `claude-haiku-4-5-20251001`, openai `gpt-4o-mini`, chatgpt `gpt-5.1`): the running code no longer has built-in default models ([ai.md](ai.md)) |
 
 ## Backups (`gamma/backups.py`)
 

@@ -13,7 +13,8 @@ import pytest
 from fastapi.testclient import TestClient
 
 import gamma.chatgpt_oauth as co
-from gamma.routers.ai import _chatgpt_request, _sse_deltas
+from gamma.ai_client import chatgpt_request as _chatgpt_request
+from gamma.routers.ai import _sse_deltas
 
 
 def _fake_jwt(claims: dict) -> str:
@@ -149,6 +150,53 @@ def test_expired_token_is_refreshed_lazily(erin, monkeypatch):
     # …and the refreshed token was persisted for the next request
     saved = next(e for e in load_provider_entries("erin") if e["id"] == entry["id"])
     assert saved["oauth"]["access_token"] == fresh["access_token"]
+
+
+def test_concurrent_requests_refresh_once(erin, monkeypatch):
+    # OpenAI rotates refresh tokens: of two parallel refreshes the second
+    # fails. Parallel requests near expiry (the translator fires dozens) must
+    # share one refresh, and nobody may save stale tokens over the fresh ones.
+    import threading
+    from gamma.ai_settings import ai_runtime, load_provider_entries, save_provider_entries
+
+    entries = load_provider_entries("erin")
+    entry = next(e for e in entries if e.get("protocol") == "chatgpt")
+    entry["oauth"]["expires_at"] = int(time.time()) - 10
+    entry["oauth"].pop("refresh_failed_at", None)
+    save_provider_entries("erin", entries)
+
+    fresh = _fake_tokens(exp=int(time.time()) + 7200)
+    calls = []
+
+    def slow_refresh(form):
+        calls.append(form)
+        time.sleep(0.2)
+        return fresh
+
+    monkeypatch.setattr(co, "_token_request", slow_refresh)
+    keys = []
+    threads = [threading.Thread(target=lambda: keys.append(
+        ai_runtime("erin")["providers"][entry["id"]]["api_key"])) for _ in range(5)]
+    for t in threads:
+        t.start()
+    for t in threads:
+        t.join()
+    assert len(calls) == 1
+    assert keys == [fresh["access_token"]] * 5
+    saved = next(e for e in load_provider_entries("erin") if e["id"] == entry["id"])
+    assert saved["oauth"]["access_token"] == fresh["access_token"]
+
+
+def test_sign_in_entry_cannot_become_a_key_entry(erin):
+    entry = next(p for p in erin.get("/api/ai/settings").json()["providers"]
+                 if p["protocol"] == "chatgpt")
+    r = erin.put(f"/api/ai/providers/{entry['id']}", json={
+        "protocol": "anthropic", "models": "", "base_url": ""})
+    assert r.status_code == 400
+    # Refused as a whole: the models of the entry are untouched.
+    after = next(p for p in erin.get("/api/ai/settings").json()["providers"]
+                 if p["id"] == entry["id"])
+    assert after["protocol"] == "chatgpt" and after["models"] == entry["models"]
 
 
 def test_provider_test_retries_a_backed_off_refresh(erin, monkeypatch):
