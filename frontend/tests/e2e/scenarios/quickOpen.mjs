@@ -31,6 +31,7 @@ export async function quickOpenScenarios(env) {
       await input.fill("horlogeire");
       await until(async () => (await dialog.getByRole("option").count()) === 1, { what: "the label's page alone" });
       assert(/Atomic clocks/.test(await dialog.getByRole("option").textContent()), "the labelled page matches");
+      assertEq(await dialog.getByRole("option").locator(".labelTagBadge").textContent(), "horlogerie", "the row shows its label");
 
       await input.fill("cavity");
       await until(async () => (await dialog.getByRole("option").count()) === 2);

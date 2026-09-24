@@ -524,5 +524,7 @@
 .quickOpenInput .searchInput { flex: 1; }
 .quickOpenList { max-height: min(420px, 55vh); overflow-y: auto; }
 .quickOpenRow { border-radius: 4px; }
+/* the chip line keeps its file-row cap; the option style would stretch it */
+.quickOpenRow .fileRowLabels { flex: 0 1 auto; }
 .quickOpenTag { flex-shrink: 0; font-style: normal; font-size: calc(10px * var(--ui-font-scale, 1)); color: var(--text-dim); }
 .quickOpen .chatMentionHint { padding: 6px 6px 0; }

@@ -47,6 +47,30 @@ export async function closeEditor(page) {
   await page.waitForSelector(".blockEditorCm", { state: "detached", timeout: 5000 });
 }
 
+// One HTML5 drag, dispatched the way the browser would: dragstart on `from`
+// (an element handle), then dragover on the row of the block `ontoText` near
+// its wrap's top left (a sibling above it). `finish("drop")` drops on that row
+// and fires dragend at the source; `finish("elsewhere")` only fires dragend at
+// the body, a drag end the rows never see.
+async function startDrag(page, from, ontoText) {
+  const onto = await page.locator(".sortableBlockWrap", { hasText: ontoText }).first().elementHandle();
+  await page.evaluate(([src, wrap]) => {
+    const dt = new DataTransfer();
+    window.__e2eDrag = { dt, src, row: wrap.querySelector(".blockRow") };
+    src.dispatchEvent(new DragEvent("dragstart", { bubbles: true, cancelable: true, dataTransfer: dt }));
+    const r = wrap.getBoundingClientRect();
+    window.__e2eDrag.row.dispatchEvent(new DragEvent("dragover", { bubbles: true, cancelable: true, dataTransfer: dt, clientX: r.left + 5, clientY: r.top + 4 }));
+  }, [from, onto]);
+  return {
+    finish: (how) => page.evaluate((how) => {
+      const { dt, src, row } = window.__e2eDrag;
+      const fire = (el, type) => el.dispatchEvent(new DragEvent(type, { bubbles: true, cancelable: true, dataTransfer: dt }));
+      if (how === "drop") { fire(row, "drop"); fire(src, "dragend"); }
+      else fire(document.body, "dragend");
+    }, how),
+  };
+}
+
 export async function newPageViaUi(page, title) {
   await page.waitForSelector(".folderNewBtn", { timeout: 15000 });
   await page.click(".folderNewBtn");
@@ -124,6 +148,34 @@ export async function noteScenarios({ server, browser, alice, step, until, sleep
     await dup.locator(".dragHandle").click();
     await page.locator(".ctxMenuItem", { hasText: "Delete" }).click();
     await saved([{ content: "first", children: [{ content: "second", children: [] }] }, { content: "third", children: [] }], "delete saved");
+    assertNoProblems(page);
+  });
+
+  await step("notes: dragging a block's handle moves it; the drop line never outlives the drag (#88)", async () => {
+    const handle = (text) => page.locator(".sortableBlockWrap", { hasText: text }).first().locator(".dragHandle").first().elementHandle();
+    const line = page.locator(".dropIndicator");
+    // A handle drag shows the line and the drop moves the block.
+    let drag = await startDrag(page, await handle("third"), "first");
+    await line.waitFor({ timeout: 5000 });
+    await drag.finish("drop");
+    await line.waitFor({ state: "detached", timeout: 5000 });
+    await saved([{ content: "third", children: [] }, { content: "first", children: [{ content: "second", children: [] }] }], "moved above");
+    // A drag whose end no row sees (a dragend elsewhere) still takes it away.
+    drag = await startDrag(page, await handle("first"), "third");
+    await line.waitFor({ timeout: 5000 });
+    await drag.finish("elsewhere");
+    await line.waitFor({ state: "detached", timeout: 5000 });
+    // Anything else dragged over the notes (rendered text here) shows none.
+    drag = await startDrag(page, await row(page, "third").locator(".blockRendered").first().elementHandle(), "first");
+    await sleep(300);
+    assertEq(await line.count(), 0, "no drop line for a non-block drag");
+    await drag.finish("elsewhere");
+    // Put the tree back for the steps below.
+    drag = await startDrag(page, await handle("first"), "third");
+    await line.waitFor({ timeout: 5000 });
+    await drag.finish("drop");
+    await saved([{ content: "first", children: [{ content: "second", children: [] }] }, { content: "third", children: [] }], "moved back");
+    assertEq(await line.count(), 0, "no drop line after the drop");
     assertNoProblems(page);
   });
 

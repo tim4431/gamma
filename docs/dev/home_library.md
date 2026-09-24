@@ -10,7 +10,8 @@ keyboard way into the library from anywhere: Ctrl+P (App.jsx's global key
 listener; not in a share view) opens a palette over the pages. With no
 query the order is the recents queue, then open tabs, then the rest by last
 edit; a query ranks through `createLibraryMatcher` — the listing search box's
-matcher, below — with recency as the tie-break. Enter opens through `openPage`, the same path as a card double-click.
+matcher, below — with recency as the tie-break. Each row shows the page's folder and label
+chips (`CardLabels`, as on a file row), so a label-only match reads as one. Enter opens through `openPage`, the same path as a card double-click.
 
 ## Folders and labels
 

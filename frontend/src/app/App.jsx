@@ -3446,7 +3446,27 @@ function LibraryApp() {
 
   useEffect(() => {
     window._gammaSetDropTarget = setDropTarget;
-    return () => { window._gammaSetDropTarget = null; };
+    // The indicator is fixed to the viewport, so a drag end the rows miss (a
+    // row re-rendered under the pointer, the dragend of a handle the move
+    // detached) would leave a line hanging over the notes (#88). Every drag
+    // starts and ends clean here; capture, so a new drag is reset before the
+    // handle's onDragStart marks it, and a drop only hides the line —
+    // onBlockDrop still reads _dragState.dropTarget.
+    const reset = () => {
+      _dragState.draggingId = null;
+      _dragState.dropTarget = null;
+      setDropTarget(null);
+    };
+    const hide = () => setDropTarget(null);
+    window.addEventListener("dragstart", reset, true);
+    window.addEventListener("dragend", reset, true);
+    window.addEventListener("drop", hide, true);
+    return () => {
+      window._gammaSetDropTarget = null;
+      window.removeEventListener("dragstart", reset, true);
+      window.removeEventListener("dragend", reset, true);
+      window.removeEventListener("drop", hide, true);
+    };
   }, []);
 
 
@@ -7830,6 +7850,10 @@ function LibraryApp() {
                   onBlockDragOver: (e, block) => {
                     e.preventDefault();
                     e.dataTransfer.dropEffect = "move";
+                    // Only a block's ⋮⋮ drag shows where it lands: an image,
+                    // link or text selection dragged over the notes has no
+                    // handle dragend to take the line away again.
+                    if (!_dragState.draggingId) return;
                     const wrap = e.currentTarget.closest(".sortableBlockWrap");
                     const r = wrap ? wrap.getBoundingClientRect() : e.currentTarget.getBoundingClientRect();
                     const px = e.clientX;
@@ -7850,6 +7874,7 @@ function LibraryApp() {
                     const dt = _dragState.dropTarget;
                     setDropTarget(null);
                     _dragState.dropTarget = null;
+                    _dragState.draggingId = null;
                     const sourceId = e.dataTransfer.getData("text/plain");
                     if (!sourceId || !dt || sourceId === dt.targetId || readOnly) return;
                     if (isDescendant(blocks, sourceId, dt.targetId)) return;
@@ -7870,7 +7895,6 @@ function LibraryApp() {
                       next = insertSibling(remaining, ancestorId, sourceBlock, !dt.above);
                     } else { return; }
                     if (next) setBlocks(next);
-                    _dragState.draggingId = null;
                   },
                 };
                 return (

@@ -3,10 +3,11 @@
 // rest by last edit; typing ranks pages through createLibraryMatcher — the
 // home listing's search: typo-tolerant, on the title or the folder/label
 // chips, title hits first. ↑↓ moves, Enter opens, Esc closes. Rows reuse the
-// chat mention picker's option style.
+// chat mention picker's option style and the home file rows' folder/label chips.
 
 import React, { useEffect, useMemo, useRef, useState } from "react";
 import { BookIcon, FileTextIcon, SearchIcon } from "../shared/ui/Icons";
+import { CardLabels } from "./FileBrowser";
 import { createLibraryMatcher } from "./librarySearch";
 import { pageAttachment, parseFolderTags } from "./libraryUtils";
 
@@ -91,7 +92,9 @@ export default function QuickOpen({ open, onClose, pages, recentViews, openTabs,
           {results.map(({ page, tag }, i) => {
             const meta = page.properties?.meta || {};
             const authors = (meta.authors || []).slice(0, 2).join(", ");
-            const detail = [authors, meta.year, page.properties?.folder].filter(Boolean).join(" · ");
+            const detail = [authors, meta.year].filter(Boolean).join(" · ");
+            const folders = parseFolderTags(page.properties?.folder);
+            const labels = parseFolderTags(page.properties?.category);
             const title = page.content || "Untitled";
             return (
               <button
@@ -105,6 +108,7 @@ export default function QuickOpen({ open, onClose, pages, recentViews, openTabs,
               >
                 {pageAttachment(page) ? <BookIcon size={15} /> : <FileTextIcon size={15} />}
                 <span><strong>{title}</strong>{detail && <small>{detail}</small>}</span>
+                <CardLabels className="fileRowLabels" folders={folders} labels={labels} />
                 {tag && <em className="quickOpenTag">{tag}</em>}
               </button>
             );
