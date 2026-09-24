@@ -480,7 +480,11 @@ fails with an empty `AssertionError`; `ExportPdfReader` substitutes a
 `/Square` carries an `/NM` id (`Zotero-<key>`, deterministic from the block
 id): Zotero's pdf-worker maps `/Square`→image annotation but silently DROPS
 one without an id, while `/Highlight` imports id-less — without `/NM`, area
-notes vanish in Zotero.
+notes vanish in Zotero. It also carries an appearance stream (`/AP /N`)
+drawing the viewer's look — a multiply wash at a quarter of the colour's
+alpha under a 2pt border — because a viewer synthesizing the box from
+`/Rect` + `/C` + `/BS` draws only the outline. No `/IC`: a viewer that
+regenerates from it would fill at the full `/CA` and hide the figure.
 
 Handwriting blocks (`ink_url`) become `/Ink` annotations: one per look
 bucket (colour × tool × size × opacity) of the group, `/InkList` polylines
