@@ -21,7 +21,8 @@ through barrel files. `main.jsx` remains the Vite entry point.
 | `support/` | Report a problem: the dialog (`ReportProblem.jsx`) and the pure report builder it and the tests share (`problemReport.js`) |
 | `transfers/` | Import/export dialogs (`ImportExport.jsx`), the import review (`ImportReviewDialog.jsx`, `ImportTree.jsx`, `importApi.js`, `importReview.js`), format rules, and upload/file chips (`FileChip.jsx`) |
 | `shared/model/` | Block tree helpers (`blockModel.js`), block operations (`blockOps.js`), and highlight colors |
-| `shared/lib/` | API transport and helpers (`utils.js`), the multipart upload (`xhrUpload.js`), search text normalization, and canvas sizing |
+| `shared/i18n/` | Interface language: `i18n.js` (`t`, `tn`, `T`, the locale store, Intl formatters), `locales.js` (the language list, pure), `locales/<code>.json` (one catalog per language) — [docs/dev/i18n.md](../../docs/dev/i18n.md); `tools/i18n.mjs` keeps the catalogs complete |
+| `shared/lib/` | API transport and helpers (`utils.js`), the multipart upload (`xhrUpload.js`), search text normalization, canvas sizing, and published pages' slugs and page hosts (`slug.js`) |
 | `shared/ui/` | Reused widgets, menus, icons, and menu hover intent |
 | `shared/illustrations/` | Decorative settings/import previews and their local image assets |
 | `shared/styles/` | `app.css`: theme, base controls, and cross-application styles |

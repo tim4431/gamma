@@ -688,6 +688,53 @@ does three things:
   (`AccountPicker`) take an empty directory as a hidden one and look the
   typed name up with `?q=`.
 
+Two more settings shape what a share host serves, both environment only
+([mirror.md](mirror.md) "Publishing" has the mechanics):
+
+- **The plan's cap.** How many pages each plan may publish is
+  `config.PLAN_PAGE_LIMITS` in `gamma/config.py`:
+
+  | plan | published pages |
+  |---|---|
+  | `free` | 5 (`GAMMA_FREE_PAGE_LIMIT` overrides it; 0 lifts the cap) |
+  | `plus`, `pro`, anything else | unlimited |
+
+  The plan is the `plan` claim the share host stored for the identity at
+  its last exchange or sign-in; a publish that finds the workspace full
+  exchanges once more, so an upgrade counts at once.
+- **Page hosts.** `GAMMA_PAGE_HOST` is the hostname pattern of the
+  per-account page hosts, with one `{username}` placeholder:
+  `{username}-pages.gammapdf.com` gives every published page the address
+  `https://<username>-pages.gammapdf.com/<slug>-<page id>`. Empty (the
+  default) means token links only. The server refuses to start on a pattern
+  without exactly one `{username}` or that is not a hostname otherwise.
+  Cloud usernames are single DNS labels (`[a-z0-9-]`, 3 to 32 characters),
+  and the `-pages` suffix keeps every page host apart from a service
+  hostname, so `accounts.RESERVED_USERNAMES` need not change; name no
+  service with the suffix. Deploying it takes a wildcard DNS record,
+  `*.gammapdf.com` pointing at the share host (named records such as
+  `account` keep precedence over the wildcard), and a wildcard site in
+  front of the container. With Caddy, whose wildcard certificate needs the
+  DNS-01 challenge (a build with the DNS provider's module):
+
+  ```
+  *.gammapdf.com {
+  	tls {
+  		dns cloudflare {env.CLOUDFLARE_API_TOKEN}
+  	}
+  	@pages header_regexp Host ^[a-z0-9-]+-pages\.gammapdf\.com$
+  	handle @pages {
+  		reverse_proxy gamma-share:8000
+  	}
+  	handle {
+  		respond 404
+  	}
+  }
+  ```
+
+  The proxy passes the `Host` header through (Caddy does by default); the
+  app reads the username out of it.
+
 The rest of the plan's cloud mode is configuration, not code: registration
 is already off on every Gamma (accounts come from the admin or the cloud),
 the default quota is the storage setting, and per-IP limits belong to the

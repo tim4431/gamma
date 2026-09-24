@@ -15,6 +15,7 @@
 // to fall back to the default), so a stale or hand-edited value never
 // breaks the app. Plain strings need no codec.
 import { DEFAULT_TOOLS, normalizeTools } from "../ink/ink.js";
+import { LANGUAGES } from "../shared/i18n/locales.js";
 
 export const ACCOUNT = "account";
 export const BROWSER = "browser";
@@ -88,6 +89,9 @@ export const PREFS = {
   // Solarized Light and Gray also tint PDF pages (app.css). index.html
   // applies a pinned theme from localStorage before first paint.
   theme: pref("gamma-theme", ACCOUNT, "system", oneOf(THEMES)),
+  // Interface language (docs/dev/i18n.md): "system" follows the browser.
+  // main.jsx reads the stored value before the first render.
+  language: pref("gamma-language", ACCOUNT, "system", oneOf(LANGUAGES.map(([code]) => code))),
   // Flip page colors: display-only inverted (night) rendering of the PDF canvas.
   pdfDarkPage: flag("gamma-pdf-dark", ACCOUNT, false),
   // Interface size: index.html applies the stored value before first paint,

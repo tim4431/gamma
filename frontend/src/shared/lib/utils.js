@@ -322,8 +322,14 @@ async function apiError(r) {
 // The share view (/?share=<token>): every same-origin API call carries the
 // token, so reads — and, when the link grants editing, writes — resolve to
 // the sharing owner's page rather than the visitor's own account. Callers
-// that already put a share= on the URL are left alone.
-const SHARE_TOKEN = new URLSearchParams(window.location.search).get("share") || "";
+// that already put a share= on the URL are left alone. A page host's pretty
+// address sets the token it resolved to before the app mounts (setShareView).
+let SHARE_TOKEN = new URLSearchParams(window.location.search).get("share") || "";
+let SHARE_VIEW = Boolean(SHARE_TOKEN);
+function setShareView(token) {
+  SHARE_TOKEN = token || "";
+  SHARE_VIEW = true;
+}
 function withShare(url) {
   if (!SHARE_TOKEN || typeof url !== "string" || !url.startsWith(`${API}/`)) return url;
   if (/[?&]share=/.test(url)) return url;
@@ -333,8 +339,7 @@ function withShare(url) {
 async function apiJson(url, options = {}) {
   const r = await fetch(withShare(url), { ...options, credentials: "include" });
   if (r.status === 401) {
-    const isShareView = new URLSearchParams(window.location.search).get("share");
-    if (!isShareView) {
+    if (!SHARE_VIEW) {
       window.dispatchEvent(new CustomEvent("gamma-auth-expired"));
     }
     throw new Error("401 Unauthorized");
@@ -392,4 +397,4 @@ async function readNdjson(res, onBatch) {
   }
 }
 
-export { API, makeId, fmtBytes, sha256, getDocIdForUrl, isPdfFile, isMarkdownFile, isUnverifiedPaperMeta, metaSourceInfo, apiJson, withShare, withWorkspace, assetUrl, setCurrentWorkspace, getCurrentWorkspace, setLinkName, getLinkName, resolvePdfUrl, pdfProxyUrl, probePdfUrl, setExpectedUser, getExpectedUser, usePersistedState, usePersistedFlag, copyText, copyRich, readNdjson };
+export { API, makeId, fmtBytes, sha256, getDocIdForUrl, isPdfFile, isMarkdownFile, isUnverifiedPaperMeta, metaSourceInfo, apiJson, setShareView, withShare, withWorkspace, assetUrl, setCurrentWorkspace, getCurrentWorkspace, setLinkName, getLinkName, resolvePdfUrl, pdfProxyUrl, probePdfUrl, setExpectedUser, getExpectedUser, usePersistedState, usePersistedFlag, copyText, copyRich, readNdjson };

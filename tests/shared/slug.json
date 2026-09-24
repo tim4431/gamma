@@ -1,0 +1,95 @@
+{
+  "_": "Page slugs for published pages' public addresses, shared by backend/gamma/publish.py (slug) and frontend/src/shared/lib/slug.js (slugify). Read by backend/tests/test_publish.py and frontend/tests/slug.test.mjs.",
+  "slug": [
+    {
+      "note": "plain words",
+      "input": "Attention Is All You Need",
+      "output": "attention-is-all-you-need"
+    },
+    {
+      "note": "punctuation runs become one dash",
+      "input": "Hello, World!  (draft #2)",
+      "output": "hello-world-draft-2"
+    },
+    {
+      "note": "accents fold to ASCII",
+      "input": "Élan vital, café crème",
+      "output": "elan-vital-cafe-creme"
+    },
+    {
+      "note": "a dash of any kind separates",
+      "input": "Before—after – between",
+      "output": "before-after-between"
+    },
+    {
+      "note": "a CJK title gives no slug",
+      "input": "量子力学の基礎",
+      "output": ""
+    },
+    {
+      "note": "CJK around Latin keeps the Latin",
+      "input": "量子 Quantum 力学 Notes",
+      "output": "quantum-notes"
+    },
+    {
+      "note": "letters that do not decompose separate",
+      "input": "Straße Đakovo",
+      "output": "stra-e-akovo"
+    },
+    {
+      "note": "compatibility forms fold (ligature, fraction, superscript)",
+      "input": "ﬁle ½ x²",
+      "output": "file-1-2-x2"
+    },
+    {
+      "note": "dotted capital I",
+      "input": "İstanbul",
+      "output": "istanbul"
+    },
+    {
+      "note": "Vietnamese",
+      "input": "Tiếng Việt",
+      "output": "tieng-viet"
+    },
+    {
+      "note": "digits stay",
+      "input": "2024 Q3 report v1.2",
+      "output": "2024-q3-report-v1-2"
+    },
+    {
+      "note": "leading and trailing junk trimmed",
+      "input": "  --- ¿Qué? ---  ",
+      "output": "que"
+    },
+    {
+      "note": "emoji separate",
+      "input": "Notes 📚 on reading",
+      "output": "notes-on-reading"
+    },
+    {
+      "note": "at most 60 characters, no dash left at the cut",
+      "input": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa bcd",
+      "output": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"
+    },
+    {
+      "note": "a long title is cut at 60",
+      "input": "The quick brown fox jumps over the lazy dog while the cat sleeps soundly",
+      "output": "the-quick-brown-fox-jumps-over-the-lazy-dog-while-the-cat-sl"
+    },
+    {
+      "note": "empty",
+      "input": "",
+      "output": ""
+    },
+    {
+      "note": "only symbols",
+      "input": "!!! ??? ...",
+      "output": ""
+    },
+    {
+      "note": "Greek gives nothing",
+      "input": "Αλφα Βήτα",
+      "output": ""
+    }
+  ]
+}

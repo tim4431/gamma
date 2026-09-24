@@ -57,6 +57,31 @@ def cloud_env() -> dict:
             "share_host": os.environ.get("GAMMA_CLOUD_SHARE_HOST", "").strip().lower() in ("1", "true", "yes", "on")}
 
 
+# The share host's published-page cap per Gamma Cloud plan (gamma/publish.py
+# page_cap): a plan missing here is unlimited. GAMMA_FREE_PAGE_LIMIT
+# overrides the free plan's number (0 lifts the cap).
+PLAN_PAGE_LIMITS = {"free": 5}
+
+
+def plan_page_limits() -> dict:
+    limits = dict(PLAN_PAGE_LIMITS)
+    raw = os.environ.get("GAMMA_FREE_PAGE_LIMIT", "").strip()
+    if raw:
+        n = int(raw)  # checked at startup (publish.check_config)
+        if n > 0:
+            limits["free"] = n
+        else:
+            limits.pop("free", None)
+    return limits
+
+
+def page_host_pattern() -> str:
+    """``GAMMA_PAGE_HOST``: the share host's per-account page hostname with
+    a ``{username}`` placeholder, e.g. ``{username}-pages.gammapdf.com``
+    ("" = no pretty addresses, token links only; gamma/publish.py)."""
+    return os.environ.get("GAMMA_PAGE_HOST", "").strip().lower()
+
+
 def sync_interval_s() -> int:
     """Seconds between mirror sync rounds (gamma/sync_engine.py); 0 turns
     the background loop off (the API's "sync now" still works)."""

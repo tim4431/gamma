@@ -1,7 +1,9 @@
 """Sign in with Gamma Cloud — the wire around ``gamma/cloud_auth.py``:
 
 - ``GET /api/server-config`` (public): what the login page needs — whether
-  cloud sign-in is on and the account server's address;
+  cloud sign-in is on and the account server's address — and ``page_host``,
+  the per-account page hostname pattern (``GAMMA_PAGE_HOST``, "" = none),
+  by which the app knows it was opened on a page host (gamma/publish.py);
 - ``GET /api/auth/cloud/start?next=&link=1`` → redirect to the account
   server (``link=1`` with a session attaches the identity to that account);
 - ``GET /api/auth/cloud/callback?code=&state=`` → session cookie + redirect
@@ -20,7 +22,7 @@ from urllib.parse import urlencode
 from fastapi import APIRouter, HTTPException, Request
 from fastapi.responses import RedirectResponse
 
-from .. import cloud_auth, cloud_sync, ratelimit
+from .. import cloud_auth, cloud_sync, config, ratelimit
 from ..auth import require_personal_user, require_user, set_session_cookie
 from ..cloud_auth import CloudAuthError
 from ..db import connect_users_db
@@ -34,7 +36,8 @@ router = APIRouter()
 async def server_config():
     cfg = cloud_auth.settings()
     return {"cloud": {"enabled": cfg["enabled"], "issuer": cfg["issuer"] if cfg["enabled"] else ""},
-            "password_login": True, "registration": False, "guest": not cfg["share_host"]}
+            "password_login": True, "registration": False, "guest": not cfg["share_host"],
+            "page_host": config.page_host_pattern()}
 
 
 @router.get("/api/auth/cloud/start")

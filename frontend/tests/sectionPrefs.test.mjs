@@ -16,7 +16,7 @@ function accountSections() {
     const source = fs.readFileSync(path.join(SETTINGS, file), "utf8");
     for (const match of source.matchAll(/scope="account"/g)) {
       const open = source.lastIndexOf("<Section", match.index);
-      const title = /title="([^"]+)"/.exec(source.slice(open, match.index))?.[1];
+      const title = /title=(?:"([^"]+)"|\{t\("([^"]+)"\)\})/.exec(source.slice(open, match.index))?.slice(1).find(Boolean);
       const ref = /^scope="account"\s+prefs=\{SECTION_PREFS\.(\w+)\["([^"]+)"\]\}/.exec(source.slice(match.index));
       found.push({ file, title, pane: ref?.[1], entry: ref?.[2] });
     }

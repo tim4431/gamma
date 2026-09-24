@@ -1,6 +1,7 @@
 import React from "react";
 import { API, apiJson, fmtBytes, isUnverifiedPaperMeta, metaSourceInfo, getCurrentWorkspace } from "../shared/lib/utils";
 import { MenuSelect } from "../shared/ui/Menus";
+import { T, t, tn } from "../shared/i18n/i18n.js";
 import {
   PaneHead, Section, Row, Toggle, Segmented, ToggleGroup, IconChoices, UnitInput, CharSlider, approxPages,
   Stat, Empty, QuotaMeter, LogBox, SettingsDraftContext, SettingsSyncContext, useSettingsDraft,
@@ -56,25 +57,25 @@ import {
 // One sidebar, three groups: everyday preferences, AI, management. Every
 // pane is one click from any other; nothing opens a second dialog.
 const PREFERENCE_NAV = [
-  ["appearance", "Appearance", ContrastIcon],
-  ["reading", "Reading & editing", BookIcon],
-  ["library", "Library", ListIcon],
-  ["account", "Account", UserIcon],
+  ["appearance", T("Appearance"), ContrastIcon],
+  ["reading", T("Reading & editing"), BookIcon],
+  ["library", T("Library"), ListIcon],
+  ["account", T("Account"), UserIcon],
 ];
 const AI_NAV = [
-  ["ai", "Connections", SparklesIcon],
-  ["assistant", "Chat", MessageSquareIcon],
-  ["ai-advanced", "Advanced", ActivityIcon],
-  ["prompts", "Prompts", TypeIcon],
-  ["integrations", "Integrations", LinkIcon],
+  ["ai", T("Connections"), SparklesIcon],
+  ["assistant", T("Chat"), MessageSquareIcon],
+  ["ai-advanced", T("Advanced"), ActivityIcon],
+  ["prompts", T("Prompts"), TypeIcon],
+  ["integrations", T("Integrations"), LinkIcon],
 ];
 const MANAGEMENT_NAV = [
-  ["workspaces", "Workspaces", UsersIcon],
-  ["backups", "Backups", DatabaseIcon],
-  ["maintenance", "Library maintenance", HardDriveIcon],
-  ["users", "Users", UsersIcon],
-  ["server", "Server", ServerIcon],
-  ["diagnostics", "Diagnostics", ActivityIcon],
+  ["workspaces", T("Workspaces"), UsersIcon],
+  ["backups", T("Backups"), DatabaseIcon],
+  ["maintenance", T("Library maintenance"), HardDriveIcon],
+  ["users", T("Users"), UsersIcon],
+  ["server", T("Server"), ServerIcon],
+  ["diagnostics", T("Diagnostics"), ActivityIcon],
 ];
 
 // --- Editor: notes + search + PDF viewer -----------------------------------
@@ -1031,7 +1032,7 @@ export default function SettingsDialog({
   const navButton = ([id, label, Icon]) => <button key={id} type="button"
     className={`settingsNavBtn ${pane === id && !query ? "active" : ""}`}
     aria-current={pane === id && !query ? "page" : undefined} onClick={() => navigate(id)}>
-    <Icon size={17} /><span>{label}</span>
+    <Icon size={17} /><span>{t(label)}</span>
     {notices?.panes?.[id] ? <i className={`noticeDot inline ${dotTone(notices.panes[id])}`} data-tone={notices.panes[id]} aria-hidden="true" /> : null}
   </button>;
   return (
@@ -1039,7 +1040,7 @@ export default function SettingsDialog({
       <SettingsSyncContext.Provider value={syncState}>
       <div className="reportOverlay" onClick={() => guard(onClose)}>
         <div className={`settingsModal ${mobileIndex ? "settingsIndexOpen" : ""}`}
-          role="dialog" aria-modal="true" aria-label="Settings"
+          role="dialog" aria-modal="true" aria-label={t("Settings")}
           tabIndex={-1} ref={modalRef} onClick={(event) => event.stopPropagation()}
           onKeyDown={(event) => {
             if (event.key === "Escape") {
@@ -1057,33 +1058,33 @@ export default function SettingsDialog({
             }
           }}>
           <div className="settingsTopbar">
-            <button className="uiBtn sm settingsMobileBack" onClick={() => guard(() => { setMobileIndex(true); setQuery(""); })}>Back</button>
-            <span className="settingsTopTitle">Settings</span>
+            <button className="uiBtn sm settingsMobileBack" onClick={() => guard(() => { setMobileIndex(true); setQuery(""); })}>{t("Back")}</button>
+            <span className="settingsTopTitle">{t("Settings")}</span>
             <div className="settingsSearch">
               <SearchIcon size={16} />
-              <input className="aiKeyInput" type="search" aria-label="Search settings" placeholder="Search settings..." value={query}
+              <input className="aiKeyInput" type="search" aria-label={t("Search settings")} placeholder={t("Search settings...")} value={query}
                 onChange={(event) => {
                   const next = event.target.value;
                   guard(() => { setQuery(next); setMobileIndex(false); });
                 }} />
-              {query ? <button className="uiClose uiCloseSm" aria-label="Clear search" onClick={() => setQuery("")}>×</button> : null}
+              {query ? <button className="uiClose uiCloseSm" aria-label={t("Clear search")} onClick={() => setQuery("")}>×</button> : null}
             </div>
-            <button className="uiClose uiCloseLg" onClick={() => guard(onClose)} aria-label="Close settings">×</button>
+            <button className="uiClose uiCloseLg" onClick={() => guard(onClose)} aria-label={t("Close settings")}>×</button>
           </div>
           <div className="settingsBody" inert={pending ? "" : undefined}>
-            <nav className="settingsSidebar" aria-label="Settings categories">
+            <nav className="settingsSidebar" aria-label={t("Settings categories")}>
               {PREFERENCE_NAV.filter(([id]) => available(id)).map(navButton)}
-              <div className="settingsNavGroup">AI</div>
+              <div className="settingsNavGroup">{t("AI")}</div>
               {AI_NAV.filter(([id]) => available(id)).map(navButton)}
-              <div className="settingsNavGroup">Manage</div>
+              <div className="settingsNavGroup">{t("Manage")}</div>
               {MANAGEMENT_NAV.filter(([id]) => available(id)).map(navButton)}
             </nav>
             <main className="settingsPane" ref={paneRef} key={pane}>
               {query.trim() ? <>
-                <PaneHead icon={SearchIcon} title="Search settings">{results.length} matching settings</PaneHead>
+                <PaneHead icon={SearchIcon} title={t("Search settings")}>{tn("{n} matching setting", "{n} matching settings", results.length)}</PaneHead>
                 {results.length ? results.map(({ pane: id, label }) => <button key={`${id}:${label}`} className="uiBtn settingsSearchResult"
-                  onClick={() => navigate(id, label)}><span>{label}</span><small>{allNav.find(([key]) => key === id)?.[1]}</small></button>)
-                  : <Empty icon={SearchIcon}>No settings found. Try "model", "PDF", or "storage".</Empty>}
+                  onClick={() => navigate(id, label)}><span>{t(label)}</span><small>{t(allNav.find(([key]) => key === id)?.[1] || "")}</small></button>)
+                  : <Empty icon={SearchIcon}>{t('No settings found. Try "model", "PDF", or "storage".')}</Empty>}
               </> : <>
                 {pane === "appearance" ? <AppearanceSettings value={papers} diagnostics={diagnostics} /> : null}
                 {pane === "reading" ? <>

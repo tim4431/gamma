@@ -2537,6 +2537,7 @@ mark.merge-del { background: color-mix(in srgb, var(--danger) 16%, transparent);
 .sharePopover .publishState { padding: 0 8px 6px 16px; }
 .publishState .mirrorStateLine { align-items: center; }
 .sharePopover .mirrorConfirm { padding: 4px 8px 6px 16px; }
+.sharePopover .publishAccount { padding: 2px 8px 6px; } /* the cap refusal's "Open account" */
 .sharePopover .mirrorConfirm > span:not(.mirrorConfirmBtns) { flex: 1 1 220px; min-width: 0; }
 .publishState .mirrorStateLine .iconBtn { margin-left: auto; }
 .uiBtn .mirrorSpin { display: inline-flex; }

@@ -10,6 +10,7 @@ from fastapi.responses import FileResponse, Response
 
 from . import backup_schedule, cloud_sync, config, migrations
 from . import sync_engine, version
+from .publish import check_config as check_publish_config
 from .auth import session_middleware
 from .db import connect_data_db, connect_pages_db, connect_users_db
 from .logbuf import log, setup_logging
@@ -76,6 +77,11 @@ def _startup_maintenance():
     then per workspace: prune orphaned uploads and apply the per-file
     schema statements (a restored backup gains page_ops, WAL, ...)."""
     log.info(f"[startup] Gamma {version.label()}")
+    try:
+        check_publish_config()
+    except ValueError as e:
+        log.error(f"[startup] {e}")
+        raise SystemExit(1)
     try:
         done = migrations.ensure_current()
     except migrations.MigrationError as e:

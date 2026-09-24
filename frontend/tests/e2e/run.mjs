@@ -36,6 +36,7 @@ import { ipadScenarios } from "./scenarios/ipad.mjs";
 import { quickOpenScenarios } from "./scenarios/quickOpen.mjs";
 import { cloudSignInScenarios } from "./scenarios/cloudSignIn.mjs";
 import { publishScenarios } from "./scenarios/publish.mjs";
+import { i18nScenarios } from "./scenarios/i18n.mjs";
 
 const server = new Server();
 let browser;
@@ -90,6 +91,7 @@ try {
   });
 
   await settingsScenarios(env);
+  await i18nScenarios(env);
   await mcpScenarios(env);
   await cloudSignInScenarios(env);
   await publishScenarios(env);

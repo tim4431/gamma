@@ -7,7 +7,7 @@ Where every setting lives, and how the Settings dialog is built.
 | Layer | Storage | Examples |
 |---|---|---|
 | Per browser | `localStorage`, one `gamma-*` key per preference, all declared in `PREFS` ([frontend/src/app/prefDefs.js](../../frontend/src/app/prefDefs.js)) with scope `browser` — except `gamma-link-name`, the share view's display name for a visitor without an account, owned by `src/collaboration/linkName.js` because the fetch wrapper reads it outside React | what describes this device: the interface size (`gamma-ui-scale`, applied pre-paint by `index.html`), the status bar, the handwriting input rules and the tool strip's presets, eraser and lasso choices (`gamma-ink-*`), the metadata and translation model picks and dictation (they name this server's provider entries, like the chat model `gamma-chat-model`); outside `PREFS`, diagnostics tracing (`gamma-debug-log`) |
-| Per account, profile | the account-wide `profile` prefs key (`/api/prefs/profile`, one JSON object keyed by preference name), every `PREFS` entry with scope `account`; each also keeps its `gamma-*` localStorage key as the instant-paint cache | appearance (theme — the pre-paint script still reads `gamma-theme` — and flip page colors), reading and editing (imported annotations, translation button and language, Enter key, how search opens), library display and PDF fetching, chat behaviour (tools switch, per-kind tool permissions, reasoning effort, the login connection check, tool limits, snapshot clearing), translation effort and parallel requests, context budgets, prompts |
+| Per account, profile | the account-wide `profile` prefs key (`/api/prefs/profile`, one JSON object keyed by preference name), every `PREFS` entry with scope `account`; each also keeps its `gamma-*` localStorage key as the instant-paint cache | appearance (theme — the pre-paint script still reads `gamma-theme` — and flip page colors), the interface language (`gamma-language`, read by `main.jsx` before the first render, [i18n.md](i18n.md)), reading and editing (imported annotations, translation button and language, Enter key, how search opens), library display and PDF fetching, chat behaviour (tools switch, per-kind tool permissions, reasoning effort, the login connection check, tool limits, snapshot clearing), translation effort and parallel requests, context budgets, prompts |
 | Session only | React state, nothing stored | the Ctrl+scroll text size of the notes list and the chat transcript (`useTextScale` in [Widgets.jsx](../../frontend/src/shared/ui/Widgets.jsx)) — resets on reload |
 | Per account, synced | `/api/prefs/{key}` (small JSON KV, `user_prefs` in `users.db`) | per account AND workspace: open tabs (`open-tabs`), the recently-viewed queue (`recent-views`), pinned folders (`pinned-folders`; pinned pages are a page property), reading positions (`read-pos`) — they name one workspace's pages; account-wide: active AI key (`ai-provider`) and the preference profile (`profile`, previous row). Server wins on load, localStorage (keyed `user@workspace`) is the instant-paint cache. The recents-card cover thumbnails are workspace data, through their own `/api/page-snaps` store (`page_snaps` in the workspace's `data.db` — over the prefs size cap) |
 | Per account, seen notices | the account-wide `notices-seen` prefs key (`db.NOTICES_SEEN_PREF_KEY`), `{notice id: fingerprint}`, written only by `POST /api/notices/{id}/seen` (below, "Notices") | which release and which log error the account has already looked at |
@@ -169,7 +169,8 @@ short hint what it does, and the hover `title` the rest.
 
 Preferences:
 
-- **Appearance**: the eight theme cards (`PictureChoices`), the dark-page
+- **Appearance**: the eight theme cards (`PictureChoices`), the interface
+  language (a `MenuSelect`: System / English / 中文, [i18n.md](i18n.md)), the dark-page
   switch with its live PDF sample, interface size and the status bar.
   [SettingsAppearance.jsx](../../frontend/src/settings/SettingsAppearance.jsx).
 - **Reading & editing**: imported annotations (a Keep / Remove segmented
@@ -281,6 +282,9 @@ Under Provision a fourth row, the Toggle *Accept published pages*
 (`cloud_share_host`), makes this server the share host people publish pages
 to; it also turns the guest account off and limits the account list to
 exact names ([cloud_accounts.md](cloud_accounts.md) "The share host").
+A share host's page cap per plan (`GAMMA_FREE_PAGE_LIMIT`) and its
+per-account page hosts (`GAMMA_PAGE_HOST`) are environment only, with no
+row here.
 Editing shows one Save button as the section's action. Values are stored in
 the server `settings` table (`cloud_*`), read-only when `GAMMA_CLOUD_ISSUER`
 manages them. The login page reads `GET /api/server-config` and shows "Sign

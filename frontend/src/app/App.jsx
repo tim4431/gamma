@@ -3,10 +3,12 @@ import { Panel, PanelGroup, PanelResizeHandle } from "react-resizable-panels";
 import PdfViewer, { clampZoom } from "../pdf/PdfViewer";
 import { highlightSpot, rangeSpot } from "../pdf/pdfSelectionSpot";
 import { COLORS } from "../shared/model/highlightColors.js";
+import { applyLanguage, t } from "../shared/i18n/i18n.js";
 import { ExportDialog, ImportDialog } from "../transfers/ImportExport";
 import ImportReviewDialog from "../transfers/ImportReviewDialog";
 import { parseGammaLink } from "../shared/model/gammaLinks.js";
-import { API, apiJson, withShare, withWorkspace, setCurrentWorkspace, getCurrentWorkspace, setLinkName, makeId, fmtBytes, getDocIdForUrl, isPdfFile, isMarkdownFile, metaSourceInfo, resolvePdfUrl, pdfProxyUrl, probePdfUrl, setExpectedUser, getExpectedUser, usePersistedState, usePersistedFlag, copyText, copyRich, readNdjson } from "../shared/lib/utils";
+import { pageHostUser, publicPath } from "../shared/lib/slug.js";
+import { API, apiJson, setShareView, withShare, withWorkspace, setCurrentWorkspace, getCurrentWorkspace, setLinkName, makeId, fmtBytes, getDocIdForUrl, isPdfFile, isMarkdownFile, metaSourceInfo, resolvePdfUrl, pdfProxyUrl, probePdfUrl, setExpectedUser, getExpectedUser, usePersistedState, usePersistedFlag, copyText, copyRich, readNdjson } from "../shared/lib/utils";
 import {
   BlockDropIndicator,
   ChatMarkdown,
@@ -332,24 +334,61 @@ export default function App() {
   // Authorization must never mount library effects (saved-page restore,
   // autosave, navigation hotkeys). They can otherwise replace its URL.
   const requestId = new URLSearchParams(window.location.search).get("gamma_oauth");
-  return requestId ? <McpAuthorization requestId={requestId} /> : <LibraryApp />;
+  return requestId ? <McpAuthorization requestId={requestId} /> : <PageHostGate />;
 }
 
-function LibraryApp() {
-  const params = new URLSearchParams(window.location.search);
+// A page host (the share host's hostname per account, server-config's
+// `page_host`; docs/dev/mirror.md "Publishing") serves published pages
+// only: its path, /<slug>-<page id>, names the page, which opens in the share
+// view as if its ?share= token were in the URL while the pretty address
+// stays in the address bar. Any other path there is the share view's "not
+// found". Everywhere else the app boots as before, with the server config it
+// read here (a ?share= link knows it is a share view without asking).
+function PageHostGate() {
+  const [boot, setBoot] = useState(() => (new URLSearchParams(window.location.search).get("share") ? {} : null));
+  useEffect(() => {
+    if (boot) return undefined;
+    let active = true;
+    (async () => {
+      let config = null;
+      try { config = await apiJson(`${API}/server-config`); } catch {}
+      if (!active) return;
+      if (!pageHostUser(config?.page_host, window.location.hostname)) { setBoot({ serverConfig: config }); return; }
+      let found = null;
+      try {
+        const q = new URLSearchParams({ host: window.location.host, path: window.location.pathname });
+        const r = await fetch(`${API}/pages/resolve-public?${q}`);
+        if (r.ok) found = await r.json();
+      } catch {}
+      if (!active) return;
+      setShareView(found?.share || "");
+      setBoot({ publicPage: found?.share ? found : { missing: true } });
+    })();
+    return () => { active = false; };
+  }, [boot]);
+  if (!boot) return <div id="splash"><div className="spin" /><div>Loading Gamma…</div></div>;
+  return <LibraryApp publicPage={boot.publicPage || null} initialServerConfig={boot.serverConfig || null} />;
+}
+
+// `publicPage`: opened on a page host — {share, page_id} (resolved), or
+// {missing: true}. `initialServerConfig`: GET /api/server-config, already read.
+function LibraryApp({ publicPage = null, initialServerConfig = null }) {
+  const params = new URLSearchParams(publicPage ? "" : window.location.search);
   const initialUrl = params.get("src") || params.get("url") || "";
-  const initialShare = params.get("share") || "";
+  const initialShare = publicPage ? (publicPage.share || "") : (params.get("share") || "");
   const initialBlockId = params.get("block") || params.get("page") || "";
   const initialCategory = params.get("unlabelled") ? NO_LABEL : (params.get("category") || "");
   const initialFolder = params.get("folder") || "";
-  // shareMode: this tab shows a page through a ?share= link — no account of
-  // its own, no library, no chat, no prefs sync. readOnly: the block tree
-  // can't be edited; every share view starts read-only and stays so unless
-  // the link resolves with edit rights (Share → "They can: Edit notes").
-  const shareMode = Boolean(initialShare);
+  // shareMode: this tab shows a page through a ?share= link (or a page
+  // host's pretty address) — no account of its own, no library, no chat, no
+  // prefs sync. readOnly: the block tree can't be edited; every share view
+  // starts read-only and stays so unless the link resolves with edit rights
+  // (Share → "They can: Edit notes").
+  const shareMode = Boolean(initialShare) || Boolean(publicPage);
   const [readOnly, setReadOnly] = useState(shareMode);
   const [shareInfo, setShareInfo] = useState(null); // resolved share: {owner, role, canEdit, audience, viewer}
-  const [shareGate, setShareGate] = useState(null); // "login" | "forbidden" | "missing" while the share can't open
+  // "login" | "forbidden" | "missing" while the share can't open
+  const [shareGate, setShareGate] = useState(publicPage?.missing ? "missing" : null);
   const [linkName, setLinkNameState] = useState(""); // the share view's display name when the viewer has no account
   const [renamingLink, setRenamingLink] = useState(false);
 
@@ -466,9 +505,9 @@ function LibraryApp() {
   }
 
   // What the login page offers besides a password: read once, unauthenticated.
-  const [serverConfig, setServerConfig] = useState(null);
+  const [serverConfig, setServerConfig] = useState(initialServerConfig);
   useEffect(() => {
-    if (shareMode) return;
+    if (shareMode || initialServerConfig) return;
     let active = true;
     apiJson(`${API}/server-config`).then((c) => { if (active) setServerConfig(c); }).catch(() => {});
     return () => { active = false; };
@@ -2267,7 +2306,7 @@ function LibraryApp() {
     && !!authUser?.user && !authUser?.is_guest;
   const [publishState, setPublishState] = useState(null);
   const [publishBusy, setPublishBusy] = useState("");
-  const [publishError, setPublishError] = useState("");
+  const [publishError, setPublishError] = useState(""); // a refusal's detail, or {message, limit} for the plan's cap
   const [publishCopied, flashPublishCopied, resetPublishCopied] = useCopied();
   // The publication's state while the share popover is open: every 5 s while
   // a round runs or a local edit waits to be synced, else every 20 s.
@@ -2401,6 +2440,7 @@ function LibraryApp() {
   const profileSync = useProfileSync(appPrefs, authUser?.user && !authUser.is_guest && !shareMode ? authUser.user : "");
   const {
     theme, setTheme, pdfDarkPage, setPdfDarkPage, uiScale, setUiScale, recentThumbs, setRecentThumbs,
+    language, setLanguage,
     fileLabels, setFileLabels,
     oaFallback, setOaFallback, metaAutoFetch, setMetaAutoFetch, pdfSaveLocal, setPdfSaveLocal,
     embAnnots, setEmbAnnots,
@@ -3926,6 +3966,7 @@ function LibraryApp() {
     if (!wsReady || bootedRef.current) return;
     bootedRef.current = true;
     if (initialShare) resolveShare(initialShare);
+    else if (shareMode) return; // a page host's address that names no shared page: "not found" is up
     else if (initialBlockId) {
       (async () => {
         try {
@@ -3990,6 +4031,10 @@ function LibraryApp() {
     mq.addEventListener("change", apply);
     return () => mq.removeEventListener("change", apply);
   }, [theme]);
+
+  // Interface language: loads the catalog, then main.jsx remounts the app
+  // under the new locale (shared/i18n/i18n.js).
+  useEffect(() => { applyLanguage(language); }, [language]);
 
   // Record a "recently viewed" entry whenever a page is opened. sessionUser
   // in the deps re-fires it once login resolves — a page opened by direct URL
@@ -4679,6 +4724,10 @@ function LibraryApp() {
       // API call in a share view (utils.withShare) — never a bare ?user=.
       let block = null;
       try { block = await apiJson(`${API}/blocks/${encodeURIComponent(data.page_id)}`); } catch {}
+      if (publicPage && block) {
+        // the address bar keeps the page host's pretty address, its slug following the title
+        window.history.replaceState(window.history.state, "", publicPath(block.content, data.page_id) + window.location.hash);
+      }
 
       let childBlocks = [];
       if (block) {
@@ -5256,11 +5305,12 @@ function LibraryApp() {
       });
       setPublishState((prev) => ({
         ...(prev || {}), page: pageId, published: true, can_publish: true, reason: undefined, error: undefined,
-        url: out.url, share: out.share, mirror: out.mirror, status: out.mirror?.status,
+        url: out.url, public_url: out.public_url, share: out.share, mirror: out.mirror, status: out.mirror?.status,
       }));
       markPublishing();
     } catch (err) {
-      setPublishError(err.message);
+      // the plan's cap carries its count: the section offers the account page with it
+      setPublishError(err.data?.limit ? { message: err.message, limit: err.data.limit } : err.message);
       if (patch) loadPublishState({ quiet: true }); // the tiles go back to what the share host holds
     } finally {
       setPublishBusy("");
@@ -5299,7 +5349,8 @@ function LibraryApp() {
     window.dispatchEvent(new CustomEvent("gamma:mirror"));
   }
   async function copyPublishLink() {
-    if (publishState?.url && await copyText(publishState.url)) { flashPublishCopied(); return; }
+    const link = publishState?.public_url || publishState?.url;
+    if (link && await copyText(link)) { flashPublishCopied(); return; }
     setStatus("Copy failed — select the link in the popover instead.");
   }
 
@@ -8129,6 +8180,7 @@ function LibraryApp() {
         onUnpublish: unpublishPage,
         onSync: syncPublication,
         onLink: () => { setOpenPopover(null); setSettingsOpen("account"); },
+        accountUrl: serverConfig?.cloud?.issuer ? `${serverConfig.cloud.issuer}/` : "",
       } : null}
       citation={(pageMeta || pageBibtex) ? (
         <Section
@@ -8376,8 +8428,8 @@ function LibraryApp() {
               setOpenPopover(opening ? "user" : null);
             }}
             data-guide="header.account"
-            title="Account & settings"
-            aria-label="Account & settings"
+            title={t("Account & settings")}
+            aria-label={t("Account & settings")}
           >
             <UserIcon size={18} />
             {notices.tone ? <span className={`noticeDot ${dotTone(notices.tone)}`} data-tone={notices.tone} aria-hidden="true" /> : null}
@@ -8434,27 +8486,27 @@ function LibraryApp() {
                 <button
                   className="popoverItem"
                   onClick={() => { setSettingsOpen("workspaces"); setOpenPopover(null); }}
-                  title="All your workspaces: rename, members, export and import, create another"
+                  title={t("All your workspaces: rename, members, export and import, create another")}
                 >
                   <UsersIcon className="popoverItemIcon" size={15} />
-                  Workspaces…
+                  {t("Workspaces…")}
                 </button>
               ) : null}
               <div className="popoverDivider" />
               <button className="popoverItem" onClick={() => { setSettingsOpen(notices.firstPane || "general"); setOpenPopover(null); }}>
                 <SettingsIcon className="popoverItemIcon" size={15} />
-                Settings…
+                {t("Settings…")}
                 {notices.tone ? <span className={`noticeDot inline ${dotTone(notices.tone)}`} aria-hidden="true" /> : null}
               </button>
               <div className="popoverDivider" />
               <details className="accountTours">
                 <summary className="popoverItem" data-guide="account.tour">
                   <HelpCircleIcon className="popoverItemIcon" size={15} />
-                  Tours <span className="accountToursArrow" aria-hidden="true">›</span>
+                  {t("Tours")} <span className="accountToursArrow" aria-hidden="true">›</span>
                 </summary>
-                <div className="accountToursMenu" role="menu" aria-label="Tours">
+                <div className="accountToursMenu" role="menu" aria-label={t("Tours")}>
                   <button className="popoverItem" role="menuitem" data-guide="account.firstRun"
-                    onClick={() => { setOpenPopover(null); guide.start("first-run"); }}>Your first paper</button>
+                    onClick={() => { setOpenPopover(null); guide.start("first-run"); }}>{t("Your first paper")}</button>
                   <button className="popoverItem" role="menuitem" data-guide="account.aiChat"
                     onClick={() => {
                       setChatHidden(false);
@@ -8462,18 +8514,18 @@ function LibraryApp() {
                       if (isPhone) setPhonePanel("chat");
                       setOpenPopover(null);
                       guide.start("ai-chat");
-                    }}>AI chat</button>
+                    }}>{t("AI chat")}</button>
                 </div>
               </details>
               <button className="popoverItem" onClick={() => { setOpenPopover(null); setReportOpen(true); }}
-                title="Describe what went wrong; Gamma adds its build, your browser and its recent log lines and opens a GitHub issue for you to review">
+                title={t("Describe what went wrong; Gamma adds its build, your browser and its recent log lines and opens a GitHub issue for you to review")}>
                 <BugIcon className="popoverItemIcon" size={15} />
-                Report a problem…
+                {t("Report a problem…")}
               </button>
               <div className="popoverDivider" />
               <button className="popoverItem popoverItemDanger" onClick={doLogout}>
                 <LogOutIcon className="popoverItemIcon" size={15} />
-                Log out
+                {t("Log out")}
               </button>
             </div>
           ) : null}
@@ -8624,7 +8676,7 @@ function LibraryApp() {
               className="uiBtn sm"
               disabled={loading}
               title="Copy this page — blocks, highlights, its PDF and files — into your own library"
-              onClick={() => importSharedPage(window.location.href)}
+              onClick={() => importSharedPage(publicPage ? `${window.location.origin}/?share=${encodeURIComponent(initialShare)}` : window.location.href)}
             >Add to my library</button>
           ) : null}
           {renderOverflowMenu(true)}
@@ -9196,6 +9248,8 @@ function LibraryApp() {
         papers={{
           theme,
           setTheme,
+          language,
+          setLanguage,
           uiScale,
           setUiScale,
           oaFallback,

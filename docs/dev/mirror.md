@@ -344,13 +344,19 @@ mirror's own answer apart.
   `GET /api/pages/{id}/publish` when the popover opens, then every 5 s while
   a round runs or a local edit waits (`pending_local`), else every 20 s.
   - Not published, allowed: "Keep this page reachable while this computer
-    is off." and a primary **Publish**. While it runs the button is
-    disabled and shows the spinning refresh glyph; a refusal shows its
-    `detail` under the row.
+    is off." and a primary **Publish**; where the plan caps publishing
+    (the answer's `limit` has a `max`) the hint counts instead, "3 of 5
+    pages published". While it runs the button is disabled and shows the
+    spinning refresh glyph; a refusal shows its `detail` under the row, and
+    the cap's refusal (a 409 carrying `limit`) adds an *Open account* button
+    to the issuer's portal, the Settings Account row's target.
   - Not published, refused: the `reason` as the row's hint. When the reason
     is the sign-in one, *Link Gamma Cloud account* opens Settings → Account,
     where the existing link flow runs.
-  - Published: the cloud link as the row hint with *Copy link*, a danger
+  - Published: the cloud link as the row hint with *Copy link* — the
+    answer's `public_url`, the page's pretty address when the share host
+    has page hosts, with the token link in the row's hover title as the
+    fallback that also works — a danger
     icon button that asks inline before it unpublishes, the state line
     (`mirrorState` of the answer's `mirror`, the pill's icon and words) with
     a *Sync now* icon button (`POST /api/mirrors/{ws}/sync?wait=1`), and
@@ -472,8 +478,9 @@ workspace there:
 4. `POST /api/share/{id}` on the share host under the mirror's token makes
    the share (default anyone / view; the request's `audience` / `role` set
    it, on a new link or an existing one through `PUT /api/share-settings`).
-   The answer is the link `<share host>/?share=<token>`, the share and the
-   mirror's status.
+   The answer is the link `<share host>/?share=<token>` (`url`), the
+   page's public address (`public_url`, below), the share and the mirror's
+   status.
 
 From then on the page is an ordinary mirrored page: edits here go there at
 the next round, edits made through an edit share come back, conflicts are
@@ -485,6 +492,62 @@ nothing changes (502). An empty filter leaves the mirror row in place.
 `GET /api/pages/{id}/publish` reads whether the page is published, its live
 share there and the mirror's raw status, plus `can_publish` / `reason` for
 the popover.
+
+**The plan's cap.** The share host limits how many pages a Gamma Cloud
+plan may publish: `config.PLAN_PAGE_LIMITS` (`{"free": 5}`; the env var
+`GAMMA_FREE_PAGE_LIMIT` overrides the free plan's number, 0 lifts it;
+other plans are unlimited). A person's workspace there holds only
+published pages, so the count is its root pages. The one place a
+publishing mirror makes a page there, `POST /api/pages`, answers 402 with
+"Free plan: up to 5 published pages. Unpublish one, or upgrade your Gamma
+Cloud plan." and `{limit, used, plan}` for an account's default personal
+workspace once it holds that many (`publish.cap_refusal`), after the "id
+taken" check, so a round re-creating a page that is already there, and
+every round of a page already published, is never refused. The plan is the
+identity's last `plan` claim, which the share host stores at every exchange
+and sign-in. It applies only while the server is a share host; a
+self-hosted server never counts. On the publishing side, `publish` reads
+`GET /api/publish/limit` on the share host before a page's first round
+there; a full workspace is exchanged once more first, so an upgrade counts
+at once. Still full, the page leaves the filter again and the answer is 409
+with the share host's words and `limit: {used, max, plan}`; a 402 the round
+itself met (the workspace filled up meanwhile) ends the same way.
+Unpublishing deletes the copy there, which frees a slot. `GET
+/api/pages/{id}/publish` carries the same `limit` whenever the account
+holds a publishing token, read fresh on every call.
+
+**Public addresses.** With `GAMMA_PAGE_HOST` set on the share host (a
+pattern such as `{username}-pages.gammapdf.com`, checked at startup: one
+`{username}`, a hostname otherwise), every published page also has a pretty
+address on a hostname per account,
+`https://<username>-pages.gammapdf.com/<slug>-<page id>`. The suffix keeps
+page hosts apart from service hostnames (services are never named with it).
+The slug (`publish.slug`, mirrored in `frontend/src/shared/lib/slug.js`,
+pinned by `tests/shared/slug.json`) is the title ASCII-folded (NFKD, marks
+dropped), lowercased, runs of anything but `[a-z0-9]` turned into one `-`,
+trimmed, at most 60 characters; a title with nothing left (a CJK one) gives
+none and the path is just `/<id>`. It is decoration: routing uses only the
+trailing id, so a renamed page keeps its links. The publishing server
+builds the address (`public_url` in the publish answers) from the share
+host's `page_host` in its `/api/server-config`, the account's username
+there (the mirror's `remote_user`), the page's title and the share host's
+scheme and port; without a pattern it is the token link.
+
+A page host serves the same SPA (asset URLs are root-relative, so any host
+loads them). At boot (`PageHostGate` in `App.jsx`) the app reads
+`/api/server-config`; when `page_host` is set and the hostname matches it,
+it calls `GET /api/pages/resolve-public?host=&path=` and enters the share
+view with the token it returns, as if `?share=<token>` were in the URL
+(`utils.setShareView`); the address bar keeps the pretty address, its slug
+brought in line with the current title. The resolver reads the username out
+of the host, takes the page with the trailing id (a page id may hold a `-`,
+so every tail after a `-` is tried, the longest shared page winning) from
+that account's default personal workspace, and answers its share; the
+share's audience and role apply as for the token link. Any other path on a
+page host, the home included, is the share view's "not found". Cookies are
+per host, so on a page host nobody is signed in: a page shared only with
+signed-in users or invited people shows the sign-in gate there, and its
+token link is the way in.
 
 Limitation: a workspace that is already a copy of another server (a clone
 of the lab's NAS) cannot publish: one remote per copy, and the page's home is

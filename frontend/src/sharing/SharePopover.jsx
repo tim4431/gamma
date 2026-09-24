@@ -15,11 +15,14 @@
 // Gamma Cloud (PublishSection, docs/dev/mirror.md "Publishing"): on a server
 // with cloud sign-in, a page can also be published to the share host, so its
 // link works while this computer is off. Not published: one sentence and a
-// Publish button, or the reason it cannot be (with the link action when the
-// account has no Gamma Cloud identity). Published: the cloud link with Copy
-// and Unpublish (confirmed inline), the publication's state line (the sync
-// pill's reading, mirrorState) with a Sync-now button, and the cloud share's
-// access as the same tiles + View / Edit toggle. App owns the data
+// Publish button (the hint counting the plan's published pages when it caps
+// them; the cap's refusal links to the account page), or the reason it
+// cannot be (with the link action when the account has no Gamma Cloud
+// identity). Published: the cloud link — the page's pretty address on its
+// page host, the token link in the hover title — with Copy and Unpublish
+// (confirmed inline), the publication's state line (the sync pill's reading,
+// mirrorState) with a Sync-now button, and the cloud share's access as the
+// same tiles + View / Edit toggle. App owns the data
 // (GET/POST/DELETE /api/pages/{id}/publish) and polls it while open.
 import React from "react";
 import { MenuSelect } from "../shared/ui/Menus";
@@ -27,7 +30,7 @@ import { AccountPicker, Empty, IconChoices, Row, Section, Segmented } from "../s
 import { useAccounts } from "../settings/SettingsWorkspace";
 import { mirrorState } from "../collaboration/MirrorPopover";
 import {
-  AlertCircleIcon, CheckIcon, CloudIcon, CloudOffIcon, CloudUploadIcon, CopyIcon, EyeIcon, GlobeIcon, LinkIcon,
+  AlertCircleIcon, CheckIcon, CloudIcon, CloudOffIcon, CloudUploadIcon, CopyIcon, ExternalLinkIcon, EyeIcon, GlobeIcon, LinkIcon,
   PenIcon, PlusIcon, RefreshIcon, ShieldIcon, Trash2Icon, UserIcon, UsersIcon,
 } from "../shared/ui/Icons";
 
@@ -116,9 +119,11 @@ export function CopyBox({ children, copied, onCopy, title, label }) {
 
 // Gamma Cloud: `state` is GET /api/pages/{id}/publish (null while loading),
 // `busy` the action running ("publish" | "update" | "unpublish" | "sync" |
-// ""), `error` the last refusal's detail, `copied` / `onCopy` the cloud
-// link's copy, `canEdit` false for a workspace viewer (nothing to press).
-function PublishSection({ state, busy, error, copied, onCopy, canEdit, onPublish, onUnpublish, onSync, onLink }) {
+// ""), `error` the last refusal's detail (or {message, limit} when the plan's
+// cap refused it), `copied` / `onCopy` the cloud link's copy, `canEdit` false
+// for a workspace viewer (nothing to press), `accountUrl` the Gamma Cloud
+// account page (the Settings Account row's "Open account").
+function PublishSection({ state, busy, error, copied, onCopy, canEdit, onPublish, onUnpublish, onSync, onLink, accountUrl }) {
   const [confirming, setConfirming] = React.useState(false);
   const published = !!state?.published;
   React.useEffect(() => { if (!published) setConfirming(false); }, [published]);
@@ -128,8 +133,25 @@ function PublishSection({ state, busy, error, copied, onCopy, canEdit, onPublish
   const running = busy === "sync" || !!mirror?.status?.running;
   const spinning = (what) => (busy === what ? <span className="mirrorSpin"><RefreshIcon size={13} /></span> : null);
   const openEdit = share && share.audience === "anyone" && share.role === "edit";
-  const problem = error || state?.error || "";
-  const errorLine = problem ? <div className="settingsPaneHint aiKeysError" role="alert">{problem}</div> : null;
+  const capped = !!error?.limit;
+  const problem = (capped ? error.message : error) || state?.error || "";
+  const errorLine = problem ? (
+    <>
+      <div className="settingsPaneHint aiKeysError" role="alert">{problem}</div>
+      {capped && accountUrl ? (
+        <div className="publishAccount">
+          <a className="uiBtn sm" href={accountUrl} target="_blank" rel="noopener"
+            title="Your Gamma Cloud account: plan, devices, sign-in methods">
+            <ExternalLinkIcon size={13} />Open account
+          </a>
+        </div>
+      ) : null}
+    </>
+  ) : null;
+  // "3 of 5 pages published" where the plan caps them (the refusal's count is the freshest)
+  const limit = (capped ? error.limit : null) || state?.limit;
+  const counted = limit && limit.max != null ? `${limit.used} of ${limit.max} pages published` : "";
+  const link = state?.public_url || state?.url || "";
 
   if (!state) {
     return (
@@ -142,8 +164,9 @@ function PublishSection({ state, busy, error, copied, onCopy, canEdit, onPublish
     return (
       <Section title="Gamma Cloud">
         <Row icon={CloudIcon} label="Publish"
-          hint={state.can_publish ? "Keep this page reachable while this computer is off." : state.reason}
-          title="Publishing copies this page to the Gamma Cloud share host and shares it there; edits keep syncing both ways.">
+          hint={!state.can_publish ? state.reason : counted || "Keep this page reachable while this computer is off."}
+          title={"Keep this page reachable while this computer is off: publishing copies it to the Gamma Cloud share host "
+            + "and shares it there; edits keep syncing both ways."}>
           {state.can_publish && canEdit ? (
             <button type="button" className="uiBtn sm primary" disabled={!!busy} onClick={() => onPublish()}>
               {spinning("publish") || <CloudUploadIcon size={13} />}Publish
@@ -168,10 +191,11 @@ function PublishSection({ state, busy, error, copied, onCopy, canEdit, onPublish
         />
       ) : null}
     >
-      <Row icon={CloudIcon} label="Cloud link" hint={state.url || "no link on the share host"} title={state.url}>
+      <Row icon={CloudIcon} label="Cloud link" hint={link || "no link on the share host"}
+        title={link && link !== state.url ? `${link}\nAlso works: ${state.url}` : link}>
         <span className="shareLinkBtns">
-          {state.url ? (
-            <button type="button" className={`uiBtn sm ${copied ? "on" : ""}`} onClick={onCopy} title={state.url}>
+          {link ? (
+            <button type="button" className={`uiBtn sm ${copied ? "on" : ""}`} onClick={onCopy} title={link}>
               {copied ? <CheckIcon size={13} /> : <LinkIcon size={13} />}
               {copied ? "Copied" : "Copy link"}
             </button>

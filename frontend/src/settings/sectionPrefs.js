@@ -24,6 +24,7 @@ const sections = (table) => Object.freeze(Object.fromEntries(
 export const SECTION_PREFS = Object.freeze({
   appearance: sections({
     Theme: ["theme"],
+    Language: ["language"],
     "PDF pages": ["pdfDarkPage"],
   }),
   reading: sections({

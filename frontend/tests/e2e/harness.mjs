@@ -150,16 +150,25 @@ export class Account {
 
 export async function launchBrowser() {
   const opts = { headless: !flags.headed };
-  if (process.env.GAMMA_E2E_BROWSER === "webkit") return webkit.launch(opts);
+  if (process.env.GAMMA_E2E_BROWSER === "webkit") return english(await webkit.launch(opts));
   try {
-    return await chromium.launch(opts);
+    return english(await chromium.launch(opts));
   } catch (e) {
     if (!/Executable doesn't exist/.test(String(e.message))) throw e;
     console.log("  (downloading Playwright's Chromium once)");
     execFileSync(process.platform === "win32" ? "npx.cmd" : "npx", ["playwright", "install", "chromium-headless-shell"],
       { cwd: path.join(ROOT, "frontend"), stdio: "inherit", shell: process.platform === "win32" });
-    return await chromium.launch(opts);
+    return english(await chromium.launch(opts));
   }
+}
+
+// The suite selects by English text, and the interface follows the
+// browser's language by default (docs/dev/i18n.md), so every context is
+// English unless a scenario asks for another locale.
+function english(browser) {
+  const newContext = browser.newContext.bind(browser);
+  browser.newContext = (options = {}) => newContext({ locale: "en-US", ...options });
+  return browser;
 }
 
 // API answers that are a designed "no" rather than a failure.

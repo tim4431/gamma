@@ -9,6 +9,7 @@ export const resolveSettingsPane = (pane) => PANE_ALIASES[pane] || pane;
 const entries = [
   ["server", "Public server URL", "public address HTTPS remote proxy OAuth MCP assistant sign-in"],
   ["appearance", "Theme", "dark light gamma amber gold sepia solarized gray system colors"],
+  ["appearance", "Language", "interface text locale english chinese 中文 语言"],
   ["appearance", "Dark PDF pages", "flip invert page colors"],
   ["appearance", "Interface size", "zoom text buttons controls scale touch"],
   ["appearance", "Status bar", "notifications messages"],
