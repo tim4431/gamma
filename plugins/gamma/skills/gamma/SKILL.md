@@ -11,7 +11,9 @@ do not infer that sign-in failed: the workflow can be installed and OAuth approv
 while the current task has no MCP tools. If setup has not been completed, direct
 the user to Gamma's Settings → Integrations and the plugin README.
 If setup already succeeded, check the current assistant's MCP status: in Codex,
-use `codex mcp get gamma`; in Claude Code, use `claude mcp get gamma` or `/mcp`.
+use `codex mcp get gamma`; in Claude Code, use `claude mcp get gamma` or `/mcp`;
+in DeepSeek Harness, look for `mcp__gamma__*` tools and the startup log, where a
+401 means the `GAMMA_TOKEN` token is unset, expired, or revoked.
 Report the observed reason: managed requirements need an
 administrator to allow the connection; authentication errors need sign-in; a
 healthy connection may need an app restart and a new task. If status cannot be

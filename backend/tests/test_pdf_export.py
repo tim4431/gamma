@@ -159,6 +159,15 @@ def test_annotate_area_as_square():
     assert str(obj["/T"]) == "tester"
     assert float(obj["/CA"]) == 0.65
     assert int(obj["/BS"]["/W"]) == 2
+    # The appearance stream draws the viewer's look: a faint fill (a quarter
+    # of the colour's alpha) under the border, both multiplied.
+    ap = obj["/AP"]["/N"].get_object()
+    assert [float(v) for v in ap["/BBox"]] == [0, 0, 200, 20]
+    gs = ap["/Resources"]["/ExtGState"]
+    assert float(gs["/Fill"]["/ca"]) == round(0.65 * 0.25, 3)
+    assert float(gs["/Stroke"]["/CA"]) == 0.65
+    assert str(gs["/Fill"]["/BM"]) == "/Multiply"
+    assert b" re f" in ap.get_data() and b" re S" in ap.get_data()
     # Zotero's pdf-worker imports a /Square (→ area/image annotation) ONLY if
     # it carries an id: /NM shaped "Zotero-<8 chars of its key alphabet>".
     # Deterministic from the block id so re-exports keep stable keys.

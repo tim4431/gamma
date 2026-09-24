@@ -8,7 +8,7 @@ which no one listens on when Gamma runs on a remote server — so the UI has the
 user paste the (failed-to-load) callback URL back, and the code is exchanged
 server-side with the PKCE verifier.
 
-Tokens are stored in the provider entry (data.db `ai-settings` prefs key, same
+Tokens are stored in the provider entry (users.db `ai-settings` pref, same
 protection as API keys: never sent back to the browser). Access tokens expire;
 ai_runtime() refreshes them lazily via the refresh token.
 """

@@ -2,7 +2,7 @@ import React from "react";
 import { API, apiJson, copyText } from "../shared/lib/utils";
 import { PaneHead, Section, Row, Segmented, Step } from "./SettingsKit";
 import { LinkIcon, KeyIcon, CopyIcon, CheckIcon, RefreshIcon, UnlinkIcon } from "../shared/ui/Icons";
-import { codexSetupCommand, claudeConnectCommand, claudePluginInstallCommands } from "./assistantSetup";
+import { codexSetupCommand, claudeConnectCommand, claudePluginInstallCommands, dshInstallCommand, dshStartCommand } from "./assistantSetup";
 
 const COPIED = "Copied. You can paste it now.";
 const COPY_MANUALLY = "Select the text above and copy it manually.";
@@ -95,12 +95,14 @@ export function IntegrationSettings({ workspaceId }) {
       document.removeEventListener("visibilitychange", visible);
     };
   }, [refresh]);
-  const create = async () => {
+  // `origin` is where the one-time token is shown: the manual section, or the
+  // DeepSeek Harness tab, which connects only with a token.
+  const create = async (tokenName, tokenScope, origin) => {
     setBusy(true); setMessage("");
     try {
       const value = await apiJson(endpoint, { method: "POST", headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ name: name.trim(), scope }) });
-      setSecret(value);
+        body: JSON.stringify({ name: tokenName, scope: tokenScope }) });
+      setSecret({ ...value, origin });
       await refresh();
     } catch (err) { setMessage(err.message); }
     finally { setBusy(false); }
@@ -119,8 +121,16 @@ export function IntegrationSettings({ workspaceId }) {
   const config = data ? `[mcp_servers.gamma]\nurl = ${JSON.stringify(data.mcp_url)}\nbearer_token_env_var = "GAMMA_TOKEN"` : "";
   const setup = data ? codexSetupCommand(data.mcp_url, platform) : "";
   const isClaude = method === "claude";
+  const isDsh = method === "dsh";
+  const tokenField = <div className="integrationDetails">
+    <p>Copy this token now. Gamma will not show it again. Keep it private.</p>
+    <CopyField label="New integration token" value={secret?.token ?? ""} action="Copy token" />
+    <div className="integrationActions">
+      <button className="uiBtn" onClick={() => setSecret(null)}>Done</button>
+    </div>
+  </div>;
   return <>
-    <PaneHead icon={LinkIcon} title="Integrations">Read-only access for Codex, Claude Code, or any MCP assistant.</PaneHead>
+    <PaneHead icon={LinkIcon} title="Integrations">Read-only access for Codex, Claude Code, DeepSeek Harness, or any MCP assistant.</PaneHead>
     {loadError ? <div className="integrationDetails" role="alert">
       <p>Could not load your connections. {loadError}</p>
       <button className="uiBtn" onClick={() => refresh()}>Try again</button>
@@ -129,54 +139,76 @@ export function IntegrationSettings({ workspaceId }) {
       {data ? <div className="integrationDetails">
         {data.oauth_available ? <>
           <div role="group" aria-label="Connection method">
-            <Segmented value={method} onChange={setMethod} options={[["settings", "Any assistant"], ["terminal", "Codex CLI"], ["claude", "Claude Code"]]} />
+            <Segmented value={method} onChange={setMethod} options={[["settings", "Any assistant"], ["terminal", "Codex CLI"], ["claude", "Claude Code"], ["dsh", "DeepSeek Harness"]]} />
           </div>
-          <Step n={1} title={method === "settings" ? "Add Gamma to your assistant" : isClaude ? "Connect Claude Code to Gamma" : "Install and connect Gamma PDF"}
-            hint={method === "settings" ? "In your assistant's settings, add an MCP server with this URL." : isClaude
-              ? "Run this command in a terminal on the computer where you use Claude Code. If Gamma is already connected at this address, continue to sign-in."
-              : "Run this command on the computer where you use Codex. It installs the plugin and opens Gamma sign-in."}>
-            {method === "settings"
-              ? <CopyField key="url" label="Gamma MCP server URL" value={data.mcp_url} action="Copy server URL" />
-              : <>
-                <div role="group" aria-label="Terminal platform">
-                  <Segmented value={platform} onChange={setPlatform} options={[["windows", "Windows PowerShell"], ["unix", "macOS / Linux"]]} />
-                </div>
-                {isClaude ? <>
-                  <CopyField key="claude-connect" label="Claude Code connection command" value={claudeConnectCommand(data.mcp_url, platform)} action="Copy connection command" />
-                  <p className="settingDesc">Requires <a href="https://code.claude.com/docs/en/setup" target="_blank" rel="noreferrer">Claude Code</a> and a running Gamma server.</p>
-                </> : <>
-                  <CopyField key="commands" label="Codex setup command" value={setup} action="Copy setup command" rows={4} />
-                  <p className="settingDesc">Requires the <a href="https://learn.chatgpt.com/docs/cli" target="_blank" rel="noreferrer">Codex CLI</a>.
-                    Downloads the setup script and plugin from <a href="https://github.com/tim4431/Gamma/releases/latest" target="_blank" rel="noreferrer">Gamma's latest release</a>.</p>
+          {isDsh ? <>
+            <Step n={1} title="Create a token"
+              hint="DeepSeek Harness has no browser sign-in. It connects with a read-only token for this workspace, which expires after 90 days.">
+              {secret?.origin === "dsh" ? tokenField
+                : <button className="uiBtn" disabled={busy || !!secret} onClick={() => create("DeepSeek Harness", "read", "dsh")}>Create token</button>}
+            </Step>
+            <Step n={2} title="Install the Gamma plugin"
+              hint="Run this in a terminal on the computer where you use DeepSeek Harness. It downloads the plugin from Gamma's latest release into your dsh home and adds it to the web profile; run it again to update.">
+              <div role="group" aria-label="Terminal platform">
+                <Segmented value={platform} onChange={setPlatform} options={[["windows", "Windows PowerShell"], ["unix", "macOS / Linux"]]} />
+              </div>
+              <CopyField key="dsh-install" label="DeepSeek Harness plugin install command" value={dshInstallCommand(platform)} action="Copy install command" rows={platform === "windows" ? 5 : 3} />
+              <p className="settingDesc">Requires <a href="https://github.com/deepseek-ai/deepseek-harness" target="_blank" rel="noreferrer">DeepSeek Harness</a> and <a href="https://pnpm.io/installation" target="_blank" rel="noreferrer">pnpm</a>.
+                For another dsh profile, change <code>--profile web</code>.</p>
+            </Step>
+            <Step n={3} title="Start dsh with Gamma"
+              hint="Paste the token when asked. Then paste a Gamma page or share link with your question; Gamma's tools appear as mcp__gamma__….">
+              <CopyField key="dsh-start" label="DeepSeek Harness start command" value={dshStartCommand(data.mcp_url, platform)} action="Copy start command" rows={3} />
+              <p className="settingDesc">Without <code>GAMMA_URL</code>, dsh starts without Gamma. When the token expires after 90 days, create a new one here.</p>
+            </Step>
+          </> : <>
+            <Step n={1} title={method === "settings" ? "Add Gamma to your assistant" : isClaude ? "Connect Claude Code to Gamma" : "Install and connect Gamma PDF"}
+              hint={method === "settings" ? "In your assistant's settings, add an MCP server with this URL." : isClaude
+                ? "Run this command in a terminal on the computer where you use Claude Code. If Gamma is already connected at this address, continue to sign-in."
+                : "Run this command on the computer where you use Codex. It installs the plugin and opens Gamma sign-in."}>
+              {method === "settings"
+                ? <CopyField key="url" label="Gamma MCP server URL" value={data.mcp_url} action="Copy server URL" />
+                : <>
+                  <div role="group" aria-label="Terminal platform">
+                    <Segmented value={platform} onChange={setPlatform} options={[["windows", "Windows PowerShell"], ["unix", "macOS / Linux"]]} />
+                  </div>
+                  {isClaude ? <>
+                    <CopyField key="claude-connect" label="Claude Code connection command" value={claudeConnectCommand(data.mcp_url, platform)} action="Copy connection command" />
+                    <p className="settingDesc">Requires <a href="https://code.claude.com/docs/en/setup" target="_blank" rel="noreferrer">Claude Code</a> and a running Gamma server.</p>
+                  </> : <>
+                    <CopyField key="commands" label="Codex setup command" value={setup} action="Copy setup command" rows={4} />
+                    <p className="settingDesc">Requires the <a href="https://learn.chatgpt.com/docs/cli" target="_blank" rel="noreferrer">Codex CLI</a>.
+                      Downloads the setup script and plugin from <a href="https://github.com/tim4431/Gamma/releases/latest" target="_blank" rel="noreferrer">Gamma's latest release</a>.</p>
                 </>}
               </>}
-          </Step>
-          <Step n={2} title="Sign in and choose a workspace"
-            hint={isClaude ? "Start Claude Code, run /mcp, select gamma, and authenticate. Sign in to Gamma in your browser and approve a workspace."
-              : "Follow your assistant's sign-in prompt. Approve read-only access in Gamma. No token to create or paste."} />
-          {isClaude ? <>
-            <Step n={3} title="Ask about your papers"
-              hint="Start a new session and paste a Gamma page or share link with your question, or mention a paper by name. With the Gamma plugin installed, /gamma:gamma starts the workflow.">
-              <p className="settingDesc">The MCP connection above is all Claude Code needs to read your library. The plugin (optional) adds the /gamma:gamma workflow and the Gamma identity.</p>
-              <details>
-                <summary>Install the plugin (once)</summary>
-                <p>Download the Claude Code plugin ZIP from <a href="https://github.com/tim4431/Gamma/releases/latest" target="_blank" rel="noreferrer">Gamma's latest release</a> and extract it into a permanent folder.
-                  Open a terminal in the folder containing <code>gamma-marketplace</code> and run:</p>
-                <CopyField label="Claude Code plugin install commands" value={claudePluginInstallCommands} action="Copy plugin install commands" rows={3} />
-                <p className="settingDesc">Choose the asset named <code>gamma-claude-code-plugin</code> followed by the version and <code>.zip</code>.
-                  Requires a release that includes the Claude Code plugin. Keep the extracted folder after installing.</p>
-              </details>
             </Step>
-            <details className="integrationAdvanced">
-              <summary>Changed the server address?</summary>
-              <p>Open Gamma at its new address, then copy these commands to replace the connection. Your plugin stays installed.
-                Restart Claude Code and sign in again through <code>/mcp</code>.</p>
-              <CopyField label="Claude Code change server commands" value={claudeConnectCommand(data.mcp_url, platform, { replace: true })} action="Copy change server commands" rows={3} />
-              <p className="settingDesc">If Gamma runs on the same computer, localhost keeps working when your LAN IP changes.
-                For a remote server, use a stable HTTPS hostname and confirm it in Gamma's Settings → Server.</p>
-            </details>
-          </> : <Step n={3} title="Start a new chat"
-            hint={method === "terminal" ? 'Copy the Gamma page URL from your browser and paste it with your question. A share link works too.' : 'Try asking: “Use Gamma to find my notes about…”'} />}
+            <Step n={2} title="Sign in and choose a workspace"
+              hint={isClaude ? "Start Claude Code, run /mcp, select gamma, and authenticate. Sign in to Gamma in your browser and approve a workspace."
+                : "Follow your assistant's sign-in prompt. Approve read-only access in Gamma. No token to create or paste."} />
+            {isClaude ? <>
+              <Step n={3} title="Ask about your papers"
+                hint="Start a new session and paste a Gamma page or share link with your question, or mention a paper by name. With the Gamma plugin installed, /gamma:gamma starts the workflow.">
+                <p className="settingDesc">The MCP connection above is all Claude Code needs to read your library. The plugin (optional) adds the /gamma:gamma workflow and the Gamma identity.</p>
+                <details>
+                  <summary>Install the plugin (once)</summary>
+                  <p>Download the Claude Code plugin ZIP from <a href="https://github.com/tim4431/Gamma/releases/latest" target="_blank" rel="noreferrer">Gamma's latest release</a> and extract it into a permanent folder.
+                    Open a terminal in the folder containing <code>gamma-marketplace</code> and run:</p>
+                  <CopyField label="Claude Code plugin install commands" value={claudePluginInstallCommands} action="Copy plugin install commands" rows={3} />
+                  <p className="settingDesc">Choose the asset named <code>gamma-claude-code-plugin</code> followed by the version and <code>.zip</code>.
+                    Requires a release that includes the Claude Code plugin. Keep the extracted folder after installing.</p>
+                </details>
+              </Step>
+              <details className="integrationAdvanced">
+                <summary>Changed the server address?</summary>
+                <p>Open Gamma at its new address, then copy these commands to replace the connection. Your plugin stays installed.
+                  Restart Claude Code and sign in again through <code>/mcp</code>.</p>
+                <CopyField label="Claude Code change server commands" value={claudeConnectCommand(data.mcp_url, platform, { replace: true })} action="Copy change server commands" rows={3} />
+                <p className="settingDesc">If Gamma runs on the same computer, localhost keeps working when your LAN IP changes.
+                  For a remote server, use a stable HTTPS hostname and confirm it in Gamma's Settings → Server.</p>
+              </details>
+            </> : <Step n={3} title="Start a new chat"
+              hint={method === "terminal" ? 'Copy the Gamma page URL from your browser and paste it with your question. A share link works too.' : 'Try asking: “Use Gamma to find my notes about…”'} />}
+          </>}
         </> : <>
           <p>Browser sign-in is not available for this Gamma address yet.</p>
           <p>An administrator can enable it by confirming the public server URL in Settings → Server.</p>
@@ -200,7 +232,7 @@ export function IntegrationSettings({ workspaceId }) {
         <div className="integrationCreateControls">
           <input className="aiKeyInput" aria-label="Connection name" value={name} maxLength={80}
             onChange={(event) => setName(event.target.value)} />
-          <button className="uiBtn" disabled={busy || !data || !name.trim() || !!secret} onClick={create}>Create token</button>
+          <button className="uiBtn" disabled={busy || !data || !name.trim() || !!secret} onClick={() => create(name.trim(), scope, "manual")}>Create token</button>
         </div>
       </Row>
       <Row label="Scope" hint={scope === "write"
@@ -208,13 +240,7 @@ export function IntegrationSettings({ workspaceId }) {
         : "Read-only: assistants. Choose “Read and write” for an offline copy of this workspace on another Gamma."}>
         <Segmented value={scope} onChange={setScope} options={[["read", "Read-only"], ["write", "Read and write"]]} />
       </Row>
-      {secret ? <div className="integrationDetails">
-        <p>Copy this token now. Gamma will not show it again. Keep it private.</p>
-        <CopyField label="New integration token" value={secret.token} action="Copy token" />
-        <div className="integrationActions">
-          <button className="uiBtn" onClick={() => setSecret(null)}>Done</button>
-        </div>
-      </div> : null}
+      {secret?.origin === "manual" ? tokenField : null}
     </Section>
     <Section title="Add the token to Codex">
       {data ? <div className="integrationDetails">

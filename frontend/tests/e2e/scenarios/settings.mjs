@@ -88,6 +88,44 @@ export async function settingsScenarios(env) {
     } finally { await ctx.close(); }
   });
 
+  await step("settings: the DeepSeek preset is the OpenAI protocol at DeepSeek's endpoint", async () => {
+    const { ctx, page } = await setup();
+    try {
+      const calls = [];
+      await page.route("**/api/ai/model-catalog", async (route) => {
+        calls.push(route.request().postDataJSON());
+        await route.fulfill({ json: { models: ["deepseek-flash", "deepseek-v4-pro"] } });
+      });
+      await openSettings(page);
+      await nav(page, "Connections").click();
+      await page.getByRole("button", { name: "+ Add provider", exact: true }).click();
+      const dialog = page.getByRole("dialog", { name: "Add key", exact: true });
+      await dialog.getByRole("button", { name: "AI service", exact: true }).click();
+      await page.getByText("DeepSeek", { exact: true }).click();
+      // A preset's endpoint is fixed: no Base URL field to fill.
+      assertEq(await dialog.getByRole("textbox", { name: /Base URL/ }).count(), 0);
+      await dialog.locator('input[autocomplete="new-password"]').fill("sk-deepseek-e2e");
+      await dialog.getByRole("button", { name: "2 usable" }).waitFor();
+      assertEq(calls.at(-1).protocol, "openai");
+      assertEq(calls.at(-1).base_url, "https://api.deepseek.com");
+      const input = dialog.getByRole("combobox", { name: "Add a model" });
+      await input.click();
+      await page.getByRole("listbox", { name: "Available models" })
+        .getByRole("option", { name: "deepseek-flash", exact: true }).click();
+      await dialog.getByRole("button", { name: "Add key", exact: true }).click();
+      await until(() => dialog.count().then((n) => n === 0));
+      const saved = page.locator(".aiProvRow").filter({ hasText: "sk-deepseek-e2e".slice(-4) });
+      await saved.locator(".aiProvName").filter({ hasText: "DeepSeek" }).waitFor();
+      assertNoProblems(page);
+    } finally {
+      await ctx.close();
+      const info = await user.api("/api/ai/settings");
+      for (const p of info.providers.filter((p) => p.base_url === "https://api.deepseek.com")) {
+        await user.api(`/api/ai/providers/${p.id}`, { method: "DELETE" });
+      }
+    }
+  });
+
   await step("settings: manual OAuth connection automatically fetches models", async () => {
     const { ctx, page } = await setup();
     try {
@@ -260,6 +298,51 @@ export async function settingsScenarios(env) {
       assert(await page.getByText("No assistants have access to this workspace yet.", { exact: true }).isVisible());
       assertEq(await page.getByRole("button", { name: "Disconnect", exact: true }).count(), 0, "other workspace connections are not managed as current workspace access");
       await user.api(`/api/integrations/tokens/${elsewhere.id}?ws=${second.id}`, { method: "DELETE" });
+      assertNoProblems(page);
+    } finally { await ctx.close(); }
+  });
+
+  await step("settings: DeepSeek Harness connects with a token made in its own tab", async () => {
+    const { ctx, page } = await setup();
+    try {
+      await openSettings(page);
+      await nav(page, "Integrations").click();
+      await page.getByRole("button", { name: "DeepSeek Harness", exact: true }).click();
+      const start = page.getByRole("textbox", { name: "DeepSeek Harness start command", exact: true });
+      await page.getByRole("button", { name: "macOS / Linux", exact: true }).click();
+      assert((await start.inputValue()).startsWith(`export GAMMA_URL='${server.base}/mcp'
+`));
+      const install = page.getByRole("textbox", { name: "DeepSeek Harness plugin install command", exact: true });
+      assert((await install.inputValue()).includes("releases/latest/download/dsh-gamma.tgz"));
+      await page.getByRole("button", { name: "Create token", exact: true }).click();
+      const secret = page.getByRole("textbox", { name: "New integration token" });
+      await secret.waitFor();
+      const token = await secret.inputValue();
+      assert(!(await start.inputValue()).includes(token), "the token is typed at a prompt, never copied into a command");
+      await until(() => page.getByRole("button", { name: "Disconnect", exact: true }).count().then((n) => n === 1));
+      const [made] = (await user.api("/api/integrations/tokens")).tokens.filter((t) => t.name === "DeepSeek Harness");
+      assertEq(made.scope, "read");
+      // What dsh sends on startup: an initialize with the bearer header.
+      const init = await fetch(`${server.base}/mcp`, { method: "POST",
+        headers: { "Content-Type": "application/json", Accept: "application/json, text/event-stream", Authorization: `Bearer ${token}` },
+        body: JSON.stringify({ jsonrpc: "2.0", id: 1, method: "initialize",
+          params: { protocolVersion: "2025-11-25", capabilities: {}, clientInfo: { name: "dsh-e2e", version: "0" } } }) });
+      assertEq(init.status, 200);
+      await page.getByText("Manual setup (advanced)", { exact: true }).click();
+      assertEq(await secret.count(), 1, "the one-time token shows only in the tab that made it");
+      await page.getByRole("button", { name: "Windows PowerShell", exact: true }).click();
+      assert((await install.inputValue()).endsWith("npx @deepseek-ai/dsh plugin --profile web add $bundle"));
+      assert((await start.inputValue()).includes("Read-Host 'Gamma token'"));
+      await page.setViewportSize({ width: 390, height: 844 });
+      await start.scrollIntoViewIfNeeded();
+      assert(await page.evaluate(() => document.documentElement.scrollWidth <= innerWidth), "four assistant tabs fit a narrow viewport");
+      if (process.env.GAMMA_MCP_SCREENSHOTS) {
+        await page.screenshot({ path: path.join(process.env.GAMMA_MCP_SCREENSHOTS, "dsh-setup-mobile.png"), fullPage: true });
+      }
+      await page.setViewportSize({ width: 1280, height: 860 });
+      await page.getByRole("button", { name: "Done", exact: true }).click();
+      await secret.waitFor({ state: "detached" });
+      await user.api(`/api/integrations/tokens/${made.id}`, { method: "DELETE" });
       assertNoProblems(page);
     } finally { await ctx.close(); }
   });

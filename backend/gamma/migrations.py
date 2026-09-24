@@ -31,6 +31,7 @@ The rules that keep this safe and small:
 Docs: docs/dev/migrations.md.
 """
 
+import json
 import shutil
 import sqlite3
 from contextlib import closing
@@ -445,6 +446,43 @@ def _v14_identities(conn: sqlite3.Connection) -> None:
     conn.commit()
 
 
+# The per-protocol default models Gamma used to serve for an entry with no
+# models picked. Frozen here: the running code no longer has a default.
+_V15_OLD_DEFAULT_MODELS = {
+    "anthropic": "claude-haiku-4-5-20251001",
+    "openai": "gpt-4o-mini",
+    "chatgpt": "gpt-5.1",
+}
+
+
+def _v15_ai_explicit_models(conn: sqlite3.Connection) -> None:
+    """AI provider entries (users.db ``user_prefs`` key ``ai-settings``) with
+    no models picked get the default they were implicitly using written in:
+    entries no longer fall back to a built-in model, so nothing an account
+    relies on disappears."""
+    rows = conn.execute(
+        "SELECT username, workspace_id, value FROM user_prefs WHERE key = 'ai-settings'").fetchall()
+    for username, ws, value in rows:
+        try:
+            data = json.loads(value)
+        except ValueError:
+            continue
+        entries = data.get("providers") if isinstance(data, dict) else None
+        if not isinstance(entries, list):
+            continue
+        changed = False
+        for e in entries:
+            default = _V15_OLD_DEFAULT_MODELS.get(e.get("protocol")) if isinstance(e, dict) else None
+            if default and not str(e.get("models") or "").strip():
+                e["models"] = default
+                changed = True
+        if changed:
+            conn.execute(
+                "UPDATE user_prefs SET value = ? WHERE username = ? AND workspace_id = ? AND key = 'ai-settings'",
+                (json.dumps(data), username, ws))
+    conn.commit()
+
+
 STEPS = [
     (1, "baseline", _v1_baseline),
     (2, "workspaces", _v2_workspaces),
@@ -460,4 +498,5 @@ STEPS = [
     (12, "sync_log_stats", _v12_sync_log_stats),
     (13, "sync_conflict_base", _v13_sync_conflict_base),
     (14, "identities", _v14_identities),
+    (15, "ai_explicit_models", _v15_ai_explicit_models),
 ]

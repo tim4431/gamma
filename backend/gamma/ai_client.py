@@ -92,7 +92,8 @@ def anthropic_request(
         body["tools"] = [{"name": t["name"], "description": t["description"],
                           "input_schema": t["parameters"]} for t in tools]
     if effort:
-        body["output_config"] = {"effort": effort}
+        # "minimal" is OpenAI's lowest level; Anthropic's is "low".
+        body["output_config"] = {"effort": "low" if effort == "minimal" else effort}
     if stream:
         body["stream"] = True
     return urllib.request.Request(
@@ -205,9 +206,10 @@ def openai_request(
             wire.append({"role": m["role"], "content": m["content"]})
     body = {
         "model": model,
-        # Current OpenAI models use max_completion_tokens. The cap includes
-        # hidden reasoning tokens, so leave a generous default.
-        "max_completion_tokens": max_tokens,
+        # Current OpenAI models take max_completion_tokens (the cap includes
+        # hidden reasoning tokens, so leave a generous default); compatible
+        # servers (DeepSeek, vLLM, Ollama, …) take the classic max_tokens.
+        ("max_completion_tokens" if is_openai_platform(conf["base_url"]) else "max_tokens"): max_tokens,
         "messages": wire,
     }
     if tools:
@@ -385,6 +387,12 @@ def protocol(runtime, entry) -> str:
     return runtime["providers"][entry["provider"]]["protocol"]
 
 
+def is_openai_platform(base_url: str) -> bool:
+    """Whether an openai-protocol entry talks to OpenAI itself rather than a
+    compatible server (DeepSeek, a gateway, a local model)."""
+    return base_url.startswith("https://api.openai.com")
+
+
 def wire_protocol(runtime, entry, tools=None) -> str:
     """The wire dialect a call actually uses. OpenAI-protocol calls that carry
     function tools go over the platform Responses API (reasoning models reject
@@ -392,8 +400,7 @@ def wire_protocol(runtime, entry, tools=None) -> str:
     OpenAI-compatible gateways behind a custom base URL may not implement
     /v1/responses, and chat-completions tools still work there."""
     conf = runtime["providers"][entry["provider"]]
-    if (tools and conf["protocol"] == "openai"
-            and conf["base_url"].startswith("https://api.openai.com")):
+    if tools and conf["protocol"] == "openai" and is_openai_platform(conf["base_url"]):
         return "openai-responses"
     return conf["protocol"]
 

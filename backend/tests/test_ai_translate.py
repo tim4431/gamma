@@ -29,7 +29,8 @@ def carol(client):
     c = TestClient(app)
     r = c.post("/api/login", json={"username": "translate_carol", "password": "pw"})
     assert r.status_code == 200, r.text
-    r = c.post("/api/ai/providers", json={"protocol": "anthropic", "api_key": "sk-ant-key-1234"})
+    r = c.post("/api/ai/providers", json={"protocol": "anthropic", "api_key": "sk-ant-key-1234",
+                                          "models": "claude-test"})
     assert r.status_code == 200, r.text
     return c
 

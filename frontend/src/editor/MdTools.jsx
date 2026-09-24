@@ -11,7 +11,7 @@ import { scanMathSpans } from "./BlockCmEditor";
 import { scanFences } from "./codeHighlight";
 import { scanImageSyntax } from "./mdMarks";
 import { ContextMenu, MenuItem } from "../shared/ui/Menus";
-import { ResizeGrip, useDragResize } from "../shared/ui/ResizeGrip";
+import { ResizeGrips, useDragResize } from "../shared/ui/ResizeGrip";
 import { Segmented } from "../settings/SettingsKit";
 import {
   AlignCenterIcon, AlignLeftIcon, AlignRightIcon, CaptionIcon, DownloadIcon,
@@ -286,9 +286,9 @@ export function tsvToMarkdown(text) {
 
 // ------------------------------------------------------------------ MdImage
 
-// A rendered ![alt](url): click zooms (lightbox), and with onEdit a hover
-// toolbar (caption / download / delete) plus a right-edge drag handle that
-// writes the `|width` back into the source. The alt text doubles as a visible
+// A rendered ![alt](url), centred on its row: click zooms (lightbox), and
+// with onEdit a hover toolbar (caption / download / delete) plus a drag grip
+// on each side that writes the `|width` back into the source. The alt text doubles as a visible
 // caption, Obsidian-style — no new syntax. Spans only: images live inside <p>.
 export function MdImage({ src, alt, width, idx, onEdit }) {
   const [lightbox, setLightbox] = useState(false);
@@ -296,6 +296,7 @@ export function MdImage({ src, alt, width, idx, onEdit }) {
   const imgRef = useRef(null);
   const { dragW, gripProps } = useDragResize({
     measure: () => imgRef.current?.getBoundingClientRect().width,
+    bound: () => imgRef.current?.closest(".mdImgWrap")?.parentElement,
     onCommit: (w) => onEdit(idx, "width", w),
   });
 
@@ -338,7 +339,7 @@ export function MdImage({ src, alt, width, idx, onEdit }) {
               onClick={() => onEdit(idx, "delete")}><Trash2Icon /></button>
           </span>
         ) : null}
-        {onEdit ? <ResizeGrip {...gripProps} /> : null}
+        {onEdit ? <ResizeGrips gripProps={gripProps} /> : null}
       </span>
       {caption != null ? (
         <input

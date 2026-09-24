@@ -40,6 +40,26 @@ def test_openai_wire_tools_and_results():
     assert body["messages"][3] == {"role": "tool", "tool_call_id": "c1", "content": "Pages…"}
 
 
+def test_anthropic_wire_maps_minimal_effort_to_low():
+    msgs = [{"role": "user", "content": "hi"}]
+    body = json.loads(anthropic_request(CONF, msgs, "", "m", effort="minimal").data)
+    assert body["output_config"] == {"effort": "low"}
+    body = json.loads(anthropic_request(CONF, msgs, "", "m", effort="high").data)
+    assert body["output_config"] == {"effort": "high"}
+
+
+def test_openai_output_cap_field_follows_the_endpoint():
+    # OpenAI itself wants max_completion_tokens; compatible servers such as
+    # DeepSeek only read max_tokens.
+    msgs = [{"role": "user", "content": "hi"}]
+    official = json.loads(openai_request(
+        {**CONF, "base_url": "https://api.openai.com"}, msgs, "", "m", max_tokens=99).data)
+    assert official["max_completion_tokens"] == 99 and "max_tokens" not in official
+    deepseek = json.loads(openai_request(
+        {**CONF, "base_url": "https://api.deepseek.com"}, msgs, "", "m", max_tokens=99).data)
+    assert deepseek["max_tokens"] == 99 and "max_completion_tokens" not in deepseek
+
+
 def test_chatgpt_wire_tools_and_results():
     req = chatgpt_request(CONF, [dict(m) for m in TURNS], "sys", "m", tools=ALL_TOOLS)
     body = json.loads(req.data)

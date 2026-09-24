@@ -228,6 +228,69 @@ export async function noteScenarios({ server, browser, alice, step, until, sleep
     assertNoProblems(page);
   });
 
+  await step("notes: images centre with a grip each side; a click opens the editor on the clicked character", async () => {
+    const up = await alice2.upload("/api/upload-image", PNG_1PX, "dot3.png", "image/png");
+    await editRow(page, "second");
+    await page.keyboard.press("Control+End");
+    await page.keyboard.press("Shift+Enter");
+    // Headings, a table and a list all render shorter than their source, so
+    // the text below them sits lower in the editor than it did rendered.
+    await page.keyboard.insertText(`![|200](${up.url})\n\n## Heading\n\n| col a | col b |\n| --- | --- |\n| 1 | 2 |\n| 3 | 4 |\n\n- item one\n- item two\n\nclick the **target** word`);
+    await closeEditor(page);
+    const frame = row(page, "target").locator(".mdImgFrame");
+    await frame.waitFor();
+    const [f, p] = [await frame.boundingBox(), await row(page, "target").locator(".blockRendered p").first().boundingBox()];
+    assert(Math.abs((f.x + f.width / 2) - (p.x + p.width / 2)) < 2, `image centred (${f.x}+${f.width} in ${p.x}+${p.width})`);
+    // The left grip dragged outward by 40px widens the centred image by 80.
+    await frame.hover();
+    const grip = await frame.locator(".mdResizeGrip.left").boundingBox();
+    await page.mouse.move(grip.x + grip.width / 2, grip.y + grip.height / 2);
+    await page.mouse.down();
+    await page.mouse.move(grip.x + grip.width / 2 - 40, grip.y + grip.height / 2, { steps: 4 });
+    await page.mouse.up();
+    await until(async () => /!\[\|28\d\]/.test(JSON.stringify(await tree(alice2, pageId))), { what: "left-grip width ≈ 280 saved" });
+    assertEq(await page.locator(".blockEditorCm").count(), 0, "resizing never opens the editor");
+
+    // Click just inside the "g" of the bold word: the caret opens before it.
+    const pt = await page.evaluate(() => {
+      const strong = [...document.querySelectorAll(".blockRendered strong")].find((s) => s.textContent === "target");
+      const r = document.createRange();
+      r.setStart(strong.firstChild, 3);
+      r.setEnd(strong.firstChild, 4);
+      const b = r.getBoundingClientRect();
+      return { x: b.left + 1, y: b.top + b.height / 2 };
+    });
+    await page.mouse.click(pt.x, pt.y);
+    await page.waitForSelector(".blockEditorCm .cm-content", { timeout: 5000 });
+    await page.keyboard.type("X");
+    await closeEditor(page);
+    await until(async () => JSON.stringify(await tree(alice2, pageId)).includes("**tarXget**"), { what: "typed at the clicked character" });
+    assertNoProblems(page);
+  });
+
+  await step("notes: the gap line between two adjacent $$ formulas opens the editor on a new line between them", async () => {
+    await editRow(page, "second");
+    await page.keyboard.press("Control+End");
+    await page.keyboard.press("Shift+Enter");
+    await page.keyboard.insertText("$$x+1$$\n$$y+2$$");
+    await closeEditor(page);
+    await until(async () => JSON.stringify(await tree(alice2, pageId)).includes("$$x+1$$\\n$$y+2$$"), { what: "two formulas saved" });
+    const mathRow = page.locator(".blockRow").filter({ has: page.locator(".katex-display") }).first();
+    const gapY = await mathRow.evaluate((r) => {
+      const [a, b] = [...r.querySelectorAll(".blockRendered > *")].map((el) => el.getBoundingClientRect());
+      return (a.bottom + b.top) / 2;
+    });
+    const box = await mathRow.locator(".blockRendered").boundingBox();
+    await page.mouse.move(box.x + box.width / 2, gapY);
+    await mathRow.locator(".mdGapLine").waitFor({ timeout: 3000 });
+    await page.mouse.click(box.x + box.width / 2, gapY);
+    await page.waitForSelector(".blockEditorCm .cm-content", { timeout: 5000 });
+    await page.keyboard.type("mid");
+    await closeEditor(page);
+    await until(async () => JSON.stringify(await tree(alice2, pageId)).includes("$$x+1$$\\nmid\\n$$y+2$$"), { what: "typed on the new line between the formulas" });
+    assertNoProblems(page);
+  });
+
   await step("notes: Export… as an Obsidian vault downloads a zip", async () => {
     await page.click("button[aria-label='View']");
     await page.locator(".popoverItem", { hasText: "Export…" }).click();

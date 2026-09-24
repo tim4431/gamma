@@ -10,9 +10,10 @@ the crop box and apply /Rotate, so the inverse mapping here must too. This is
 the exact reverse of what routers/imports.py does when reading embedded
 annotations (which come straight from PDF user space).
 
-No appearance streams (/AP) are written — every mainstream viewer synthesizes
-the marker look for /Highlight annotations from /QuadPoints + /C, and the
-outline for /Square from /Rect + /C + /BS.
+/Highlight carries no appearance stream (/AP) — every mainstream viewer
+synthesizes the marker look from /QuadPoints + /C. /Square does: synthesized
+from /Rect + /C + /BS it would be a bare outline, and the viewer's area note
+also has a faint fill.
 
 Zotero compatibility: its reader imports /Highlight (→ highlight) and /Square
 (→ image/area annotation) — but pdf-worker's ``readRawAnnotation`` DROPS a
@@ -30,6 +31,7 @@ import re
 from PyPDF2 import PdfReader, PdfWriter
 from PyPDF2.generic import (
     ArrayObject,
+    DecodedStreamObject,
     DictionaryObject,
     FloatObject,
     NameObject,
@@ -149,21 +151,63 @@ def zotero_annot_key(highlight_id: str) -> str:
     return "".join(_ZOTERO_KEY_CHARS[b & 31] for b in digest[:8])
 
 
-def _square_annotation(rects, color, note, author, highlight_id=""):
-    """Area note → /Square: a stroked rectangle (no interior fill — it would
-    obscure the figure underneath) over the bounding box of the rects. The
+# The area note's wash, as a share of the colour's alpha — the viewer's
+# ``color-mix(in srgb, <color> 25%, transparent)``.
+AREA_FILL_SHARE = 0.25
+
+
+def _square_appearance(writer, box, color):
+    """The /Square's normal appearance, drawn like the viewer's area note: a
+    faint multiply wash of the colour under a 2pt border. /IC is not set — a
+    viewer that regenerates the look from it would fill at the full /CA and
+    hide the figure; without an /AP it falls back to the plain outline."""
+    x1, y1, x2, y2 = box
+    w, h = x2 - x1, y2 - y1
+    r, g, b, alpha = color
+    rgb = f"{r:.4f} {g:.4f} {b:.4f}"
+    ops = (f"/Fill gs {rgb} rg 0 0 {w:.2f} {h:.2f} re f\n"
+           f"/Stroke gs {rgb} RG 2 w 1 1 {max(w - 2, 0):.2f} {max(h - 2, 0):.2f} re S\n")
+
+    def gstate(key, value):
+        return DictionaryObject({
+            NameObject("/Type"): NameObject("/ExtGState"),
+            NameObject(key): FloatObject(round(value, 3)),
+            NameObject("/BM"): NameObject("/Multiply"),
+        })
+
+    stream = DecodedStreamObject()
+    stream.set_data(ops.encode("ascii"))
+    stream.update({
+        NameObject("/Type"): NameObject("/XObject"),
+        NameObject("/Subtype"): NameObject("/Form"),
+        NameObject("/BBox"): ArrayObject(FloatObject(v) for v in (0, 0, w, h)),
+        NameObject("/Resources"): DictionaryObject({
+            NameObject("/ExtGState"): DictionaryObject({
+                NameObject("/Fill"): gstate("/ca", alpha * AREA_FILL_SHARE),
+                NameObject("/Stroke"): gstate("/CA", alpha),
+            }),
+        }),
+    })
+    return writer._add_object(stream)
+
+
+def _square_annotation(writer, rects, color, note, author, highlight_id=""):
+    """Area note → /Square over the bounding box of the rects, with an
+    appearance stream for the viewer's look (``_square_appearance``). The
     /NM id is what makes Zotero import it (see module docstring)."""
     xs = [v for x1, _, x2, _ in rects for v in (x1, x2)]
     ys = [v for _, y1, _, y2 in rects for v in (y1, y2)]
+    box = (min(xs), min(ys), max(xs), max(ys))
     annot = DictionaryObject({
         NameObject("/Type"): NameObject("/Annot"),
         NameObject("/Subtype"): NameObject("/Square"),
-        NameObject("/Rect"): ArrayObject(
-            FloatObject(v) for v in (min(xs), min(ys), max(xs), max(ys))
-        ),
+        NameObject("/Rect"): ArrayObject(FloatObject(v) for v in box),
         NameObject("/BS"): DictionaryObject({
             NameObject("/W"): NumberObject(2),
             NameObject("/S"): NameObject("/S"),
+        }),
+        NameObject("/AP"): DictionaryObject({
+            NameObject("/N"): _square_appearance(writer, box, color),
         }),
     })
     if highlight_id:
@@ -286,7 +330,7 @@ def annotate_pdf(pdf_bytes: bytes, highlights, author: str = "", ink=()) -> tupl
         pdf_rects = [_viewer_rect_to_pdf(r, rotation, crop) for r in viewer_rects]
         color = parse_css_color(h.get("color"))
         if pos.get("area"):
-            annot = _square_annotation(pdf_rects, color, h.get("note") or "",
+            annot = _square_annotation(writer, pdf_rects, color, h.get("note") or "",
                                        author, highlight_id=h.get("id") or "")
         else:
             annot = _highlight_annotation(pdf_rects, color, h.get("note") or "", author)

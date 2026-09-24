@@ -75,13 +75,22 @@ function ProviderForm({ value, onCancel }) {
     removeModel,
     submitAiProvider,
   } = value;
+  // Named services are a protocol plus a fixed endpoint (DeepSeek = the
+  // OpenAI protocol at api.deepseek.com); an entry made from one is
+  // recognized by that pair.
+  const services = aiKeysInfo.services || [];
   const [service, setService] = React.useState(() => {
+    const base = (aiKeysForm.base_url || "").replace(/\/$/, "");
+    const preset = services.find((item) => item.protocol === aiKeysForm.protocol && item.base_url === base);
+    if (preset) return preset.id;
     const protocol = aiProtocolOf(aiKeysForm.protocol);
-    return aiKeysForm.base_url && aiKeysForm.base_url.replace(/\/$/, "") !== protocol?.default_base_url?.replace(/\/$/, "")
-      ? "custom" : aiKeysForm.protocol;
+    return base && base !== protocol?.default_base_url?.replace(/\/$/, "") ? "custom" : aiKeysForm.protocol;
   });
   const oauth = isOauthProto(aiKeysForm.protocol);
   const protocol = aiProtocolOf(aiKeysForm.protocol);
+  // A saved connection can't turn from sign-in into API key or back (the
+  // server refuses it): editing offers only services of the same kind.
+  const offered = (protocolId) => !aiKeysForm.id || isOauthProto(protocolId) === oauth;
 
   return (
     <div className="settingsForm">
@@ -89,11 +98,15 @@ function ProviderForm({ value, onCancel }) {
         <MenuSelect block label="AI service" value={service}
           onChange={(next) => {
             setService(next);
-            if (next !== "custom") setAiKeysForm((form) => ({ ...form, protocol: next, base_url: "", models: "", test_model: "" }));
+            const preset = services.find((item) => item.id === next);
+            if (preset) setAiKeysForm((form) => ({ ...form, protocol: preset.protocol, base_url: preset.base_url, models: "", test_model: "" }));
+            else if (next !== "custom") setAiKeysForm((form) => ({ ...form, protocol: next, base_url: "", models: "", test_model: "" }));
             else if (oauth) setAiKeysForm((form) => ({ ...form, protocol: "openai", base_url: "", models: "", test_model: "" }));
           }} options={[
-            ...aiKeysInfo.protocols.map((item) => [item.id, ({ openai: "OpenAI API", anthropic: "Anthropic", chatgpt: "ChatGPT subscription" })[item.id] || item.label]),
-            ["custom", "Custom endpoint"],
+            ...aiKeysInfo.protocols.filter((item) => offered(item.id))
+              .map((item) => [item.id, ({ openai: "OpenAI API", anthropic: "Anthropic", chatgpt: "ChatGPT subscription" })[item.id] || item.label]),
+            ...services.filter((item) => offered(item.protocol)).map((item) => [item.id, item.label]),
+            ...(offered("openai") ? [["custom", "Custom endpoint"]] : []),
           ]} />
         {service === "custom" ? <Field label="API format" hint="Use the format supported by your service">
           <MenuSelect block label="API protocol" value={aiKeysForm.protocol}
@@ -151,7 +164,7 @@ function ProviderForm({ value, onCancel }) {
             </Field> : null}
           </>
         )}
-        <Field label="Name" hint={'optional — e.g. "DeepSeek", "work key"'}>
+        <Field label="Name" hint={'optional — e.g. "work key"'}>
           <input
             className="aiKeyInput" type="text" spellCheck={false}
             value={aiKeysForm.name}
@@ -165,7 +178,7 @@ function ProviderForm({ value, onCancel }) {
         title="Models"
         hint={formModels.length
           ? "Offered in the chat model menu."
-          : `None picked yet — the chat menu falls back to ${protocol?.default_model || "the provider default"}.`}
+          : "None picked yet — pick at least one to use this connection."}
       >
         {formModels.length ? (
           <div className="aiModelChips">
@@ -373,7 +386,7 @@ export function AiSettings({ value, taskModels, confirm, setStatus }) {
                 </span>
                 <span className="aiProvMeta">
                   <span className="aiProvName">
-                    {provider.name || protocol?.label || provider.protocol}
+                    {provider.label || provider.protocol}
                     {active ? <span className="aiProvActiveBadge">in use</span> : null}
                   </span>
                   <span className="aiProvDesc">
@@ -384,11 +397,11 @@ export function AiSettings({ value, taskModels, confirm, setStatus }) {
                   </span>
                   <span className="aiProvDesc aiProvModels">
                     <span className="aiProvModelsLabel">Models</span>
-                    {(parseFolderTags(provider.models).length
-                      ? parseFolderTags(provider.models)
-                      : [protocol?.default_model || "provider default"]).map((model) => (
-                      <span className="categoryTag" key={model}>{model}</span>
-                    ))}
+                    {parseFolderTags(provider.models).length
+                      ? parseFolderTags(provider.models).map((model) => (
+                        <span className="categoryTag" key={model}>{model}</span>
+                      ))
+                      : <span className="aiKeysError">none picked — edit to choose</span>}
                   </span>
                   {test ? (
                     <span

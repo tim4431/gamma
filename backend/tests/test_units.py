@@ -69,7 +69,7 @@ def test_parse_images_validates():
 
 
 def test_parse_files_validates():
-    from gamma.routers.ai import _parse_files
+    from gamma.ai_context import parse_files as _parse_files
     good = {"name": "paper.pdf", "data": "data:application/pdf;base64,JVBERi0="}
     junk = [
         {"name": "x.png", "data": "data:image/png;base64,iVBORw0KGgo="},  # wrong type

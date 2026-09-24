@@ -1,4 +1,4 @@
-# Gamma PDF for Codex and Claude Code
+# Gamma PDF for Codex, Claude Code, and DeepSeek Harness
 
 This plugin supplies the Gamma workflow and display identity. Configure the
 Gamma MCP connection separately: every Gamma installation has its own address
@@ -37,6 +37,25 @@ from the repository root; the MCP connection still needs separate setup.
 
 The plugin layout follows the [Claude Code plugin reference](https://code.claude.com/docs/en/plugins-reference);
 connection setup follows the [Claude Code MCP guide](https://code.claude.com/docs/en/mcp).
+
+## DeepSeek Harness
+
+This directory is also a DeepSeek Harness plugin: `package.json` declares a dsh
+bundle whose `cordis.patch.yml` adds the Gamma MCP connection and, through
+`dsh-skill.js`, the same `skills/gamma` skill. In Gamma, open **Settings → AI →
+Integrations → DeepSeek Harness**:
+
+1. Create a read-only token. dsh's MCP client has no browser sign-in.
+2. Run the install command. It downloads `dsh-gamma.tgz` from Gamma's latest
+   release into your dsh home (`~/.dsh`) and runs
+   `dsh plugin --profile web add` on that file. Run it again to update.
+   Requires pnpm, which `dsh plugin` uses.
+3. Run the start command. It sets `GAMMA_URL` to this server, asks for the
+   token (`GAMMA_TOKEN`) and starts `dsh web`.
+
+For local development with dsh 0.1.7 or later, add this directory itself:
+`dsh plugin --profile web add ./plugins/gamma`. Details:
+[the integration guide](../../docs/dev/mcp.md#deepseek-harness).
 
 ## Codex
 
@@ -103,7 +122,8 @@ The `Assistant plugin package` workflow tests them and builds preview artifacts.
 
 ## Shared implementation
 
-Both manifests live in this directory and point to `skills/`. Edit
+Both manifests live in this directory and point to `skills/`; the dsh
+`package.json` serves the same `skills/` through `dsh-skill.js`. Edit
 `skills/gamma/SKILL.md` once to change the workflow for both clients. Codex's
 display metadata stays in `.codex-plugin/plugin.json` and `agents/openai.yaml`;
 Claude Code reads `.claude-plugin/plugin.json`. The builder checks shared

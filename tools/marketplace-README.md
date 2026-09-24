@@ -1,4 +1,4 @@
-# Gamma PDF for Codex and Claude Code
+# Gamma PDF for Codex, Claude Code, and DeepSeek Harness
 
 Search and read your Gamma pages, notes, highlights and PDF text from either assistant.
 
@@ -34,6 +34,12 @@ Start a new session and invoke `/gamma:gamma`, or ask about your Gamma library.
 To update later, run `claude plugin marketplace update gamma-local` followed by
 `claude plugin update gamma@gamma-local`, then start a new session.
 For an extracted marketplace, replace its contents with the newer release first.
+
+### DeepSeek Harness
+
+DeepSeek Harness installs Gamma from its own release asset, `dsh-gamma.tgz`,
+rather than from this marketplace. Choose **DeepSeek Harness** in Gamma's
+Integrations panel for the token, the install command and the start command.
 
 ### Codex
 
