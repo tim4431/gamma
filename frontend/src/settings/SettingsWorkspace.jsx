@@ -9,13 +9,14 @@
 // The dialog (ManageWorkspaceDialog) is shared with the admin's Server pane
 // (settingsWorkspacesAdmin.jsx), which adds access, quota, ownership, kind
 // conversion and join-as-owner in `admin` mode. Also exported from here:
-// useAccounts, useWorkspace (one workspace's state + every call on it),
+// useAccounts, useCloudSignIn, useWorkspace (one workspace's state + every
+// call on it, incl. invitations by Gamma Cloud username),
 // AccessRows, StorageRow, MembersList, InviteDialog, NameDialog, the role
 // tables and workspaceMeta (the switcher's one-line description).
 import React from "react";
 import { API, apiJson, fmtBytes } from "../shared/lib/utils";
 import { ActionMenu, MenuSelect } from "../shared/ui/Menus";
-import { PaneHead, Section, Row, SubDialog, Field, Empty, QuotaMeter, UnitInput, AccountPicker } from "./SettingsKit";
+import { PaneHead, Section, Row, SubDialog, Field, Empty, QuotaMeter, UnitInput, AccountPicker, Segmented } from "./SettingsKit";
 import {
   CheckIcon, DatabaseIcon, ExportIcon, GlobeIcon, HardDriveIcon, ImportIcon, LogOutIcon, PenIcon,
   PlusIcon, ShieldIcon, Trash2Icon, UserIcon, UsersIcon,
@@ -47,6 +48,18 @@ export function useAccounts() {
     return () => { live = false; };
   }, []);
   return accounts;
+}
+
+// Whether this server signs people in with Gamma Cloud (GET /api/server-config)
+// — what lets an owner invite someone by their cloud username.
+export function useCloudSignIn() {
+  const [on, setOn] = React.useState(false);
+  React.useEffect(() => {
+    let live = true;
+    apiJson(`${API}/server-config`).then((c) => { if (live) setOn(!!c?.cloud?.enabled); }).catch(() => {});
+    return () => { live = false; };
+  }, []);
+  return on;
 }
 
 // One workspace as the Settings dialogs see it: GET /api/workspaces/{id}
@@ -100,6 +113,8 @@ export function useWorkspace(wsId) {
     update: (patch) => call("", "PUT", patch),                // {name} | {default} | {kind} | {access, public_role} | {quota_mb}
     setRole: (username, role) => call(`/members/${encodeURIComponent(username)}`, "PUT", { role }),
     removeMember: (username) => call(`/members/${encodeURIComponent(username)}`, "DELETE"),
+    inviteCloud: (username, role) => call("/invites", "POST", { username, role }),   // by Gamma Cloud username
+    cancelInvite: (subject) => call(`/invites/${encodeURIComponent(subject)}`, "DELETE"),
     destroy: () => call("", "DELETE", null, { refresh: false }),
   };
 }
@@ -172,15 +187,17 @@ export function StorageRow({ quota, me }) {
 
 // The explicit members, each with a role menu and a remove button
 // (owners). `me` marks "you"; the last owner cannot go; leaving yourself
-// is an action row of the dialog, not a button on your own row.
-export function MembersList({ info, me, canManage, busy, onSetRole, onRemove }) {
+// is an action row of the dialog, not a button on your own row. Pending
+// invitations by Gamma Cloud username (`pending: true`) follow, tagged, with
+// only a remove button (`onCancel`).
+export function MembersList({ info, me, canManage, busy, onSetRole, onRemove, onCancel }) {
   const members = info?.members || [];
-  const owners = members.filter((m) => m.role === "owner").length;
+  const owners = members.filter((m) => m.role === "owner" && !m.pending).length;
   return members.map((m) => {
-    const self = m.username === me;
+    const self = m.username === me && !m.pending;
     const stuck = m.role === "owner" && owners <= 1;
     return (
-      <div key={m.username} className="aiProvRow">
+      <div key={m.pending ? `pending:${m.subject}` : m.username} className="aiProvRow">
         <span className={`aiProvAvatar ${m.role === "owner" ? "active" : ""}`}>
           {m.role === "owner" ? <ShieldIcon size={15} /> : <UserIcon size={15} />}
         </span>
@@ -188,6 +205,7 @@ export function MembersList({ info, me, canManage, busy, onSetRole, onRemove }) 
           <span className="aiProvName">
             {m.username}
             {self ? <span className="uiTag">you</span> : null}
+            {m.pending ? <span className="uiTag" title="Invited by Gamma Cloud username; joins on their first sign-in to this server">pending</span> : null}
           </span>
           <span className="aiProvDesc">
             {ROLE_OPTIONS.find(([r]) => r === m.role)?.[1] || m.role}
@@ -195,13 +213,22 @@ export function MembersList({ info, me, canManage, busy, onSetRole, onRemove }) 
           </span>
         </span>
         <span className="aiProvActions">
-          {canManage ? (
+          {m.pending && canManage ? (
+            <button
+              className="uiBtn sm iconSq" disabled={busy}
+              title={`Withdraw the invitation to ${m.username}`} aria-label="Remove"
+              onClick={() => onCancel(m)}
+            >
+              <Trash2Icon size={13} />
+            </button>
+          ) : null}
+          {canManage && !m.pending ? (
             <MenuSelect
               value={m.role} label="Role" options={ROLE_OPTIONS}
               onChange={(r) => { if (r !== m.role) onSetRole(m.username, r); }}
             />
           ) : null}
-          {canManage && !self && !stuck ? (
+          {canManage && !m.pending && !self && !stuck ? (
             <button
               className="uiBtn sm iconSq" disabled={busy}
               title={`Remove ${m.username}`} aria-label="Remove"
@@ -216,23 +243,55 @@ export function MembersList({ info, me, canManage, busy, onSetRole, onRemove }) 
   });
 }
 
-// Invite: pick an account from the directory, choose a role.
-export function InviteDialog({ name, accounts, exclude, busy, error, onSubmit, onClose }) {
+// Invite: pick an account from the directory, choose a role. With `cloud`
+// (this server signs in with Gamma Cloud) a person can also be named by
+// their cloud username before they have an account here; that invitation
+// waits for their first sign-in and grants edit or view, never ownership.
+// onSubmit(username, role, via) — via is "local" or "cloud".
+const INVITE_VIA = [["local", "On this server"], ["cloud", "Gamma Cloud username"]];
+const CLOUD_ROLE_OPTIONS = ROLE_OPTIONS.filter(([r]) => r !== "owner");
+
+export function InviteDialog({ name, accounts, exclude, cloud, busy, error, onSubmit, onClose }) {
+  const [via, setVia] = React.useState("local");
   const [username, setUsername] = React.useState("");
+  const [cloudName, setCloudName] = React.useState("");
   const [role, setRole] = React.useState("editor");
+  const byCloud = cloud && via === "cloud";
+  const who = byCloud ? cloudName.trim().replace(/^@/, "").toLowerCase() : username;
+  const submit = () => { if (who && !busy) onSubmit(who, role, byCloud ? "cloud" : "local"); };
+  function pickVia(next) {
+    setVia(next);
+    if (next === "cloud" && role === "owner") setRole("editor");
+  }
   return (
-    <SubDialog title={`Invite to ${name}`} onClose={onClose} draft={{ username, role }}>
+    <SubDialog title={`Invite to ${name}`} onClose={onClose} draft={{ username, cloudName, role }}>
       <div className="settingsForm">
-        <Field label="Account" hint="anyone with an account on this server">
-          <AccountPicker accounts={accounts} exclude={exclude} value={username} onChange={setUsername} autoFocus />
-        </Field>
-        <Field label="Role" hint="owners manage members; editors write; viewers read">
-          <MenuSelect value={role} label="Role" options={ROLE_OPTIONS} block onChange={setRole} />
+        {cloud ? (
+          <Field label="Find by">
+            <Segmented value={via} onChange={pickVia} options={INVITE_VIA} disabled={busy} />
+          </Field>
+        ) : null}
+        {byCloud ? (
+          <Field label="Gamma Cloud username" hint="they join on their first sign-in here">
+            <input
+              className="aiKeyInput" type="text" autoFocus spellCheck={false} autoCapitalize="none"
+              placeholder="username" value={cloudName}
+              onChange={(e) => setCloudName(e.target.value)}
+              onKeyDown={(e) => { if (e.key === "Enter") submit(); }}
+            />
+          </Field>
+        ) : (
+          <Field label="Account" hint="anyone with an account on this server">
+            <AccountPicker accounts={accounts} exclude={exclude} value={username} onChange={setUsername} autoFocus />
+          </Field>
+        )}
+        <Field label="Role" hint={byCloud ? "editors write; viewers read" : "owners manage members; editors write; viewers read"}>
+          <MenuSelect value={role} label="Role" options={byCloud ? CLOUD_ROLE_OPTIONS : ROLE_OPTIONS} block onChange={setRole} />
         </Field>
         {error ? <div className="settingsPaneHint aiKeysError">{error}</div> : null}
         <div className="reportModalBtns">
           <button className="uiBtn" onClick={onClose}>Cancel</button>
-          <button className="uiBtn primary" disabled={busy || !username} onClick={() => onSubmit(username, role)}>Invite</button>
+          <button className="uiBtn primary" disabled={busy || !who} onClick={submit}>Invite</button>
         </div>
       </div>
     </SubDialog>
@@ -279,6 +338,7 @@ function WorkspacePage({ title, onClose, children }) {
 
 export function ManageWorkspaceDialog({ wsId, me, admin, accounts, confirm, setStatus, canOpen, onOpen, onClose, onLeft, personalCount, inline = false }) {
   const ws = useWorkspace(wsId);
+  const cloudSignIn = useCloudSignIn();
   const [renaming, setRenaming] = React.useState(false);
   const [inviting, setInviting] = React.useState(false);
   const info = ws.info;
@@ -286,8 +346,9 @@ export function ManageWorkspaceDialog({ wsId, me, admin, accounts, confirm, setS
   const mine = isPersonal && info?.personal_of === me;
   const isOwner = info?.role === "owner";
   const manages = isOwner || admin;
-  const explicitMember = (info?.members || []).some((m) => m.username === me);
-  const soleOwner = (info?.members || []).filter((m) => m.role === "owner").length <= 1 && isOwner;
+  const members = (info?.members || []).filter((m) => !m.pending); // pending invitations are not members yet
+  const explicitMember = members.some((m) => m.username === me);
+  const soleOwner = members.filter((m) => m.role === "owner").length <= 1 && isOwner;
 
   const done = (msg) => { if (msg) setStatus(msg); };
 
@@ -296,9 +357,31 @@ export function ManageWorkspaceDialog({ wsId, me, admin, accounts, confirm, setS
     if (d) { setRenaming(false); done(`Renamed to ${d.name}.`); }
   }
 
-  async function invite(username, role) {
+  async function invite(username, role, via) {
+    const verb = role === "viewer" ? "view" : role === "editor" ? "edit" : "manage";
+    if (via === "cloud") {
+      const d = await ws.inviteCloud(username, role);
+      if (!d) return;
+      setInviting(false);
+      done(d.invited?.member
+        ? `${d.invited.member} can now ${verb} ${d.name}.`
+        : `Invited ${username}; they can ${verb} ${d.name} once they sign in with Gamma Cloud.`);
+      return;
+    }
     const d = await ws.setRole(username, role);
-    if (d) { setInviting(false); done(`${username} can now ${role === "viewer" ? "view" : role === "editor" ? "edit" : "manage"} ${d.name}.`); }
+    if (d) { setInviting(false); done(`${username} can now ${verb} ${d.name}.`); }
+  }
+
+  function cancelInvite(m) {
+    confirm({
+      title: "Withdraw invitation",
+      message: `Withdraw the invitation to ${m.username} for "${info?.name}"?`,
+      confirmLabel: "Withdraw", danger: true,
+      onConfirm: async () => {
+        const d = await ws.cancelInvite(m.subject);
+        if (d) done(`Withdrew the invitation to ${m.username}.`);
+      },
+    });
   }
 
   function remove(username) {
@@ -336,7 +419,7 @@ export function ManageWorkspaceDialog({ wsId, me, admin, accounts, confirm, setS
       title: toShared ? "Convert to shared workspace" : "Convert to personal workspace",
       message: toShared
         ? `Make "${info?.name}" a shared workspace? ${info?.personal_of} stays its owner and can invite people; it stops counting against their storage. If it is their default, another personal workspace becomes the default.`
-        : `Make "${info?.name}" ${info?.members?.[0]?.username}'s personal workspace? It becomes private, its own quota is cleared, and it counts against their storage.`,
+        : `Make "${info?.name}" ${members[0]?.username}'s personal workspace? It becomes private, its own quota is cleared, and it counts against their storage.`,
       confirmLabel: "Convert",
       onConfirm: async () => {
         const d = await ws.update({ kind });
@@ -384,7 +467,7 @@ export function ManageWorkspaceDialog({ wsId, me, admin, accounts, confirm, setS
                   </button>
                 ) : null}
               >
-                <MembersList info={info} me={me} canManage={manages} busy={ws.busy} onSetRole={ws.setRole} onRemove={remove} />
+                <MembersList info={info} me={me} canManage={manages} busy={ws.busy} onSetRole={ws.setRole} onRemove={remove} onCancel={cancelInvite} />
                 {info.access === "public" && !explicitMember ? (
                   <div className="settingsPaneHint">You are in because the workspace is public — everyone on this server is.</div>
                 ) : manages ? (
@@ -412,8 +495,8 @@ export function ManageWorkspaceDialog({ wsId, me, admin, accounts, confirm, setS
                   <button className="uiBtn sm" disabled={ws.busy} onClick={() => convert("shared")}>Make shared</button>
                 </Row>
               ) : null}
-              {admin && !isPersonal && info.members?.length === 1 ? (
-                <Row icon={UserIcon} label="Convert to personal" hint={`hand it to ${info.members[0].username} as a personal workspace`}>
+              {admin && !isPersonal && members.length === 1 ? (
+                <Row icon={UserIcon} label="Convert to personal" hint={`hand it to ${members[0].username} as a personal workspace`}>
                   <button className="uiBtn sm" disabled={ws.busy} onClick={() => convert("personal")}>Make personal</button>
                 </Row>
               ) : null}
@@ -449,7 +532,7 @@ export function ManageWorkspaceDialog({ wsId, me, admin, accounts, confirm, setS
       ) : null}
       {inviting ? (
         <InviteDialog
-          name={title} accounts={accounts} exclude={(info?.members || []).map((m) => m.username)}
+          name={title} accounts={accounts} exclude={members.map((m) => m.username)} cloud={cloudSignIn}
           busy={ws.busy} error={ws.error} onSubmit={invite} onClose={() => { setInviting(false); ws.setError(""); }}
         />
       ) : null}

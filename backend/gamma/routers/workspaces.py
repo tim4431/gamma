@@ -1,5 +1,6 @@
 """Workspaces API (/api/workspaces*): create, inspect, rename, access,
-quota, kind, default, delete, members.
+quota, kind, default, delete, members, and invitations by Gamma Cloud
+username (pending memberships, claimed on the person's first sign-in).
 
 The model and its rules live in gamma/workspaces.py; this is the HTTP skin.
 Anyone creates personal workspaces for themselves; server admins create
@@ -12,11 +13,13 @@ Settings → Workspaces manages every workspace from one place).
 from fastapi import APIRouter, HTTPException, Request
 from pydantic import BaseModel
 
-from .. import workspaces
+from .. import cloud_auth, ratelimit, workspaces
 from ..auth import require_user
 from ..server_settings import user_limits, usage_bytes, validate_quota_mb, workspace_bytes, workspace_quota
 
 router = APIRouter(prefix="/api/workspaces", tags=["workspaces"])
+
+LOOKUPS_PER_10_MIN = 30  # cloud username lookups per inviting account
 
 
 class WorkspaceCreate(BaseModel):
@@ -39,6 +42,11 @@ class WorkspaceUpdate(BaseModel):
 
 class MemberRole(BaseModel):
     role: str
+
+
+class CloudInvite(BaseModel):
+    username: str                    # a Gamma Cloud username
+    role: str = "editor"             # editor / viewer
 
 
 def _member(request: Request, ws: str, needed: str) -> str:
@@ -81,12 +89,13 @@ def _payload(ws: str, user: str) -> dict:
     """The workspace as the caller sees it: its row, the caller's role
     (None for an admin who is no member), whose personal workspace it is
     (``personal_of``, "" when shared), whether it is the caller's default,
-    and the explicit members."""
+    and the explicit members followed by the pending invitations (tagged
+    ``pending: true``, with the cloud ``subject``)."""
     info = workspaces.get(ws)
     return {**info, "role": workspaces.role_of(ws, user),
             "personal_of": workspaces.personal_owner(ws),
             "default": workspaces.default_workspace(user) == ws,
-            "members": workspaces.members(ws)}
+            "members": workspaces.members_with_pending(ws)}
 
 
 @router.post("")
@@ -202,3 +211,45 @@ async def remove_member(ws: str, username: str, request: Request):
     except ValueError as e:
         raise HTTPException(status_code=400, detail=str(e))
     return {"ok": True, "left": username == user}
+
+
+@router.get("/{ws}/invites")
+async def list_invites(ws: str, request: Request):
+    """The invitations by Gamma Cloud username still waiting for the
+    person's first sign-in (any member; admins)."""
+    _member(request, ws, "viewer")
+    return {"invites": workspaces.pending_invites(ws)}
+
+
+@router.post("/{ws}/invites")
+def invite_by_cloud_username(ws: str, payload: CloudInvite, request: Request):
+    """Invite a Gamma Cloud account by its username (owner of a shared
+    workspace; admins) — sync: the lookup goes to the account server. A
+    person whose cloud identity is already linked to an account here joins
+    at once; anyone else gets a pending membership their first cloud sign-in
+    turns into a real one. Refused on personal workspaces and when cloud
+    sign-in is off on this server."""
+    user = _member(request, ws, "owner")
+    if workspaces.get(ws)["kind"] != "shared":
+        raise HTTPException(status_code=400, detail="a personal workspace has no other members")
+    if not cloud_auth.settings()["enabled"]:
+        raise HTTPException(status_code=400, detail="Gamma Cloud sign-in is not set up on this server")
+    ratelimit.check(f"cloud-lookup:{user}", LOOKUPS_PER_10_MIN, 600)
+    try:
+        invited = workspaces.invite_cloud(ws, payload.username, payload.role, by=user)
+    except workspaces.CloudLookupError as e:
+        raise HTTPException(status_code=503, detail=str(e))
+    except ValueError as e:
+        raise HTTPException(status_code=400, detail=str(e))
+    return {**_payload(ws, user), "invited": invited}
+
+
+@router.delete("/{ws}/invites/{subject}")
+async def cancel_invite(ws: str, subject: str, request: Request):
+    """Withdraw a pending invitation (owner; admins)."""
+    _member(request, ws, "owner")
+    try:
+        workspaces.cancel_invite(ws, subject)
+    except ValueError as e:
+        raise HTTPException(status_code=404, detail=str(e))
+    return {"ok": True}

@@ -197,4 +197,68 @@ export async function mentionScenarios(env) {
       assertNoProblems(page);
     } finally { await ctx.close(); }
   });
+
+  await step("mentions: selected note text rides with the message as its exact source range", async () => {
+    // The same sentence twice, the second one bold: the selection must name
+    // the SECOND one's range in the markdown, not rendered text.
+    const src = "Noise is low. **Noise is low.** End.";
+    const notes = await user.api("/api/pages", { method: "POST", body: { title: "Selection check" } });
+    const block = await user.api("/api/blocks", { method: "POST", body: { parent_id: notes.id, content: src } });
+    const { ctx, page, input, requests } = await setup({}, notes.id);
+    try {
+      const rendered = page.locator(`[data-block-id="${block.id}"] .blockRendered`);
+      await rendered.waitFor();
+      // Ctrl+drag across the bold sentence on the rendered view → a Note chip.
+      const span = await rendered.locator("strong").evaluate((el) => {
+        const r = document.createRange(), t = el.firstChild;
+        r.setStart(t, 0); r.setEnd(t, 1);
+        const a = r.getBoundingClientRect();
+        r.setStart(t, t.data.length - 1); r.setEnd(t, t.data.length);
+        const b = r.getBoundingClientRect();
+        return { x0: a.left + 1, x1: b.right - 1, y: (a.top + a.bottom) / 2 };
+      });
+      await page.keyboard.down("Control");
+      await page.mouse.move(span.x0, span.y);
+      await page.mouse.down();
+      await page.mouse.move(span.x1, span.y, { steps: 5 });
+      await page.mouse.up();
+      await page.keyboard.up("Control");
+      const noteChip = page.locator(".chatSelChips .isNote");
+      await noteChip.waitFor({ timeout: 5000 });
+      assertEq(await page.locator(".blockEditorCm").count(), 0, "a Ctrl+drag never opens the editor");
+
+      // A plain drag opens the editor and keeps selecting in the raw source:
+      // from the start of "End." to past the line's end.
+      const end = await rendered.evaluate((el) => {
+        const t = el.querySelector("p").lastChild;
+        const r = document.createRange();
+        r.setStart(t, t.data.indexOf("End")); r.setEnd(t, t.data.indexOf("End") + 1);
+        const a = r.getBoundingClientRect();
+        return { x: a.left + 1, y: (a.top + a.bottom) / 2, right: el.getBoundingClientRect().right - 4 };
+      });
+      await page.mouse.move(end.x, end.y);
+      await page.mouse.down();
+      await page.waitForSelector(".blockEditorCm .cm-content", { timeout: 5000 });
+      await page.mouse.move(end.right, end.y, { steps: 5 });
+      await page.mouse.up();
+      // The Cursor chip turns into a Selection chip holding just the selection.
+      const selChip = page.locator(".chatSelChips .isCursor").filter({ has: page.getByRole("img", { name: "Selection", exact: true }) });
+      await selChip.waitFor({ timeout: 5000 });
+      const chipText = await selChip.textContent();
+      assert(chipText.includes("End.") && !chipText.includes("Noise"), `selection chip: ${chipText}`);
+
+      await input.click(); // closes the editor; the selection chip stays
+      await selChip.waitFor({ timeout: 5000 });
+      await input.fill("make it louder");
+      await input.press("Enter");
+      await until(() => requests.length === 1);
+      const bold = src.indexOf("Noise", 5);
+      assertEq(JSON.stringify(requests[0].note_selections), JSON.stringify([
+        { block_id: block.id, from: src.length - 4, to: src.length, text: "End." },
+        { block_id: block.id, from: bold, to: bold + 13, text: "Noise is low." },
+      ]), "both selections as exact source ranges, the editor's first");
+      assertEq(requests[0].focus_block_id, block.id);
+      assertNoProblems(page);
+    } finally { await ctx.close(); }
+  });
 }

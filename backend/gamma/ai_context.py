@@ -155,15 +155,22 @@ def final_prompt(payload, located: list | None = None) -> str:
             f"page's PDF attachment. Answer specifically about {'them' if several else 'it'}:"
             "\n\n" + "\n\n".join(blocks)
         )
-    passages = [str(p).strip() for p in (getattr(payload, "note_passages", None) or [])
-                if str(p).strip()][:MAX_NOTE_PASSAGES]
-    if passages:
-        joined = "\n\n---\n\n".join(p[:MAX_NOTE_PASSAGE_CHARS] for p in passages)
+    selected = request_note_selections(payload)
+    if selected:
+        shown = "\n\n".join(
+            f'{sel["label"]} (in block [{sel["block_id"]}]):\n"""\n'
+            + sel["text"][:MAX_NOTE_PASSAGE_CHARS]
+            + ("…" if len(sel["text"]) > MAX_NOTE_PASSAGE_CHARS else "") + '\n"""'
+            for sel in selected)
+        several = len(selected) > 1
         prompt = (
             f"{prompt}\n\n"
-            "The user has selected the following text in their own notes on this "
-            'page (multiple selections are separated by "---"). Answer specifically '
-            f'about it:\n"""\n{joined}\n"""'
+            f"The user has selected the following exact passage{'s' if several else ''} "
+            "of their own notes (markdown source, labelled; \"this\" and \"the selection\" "
+            f"mean {'them' if several else 'it'}). Answer a question about the selection in "
+            "the chat; carry out an instruction that transforms it (rewrite, fix, translate, "
+            '…) by editing only the selected text with edit_block mode "selection":'
+            f"\n{shown}"
         )
     return prompt
 
@@ -171,9 +178,32 @@ def final_prompt(payload, located: list | None = None) -> str:
 # Caps for what a message may point at inside the notes: attached blocks
 # (chips), selected note text, and the size of each in the prompt.
 MAX_CONTEXT_BLOCKS = 12
-MAX_NOTE_PASSAGES = 6
+MAX_NOTE_SELECTIONS = 6
 MAX_NOTE_PASSAGE_CHARS = 4000
 MAX_BLOCK_SECTION_CHARS = 12_000
+
+
+def request_note_selections(payload) -> list[dict]:
+    """The note text the user selected for this message, as exact ranges of
+    block sources: [{label: "S1", block_id, from, to, text}]. `text` is the
+    source slice the client saw — the edit tool re-finds the passage by it
+    when the block changed since. Malformed entries are dropped."""
+    out = []
+    for raw in (getattr(payload, "note_selections", None) or [])[:MAX_NOTE_SELECTIONS]:
+        if not isinstance(raw, dict):
+            continue
+        block_id = str(raw.get("block_id") or "").strip()[:64]
+        text = raw.get("text")
+        try:
+            start, end = int(raw.get("from")), int(raw.get("to"))
+        except (TypeError, ValueError):
+            continue
+        if (not block_id or not isinstance(text, str) or not text.strip()
+                or start < 0 or end - start != len(text)):
+            continue
+        out.append({"label": f"S{len(out) + 1}", "block_id": block_id,
+                    "from": start, "to": end, "text": text})
+    return out
 
 
 def notes_focus_section(ws: str, payload) -> str:
@@ -186,6 +216,11 @@ def notes_focus_section(ws: str, payload) -> str:
     focus = str(getattr(payload, "focus_block_id", "") or "").strip()
     chips = [str(b).strip() for b in (getattr(payload, "context_blocks", None) or [])
              if str(b).strip()][:MAX_CONTEXT_BLOCKS]
+    # A selection's block rides along whole, so the model sees what surrounds
+    # the passage it may rewrite.
+    for sel in request_note_selections(payload):
+        if sel["block_id"] != focus and sel["block_id"] not in chips:
+            chips.append(sel["block_id"])
     if not focus and not chips:
         return ""
     pages = {str(p) for p in (payload.pages or []) if p}

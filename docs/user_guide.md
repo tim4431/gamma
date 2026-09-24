@@ -69,6 +69,7 @@ Open the chat from the **⋮ menu → AI Chat**. Configure providers in Settings
 - **Context**: in a paper the chat reads that paper's text automatically. The **PDF toggle** attaches the actual file (so the model sees figures and tables); it turns itself off once the file has been sent in a conversation, to avoid re-billing it every message.
 - **Add more**: paste images, Ctrl+drag a region of the page (see [Reading](#reading-and-highlighting)), type **`@`** to attach another paper from your library, or use the **+ menu** to attach files or pick several papers (optionally with your notes and highlights).
 - **Quote passages**: click a highlight to set the chat's "Selection"; Ctrl+click more highlights to add up to six passages.
+- **Change just part of a note**: drag across a note's text — the note opens and the drag selects, and the chat's chip becomes **Selection**. Ask for the change ("make this more concise", "translate this") and the assistant rewrites only the selected text, never the rest of the note. Hold Ctrl while dragging to select without opening the note and to collect several passages.
 - **Citations are clickable**: an answer's `p. 12` link jumps the PDF to the quoted passage and highlights it.
 - **Token counts**: a dim line under each reply shows ↑ tokens sent, ↓ tokens received, and how much the provider served from its cache. Settings → AI → Connections → **Token usage** totals today, the week and the month per model.
 - Per message: **copy**, **edit & re-send** (discards the replies after it), and a **stop** button while streaming. **Ctrl+F inside the panel** finds text in the conversation.
@@ -97,7 +98,7 @@ The home page is a recents feed of all your pages, with a **Recently viewed** st
 **Ctrl+F** searches everything at once: page titles, this paper's notes, this PDF's text, other notes, reference links, and the full text of every PDF in the library — with match-case, whole-word and regex toggles.
 
 - **Filter chips**: type a label or folder name and press Tab — label chips match exactly, folder chips include everything beneath them (`qc` pulls in `qc/neutral-atom`).
-- **Ctrl+P** is the quick way to another page: a palette listing your recent pages, filtered by title as you type — ↑↓ and Enter open it.
+- **Ctrl+P** is the quick way to another page: a palette listing your recent pages, filtered by title, folder or label as you type (small typos are forgiven, like the library's search box) — ↑↓ and Enter open it.
 - **Enter / Shift+Enter** step through matches; the chevron collapses the result lists into a compact find bar (make that the default in Settings → Reading & editing).
 - Matching is forgiving: "3000" finds "3,000-qubit", even across a line break. Opening a library hit loads the paper and scrolls to the highlighted match.
 
@@ -217,6 +218,10 @@ The installed web app still needs the server to be reachable. For a library that
 - **Background tasks** (uploads, fetches, exports) show in the top bar's tasks popover with progress.
 - On a phone everything becomes full-screen views behind a bottom tab bar (Library/PDF · Notes · Chat).
 
+## Report a problem
+
+Something broke? Open the account menu and choose **Report a problem…** (it is also under Settings → Diagnostics → Help). Say what happened and, if you know, how to bring it back. Gamma adds what a maintainer needs to reproduce it: which build the server runs, your browser and screen, what kind of view was open, and the app's own recent log lines — never your notes, files or names, and any secret-looking text is masked; the preview shows exactly what goes out. **Record…** captures your screen while you show the problem (the dialog shrinks to a small pill with a Stop button; up to three minutes, no sound); the recording is saved to your downloads and you drop it into the GitHub form. **Open GitHub issue** opens the bug form with everything filled in for you to review before posting, and copies the same report to your clipboard; **Copy report** is for sending it any other way.
+
 ## Settings at a glance
 
 Settings (account menu → Settings) has one sidebar in three groups; the search box at the top finds any setting by name.
@@ -236,6 +241,7 @@ Settings (account menu → Settings) has one sidebar in three groups; the search
 | | Backups | Server-side snapshots |
 | | Library maintenance | Storage, search-index rebuild, metadata health table |
 | | Users, Server | Administrators: accounts, the dashboard, public URL, storage defaults, shared workspaces, server backups, the log |
+| | Diagnostics | This browser's session log, debug tracing, Report a problem |
 
 Preferences apply immediately; browser-only ones (theme, layout) are marked *This browser*, the rest sync with your account.
 
@@ -244,7 +250,7 @@ Preferences apply immediately; browser-only ones (theme, layout) are marked *Thi
 | Keys | Does |
 |---|---|
 | Ctrl+F | Search everything (find-in-chat when the chat is focused) |
-| Ctrl+P | Quick open: pick a page by title (recent pages first) |
+| Ctrl+P | Quick open: pick a page by title, folder or label (recent pages first) |
 | Enter / Shift+Enter | In search: next / previous match. In notes: line break / new note (swappable). In chat: send / newline |
 | Tab / Shift+Tab | Indent / outdent a note · accept a search filter chip · hop between `{}` arguments in math · hop table cells |
 | Ctrl+B / I / E / Shift+X / Shift+H | Bold / italic / code / strike / highlight |
@@ -255,6 +261,7 @@ Preferences apply immediately; browser-only ones (theme, layout) are marked *Thi
 | Ctrl+wheel | Zoom the PDF at the cursor |
 | Ctrl+drag on the page | Capture a region → chat image + optional area highlight |
 | Ctrl+click a highlight | Add its quote to the chat selection |
+| Ctrl+drag across note text | Attach that passage to the chat — the assistant edits only it |
 | Double-click | Open a library card · collapse/expand a window (on its grip) |
 | Middle-click a tab | Close it (pinned tabs are protected) |
 | Ctrl+Shift+S | In the browser extension: save this page to Gamma |

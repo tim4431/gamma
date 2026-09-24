@@ -60,6 +60,10 @@ workspace's files), `db.SCHEMA_VERSION`, `manage.py migrate` / `backups`.
 | 13 | `sync_conflict_base` | every workspace's `sync_conflicts` gains `base`, the text a merged block had before either side edited it (the resolver's diff view); older rows carry none |
 | 14 | `identities` | Adds the `identities` table (+ unique index per account) in `users.db`: the Gamma Cloud identity linked to an account ([cloud_accounts.md](cloud_accounts.md)) |
 | 15 | `ai_explicit_models` | AI provider entries (`user_prefs` key `ai-settings`) with no models picked get the default model they were implicitly using written in (anthropic `claude-haiku-4-5-20251001`, openai `gpt-4o-mini`, chatgpt `gpt-5.1`): the running code no longer has built-in default models ([ai.md](ai.md)) |
+| 16 | `pending_memberships` | Adds the `pending_memberships` table (+ an index by subject) in `users.db`: shared-workspace invitations by Gamma Cloud username, keyed by workspace and cloud subject, waiting for that person's first sign-in ([workspaces.md](workspaces.md)). Nothing else changes |
+| 17 | `profile` | The account-wide `appearance` pref (`{theme, pdfDark}`) becomes the new `profile` pref (`{theme, pdfDarkPage}`, keyed by the web app's preference names, same `updated_at`); an existing profile is kept; `appearance` rows are dropped ([settings.md](settings.md)) |
+| 18 | `cloud_grant` | `sessions` gains `via` (`''` a password or the guest, `cloud` a Gamma Cloud sign-in; existing rows count as password sessions) and `identities` gains `revoked_at`: the grant check ends only the sessions a cloud sign-in minted when the account server refuses that account's grant ([cloud_accounts.md](cloud_accounts.md)) |
+| 19 | `mirror_page_filter` | `mirrors` gains `page_filter`: NULL (every page travels, what every existing mirror keeps) or a JSON list of the only page ids that do, the shape a published page's mirror has ([mirror.md](mirror.md) "The page filter") |
 
 ## Backups (`gamma/backups.py`)
 

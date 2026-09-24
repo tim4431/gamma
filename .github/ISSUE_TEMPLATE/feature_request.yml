@@ -1,0 +1,16 @@
+name: Feature request
+description: Something Gamma should do, or do differently.
+labels: ["enhancement"]
+body:
+  - type: textarea
+    id: problem
+    attributes:
+      label: What are you trying to do
+      description: The task or situation, before any solution.
+    validations:
+      required: true
+  - type: textarea
+    id: proposal
+    attributes:
+      label: What would help
+      description: How you imagine it working. Other tools that do it well are a useful reference.

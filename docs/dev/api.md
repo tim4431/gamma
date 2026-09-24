@@ -91,7 +91,9 @@ else; in dev, Vite proxies `/api` → `127.0.0.1:9001`.
   when the account's password is changed.
 - A cloud identity (Sign in with Gamma Cloud, [cloud_accounts.md](cloud_accounts.md))
   ends in the same `sessions` row as a password login: the callback mints it,
-  nothing downstream can tell the difference.
+  nothing downstream can tell the difference. The row is marked
+  `via = 'cloud'` so the hourly grant check can end it when the account
+  server revokes the grant.
 - `/api/login` and `/api/login-guest` are rate-limited per IP/username
   (`gamma/ratelimit.py`, in-process fixed windows → 429), as are share-link
   visitors' writes and unknown share tokens (above; those log a warning
@@ -109,13 +111,15 @@ else; in dev, Vite proxies `/api` → `127.0.0.1:9001`.
 ### Session & account (`auth.py`)
 | Method | Path | Purpose |
 |---|---|---|
-| POST | `/login`, `/login-guest`, `/logout` | session management (`/login` refuses an account with an empty password hash — one only its cloud identity signs in) |
-| GET | `/server-config` | public: what the login page offers besides a password — `{cloud: {enabled, issuer}, password_login, registration}` ([cloud_accounts.md](cloud_accounts.md)) |
+| POST | `/login`, `/login-guest`, `/logout` | session management (`/login` refuses an account with an empty password hash — one only its cloud identity signs in; `/login-guest` is 403 on a share host) |
+| GET | `/server-config` | public: what the login page offers besides a password — `{cloud: {enabled, issuer}, password_login, registration, guest}` (`guest` false on a share host) ([cloud_accounts.md](cloud_accounts.md)) |
+| POST | `/auth/cloud/exchange` | the share host's half of publishing ([mirror.md](mirror.md) "Publishing"): `Authorization: Bearer <Gamma Cloud access token>`, body `{server?}` (the calling server's name) → `{token, workspace_id, username, url}` — a write-scope integration token (365 days, named "Published pages from <server>", replacing the live one of that name) on the person's default personal workspace here, the account resolved under the sign-in policy like a first sign-in (provisioned under `provision`, pending invitations claimed), and this server's address. 403 unless the server accepts published pages (`cloud_share_host`), for an unconfirmed cloud e-mail, or when the policy refuses the account; 401 for a token the account server does not know; 503 when it cannot be asked; 429 past 20 per IP or 10 per cloud account in 10 minutes |
 | GET | `/auth/cloud/start?next=&link=1` | Sign in with Gamma Cloud: stores the pending PKCE sign-in and redirects to the account server; `link=1` needs a session and attaches the cloud identity to that account |
-| GET | `/auth/cloud/callback?code=&state=` | the account server's return: verifies the ID token, resolves or creates the local account per the policy (`gamma/cloud_auth.py`), mints a session and redirects to `next`; a refusal goes back to `/?cloud_error=` |
-| GET / POST | `/auth/cloud/status`, `/auth/cloud/unlink` | the signed-in account's own cloud identity (username, plan, e-mail, linked at); unlink is refused for an account without a password |
-| GET | `/session` | who am I, plus `workspaces: [{id, name, kind, role, access, public_role, personal, default, members}]` (memberships + every public workspace) and `default_workspace` (quota lives in `/quota`) |
-| GET | `/accounts` | the account directory for the invite / owner pickers: `{accounts: [{username, is_admin}]}`, non-guest accounts only (signed-in non-guest callers) |
+| GET | `/auth/cloud/callback?code=&state=` | the account server's return: verifies the ID token, resolves or creates the local account per the policy (`gamma/cloud_auth.py`), pulls the preference profile, registers this server on the person's server list (`gamma/cloud_sync.py`), mints a session and redirects to `next`; a refusal goes back to `/?cloud_error=` |
+| GET | `/auth/cloud/sync-status` | the signed-in account's own preference profile sync (session only; guests and integration tokens get 403): `{profile: {state, at, error}, identity: {linked, username?}}`. `state` is `off` (cloud sign-in off, or no identity holding a token), `pending` (a push is scheduled, or failed and waits for the next check; `error` then says why), `synced` (the last pull or push agreed, at `at`) or `error` (the last attempt failed). Read from memory (`cloud_sync.profile_status`), no network; the Settings dialog polls it while open |
+| GET / POST | `/auth/cloud/status`, `/auth/cloud/unlink` | the signed-in account's own cloud identity (username, plan, e-mail, linked at, `offline` — a refresh token is held — and `revoked_at`) plus `enabled` and the `issuer` (the account server's address, which the Account pane's "Open account" button opens); unlink is refused for an account without a password, and takes this server off the person's server list before revoking the grant |
+| GET | `/session` | who am I, plus `workspaces: [{id, name, kind, role, access, public_role, personal, default, members}]` (memberships + every public workspace) and `default_workspace` (quota lives in `/quota`); `build` (`version`, `commit`, `label`, `frozen`) is what a problem report names the server by, sent to the login page too |
+| GET | `/accounts[?q=]` | the account directory for the invite / owner pickers: `{accounts: [{username, is_admin}]}`, non-guest accounts only (signed-in non-guest callers). On a share host only admins get the list; anyone else gets the one account named exactly `q`, or none |
 | GET | `/export` (+ `/export-progress`) | backup zip of a workspace (everything or `uploads=0`; the `gamma-backup-1` zip of `gamma/ws_backup.py`): the request's, `?ws=` (any member), or — admins — `?user=` for an account's default workspace |
 | GET | `/export-all` | every personal workspace of the account in one zip, one `/export` zip per workspace inside (`uploads=0` for databases only; guests 403) |
 | POST | `/import-data` | restore (`mode=replace`, owners) / merge (`mode=merge`, editors) a backup zip into a workspace (same targeting); never into the guest workspace |
@@ -124,8 +128,8 @@ else; in dev, Vite proxies `/api` → `127.0.0.1:9001`.
 | Method | Path | Purpose |
 |---|---|---|
 | POST | `/workspaces` | create a personal one (`{name}`; guests 403); admins may add `kind: "shared"`, `owner`, `access`, `public_role`, `quota_mb` |
-| GET | `/workspaces/mine` | Settings → Workspaces: every workspace I can open with its `used_bytes` (and `mirror_of`, the remote workspace's name when it is an offline copy — [mirror.md](mirror.md)), plus `account` (my limits and the usage of all my personal workspaces) |
-| GET/PUT/DELETE | `/workspaces/{id}` | kind + members + quota + `personal_of` + `default` (any member; admins) / rename `{name}` (owner), `default: true` (a personal workspace's owner), kind, access + public role, workspace quota (admin) / delete (owner; not an account's last personal one) |
+| GET | `/workspaces/mine` | Settings → Workspaces: every workspace I can open with its `used_bytes` (and `mirror_of`, the remote workspace's name when it is an offline copy, `publishing` true when it publishes pages to Gamma Cloud, where `mirror_of` stays empty — [mirror.md](mirror.md)), plus `account` (my limits and the usage of all my personal workspaces) |
+| GET/PUT/DELETE | `/workspaces/{id}` | kind + members (pending invitations last, `pending: true` + `subject`) + quota + `personal_of` + `default` (any member; admins) / rename `{name}` (owner), `default: true` (a personal workspace's owner), kind, access + public role, workspace quota (admin) / delete (owner; not an account's last personal one) |
 | GET/POST | `/workspaces/{id}/backups` | the workspace's server-kept snapshots (any member) / take one now `{label?, uploads?}` (owner; at most `ws_backup.MAX_PER_WORKSPACE`) |
 | GET | `/workspaces/{id}/backups/{name}/download` | the snapshot as a zip — the same zip `/export` gives (any member) |
 | POST | `/workspaces/{id}/backups/{name}/restore?mode=` | restore it in place: `replace` (owner) / `merge` (editor), the same rules as `/import-data` |
@@ -135,6 +139,8 @@ else; in dev, Vite proxies `/api` → `127.0.0.1:9001`.
 | POST | `/backup-tasks/{id}/run` | queue a run now, paused or not (409 while it runs) |
 | POST | `/backup-tasks/preview` | `{cron}` → `{runs: [next three ISO times], timezone: "UTC"}` |
 | PUT/DELETE | `/workspaces/{id}/members/{user}` | shared workspaces: invite or set a role `{role}`, incl. owner (owner) / remove (owner) or leave (yourself) |
+| GET/POST | `/workspaces/{id}/invites` | invitations by Gamma Cloud username still waiting for the person's first sign-in, `{invites: [{subject, username, role, invited_by, created_at}]}` (any member) / invite `{username, role}` — role `editor` (default) or `viewer`; the account server resolves the username to a subject; a person already linked here becomes a member at once (`invited: {member}`), anyone else gets a pending membership (`invited: {pending}`) their first cloud sign-in claims; returns the workspace like `GET /workspaces/{id}` (owner; admins). 400 on a personal workspace, when cloud sign-in is off, for an unknown username or an existing member; 429 past 30 lookups per account per 10 minutes; 503 when the account server cannot be asked ([workspaces.md](workspaces.md) "Pending invitations") |
+| DELETE | `/workspaces/{id}/invites/{subject}` | withdraw a pending invitation (owner; admins); 404 when there is none |
 | GET | `/workspaces/find-page/{page_id}` | which of my workspaces holds the page (deep links without `ws`) |
 
 `PUT /workspaces/{id}` applies all supplied changes in one transaction.
@@ -142,7 +148,7 @@ Authorization or validation failure leaves the name, kind, access, quota and
 account default unchanged. Creation limits count explicit memberships, not
 public workspaces the account can merely open.
 
-The generic preference endpoints scope `appearance` and `ai-provider` to the
+The generic preference endpoints scope `profile` and `ai-provider` to the
 account without requiring workspace access. Other supported preference keys
 require access to the named workspace. `ai-settings` remains reserved and is
 never returned by the generic endpoint.
@@ -259,19 +265,19 @@ the request's workspace — the extension names none, so its personal one.
 | POST | `/metadata/cite` | BibTeX → PPT-style citation via AI (regenerate / fallback; the fetch already produces one) |
 | GET | `/metadata/status` | library-wide health table (feeds Settings → Library): every page with a PDF attachment plus pages carrying `properties.meta` without one (`has_file: false`); per paper `meta_source`, `meta_kind`, `meta_unverified` (null for pre-flag records) |
 
-### AI (`ai.py`) — all config is per-user GUI entries, no env API keys
+### AI (`ai.py`) — all config is GUI entries (each account's own plus the server's shared ones), no env API keys
 | Method | Path | Purpose |
 |---|---|---|
-| POST | `/ai/chat` | chat; NDJSON stream of `{context}` (first line: per-page coverage — native/text, pages shown of total; `doc_id` `""` for a page without a PDF; the open paper's entry adds `selection: {passages: [{page, section, found, crop}]}` when passages were selected) then `{delta}`/`{action}`/`{progress}`/`{usage}`/`{error}`; `usage` is the provider's token report `{input, output, cache_read, cache_write}`, one line per provider turn (the client sums an agent reply's rounds; non-stream replies carry one summed `usage` field); `progress` previews an edit_block/create_block call still being written (target id + markdown so far). Context is `pages` (up to 7 page ids, de-duplicated; they also become the tool scope's `context_pages`) or `page_id` (one; its PDF attachment derived server-side; `doc_id` is accepted as a compatibility input and resolves to its page), plus model id, effort, images, files, the agent scope, the selected PDF passages `selections` (`[{text, page, box}]`, box `[x0, y0, x1, y1]` page fractions; the older `"---"`-joined `selection` string is still read), and the notes pointers `focus_block_id` (cursor block), `context_blocks` (attached block ids), `note_passages` (Ctrl-selected note text). See [ai.md](ai.md) |
-| GET | `/ai/models` | model registry (each model carries `native_pdf`: whether its provider accepts the PDF file itself) + default prompts (feeds the model switchers and prompt editor) |
-| GET | `/ai/settings` | masked provider list (key hints only, each with its display `label`), plus the `protocols` and named `services` (e.g. DeepSeek) the add form offers |
-| POST/PUT/DELETE | `/ai/providers[/{id}]` | manage provider entries |
-| POST | `/ai/providers/{id}/test` | live probe of one credential (model: the entry's `test_model`, else the request's `model` — the client sends its metadata model — else the first model); failures carry an `auth` flag for expired/rejected credentials |
+| POST | `/ai/chat` | chat; NDJSON stream of `{context}` (first line: per-page coverage — native/text, pages shown of total; `doc_id` `""` for a page without a PDF; the open paper's entry adds `selection: {passages: [{page, section, found, crop}]}` when passages were selected) then `{delta}`/`{action}`/`{progress}`/`{usage}`/`{error}`; `usage` is the provider's token report `{input, output, cache_read, cache_write}`, one line per provider turn (the client sums an agent reply's rounds; non-stream replies carry one summed `usage` field); `progress` previews an edit_block/create_block call still being written (target id + markdown so far). Context is `pages` (up to 7 page ids, de-duplicated; they also become the tool scope's `context_pages`) or `page_id` (one; its PDF attachment derived server-side; `doc_id` is accepted as a compatibility input and resolves to its page), plus model id, effort, images, files, the agent scope, the selected PDF passages `selections` (`[{text, page, box}]`, box `[x0, y0, x1, y1]` page fractions; the older `"---"`-joined `selection` string is still read), and the notes pointers `focus_block_id` (cursor block), `context_blocks` (attached block ids), `note_selections` (selected note text as exact source ranges `[{block_id, from, to, text}]`, what `edit_block` mode `"selection"` rewrites). See [ai.md](ai.md) |
+| GET | `/ai/models` | model registry (each model carries `native_pdf`: whether its provider accepts the PDF file itself, and `shared`: it comes from a server entry, `server:<id>:<model>`) + default prompts (feeds the model switchers and prompt editor) |
+| GET | `/ai/settings` | masked provider list (key hints only, each with its display `label`), then the server's shared entries the account may use as read-only rows (`shared: true`, key hint for admins only), plus the `protocols` and named `services` (e.g. DeepSeek) the add form offers |
+| POST/PUT/DELETE | `/ai/providers[/{id}]` | manage the account's own provider entries (a shared `server:` id is a 404 here) |
+| POST | `/ai/providers/{id}/test` | live probe of one credential (model: the entry's `test_model`, else the request's `model` — the client sends its metadata model — else the first model); failures carry an `auth` flag for expired/rejected credentials. Admins may name a shared entry (`server:<id>`) |
 | POST | `/ai/providers/{id}/usage` | ChatGPT subscription allowance windows; explicitly unavailable for generic API-key providers; an expired sign-in returns `{available: false, auth: true}` in-body |
 | GET | `/ai/usage` | the account's token usage as the providers reported it: `windows` (today / week / month / all → calls + the four counts), the 30-day split by `kinds` and by `models`; see [ai.md](ai.md) "Token usage" |
 | DELETE | `/ai/usage` | forget the account's usage rows |
-| POST | `/ai/health` | login connection check of one entry (`{provider_id, mode}`; `""` = first entry): `mode: "ping"` is the free credential check (OAuth → usage endpoint, API key → `/v1/models`), `"test"` the tiny live completion; always answers in-body `{configured, ok, auth?, error?}` |
-| POST | `/ai/model-catalog` | list models available to a credential |
+| POST | `/ai/health` | login connection check of one entry the account can use, its own or shared (`{provider_id, mode}`; `""` = the first): `mode: "ping"` is the free credential check (OAuth → usage endpoint, API key → `/v1/models`), `"test"` the tiny live completion; always answers in-body `{configured, ok, auth?, error?}` |
+| POST | `/ai/model-catalog` | list models available to a credential: the typed key, or a saved entry's (`provider_id`; admins may name a shared `server:<id>`) |
 | POST | `/ai/oauth/chatgpt/start`, `/complete` | ChatGPT OAuth (PKCE, pasted callback URL) |
 | POST | `/ai/transcribe` | voice dictation |
 | POST | `/ai/translate` | translate paragraph texts for the viewer's translated view (`{texts, lang, model, effort, stream}` → `{translations}`; with `stream: true` an NDJSON stream of `{i: [indices], text}` partials as each paragraph is written, then the same final object; in-memory per-paragraph cache) |
@@ -316,10 +322,16 @@ archived conversation browsing remains session-only.
 ### Prefs (`prefs.py`)
 | Method | Path | Purpose |
 |---|---|---|
-| GET/PUT | `/prefs/{key}` | small synced JSON KV per account: `open-tabs`, `recent-views`, `pinned-folders`, `read-pos` are stored per workspace (the request's), `appearance` / `ai-provider` account-wide (`db.USER_PREF_KEYS`); refuses the reserved `ai-settings` key |
+| GET/PUT | `/prefs/{key}` | small synced JSON KV per account: `open-tabs`, `recent-views`, `pinned-folders`, `read-pos` are stored per workspace (the request's), `profile` / `ai-provider` account-wide (`db.USER_PREF_KEYS`); `profile` is the web app's account-scoped settings as one object keyed by preference name (400 unless an object; `db.get_profile` / `db.set_profile`, [settings.md](settings.md)); values over 64 KB get 413; refuses the reserved `ai-settings` key |
 | GET | `/page-snaps` | all recents-card cover thumbnails `{snaps: {pageId: {img, at}}}`; `?after=<iso>` returns only newer ones (the focus-pull delta) |
 | PUT | `/page-snaps/{page_id}` | store a cover (JPEG data URL body `{img, at}`; per-page newest-`at` wins, count-capped server-side) |
 | DELETE | `/page-snaps/{page_id}` | drop a cover (the recents card's ×) |
+
+### Notices (`notices.py`, `gamma/notices.py`) — see [settings.md](settings.md) "Notices"
+| Method | Path | Purpose |
+|---|---|---|
+| GET | `/notices` | `{notices: [{id, fingerprint, tone, pane, title}]}` the account has not looked at yet, strongest `tone` (`info` / `warn` / `error`) first; `pane` is the Settings pane that resolves it. Admin-only sources (`update`: a newer GitHub release; `log-errors`: errors logged since the last look) are skipped for members; guests and integration tokens get `[]`. Sync: the release check may hit the network when its cache is stale |
+| POST | `/notices/{id}/seen` | `{fingerprint}` — the account has seen this version of the notice (kept in the account-wide `notices-seen` pref); it stays quiet until the fingerprint changes. 403 for guests and tokens, 400 for a malformed id or fingerprint |
 
 ### Integrations and MCP (`routers/integrations.py`, `mcp_oauth.py`, `mcp_server.py`) — see [mcp.md](mcp.md)
 | Method | Path | Purpose |
@@ -336,7 +348,7 @@ A manual token (`gamma_…`, not an OAuth one) is also accepted on every `/api/*
 |---|---|---|
 | GET | `/mirrors` | the caller's offline copies with their sync status |
 | POST | `/mirrors` | `{remote_url, token, name?, mode?: two-way \| pull, workspace_id?, adopt?: theirs \| mine}` → the mirror: a new personal workspace that follows the remote workspace the token belongs to, or with `workspace_id` an existing personal workspace of the caller's whose pages adopt one side's version (validated against the remote's `/sync/whoami` first; a read token or a viewer's role gives `pull`); the first fill runs in the background |
-| GET | `/mirrors/{ws}` | one mirror, with `conflicts_open` (unresolved merges), `pending_local` (a local write no round has pushed yet; two-way copies only), `poll_s` / `on_change` (its cadence), `detached`, `interval_s` (0 = the loop is off); `status.progress` `{done, total, page, first, file?}` while a round runs |
+| GET | `/mirrors/{ws}` | one mirror, with `conflicts_open` (unresolved merges), `pending_local` (a local write no round has pushed yet; two-way copies only), `poll_s` / `on_change` (its cadence), `detached`, `interval_s` (0 = the loop is off), `page_filter` (null = every page travels, else the ids of the only pages that do — a publication); `status.progress` `{done, total, page, first, file?}` while a round runs |
 | PATCH | `/mirrors/{ws}` | `{poll_s?, on_change?, mode?}` |
 | POST | `/mirrors/{ws}/detach` | detach, the link kept |
 | POST | `/mirrors/{ws}/relink` | `{token?, remote_url?, adopt?}` — link again |
@@ -348,6 +360,14 @@ A manual token (`gamma_…`, not an OAuth one) is also accepted on every `/api/*
 | POST | `/mirrors/{ws}/conflicts/{id}` | `{choice: keep \| mine \| theirs}` |
 
 Session only, the mirror's owner, never a guest.
+
+### Publishing (`routers/publish.py`, `gamma/publish.py`) — see [mirror.md](mirror.md) "Publishing"
+
+| method | path | what |
+|---|---|---|
+| POST | `/pages/{id}/publish` | publish the page to the share host Gamma Cloud names: body `{audience?: anyone \| users \| list, role?: view \| edit}` (optional; the share there, default anyone / view, applied to a new or an existing link) → `{url: "<share host>/?share=<token>", share: {token, page_id, audience, role, users, created_by}, mirror: {ws, status, page_filter, conflicts_open, pending_local}}`. Adds the page to the workspace's filtered mirror of the share host (made on the first publication through `/auth/cloud/exchange` there), runs one round and makes the share. Workspace editors, session only, never a guest. 409 with a message when it cannot: no linked Gamma Cloud identity with a token ("Sign in with Gamma Cloud to publish."), no share host named, a workspace that is a copy of another server, a mirror owned by someone else, detached or receive-only, or this server is itself a share host; 400 for a block that is not a page; 502 when the share host refused or the page did not reach it; 503 when the account server cannot be read |
+| DELETE | `/pages/{id}/publish` | unpublish: the share there stops, the copy there is deleted, the page leaves the filter; the page here is untouched → `{published: false, mirror}`. 409 when the page is not published; 502 (nothing changed) when the share host cannot be reached |
+| GET | `/pages/{id}/publish` | `{published, can_publish, reason?, url?, share?, status?, mirror?, error?}` — `can_publish` / `reason` say whether publishing would be refused and why (the same messages as POST), `status` is the mirror's raw status (the pill's reading is the frontend's), `share` the live share settings there (`url` with them), `error` when the share host could not be read. Any member |
 | GET | `/integrations/oauth/request?request_id=` | the pending consent (client name, the account's workspaces) for the consent screen |
 | POST | `/integrations/oauth/consent` | approve or deny a pending sign-in for one workspace |
 | GET | `/.well-known/oauth-authorization-server`, `/.well-known/oauth-protected-resource` | OAuth discovery for MCP clients (no `/api` prefix) |
@@ -371,8 +391,10 @@ Session only, the mirror's owner, never a guest.
 | GET/POST | `/admin/backups` | list the whole-data-directory snapshots under `backups/` / take one now (`{label?, uploads?}` — databases, plus every upload with `uploads: true`); per-workspace snapshots are `/workspaces/{id}/backups` |
 | GET | `/admin/backups/{name}/download` | the snapshot as a zip |
 | DELETE | `/admin/backups/{name}` | delete a snapshot (restoring is `manage.py backups --restore`, server stopped — [migrations.md](migrations.md)) |
-| GET/PUT | `/admin/settings` | server-wide storage defaults, plus `public_url` / `public_url_source` (the admin-confirmed public server URL, [mcp.md](mcp.md)) |
+| GET/PUT | `/admin/settings` | server-wide storage defaults, plus `public_url` / `public_url_source` (the admin-confirmed public server URL, [mcp.md](mcp.md)) and `cloud` (the cloud sign-in settings, written as `cloud_issuer`, `cloud_client_id`, `cloud_client_secret`, `cloud_policy`, `cloud_share_host` — [cloud_accounts.md](cloud_accounts.md)) |
 | GET | `/admin/logs?after=<seq>` | scrubbed in-memory server log |
+| GET/PUT | `/admin/ai-providers` | the server's shared AI entries, masked like `/ai/settings` (key hint, never the key; API-key `protocols` and `services` only), and `guests`; PUT `{guests}` sets whether the guest account may use them (default off) |
+| POST/PUT/DELETE | `/admin/ai-providers[/{id}]` | add / edit / remove a shared entry (the `/ai/providers` fields and validation, API-key protocols only, at most 20; ids are `server:<id>`; the key is write-only and stored encrypted). Admin session only: an integration token is refused. Test and model listing go through `/ai/providers/{id}/test` and `/ai/model-catalog` |
 | GET | `/admin/server-info?refresh=` | the Server dashboard (`gamma/version.py`): `version` / `commit` / `label` (from `GAMMA_VERSION` / `GAMMA_COMMIT` — the Docker build and the desktop shell set them; a checkout is a "development build"), `started_at`, `uptime_seconds`, `python`, `platform`, `schema_version`, `frozen`, `log_counts` `{info, warning, error}` since startup, `latest` (`{version, url, published_at}` from the GitHub Releases API, cached six hours, ten minutes after a failure, `refresh=1` refetches; `GAMMA_UPDATE_CHECK=off` disables) or `latest_error`, `update_available` (True/False, None without a version to compare), `image`, `releases_url`. Sync: it may hit the network |
 
 Rails: the guest account is untouchable, no self-delete, the last admin

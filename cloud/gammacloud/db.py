@@ -20,7 +20,7 @@ from datetime import datetime, timezone
 
 from . import config
 
-SCHEMA_VERSION = 3
+SCHEMA_VERSION = 4
 BUSY_TIMEOUT = 10  # seconds a connection waits for another writer
 
 
@@ -84,6 +84,27 @@ REFRESH_HISTORY = """CREATE TABLE IF NOT EXISTS refresh_history (
         refresh_hash TEXT PRIMARY KEY,
         grant_id TEXT NOT NULL,
         replaced_at TEXT NOT NULL
+    )"""
+
+# The preference profile (``prefs.py``): one JSON value per (account, key);
+# ``updated_at`` is the version, per-key last-writer-wins.
+PREFS = """CREATE TABLE IF NOT EXISTS prefs (
+        account_id TEXT NOT NULL REFERENCES accounts(id),
+        key TEXT NOT NULL,
+        value TEXT NOT NULL,
+        updated_at TEXT NOT NULL,
+        PRIMARY KEY (account_id, key)
+    )"""
+
+# The Gamma servers a person linked their identity on (``servers.py``):
+# each registers its confirmed public URL (normalized, one row per URL).
+SERVERS_LINKED = """CREATE TABLE IF NOT EXISTS servers_linked (
+        account_id TEXT NOT NULL REFERENCES accounts(id),
+        url TEXT NOT NULL,
+        name TEXT NOT NULL DEFAULT '',
+        linked_at TEXT NOT NULL,
+        last_seen_at TEXT NOT NULL,
+        PRIMARY KEY (account_id, url)
     )"""
 
 SCHEMA = [
@@ -225,6 +246,8 @@ SCHEMA = [
         event TEXT NOT NULL,
         detail TEXT NOT NULL DEFAULT ''
     )""",
+    PREFS,
+    SERVERS_LINKED,
 ]
 
 
@@ -290,10 +313,17 @@ def _step_devices(conn) -> None:
                  "AND audit.event = 'oidc.authorize') WHERE app_signed_in_at IS NULL")
 
 
+def _step_profile(conn) -> None:
+    """The preference profile and the linked-server list."""
+    conn.execute(PREFS)
+    conn.execute(SERVERS_LINKED)
+
+
 STEPS: list = [
     # (version, name, fn(conn)) — append only; see docs/dev/cloud_accounts.md.
     (2, "external_logins", _step_external_logins),
     (3, "devices", _step_devices),
+    (4, "profile", _step_profile),
 ]
 
 

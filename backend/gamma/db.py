@@ -20,7 +20,7 @@ here on connect — that is what the numbered migration steps are for.
 import json
 import re
 import sqlite3
-from datetime import datetime, timezone
+from datetime import datetime, timedelta, timezone
 from pathlib import Path
 
 from .config import USERS_DB, WORKSPACES_DIR
@@ -28,7 +28,7 @@ from .config import USERS_DB, WORKSPACES_DIR
 # The data-directory schema version this code expects (users.db
 # ``PRAGMA user_version``). Bump it together with a new step in
 # gamma/migrations.py — never without one, never without bumping.
-SCHEMA_VERSION = 15
+SCHEMA_VERSION = 19
 
 
 class SchemaOutdated(RuntimeError):
@@ -115,7 +115,8 @@ USERS_SCHEMA = [
         status TEXT NOT NULL DEFAULT '{}',
         created_at TEXT NOT NULL,
         poll_s INTEGER NOT NULL DEFAULT 30,
-        on_change INTEGER NOT NULL DEFAULT 1
+        on_change INTEGER NOT NULL DEFAULT 1,
+        page_filter TEXT
     )""",
     """CREATE TABLE IF NOT EXISTS publisher_sessions (
         username TEXT NOT NULL,
@@ -140,8 +141,10 @@ USERS_SCHEMA = [
     )""",
     # A cloud identity linked to an account (gamma/cloud_auth.py): the
     # account server's stable subject, the last verified claims (handle,
-    # plan, email) and — desktop client only — the refresh token, Fernet-
-    # encrypted with the data directory's key. One per account and provider.
+    # plan, email), the refresh token (Fernet-encrypted with the data
+    # directory's key; empty when the sign-in handed none out) and
+    # revoked_at, when the account server last refused that grant (cleared
+    # by the next sign-in). One per account and provider.
     """CREATE TABLE IF NOT EXISTS identities (
         provider TEXT NOT NULL,
         subject TEXT NOT NULL,
@@ -151,14 +154,18 @@ USERS_SCHEMA = [
         refresh_token TEXT NOT NULL DEFAULT '',
         created_at TEXT NOT NULL,
         last_login_at TEXT NOT NULL,
+        revoked_at TEXT NOT NULL DEFAULT '',
         PRIMARY KEY (provider, subject)
     )""",
     """CREATE UNIQUE INDEX IF NOT EXISTS identities_account ON identities(provider, username)""",
+    # via: how the session was minted — '' a password (or the guest), 'cloud'
+    # a Gamma Cloud sign-in; the grant check ends only the 'cloud' ones.
     """CREATE TABLE IF NOT EXISTS sessions (
         token TEXT PRIMARY KEY,
         username TEXT NOT NULL REFERENCES users(username),
         guest_date TEXT,
-        created_at TEXT NOT NULL
+        created_at TEXT NOT NULL,
+        via TEXT NOT NULL DEFAULT ''
     )""",
     # A workspace is a library: its own pages.db / data.db / uploads under
     # workspaces/<id>/. `id` is a random token (never a name, so renaming a
@@ -189,6 +196,21 @@ USERS_SCHEMA = [
         PRIMARY KEY (workspace_id, username)
     )""",
     "CREATE INDEX IF NOT EXISTS idx_wm_user ON workspace_members(username)",
+    # An invitation to a shared workspace for someone who has no account on
+    # this server yet, named by their Gamma Cloud account (gamma/workspaces.py
+    # invite_cloud): subject = the account server's stable id, username = the
+    # cloud username as typed (lowercase). Their first cloud sign-in turns it
+    # into a workspace_members row (claim_pending_memberships).
+    """CREATE TABLE IF NOT EXISTS pending_memberships (
+        workspace_id TEXT NOT NULL REFERENCES workspaces(id),
+        subject TEXT NOT NULL,
+        username TEXT NOT NULL,
+        role TEXT NOT NULL,
+        invited_by TEXT NOT NULL DEFAULT '',
+        created_at TEXT NOT NULL,
+        PRIMARY KEY (workspace_id, subject)
+    )""",
+    "CREATE INDEX IF NOT EXISTS idx_pending_subject ON pending_memberships(subject)",
     # Share links, one per (workspace, page). page_id is the shared page's
     # root block. audience: who may open the link — "anyone" (no login),
     # "users" (any signed-in non-guest account), "list" (the usernames in
@@ -354,10 +376,13 @@ def connect_users_db() -> sqlite3.Connection:
 
 
 # Prefs that follow the account regardless of workspace (stored with
-# workspace_id ''). Everything else is per account + workspace, because the
+# workspace_id ''): the AI provider entries, the active entry, and the
+# preference profile. Everything else is per account + workspace, because the
 # value names that workspace's pages (open tabs, recents, pinned folders,
 # reading positions).
-USER_PREF_KEYS = frozenset({"ai-settings", "ai-provider", "appearance"})
+PROFILE_PREF_KEY = "profile"
+NOTICES_SEEN_PREF_KEY = "notices-seen"  # gamma/notices.py: {notice id: fingerprint seen}
+USER_PREF_KEYS = frozenset({"ai-settings", "ai-provider", PROFILE_PREF_KEY, NOTICES_SEEN_PREF_KEY})
 
 
 def pref_scope(key: str, ws: str) -> str:
@@ -378,18 +403,85 @@ def get_pref(username: str, key: str, ws: str = ""):
         return None, ""
 
 
-def set_pref(username: str, key: str, value, ws: str = "") -> str:
-    """Store a pref (last write wins); returns the new updated_at."""
-    now = page_now()
+def set_pref(username: str, key: str, value, ws: str = "", *, updated_at: str | None = None) -> str:
+    """Store a pref (last write wins); returns the updated_at in effect.
+
+    Without ``updated_at`` this is a change made here, stamped now. The
+    profile's stamp never goes back: one at or before the stored stamp
+    becomes that plus a millisecond, so an edit right after a pull from a
+    clock that runs ahead still counts as newer. A profile change of an
+    account linked to Gamma Cloud is then pushed there (gamma/cloud_sync.py).
+    With ``updated_at`` it is a copy synced from elsewhere: written only
+    when newer than the stored one, and never pushed back."""
+    scope = pref_scope(key, ws)
     with connect_users_db() as db:
-        db.execute(
-            "INSERT INTO user_prefs (username, workspace_id, key, value, updated_at) VALUES (?, ?, ?, ?, ?) "
-            "ON CONFLICT(username, workspace_id, key) DO UPDATE SET value = excluded.value, "
-            "updated_at = excluded.updated_at",
-            (username, pref_scope(key, ws), key, json.dumps(value), now),
-        )
+        if updated_at is None:
+            stamp = page_now()
+            if key == PROFILE_PREF_KEY:
+                row = db.execute("SELECT updated_at FROM user_prefs WHERE username = ? AND workspace_id = ? AND key = ?",
+                                 (username, scope, key)).fetchone()
+                if row and row[0] >= stamp:
+                    stamp = _stamp_after(row[0])
+            db.execute(
+                "INSERT INTO user_prefs (username, workspace_id, key, value, updated_at) VALUES (?, ?, ?, ?, ?) "
+                "ON CONFLICT(username, workspace_id, key) DO UPDATE SET value = excluded.value, "
+                "updated_at = excluded.updated_at",
+                (username, scope, key, json.dumps(value), stamp),
+            )
+        else:
+            db.execute(
+                "INSERT INTO user_prefs (username, workspace_id, key, value, updated_at) VALUES (?, ?, ?, ?, ?) "
+                "ON CONFLICT(username, workspace_id, key) DO UPDATE SET value = excluded.value, "
+                "updated_at = excluded.updated_at WHERE excluded.updated_at > user_prefs.updated_at",
+                (username, scope, key, json.dumps(value), updated_at),
+            )
+            stamp = db.execute("SELECT updated_at FROM user_prefs WHERE username = ? AND workspace_id = ? AND key = ?",
+                               (username, scope, key)).fetchone()[0]
         db.commit()
-    return now
+    if updated_at is None and key == PROFILE_PREF_KEY:
+        from . import cloud_sync  # local: cloud_sync imports this module
+        cloud_sync.profile_changed(username)
+    return stamp
+
+
+def restamp_pref(username: str, key: str, old: str, new: str, ws: str = "") -> bool:
+    """Move a pref's version from ``old`` to ``new`` without touching its
+    value, only while it is still at ``old`` (a change made meanwhile wins).
+    The cloud sync does this when the account server stored a pushed value
+    under another time (its own clock, millisecond precision)."""
+    with connect_users_db() as db:
+        cur = db.execute("UPDATE user_prefs SET updated_at = ? WHERE username = ? AND workspace_id = ? AND key = ? "
+                         "AND updated_at = ?", (new, username, pref_scope(key, ws), key, old))
+        db.commit()
+    return bool(cur.rowcount)
+
+
+def _stamp_after(ts: str) -> str:
+    """``ts`` plus one millisecond, in page_now()'s form."""
+    try:
+        t = datetime.fromisoformat(ts.replace("Z", "+00:00"))
+    except ValueError:
+        return page_now()
+    return (t + timedelta(milliseconds=1)).astimezone(timezone.utc).strftime("%Y-%m-%dT%H:%M:%S.%f") + "Z"
+
+
+# The preference profile: every account-scoped setting of the web app in one
+# JSON object keyed by preference name (frontend/src/app/prefDefs.js declares
+# which). Opaque to the server; it never holds secrets — the AI provider
+# entries keep their own key.
+
+def get_profile(username: str) -> tuple[dict, str]:
+    """(profile, updated_at); ({}, "") when the account has none yet."""
+    value, updated_at = get_pref(username, PROFILE_PREF_KEY)
+    return (value if isinstance(value, dict) else {}), updated_at
+
+
+def set_profile(username: str, value: dict, *, updated_at: str | None = None) -> str:
+    """Replace the account's profile (last write wins); returns updated_at.
+    ``updated_at`` marks a copy synced from Gamma Cloud (see set_pref)."""
+    if not isinstance(value, dict):
+        raise ValueError("a profile is a JSON object")
+    return set_pref(username, PROFILE_PREF_KEY, value, updated_at=updated_at)
 
 
 # --- workspace files ---------------------------------------------------------

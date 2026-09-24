@@ -88,8 +88,9 @@ function scoreTitle(title, phraseRe, terms, caseSensitive) {
   return score - Math.min(10, first / 10); // earlier first hit nudges up
 }
 
-// Shared by workspace search and chat's library picker.
-export function createTitleScorer(query, { caseSensitive = false, wholeWord = false } = {}) {
+// A query → the phrase regex plus per-term matchers scoreTitle takes, or null
+// for an empty/unusable query.
+function prepareQuery(query, { caseSensitive = false, wholeWord = false } = {}) {
   const phrase = buildSearchRegex(query, { caseSensitive, wholeWord });
   if (!query.trim() || !phrase) return null;
   const dashRe = new RegExp(`[${DASH_CLASS}]`);
@@ -98,12 +99,39 @@ export function createTitleScorer(query, { caseSensitive = false, wholeWord = fa
     text: caseSensitive ? t : t.toLowerCase(),
     plain: !wholeWord && !dashRe.test(t) && !/\d\d/.test(t),
   })).filter((t) => t.re);
+  return { phrase, terms };
+}
+
+// Shared by workspace search and chat's library picker.
+export function createTitleScorer(query, { caseSensitive = false, wholeWord = false } = {}) {
+  const prepared = prepareQuery(query, { caseSensitive, wholeWord });
+  if (!prepared) return null;
   const cache = new Map();
   return (page) => {
     if (!cache.has(page.id)) {
       const title = page.content || "";
-      cache.set(page.id, scoreTitle(title, phrase, terms, caseSensitive));
+      cache.set(page.id, scoreTitle(title, prepared.phrase, prepared.terms, caseSensitive));
     }
     return cache.get(page.id);
+  };
+}
+
+// The library's own lookups — the home listing's search box and Ctrl+P —
+// match a title OR its folder/label chips ("cs229" surfaces that label's
+// papers; "cs229 attention" needs both). Same typo-tolerant scoring as
+// createTitleScorer, with diacritics folded on both sides. Title hits outrank
+// chip-only hits. Returns (title, chips) → score (0 = no hit), or null for an
+// empty query.
+const TITLE_TIER = 1000;
+const foldMarks = (s) => (s || "").normalize("NFD").replace(/[\u0300-\u036f]/g, "");
+export function createLibraryMatcher(query) {
+  const prepared = prepareQuery(foldMarks(query));
+  if (!prepared) return null;
+  const { phrase, terms } = prepared;
+  return (title, chips = []) => {
+    const t = foldMarks(title);
+    const own = scoreTitle(t, phrase, terms, false);
+    if (own > 0) return TITLE_TIER + own;
+    return chips.length ? scoreTitle([t, ...chips.map(foldMarks)].join(" "), phrase, terms, false) : 0;
   };
 }

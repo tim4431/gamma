@@ -445,7 +445,7 @@ def _run_read_block(conn, ws: str, scope: dict, args: dict):
                  "summary": f"Read notes of {what}"}
 
 
-EDIT_MODES = ("replace", "append", "prepend", "patch")
+EDIT_MODES = ("replace", "append", "prepend", "patch", "selection")
 # Lines that start a paragraph-level construct: heading, list item, quote,
 # table row, fence, display math, rule.
 _BLOCKY_LINE = re.compile(r"^\s*(#{1,6}\s|[-*+]\s|\d+[.)]\s|>|\||```|\$\$|---)")
@@ -493,7 +493,46 @@ def patch_block_text(existing: str, find: str, replacement: str):
     return None, f"error: `find` matches {n} places in the block — include more surrounding text so it matches once"
 
 
+def find_selection(scope: dict, label) -> dict | None:
+    """The user's note selection a "selection" edit names — by its label
+    ("S1"), or the only one when the call gives none."""
+    sels = scope.get("note_selections") or []
+    label = str(label or "").strip().upper()
+    if not label:
+        return sels[0] if len(sels) == 1 else None
+    return next((s for s in sels if s["label"] == label), None)
+
+
+def replace_selection_text(existing: str, sel: dict, replacement: str):
+    """The block text with the user's selected range replaced: at the
+    recorded offsets while they still hold the selected text, else at the
+    text's one occurrence (the block changed since the selection). Returns
+    (text, start) or (None, error message). Mirrored in frontend
+    editor/BlockTree.jsx (the streamed preview)."""
+    start, text = sel["from"], sel["text"]
+    if existing[start:start + len(text)] != text:
+        n = existing.count(text)
+        if n != 1:
+            return None, ("error: the selected text has changed since the user selected it — "
+                          "read the block and use mode patch, or ask the user to select again")
+        start = existing.index(text)
+    return existing[:start] + replacement + existing[start + len(text):], start
+
+
 def _run_edit_block(conn, ws: str, scope: dict, args: dict):
+    mode = str(args.get("mode") or "replace").strip().lower()
+    sel = None
+    if mode == "selection":
+        # The block is the selection's; a block_id the model adds must agree.
+        sel = find_selection(scope, args.get("selection"))
+        if not sel:
+            labels = [s["label"] for s in scope.get("note_selections") or []]
+            return ("error: the user selected no note text for this message — use another mode"
+                    if not labels else
+                    f"error: name the selection to edit — one of {', '.join(labels)}"), None
+        if args.get("block_id") and args.get("block_id") != sel["block_id"]:
+            return f'error: selection {sel["label"]} is in block [{sel["block_id"]}], not that one', None
+        args = {**args, "block_id": sel["block_id"]}
     loaded, error = _load_scoped_block(conn, scope, args.get("block_id"))
     if error:
         return error, None
@@ -503,7 +542,6 @@ def _run_edit_block(conn, ws: str, scope: dict, args: dict):
     content = args.get("content")
     if not isinstance(content, str):
         return "error: content must be a string (the block's markdown)", None
-    mode = str(args.get("mode") or "replace").strip().lower()
     if mode not in EDIT_MODES:
         return f"error: mode must be one of {', '.join(EDIT_MODES)}", None
     if mode == "patch":
@@ -515,6 +553,14 @@ def _run_edit_block(conn, ws: str, scope: dict, args: dict):
         content, err = patch_block_text(block["content"] or "", find, content)
         if err:
             return err, None
+    elif mode == "selection":
+        # Exactly the range the user selected; the rest is never retyped.
+        replacement = content
+        content, start = replace_selection_text(block["content"] or "", sel, replacement)
+        if content is None:
+            return start, None
+        # A second edit this turn rewrites what the first one left there.
+        sel.update({"from": start, "to": start + len(replacement), "text": replacement})
     elif mode != "replace":
         # Append/prepend never retype the existing text: the model sends only
         # the addition, joined on its own line(s). A blank line keeps a new
@@ -532,7 +578,7 @@ def _run_edit_block(conn, ws: str, scope: dict, args: dict):
         conn, page_id, [{"op": "set", "id": block["id"], "content": content, "base": block["content"] or ""}],
         actor=scope.get("actor", ""), client="ai"))
     verb = {"replace": "Edited", "append": "Appended to", "prepend": "Prepended to",
-            "patch": "Edited part of"}[mode]
+            "patch": "Edited part of", "selection": "Edited the selection in"}[mode]
     return (f'ok — block [{block["id"]}] updated' + (f" ({mode})" if mode != "replace" else ""),
             {"kind": "edit", "page_id": page_id, "block_id": block["id"], "mode": mode,
              "summary": f"{verb} a note in “{page_title[:60]}”"})
@@ -1019,7 +1065,11 @@ TOOLS = [
                 "existing text on its own line (send ONLY the addition — the existing "
                 "text is kept untouched, no read needed); \"patch\" replaces just the "
                 "passage `find` (quoted exactly as read_block shows it, occurring once) "
-                "with `content` — an empty `content` cuts it. Prefer append when asked "
+                "with `content` — an empty `content` cuts it; \"selection\" replaces "
+                "exactly the note text the user selected (`selection`: its label, e.g. "
+                "\"S1\"; the block is the selection's) with `content`, touching nothing "
+                "else. When the user selected text, a change to it is ALWAYS a "
+                "selection edit. Otherwise prefer append when asked "
                 "to add, extend, note something, or continue a block; patch to delete, "
                 "shorten or correct one part of a long block; replace only for a full "
                 "rewrite. Use exact block ids from read_block (never page ids — "
@@ -1029,16 +1079,21 @@ TOOLS = [
                 "type": "object",
                 "properties": {"block_id": {"type": "string"},
                                "mode": {"type": "string",
-                                        "enum": ["replace", "append", "prepend", "patch"],
-                                        "description": "replace (default), append, prepend or patch"},
+                                        "enum": list(EDIT_MODES),
+                                        "description": "replace (default), append, prepend, patch or selection"},
                                "find": {"type": "string",
                                         "description": "patch only: the exact existing text "
                                                        "to replace or cut (must occur once)"},
+                               "selection": {"type": "string",
+                                             "description": "selection only: the label of the "
+                                                            "user's selection (\"S1\", …)"},
                                "content": {"type": "string",
                                            "description": "replace: the block's full new "
                                                           "markdown; append/prepend: only "
                                                           "the text to add; patch: what "
-                                                          "replaces `find` (\"\" to cut it)"}},
+                                                          "replaces `find` (\"\" to cut it); "
+                                                          "selection: what replaces the "
+                                                          "selected text"}},
                 "required": ["block_id", "content"],
             },
         },
@@ -1139,6 +1194,16 @@ def agent_system(scope: dict, perms: dict | None = None, base: str = "") -> str:
         text += (f'The user\'s cursor is on note block "{focus}" (its text is in the '
                  'context): "this block", "here", "this note" refer to it — edit or '
                  "extend it directly by that id, no read_block needed.\n")
+    sels = scope.get("note_selections") or []
+    if sels and "edit_block" in names:
+        text += ("The user selected text in their notes (" + ", ".join(
+                     f'{s["label"]} in block "{s["block_id"]}"' for s in sels)
+                 + '; the passages are quoted after their message). "This", "the selection" '
+                 "mean it. An instruction that transforms it — rewrite, fix, shorten, expand, "
+                 "translate, reformat, restyle — is an edit in place: call edit_block with mode "
+                 "\"selection\" and its label instead of writing the new text in your reply, and "
+                 "never rewrite the rest of the block. A question about it is answered in the "
+                 "chat without editing.\n")
     chips = [b for b in (scope.get("context_blocks") or []) if b and b != scope.get("page_id")]
     if chips:
         text += ("The user attached these note blocks to the message (text in the "

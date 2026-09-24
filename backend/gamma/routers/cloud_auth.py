@@ -5,9 +5,14 @@
 - ``GET /api/auth/cloud/start?next=&link=1`` → redirect to the account
   server (``link=1`` with a session attaches the identity to that account);
 - ``GET /api/auth/cloud/callback?code=&state=`` → session cookie + redirect
-  to ``next``, or back to the login page with ``?cloud_error=``;
+  to ``next``, or back to the login page with ``?cloud_error=``; the
+  preference profile is pulled before the redirect and this server put on
+  the person's server list (gamma/cloud_sync.py);
 - ``GET /api/auth/cloud/status`` / ``POST /api/auth/cloud/unlink`` for the
-  signed-in account's own identity (Settings → Account).
+  signed-in account's own identity (Settings → Account); an unlink takes
+  this server off the person's server list and revokes the grant.
+- ``GET /api/auth/cloud/sync-status``: the signed-in account's own
+  preference profile sync state (Settings' section tags), from memory.
 """
 
 from urllib.parse import urlencode
@@ -15,7 +20,7 @@ from urllib.parse import urlencode
 from fastapi import APIRouter, HTTPException, Request
 from fastapi.responses import RedirectResponse
 
-from .. import cloud_auth, ratelimit
+from .. import cloud_auth, cloud_sync, ratelimit
 from ..auth import require_personal_user, require_user, set_session_cookie
 from ..cloud_auth import CloudAuthError
 from ..db import connect_users_db
@@ -29,7 +34,7 @@ router = APIRouter()
 async def server_config():
     cfg = cloud_auth.settings()
     return {"cloud": {"enabled": cfg["enabled"], "issuer": cfg["issuer"] if cfg["enabled"] else ""},
-            "password_login": True, "registration": False}
+            "password_login": True, "registration": False, "guest": not cfg["share_host"]}
 
 
 @router.get("/api/auth/cloud/start")
@@ -68,7 +73,8 @@ def cloud_callback(request: Request, code: str = "", state: str = "", error: str
         log.info(f"cloud sign-in refused: {e}")
         cloud_auth.revoke_later([refresh])  # a refused sign-in leaves no device behind at the account server
         return _login_redirect(str(e))
-    token = new_session(username)
+    cloud_sync.signed_in(request, username, claims["sub"], tokens)
+    token = new_session(username, via="cloud")
     resp = RedirectResponse(next_path, status_code=302, headers={"Cache-Control": "no-store"})
     set_session_cookie(resp, token, request)
     return resp
@@ -77,7 +83,19 @@ def cloud_callback(request: Request, code: str = "", state: str = "", error: str
 @router.get("/api/auth/cloud/status")
 async def cloud_status(request: Request):
     user = require_user(request)
-    return {"identity": cloud_auth.status_of(user), "enabled": cloud_auth.settings()["enabled"]}
+    cfg = cloud_auth.settings()
+    # the issuer is the portal's address too: Settings → Account opens it from here
+    return {"identity": cloud_auth.status_of(user), "enabled": cfg["enabled"], "issuer": cfg["issuer"]}
+
+
+@router.get("/api/auth/cloud/sync-status")
+def cloud_sync_status(request: Request):
+    """The caller's profile sync state (``cloud_sync.profile_status``) and
+    whether a cloud identity is linked. A browser session only; no network."""
+    user = require_personal_user(request, "The guest account keeps its settings in the browser.")
+    identity = cloud_auth.status_of(user)
+    linked = {"linked": True, "username": identity.get("username", "")} if identity else {"linked": False}
+    return {"profile": cloud_sync.profile_status(user), "identity": linked}
 
 
 @router.post("/api/auth/cloud/unlink")
@@ -86,7 +104,7 @@ async def cloud_unlink(request: Request):
     password, so unlinking would lock it out: refused until a password is
     set."""
     user = require_personal_user(request, "unlink from a browser session")
-    held = cloud_auth.refresh_token_of(user)
+    subject, held = cloud_auth.grant_of(user)
     with connect_users_db() as conn:
         row = conn.execute("SELECT password_hash FROM users WHERE username = ?", (user,)).fetchone()
         if not row or not row[0]:
@@ -94,6 +112,6 @@ async def cloud_unlink(request: Request):
         if not cloud_auth.unlink(conn, user):
             raise HTTPException(404, "no Gamma Cloud account is linked")
         conn.commit()
-    cloud_auth.revoke_later([held])
+    cloud_sync.release_later(subject, held)
     log.info(f"cloud sign-in: {user} unlinked")
     return {"ok": True}

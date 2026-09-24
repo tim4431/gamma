@@ -1,5 +1,6 @@
 import React from "react";
 import { PaneHead, Section, Row, Toggle, Stepper, PictureChoices } from "./SettingsKit";
+import { SECTION_PREFS } from "./sectionPrefs.js";
 import { ContrastIcon, LayoutIcon, MaximizeIcon, MoonIcon } from "../shared/ui/Icons";
 import { ThemePreview, PdfPreview } from "../shared/illustrations";
 import { UI_SCALE } from "../app/prefs";
@@ -21,12 +22,12 @@ export function AppearanceSettings({ value, diagnostics }) {
     <div className="appearanceSettings">
       <PaneHead icon={ContrastIcon} title="Appearance" />
 
-      <Section title="Theme" action={<span className="setScope">Your account</span>}>
+      <Section title="Theme" scope="account" prefs={SECTION_PREFS.appearance["Theme"]}>
         <PictureChoices label="Theme" value={value.theme} onChange={value.setTheme}
           options={THEMES.map((theme) => ({ value: theme[0], label: theme[1], hint: theme[2], preview: <ThemePreview theme={theme} dark={DARK} /> }))} />
       </Section>
 
-      <Section title="PDF pages" action={<span className="setScope">Your account</span>}>
+      <Section title="PDF pages" scope="account" prefs={SECTION_PREFS.appearance["PDF pages"]}>
         <div className="appearancePdf">
           <PdfPreview dark={value.pdfDarkPage || value.theme === "gamma-dark"} />
           <div className="appearancePdfControls">
@@ -38,7 +39,7 @@ export function AppearanceSettings({ value, diagnostics }) {
         </div>
       </Section>
 
-      <Section title="Interface" action={<span className="setScope">This browser</span>}>
+      <Section title="Interface" scope="browser">
         <div className="appearanceInterface">
           <Row icon={MaximizeIcon} label="Interface size" hint="Text, buttons, icons and switches."
             title="PDF zoom stays separate. To further resize notes or chat text, hold Ctrl (⌘ on Mac) and scroll over that panel.">

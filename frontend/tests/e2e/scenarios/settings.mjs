@@ -347,6 +347,40 @@ export async function settingsScenarios(env) {
     } finally { await ctx.close(); }
   });
 
+  await step("settings: section tags say where settings live and whether each section's settings are saved", async () => {
+    const { ctx, page } = await setup();
+    try {
+      await openSettings(page);
+      const tag = (title) => page.locator(`.settingsPane .setSection[data-setting="${title}"] .setScope`);
+      const sync = (title) => tag(title).getAttribute("data-sync");
+      // a password account without Gamma Cloud: saved on this server, a check and one word
+      await until(() => sync("Theme").then((v) => v === "saved"));
+      assertEq(await tag("Theme").innerText(), "account");
+      assertEq(await tag("Theme").locator("svg").count(), 1);
+      assert((await tag("Theme").getAttribute("title")).startsWith("Saved on this server."));
+      assert((await tag("Theme").getAttribute("aria-label")).startsWith("Account setting. Saved on this server."));
+      // a device section stays with the browser: a monitor and one word
+      assertEq(await sync("Interface"), "browser");
+      assertEq(await tag("Interface").innerText(), "browser");
+      assertEq(await tag("Interface").locator("svg").count(), 1);
+      // one change spins only the section holding it
+      await nav(page, "Reading & editing").click();
+      await until(() => sync("Notes").then((v) => v === "saved"));
+      await row(page, "Enter key").getByRole("button", { name: "New note", exact: true }).click();
+      await until(() => sync("Notes").then((v) => v === "syncing"));
+      assertEq(await sync("Search opens as"), "saved");
+      assertEq(await sync("PDF viewer"), "saved");
+      await until(() => sync("Notes").then((v) => v === "saved"));
+      assertEq((await user.api("/api/prefs/profile")).value?.enterNewNote, true);
+      await nav(page, "Appearance").click();
+      assertEq(await sync("Theme"), "saved");
+      await nav(page, "Reading & editing").click();
+      await row(page, "Enter key").getByRole("button", { name: "New line", exact: true }).click();
+      await until(async () => (await user.api("/api/prefs/profile")).value?.enterNewNote === false);
+      assertNoProblems(page);
+    } finally { await ctx.close(); }
+  });
+
   await step("settings: navigation, search, scoped management, and preferences survive reload", async () => {
     const { ctx, page } = await setup();
     try {
@@ -356,7 +390,7 @@ export async function settingsScenarios(env) {
         await page.getByRole("button", { name: label, exact: true }).click();
         await until(() => page.locator("html").getAttribute("data-theme").then((v) => v === theme));
         assertEq(await page.evaluate(() => getComputedStyle(document.documentElement).colorScheme), scheme);
-        await until(async () => (await user.api("/api/prefs/appearance")).value?.theme === theme);
+        await until(async () => (await user.api("/api/prefs/profile")).value?.theme === theme);
         await page.reload();
         await page.waitForSelector(".folderNewBtn");
         assertEq(await page.locator("html").getAttribute("data-theme"), theme);
@@ -370,7 +404,7 @@ export async function settingsScenarios(env) {
       await page.getByRole("button", { name: "Solarized Light", exact: true }).click();
       await until(() => page.locator("html").getAttribute("data-theme").then((v) => v === "solarized"));
       assertEq(await page.evaluate(() => getComputedStyle(document.documentElement).getPropertyValue("--text-primary").trim()), "#657b83");
-      await until(async () => (await user.api("/api/prefs/appearance")).value?.theme === "solarized");
+      await until(async () => (await user.api("/api/prefs/profile")).value?.theme === "solarized");
       await page.reload();
       await page.waitForSelector(".folderNewBtn");
       await until(() => page.locator("html").getAttribute("data-theme").then((v) => v === "solarized"));
@@ -379,10 +413,10 @@ export async function settingsScenarios(env) {
       assertEq(await themes.getByRole("button").count(), 8);
       assertEq(await themes.locator('[aria-pressed="true"]').count(), 1);
       await page.getByRole("checkbox", { name: "Dark PDF pages", exact: true }).check();
-      await until(() => user.api("/api/prefs/appearance").then((v) => v.value?.pdfDark === true));
+      await until(() => user.api("/api/prefs/profile").then((v) => v.value?.pdfDarkPage === true));
       assert(await page.locator(".appearancePdfPreview.isDark").isVisible());
       await page.getByRole("checkbox", { name: "Dark PDF pages", exact: true }).uncheck();
-      await until(() => user.api("/api/prefs/appearance").then((v) => v.value?.pdfDark === false));
+      await until(() => user.api("/api/prefs/profile").then((v) => v.value?.pdfDarkPage === false));
       await row(page, "Interface size").getByRole("button", { name: "Larger", exact: true }).click();
       assert((await row(page, "Interface size").innerText()).includes("110%"));
       await row(page, "Interface size").getByRole("button", { name: "Reset", exact: true }).click();
@@ -400,6 +434,17 @@ export async function settingsScenarios(env) {
       await row(page, "Parallel requests").locator("input").fill("7");
       await row(page, "Parallel requests").locator("input").press("Tab");
       await until(() => page.evaluate(() => localStorage.getItem("gamma-translate-parallel")).then((v) => v === "7"));
+      // An account preference reaches the account's profile; a device one never does.
+      await until(() => user.api("/api/prefs/profile").then((v) => v.value?.translateParallel === 7));
+      assert(!("uiScale" in (await user.api("/api/prefs/profile")).value), "interface size stays with the browser");
+      // A fresh browser signed in to the same account picks the profile up.
+      const other = await user.context(browser);
+      try {
+        const fresh = await openPage(other, server.base);
+        await until(() => fresh.evaluate(() => localStorage.getItem("gamma-translate-parallel")).then((v) => v === "7"));
+        assertEq(await fresh.evaluate(() => localStorage.getItem("gamma-theme")), "solarized");
+        assertNoProblems(fresh);
+      } finally { await other.close(); }
       await nav(page, "Workspaces").click();
       await page.getByRole("button", { name: "Manage", exact: true }).first().click();
       await page.getByRole("button", { name: "Back to workspaces", exact: true }).waitFor();
@@ -599,6 +644,86 @@ export async function settingsScenarios(env) {
     } finally { await ctx.close(); }
   });
 
+  await step("settings: Report a problem gathers diagnostics and opens the prefilled GitHub bug form", async () => {
+    const { ctx, page } = await setup();
+    try {
+      // window.open would leave the test; record the URL instead.
+      await page.evaluate(() => { window.__opened = []; window.open = (u) => { window.__opened.push(u); return {}; }; });
+      await page.getByRole("button", { name: "Account & settings", exact: true }).click();
+      await page.getByRole("button", { name: "Report a problem…", exact: true }).click();
+      const dialog = page.getByRole("dialog", { name: "Report a problem", exact: true });
+      await dialog.waitFor();
+      const open = dialog.getByRole("button", { name: "Open GitHub issue", exact: true });
+      assert(await open.isDisabled(), "nothing to report yet");
+      await dialog.getByLabel("What happened").fill("A blue line stays on the notes\nafter a drag");
+      await dialog.getByLabel("How to reproduce").fill("drag a block, drop it outside");
+      await dialog.getByText("Preview the report", { exact: true }).click();
+      const preview = await dialog.locator("pre").textContent();
+      assert(/\*\*Build:\*\* Gamma .+ · (server|checkout|desktop app)/.test(preview), `build line in ${preview}`);
+      assert(/\*\*Browser:\*\* .+ on .+ · \d+×\d+/.test(preview), "browser line");
+      assert(/\*\*View:\*\* home.* · workspace: personal, owner$/m.test(preview), `view line in ${preview}`);
+      assert(!preview.includes("Server (seen as admin)"), "a member sees no server section");
+      // The toggle folds the diagnostics away — and the preview with them.
+      await dialog.getByRole("checkbox", { name: "Include diagnostics" }).uncheck();
+      assertEq(await dialog.locator("pre").count(), 0, "no preview without diagnostics");
+      await dialog.getByRole("checkbox", { name: "Include diagnostics" }).check();
+      // A screen recording: the browser's picker is stubbed with a canvas
+      // stream (a real MediaStream, so MediaRecorder runs for real). The
+      // dialog folds into the pill meanwhile and comes back with the file.
+      await page.evaluate(() => {
+        navigator.mediaDevices.getDisplayMedia = async () => {
+          const c = document.createElement("canvas");
+          c.width = 64; c.height = 64;
+          const g = c.getContext("2d");
+          setInterval(() => { g.fillStyle = `hsl(${Date.now() % 360} 80% 50%)`; g.fillRect(0, 0, 64, 64); }, 40);
+          return c.captureStream(10);
+        };
+      });
+      await dialog.getByRole("button", { name: "Record…", exact: true }).click();
+      await dialog.waitFor({ state: "detached" });
+      const pill = page.locator(".reportRecordPill");
+      await pill.waitFor();
+      assert(/Recording \d:\d\d/.test(await pill.textContent()), "the pill shows a clock");
+      await page.waitForTimeout(1500);
+      await pill.getByRole("button", { name: "Stop", exact: true }).click();
+      await dialog.waitFor();
+      const recRow = dialog.locator('[data-setting="Screen recording"]');
+      await until(async () => /gamma-recording-\d{8}-\d{4}\.(webm|mp4) · 0:0\d · \d+(\.\d+)? [KM]B/.test(await recRow.textContent()), { what: "the recording's row" });
+      assertEq(await dialog.getByLabel("What happened").inputValue(), "A blue line stays on the notes\nafter a drag", "the draft survives the recording");
+      const download = page.waitForEvent("download");
+      await recRow.getByRole("button", { name: "Save", exact: true }).click();
+      const file = await download;
+      assert(/^gamma-recording-\d{8}-\d{4}\.(webm|mp4)$/.test(file.suggestedFilename()), `saved as ${file.suggestedFilename()}`);
+      await until(async () => (await recRow.textContent()).includes("· saved"), { what: "the saved tag" });
+      await open.click();
+      await dialog.waitFor({ state: "detached" });
+      const url = new URL(await until(() => page.evaluate(() => window.__opened[0]), { what: "the GitHub tab" }));
+      assertEq(`${url.origin}${url.pathname}`, "https://github.com/tim4431/gamma/issues/new");
+      assertEq(url.searchParams.get("template"), "bug_report.yml");
+      assertEq(url.searchParams.get("title"), "A blue line stays on the notes");
+      assertEq(url.searchParams.get("description"), "A blue line stays on the notes\nafter a drag");
+      assert(/^drag a block, drop it outside\n\nScreen recording: `gamma-recording-\d{8}-\d{4}\.(webm|mp4)` \(dropped into this issue by the reporter\)\.$/.test(url.searchParams.get("steps")), `steps name the recording: ${url.searchParams.get("steps")}`);
+      assert(url.searchParams.get("diagnostics").includes("**Build:**"), "diagnostics ride along");
+      // The Diagnostics pane's Help row opens the same dialog; an admin's
+      // report adds the server dashboard and log.
+      server.manage("set-admin", "settings-user", "on");
+      await page.reload();
+      await page.waitForSelector(".folderNewBtn");
+      await openSettings(page);
+      await nav(page, "Diagnostics").click();
+      await row(page, "Report a problem").getByRole("button", { name: "Report…", exact: true }).click();
+      await dialog.waitFor();
+      await dialog.getByText("Preview the report", { exact: true }).click();
+      await until(async () => (await dialog.locator("pre").textContent()).includes("**Server (seen as admin):** Gamma"), { what: "the admin's server section" });
+      await dialog.getByRole("button", { name: "Close Report a problem", exact: true }).click();
+      await dialog.waitFor({ state: "detached" });
+      assertNoProblems(page);
+    } finally {
+      server.manage("set-admin", "settings-user", "off");
+      await ctx.close();
+    }
+  });
+
   await step("settings: administrators see their own account separately from all users", async () => {
     server.manage("set-admin", "settings-user", "on");
     const { ctx, page } = await setup();
@@ -642,5 +767,106 @@ export async function settingsScenarios(env) {
       assertEq(await page.getByText("Personal workspaces", { exact: true }).count(), 0);
       assertNoProblems(page);
     } finally { await ctx.close(); }
+  });
+
+  await step("settings: a shared AI provider from Server is a read-only connection for every account", async () => {
+    // settings-user is an admin since the step above.
+    server.manage("create-user", "settings-member", "settings-member-pw");
+    const member = await new Account(server, "settings-member", "settings-member-pw").login();
+    const { ctx, page } = await setup();
+    try {
+      await page.route("**/api/ai/model-catalog", (route) => route.fulfill({ json: { models: ["lab-model", "lab-big"] } }));
+      await openSettings(page);
+      await nav(page, "Server").click();
+      await row(page, "Shared AI provider").getByRole("button", { name: "+ Add provider", exact: true }).click();
+      const dialog = page.getByRole("dialog", { name: "Add shared key", exact: true });
+      // API keys only: the ChatGPT sign-in is not offered for a shared entry.
+      await dialog.getByRole("button", { name: "AI service", exact: true }).click();
+      assertEq(await page.getByText("ChatGPT subscription", { exact: true }).count(), 0);
+      await page.locator(".uiSelectMenu").getByRole("button", { name: "OpenAI API", exact: true }).click();
+      await dialog.locator('input[autocomplete="new-password"]').fill("sk-shared-e2e-key-7777");
+      await dialog.getByRole("button", { name: "2 usable" }).waitFor();
+      await dialog.getByRole("combobox", { name: "Add a model" }).click();
+      await page.getByRole("listbox", { name: "Available models" })
+        .getByRole("option", { name: "lab-model", exact: true }).click();
+      await dialog.getByRole("button", { name: "Add key", exact: true }).click();
+      await until(() => dialog.count().then((n) => n === 0));
+      await page.locator(".settingsPane .aiProvRow").filter({ hasText: "…7777" }).waitFor();
+      assert(!await row(page, "Guests may use it").locator("input").isChecked(), "guests are off by default");
+
+      // Connections: a read-only row with the tag, and its model in the pickers.
+      await nav(page, "Connections").click();
+      const shared = page.locator(".settingsPane .aiProvRow").filter({ hasText: "Shared by this server" });
+      await shared.waitFor();
+      assertEq(await shared.getByRole("button").count(), 0, "no edit or delete on a shared row");
+      await shared.getByRole("radio").check();
+      await row(page, "Default chat model").getByRole("button").click();
+      await page.locator(".uiSelectMenu").getByRole("button", { name: "lab-model", exact: true }).click();
+
+      // Another account gets the models, never the key hint.
+      const models = await member.api("/api/ai/models");
+      assert(models.models.some((m) => m.model === "lab-model" && m.shared), "member sees the shared model");
+      const mine = (await member.api("/api/ai/settings")).providers.find((p) => p.shared);
+      assertEq(mine.key_hint, "");
+      assertNoProblems(page);
+    } finally {
+      await ctx.close();
+      for (const p of (await user.api("/api/admin/ai-providers")).providers) {
+        await user.api(`/api/admin/ai-providers/${encodeURIComponent(p.id)}`, { method: "DELETE" });
+      }
+    }
+  });
+
+  // The red dot (app/notices.js): the feed is faked so no real error or
+  // release is needed; the acks go to the real server.
+  await step("settings: a notice dots the account button and Settings… lands on its pane", async () => {
+    server.manage("set-admin", "settings-user", "on");
+    const ctx = await user.context(browser);
+    try {
+      await ctx.addInitScript(() => localStorage.setItem("gamma-ai-login-check", "off"));
+      const seen = [];
+      let notices = [
+        { id: "update", fingerprint: "9.9.9", tone: "warn", pane: "server", title: "Gamma v9.9.9 is available" },
+        { id: "backup-failed", fingerprint: "t1", tone: "error", pane: "backups", title: "A backup task failed" },
+      ];
+      await ctx.route("**/api/notices", (route) => route.fulfill({ json: { notices } }));
+      await ctx.route("**/api/notices/*/seen", async (route) => {
+        const id = route.request().url().match(/notices\/([^/]+)\/seen/)[1];
+        seen.push(`${id}:${route.request().postDataJSON().fingerprint}`);
+        notices = notices.filter((n) => n.id !== id);
+        await route.continue();
+      });
+      const page = await openPage(ctx, server.base);
+      await page.waitForSelector(".folderNewBtn");
+      const account = page.getByRole("button", { name: "Account & settings", exact: true });
+      await account.locator(".noticeDot").waitFor();
+      assertEq(await account.locator(".noticeDot").getAttribute("data-tone"), "error", "the strongest notice colours the dot");
+      await account.click();
+      const item = page.getByRole("button", { name: "Settings…", exact: true });
+      await item.locator(".noticeDot").waitFor();
+      await item.click();
+      await page.getByRole("dialog", { name: "Settings", exact: true }).waitFor();
+      // Lands on the strongest notice's pane; the visit resolves it and the
+      // other pane keeps its dot.
+      assertEq(await nav(page, "Backups").getAttribute("aria-current"), "page", "Settings… opens the dotted pane");
+      await until(() => seen.length === 1, { what: "the ack of the visited pane" });
+      assertEq(seen[0], "backup-failed:t1");
+      await nav(page, "Server").locator(".noticeDot").waitFor();
+      assertEq(await nav(page, "Backups").locator(".noticeDot").count(), 0);
+      assertEq(await account.locator(".noticeDot").getAttribute("data-tone"), "warn");
+      await nav(page, "Server").click();
+      await until(() => seen.length === 2, { what: "the second ack" });
+      assertEq(seen[1], "update:9.9.9");
+      await until(() => nav(page, "Server").locator(".noticeDot").count().then((n) => n === 0));
+      assertEq(await account.locator(".noticeDot").count(), 0, "nothing left to see");
+      // The ack is stored with the account (posted after the dot has gone),
+      // so other browsers agree.
+      await until(async () => (await user.api("/api/prefs/notices-seen")).value?.update === "9.9.9",
+        { what: "the ack stored with the account" });
+      assertNoProblems(page);
+    } finally {
+      await ctx.close();
+      await user.api("/api/prefs/notices-seen", { method: "PUT", body: { value: {} } });
+    }
   });
 }

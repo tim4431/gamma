@@ -28,6 +28,51 @@ The owner can then invite existing accounts:
 A shared workspace must retain at least one owner. To transfer ownership,
 make another member an owner before removing or demoting the current owner.
 
+### Pending invitations (Gamma Cloud usernames)
+
+When this server signs people in with Gamma Cloud
+([cloud_accounts.md](cloud_accounts.md)), an owner or an administrator can
+also invite a person who has no account here yet by their **Gamma Cloud
+username**. The invite editor then offers "On this server" or "Gamma Cloud
+username". Such an invitation grants edit or view access, never ownership:
+
+1. The server asks the account server for the account with exactly that
+   username (`GET <issuer>/api/lookup/username?u=`, bearer access token).
+   The answer is the account's stable id, its **subject**. If no account
+   has that username, the invitation is refused.
+2. If a local account is already linked to that subject (`identities`),
+   that account becomes a member immediately.
+3. Otherwise a row in `pending_memberships` (users.db: workspace, subject,
+   the username as typed in lowercase, role, inviter, time; one per
+   workspace and subject) records the invitation. Inviting the same
+   username again changes its role.
+4. **The claim.** Each cloud sign-in calls
+   `workspaces.claim_pending_memberships(username, subject)` from
+   `cloud_auth.resolve_account`, after the local account is known. The local
+   account can be newly provisioned, claimed by username, linked from
+   Settings → Account, or already linked. Every pending row for that subject
+   becomes a `workspace_members` row with its role, and the pending rows are
+   deleted. If the person is already a member, the existing role stays.
+   Rows for a workspace that is gone or no longer shared are dropped.
+
+Pending rows are keyed by subject, not by username, so a later rename on
+either side does not redirect an invitation. `GET /workspaces/{id}` lists
+pending rows after the members, tagged `pending: true` with their `subject`.
+The Manage page shows them with a *pending* tag and a remove button that
+withdraws the invitation. Deleting a workspace removes its pending rows, and
+so does converting it to personal. Counts of `members` include explicit
+members only. Invitations require cloud sign-in on this server, and the
+lookup is rate limited per inviting account. Code: `backend/gamma/workspaces.py`
+(`invite_cloud`, `claim_pending_memberships`); tests:
+`backend/tests/test_pending_memberships.py`.
+
+The lookup runs on the inviter's own Gamma Cloud grant: an access token from
+the refresh token stored with their linked identity
+(`cloud_auth.access_token_for`, [cloud_accounts.md](cloud_accounts.md)). An
+inviter whose account here is not linked to Gamma Cloud is refused with
+"Link your own Gamma Cloud account" (503), and so is one whose grant the
+account server does not honour.
+
 Administrators also choose shared workspace access:
 
 - **Private:** only explicit members can open it.
@@ -90,7 +135,8 @@ database rows without moving files. Schema upgrades run through the
 [versioned migration system](migrations.md).
 
 Workspace members share chats and cover snapshots as well as pages. AI keys,
-provider choice and appearance belong to the account. Open tabs, recents,
+provider choice and the preference profile (appearance, reading, library and
+chat settings, [settings.md](settings.md)) belong to the account. Open tabs, recents,
 reading positions and saved layouts belong to an **account and workspace**.
 Their browser caches use `user@workspace`; another account opening the same
 shared library gets its own reading state. Unscoped legacy session caches are
@@ -141,13 +187,17 @@ in the [API reference](api.md).
 | `DELETE /workspaces/{id}` | Delete the workspace, its content and its saved workspace backups |
 | `PUT /workspaces/{id}/members/{user}` | Invite or change a membership role |
 | `DELETE /workspaces/{id}/members/{user}` | Remove a member, or leave your own explicit membership |
+| `POST /workspaces/{id}/invites` | Invite by Gamma Cloud username (`{username, role}`): a membership now, or a pending one |
+| `GET /workspaces/{id}/invites` | Pending invitations waiting for a first cloud sign-in |
+| `DELETE /workspaces/{id}/invites/{subject}` | Withdraw a pending invitation |
 | `GET /workspaces/find-page/{id}` | Locate a page or block among accessible workspaces |
 | `GET /accounts` | `{accounts: [{username, is_admin}]}` for invite and owner pickers; non-guest accounts only |
 | `GET /admin/workspaces` | Administrator's inventory, including orphaned directories |
 
 `GET /session` and `/workspaces/mine` use `members` as a count. Workspace
-details use `members` as an array. Details report `personal_of` as the owner's
-username; the session list instead has a boolean `personal`.
+details use `members` as an array, with pending invitations last
+(`pending: true`). Details report `personal_of` as the owner's username; the
+session list instead has a boolean `personal`.
 
 ## Browser startup and switching
 
@@ -216,7 +266,9 @@ edits made there are pulled. The desktop app makes one from the switcher
 (the *clone* chip on a remote workspace's row); any Gamma makes one from
 Settings → Workspaces → Clones with the server's address and a write-scope
 integration token made there. `GET /workspaces/mine` marks such a workspace
-with `mirror_of`. The whole design — the change feed, the three-way merge,
+with `mirror_of`; a workspace that publishes pages to Gamma Cloud (a
+filtered mirror of the share host) is not a clone and is marked
+`publishing` instead. The whole design — the change feed, the three-way merge,
 edit-beats-delete, the conflict list — is [mirror.md](mirror.md).
 
 ## Current limits
@@ -231,4 +283,5 @@ edit-beats-delete, the conflict list — is [mirror.md](mirror.md).
 
 The historical reasoning is in [research/workspaces.md](../research/workspaces.md).
 Executable coverage is in `backend/tests/test_workspaces.py`,
+`backend/tests/test_pending_memberships.py`,
 `frontend/tests/sessionState.test.mjs` and `frontend/tests/e2e/`.

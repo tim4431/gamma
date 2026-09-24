@@ -8,15 +8,21 @@
 // each resolved here or opened on its block. "Clone a remote workspace"
 // asks for the server address and a write token made there (Settings →
 // Integrations on that server), into a new workspace or an existing one.
+//
+// A publication (a mirror with a page filter, the pages a workspace
+// publishes to Gamma Cloud; docs/dev/mirror.md "Publishing") is not a clone:
+// it is listed under its own "Publishing" heading with its state, the count
+// of published pages and a "more" menu of Sync now and Stop publishing all
+// (DELETE /api/pages/{id}/publish for each page), never the clone actions.
 import React from "react";
 import { API, apiJson, fmtBytes } from "../shared/lib/utils";
 import { Section, SubDialog, Field, IconChoices, Segmented, Empty } from "./SettingsKit";
 import { ActionMenu, MenuSelect } from "../shared/ui/Menus";
 import {
-  AlertCircleIcon, ArrowDownIcon, ArrowUpDownIcon, CheckIcon, CloudDownloadIcon, HardDriveIcon, LinkIcon, MoreIcon,
-  PlusIcon, RefreshIcon, TrashIcon, UnlinkIcon, UploadIcon,
+  AlertCircleIcon, ArrowDownIcon, ArrowUpDownIcon, CheckIcon, CloudDownloadIcon, CloudOffIcon, HardDriveIcon, LinkIcon,
+  MoreIcon, PlusIcon, RefreshIcon, TrashIcon, UnlinkIcon, UploadIcon,
 } from "../shared/ui/Icons";
-import { clock, hostOf, isPullOnly, mirrorState, roundSummary } from "../collaboration/MirrorPopover";
+import { clock, hostOf, isPublication, isPullOnly, mirrorState, n, roundSummary } from "../collaboration/MirrorPopover";
 import { ConflictCard, useConflicts } from "../collaboration/MergeResolver";
 
 // The account's mirrors (null while loading). `enabled` false (a guest, or
@@ -193,6 +199,32 @@ export function MirrorsSection({ mirrors, refresh, workspaces, currentId, switch
     });
   }
 
+  // Stop publishing every page of a publication: one DELETE per page, in
+  // that workspace (?ws=), each stopping the share there and deleting the copy.
+  function stopPublishing(m) {
+    const pages = m.page_filter || [];
+    confirm({
+      title: "Stop publishing all",
+      message: `The ${n(pages.length, "published page")} of “${nameOf(m)}” leave Gamma Cloud: their cloud links stop working and the copies there are deleted. The pages here stay.`,
+      confirmLabel: "Stop publishing", danger: true,
+      onConfirm: async () => {
+        setBusy(true);
+        const failed = [];
+        for (const id of pages) {
+          try {
+            await apiJson(`${API}/pages/${encodeURIComponent(id)}/publish?ws=${encodeURIComponent(m.workspace_id)}`, { method: "DELETE" });
+          } catch (err) {
+            failed.push(err.message);
+          }
+        }
+        setBusy(false);
+        setStatus?.(failed.length ? `Could not stop ${n(failed.length, "page")}: ${failed[0]}` : "Stopped publishing.");
+        refresh();
+        window.dispatchEvent(new CustomEvent("gamma:mirror"));
+      },
+    });
+  }
+
   if (conflictsOf) {
     return <MirrorConflicts mirror={conflictsOf} setStatus={setStatus} closeSettings={closeSettings} onClose={() => { setConflictsOf(null); refresh(); }} />;
   }
@@ -257,6 +289,53 @@ export function MirrorsSection({ mirrors, refresh, workspaces, currentId, switch
     );
   }
 
+  // A publication's row: its state, the pages it publishes, Sync now and
+  // Stop publishing all.
+  function publicationRow(m) {
+    const current = m.workspace_id === currentId;
+    const s = m.status || {};
+    const st = mirrorState(m);
+    const pages = m.page_filter || [];
+    const more = [
+      { icon: RefreshIcon, label: "Sync now", disabled: s.running || m.detached || m.mode === "off",
+        title: "Send local edits and bring back edits made through the cloud links", onClick: () => syncNow(m) },
+      { icon: CloudOffIcon, label: "Stop publishing all", danger: true, disabled: !pages.length,
+        title: "Every page leaves Gamma Cloud; the pages here stay", onClick: () => stopPublishing(m) },
+    ];
+    return (
+      <div key={m.workspace_id} className="aiProvRow" data-publication={m.workspace_id}>
+        <span className={`aiProvAvatar mirrorAvatar ${st.tone} ${current ? "active" : ""}`} title={st.title}>
+          <st.Icon size={15} />
+        </span>
+        <span className="aiProvMeta">
+          <span className="aiProvName">
+            {nameOf(m)}
+            {current ? <span className="uiTag">open</span> : null}
+            {s.last_error ? <span className="uiTag warn">problem</span> : null}
+            {!s.last_error && m.pending_local ? <span className="uiTag pending" title="Local edits the next round sends">unsynced edits</span> : null}
+            {m.conflicts_open ? <span className="uiTag warn">{n(m.conflicts_open, "conflict")}</span> : null}
+          </span>
+          <span className="aiProvDesc" title={m.remote_url}>
+            {n(pages.length, "published page")} · {hostOf(m.remote_url)}
+          </span>
+          <span className="aiProvDesc">{mirrorStatusLine(m)}</span>
+        </span>
+        <span className="aiProvActions">
+          {m.conflicts_open ? (
+            <button className="uiBtn sm primary" disabled={busy} onClick={() => setConflictsOf({ ...m, name: nameOf(m) })}
+              title="Blocks edited both here and through a cloud link wait for you to resolve">
+              <AlertCircleIcon size={13} /> Conflicts ({m.conflicts_open})
+            </button>
+          ) : null}
+          <ActionMenu label="More" icon={MoreIcon} iconOnly disabled={busy} items={more} />
+        </span>
+      </div>
+    );
+  }
+
+  const clones = (mirrors || []).filter((m) => !isPublication(m));
+  const publications = (mirrors || []).filter(isPublication);
+
   return (
     <>
       <Section
@@ -268,12 +347,13 @@ export function MirrorsSection({ mirrors, refresh, workspaces, currentId, switch
         )}
       >
         {mirrors === null ? <Empty icon={CloudDownloadIcon}>Loading…</Empty>
-          : mirrors.length ? mirrors.map(row)
+          : clones.length ? clones.map(row)
           : <Empty icon={CloudDownloadIcon}>
               <span>No clones yet.</span>
               <span className="settingDesc">A clone follows a workspace on another Gamma server, pulling and pushing changes, and opens without a connection.</span>
             </Empty>}
       </Section>
+      {publications.length ? <Section title="Publishing">{publications.map(publicationRow)}</Section> : null}
       {creating ? (
         <MirrorDialog busy={busy} error={createError} onSubmit={submit} onClose={() => setCreating(false)}
           candidates={(workspaces || []).filter((w) => w.personal && !w.mirror_of && !(mirrors || []).some((m) => m.workspace_id === w.id))} />

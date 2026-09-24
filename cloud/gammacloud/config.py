@@ -24,6 +24,10 @@ variable with a ``GAMMA_CLOUD_`` prefix; nothing is read from the request.
   is offered only when both of its values are set. Their callback URLs are
   ``<public url>/oauth/<provider>/callback``. ``GAMMA_CLOUD_GOOGLE_ONE_TAP=0``
   turns off Google's sign-in prompt on the sign-in pages.
+- ``GAMMA_CLOUD_SHARE_HOST_URL`` — the free share host's address (a Gamma
+  with ``GAMMA_CLOUD_SHARE_HOST=1``), handed to Gamma servers as ``share_host``
+  in ``GET /api/me`` and ``gamma_share_host`` in the discovery document, so
+  they know where to publish pages. Empty = no share host.
 """
 
 import os
@@ -56,6 +60,8 @@ TURNSTILE_SECRET = os.environ.get("GAMMA_CLOUD_TURNSTILE_SECRET", "")
 TURNSTILE_SITEKEY = os.environ.get("GAMMA_CLOUD_TURNSTILE_SITEKEY", "")
 
 DESKTOP_CLIENT_ID = os.environ.get("GAMMA_CLOUD_DESKTOP_CLIENT_ID", "") or "gamma-desktop"
+
+SHARE_HOST_URL = os.environ.get("GAMMA_CLOUD_SHARE_HOST_URL", "").strip().rstrip("/")
 
 GOOGLE_CLIENT_ID = os.environ.get("GAMMA_CLOUD_GOOGLE_CLIENT_ID", "").strip()
 GOOGLE_CLIENT_SECRET = os.environ.get("GAMMA_CLOUD_GOOGLE_CLIENT_SECRET", "").strip()

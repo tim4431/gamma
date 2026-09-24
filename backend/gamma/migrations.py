@@ -38,7 +38,7 @@ from contextlib import closing
 from pathlib import Path
 
 from . import backups, config
-from .db import PAGES_SCHEMA, SCHEMA_VERSION, USERS_SCHEMA, USER_PREF_KEYS, page_now, users_db_version
+from .db import PAGES_SCHEMA, SCHEMA_VERSION, USERS_SCHEMA, page_now, users_db_version
 from .logbuf import log
 from .normalize import normalize_data_db, normalize_pages_db
 
@@ -275,6 +275,11 @@ def _fresh_workspace_files(target: Path) -> None:
     create_workspace_files(target.name)
 
 
+# The account-wide pref keys when step 2 ran (frozen: db.USER_PREF_KEYS has
+# moved on since — step 17 folded `appearance` into `profile`).
+_V2_ACCOUNT_PREF_KEYS = frozenset({"ai-settings", "ai-provider", "appearance"})
+
+
 def _move_prefs(conn: sqlite3.Connection, username: str, ws_id: str, data_db: Path) -> None:
     """data.db `prefs` rows → users.db user_prefs (personal keys with
     workspace '' , the rest under the new workspace), then drop the table."""
@@ -283,7 +288,7 @@ def _move_prefs(conn: sqlite3.Connection, username: str, ws_id: str, data_db: Pa
     with closing(sqlite3.connect(str(data_db))) as ddb:
         if ddb.execute("SELECT 1 FROM sqlite_master WHERE type = 'table' AND name = 'prefs'").fetchone():
             for key, value, updated_at in ddb.execute("SELECT key, value, updated_at FROM prefs"):
-                scope = "" if key in USER_PREF_KEYS else ws_id
+                scope = "" if key in _V2_ACCOUNT_PREF_KEYS else ws_id
                 conn.execute(
                     "INSERT OR IGNORE INTO user_prefs (username, workspace_id, key, value, updated_at) "
                     "VALUES (?, ?, ?, ?, ?)", (username, scope, key, value, updated_at))
@@ -483,6 +488,70 @@ def _v15_ai_explicit_models(conn: sqlite3.Connection) -> None:
     conn.commit()
 
 
+def _v16_pending_memberships(conn: sqlite3.Connection) -> None:
+    """Adds ``pending_memberships`` (+ its subject index) in users.db: shared
+    workspace invitations waiting for a Gamma Cloud account's first sign-in
+    (gamma/workspaces.py)."""
+    conn.execute(
+        "CREATE TABLE IF NOT EXISTS pending_memberships (workspace_id TEXT NOT NULL REFERENCES workspaces(id), "
+        "subject TEXT NOT NULL, username TEXT NOT NULL, role TEXT NOT NULL, invited_by TEXT NOT NULL DEFAULT '', "
+        "created_at TEXT NOT NULL, PRIMARY KEY (workspace_id, subject))")
+    conn.execute("CREATE INDEX IF NOT EXISTS idx_pending_subject ON pending_memberships(subject)")
+    conn.commit()
+
+
+def _v17_profile(conn: sqlite3.Connection) -> None:
+    """The account-wide ``appearance`` pref ({theme, pdfDark}) becomes the
+    first two entries of the new ``profile`` pref ({theme, pdfDarkPage}, keyed
+    by the web app's preference names), keeping its updated_at; an account
+    that somehow has a profile already keeps it. ``appearance`` rows are
+    dropped."""
+    rows = conn.execute(
+        "SELECT username, value, updated_at FROM user_prefs WHERE key = 'appearance' AND workspace_id = ''").fetchall()
+    for username, value, updated_at in rows:
+        try:
+            old = json.loads(value)
+        except ValueError:
+            continue
+        if not isinstance(old, dict):
+            continue
+        profile = {}
+        if isinstance(old.get("theme"), str):
+            profile["theme"] = old["theme"]
+        if isinstance(old.get("pdfDark"), bool):
+            profile["pdfDarkPage"] = old["pdfDark"]
+        if profile:
+            conn.execute(
+                "INSERT OR IGNORE INTO user_prefs (username, workspace_id, key, value, updated_at) "
+                "VALUES (?, '', 'profile', ?, ?)", (username, json.dumps(profile), updated_at))
+    conn.execute("DELETE FROM user_prefs WHERE key = 'appearance'")
+    conn.commit()
+
+
+
+def _v18_cloud_grant(conn: sqlite3.Connection) -> None:
+    """``sessions`` gains ``via`` ('' a password or the guest, 'cloud' a
+    Gamma Cloud sign-in) and ``identities`` gains ``revoked_at``: the grant
+    check (gamma/cloud_sync.py) ends only the sessions a cloud sign-in
+    minted when the account server refuses that account's grant. Sessions
+    that exist already count as password sessions."""
+    if "via" not in _columns(conn, "sessions"):
+        conn.execute("ALTER TABLE sessions ADD COLUMN via TEXT NOT NULL DEFAULT ''")
+    if "revoked_at" not in _columns(conn, "identities"):
+        conn.execute("ALTER TABLE identities ADD COLUMN revoked_at TEXT NOT NULL DEFAULT ''")
+    conn.commit()
+
+
+def _v19_mirror_page_filter(conn: sqlite3.Connection) -> None:
+    """``mirrors`` gains ``page_filter``: NULL (every page travels, what
+    every existing mirror keeps) or a JSON list of page ids, the only pages a
+    round looks at — a page published to the share host
+    (gamma/sync_engine.py, gamma/publish.py)."""
+    if "page_filter" not in _columns(conn, "mirrors"):
+        conn.execute("ALTER TABLE mirrors ADD COLUMN page_filter TEXT")
+    conn.commit()
+
+
 STEPS = [
     (1, "baseline", _v1_baseline),
     (2, "workspaces", _v2_workspaces),
@@ -499,4 +568,8 @@ STEPS = [
     (13, "sync_conflict_base", _v13_sync_conflict_base),
     (14, "identities", _v14_identities),
     (15, "ai_explicit_models", _v15_ai_explicit_models),
+    (16, "pending_memberships", _v16_pending_memberships),
+    (17, "profile", _v17_profile),
+    (18, "cloud_grant", _v18_cloud_grant),
+    (19, "mirror_page_filter", _v19_mirror_page_filter),
 ]

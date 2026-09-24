@@ -263,7 +263,7 @@ def test_final_prompt_labels_passages():
     from types import SimpleNamespace
     from gamma.ai_context import final_prompt
 
-    payload = SimpleNamespace(prompt="explain", selection="", note_passages=[],
+    payload = SimpleNamespace(prompt="explain", selection="", note_selections=[],
                               selections=[{"text": "H = ∑ ω", "page": 4, "box": [0, 0, 1, 1]}])
     assert "Selected passage (PDF page 4):" in final_prompt(payload)
     text = final_prompt(payload, [{"page": 4, "section": "Methods › Noise", "found": False, "crop": True}])

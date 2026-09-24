@@ -7,7 +7,9 @@
 // than once, the rendered text on either side (matched loosely, skipping
 // markup the source has and the rendered view doesn't) picks the occurrence.
 // The same lookup finds where a rendered block begins, for the hover line in
-// the gap between two blocks that opens the editor on a line between them.
+// the gap between two blocks that opens the editor on a line between them,
+// and the source range a Ctrl-selection of rendered text covers, for the
+// chat's selection chip.
 // `locateInSource` and `gapInSource` are pure; the rest reads the DOM.
 
 const CTX = 40; // characters of context taken on each side of the click
@@ -122,17 +124,11 @@ function contextAt(container, node, offset) {
   };
 }
 
-// The context for locateInSource of a click at (x, y) inside `container`
-// (a block's rendered view), or null when it didn't hit its text.
-export function renderedClickContext(container, x, y) {
-  const hit = caretAt(x, y);
-  return hit ? contextAt(container, hit.node, hit.offset) : null;
-}
-
-// The source offset a click on the rendered view points at, or null.
+// The source offset a click at (x, y) on `container` (a block's rendered
+// view) points at, or null when it didn't hit the note's own text.
 export function sourceOffsetAtPoint(container, source, x, y) {
-  if (!container) return null;
-  return locateInSource(source, renderedClickContext(container, x, y));
+  const hit = container && caretAt(x, y);
+  return hit ? locateInSource(source, contextAt(container, hit.node, hit.offset)) : null;
 }
 
 // ---- gaps between the rendered view's blocks (paragraphs, formulas, lists…)
@@ -154,13 +150,16 @@ export function gapInSource(source, at, spans = []) {
 
 // The rendered view's top-level blocks, top to bottom, with the gap between
 // each pair: [{y, half, below}] — `y` the gap's middle (client coords),
-// `half` its hover reach, `below` the block under it.
+// `half` its hover reach, `below` the block under it. The reach covers the
+// gap plus up to 6px into each block (a third of the shorter one at most, so
+// the reaches around a short block — an empty line — never meet).
 export function renderedGaps(container, skip) {
   const kids = [...container.children].filter((k) => k !== skip && k.getClientRects().length);
   const gaps = [];
   for (let i = 1; i < kids.length; i++) {
     const a = kids[i - 1].getBoundingClientRect(), b = kids[i].getBoundingClientRect();
-    gaps.push({ y: (a.bottom + b.top) / 2, half: Math.max(4, (b.top - a.bottom) / 2), below: kids[i] });
+    const into = Math.min(6, a.height / 3, b.height / 3);
+    gaps.push({ y: (a.bottom + b.top) / 2, half: Math.max(2, (b.top - a.bottom) / 2) + into, below: kids[i] });
   }
   return gaps;
 }
@@ -174,4 +173,38 @@ export function blockStartInSource(container, source, below) {
     return locateInSource(source, contextAt(container, n, n.data.length - n.data.trimStart().length));
   }
   return null;
+}
+
+// ---- a selection made in the rendered view
+
+// A DOM range boundary as a text node + offset: a boundary before a child
+// is the start of that child's first text, one past the last child the end
+// of the element's last text.
+function textPoint(node, offset) {
+  if (node.nodeType === 3) return { node, offset };
+  const next = node.childNodes[offset];
+  if (next) {
+    const t = next.nodeType === 3 ? next : document.createTreeWalker(next, NodeFilter.SHOW_TEXT).nextNode();
+    return t ? { node: t, offset: 0 } : null;
+  }
+  const walker = document.createTreeWalker(node, NodeFilter.SHOW_TEXT);
+  let last = null;
+  for (let t = walker.nextNode(); t; t = walker.nextNode()) last = t;
+  return last ? { node: last, offset: last.data.length } : null;
+}
+
+// The source range {from, to} a selection inside one block's rendered view
+// covers, or null when an end can't be placed. `spans` ([{from, to}]: math)
+// are taken whole — an end inside a formula widens to cover it.
+export function sourceRangeOfSelection(container, source, range, spans = []) {
+  const ends = [textPoint(range.startContainer, range.startOffset), textPoint(range.endContainer, range.endOffset)];
+  if (ends.some((p) => !p)) return null;
+  const [a, b] = ends.map((p) => locateInSource(source, contextAt(container, p.node, p.offset)));
+  if (a == null || b == null) return null;
+  let from = Math.min(a, b), to = Math.max(a, b);
+  for (const sp of spans) {
+    if (from > sp.from && from < sp.to) from = sp.from;
+    if (to > sp.from && to < sp.to) to = sp.to;
+  }
+  return to > from ? { from, to } : null;
 }

@@ -71,8 +71,8 @@ def test_edit_block_append_prepend_replace(page):
     # The armed spec offers the mode with its choices.
     from gamma.ai_tools import agent_tools
     spec = next(t for t in agent_tools("page", {}) if t["name"] == "edit_block")
-    assert spec["parameters"]["properties"]["mode"]["enum"] == ["replace", "append", "prepend", "patch"]
-    assert list(spec["parameters"]["properties"]) == ["block_id", "mode", "find", "content"]
+    assert spec["parameters"]["properties"]["mode"]["enum"] == ["replace", "append", "prepend", "patch", "selection"]
+    assert list(spec["parameters"]["properties"]) == ["block_id", "mode", "find", "selection", "content"]
 
 
 def test_patch_block_text_rules():
@@ -120,5 +120,47 @@ def test_edit_block_patch_cuts_and_replaces_a_passage(page):
     assert _content(c, block) == "Setup: 20 mK.\n\nResult: T1 = 310 us, measured twice."
     from gamma.ai_tools import agent_tools
     spec = next(t for t in agent_tools("page", {}) if t["name"] == "edit_block")
-    assert spec["parameters"]["properties"]["mode"]["enum"] == ["replace", "append", "prepend", "patch"]
+    assert spec["parameters"]["properties"]["mode"]["enum"] == ["replace", "append", "prepend", "patch", "selection"]
     assert "find" in spec["parameters"]["properties"]
+
+
+def test_edit_block_selection_rewrites_only_the_selected_range(page):
+    """mode "selection": the user's selected range — not the first match of
+    its text — is replaced; the rest of the block is never retyped, a second
+    edit rewrites what the first left, and a stale selection is refused."""
+    c, page_id = page
+    src = "Noise is low. **Noise is low.** End."
+    block = c.post("/api/blocks", json={"parent_id": page_id, "content": src}).json()["id"]
+    start = src.index("Noise", 5)  # the SECOND occurrence, inside the bold
+    sel = {"label": "S1", "block_id": block, "from": start, "to": start + 13, "text": "Noise is low."}
+    scope = {"type": "page", "page_id": page_id, "note_selections": [sel]}
+    ws = workspace_of(USER)
+    text, action = run_agent_tool(ws, scope, "edit_block",
+                                  {"block_id": block, "mode": "selection", "selection": "S1",
+                                   "content": "Noise is 3 dB lower."})
+    assert text.startswith("ok"), text
+    assert action["mode"] == "selection" and action["summary"].startswith("Edited the selection")
+    assert _content(c, block) == "Noise is low. **Noise is 3 dB lower.** End."
+    # No label with one selection: that one; the range now holds the first edit.
+    text, _ = run_agent_tool(ws, scope, "edit_block", {"mode": "selection", "content": "Quiet."})
+    assert text.startswith("ok"), text
+    assert _content(c, block) == "Noise is low. **Quiet.** End."
+    # The block changed under the selection and its text is gone: refused.
+    c.put(f"/api/blocks/{block}", json={"content": "rewritten by hand"})
+    text, _ = run_agent_tool(ws, scope, "edit_block", {"mode": "selection", "content": "x"})
+    assert text.startswith("error: the selected text has changed"), text
+    # A block id other than the selection's, and a request without selections.
+    text, _ = run_agent_tool(ws, scope, "edit_block",
+                             {"block_id": page_id, "mode": "selection", "content": "x"})
+    assert text.startswith("error: selection S1 is in block"), text
+    text, _ = run_agent_tool(ws, {"type": "page", "page_id": page_id}, "edit_block",
+                             {"block_id": block, "mode": "selection", "content": "x"})
+    assert text.startswith("error: the user selected no note text"), text
+
+
+def test_replace_selection_text_refinds_a_moved_passage():
+    from gamma.ai_tools import replace_selection_text
+    sel = {"from": 0, "to": 3, "text": "abc"}
+    assert replace_selection_text("xx abc yy", sel, "Z") == ("xx Z yy", 3)
+    assert replace_selection_text("abc abc", {"from": 4, "to": 7, "text": "abc"}, "Z") == ("abc Z", 4)
+    assert replace_selection_text("abc abc", {"from": 1, "to": 4, "text": "abc"}, "Z")[0] is None

@@ -18,6 +18,8 @@ import {
   useTextScale,
 } from "../shared/ui/Widgets";
 import { BlockTree, _dragState } from "../editor/BlockTree";
+import { scanMathSpans } from "../editor/BlockCmEditor";
+import { sourceRangeOfSelection } from "../editor/clickToSource";
 import { FileChipContext, forgetDocPages, rememberDocPage, setUploadReporter, uploadFilesAsLines, xhrUpload } from "../transfers/FileChip";
 import { CardLabels, KindToggle, ListFindBox, PageCard, ViewToggle } from "../library/FileBrowser";
 import ChatDock from "../chat/ChatDock";
@@ -26,7 +28,7 @@ import SearchPanel from "../search/SearchPanel";
 import QuickOpen from "../library/QuickOpen";
 import { ContextMenu, MenuItem, MenuLabel, MenuSelect, SubMenuItem } from "../shared/ui/Menus";
 import {
-  ActivityIcon, AlertCircleIcon, ArrowLeftIcon, ArrowUpDownIcon, BookIcon, CheckIcon, CopyIcon, DatabaseIcon, DownloadIcon, ExportIcon,
+  ActivityIcon, AlertCircleIcon, ArrowLeftIcon, ArrowUpDownIcon, BookIcon, BugIcon, CheckIcon, CopyIcon, DatabaseIcon, DownloadIcon, ExportIcon,
   ExternalLinkIcon, EyeIcon, EyeOffIcon, FileGlyph, FileIcon, FileTextIcon, FitWidthIcon, FolderGlyph,
   FilePlusIcon, PaperclipIcon, FolderIcon, FolderOpenIcon, FolderPlusIcon, GlobeIcon, HelpCircleIcon, HomeIcon, ImportIcon, InfoIcon, LabelGlyph, LabelIcon,
   LanguagesIcon, LanguagesOffIcon, LinkIcon, LogOutIcon, MaximizeIcon, MenuIcon, MinimizeIcon, PenIcon, PinIcon, PlusIcon,
@@ -67,7 +69,9 @@ import { loadSession, saveSession, clearSession, setSessionScope } from "./sessi
 import { ROLE_LABEL, workspaceMeta } from "../settings/SettingsWorkspace";
 import { AuthLoading, LoginPage, SessionConflictPage, ShareBlockedPage, WorkspaceUnavailablePage } from "../auth/LoginPage";
 import { McpAuthorization } from "../auth/McpConsent";
-import { THEMES, TRANSLATE_LANGS, useAppPrefs } from "./prefs";
+import { TRANSLATE_LANGS, useAppPrefs, useProfileSync } from "./prefs";
+import { useNotices } from "./useNotices";
+import { dotTone } from "./notices";
 import { useBlockHistory } from "../editor/blockHistory.js";
 import { InkToolbar } from "../ink/InkLayer";
 import { MAX_STROKES, appendStroke, duplicateStrokes, eraseAt, newInk, removeStrokes, restyleStrokes, toolStyle, transformStrokes, translateStrokes } from "../ink/ink";
@@ -77,6 +81,7 @@ import { applyOps, applyPatch, keepUiFlags } from "../shared/model/blockOps";
 import { PresenceBar } from "../collaboration/Presence";
 import { cleanLinkName, loadLinkName, saveLinkName, LINK_NAME_MAX } from "../collaboration/linkName";
 import SettingsDialog from "../settings/SettingsDialog";
+import ReportProblem from "../support/ReportProblem";
 import { useGuide } from "../guide/useGuide";
 import GuideOverlay from "../guide/GuideOverlay";
 import { guideEvents } from "../guide/events";
@@ -102,6 +107,7 @@ import {
   NO_LABEL_TITLE,
   labelTitle,
 } from "../library/libraryUtils";
+import { createLibraryMatcher } from "../library/librarySearch";
 
 // PDF load phases that own a row in the background-transfers popover; every
 // other phase is viewer-local. Allowlist on purpose — the transfer handling's
@@ -155,17 +161,6 @@ function homeUrlFor(folder, label) {
   if (folder) q.push(`folder=${encodeURIComponent(folder)}`);
   if (label) q.push(label === NO_LABEL ? "unlabelled=1" : `category=${encodeURIComponent(label)}`);
   return withWorkspace(q.length ? `/?${q.join("&")}` : "/");
-}
-
-// The listing search box: every whitespace-separated term must appear in the
-// item's text (its title plus, for a page, its folder/label chips), case and
-// diacritics folded. Deliberately much simpler than the workspace search — it
-// only reorders what is already on screen.
-const normalizeFind = (s) => (s || "").toLowerCase().normalize("NFD").replace(/[\u0300-\u036f]/g, "");
-function makeFindMatcher(query) {
-  const terms = normalizeFind(query).split(/\s+/).filter(Boolean);
-  if (!terms.length) return null;
-  return (hay) => { const h = normalizeFind(hay); return terms.every((t) => h.includes(t)); };
 }
 
 // Folder uploads tag each PDF with its directory path as a folder label:
@@ -491,7 +486,7 @@ function LibraryApp() {
         }
         setWorkspaceUnavailable(false);
         applyWorkspace(data.user, chosen, list);
-        setAuthUser({ user: data.user, is_guest: data.is_guest, is_admin: data.is_admin });
+        setAuthUser({ user: data.user, is_guest: data.is_guest, is_admin: data.is_admin, build: data.build });
       } else {
         setAuthUser(false);
       }
@@ -848,16 +843,12 @@ function LibraryApp() {
       recentsSyncRef.current = "";
       readPosRef.current = {};
       readPosLoadedRef.current = false;
-      appearanceSyncRef.current = "";
-      appearanceLoadedRef.current = false;
       return;
     }
     prefsUserRef.current = u;
     tabsSyncRef.current = "";
     recentsSyncRef.current = "";
     snapsSyncedRef.current = false;
-    appearanceSyncRef.current = "";
-    appearanceLoadedRef.current = false;
     // Local cache first for instant paint…
     let localTabs = [];
     try { localTabs = JSON.parse(localStorage.getItem(`gamma-tabs:${u}`) || "[]"); } catch {}
@@ -912,21 +903,6 @@ function LibraryApp() {
       readPosLoadedRef.current = true;
       if (mergeReadPos(u, d.value)) pushReadPosSoon(u);
     }).catch(() => { if (prefsUserRef.current === u) readPosLoadedRef.current = true; });
-    // Appearance: apply the account's copy; a validation miss (stale value
-    // shape) leaves the local state, and the push effect then normalizes the
-    // server copy. A GET failure keeps the gate closed so this session can't
-    // clobber a copy it never saw.
-    apiJson(`${API}/prefs/appearance`).then((d) => {
-      if (prefsUserRef.current !== u) return;
-      if (d.updated_at && d.value && typeof d.value === "object") {
-        const t = THEMES.includes(d.value.theme) ? d.value.theme : undefined;
-        const pd = typeof d.value.pdfDark === "boolean" ? d.value.pdfDark : undefined;
-        if (t !== undefined && pd !== undefined) appearanceSyncRef.current = JSON.stringify({ theme: t, pdfDark: pd });
-        if (t !== undefined) setTheme(t);
-        if (pd !== undefined) setPdfDarkPage(pd);
-      }
-      appearanceLoadedRef.current = true;
-    }).catch(() => {});
   }, [authUser?.user, wsId, shareMode]);
 
   // Write a page's tag-list property ("folder" nests on "/", "category" is
@@ -1684,12 +1660,6 @@ function LibraryApp() {
   const prefsUserRef = useRef(""); // whose tabs/folders are currently loaded
   const tabsSyncRef = useRef("");  // updated_at of the last server state we applied/wrote
   const tabsPushTimerRef = useRef(null);
-  // Appearance (theme + flipped PDF colors) follows the account through
-  // /api/prefs/appearance: the server copy wins on login, a browser that
-  // syncs first seeds it, later changes push back. localStorage stays the
-  // instant-paint cache — the index.html pre-paint script keeps reading it.
-  const appearanceSyncRef = useRef("");      // JSON of the last state applied/pushed
-  const appearanceLoadedRef = useRef(false); // gate: no pushes before a successful pull
   // Debounced PUT of one synced pref (/api/prefs/<key>): quick successive
   // changes collapse into the last value; `onSaved` gets the server reply.
   // Shared by the open tabs, the recents queue and the pinned folders.
@@ -1870,23 +1840,6 @@ function LibraryApp() {
         if (mergeReadPos(u, d.value)) pushReadPosSoon(u);
       } catch {}
     }
-    async function pullAppearance() {
-      const u = prefsUserRef.current;
-      if (!u) return;
-      try {
-        const d = await apiJson(`${API}/prefs/appearance`);
-        if (prefsUserRef.current !== u || !d.updated_at || !d.value || typeof d.value !== "object") return;
-        const t = THEMES.includes(d.value.theme) ? d.value.theme : undefined;
-        const pd = typeof d.value.pdfDark === "boolean" ? d.value.pdfDark : undefined;
-        if (t === undefined || pd === undefined) return;
-        appearanceLoadedRef.current = true;
-        const snap = JSON.stringify({ theme: t, pdfDark: pd });
-        if (appearanceSyncRef.current === snap) return;
-        appearanceSyncRef.current = snap;
-        setTheme(t);
-        setPdfDarkPage(pd);
-      } catch {}
-    }
     async function pullRecents() {
       const u = prefsUserRef.current;
       if (!u || document.hidden || recentsPushTimerRef.current) return;
@@ -1943,7 +1896,6 @@ function LibraryApp() {
       pullReadPos();
       pullRecents();
       pullSnaps();
-      pullAppearance();
     };
     const onVisibility = () => { if (document.hidden) flushReadPos(); else onWake(); };
     window.addEventListener("focus", onWake);
@@ -2306,6 +2258,25 @@ function LibraryApp() {
     ? `${window.location.origin}${window.location.pathname}?share=${shareSettings.token}`
     : "";
   const [shareCopied, flashShareCopied, resetShareCopied] = useCopied();
+  // Gamma Cloud publishing of the open page (the share popover's Gamma Cloud
+  // section, docs/dev/mirror.md "Publishing"): GET /api/pages/{id}/publish
+  // tagged with the page it belongs to, the action running, its refusal.
+  // Offered where the server has cloud sign-in and is not itself the share
+  // host (server-config's `guest` is false only there), never to the guest.
+  const publishOffered = !shareMode && !!serverConfig?.cloud?.enabled && serverConfig?.guest !== false
+    && !!authUser?.user && !authUser?.is_guest;
+  const [publishState, setPublishState] = useState(null);
+  const [publishBusy, setPublishBusy] = useState("");
+  const [publishError, setPublishError] = useState("");
+  const [publishCopied, flashPublishCopied, resetPublishCopied] = useCopied();
+  // The publication's state while the share popover is open: every 5 s while
+  // a round runs or a local edit waits to be synced, else every 20 s.
+  const publishActive = !!publishState?.mirror?.status?.running || !!publishState?.mirror?.pending_local;
+  useEffect(() => {
+    if (openPopover !== "share" || !publishOffered || !focusedBlockId) return undefined;
+    const t = setInterval(() => loadPublishState({ quiet: true }), publishActive ? 5000 : 20000);
+    return () => clearInterval(t);
+  }, [openPopover, publishOffered, focusedBlockId, publishActive]); // eslint-disable-line react-hooks/exhaustive-deps
   // Workspace search lives in search/SearchPanel.jsx (SearchPanel); App only holds what
   // the PDF viewer needs from it: the match highlights and the search hook.
   const [findMarks, setFindMarks] = useState([]); // [{page, rect, active}] painted by PdfViewer
@@ -2423,7 +2394,11 @@ function LibraryApp() {
   const [pdfHidden, setPdfHidden] = useState(false);
   const [pdfScale, setPdfScale] = useState("page-width");
   // Every localStorage-backed user preference (the Settings dialog's state)
-  // lives in useAppPrefs (prefs.js) — one hook, one storage key per entry.
+  // lives in useAppPrefs (prefs.js) — one hook, one storage key per entry;
+  // the account-scoped ones follow the account through its profile
+  // (useProfileSync). Guests share one account, so theirs stay local.
+  const appPrefs = useAppPrefs();
+  const profileSync = useProfileSync(appPrefs, authUser?.user && !authUser.is_guest && !shareMode ? authUser.user : "");
   const {
     theme, setTheme, pdfDarkPage, setPdfDarkPage, uiScale, setUiScale, recentThumbs, setRecentThumbs,
     fileLabels, setFileLabels,
@@ -2447,23 +2422,7 @@ function LibraryApp() {
     toolRounds, setToolRounds, agentReadChars, setAgentReadChars, agentPerms, setAgentPerms,
     agentEnabled, setAgentEnabled,
     chatImgAutoClear, setChatImgAutoClear,
-  } = useAppPrefs();
-
-  // Appearance changes push to the account (the value is tiny — no debounce).
-  // The loaded gate keeps a session that hasn't pulled yet from overwriting
-  // the server copy with its stale local cache.
-  useEffect(() => {
-    if (!prefsUserRef.current || shareMode || !appearanceLoadedRef.current) return;
-    const payload = { theme, pdfDark: pdfDarkPage };
-    const snap = JSON.stringify(payload);
-    if (appearanceSyncRef.current === snap) return;
-    appearanceSyncRef.current = snap;
-    apiJson(`${API}/prefs/appearance`, {
-      method: "PUT",
-      headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ value: payload }),
-    }).catch(() => {});
-  }, [theme, pdfDarkPage, authUser?.user, shareMode]);
+  } = appPrefs;
   const viewerWrapRef = useRef(null);
   const pdfRetryRef = useRef(null); // set by PdfViewer: re-runs a failed load (pill's Retry button)
   const appRef = useRef(null);
@@ -2497,6 +2456,12 @@ function LibraryApp() {
   // The settings page (account popover → Settings…): two-column modal,
   // categories on the left, the selected pane on the right.
   const [settingsOpen, setSettingsOpen] = useState(null); // null | pane id — see settingsNavigation.js
+  // What wants a look (a newer release, errors in the log — app/notices.js):
+  // the dot on the account button and on the Settings panes that resolve it;
+  // "Settings…" lands on the strongest one.
+  const notices = useNotices(!!authUser?.user && !authUser.is_guest && !shareMode);
+  // "Report a problem" (account menu, Settings → Diagnostics): support/ReportProblem.jsx.
+  const [reportOpen, setReportOpen] = useState(false);
   const [importOpen, setImportOpen] = useState(false);
   const [importReview, setImportReview] = useState(null);
   // Export dialog: one "Export…" menu entry, the shape of the export chosen
@@ -2601,6 +2566,8 @@ function LibraryApp() {
     try {
       const info = await apiJson(`${API}/ai/settings`);
       setAiKeysInfo(info);
+      // The server's shared entries may have changed (Settings → Server).
+      refreshAiModels();
       // Usage is account status, not an edit action: fetch it as soon as the
       // pane opens. Only OAuth protocols have a portable percentage endpoint;
       // generic API-key providers would merely return "unavailable".
@@ -2858,9 +2825,11 @@ function LibraryApp() {
   }
   // Note chips for the next chat message — blocks attached with Ctrl+click /
   // the ⋮⋮ menu's "Add to chat" ({kind: "block", id, text}; the server serves
-  // their live text with ids, so the agent can edit them) and note text
-  // selected with Ctrl held ({kind: "note", text}). Cleared on send, like
-  // pdfSelections; a page switch drops them (their ids belong to the page).
+  // their live text with ids, so the agent can edit them) and rendered note
+  // text selected with Ctrl held, as the exact source range it covers
+  // ({kind: "note", id, from, to, text} — edit_block mode "selection"
+  // rewrites just that). Cleared on send, like pdfSelections; a page switch
+  // drops them (their ids belong to the page).
   const [chatNotes, setChatNotes] = useState([]);
   function addBlockToChat(block) {
     if (!block?.id || block.id === "root") return;
@@ -2869,13 +2838,41 @@ function LibraryApp() {
       ? prev : prev.length >= 12 ? prev : [...prev, { kind: "block", id: block.id, text }]);
     setStatus("Block attached to your next chat message.");
   }
-  function addNoteSelection(text) {
-    const part = (text || "").trim().slice(0, 4000);
-    if (!part) return;
-    setChatNotes((prev) => prev.some((n) => n.kind === "note" && n.text === part) || prev.length >= 12
-      ? prev : [...prev, { kind: "note", text: part }]);
+  // A Ctrl-selection inside one block's rendered view → its source range;
+  // one that can't be pinned down (it spans blocks, or an end isn't the
+  // note's own text) attaches the block it started in instead.
+  function addNoteSelection(range, rendered) {
+    const rowId = rendered.closest("[data-block-id]")?.getAttribute("data-block-id");
+    const block = rowId && flattenBlocks(blocksRef.current).find((b) => b.id === rowId);
+    if (!block) return;
+    const src = block.content || "";
+    const inOne = rendered.contains(range.startContainer) && rendered.contains(range.endContainer);
+    const at = inOne && sourceRangeOfSelection(rendered, src, range, scanMathSpans(src));
+    const text = at ? src.slice(at.from, at.to) : "";
+    if (!text.trim()) {
+      addBlockToChat(block);
+      return;
+    }
+    const note = { kind: "note", id: block.id, from: at.from, to: at.to, text };
+    setChatNotes((prev) => prev.some((n) => n.kind === "note" && n.id === note.id && n.from === note.from && n.to === note.to)
+      || prev.filter((n) => n.kind === "note").length >= 6 ? prev : [...prev, note]);
   }
   useEffect(() => { setChatNotes([]); }, [focusedBlockId]);
+  // The open editor's selection, for the chat's Cursor chip, which becomes
+  // a "Selection" chip riding with the message as an exact source range.
+  // Kept after the editor closes (clicking into the chat closes it) until
+  // the caret collapses somewhere, the page changes or the message is sent;
+  // settled 120 ms after the last change so a drag doesn't re-render App on
+  // every move.
+  const [noteSel, setNoteSel] = useState(null); // {id, from, to}
+  const noteSelTimerRef = useRef(null);
+  function trackNoteSel(id, from, to) {
+    clearTimeout(noteSelTimerRef.current);
+    noteSelTimerRef.current = setTimeout(() => setNoteSel((prev) => (from === to
+      ? null
+      : prev?.id === id && prev.from === from && prev.to === to ? prev : { id, from, to })), 120);
+  }
+  useEffect(() => { clearTimeout(noteSelTimerRef.current); setNoteSel(null); }, [focusedBlockId]);
   // Figures pending send in the chat (data URLs) — pasted into the chat input
   // or captured by a Ctrl+drag area selection on the PDF. Lives here (not in
   // ChatDock) so the viewer can attach even while the chat window is closed.
@@ -3363,17 +3360,18 @@ function LibraryApp() {
   useEffect(() => {
     function onMouseUp(e) {
       if (!viewerWrapRef.current?.contains(e.target)) {
-        // Notes: Ctrl+select rendered note text attaches it as a chip. Plain
-        // selection is left alone (people select notes to copy them), and
-        // selections inside an open editor are the editor's business.
+        // Notes: Ctrl+select rendered note text attaches its source range as
+        // a chip. (A plain drag opens the editor and selects there — the
+        // Cursor chip's Selection; selections inside an open editor are the
+        // editor's business.)
         if ((e.ctrlKey || e.metaKey) && e.target.closest?.(".blockList")
             && !e.target.closest(".cm-editor, textarea, input")) {
           setTimeout(() => {
             const sel = window.getSelection();
-            const text = sel ? sel.toString().trim() : "";
-            const node = sel?.anchorNode;
-            const el = node?.nodeType === 3 ? node.parentElement : node;
-            if (text && el?.closest?.(".blockRendered")) addNoteSelection(text);
+            if (!sel || sel.isCollapsed || !sel.rangeCount || !sel.toString().trim()) return;
+            const node = sel.anchorNode;
+            const rendered = (node?.nodeType === 3 ? node.parentElement : node)?.closest?.(".blockRendered");
+            if (rendered) addNoteSelection(sel.getRangeAt(0), rendered);
           }, 10);
         }
         return;
@@ -3457,7 +3455,27 @@ function LibraryApp() {
 
   useEffect(() => {
     window._gammaSetDropTarget = setDropTarget;
-    return () => { window._gammaSetDropTarget = null; };
+    // The indicator is fixed to the viewport, so a drag end the rows miss (a
+    // row re-rendered under the pointer, the dragend of a handle the move
+    // detached) would leave a line hanging over the notes (#88). Every drag
+    // starts and ends clean here; capture, so a new drag is reset before the
+    // handle's onDragStart marks it, and a drop only hides the line —
+    // onBlockDrop still reads _dragState.dropTarget.
+    const reset = () => {
+      _dragState.draggingId = null;
+      _dragState.dropTarget = null;
+      setDropTarget(null);
+    };
+    const hide = () => setDropTarget(null);
+    window.addEventListener("dragstart", reset, true);
+    window.addEventListener("dragend", reset, true);
+    window.addEventListener("drop", hide, true);
+    return () => {
+      window._gammaSetDropTarget = null;
+      window.removeEventListener("dragstart", reset, true);
+      window.removeEventListener("dragend", reset, true);
+      window.removeEventListener("drop", hide, true);
+    };
   }, []);
 
 
@@ -3548,12 +3566,15 @@ function LibraryApp() {
   const [aiLive, setAiLive] = useState(null);
   const [aiScan, setAiScan] = useState(null);
   // The block row the cursor is on, for the chat's "Cursor" chip and
-  // focus_block_id (null on the home page / when no row is focused).
+  // focus_block_id (null on the home page / when no row is focused); `sel`
+  // is the text selected in it ({from, to, text} of its source).
   const focusedNote = useMemo(() => {
     if (!focusedBlockId || !focusedId) return null;
     const b = flattenBlocks(blocks).find((x) => x.id === focusedId);
-    return b ? { id: b.id, text: blockChipText(b) } : null;
-  }, [blocks, focusedId, focusedBlockId]);
+    if (!b) return null;
+    const text = noteSel?.id === b.id ? (b.content || "").slice(noteSel.from, noteSel.to) : "";
+    return { id: b.id, text: blockChipText(b), ...(text.trim() ? { sel: { from: noteSel.from, to: noteSel.to, text } } : {}) };
+  }, [blocks, focusedId, focusedBlockId, noteSel]);
   const aiMarkTimersRef = useRef(new Map());
   const aiMarkSeqRef = useRef(0);
   const autosaveTimerRef = useRef(null);
@@ -3605,7 +3626,7 @@ function LibraryApp() {
   // page open and after any sync event; a decision is posted and the block's
   // new text arrives over the page socket like any edit.
   const [merges, setMerges] = useState(null);
-  const mirrorWs = workspace?.mirror_of ? workspace.id : "";
+  const mirrorWs = workspace?.mirror_of || workspace?.publishing ? workspace.id : "";
   const loadMerges = useCallback(async () => {
     if (!mirrorWs || !focusedBlockId || !authUser?.user) { setMerges(null); return; }
     try {
@@ -4115,7 +4136,7 @@ function LibraryApp() {
       // Only blocks of THIS page can be previewed: an edit targets a block in
       // the tree, a create a parent in it (the page id = a top-level block).
       if (!inTree(ev.tool === "edit_block" ? ev.block_id : ev.parent_id)) return;
-      setAiLive({ tool: ev.tool, blockId: ev.block_id, parentId: ev.parent_id, afterId: ev.after_id, mode: ev.mode || "replace", find: ev.find, content: ev.content || "" });
+      setAiLive({ tool: ev.tool, blockId: ev.block_id, parentId: ev.parent_id, afterId: ev.after_id, mode: ev.mode || "replace", find: ev.find, at: ev.at, content: ev.content || "" });
       return;
     }
     const a = ev.action;
@@ -5202,6 +5223,86 @@ function LibraryApp() {
       setStatus(`Stop sharing failed: ${err.message}`);
     }
   }
+  // Publishing to Gamma Cloud (sharing/SharePopover.jsx PublishSection). POST
+  // both publishes and changes an existing cloud share's audience / role; it
+  // runs a sync round, so it can take seconds. Refusals come back as the
+  // server's sentence and are shown in the section, never as an alert.
+  const publishUrl = (pageId) => `${API}/pages/${encodeURIComponent(pageId)}/publish`;
+  async function loadPublishState({ quiet = false } = {}) {
+    const pageId = focusedBlockId;
+    if (!publishOffered || !pageId || homeMode) return;
+    if (!quiet) { setPublishState(null); setPublishError(""); resetPublishCopied(); }
+    try {
+      const data = await apiJson(publishUrl(pageId));
+      setPublishState({ ...data, page: pageId });
+    } catch (err) {
+      if (!quiet) setPublishState({ published: false, can_publish: false, reason: err.message, page: pageId });
+    }
+  }
+  function markPublishing() {
+    // the header's sync pill follows the publication without a reload
+    setWorkspace((prev) => (prev && !prev.mirror_of && !prev.publishing ? { ...prev, publishing: true } : prev));
+    window.dispatchEvent(new CustomEvent("gamma:mirror"));
+  }
+  async function publishPage(patch) {
+    const pageId = focusedBlockId;
+    if (!pageId || publishBusy) return;
+    setPublishBusy(patch ? "update" : "publish");
+    setPublishError("");
+    if (patch) setPublishState((prev) => (prev?.share ? { ...prev, share: { ...prev.share, ...patch } } : prev));
+    try {
+      const out = await apiJson(publishUrl(pageId), {
+        method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify(patch || {}),
+      });
+      setPublishState((prev) => ({
+        ...(prev || {}), page: pageId, published: true, can_publish: true, reason: undefined, error: undefined,
+        url: out.url, share: out.share, mirror: out.mirror, status: out.mirror?.status,
+      }));
+      markPublishing();
+    } catch (err) {
+      setPublishError(err.message);
+      if (patch) loadPublishState({ quiet: true }); // the tiles go back to what the share host holds
+    } finally {
+      setPublishBusy("");
+    }
+  }
+  async function unpublishPage() {
+    const pageId = focusedBlockId;
+    if (!pageId || publishBusy) return;
+    setPublishBusy("unpublish");
+    setPublishError("");
+    try {
+      const out = await apiJson(publishUrl(pageId), { method: "DELETE" });
+      setPublishState((prev) => ({
+        ...(prev || {}), page: pageId, published: false, url: undefined, share: undefined, mirror: out.mirror,
+      }));
+      window.dispatchEvent(new CustomEvent("gamma:mirror"));
+      loadPublishState({ quiet: true });
+    } catch (err) {
+      setPublishError(err.message);
+    } finally {
+      setPublishBusy("");
+    }
+  }
+  async function syncPublication() {
+    const ws = publishState?.mirror?.ws;
+    if (!ws || publishBusy) return;
+    setPublishBusy("sync");
+    setPublishError("");
+    try {
+      await apiJson(`${API}/mirrors/${encodeURIComponent(ws)}/sync?wait=1`, { method: "POST" });
+    } catch (err) {
+      setPublishError(err.message);
+    }
+    await loadPublishState({ quiet: true });
+    setPublishBusy("");
+    window.dispatchEvent(new CustomEvent("gamma:mirror"));
+  }
+  async function copyPublishLink() {
+    if (publishState?.url && await copyText(publishState.url)) { flashPublishCopied(); return; }
+    setStatus("Copy failed — select the link in the popover instead.");
+  }
+
   // The share view's visitor renamed themself: keep it, and rejoin the room
   // so presence shows the new name (it travels in the socket handshake).
   function commitLinkName(raw) {
@@ -6210,13 +6311,14 @@ function LibraryApp() {
     items.sort(cmp);
     const none = items.findIndex((it) => it.kind === "label" && it.label === NO_LABEL);
     if (none >= 0) items.push(...items.splice(none, 1));
-    const match = makeFindMatcher(homeQuery);
+    // The same matcher as Ctrl+P (library/librarySearch.js): typo-tolerant,
+    // and a page also matches on its chips, so "cs229" surfaces its papers.
+    const match = createLibraryMatcher(homeQuery);
     if (!match) return items;
-    // A page also matches on its chips, so "cs229" surfaces its papers.
     for (const it of items) {
-      it._match = match(it.kind === "page"
-        ? [it._title, ...(it.block._folders || []), ...(it.block._labels || [])].join(" ")
-        : it._title);
+      it._match = match(it._title, it.kind === "page"
+        ? [...(it.block._folders || []), ...(it.block._labels || [])]
+        : []) > 0;
     }
     return [...items.filter((it) => it._match), ...items.filter((it) => !it._match)];
   }, [scopePages, categoryFilter, childFolders, folderMeta, scopeLabels, labelMeta, viewedAtById, homeSort, homeKinds, homeQuery]);
@@ -6552,7 +6654,7 @@ function LibraryApp() {
         onUsernameChange={setLoginUser}
         onPasswordChange={setLoginPass}
         onSubmit={doLogin}
-        onGuestLogin={doGuestLogin}
+        onGuestLogin={serverConfig?.guest === false ? undefined : doGuestLogin}
         cloudLogin={serverConfig?.cloud}
       />
     );
@@ -7649,6 +7751,7 @@ function LibraryApp() {
                   // bookkeeping, and our caret for the others on the page.
                   onCaret: (id, from, to) => {
                     caretRef.current = { id, from, to };
+                    trackNoteSel(id, from, to);
                     collab.sendCursor({ block: id, anchor: from, head: to });
                   },
                   onStartEdit: (id, editMode) => {
@@ -7756,6 +7859,10 @@ function LibraryApp() {
                   onBlockDragOver: (e, block) => {
                     e.preventDefault();
                     e.dataTransfer.dropEffect = "move";
+                    // Only a block's ⋮⋮ drag shows where it lands: an image,
+                    // link or text selection dragged over the notes has no
+                    // handle dragend to take the line away again.
+                    if (!_dragState.draggingId) return;
                     const wrap = e.currentTarget.closest(".sortableBlockWrap");
                     const r = wrap ? wrap.getBoundingClientRect() : e.currentTarget.getBoundingClientRect();
                     const px = e.clientX;
@@ -7776,6 +7883,7 @@ function LibraryApp() {
                     const dt = _dragState.dropTarget;
                     setDropTarget(null);
                     _dragState.dropTarget = null;
+                    _dragState.draggingId = null;
                     const sourceId = e.dataTransfer.getData("text/plain");
                     if (!sourceId || !dt || sourceId === dt.targetId || readOnly) return;
                     if (isDescendant(blocks, sourceId, dt.targetId)) return;
@@ -7796,7 +7904,6 @@ function LibraryApp() {
                       next = insertSibling(remaining, ancestorId, sourceBlock, !dt.above);
                     } else { return; }
                     if (next) setBlocks(next);
-                    _dragState.draggingId = null;
                   },
                 };
                 return (
@@ -7848,7 +7955,7 @@ function LibraryApp() {
           openTabs={openTabs}
           onOpenPage={openPageLink}
           pdfSelections={pdfSelections} setPdfSelections={setPdfSelections}
-          chatNotes={chatNotes} setChatNotes={setChatNotes} focusedNote={focusedNote}
+          chatNotes={chatNotes} setChatNotes={setChatNotes} focusedNote={focusedNote} onSelectionSent={() => setNoteSel(null)}
           chatImages={chatImages} setChatImages={setChatImages}
           chatModel={chatSendModel} setChatModel={setChatModel}
           chatEffort={chatEffort} setChatEffort={setChatEffort}
@@ -8011,6 +8118,18 @@ function LibraryApp() {
       onRemove={removeShareUser}
       onStop={stopSharing}
       onClose={() => { setOpenPopover(null); setShareError(""); }}
+      publish={publishOffered ? {
+        state: publishState?.page === focusedBlockId ? publishState : null,
+        busy: publishBusy,
+        error: publishError,
+        copied: !!publishCopied,
+        onCopy: copyPublishLink,
+        canEdit: !readOnly,
+        onPublish: publishPage,
+        onUnpublish: unpublishPage,
+        onSync: syncPublication,
+        onLink: () => { setOpenPopover(null); setSettingsOpen("account"); },
+      } : null}
       citation={(pageMeta || pageBibtex) ? (
         <Section
           title="Citation"
@@ -8222,7 +8341,7 @@ function LibraryApp() {
             className={`iconBtn ${openPopover === "share" ? "activeIcon" : ""}`}
             onClick={() => {
               const opening = openPopover !== "share";
-              if (opening) { loadShareSettings(); setShareError(""); }
+              if (opening) { loadShareSettings(); setShareError(""); loadPublishState(); }
               setOpenPopover(opening ? "share" : null);
             }}
             disabled={loading}
@@ -8235,11 +8354,12 @@ function LibraryApp() {
           {openPopover === "share" ? sharePopover : null}
         </span>
       ) : null}
-      {authUser?.user && workspace?.mirror_of ? (
+      {authUser?.user && (workspace?.mirror_of || workspace?.publishing) ? (
         <MirrorPopover
           key={workspace.id}
           wsId={workspace.id}
           mirrorOf={workspace.mirror_of}
+          publication={!workspace.mirror_of && !!workspace.publishing}
           open={openPopover === "mirror"}
           onToggle={() => setOpenPopover(openPopover === "mirror" ? null : "mirror")}
           jumpTo={(pageId, blockId) => jumpToRef.current?.(pageId, blockId)}
@@ -8260,6 +8380,7 @@ function LibraryApp() {
             aria-label="Account & settings"
           >
             <UserIcon size={18} />
+            {notices.tone ? <span className={`noticeDot ${dotTone(notices.tone)}`} data-tone={notices.tone} aria-hidden="true" /> : null}
           </button>
           {openPopover === "user" ? (
             <div className="popover userPopover">
@@ -8320,9 +8441,10 @@ function LibraryApp() {
                 </button>
               ) : null}
               <div className="popoverDivider" />
-              <button className="popoverItem" onClick={() => { setSettingsOpen("general"); setOpenPopover(null); }}>
+              <button className="popoverItem" onClick={() => { setSettingsOpen(notices.firstPane || "general"); setOpenPopover(null); }}>
                 <SettingsIcon className="popoverItemIcon" size={15} />
                 Settings…
+                {notices.tone ? <span className={`noticeDot inline ${dotTone(notices.tone)}`} aria-hidden="true" /> : null}
               </button>
               <div className="popoverDivider" />
               <details className="accountTours">
@@ -8343,6 +8465,11 @@ function LibraryApp() {
                     }}>AI chat</button>
                 </div>
               </details>
+              <button className="popoverItem" onClick={() => { setOpenPopover(null); setReportOpen(true); }}
+                title="Describe what went wrong; Gamma adds its build, your browser and its recent log lines and opens a GitHub issue for you to review">
+                <BugIcon className="popoverItemIcon" size={15} />
+                Report a problem…
+              </button>
               <div className="popoverDivider" />
               <button className="popoverItem popoverItemDanger" onClick={doLogout}>
                 <LogOutIcon className="popoverItemIcon" size={15} />
@@ -9062,6 +9189,8 @@ function LibraryApp() {
       <GuideOverlay guide={guide} />
       <SettingsDialog
         activePane={settingsOpen}
+        profileSync={profileSync}
+        notices={notices}
         onPaneChange={setSettingsOpen}
         onClose={() => setSettingsOpen(null)}
         papers={{
@@ -9260,8 +9389,22 @@ function LibraryApp() {
           onSelfRenamed: checkSession, // self-rename re-keys the whole app
           refreshQuota,
         } : null}
-        diagnostics={{ statusBarVisible, setStatusBarVisible, sysLog, setStatus, debugLog, setDebugLog }}
+        diagnostics={{ statusBarVisible, setStatusBarVisible, sysLog, setStatus, debugLog, setDebugLog,
+          openReport: () => { setSettingsOpen(null); setReportOpen(true); } }}
       />
+      {reportOpen ? (
+        <ReportProblem onClose={() => setReportOpen(false)} setStatus={setStatus}
+          facts={{
+            build: authUser?.build,
+            view: { mode: shareMode ? "share" : homeMode ? "home" : "page", pdf: !!pdfUrl, readOnly, phone: isPhone, theme, uiScale },
+            workspace: workspace ? {
+              kind: workspace.mirror_of ? "clone" : workspace.personal ? "personal" : workspace.access === "public" ? "public" : "shared",
+              role: workspace.role,
+            } : null,
+            events: sysLog,
+            isAdmin: !!authUser?.is_admin,
+          }} />
+      ) : null}
       {tabMenu ? (() => {
         // Two pins: the tab pin (this device's tab strip, synced with the
         // tabs) and the library pin (the page's Pinned strip on the home

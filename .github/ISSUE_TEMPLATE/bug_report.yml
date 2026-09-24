@@ -1,0 +1,31 @@
+# The bug form. "Report a problem" inside Gamma (account menu, Settings →
+# Diagnostics) opens this form with the fields below prefilled from the URL:
+# the query parameter names are these field ids, so keep them stable
+# (frontend/src/support/problemReport.js, githubIssueUrl).
+name: Bug report
+description: Something in Gamma does not work as it should.
+labels: ["bug"]
+body:
+  - type: textarea
+    id: description
+    attributes:
+      label: What happened
+      description: What you did, what you expected, what you saw instead. A screenshot or a short recording helps a lot — drop it here (Gamma's "Report a problem" can record your screen; the saved file goes here too).
+      placeholder: A blue line stays on the notes after I dragged a block…
+    validations:
+      required: true
+  - type: textarea
+    id: steps
+    attributes:
+      label: How to reproduce
+      description: The steps that bring it back, if you found them.
+      placeholder: |
+        1. Open a page with notes
+        2. Drag a block by its handle and drop it outside the notes
+        3. The line is still there
+  - type: textarea
+    id: diagnostics
+    attributes:
+      label: Diagnostics
+      description: Filled in by Gamma's "Report a problem" (account menu → Report a problem…). If you are writing this by hand, say which version you run (Settings → Server for admins, or the Docker tag / desktop app version), your browser and operating system, and how you run Gamma (Docker, desktop app, from a checkout).
+      render: markdown

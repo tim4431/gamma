@@ -1,14 +1,15 @@
 // Quick open (Ctrl+P): a VS Code-style palette over the library's pages.
 // Empty query lists the recently viewed pages, then the open tabs, then the
-// rest by last edit; typing ranks titles through createTitleScorer (the same
-// scorer the workspace search, the filter-chip listing and the chat's @
-// picker use). ↑↓ moves, Enter opens, Esc closes. Rows reuse the chat
-// mention picker's option style.
+// rest by last edit; typing ranks pages through createLibraryMatcher — the
+// home listing's search: typo-tolerant, on the title or the folder/label
+// chips, title hits first. ↑↓ moves, Enter opens, Esc closes. Rows reuse the
+// chat mention picker's option style and the home file rows' folder/label chips.
 
 import React, { useEffect, useMemo, useRef, useState } from "react";
 import { BookIcon, FileTextIcon, SearchIcon } from "../shared/ui/Icons";
-import { createTitleScorer } from "./librarySearch";
-import { pageAttachment } from "./libraryUtils";
+import { CardLabels } from "./FileBrowser";
+import { createLibraryMatcher } from "./librarySearch";
+import { pageAttachment, parseFolderTags } from "./libraryUtils";
 
 const MAX_ROWS = 40;
 
@@ -40,10 +41,13 @@ export default function QuickOpen({ open, onClose, pages, recentViews, openTabs,
     if (!open) return [];
     const recentRank = new Map(recentViews.map((r, i) => [r.id, i]));
     const tabs = new Set(openTabs.map((t) => t.id));
-    const score = createTitleScorer(query);
+    const match = createLibraryMatcher(query);
+    const score = (p) => match(p.content, [
+      ...parseFolderTags(p.properties?.folder), ...parseFolderTags(p.properties?.category),
+    ]);
     const rankOf = (p) => (recentRank.has(p.id) ? recentRank.get(p.id) : tabs.has(p.id) ? 1000 : 2000);
     return pages
-      .map((p) => ({ page: p, score: score ? score(p) : 1, rank: rankOf(p) }))
+      .map((p) => ({ page: p, score: match ? score(p) : 1, rank: rankOf(p) }))
       .filter((r) => r.score > 0)
       .sort((a, b) => (b.score - a.score) || (a.rank - b.rank)
         || (b.page.updated_at || "").localeCompare(a.page.updated_at || ""))
@@ -65,8 +69,8 @@ export default function QuickOpen({ open, onClose, pages, recentViews, openTabs,
             ref={inputRef}
             autoFocus
             className="searchInput"
-            placeholder="Search pages by title"
-            aria-label="Search pages by title"
+            placeholder="Search pages by title or label"
+            aria-label="Search pages by title or label"
             value={query}
             onChange={(e) => setQuery(e.target.value)}
             onKeyDown={(e) => {
@@ -88,7 +92,9 @@ export default function QuickOpen({ open, onClose, pages, recentViews, openTabs,
           {results.map(({ page, tag }, i) => {
             const meta = page.properties?.meta || {};
             const authors = (meta.authors || []).slice(0, 2).join(", ");
-            const detail = [authors, meta.year, page.properties?.folder].filter(Boolean).join(" · ");
+            const detail = [authors, meta.year].filter(Boolean).join(" · ");
+            const folders = parseFolderTags(page.properties?.folder);
+            const labels = parseFolderTags(page.properties?.category);
             const title = page.content || "Untitled";
             return (
               <button
@@ -102,6 +108,7 @@ export default function QuickOpen({ open, onClose, pages, recentViews, openTabs,
               >
                 {pageAttachment(page) ? <BookIcon size={15} /> : <FileTextIcon size={15} />}
                 <span><strong>{title}</strong>{detail && <small>{detail}</small>}</span>
+                <CardLabels className="fileRowLabels" folders={folders} labels={labels} />
                 {tag && <em className="quickOpenTag">{tag}</em>}
               </button>
             );

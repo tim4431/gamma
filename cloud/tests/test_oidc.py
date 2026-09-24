@@ -155,6 +155,27 @@ def test_unverified_account_is_refused(client):
     assert r.status_code == 403
 
 
+def test_consent_page(client):
+    register(client)
+    verify(client)
+    _, challenge = pkce()
+    r = client.get("/authorize", params=authorize_params(challenge, scope="openid email profile offline_access prefs"))
+    page = r.text
+    assert "Sign in to Gamma desktop app" in page and "on this computer" in page
+    # the account as a row, not a question
+    assert "<b>alice</b><span>alice@example.org</span>" in page and "Continue as" not in page
+    # what the app gets, in words; never the scope ids
+    for words in ("Your username and e-mail", "Your settings, so they follow you", "Stay signed in on this device"):
+        assert words in page
+    body = page[page.index("<body>"):page.index("<script>")]
+    assert "offline_access" not in body and "prefs" not in body and "openid" not in body
+    # the actions and the footnote keep their ids and endpoints
+    assert "id=go>Continue</button>" in page and "id=other>Use another account</button>" in page
+    assert "id=cancel>Cancel</button>" in page and "'/authorize/cancel'" in page
+    assert "You can sign this device out any time from <a href=/devices>Devices</a>." in page
+    assert request_id_from(page)
+
+
 def test_login_on_authorize_page(client):
     register(client)
     verify(client)
@@ -196,7 +217,7 @@ def test_confidential_client(client):
                                                redirect_uris=["https://alice.gammapdf.com/api/auth/cloud/callback"])
         conn.commit()
     verifier, challenge = pkce()
-    # offline_access is refused for a container
+    # offline_access without the prefs scope is refused for a container (with it: test_profile.py)
     r = client.get("/authorize", params=authorize_params(challenge, client_id=client_id,
                                                         redirect="https://alice.gammapdf.com/api/auth/cloud/callback"),
                    follow_redirects=False)
@@ -204,6 +225,10 @@ def test_confidential_client(client):
     r = client.get("/authorize", params=authorize_params(challenge, client_id=client_id, scope="openid email",
                                                         redirect="https://alice.gammapdf.com/api/auth/cloud/callback"))
     assert "Sign in to Alice&#x27;s server" in r.text
+    # a hosted server is named by the origin of its redirect URI; openid + email only: no refresh, no settings
+    assert "<span>https://alice.gammapdf.com</span>" in r.text and "on this computer" not in r.text
+    assert "Your username and e-mail" in r.text
+    assert "Stay signed in on this device" not in r.text and "Your settings, so they follow you" not in r.text
     rid = request_id_from(r.text)
     redirect = client.post("/authorize/continue", json={"request_id": rid}).json()["redirect"]
     code = parse_qs(urlsplit(redirect).query)["code"][0]

@@ -227,10 +227,11 @@ def test_chat_carries_notes_focus(notes, monkeypatch):
     r = c.post("/api/ai/chat", json={
         "prompt": "expand this", "agent_scope": "page", "page_id": ids["page"],
         "focus_block_id": top, "context_blocks": [other],
-        "note_passages": ["a selected sentence"]})
+        "note_selections": [{"block_id": other, "from": 0, "to": 5, "text": "chip "}]})
     assert r.status_code == 200, r.text
     user_turn = seen["messages"][-1]["content"]
     assert f"- [{top}] cursor block" in user_turn and f"[{other}] chip block" in user_turn
-    assert "selected the following text in their own notes" in user_turn
-    assert "a selected sentence" in user_turn
+    assert "selected the following exact passage of their own notes" in user_turn
+    assert f'S1 (in block [{other}]):\n"""\nchip \n"""' in user_turn
+    assert 'mode "selection"' in seen["system"] and f'S1 in block "{other}"' in seen["system"]
     assert f'cursor is on note block "{top}"' in seen["system"]

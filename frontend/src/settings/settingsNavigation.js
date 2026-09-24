@@ -57,6 +57,7 @@ const entries = [
   ["users", "Users", "administration accounts password limits personal workspaces"],
   ["server", "Server", "administration storage defaults shared workspaces backups log"],
   ["server", "Shared workspaces", "administration new shared workspace members"],
+  ["server", "Shared AI provider", "administration API key everyone lab members guests connection models"],
   ["diagnostics", "Debug logging", "diagnostics tracing browser system log"],
 ];
 export const SETTINGS_SEARCH = entries.map(([pane, label, keywords]) => ({ pane, label, keywords }));

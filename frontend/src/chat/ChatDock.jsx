@@ -16,7 +16,7 @@ import { MenuSelect } from "../shared/ui/Menus";
 import { guideEvents } from "../guide/events.js";
 import { CharSlider, approxPages } from "../settings/SettingsKit";
 import { AgentToolPicker, CHAT_KIND_ROWS } from "../settings/SettingsDialog";
-import { AlertCircleIcon, ArrowDownIcon, ArrowUpIcon, BookIcon, CheckIcon, ChevronDownIcon, ChevronUpIcon, CloudDownloadIcon, CopyIcon, EyeIcon, FileIcon, FolderIcon, GlobeIcon, HistoryIcon, InfoIcon, ListIcon, MicIcon, PaperclipIcon, PencilIcon, PlusIcon, SearchIcon, SettingsIcon, SlidersIcon, StopIcon, TrashIcon, XIcon } from "../shared/ui/Icons";
+import { AlertCircleIcon, ArrowDownIcon, ArrowUpIcon, BookIcon, CheckIcon, ChevronDownIcon, ChevronUpIcon, CloudDownloadIcon, CopyIcon, EyeIcon, FileIcon, FolderIcon, GlobeIcon, HighlightIcon, HistoryIcon, InfoIcon, ListIcon, MicIcon, OutlineIcon, PaperclipIcon, PencilIcon, PlusIcon, QuoteIcon, SearchIcon, SettingsIcon, SlidersIcon, StopIcon, TextCursorIcon, TrashIcon, XIcon } from "../shared/ui/Icons";
 
 const JSON_HEADERS = { "Content-Type": "application/json" };
 
@@ -138,12 +138,20 @@ const toolCallText = (a) => {
 };
 
 // One chip in the composer's strip: a PDF passage, the cursor block, an
-// attached block or selected note text. `kind` is the modifier class that
-// colours the label (isCursor / isBlock / isNote; none for a PDF passage).
-function SelChip({ kind, label, labelTitle, text, title, onRemove, removeTitle }) {
+// attached block or selected note text. `icon` names what it is (`label` is
+// the icon's accessible name and tooltip heading; `n` numbers one of several
+// PDF passages); `kind` is the modifier class that colours it (isCursor /
+// isBlock / isNote; none for a PDF passage).
+const SEL_CHIP_ICONS = { cursor: TextCursorIcon, selection: HighlightIcon, passage: QuoteIcon, block: OutlineIcon };
+
+function SelChip({ kind, icon, label, n, labelTitle, text, title, onRemove, removeTitle }) {
+  const Glyph = SEL_CHIP_ICONS[icon];
   return (
     <div className={`chatSelChip${kind ? ` ${kind}` : ""}`} title={title ?? text}>
-      <span className="chatSelChipLabel" title={labelTitle}>{label}</span>
+      <span className="chatSelChipLabel" role="img" aria-label={label}
+        title={labelTitle ? `${label} — ${labelTitle}` : label}>
+        <Glyph size={13} />{n ? <span className="chatSelChipNum">{n}</span> : null}
+      </span>
       <span className="chatSelChipText">{text.slice(0, 140)}{text.length > 140 ? "…" : ""}</span>
       <button type="button" className="uiClose uiCloseSm chatSelChipClose" onClick={onRemove} title={removeTitle}>×</button>
     </div>
@@ -155,10 +163,12 @@ export default function ChatDock({
   readOnly = false,
   docId, pageAttach, focusedBlockId, homeBlocks, pageTitle, openTabs,
   pdfSelections, setPdfSelections,
-  // Note chips ([{kind: "block", id, text} | {kind: "note", text}], App
-  // state like pdfSelections) and the block row the user's cursor is on —
-  // both ride with the next message so "this block" means something.
-  chatNotes, setChatNotes, focusedNote,
+  // Note chips ([{kind: "block", id, text} | {kind: "note", id, from, to,
+  // text}], App state like pdfSelections) and the block row the user's
+  // cursor is on ({id, text, sel?: {from, to, text}} — the text selected in
+  // its editor) — both ride with the next message so "this block" and "the
+  // selection" mean something. onSelectionSent drops the sent selection.
+  chatNotes, setChatNotes, focusedNote, onSelectionSent,
   chatImages, setChatImages,
   chatModel, setChatModel, chatEffort, setChatEffort, chatSystem,
   dictationModel, dictationLang,
@@ -569,13 +579,18 @@ export default function ChatDock({
     const notes = chatNotes || [];
     setChatNotes?.([]);
     const contextBlocks = notes.filter((n) => n.kind === "block").map((n) => n.id);
-    const notePassages = notes.filter((n) => n.kind === "note").map((n) => n.text);
+    // Selected note text goes as exact source ranges (the cursor block's
+    // selection first) — edit_block mode "selection" rewrites only that.
+    const cursorSel = cursorChip?.sel ? [{ id: cursorChip.id, ...cursorChip.sel }] : [];
+    const noteSelections = [...cursorSel, ...notes.filter((n) => n.kind === "note")]
+      .map((n) => ({ block_id: n.id, from: n.from, to: n.to, text: n.text }));
+    if (cursorSel.length) onSelectionSent?.();
     const images = chatImages;
     setChatImages([]);
     const files = chatFiles;
     setChatFiles([]);
     const prevMessages = baseMessages ?? chatMessages;
-    const quoted = [selection, ...notes.map((n) => n.text)].filter(Boolean).join("\n\n---\n\n");
+    const quoted = [selection, ...cursorSel.map((n) => n.text), ...notes.map((n) => n.text)].filter(Boolean).join("\n\n---\n\n");
     const shown = quoted ? `${text}\n\n> ${quoted.slice(0, 280)}${quoted.length > 280 ? "…" : ""}` : text;
     // Names of PDFs that ride along with THIS message (displayed in the bubble)
     const contextIds = [...new Set([focusedBlockId, ...selectedDocs].filter(Boolean))];
@@ -639,7 +654,7 @@ export default function ChatDock({
           selections,
           focus_block_id: cursorChip ? cursorChip.id : "",
           context_blocks: contextBlocks,
-          note_passages: notePassages,
+          note_selections: noteSelections,
           attach_pdf: sendingPdf,
           effort: chatEffort || "",
           system: chatSystem || "",
@@ -1278,22 +1293,29 @@ export default function ChatDock({
       {pdfSelections.length || chatNotes?.length || cursorChip ? (
         <div className="chatSelChips">
           {cursorChip ? (
-            <SelChip kind="isCursor" label="Cursor" text={cursorChip.text}
-              title={`Your cursor is on this block — it rides with the message, so "this block" means it.\n${cursorChip.text}`}
-              onRemove={() => setCursorOff(cursorChip.id)}
-              removeTitle="Don't send the cursor block with this message" />
+            cursorChip.sel ? (
+              <SelChip kind="isCursor" icon="selection" label="Selection" text={cursorChip.sel.text}
+                title={`The text you selected in this note — the assistant changes only this part.\n${cursorChip.sel.text}`}
+                onRemove={() => setCursorOff(cursorChip.id)}
+                removeTitle="Don't send the selection with this message" />
+            ) : (
+              <SelChip kind="isCursor" icon="cursor" label="Cursor" text={cursorChip.text}
+                title={`Your cursor is on this block — it rides with the message, so "this block" means it.\n${cursorChip.text}`}
+                onRemove={() => setCursorOff(cursorChip.id)}
+                removeTitle="Don't send the cursor block with this message" />
+            )
           ) : null}
           {pdfSelections.map((s, i) => (
-            <SelChip key={`p${i}`} text={s.text}
-              label={pdfSelections.length > 1 ? `Sel ${i + 1}` : "Selection"}
+            <SelChip key={`p${i}`} text={s.text} icon="passage"
+              label={pdfSelections.length > 1 ? `Passage ${i + 1}` : "Selection"} n={pdfSelections.length > 1 ? i + 1 : null}
               labelTitle={`${s.page ? `From PDF page ${s.page}. ` : ""}Hold Ctrl while selecting in the PDF to add more passages`}
               onRemove={() => setPdfSelections((prev) => prev.filter((_, j) => j !== i))}
               removeTitle="Remove this passage" />
           ))}
           {(chatNotes || []).map((n, i) => (
             <SelChip key={`n${i}`} kind={n.kind === "block" ? "isBlock" : "isNote"} text={n.text}
-              label={n.kind === "block" ? "Block" : "Note"}
-              labelTitle={n.kind === "block" ? "A note block attached with Ctrl+click or the ⋮⋮ menu — the assistant gets its text and id" : "Text selected in your notes with Ctrl held"}
+              icon={n.kind === "block" ? "block" : "selection"} label={n.kind === "block" ? "Block" : "Note selection"}
+              labelTitle={n.kind === "block" ? "A note block attached with Ctrl+click or the ⋮⋮ menu — the assistant gets its text and id" : "Note text selected with Ctrl held — the assistant changes only this part"}
               onRemove={() => setChatNotes?.((prev) => prev.filter((_, j) => j !== i))}
               removeTitle={n.kind === "block" ? "Detach this block" : "Remove this passage"} />
           ))}
@@ -1435,6 +1457,7 @@ export default function ChatDock({
             : pdfSelections.length ? "Ask about the selection…"
             : chatNotes?.length > 1 ? `Ask about the ${chatNotes.length} attached notes…`
             : chatNotes?.length ? (chatNotes[0].kind === "block" ? "Ask about the attached block…" : "Ask about the selected note…")
+            : cursorChip?.sel ? "Ask about the selection…"
             : cursorChip ? "Ask about this block…"
             : chatDocs.length ? `Ask about ${chatDocs.length} attached page${chatDocs.length > 1 ? "s" : ""}…`
             : agentAsk || "Ask…"

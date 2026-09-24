@@ -24,6 +24,13 @@ other; deleted-and-edited pages come back.
 Files travel by content hash: uploads a page references are fetched when
 missing here and uploaded when missing there, so a re-run never duplicates.
 
+A mirror may carry a page filter (``page_filter``, a list of page ids; NULL
+= every page): a round then looks only at those pages, in both feeds, moves
+only their files, and a page outside it never travels either way. A listed
+page with no saved base is "new" whatever the feeds say, which is how a page
+added to the filter goes over at the next round. Publishing a page to the
+share host is such a filtered mirror (gamma/publish.py).
+
 Writes on the remote carry the mirror's write-scope integration token
 (``Authorization: Bearer``), so they land under the account that made the
 mirror. Local writes go through ``commit_ops`` with client ``"sync"``, which
@@ -128,7 +135,11 @@ class Remote:
         return status == 200
 
     def _headers(self, content_type=None):
-        headers = {"Authorization": f"Bearer {self.token}", "Accept": "application/json"}
+        from . import cloud_auth  # local: cloud_auth imports this module
+
+        # the remote may sit behind Cloudflare, which blocks a bare Python-urllib signature
+        headers = {"Authorization": f"Bearer {self.token}", "Accept": "application/json",
+                   "User-Agent": cloud_auth.user_agent()}
         if self.ws:
             headers["X-Gamma-Workspace"] = self.ws
         if content_type:
@@ -203,14 +214,26 @@ class Remote:
 # --- the registry -----------------------------------------------------------------
 
 _COLS = ("workspace_id, remote_url, remote_ws, remote_name, token, owner, mode, remote_cursor, local_cursor, "
-         "status, created_at, poll_s, on_change")
+         "status, created_at, poll_s, on_change, page_filter")
+
+
+def _parse_filter(raw) -> list[str] | None:
+    """A stored ``page_filter``: None (every page travels) or the page ids."""
+    if raw is None:
+        return None
+    try:
+        ids = json.loads(raw)
+    except ValueError:
+        return None
+    return [i for i in ids if isinstance(i, str)] if isinstance(ids, list) else None
 
 
 def _row_info(row, *, with_token=False) -> dict:
     info = {"workspace_id": row[0], "remote_url": row[1], "remote_ws": row[2], "remote_name": row[3],
             "owner": row[5], "mode": row[6], "remote_cursor": row[7], "local_cursor": row[8],
             "status": json.loads(row[9] or "{}"), "created_at": row[10],
-            "poll_s": int(row[11] if row[11] is not None else 30), "on_change": bool(row[12] if row[12] is not None else 1)}
+            "poll_s": int(row[11] if row[11] is not None else 30), "on_change": bool(row[12] if row[12] is not None else 1),
+            "page_filter": _parse_filter(row[13])}
     if with_token:
         info["token"] = cipher().decrypt(row[4].encode("ascii")).decode("utf-8")
     return info
@@ -244,6 +267,8 @@ def _clear_bases(ws: str) -> None:
 def _save(ws: str, **fields) -> None:
     if "status" in fields and not isinstance(fields["status"], str):
         fields["status"] = json.dumps(fields["status"])
+    if "page_filter" in fields:
+        _filters.pop(ws, None)
     sets = ", ".join(f"{k} = ?" for k in fields)
     with connect_users_db() as conn:
         conn.execute(f"UPDATE mirrors SET {sets} WHERE workspace_id = ?", (*fields.values(), ws))
@@ -282,7 +307,8 @@ def _check_remote(remote_url: str, token: str, mode: str, fetch) -> tuple[str, d
 
 
 def create_mirror(owner: str, remote_url: str, token: str, *, name: str = "", mode: str = "two-way",
-                  fetch=None, workspace_id: str = "", adopt: str = "theirs") -> dict:
+                  fetch=None, workspace_id: str = "", adopt: str = "theirs",
+                  page_filter: list[str] | None = None) -> dict:
     """Make a local workspace of ``owner``'s that mirrors the remote
     workspace the token belongs to — or link ``workspace_id``, an existing
     personal workspace of the owner's (an imported backup, a copy detached
@@ -290,15 +316,21 @@ def create_mirror(owner: str, remote_url: str, token: str, *, name: str = "", mo
     so the first round adopts ``adopt``'s version of each and records what
     differed as ``diverged`` conflicts. Talks to the remote first
     (``whoami``), so a bad URL or token fails before anything is created.
+    ``page_filter`` limits the mirror to those pages (several filtered
+    mirrors of one remote workspace may coexist: each moves only its own).
     Returns the mirror's info (run ``sync_workspace`` for the first fill)."""
     if adopt not in ADOPT:
         raise ValueError("adopt must be theirs or mine")
+    if page_filter is not None and (not isinstance(page_filter, list)
+                                    or not all(isinstance(p, str) and p for p in page_filter)):
+        raise ValueError("page_filter must be a list of page ids")
     remote_url, me, mode = _check_remote(remote_url, token, mode, fetch)
     token = token.strip()
     remote_ws, remote_name = me["workspace"]["id"], me["workspace"].get("name") or "Workspace"
     with connect_users_db() as conn:
-        if conn.execute("SELECT 1 FROM mirrors WHERE owner = ? AND remote_url = ? AND remote_ws = ? AND mode != 'off'",
-                        (owner, remote_url, remote_ws)).fetchone():
+        if page_filter is None and conn.execute(
+                "SELECT 1 FROM mirrors WHERE owner = ? AND remote_url = ? AND remote_ws = ? AND mode != 'off' "
+                "AND page_filter IS NULL", (owner, remote_url, remote_ws)).fetchone():
             raise ValueError("you already mirror that workspace")
     status = {"remote_user": me.get("user"), "remote_role": me.get("role")}
     if workspace_id:
@@ -314,10 +346,65 @@ def create_mirror(owner: str, remote_url: str, token: str, *, name: str = "", mo
     with connect_users_db() as conn:
         conn.execute(
             "INSERT INTO mirrors (workspace_id, remote_url, remote_ws, remote_name, token, owner, mode, "
-            "remote_cursor, local_cursor, status, created_at) VALUES (?, ?, ?, ?, ?, ?, ?, '', '', ?, ?)",
-            (info["id"], remote_url, remote_ws, remote_name, _seal(token), owner, mode, json.dumps(status), page_now()))
+            "remote_cursor, local_cursor, status, created_at, page_filter) VALUES (?, ?, ?, ?, ?, ?, ?, '', '', ?, ?, ?)",
+            (info["id"], remote_url, remote_ws, remote_name, _seal(token), owner, mode, json.dumps(status), page_now(),
+             None if page_filter is None else json.dumps(list(dict.fromkeys(page_filter)))))
         conn.commit()
+    _filters.pop(info["id"], None)
     return get_mirror(info["id"])
+
+
+def replace_token(ws: str, token: str) -> None:
+    """Store a new token for the same remote workspace (the old one expired
+    or was replaced there); the bases and cursors stay."""
+    _save(ws, token=_seal(token.strip()))
+
+
+def round_lock(ws: str) -> threading.Lock:
+    """The lock a round of ``ws`` holds. Held around a change that must not
+    interleave with a round (the page filter and what goes with it, such as
+    unpublishing a page); not re-entrant: never call ``sync_workspace``
+    while holding it."""
+    return _lock(ws)
+
+
+def filter_add(ws: str, page_id: str, *, adopt: str = "") -> dict:
+    """Add a page to a filtered mirror's ``page_filter`` (a mirror without a
+    filter already moves every page: unchanged). The next round finds it
+    "new" and sends it over; ``adopt`` sets whose version a page both sides
+    hold without a base takes. Hold ``round_lock``."""
+    mirror = get_mirror(ws)
+    if not mirror:
+        raise ValueError("not a mirror")
+    fields = {}
+    if mirror["page_filter"] is not None and page_id not in mirror["page_filter"]:
+        fields["page_filter"] = json.dumps(mirror["page_filter"] + [page_id])
+    if adopt:
+        if adopt not in ADOPT:
+            raise ValueError("adopt must be theirs or mine")
+        fields["status"] = {**mirror["status"], "adopt": adopt}
+    if fields:
+        _save(ws, **fields)
+    return get_mirror(ws)
+
+
+def filter_remove(ws: str, page_ids) -> dict | None:
+    """Drop pages from a filtered mirror's ``page_filter`` together with
+    their saved bases and retry entries: they stop travelling, the pages
+    stay where they are on both sides. An empty filter leaves the row (a
+    round of it asks nothing of the remote). Hold ``round_lock``."""
+    mirror = get_mirror(ws)
+    if not mirror or mirror["page_filter"] is None:
+        return mirror
+    drop = set(page_ids)
+    status = mirror["status"]
+    retry = {k: v for k, v in (status.get("retry") or {}).items() if k not in drop}
+    _save(ws, page_filter=json.dumps([p for p in mirror["page_filter"] if p not in drop]),
+          status={**status, "retry": retry})
+    with connect_pages_db(ws) as conn:
+        for page_id in drop:
+            _drop_state(conn, page_id)
+    return get_mirror(ws)
 
 
 def set_cadence(ws: str, *, poll_s: int | None = None, on_change: bool | None = None,
@@ -416,6 +503,7 @@ def remove_mirror(ws: str) -> None:
     with connect_users_db() as conn:
         conn.execute("DELETE FROM mirrors WHERE workspace_id = ?", (ws,))
         conn.commit()
+    _filters.pop(ws, None)
     with connect_pages_db(ws) as conn:
         conn.execute("DELETE FROM sync_pages")
         conn.execute("DELETE FROM sync_conflicts")
@@ -618,11 +706,15 @@ def _pull_files(ws: str, remote: Remote, names: set[str], report: dict) -> None:
             pdf_meta.schedule(ws, name[:-4])
 
 
-def missing_uploads(ws: str) -> set[str]:
+def missing_uploads(ws: str, pages=None) -> set[str]:
     """The upload names the workspace's blocks reference (content, props, a
-    page's ``doc_id``) that are not in its uploads folder."""
+    page's ``doc_id``) that are not in its uploads folder; only those of
+    ``pages`` (page ids) when given."""
     with connect_pages_db(ws) as conn:
-        rows = conn.execute("SELECT content, properties FROM unified_blocks").fetchall()
+        if pages is None:
+            rows = conn.execute("SELECT content, properties FROM unified_blocks").fetchall()
+        else:
+            rows = [(r[3], r[4]) for page_id in pages for r in fetch_subtree(conn, page_id)]
     blocks = []
     for content, props in rows:
         try:
@@ -1081,6 +1173,10 @@ def sync_workspace(ws: str, *, fetch=None) -> dict:
 def _round(ws: str, mirror: dict, fetch) -> dict:
     if mirror["mode"] == "off":
         return mirror["status"]  # detached: nothing runs until it is linked again
+    if mirror["page_filter"] is not None:
+        mirror = {**mirror, "page_filter": _prune_filter(ws, mirror["page_filter"])}
+        if not mirror["page_filter"]:
+            return mirror["status"]  # a filter naming no page: nothing travels, the remote is not asked
     remote = Remote(mirror["remote_url"], mirror["remote_ws"], mirror["token"], fetch)
     first = not mirror["status"].get("last_sync")  # the first fill (or one that never completed)
     started = time.monotonic()  # local writes up to here are this round's to push
@@ -1124,6 +1220,8 @@ def _round(ws: str, mirror: dict, fetch) -> dict:
         # (the cursors have moved past them, so the feeds alone would not list them again)
         for page_id, flags in (mirror["status"].get("retry") or {}).items():
             todo.setdefault(page_id, flags)
+        if mirror["page_filter"] is not None:
+            todo = _filtered(ws, mirror["page_filter"], todo, force=report["prune"])
         failed = {}
         for n, page_id in enumerate(sorted(todo)):
             flags = todo[page_id]
@@ -1143,7 +1241,7 @@ def _round(ws: str, mirror: dict, fetch) -> dict:
                 log.warning(f"[mirror] {ws}: page {page_id}: {e}")
         # files the copy's pages reference but its uploads folder lacks (an
         # interrupted round, a file lost on disk): fetched again every round
-        _pull_files(ws, remote, missing_uploads(ws), report)
+        _pull_files(ws, remote, missing_uploads(ws, mirror["page_filter"]), report)
         # cursors move only when the round could talk to the remote at all
         _save(ws, remote_cursor=remote_cursor, local_cursor=local_cursor)
         report = {k: v for k, v in report.items() if k not in ("adopt", "prune", "progress")}
@@ -1163,6 +1261,42 @@ def _round(ws: str, mirror: dict, fetch) -> dict:
     status.pop("progress", None)
     _save(ws, status=status)
     return status
+
+
+def _prune_filter(ws: str, page_filter: list[str]) -> list[str]:
+    """The filter without pages that are gone here and have no base (deleted
+    here and the deletion carried there, or never here): nothing of theirs
+    is left to move. Runs under the round lock."""
+    with connect_pages_db(ws) as conn:
+        synced = {r[0] for r in conn.execute("SELECT page_id FROM sync_pages")}
+        gone = [p for p in page_filter if p not in synced and not conn.execute(
+            "SELECT 1 FROM unified_blocks WHERE id = ? AND parent_id = 'root'", (p,)).fetchone()]
+    if gone:
+        filter_remove(ws, gone)
+    return [p for p in page_filter if p not in gone]
+
+
+def _filtered(ws: str, page_filter: list[str], todo: dict, *, force: bool) -> dict:
+    """A filtered mirror's work list: the feeds' entries for its pages only;
+    every listed page without a base as "new" (a tombstone there from an
+    earlier publication says nothing about this one); and a page with a base
+    that was deleted there and not here leaves the filter instead of being
+    deleted here: the copy there was removed (unpublished), the page here
+    stays. A force leaves the tombstones to its own rules."""
+    keep = set(page_filter)
+    with connect_pages_db(ws) as conn:
+        synced = {r[0] for r in conn.execute("SELECT page_id FROM sync_pages")}
+    out = {p: f for p, f in todo.items() if p in keep}
+    for page_id in keep - synced:
+        out[page_id] = {"seq": None, "remote_gone": False, "local_gone": False}
+    if not force:
+        dropped = [p for p, f in out.items() if f["remote_gone"] and not f["local_gone"]]
+        if dropped:
+            filter_remove(ws, dropped)
+            for page_id in dropped:
+                out.pop(page_id)
+                log.info(f"[mirror] {ws}: {page_id} was removed on the remote; it no longer travels, kept here")
+    return out
 
 
 def _title_of(ws: str, page_id: str) -> str:
@@ -1203,6 +1337,7 @@ _pending: dict[str, float] = {}   # ws -> earliest monotonic time a requested ro
 _last_run: dict[str, float] = {}  # ws -> monotonic time of the last round the loop started
 _wants_change: dict[str, bool] = {}  # ws -> a round after a local edit (mode on, on_change set)
 _dirty: dict[str, float] = {}     # ws -> monotonic time of the last local write no round has pushed yet
+_filters: dict[str, frozenset | None] = {}  # ws -> its mirror's page filter (None: every page), read on first use
 _wake = threading.Event()         # set by request_sync so the loop looks again at once
 
 
@@ -1221,11 +1356,26 @@ def has_local_changes(ws: str) -> bool:
     return ws in _dirty
 
 
-def _on_commit(ws: str, client: str) -> None:
+def _filter_of(ws: str) -> frozenset | None:
+    """The page filter of ``ws``'s mirror (None: no mirror, or one that
+    moves every page), cached until the filter changes."""
+    if ws not in _filters:
+        with connect_users_db() as conn:
+            row = conn.execute("SELECT page_filter FROM mirrors WHERE workspace_id = ?", (ws,)).fetchone()
+        ids = _parse_filter(row[0]) if row else None
+        _filters[ws] = None if ids is None else frozenset(ids)
+    return _filters[ws]
+
+
+def _on_commit(ws: str, client: str, page_id: str = "") -> None:
     """``ops.commit_listeners``: a local write marks the copy dirty and, in
     a copy set to sync on change, asks for a round; the engine's own writes
-    (client ``sync``) do neither."""
+    (client ``sync``) do neither, nor does a write to a page outside the
+    mirror's page filter."""
     if client == CLIENT:
+        return
+    page_filter = _filter_of(ws)
+    if page_filter is not None and page_id and page_id not in page_filter:
         return
     _dirty[ws] = time.monotonic()
     if _wants_change.get(ws):

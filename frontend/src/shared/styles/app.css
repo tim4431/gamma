@@ -383,6 +383,7 @@
 :is(
   .searchInput,
   .promptTextarea,
+  .reportProblemText,
   .aiKeyInput,
   .loginInput,
   .folderNewInput,
@@ -2530,6 +2531,15 @@ mark.merge-del { background: color-mix(in srgb, var(--danger) 16%, transparent);
 .sharePopover .settingText { min-width: 0; }
 .sharePopover .setRow .settingDesc { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .shareLinkBtns { display: inline-flex; align-items: center; gap: 6px; }
+/* Gamma Cloud (PublishSection): the not-published row's sentence or refusal
+   wraps; the state line's Sync-now button sits at its end. */
+.sharePopover .setRow[data-setting="Publish"] .settingDesc { white-space: normal; }
+.sharePopover .publishState { padding: 0 8px 6px 16px; }
+.publishState .mirrorStateLine { align-items: center; }
+.sharePopover .mirrorConfirm { padding: 4px 8px 6px 16px; }
+.sharePopover .mirrorConfirm > span:not(.mirrorConfirmBtns) { flex: 1 1 220px; min-width: 0; }
+.publishState .mirrorStateLine .iconBtn { margin-left: auto; }
+.uiBtn .mirrorSpin { display: inline-flex; }
 .settingsPaneHint.shareSummary { display: flex; align-items: flex-start; gap: 6px; padding: 0 8px 2px; }
 .settingsPaneHint.shareWarn { color: #d9822b; }
 .shareWarn svg { flex-shrink: 0; margin-top: 2px; }
@@ -3628,10 +3638,14 @@ html.appFocusFullscreen, html.appFocusFullscreen body { overflow: hidden; oversc
   min-width: 0;
 }
 .chatSelChipLabel {
+  display: inline-flex;
+  align-items: center;
+  gap: 1px;
   color: #8ab4f8;
   font-weight: 600;
   flex-shrink: 0;
 }
+.chatSelChipNum { font-size: 0.9em; line-height: 1; }
 .chatSelChipText {
   overflow: hidden;
   text-overflow: ellipsis;
@@ -3721,6 +3735,67 @@ html.appFocusFullscreen, html.appFocusFullscreen body { overflow: hidden; oversc
   justify-content: flex-end;
   gap: 8px;
 }
+/* Report a problem (support/ReportProblem.jsx): two text boxes, the
+   diagnostics preview folded under its own summary. */
+.reportModal.reportProblem { width: min(540px, calc(100vw - 32px)); }
+.reportProblemText {
+  width: 100%;
+  font-size: calc(12.5px * var(--ui-font-scale, 1));
+  line-height: 1.5;
+  padding: 8px 10px;
+  resize: vertical;
+}
+.reportProblemText:focus { border-color: var(--text-dim); }
+.reportPreview summary {
+  cursor: pointer;
+  font-size: calc(12px * var(--ui-font-scale, 1));
+  color: var(--text-secondary);
+  user-select: none;
+}
+.reportPreview pre {
+  margin: 6px 0 0;
+  max-height: 220px;
+  overflow: auto;
+  overscroll-behavior: contain;
+  border: 1px solid var(--border-subtle);
+  border-radius: 8px;
+  padding: 8px 10px;
+  font-size: calc(11px * var(--ui-font-scale, 1));
+  line-height: 1.45;
+  white-space: pre-wrap;
+  word-break: break-word;
+  color: var(--text-secondary);
+}
+/* The dialog folded into a pill while a screen recording runs: the app
+   must stay usable underneath. */
+.reportRecordPill {
+  position: fixed;
+  right: 16px;
+  bottom: 16px;
+  z-index: var(--z-popover);
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 6px 8px 6px 12px;
+  border-radius: 999px;
+  background: var(--bg-surface);
+  border: 1px solid var(--border);
+  box-shadow: var(--shadow-surface);
+  color: var(--text-primary);
+  font-size: calc(12.5px * var(--ui-font-scale, 1));
+  max-width: calc(100vw - 32px);
+}
+.reportRecordText { white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.reportRecordDot {
+  width: 9px;
+  height: 9px;
+  border-radius: 50%;
+  background: var(--danger);
+  flex: none;
+  animation: reportRecordPulse 1.2s ease-in-out infinite;
+}
+@keyframes reportRecordPulse { 50% { opacity: 0.35; } }
+@media (prefers-reduced-motion: reduce) { .reportRecordDot { animation: none; } }
 .chatInputRow {
   position: relative;
   display: flex;
@@ -4200,6 +4275,24 @@ html.appFocusFullscreen, html.appFocusFullscreen body { overflow: hidden; oversc
 
 /* --- downloads & uploads (Chrome-style transfer list) --- */
 .topbar .transferBtn { position: relative; }
+/* The red dot (app/notices.js): something wants a look. On a header icon
+   button it sits in the corner; `.inline` puts it after a menu item's or a
+   Settings nav button's label. `.info` is an accent-coloured hint, `.alert`
+   needs attention. */
+.topbar .popoverAnchor > .iconBtn { position: relative; }
+.noticeDot {
+  position: absolute;
+  top: 3px;
+  right: 3px;
+  width: 7px;
+  height: 7px;
+  border-radius: 50%;
+  background: var(--danger);
+  pointer-events: none;
+}
+.noticeDot.info { background: var(--accent); }
+.noticeDot.inline { position: static; display: inline-block; margin-left: auto; flex-shrink: 0; }
+.popoverItem .noticeDot.inline { margin-left: 8px; }
 .transferSpin {
   position: absolute;
   top: 3px;

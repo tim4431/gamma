@@ -181,6 +181,18 @@ The scenarios live in `tests/e2e/scenarios/`:
 - `chatNavigation.mjs`: a library or PDF chat reply keeps streaming and is
   saved while the user navigates away and back, before or after it finishes.
   `--only "chat navigation"`.
+- `publish.mjs`: publishing a page to Gamma Cloud end to end. A second
+  Gamma is started as the share host (`new Server({env})` in `harness.mjs`
+  passes `GAMMA_CLOUD_ISSUER`, `GAMMA_CLOUD_POLICY=provision`,
+  `GAMMA_CLOUD_SHARE_HOST=1`), and `fakeCloud.mjs` stands in for the
+  account server both servers trust: discovery naming the share host, an
+  authorization endpoint that answers at once, PKCE code and refresh
+  grants, EdDSA ID tokens with their JWKS, `/userinfo`, and the profile and
+  server-list endpoints. The account links its identity through the real
+  round trip from the share popover, publishes, opens the link on the share
+  host anonymously, changes the cloud share's audience, syncs, checks the
+  pill and Settings' Publishing row, unpublishes, and stops publishing
+  from Settings. `--only publish`.
 - `mirror.mjs`: Settings → Workspaces → Clones — the server clones one of
   its own workspaces through the dialog with a write token made via the
   API: Sync, the empty conflicts list, opening the clone, the sync pill's
@@ -271,7 +283,7 @@ save path, workspaces, auth or rendering of URLs should add a step here; the
   shows the build and the update check. Backend code must log through
   `gamma/logbuf.py`'s `log` (never `print()`); use `log.warning` for what an
   admin should notice. Secrets are masked at insert time. Gone on restart.
-- **Session log + debug tracing** — Settings → Advanced: browser-side event
+- **Session log + debug tracing** — Settings → Diagnostics: browser-side event
   log; the "Debug logging" toggle traces reading-position/restore/sync
   events into it and the console. Every PDF load phase lands here as
   `pdf <phase> +<ms>` (ms since the viewer started opening that url) and as
@@ -294,8 +306,32 @@ save path, workspaces, auth or rendering of URLs should add a step here; the
   Settings reindex buttons) calls `wakeTasks` so the button appears at once
   instead of waiting for the heartbeat. Work started elsewhere (the AI chat's
   own extraction, another tab) shows up within the heartbeat.
-- **Status bar** — Settings → Advanced turns the floating status pill into a
+- **Status bar** — Settings → Appearance turns the floating status pill into a
   persistent bar under the tabs.
+- **Report a problem** — account menu → "Report a problem…", or the Help
+  section of Settings → Diagnostics. `src/support/ReportProblem.jsx` asks
+  what happened and how to reproduce it, then `src/support/problemReport.js`
+  (pure, unit-tested in `tests/problemReport.test.mjs`) builds the report:
+  the build (`build` on `GET /api/session`, `version.build_info()`), the
+  browser and screen, the kind of view open and the workspace's kind and
+  role (never its name), the session log's warnings and errors plus its
+  newest lines, and — for an admin — the Server dashboard line and the
+  server log's last warnings. Every line goes through a JS mirror of
+  `logbuf.scrub`. "Open GitHub issue" copies the whole report to the
+  clipboard and opens `.github/ISSUE_TEMPLATE/bug_report.yml` prefilled
+  through its field ids (`description`, `steps`, `diagnostics`; trimmed to
+  GitHub's URL budget, in which case the status line says to paste). Nothing
+  leaves the browser until the reporter submits the form; "Copy report" is
+  the path for people without GitHub. Keep the field ids and the query
+  parameters in step. **Screen recording** (the dialog's Record… row, shown
+  where `getDisplayMedia` + `MediaRecorder` exist): the dialog folds into a
+  pill while the reporter reproduces the problem, Stop (the pill, the
+  browser's own stop-sharing bar, or the 3-minute cap) brings it back with
+  the file (webm, or mp4 where that is what the browser records; 1.5 Mbit/s,
+  no sound), Save downloads it, and opening the form saves it too. A URL
+  cannot carry a file, so the steps name the file and the reporter drops it
+  into the form (GitHub uploads it with the issue). The e2e step stubs the
+  picker with a canvas stream so the recorder itself runs for real.
 - **Library health** — Settings → Library maintenance lists, per paper:
   metadata state, extracted-text chars, and search-index coverage, with
   per-row retry/reindex buttons plus batch actions: Fetch needed / Refetch

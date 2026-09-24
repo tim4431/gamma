@@ -33,11 +33,16 @@ export const flags = {
 // ---------------------------------------------------------------------------
 // Server
 
-let current = null; // the running server, for failure artifacts
+// Every server a run started, the suite's own first: failure artifacts go
+// under its temp dir and carry every server's log tail.
+const servers = [];
 
+// `env` adds to the backend's environment (a second Gamma started as another
+// kind of server, e.g. the publish scenario's share host).
 export class Server {
-  constructor() {
-    current = this;
+  constructor({ env = {} } = {}) {
+    servers.push(this);
+    this.env = env;
     this.dir = fs.mkdtempSync(path.join(os.tmpdir(), "gamma-e2e-"));
     this.dataDir = path.join(this.dir, "data");
     this.logPath = path.join(this.dir, "server.log");
@@ -47,7 +52,7 @@ export class Server {
   get base() { return `http://127.0.0.1:${this.port}`; }
   manage(...args) {
     return execFileSync(PYTHON, ["manage.py", ...args], {
-      cwd: BACKEND, env: { ...process.env, GAMMA_DATA_DIR: this.dataDir }, encoding: "utf8",
+      cwd: BACKEND, env: { ...process.env, GAMMA_DATA_DIR: this.dataDir, ...this.env }, encoding: "utf8",
     });
   }
   async start() {
@@ -59,7 +64,7 @@ export class Server {
     const log = fs.openSync(this.logPath, "a");
     this.proc = spawn(PYTHON, ["-m", "uvicorn", "app:app", "--host", "127.0.0.1", "--port", String(this.port)], {
       cwd: BACKEND, stdio: ["ignore", log, log],
-      env: { ...process.env, GAMMA_DATA_DIR: this.dataDir, GAMMA_STATIC_DIR: DIST, PYTHONIOENCODING: "utf-8", GAMMA_UPDATE_CHECK: "off" },
+      env: { ...process.env, GAMMA_DATA_DIR: this.dataDir, GAMMA_STATIC_DIR: DIST, PYTHONIOENCODING: "utf-8", GAMMA_UPDATE_CHECK: "off", ...this.env },
     });
     const t0 = Date.now();
     while (Date.now() - t0 < 30000) {
@@ -255,6 +260,7 @@ export async function step(name, fn) {
 // problems and the tail of the server log, under <temp dir>/failures/ (the
 // temp dir is then kept) — what a CI log alone can't tell you.
 async function saveFailureArtifacts(name, err) {
+  const current = servers[0];
   if (!current) return;
   const dir = path.join(current.dir, "failures");
   fs.mkdirSync(dir, { recursive: true });
@@ -267,6 +273,7 @@ async function saveFailureArtifacts(name, err) {
   fs.writeFileSync(path.join(dir, `${slug}.log`), [
     `# ${name}`, "", String((err && err.stack) || err), "", "## page problems", ...(problems.length ? problems : ["(none)"]),
     "", "## server log (tail)", current.log().slice(-8000),
+    ...servers.slice(1).filter((s) => s.proc).flatMap((s) => ["", `## ${s.base} log (tail)`, s.log().slice(-4000)]),
   ].join("\n"));
   console.log(`        artifacts: ${dir}`);
 }

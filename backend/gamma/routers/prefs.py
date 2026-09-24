@@ -5,9 +5,13 @@ Lets browser state that should follow the account (open tabs, ...) sync
 across devices: last write wins, `updated_at` tells clients whether the
 stored copy is newer than what they have. Most keys are stored per account
 AND workspace (open tabs name that workspace's pages); the keys in
-``db.USER_PREF_KEYS`` (appearance, the AI provider entries) follow the
-account everywhere. Session-only — share links never read or write prefs.
-Values are opaque JSON blobs; keep them small.
+``db.USER_PREF_KEYS`` (the preference profile, the AI provider entries)
+follow the account everywhere. Session-only — share links never read or
+write prefs. Values are opaque JSON blobs; keep them small.
+
+`profile` holds every account-scoped setting of the web app as one object
+keyed by preference name (``db.get_profile`` / ``db.set_profile``); the
+server does not look inside it beyond requiring an object.
 
 The `ai-settings` key holds the user's AI provider API keys and is reserved:
 it is only reachable through /api/ai/settings, which masks the keys — these
@@ -30,6 +34,7 @@ from pydantic import BaseModel
 from ..ai_settings import AI_SETTINGS_PREF_KEY
 from ..auth import require_user, require_ws
 from ..db import (
+    PROFILE_PREF_KEY,
     USER_PREF_KEYS,
     delete_page_snap,
     get_page_snaps,
@@ -42,7 +47,10 @@ from ..db import (
 router = APIRouter(prefix="/api", tags=["prefs"])
 
 _KEY_RE = re.compile(r"^[a-z0-9][a-z0-9_-]{0,63}$")
-MAX_VALUE_BYTES = 64 * 1024  # tabs/folders are a few KB; anything bigger is a bug
+# Tabs/folders are a few KB and the profile (settings plus four custom
+# prompts) well under this; anything bigger is a bug. The same 64 KB is the
+# account server's per-key cap for synced prefs.
+MAX_VALUE_BYTES = 64 * 1024
 
 
 def _check_key(key: str):
@@ -68,6 +76,8 @@ async def write_pref(key: str, payload: PrefWriteRequest, request: Request):
     _check_key(key)
     if len(json.dumps(payload.value)) > MAX_VALUE_BYTES:
         raise HTTPException(status_code=413, detail="pref value too large")
+    if key == PROFILE_PREF_KEY and not isinstance(payload.value, dict):
+        raise HTTPException(status_code=400, detail="the profile is a JSON object")
     updated_at = set_pref(user, key, payload.value, "" if key in USER_PREF_KEYS else require_ws(request))
     return {"key": key, "updated_at": updated_at}
 
