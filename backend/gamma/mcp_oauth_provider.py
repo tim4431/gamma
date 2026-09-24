@@ -66,4 +66,3 @@ class Provider:
 
     async def load_refresh_token(self, client, refresh_token):
         return None
-

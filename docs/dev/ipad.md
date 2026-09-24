@@ -1,7 +1,12 @@
 # Gamma on the iPad (and other tablets)
 
-The iPad app is the web app installed to the home screen. There is no
-Swift client: the browser ink layer already gives Apple Pencil pressure,
+This document covers the installable **web app** imported from tim's branch.
+This repository also retains the native Swift/PDFKit/PencilKit client in
+[`ipad/`](../../ipad/README.md), including recording, replay, cached offline
+reading and the **Pencil & Audio** handoff; that client is not replaced by the
+home-screen installation described here.
+
+For the web path, the browser ink layer already gives Apple Pencil pressure,
 tilt, hover, palm rejection and Safari's touch-gesture handling
 ([handwriting.md](handwriting.md)), and every other feature — the block
 editor, search, AI, sharing, workspaces — is the same React code the
@@ -40,20 +45,19 @@ layout (its Safari sends a desktop-class UA and is wider than the phone
 breakpoint, `useIsPhone` in App.jsx) with the touch rules the ink layer and
 the viewer already carry.
 
-## Not built (and why)
+## Web-path limitations
 
 - **No service worker / offline shell.** Installability on iOS does not
   need one, and a cache layer would sit on top of the asset cache rules
-  in [repository.md](repository.md). Offline reading is the separate
-  "offline library" item in the upstream study, to be scoped on its own.
+  in [repository.md](repository.md). The web installation does not
+  inherit the native client's [offline downloads and outbox](../../ipad/OFFLINE.md).
 - **Pencil double-tap and squeeze** are not exposed to web content by
   iPadOS; Pencil hover is (a `pen` pointer with no buttons) and already
   shows the tool footprint.
-- **A native wrapper** (a `WKWebView` shell like the desktop's Electron
-  one) would only add App Store distribution and system share-sheet
-  integration. It stays out until distribution is a goal; the web app is
-  the product either way, as the desktop shell's black-box rule already
-  says ([desktop.md](desktop.md)).
+- **Native distribution is separate.** The home-screen installation does not
+  install or update the Swift client. This repository's native app includes a
+  `WKWebView` full-workspace mode plus PDFKit/PencilKit recording and replay;
+  see its [build and signing instructions](../../ipad/README.md).
 
 ## Tests
 

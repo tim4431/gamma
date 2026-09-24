@@ -126,4 +126,3 @@ class GammaMCP:
         hosts = await run_in_threadpool(mcp_allowed_hosts)
         manager.security_settings.allowed_hosts = hosts
         await manager.handle_request(scope, receive, send)
-

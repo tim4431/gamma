@@ -127,12 +127,26 @@ export function createCollabSession({ clientId, api, openSocket, keepalivePost, 
       : p)));
   }
 
+  // Rejected writes remain exportable even after the ordinary resync drops
+  // their queue. Never call a disconnect clean merely because a 403 emptied it.
+  const rejectedRecovery = [];
+  let recoveryOverflow = false;
+  function recoverySnapshot() {
+    const pages = [...st.sessions].filter(s => s.queue.length || s.sending).map(s => ({
+      pageID: s.pageId, ops: [...(s.outgoingOps || []), ...s.queue], tree: s.base,
+    }));
+    const text = JSON.stringify({ complete: !recoveryOverflow, pages, rejected: rejectedRecovery });
+    if (text.length > 8 * 1024 * 1024) return { complete: false, reason: "recovery-too-large", pages: [], rejected: [] };
+    return JSON.parse(text);
+  }
+
   // --- outgoing ops ----------------------------------------------------------
 
   function send(s = st.session) {
     if (s.sending || !s.queue.length) return s.sending;
     const page = s.pageId;
     const ops = s.queue;
+    s.outgoingOps = ops;
     s.queue = [];
     if (s.timer) { cancel(s.timer); s.timer = null; }
     // Our caret in the text this batch produces, for the page it belongs to.
@@ -193,13 +207,29 @@ export function createCollabSession({ clientId, api, openSocket, keepalivePost, 
       } catch (err) {
         const status = err?.status || 0;
         if (status >= 400 && status < 500 && status !== 408 && status !== 429) {
-          // The server refused the batch (stale ids, a permission change):
-          // resync rather than loop on it.
-          o().onStatus?.(`Save rejected: ${err.message}`);
+          // The server refused THIS batch for good (stale ids, a permission
+          // change, or a native restore its bounded provenance no longer
+          // recognises): resync rather than loop on it. What the user queued
+          // WHILE it was out is a separate change and must not go down with it,
+          // so the self-contained `set` ops among those are re-queued — a
+          // structural op was computed against the tree this reload replaces, so
+          // it is reported instead of replayed blind. (Silent loss is the one
+          // outcome a refusal must not produce.)
+          const rejected = { pageID: page, ops: [...ops, ...s.queue], tree: s.base };
+          const size = JSON.stringify([...rejectedRecovery, rejected]).length;
+          if (size <= 8 * 1024 * 1024) rejectedRecovery.push(JSON.parse(JSON.stringify(rejected)));
+          else recoveryOverflow = true;
+          const later = s.queue;
+          const kept = later.filter((op) => op.op === "set");
+          const dropped = later.length - kept.length;
           s.queue = [];
           s.inflight.clear();
           s.deferred.clear();
+          o().onStatus?.(`Save rejected: ${err.message}`
+            + (kept.length ? ` — keeping ${kept.length} later edit${kept.length === 1 ? "" : "s"}` : "")
+            + (dropped ? ` (${dropped} later structural change${dropped === 1 ? "" : "s"} could not be kept)` : ""));
           if (s === st.session) o().onReload?.(page);
+          if (kept.length) enqueue(kept, true, s);
         } else if (s.retries < MAX_RETRIES) {
           s.retries += 1;
           o().onStatus?.(`Save failed: ${err.message} — retrying…`);
@@ -213,6 +243,7 @@ export function createCollabSession({ clientId, api, openSocket, keepalivePost, 
         }
       } finally {
         s.sending = null;
+        s.outgoingOps = null;
         if (!s.queue.length) st.sessions.delete(s);
       }
       if (s.queue.length && !s.timer) send(s);
@@ -223,8 +254,10 @@ export function createCollabSession({ clientId, api, openSocket, keepalivePost, 
     return p;
   }
 
-  function enqueue(ops, now = false) {
-    const s = st.session;
+  // `target` defaults to the page on screen; a rejected batch is re-queued on
+  // ITS OWN session, which may be a page the user has already left.
+  function enqueue(ops, now = false, target = st.session) {
+    const s = target;
     st.sessions.add(s);
     for (const op of ops) {
       // inflight counts queued-or-sent set ops per block; a keystroke that
@@ -464,7 +497,7 @@ export function createCollabSession({ clientId, api, openSocket, keepalivePost, 
   }
 
   return {
-    commit, flush, hasPending, sendCursor, pagehide, connect, disconnect,
+    commit, flush, hasPending, recoverySnapshot, sendCursor, pagehide, connect, disconnect,
     get peers() { return peers; },
     get me() { return me; },
   };

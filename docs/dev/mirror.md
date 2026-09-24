@@ -53,6 +53,21 @@ Not synced: preferences (reading positions, open tabs, recents — they are
 per account and per server), chats, cover snapshots, search indexes (the
 copy rebuilds its own).
 
+### Native iPad compatibility boundary
+
+The native client's cached library/outbox is separate from these server-to-server
+mirrors. This mirror implementation transfers `/api/uploads` references, not the
+native `/api/assets` originals, audio or replay derivatives. Generic mirror ops
+must not bypass the native payload/revision guards: importing a new native
+payload or changing reserved properties is refused rather than fabricating a
+valid native copy. Cross-page relocation of native blocks (including an ordinary
+parent containing native descendants) must be refused **before deleting the
+source subtree**. The entire incoming batch is preflighted for unsupported native
+claims before any relocation deletes an earlier ordinary block; stored native
+subtrees are checked again under the source deletion's write lock. Do not treat
+a mirror as a complete backup of native iPad
+recordings; see [the native offline model](../../ipad/OFFLINE.md).
+
 ## The change feed (remote side)
 
 `GET /api/sync/changes?since=&limit=` lists the pages whose root was

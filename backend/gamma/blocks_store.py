@@ -247,7 +247,8 @@ def create_page(conn, title: str, props: dict | None = None, *,
     otherwise; ``block_id`` reuses an id (a page brought back) — its
     ``deleted_pages`` tombstone, if any, is cleared. The one code path that
     mints pages: POST /api/pages, POST /api/blocks (parent ``root``) and
-    get_or_create_doc_page all go through it."""
+    get_or_create_doc_page all go through it. The native blank-notebook
+    endpoint supplies its client-minted UUID for idempotent retries."""
     block_id = block_id or secrets.token_urlsafe(9)
     title = (title or "").strip() or "Untitled"
     props = dict(props or {})

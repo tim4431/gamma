@@ -6,7 +6,7 @@ import { COLORS } from "../shared/model/highlightColors.js";
 import { ExportDialog, ImportDialog } from "../transfers/ImportExport";
 import ImportReviewDialog from "../transfers/ImportReviewDialog";
 import { parseGammaLink } from "../shared/model/gammaLinks.js";
-import { API, apiJson, withShare, withWorkspace, setCurrentWorkspace, getCurrentWorkspace, setLinkName, makeId, fmtBytes, getDocIdForUrl, isPdfFile, isMarkdownFile, metaSourceInfo, resolvePdfUrl, pdfProxyUrl, probePdfUrl, setExpectedUser, getExpectedUser, usePersistedState, usePersistedFlag, copyText, copyRich, readNdjson } from "../shared/lib/utils";
+import { API, apiJson as baseApiJson, withShare, withWorkspace, setCurrentWorkspace, getCurrentWorkspace, setLinkName, makeId, fmtBytes, getDocIdForUrl, isPdfFile, isMarkdownFile, metaSourceInfo, resolvePdfUrl, pdfProxyUrl, probePdfUrl, setExpectedUser, getExpectedUser, usePersistedState, usePersistedFlag, copyText, copyRich, readNdjson } from "../shared/lib/utils";
 import {
   BlockDropIndicator,
   ChatMarkdown,
@@ -20,6 +20,7 @@ import {
 import { BlockTree, _dragState } from "../editor/BlockTree";
 import { FileChipContext, forgetDocPages, rememberDocPage, setUploadReporter, uploadFilesAsLines, xhrUpload } from "../transfers/FileChip";
 import { CardLabels, KindToggle, ListFindBox, PageCard, ViewToggle } from "../library/FileBrowser";
+import BlankPDFDialog from "../library/BlankPDFDialog";
 import ChatDock from "../chat/ChatDock";
 import { createChatSession } from "../chat/chatSession";
 import SearchPanel from "../search/SearchPanel";
@@ -73,6 +74,20 @@ import { InkToolbar } from "../ink/InkLayer";
 import { MAX_STROKES, appendStroke, duplicateStrokes, eraseAt, newInk, removeStrokes, restyleStrokes, toolStyle, transformStrokes, translateStrokes } from "../ink/ink";
 import * as inkStore from "../ink/inkStore";
 import { usePageCollab } from "../collaboration/usePageCollab";
+import { blocksToPdfInk } from "../native/inkBlock.js";
+import { isNativeClaim, nativeClaimKind } from "../native/nativeClaim.js";
+import { isEmbeddedLocalRuntime } from "../native/localRuntime.js";
+
+function LocalRuntimeRecovery() {
+  return <div className="app"><div className="loginPage"><div className="loginCard">
+    <div className="loginTitle">Gamma</div>
+    <p className="loginSubtitle">On this iPad</p>
+    <p className="loginConflictText">The local session is unavailable. Use Server in the app toolbar to reopen On this iPad. No local password is needed.</p>
+    <p className="loginConflictHint">To connect to a remote server, use Server in the app toolbar.</p>
+  </div></div></div>;
+}
+import { nativePDFRequest, nativeReturnRequest, applyNativeViewport, prepareNativeDisconnect } from "../native/nativeBridge.js";
+import NoteReplayPlayer, { useReplayAssets } from "../native/NoteReplayPlayer.jsx";
 import { applyOps, applyPatch, keepUiFlags } from "../shared/model/blockOps";
 import { PresenceBar } from "../collaboration/Presence";
 import { cleanLinkName, loadLinkName, saveLinkName, LINK_NAME_MAX } from "../collaboration/linkName";
@@ -333,6 +348,23 @@ function TransferRow({ status, icon, name, info, progress, onStop }) {
   );
 }
 
+// Direct page mutations (title, tags, metadata, cross-page edits) do not use
+// the collaboration queue. Retain only their JSON body, never request headers.
+const nativePageWrites = new Map();
+function apiJson(path, init) {
+  if (!/\/api\/(blocks|pages)\//.test(path) || !["POST", "PUT", "PATCH", "DELETE"].includes(init?.method)) return baseApiJson(path, init);
+  const key = Symbol(path);
+  const entry = { server: location.origin, user: getExpectedUser(), workspace: getCurrentWorkspace(), path,
+    method: init.method, body: typeof init.body === "string" ? init.body : null, complete: init.body == null || typeof init.body === "string" };
+  nativePageWrites.set(key, entry);
+  const promise = baseApiJson(path, init).then(result => {
+    if (nativePageWrites.get(key) === entry) nativePageWrites.delete(key);
+    return result;
+  }).finally(() => { entry.promise = null; });
+  entry.promise = promise;
+  return promise;
+}
+
 export default function App() {
   // Authorization must never mount library effects (saved-page restore,
   // autosave, navigation hotkeys). They can otherwise replace its URL.
@@ -368,6 +400,8 @@ function LibraryApp() {
   const [wsReady, setWsReady] = useState(shareMode);
   const [workspaceUnavailable, setWorkspaceUnavailable] = useState(false);
   const wsId = workspace?.id || "";
+
+  const embeddedLocal = isEmbeddedLocalRuntime();
 
   // Auth state: null=loading, false=logged out, {user, is_guest}=logged in
   const [authUser, setAuthUser] = useState(shareMode ? {user:"_public"} : null);
@@ -731,9 +765,16 @@ function LibraryApp() {
   }
 
   async function doLogout() {
+    if (embeddedLocal) return; // The native host owns local-session recovery.
     // Flush pending edits while the session is still valid. Setting authUser
     // false after the cookie is removed performs a local-only workspace
     // teardown, without starting reads that race logout.
+    const saved = await nativeControlHandlersRef.current.prepareDisconnect();
+    await nativeControlHandlersRef.current.cancelDisconnect();
+    if (!saved.ok) {
+      setStatus("Notes could not be saved. Retry, or use Disconnect to preserve recovery data before leaving.");
+      return;
+    }
     leaveCurrentPage();
     await fetch(`${API}/logout`, { method: "POST", credentials: "include" });
     // Logout kills the browser-wide session: tell other tabs of this account
@@ -1074,6 +1115,15 @@ function LibraryApp() {
   async function duplicatePage(pageId) {
     const data = await apiJson(`${API}/blocks/${pageId}/subtree`);
     const src = data.block || {};
+    // A page copy clones its children through the bulk children writer, which
+    // is a generic insert: the server refuses native ink/audio manifests there
+    // (`guard_generic_insert`), so a page carrying iPad annotations is refused
+    // UP FRONT — before the copy page is created, and rather than half-copying
+    // it into an empty page plus an error.
+    const nativeChild = (list) => (list || []).find((b) => isNativeClaim(b.properties) || nativeChild(b.children));
+    if (nativeChild(src.children)) {
+      throw new Error("This page has iPad annotations; copying it would need a native copy the server does not accept.");
+    }
     const created = await apiJson(`${API}/blocks`, {
       method: "POST",
       headers: { "Content-Type": "application/json" },
@@ -3240,7 +3290,9 @@ function LibraryApp() {
     }
     setPageMeta(null);
     setPageBibtex("");
-    if (!metaAutoFetch) return; // manual via ↻ only
+    // A blank notebook has no scholarly identity to look up — the automatic
+    // lookup is skipped (the ↻ button still asks explicitly).
+    if (!metaAutoFetch || b.properties.pdf_kind === "blank") return; // manual via ↻ only
     if (b.properties.meta_error) return; // a past lookup failed — retry only via ↻
     if (attemptedMetaRef.current.has(b.id)) return;
     attemptedMetaRef.current.add(b.id);
@@ -3506,6 +3558,8 @@ function LibraryApp() {
   const inkActiveRef = useRef(null);
   const inkTimerRef = useRef(0);
   const prevInkRef = useRef({ json: "", value: [] });
+  // Same identity-stable list, for the native `pdf_ink` blocks.
+  const prevNativeInkRef = useRef({ json: "", value: [] });
   // Stroke-level history for the strip's Ctrl+Z and Undo/Redo buttons
   // (entries: {changes: [{id, page, before, after}], label} per action;
   // inkHistoryState mirrors the lengths for the buttons) and the lasso
@@ -3769,6 +3823,80 @@ function LibraryApp() {
   };
   // Send queued edits NOW — before anything replaces the block tree.
   function flushPendingSave() { collabRef.current.flush(); }
+  // Web → Pencil & Audio (docs/dev/handwriting.md "Native handoff").
+  //
+  // Upstream has no whole-tree autosave: the page is a live collab session
+  // whose edits leave as debounced op batches. So the source flow's
+  // "flush the pending autosave, then wait for the in-flight saves" becomes
+  // exactly two collab primitives — `flush()` (awaits the queued batch AND any
+  // batch that started while it waited) and `hasPending()` — re-checked on both
+  // sides of the round trip. The tree is then frozen, because the native
+  // workspace owns the document until it returns through a reload.
+  const nativeViewportRef = useRef(null);
+  const nativeIdentityRef = useRef(null);
+  nativeIdentityRef.current = { user: sessionUser, pageID: focusedBlockId, docID: docId, workspaceID: getCurrentWorkspace() || workspace?.id || "" };
+  const nativeHandoffPendingRef = useRef(false);
+  const nativeReturnPendingRef = useRef(null);
+  const nativeControlHandlersRef = useRef(null);
+  const nativeDisconnectRef = useRef(null);
+  const nativeRecoveryScopeRef = useRef(null);
+  if (sessionUser && wsReady) nativeRecoveryScopeRef.current = { server: location.origin, user: sessionUser, workspace: getCurrentWorkspace() };
+  const inkDraftScopesRef = useRef({});
+  async function openInNativeReader() {
+    const bridge = window.webkit?.messageHandlers?.gammaNative;
+    const workspaceID = getCurrentWorkspace() || workspace?.id || "";
+    if (!bridge || readOnly || !docId || !focusedBlockId || !workspaceID || nativeHandoffPendingRef.current) return;
+    nativeHandoffPendingRef.current = true;
+    try {
+      const pageID = focusedBlockId;
+      const navigationToken = restoreTokenRef.current;
+      const sameDocument = () => nativeIdentityRef.current?.pageID === pageID &&
+        nativeIdentityRef.current?.docID === docId && nativeIdentityRef.current?.workspaceID === workspaceID &&
+        restoreTokenRef.current === navigationToken;
+      // Capture before any await or UI freeze. A loading/previous document is
+      // not a reading position for this page; never silently open page one.
+      const viewport = pdfRenderedUrlRef.current === pdfUrl && !restoringForRef.current
+        ? nativeViewportRef.current?.() : null;
+      if (!viewport) throw new Error("Wait for the PDF reading position to finish loading before opening Pencil.");
+      setStatus("Saving notes before opening Pencil…");
+      await collabRef.current.flush();
+      if (collabRef.current.hasPending() || !sameDocument()) {
+        throw new Error("Notes changed or are not saved yet. Wait for sync and try again.");
+      }
+      // Then re-declare the account AND the library, and let the server confirm
+      // both: the payload is a claim the native side independently verifies,
+      // never a grant. The workspace must still be one this account may WRITE
+      // (owner or editor) — the iPad will write annotations into it, and a
+      // viewer role or a membership that changed since this tab booted must not
+      // hand off a document the native side could only fail on.
+      const session = await apiJson(`${API}/session`);
+      if (!session.user || session.user !== sessionUser) throw new Error("The Gamma account changed. Reload before opening Pencil.");
+      const membership = (session.workspaces || []).find((w) => w.id === workspaceID);
+      if (!membership) throw new Error("This library is no longer available to this account. Reload before opening Pencil.");
+      if (!["owner", "editor"].includes(membership.role)) {
+        throw new Error(`Your role in this library is ${membership.role || "unknown"} — Pencil needs editing access.`);
+      }
+      if (collabRef.current.hasPending() || !sameDocument()) {
+        throw new Error("Notes changed during handoff. Please try again after saving.");
+      }
+      const request = nativePDFRequest({ pageID, docID: docId, title: pageTitle, user: session.user, workspace: workspaceID, viewport });
+      if (!request) throw new Error("Invalid Gamma document identity.");
+      const root = document.getElementById("root");
+      if (root) root.inert = true;
+      window.__GAMMA_NATIVE_ACTIVE__ = true;
+      setReplayBlockID(null);
+      bridge.postMessage(request);
+      setStatus("Opened in Pencil workspace");
+    } catch (error) {
+      // A refused or failed handoff must leave a usable page behind.
+      const root = document.getElementById("root");
+      if (root) root.inert = false;
+      window.__GAMMA_NATIVE_ACTIVE__ = false;
+      setStatus(error.message);
+    } finally {
+      nativeHandoffPendingRef.current = false;
+    }
+  }
   useEffect(() => {
     if (!focusedBlockId) return;
     if (suppressAutosaveRef.current) {
@@ -3780,6 +3908,11 @@ function LibraryApp() {
       return;
     }
     if (readOnly) return;
+    // The native workspace owns the document while the handoff is active. The
+    // tree is inert, so there should be no new edits — this is the belt to
+    // that braces: a state change from any other source must not enqueue an op
+    // that would race the iPad's own writes. Native returns through a reload.
+    if (window.__GAMMA_NATIVE_ACTIVE__) return;
     const ops = collab.commit(blocks, { now: saveNowRef.current });
     saveNowRef.current = false;
     const seed = seedBlockIdRef.current;
@@ -4441,6 +4574,45 @@ function LibraryApp() {
     }
   }
 
+  // The parent block id of `id` in `tree` (the page block itself for a
+  // top-level row), or null when it is not in the tree.
+  function parentBlockIdOf(tree, id) {
+    const ctx = findBlockContext(tree, id);
+    if (!ctx) return null;
+    return ctx.depth === 0 ? focusedBlockId : ctx.ancestors[ctx.depth - 1] || null;
+  }
+
+  // Ink/audio writers anchor to the containing PDF page and preserve their
+  // actual outliner parent. Same-page indent/outdent/drop is therefore safe.
+  // Native notes instead bind to their exact parent: do not broaden that contract.
+  function nativeParentingBlocked(id) {
+    const block = findBlock(blocksRef.current, id);
+    if (!isNativeClaim(block?.properties) || ["ink", "audio"].includes(nativeClaimKind(block?.properties))) return false;
+    setStatus("Native notes keep their parent — this block cannot be re-parented here.");
+    return true;
+  }
+
+  // Copy and cross-page move guards include native descendants, not just the
+  // selected row; nesting must not create a back door around payload ownership.
+  function hasNativeSubtree(block) {
+    return !!block && (isNativeClaim(block.properties) || (block.children || []).some(hasNativeSubtree));
+  }
+
+  // A blank PDF notebook (BlankPDFDialog): an ordinary library page with its own
+  // immutable document, created under the caller's own id so the dialog's retry
+  // is idempotent. Nothing here inserts pages into an existing PDF.
+  const [blankPDFOpen, setBlankPDFOpen] = useState(false);
+  async function createBlankPDF(id, body) {
+    const created = await apiJson(`${API}/blank-pdfs/${id}`, {
+      method: "PUT",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify(body),
+    });
+    await fetchHomeBlocks();
+    await openBlock(created.id, { pushNav: true });
+    setBlankPDFOpen(false);
+  }
+
   // Attach a PDF to the open page (one that carries none): the same ingest
   // as opening a new PDF, then bound to THIS page via POST
   // /pages/{id}/attachment — no new page is created.
@@ -4695,7 +4867,7 @@ function LibraryApp() {
   }
 
   async function openBlock(blockId, opts) {
-    if (!blockId || shareMode) return;
+    if (!blockId || shareMode || (opts?.canApply && !opts.canApply())) return;
     // Back records LINK jumps only — callers opt in via {pushNav: true}.
     // Plain navigation (library, search, tabs, home) never pushes.
     if (opts?.pushNav && blockId !== focusedBlockId) pushNav();
@@ -4705,6 +4877,7 @@ function LibraryApp() {
     setStatus("Opening...");
     try {
       const subtreeData = await apiJson(`${API}/blocks/${blockId}/subtree`);
+      if (opts?.canApply && !opts.canApply()) return;
       const block = subtreeData.block;
       if (!block) throw new Error("Block not found");
       const props = block.properties || {};
@@ -5550,7 +5723,79 @@ function LibraryApp() {
     return next;
   }, [blocks]);
 
+  // ---- Native (iPad) handwriting, audio and Note Replay -------------------
+  // `pdf_ink` and `audio` blocks written by the iPad app (docs/dev/handwriting.md
+  // "Native handwriting blocks"). The web renders them; the editable PKDrawing
+  // source and the recording stay on iPad and are never rewritten here.
+  //
+  // Identity-stable like `inkBlocks`: a keystroke elsewhere must not rebuild
+  // the viewer's per-page layer input.
+  const nativeInkBlocks = useMemo(() => {
+    const next = blocksToPdfInk(blocks);
+    const json = JSON.stringify(next);
+    if (json === prevNativeInkRef.current.json) return prevNativeInkRef.current.value;
+    prevNativeInkRef.current = { json, value: next };
+    return next;
+  }, [blocks]);
+  const [replayBlockID, setReplayBlockID] = useState(null);
+  const [replayFrame, setReplayFrame] = useState(null);
+  const [replaySeekRequest, setReplaySeekRequest] = useState(null);
+  const [nativeInkJumpRequest, setNativeInkJumpRequest] = useState(null);
+  // Jump to a native ink block: show the PDF, open its page, and ask the
+  // viewer for the strokes themselves (canonical-space bounds, so this lands
+  // on the handwriting rather than on the page).
+  const jumpToNativeInk = useCallback((id) => {
+    setFocusedId(id);
+    setPdfHidden(false);
+    if (!pdfUrl && docId) setPdfUrl(`${API}/uploads/${encodeURIComponent(docId)}.pdf`);
+    setNativeInkJumpRequest({ id, nonce: performance.now() });
+  }, [pdfUrl, docId]);
+  const replayBlock = useMemo(
+    () => flattenBlocks(blocks).find((b) => b.id === replayBlockID && b.properties?.type === "audio") ?? null,
+    [blocks, replayBlockID],
+  );
+  // The derivative loader is scoped to account + workspace + document: a
+  // workspace switch must not leave another library's stroke images loaded,
+  // and the workspace is also what the asset URLs are scoped by.
+  const replayAssets = useReplayAssets(nativeInkBlocks,
+    !readOnly && focusedBlockId && sessionUser ? `${sessionUser}:${workspace?.id || getCurrentWorkspace()}:${focusedBlockId}` : null);
+  const replay = replayBlock && replayFrame?.recordingID === replayBlock.id ? { ...replayFrame, assets: replayAssets } : null;
+  const updateReplayFrame = useCallback((frame) => setReplayFrame(frame), []);
+  const seekReplay = useCallback(
+    (time) => setReplaySeekRequest({ recordingID: replayBlockID, time, nonce: performance.now() }),
+    [replayBlockID],
+  );
+  useEffect(() => {
+    // The notes pane asks for the player by event, so the bar can live at the
+    // app root (one player at a time, next to the PDF it drives).
+    const start = (event) => {
+      if (readOnly || !docId) return;
+      const block = flattenBlocks(blocksRef.current).find((b) => b.id === event.detail?.blockID && b.properties?.type === "audio");
+      if (!block || block.id === replayBlockID) return;
+      // A plain audio player elsewhere on the page must not keep playing under
+      // the replay's own audio.
+      document.querySelectorAll("audio").forEach((audio) => audio.pause());
+      setReplayFrame(null);
+      setReplaySeekRequest(null);
+      setReplayBlockID(block.id);
+      setPdfHidden(false);
+      if (!pdfUrl) setPdfUrl(`${API}/uploads/${encodeURIComponent(docId)}.pdf`);
+    };
+    window.addEventListener("gamma-start-replay", start);
+    return () => window.removeEventListener("gamma-start-replay", start);
+  }, [readOnly, docId, pdfUrl, replayBlockID]);
+  // Leaving the page or switching account/workspace ends the session: media and
+  // the frame loop stop with it rather than staying half-active.
+  useEffect(() => {
+    setReplayBlockID(null);
+    setReplayFrame(null);
+    setNativeInkJumpRequest(null);
+  }, [focusedBlockId, sessionUser, workspace?.id]);
+
+  const inkFlushInFlightRef = useRef(null);
   const flushInk = useCallback(async () => {
+    if (inkFlushInFlightRef.current) await inkFlushInFlightRef.current;
+    const run = (async () => {
     clearTimeout(inkTimerRef.current);
     inkTimerRef.current = 0;
     const json = { "Content-Type": "application/json" };
@@ -5574,7 +5819,139 @@ function LibraryApp() {
         if (!inkTimerRef.current) inkTimerRef.current = setTimeout(flushInk, 2000);
       }
     }
+    })();
+    inkFlushInFlightRef.current = run;
+    try { await run; } finally { if (inkFlushInFlightRef.current === run) inkFlushInFlightRef.current = null; }
   }, []);
+
+  // Installed even on the login/home screens. Native owns the confirmation UI;
+  // failure keeps all browser state alive until cancel or explicit recovery/export.
+  nativeControlHandlersRef.current = {
+    async prepareDisconnect() {
+      if (nativeDisconnectRef.current) return nativeDisconnectRef.current;
+      const root = document.getElementById("root");
+      document.activeElement?.blur?.();
+      if (root) root.inert = true;
+      const scope = { ...nativeRecoveryScopeRef.current, pageID: focusedBlockId, docID: docId };
+      const snapshot = () => {
+        const collab = collabRef.current.recoverySnapshot();
+        const pageWrites = [...nativePageWrites.values()].map(({ promise, ...entry }) => entry);
+        const data = { version: 1, ...scope, complete: collab.complete && pageWrites.every(e => e.complete), collaboration: collab, pageWrites,
+          inkDrafts: inkStore.dirtyDrafts().map(d => ({ ...d, ...inkDraftScopesRef.current[d.id] })) };
+        const text = JSON.stringify(data);
+        return text.length <= 12 * 1024 * 1024 ? JSON.parse(text)
+          : { version: 1, ...scope, complete: false, reason: "recovery-too-large" };
+      };
+      const run = prepareNativeDisconnect({
+        settle: () => new Promise(resolve => setTimeout(resolve, 0)),
+        flush: async () => {
+          await Promise.allSettled([...nativePageWrites.values()].map(e => e.promise).filter(Boolean));
+          await collabRef.current.flush();
+        }, flushInk,
+        hasPending: () => {
+          const recovery = collabRef.current.recoverySnapshot();
+          return nativePageWrites.size > 0 || collabRef.current.hasPending() || !recovery.complete || recovery.rejected.length > 0;
+        }, dirtyInk: () => inkStore.dirtyDrafts(), recovery: snapshot,
+      });
+      nativeDisconnectRef.current = run;
+      try { return await run; } finally { nativeDisconnectRef.current = null; }
+    },
+    async cancelDisconnect() {
+      const root = document.getElementById("root");
+      if (root) root.inert = false;
+      window.__GAMMA_NATIVE_ACTIVE__ = false;
+      return { ok: true };
+    },
+    async restorePosition(raw) {
+      const payload = nativeReturnRequest(raw, location.origin);
+      if (!payload) return { ok: false, reason: "invalid-position" };
+      if (!wsReady || authUser === null) return { ok: false, reason: "not-ready" };
+      if (payload.user !== sessionUser || payload.workspace !== getCurrentWorkspace() || shareMode) return { ok: false, reason: "identity-mismatch" };
+      const key = payload.requestID || JSON.stringify(payload);
+      if (nativeReturnPendingRef.current?.pending && nativeReturnPendingRef.current.key === window.__GAMMA_NATIVE_CANCELLED_REQUEST__) {
+        cancelPdfRestore();
+        nativeReturnPendingRef.current = null;
+      }
+      if (window.__GAMMA_NATIVE_CANCELLED_REQUEST__ === key) return { ok: false, reason: "cancelled" };
+      if (nativeReturnPendingRef.current?.key === key) return nativeReturnPendingRef.current.promise;
+      if (nativeReturnPendingRef.current?.pending) return { ok: false, reason: "restore-in-progress" };
+      const state = { key, pending: true };
+      nativeReturnPendingRef.current = state;
+      const isCurrent = () => nativeReturnPendingRef.current === state && window.__GAMMA_NATIVE_CANCELLED_REQUEST__ !== key;
+      state.promise = (async () => {
+        try {
+          // Verify before navigation, including retained WK views whose current
+          // page can differ from the native reader's most recent document.
+          const data = await apiJson(`${API}/blocks/${encodeURIComponent(payload.pageID)}/subtree`);
+          if (!isCurrent()) return { ok: false, reason: "cancelled" };
+          if (data.block?.properties?.doc_id !== payload.docID) return { ok: false, reason: "document-mismatch" };
+          if (nativeIdentityRef.current.user !== payload.user || nativeIdentityRef.current.workspaceID !== payload.workspace) return { ok: false, reason: "identity-mismatch" };
+          cancelPdfRestore();
+          cancelCoarseRestoreRef.current();
+          const url = await openBlock(payload.pageID, { canApply: isCurrent });
+          if (!isCurrent()) return { ok: false, reason: "cancelled" };
+          if (!url) return { ok: false, reason: "open-failed" };
+          setPdfHidden(false);
+          cancelPdfRestore();
+          cancelCoarseRestoreRef.current();
+          restoredPdfUrlRef.current = url;
+          restoringForRef.current = payload.pageID;
+          const token = restoreTokenRef.current;
+          let previous = "", stable = 0;
+          for (let tries = 0; tries < 300; tries++) {
+            await new Promise(resolve => setTimeout(resolve, 50));
+            if (!isCurrent()) return { ok: false, reason: "cancelled" };
+            if (restoreTokenRef.current !== token) return { ok: false, reason: "navigation-changed" };
+            const identity = nativeIdentityRef.current;
+            if (identity.user !== payload.user || identity.workspaceID !== payload.workspace) return { ok: false, reason: "identity-mismatch" };
+            if (identity.pageID !== payload.pageID || identity.docID !== payload.docID || identity.workspaceID !== payload.workspace) continue;
+            if (pdfRenderedUrlRef.current !== url) continue;
+            const scroller = viewerWrapRef.current?.querySelector(".pdfViewer");
+            const page = scroller?.querySelector(`.pdfPageWrap[data-page="${payload.viewport.pageIndex + 1}"]`);
+            const box = page?.getBoundingClientRect();
+            if (!box?.width || !box?.height) continue;
+            const signature = [box.width, box.height, box.top + scroller.scrollTop, scroller.clientWidth, scroller.clientHeight, scroller.scrollHeight].join(":");
+            stable = signature === previous ? stable + 1 : 0;
+            previous = signature;
+            if (stable < 4) continue;
+            if (!isCurrent()) return { ok: false, reason: "cancelled" };
+            cancelCoarseRestoreRef.current();
+            if (!applyNativeViewport(scroller, payload.viewport)) continue;
+            tabScrollRef.current[payload.pageID] = { top: scroller.scrollTop, scale: pdfEffScaleRef.current };
+            recordReadPos(payload.pageID, payload.viewport.pageIndex + 1);
+            await nativeControlHandlersRef.current.cancelDisconnect();
+            if (!isCurrent()) return { ok: false, reason: "cancelled" };
+            return { ok: true, reason: "restored" };
+          }
+          return { ok: false, reason: "layout-not-ready" };
+        } catch (error) { return { ok: false, reason: "restore-failed", detail: String(error.message || error) }; }
+        finally {
+          state.pending = false;
+          if (nativeReturnPendingRef.current === state) restoringForRef.current = null;
+        }
+      })();
+      const result = await state.promise;
+      if (!result.ok && nativeReturnPendingRef.current === state) nativeReturnPendingRef.current = null;
+      return result;
+    },
+  };
+  useEffect(() => {
+    const control = { version: 1 };
+    for (const method of ["restorePosition", "prepareDisconnect", "cancelDisconnect"]) {
+      control[method] = payload => nativeControlHandlersRef.current[method](payload);
+    }
+    window.__GAMMA_NATIVE_CONTROL__ = control;
+    window.dispatchEvent(new Event("gamma:native-control-ready"));
+    return () => { if (window.__GAMMA_NATIVE_CONTROL__ === control) delete window.__GAMMA_NATIVE_CONTROL__; };
+  }, []);
+  useEffect(() => {
+    if (!wsReady || !sessionUser || !window.__GAMMA_NATIVE_RETURN__) return;
+    const payload = window.__GAMMA_NATIVE_RETURN__;
+    window.__GAMMA_NATIVE_CONTROL__?.restorePosition(payload).then(result => {
+      if (result.ok && window.__GAMMA_NATIVE_RETURN__ === payload) delete window.__GAMMA_NATIVE_RETURN__;
+    });
+  }, [wsReady, sessionUser]);
+
   function scheduleInk() {
     clearTimeout(inkTimerRef.current);
     inkTimerRef.current = setTimeout(flushInk, 700);
@@ -5616,7 +5993,10 @@ function LibraryApp() {
         properties: { ink_url: "", pdf_page: c.page, ink_strokes: 0 },
       }))]);
     }
-    for (const c of changes) inkStore.setDraft(c.id, c.after);
+    for (const c of changes) {
+      inkDraftScopesRef.current[c.id] = { ...nativeRecoveryScopeRef.current, pageID: focusedBlockId, docID: docId };
+      inkStore.setDraft(c.id, c.after);
+    }
     if (record) {
       const h = inkHistRef.current;
       h.undo.push({ changes, label });
@@ -6362,7 +6742,7 @@ function LibraryApp() {
   // stops shifting under it.
   useEffect(() => {
     coarseRestorePendingRef.current = false;
-    if (pdfHidden || !pdfUrl) return;
+    if (pdfHidden || !pdfUrl || nativeReturnPendingRef.current?.pending || window.__GAMMA_NATIVE_RETURN__) return;
     if (restoredPdfUrlRef.current === pdfUrl) { dbg("restore: already done for this doc"); return; }
     const fid = focusedBlockIdRef.current;
     // Tab switches restore an exact per-page position (tabScrollRef) — the
@@ -6511,9 +6891,17 @@ function LibraryApp() {
     return () => document.removeEventListener('scroll', onScroll, { capture: true });
   }, [pdfUrl, pdfHidden]);
 
+  // One navigation for every Gamma link card on screen (chat, notes, embeds).
+  // Keep this hook above every access-gate return, including share recovery.
+  const gammaNav = useMemo(
+    () => ({ openPage: openPageLink, openBlock: openBlockLink }),
+    [focusedBlockId, blocks, refCache, shareMode],
+  );
+
   // A share link that can't open yet: sign in (signed-in / specific-people
   // shares), or explain why not.
   if (shareMode && shareGate) {
+    if (embeddedLocal && shareGate === "login") return <LocalRuntimeRecovery />;
     return shareGate === "login" ? (
       <LoginPage
         username={loginUser}
@@ -6531,19 +6919,11 @@ function LibraryApp() {
   }
 
   // Login page state
-  // One navigation for every Gamma link card on screen (chat, notes, embeds).
-  // Declared above the loading/unavailable returns below — it is a hook.
-  // Rebuilt when what the handlers close over changes; a click reads the
-  // current value, so the cards themselves never re-render for navigation.
-  const gammaNav = useMemo(
-    () => ({ openPage: openPageLink, openBlock: openBlockLink }),
-    [focusedBlockId, blocks, refCache, shareMode],
-  );
-
   if (workspaceUnavailable) return <WorkspaceUnavailablePage />;
   if (authUser === null) return <AuthLoading />;
 
   if (authUser === false) {
+    if (embeddedLocal) return <LocalRuntimeRecovery />;
     return (
       <LoginPage
         username={loginUser}
@@ -7613,6 +7993,12 @@ function LibraryApp() {
                   rootId: focusedBlockId,
                   onJump: jumpToHighlightId,
                   onInkJump: showInkOnPage,
+                  // Native `pdf_ink` blocks: their own jump (canonical-space
+                  // bounds) and the shared per-stroke derivative set, so the
+                  // Notes picture is the same high-resolution ink the PDF and
+                  // Replay draw.
+                  onNativeInkJump: jumpToNativeInk,
+                  nativeInkPreviews: replayAssets,
                   onEnterAttachMode: readOnly ? null : setAttachModeBlockId,
                   onUnlinkHighlight: readOnly ? null : unlinkHighlightFromBlock,
                   onOpenLinkTarget: (b) => {
@@ -7684,13 +8070,18 @@ function LibraryApp() {
                     setBlocks(next);
                     setFocusedId(newId);
                   },
+                  // Indent/outdent stays within this page: native ink/audio
+                  // preserve their actual parent on later iPad saves. Native
+                  // notes still use the narrower exact-parent contract.
                   onIndent: (id) => {
                     if (readOnly) return;
+                    if (nativeParentingBlocked(id)) return;
                     setBlocks(indentBlock(blocks, id));
                     setFocusedId(id);
                   },
                   onOutdent: (id) => {
                     if (readOnly) return;
+                    if (nativeParentingBlocked(id)) return;
                     setBlocks(outdentBlock(blocks, id));
                     setFocusedId(id);
                   },
@@ -7710,6 +8101,14 @@ function LibraryApp() {
                     if (readOnly) return;
                     const src = findBlock(blocks, id);
                     if (!src) return;
+                    // The row menu disables this for native blocks; keep the
+                    // guard so another caller cannot queue an insert the server
+                    // refuses (guard_generic_insert) and lose the action to the
+                    // resync that follows a rejected batch.
+                    if (hasNativeSubtree(src)) {
+                      setStatus("iPad annotations are copied on the iPad — the server refuses a web copy.");
+                      return;
+                    }
                     // Fresh ids all the way down; PDF anchoring stays with the
                     // original — a copy with the same highlight_id/position
                     // would draw a duplicate highlight on the page (same rule
@@ -7725,6 +8124,14 @@ function LibraryApp() {
                   },
                   onMoveToPage: async (id) => {
                     if (readOnly) return;
+                    // An annotation belongs to its page's document, and it is the
+                    // PAGE that the native writer validates against; moving it
+                    // elsewhere would leave it attached to another document.
+                    const moving = findBlock(blocksRef.current, id);
+                    if (hasNativeSubtree(moving)) {
+                      setStatus("iPad annotations stay on their page — moving one elsewhere is not supported.");
+                      return;
+                    }
                     try {
                       const d = await apiJson(`${API}/blocks/root/children`);
                       const pages = (d.children || []).filter((p) => p.id !== focusedBlockId);
@@ -7795,6 +8202,13 @@ function LibraryApp() {
                       if (!ancestorId) return;
                       next = insertSibling(remaining, ancestorId, sourceBlock, !dt.above);
                     } else { return; }
+                    // Drops stay within this page. Only native notes (and unknown
+                    // native claims) still require their exact parent.
+                    if (next && parentBlockIdOf(next, sourceId) !== parentBlockIdOf(blocks, sourceId) &&
+                        nativeParentingBlocked(sourceId)) {
+                      _dragState.draggingId = null;
+                      return;
+                    }
                     if (next) setBlocks(next);
                     _dragState.draggingId = null;
                   },
@@ -8130,6 +8544,10 @@ function LibraryApp() {
               <FilePlusIcon className="popoverItemIcon" size={15} />
               New page
             </button>
+            <button className="popoverItem" onClick={() => { setOpenPopover(null); setBlankPDFOpen(true); }}>
+              <FilePlusIcon className="popoverItemIcon" size={15} />
+              New blank PDF
+            </button>
           </div>
         ) : null}
       </span>
@@ -8265,12 +8683,12 @@ function LibraryApp() {
             <div className="popover userPopover">
               <div className="userCard">
                 <span className="userAvatar" aria-hidden="true">
-                  {authUser.is_guest
+                  {embeddedLocal || authUser.is_guest
                     ? <UserIcon size={20} />
                     : <span className="userAvatarInitial">{authUser.user.charAt(0).toUpperCase()}</span>}
                 </span>
                 <span className="userCardMeta">
-                  <span className="userCardName">{authUser.is_guest ? "Guest" : authUser.user}</span>
+                  <span className="userCardName">{embeddedLocal ? "On this iPad" : authUser.is_guest ? "Guest" : authUser.user}</span>
                   <span className="userCardRole">
                     {authUser.is_guest ? "Temporary workspace"
                       : workspace ? `${workspace.name} · ${workspaceMeta(workspace)}`
@@ -8344,10 +8762,14 @@ function LibraryApp() {
                 </div>
               </details>
               <div className="popoverDivider" />
-              <button className="popoverItem popoverItemDanger" onClick={doLogout}>
-                <LogOutIcon className="popoverItemIcon" size={15} />
-                Log out
-              </button>
+              {embeddedLocal ? (
+                <div className="popoverHint">Use Server in the app toolbar to connect to a remote server.</div>
+              ) : (
+                <button className="popoverItem popoverItemDanger" onClick={doLogout}>
+                  <LogOutIcon className="popoverItemIcon" size={15} />
+                  Log out
+                </button>
+              )}
             </div>
           ) : null}
         </span>
@@ -8542,6 +8964,14 @@ function LibraryApp() {
         </ContextMenu>
       )}
 
+      {/* Note Replay's own bar, one at a time, above the work area: it drives
+          the PDF's ink layers through `replay`/`onReplaySeek` and is closed by
+          Done (the recording stays playable from its block). */}
+      {replayBlock ? (
+        <NoteReplayPlayer key={replayBlock.id} block={replayBlock} inkBlocks={nativeInkBlocks} assets={replayAssets}
+          onFrame={updateReplayFrame}
+          onClose={() => { setReplayBlockID(null); setReplayFrame(null); }} seekRequest={replaySeekRequest} />
+      ) : null}
       <div className="workArea">
       <PanelGroup direction="horizontal" autoSaveId="gamma-work-h" ref={(h) => { panelGroupRefs.current["work-h"] = h; }}>
       {slotWins("left").length ? (
@@ -8686,6 +9116,25 @@ function LibraryApp() {
           ) : null}
           {pdfUrl ? (
             <PdfViewer url={pdfUrl} highlights={highlights}
+              // The native handoff lives in the viewer's own top-right control
+              // row (PdfViewer's headerAction) so it can never overlap the page
+              // widget on a portrait or narrow viewport.
+              headerAction={!pdfHidden && !readOnly && window.__GAMMA_IPAD__ ? (
+                <div className="pdfCtlBox pdfNativeAction">
+                  <button
+                    onClick={openInNativeReader}
+                    aria-label="Open Pencil, recording and Replay"
+                    title="Open this Gamma PDF in the native Pencil workspace"
+                  >
+                    Pencil &amp; Audio
+                  </button>
+                </div>
+              ) : null}
+              nativeInkBlocks={nativeInkBlocks}
+              nativeInkPreviews={replayAssets}
+              replay={replay}
+              inkJumpRequest={nativeInkJumpRequest}
+              onReplaySeek={seekReplay}
               citation={pdfCitation?.pageId === focusedBlockId ? pdfCitation : null}
               hideEmbeddedAnnots={embAnnots === "hide"}
               darkPage={pdfDarkPage}
@@ -8712,7 +9161,7 @@ function LibraryApp() {
               onInkAction={readOnly ? undefined : handleInkAction}
               onInkMoveSelection={readOnly ? undefined : handleInkMoveSelection}
               onInkJump={showInkInNotes}
-              pdfScaleValue={pdfScale} scrollRef={scrollToRef}
+              pdfScaleValue={pdfScale} scrollRef={scrollToRef} viewportRef={nativeViewportRef}
               searchRef={pdfSearchRef}
               captureRef={pdfCaptureRef}
               findMarks={findMarks}
@@ -8887,6 +9336,10 @@ function LibraryApp() {
             </div>
           </div>
         </div>
+      ) : null}
+      {blankPDFOpen && !readOnly ? (
+        <BlankPDFDialog folder={folderFilter || ""} onCreate={createBlankPDF}
+          onClose={() => { setBlankPDFOpen(false); fetchHomeBlocks(); }} />
       ) : null}
       {labelRenaming ? (
         <div className="reportOverlay" onClick={() => setLabelRenaming(null)}>

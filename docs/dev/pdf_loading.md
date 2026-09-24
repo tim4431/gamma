@@ -110,6 +110,60 @@ compares one (at 20 Mbps, 0.6 to 0.85 s of every open — the research note has
 the measurement). The static route in `gamma/app.py` compares the ETag
 itself, so the unhashed files (`index.html`, favicons) get a real 304.
 
+## Native reading-position handoff
+
+Pencil & Audio captures the actual `.pdfPageWrap` intersecting the PDF scroller's
+visible top before awaiting note flush/session verification. The additive bridge
+`viewport: {pageIndex, anchorX, anchorY}` uses a zero-based page index and finite
+0…1 coordinates within the displayed (rotation-applied crop) page, not a fraction
+of the entire document or the debounced reading-page preference. A loading or
+pending-restore viewer refuses handoff rather than silently defaulting to page 1.
+The page/document/workspace and navigation generation are checked again after
+asynchronous work; existing account/role checks remain mandatory.
+
+On iPad, `GammaReadingPosition` strictly validates optional geometry (including
+rejecting booleans as numbers). `PDFInkView.requestedViewport` is consumed after
+PDFKit layout/window readiness, converting the displayed crop anchor back through
+`PDFView.convert` and navigating with `PDFDestination`. It is not reapplied for
+ink/content rerenders. The optional field leaves old six-field callers compatible.
+`nativeViewport.test.mjs`, `tests/e2e/nativeHandoff.mjs`, and
+`GammaReadingPositionTests.swift` cover the contract and crop/rotation conversion.
+
+### Native return and disconnect control (v1)
+
+`window.__GAMMA_NATIVE_CONTROL__` is installed on every App screen, including
+home and signed-out login. Its async `restorePosition(payload)` accepts
+`{server,user,workspace,pageID,docID,requestID,viewport}`. Server is the current
+origin; the account/workspace and fetched page's document must match. Native
+may inject the same payload as `window.__GAMMA_NATIVE_RETURN__` before mount.
+The `gamma:native-control-ready` DOM event announces method installation;
+`not-ready` means retry after session/workspace boot. Native should reuse the
+requestID when retrying. Completed requests do not jump again.
+
+Restore opens/reloads the target page after native sync, suppresses saved coarse
+and tab-position restoration, waits for the actual PDF DOM and stable geometry,
+and applies the displayed crop's page-local anchor once (both scroll axes).
+It returns `{ok:true,reason:"restored"}` only after application. Browser clamping
+at the document edges is unavoidable; layout/open/identity failures are explicit.
+
+`prepareDisconnect({})` blurs the editor, freezes the root, awaits React's pending
+commit, awaits direct App page/block JSON mutations (including title and metadata),
+flushes all collaboration sessions, uploads dirty browser ink (after its new block
+insert), and flushes again. A stalled network returns `flush-timeout` with recovery
+after ten seconds; the host's evaluation deadline must be longer. It needs neither a PDF nor authentication
+when there is no dirty data. A failed/rejected write returns `{ok:false,reason,
+recovery}`; collaboration recovery includes previous pages, in-flight batches,
+and permanently rejected batches that a resync otherwise removes. Ink exports
+include raw drafts and their original identity. JSON snapshots are detached and
+bounded (8 Mi characters for collaboration, 12 Mi combined); oversized exports
+are explicitly `complete:false`, never safe-recovery claims. No credentials are
+included and nothing is automatically replayed. The native host must durably
+save complete recovery before offering recovery-and-disconnect; incomplete or
+unsupported bridges require an explicit data-loss confirmation, not a claim of
+successful flush. `cancelDisconnect()` unfreezes the root. Sign out flushes first;
+on failure it stays signed in and points to explicit native Disconnect. The
+control remains usable once a clean sign out reaches Login.
+
 ## High zoom and touch scrolling
 
 `shared/lib/canvasSize.js` bounds every PDF and live-ink backing store to 8 Mi pixels

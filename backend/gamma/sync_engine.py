@@ -47,7 +47,8 @@ from fractional_indexing import generate_key_between
 from .blocks_store import create_page, fetch_subtree, page_root_id
 from .db import connect_pages_db, connect_users_db, page_now, ws_uploads_dir
 from .logbuf import log
-from .ops import MAX_OPS, OpError, commit_ops, delete_page
+from .native_ink import NativeScopeError, guard_generic_insert, guard_generic_update, native_kind
+from .ops import MAX_OPS, OpError, after_commit, apply_ops, commit_ops, delete_page
 from .publisher_sessions import cipher
 from .routers.sync import changes as local_changes
 from .sync_tree import (ancestors, diff, snapshot_from_rows, snapshot_from_tree, subtree_ids, tree_order,
@@ -690,17 +691,53 @@ def _relocated(ws: str, page_id: str, ops: list[dict]) -> list[dict]:
     them to this page (or this copy edited them after the remote moved
     them). The block leaves its page here first — the remote's place wins —
     and keeps the text it has here, which the push then sends on."""
+    # Reject an unsupported native batch BEFORE relocating its first ordinary
+    # block. Otherwise a later native refusal would strand earlier source
+    # deletions: the target batch has not been applied yet. This is a bounded
+    # native preflight, not a replacement for the op path's validation.
+    with connect_pages_db(ws) as conn:
+        conn.execute("BEGIN IMMEDIATE")
+        for op in ops:
+            if op["op"] == "insert":
+                home = page_root_id(conn, op["id"])
+                if home and home != page_id:
+                    subtree = fetch_subtree(conn, op["id"])
+                    if any(native_kind(json.loads(r[4] or "{}")) is not None for r in subtree):
+                        raise OpError(409, "native annotations and recordings must stay in their PDF page")
+                if home != page_id:
+                    # No generic mirror creation/resurrection of native data,
+                    # even when no local row exists to inspect.
+                    try:
+                        guard_generic_insert(op.get("props"))
+                    except NativeScopeError as e:
+                        raise OpError(409, str(e)) from e
+            elif op["op"] == "set":
+                row = conn.execute("SELECT properties FROM unified_blocks WHERE id = ?",
+                                   (op["id"],)).fetchone()
+                try:
+                    guard_generic_update(json.loads(row[0] or "{}") if row else {}, op.get("props"))
+                except NativeScopeError as e:
+                    raise OpError(409, str(e)) from e
     out = []
     for op in ops:
         if op["op"] == "insert":
             with connect_pages_db(ws) as conn:
+                # The native subtree check and source deletion share the write
+                # lock: a concurrent native writer cannot add a child between
+                # validation and deletion. Inspect stored rows, not remote props
+                # (which may be stale or omit the native payload entirely).
+                conn.execute("BEGIN IMMEDIATE")
                 home = page_root_id(conn, op["id"])
-                row = conn.execute("SELECT content FROM unified_blocks WHERE id = ?", (op["id"],)).fetchone() \
-                    if home and home != page_id else None
-            if home and home != page_id:
-                commit_ops(ws, home, [{"op": "delete", "id": op["id"]}], actor=ACTOR, client=CLIENT)
-                if row and (row[0] or "") != op.get("content", ""):
-                    op = {**op, "content": row[0] or ""}
+                if home and home != page_id:
+                    subtree = fetch_subtree(conn, op["id"])
+                    if any(native_kind(json.loads(r[4] or "{}")) is not None for r in subtree):
+                        raise OpError(409, "native annotations and recordings must stay in their PDF page")
+                    row = conn.execute("SELECT content FROM unified_blocks WHERE id = ?", (op["id"],)).fetchone()
+                    result = apply_ops(conn, home, [{"op": "delete", "id": op["id"]}],
+                                       actor=ACTOR, client=CLIENT)
+                    after_commit(ws, conn, result)
+                    if row and (row[0] or "") != op.get("content", ""):
+                        op = {**op, "content": row[0] or ""}
         out.append(op)
     return out
 
