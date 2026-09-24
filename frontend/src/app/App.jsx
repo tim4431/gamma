@@ -2699,7 +2699,7 @@ function LibraryApp() {
   // Model picker for the form: API protocols are listed live from the
   // provider's /v1/models (typed key, or the stored one when editing);
   // ChatGPT (OAuth) is listed live from the codex backend via the entry's
-  // sign-in token (known-good fallback list before connecting).
+  // sign-in token (nothing to list before connecting).
   const [aiModelCatalog, setAiModelCatalog] = useState(null); // null | {loading} | {models} | {error}
   const catalogRequest = useRef(0);
   const catalogTarget = JSON.stringify([aiKeysForm?.id, aiKeysForm?.protocol, aiKeysForm?.api_key, aiKeysForm?.base_url, aiKeysForm?.oauthConnectedAt]);

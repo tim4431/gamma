@@ -75,6 +75,15 @@ lazily in `ai_runtime`). Its wire is the Responses API on
 deltas), and PDF attachments go as native `input_file` parts with an automatic
 retry as extracted text if the backend rejects them.
 
+Its model list (`POST /api/ai/model-catalog`) is Codex CLI's own listing call,
+`GET {base}/models?client_version=…`, made with the entry's token. The backend
+hides models newer than the client version it is told, so Gamma claims the
+newest Codex CLI release: npm's `latest` for `@openai/codex`, cached for 6 h
+(`_codex_client_version`; on a failed lookup the last good version, else a
+floor constant, with a retry after 10 min). No model names are hardcoded. A
+failed listing is a 502 the picker shows, and a fresh connect whose listing
+fails starts with no models.
+
 ## Chat endpoint
 
 `/api/ai/chat` speaks both the Anthropic Messages API and the OpenAI Chat

@@ -627,16 +627,37 @@ def ai_provider_usage(provider_id: str, request: Request):
     }
 
 
-# Fallback when the live listing fails on a connected entry (offline, backend
-# hiccup): models the ChatGPT backend has been known to serve.
-_CHATGPT_MODEL_FALLBACK = [
-    "gpt-5.6-sol", "gpt-5.6-terra", "gpt-5.6-luna",
-    "gpt-5.5", "gpt-5.4", "gpt-5.4-mini",
-]
-# GET {base}/models gates its answer on the caller's version — keep in rough
-# sync with a current Codex CLI release so new models show up.
-_CHATGPT_CLIENT_VERSION = "0.146.0"
+# GET {base}/models gates its answer on the caller's version, so the listing
+# claims the newest Codex CLI release (npm's `latest` tag), looked up live and
+# cached. The floor is only for when npm can't be reached.
+_CODEX_VERSION_URL = "https://registry.npmjs.org/@openai/codex/latest"
+_CODEX_VERSION_FLOOR = "0.156.1"
+_CODEX_VERSION_TTL = 6 * 3600       # a good answer
+_CODEX_VERSION_RETRY = 600          # after a failed lookup
+_codex_version = {"value": "", "until": 0.0}
+_codex_version_lock = threading.Lock()
 _MODEL_CATALOG_TIMEOUT = 5
+
+
+def _codex_client_version() -> str:
+    """The newest Codex CLI version, cached; the last good one (else the
+    floor) while npm is unreachable."""
+    with _codex_version_lock:
+        now = time.time()
+        if now < _codex_version["until"]:
+            return _codex_version["value"] or _CODEX_VERSION_FLOOR
+        try:
+            with urlopen(URLRequest(_CODEX_VERSION_URL, headers={"Accept": "application/json"}),
+                         timeout=_MODEL_CATALOG_TIMEOUT) as resp:
+                version = str(json.loads(resp.read()).get("version") or "").strip()
+            if not re.fullmatch(r"\d+\.\d+\.\d+", version):
+                raise ValueError(f"unexpected version {version!r}")
+            _codex_version.update(value=version, until=now + _CODEX_VERSION_TTL)
+        except Exception as e:
+            log.warning(f"[ai] codex version lookup failed, using "
+                        f"{_codex_version['value'] or _CODEX_VERSION_FLOOR}: {e}")
+            _codex_version["until"] = now + _CODEX_VERSION_RETRY
+        return _codex_version["value"] or _CODEX_VERSION_FLOOR
 
 
 def _model_catalog_json(req: URLRequest) -> dict:
@@ -666,8 +687,8 @@ def _models_list_request(protocol: str, key: str, base: str) -> URLRequest:
 def _chatgpt_model_catalog(user: str, provider_id: str = "") -> list:
     """Live model list from the ChatGPT (codex) backend, Codex CLI's own
     listing call: GET {base}/models?client_version=… with the OAuth bearer.
-    Needs a connected entry — the list is account-gated; falls back to the
-    known-good list only when the fetch itself fails."""
+    Needs a connected entry — the list is account-gated, so there is no
+    hardcoded fallback: a failed fetch is an error."""
     providers = ai_runtime(user)["providers"]
     conf = providers.get(provider_id)
     if not conf or conf.get("protocol") != "chatgpt":
@@ -678,7 +699,7 @@ def _chatgpt_model_catalog(user: str, provider_id: str = "") -> list:
                             detail="sign in with ChatGPT first — the model list comes from your account")
     try:
         req = URLRequest(
-            f"{conf['base_url']}/models?client_version={_CHATGPT_CLIENT_VERSION}",
+            f"{conf['base_url']}/models?client_version={_codex_client_version()}",
             headers={
                 "Authorization": f"Bearer {conf['api_key']}",
                 "chatgpt-account-id": conf.get("account_id", ""),
@@ -694,11 +715,11 @@ def _chatgpt_model_catalog(user: str, provider_id: str = "") -> list:
             (hidden if vis == "hide" else listed).append(slug)
         # `hide` marks picker-hidden but usable slugs — offer them after the
         # listed ones rather than dropping them.
-        models = list(dict.fromkeys(listed + hidden))
-        return models or _CHATGPT_MODEL_FALLBACK
+        return list(dict.fromkeys(listed + hidden))
+    except urllib.error.HTTPError as e:
+        raise HTTPException(status_code=502, detail=f"model list failed: {_upstream_detail(e, 200)}")
     except Exception as e:
-        log.warning(f"[ai] chatgpt model listing failed, using fallback: {e}")
-        return _CHATGPT_MODEL_FALLBACK
+        raise HTTPException(status_code=502, detail=f"model list failed: {e}")
 
 
 class ModelCatalogRequest(BaseModel):
@@ -714,7 +735,7 @@ def ai_model_catalog(payload: ModelCatalogRequest, request: Request):
     """Model names offered by a provider, for the settings form's model picker.
     API protocols are asked live (GET /v1/models with the entry's key); the
     ChatGPT backend is asked via Codex CLI's listing call with the OAuth
-    token (known-good fallback list when not connected)."""
+    token (an error until an entry is connected)."""
     user = _require_editor(request)
     entry = {}
     protocol = payload.protocol
@@ -1194,11 +1215,6 @@ def ai_transcribe(request: Request, file: UploadFile = File(...),
 _OAUTH_STATES: dict = {}  # state -> {"verifier", "at"} — in-memory, 15 min TTL
 _OAUTH_STATE_TTL = 900
 
-# Last-resort models seeded on a fresh connect when even the live listing
-# fails; freely editable per entry afterwards.
-_CHATGPT_DEFAULT_MODELS = "gpt-5.6-sol, gpt-5.6-terra"
-
-
 @router.post("/ai/oauth/chatgpt/start")
 async def chatgpt_auth_start(request: Request):
     _require_editor(request)
@@ -1258,15 +1274,16 @@ async def chatgpt_auth_complete(payload: ChatGPTAuthComplete, request: Request):
         }
         entries.append(entry)
         if not entry["models"]:
-            # Seed the model list live from the account instead of a
-            # hardcoded (quickly stale) default. Tokens must be stored first —
-            # the listing call reads them back through ai_runtime.
+            # Seed the model list live from the account; if that fails the
+            # entry starts empty and the models are picked in its settings
+            # form. Tokens must be stored first — the listing call reads them
+            # back through ai_runtime.
             save_provider_entries(user, entries)
             try:
                 live = _chatgpt_model_catalog(user, entry["id"])
             except Exception:
                 live = []
-            entry["models"] = ", ".join(live[:2])[:MAX_MODELS_LEN] or _CHATGPT_DEFAULT_MODELS
+            entry["models"] = ", ".join(live[:2])[:MAX_MODELS_LEN]
     save_provider_entries(user, entries)
     return _masked_settings(user, request.state.is_guest)
 

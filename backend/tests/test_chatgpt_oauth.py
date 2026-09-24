@@ -244,6 +244,8 @@ def test_model_catalog_asks_chatgpt_backend_live(erin, monkeypatch):
                  if p["protocol"] == "chatgpt")
     seen = {}
 
+    monkeypatch.setattr(ai_mod, "_codex_client_version", lambda: "9.9.9")
+
     def fake_urlopen(req, timeout=0):
         seen["url"] = req.full_url
         seen["auth"] = req.get_header("Authorization")
@@ -260,7 +262,7 @@ def test_model_catalog_asks_chatgpt_backend_live(erin, monkeypatch):
     assert r.status_code == 200
     assert r.json()["models"] == ["gpt-6-codex", "gpt-5.1-codex", "gpt-5-codex-mini"]
     assert "chatgpt.com/backend-api/codex/models" in seen["url"]
-    assert "client_version=" in seen["url"]
+    assert "client_version=9.9.9" in seen["url"]
     assert seen["auth"].startswith("Bearer ")
 
     # No provider_id (pre-connect form): any connected chatgpt entry serves
@@ -268,16 +270,48 @@ def test_model_catalog_asks_chatgpt_backend_live(erin, monkeypatch):
     assert "gpt-6-codex" in r.json()["models"]
 
 
-def test_model_catalog_falls_back_when_listing_fails(erin, monkeypatch):
+def test_codex_client_version_is_looked_up_and_cached(monkeypatch):
+    import gamma.routers.ai as ai_mod
+
+    monkeypatch.setattr(ai_mod, "_codex_version", {"value": "", "until": 0.0})
+    calls = []
+
+    def npm(req, timeout=0):
+        calls.append(req.full_url)
+        return _FakeResp({"name": "@openai/codex", "version": "1.2.3"})
+
+    monkeypatch.setattr(ai_mod, "urlopen", npm)
+    assert ai_mod._codex_client_version() == "1.2.3"
+    assert ai_mod._codex_client_version() == "1.2.3"
+    assert calls == [ai_mod._CODEX_VERSION_URL]  # second call served from cache
+
+    # Expired + npm down: keep the last good version, and don't retry at once.
+    def down(req, timeout=0):
+        calls.append(req.full_url)
+        raise OSError("offline")
+
+    ai_mod._codex_version["until"] = 0.0
+    monkeypatch.setattr(ai_mod, "urlopen", down)
+    assert ai_mod._codex_client_version() == "1.2.3"
+    assert ai_mod._codex_client_version() == "1.2.3"
+    assert len(calls) == 2
+
+    # Never looked up successfully: the floor.
+    monkeypatch.setattr(ai_mod, "_codex_version", {"value": "", "until": 0.0})
+    assert ai_mod._codex_client_version() == ai_mod._CODEX_VERSION_FLOOR
+
+
+def test_model_catalog_errors_when_listing_fails(erin, monkeypatch):
     import gamma.routers.ai as ai_mod
 
     def boom(req, timeout=0):
         raise OSError("no route to host")
 
+    # No hardcoded model list to fall back on — the picker shows the error.
     monkeypatch.setattr(ai_mod, "urlopen", boom)
     r = erin.post("/api/ai/model-catalog", json={"protocol": "chatgpt"})
-    assert r.status_code == 200
-    assert r.json()["models"] == ai_mod._CHATGPT_MODEL_FALLBACK
+    assert r.status_code == 502
+    assert "no route to host" in r.json()["detail"]
 
     # API protocols need a key (typed or stored) before asking /v1/models
     r = erin.post("/api/ai/model-catalog", json={"protocol": "openai"})
