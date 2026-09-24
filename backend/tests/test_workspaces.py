@@ -129,6 +129,18 @@ def test_owner_only_management_and_rails(ann, ben, cid, lab):
     assert members == {"ws_ann": "owner", "ws_ben": "editor", "ws_cid": "viewer"}
 
 
+def test_invites_by_cloud_username_need_cloud_sign_in(ann, ben, cid, lab, monkeypatch):
+    # the whole flow is tests/test_pending_memberships.py; here the rails
+    from gamma import cloud_auth
+    monkeypatch.setattr(cloud_auth, "settings", lambda: {"enabled": False, "issuer": ""})
+    r = ann.post(f"/api/workspaces/{lab}/invites", json={"username": "someone", "role": "viewer"})
+    assert r.status_code == 400 and "not set up" in r.json()["detail"]
+    assert ben.post(f"/api/workspaces/{lab}/invites", json={"username": "someone"}).status_code == 403
+    assert cid.get(f"/api/workspaces/{lab}/invites").json() == {"invites": []}  # any member reads them
+    assert ann.delete(f"/api/workspaces/{lab}/invites/nobody").status_code == 404
+    assert not any(m.get("pending") for m in ann.get(f"/api/workspaces/{lab}").json()["members"])
+
+
 def test_several_personal_workspaces(ann, ben, boss):
     """work / life / play: all personal, all metered against the account;
     the first is the default until another is made default; the last one
@@ -240,8 +252,8 @@ def test_public_access_does_not_consume_workspace_creation_slots(boss, ann, monk
 def test_account_preferences_do_not_require_workspace_access(ann):
     headers = _in("inaccessible-workspace")
     value = {"theme": "dark"}
-    assert ann.put("/api/prefs/appearance", headers=headers, json={"value": value}).status_code == 200
-    assert ann.get("/api/prefs/appearance", headers=headers).json()["value"] == value
+    assert ann.put("/api/prefs/profile", headers=headers, json={"value": value}).status_code == 200
+    assert ann.get("/api/prefs/profile", headers=headers).json()["value"] == value
     assert ann.get("/api/prefs/open-tabs", headers=headers).status_code == 403
     assert ann.put("/api/prefs/open-tabs", headers=headers, json={"value": []}).status_code == 403
     assert ann.get("/api/prefs/ai-settings", headers=headers).status_code == 400
@@ -302,9 +314,9 @@ def test_prefs_follow_account_and_workspace(ann, lab):
     assert ann.put("/api/prefs/open-tabs", json={"value": ["lab1"]}, headers=_in(lab)).status_code == 200
     assert ann.get("/api/prefs/open-tabs", headers=_in(mine)).json()["value"] == ["p1"]
     assert ann.get("/api/prefs/open-tabs", headers=_in(lab)).json()["value"] == ["lab1"]
-    # appearance and the AI provider choice are account-wide
-    assert ann.put("/api/prefs/appearance", json={"value": {"theme": "dark", "pdfDark": False}}, headers=_in(lab)).status_code == 200
-    assert ann.get("/api/prefs/appearance", headers=_in(mine)).json()["value"]["theme"] == "dark"
+    # the preference profile and the AI provider choice are account-wide
+    assert ann.put("/api/prefs/profile", json={"value": {"theme": "dark", "pdfDarkPage": False}}, headers=_in(lab)).status_code == 200
+    assert ann.get("/api/prefs/profile", headers=_in(mine)).json()["value"]["theme"] == "dark"
 
 
 def test_only_personal_workspaces_count_as_usage(boss, ann, ben, lab):

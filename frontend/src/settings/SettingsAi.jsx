@@ -1,14 +1,18 @@
 // Settings → Providers: the user's AI credential list (OpenAI-platform style)
-// and the add/edit-key wizard. All state and handlers live in App.jsx (the
-// aiKeys* group) — these components only render it.
+// and the add/edit-key wizard. All state and handlers of the account's own
+// list live in App.jsx (the aiKeys* group) — these components only render
+// it; the server's shared entries appear there as read-only rows.
+// SharedAiProviderSettings is Settings → Server's list of those shared
+// entries (/api/admin/ai-providers), the same rows and the same form over
+// its own state (useProviderEditor).
 import React from "react";
 import { API, apiJson } from "../shared/lib/utils";
-import { parseFolderTags } from "../library/libraryUtils";
+import { friendlyApiError, parseFolderTags } from "../library/libraryUtils";
 import { MenuSelect } from "../shared/ui/Menus";
 import { cachedPercent, fmtTokens, usageDetail } from "../chat/tokenUsage";
 import { ModelPicker } from "./ModelPicker";
-import { Section, SubDialog, Step, Field, Empty, PercentMeter, Row, PasswordInput, StatText } from "./SettingsKit";
-import { ActivityIcon, GlobeIcon, KeyIcon, MicIcon, PaperIcon, RefreshIcon, SparklesIcon, Trash2Icon } from "../shared/ui/Icons";
+import { Section, SubDialog, Step, Field, Empty, PercentMeter, Row, PasswordInput, StatText, Toggle } from "./SettingsKit";
+import { ActivityIcon, GlobeIcon, KeyIcon, MicIcon, PaperIcon, RefreshIcon, SparklesIcon, Trash2Icon, UserIcon } from "../shared/ui/Icons";
 
 const DICTATION_LANGS = [
   ["", "Auto-detect"], ["en", "English"], ["zh", "中文"], ["ja", "日本語"], ["ko", "한국어"],
@@ -52,6 +56,245 @@ function ProviderUsage({ usage }) {
       })}
     </span>
   );
+}
+
+// One connection of a provider list: avatar, name (plus "in use" and the
+// shared tag), the credential line, its models, the last Test result and
+// the usage windows, then the caller's buttons. `radio` is the active-key
+// picker of the account's own list; `onFix` opens the entry's editor from
+// a failed test.
+function ProviderRow({ provider, protocol, oauth, active = false, radio = null, test, usage, onFix, children }) {
+  const models = parseFolderTags(provider.models);
+  return (
+    <label className={`aiProvRow ${radio ? "aiProvSelectable" : ""} ${active ? "active" : ""}`}>
+      {radio}
+      <span className={`aiProvAvatar ${active ? "active" : ""}`}>
+        {oauth ? <SparklesIcon size={15} /> : <KeyIcon size={15} />}
+      </span>
+      <span className="aiProvMeta">
+        <span className="aiProvName">
+          {provider.label || provider.protocol}
+          {active ? <span className="aiProvActiveBadge">in use</span> : null}
+          {provider.shared ? (
+            <span className="uiTag" title="An administrator added this connection for everyone on this server. Its key is never shown; its tokens count on your account.">
+              Shared by this server
+            </span>
+          ) : null}
+        </span>
+        <span className="aiProvDesc">
+          {oauth
+            ? `${provider.oauth_connected ? `signed in${provider.account ? ` as ${provider.account}` : ""}` : "not connected"} · ChatGPT subscription`
+            : `${provider.key_hint ? `key ${provider.key_hint} · ` : provider.shared ? "" : "key set · "}${protocol?.label || provider.protocol}`}
+          {provider.base_url ? ` · ${provider.base_url}` : ""}
+        </span>
+        <span className="aiProvDesc aiProvModels">
+          <span className="aiProvModelsLabel">Models</span>
+          {models.length
+            ? models.map((model) => <span className="categoryTag" key={model}>{model}</span>)
+            : <span className="aiKeysError">{onFix ? "none picked — edit to choose" : "none picked"}</span>}
+        </span>
+        {test ? (
+          <span
+            className={`aiProvDesc ${test.busy ? "" : test.ok ? "aiTestOk" : "aiKeysError"}`}
+            title={!test.busy && !test.ok ? test.error : undefined}
+          >
+            {test.busy
+              ? "Testing…"
+              : test.ok
+                ? `✓ working · ${test.model} · ${(test.latency_ms / 1000).toFixed(1)}s`
+                : test.auth && onFix ? (
+                  // Broken credential: one clear line + the fix,
+                  // never the upstream body (hover shows the detail).
+                  <>
+                    ✗ {oauth ? "ChatGPT sign-in expired" : "API key rejected"} —{" "}
+                    <button className="chatEmptyLink" onClick={(event) => { event.preventDefault(); onFix(); }}>
+                      {oauth ? "reconnect" : "update the key"}
+                    </button>
+                  </>
+                ) : `✗ ${test.error}`}
+          </span>
+        ) : null}
+        {usage ? <ProviderUsage usage={usage} /> : null}
+      </span>
+      {children ? <span className="aiProvActions">{children}</span> : null}
+    </label>
+  );
+}
+
+// The add/edit-key form's state for a provider list App does not hold —
+// Settings → Server's shared entries: ProviderForm's `value` contract over
+// the REST collection `base` (POST adds, PUT/DELETE `${base}/<id>`, each
+// answering with the list). The model picker lists live through
+// /api/ai/model-catalog, which takes a saved shared entry's id from an admin.
+function useProviderEditor({ info, setInfo, base, onSaved }) {
+  const [form, setForm] = React.useState(null);
+  const [busy, setBusy] = React.useState(false);
+  const [error, setError] = React.useState("");
+  const [catalog, setCatalog] = React.useState(null); // null | {loading} | {models} | {error}
+  const [customModel, setCustomModel] = React.useState("");
+  const catalogRequest = React.useRef(0);
+  const protocolOf = (id) => info?.protocols?.find((p) => p.id === id);
+  const isOauth = (id) => protocolOf(id)?.auth === "oauth";
+  const stored = form?.id ? info?.providers?.find((p) => p.id === form.id) : null;
+  const target = JSON.stringify([form?.id, form?.protocol, form?.api_key, form?.base_url]);
+  const targetRef = React.useRef(target);
+  targetRef.current = target;
+  const formModels = parseFolderTags(form?.models);
+
+  async function loadModelCatalog() {
+    if (!form) return;
+    const request = ++catalogRequest.current;
+    const at = target;
+    setCatalog({ loading: true });
+    try {
+      const d = await apiJson(`${API}/ai/model-catalog`, {
+        method: "POST", headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ provider_id: form.id || "", protocol: form.protocol,
+          api_key: form.api_key.trim(), base_url: form.base_url.trim() }),
+      });
+      if (request === catalogRequest.current && at === targetRef.current) setCatalog({ models: d.models || [] });
+    } catch (err) {
+      if (request === catalogRequest.current && at === targetRef.current) setCatalog({ error: friendlyApiError(err) });
+    }
+  }
+  // Debounced like the account's own form; a stale answer is dropped.
+  React.useEffect(() => {
+    setCatalog(null);
+    if (!form || !(form.api_key?.trim() || stored?.key_hint)) return;
+    const timer = setTimeout(loadModelCatalog, 500);
+    return () => { clearTimeout(timer); catalogRequest.current++; };
+  }, [target]); // eslint-disable-line react-hooks/exhaustive-deps
+  React.useEffect(() => { setCustomModel(""); }, [form?.id, form?.protocol]);
+
+  async function submit() {
+    if (!form) return;
+    if (!form.id && !form.api_key.trim()) { setError("An API key is required."); return; }
+    setBusy(true);
+    setError("");
+    try {
+      setInfo(await apiJson(`${base}${form.id ? `/${encodeURIComponent(form.id)}` : ""}`, {
+        method: form.id ? "PUT" : "POST", headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ protocol: form.protocol, name: form.name.trim(), base_url: form.base_url.trim(),
+          models: form.models.trim(), test_model: (form.test_model || "").trim(),
+          ...(form.api_key.trim() ? { api_key: form.api_key.trim() } : {}) }),
+      }));
+      setForm(null);
+      onSaved?.();
+    } catch (err) {
+      setError(err.message);
+    } finally {
+      setBusy(false);
+    }
+  }
+
+  return {
+    aiKeysForm: form,
+    setAiKeysForm: setForm,
+    aiKeysInfo: info,
+    aiKeysBusy: busy,
+    aiKeysError: error,
+    setAiKeysError: setError,
+    aiModelCatalog: catalog,
+    formOauthPending: false,
+    formModels,
+    availModels: (catalog?.models || []).filter((m) => !formModels.includes(m)),
+    customModel,
+    setCustomModel,
+    aiProtocolOf: protocolOf,
+    isOauthProto: isOauth,
+    startChatGPTAuth: () => {},
+    loadModelCatalog,
+    addCatalogModel: (m) => m && setForm((f) => {
+      if (!f) return f;
+      const cur = parseFolderTags(f.models);
+      return cur.includes(m) ? f : { ...f, models: [...cur, m].join(", ") };
+    }),
+    removeModel: (m) => setForm((f) => f ? { ...f, models: parseFolderTags(f.models).filter((x) => x !== m).join(", ") } : f),
+    submitAiProvider: submit,
+    startAdd: () => { setError(""); setForm({ id: "", protocol: "openai", name: "", api_key: "", base_url: "", models: "", test_model: "" }); },
+    startEdit: (p) => { setError(""); setForm({ id: p.id, protocol: p.protocol, name: p.name || "", api_key: "", base_url: p.base_url || "", models: p.models || "", test_model: p.test_model || "" }); },
+    close: () => { setForm(null); setError(""); },
+  };
+}
+
+// Settings → Server → Shared AI provider (admins): connections every
+// account on the server may use next to its own (backend
+// gamma/ai_settings.py). API keys only, write-only like an account's; the
+// guest account gets them only while the switch is on.
+export function SharedAiProviderSettings({ setStatus, confirm }) {
+  const base = `${API}/admin/ai-providers`;
+  const [info, setInfo] = React.useState(null);
+  const [loadError, setLoadError] = React.useState("");
+  const [tests, setTests] = React.useState({});
+  React.useEffect(() => {
+    let active = true;
+    apiJson(base).then((v) => { if (active) setInfo(v); }).catch((err) => { if (active) setLoadError(err.message); });
+    return () => { active = false; };
+  }, [base]);
+  const editor = useProviderEditor({ info, setInfo, base, onSaved: () => setStatus?.("Shared AI provider saved.") });
+  async function test(p) {
+    setTests((t) => ({ ...t, [p.id]: { busy: true } }));
+    let result;
+    try {
+      result = await apiJson(`${API}/ai/providers/${encodeURIComponent(p.id)}/test`, { method: "POST" });
+    } catch (err) {
+      result = { ok: false, error: err.message };
+    }
+    setTests((t) => ({ ...t, [p.id]: result }));
+  }
+  const run = async (call) => {
+    try { setInfo(await call()); } catch (err) { setLoadError(err.message); }
+  };
+  function remove(p) {
+    confirm({
+      title: "Remove shared AI key",
+      message: `Remove the "${p.label || p.protocol}" connection? Every account using it loses its models. This cannot be undone.`,
+      confirmLabel: "Remove",
+      danger: true,
+      onConfirm: () => run(() => apiJson(`${base}/${encodeURIComponent(p.id)}`, { method: "DELETE" })),
+    });
+  }
+  const setGuests = (guests) => run(() => apiJson(base, {
+    method: "PUT", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ guests }),
+  }));
+  const providers = info?.providers || [];
+  return <>
+    <Section title="Shared AI provider" action={info ? (
+      <button className="uiBtn sm" onClick={editor.startAdd}>+ Add provider</button>
+    ) : null}>
+      {!info && !loadError ? <p className="setNotice">Loading…</p> : null}
+      {info && !providers.length ? <Empty icon={KeyIcon}>No shared connection. Each account uses its own keys.</Empty> : null}
+      {providers.map((provider) => {
+        const t = tests[provider.id];
+        return (
+          <ProviderRow key={provider.id} provider={{ ...provider, shared: false }}
+            protocol={editor.aiProtocolOf(provider.protocol)} test={t} onFix={() => editor.startEdit(provider)}>
+            <button className="uiBtn sm" disabled={t?.busy}
+              title="Send a tiny AI request through this key to check it still works; the tokens count on your account"
+              onClick={() => test(provider)}>Test</button>
+            <button className="uiBtn sm" title="Edit connection and available models"
+              onClick={() => editor.startEdit(provider)}>Manage</button>
+            <button className="uiBtn sm iconSq danger" title="Remove this shared key" aria-label="Remove shared key"
+              onClick={() => remove(provider)}>
+              <Trash2Icon size={13} />
+            </button>
+          </ProviderRow>
+        );
+      })}
+      {info ? (
+        <Toggle icon={UserIcon} label="Guests may use it" checked={!!info.guests} onChange={setGuests}
+          hint="Off keeps the guest account without AI"
+          title="The guest account is open to anyone who can reach this server; with this on, its visitors spend the shared keys too." />
+      ) : null}
+      {loadError ? <p className="settingsPaneHint aiKeysError" role="alert">{loadError}</p> : null}
+    </Section>
+    {editor.aiKeysForm ? (
+      <SubDialog draft={editor.aiKeysForm} title={editor.aiKeysForm.id ? "Edit shared key" : "Add shared key"}
+        onClose={editor.close}>
+        <ProviderForm value={editor} onCancel={editor.close} />
+      </SubDialog>
+    ) : null}
+  </>;
 }
 
 function ProviderForm({ value, onCancel }) {
@@ -364,14 +607,17 @@ export function AiSettings({ value, taskModels, confirm, setStatus }) {
             </Empty>
           ) : null}
           {providers.map((provider) => {
-            const protocol = value.aiProtocolOf(provider.protocol);
             const test = value.aiKeyTests?.[provider.id];
             const usage = value.aiKeyUsage?.[provider.id];
-            const oauth = value.isOauthProto(provider.protocol);
             const active = activeKeyId === provider.id;
+            // A shared entry is read-only here: an admin edits it under
+            // Settings → Server.
+            const own = canEdit && !provider.shared;
             return (
-              <label key={provider.id} className={`aiProvRow aiProvSelectable ${active ? "active" : ""}`}>
-                {providers.length > 1 ? (
+              <ProviderRow key={provider.id} provider={provider} active={active}
+                protocol={value.aiProtocolOf(provider.protocol)} oauth={value.isOauthProto(provider.protocol)}
+                test={test} usage={usage} onFix={own ? () => value.startEditAiProvider(provider) : null}
+                radio={providers.length > 1 ? (
                   <input
                     type="radio"
                     className="aiProvRadio"
@@ -380,78 +626,26 @@ export function AiSettings({ value, taskModels, confirm, setStatus }) {
                     onChange={() => value.setAiProvider(provider.id)}
                     title="Use this key for AI requests"
                   />
-                ) : null}
-                <span className={`aiProvAvatar ${active ? "active" : ""}`}>
-                  {oauth ? <SparklesIcon size={15} /> : <KeyIcon size={15} />}
-                </span>
-                <span className="aiProvMeta">
-                  <span className="aiProvName">
-                    {provider.label || provider.protocol}
-                    {active ? <span className="aiProvActiveBadge">in use</span> : null}
-                  </span>
-                  <span className="aiProvDesc">
-                    {oauth
-                      ? `${provider.oauth_connected ? `signed in${provider.account ? ` as ${provider.account}` : ""}` : "not connected"} · ChatGPT subscription`
-                      : `key ${provider.key_hint || "set"} · ${protocol?.label || provider.protocol}`}
-                    {provider.base_url ? ` · ${provider.base_url}` : ""}
-                  </span>
-                  <span className="aiProvDesc aiProvModels">
-                    <span className="aiProvModelsLabel">Models</span>
-                    {parseFolderTags(provider.models).length
-                      ? parseFolderTags(provider.models).map((model) => (
-                        <span className="categoryTag" key={model}>{model}</span>
-                      ))
-                      : <span className="aiKeysError">none picked — edit to choose</span>}
-                  </span>
-                  {test ? (
-                    <span
-                      className={`aiProvDesc ${test.busy ? "" : test.ok ? "aiTestOk" : "aiKeysError"}`}
-                      title={!test.busy && !test.ok ? test.error : undefined}
-                    >
-                      {test.busy
-                        ? "Testing…"
-                        : test.ok
-                          ? `✓ working · ${test.model} · ${(test.latency_ms / 1000).toFixed(1)}s`
-                          : test.auth ? (
-                            // Broken credential: one clear line + the fix,
-                            // never the upstream body (hover shows the detail).
-                            <>
-                              ✗ {oauth ? "ChatGPT sign-in expired" : "API key rejected"} —{" "}
-                              <button
-                                className="chatEmptyLink"
-                                onClick={(event) => { event.preventDefault(); value.startEditAiProvider(provider); }}
-                              >
-                                {oauth ? "reconnect" : "update the key"}
-                              </button>
-                            </>
-                          ) : `✗ ${test.error}`}
-                    </span>
-                  ) : null}
-                  {usage ? (
-                    <ProviderUsage usage={usage} />
-                  ) : null}
-                </span>
-                {canEdit ? (
-                  <span className="aiProvActions">
-                    <button className="uiBtn sm" disabled={value.aiKeysBusy || test?.busy}
-                      title="Send a tiny AI request through this credential to check it still works"
-                      onClick={() => value.testAiProvider(provider)}>
-                      Test
-                    </button>
-                    <button className="uiBtn sm" disabled={value.aiKeysBusy || usage?.busy}
-                      title="Query remaining allowance; subscription percentages are available for ChatGPT sign-in providers"
-                      onClick={() => value.queryAiProviderUsage(provider)}>
-                      Usage
-                    </button>
-                    <button className="uiBtn sm" disabled={value.aiKeysBusy}
-                      title="Edit connection and available models" onClick={() => value.startEditAiProvider(provider)}>Manage</button>
-                    <button className="uiBtn sm iconSq danger" disabled={value.aiKeysBusy} title="Remove this key"
-                      aria-label="Remove key" onClick={() => value.deleteAiProvider(provider)}>
-                      <Trash2Icon size={13} />
-                    </button>
-                  </span>
-                ) : null}
-              </label>
+                ) : null}>
+                {own ? <>
+                  <button className="uiBtn sm" disabled={value.aiKeysBusy || test?.busy}
+                    title="Send a tiny AI request through this credential to check it still works"
+                    onClick={() => value.testAiProvider(provider)}>
+                    Test
+                  </button>
+                  <button className="uiBtn sm" disabled={value.aiKeysBusy || usage?.busy}
+                    title="Query remaining allowance; subscription percentages are available for ChatGPT sign-in providers"
+                    onClick={() => value.queryAiProviderUsage(provider)}>
+                    Usage
+                  </button>
+                  <button className="uiBtn sm" disabled={value.aiKeysBusy}
+                    title="Edit connection and available models" onClick={() => value.startEditAiProvider(provider)}>Manage</button>
+                  <button className="uiBtn sm iconSq danger" disabled={value.aiKeysBusy} title="Remove this key"
+                    aria-label="Remove key" onClick={() => value.deleteAiProvider(provider)}>
+                    <Trash2Icon size={13} />
+                  </button>
+                </> : null}
+              </ProviderRow>
             );
           })}
           {canEdit && providers.length ? (

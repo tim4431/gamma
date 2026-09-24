@@ -319,6 +319,9 @@ export async function noteScenarios({ server, browser, alice, step, until, sleep
   if (ctx) await ctx.close();
 
   await step("notes: Enter-as-new-block preference, in the default workspace", async () => {
+    // The Enter key is an account preference: the profile's copy wins over this browser's.
+    const { value: profile } = await alice.api("/api/prefs/profile");
+    await alice.api("/api/prefs/profile", { method: "PUT", body: { value: { ...(profile || {}), enterNewNote: true } } });
     const ctxD = await alice.context(browser);
     await ctxD.addInitScript(() => { try { localStorage.setItem("gamma-enter-new-note", "1"); } catch {} });
     const p = await openPage(ctxD, `${server.base}/?ws=${alice.defaultWs}`);

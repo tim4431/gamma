@@ -295,7 +295,7 @@ def test_upgrade_to_devices(client):
         conn.execute("DROP TABLE refresh_history")
         conn.execute("PRAGMA user_version = 2")
         conn.commit()
-    assert db.ensure_current() == ["devices"]
+    assert db.ensure_current() == ["devices", "profile"]
     assert db.ensure_current() == []
     with closing(db.connect()) as conn:
         assert conn.execute("SELECT app_signed_in_at FROM accounts").fetchone()[0]  # from the audit

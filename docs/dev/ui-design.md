@@ -28,7 +28,7 @@ already exists. Bespoke CSS classes are for **layout only**.
 ### Interface size and text size
 
 - **Interface size** (Settings / Appearance, `gamma-ui-scale`, a `Stepper` over
-  the `UI_SCALE` range in `app/prefs.js`, 70–160 % in 10 % steps) scales both
+  the `UI_SCALE` range in `app/prefDefs.js`, 70–160 % in 10 % steps) scales both
   interface text and controls. Fixed font sizes in the application stylesheets
   multiply by `--ui-font-scale`, inherited from `--ui-scale`. Controls (buttons,
   summaries, button roles and the shared control classes) use CSS `zoom` for
@@ -116,6 +116,11 @@ toggles an inline form — compact `AccountPicker` + access — a popover can't
 host a modal) and the page's Citation section (App.jsx owns it: a `citeHead`
 label line, then a `CopyBox` — text with the copy button pinned top-right —
 for the slide citation and for BibTeX; the section's action regenerates).
+On a server with cloud sign-in a *Gamma Cloud* section sits above the
+citation (`PublishSection`): Publish, or the published link with Copy and
+an inline-confirmed Unpublish, the sync state line with Sync now, and the
+cloud share's access as the same tiles and View / Edit toggle
+([mirror.md](mirror.md) "What the person sees").
 Every change saves at once; nothing is a bespoke control. There is no
 "reset link": stopping and sharing again mints a new address. The read-only
 view shows the counterpart tag ("Can edit · shared by …", and "as <name>" for
@@ -125,7 +130,7 @@ a visitor without an account) in its top bar.
 | `app/App.jsx` | routing, block-tree editor state, docks, the page's live session glue, AI chat glue (decomposition in progress) |
 | `collaboration/usePageCollab.js`, `shared/model/blockOps.js`, `collaboration/Presence.jsx` | the live session (ops out, ops + presence in), the pure tree diff/apply, the avatar stack / row chips ([collab.md](collab.md)) |
 | `collaboration/MirrorPopover.jsx`, `collaboration/MergeResolver.jsx`, `settings/SettingsMirrors.jsx` | a clone's sync pill with its settings and conflicts views, the conflict card + the row chip, Settings → Workspaces → Clones ([mirror.md](mirror.md)) |
-| `app/prefs.js` | every localStorage preference (`useAppPrefs`) |
+| `app/prefDefs.js`, `app/prefs.js` | every preference's key, default, codec and scope (`PREFS`); the hooks that make them state (`useAppPrefs`) and sync the account-scoped ones (`useProfileSync`) |
 | `settings/SettingsDialog.jsx` + the `settings/Settings*.jsx` panes | the Settings dialog (`SettingsKit.jsx` holds the shared primitives incl. `AccountPicker`, the search-box-over-account-rows people picker, and `LogBox`) |
 | `settings/SettingsAppearance.jsx`, `settings/SettingsLibraryDisplay.jsx` | the Appearance pane (theme cards + PDF sample) and Library › Display (a live `PageCard` beside its switches) ([settings.md](settings.md)) |
 | `settings/BackupTasks.jsx` | Settings → Backups' task table and its editor `SubDialog` (scope `Segmented`, workspace and weekday `ToggleGroup`s, frequency and retention `MenuSelect`s, the cron preview); each row's `ActionMenu` ([settings.md](settings.md)) |

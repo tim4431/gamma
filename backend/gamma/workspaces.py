@@ -28,11 +28,22 @@ workspace's pages only as a member or through public access.
 
 Requests pick their workspace with ``?ws=`` or the ``X-Gamma-Workspace``
 header (gamma/auth.py ``require_ws``); the frontend keeps the id in the URL.
+
+A shared workspace can also invite someone who has no account here yet, by
+their Gamma Cloud username (``invite_cloud``): the account server answers
+username → subject, and the invitation waits in ``pending_memberships``
+keyed by that subject until their first cloud sign-in creates or links the
+local account (``claim_pending_memberships``, called by gamma/cloud_auth.py).
 """
 
+import json
+import re
 import secrets
 import shutil
 import sqlite3
+import urllib.error
+import urllib.parse
+import urllib.request
 
 from .config import WORKSPACES_DIR
 from .db import connect_users_db, page_now, safe_ws_id, ws_dir, ws_uploads_dir
@@ -46,6 +57,11 @@ ACCESS = ("private", "public")
 PUBLIC_ROLES = ("viewer", "editor")  # what a public workspace hands every account
 MAX_NAME_LEN = 80
 MAX_WORKSPACES_PER_USER = 50
+INVITE_ROLES = ("editor", "viewer")  # what a pending (cloud-username) invitation may grant
+MAX_PENDING_PER_WORKSPACE = 100
+# The account server's username rule (cloud/gammacloud/accounts.py USERNAME_RE).
+CLOUD_USERNAME_RE = re.compile(r"^[a-z0-9][a-z0-9-]{1,30}[a-z0-9]$")
+LOOKUP_TIMEOUT = 10
 
 _COLS = "id, name, created_by, created_at, kind, access, public_role, quota_mb"
 
@@ -132,9 +148,12 @@ def list_for_user(username: str) -> list[dict]:
     """Every workspace the account can open — its memberships plus, for a
     non-guest account, every public workspace: ``[{id, name, kind, role,
     access, public_role, created_by, created_at, members, personal,
-    default, mirror_of}]``, personal ones first (the default at the top),
-    then by name. ``members`` counts explicit members; ``mirror_of`` names
-    the remote workspace a mirror follows ("" otherwise)."""
+    default, mirror_of, publishing}]``, personal ones first (the default at
+    the top), then by name. ``members`` counts explicit members; ``mirror_of``
+    names the remote workspace a mirror follows ("" otherwise);
+    ``publishing`` is true for a workspace that publishes pages to the share
+    host (a filtered mirror, gamma/publish.py), which is not a clone:
+    ``mirror_of`` stays "" for it."""
     with connect_users_db() as conn:
         me = conn.execute(
             "SELECT default_workspace, is_guest FROM users WHERE username = ?", (username,)).fetchone()
@@ -142,7 +161,10 @@ def list_for_user(username: str) -> list[dict]:
             f"SELECT {_COLS}, "
             "(SELECT role FROM workspace_members m WHERE m.workspace_id = w.id AND m.username = ?), "
             "(SELECT COUNT(*) FROM workspace_members x WHERE x.workspace_id = w.id), "
-            "(SELECT remote_name FROM mirrors mi WHERE mi.workspace_id = w.id AND mi.mode != 'off') "
+            "(SELECT remote_name FROM mirrors mi WHERE mi.workspace_id = w.id AND mi.mode != 'off' "
+            "AND mi.page_filter IS NULL), "
+            "EXISTS (SELECT 1 FROM mirrors mp WHERE mp.workspace_id = w.id AND mp.mode != 'off' "
+            "AND mp.page_filter IS NOT NULL) "
             "FROM workspaces w WHERE w.access = 'public' "
             "OR EXISTS (SELECT 1 FROM workspace_members m WHERE m.workspace_id = w.id AND m.username = ?)",
             (username, username)).fetchall()
@@ -154,7 +176,7 @@ def list_for_user(username: str) -> list[dict]:
         if not role:
             continue
         out.append({**info, "role": role, "members": r[9], "personal": info["kind"] == "personal",
-                    "default": info["id"] == default, "mirror_of": r[10] or ""})
+                    "default": info["id"] == default, "mirror_of": r[10] or "", "publishing": bool(r[11])})
     out.sort(key=lambda w: (not w["personal"], not w["default"], w["name"].lower()))
     return out
 
@@ -303,6 +325,7 @@ def update(ws: str, changes: dict, *, default_for: str = "") -> dict:
                 raise ValueError("only a workspace with a single member can become personal")
             _check_account(conn, people[0][0])
             conn.execute("UPDATE workspace_members SET role = 'owner' WHERE workspace_id = ?", (ws,))
+            conn.execute("DELETE FROM pending_memberships WHERE workspace_id = ?", (ws,))
             info.update(access="private", public_role="viewer", quota_mb=None)
         elif kind != info["kind"]:
             owner = people[0][0] if people else ""
@@ -370,6 +393,212 @@ def remove_member(ws: str, username: str) -> None:
         conn.commit()
 
 
+# --- pending memberships: invite by Gamma Cloud username ---------------------
+
+class CloudLookupError(Exception):
+    """The account server could not answer a username lookup (sign-in off,
+    unreachable, no access token) — a message safe to show the inviter."""
+
+
+def clean_cloud_username(name) -> str:
+    """A cloud username as typed ("@Alice " → "alice"), or ValueError."""
+    name = str(name or "").strip().lstrip("@").lower()
+    if not CLOUD_USERNAME_RE.match(name):
+        raise ValueError("a Gamma Cloud username is 3–32 lowercase letters, digits or dashes")
+    return name
+
+
+def _get_json(url: str, headers: dict) -> tuple[int, dict]:
+    """(HTTP status, JSON body) of a GET; CloudLookupError when unreachable."""
+    req = urllib.request.Request(url, headers={"Accept": "application/json", **headers})
+    try:
+        with urllib.request.urlopen(req, timeout=LOOKUP_TIMEOUT) as resp:
+            return resp.status, json.load(resp)
+    except urllib.error.HTTPError as e:
+        try:
+            body = json.load(e)
+        except ValueError:
+            body = {}
+        return e.code, body if isinstance(body, dict) else {}
+    except (urllib.error.URLError, OSError, ValueError) as e:
+        raise CloudLookupError(f"cannot reach the account server: {e}") from e
+
+
+def lookup_with_token(issuer: str, access_token: str, name: str) -> dict | None:
+    """The account server's exact username lookup, ``GET
+    <issuer>/api/lookup/username?u=<name>`` with a bearer access token:
+    ``{sub, username}``, None when no account has that username (404),
+    CloudLookupError for anything else."""
+    url = f"{issuer}/api/lookup/username?" + urllib.parse.urlencode({"u": name})
+    status, body = _get_json(url, {"Authorization": f"Bearer {access_token}"})
+    if status == 404:
+        return None
+    if status != 200 or not isinstance(body, dict) or not body.get("sub") or not body.get("username"):
+        body = body if isinstance(body, dict) else {}
+        detail = body.get("error_description") or body.get("error") or f"answered {status}"
+        raise CloudLookupError(f"the account server could not look the username up ({detail})")
+    return {"sub": str(body["sub"]), "username": str(body["username"]).lower()}
+
+
+def _cloud_access_token(by: str) -> str:
+    """An access token for the account server on behalf of ``by`` (the
+    inviting account): its own linked Gamma Cloud grant
+    (``cloud_auth.access_token_for``). CloudLookupError when the inviter has
+    no linked identity or the account server hands out no token."""
+    from . import cloud_auth  # local: cloud_auth imports this module
+
+    if not cloud_auth.grant_of(by)[0]:
+        raise CloudLookupError("Link your own Gamma Cloud account (Settings → Account) to invite by "
+                               "Gamma Cloud username.")
+    token = cloud_auth.access_token_for(by)
+    if not token:
+        raise CloudLookupError("Gamma Cloud did not answer for your account. Try again later, or sign in "
+                               "with Gamma Cloud again.")
+    return token
+
+
+def cloud_lookup_username(name: str, by: str = "") -> dict | None:
+    """The transport of ``lookup_cloud_username``: ``{sub, username}`` for an
+    existing cloud account, None for no such username, CloudLookupError when
+    the account server cannot be asked (tests replace this function)."""
+    from . import cloud_auth  # local: cloud_auth imports this module
+
+    cfg = cloud_auth.settings()
+    if not cfg["enabled"]:
+        raise CloudLookupError("Gamma Cloud sign-in is not set up on this server.")
+    token = _cloud_access_token(by)
+    if not token:
+        raise CloudLookupError("This server has no Gamma Cloud access token to look usernames up with.")
+    return lookup_with_token(cfg["issuer"], token, name)
+
+
+def lookup_cloud_username(name, by: str = "") -> dict | None:
+    """A cloud username as typed → ``{sub, username}``, or None when no
+    Gamma Cloud account has it (exact match only)."""
+    return cloud_lookup_username(clean_cloud_username(name), by=by)
+
+
+def _check_shared(conn, ws: str) -> None:
+    row = conn.execute("SELECT kind FROM workspaces WHERE id = ?", (ws,)).fetchone()
+    if not row:
+        raise ValueError("workspace not found")
+    if row[0] != "shared":
+        raise ValueError("a personal workspace has no other members — share a page, or ask an admin for a shared workspace")
+
+
+def invite_cloud(ws: str, name, role: str, by: str) -> dict:
+    """Invite the Gamma Cloud account ``name`` to a shared workspace as
+    editor or viewer. When that person already has a local account linked
+    to their cloud identity, they become a member right away (``{"member":
+    <local username>}``); otherwise the invitation waits for their first
+    sign-in (``{"pending": {...}}``; inviting again changes its role).
+    ValueError on a personal workspace, a bad role or username, no such
+    cloud account, or someone who is already a member; CloudLookupError when
+    the account server cannot be asked."""
+    from .cloud_auth import PROVIDER  # local: cloud_auth imports this module
+
+    if role not in INVITE_ROLES:
+        raise ValueError("an invitation by Gamma Cloud username makes an editor or a viewer")
+    name = clean_cloud_username(name)
+    with connect_users_db() as conn:
+        _check_shared(conn, ws)
+    found = lookup_cloud_username(name, by=by)
+    if not found:
+        raise ValueError(f"no Gamma Cloud account is named {name}")
+    subject, username = found["sub"], found["username"]
+    now = page_now()
+    with connect_users_db() as conn:
+        conn.execute("BEGIN IMMEDIATE")
+        _check_shared(conn, ws)  # again: the lookup went over the network
+        linked = conn.execute("SELECT username FROM identities WHERE provider = ? AND subject = ?",
+                              (PROVIDER, subject)).fetchone()
+        if linked:
+            local = linked[0]
+            _check_account(conn, local)
+            if conn.execute("SELECT 1 FROM workspace_members WHERE workspace_id = ? AND username = ?",
+                            (ws, local)).fetchone():
+                raise ValueError(f"{username} is already a member of this workspace, as {local}")
+            conn.execute("INSERT INTO workspace_members (workspace_id, username, role, added_by, added_at) "
+                         "VALUES (?, ?, ?, ?, ?)", (ws, local, role, by, now))
+            conn.execute("DELETE FROM pending_memberships WHERE workspace_id = ? AND subject = ?", (ws, subject))
+            conn.commit()
+            return {"member": local, "username": username}
+        waiting = conn.execute("SELECT COUNT(*) FROM pending_memberships WHERE workspace_id = ? AND subject != ?",
+                               (ws, subject)).fetchone()[0]
+        if waiting >= MAX_PENDING_PER_WORKSPACE:
+            raise ValueError("too many pending invitations in this workspace")
+        conn.execute(
+            "INSERT INTO pending_memberships (workspace_id, subject, username, role, invited_by, created_at) "
+            "VALUES (?, ?, ?, ?, ?, ?) ON CONFLICT(workspace_id, subject) DO UPDATE SET "
+            "username = excluded.username, role = excluded.role, invited_by = excluded.invited_by",
+            (ws, subject, username, role, by, now))
+        conn.commit()
+    return {"pending": {"subject": subject, "username": username, "role": role, "invited_by": by, "created_at": now}}
+
+
+def pending_invites(ws: str) -> list[dict]:
+    """The workspace's invitations waiting for a first cloud sign-in:
+    ``[{subject, username, role, invited_by, created_at}]`` by username."""
+    with connect_users_db() as conn:
+        rows = conn.execute(
+            "SELECT subject, username, role, invited_by, created_at FROM pending_memberships "
+            "WHERE workspace_id = ? ORDER BY username", (ws,)).fetchall()
+    return [{"subject": r[0], "username": r[1], "role": r[2], "invited_by": r[3], "created_at": r[4]} for r in rows]
+
+
+def members_with_pending(ws: str) -> list[dict]:
+    """``members`` followed by the pending invitations in the same shape
+    (``added_by`` / ``added_at``), each tagged ``pending: True`` with its
+    ``subject`` — the one list the Manage dialog renders."""
+    return members(ws) + [
+        {"username": p["username"], "role": p["role"], "added_by": p["invited_by"], "added_at": p["created_at"],
+         "subject": p["subject"], "pending": True} for p in pending_invites(ws)]
+
+
+def cancel_invite(ws: str, subject: str) -> None:
+    """Withdraw a pending invitation; ValueError when there is none."""
+    with connect_users_db() as conn:
+        cur = conn.execute("DELETE FROM pending_memberships WHERE workspace_id = ? AND subject = ?", (ws, subject))
+        conn.commit()
+    if not cur.rowcount:
+        raise ValueError("no such invitation")
+
+
+def claim_pending_memberships(username: str, subject: str) -> list[str]:
+    """The cloud identity ``subject`` now signs in as the local account
+    ``username`` (created, claimed or linked): every invitation waiting for
+    that subject becomes a membership with its role, and the pending rows
+    go. An existing membership keeps its own role; an invitation into a
+    workspace that is gone or no longer shared is dropped. Returns the
+    workspace ids joined. Cheap when nothing waits — it runs on every cloud
+    sign-in."""
+    with connect_users_db() as conn:
+        rows = conn.execute(
+            "SELECT p.workspace_id, p.role, p.invited_by, w.kind FROM pending_memberships p "
+            "LEFT JOIN workspaces w ON w.id = p.workspace_id WHERE p.subject = ?", (subject,)).fetchall()
+        if not rows:
+            return []
+        account = conn.execute("SELECT is_guest FROM users WHERE username = ?", (username,)).fetchone()
+        if not account or account[0]:
+            return []
+        now = page_now()
+        joined = []
+        for ws, role, by, kind in rows:
+            if kind != "shared" or role not in INVITE_ROLES:
+                continue
+            cur = conn.execute(
+                "INSERT INTO workspace_members (workspace_id, username, role, added_by, added_at) "
+                "VALUES (?, ?, ?, ?, ?) ON CONFLICT(workspace_id, username) DO NOTHING",
+                (ws, username, role, by, now))
+            if cur.rowcount:
+                joined.append(ws)
+        conn.execute("DELETE FROM pending_memberships WHERE subject = ?", (subject,))
+        conn.commit()
+    if joined:
+        log.info(f"[workspaces] {username} joined {len(joined)} workspace(s) they were invited to by cloud username")
+    return joined
+
+
 def _is_last_owner(conn, ws: str, username: str) -> bool:
     owners = [r[0] for r in conn.execute(
         "SELECT username FROM workspace_members WHERE workspace_id = ? AND role = 'owner'", (ws,))]
@@ -398,6 +627,7 @@ def delete(ws: str) -> str:
 def _delete_rows(conn, ws: str) -> None:
     conn.execute("DELETE FROM integration_tokens WHERE workspace_id = ?", (ws,))
     conn.execute("DELETE FROM workspace_members WHERE workspace_id = ?", (ws,))
+    conn.execute("DELETE FROM pending_memberships WHERE workspace_id = ?", (ws,))
     conn.execute("DELETE FROM shares WHERE workspace_id = ?", (ws,))
     conn.execute("DELETE FROM user_prefs WHERE workspace_id = ?", (ws,))
     conn.execute("DELETE FROM workspaces WHERE id = ?", (ws,))

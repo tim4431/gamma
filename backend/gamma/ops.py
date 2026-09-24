@@ -361,16 +361,16 @@ def apply_ops(conn, page_id: str, ops: list[dict], *, actor: str, client: str = 
     return result
 
 
-# Called after every committed write with ``(ws, client)`` — what an offline
+# Called after every committed write with ``(ws, client, page_id)`` — what an offline
 # copy's engine listens to for its sync-on-change (sync_engine.request_sync).
 # Registered at import by the listener, so this module never imports it.
 commit_listeners: list = []
 
 
-def _notify(ws: str, client: str = "") -> None:
+def _notify(ws: str, client: str = "", page_id: str = "") -> None:
     for fn in commit_listeners:
         try:
-            fn(ws, client)
+            fn(ws, client, page_id)
         except Exception as e:  # noqa: BLE001 — a listener must never break a write
             log.warning(f"[ops] commit listener: {e}")
 
@@ -384,7 +384,7 @@ def after_commit(ws: str, conn, result: dict) -> dict:
     if result["deleted_ids"]:
         block_index.purge_page_data(ws, conn, result["deleted_ids"])
     collab.publish_ops(ws, result)
-    _notify(ws, result.get("client") or "")
+    _notify(ws, result.get("client") or "", result.get("page_id") or "")
     return result
 
 
@@ -419,7 +419,7 @@ def delete_page(ws: str, conn, page_id: str, *, actor: str, client: str = "") ->
     removed = cleanup_orphan_uploads(conn, ws_uploads_dir(ws))
     block_index.purge_page_data(ws, conn, deleted_ids)
     collab.publish_reload(ws, page_id)
-    _notify(ws, client)
+    _notify(ws, client, page_id)
     return {"deleted_ids": deleted_ids, "removed_uploads": removed}
 
 
@@ -432,7 +432,7 @@ def record_ops(ws: str, conn, page_id: str, ops: list[dict], *, actor: str) -> i
     conn.commit()
     collab.publish(ws, page_id, {"t": "ops", "seq": seq, "at": now, "actor": actor,
                                    "client": "", "ops": ops})
-    _notify(ws)
+    _notify(ws, "", page_id)
     return seq
 
 
@@ -442,7 +442,7 @@ def note_reload(ws: str, conn, page_id: str, actor: str) -> int:
     seq = log_reload(conn, page_id, actor)
     conn.commit()
     collab.publish_reload(ws, page_id, seq)
-    _notify(ws)
+    _notify(ws, "", page_id)
     return seq
 
 

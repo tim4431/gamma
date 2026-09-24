@@ -3,7 +3,7 @@ import { API, apiJson, fmtBytes, isUnverifiedPaperMeta, metaSourceInfo, getCurre
 import { MenuSelect } from "../shared/ui/Menus";
 import {
   PaneHead, Section, Row, Toggle, Segmented, ToggleGroup, IconChoices, UnitInput, CharSlider, approxPages,
-  Stat, Empty, QuotaMeter, LogBox, SettingsDraftContext, useSettingsDraft,
+  Stat, Empty, QuotaMeter, LogBox, SettingsDraftContext, SettingsSyncContext, useSettingsDraft,
 } from "./SettingsKit";
 import { LibraryDisplaySettings } from "./SettingsLibraryDisplay";
 import { AppearanceSettings } from "./SettingsAppearance";
@@ -88,7 +88,7 @@ function ViewerSettings({ value, onTranslationModels }) {
   return (
     <>
 
-      <Section title="PDF viewer">
+      <Section title="PDF viewer" scope="account">
         <Row
           icon={HighlightIcon}
           label="Imported annotations"
@@ -99,7 +99,7 @@ function ViewerSettings({ value, onTranslationModels }) {
             options={[["hide", "Keep originals"], ["strip", "Remove originals"]]} />
         </Row>
       </Section>
-      <Section title="Handwriting">
+      <Section title="Handwriting" scope="browser">
         <div data-setting="Draws with">
           <IconChoices label="Draws with" value={value.inkPenOnly ? "pen" : "any"}
             onChange={(choice) => value.setInkPenOnly(choice === "pen")} options={DRAW_WITH} />
@@ -121,7 +121,7 @@ function ViewerSettings({ value, onTranslationModels }) {
           onChange={value.setInkPressure}
         />
       </Section>
-      <Section title="Translation" action={
+      <Section title="Translation" scope="account" action={
         <button className="uiBtn sm" onClick={onTranslationModels} title="Translation model, effort and parallel requests (AI › Advanced)">
           <SlidersIcon size={13} /> Model & speed
         </button>
@@ -215,7 +215,7 @@ function SearchSettings({ value }) {
   return (
     <>
 
-      <Section title="Search opens as">
+      <Section title="Search opens as" scope="account">
         <Row icon={HomeIcon} label="On the home page" hint="Full panel: grouped result lists"
           title="With no PDF open the compact find bar has nothing to show, so the home page defaults to the full panel.">
           <Segmented value={value.searchDetailsHome ? "panel" : "bar"} onChange={(v) => value.setSearchDetailsHome(v === "panel")}
@@ -235,7 +235,7 @@ function NotesSettings({ value }) {
   return (
     <>
 
-      <Section title="Notes">
+      <Section title="Notes" scope="account">
         <Row icon={CornerDownLeftIcon} label="Enter key"
           hint={value.enterNewNote ? "Shift+Enter inserts a new line" : "Shift+Enter creates a new note"}>
           <Segmented value={value.enterNewNote ? "note" : "line"}
@@ -296,10 +296,10 @@ function LibrarySettings({ value }) {
   return (
     <>
       <PaneHead icon={ListIcon} title="Library" />
-      <Section title="Display">
+      <Section title="Display" scope="account">
         <LibraryDisplaySettings value={value} />
       </Section>
-      <Section title="PDFs">
+      <Section title="PDFs" scope="account">
         <Toggle
           icon={CloudDownloadIcon}
           label="Open-access fallback"
@@ -729,6 +729,7 @@ function PromptsSettings({ value }) {
       <PaneHead icon={TypeIcon} title="Custom prompts" />
       <Section
         title="Prompts"
+        scope="account"
         action={
           <span className="setControlGroup">
             <button className="uiBtn sm" disabled={!dirty} onClick={discard}>Cancel</button>
@@ -797,7 +798,7 @@ export function AgentToolPicker({ kind, perms, setPerms, disabled }) {
 // chips the chat header's settings popover shows for the open chat.
 function AssistantSettings({ value }) {
   return (
-    <Section title="Tools">
+    <Section title="Tools" scope="account">
       <Toggle icon={SparklesIcon} label="Assistant tools"
         hint="Let chats read, search and edit your library"
         title="The master switch for tools in every chat. Off keeps your per-chat choices below for when you turn it on again."
@@ -832,7 +833,7 @@ function AdvancedAiSettings({ value, ai, papers }) {
           <MenuSelect label="Default reasoning effort" value={ai.chatEffort} onChange={ai.setChatEffort}
             options={[["", "Default"], ...(ai.aiInfo?.efforts || ["low", "medium", "high"]).map((v) => [v, v])]} />
         </Row>
-        <Section title="Tool limits">
+        <Section title="Tool limits" scope="account">
         <Row icon={RefreshIcon} label="Tool rounds"
           hint="AI ↔ tool round-trips per message"
           title="Each round-trip lets the model issue more tool calls. This is a runaway guard — actual work is separately capped at 200 changes per message.">
@@ -850,6 +851,7 @@ function AdvancedAiSettings({ value, ai, papers }) {
         </Section>
       <Section
         title="Context size"
+        scope="account"
         action={
           <MenuSelect label="Context budget" value={contextPreset}
             onChange={(preset) => {
@@ -868,8 +870,8 @@ function AdvancedAiSettings({ value, ai, papers }) {
           </Row>
         ))}
       </Section>
-        <Section title="Translation performance"><TranslationModels value={papers} advanced /></Section>
-        <Section title="Chat">
+        <Section title="Translation performance" scope="account"><TranslationModels value={papers} advanced /></Section>
+        <Section title="Chat" scope="account">
           <Toggle
             icon={RectSelectIcon}
             label="Clear snapshots on click"
@@ -923,10 +925,40 @@ function AdvancedSettings({ value }) {
 
 // --- the dialog -------------------------------------------------------------
 
+const SYNC_POLL_MS = 15000;
+const SYNC_SOON_MS = 6000; // the server pushes to Gamma Cloud 5 s after a change lands
+
+// The account profile's sync state for the section tags while the dialog is
+// open: this browser's (useProfileSync, `local`) plus this server's with Gamma
+// Cloud (GET /api/auth/cloud/sync-status, `cloud`), polled every 15 s, again
+// as soon as a local change has been saved, and sooner while a push waits.
+function useCloudSyncStatus(open, local) {
+  const [cloud, setCloud] = React.useState(null);
+  const signedIn = !!local && local.state !== "signed-out";
+  const saved = local?.state === "loaded";
+  React.useEffect(() => {
+    if (!open || !signedIn) { setCloud(null); return undefined; }
+    let stopped = false;
+    let timer = null;
+    const poll = () => {
+      apiJson(`${API}/auth/cloud/sync-status`).catch(() => null).then((d) => {
+        if (stopped) return;
+        if (d) setCloud(d);
+        const soon = d?.profile?.state === "pending" && !d.profile.error;
+        timer = setTimeout(poll, soon ? SYNC_SOON_MS : SYNC_POLL_MS);
+      });
+    };
+    poll();
+    return () => { stopped = true; clearTimeout(timer); };
+  }, [open, signedIn, saved]);
+  return React.useMemo(() => ({ local, cloud }), [local, cloud]);
+}
+
 export default function SettingsDialog({
   activePane, onPaneChange, onClose, papers, notes, library, ai, prompts,
-  context, search, users, workspace, backups, server, diagnostics,
+  context, search, users, workspace, backups, server, diagnostics, profileSync,
 }) {
+  const syncState = useCloudSyncStatus(!!activePane, profileSync);
   const [query, setQuery] = React.useState("");
   const [mobileIndex, setMobileIndex] = React.useState(false);
   const [jump, setJump] = React.useState(null);
@@ -988,6 +1020,7 @@ export default function SettingsDialog({
   </button>;
   return (
     <SettingsDraftContext.Provider value={drafts}>
+      <SettingsSyncContext.Provider value={syncState}>
       <div className="reportOverlay" onClick={() => guard(onClose)}>
         <div className={`settingsModal ${mobileIndex ? "settingsIndexOpen" : ""}`}
           role="dialog" aria-modal="true" aria-label="Settings"
@@ -1079,6 +1112,7 @@ export default function SettingsDialog({
           </div> : null}
         </div>
       </div>
+      </SettingsSyncContext.Provider>
     </SettingsDraftContext.Provider>
   );
 }

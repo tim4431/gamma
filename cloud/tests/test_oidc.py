@@ -196,7 +196,7 @@ def test_confidential_client(client):
                                                redirect_uris=["https://alice.gammapdf.com/api/auth/cloud/callback"])
         conn.commit()
     verifier, challenge = pkce()
-    # offline_access is refused for a container
+    # offline_access without the prefs scope is refused for a container (with it: test_profile.py)
     r = client.get("/authorize", params=authorize_params(challenge, client_id=client_id,
                                                         redirect="https://alice.gammapdf.com/api/auth/cloud/callback"),
                    follow_redirects=False)

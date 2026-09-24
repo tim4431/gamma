@@ -1,6 +1,7 @@
 // Settings → Server (admins only): everything that is about the server
 // rather than one account — the dashboard (build, uptime, warnings, the
 // update check), the storage defaults every account inherits, the shared
+// AI provider every account may use (SettingsAi.jsx), the shared
 // workspaces (settingsWorkspacesAdmin.jsx), whole-data-directory snapshots
 // (settingsBackups.jsx ServerBackups) and the scrubbed server log with a
 // level filter. Per-account things — including each account's personal
@@ -12,6 +13,7 @@ import { WorkspacesAdmin } from "./SettingsWorkspacesAdmin";
 import { ServerBackups } from "./SettingsBackups";
 import { PublicUrlSettings } from "./SettingsPublicUrl";
 import { CloudSignInSettings } from "./SettingsCloudSignIn";
+import { SharedAiProviderSettings } from "./SettingsAi";
 import { ActivityIcon, AlertCircleIcon, CloudDownloadIcon, ImportIcon, ServerIcon } from "../shared/ui/Icons";
 
 export function ServerSettings({ value }) {
@@ -31,6 +33,7 @@ export function ServerSettings({ value }) {
       <Section title="Storage defaults">
         <ServerLimitRows setStatus={value.setStatus} refreshQuota={value.refreshQuota} />
       </Section>
+      <SharedAiProviderSettings setStatus={value.setStatus} confirm={value.confirm} />
       <WorkspacesAdmin value={value} />
       <ServerBackups setStatus={value.setStatus} confirm={value.confirm} />
       <Section title="Log">

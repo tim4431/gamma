@@ -542,7 +542,9 @@
 .setRow > .settingText { min-width: 0; }
 .setRow > :last-child { min-width: 0; max-width: 100%; }
 .setRow > .unitInput { width: 130px; }
-.setScope { display: inline-block; margin-left: 8px; font-size: calc(11px * var(--ui-font-scale, 1)); color: var(--text-muted); font-weight: 400; }
+.setScope { display: inline-flex; align-items: center; gap: 4px; margin-left: 8px; font-size: calc(11px * var(--ui-font-scale, 1)); color: var(--text-muted); font-weight: 400; min-width: 0; text-align: right; }
+.setScope svg { flex-shrink: 0; }
+.setScope.error { color: var(--danger); }
 .setNotice { font-size: calc(12.5px * var(--ui-font-scale, 1)); line-height: 1.6; color: var(--text-muted); margin: 8px 0; }
 .setControlGroup { border: 0; padding: 0; margin: 0; min-width: 0; display: inline-flex; align-items: center; gap: 6px; }
 .setControlGroup:disabled { opacity: .5; }

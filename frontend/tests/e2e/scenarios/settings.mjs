@@ -347,6 +347,23 @@ export async function settingsScenarios(env) {
     } finally { await ctx.close(); }
   });
 
+  await step("settings: section tags say where settings live and whether they are saved", async () => {
+    const { ctx, page } = await setup();
+    try {
+      await openSettings(page);
+      const tag = (title) => page.locator(`.settingsPane .setSection[data-setting="${title}"] .setScope`);
+      // a password account without Gamma Cloud: saved on this server, with the check
+      await until(() => tag("Theme").getAttribute("data-sync").then((v) => v === "saved"));
+      assertEq(await tag("Theme").innerText(), "Your account");
+      assertEq(await tag("Theme").locator("svg").count(), 1);
+      assert((await tag("Theme").getAttribute("title")).startsWith("Saved on this server."));
+      // a device section stays with the browser
+      assertEq(await tag("Interface").innerText(), "This browser");
+      assertEq(await tag("Interface").locator("svg").count(), 0);
+      assertNoProblems(page);
+    } finally { await ctx.close(); }
+  });
+
   await step("settings: navigation, search, scoped management, and preferences survive reload", async () => {
     const { ctx, page } = await setup();
     try {
@@ -356,7 +373,7 @@ export async function settingsScenarios(env) {
         await page.getByRole("button", { name: label, exact: true }).click();
         await until(() => page.locator("html").getAttribute("data-theme").then((v) => v === theme));
         assertEq(await page.evaluate(() => getComputedStyle(document.documentElement).colorScheme), scheme);
-        await until(async () => (await user.api("/api/prefs/appearance")).value?.theme === theme);
+        await until(async () => (await user.api("/api/prefs/profile")).value?.theme === theme);
         await page.reload();
         await page.waitForSelector(".folderNewBtn");
         assertEq(await page.locator("html").getAttribute("data-theme"), theme);
@@ -370,7 +387,7 @@ export async function settingsScenarios(env) {
       await page.getByRole("button", { name: "Solarized Light", exact: true }).click();
       await until(() => page.locator("html").getAttribute("data-theme").then((v) => v === "solarized"));
       assertEq(await page.evaluate(() => getComputedStyle(document.documentElement).getPropertyValue("--text-primary").trim()), "#657b83");
-      await until(async () => (await user.api("/api/prefs/appearance")).value?.theme === "solarized");
+      await until(async () => (await user.api("/api/prefs/profile")).value?.theme === "solarized");
       await page.reload();
       await page.waitForSelector(".folderNewBtn");
       await until(() => page.locator("html").getAttribute("data-theme").then((v) => v === "solarized"));
@@ -379,10 +396,10 @@ export async function settingsScenarios(env) {
       assertEq(await themes.getByRole("button").count(), 8);
       assertEq(await themes.locator('[aria-pressed="true"]').count(), 1);
       await page.getByRole("checkbox", { name: "Dark PDF pages", exact: true }).check();
-      await until(() => user.api("/api/prefs/appearance").then((v) => v.value?.pdfDark === true));
+      await until(() => user.api("/api/prefs/profile").then((v) => v.value?.pdfDarkPage === true));
       assert(await page.locator(".appearancePdfPreview.isDark").isVisible());
       await page.getByRole("checkbox", { name: "Dark PDF pages", exact: true }).uncheck();
-      await until(() => user.api("/api/prefs/appearance").then((v) => v.value?.pdfDark === false));
+      await until(() => user.api("/api/prefs/profile").then((v) => v.value?.pdfDarkPage === false));
       await row(page, "Interface size").getByRole("button", { name: "Larger", exact: true }).click();
       assert((await row(page, "Interface size").innerText()).includes("110%"));
       await row(page, "Interface size").getByRole("button", { name: "Reset", exact: true }).click();
@@ -400,6 +417,17 @@ export async function settingsScenarios(env) {
       await row(page, "Parallel requests").locator("input").fill("7");
       await row(page, "Parallel requests").locator("input").press("Tab");
       await until(() => page.evaluate(() => localStorage.getItem("gamma-translate-parallel")).then((v) => v === "7"));
+      // An account preference reaches the account's profile; a device one never does.
+      await until(() => user.api("/api/prefs/profile").then((v) => v.value?.translateParallel === 7));
+      assert(!("uiScale" in (await user.api("/api/prefs/profile")).value), "interface size stays with the browser");
+      // A fresh browser signed in to the same account picks the profile up.
+      const other = await user.context(browser);
+      try {
+        const fresh = await openPage(other, server.base);
+        await until(() => fresh.evaluate(() => localStorage.getItem("gamma-translate-parallel")).then((v) => v === "7"));
+        assertEq(await fresh.evaluate(() => localStorage.getItem("gamma-theme")), "solarized");
+        assertNoProblems(fresh);
+      } finally { await other.close(); }
       await nav(page, "Workspaces").click();
       await page.getByRole("button", { name: "Manage", exact: true }).first().click();
       await page.getByRole("button", { name: "Back to workspaces", exact: true }).waitFor();
@@ -642,5 +670,53 @@ export async function settingsScenarios(env) {
       assertEq(await page.getByText("Personal workspaces", { exact: true }).count(), 0);
       assertNoProblems(page);
     } finally { await ctx.close(); }
+  });
+
+  await step("settings: a shared AI provider from Server is a read-only connection for every account", async () => {
+    // settings-user is an admin since the step above.
+    server.manage("create-user", "settings-member", "settings-member-pw");
+    const member = await new Account(server, "settings-member", "settings-member-pw").login();
+    const { ctx, page } = await setup();
+    try {
+      await page.route("**/api/ai/model-catalog", (route) => route.fulfill({ json: { models: ["lab-model", "lab-big"] } }));
+      await openSettings(page);
+      await nav(page, "Server").click();
+      await row(page, "Shared AI provider").getByRole("button", { name: "+ Add provider", exact: true }).click();
+      const dialog = page.getByRole("dialog", { name: "Add shared key", exact: true });
+      // API keys only: the ChatGPT sign-in is not offered for a shared entry.
+      await dialog.getByRole("button", { name: "AI service", exact: true }).click();
+      assertEq(await page.getByText("ChatGPT subscription", { exact: true }).count(), 0);
+      await page.locator(".uiSelectMenu").getByRole("button", { name: "OpenAI API", exact: true }).click();
+      await dialog.locator('input[autocomplete="new-password"]').fill("sk-shared-e2e-key-7777");
+      await dialog.getByRole("button", { name: "2 usable" }).waitFor();
+      await dialog.getByRole("combobox", { name: "Add a model" }).click();
+      await page.getByRole("listbox", { name: "Available models" })
+        .getByRole("option", { name: "lab-model", exact: true }).click();
+      await dialog.getByRole("button", { name: "Add key", exact: true }).click();
+      await until(() => dialog.count().then((n) => n === 0));
+      await page.locator(".settingsPane .aiProvRow").filter({ hasText: "…7777" }).waitFor();
+      assert(!await row(page, "Guests may use it").locator("input").isChecked(), "guests are off by default");
+
+      // Connections: a read-only row with the tag, and its model in the pickers.
+      await nav(page, "Connections").click();
+      const shared = page.locator(".settingsPane .aiProvRow").filter({ hasText: "Shared by this server" });
+      await shared.waitFor();
+      assertEq(await shared.getByRole("button").count(), 0, "no edit or delete on a shared row");
+      await shared.getByRole("radio").check();
+      await row(page, "Default chat model").getByRole("button").click();
+      await page.locator(".uiSelectMenu").getByRole("button", { name: "lab-model", exact: true }).click();
+
+      // Another account gets the models, never the key hint.
+      const models = await member.api("/api/ai/models");
+      assert(models.models.some((m) => m.model === "lab-model" && m.shared), "member sees the shared model");
+      const mine = (await member.api("/api/ai/settings")).providers.find((p) => p.shared);
+      assertEq(mine.key_hint, "");
+      assertNoProblems(page);
+    } finally {
+      await ctx.close();
+      for (const p of (await user.api("/api/admin/ai-providers")).providers) {
+        await user.api(`/api/admin/ai-providers/${encodeURIComponent(p.id)}`, { method: "DELETE" });
+      }
+    }
   });
 }

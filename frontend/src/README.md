@@ -6,7 +6,7 @@ through barrel files. `main.jsx` remains the Vite entry point.
 
 | Folder | Responsibility and entry points |
 | --- | --- |
-| `app/` | `App.jsx` connects the application views, navigation, saves, and docks; `prefs.js` and `sessionState.js` manage browser preferences and session restoration |
+| `app/` | `App.jsx` connects the application views, navigation, saves, and docks; `prefDefs.js` declares every preference (key, default, codec, browser or account scope), `prefs.js` turns them into state and syncs the account ones, `sessionState.js` handles session restoration |
 | `auth/` | Login, session/share access screens (`LoginPage.jsx`) and MCP authorization (`McpConsent.jsx`) |
 | `chat/` | AI conversation panel (`ChatDock.jsx`), paper mentions, chat permission settings, and the token-usage formatting (`tokenUsage.js`) shared with Settings |
 | `collaboration/` | `usePageCollab.js`, the pure `collabSession.js` state machine, presence UI, `MirrorPopover.jsx` — the header's sync pill of a clone with its settings and conflicts views — and `MergeResolver.jsx`, the conflict chip on a block row ([docs/dev/mirror.md](../../docs/dev/mirror.md)) |
@@ -16,7 +16,7 @@ through barrel files. `main.jsx` remains the Vite entry point.
 | `library/` | Library cards and browsing controls (`FileBrowser.jsx`), the Ctrl+P page palette (`QuickOpen.jsx`), folder/page rules, title scoring, and `library.css` |
 | `pdf/` | `PdfViewer.jsx`, document loading, citations, translation, and scroll alignment |
 | `search/` | Workspace search (`SearchPanel.jsx`) |
-| `settings/` | `SettingsDialog.jsx`, individual settings panes, shared pane controls (`SettingsKit.jsx`), navigation, integration setup, and `settings.css` |
+| `settings/` | `SettingsDialog.jsx`, individual settings panes, shared pane controls (`SettingsKit.jsx`), the profile sync reading (`syncState.js`), navigation, integration setup, and `settings.css` |
 | `sharing/` | The page Share popover (`SharePopover.jsx`): link, access, invited people, stop sharing |
 | `transfers/` | Import/export dialogs (`ImportExport.jsx`), the import review (`ImportReviewDialog.jsx`, `ImportTree.jsx`, `importApi.js`, `importReview.js`), format rules, and upload/file chips (`FileChip.jsx`) |
 | `shared/model/` | Block tree helpers (`blockModel.js`), block operations (`blockOps.js`), and highlight colors |

@@ -69,7 +69,7 @@ import { loadSession, saveSession, clearSession, setSessionScope } from "./sessi
 import { ROLE_LABEL, workspaceMeta } from "../settings/SettingsWorkspace";
 import { AuthLoading, LoginPage, SessionConflictPage, ShareBlockedPage, WorkspaceUnavailablePage } from "../auth/LoginPage";
 import { McpAuthorization } from "../auth/McpConsent";
-import { THEMES, TRANSLATE_LANGS, useAppPrefs } from "./prefs";
+import { TRANSLATE_LANGS, useAppPrefs, useProfileSync } from "./prefs";
 import { useBlockHistory } from "../editor/blockHistory.js";
 import { InkToolbar } from "../ink/InkLayer";
 import { MAX_STROKES, appendStroke, duplicateStrokes, eraseAt, newInk, removeStrokes, restyleStrokes, toolStyle, transformStrokes, translateStrokes } from "../ink/ink";
@@ -840,16 +840,12 @@ function LibraryApp() {
       recentsSyncRef.current = "";
       readPosRef.current = {};
       readPosLoadedRef.current = false;
-      appearanceSyncRef.current = "";
-      appearanceLoadedRef.current = false;
       return;
     }
     prefsUserRef.current = u;
     tabsSyncRef.current = "";
     recentsSyncRef.current = "";
     snapsSyncedRef.current = false;
-    appearanceSyncRef.current = "";
-    appearanceLoadedRef.current = false;
     // Local cache first for instant paint…
     let localTabs = [];
     try { localTabs = JSON.parse(localStorage.getItem(`gamma-tabs:${u}`) || "[]"); } catch {}
@@ -904,21 +900,6 @@ function LibraryApp() {
       readPosLoadedRef.current = true;
       if (mergeReadPos(u, d.value)) pushReadPosSoon(u);
     }).catch(() => { if (prefsUserRef.current === u) readPosLoadedRef.current = true; });
-    // Appearance: apply the account's copy; a validation miss (stale value
-    // shape) leaves the local state, and the push effect then normalizes the
-    // server copy. A GET failure keeps the gate closed so this session can't
-    // clobber a copy it never saw.
-    apiJson(`${API}/prefs/appearance`).then((d) => {
-      if (prefsUserRef.current !== u) return;
-      if (d.updated_at && d.value && typeof d.value === "object") {
-        const t = THEMES.includes(d.value.theme) ? d.value.theme : undefined;
-        const pd = typeof d.value.pdfDark === "boolean" ? d.value.pdfDark : undefined;
-        if (t !== undefined && pd !== undefined) appearanceSyncRef.current = JSON.stringify({ theme: t, pdfDark: pd });
-        if (t !== undefined) setTheme(t);
-        if (pd !== undefined) setPdfDarkPage(pd);
-      }
-      appearanceLoadedRef.current = true;
-    }).catch(() => {});
   }, [authUser?.user, wsId, shareMode]);
 
   // Write a page's tag-list property ("folder" nests on "/", "category" is
@@ -1676,12 +1657,6 @@ function LibraryApp() {
   const prefsUserRef = useRef(""); // whose tabs/folders are currently loaded
   const tabsSyncRef = useRef("");  // updated_at of the last server state we applied/wrote
   const tabsPushTimerRef = useRef(null);
-  // Appearance (theme + flipped PDF colors) follows the account through
-  // /api/prefs/appearance: the server copy wins on login, a browser that
-  // syncs first seeds it, later changes push back. localStorage stays the
-  // instant-paint cache — the index.html pre-paint script keeps reading it.
-  const appearanceSyncRef = useRef("");      // JSON of the last state applied/pushed
-  const appearanceLoadedRef = useRef(false); // gate: no pushes before a successful pull
   // Debounced PUT of one synced pref (/api/prefs/<key>): quick successive
   // changes collapse into the last value; `onSaved` gets the server reply.
   // Shared by the open tabs, the recents queue and the pinned folders.
@@ -1862,23 +1837,6 @@ function LibraryApp() {
         if (mergeReadPos(u, d.value)) pushReadPosSoon(u);
       } catch {}
     }
-    async function pullAppearance() {
-      const u = prefsUserRef.current;
-      if (!u) return;
-      try {
-        const d = await apiJson(`${API}/prefs/appearance`);
-        if (prefsUserRef.current !== u || !d.updated_at || !d.value || typeof d.value !== "object") return;
-        const t = THEMES.includes(d.value.theme) ? d.value.theme : undefined;
-        const pd = typeof d.value.pdfDark === "boolean" ? d.value.pdfDark : undefined;
-        if (t === undefined || pd === undefined) return;
-        appearanceLoadedRef.current = true;
-        const snap = JSON.stringify({ theme: t, pdfDark: pd });
-        if (appearanceSyncRef.current === snap) return;
-        appearanceSyncRef.current = snap;
-        setTheme(t);
-        setPdfDarkPage(pd);
-      } catch {}
-    }
     async function pullRecents() {
       const u = prefsUserRef.current;
       if (!u || document.hidden || recentsPushTimerRef.current) return;
@@ -1935,7 +1893,6 @@ function LibraryApp() {
       pullReadPos();
       pullRecents();
       pullSnaps();
-      pullAppearance();
     };
     const onVisibility = () => { if (document.hidden) flushReadPos(); else onWake(); };
     window.addEventListener("focus", onWake);
@@ -2298,6 +2255,25 @@ function LibraryApp() {
     ? `${window.location.origin}${window.location.pathname}?share=${shareSettings.token}`
     : "";
   const [shareCopied, flashShareCopied, resetShareCopied] = useCopied();
+  // Gamma Cloud publishing of the open page (the share popover's Gamma Cloud
+  // section, docs/dev/mirror.md "Publishing"): GET /api/pages/{id}/publish
+  // tagged with the page it belongs to, the action running, its refusal.
+  // Offered where the server has cloud sign-in and is not itself the share
+  // host (server-config's `guest` is false only there), never to the guest.
+  const publishOffered = !shareMode && !!serverConfig?.cloud?.enabled && serverConfig?.guest !== false
+    && !!authUser?.user && !authUser?.is_guest;
+  const [publishState, setPublishState] = useState(null);
+  const [publishBusy, setPublishBusy] = useState("");
+  const [publishError, setPublishError] = useState("");
+  const [publishCopied, flashPublishCopied, resetPublishCopied] = useCopied();
+  // The publication's state while the share popover is open: every 5 s while
+  // a round runs or a local edit waits to be synced, else every 20 s.
+  const publishActive = !!publishState?.mirror?.status?.running || !!publishState?.mirror?.pending_local;
+  useEffect(() => {
+    if (openPopover !== "share" || !publishOffered || !focusedBlockId) return undefined;
+    const t = setInterval(() => loadPublishState({ quiet: true }), publishActive ? 5000 : 20000);
+    return () => clearInterval(t);
+  }, [openPopover, publishOffered, focusedBlockId, publishActive]); // eslint-disable-line react-hooks/exhaustive-deps
   // Workspace search lives in search/SearchPanel.jsx (SearchPanel); App only holds what
   // the PDF viewer needs from it: the match highlights and the search hook.
   const [findMarks, setFindMarks] = useState([]); // [{page, rect, active}] painted by PdfViewer
@@ -2415,7 +2391,11 @@ function LibraryApp() {
   const [pdfHidden, setPdfHidden] = useState(false);
   const [pdfScale, setPdfScale] = useState("page-width");
   // Every localStorage-backed user preference (the Settings dialog's state)
-  // lives in useAppPrefs (prefs.js) — one hook, one storage key per entry.
+  // lives in useAppPrefs (prefs.js) — one hook, one storage key per entry;
+  // the account-scoped ones follow the account through its profile
+  // (useProfileSync). Guests share one account, so theirs stay local.
+  const appPrefs = useAppPrefs();
+  const profileSync = useProfileSync(appPrefs, authUser?.user && !authUser.is_guest && !shareMode ? authUser.user : "");
   const {
     theme, setTheme, pdfDarkPage, setPdfDarkPage, uiScale, setUiScale, recentThumbs, setRecentThumbs,
     fileLabels, setFileLabels,
@@ -2439,23 +2419,7 @@ function LibraryApp() {
     toolRounds, setToolRounds, agentReadChars, setAgentReadChars, agentPerms, setAgentPerms,
     agentEnabled, setAgentEnabled,
     chatImgAutoClear, setChatImgAutoClear,
-  } = useAppPrefs();
-
-  // Appearance changes push to the account (the value is tiny — no debounce).
-  // The loaded gate keeps a session that hasn't pulled yet from overwriting
-  // the server copy with its stale local cache.
-  useEffect(() => {
-    if (!prefsUserRef.current || shareMode || !appearanceLoadedRef.current) return;
-    const payload = { theme, pdfDark: pdfDarkPage };
-    const snap = JSON.stringify(payload);
-    if (appearanceSyncRef.current === snap) return;
-    appearanceSyncRef.current = snap;
-    apiJson(`${API}/prefs/appearance`, {
-      method: "PUT",
-      headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ value: payload }),
-    }).catch(() => {});
-  }, [theme, pdfDarkPage, authUser?.user, shareMode]);
+  } = appPrefs;
   const viewerWrapRef = useRef(null);
   const pdfRetryRef = useRef(null); // set by PdfViewer: re-runs a failed load (pill's Retry button)
   const appRef = useRef(null);
@@ -2593,6 +2557,8 @@ function LibraryApp() {
     try {
       const info = await apiJson(`${API}/ai/settings`);
       setAiKeysInfo(info);
+      // The server's shared entries may have changed (Settings → Server).
+      refreshAiModels();
       // Usage is account status, not an edit action: fetch it as soon as the
       // pane opens. Only OAuth protocols have a portable percentage endpoint;
       // generic API-key providers would merely return "unavailable".
@@ -3631,7 +3597,7 @@ function LibraryApp() {
   // page open and after any sync event; a decision is posted and the block's
   // new text arrives over the page socket like any edit.
   const [merges, setMerges] = useState(null);
-  const mirrorWs = workspace?.mirror_of ? workspace.id : "";
+  const mirrorWs = workspace?.mirror_of || workspace?.publishing ? workspace.id : "";
   const loadMerges = useCallback(async () => {
     if (!mirrorWs || !focusedBlockId || !authUser?.user) { setMerges(null); return; }
     try {
@@ -5228,6 +5194,86 @@ function LibraryApp() {
       setStatus(`Stop sharing failed: ${err.message}`);
     }
   }
+  // Publishing to Gamma Cloud (sharing/SharePopover.jsx PublishSection). POST
+  // both publishes and changes an existing cloud share's audience / role; it
+  // runs a sync round, so it can take seconds. Refusals come back as the
+  // server's sentence and are shown in the section, never as an alert.
+  const publishUrl = (pageId) => `${API}/pages/${encodeURIComponent(pageId)}/publish`;
+  async function loadPublishState({ quiet = false } = {}) {
+    const pageId = focusedBlockId;
+    if (!publishOffered || !pageId || homeMode) return;
+    if (!quiet) { setPublishState(null); setPublishError(""); resetPublishCopied(); }
+    try {
+      const data = await apiJson(publishUrl(pageId));
+      setPublishState({ ...data, page: pageId });
+    } catch (err) {
+      if (!quiet) setPublishState({ published: false, can_publish: false, reason: err.message, page: pageId });
+    }
+  }
+  function markPublishing() {
+    // the header's sync pill follows the publication without a reload
+    setWorkspace((prev) => (prev && !prev.mirror_of && !prev.publishing ? { ...prev, publishing: true } : prev));
+    window.dispatchEvent(new CustomEvent("gamma:mirror"));
+  }
+  async function publishPage(patch) {
+    const pageId = focusedBlockId;
+    if (!pageId || publishBusy) return;
+    setPublishBusy(patch ? "update" : "publish");
+    setPublishError("");
+    if (patch) setPublishState((prev) => (prev?.share ? { ...prev, share: { ...prev.share, ...patch } } : prev));
+    try {
+      const out = await apiJson(publishUrl(pageId), {
+        method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify(patch || {}),
+      });
+      setPublishState((prev) => ({
+        ...(prev || {}), page: pageId, published: true, can_publish: true, reason: undefined, error: undefined,
+        url: out.url, share: out.share, mirror: out.mirror, status: out.mirror?.status,
+      }));
+      markPublishing();
+    } catch (err) {
+      setPublishError(err.message);
+      if (patch) loadPublishState({ quiet: true }); // the tiles go back to what the share host holds
+    } finally {
+      setPublishBusy("");
+    }
+  }
+  async function unpublishPage() {
+    const pageId = focusedBlockId;
+    if (!pageId || publishBusy) return;
+    setPublishBusy("unpublish");
+    setPublishError("");
+    try {
+      const out = await apiJson(publishUrl(pageId), { method: "DELETE" });
+      setPublishState((prev) => ({
+        ...(prev || {}), page: pageId, published: false, url: undefined, share: undefined, mirror: out.mirror,
+      }));
+      window.dispatchEvent(new CustomEvent("gamma:mirror"));
+      loadPublishState({ quiet: true });
+    } catch (err) {
+      setPublishError(err.message);
+    } finally {
+      setPublishBusy("");
+    }
+  }
+  async function syncPublication() {
+    const ws = publishState?.mirror?.ws;
+    if (!ws || publishBusy) return;
+    setPublishBusy("sync");
+    setPublishError("");
+    try {
+      await apiJson(`${API}/mirrors/${encodeURIComponent(ws)}/sync?wait=1`, { method: "POST" });
+    } catch (err) {
+      setPublishError(err.message);
+    }
+    await loadPublishState({ quiet: true });
+    setPublishBusy("");
+    window.dispatchEvent(new CustomEvent("gamma:mirror"));
+  }
+  async function copyPublishLink() {
+    if (publishState?.url && await copyText(publishState.url)) { flashPublishCopied(); return; }
+    setStatus("Copy failed — select the link in the popover instead.");
+  }
+
   // The share view's visitor renamed themself: keep it, and rejoin the room
   // so presence shows the new name (it travels in the socket handshake).
   function commitLinkName(raw) {
@@ -6579,7 +6625,7 @@ function LibraryApp() {
         onUsernameChange={setLoginUser}
         onPasswordChange={setLoginPass}
         onSubmit={doLogin}
-        onGuestLogin={doGuestLogin}
+        onGuestLogin={serverConfig?.guest === false ? undefined : doGuestLogin}
         cloudLogin={serverConfig?.cloud}
       />
     );
@@ -8039,6 +8085,18 @@ function LibraryApp() {
       onRemove={removeShareUser}
       onStop={stopSharing}
       onClose={() => { setOpenPopover(null); setShareError(""); }}
+      publish={publishOffered ? {
+        state: publishState?.page === focusedBlockId ? publishState : null,
+        busy: publishBusy,
+        error: publishError,
+        copied: !!publishCopied,
+        onCopy: copyPublishLink,
+        canEdit: !readOnly,
+        onPublish: publishPage,
+        onUnpublish: unpublishPage,
+        onSync: syncPublication,
+        onLink: () => { setOpenPopover(null); setSettingsOpen("account"); },
+      } : null}
       citation={(pageMeta || pageBibtex) ? (
         <Section
           title="Citation"
@@ -8250,7 +8308,7 @@ function LibraryApp() {
             className={`iconBtn ${openPopover === "share" ? "activeIcon" : ""}`}
             onClick={() => {
               const opening = openPopover !== "share";
-              if (opening) { loadShareSettings(); setShareError(""); }
+              if (opening) { loadShareSettings(); setShareError(""); loadPublishState(); }
               setOpenPopover(opening ? "share" : null);
             }}
             disabled={loading}
@@ -8263,11 +8321,12 @@ function LibraryApp() {
           {openPopover === "share" ? sharePopover : null}
         </span>
       ) : null}
-      {authUser?.user && workspace?.mirror_of ? (
+      {authUser?.user && (workspace?.mirror_of || workspace?.publishing) ? (
         <MirrorPopover
           key={workspace.id}
           wsId={workspace.id}
           mirrorOf={workspace.mirror_of}
+          publication={!workspace.mirror_of && !!workspace.publishing}
           open={openPopover === "mirror"}
           onToggle={() => setOpenPopover(openPopover === "mirror" ? null : "mirror")}
           jumpTo={(pageId, blockId) => jumpToRef.current?.(pageId, blockId)}
@@ -9090,6 +9149,7 @@ function LibraryApp() {
       <GuideOverlay guide={guide} />
       <SettingsDialog
         activePane={settingsOpen}
+        profileSync={profileSync}
         onPaneChange={setSettingsOpen}
         onClose={() => setSettingsOpen(null)}
         papers={{

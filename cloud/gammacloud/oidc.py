@@ -11,11 +11,18 @@ Clients:
 - the **desktop** client (``config.DESKTOP_CLIENT_ID``): public, no secret,
   not in the table; its redirect URI must be
   ``http://127.0.0.1:<any port>/api/auth/cloud/callback`` (or localhost /
-  [::1]), which is what a local Gamma sidecar listens on. The only client
-  that may ask for ``offline_access`` (a refresh token, so a laptop signs
-  in while offline).
+  [::1]), which is what a local Gamma sidecar listens on. It may always
+  ask for ``offline_access`` (a refresh token, so a laptop signs in while
+  offline).
 - **share-host** and **container** clients: confidential, one row each,
-  created at provisioning, exact redirect URIs.
+  created at provisioning, exact redirect URIs. They get a refresh token
+  only together with the ``prefs`` scope: a server syncing a person's
+  preference profile between sign-ins needs one.
+
+Scopes: ``openid`` (required), ``email``, ``profile`` (OIDC's: the display
+name), ``offline_access``, and ``prefs`` — the preference profile under
+``/api/me/prefs`` (``prefs.py``). An access token keeps the scope it was
+issued with.
 
 Timing: an authorize request lives AUTHORIZE_REQUEST_TTL while the person
 signs in; a code AUTH_CODE_TTL; an access token ACCESS_TOKEN_TTL; an ID
@@ -42,7 +49,7 @@ from . import accounts, config
 from .db import after, audit, begin_write, new_id, new_token, now, parse, token_hash
 from .ratelimit import agent_of, ip_of
 
-SCOPES = ("openid", "email", "profile", "offline_access")
+SCOPES = ("openid", "email", "profile", "offline_access", "prefs")
 LOOPBACK_HOSTS = ("127.0.0.1", "localhost", "::1")
 DESKTOP_CALLBACK_PATH = "/api/auth/cloud/callback"
 CHALLENGE_RE = re.compile(r"^[A-Za-z0-9._~-]{43,128}$")
@@ -117,6 +124,8 @@ def discovery() -> dict:
         "code_challenge_methods_supported": ["S256"],
         "claims_supported": ["sub", "iss", "aud", "exp", "iat", "auth_time", "nonce", "preferred_username", "email",
                              "email_verified", "name", "plan"],
+        # not OIDC: where a Gamma server publishes pages ("" = no share host)
+        "gamma_share_host": config.SHARE_HOST_URL,
     }
 
 
@@ -199,8 +208,8 @@ def parse_scope(raw: str, client: dict) -> str:
     for s in wanted:
         if s not in SCOPES:
             raise OAuthError("invalid_scope", f"unknown scope {s}")
-    if "offline_access" in wanted and client["kind"] != "desktop":
-        raise OAuthError("invalid_scope", "only the desktop app may ask for offline_access")
+    if "offline_access" in wanted and client["kind"] != "desktop" and "prefs" not in wanted:
+        raise OAuthError("invalid_scope", "a server may ask for offline_access only with the prefs scope")
     return " ".join(dict.fromkeys(wanted))
 
 

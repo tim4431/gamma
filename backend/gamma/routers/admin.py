@@ -25,8 +25,9 @@ from fastapi.responses import FileResponse
 from pydantic import BaseModel
 from starlette.background import BackgroundTask
 
-from .. import backups, cloud_auth, workspaces
+from .. import ai_settings, backups, cloud_auth, cloud_sync, workspaces
 from ..auth import require_admin
+from .ai import AIProviderRequest
 from ..db import connect_users_db
 from ..logbuf import tail as _log_tail
 from .. import version
@@ -124,6 +125,7 @@ class SettingsUpdateRequest(BaseModel):
     cloud_client_id: str | None = None
     cloud_client_secret: str | None = None
     cloud_policy: str | None = None
+    cloud_share_host: bool | None = None   # accept published pages (gamma/publish.py)
 
 
 @router.put("/settings")
@@ -148,12 +150,79 @@ async def update_settings(payload: SettingsUpdateRequest, request: Request):
         if payload.quota_mb is not None:
             set_default_quota_mb(payload.quota_mb)
         if any(v is not None for v in (payload.cloud_issuer, payload.cloud_client_id, payload.cloud_client_secret,
-                                       payload.cloud_policy)):
+                                       payload.cloud_policy, payload.cloud_share_host)):
             cloud_auth.save_settings(issuer=payload.cloud_issuer, client_id=payload.cloud_client_id,
-                                     client_secret=payload.cloud_client_secret, policy=payload.cloud_policy)
+                                     client_secret=payload.cloud_client_secret, policy=payload.cloud_policy,
+                                     share_host=payload.cloud_share_host)
     except ValueError as e:
         raise HTTPException(status_code=400, detail=str(e))
     return {**get_defaults(), **public_url_settings(), "cloud": cloud_auth.settings()}
+
+
+# --- the server's shared AI connections (gamma/ai_settings.py) ---------------
+# Mirrors /api/ai/providers*: the key is write-only, reads are masked. The
+# ids are the namespaced ``server:<id>`` every account's runtime uses; the
+# Test button and the model list go through /api/ai/providers/{id}/test and
+# /api/ai/model-catalog, which take that id from an admin.
+
+def _shared_ai_view() -> dict:
+    config = ai_settings.load_server_ai()
+    return {"providers": [{**ai_settings.mask_entry(e), "shared": True} for e in config["providers"]],
+            "guests": config["guests"], **ai_settings.protocol_choices(key_only=True), "can_edit": True}
+
+
+def _shared_entry(config: dict, provider_id: str) -> dict:
+    entry = next((e for e in config["providers"] if e.get("id") == provider_id), None)
+    if not entry:
+        raise HTTPException(status_code=404, detail="provider not found")
+    return entry
+
+
+class SharedAiRequest(BaseModel):
+    guests: bool | None = None  # may the guest account use the shared entries
+
+
+@router.get("/ai-providers")
+def list_ai_providers(request: Request):
+    require_admin(request)
+    return _shared_ai_view()
+
+
+@router.put("/ai-providers")
+def update_ai_providers(payload: SharedAiRequest, request: Request):
+    require_admin(request)
+    if payload.guests is not None:
+        ai_settings.edit_server_ai(lambda config: config.update(guests=payload.guests))
+    return _shared_ai_view()
+
+
+@router.post("/ai-providers")
+def add_ai_provider(payload: AIProviderRequest, request: Request):
+    require_admin(request)
+
+    def add(config):
+        if len(config["providers"]) >= ai_settings.MAX_PROVIDERS:
+            raise HTTPException(status_code=400, detail="too many providers")
+        config["providers"].append(ai_settings.new_key_entry(payload, ai_settings.new_server_provider_id()))
+    ai_settings.edit_server_ai(add)
+    return _shared_ai_view()
+
+
+@router.put("/ai-providers/{provider_id}")
+def update_ai_provider(provider_id: str, payload: AIProviderRequest, request: Request):
+    require_admin(request)
+    ai_settings.edit_server_ai(lambda config: ai_settings.update_entry(_shared_entry(config, provider_id), payload))
+    return _shared_ai_view()
+
+
+@router.delete("/ai-providers/{provider_id}")
+def delete_ai_provider(provider_id: str, request: Request):
+    require_admin(request)
+
+    def drop(config):
+        config["providers"] = [e for e in config["providers"] if e.get("id") != provider_id]
+    ai_settings.edit_server_ai(drop)
+    return _shared_ai_view()
 
 
 @router.get("/users")
@@ -355,11 +424,11 @@ async def delete_user(username: str, request: Request):
             raise HTTPException(status_code=400, detail="the guest account resets itself daily; it cannot be deleted")
         if row[2] and _admin_count(conn) <= 1:
             raise HTTPException(status_code=400, detail="cannot delete the last admin")
-        held = cloud_auth.refresh_token_of(username)
+        subject, held = cloud_auth.grant_of(username)
         conn.execute("DELETE FROM sessions WHERE username = ?", (username,))
         conn.execute("DELETE FROM identities WHERE username = ?", (username,))
         conn.commit()
-    cloud_auth.revoke_later([held])
+    cloud_sync.release_later(subject, held)  # off the person's server list, grant revoked
     deleted = workspaces.delete_account_workspaces(username)
     with connect_users_db() as conn:
         conn.execute("DELETE FROM users WHERE username = ?", (username,))

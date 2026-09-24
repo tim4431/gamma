@@ -4,8 +4,9 @@
 // (Segmented, PictureChoices, Stepper, UnitInput, CharSlider, AccountPicker, LogBox, Stat, Empty, QuotaMeter/PercentMeter). New settings
 // UI should reuse these; bespoke classes are for layout only.
 import React from "react";
-import { copyText, fmtBytes } from "../shared/lib/utils";
-import { CheckIcon, EyeIcon, EyeOffIcon, ShieldIcon, UserIcon } from "../shared/ui/Icons";
+import { API, apiJson, copyText, fmtBytes } from "../shared/lib/utils";
+import { AlertCircleIcon, CheckIcon, CloudCheckIcon, EyeIcon, EyeOffIcon, RefreshIcon, ShieldIcon, UserIcon } from "../shared/ui/Icons";
+import { profileSyncState } from "./syncState.js";
 
 export const SettingsDraftContext = React.createContext(null);
 
@@ -30,12 +31,33 @@ export function PaneHead({ icon: Icon, title, children }) {
   );
 }
 
-export function Section({ title, action, children }) {
+// `scope` tags where the section's settings live: "account" (they follow
+// the signed-in account, app/prefDefs.js) or "browser" (this device only).
+// An account tag reads the profile's live sync state from
+// SettingsSyncContext ({local, cloud}, provided by the dialog;
+// settings/syncState.js): icon + short text, the sentence on hover.
+export const SettingsSyncContext = React.createContext(null);
+const SYNC_ICONS = { check: CheckIcon, cloudCheck: CloudCheckIcon, refresh: RefreshIcon, alert: AlertCircleIcon };
+
+function ScopeTag({ scope }) {
+  const sync = React.useContext(SettingsSyncContext);
+  if (scope !== "account") return <span className="setScope" data-scope={scope}>This browser</span>;
+  const tag = profileSyncState(sync?.local, sync?.cloud);
+  const Icon = SYNC_ICONS[tag.icon];
+  return (
+    <span className={`setScope ${tag.tone} ${tag.spin ? "mirrorSpin" : ""}`} data-scope={scope} data-sync={tag.state} title={tag.title}>
+      {Icon ? <Icon size={11} /> : null}{tag.label}
+    </span>
+  );
+}
+
+export function Section({ title, scope, action, children }) {
   return (
     <>
       <div className="setSection" data-setting={title}>
         <span className="setSectionLabel">{title}</span>
         <span className="setSectionRule" />
+        {scope ? <ScopeTag scope={scope} /> : null}
         {action}
       </div>
       {children}
@@ -428,15 +450,37 @@ export function Empty({ icon: Icon, children }) {
 // Typing filters; Enter picks the first match; ↑/↓ move the highlight.
 // `compact` keeps the list closed until the box is focused or has text —
 // for a popover, where an always-open list would crowd the rest.
+// An empty directory is a hidden one (a share host lists no accounts, only
+// the one named exactly): the typed name is then looked up as
+// `GET /api/accounts?q=`.
 export function AccountPicker({ accounts, exclude = [], value, onChange, placeholder, autoFocus, compact }) {
   const [query, setQuery] = React.useState(value || "");
   const [cursor, setCursor] = React.useState(0);
   const [focused, setFocused] = React.useState(false);
+  const [found, setFound] = React.useState([]);
+  const hidden = Array.isArray(accounts) && accounts.length === 0;
+  const typed = query.trim();
+  React.useEffect(() => {
+    if (!hidden || !typed) { setFound([]); return undefined; }
+    let live = true;
+    const t = setTimeout(() => {
+      apiJson(`${API}/accounts?q=${encodeURIComponent(typed)}`)
+        .then((d) => { if (live) setFound(d.accounts || []); })
+        .catch(() => { if (live) setFound([]); });
+    }, 250);
+    return () => { live = false; clearTimeout(t); };
+  }, [hidden, typed]);
+  const directory = hidden ? found : accounts;
   const skip = new Set(exclude);
   const q = query.trim().toLowerCase();
-  const matches = (accounts || []).filter((a) => !skip.has(a.username) && (!q || a.username.toLowerCase().includes(q)));
+  const matches = (directory || []).filter((a) => !skip.has(a.username) && (!q || a.username.toLowerCase().includes(q)));
   const shown = matches.slice(0, 8);
   const open = !compact || focused || !!q;
+  // a looked-up name arrives after the typing: spelled exactly, it is picked
+  React.useEffect(() => {
+    const exact = hidden && found.find((a) => a.username === typed && !skip.has(a.username));
+    if (exact && exact.username !== value) onChange(exact.username);
+  }, [found]); // eslint-disable-line react-hooks/exhaustive-deps
 
   function pick(name) {
     setQuery(name);
@@ -471,7 +515,7 @@ export function AccountPicker({ accounts, exclude = [], value, onChange, placeho
         <span className="setPickList" role="listbox">
           {accounts == null ? <span className="setPickEmpty">Loading accounts…</span> : null}
           {accounts != null && !shown.length ? (
-            <span className="setPickEmpty">{q ? `No account matches "${query.trim()}"` : "No other accounts"}</span>
+            <span className="setPickEmpty">{q ? `No account matches "${query.trim()}"` : hidden ? "Type an exact username" : "No other accounts"}</span>
           ) : null}
           {shown.map((a, i) => (
             <button

@@ -168,6 +168,7 @@ ICONS = {
     "download": '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4M7 10l5 5 5-5M12 15V3"/></svg>',
     "docs": '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M4 19.5A2.5 2.5 0 0 1 6.5 17H20M4 19.5A2.5 2.5 0 0 0 6.5 22H20V2H6.5A2.5 2.5 0 0 0 4 4.5z"/></svg>',
     "desktop": '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect x="3" y="4" width="18" height="12" rx="2"/><path d="M2 20h20"/></svg>',
+    "server": '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect x="3" y="4" width="18" height="7" rx="2"/><rect x="3" y="13" width="18" height="7" rx="2"/><path d="M7 7.5h.01M7 16.5h.01"/></svg>',
     "globe": '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="9"/><path d="M3 12h18M12 3a14 14 0 0 1 0 18M12 3a14 14 0 0 0 0 18"/></svg>',
     "check": '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="3" stroke-linecap="round" stroke-linejoin="round"><path d="M5 12l5 5 9-10"/></svg>',
     "mail": '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect x="3" y="5" width="18" height="14" rx="2"/><path d="M3 7l9 6 9-6"/></svg>',
@@ -419,6 +420,21 @@ def _app_row(d: dict, manage: bool) -> str:
     return _row("desktop", title, meta, end)
 
 
+def _server_row(srv: dict) -> str:
+    """One Gamma server the account is linked on: its name links to it; the
+    desktop sidecar's loopback address is *this computer*, not a link."""
+    host = srv["url"].split("://", 1)[-1]
+    if srv["local"]:
+        title = "This computer"
+        meta = [esc(srv["name"]) if srv["name"] != host else "", esc(host)]
+    else:
+        title = f"<a href='{esc(srv['url'])}' target=_blank rel='noopener noreferrer'>{esc(srv['name'])}</a>"
+        meta = [esc(host) if srv["name"] != host else ""]
+    meta.append(f"linked {_date(srv['linked_at'])}")
+    return (f"<div class=dev><div class=ico>{ICONS['server']}</div><div class=txt><b>{title}</b>"
+            f"<span>{' · '.join(x for x in meta if x)}</span></div>{_last(srv['last_seen_at'], 'Last seen')}</div>")
+
+
 def _browser_row(b: dict) -> str:
     title = _platform(b["user_agent"]) or "Unknown browser"
     meta = [f"signed in {_date(b['created_at'])}", f"last seen at {esc(b['ip'])}" if b["ip"] else ""]
@@ -447,7 +463,8 @@ RESEND_JS = ("document.querySelectorAll('[data-resend]').forEach(r => r.onclick 
              "catch (e) { r.textContent = e.message; r.disabled = false; } });")
 
 
-def overview_page(account: dict, devices: list[dict], mail_failed: bool = False) -> str:
+def overview_page(account: dict, devices: list[dict], servers: list[dict] | None = None,
+                  mail_failed: bool = False) -> str:
     verified = account["email_verified"]
     name = account["display_name"] or account["username"]
     tags = (f"<span>@{esc(account['username'])}</span><span class=pill>{esc(account['plan'].capitalize())} plan</span>"
@@ -477,6 +494,11 @@ def overview_page(account: dict, devices: list[dict], mail_failed: bool = False)
         f"<div class=actions><a class='btn btn--sm' href='{SITE}/download'>Get the desktop app</a></div></div>")
     more = f"<a href='/devices'>Manage{f' all {len(devices)}' if len(devices) > 4 else ''}</a>"
     signins = f"<section class=section><h2>Gamma apps <span>{more}</span></h2><div class=list>{recent}</div></section>"
+    servers = servers or []
+    listed = "".join(_server_row(srv) for srv in servers) or (
+        f"<div class=blank>{ICONS['server']}No Gamma server lists this account yet. "
+        "A server you sign in to with Gamma Cloud shows up here.</div>")
+    signins += f"<section class=section><h2>Gamma servers</h2><div class=list>{listed}</div></section>"
     plan = (f"<section class=section><h2>Plan</h2><div class=body><div class=planname>{esc(account['plan'])}</div>"
             "<p class=plantext>The desktop app is your library. A hosted Gamma server of your own comes with the Plus and Pro plans.</p>"
             f"<div class=actions><a class='btn btn--sm' href='{SITE}/#selfhost'>Self-host instead</a></div></div></section>")
@@ -505,8 +527,8 @@ def devices_page(account: dict, devices: list[dict], browsers: list[dict]) -> st
              f"<section class=section><h2>Browsers <span data-count>{len(browsers)} signed in</span></h2>"
              f"<div class=list>{rows}</div></section>"
              f"<div class=formfoot>{everywhere}<span class=empty>Signing an app out revokes its key to this account, so it "
-             "cannot renew its sign-in. Sessions it already opened on its own Gamma server stay open until you sign out "
-             "there.</span></div><div class=msg id=devmsg></div>")
+             "cannot renew its sign-in. Its Gamma server checks the key every hour and then ends the sessions it "
+             "opened with this account.</span></div><div class=msg id=devmsg></div>")
     script = """
 const msg = document.getElementById('devmsg');
 function gone(row){
@@ -521,7 +543,7 @@ document.querySelectorAll('[data-endsession]').forEach(b => b.onclick = () => ac
   await api('/api/sessions/' + b.dataset.endsession + '/revoke', {}); gone(b.closest('.dev')); }, msg));
 const all = document.getElementById('revokeall');
 if (all) all.onclick = () => {
-  if (!confirm('Sign out every Gamma app and every other browser? Apps keep the sessions they already opened on their own Gamma server.')) return;
+  if (!confirm('Sign out every Gamma app and every other browser? Each app's Gamma server ends the sessions it opened within the hour.')) return;
   act(all, async () => { await api('/api/devices/revoke-all', {}); location.reload(); }, msg);
 };
 """

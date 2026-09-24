@@ -17,6 +17,12 @@
 // /api/mirrors/{ws} every 20 s, every 2 s while a round runs or a local
 // edit waits (the page's collab session raises `gamma:local-edit` when it
 // queues ops); the log too while open.
+//
+// A publication (a mirror with a page filter: the pages this workspace
+// publishes to Gamma Cloud, docs/dev/mirror.md "Publishing") gets the same
+// pill and reading, but its name line says "Published to Gamma Cloud" and
+// its settings keep only the cadence: direction, the forces, detach and
+// remove origin would break it.
 import React from "react";
 import { API, apiJson, fmtBytes } from "../shared/lib/utils";
 import { Row, Segmented, Toggle } from "../settings/SettingsKit";
@@ -99,6 +105,11 @@ export function roundSummary(s) {
   const blocks = diffStat(roundBlocks(s));
   if (blocks) parts.push(`${blocks} blocks`);
   return parts.join(", ");
+}
+
+// A mirror with a page filter is a publication, not a clone.
+export function isPublication(info) {
+  return Array.isArray(info?.page_filter);
 }
 
 export function isPullOnly(info) {
@@ -233,7 +244,7 @@ function Confirm({ what, busy, onYes, onNo }) {
   );
 }
 
-function SettingsView({ info, wsId, onBack, reload, onOpenSettings }) {
+function SettingsView({ info, wsId, publication, onBack, reload, onOpenSettings }) {
   const [confirm, setConfirm] = React.useState(null); // "pull" | "push" | "forget" | null
   const [busy, setBusy] = React.useState(false);
   const detached = info?.detached;
@@ -263,12 +274,20 @@ function SettingsView({ info, wsId, onBack, reload, onOpenSettings }) {
       </Row>
       <Toggle icon={PenIcon} checked={Boolean(info?.on_change)} disabled={busy} onChange={(v) => call("", "PATCH", { on_change: v })}
         label="Sync after an edit" hint="a round about a second after you change something" />
-      <Row icon={ArrowUpDownIcon} label="Direction"
-        title="Two-way: your changes go to the remote. Receive only: the remote's changes arrive, yours stay here until you switch back.">
-        <Segmented value={pull ? "pull" : "two-way"} onChange={(v) => call("", "PATCH", { mode: v })} options={DIRECTION} />
-      </Row>
-      <div className="popoverDivider" />
-      {confirm ? (
+      {!publication ? (
+        <Row icon={ArrowUpDownIcon} label="Direction"
+          title="Two-way: your changes go to the remote. Receive only: the remote's changes arrive, yours stay here until you switch back.">
+          <Segmented value={pull ? "pull" : "two-way"} onChange={(v) => call("", "PATCH", { mode: v })} options={DIRECTION} />
+        </Row>
+      ) : null}
+      {publication && !detached ? null : <div className="popoverDivider" />}
+      {publication ? (detached ? (
+        <div className="mirrorSetActions">
+          <button className="uiBtn sm primary" disabled={busy} onClick={() => call("/relink", "POST", {})} title="Publish again; what both sides did meanwhile merges">
+            <LinkIcon size={13} /> Reattach
+          </button>
+        </div>
+      ) : null) : confirm ? (
         <Confirm what={confirm} busy={busy} onNo={() => setConfirm(null)}
           onYes={() => confirm === "forget" ? call("", "DELETE") : call("/force", "POST", { direction: confirm })} />
       ) : (
@@ -293,7 +312,9 @@ function SettingsView({ info, wsId, onBack, reload, onOpenSettings }) {
           </button>
         </div>
       )}
-      <button className="popoverItem mirrorMore" onClick={onOpenSettings}><SettingsIcon size={13} /> All clones in Settings</button>
+      <button className="popoverItem mirrorMore" onClick={onOpenSettings}>
+        <SettingsIcon size={13} /> {publication ? "Publishing in Settings" : "All clones in Settings"}
+      </button>
     </>
   );
 }
@@ -374,7 +395,9 @@ function LogList({ log, jumpTo }) {
 
 const PENDING_GRACE_MS = 6000; // how long a local edit counts as pending before the server confirms it
 
-export function MirrorPopover({ wsId, mirrorOf, open, onToggle, jumpTo, onOpenSettings }) {
+// `publication` says what the workspace listing knows before the mirror's
+// own answer (its page filter) arrives.
+export function MirrorPopover({ wsId, mirrorOf, publication: listedAsPublication = false, open, onToggle, jumpTo, onOpenSettings }) {
   const [info, setInfo] = React.useState(null);
   const [log, setLog] = React.useState(null);
   const [busy, setBusy] = React.useState(false);
@@ -442,6 +465,8 @@ export function MirrorPopover({ wsId, mirrorOf, open, onToggle, jumpTo, onOpenSe
   const s = info?.status || {};
   const host = hostOf(info?.remote_url);
   const pull = isPullOnly(info);
+  const publication = info ? isPublication(info) : listedAsPublication;
+  const name = publication ? "Published to Gamma Cloud" : mirrorOf;
 
   return (
     <span data-popover="mirror" className="popoverAnchor">
@@ -449,7 +474,7 @@ export function MirrorPopover({ wsId, mirrorOf, open, onToggle, jumpTo, onOpenSe
         className={`iconBtn mirrorPill ${st.tone} ${open ? "activeIcon" : ""}`}
         data-state={st.state}
         onClick={onToggle}
-        title={`Clone of ${mirrorOf}${host ? ` on ${host}` : ""} — ${st.text}`}
+        title={`${publication ? name : `Clone of ${mirrorOf}`}${host ? ` on ${host}` : ""} — ${st.text}`}
         aria-label="Sync status"
       >
         <st.Icon size={15} />
@@ -458,7 +483,7 @@ export function MirrorPopover({ wsId, mirrorOf, open, onToggle, jumpTo, onOpenSe
       </button>
       {open ? (
         <div className="popover mirrorPopover" role="dialog" aria-label="Sync status">
-          {view === "settings" ? <SettingsView info={info} wsId={wsId} onBack={() => setView("main")} reload={load} onOpenSettings={onOpenSettings} />
+          {view === "settings" ? <SettingsView info={info} wsId={wsId} publication={publication} onBack={() => setView("main")} reload={load} onOpenSettings={onOpenSettings} />
             : view === "review" ? <ReviewView wsId={wsId} onBack={() => setView("main")} jumpTo={jumpTo} />
             : (
               <>
@@ -467,8 +492,10 @@ export function MirrorPopover({ wsId, mirrorOf, open, onToggle, jumpTo, onOpenSe
                     {pull ? <ArrowDownIcon size={15} /> : <ArrowUpDownIcon size={15} />}
                   </span>
                   <span className="mirrorPopTitle">
-                    <span className="popoverTitle mirrorEllipsis">{mirrorOf}</span>
-                    <span className="popoverHint mirrorEllipsis" title={info?.remote_url}>remote · {host}{s.remote_user ? ` · ${s.remote_user}` : ""}</span>
+                    <span className="popoverTitle mirrorEllipsis">{name}</span>
+                    <span className="popoverHint mirrorEllipsis" title={info?.remote_url}>
+                      {publication ? `${n(info?.page_filter?.length, "page")} · ${host}` : `remote · ${host}${s.remote_user ? ` · ${s.remote_user}` : ""}`}
+                    </span>
                   </span>
                   <span className="mirrorPopBtns">
                     <button className={`iconBtn sm ${running ? "mirrorSpin" : ""}`} disabled={running || info?.detached} onClick={syncNow} aria-label="Sync"

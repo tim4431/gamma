@@ -1,14 +1,16 @@
 // Sign in with Gamma Cloud (backend gamma/cloud_auth.py, docs/dev/cloud_accounts.md):
 // - CloudSignInSettings — Settings → Server → Sign-in (admins): the account
 //   server's address, the client this server is, and what happens to a cloud
-//   identity this server has not seen (refuse / claim / provision).
+//   identity this server has not seen (refuse / claim / provision), and
+//   under provision whether it accepts published pages (the share host).
 // - CloudIdentityRow — Settings → Account: the signed-in account's own link
 //   to its cloud account (link = a round trip through the account server,
 //   unlink = one call; refused for an account that has no password).
 import React from "react";
 import { API, apiJson } from "../shared/lib/utils";
-import { Row, Segmented, PasswordInput, useSettingsDraft } from "./SettingsKit";
-import { CloudIcon, KeyIcon, UserIcon } from "../shared/ui/Icons";
+import { Row, Segmented, PasswordInput, SettingsSyncContext, Toggle, useSettingsDraft } from "./SettingsKit";
+import { cloudSyncHint } from "./syncState.js";
+import { CloudIcon, GlobeIcon, KeyIcon, UserIcon } from "../shared/ui/Icons";
 
 const POLICIES = [
   ["refuse", "Refuse", null, "Only accounts already linked to a cloud account can sign in"],
@@ -20,11 +22,11 @@ const POLICIES = [
 // the Server pane can put it on its Sign-in section rule.
 export function CloudSignInSettings({ setStatus, action }) {
   const [saved, setSaved] = React.useState(null); // the `cloud` object of /api/admin/settings
-  const [draft, setDraft] = React.useState({ issuer: "", client_id: "", secret: "", policy: "refuse" });
+  const [draft, setDraft] = React.useState({ issuer: "", client_id: "", secret: "", policy: "refuse", share_host: false });
   const [error, setError] = React.useState("");
   const [busy, setBusy] = React.useState(false);
   const fromSaved = (c) => ({ issuer: c.issuer || "", client_id: c.client_id === "gamma-desktop" ? "" : (c.client_id || ""),
-    secret: "", policy: c.policy || "refuse" });
+    secret: "", policy: c.policy || "refuse", share_host: !!c.share_host });
   React.useEffect(() => {
     let active = true;
     apiJson(`${API}/admin/settings`).then((v) => {
@@ -40,7 +42,8 @@ export function CloudSignInSettings({ setStatus, action }) {
     if (!saved || managed || busy) return;
     setBusy(true); setError("");
     try {
-      const body = { cloud_issuer: draft.issuer.trim(), cloud_client_id: draft.client_id.trim(), cloud_policy: draft.policy };
+      const body = { cloud_issuer: draft.issuer.trim(), cloud_client_id: draft.client_id.trim(), cloud_policy: draft.policy,
+        cloud_share_host: draft.policy === "provision" && draft.share_host };
       if (draft.secret) body.cloud_client_secret = draft.secret;
       const value = await apiJson(`${API}/admin/settings`, {
         method: "PUT", headers: { "Content-Type": "application/json" }, body: JSON.stringify(body),
@@ -85,6 +88,11 @@ export function CloudSignInSettings({ setStatus, action }) {
       title="Refuse: only linked accounts. Claim: a cloud username equal to an unlinked username here takes it over — for a server whose accounts were created under cloud usernames. Provision: every verified cloud account gets an account — the free share host.">
       <Segmented value={draft.policy} onChange={set("policy")} options={POLICIES} disabled={disabled} />
     </Row>
+    {draft.policy === "provision" ? (
+      <Toggle icon={GlobeIcon} label="Accept published pages" checked={draft.share_host} onChange={set("share_host")}
+        disabled={disabled} hint="This server is the share host people publish pages to"
+        title="The free share host: a Gamma Cloud account may publish pages here from its own Gamma. Also turns off the guest account and limits the account list to exact names." />
+    ) : null}
     {error ? <p className="settingsPaneHint aiKeysError" role="alert">{error}</p> : null}
   </>;
 }
@@ -92,6 +100,8 @@ export function CloudSignInSettings({ setStatus, action }) {
 export function CloudIdentityRow({ setStatus, confirm }) {
   const [state, setState] = React.useState(null); // {identity, enabled}
   const [error, setError] = React.useState("");
+  const sync = React.useContext(SettingsSyncContext);
+  const syncHint = cloudSyncHint(sync?.cloud);
   const load = React.useCallback(() => {
     apiJson(`${API}/auth/cloud/status`).then(setState).catch((err) => setError(err.message));
   }, []);
@@ -114,7 +124,8 @@ export function CloudIdentityRow({ setStatus, confirm }) {
   }
   return <>
     <Row icon={CloudIcon} label="Gamma Cloud"
-      hint={id ? `${id.username}${id.email ? ` · ${id.email}` : ""}${id.plan ? ` · ${id.plan} plan` : ""}` : "Sign in here with your Gamma Cloud account"}
+      hint={id ? `${id.username}${id.email ? ` · ${id.email}` : ""}${id.plan ? ` · ${id.plan} plan` : ""}${syncHint ? ` · ${syncHint}` : ""}`
+        : "Sign in here with your Gamma Cloud account"}
       title={id ? `Linked ${id.linked_at ? id.linked_at.slice(0, 10) : ""}. Signing in with this cloud account opens this account.`
         : "Link your Gamma Cloud account: you are sent to the account server and back, then either login opens this account."}>
       <span className="setRowControls">

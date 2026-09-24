@@ -61,4 +61,42 @@ export async function cloudSignInScenarios(env) {
       } finally { await anon2.close(); }
     } finally { await ctx.close(); }
   });
+
+  // Invitations by cloud username (docs/dev/workspaces.md): the invite editor
+  // offers the second way only while cloud sign-in is on. The lookup runs on
+  // the inviter's own linked Gamma Cloud grant, and this admin has none, so
+  // the invitation is refused with a message; the lookup through a real
+  // grant, the pending row and its claim on first sign-in are
+  // backend/tests/test_pending_memberships.py.
+  await step("cloud sign-in: a workspace owner can name a Gamma Cloud username", async () => {
+    const lab = await admin.api("/api/workspaces", { method: "POST", body: { name: "Cloud invite lab", kind: "shared" } });
+    const ctx = await admin.context(browser);
+    try {
+      const page = await openPage(ctx, server.base);
+      const openInvite = async () => {
+        await openSettings(page, "Workspaces");
+        await page.locator(".aiProvRow").filter({ hasText: "Cloud invite lab" }).getByRole("button", { name: "Manage" }).click();
+        await page.getByRole("button", { name: "Invite", exact: true }).click();
+        return page.getByRole("dialog", { name: "Invite to Cloud invite lab", exact: true });
+      };
+      // off: only accounts on this server
+      let dialog = await openInvite();
+      await dialog.waitFor();
+      assertEq(await dialog.getByRole("button", { name: "Gamma Cloud username", exact: true }).count(), 0, "no cloud choice while sign-in is off");
+      // on: the second way to name a person
+      await admin.api("/api/admin/settings", { method: "PUT", body: { cloud_issuer: "https://account.example" } });
+      await page.reload();
+      dialog = await openInvite();
+      await dialog.getByRole("button", { name: "Gamma Cloud username", exact: true }).click();
+      const field = dialog.getByRole("textbox", { name: /Gamma Cloud username/ });
+      await field.fill("@Alice");
+      await dialog.getByRole("button", { name: "Invite", exact: true }).click();
+      await dialog.locator(".aiKeysError").filter({ hasText: "Link your own Gamma Cloud account" }).waitFor();
+      assertEq((await admin.api(`/api/workspaces/${lab.id}/invites`)).invites.length, 0, "nothing pending after a refused lookup");
+      await assertNoProblems(page, [/POST \/api\/workspaces\/[^/]+\/invites -> 503/, /Link your own Gamma Cloud account/]);
+    } finally {
+      await admin.api("/api/admin/settings", { method: "PUT", body: { cloud_issuer: "" } });
+      await ctx.close();
+    }
+  });
 }

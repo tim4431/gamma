@@ -11,7 +11,8 @@ Code: `gamma/sync_engine.py` (the engine and the mirror registry),
 `gamma/sync_tree.py` (snapshots and the diff between them),
 `gamma/routers/sync.py` (the change feed and `whoami`, what a mirror reads
 on the remote), `gamma/routers/mirrors.py` (the mirror API on the server
-that holds the copy), `frontend/src/settings/SettingsMirrors.jsx` (Settings →
+that holds the copy), `gamma/publish.py` + `gamma/routers/publish.py`
+(publishing a page to the share host, below), `frontend/src/settings/SettingsMirrors.jsx` (Settings →
 Workspaces → Clones), `frontend/src/collaboration/MirrorPopover.jsx`
 (the header's sync pill, its settings and review views),
 `frontend/src/collaboration/MergeResolver.jsx` (the merge chip on a block
@@ -52,6 +53,37 @@ the frontend changes: editing a mirror is editing a workspace.
 Not synced: preferences (reading positions, open tabs, recents — they are
 per account and per server), chats, cover snapshots, search indexes (the
 copy rebuilds its own).
+
+## The page filter
+
+A mirror may name the only pages that travel: `mirrors.page_filter`, a JSON
+list of page ids (NULL, what every mirror made by hand has, means every
+page; migration step 19). Publishing is the one thing that makes such a
+mirror today. With a filter a round:
+
+- takes from both change feeds, and from its retry list, only the listed
+  pages, and fetches only their missing files (`missing_uploads(ws,
+  pages)`); a page outside it never travels in either direction, whatever
+  the feeds say, and neither does its deletion;
+- treats a listed page that has no saved base as new whatever the feeds say
+  (`_filtered`): a tombstone on the remote from an earlier publication says
+  nothing about this one. So a page added to the filter (`filter_add`) goes
+  over whole at the next round, created there under its id with its files;
+- drops from the filter a listed page that was deleted on the remote and not
+  here, instead of deleting it here: the copy there was removed (by
+  unpublishing, or by its owner on the remote), the page here stays;
+- drops a listed page that is gone here and has no base (`_prune_filter`,
+  at the start of a round): a page deleted here is deleted there by the
+  normal rule first, then leaves the filter;
+- asks nothing of the remote when the filter is empty.
+
+Local writes to pages outside the filter neither mark the copy dirty nor
+ask for a sync-on-change round (`ops.commit_listeners` get the page id; the
+engine caches each copy's filter in `_filters`). Several filtered mirrors of
+one remote workspace may coexist (each local workspace that publishes to the
+same account has its own); a second unfiltered mirror of the same remote is
+still refused. Changes to the filter are made under `round_lock(ws)`, the
+lock a round holds, so no round sees half of one.
 
 ## The change feed (remote side)
 
@@ -295,6 +327,53 @@ Settings jump to the block (`gamma:jump`).
   remote's or keep local), a name and the direction as two `IconChoices`
   tiles.
 
+### Publishing (`SharePopover.jsx` `PublishSection`)
+
+A publication is not a clone, and the UI keeps the two apart.
+`GET /api/workspaces/mine` and `/api/session` give a workspace that
+publishes `publishing: true` and leave its `mirror_of` empty, so it stays in
+Settings' Personal list and the desktop switcher never calls it a clone.
+`isPublication(info)` (a non-null `page_filter`) is how the frontend tells a
+mirror's own answer apart.
+
+- **The share popover** gets a *Gamma Cloud* section under the local share
+  when the server has cloud sign-in on and is not itself a share host
+  (`server-config`: `cloud.enabled`, and `guest` not false), never for the
+  guest. App owns the data (`loadPublishState`, `publishPage`,
+  `unpublishPage`, `syncPublication`) and reads
+  `GET /api/pages/{id}/publish` when the popover opens, then every 5 s while
+  a round runs or a local edit waits (`pending_local`), else every 20 s.
+  - Not published, allowed: "Keep this page reachable while this computer
+    is off." and a primary **Publish**. While it runs the button is
+    disabled and shows the spinning refresh glyph; a refusal shows its
+    `detail` under the row.
+  - Not published, refused: the `reason` as the row's hint. When the reason
+    is the sign-in one, *Link Gamma Cloud account* opens Settings → Account,
+    where the existing link flow runs.
+  - Published: the cloud link as the row hint with *Copy link*, a danger
+    icon button that asks inline before it unpublishes, the state line
+    (`mirrorState` of the answer's `mirror`, the pill's icon and words) with
+    a *Sync now* icon button (`POST /api/mirrors/{ws}/sync?wait=1`), and
+    the cloud share's access as the local share draws it: the three
+    audience tiles (their hints in the share host's terms) and the View /
+    Edit segmented as the section's action. A change is
+    `POST /api/pages/{id}/publish {audience, role}`, shown at once and put
+    back when the server refuses.
+  - A viewer of the workspace sees the state and the link but no buttons.
+- **The header's sync pill** shows for a publication as for a clone. Its
+  tooltip and name line say *Published to Gamma Cloud* with the count of
+  pages and the host; its gear keeps *Automatic sync* and *Sync after an
+  edit* and hides *Direction*, the forces, *Detach* and *Remove origin*,
+  which would break it (a detached publication still offers *Reattach*).
+  The first publication in a workspace sets `publishing` on the open
+  workspace, so the pill appears without a reload.
+- **Settings → Workspaces** lists publications under their own
+  *Publishing* heading below Clones: the state avatar, the workspace's
+  name with its tags, *N published pages · host*, the status line, a
+  *Conflicts* button when any wait, and a "more" menu with *Sync now* and
+  a danger *Stop publishing all* (confirmed, then
+  `DELETE /api/pages/{id}/publish?ws=` for every page in the filter).
+
 ### The desktop switcher
 
 On a remote server every workspace row carries a *clone* chip on hover.
@@ -360,13 +439,67 @@ differing blocks of a page are pushed, files only when the other side lacks
 the hash. Confirmed inline in the popover; a pull-only clone cannot force
 push.
 
+## Publishing
+
+A page of a local Gamma (the desktop sidecar, usually) can be published to
+the free share host, so its share link works while the laptop is closed
+(`gamma/publish.py`, the plan's step 6). The share host is a Gamma with
+cloud sign-in under the `provision` policy and the *Accept published pages*
+switch on ([cloud_accounts.md](cloud_accounts.md) "The share host"); the
+account server names it (`gamma_share_host` in its discovery document).
+Publishing is a filtered two-way mirror of the person's default personal
+workspace there:
+
+1. `POST /api/pages/{id}/publish` (a workspace editor with a linked Gamma
+   Cloud identity holding a token; the page a root block). Refused with 409
+   and a message when the account has no identity ("Sign in with Gamma Cloud
+   to publish."), when the account server names no share host, when this
+   server is itself a share host, or when the workspace already follows
+   another server.
+2. No mirror yet: the server asks the account server for an access token
+   (`cloud_auth.access_token_for`), trades it at the share host's
+   `POST /api/auth/cloud/exchange` for a write token on the person's
+   workspace there, and links this workspace to it (`create_mirror` with
+   `workspace_id` = this workspace, `adopt: mine`, two-way, `page_filter:
+   [id]`, named *Gamma Cloud*). Another local workspace of the same account
+   that already publishes lends its token instead, since the share host
+   keeps one live token per account and calling server. A mirror that
+   exists: the page is added to its filter (with `adopt: mine` for the next
+   round), and a token the share host no longer accepts is exchanged again
+   for every publishing mirror of the account.
+3. One round runs at once; the page must have a base afterwards (else 502
+   with the round's error).
+4. `POST /api/share/{id}` on the share host under the mirror's token makes
+   the share (default anyone / view; the request's `audience` / `role` set
+   it, on a new link or an existing one through `PUT /api/share-settings`).
+   The answer is the link `<share host>/?share=<token>`, the share and the
+   mirror's status.
+
+From then on the page is an ordinary mirrored page: edits here go there at
+the next round, edits made through an edit share come back, conflicts are
+the usual rows. `DELETE /api/pages/{id}/publish` stops the share there,
+deletes the copy there and drops the page and its base from the filter, all
+under the round lock (so no round reads the copy's deletion as the page's);
+the page here is untouched, and when the share host cannot be reached
+nothing changes (502). An empty filter leaves the mirror row in place.
+`GET /api/pages/{id}/publish` reads whether the page is published, its live
+share there and the mirror's raw status, plus `can_publish` / `reason` for
+the popover.
+
+Limitation: a workspace that is already a copy of another server (a clone
+of the lab's NAS) cannot publish: one remote per copy, and the page's home is
+that other server. Publish from there (its admin can turn it into a share
+host, or its pages can be shared from it directly). The publishing mirror
+is listed in `GET /api/mirrors` with the clones; the UI shows it apart
+("What the person sees", Publishing).
+
 ## API
 
 | method | path | what |
 |---|---|---|
 | GET | `/api/mirrors` | the caller's mirrors with status |
 | POST | `/api/mirrors` | `{remote_url, token, name?, mode?, workspace_id?, adopt?}` → the mirror (validated against the remote's `whoami` first; a read token or a viewer's role makes it `pull`; `workspace_id` links an existing workspace of the caller's under the `adopt` policy); the first fill runs in the background |
-| GET | `/api/mirrors/{ws}` | one mirror, with `conflicts_open`, `pending_local` (a local write no round has pushed yet; two-way copies only), `poll_s`, `on_change`, `detached`, `interval_s` (0 = the loop is off) |
+| GET | `/api/mirrors/{ws}` | one mirror, with `conflicts_open`, `pending_local` (a local write no round has pushed yet; two-way copies only), `poll_s`, `on_change`, `detached`, `interval_s` (0 = the loop is off), `page_filter` (null = every page) |
 | PATCH | `/api/mirrors/{ws}` | `{poll_s?, on_change?, mode?}` — the cadence and direction |
 | POST | `/api/mirrors/{ws}/sync[?wait=1]` | a round now |
 | POST | `/api/mirrors/{ws}/detach` | detach (the link is kept) |
@@ -377,7 +510,8 @@ push.
 | GET | `/api/mirrors/{ws}/conflicts[?resolved=1][&page=]` | the decisions to look at (`mine`, `theirs`, `result`, and `base` for a merge), one page's with `page` |
 | POST | `/api/mirrors/{ws}/conflicts/{id}` | `{choice: keep \| mine \| theirs}` |
 
-Session-only, the mirror's owner only, never a guest.
+Session-only, the mirror's owner only, never a guest. Publishing's three
+endpoints are in [api.md](api.md) "Publishing".
 
 ## Testing
 
@@ -399,8 +533,17 @@ after more typing, a block moved to another page while edited here, edits
 made while the remote is unreachable — each ending with both sides equal. The progress reports, the interrupted-flag
 reset, the retry of a page that failed, detach + re-link, linking an
 existing workspace, the force in both directions, the cadence and the
-sync-on-change trigger are in `test_mirror.py` too; the browser scenario
-drives the popover's settings view, detach / link again and the merge chip. The
+sync-on-change trigger are in `test_mirror.py` too. `test_publish.py`
+covers the page filter (pages and deletions outside it stay put both ways,
+a page added later goes over, a published page removed there leaves the
+filter), the share host's exchange against a fake account server, and
+publishing end to end: the page and its PDF on the share host, the link
+resolving there, an edit through an edit share coming back, unpublishing,
+a re-publication, a revoked token exchanged again, and the refusals. The browser scenario
+drives the popover's settings view, detach / link again and the merge chip;
+`publish.mjs` publishes end to end against a second Gamma started as the
+share host and a stand-in account server
+([debugging.md](debugging.md)). The
 desktop's flow — the *keep offline* chip, the registry map, the
 *offline copy* / *original* cross-links, one copy per workspace — is a step
 of `desktop/test/e2e.js`.

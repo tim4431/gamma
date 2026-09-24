@@ -15,7 +15,7 @@ from fastapi import APIRouter, HTTPException, Request
 from fastapi.responses import JSONResponse
 from pydantic import BaseModel
 
-from .. import accounts, captcha, config, db, mail, oidc, ratelimit, sessions
+from .. import accounts, captcha, config, db, mail, oidc, ratelimit, servers, sessions
 from ..log import log
 
 router = APIRouter(prefix="/api")
@@ -155,12 +155,15 @@ def logout(request: Request):
 
 @router.get("/me")
 def me(request: Request):
-    """The account, its signed-in devices and (v1) its servers. A Gamma
-    sidecar reads this with its access token to learn which servers the
-    person has."""
+    """The account, its signed-in devices (portal session only), its
+    servers (provisioned ones (v1) and the ones it linked its identity on)
+    and ``share_host``, the address pages are published to ("" = none). A
+    Gamma sidecar reads this with its access token to learn which servers
+    the person has."""
     with closing(db.connect()) as conn:
         account = current_account(conn, request)
-        out = {"account": accounts.public(account), "servers": [], "auth": request.state.auth}
+        out = {"account": accounts.public(account), "servers": servers.of_account(conn, account["id"]),
+               "share_host": config.SHARE_HOST_URL, "auth": request.state.auth}
         if request.state.auth == "session":
             out["devices"] = oidc.devices(conn, account["id"])
         conn.commit()

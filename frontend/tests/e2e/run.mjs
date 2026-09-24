@@ -35,6 +35,7 @@ import { pdfTouchScenarios } from "./scenarios/pdfTouch.mjs";
 import { ipadScenarios } from "./scenarios/ipad.mjs";
 import { quickOpenScenarios } from "./scenarios/quickOpen.mjs";
 import { cloudSignInScenarios } from "./scenarios/cloudSignIn.mjs";
+import { publishScenarios } from "./scenarios/publish.mjs";
 
 const server = new Server();
 let browser;
@@ -91,6 +92,7 @@ try {
   await settingsScenarios(env);
   await mcpScenarios(env);
   await cloudSignInScenarios(env);
+  await publishScenarios(env);
   await mirrorScenarios(env);
   await mentionScenarios(env);
   await quickOpenScenarios(env);

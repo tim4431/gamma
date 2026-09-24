@@ -299,12 +299,14 @@ def revoke_everything(conn, account_id: str) -> None:
 def delete(conn, account_id: str, actor: str = "") -> None:
     """Soft delete: the row keeps its username and e-mail through the grace
     period (``manage.py purge-deleted`` removes it), nothing can sign in as
-    it any more (its Google/GitHub links go at once), and its servers'
-    teardown is the provisioner's job (v1)."""
+    it any more (its Google/GitHub links, preference profile and linked
+    servers go at once), and its servers' teardown is the provisioner's job
+    (v1)."""
     revoke_everything(conn, account_id)
     conn.execute("UPDATE email_tokens SET used_at = ? WHERE account_id = ? AND used_at IS NULL", (now(), account_id))
     conn.execute("UPDATE accounts SET deleted_at = ?, password_hash = NULL WHERE id = ?", (now(), account_id))
-    conn.execute("DELETE FROM identities WHERE account_id = ?", (account_id,))
+    for table in ("identities", "prefs", "servers_linked"):
+        conn.execute(f"DELETE FROM {table} WHERE account_id = ?", (account_id,))
     audit(conn, "account.delete", account_id, actor or account_id)
 
 
@@ -314,7 +316,8 @@ def purge_deleted(conn, older_than_days: int) -> int:
     cutoff = after(-older_than_days * 86400)
     rows = conn.execute("SELECT id FROM accounts WHERE deleted_at IS NOT NULL AND deleted_at <= ?", (cutoff,)).fetchall()
     for row in rows:
-        for table in ("identities", "portal_sessions", "email_tokens", "grants", "access_tokens"):
+        for table in ("identities", "portal_sessions", "email_tokens", "grants", "access_tokens", "prefs",
+                      "servers_linked"):
             conn.execute(f"DELETE FROM {table} WHERE account_id = ?", (row["id"],))
         conn.execute("DELETE FROM accounts WHERE id = ?", (row["id"],))
         audit(conn, "account.purge", row["id"], "system")

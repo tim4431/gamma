@@ -17,11 +17,13 @@ All state is SQLite + files on disk under a data directory (env
   schema version (`db.SCHEMA_VERSION`). Tables:
   - `users` — accounts (bcrypt), the guest/admin flags, nullable per-user
     storage-limit overrides, `default_workspace` (the personal workspace);
-  - `sessions` — session tokens;
+  - `sessions` — session tokens, with `via` (`cloud` for one a Gamma Cloud
+    sign-in minted, else empty);
   - `identities` — the Gamma Cloud identity linked to an account
     (`provider`, the account server's `subject`, `username`, `email`, the
-    last verified `claims` — username, plan — and, desktop client only, the
-    Fernet-encrypted `refresh_token`); one per account and provider
+    last verified `claims` — username, plan — the Fernet-encrypted
+    `refresh_token` and `revoked_at`, when the account server last refused
+    that grant); one per account and provider
     ([cloud_accounts.md](cloud_accounts.md));
   - `workspaces` (`id`, `name`, `created_by`, `kind` personal/shared,
     `access` private/public, `public_role`, `quota_mb`) and
@@ -36,7 +38,8 @@ All state is SQLite + files on disk under a data directory (env
     secrets), the workspace id for everything that names its pages (open
     tabs, recents, pinned folders, reading positions);
   - `settings` — admin-tunable server settings (KV), including the
-    admin-confirmed `public_url`;
+    admin-confirmed `public_url` and the shared AI provider entries
+    (`ai_providers`, keys encrypted, [ai.md](ai.md));
   - `publisher_sessions` — encrypted publisher cookie snapshots per
     `(username, host)`, imported by the Connector ([extension.md](extension.md));
   - `integration_tokens` — hashed assistant tokens per account and workspace
@@ -128,7 +131,9 @@ endpoint/auth table: [api.md](api.md).
 row, not a second identity: the callback verifies the account server's ID
 token, finds the `identities` row (or links, claims or provisions one per
 the admin's policy), inserts the same `sessions` row the password login
-does and sets the same cookie. An account the cloud provisioned has an
+does (marked `via = 'cloud'`) and sets the same cookie. The hourly grant
+check (`gamma/cloud_sync.py`) deletes those rows, and only those, once the
+account server refuses the account's grant. An account the cloud provisioned has an
 EMPTY password hash and the password login refuses it. `manage.py
 set-password` gives it one. The settings live in the `settings` KV:
 `cloud_issuer`, `cloud_client_id`, `cloud_client_secret` (Fernet-encrypted

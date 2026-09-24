@@ -38,6 +38,19 @@ row per machine. A refresh token this server stops holding — replaced by a
 newer sign-in, left over from a refused one, dropped by an unlink or a
 deletion — is revoked at the account server (``revoke_later``), so no row
 there outlives what it stands for.
+
+Every sign-in asks for ``offline_access`` and ``prefs``, so the identity
+row keeps a refresh token, and ``access_token_for`` turns it into an access
+token for the account server's API: one refresh at a time per account, the
+rotated refresh token saved before the access token is used, the access
+token cached in memory until shortly before it expires. A refresh the
+account server refuses with ``invalid_grant`` means the grant was revoked
+(the person signed this server out on the Devices page, changed their
+password, deleted the account): the token is dropped, the identity marked
+``revoked_at`` and the sessions a cloud sign-in minted for that account
+end. Anything else (no network, a 5xx) changes nothing. What the server
+does with the token (the hourly grant check, the preference profile, the
+server list) is gamma/cloud_sync.py.
 """
 
 import hashlib
@@ -56,7 +69,7 @@ from urllib.parse import urlsplit
 import jwt
 from cryptography.fernet import InvalidToken
 
-from . import config, mcp_oauth
+from . import config, mcp_oauth, workspaces
 from .chatgpt_oauth import _b64url
 from .db import connect_users_db, page_now
 from .logbuf import log
@@ -66,17 +79,28 @@ from .server_settings import _get_raw, _set_raw, public_url_settings, validate_p
 PROVIDER = "gamma-cloud"
 POLICIES = ("refuse", "claim", "provision")
 DEFAULT_CLIENT_ID = "gamma-desktop"
-SCOPE_DESKTOP = "openid email profile offline_access"
-SCOPE_SERVER = "openid email profile"
+# Every client asks for a refresh token (offline_access) and the preference
+# profile (prefs); the account server lets a confidential client have the
+# first only together with the second.
+SCOPE = "openid email profile offline_access prefs"
 CALLBACK_PATH = "/api/auth/cloud/callback"
 PENDING_TTL = 600
 HTTP_TIMEOUT = 15
+ACCESS_MARGIN = 120   # seconds before its expiry a cached access token is no longer handed out
 _DISCOVERY_TTL = 3600
 _JWKS_TTL = 3600
 
 
 class CloudAuthError(Exception):
-    """A message safe to show the person on the login page."""
+    """A message safe to show the person on the login page. From ``_http``:
+    ``status`` is the account server's HTTP status (None when it could not
+    be reached), ``error`` the OAuth error code, ``body`` its JSON answer."""
+
+    def __init__(self, message: str, *, status: int | None = None, error: str = "", body: dict | None = None):
+        super().__init__(message)
+        self.status = status
+        self.error = error
+        self.body = body or {}
 
 
 def _conn() -> sqlite3.Connection:
@@ -89,21 +113,24 @@ def _conn() -> sqlite3.Connection:
 
 def settings() -> dict:
     """The effective configuration: ``issuer``, ``client_id``, ``policy``,
-    ``has_secret``, ``enabled``, and ``source`` (``environment`` when
-    ``GAMMA_CLOUD_ISSUER`` is set, else ``saved``). The secret itself is
-    never returned."""
+    ``has_secret``, ``enabled``, ``share_host`` (this server accepts
+    published pages, gamma/publish.py; only with cloud sign-in on), and
+    ``source`` (``environment`` when ``GAMMA_CLOUD_ISSUER`` is set, else
+    ``saved``). The secret itself is never returned."""
     env = config.cloud_env()
     if env["issuer"]:
         return {"issuer": env["issuer"], "client_id": env["client_id"] or DEFAULT_CLIENT_ID,
                 "policy": env["policy"] if env["policy"] in POLICIES else "refuse",
-                "has_secret": bool(env["client_secret"]), "enabled": True, "source": "environment"}
+                "has_secret": bool(env["client_secret"]), "enabled": True, "share_host": env["share_host"],
+                "source": "environment"}
     issuer = _get_raw("cloud_issuer")
     client_id = _get_raw("cloud_client_id")
     policy = _get_raw("cloud_policy")
     has_secret = bool(_get_raw("cloud_client_secret"))
+    share_host = bool(issuer) and (env["share_host"] or _get_raw("cloud_share_host") == "1")
     return {"issuer": issuer, "client_id": client_id or DEFAULT_CLIENT_ID,
             "policy": policy if policy in POLICIES else "refuse",
-            "has_secret": has_secret, "enabled": bool(issuer), "source": "saved"}
+            "has_secret": has_secret, "enabled": bool(issuer), "share_host": share_host, "source": "saved"}
 
 
 def client_secret() -> str:
@@ -130,7 +157,7 @@ def validate_issuer(value: str) -> str:
         raise ValueError("The issuer is the account server's HTTPS address without a path (HTTP only for localhost).") from None
 
 
-def save_settings(*, issuer=None, client_id=None, client_secret=None, policy=None) -> None:
+def save_settings(*, issuer=None, client_id=None, client_secret=None, policy=None, share_host=None) -> None:
     """Admin edits (Settings → Server → Sign-in). ``None`` leaves a value;
     an empty issuer turns cloud sign-in off; an empty secret clears it."""
     if config.cloud_env()["issuer"]:
@@ -151,6 +178,8 @@ def save_settings(*, issuer=None, client_id=None, client_secret=None, policy=Non
         if policy not in POLICIES:
             raise ValueError("policy must be refuse, claim or provision")
         _set_raw("cloud_policy", policy)
+    if share_host is not None:
+        _set_raw("cloud_share_host", "1" if share_host else "")
 
 
 # --- the account server -------------------------------------------------------
@@ -159,17 +188,25 @@ _discovery_cache: dict = {}
 _jwks_cache: dict = {}
 
 
-def _http(url: str, data: bytes | None = None, headers: dict | None = None) -> dict:
-    req = urllib.request.Request(url, data=data, headers={"Accept": "application/json", **(headers or {})})
+def _http(url: str, data: bytes | None = None, headers: dict | None = None, *, method: str | None = None,
+          timeout: float = HTTP_TIMEOUT) -> dict:
+    """One call to the account server: its JSON answer, or CloudAuthError
+    (``status`` None when it could not be reached)."""
+    req = urllib.request.Request(url, data=data, headers={"Accept": "application/json", **(headers or {})},
+                                 method=method)
     try:
-        with urllib.request.urlopen(req, timeout=HTTP_TIMEOUT) as resp:
+        with urllib.request.urlopen(req, timeout=timeout) as resp:
             return json.load(resp)
     except urllib.error.HTTPError as e:
         try:
             body = json.load(e)
         except ValueError:
             body = {}
-        raise CloudAuthError(body.get("error_description") or body.get("error") or f"account server answered {e.code}") from e
+        body = body if isinstance(body, dict) else {}
+        detail = body.get("detail") if isinstance(body.get("detail"), str) else ""
+        raise CloudAuthError(body.get("error_description") or body.get("error") or detail
+                             or f"account server answered {e.code}",
+                             status=e.code, error=str(body.get("error") or ""), body=body) from e
     except (urllib.error.URLError, OSError, ValueError) as e:
         raise CloudAuthError(f"cannot reach the account server: {e}") from e
 
@@ -186,6 +223,40 @@ def discovery(issuer: str) -> dict:
             raise CloudAuthError(f"the account server's {key} is not under its issuer")
     _discovery_cache[issuer] = (time.monotonic() + _DISCOVERY_TTL, doc)
     return doc
+
+
+def share_host_url() -> str:
+    """Where the account server's free share host is (the discovery
+    document's ``gamma_share_host``), "" when it names none or cloud sign-in
+    is off. Raises CloudAuthError when the account server cannot be read."""
+    cfg = settings()
+    if not cfg["enabled"]:
+        return ""
+    raw = str(discovery(cfg["issuer"]).get("gamma_share_host") or "").strip().rstrip("/")
+    if not raw:
+        return ""
+    parts = urlsplit(raw)
+    if parts.scheme not in ("http", "https") or not parts.netloc or parts.query or parts.fragment             or parts.path not in ("", "/") or any(c.isspace() for c in raw):
+        raise CloudAuthError("the account server names a share host that is not a server address")
+    return raw
+
+
+def userinfo(access_token: str) -> dict:
+    """The claims the account server answers for a bearer access token at
+    its ``/userinfo`` (``sub``, ``preferred_username``, ``plan``, ``email``,
+    ``email_verified``, ``name``), or CloudAuthError (``status`` 401 for a
+    token it does not know). Nothing is cached: the token is someone else's."""
+    cfg = settings()
+    if not cfg["enabled"]:
+        raise CloudAuthError("Cloud sign-in is not set up on this server.")
+    doc = discovery(cfg["issuer"])
+    endpoint = str(doc.get("userinfo_endpoint") or cfg["issuer"] + "/userinfo")
+    if not endpoint.startswith(cfg["issuer"] + "/"):
+        raise CloudAuthError("the account server's userinfo_endpoint is not under its issuer")
+    claims = _http(endpoint, headers={"Authorization": f"Bearer {access_token}"})
+    if not isinstance(claims, dict) or not claims.get("sub"):
+        raise CloudAuthError("the account server's answer names no account")
+    return claims
 
 
 def _jwks(issuer: str, jwks_uri: str, *, kid: str) -> dict:
@@ -244,9 +315,8 @@ def begin(request, *, link_user: str | None, next_path: str) -> str:
     mcp_oauth.store("cloud_login", base, state,
                     {"verifier": verifier, "nonce": nonce, "link_user": link_user or "", "next": next_path,
                      "redirect_uri": base + CALLBACK_PATH}, PENDING_TTL)
-    scope = SCOPE_DESKTOP if cfg["client_id"] == DEFAULT_CLIENT_ID else SCOPE_SERVER
     params = {"response_type": "code", "client_id": cfg["client_id"], "redirect_uri": base + CALLBACK_PATH,
-              "scope": scope, "state": state, "nonce": nonce,
+              "scope": SCOPE, "state": state, "nonce": nonce,
               "code_challenge": _b64url(hashlib.sha256(verifier.encode()).digest()), "code_challenge_method": "S256"}
     return doc["authorization_endpoint"] + "?" + urllib.parse.urlencode(params)
 
@@ -323,9 +393,10 @@ def _decrypt(stored: str) -> str:
 
 
 def link(conn, username: str, claims: dict, refresh_token: str = "") -> str:
-    """Insert or refresh the identity row of ``username``. The refresh token
-    (desktop client only) is Fernet-encrypted at rest. Returns the refresh
-    token a new one replaced, for the caller to revoke once committed."""
+    """Insert or refresh the identity row of ``username`` (a sign-in clears
+    ``revoked_at``). The refresh token is Fernet-encrypted at rest. Returns
+    the refresh token a new one replaced, for the caller to revoke once
+    committed."""
     old = conn.execute("SELECT refresh_token FROM identities WHERE provider = ? AND subject = ?",
                        (PROVIDER, claims["sub"])).fetchone()  # conn may or may not return Rows
     replaced = _decrypt(old[0]) if old and refresh_token else ""
@@ -334,7 +405,7 @@ def link(conn, username: str, claims: dict, refresh_token: str = "") -> str:
     conn.execute(
         "INSERT INTO identities (provider, subject, username, email, claims, refresh_token, created_at, last_login_at) "
         "VALUES (?, ?, ?, ?, ?, ?, ?, ?) ON CONFLICT(provider, subject) DO UPDATE SET username = excluded.username, "
-        "email = excluded.email, claims = excluded.claims, last_login_at = excluded.last_login_at, "
+        "email = excluded.email, claims = excluded.claims, last_login_at = excluded.last_login_at, revoked_at = '', "
         "refresh_token = CASE WHEN excluded.refresh_token = '' THEN identities.refresh_token ELSE excluded.refresh_token END",
         (PROVIDER, claims["sub"], username, claims.get("email", ""), json.dumps(_public_claims(claims)),
          stored_refresh, now, now))
@@ -353,13 +424,169 @@ def status_of(username: str) -> dict | None:
     if not row:
         return None
     return {"subject": row["subject"], "email": row["email"], **json.loads(row["claims"] or "{}"),
-            "linked_at": row["created_at"], "last_login_at": row["last_login_at"], "offline": bool(row["refresh_token"])}
+            "linked_at": row["created_at"], "last_login_at": row["last_login_at"], "offline": bool(row["refresh_token"]),
+            "revoked_at": row["revoked_at"]}
 
 
 def refresh_token_of(username: str) -> str:
+    return grant_of(username)[1]
+
+
+def grant_of(username: str) -> tuple[str, str]:
+    """(subject, refresh token) of the account's identity; ("", "") without one."""
     with _conn() as conn:
         row = identity_of(conn, username)
-    return _decrypt(row["refresh_token"]) if row else ""
+    return (row["subject"], _decrypt(row["refresh_token"])) if row else ("", "")
+
+
+# --- access tokens --------------------------------------------------------------
+
+_access: dict[str, tuple[str, float]] = {}   # subject -> (access token, monotonic time it stops being handed out)
+_grant_locks: dict[str, threading.Lock] = {}
+_grant_locks_guard = threading.Lock()
+
+
+def _grant_lock(subject: str) -> threading.Lock:
+    with _grant_locks_guard:
+        return _grant_locks.setdefault(subject, threading.Lock())
+
+
+def remember_access(subject: str, tokens: dict) -> None:
+    """Cache the access token of a token answer (a sign-in's or a refresh's)."""
+    access = tokens.get("access_token")
+    if not subject or not isinstance(access, str) or not access:
+        return
+    try:
+        lifetime = int(tokens.get("expires_in") or 3600)
+    except (TypeError, ValueError):
+        lifetime = 3600
+    _access[subject] = (access, time.monotonic() + max(30, lifetime - ACCESS_MARGIN))
+
+
+def forget_access(subject: str) -> None:
+    """Drop a cached access token (the account server answered 401 to it)."""
+    _access.pop(subject, None)
+
+
+def cached_access(subject: str) -> str:
+    cached = _access.get(subject)
+    return cached[0] if cached and cached[1] > time.monotonic() else ""
+
+
+def refresh_grant(refresh_token: str) -> dict:
+    """The refresh-token grant at the account server's token endpoint: the
+    new token set (the refresh token rotated), or CloudAuthError, whose
+    ``error`` is ``invalid_grant`` when the grant is gone. The caller saves
+    the rotated token."""
+    cfg = settings()
+    doc = discovery(cfg["issuer"])
+    form = {"grant_type": "refresh_token", "refresh_token": refresh_token, "client_id": cfg["client_id"]}
+    secret = client_secret()
+    if secret:
+        form["client_secret"] = secret
+    return _http(doc["token_endpoint"], data=urllib.parse.urlencode(form).encode(),
+                 headers={"Content-Type": "application/x-www-form-urlencoded",
+                          "User-Agent": _user_agent(server_url() or "no address")})
+
+
+def access_token_for(username: str, *, fresh: bool = False) -> str | None:
+    """An access token for the account server on behalf of ``username``, or
+    None: cloud sign-in off, no identity, no refresh token, the account
+    server unreachable (a warning), or the grant revoked (``_grant_refused``).
+    A cached token is handed out until shortly before it expires; ``fresh``
+    refreshes regardless (the hourly grant check). One refresh at a time per
+    account, and the rotated refresh token is saved before the access token
+    is used."""
+    if not settings()["enabled"]:
+        return None
+    with _conn() as conn:
+        row = identity_of(conn, username)
+    if not row:
+        return None
+    subject = row["subject"]
+    with _grant_lock(subject):
+        if not fresh and cached_access(subject):
+            return cached_access(subject)
+        with _conn() as conn:
+            row = identity_by_subject(conn, subject)
+        used = _decrypt(row["refresh_token"]) if row else ""
+        if not used:
+            return None
+        try:
+            tokens = refresh_grant(used)
+        except CloudAuthError as e:
+            if e.error == "invalid_grant":
+                _grant_refused(subject, used)
+            else:
+                log.warning(f"cloud: could not refresh the Gamma Cloud grant of {row['username']} "
+                            f"(tried again at the next check): {e}")
+            return None
+        rotated = tokens.get("refresh_token") or used
+        with _conn() as conn:
+            conn.execute("BEGIN IMMEDIATE")
+            now_row = identity_by_subject(conn, subject)
+            if not now_row or _decrypt(now_row["refresh_token"]) != used:
+                # A sign-in or an unlink replaced the token while this refresh
+                # was in flight: theirs stands, this grant's new key goes back.
+                conn.rollback()
+                if rotated != used:
+                    revoke_later([rotated])
+                return None
+            if rotated != used:
+                conn.execute("UPDATE identities SET refresh_token = ? WHERE provider = ? AND subject = ?",
+                             (cipher().encrypt(rotated.encode()).decode("ascii"), PROVIDER, subject))
+            conn.commit()
+        remember_access(subject, tokens)
+        return cached_access(subject) or None
+
+
+def _grant_refused(subject: str, used: str) -> None:
+    """The account server answered ``invalid_grant`` to ``used``: the grant
+    is revoked. Drop the token, mark the identity, and end the sessions a
+    cloud sign-in minted for the account (password sessions stay), unless
+    a newer sign-in already holds another token."""
+    with _conn() as conn:
+        conn.execute("BEGIN IMMEDIATE")
+        row = identity_by_subject(conn, subject)
+        if not row or _decrypt(row["refresh_token"]) != used:
+            conn.rollback()
+            return
+        conn.execute("UPDATE identities SET refresh_token = '', revoked_at = ? WHERE provider = ? AND subject = ?",
+                     (page_now(), PROVIDER, subject))
+        ended = conn.execute("DELETE FROM sessions WHERE username = ? AND via = 'cloud'", (row["username"],)).rowcount
+        conn.commit()
+    forget_access(subject)
+    log.warning(f"cloud: Gamma Cloud revoked the grant of {row['username']} (signed out on the account server); "
+                f"ended {ended} session(s) its cloud sign-ins opened here")
+
+
+# --- this server's address -------------------------------------------------------
+
+_LOOPBACK = frozenset({"localhost", "127.0.0.1", "::1"})
+
+
+def server_url(request=None) -> str:
+    """This server's address for the account server's server list: the
+    admin-confirmed public URL, else, for a local sidecar, the loopback
+    origin a sign-in came in on (remembered in the settings KV for the
+    hourly check), else "" (a LAN address is not listed)."""
+    configured = public_url_settings()["public_url"]
+    if configured:
+        return configured
+    if request is not None:
+        origin = str(request.base_url).rstrip("/")
+        if urlsplit(origin).hostname in _LOOPBACK:
+            if _get_raw("cloud_server_url") != origin:
+                _set_raw("cloud_server_url", origin)
+            return origin
+    return _get_raw("cloud_server_url")
+
+
+def server_name(url: str) -> str:
+    """The name the server list shows: the machine's name for a sidecar,
+    else the public host."""
+    host = urlsplit(url).hostname or ""
+    return socket.gethostname()[:80] if host in _LOOPBACK else host
 
 
 def revoke_refresh(token: str) -> None:
@@ -398,6 +625,7 @@ def resolve_account(claims: dict) -> str:
     the new one replaced."""
     stale: list[str] = []
     username = _resolve(claims, stale)
+    workspaces.claim_pending_memberships(username, claims["sub"])  # invitations by cloud username
     revoke_later(stale)
     return username
 

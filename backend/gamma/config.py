@@ -46,12 +46,15 @@ def cloud_env() -> dict:
     ``GAMMA_CLOUD_CLIENT_SECRET`` (a confidential client; unset = the public
     desktop client), ``GAMMA_CLOUD_POLICY`` (refuse / claim / provision) and
     ``GAMMA_CLOUD_ADMIN_SUBJECT`` (the cloud account that becomes this
-    server's admin on first sign-in)."""
+    server's admin on first sign-in) and ``GAMMA_CLOUD_SHARE_HOST=1`` (this
+    server is the free share host: it accepts published pages, refuses the
+    guest and lists accounts only by exact name — gamma/publish.py)."""
     return {"issuer": os.environ.get("GAMMA_CLOUD_ISSUER", "").strip().rstrip("/"),
             "client_id": os.environ.get("GAMMA_CLOUD_CLIENT_ID", "").strip(),
             "client_secret": os.environ.get("GAMMA_CLOUD_CLIENT_SECRET", ""),
             "policy": os.environ.get("GAMMA_CLOUD_POLICY", "").strip().lower(),
-            "admin_subject": os.environ.get("GAMMA_CLOUD_ADMIN_SUBJECT", "").strip()}
+            "admin_subject": os.environ.get("GAMMA_CLOUD_ADMIN_SUBJECT", "").strip(),
+            "share_host": os.environ.get("GAMMA_CLOUD_SHARE_HOST", "").strip().lower() in ("1", "true", "yes", "on")}
 
 
 def sync_interval_s() -> int:

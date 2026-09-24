@@ -19,7 +19,10 @@ The databases are not metered.
 
 The module also owns the admin-confirmed public server URL (`settings` key
 `public_url`, or the `GAMMA_PUBLIC_URL` override) and the MCP host allowlist
-derived from it ([mcp.md](../../docs/dev/mcp.md)).
+derived from it ([mcp.md](../../docs/dev/mcp.md)). Other modules keep their
+server-wide values in the same KV through ``_get_raw``/``_set_raw``: the
+cloud sign-in (`cloud_*`, gamma/cloud_auth.py) and the shared AI providers
+(`ai_providers`, gamma/ai_settings.py).
 """
 
 import re

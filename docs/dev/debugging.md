@@ -181,6 +181,18 @@ The scenarios live in `tests/e2e/scenarios/`:
 - `chatNavigation.mjs`: a library or PDF chat reply keeps streaming and is
   saved while the user navigates away and back, before or after it finishes.
   `--only "chat navigation"`.
+- `publish.mjs`: publishing a page to Gamma Cloud end to end. A second
+  Gamma is started as the share host (`new Server({env})` in `harness.mjs`
+  passes `GAMMA_CLOUD_ISSUER`, `GAMMA_CLOUD_POLICY=provision`,
+  `GAMMA_CLOUD_SHARE_HOST=1`), and `fakeCloud.mjs` stands in for the
+  account server both servers trust: discovery naming the share host, an
+  authorization endpoint that answers at once, PKCE code and refresh
+  grants, EdDSA ID tokens with their JWKS, `/userinfo`, and the profile and
+  server-list endpoints. The account links its identity through the real
+  round trip from the share popover, publishes, opens the link on the share
+  host anonymously, changes the cloud share's audience, syncs, checks the
+  pill and Settings' Publishing row, unpublishes, and stops publishing
+  from Settings. `--only publish`.
 - `mirror.mjs`: Settings → Workspaces → Clones — the server clones one of
   its own workspaces through the dialog with a write token made via the
   API: Sync, the empty conflicts list, opening the clone, the sync pill's

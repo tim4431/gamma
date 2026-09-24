@@ -55,22 +55,28 @@ from ..ai_context import (
     request_note_selections,
 )
 from ..ai_settings import (
-    MAX_KEY_LEN,
     MAX_MODELS_LEN,
     MAX_NAME_LEN,
     MAX_PROVIDERS,
-    MAX_URL_LEN,
     ai_runtime,
     clear_refresh_backoff,
     entry_models,
+    is_oauth_protocol as _is_oauth_protocol,
+    is_server_id,
     load_provider_entries,
+    load_server_ai,
+    mask_entry,
+    new_key_entry,
     new_provider_id,
+    protocol_choices,
     provider_label,
     require_ai_runtime,
     save_provider_entries,
+    server_entries_for,
+    update_entry,
 )
 from ..auth import require_user, require_ws, ws_role
-from ..config import AI_PROTOCOLS, AI_SERVICES
+from ..config import AI_PROTOCOLS
 from ..db import page_now, ws_db_path
 from ..logbuf import log
 from ..pdf_text import extract_text
@@ -299,42 +305,33 @@ def ai_models(request: Request):
 # OpenAI-platform-style key list: add / edit / remove provider entries. Keys
 # are write-only from the client: GET returns a masked hint, never the key.
 # Stored under the reserved account-wide `ai-settings` pref in users.db —
-# see gamma/ai_settings.py for the security rationale.
+# see gamma/ai_settings.py for the security rationale. The server's shared
+# entries (managed under /api/admin/ai-providers*) follow as read-only rows.
 
-def _masked_settings(user: str, is_guest: bool) -> dict:
-    out = []
-    for e in load_provider_entries(user):
-        key = (e.get("api_key") or "").strip()
-        oauth = e.get("oauth") if isinstance(e.get("oauth"), dict) else {}
-        out.append({
-            "id": e.get("id") or "",
-            "name": (e.get("name") or "").strip(),
-            "label": provider_label(e),  # name, else the service / protocol label
-            "protocol": e.get("protocol") or "",
-            # Enough to recognize the key, never enough to use it.
-            "key_hint": f"…{key[-4:]}" if len(key) >= 12 else ("set" if key else ""),
-            "base_url": (e.get("base_url") or "").strip(),
-            "models": (e.get("models") or "").strip(),
-            "test_model": (e.get("test_model") or "").strip(),
-            "created_at": e.get("created_at") or "",
-            # ChatGPT sign-in entries: connection status + account label only,
-            # never the tokens themselves.
-            "oauth_connected": bool(oauth.get("access_token")),
-            "account": oauth.get("email") or "",
-        })
+def _masked_settings(request: Request) -> dict:
+    user = request.state.user
+    own = [mask_entry(e) for e in load_provider_entries(user) if not is_server_id(e.get("id"))]
+    # Shared rows: only an admin sees their key hint.
+    shared = [{**mask_entry(e, hint=request.state.is_admin), "shared": True}
+              for e in server_entries_for(user)]
     return {
-        "providers": out,
-        # Feeds the "Add provider" dropdown and the form placeholders.
-        # auth "oauth" = sign-in entries (no API key field in the form).
-        "protocols": [
-            {"id": pid, "label": conf["label"], "default_base_url": conf["base_url"],
-             "auth": conf.get("auth", "key")}
-            for pid, conf in AI_PROTOCOLS.items()
-        ],
-        # Named presets (protocol + endpoint) listed next to the protocols.
-        "services": AI_SERVICES,
-        "can_edit": not is_guest,
+        "providers": own + shared,
+        # Feeds the "Add provider" dropdown and the form placeholders
+        # (protocols with auth "oauth" = sign-in entries, no API key field)
+        # plus the named presets (protocol + endpoint).
+        **protocol_choices(),
+        "can_edit": not request.state.is_guest,
     }
+
+
+def _saved_entry(request: Request, user: str, provider_id: str) -> dict | None:
+    """A saved entry by the id the client knows it by: the account's own,
+    or, for an admin only, one of the server's shared entries."""
+    if is_server_id(provider_id):
+        if not request.state.is_admin:
+            return None
+        return next((e for e in load_server_ai()["providers"] if e.get("id") == provider_id), None)
+    return next((e for e in load_provider_entries(user) if e.get("id") == provider_id), None)
 
 
 def _require_editor(request: Request) -> str:
@@ -346,11 +343,6 @@ def _require_editor(request: Request) -> str:
     return user
 
 
-def _is_oauth_protocol(protocol) -> bool:
-    """Sign-in protocols (ChatGPT) hold OAuth tokens instead of an API key."""
-    return AI_PROTOCOLS.get(protocol, {}).get("auth") == "oauth"
-
-
 class AIProviderRequest(BaseModel):
     protocol: str = ""      # an API-key key of AI_PROTOCOLS (required on add)
     name: str | None = None      # display label; "" = service / protocol label
@@ -360,42 +352,12 @@ class AIProviderRequest(BaseModel):
     test_model: str | None = None  # model probes use (Test button / login check); "" = first model
 
 
-def _apply_provider_fields(entry: dict, payload: AIProviderRequest):
-    """Validate + copy the editable fields of a provider entry in place."""
-    oauth_entry = _is_oauth_protocol(entry.get("protocol"))
-    if payload.name is not None:
-        entry["name"] = str(payload.name).strip()[:MAX_NAME_LEN]
-    # OAuth secrets and endpoints are owned by the sign-in flow. In
-    # particular, accepting an arbitrary base URL here would let a crafted API
-    # request redirect the bearer token on the next model or usage call.
-    if payload.api_key and not oauth_entry:  # never clears; delete the entry to drop a key
-        key = str(payload.api_key).strip()
-        if not key or len(key) > MAX_KEY_LEN or any(c.isspace() for c in key):
-            raise HTTPException(status_code=400, detail="invalid API key")
-        entry["api_key"] = key
-    if payload.base_url is not None and not oauth_entry:
-        url = str(payload.base_url).strip().rstrip("/")
-        if (url and not re.match(r"^https?://", url)) or len(url) > MAX_URL_LEN:
-            raise HTTPException(status_code=400, detail="base URL must start with http(s)://")
-        entry["base_url"] = url
-    if payload.models is not None:
-        models = str(payload.models).strip()
-        if len(models) > MAX_MODELS_LEN:
-            raise HTTPException(status_code=400, detail="model list too long")
-        entry["models"] = models
-    if payload.test_model is not None:
-        test_model = str(payload.test_model).strip()
-        if len(test_model) > 100:
-            raise HTTPException(status_code=400, detail="test model name too long")
-        entry["test_model"] = test_model
-
-
 @router.get("/ai/usage")
 def ai_usage_summary(request: Request):
     """Token usage of the signed-in account's AI calls, as the providers
     reported it: totals for today / 7 days / 30 days / all kept rows, the
     30-day split by kind (chat, translate, metadata, cite, test) and by
-    model. Guests have no providers, so theirs is always empty."""
+    model. Calls through the server's shared entries count here too."""
     user = require_user(request)
     return ai_usage.summary(user)
 
@@ -409,8 +371,8 @@ def ai_usage_reset(request: Request):
 
 @router.get("/ai/settings")
 async def ai_settings_get(request: Request):
-    user = require_user(request)
-    return _masked_settings(user, request.state.is_guest)
+    require_user(request)
+    return _masked_settings(request)
 
 
 @router.post("/ai/providers")
@@ -422,41 +384,23 @@ async def ai_provider_add(payload: AIProviderRequest, request: Request):
     if _is_oauth_protocol(payload.protocol):
         raise HTTPException(status_code=400,
                             detail="sign-in connections are created by signing in — use the Connect button")
-    if payload.protocol not in AI_PROTOCOLS:
-        raise HTTPException(status_code=400, detail="unknown protocol")
-    if not (payload.api_key or "").strip():
-        raise HTTPException(status_code=400, detail="API key required")
-    entry = {"id": new_provider_id(), "protocol": payload.protocol,
-             "name": "", "api_key": "", "base_url": "", "models": "",
-             "created_at": page_now()}
-    _apply_provider_fields(entry, payload)
-    entries.append(entry)
+    entries.append(new_key_entry(payload, new_provider_id()))
     save_provider_entries(user, entries)
-    return _masked_settings(user, request.state.is_guest)
+    return _masked_settings(request)
 
 
 @router.put("/ai/providers/{provider_id}")
 async def ai_provider_update(provider_id: str, payload: AIProviderRequest, request: Request):
+    # A sign-in entry stays a sign-in entry (name/models remain editable
+    # here); shared entries are edited under /api/admin/ai-providers.
     user = _require_editor(request)
     entries = load_provider_entries(user)
     entry = next((e for e in entries if e.get("id") == provider_id), None)
     if not entry:
         raise HTTPException(status_code=404, detail="provider not found")
-    # Protocol edits never cross the key/OAuth boundary — a sign-in entry stays
-    # a sign-in entry (name/models remain editable through this endpoint).
-    # Refused outright rather than ignored, so the other fields of such a
-    # request (reset for the new service) don't land on the old entry.
-    if payload.protocol and payload.protocol != entry.get("protocol"):
-        if payload.protocol not in AI_PROTOCOLS:
-            raise HTTPException(status_code=400, detail="unknown protocol")
-        if _is_oauth_protocol(payload.protocol) != _is_oauth_protocol(entry.get("protocol")):
-            raise HTTPException(status_code=400,
-                                detail="a sign-in connection and an API-key connection can't be "
-                                       "switched into each other — add a new connection instead")
-        entry["protocol"] = payload.protocol
-    _apply_provider_fields(entry, payload)
+    update_entry(entry, payload)
     save_provider_entries(user, entries)
-    return _masked_settings(user, request.state.is_guest)
+    return _masked_settings(request)
 
 
 @router.delete("/ai/providers/{provider_id}")
@@ -464,7 +408,7 @@ async def ai_provider_delete(provider_id: str, request: Request):
     user = _require_editor(request)
     entries = [e for e in load_provider_entries(user) if e.get("id") != provider_id]
     save_provider_entries(user, entries)
-    return _masked_settings(user, request.state.is_guest)
+    return _masked_settings(request)
 
 
 def _is_oauth_entry(entry: dict) -> bool:
@@ -529,9 +473,10 @@ class AIProviderTestRequest(BaseModel):
 def ai_provider_test(provider_id: str, request: Request, payload: AIProviderTestRequest | None = None):
     """Live probe of one saved entry, for the settings list's Test button.
     The probe result comes back in-body — a failed probe is a successful test,
-    not an HTTP error."""
+    not an HTTP error. A shared entry (``server:<id>``) is an admin's to
+    test; its tokens count on the admin's account."""
     user = _require_editor(request)
-    entry = next((e for e in load_provider_entries(user) if e.get("id") == provider_id), None)
+    entry = _saved_entry(request, user, provider_id)
     if not entry:
         raise HTTPException(status_code=404, detail="provider not found")
     return _probe_entry(user, entry, payload.model if payload else "")
@@ -756,12 +701,13 @@ def ai_model_catalog(payload: ModelCatalogRequest, request: Request):
     """Model names offered by a provider, for the settings form's model picker.
     API protocols are asked live (GET /v1/models with the entry's key); the
     ChatGPT backend is asked via Codex CLI's listing call with the OAuth
-    token (an error until an entry is connected)."""
+    token (an error until an entry is connected). An admin editing a shared
+    entry names it by its ``server:<id>``."""
     user = _require_editor(request)
     entry = {}
     protocol = payload.protocol
     if payload.provider_id:
-        entry = next((e for e in load_provider_entries(user) if e.get("id") == payload.provider_id), None) or {}
+        entry = _saved_entry(request, user, payload.provider_id) or {}
         protocol = protocol or entry.get("protocol")
     if protocol == "chatgpt":
         return {"models": _chatgpt_model_catalog(user, payload.provider_id)}
@@ -804,9 +750,10 @@ def ai_health(payload: AIHealthRequest, request: Request):
     tokens: OAuth entries ask the subscription usage endpoint, API keys list
     /v1/models — both 401 on a dead credential. "test" runs the same tiny
     completion as the Test button (through the entry's test model). Always
-    answers in-body: {configured, ok, auth?, error?, ...}."""
+    answers in-body: {configured, ok, auth?, error?, ...}. The entries are
+    the ones the account can use: its own, then the server's shared ones."""
     user = require_user(request)
-    entries = load_provider_entries(user)
+    entries = [e for e in load_provider_entries(user) if not is_server_id(e.get("id"))] + server_entries_for(user)
     entry = (next((e for e in entries if e.get("id") == payload.provider_id), None)
              or (entries[0] if entries else None))
     if not entry:
@@ -1184,7 +1131,9 @@ def ai_transcribe(request: Request, file: UploadFile = File(...),
     # surely can while a compatible server (DeepSeek) may not: the chat's own
     # entry if it is OpenAI, else any OpenAI entry, else the chat's compatible
     # entry, else any compatible one.
-    hinted = rt["providers"].get((model_hint or "").split(":", 1)[0])
+    # (A shared entry's ids have a colon of their own: "server:<id>:<model>".)
+    hinted = rt["providers"].get(next((m["provider"] for m in rt["models"] if m["id"] == model_hint),
+                                      (model_hint or "").split(":", 1)[0]))
     speakers = [c for c in ([hinted] if hinted else []) + list(rt["providers"].values())
                 if c["protocol"] == "openai"]
     conf = next((c for c in speakers if is_openai_platform(c["base_url"])),
@@ -1318,7 +1267,7 @@ def chatgpt_auth_complete(payload: ChatGPTAuthComplete, request: Request):
                 live = []
             entry["models"] = ", ".join(live[:2])[:MAX_MODELS_LEN]
     save_provider_entries(user, entries)
-    return _masked_settings(user, request.state.is_guest)
+    return _masked_settings(request)
 
 
 

@@ -208,6 +208,15 @@ export const LogOutIcon = (p) => (
 export const CloudIcon = (p) => (
   <Icon {...p}><path d="M17.5 19a4.5 4.5 0 0 0 .4-8.98A7 7 0 0 0 4.3 12.2 3.5 3.5 0 0 0 6 19z" /></Icon>
 );
+export const CloudUploadIcon = (p) => (
+  <Icon {...p}><path d="M12 13v8" /><path d="m8 17 4-4 4 4" /><path d="M4.4 15.2A5 5 0 0 1 7 6a7 7 0 0 1 13.2 2.3A4.5 4.5 0 0 1 19.6 17" /></Icon>
+);
+export const CloudOffIcon = (p) => (
+  <Icon {...p}><path d="m2 2 20 20" /><path d="M5.8 5.8A7 7 0 0 0 6 19h11.5a4.5 4.5 0 0 0 1.9-.4" /><path d="M21.5 15.4A4.5 4.5 0 0 0 17.5 10h-.8A7 7 0 0 0 9.4 5.2" /></Icon>
+);
+export const CloudCheckIcon = (p) => (
+  <Icon {...p}><path d="m16 13-4.5 4.5L9 15" /><path d="M5 17.74A7 7 0 1 1 15.71 10h1.79a4.5 4.5 0 0 1 1.5 8.74" /></Icon>
+);
 export const KeyIcon = (p) => (
   <Icon {...p}><path d="M21 2l-2 2m-7.61 7.61a5.5 5.5 0 1 1-7.778 7.778 5.5 5.5 0 0 1 7.777-7.777zm0 0L15.5 7.5m0 0l3 3L22 7l-3-3m-3.5 3.5L19 4" /></Icon>
 );

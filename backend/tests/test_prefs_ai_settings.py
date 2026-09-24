@@ -55,6 +55,37 @@ def test_prefs_never_serve_the_reserved_ai_settings_key(guest):
     assert guest.put("/api/prefs/ai-settings", json={"value": {}}).status_code == 400
 
 
+def test_profile_is_one_account_wide_object(alice):
+    # The preference profile follows the account, not the workspace: a write
+    # through one workspace reads back through any other (or none).
+    from gamma import db
+    from conftest import workspace_of
+    assert "profile" in db.USER_PREF_KEYS
+    profile = {"theme": "sepia", "enterNewNote": True, "agentPerms": {"pdf": {"block_edit": False}}}
+    r = alice.put("/api/prefs/profile", json={"value": profile}, headers={"X-Gamma-Workspace": workspace_of("prefs_alice")})
+    assert r.status_code == 200 and r.json()["updated_at"]
+    body = alice.get("/api/prefs/profile", headers={"X-Gamma-Workspace": "some-other-workspace"}).json()
+    assert body["value"] == profile and body["updated_at"] == r.json()["updated_at"]
+    assert db.get_profile("prefs_alice") == (profile, body["updated_at"])
+    # set_profile goes through set_pref (last write wins, a newer updated_at)
+    later = db.set_profile("prefs_alice", {"theme": "gray"})
+    assert later > body["updated_at"]
+    assert alice.get("/api/prefs/profile").json() == {"key": "profile", "value": {"theme": "gray"}, "updated_at": later}
+    with pytest.raises(ValueError):
+        db.set_profile("prefs_alice", ["not", "an", "object"])
+
+
+def test_profile_must_be_an_object_within_the_size_cap(alice):
+    from gamma import db
+    assert db.get_profile("prefs_nobody") == ({}, "")
+    assert alice.put("/api/prefs/profile", json={"value": ["theme"]}).status_code == 400
+    assert alice.put("/api/prefs/profile", json={"value": "dark"}).status_code == 400
+    assert alice.put("/api/prefs/profile", json={"value": {"chatSystem": "x" * (70 * 1024)}}).status_code == 413
+    # four long custom prompts still fit
+    prompts = {k: "p" * 12000 for k in ("chatSystem", "agentSystem", "metaPrompt", "citePrompt")}
+    assert alice.put("/api/prefs/profile", json={"value": prompts}).status_code == 200
+
+
 def test_prefs_require_session(client):
     from gamma.app import app
     anon = TestClient(app)
@@ -342,6 +373,165 @@ def test_deleting_all_providers_disables_ai(alice):
         assert alice.delete(f"/api/ai/providers/{p['id']}").status_code == 200
     assert alice.get("/api/ai/settings").json()["providers"] == []
     assert alice.get("/api/ai/models").json()["enabled"] is False
+
+
+# --- the server's shared AI connections (/api/admin/ai-providers*) -----------
+
+SHARED_KEY = "sk-shared-lab-key-4242"
+
+
+@pytest.fixture(scope="module")
+def admin(client):
+    from conftest import login, make_user
+    make_user("prefs_admin", "pw", is_admin=1)
+    return login("prefs_admin", "pw")
+
+
+@pytest.fixture
+def shared(admin):
+    """One shared entry for the test; the server's list is emptied after it
+    (the whole run shares one users.db, and other tests expect no AI)."""
+    from gamma import ai_settings
+    r = admin.post("/api/admin/ai-providers", json={
+        "protocol": "openai", "name": "Lab key", "api_key": SHARED_KEY,
+        "base_url": "https://llm.example.org", "models": "lab-model, lab-big",
+    })
+    assert r.status_code == 200, r.text
+    try:
+        yield r.json()["providers"][0]
+    finally:
+        ai_settings.save_server_ai({"providers": [], "guests": False})
+
+
+def test_shared_provider_is_masked_and_encrypted_at_rest(admin, shared):
+    from gamma.server_settings import _get_raw
+    assert shared["id"].startswith("server:") and shared["shared"] is True
+    assert shared["key_hint"] == "…4242" and shared["label"] == "Lab key"
+    listed = admin.get("/api/admin/ai-providers").json()
+    assert SHARED_KEY not in str(listed) and listed["guests"] is False
+    # API-key protocols only: the form never offers the ChatGPT sign-in.
+    assert "chatgpt" not in [p["id"] for p in listed["protocols"]]
+    raw = _get_raw("ai_providers")
+    assert raw and SHARED_KEY not in raw and "lab-model" in raw
+    # Edits keep the stored key unless a new one is sent; validation is the
+    # user entries' own.
+    r = admin.put(f"/api/admin/ai-providers/{shared['id']}", json={"models": "lab-model"})
+    assert r.json()["providers"][0]["models"] == "lab-model"
+    assert r.json()["providers"][0]["key_hint"] == "…4242"
+    assert admin.put(f"/api/admin/ai-providers/{shared['id']}", json={"protocol": "chatgpt"}).status_code == 400
+    assert admin.post("/api/admin/ai-providers", json={"protocol": "chatgpt", "api_key": "sk-x-123456"}).status_code == 400
+    assert admin.post("/api/admin/ai-providers", json={"protocol": "openai"}).status_code == 400
+    assert admin.post("/api/admin/ai-providers",
+                      json={"protocol": "openai", "api_key": "sk-ok-123456", "base_url": "ftp://x"}).status_code == 400
+    assert admin.put("/api/admin/ai-providers/server:nope", json={"name": "x"}).status_code == 404
+
+
+def test_shared_provider_admin_api_is_admin_session_only(alice, admin, shared):
+    from gamma.app import app
+    from gamma.integrations import create_token
+    from conftest import workspace_of
+    for method, path in (("get", "/api/admin/ai-providers"), ("put", "/api/admin/ai-providers"),
+                         ("post", "/api/admin/ai-providers"),
+                         ("put", f"/api/admin/ai-providers/{shared['id']}"),
+                         ("delete", f"/api/admin/ai-providers/{shared['id']}")):
+        assert getattr(alice, method)(path, **({} if method in ("get", "delete") else {"json": {}})).status_code == 403
+    # An admin's integration token is not an admin session.
+    token = create_token("prefs_admin", workspace_of("prefs_admin"), "script", 1)["token"]
+    bearer = TestClient(app)
+    bearer.headers["Authorization"] = f"Bearer {token}"
+    assert bearer.get("/api/admin/ai-providers").status_code == 403
+    assert bearer.post("/api/admin/ai-providers", json={"protocol": "openai", "api_key": "sk-tok-123456"}).status_code == 403
+
+
+def test_every_account_gets_shared_models_after_its_own(alice, admin, shared, monkeypatch):
+    import gamma.routers.ai as ai_mod
+    sid = shared["id"]
+    models = alice.get("/api/ai/models").json()
+    assert models["enabled"] is True
+    assert models["default"] == f"{sid}:lab-model"
+    assert [m["id"] for m in models["models"]] == [f"{sid}:lab-model", f"{sid}:lab-big"]
+    assert all(m["shared"] and m["provider_name"] == "Lab key" for m in models["models"])
+
+    # A member sees a read-only row without the key hint; the admin sees it.
+    row = next(p for p in alice.get("/api/ai/settings").json()["providers"] if p["id"] == sid)
+    assert row["shared"] is True and row["key_hint"] == ""
+    admin_row = next(p for p in admin.get("/api/ai/settings").json()["providers"] if p["id"] == sid)
+    assert admin_row["key_hint"] == "…4242"
+    # ...and cannot touch it through the account's own endpoints.
+    assert alice.put(f"/api/ai/providers/{sid}", json={"name": "mine"}).status_code == 404
+    alice.delete(f"/api/ai/providers/{sid}")
+    assert any(p["id"] == sid for p in alice.get("/api/ai/settings").json()["providers"])
+    assert alice.post(f"/api/ai/providers/{sid}/test").status_code == 404
+    assert alice.post("/api/ai/model-catalog", json={"provider_id": sid}).status_code == 400
+
+    # The account's own entry wins the default; the shared models follow.
+    own = alice.post("/api/ai/providers", json={
+        "protocol": "anthropic", "api_key": "sk-ant-own-key-0001", "models": "own-model"}).json()["providers"][0]
+    models = alice.get("/api/ai/models").json()
+    assert models["default"] == f"{own['id']}:own-model"
+    assert [m["id"] for m in models["models"]][1:] == [f"{sid}:lab-model", f"{sid}:lab-big"]
+
+    # Chat through the shared entry: the stored key goes upstream, the
+    # tokens are recorded on the member's account.
+    seen = {}
+
+    def fake_call(messages, system, entry, rt, **kw):
+        seen.update(provider=rt["providers"][entry["provider"]], model=entry["model"])
+        kw["on_usage"]({"input": 7, "output": 3})
+        return "ok"
+    monkeypatch.setattr(ai_mod, "_call_ai", fake_call)
+    # The login check reaches the shared entry for any account.
+    body = alice.post("/api/ai/health", json={"provider_id": sid, "mode": "test"}).json()
+    assert body["ok"] is True and body["provider_id"] == sid
+    assert seen["provider"]["api_key"] == SHARED_KEY and seen["provider"]["base_url"] == "https://llm.example.org"
+    usage = alice.get("/api/ai/usage").json()
+    assert any(m["provider_id"] == sid for m in usage["models"])
+    assert alice.delete(f"/api/ai/providers/{own['id']}").status_code == 200
+
+
+def test_admin_tests_and_lists_models_of_a_shared_entry(admin, shared, monkeypatch):
+    import gamma.routers.ai as ai_mod
+    sid = shared["id"]
+    seen = {}
+    monkeypatch.setattr(ai_mod, "_call_ai", lambda m, s, entry, rt, **kw: seen.update(entry) or "ok")
+    body = admin.post(f"/api/ai/providers/{sid}/test").json()
+    assert body["ok"] is True and seen == {"provider": sid, "model": "lab-model"}
+
+    def listing(req):
+        seen.update(url=req.full_url, auth=req.headers.get("Authorization"))
+        return {"data": [{"id": "lab-model"}, {"id": "lab-new"}]}
+    monkeypatch.setattr(ai_mod, "_model_catalog_json", listing)
+    r = admin.post("/api/ai/model-catalog", json={"provider_id": sid})
+    assert r.status_code == 200 and r.json()["models"] == ["lab-model", "lab-new"]
+    assert seen["url"] == "https://llm.example.org/v1/models" and seen["auth"] == f"Bearer {SHARED_KEY}"
+
+
+def test_guests_get_shared_entries_only_when_switched_on(guest, admin, shared):
+    assert guest.get("/api/ai/models").json()["enabled"] is False
+    assert guest.get("/api/ai/settings").json()["providers"] == []
+    r = admin.put("/api/admin/ai-providers", json={"guests": True})
+    assert r.status_code == 200 and r.json()["guests"] is True
+    models = guest.get("/api/ai/models").json()
+    assert models["enabled"] is True and models["default"] == f"{shared['id']}:lab-model"
+    rows = guest.get("/api/ai/settings").json()
+    assert rows["can_edit"] is False and rows["providers"][0]["key_hint"] == ""
+    assert admin.put("/api/admin/ai-providers", json={"guests": False}).json()["guests"] is False
+    assert guest.get("/api/ai/models").json()["enabled"] is False
+
+
+def test_deleting_a_shared_entry_removes_it_everywhere(alice, admin, shared):
+    r = admin.delete(f"/api/admin/ai-providers/{shared['id']}")
+    assert r.status_code == 200 and r.json()["providers"] == []
+    assert alice.get("/api/ai/models").json()["enabled"] is False
+
+
+def test_shared_provider_cap(admin, shared):
+    from gamma.ai_settings import MAX_PROVIDERS
+    for i in range(MAX_PROVIDERS - 1):
+        assert admin.post("/api/admin/ai-providers",
+                          json={"protocol": "openai", "api_key": f"sk-cap-key-{i:04d}"}).status_code == 200
+    assert admin.post("/api/admin/ai-providers",
+                      json={"protocol": "openai", "api_key": "sk-cap-key-over"}).status_code == 400
 
 
 # --- manage.py rename-user ----------------------------------------------------

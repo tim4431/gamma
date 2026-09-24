@@ -2530,6 +2530,15 @@ mark.merge-del { background: color-mix(in srgb, var(--danger) 16%, transparent);
 .sharePopover .settingText { min-width: 0; }
 .sharePopover .setRow .settingDesc { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .shareLinkBtns { display: inline-flex; align-items: center; gap: 6px; }
+/* Gamma Cloud (PublishSection): the not-published row's sentence or refusal
+   wraps; the state line's Sync-now button sits at its end. */
+.sharePopover .setRow[data-setting="Publish"] .settingDesc { white-space: normal; }
+.sharePopover .publishState { padding: 0 8px 6px 16px; }
+.publishState .mirrorStateLine { align-items: center; }
+.sharePopover .mirrorConfirm { padding: 4px 8px 6px 16px; }
+.sharePopover .mirrorConfirm > span:not(.mirrorConfirmBtns) { flex: 1 1 220px; min-width: 0; }
+.publishState .mirrorStateLine .iconBtn { margin-left: auto; }
+.uiBtn .mirrorSpin { display: inline-flex; }
 .settingsPaneHint.shareSummary { display: flex; align-items: flex-start; gap: 6px; padding: 0 8px 2px; }
 .settingsPaneHint.shareWarn { color: #d9822b; }
 .shareWarn svg { flex-shrink: 0; margin-top: 2px; }

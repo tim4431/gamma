@@ -17,6 +17,7 @@ from .routers import admin as admin_router
 from .routers import external as external_router
 from .routers import oidc as oidc_router
 from .routers import portal as portal_router
+from .routers import profile as profile_router
 
 
 def purge() -> None:
@@ -112,6 +113,7 @@ def create_app() -> FastAPI:
 
     app.include_router(oidc_router.router)
     app.include_router(accounts_router.router)
+    app.include_router(profile_router.router)
     app.include_router(admin_router.router)
     app.include_router(external_router.router)
     app.include_router(portal_router.router)

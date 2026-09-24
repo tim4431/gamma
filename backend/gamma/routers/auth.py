@@ -15,7 +15,7 @@ from fastapi.responses import FileResponse, JSONResponse
 from pydantic import BaseModel
 from starlette.background import BackgroundTask
 
-from .. import ratelimit, workspaces, ws_backup
+from .. import cloud_auth, ratelimit, workspaces, ws_backup
 from ..auth import is_guest_workspace, require_user, requested_ws, set_session_cookie
 from ..ratelimit import client_ip
 from ..db import connect_users_db, page_now, ws_dir
@@ -157,13 +157,15 @@ class LoginRequest(BaseModel):
     password: str
 
 
-def new_session(username: str) -> str:
+def new_session(username: str, via: str = "") -> str:
     """Mint a session row for an account; the caller sets the cookie. Shared
-    by the password login and the cloud sign-in callback."""
+    by the password login and the cloud sign-in callback, which passes
+    ``via="cloud"``: the grant check ends those sessions, and only those,
+    when the account server refuses the account's grant."""
     token = secrets.token_urlsafe(32)
     with connect_users_db() as conn:
-        conn.execute("INSERT INTO sessions (token, username, created_at) VALUES (?, ?, ?)",
-                     (token, username, page_now()))
+        conn.execute("INSERT INTO sessions (token, username, created_at, via) VALUES (?, ?, ?, ?)",
+                     (token, username, page_now(), via))
         conn.commit()
     return token
 
@@ -221,20 +223,29 @@ async def get_session(request: Request):
 
 
 @router.get("/accounts")
-async def list_accounts(request: Request):
+async def list_accounts(request: Request, q: str = ""):
     """The account directory — ``{accounts: [{username, is_admin}]}``, every
     non-guest account by name — for the invite and owner pickers. Any
     signed-in non-guest account may read it (a self-hosted server's
-    members know each other; the guest sees nothing)."""
+    members know each other; the guest sees nothing). On a share host
+    (``cloud_share_host``: strangers' accounts side by side) only admins get
+    the list; everyone else gets the account named exactly ``q``, if any."""
     require_user(request)
     if request.state.is_guest:
         raise HTTPException(status_code=403, detail="the guest account cannot list accounts")
-    return {"accounts": workspaces.accounts()}
+    accounts = workspaces.accounts()
+    if cloud_auth.settings()["share_host"] and not request.state.is_admin:
+        accounts = [a for a in accounts if q and a["username"] == q.strip()]
+    return {"accounts": accounts}
 
 
 @router.post("/login-guest")
 async def login_guest(request: Request):
     from datetime import datetime, timezone
+
+    if cloud_auth.settings()["share_host"]:
+        # a public share host holds strangers' published pages: no shared guest account there
+        raise HTTPException(status_code=403, detail="This server has no guest access.")
 
     # Each call mints a permanent session row; cap the rate so a public instance
     # can't be flooded into unbounded session-table growth.

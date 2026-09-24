@@ -11,13 +11,24 @@
 // badge uses) and one View / Edit toggle says what they may do; the one-line
 // summary under them is the only prose. Invited people carry their own
 // View / Edit toggle on top, whatever the tiles say.
+//
+// Gamma Cloud (PublishSection, docs/dev/mirror.md "Publishing"): on a server
+// with cloud sign-in, a page can also be published to the share host, so its
+// link works while this computer is off. Not published: one sentence and a
+// Publish button, or the reason it cannot be (with the link action when the
+// account has no Gamma Cloud identity). Published: the cloud link with Copy
+// and Unpublish (confirmed inline), the publication's state line (the sync
+// pill's reading, mirrorState) with a Sync-now button, and the cloud share's
+// access as the same tiles + View / Edit toggle. App owns the data
+// (GET/POST/DELETE /api/pages/{id}/publish) and polls it while open.
 import React from "react";
 import { MenuSelect } from "../shared/ui/Menus";
 import { AccountPicker, Empty, IconChoices, Row, Section, Segmented } from "../settings/SettingsKit";
 import { useAccounts } from "../settings/SettingsWorkspace";
+import { mirrorState } from "../collaboration/MirrorPopover";
 import {
-  AlertCircleIcon, CheckIcon, CopyIcon, EyeIcon, GlobeIcon, LinkIcon, PenIcon, PlusIcon,
-  ShieldIcon, Trash2Icon, UserIcon, UsersIcon,
+  AlertCircleIcon, CheckIcon, CloudIcon, CloudOffIcon, CloudUploadIcon, CopyIcon, EyeIcon, GlobeIcon, LinkIcon,
+  PenIcon, PlusIcon, RefreshIcon, ShieldIcon, Trash2Icon, UserIcon, UsersIcon,
 } from "../shared/ui/Icons";
 
 const SHARE_ROLE_OPTIONS = [["view", "Can view"], ["edit", "Can edit"]];
@@ -31,6 +42,16 @@ const AUDIENCE_TILES = [
   { value: "users", label: "Signed in", hint: "any account here", Icon: UsersIcon },
   { value: "list", label: "Invited only", hint: "the people below", Icon: ShieldIcon },
 ];
+
+// The cloud share's tiles: the same three, their hints in the share host's terms.
+const CLOUD_AUDIENCE_TILES = [
+  AUDIENCE_TILES[0],
+  { ...AUDIENCE_TILES[1], hint: "any Gamma Cloud account" },
+  { ...AUDIENCE_TILES[2], hint: "people invited there" },
+];
+
+// The refusal publish.py answers for an account without a Gamma Cloud identity.
+export const PUBLISH_SIGN_IN = "Sign in with Gamma Cloud to publish.";
 
 // The one sentence that says what the tiles + toggle add up to.
 function accessSummary(settings, invited) {
@@ -93,14 +114,134 @@ export function CopyBox({ children, copied, onCopy, title, label }) {
   );
 }
 
+// Gamma Cloud: `state` is GET /api/pages/{id}/publish (null while loading),
+// `busy` the action running ("publish" | "update" | "unpublish" | "sync" |
+// ""), `error` the last refusal's detail, `copied` / `onCopy` the cloud
+// link's copy, `canEdit` false for a workspace viewer (nothing to press).
+function PublishSection({ state, busy, error, copied, onCopy, canEdit, onPublish, onUnpublish, onSync, onLink }) {
+  const [confirming, setConfirming] = React.useState(false);
+  const published = !!state?.published;
+  React.useEffect(() => { if (!published) setConfirming(false); }, [published]);
+  const share = state?.share;
+  const mirror = state?.mirror;
+  const st = mirror ? mirrorState(mirror, { busy: busy === "sync" }) : null;
+  const running = busy === "sync" || !!mirror?.status?.running;
+  const spinning = (what) => (busy === what ? <span className="mirrorSpin"><RefreshIcon size={13} /></span> : null);
+  const openEdit = share && share.audience === "anyone" && share.role === "edit";
+  const problem = error || state?.error || "";
+  const errorLine = problem ? <div className="settingsPaneHint aiKeysError" role="alert">{problem}</div> : null;
+
+  if (!state) {
+    return (
+      <Section title="Gamma Cloud">
+        <Row icon={CloudIcon} label="Publish" hint="Loading…" />
+      </Section>
+    );
+  }
+  if (!published) {
+    return (
+      <Section title="Gamma Cloud">
+        <Row icon={CloudIcon} label="Publish"
+          hint={state.can_publish ? "Keep this page reachable while this computer is off." : state.reason}
+          title="Publishing copies this page to the Gamma Cloud share host and shares it there; edits keep syncing both ways.">
+          {state.can_publish && canEdit ? (
+            <button type="button" className="uiBtn sm primary" disabled={!!busy} onClick={() => onPublish()}>
+              {spinning("publish") || <CloudUploadIcon size={13} />}Publish
+            </button>
+          ) : !state.can_publish && state.reason === PUBLISH_SIGN_IN ? (
+            <button type="button" className="uiBtn sm" onClick={onLink}>
+              <CloudIcon size={13} />Link Gamma Cloud account
+            </button>
+          ) : null}
+        </Row>
+        {errorLine}
+      </Section>
+    );
+  }
+  return (
+    <Section
+      title="Gamma Cloud"
+      action={share && share.audience !== "list" && canEdit ? (
+        <Segmented
+          value={share.role} options={ROLE_SEGMENTS} disabled={!!busy}
+          onChange={(role) => { if (role !== share.role) onPublish({ role }); }}
+        />
+      ) : null}
+    >
+      <Row icon={CloudIcon} label="Cloud link" hint={state.url || "no link on the share host"} title={state.url}>
+        <span className="shareLinkBtns">
+          {state.url ? (
+            <button type="button" className={`uiBtn sm ${copied ? "on" : ""}`} onClick={onCopy} title={state.url}>
+              {copied ? <CheckIcon size={13} /> : <LinkIcon size={13} />}
+              {copied ? "Copied" : "Copy link"}
+            </button>
+          ) : null}
+          {canEdit ? (
+            <button type="button" className={`uiBtn sm iconSq danger ${confirming ? "on" : ""}`} disabled={!!busy}
+              onClick={() => setConfirming((v) => !v)} aria-label="Unpublish"
+              title="Unpublish: the cloud link stops working and the copy on Gamma Cloud is deleted; this page stays here.">
+              {spinning("unpublish") || <CloudOffIcon size={13} />}
+            </button>
+          ) : null}
+        </span>
+      </Row>
+      {confirming ? (
+        <div className="mirrorConfirm">
+          <AlertCircleIcon size={14} />
+          <span>Unpublish? The cloud link stops working and the copy there is deleted; this page stays here.</span>
+          <span className="mirrorConfirmBtns">
+            <button type="button" className="uiBtn sm danger dangerBtn" disabled={!!busy}
+              onClick={async () => { await onUnpublish(); setConfirming(false); }}>Unpublish</button>
+            <button type="button" className="uiBtn sm" disabled={!!busy} onClick={() => setConfirming(false)}>Cancel</button>
+          </span>
+        </div>
+      ) : null}
+      {st ? (
+        <div className={`mirrorState ${st.tone} publishState`} data-state={st.state} title={st.title}>
+          <st.Icon size={14} />
+          <div className="mirrorStateBody">
+            <div className="mirrorStateLine">
+              <span>{st.text}</span>
+              <button type="button" className={`iconBtn sm ${running ? "mirrorSpin" : ""}`} disabled={running || !!busy}
+                onClick={onSync} aria-label="Sync now" title={running ? "A round is running" : "Sync now"}>
+                <RefreshIcon size={14} />
+              </button>
+            </div>
+          </div>
+        </div>
+      ) : null}
+      {share ? (
+        <>
+          <IconChoices
+            label="Who can open the cloud link" value={share.audience} options={CLOUD_AUDIENCE_TILES}
+            onChange={(audience) => {
+              if (!canEdit || busy || audience === share.audience) return;
+              onPublish(audience === "anyone" ? { audience, role: "view" } : { audience });
+            }}
+          />
+          <div className={`settingsPaneHint shareSummary ${openEdit ? "shareWarn" : ""}`}>
+            {openEdit ? <AlertCircleIcon size={13} /> : null}
+            <span>
+              {busy === "update" ? "Saving…" : accessSummary(share, (share.users || []).length > 0)}
+              {openEdit && busy !== "update" ? " No sign-in needed; edits are recorded under a name they choose." : ""}
+            </span>
+          </div>
+        </>
+      ) : null}
+      {errorLine}
+    </Section>
+  );
+}
+
 // Props: settings (null while loading; {token: null} when unshared), error
 // (the last failed save, e.g. an unknown username), me / meIsGuest (the
 // owner's account), shareUrl, copied / onCopy, and one callback per action.
 // `citation` is the page's citation section (App owns it), shown when the
-// page has metadata.
+// page has metadata. `publish` is the Gamma Cloud section's props
+// (PublishSection), or null where the server offers no publishing.
 export function SharePopover({
   settings, error, me, meIsGuest, shareUrl, copied, onCopy,
-  onCreate, onUpdate, onInvite, onSetRole, onRemove, onStop, onClose, citation,
+  onCreate, onUpdate, onInvite, onSetRole, onRemove, onStop, onClose, citation, publish,
 }) {
   const [inviting, setInviting] = React.useState(false);
   const users = settings?.users || [];
@@ -207,6 +348,7 @@ export function SharePopover({
             </Section>
           </>
         ) : null}
+        {settings && publish ? <PublishSection {...publish} /> : null}
         {settings ? citation : null}
       </div>
     </div>

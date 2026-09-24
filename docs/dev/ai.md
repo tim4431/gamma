@@ -10,9 +10,10 @@ loop runs, and what the user controls. The tools themselves are catalogued in
 
 ## Provider and models
 
-There are NO env API keys; providers are per-user GUI entries (Settings →
-Provider and models) stored under the reserved account-wide `ai-settings` pref in
-`users.db` — a LIST of `{id, name, protocol, api_key, base_url, models}` managed
+There are NO env API keys; providers are GUI entries: each account's own
+(Settings → Provider and models), plus the server's shared ones an admin adds
+(below). An account's entries are stored under the reserved account-wide
+`ai-settings` pref in `users.db` — a LIST of `{id, name, protocol, api_key, base_url, models}` managed
 via `POST/PUT/DELETE /api/ai/providers[/{id}]`. An entry offers exactly the
 models picked for it (from the provider's live listing in the form): there is
 no built-in default model, so an entry with none picked offers nothing and its
@@ -45,8 +46,10 @@ the chat window ("authentication is broken — sign in again"), dismissed or
 cleared by a passing Test / provider edit.
 
 `ai_runtime(user)` in `gamma/ai_settings.py` builds the per-request config and
-model registry (ids are `<entryId>:<model>`; the wire format comes from the
-entry's `protocol`, never from the provider id) — AI endpoints must use it, not
+model registry from the account's own entries followed by the server's shared
+ones (ids are `<entryId>:<model>`; the wire format comes from the entry's
+`protocol`, never from the provider id; the default model is the account's
+own first model, else the server's first) — AI endpoints must use it, not
 module-level config constants for credentials or model routing. Env vars set
 each protocol's administrator-controlled default base URL, including
 `GAMMA_AI_CHATGPT_BASE_URL`.
@@ -83,6 +86,36 @@ protocol URL, not an entry field, and OAuth entries cannot edit their API key
 or base URL; this prevents a settings request from redirecting a bearer token.
 The ChatGPT account endpoint is provider-specific and may require maintenance
 if its upstream contract changes.
+
+### Shared provider entries
+
+An admin can add provider entries for the whole server (Settings → Server →
+Shared AI provider, `/api/admin/ai-providers*`), so the members of a lab do
+not each need a key. A shared entry has an account entry's shape (`id, name,
+protocol, api_key, base_url, models, test_model, created_at`), API-key
+protocols only (no ChatGPT sign-in: its tokens belong to one person). The
+list lives in the users.db `settings` KV under `ai_providers` as
+`{providers: [...], guests: bool}`, at most `MAX_PROVIDERS` (20) entries,
+each `api_key` Fernet-encrypted with the data directory's key the way the
+cloud client secret is (`publisher_sessions.cipher`); a key that no longer
+decrypts reads as no key and logs a warning. The same helpers validate both
+lists (`new_key_entry`, `update_entry`, `apply_provider_fields`,
+`mask_entry` in `ai_settings.py`).
+
+Ids are namespaced, `server:<id>`, so a shared entry's models
+(`server:<id>:<model>`) never collide with an account's; the registry marks
+them `shared: true`. `ai_runtime` (via `server_entries_for`) offers them to
+every account after its own entries. The guest account gets them only while
+the admin switch `guests` is on (default off); a name that is not an account
+(a link visitor) never does. `GET /api/ai/settings` lists them after the
+account's own as read-only rows (`shared: true`), with the last-4 key hint
+for admins only; `/api/ai/providers/{id}` never edits or deletes them (404).
+An admin may name a shared id on the Test probe and the model catalog, which
+is how the Server section's form lists models and tests a saved entry; the
+login check (`/api/ai/health`) accepts any entry the account can use. Token
+usage stays per account: a member's calls through a shared entry are
+recorded on that member (provider id `server:<id>`), and there is no
+server-wide meter.
 
 ### The chatgpt protocol (OAuth)
 
@@ -343,7 +376,7 @@ button (sliders icon) in each folder/PDF chat header toggles the configured tool
 chat only. New chat resets the switch back to on.
 
 Which tools a chat may use is configured per chat KIND — there are three
-(`CHAT_KINDS` in `app/prefs.js`, `CHAT_KIND_ROWS` in `settings/SettingsDialog.jsx`):
+(`CHAT_KINDS` in `app/prefDefs.js`, `CHAT_KIND_ROWS` in `settings/SettingsDialog.jsx`):
 
 - **Folder chat** — the home/folder view (`agent_scope: "folder"`).
 - **PDF chat** — a page with a PDF attached (`agent_scope: "page"`).
@@ -525,7 +558,7 @@ over, and the layout never moves. Translated text is selectable/copyable;
 while shown, the invisible original text layer stands down.
 
 Targets are the allowlisted `TRANSLATE_LANGS` codes (mirrored in
-`frontend/src/app/prefs.js`); model and reasoning `effort` come from Settings →
+`frontend/src/app/prefDefs.js`); model and reasoning `effort` come from Settings →
 Reading (model follows the chat model by default; effort omitted unless
 picked — Low/Minimal is the speed lever for reasoning models); the whole
 Translation section can be switched off there too. The server keeps an
@@ -583,7 +616,8 @@ show what a week cost. Code: `gamma/ai_usage.py`, `ai_client.normalize_usage`,
   rows. Settings → AI › Connections → **Token usage** renders three
   tiles (today / 7 days / 30 days), the all-time line with Reset, and a
   by-model table (plus a by-kind block when more than one kind ran).
-  Guests never see it (no providers). No prices anywhere: they differ per
+  Guests never see it (the pane shows it only to an account that can
+  store keys). No prices anywhere: they differ per
   provider and change; the tokens are what every provider agrees on.
 
 ## Chat history buckets

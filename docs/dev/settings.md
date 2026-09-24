@@ -6,16 +6,60 @@ Where every setting lives, and how the Settings dialog is built.
 
 | Layer | Storage | Examples |
 |---|---|---|
-| Per browser | `localStorage`, one `gamma-*` key per preference, all declared in `useAppPrefs()` ([frontend/src/app/prefs.js](../../frontend/src/app/prefs.js)) — except `gamma-link-name`, the share view's display name for a visitor without an account, owned by `src/collaboration/linkName.js` because the fetch wrapper reads it outside React | PDF viewer behavior (incl. the handwriting input rules and the tool strip's presets, eraser and lasso choices, `gamma-ink-*`), context budgets, agent permissions, prompts, the interface size (`gamma-ui-scale`, applied pre-paint by `index.html` like the theme). Theme + flip-page-colors live here too but additionally sync per account (next row, `appearance` key) — localStorage is their instant-paint cache |
+| Per browser | `localStorage`, one `gamma-*` key per preference, all declared in `PREFS` ([frontend/src/app/prefDefs.js](../../frontend/src/app/prefDefs.js)) with scope `browser` — except `gamma-link-name`, the share view's display name for a visitor without an account, owned by `src/collaboration/linkName.js` because the fetch wrapper reads it outside React | what describes this device: the interface size (`gamma-ui-scale`, applied pre-paint by `index.html`), the status bar, the handwriting input rules and the tool strip's presets, eraser and lasso choices (`gamma-ink-*`), the metadata and translation model picks and dictation (they name this server's provider entries, like the chat model `gamma-chat-model`); outside `PREFS`, diagnostics tracing (`gamma-debug-log`) |
+| Per account, profile | the account-wide `profile` prefs key (`/api/prefs/profile`, one JSON object keyed by preference name), every `PREFS` entry with scope `account`; each also keeps its `gamma-*` localStorage key as the instant-paint cache | appearance (theme — the pre-paint script still reads `gamma-theme` — and flip page colors), reading and editing (imported annotations, translation button and language, Enter key, how search opens), library display and PDF fetching, chat behaviour (tools switch, per-kind tool permissions, reasoning effort, the login connection check, tool limits, snapshot clearing), translation effort and parallel requests, context budgets, prompts |
 | Session only | React state, nothing stored | the Ctrl+scroll text size of the notes list and the chat transcript (`useTextScale` in [Widgets.jsx](../../frontend/src/shared/ui/Widgets.jsx)) — resets on reload |
-| Per account, synced | `/api/prefs/{key}` (small JSON KV, `user_prefs` in `users.db`) | per account AND workspace: open tabs (`open-tabs`), the recently-viewed queue (`recent-views`), pinned folders (`pinned-folders`; pinned pages are a page property), reading positions (`read-pos`) — they name one workspace's pages; account-wide: active AI key (`ai-provider`), appearance (`appearance`: theme + flip page colors). Server wins on load, localStorage (keyed `user@workspace`) is the instant-paint cache. The recents-card cover thumbnails are workspace data, through their own `/api/page-snaps` store (`page_snaps` in the workspace's `data.db` — over the prefs size cap) |
-| Per account, server-only | AI provider entries (keys/OAuth tokens) under the reserved `ai-settings` prefs key (account-wide), managed via `/api/ai/providers*`; the browser only ever sees a masked hint | API keys, ChatGPT OAuth |
+| Per account, synced | `/api/prefs/{key}` (small JSON KV, `user_prefs` in `users.db`) | per account AND workspace: open tabs (`open-tabs`), the recently-viewed queue (`recent-views`), pinned folders (`pinned-folders`; pinned pages are a page property), reading positions (`read-pos`) — they name one workspace's pages; account-wide: active AI key (`ai-provider`) and the preference profile (`profile`, previous row). Server wins on load, localStorage (keyed `user@workspace`) is the instant-paint cache. The recents-card cover thumbnails are workspace data, through their own `/api/page-snaps` store (`page_snaps` in the workspace's `data.db` — over the prefs size cap) |
+| Per account, server-only | AI provider entries (keys/OAuth tokens) under the reserved `ai-settings` prefs key (account-wide), managed via `/api/ai/providers*`; the browser only ever sees a masked hint. The server's shared entries (next row) are listed after them read-only | API keys, ChatGPT OAuth |
 | Per workspace | `workspaces` / `workspace_members` in `users.db`, via `/api/workspaces*` ([workspaces.md](workspaces.md)) | name, kind (personal / shared), members and roles, access (private / public + the public role) and a shared workspace's own quota (admins), the account's default workspace, which workspace this tab works in (`?ws=` in the URL, `gamma-last-ws:<user>` remembers the last one) |
-| Server-wide (admin) | `settings` KV in `users.db` via `GET/PUT /api/admin/settings`, plus nullable per-user override columns | default max upload size, default storage quota |
+| Server-wide (admin) | `settings` KV in `users.db` via `GET/PUT /api/admin/settings`, plus nullable per-user override columns; the shared AI entries under the `ai_providers` key via `/api/admin/ai-providers*` (keys encrypted with the data directory's key, like the cloud client secret) | default max upload size, default storage quota, public URL, cloud sign-in (and whether this server is the share host), shared AI provider entries and whether guests may use them |
 
-Adding a browser preference = one line in `useAppPrefs()` (with a codec if the
-value needs validation) plus a control in the matching settings pane. Don't
-scatter `usePersistedState` calls through App.jsx.
+Adding a preference = one entry in `PREFS` (key, scope, default, and a codec
+if the value needs validation) plus a control in the matching settings pane;
+`useAppPrefs()` ([prefs.js](../../frontend/src/app/prefs.js)) turns every
+entry into state and a setter. Don't scatter `usePersistedState` calls
+through App.jsx. Pick `account` unless the value only makes sense on this
+device or names something that exists only on this server.
+
+The profile syncs through `useProfileSync` in prefs.js. On sign-in the
+server copy wins; an account without one is seeded from this browser.
+Entries are validated with the same codecs as localStorage, so unknown names
+and bad values are dropped and a partial profile applies what it has.
+Changes push one second after they settle (a slider sends one PUT), last
+write wins, a pending push is flushed when the page is hidden, and focus
+pulls at most every 15 seconds. Nothing is pushed before the first load
+succeeds. Signed-out visitors, the shared guest account and share views keep
+working from localStorage alone. The profile carries no secrets, and an
+account linked to Gamma Cloud carries it to every Gamma server it signs in
+to: the server pulls the account server's copy on a cloud sign-in and every
+hour, and pushes a change a few seconds after it lands, newest wins
+(`gamma/cloud_sync.py`, [cloud_accounts.md](cloud_accounts.md)). The
+provider entries and the active key never join it. `PUT /api/prefs/profile` requires
+an object and shares the prefs cap of 64 KB, enough for four long custom
+prompts. Step 17 of the migrations turned the old `appearance` key into the
+profile's first two entries.
+
+The account sections' tag shows where that stands. `useProfileSync`
+returns its own state (signed-out / loading / loaded / pending / pushing /
+failed); the dialog passes it on with `GET /api/auth/cloud/sync-status`,
+polled while the dialog is open (every 15 seconds, 6 seconds while the
+server's push to Gamma Cloud is due, and again once a local change is
+saved), through `SettingsSyncContext`. One pure function,
+`profileSyncState` in
+[settings/syncState.js](../../frontend/src/settings/syncState.js), reads
+the two into the tag every `scope="account"` section shows:
+
+| state | tag | hover |
+|---|---|---|
+| signed out, guest, share view | This browser | kept in this browser only |
+| first load, or the server has not answered yet | Your account | saved with your account on this server |
+| saved here, no Gamma Cloud identity (or its grant is gone) | check + Your account | "Saved on this server. Link a Gamma Cloud account to carry these settings to other servers." |
+| synced with Gamma Cloud | cloud-check + Your account · synced | "Synced with Gamma Cloud at <time>" |
+| a change settling or being sent, here or to Gamma Cloud | spinning refresh + Your account · syncing | |
+| the last save here or the last cloud attempt failed | warning + Your account · not synced, in red | the error |
+
+`cloudSyncHint` in the same module is meant for the Account pane's Gamma
+Cloud row ("Settings synced 14:37" / "Settings not synced: <error>").
 
 The last open page and viewer layout use `app/sessionState.js`, separately from
 synced preferences. Its key is `gamma-session:<user>@<workspace>`. Reads wait
@@ -49,8 +93,10 @@ One dialog, one sidebar in three groups, defined by `PREFERENCE_NAV`,
 [SettingsDialog.jsx](../../frontend/src/settings/SettingsDialog.jsx). Every
 pane is one click from any other; nothing opens a second dialog or a
 "back" link. Panes carry no explanatory subtitle: a section rule's right-hand
-tag ("Your account" / "This browser") says where a setting lives, a row's
-short hint what it does, and the hover `title` the rest.
+tag ("Your account" / "This browser", `Section`'s `scope` prop, matching the
+settings' scope in `PREFS`; an account tag also shows the profile's sync
+state, above) says where a setting lives, a row's short hint
+what it does, and the hover `title` the rest.
 
 Preferences:
 
@@ -72,7 +118,9 @@ Preferences:
 AI:
 
 - **Connections**: the provider list (empty state: one sentence and the Add
-  button), the login connection check, the models (default chat, metadata,
+  button; the server's shared entries follow the account's own as read-only
+  rows tagged "Shared by this server", selectable as the active key but
+  without Test / Manage / delete), the login connection check, the models (default chat, metadata,
   dictation, translation) and the account's token usage
   ([ai.md](ai.md) "Token usage"). The check, models and usage sections
   appear only once a provider exists.
@@ -109,6 +157,9 @@ Manage:
   Force pull / Force push, Detach, Remove origin) and "Clone a remote
   workspace" (a `SubDialog`: origin server, write token, into a new or an
   existing workspace, name, direction) — [mirror.md](mirror.md).
+  Under them, a **Publishing** heading lists the workspaces that publish
+  pages to Gamma Cloud (the count of pages, the state, a "more" menu with
+  Sync now and Stop publishing all), never with the clone actions.
   The same state sits in the header as the sync pill
   (`collaboration/MirrorPopover.jsx`) while a clone is open; the clone's
   own settings (cadence, direction, force pull / push, detach / reattach,
@@ -127,8 +178,17 @@ Manage:
   labelled Storage / Edit buttons.
 - **Server** (admins): the dashboard (build, uptime, warnings, the update
   check), the public server URL, storage defaults (each box saves on Enter
-  or blur), shared workspaces, server backups and the log with its level
-  filter ([user_db.md](user_db.md)).
+  or blur), the shared AI provider, shared workspaces, server backups and
+  the log with its level filter ([user_db.md](user_db.md)).
+
+**Shared AI provider** (Server, `SettingsAi.jsx` `SharedAiProviderSettings`)
+lists the server's shared connections with the same rows and the same
+add/edit form as Connections (`ProviderRow`, `ProviderForm`; the form's
+state comes from `useProviderEditor` over `/api/admin/ai-providers`
+instead of App's aiKeys group). API-key services only. Each row has Test,
+Manage and delete; "+ Add provider" is the section's action. A "Guests may
+use it" switch (default off) decides whether the guest account gets them
+([ai.md](ai.md) "Shared provider entries").
 - **Diagnostics**: browser tracing and the browser session log.
 
 Administrators confirm the **Public server URL** under Server: the row shows
@@ -146,6 +206,10 @@ server. Empty on a local machine (the built-in public desktop client); a
 hosted server enters the client id and write-only secret it was given. The
 secret field shows once an id is typed; the inputs refuse browser autofill.
 Unknown cloud accounts: a `Segmented` policy, Refuse / Claim / Provision.
+Under Provision a fourth row, the Toggle *Accept published pages*
+(`cloud_share_host`), makes this server the share host people publish pages
+to; it also turns the guest account off and limits the account list to
+exact names ([cloud_accounts.md](cloud_accounts.md) "The share host").
 Editing shows one Save button as the section's action. Values are stored in
 the server `settings` table (`cloud_*`), read-only when `GAMMA_CLOUD_ISSUER`
 manages them. The login page reads `GET /api/server-config` and shows "Sign
@@ -179,12 +243,14 @@ model, reasoning effort, single-paper context budget and tool permissions.
 The Tools button and checkbox also edit the global `agentEnabled` preference;
 there is no conversation-local tools override or reset on New chat.
 Permissions remain scoped by chat kind (folder, PDF, notes), applying to all
-chats of that kind in this browser. Both surfaces show the same tool
-chips per chat kind; there are no presets.
+chats of that kind. Both surfaces show the same tool chips per chat kind;
+there are no presets.
 
-These browser preferences persist locally; this does not make them
-account-synced. Provider selection and credentials retain their existing
-account scope. Context presets change the three budgets together: Standard
+Reasoning effort, the context budgets, the tools switch and the permissions
+are account preferences: they live in the profile and follow the account to
+every browser. The chat model stays with the browser, remembered per
+provider entry; provider selection and credentials keep their own account
+keys. Context presets change the three budgets together: Standard
 is 60,000 / 6,000 / 120,000 characters, Larger doubles them, and Custom exposes
 the exact values without changing them.
 
