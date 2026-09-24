@@ -25,6 +25,7 @@ _buf = deque(maxlen=_MAX_ENTRIES)
 _lock = threading.Lock()
 _seq = 0
 _counts = {"info": 0, "warning": 0, "error": 0}  # since startup, beyond what the ring still holds
+_last_seq = {"info": 0, "warning": 0, "error": 0}  # seq of the newest line of each level
 
 _SCRUB_RULES = (
     # Bearer/sk- first: the key=value rule below would otherwise consume the
@@ -61,6 +62,7 @@ class _BufferHandler(logging.Handler):
             _buf.append({"seq": _seq, "t": time.time(), "level": record.levelname, "msg": msg})
             key = "error" if record.levelno >= logging.ERROR else "warning" if record.levelno >= logging.WARNING else "info"
             _counts[key] += 1
+            _last_seq[key] = _seq
 
 
 def counts() -> dict:
@@ -68,6 +70,14 @@ def counts() -> dict:
     dashboard's tiles, unaffected by the ring buffer's cap."""
     with _lock:
         return dict(_counts)
+
+
+def last_seq(level: str) -> int:
+    """The seq of the newest line at ``level`` (``warning`` / ``error``),
+    0 when none was logged since startup. A notice's fingerprint
+    (gamma/notices.py): unchanged until another such line arrives."""
+    with _lock:
+        return _last_seq.get(level, 0)
 
 
 def tail(after: int = 0) -> list:

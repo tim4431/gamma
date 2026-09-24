@@ -10,6 +10,7 @@ Where every setting lives, and how the Settings dialog is built.
 | Per account, profile | the account-wide `profile` prefs key (`/api/prefs/profile`, one JSON object keyed by preference name), every `PREFS` entry with scope `account`; each also keeps its `gamma-*` localStorage key as the instant-paint cache | appearance (theme — the pre-paint script still reads `gamma-theme` — and flip page colors), reading and editing (imported annotations, translation button and language, Enter key, how search opens), library display and PDF fetching, chat behaviour (tools switch, per-kind tool permissions, reasoning effort, the login connection check, tool limits, snapshot clearing), translation effort and parallel requests, context budgets, prompts |
 | Session only | React state, nothing stored | the Ctrl+scroll text size of the notes list and the chat transcript (`useTextScale` in [Widgets.jsx](../../frontend/src/shared/ui/Widgets.jsx)) — resets on reload |
 | Per account, synced | `/api/prefs/{key}` (small JSON KV, `user_prefs` in `users.db`) | per account AND workspace: open tabs (`open-tabs`), the recently-viewed queue (`recent-views`), pinned folders (`pinned-folders`; pinned pages are a page property), reading positions (`read-pos`) — they name one workspace's pages; account-wide: active AI key (`ai-provider`) and the preference profile (`profile`, previous row). Server wins on load, localStorage (keyed `user@workspace`) is the instant-paint cache. The recents-card cover thumbnails are workspace data, through their own `/api/page-snaps` store (`page_snaps` in the workspace's `data.db` — over the prefs size cap) |
+| Per account, seen notices | the account-wide `notices-seen` prefs key (`db.NOTICES_SEEN_PREF_KEY`), `{notice id: fingerprint}`, written only by `POST /api/notices/{id}/seen` (below, "Notices") | which release and which log error the account has already looked at |
 | Per account, server-only | AI provider entries (keys/OAuth tokens) under the reserved `ai-settings` prefs key (account-wide), managed via `/api/ai/providers*`; the browser only ever sees a masked hint. The server's shared entries (next row) are listed after them read-only | API keys, ChatGPT OAuth |
 | Per workspace | `workspaces` / `workspace_members` in `users.db`, via `/api/workspaces*` ([workspaces.md](workspaces.md)) | name, kind (personal / shared), members and roles, access (private / public + the public role) and a shared workspace's own quota (admins), the account's default workspace, which workspace this tab works in (`?ws=` in the URL, `gamma-last-ws:<user>` remembers the last one) |
 | Server-wide (admin) | `settings` KV in `users.db` via `GET/PUT /api/admin/settings`, plus nullable per-user override columns; the shared AI entries under the `ai_providers` key via `/api/admin/ai-providers*` (keys encrypted with the data directory's key, like the cloud client secret) | default max upload size, default storage quota, public URL, cloud sign-in (and whether this server is the share host), shared AI provider entries and whether guests may use them |
@@ -113,6 +114,38 @@ always kept. Deleting a task keeps its snapshots.
 Guests and integration tokens cannot manage tasks.
 
 Runtime and storage: [docs/dev/workspaces.md](workspaces.md#backups).
+
+## Notices: the red dot
+
+Something that wants a look once — a newer Gamma release, errors in the
+server log — is a *notice* (`gamma/notices.py`): `{id, fingerprint, tone,
+pane, title}`, where `pane` is the Settings pane that shows it and
+`fingerprint` names what changed (the release version; the server start
+time plus the newest error's seq). "Resolved" means the account has seen
+that fingerprint, kept in the `notices-seen` pref; a new release or a fresh
+error changes the fingerprint and the notice is back by itself. Nothing is
+dismissed for good, and nothing is per browser.
+
+Sources are functions registered with `@source` in `gamma/notices.py`; each
+returns a Notice or None and must be a cached or in-memory read, because
+`GET /api/notices` runs them on every poll. Admin-only sources are skipped
+for members, so a member's poll does no work at all; guests, share views
+and integration tokens get an empty list. The first two sources — the
+release check (behind `version.latest_release`'s six-hour cache; sync
+endpoint on purpose) and the log errors (`logbuf.last_seq("error")`) — both
+point at the Server pane.
+
+The frontend: `app/useNotices.js` (one instance in App.jsx) polls every
+five minutes and on window focus, and `app/notices.js` (pure,
+`tests/notices.test.mjs`) folds the list into the strongest `tone`, the
+strongest tone per `pane`, and `firstPane`. The `.noticeDot` (red; accent
+for an `info` notice) sits on the account button, after the account menu's
+"Settings…", and after each dotted pane's sidebar button. "Settings…" opens
+on `firstPane`; every other opener keeps its pane. Showing a pane calls
+`markSeen(pane)`: its notices leave the list at once and each ack is posted
+to `POST /api/notices/{id}/seen`, so other tabs and browsers agree on their
+next poll. The browser flow is the last step of `e2e/scenarios/settings.mjs`,
+with a faked feed and real acks.
 
 ## The Settings dialog
 

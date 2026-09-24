@@ -667,6 +667,34 @@ export async function settingsScenarios(env) {
       await dialog.getByRole("checkbox", { name: "Include diagnostics" }).uncheck();
       assertEq(await dialog.locator("pre").count(), 0, "no preview without diagnostics");
       await dialog.getByRole("checkbox", { name: "Include diagnostics" }).check();
+      // A screen recording: the browser's picker is stubbed with a canvas
+      // stream (a real MediaStream, so MediaRecorder runs for real). The
+      // dialog folds into the pill meanwhile and comes back with the file.
+      await page.evaluate(() => {
+        navigator.mediaDevices.getDisplayMedia = async () => {
+          const c = document.createElement("canvas");
+          c.width = 64; c.height = 64;
+          const g = c.getContext("2d");
+          setInterval(() => { g.fillStyle = `hsl(${Date.now() % 360} 80% 50%)`; g.fillRect(0, 0, 64, 64); }, 40);
+          return c.captureStream(10);
+        };
+      });
+      await dialog.getByRole("button", { name: "Record…", exact: true }).click();
+      await dialog.waitFor({ state: "detached" });
+      const pill = page.locator(".reportRecordPill");
+      await pill.waitFor();
+      assert(/Recording \d:\d\d/.test(await pill.textContent()), "the pill shows a clock");
+      await page.waitForTimeout(1500);
+      await pill.getByRole("button", { name: "Stop", exact: true }).click();
+      await dialog.waitFor();
+      const recRow = dialog.locator('[data-setting="Screen recording"]');
+      await until(async () => /gamma-recording-\d{8}-\d{4}\.(webm|mp4) · 0:0\d · \d+(\.\d+)? [KM]B/.test(await recRow.textContent()), { what: "the recording's row" });
+      assertEq(await dialog.getByLabel("What happened").inputValue(), "A blue line stays on the notes\nafter a drag", "the draft survives the recording");
+      const download = page.waitForEvent("download");
+      await recRow.getByRole("button", { name: "Save", exact: true }).click();
+      const file = await download;
+      assert(/^gamma-recording-\d{8}-\d{4}\.(webm|mp4)$/.test(file.suggestedFilename()), `saved as ${file.suggestedFilename()}`);
+      await until(async () => (await recRow.textContent()).includes("· saved"), { what: "the saved tag" });
       await open.click();
       await dialog.waitFor({ state: "detached" });
       const url = new URL(await until(() => page.evaluate(() => window.__opened[0]), { what: "the GitHub tab" }));
@@ -674,7 +702,7 @@ export async function settingsScenarios(env) {
       assertEq(url.searchParams.get("template"), "bug_report.yml");
       assertEq(url.searchParams.get("title"), "A blue line stays on the notes");
       assertEq(url.searchParams.get("description"), "A blue line stays on the notes\nafter a drag");
-      assertEq(url.searchParams.get("steps"), "drag a block, drop it outside");
+      assert(/^drag a block, drop it outside\n\nScreen recording: `gamma-recording-\d{8}-\d{4}\.(webm|mp4)` \(dropped into this issue by the reporter\)\.$/.test(url.searchParams.get("steps")), `steps name the recording: ${url.searchParams.get("steps")}`);
       assert(url.searchParams.get("diagnostics").includes("**Build:**"), "diagnostics ride along");
       // The Diagnostics pane's Help row opens the same dialog; an admin's
       // report adds the server dashboard and log.
@@ -687,7 +715,7 @@ export async function settingsScenarios(env) {
       await dialog.waitFor();
       await dialog.getByText("Preview the report", { exact: true }).click();
       await until(async () => (await dialog.locator("pre").textContent()).includes("**Server (seen as admin):** Gamma"), { what: "the admin's server section" });
-      await page.keyboard.press("Escape");
+      await dialog.getByRole("button", { name: "Close Report a problem", exact: true }).click();
       await dialog.waitFor({ state: "detached" });
       assertNoProblems(page);
     } finally {
@@ -786,6 +814,59 @@ export async function settingsScenarios(env) {
       for (const p of (await user.api("/api/admin/ai-providers")).providers) {
         await user.api(`/api/admin/ai-providers/${encodeURIComponent(p.id)}`, { method: "DELETE" });
       }
+    }
+  });
+
+  // The red dot (app/notices.js): the feed is faked so no real error or
+  // release is needed; the acks go to the real server.
+  await step("settings: a notice dots the account button and Settings… lands on its pane", async () => {
+    server.manage("set-admin", "settings-user", "on");
+    const ctx = await user.context(browser);
+    try {
+      await ctx.addInitScript(() => localStorage.setItem("gamma-ai-login-check", "off"));
+      const seen = [];
+      let notices = [
+        { id: "update", fingerprint: "9.9.9", tone: "warn", pane: "server", title: "Gamma v9.9.9 is available" },
+        { id: "backup-failed", fingerprint: "t1", tone: "error", pane: "backups", title: "A backup task failed" },
+      ];
+      await ctx.route("**/api/notices", (route) => route.fulfill({ json: { notices } }));
+      await ctx.route("**/api/notices/*/seen", async (route) => {
+        const id = route.request().url().match(/notices\/([^/]+)\/seen/)[1];
+        seen.push(`${id}:${route.request().postDataJSON().fingerprint}`);
+        notices = notices.filter((n) => n.id !== id);
+        await route.continue();
+      });
+      const page = await openPage(ctx, server.base);
+      await page.waitForSelector(".folderNewBtn");
+      const account = page.getByRole("button", { name: "Account & settings", exact: true });
+      await account.locator(".noticeDot").waitFor();
+      assertEq(await account.locator(".noticeDot").getAttribute("data-tone"), "error", "the strongest notice colours the dot");
+      await account.click();
+      const item = page.getByRole("button", { name: "Settings…", exact: true });
+      await item.locator(".noticeDot").waitFor();
+      await item.click();
+      await page.getByRole("dialog", { name: "Settings", exact: true }).waitFor();
+      // Lands on the strongest notice's pane; the visit resolves it and the
+      // other pane keeps its dot.
+      assertEq(await nav(page, "Backups").getAttribute("aria-current"), "page", "Settings… opens the dotted pane");
+      await until(() => seen.length === 1, { what: "the ack of the visited pane" });
+      assertEq(seen[0], "backup-failed:t1");
+      await nav(page, "Server").locator(".noticeDot").waitFor();
+      assertEq(await nav(page, "Backups").locator(".noticeDot").count(), 0);
+      assertEq(await account.locator(".noticeDot").getAttribute("data-tone"), "warn");
+      await nav(page, "Server").click();
+      await until(() => seen.length === 2, { what: "the second ack" });
+      assertEq(seen[1], "update:9.9.9");
+      await until(() => nav(page, "Server").locator(".noticeDot").count().then((n) => n === 0));
+      assertEq(await account.locator(".noticeDot").count(), 0, "nothing left to see");
+      // The ack is stored with the account (posted after the dot has gone),
+      // so other browsers agree.
+      await until(async () => (await user.api("/api/prefs/notices-seen")).value?.update === "9.9.9",
+        { what: "the ack stored with the account" });
+      assertNoProblems(page);
+    } finally {
+      await ctx.close();
+      await user.api("/api/prefs/notices-seen", { method: "PUT", body: { value: {} } });
     }
   });
 }

@@ -229,7 +229,10 @@ available update only says which image to pull; the desktop app updates
 on its own. Things worth an admin's eye are logged at WARNING — a
 share-link visitor over the write throttle, an address probing unknown
 share links ([api.md](api.md) "Link visitors") — so the tile turns amber
-and the log's "Warnings" filter shows them.
+and the log's "Warnings" filter shows them. An admin who never opens the
+pane still hears of a newer release and of logged errors: both are notices
+(`gamma/notices.py`, `GET /api/notices`), the red dot on the account
+button that leads to this pane — [settings.md](settings.md) "Notices".
 
 `gamma/logbuf.py`, `GET /api/admin/logs?after=<seq>`: all backend logging goes
 through `logbuf.log` (a `logging` logger — use it, not `print()`), which tees

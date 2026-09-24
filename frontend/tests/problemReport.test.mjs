@@ -2,7 +2,7 @@ import test from "node:test";
 import assert from "node:assert/strict";
 import {
   buildReport, describeBrowser, describeFacts, formatDiagnostics, githubIssueUrl, issueTitle,
-  scrubReportText, selectEvents, NEW_ISSUE_URL,
+  scrubReportText, selectEvents, withRecording, NEW_ISSUE_URL,
 } from "../src/support/problemReport.js";
 
 const CHROME_LINUX = {
@@ -92,6 +92,17 @@ test("the report has the description first and the diagnostics only when asked",
   const bare = buildReport({ description: "Nothing else", facts, includeDiagnostics: false });
   assert.equal(bare, "### What happened\nNothing else");
   assert.equal(buildReport({ facts, includeDiagnostics: false }), "### What happened\n(not described)");
+});
+
+test("a screen recording is named in the steps, of the report and of the form alike", () => {
+  const note = "Screen recording: `gamma-recording-20260924-1200.webm` (dropped into this issue by the reporter).";
+  assert.equal(withRecording("", "gamma-recording-20260924-1200.webm"), note);
+  assert.equal(withRecording("drag a block\n", "gamma-recording-20260924-1200.webm"), `drag a block\n\n${note}`);
+  assert.equal(withRecording("drag a block", ""), "drag a block");
+  const report = buildReport({ description: "d", facts, includeDiagnostics: false, recording: "gamma-recording-20260924-1200.webm" });
+  assert.equal(report, `### What happened\nd\n\n### How to reproduce\n${note}`);
+  const { url } = githubIssueUrl({ description: "d", steps: "drag", recording: "gamma-recording-20260924-1200.webm" });
+  assert.equal(new URL(url).searchParams.get("steps"), `drag\n\n${note}`);
 });
 
 test("the issue title is the description's first line, shortened", () => {

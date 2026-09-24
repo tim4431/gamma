@@ -70,6 +70,8 @@ import { ROLE_LABEL, workspaceMeta } from "../settings/SettingsWorkspace";
 import { AuthLoading, LoginPage, SessionConflictPage, ShareBlockedPage, WorkspaceUnavailablePage } from "../auth/LoginPage";
 import { McpAuthorization } from "../auth/McpConsent";
 import { TRANSLATE_LANGS, useAppPrefs, useProfileSync } from "./prefs";
+import { useNotices } from "./useNotices";
+import { dotTone } from "./notices";
 import { useBlockHistory } from "../editor/blockHistory.js";
 import { InkToolbar } from "../ink/InkLayer";
 import { MAX_STROKES, appendStroke, duplicateStrokes, eraseAt, newInk, removeStrokes, restyleStrokes, toolStyle, transformStrokes, translateStrokes } from "../ink/ink";
@@ -2454,6 +2456,10 @@ function LibraryApp() {
   // The settings page (account popover → Settings…): two-column modal,
   // categories on the left, the selected pane on the right.
   const [settingsOpen, setSettingsOpen] = useState(null); // null | pane id — see settingsNavigation.js
+  // What wants a look (a newer release, errors in the log — app/notices.js):
+  // the dot on the account button and on the Settings panes that resolve it;
+  // "Settings…" lands on the strongest one.
+  const notices = useNotices(!!authUser?.user && !authUser.is_guest && !shareMode);
   // "Report a problem" (account menu, Settings → Diagnostics): support/ReportProblem.jsx.
   const [reportOpen, setReportOpen] = useState(false);
   const [importOpen, setImportOpen] = useState(false);
@@ -8374,6 +8380,7 @@ function LibraryApp() {
             aria-label="Account & settings"
           >
             <UserIcon size={18} />
+            {notices.tone ? <span className={`noticeDot ${dotTone(notices.tone)}`} data-tone={notices.tone} aria-hidden="true" /> : null}
           </button>
           {openPopover === "user" ? (
             <div className="popover userPopover">
@@ -8434,9 +8441,10 @@ function LibraryApp() {
                 </button>
               ) : null}
               <div className="popoverDivider" />
-              <button className="popoverItem" onClick={() => { setSettingsOpen("general"); setOpenPopover(null); }}>
+              <button className="popoverItem" onClick={() => { setSettingsOpen(notices.firstPane || "general"); setOpenPopover(null); }}>
                 <SettingsIcon className="popoverItemIcon" size={15} />
                 Settings…
+                {notices.tone ? <span className={`noticeDot inline ${dotTone(notices.tone)}`} aria-hidden="true" /> : null}
               </button>
               <div className="popoverDivider" />
               <details className="accountTours">
@@ -9182,6 +9190,7 @@ function LibraryApp() {
       <SettingsDialog
         activePane={settingsOpen}
         profileSync={profileSync}
+        notices={notices}
         onPaneChange={setSettingsOpen}
         onClose={() => setSettingsOpen(null)}
         papers={{

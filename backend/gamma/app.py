@@ -31,6 +31,7 @@ from .routers import (
     links,
     metadata,
     mirrors,
+    notices,
     pages,
     pdf,
     prefs,
@@ -133,6 +134,7 @@ def create_app() -> FastAPI:
     app.include_router(chats.router)
     app.include_router(chats.history_router)
     app.include_router(prefs.router)
+    app.include_router(notices.router)
     app.include_router(integrations.router)
     app.include_router(mcp_oauth_router)
     app.router.routes.append(mcp.route())

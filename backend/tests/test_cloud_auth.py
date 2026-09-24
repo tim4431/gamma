@@ -247,7 +247,9 @@ def test_provision_policy_creates_account(cloud, monkeypatch):
     assert r.status_code == 302 and r.headers["location"] == "/?page=abc"
     s = c.get("/api/session").json()
     assert s["user"] == "ca_alice" and s["is_admin"] is False and s["default_workspace"]
-    status = c.get("/api/auth/cloud/status").json()["identity"]
+    answer = c.get("/api/auth/cloud/status").json()
+    assert answer["issuer"] == ISSUER  # the Account pane's "Open account" button
+    status = answer["identity"]
     assert status["username"] == "ca_alice" and status["plan"] == "free" and status["offline"] is True
     # only the cloud can sign this account in
     r = c.post("/api/login", json={"username": "ca_alice", "password": ""})

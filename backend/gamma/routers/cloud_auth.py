@@ -83,7 +83,9 @@ def cloud_callback(request: Request, code: str = "", state: str = "", error: str
 @router.get("/api/auth/cloud/status")
 async def cloud_status(request: Request):
     user = require_user(request)
-    return {"identity": cloud_auth.status_of(user), "enabled": cloud_auth.settings()["enabled"]}
+    cfg = cloud_auth.settings()
+    # the issuer is the portal's address too: Settings → Account opens it from here
+    return {"identity": cloud_auth.status_of(user), "enabled": cfg["enabled"], "issuer": cfg["issuer"]}
 
 
 @router.get("/api/auth/cloud/sync-status")

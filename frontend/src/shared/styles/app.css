@@ -3766,6 +3766,36 @@ html.appFocusFullscreen, html.appFocusFullscreen body { overflow: hidden; oversc
   word-break: break-word;
   color: var(--text-secondary);
 }
+/* The dialog folded into a pill while a screen recording runs: the app
+   must stay usable underneath. */
+.reportRecordPill {
+  position: fixed;
+  right: 16px;
+  bottom: 16px;
+  z-index: var(--z-popover);
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 6px 8px 6px 12px;
+  border-radius: 999px;
+  background: var(--bg-surface);
+  border: 1px solid var(--border);
+  box-shadow: var(--shadow-surface);
+  color: var(--text-primary);
+  font-size: calc(12.5px * var(--ui-font-scale, 1));
+  max-width: calc(100vw - 32px);
+}
+.reportRecordText { white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.reportRecordDot {
+  width: 9px;
+  height: 9px;
+  border-radius: 50%;
+  background: var(--danger);
+  flex: none;
+  animation: reportRecordPulse 1.2s ease-in-out infinite;
+}
+@keyframes reportRecordPulse { 50% { opacity: 0.35; } }
+@media (prefers-reduced-motion: reduce) { .reportRecordDot { animation: none; } }
 .chatInputRow {
   position: relative;
   display: flex;
@@ -4245,6 +4275,24 @@ html.appFocusFullscreen, html.appFocusFullscreen body { overflow: hidden; oversc
 
 /* --- downloads & uploads (Chrome-style transfer list) --- */
 .topbar .transferBtn { position: relative; }
+/* The red dot (app/notices.js): something wants a look. On a header icon
+   button it sits in the corner; `.inline` puts it after a menu item's or a
+   Settings nav button's label. `.info` is an accent-coloured hint, `.alert`
+   needs attention. */
+.topbar .popoverAnchor > .iconBtn { position: relative; }
+.noticeDot {
+  position: absolute;
+  top: 3px;
+  right: 3px;
+  width: 7px;
+  height: 7px;
+  border-radius: 50%;
+  background: var(--danger);
+  pointer-events: none;
+}
+.noticeDot.info { background: var(--accent); }
+.noticeDot.inline { position: static; display: inline-block; margin-left: auto; flex-shrink: 0; }
+.popoverItem .noticeDot.inline { margin-left: 8px; }
 .transferSpin {
   position: absolute;
   top: 3px;

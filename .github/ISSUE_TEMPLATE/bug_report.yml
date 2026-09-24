@@ -10,7 +10,7 @@ body:
     id: description
     attributes:
       label: What happened
-      description: What you did, what you expected, what you saw instead. A screenshot or a short recording helps a lot — paste it here.
+      description: What you did, what you expected, what you saw instead. A screenshot or a short recording helps a lot — drop it here (Gamma's "Report a problem" can record your screen; the saved file goes here too).
       placeholder: A blue line stays on the notes after I dragged a block…
     validations:
       required: true

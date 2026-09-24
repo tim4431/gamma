@@ -117,7 +117,7 @@ else; in dev, Vite proxies `/api` → `127.0.0.1:9001`.
 | GET | `/auth/cloud/start?next=&link=1` | Sign in with Gamma Cloud: stores the pending PKCE sign-in and redirects to the account server; `link=1` needs a session and attaches the cloud identity to that account |
 | GET | `/auth/cloud/callback?code=&state=` | the account server's return: verifies the ID token, resolves or creates the local account per the policy (`gamma/cloud_auth.py`), pulls the preference profile, registers this server on the person's server list (`gamma/cloud_sync.py`), mints a session and redirects to `next`; a refusal goes back to `/?cloud_error=` |
 | GET | `/auth/cloud/sync-status` | the signed-in account's own preference profile sync (session only; guests and integration tokens get 403): `{profile: {state, at, error}, identity: {linked, username?}}`. `state` is `off` (cloud sign-in off, or no identity holding a token), `pending` (a push is scheduled, or failed and waits for the next check; `error` then says why), `synced` (the last pull or push agreed, at `at`) or `error` (the last attempt failed). Read from memory (`cloud_sync.profile_status`), no network; the Settings dialog polls it while open |
-| GET / POST | `/auth/cloud/status`, `/auth/cloud/unlink` | the signed-in account's own cloud identity (username, plan, e-mail, linked at, `offline` — a refresh token is held — and `revoked_at`); unlink is refused for an account without a password, and takes this server off the person's server list before revoking the grant |
+| GET / POST | `/auth/cloud/status`, `/auth/cloud/unlink` | the signed-in account's own cloud identity (username, plan, e-mail, linked at, `offline` — a refresh token is held — and `revoked_at`) plus `enabled` and the `issuer` (the account server's address, which the Account pane's "Open account" button opens); unlink is refused for an account without a password, and takes this server off the person's server list before revoking the grant |
 | GET | `/session` | who am I, plus `workspaces: [{id, name, kind, role, access, public_role, personal, default, members}]` (memberships + every public workspace) and `default_workspace` (quota lives in `/quota`); `build` (`version`, `commit`, `label`, `frozen`) is what a problem report names the server by, sent to the login page too |
 | GET | `/accounts[?q=]` | the account directory for the invite / owner pickers: `{accounts: [{username, is_admin}]}`, non-guest accounts only (signed-in non-guest callers). On a share host only admins get the list; anyone else gets the one account named exactly `q`, or none |
 | GET | `/export` (+ `/export-progress`) | backup zip of a workspace (everything or `uploads=0`; the `gamma-backup-1` zip of `gamma/ws_backup.py`): the request's, `?ws=` (any member), or — admins — `?user=` for an account's default workspace |
@@ -326,6 +326,12 @@ archived conversation browsing remains session-only.
 | GET | `/page-snaps` | all recents-card cover thumbnails `{snaps: {pageId: {img, at}}}`; `?after=<iso>` returns only newer ones (the focus-pull delta) |
 | PUT | `/page-snaps/{page_id}` | store a cover (JPEG data URL body `{img, at}`; per-page newest-`at` wins, count-capped server-side) |
 | DELETE | `/page-snaps/{page_id}` | drop a cover (the recents card's ×) |
+
+### Notices (`notices.py`, `gamma/notices.py`) — see [settings.md](settings.md) "Notices"
+| Method | Path | Purpose |
+|---|---|---|
+| GET | `/notices` | `{notices: [{id, fingerprint, tone, pane, title}]}` the account has not looked at yet, strongest `tone` (`info` / `warn` / `error`) first; `pane` is the Settings pane that resolves it. Admin-only sources (`update`: a newer GitHub release; `log-errors`: errors logged since the last look) are skipped for members; guests and integration tokens get `[]`. Sync: the release check may hit the network when its cache is stale |
+| POST | `/notices/{id}/seen` | `{fingerprint}` — the account has seen this version of the notice (kept in the account-wide `notices-seen` pref); it stays quiet until the fingerprint changes. 403 for guests and tokens, 400 for a malformed id or fingerprint |
 
 ### Integrations and MCP (`routers/integrations.py`, `mcp_oauth.py`, `mcp_server.py`) — see [mcp.md](mcp.md)
 | Method | Path | Purpose |

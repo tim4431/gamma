@@ -158,12 +158,23 @@ export function formatDiagnostics(facts = {}) {
   return scrubReportText(parts.join("\n"));
 }
 
+// A screen recording cannot travel in a URL: the reporter drops the saved
+// file into the GitHub form. The steps name it so the form reminds them and
+// the reader knows to look for it.
+export function withRecording(steps = "", recording = "") {
+  const text = steps.trim();
+  if (!recording) return text;
+  const note = `Screen recording: \`${recording}\` (dropped into this issue by the reporter).`;
+  return text ? `${text}\n\n${note}` : note;
+}
+
 // The whole report as one markdown document — what "Copy report" puts on
 // the clipboard, and what a reporter pastes when the GitHub URL had to be
 // trimmed.
-export function buildReport({ description = "", steps = "", facts, includeDiagnostics = true } = {}) {
+export function buildReport({ description = "", steps = "", facts, includeDiagnostics = true, recording = "" } = {}) {
   const parts = [`### What happened\n${description.trim() || "(not described)"}`];
-  if (steps.trim()) parts.push(`### How to reproduce\n${steps.trim()}`);
+  const how = withRecording(steps, recording);
+  if (how) parts.push(`### How to reproduce\n${how}`);
   if (includeDiagnostics) parts.push(`### Diagnostics\n${formatDiagnostics(facts)}`);
   return scrubReportText(parts.join("\n\n"));
 }
@@ -179,14 +190,15 @@ export function issueTitle(description = "") {
 // query parameters are that form's field ids). Diagnostics are trimmed to
 // GitHub's URL budget; `trimmed` tells the caller to say the clipboard
 // holds the whole report.
-export function githubIssueUrl({ description = "", steps = "", diagnostics = "" } = {}) {
+export function githubIssueUrl({ description = "", steps = "", diagnostics = "", recording = "" } = {}) {
+  const how = withRecording(steps, recording);
   const make = (diag) => {
     const params = new URLSearchParams();
     params.set("template", "bug_report.yml");
     const title = issueTitle(description);
     if (title) params.set("title", title);
     if (description.trim()) params.set("description", description.trim());
-    if (steps.trim()) params.set("steps", steps.trim());
+    if (how) params.set("steps", how);
     if (diag) params.set("diagnostics", diag);
     return `${NEW_ISSUE_URL}?${params}`;
   };

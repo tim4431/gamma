@@ -10,7 +10,7 @@ import React from "react";
 import { API, apiJson } from "../shared/lib/utils";
 import { Row, Segmented, PasswordInput, SettingsSyncContext, Toggle, useSettingsDraft } from "./SettingsKit";
 import { cloudSyncHint } from "./syncState.js";
-import { CloudIcon, GlobeIcon, KeyIcon, UserIcon } from "../shared/ui/Icons";
+import { CloudIcon, ExternalLinkIcon, GlobeIcon, KeyIcon, UserIcon } from "../shared/ui/Icons";
 
 const POLICIES = [
   ["refuse", "Refuse", null, "Only accounts already linked to a cloud account can sign in"],
@@ -130,6 +130,11 @@ export function CloudIdentityRow({ setStatus, confirm }) {
         : "Link your Gamma Cloud account: you are sent to the account server and back, then either login opens this account."}>
       <span className="setRowControls">
         {id ? <span className="uiTag ok">linked</span> : null}
+        {id && state.issuer ? (
+          <a className="uiBtn sm" href={`${state.issuer}/`} target="_blank" rel="noopener"
+            title="Your Gamma Cloud account: plan, devices, sign-in methods">
+            <ExternalLinkIcon size={14} /> Open account
+          </a>) : null}
         {id ? <button className="uiBtn sm" onClick={unlink}>Unlink</button>
             : <button className="uiBtn sm primary" onClick={link}>Link Gamma Cloud account</button>}
       </span>

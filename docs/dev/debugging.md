@@ -323,7 +323,15 @@ save path, workspaces, auth or rendering of URLs should add a step here; the
   GitHub's URL budget, in which case the status line says to paste). Nothing
   leaves the browser until the reporter submits the form; "Copy report" is
   the path for people without GitHub. Keep the field ids and the query
-  parameters in step.
+  parameters in step. **Screen recording** (the dialog's Record… row, shown
+  where `getDisplayMedia` + `MediaRecorder` exist): the dialog folds into a
+  pill while the reporter reproduces the problem, Stop (the pill, the
+  browser's own stop-sharing bar, or the 3-minute cap) brings it back with
+  the file (webm, or mp4 where that is what the browser records; 1.5 Mbit/s,
+  no sound), Save downloads it, and opening the form saves it too. A URL
+  cannot carry a file, so the steps name the file and the reporter drops it
+  into the form (GitHub uploads it with the issue). The e2e step stubs the
+  picker with a canvas stream so the recorder itself runs for real.
 - **Library health** — Settings → Library maintenance lists, per paper:
   metadata state, extracted-text chars, and search-index coverage, with
   per-row retry/reindex buttons plus batch actions: Fetch needed / Refetch

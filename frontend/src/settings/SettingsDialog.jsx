@@ -14,6 +14,7 @@ import { UsersSettings } from "./SettingsUsers";
 import { WorkspacesSettings } from "./SettingsWorkspace";
 import { WorkspaceBackups } from "./SettingsBackups";
 import { ServerSettings } from "./SettingsServer";
+import { dotTone } from "../app/notices";
 import { resolveSettingsPane, searchSettings } from "./settingsNavigation";
 import { TRANSLATE_LANGS } from "../app/prefs";
 import {
@@ -966,7 +967,7 @@ function useCloudSyncStatus(open, local) {
 
 export default function SettingsDialog({
   activePane, onPaneChange, onClose, papers, notes, library, ai, prompts,
-  context, search, users, workspace, backups, server, diagnostics, profileSync,
+  context, search, users, workspace, backups, server, diagnostics, profileSync, notices,
 }) {
   const syncState = useCloudSyncStatus(!!activePane, profileSync);
   const [query, setQuery] = React.useState("");
@@ -1002,6 +1003,10 @@ export default function SettingsDialog({
       context: "Single paper" }[activePane];
     if (legacyTarget) setJump({ label: legacyTarget });
   }, [activePane]);
+  // Looking at a pane resolves the notices pointing at it (app/useNotices.js).
+  React.useEffect(() => {
+    if (activePane && !query) notices?.markSeen(pane);
+  }, [activePane, pane, query, notices]);
   React.useEffect(() => {
     if (!jump || query || !activePane) return;
     const target = [...(paneRef.current?.querySelectorAll("[data-setting]") || [])]
@@ -1027,6 +1032,7 @@ export default function SettingsDialog({
     className={`settingsNavBtn ${pane === id && !query ? "active" : ""}`}
     aria-current={pane === id && !query ? "page" : undefined} onClick={() => navigate(id)}>
     <Icon size={17} /><span>{label}</span>
+    {notices?.panes?.[id] ? <i className={`noticeDot inline ${dotTone(notices.panes[id])}`} data-tone={notices.panes[id]} aria-hidden="true" /> : null}
   </button>;
   return (
     <SettingsDraftContext.Provider value={drafts}>

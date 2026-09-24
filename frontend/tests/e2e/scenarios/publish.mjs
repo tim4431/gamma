@@ -64,6 +64,9 @@ export async function publishScenarios(env) {
       await row.locator(".uiTag", { hasText: "linked" }).waitFor();
       await until(() => row.locator(".settingDesc").textContent().then((t) => t.includes("Settings synced")),
         { timeout: 15000, what: "the settings sync hint on the link row" });
+      const open = row.getByRole("link", { name: "Open account", exact: true });
+      assertEq((await open.getAttribute("href") || "").replace(/\/$/, ""), cloud.issuer.replace(/\/$/, ""), "Open account goes to the portal");
+      assertEq(await open.getAttribute("target"), "_blank", "the portal opens in a new tab");
       await page.keyboard.press("Escape");
       assertNoProblems(page);
     });
