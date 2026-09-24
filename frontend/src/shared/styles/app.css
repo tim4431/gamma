@@ -3628,10 +3628,14 @@ html.appFocusFullscreen, html.appFocusFullscreen body { overflow: hidden; oversc
   min-width: 0;
 }
 .chatSelChipLabel {
+  display: inline-flex;
+  align-items: center;
+  gap: 1px;
   color: #8ab4f8;
   font-weight: 600;
   flex-shrink: 0;
 }
+.chatSelChipNum { font-size: 0.9em; line-height: 1; }
 .chatSelChipText {
   overflow: hidden;
   text-overflow: ellipsis;

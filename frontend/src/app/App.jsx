@@ -104,6 +104,7 @@ import {
   NO_LABEL_TITLE,
   labelTitle,
 } from "../library/libraryUtils";
+import { createLibraryMatcher } from "../library/librarySearch";
 
 // PDF load phases that own a row in the background-transfers popover; every
 // other phase is viewer-local. Allowlist on purpose — the transfer handling's
@@ -157,17 +158,6 @@ function homeUrlFor(folder, label) {
   if (folder) q.push(`folder=${encodeURIComponent(folder)}`);
   if (label) q.push(label === NO_LABEL ? "unlabelled=1" : `category=${encodeURIComponent(label)}`);
   return withWorkspace(q.length ? `/?${q.join("&")}` : "/");
-}
-
-// The listing search box: every whitespace-separated term must appear in the
-// item's text (its title plus, for a page, its folder/label chips), case and
-// diacritics folded. Deliberately much simpler than the workspace search — it
-// only reorders what is already on screen.
-const normalizeFind = (s) => (s || "").toLowerCase().normalize("NFD").replace(/[\u0300-\u036f]/g, "");
-function makeFindMatcher(query) {
-  const terms = normalizeFind(query).split(/\s+/).filter(Boolean);
-  if (!terms.length) return null;
-  return (hay) => { const h = normalizeFind(hay); return terms.every((t) => h.includes(t)); };
 }
 
 // Folder uploads tag each PDF with its directory path as a folder label:
@@ -2883,11 +2873,12 @@ function LibraryApp() {
     const src = block.content || "";
     const inOne = rendered.contains(range.startContainer) && rendered.contains(range.endContainer);
     const at = inOne && sourceRangeOfSelection(rendered, src, range, scanMathSpans(src));
-    if (!at || !src.slice(at.from, at.to).trim()) {
+    const text = at ? src.slice(at.from, at.to) : "";
+    if (!text.trim()) {
       addBlockToChat(block);
       return;
     }
-    const note = { kind: "note", id: block.id, from: at.from, to: at.to, text: src.slice(at.from, at.to) };
+    const note = { kind: "note", id: block.id, from: at.from, to: at.to, text };
     setChatNotes((prev) => prev.some((n) => n.kind === "note" && n.id === note.id && n.from === note.from && n.to === note.to)
       || prev.filter((n) => n.kind === "note").length >= 6 ? prev : [...prev, note]);
   }
@@ -6245,13 +6236,14 @@ function LibraryApp() {
     items.sort(cmp);
     const none = items.findIndex((it) => it.kind === "label" && it.label === NO_LABEL);
     if (none >= 0) items.push(...items.splice(none, 1));
-    const match = makeFindMatcher(homeQuery);
+    // The same matcher as Ctrl+P (library/librarySearch.js): typo-tolerant,
+    // and a page also matches on its chips, so "cs229" surfaces its papers.
+    const match = createLibraryMatcher(homeQuery);
     if (!match) return items;
-    // A page also matches on its chips, so "cs229" surfaces its papers.
     for (const it of items) {
-      it._match = match(it.kind === "page"
-        ? [it._title, ...(it.block._folders || []), ...(it.block._labels || [])].join(" ")
-        : it._title);
+      it._match = match(it._title, it.kind === "page"
+        ? [...(it.block._folders || []), ...(it.block._labels || [])]
+        : []) > 0;
     }
     return [...items.filter((it) => it._match), ...items.filter((it) => !it._match)];
   }, [scopePages, categoryFilter, childFolders, folderMeta, scopeLabels, labelMeta, viewedAtById, homeSort, homeKinds, homeQuery]);

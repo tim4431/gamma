@@ -277,28 +277,32 @@ notes. The server resolves all three against the request's context pages.
   the agent prompt lists the ids, so *"rewrite these"* means them. Capped at
   12 chips / 12k chars (`MAX_CONTEXT_BLOCKS`, `MAX_BLOCK_SECTION_CHARS`).
   Ids outside the context pages, and page ids, are dropped silently.
-- `note_selections` — note text the user selected, as exact ranges of block
-  sources `[{block_id, from, to, text}]` (`text` is the source slice the
-  client saw). Two ways in: the open editor's selection (a plain drag on a
-  rendered note opens the editor and keeps selecting in the raw source;
-  App's `noteSel`, settled 120 ms after the last change, turns the Cursor
-  chip into a **Selection** chip and survives the editor closing when the
-  chat input is clicked), and a Ctrl+drag across rendered text, whose two
-  ends are mapped back to source offsets by `editor/clickToSource.js`
-  (`sourceRangeOfSelection`; an end inside a formula widens to the whole
-  formula, and a selection that can't be pinned down attaches its block
-  instead). `ai_context.request_note_selections` validates them and labels
-  them S1, S2… (6 max); the prompt quotes each with its block id and says a
-  question is answered in the chat while an instruction that transforms the
-  selection (rewrite, fix, translate, …) is carried out in place with
-  `edit_block` mode `"selection"` — without that line a small model answered
-  "translate this" with the translation in its reply instead — the selections'
-  blocks ride along whole in the notes-focus section, and the agent prompt
-  repeats the rule. The editor's selection is dropped once sent.
+- `note_selections` — selected note text as exact ranges of block sources,
+  `[{block_id, from, to, text}]`; `text` is the source slice the client saw.
+  Two sources feed it:
+  - The open editor's selection. A plain drag on a rendered note opens the
+    editor and keeps selecting in the raw source. App's `noteSel` (settled
+    120 ms after the last change) turns the Cursor chip into a Selection
+    chip. It survives the editor closing when the chat input is clicked, and
+    is dropped once sent.
+  - A Ctrl+drag across rendered text. `sourceRangeOfSelection`
+    (`editor/clickToSource.js`) maps both ends back to source offsets and
+    widens an end inside a formula to the whole formula. A selection it
+    can't place attaches its block instead.
 
-Chips render in the composer's chip strip next to PDF passages ("Block" /
-"Note" / "Selection" labels). They clear on send and on a page switch, since the ids
-belong to the page. Ctrl+click on a highlight card sends the quote as a PDF
+  `ai_context.request_note_selections` validates them and labels them S1,
+  S2… (6 max). The prompt quotes each with its block id, and each
+  selection's block rides along whole in the notes-focus section. Both the
+  prompt and the agent prompt say that a question is answered in the chat,
+  while an instruction that transforms the selection (rewrite, fix,
+  translate, …) is an in-place `edit_block` mode `"selection"`. Without that
+  rule a small model answered "translate this" with the translation in its
+  reply.
+
+Chips render in the composer's chip strip next to PDF passages, each kind
+an icon (text cursor = cursor block, highlighter = selected note text,
+outline = attached block, quote = PDF passage). They clear on send and on a
+page switch, since the ids belong to the page. Ctrl+click on a highlight card sends the quote as a PDF
 passage, not a block chip.
 
 Reasoning models burn invisible tokens — keep `max_tokens` generous (empty

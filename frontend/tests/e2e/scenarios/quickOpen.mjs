@@ -9,7 +9,8 @@ export async function quickOpenScenarios(env) {
   const titles = ["Cavity readout", "Cavity sensors", "Quantum correction", "Atomic clocks"];
   const papers = {};
   for (const title of titles) {
-    papers[title] = await user.api("/api/blocks", { method: "POST", body: { parent_id: "root", content: title } });
+    const properties = title === "Atomic clocks" ? { category: "horlogerie" } : undefined;
+    papers[title] = await user.api("/api/blocks", { method: "POST", body: { parent_id: "root", content: title, properties } });
   }
 
   await step("quickopen: Ctrl+P lists pages, filters by title and opens the pick", async () => {
@@ -20,11 +21,16 @@ export async function quickOpenScenarios(env) {
       await page.keyboard.press("Control+p");
       const dialog = page.getByRole("dialog", { name: "Open a page" });
       await dialog.waitFor();
-      const input = dialog.getByRole("textbox", { name: "Search pages by title" });
+      const input = dialog.getByRole("textbox", { name: "Search pages by title or label" });
       await until(() => input.evaluate((el) => el === document.activeElement), { what: "the palette's input takes focus" });
       await until(async () => (await dialog.getByRole("option").count()) === titles.length, { what: "every page listed before typing" });
       assert(await dialog.getByRole("option", { name: /Atomic clocks/ }).locator(".quickOpenTag").textContent() === "Current",
         "the open page is tagged Current");
+
+      // A label matches like a title, typos included ("horlogerie" is only a label).
+      await input.fill("horlogeire");
+      await until(async () => (await dialog.getByRole("option").count()) === 1, { what: "the label's page alone" });
+      assert(/Atomic clocks/.test(await dialog.getByRole("option").textContent()), "the labelled page matches");
 
       await input.fill("cavity");
       await until(async () => (await dialog.getByRole("option").count()) === 2);

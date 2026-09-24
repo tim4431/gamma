@@ -1,6 +1,6 @@
 // A click on a block's rendered markdown → the offset in its raw source the
 // editor opens at (editor/clickToSource.js). Each case gives the rendered
-// text around the click the way renderedClickContext reads it from the DOM.
+// text around the click the way the module reads it from the DOM.
 import assert from "node:assert/strict";
 import { test } from "node:test";
 import { gapInSource, locateInSource } from "../src/editor/clickToSource.js";

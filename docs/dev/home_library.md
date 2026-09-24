@@ -7,10 +7,10 @@ Code: [FileBrowser.jsx](../../frontend/src/library/FileBrowser.jsx),
 
 Quick open ([QuickOpen.jsx](../../frontend/src/library/QuickOpen.jsx)) is the
 keyboard way into the library from anywhere: Ctrl+P (App.jsx's global key
-listener; not in a share view) opens a palette over the page titles. With no
+listener; not in a share view) opens a palette over the pages. With no
 query the order is the recents queue, then open tabs, then the rest by last
-edit; a query ranks through `createTitleScorer` with recency as the
-tie-break. Enter opens through `openPage`, the same path as a card double-click.
+edit; a query ranks through `createLibraryMatcher` — the listing search box's
+matcher, below — with recency as the tie-break. Enter opens through `openPage`, the same path as a card double-click.
 
 ## Folders and labels
 
@@ -69,8 +69,11 @@ its back row is plain navigation.
 A search box sits left of the sort pill (`ListFindBox`, live as you type, per
 view, not persisted). It never drops anything: matching items float to the top
 of the current sort and the rest stay in place dimmed (`.homeDim`). A page
-matches on its title plus its folder/label chips; matching is
-case/diacritic-folded, every whitespace term must appear.
+matches on its title or its folder/label chips through `createLibraryMatcher`
+([librarySearch.js](../../frontend/src/library/librarySearch.js), shared with
+Ctrl+P): the workspace search's typo-tolerant title scorer, case/diacritic-
+folded, every whitespace term must hit the title or a chip, and title hits
+outrank chip-only ones.
 
 **New page** and **New folder** are the FIRST items of the listing itself,
 not toolbar buttons. New page (`newPageAllowed`: not in a label view, not

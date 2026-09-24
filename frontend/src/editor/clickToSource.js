@@ -124,17 +124,11 @@ function contextAt(container, node, offset) {
   };
 }
 
-// The context for locateInSource of a click at (x, y) inside `container`
-// (a block's rendered view), or null when it didn't hit its text.
-export function renderedClickContext(container, x, y) {
-  const hit = caretAt(x, y);
-  return hit ? contextAt(container, hit.node, hit.offset) : null;
-}
-
-// The source offset a click on the rendered view points at, or null.
+// The source offset a click at (x, y) on `container` (a block's rendered
+// view) points at, or null when it didn't hit the note's own text.
 export function sourceOffsetAtPoint(container, source, x, y) {
-  if (!container) return null;
-  return locateInSource(source, renderedClickContext(container, x, y));
+  const hit = container && caretAt(x, y);
+  return hit ? locateInSource(source, contextAt(container, hit.node, hit.offset)) : null;
 }
 
 // ---- gaps between the rendered view's blocks (paragraphs, formulas, lists…)
@@ -156,13 +150,16 @@ export function gapInSource(source, at, spans = []) {
 
 // The rendered view's top-level blocks, top to bottom, with the gap between
 // each pair: [{y, half, below}] — `y` the gap's middle (client coords),
-// `half` its hover reach, `below` the block under it.
+// `half` its hover reach, `below` the block under it. The reach covers the
+// gap plus up to 6px into each block (a third of the shorter one at most, so
+// the reaches around a short block — an empty line — never meet).
 export function renderedGaps(container, skip) {
   const kids = [...container.children].filter((k) => k !== skip && k.getClientRects().length);
   const gaps = [];
   for (let i = 1; i < kids.length; i++) {
     const a = kids[i - 1].getBoundingClientRect(), b = kids[i].getBoundingClientRect();
-    gaps.push({ y: (a.bottom + b.top) / 2, half: Math.max(4, (b.top - a.bottom) / 2), below: kids[i] });
+    const into = Math.min(6, a.height / 3, b.height / 3);
+    gaps.push({ y: (a.bottom + b.top) / 2, half: Math.max(2, (b.top - a.bottom) / 2) + into, below: kids[i] });
   }
   return gaps;
 }

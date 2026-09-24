@@ -1437,9 +1437,9 @@ def ai_chat(payload: AIChatRequest, request: Request):
                             continue
                         args = _partial_json_object(data.get("json") or "")
                         target = args.get("block_id" if name == "edit_block" else "parent_id")
+                        mode = str(args.get("mode") or "replace").lower()
                         sel = (find_selection(scope, args.get("selection"))
-                               if name == "edit_block" and str(args.get("mode") or "").lower() == "selection"
-                               else None)
+                               if name == "edit_block" and mode == "selection" else None)
                         if sel:
                             target = sel["block_id"]
                         content = args.get("content")
@@ -1454,7 +1454,6 @@ def ai_chat(payload: AIChatRequest, request: Request):
                             progress["block_id"] = target
                             # append/prepend: the preview keeps the stored text
                             # and types the addition in at the right end.
-                            mode = str(args.get("mode") or "replace").lower()
                             if sel:
                                 # selection: the preview swaps the selected
                                 # range (re-found by its text if it moved).

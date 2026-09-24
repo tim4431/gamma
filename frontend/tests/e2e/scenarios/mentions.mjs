@@ -242,7 +242,7 @@ export async function mentionScenarios(env) {
       await page.mouse.move(end.right, end.y, { steps: 5 });
       await page.mouse.up();
       // The Cursor chip turns into a Selection chip holding just the selection.
-      const selChip = page.locator(".chatSelChips .isCursor", { hasText: "Selection" });
+      const selChip = page.locator(".chatSelChips .isCursor").filter({ has: page.getByRole("img", { name: "Selection", exact: true }) });
       await selChip.waitFor({ timeout: 5000 });
       const chipText = await selChip.textContent();
       assert(chipText.includes("End.") && !chipText.includes("Noise"), `selection chip: ${chipText}`);

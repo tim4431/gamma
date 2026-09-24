@@ -938,8 +938,8 @@ function BlockRow({
   }, [block.id, registerRef]);
 
   // Caret-at-click placement happens inside BlockCmEditor on mount (at the
-  // source offset the click mapped to, else posAtCoords); just drop the captured coords once edit mode is entered so later
-  // re-renders don't reuse them.
+  // source offset the click mapped to, else posAtCoords); drop the captured
+  // click once edit mode is entered so later re-renders don't reuse it.
   useEffect(() => {
     if (block.editMode) clickPosRef.current = null;
   }, [block.editMode]);
@@ -1762,7 +1762,7 @@ function joinBlockText(existing, addition, mode, find, at) {
   if (mode === "selection") {
     const cur = existing || "";
     if (!find) return cur;
-    let start = cur.slice(at, at + find.length) === find ? at : cur.indexOf(find);
+    const start = cur.slice(at, at + find.length) === find ? at : cur.indexOf(find);
     if (start !== at && (start < 0 || cur.indexOf(find, start + 1) >= 0)) return cur;
     return cur.slice(0, start) + (addition || "") + cur.slice(start + find.length);
   }
