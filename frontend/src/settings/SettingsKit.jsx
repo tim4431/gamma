@@ -5,8 +5,8 @@
 // UI should reuse these; bespoke classes are for layout only.
 import React from "react";
 import { API, apiJson, copyText, fmtBytes } from "../shared/lib/utils";
-import { AlertCircleIcon, CheckIcon, CloudCheckIcon, EyeIcon, EyeOffIcon, RefreshIcon, ShieldIcon, UserIcon } from "../shared/ui/Icons";
-import { profileSyncState } from "./syncState.js";
+import { AlertCircleIcon, CheckIcon, CloudCheckIcon, EyeIcon, EyeOffIcon, MonitorIcon, RefreshIcon, ShieldIcon, UserIcon } from "../shared/ui/Icons";
+import { BROWSER_TAG, profileSyncState } from "./syncState.js";
 
 export const SettingsDraftContext = React.createContext(null);
 
@@ -33,31 +33,53 @@ export function PaneHead({ icon: Icon, title, children }) {
 
 // `scope` tags where the section's settings live: "account" (they follow
 // the signed-in account, app/prefDefs.js) or "browser" (this device only).
-// An account tag reads the profile's live sync state from
+// An account section also names the preferences it holds (`prefs`, from
+// settings/sectionPrefs.js), and its tag reads their live sync state from
 // SettingsSyncContext ({local, cloud}, provided by the dialog;
-// settings/syncState.js): icon + short text, the sentence on hover.
+// settings/syncState.js). The tag is an icon and one muted word; the
+// sentence is its hover title and accessible name.
 export const SettingsSyncContext = React.createContext(null);
-const SYNC_ICONS = { check: CheckIcon, cloudCheck: CloudCheckIcon, refresh: RefreshIcon, alert: AlertCircleIcon };
+const SYNC_ICONS = { monitor: MonitorIcon, check: CheckIcon, cloudCheck: CloudCheckIcon, refresh: RefreshIcon, alert: AlertCircleIcon };
 
-function ScopeTag({ scope }) {
+// A save takes about a second; the spinner it starts keeps turning at least
+// this long, so the feedback is seen rather than flickered.
+const MIN_SPIN_MS = 700;
+
+function useMinimumSpin(spin) {
+  const [held, setHeld] = React.useState(false);
+  const since = React.useRef(0);
+  React.useEffect(() => {
+    if (spin) { since.current = Date.now(); setHeld(true); return undefined; }
+    const left = MIN_SPIN_MS - (Date.now() - since.current);
+    if (left <= 0) { setHeld(false); return undefined; }
+    const t = setTimeout(() => setHeld(false), left);
+    return () => clearTimeout(t);
+  }, [spin]);
+  return spin || held;
+}
+
+function ScopeTag({ scope, prefs }) {
   const sync = React.useContext(SettingsSyncContext);
-  if (scope !== "account") return <span className="setScope" data-scope={scope}>This browser</span>;
-  const tag = profileSyncState(sync?.local, sync?.cloud);
+  const read = scope === "account" ? profileSyncState(sync?.local, sync?.cloud, prefs) : BROWSER_TAG;
+  const spinning = useMinimumSpin(read.spin);
+  const tag = spinning && !read.spin ? { ...read, state: "syncing", icon: "refresh", spin: true } : read;
   const Icon = SYNC_ICONS[tag.icon];
+  const where = tag.label === "browser" ? "Browser setting" : "Account setting";
   return (
-    <span className={`setScope ${tag.tone} ${tag.spin ? "mirrorSpin" : ""}`} data-scope={scope} data-sync={tag.state} title={tag.title}>
-      {Icon ? <Icon size={11} /> : null}{tag.label}
+    <span className={`setScope ${tag.tone} ${tag.spin ? "mirrorSpin" : ""}`} data-scope={scope} data-sync={tag.state}
+      role="img" aria-label={`${where}. ${tag.title}`} title={tag.title}>
+      {Icon ? <Icon size={14} /> : null}{tag.label}
     </span>
   );
 }
 
-export function Section({ title, scope, action, children }) {
+export function Section({ title, scope, prefs, action, children }) {
   return (
     <>
       <div className="setSection" data-setting={title}>
         <span className="setSectionLabel">{title}</span>
         <span className="setSectionRule" />
-        {scope ? <ScopeTag scope={scope} /> : null}
+        {scope ? <ScopeTag scope={scope} prefs={prefs} /> : null}
         {action}
       </div>
       {children}

@@ -15,7 +15,7 @@ from fastapi.responses import FileResponse, JSONResponse
 from pydantic import BaseModel
 from starlette.background import BackgroundTask
 
-from .. import cloud_auth, ratelimit, workspaces, ws_backup
+from .. import cloud_auth, ratelimit, version, workspaces, ws_backup
 from ..auth import is_guest_workspace, require_user, requested_ws, set_session_cookie
 from ..ratelimit import client_ip
 from ..db import connect_users_db, page_now, ws_dir
@@ -213,13 +213,15 @@ async def get_session(request: Request):
     """Who am I, plus the workspaces I belong to (``workspaces``: [{id,
     name, role, personal, members}]) and my default one — enough for the
     frontend to pick a workspace and paint the switcher without another
-    round trip."""
+    round trip. ``build`` (version, commit, label, frozen) is what a
+    problem report names this server by; the login page gets it too."""
     user = request.state.user
+    build = version.build_info()
     if not user:
-        return {"user": None}
+        return {"user": None, "build": build}
     return {"user": user, "is_guest": request.state.is_guest, "is_admin": request.state.is_admin,
             "default_workspace": request.state.default_ws or workspaces.ensure_personal(user),
-            "workspaces": workspaces.list_for_user(user)}
+            "workspaces": workspaces.list_for_user(user), "build": build}
 
 
 @router.get("/accounts")

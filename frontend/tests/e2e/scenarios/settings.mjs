@@ -347,19 +347,36 @@ export async function settingsScenarios(env) {
     } finally { await ctx.close(); }
   });
 
-  await step("settings: section tags say where settings live and whether they are saved", async () => {
+  await step("settings: section tags say where settings live and whether each section's settings are saved", async () => {
     const { ctx, page } = await setup();
     try {
       await openSettings(page);
       const tag = (title) => page.locator(`.settingsPane .setSection[data-setting="${title}"] .setScope`);
-      // a password account without Gamma Cloud: saved on this server, with the check
-      await until(() => tag("Theme").getAttribute("data-sync").then((v) => v === "saved"));
-      assertEq(await tag("Theme").innerText(), "Your account");
+      const sync = (title) => tag(title).getAttribute("data-sync");
+      // a password account without Gamma Cloud: saved on this server, a check and one word
+      await until(() => sync("Theme").then((v) => v === "saved"));
+      assertEq(await tag("Theme").innerText(), "account");
       assertEq(await tag("Theme").locator("svg").count(), 1);
       assert((await tag("Theme").getAttribute("title")).startsWith("Saved on this server."));
-      // a device section stays with the browser
-      assertEq(await tag("Interface").innerText(), "This browser");
-      assertEq(await tag("Interface").locator("svg").count(), 0);
+      assert((await tag("Theme").getAttribute("aria-label")).startsWith("Account setting. Saved on this server."));
+      // a device section stays with the browser: a monitor and one word
+      assertEq(await sync("Interface"), "browser");
+      assertEq(await tag("Interface").innerText(), "browser");
+      assertEq(await tag("Interface").locator("svg").count(), 1);
+      // one change spins only the section holding it
+      await nav(page, "Reading & editing").click();
+      await until(() => sync("Notes").then((v) => v === "saved"));
+      await row(page, "Enter key").getByRole("button", { name: "New note", exact: true }).click();
+      await until(() => sync("Notes").then((v) => v === "syncing"));
+      assertEq(await sync("Search opens as"), "saved");
+      assertEq(await sync("PDF viewer"), "saved");
+      await until(() => sync("Notes").then((v) => v === "saved"));
+      assertEq((await user.api("/api/prefs/profile")).value?.enterNewNote, true);
+      await nav(page, "Appearance").click();
+      assertEq(await sync("Theme"), "saved");
+      await nav(page, "Reading & editing").click();
+      await row(page, "Enter key").getByRole("button", { name: "New line", exact: true }).click();
+      await until(async () => (await user.api("/api/prefs/profile")).value?.enterNewNote === false);
       assertNoProblems(page);
     } finally { await ctx.close(); }
   });
@@ -625,6 +642,58 @@ export async function settingsScenarios(env) {
       if (flags.keep) await page.screenshot({ path: `${server.dir}/settings-mobile.png`, animations: "disabled" });
       assertNoProblems(page);
     } finally { await ctx.close(); }
+  });
+
+  await step("settings: Report a problem gathers diagnostics and opens the prefilled GitHub bug form", async () => {
+    const { ctx, page } = await setup();
+    try {
+      // window.open would leave the test; record the URL instead.
+      await page.evaluate(() => { window.__opened = []; window.open = (u) => { window.__opened.push(u); return {}; }; });
+      await page.getByRole("button", { name: "Account & settings", exact: true }).click();
+      await page.getByRole("button", { name: "Report a problem…", exact: true }).click();
+      const dialog = page.getByRole("dialog", { name: "Report a problem", exact: true });
+      await dialog.waitFor();
+      const open = dialog.getByRole("button", { name: "Open GitHub issue", exact: true });
+      assert(await open.isDisabled(), "nothing to report yet");
+      await dialog.getByLabel("What happened").fill("A blue line stays on the notes\nafter a drag");
+      await dialog.getByLabel("How to reproduce").fill("drag a block, drop it outside");
+      await dialog.getByText("Preview the report", { exact: true }).click();
+      const preview = await dialog.locator("pre").textContent();
+      assert(/\*\*Build:\*\* Gamma .+ · (server|checkout|desktop app)/.test(preview), `build line in ${preview}`);
+      assert(/\*\*Browser:\*\* .+ on .+ · \d+×\d+/.test(preview), "browser line");
+      assert(/\*\*View:\*\* home.* · workspace: personal, owner$/m.test(preview), `view line in ${preview}`);
+      assert(!preview.includes("Server (seen as admin)"), "a member sees no server section");
+      // The toggle folds the diagnostics away — and the preview with them.
+      await dialog.getByRole("checkbox", { name: "Include diagnostics" }).uncheck();
+      assertEq(await dialog.locator("pre").count(), 0, "no preview without diagnostics");
+      await dialog.getByRole("checkbox", { name: "Include diagnostics" }).check();
+      await open.click();
+      await dialog.waitFor({ state: "detached" });
+      const url = new URL(await until(() => page.evaluate(() => window.__opened[0]), { what: "the GitHub tab" }));
+      assertEq(`${url.origin}${url.pathname}`, "https://github.com/tim4431/gamma/issues/new");
+      assertEq(url.searchParams.get("template"), "bug_report.yml");
+      assertEq(url.searchParams.get("title"), "A blue line stays on the notes");
+      assertEq(url.searchParams.get("description"), "A blue line stays on the notes\nafter a drag");
+      assertEq(url.searchParams.get("steps"), "drag a block, drop it outside");
+      assert(url.searchParams.get("diagnostics").includes("**Build:**"), "diagnostics ride along");
+      // The Diagnostics pane's Help row opens the same dialog; an admin's
+      // report adds the server dashboard and log.
+      server.manage("set-admin", "settings-user", "on");
+      await page.reload();
+      await page.waitForSelector(".folderNewBtn");
+      await openSettings(page);
+      await nav(page, "Diagnostics").click();
+      await row(page, "Report a problem").getByRole("button", { name: "Report…", exact: true }).click();
+      await dialog.waitFor();
+      await dialog.getByText("Preview the report", { exact: true }).click();
+      await until(async () => (await dialog.locator("pre").textContent()).includes("**Server (seen as admin):** Gamma"), { what: "the admin's server section" });
+      await page.keyboard.press("Escape");
+      await dialog.waitFor({ state: "detached" });
+      assertNoProblems(page);
+    } finally {
+      server.manage("set-admin", "settings-user", "off");
+      await ctx.close();
+    }
   });
 
   await step("settings: administrators see their own account separately from all users", async () => {

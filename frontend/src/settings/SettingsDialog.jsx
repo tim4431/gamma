@@ -5,6 +5,7 @@ import {
   PaneHead, Section, Row, Toggle, Segmented, ToggleGroup, IconChoices, UnitInput, CharSlider, approxPages,
   Stat, Empty, QuotaMeter, LogBox, SettingsDraftContext, SettingsSyncContext, useSettingsDraft,
 } from "./SettingsKit";
+import { SECTION_PREFS } from "./sectionPrefs.js";
 import { LibraryDisplaySettings } from "./SettingsLibraryDisplay";
 import { AppearanceSettings } from "./SettingsAppearance";
 import { AiSettings } from "./SettingsAi";
@@ -88,7 +89,7 @@ function ViewerSettings({ value, onTranslationModels }) {
   return (
     <>
 
-      <Section title="PDF viewer" scope="account">
+      <Section title="PDF viewer" scope="account" prefs={SECTION_PREFS.reading["PDF viewer"]}>
         <Row
           icon={HighlightIcon}
           label="Imported annotations"
@@ -121,7 +122,7 @@ function ViewerSettings({ value, onTranslationModels }) {
           onChange={value.setInkPressure}
         />
       </Section>
-      <Section title="Translation" scope="account" action={
+      <Section title="Translation" scope="account" prefs={SECTION_PREFS.reading["Translation"]} action={
         <button className="uiBtn sm" onClick={onTranslationModels} title="Translation model, effort and parallel requests (AI › Advanced)">
           <SlidersIcon size={13} /> Model & speed
         </button>
@@ -215,7 +216,7 @@ function SearchSettings({ value }) {
   return (
     <>
 
-      <Section title="Search opens as" scope="account">
+      <Section title="Search opens as" scope="account" prefs={SECTION_PREFS.reading["Search opens as"]}>
         <Row icon={HomeIcon} label="On the home page" hint="Full panel: grouped result lists"
           title="With no PDF open the compact find bar has nothing to show, so the home page defaults to the full panel.">
           <Segmented value={value.searchDetailsHome ? "panel" : "bar"} onChange={(v) => value.setSearchDetailsHome(v === "panel")}
@@ -235,7 +236,7 @@ function NotesSettings({ value }) {
   return (
     <>
 
-      <Section title="Notes" scope="account">
+      <Section title="Notes" scope="account" prefs={SECTION_PREFS.reading["Notes"]}>
         <Row icon={CornerDownLeftIcon} label="Enter key"
           hint={value.enterNewNote ? "Shift+Enter inserts a new line" : "Shift+Enter creates a new note"}>
           <Segmented value={value.enterNewNote ? "note" : "line"}
@@ -296,10 +297,10 @@ function LibrarySettings({ value }) {
   return (
     <>
       <PaneHead icon={ListIcon} title="Library" />
-      <Section title="Display" scope="account">
+      <Section title="Display" scope="account" prefs={SECTION_PREFS.library["Display"]}>
         <LibraryDisplaySettings value={value} />
       </Section>
-      <Section title="PDFs" scope="account">
+      <Section title="PDFs" scope="account" prefs={SECTION_PREFS.library["PDFs"]}>
         <Toggle
           icon={CloudDownloadIcon}
           label="Open-access fallback"
@@ -729,7 +730,7 @@ function PromptsSettings({ value }) {
       <PaneHead icon={TypeIcon} title="Custom prompts" />
       <Section
         title="Prompts"
-        scope="account"
+        scope="account" prefs={SECTION_PREFS.prompts["Prompts"]}
         action={
           <span className="setControlGroup">
             <button className="uiBtn sm" disabled={!dirty} onClick={discard}>Cancel</button>
@@ -798,7 +799,7 @@ export function AgentToolPicker({ kind, perms, setPerms, disabled }) {
 // chips the chat header's settings popover shows for the open chat.
 function AssistantSettings({ value }) {
   return (
-    <Section title="Tools" scope="account">
+    <Section title="Tools" scope="account" prefs={SECTION_PREFS.assistant["Tools"]}>
       <Toggle icon={SparklesIcon} label="Assistant tools"
         hint="Let chats read, search and edit your library"
         title="The master switch for tools in every chat. Off keeps your per-chat choices below for when you turn it on again."
@@ -833,7 +834,7 @@ function AdvancedAiSettings({ value, ai, papers }) {
           <MenuSelect label="Default reasoning effort" value={ai.chatEffort} onChange={ai.setChatEffort}
             options={[["", "Default"], ...(ai.aiInfo?.efforts || ["low", "medium", "high"]).map((v) => [v, v])]} />
         </Row>
-        <Section title="Tool limits" scope="account">
+        <Section title="Tool limits" scope="account" prefs={SECTION_PREFS.advanced["Tool limits"]}>
         <Row icon={RefreshIcon} label="Tool rounds"
           hint="AI ↔ tool round-trips per message"
           title="Each round-trip lets the model issue more tool calls. This is a runaway guard — actual work is separately capped at 200 changes per message.">
@@ -851,7 +852,7 @@ function AdvancedAiSettings({ value, ai, papers }) {
         </Section>
       <Section
         title="Context size"
-        scope="account"
+        scope="account" prefs={SECTION_PREFS.advanced["Context size"]}
         action={
           <MenuSelect label="Context budget" value={contextPreset}
             onChange={(preset) => {
@@ -870,8 +871,8 @@ function AdvancedAiSettings({ value, ai, papers }) {
           </Row>
         ))}
       </Section>
-        <Section title="Translation performance" scope="account"><TranslationModels value={papers} advanced /></Section>
-        <Section title="Chat" scope="account">
+        <Section title="Translation performance" scope="account" prefs={SECTION_PREFS.advanced["Translation performance"]}><TranslationModels value={papers} advanced /></Section>
+        <Section title="Chat" scope="account" prefs={SECTION_PREFS.advanced["Chat"]}>
           <Toggle
             icon={RectSelectIcon}
             label="Clear snapshots on click"
@@ -919,6 +920,12 @@ function AdvancedSettings({ value }) {
             options={[["all", "All"], ["warn", "Warnings", null, "Warnings and errors"], ["error", "Errors"]]} />}
         />
       </Section>
+      <Section title="Help">
+        <Row icon={BugIcon} label="Report a problem" hint="A GitHub issue prefilled with this log and the build"
+          title="Describe what went wrong; Gamma adds its build, your browser and the recent lines of this log and opens the bug form on GitHub for you to review before posting.">
+          <button type="button" className="uiBtn sm" onClick={value.openReport}>Report…</button>
+        </Row>
+      </Section>
     </>
   );
 }
@@ -929,13 +936,16 @@ const SYNC_POLL_MS = 15000;
 const SYNC_SOON_MS = 6000; // the server pushes to Gamma Cloud 5 s after a change lands
 
 // The account profile's sync state for the section tags while the dialog is
-// open: this browser's (useProfileSync, `local`) plus this server's with Gamma
-// Cloud (GET /api/auth/cloud/sync-status, `cloud`), polled every 15 s, again
-// as soon as a local change has been saved, and sooner while a push waits.
+// open: this browser's (useProfileSync, `local`, per preference name) plus
+// this server's with Gamma Cloud (GET /api/auth/cloud/sync-status, `cloud`,
+// account-wide), polled every 15 s, again as soon as a local change has been
+// saved, and sooner while a push waits. Every answer also goes to the local
+// hook's noteCloud, which then knows when its last push reached the cloud.
 function useCloudSyncStatus(open, local) {
   const [cloud, setCloud] = React.useState(null);
   const signedIn = !!local && local.state !== "signed-out";
   const saved = local?.state === "loaded";
+  const noteCloud = local?.noteCloud;
   React.useEffect(() => {
     if (!open || !signedIn) { setCloud(null); return undefined; }
     let stopped = false;
@@ -943,14 +953,14 @@ function useCloudSyncStatus(open, local) {
     const poll = () => {
       apiJson(`${API}/auth/cloud/sync-status`).catch(() => null).then((d) => {
         if (stopped) return;
-        if (d) setCloud(d);
+        if (d) { setCloud(d); noteCloud?.(d.profile); }
         const soon = d?.profile?.state === "pending" && !d.profile.error;
         timer = setTimeout(poll, soon ? SYNC_SOON_MS : SYNC_POLL_MS);
       });
     };
     poll();
     return () => { stopped = true; clearTimeout(timer); };
-  }, [open, signedIn, saved]);
+  }, [open, signedIn, saved, noteCloud]);
   return React.useMemo(() => ({ local, cloud }), [local, cloud]);
 }
 

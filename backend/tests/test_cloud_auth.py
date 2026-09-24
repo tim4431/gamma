@@ -692,3 +692,38 @@ def test_grant_check_runs_at_startup(monkeypatch):
 
     asyncio.run(run())
     assert seen == [1]
+
+
+def test_every_outbound_call_identifies_as_gamma(monkeypatch, tmp_path):
+    """The account server and the share host sit behind Cloudflare, which
+    blocks the bare Python-urllib signature: every call carries Gamma's
+    user agent — the discovery fetch, the username lookup, the mirror client."""
+    import io
+    import urllib.request
+
+    from gamma import sync_engine, workspaces
+
+    seen = []
+
+    class _Resp(io.BytesIO):
+        status = 200
+
+        def __enter__(self):
+            return self
+
+        def __exit__(self, *a):
+            return False
+
+    def fake_urlopen(req, timeout=None):
+        seen.append(req.get_header("User-agent") or "")
+        return _Resp(b'{"issuer": "https://acct.example", "sub": "x", "username": "x"}')
+
+    monkeypatch.setattr(urllib.request, "urlopen", fake_urlopen)
+    cloud_auth._discovery_cache.clear()
+    try:
+        cloud_auth.discovery("https://acct.example")  # the body is not a full discovery document
+    except cloud_auth.CloudAuthError:
+        pass
+    workspaces.lookup_with_token("https://acct.example", "tok", "alice")
+    sync_engine.Remote("https://share.example", "", "gamma_x").get("/api/sync/whoami")
+    assert len(seen) == 3 and all(ua.startswith("Gamma/") for ua in seen), seen

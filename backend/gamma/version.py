@@ -50,6 +50,13 @@ def label() -> str:
     return "development build" + (f" ({COMMIT})" if COMMIT else "")
 
 
+def build_info() -> dict:
+    """The build as every signed-in client may know it (``/api/session``):
+    what a problem report names, nothing an admin dashboard adds."""
+    return {"version": VERSION, "commit": COMMIT, "label": label(),
+            "frozen": bool(getattr(sys, "frozen", False))}
+
+
 def parse_version(text) -> tuple | None:
     """``v1.2.3`` / ``1.2.3`` → ``(1, 2, 3)``; None for anything else."""
     m = re.fullmatch(r"v?(\d+)\.(\d+)(?:\.(\d+))?", str(text or "").strip())
@@ -103,5 +110,5 @@ def server_info(refresh: bool = False) -> dict:
         "latest": release, "latest_error": error,
         "update_available": (theirs > mine) if (mine and theirs) else None,
         "image": IMAGE, "releases_url": RELEASES_PAGE,
-        "frozen": bool(getattr(sys, "frozen", False)),
+        "frozen": build_info()["frozen"],
     }

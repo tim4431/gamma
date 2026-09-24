@@ -383,6 +383,7 @@
 :is(
   .searchInput,
   .promptTextarea,
+  .reportProblemText,
   .aiKeyInput,
   .loginInput,
   .folderNewInput,
@@ -3733,6 +3734,37 @@ html.appFocusFullscreen, html.appFocusFullscreen body { overflow: hidden; oversc
   flex-wrap: wrap;
   justify-content: flex-end;
   gap: 8px;
+}
+/* Report a problem (support/ReportProblem.jsx): two text boxes, the
+   diagnostics preview folded under its own summary. */
+.reportModal.reportProblem { width: min(540px, calc(100vw - 32px)); }
+.reportProblemText {
+  width: 100%;
+  font-size: calc(12.5px * var(--ui-font-scale, 1));
+  line-height: 1.5;
+  padding: 8px 10px;
+  resize: vertical;
+}
+.reportProblemText:focus { border-color: var(--text-dim); }
+.reportPreview summary {
+  cursor: pointer;
+  font-size: calc(12px * var(--ui-font-scale, 1));
+  color: var(--text-secondary);
+  user-select: none;
+}
+.reportPreview pre {
+  margin: 6px 0 0;
+  max-height: 220px;
+  overflow: auto;
+  overscroll-behavior: contain;
+  border: 1px solid var(--border-subtle);
+  border-radius: 8px;
+  padding: 8px 10px;
+  font-size: calc(11px * var(--ui-font-scale, 1));
+  line-height: 1.45;
+  white-space: pre-wrap;
+  word-break: break-word;
+  color: var(--text-secondary);
 }
 .chatInputRow {
   position: relative;

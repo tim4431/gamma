@@ -135,7 +135,11 @@ class Remote:
         return status == 200
 
     def _headers(self, content_type=None):
-        headers = {"Authorization": f"Bearer {self.token}", "Accept": "application/json"}
+        from . import cloud_auth  # local: cloud_auth imports this module
+
+        # the remote may sit behind Cloudflare, which blocks a bare Python-urllib signature
+        headers = {"Authorization": f"Bearer {self.token}", "Accept": "application/json",
+                   "User-Agent": cloud_auth.user_agent()}
         if self.ws:
             headers["X-Gamma-Workspace"] = self.ws
         if content_type:

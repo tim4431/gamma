@@ -14,6 +14,9 @@ def test_guest_login_and_session(guest):
     data = r.json()
     assert data["user"]
     assert data["is_guest"] is True
+    # The build a problem report names the server by (gamma/version.py).
+    assert set(data["build"]) == {"version", "commit", "label", "frozen"}
+    assert data["build"]["label"]
 
 
 def test_user_guard_matching_header_passes(guest):

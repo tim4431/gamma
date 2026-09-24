@@ -192,8 +192,11 @@ def _http(url: str, data: bytes | None = None, headers: dict | None = None, *, m
           timeout: float = HTTP_TIMEOUT) -> dict:
     """One call to the account server: its JSON answer, or CloudAuthError
     (``status`` None when it could not be reached)."""
-    req = urllib.request.Request(url, data=data, headers={"Accept": "application/json", **(headers or {})},
-                                 method=method)
+    # Always identify as Gamma: the account server sits behind Cloudflare,
+    # which blocks the bare Python-urllib signature.
+    req = urllib.request.Request(url, data=data, method=method,
+                                 headers={"Accept": "application/json", "User-Agent": user_agent(),
+                                          **(headers or {})})
     try:
         with urllib.request.urlopen(req, timeout=timeout) as resp:
             return json.load(resp)
@@ -336,6 +339,11 @@ def _user_agent(base: str) -> str:
     from . import version
     system = {"Darwin": "macOS"}.get(platform.system(), platform.system()) or "unknown system"
     return f"Gamma/{version.label()} ({system}; {base})"
+
+
+def user_agent() -> str:
+    """This server's user agent for any call to another server."""
+    return _user_agent(server_url() or "no address")
 
 
 def exchange(request, *, code: str, state: str) -> tuple[dict, dict, str]:

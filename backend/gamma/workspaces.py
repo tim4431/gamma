@@ -410,7 +410,10 @@ def clean_cloud_username(name) -> str:
 
 def _get_json(url: str, headers: dict) -> tuple[int, dict]:
     """(HTTP status, JSON body) of a GET; CloudLookupError when unreachable."""
-    req = urllib.request.Request(url, headers={"Accept": "application/json", **headers})
+    from . import cloud_auth  # local: cloud_auth imports this module
+
+    req = urllib.request.Request(url, headers={"Accept": "application/json", "User-Agent": cloud_auth.user_agent(),
+                                               **headers})
     try:
         with urllib.request.urlopen(req, timeout=LOOKUP_TIMEOUT) as resp:
             return resp.status, json.load(resp)

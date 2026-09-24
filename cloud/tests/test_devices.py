@@ -2,6 +2,7 @@
 a revoke, code replay, sign-out-everywhere, the refresh retry window and
 reuse detection, one grant per device, last activity, and the page."""
 
+import re
 import sqlite3
 import threading
 import time
@@ -194,6 +195,13 @@ def test_the_devices_page(client):
     assert "Gamma apps" in page and "Browsers" in page and "This browser" in page
     assert "aria-label='Sign out Tim&#x27;s &lt;ThinkPad&gt;'" in page
     assert "<time datetime=" in page
+    # the inline script must parse: an apostrophe inside a single-quoted JS
+    # string once broke every button on this page
+    script = page[page.rindex("<script>") + 8:page.rindex("</script>")]
+    for quoted in re.findall(r"'((?:[^'\
+]|\.)*)'", script):
+        assert "'" not in quoted
+    assert 'confirm("Sign out every Gamma app' in script
 
 
 # --- browsers -----------------------------------------------------------------

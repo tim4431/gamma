@@ -385,12 +385,18 @@ which is what the profile endpoints check.
 **The authorize page.** `GET /authorize` validates the client and redirect
 URI first (a bad one is shown, never followed), the rest is redirected
 back as an OAuth error, and a valid request is stored as pending. A
-signed-in, verified person sees "Continue as *username*" with *use another
-account* and *cancel*; a signed-out person signs in on the page
+signed-in, verified person sees a Google-style confirm card
+(`pages._consent_page`): a Gamma Cloud brand strip, "Sign in to *client
+name*" with the asker's address under it (a hosted server's redirect-URI
+origin, or "on this computer" for the desktop app), the account as an
+avatar row, what the requested scopes give in plain words
+(`pages.SCOPE_WORDS`, never scope ids), a primary *Continue* with *use
+another account* and *cancel* as text links beneath, and a footnote
+pointing at Devices. A signed-out person signs in on the page
 (`POST /authorize/login`, which also sets the portal cookie so the next
-server is one click); an unverified person sees the verify notice. There
-is no consent screen: every client is first party, the page names the
-server that asks.
+server is one click); an unverified person sees the verify notice. Nothing
+is granted per scope: every client is first party, and the card only says
+who asks and what it gets.
 
 **Tokens.** `POST /token` with `authorization_code` checks the code's
 client, redirect URI, expiry and PKCE verifier; a replayed code revokes
@@ -511,7 +517,10 @@ the account server refused that grant and cleared by the next sign-in.
 **The device.** The desktop client names this install on the code
 exchange (`cloud_auth.device`): `device_id`, made once and kept in the
 `settings` KV as `cloud_device_id`, and `device_name`, the machine's host
-name; the user agent is `Gamma/<version> (<system>; <address>)`. A refresh
+name; the user agent is `Gamma/<version> (<system>; <address>)`, and every
+call this server makes to another (the account server, the username
+lookup, a mirror's remote) carries it — Cloudflare in front of the account
+server blocks the bare Python-urllib signature. A refresh
 token this server stops holding is revoked at the account server
 (`revoke_later`, RFC 7009, on a background thread, failures logged as
 warnings): the one a newer sign-in replaced (`link` returns it), the one a

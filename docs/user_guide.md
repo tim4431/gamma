@@ -218,6 +218,10 @@ The installed web app still needs the server to be reachable. For a library that
 - **Background tasks** (uploads, fetches, exports) show in the top bar's tasks popover with progress.
 - On a phone everything becomes full-screen views behind a bottom tab bar (Library/PDF · Notes · Chat).
 
+## Report a problem
+
+Something broke? Open the account menu and choose **Report a problem…** (it is also under Settings → Diagnostics → Help). Say what happened and, if you know, how to bring it back. Gamma adds what a maintainer needs to reproduce it: which build the server runs, your browser and screen, what kind of view was open, and the app's own recent log lines — never your notes, files or names, and any secret-looking text is masked; the preview shows exactly what goes out. **Open GitHub issue** opens the bug form with everything filled in for you to review before posting, and copies the same report to your clipboard; **Copy report** is for sending it any other way.
+
 ## Settings at a glance
 
 Settings (account menu → Settings) has one sidebar in three groups; the search box at the top finds any setting by name.
@@ -237,6 +241,7 @@ Settings (account menu → Settings) has one sidebar in three groups; the search
 | | Backups | Server-side snapshots |
 | | Library maintenance | Storage, search-index rebuild, metadata health table |
 | | Users, Server | Administrators: accounts, the dashboard, public URL, storage defaults, shared workspaces, server backups, the log |
+| | Diagnostics | This browser's session log, debug tracing, Report a problem |
 
 Preferences apply immediately; browser-only ones (theme, layout) are marked *This browser*, the rest sync with your account.
 

@@ -2,9 +2,9 @@
 // localStorage-backed state per entry of PREFS (app/prefDefs.js, where each
 // preference declares its key, default, codec and scope), plus the sync of
 // the account-scoped ones through the account's profile.
-import { useEffect, useRef, useState } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { API, apiJson, usePersistedState } from "../shared/lib/utils";
-import { PREFS, profileOf, readProfile, setterName } from "./prefDefs.js";
+import { ACCOUNT_PREFS, PREFS, profileOf, readProfile, setterName } from "./prefDefs.js";
 
 export { CHAT_KINDS, FILE_LABEL_MODES, THEMES, TRANSLATE_LANGS, UI_SCALE } from "./prefDefs.js";
 
@@ -40,27 +40,45 @@ const PULL_MIN_MS = 15000;
 // Until the first load succeeds nothing is pushed, so a session can't
 // overwrite a copy it never saw.
 //
-// Returns where that stands, {state, error} (the Settings dialog's section
-// tags read it, settings/syncState.js): "signed-out" (localStorage only),
-// "loading" (the first pull), "loaded" (in step with the server), "pending"
-// (a change settling), "pushing" (its PUT in flight), "failed" (the last
-// pull or push failed; `error` says why).
+// Returns where that stands (the Settings dialog's section tags read it,
+// settings/syncState.js):
+// - `state`: "signed-out" (localStorage only), "loading" (the first pull),
+//   "loaded" (in step with the server), "pending" (a change settling),
+//   "pushing" (its PUT in flight), "failed" (the last pull or push failed;
+//   `error` says why);
+// - Sets of preference names: `pending` (the value differs from the copy
+//   the server last confirmed), `inflight` (sent in the PUT now on its
+//   way), `failed` (a push of exactly this value failed; the next change
+//   sends it again), `awaitingCloud` (pushed since Gamma Cloud last
+//   reported the profile synced);
+// - `noteCloud(profile)`: the dialog hands it every sync-status answer; a
+//   "synced" at a time after the last push clears `awaitingCloud`.
+const NONE = new Set();
+const perName = (values) => Object.fromEntries(ACCOUNT_PREFS.map((name) => [name, JSON.stringify(values[name])]));
+// failed: {name: the value whose push failed}; awaitingAt: the server time of the last push
+const IDLE = { inflight: NONE, failed: {}, awaiting: NONE, awaitingAt: "" };
+
 export function useProfileSync(prefs, user) {
-  const snap = JSON.stringify(profileOf(prefs));
+  const values = profileOf(prefs);
+  const snap = JSON.stringify(values);
   const latest = useRef(null);
   latest.current = { prefs, snap, user };
   const syncedRef = useRef(null); // the server's profile as last seen/sent; null = not loaded
+  const confirmedRef = useRef(null); // {name: JSON} the server confirmed holding; null = not loaded
   const timerRef = useRef(null);
+  const pushIdRef = useRef(0);
+  const sendingRef = useRef(0); // PUTs not answered yet
   const [status, setStatus] = useState(() => ({ state: user ? "loading" : "signed-out", error: "" }));
+  const [flight, setFlight] = useState(IDLE);
   const mark = (state, error = "") => setStatus((was) => (was.state === state && was.error === error ? was : { state, error }));
 
   function apply(value) {
-    const values = readProfile(value);
+    const read = readProfile(value);
     const current = latest.current.prefs;
-    for (const [name, v] of Object.entries(values)) {
+    for (const [name, v] of Object.entries(read)) {
       if (JSON.stringify(current[name]) !== JSON.stringify(v)) current[setterName(name)](v);
     }
-    return JSON.stringify(values);
+    return JSON.stringify(read);
   }
 
   function push(keepalive = false) {
@@ -77,13 +95,28 @@ export function useProfileSync(prefs, user) {
       body: `{"value":${now}}`,
     };
     if (keepalive) { fetch(PROFILE_URL, { ...request, keepalive: true, credentials: "same-origin" }).catch(() => {}); return; }
+    const sent = perName(JSON.parse(now));
+    const confirmed = confirmedRef.current || {};
+    const names = ACCOUNT_PREFS.filter((name) => sent[name] !== confirmed[name]);
+    const id = ++pushIdRef.current;
+    sendingRef.current += 1;
+    setFlight((f) => ({ ...f, inflight: new Set(names) }));
     mark("pushing");
-    apiJson(PROFILE_URL, request).then(() => {
-      if (latest.current.user === u && !timerRef.current && syncedRef.current === now) mark("loaded");
+    // Only the latest push's answer ends `inflight`.
+    const settle = (next) => setFlight((f) => ({ ...next(f), inflight: id === pushIdRef.current ? NONE : f.inflight }));
+    apiJson(PROFILE_URL, request).then((d) => {
+      sendingRef.current -= 1;
+      if (latest.current.user !== u) return;
+      confirmedRef.current = sent;
+      settle((f) => ({ ...f, failed: {}, awaiting: new Set([...f.awaiting, ...names]), awaitingAt: d?.updated_at || f.awaitingAt }));
+      if (!timerRef.current && syncedRef.current === now) mark("loaded");
     }, (err) => {
+      sendingRef.current -= 1;
       // A failed PUT leaves the change pending, so a later pull doesn't revert it.
       if (syncedRef.current === now) syncedRef.current = before;
-      if (latest.current.user === u && !timerRef.current) mark("failed", err?.message || "");
+      if (latest.current.user !== u) return;
+      settle((f) => ({ ...f, failed: { ...f.failed, ...Object.fromEntries(names.map((name) => [name, sent[name]])) } }));
+      if (!timerRef.current) mark("failed", err?.message || "");
     });
   }
 
@@ -96,24 +129,34 @@ export function useProfileSync(prefs, user) {
 
   function pull(u) {
     return apiJson(PROFILE_URL).then((d) => {
-      // A local change waiting to go out is newer than what the server holds.
-      if (latest.current.user !== u || timerRef.current) return;
+      // A local change waiting to go out, or on its way, is newer than what the server holds.
+      if (latest.current.user !== u || timerRef.current || sendingRef.current) return;
+      // After a first load, or once the server's copy replaced this one, nothing is failed.
+      let settled = confirmedRef.current === null;
       if (!d.updated_at) {
-        if (syncedRef.current === null) syncedRef.current = ""; // never saved: seed from here
-      } else if (JSON.stringify(readProfile(d.value)) !== syncedRef.current) {
-        syncedRef.current = apply(d.value);
+        if (settled) { syncedRef.current = ""; confirmedRef.current = {}; } // never saved: seed from here
+      } else {
+        const read = readProfile(d.value);
+        if (JSON.stringify(read) !== syncedRef.current) { syncedRef.current = apply(d.value); settled = true; }
+        confirmedRef.current = perName(read);
       }
+      if (settled) setFlight((f) => ({ ...f, failed: {} }));
       mark("loaded");
       schedule();
     }).catch((err) => {
-      if (latest.current.user === u && !timerRef.current) mark("failed", err?.message || "");
+      if (latest.current.user !== u || timerRef.current) return;
+      // The first load failed: none of these settings are the account's copy yet.
+      if (confirmedRef.current === null) setFlight((f) => ({ ...f, failed: perName(profileOf(latest.current.prefs)) }));
+      mark("failed", err?.message || "");
     });
   }
 
   useEffect(() => {
     syncedRef.current = null;
+    confirmedRef.current = null;
     clearTimeout(timerRef.current);
     timerRef.current = null;
+    setFlight(IDLE);
     mark(user ? "loading" : "signed-out");
     if (user) pull(user);
   }, [user]);
@@ -140,5 +183,21 @@ export function useProfileSync(prefs, user) {
     };
   }, []);
 
-  return status;
+  const noteCloud = useCallback((profile) => {
+    if (profile?.state !== "synced" || !profile.at) return;
+    setFlight((f) => (f.awaiting.size && profile.at > f.awaitingAt ? { ...f, awaiting: NONE, awaitingAt: "" } : f));
+  }, []);
+
+  // A name whose push of exactly this value failed reads as failed, not pending.
+  const confirmed = confirmedRef.current;
+  const pendingKey = confirmed ? ACCOUNT_PREFS.filter((name) => {
+    const now = JSON.stringify(values[name]);
+    return now !== confirmed[name] && now !== flight.failed[name];
+  }).join(",") : "";
+  const failedKey = Object.keys(flight.failed).filter((name) => JSON.stringify(values[name]) === flight.failed[name]).join(",");
+  const pending = useMemo(() => (pendingKey ? new Set(pendingKey.split(",")) : NONE), [pendingKey]);
+  const failed = useMemo(() => (failedKey ? new Set(failedKey.split(",")) : NONE), [failedKey]);
+  return useMemo(() => ({
+    ...status, pending, inflight: flight.inflight, failed, awaitingCloud: flight.awaiting, noteCloud,
+  }), [status, pending, flight.inflight, failed, flight.awaiting, noteCloud]);
 }

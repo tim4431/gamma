@@ -14,6 +14,7 @@ import html
 import json
 import re
 from datetime import datetime, timezone
+from urllib.parse import urlsplit
 
 from . import accounts, config
 from .providers import NAMES
@@ -57,6 +58,16 @@ form .btn{margin-top:14px}.cf-turnstile{margin-top:14px}.msg{min-height:1.3em;fo
 .switch{margin-top:18px;text-align:center;font-size:13.5px;color:var(--text-2)}.terms{margin-top:12px;text-align:center;font-size:12px;color:var(--muted)}.terms a{color:inherit;text-decoration:underline}
 .via{display:flex;align-items:center;gap:10px;padding:10px 12px;border:1px solid var(--line);border-radius:6px;background:var(--surface-2);font-size:13.5px}.via svg{width:18px;height:18px;flex:none}
 .conn{display:flex;align-items:center;gap:12px;padding:10px 0;border-top:1px solid var(--line)}.conn:first-child{border-top:0;padding-top:0}.conn>svg{width:18px;height:18px;flex:none}.conn .txt{flex:1;min-width:0}.conn .txt b{font-weight:500;display:block}.conn .txt span{color:var(--muted);font-size:12.5px;display:block;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+/* the authorize page: a brand strip, the asker, the account, what it gets, the actions, a footnote */
+.consent{padding:0;margin-top:8vh}.consent .cbrand{display:flex;align-items:center;gap:9px;padding:12px 22px;border-bottom:1px solid var(--line);font-weight:600;font-size:13.5px}.consent .cbrand svg{width:20px;height:20px;display:block}.consent .cbrand em{font-style:normal;color:var(--accent);font-weight:500;margin-left:3px}
+.consent .cbody{padding:22px}.consent h1{font-size:21px;overflow-wrap:anywhere}.consent .where{display:flex;align-items:center;gap:6px;margin-top:6px;color:var(--muted);font-size:13px}.consent .where svg{width:14px;height:14px;flex:none}.consent .where span{min-width:0;overflow-wrap:anywhere}
+.who{display:flex;align-items:center;gap:12px;margin:20px 0;padding:10px 12px;border:1px solid var(--line);border-radius:8px}.who .avatar{width:36px;height:36px;font-size:15px}.who div{min-width:0}.who b,.who span{display:block;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}.who b{font-weight:600}.who span{color:var(--muted);font-size:12.5px}
+.gets{font-size:12.5px;font-weight:500;color:var(--text-2);margin-bottom:10px;overflow-wrap:anywhere}.scopes{list-style:none;margin:0;padding:0;display:grid;gap:10px}.scopes li{display:flex;align-items:center;gap:10px;font-size:13.5px}
+.scopes i{width:28px;height:28px;border-radius:6px;background:var(--surface-2);border:1px solid var(--line);display:grid;place-items:center;color:var(--text-2);flex:none}.scopes svg{width:15px;height:15px}
+.go{display:flex;justify-content:flex-end;margin-top:24px}.go .btn{min-width:112px}.alt{margin-top:10px;text-align:right;font-size:13px;color:var(--muted)}.alt .sep{margin:0 7px}
+.linkbtn{background:none;border:0;padding:0;font:inherit;color:inherit;cursor:pointer}.linkbtn:hover{color:var(--text);text-decoration:underline}.linkbtn:disabled{opacity:.5;cursor:default}
+.consent .msg{min-height:0}.consent .msg:empty{margin:0}.consent .cfoot{padding:11px 22px;border-top:1px solid var(--line);font-size:12.5px;color:var(--muted)}.consent .cfoot a{color:inherit;text-decoration:underline}
+@media(max-width:480px){.consent{margin-top:16px}.consent .cbody{padding:20px 18px}.consent .cbrand,.consent .cfoot{padding-left:18px;padding-right:18px}.go .btn{width:100%}.alt{text-align:center}}
 /* app shell */
 .app{display:grid;grid-template-columns:240px minmax(0,1fr);min-height:100vh}
 .side{background:var(--surface-2);border-right:1px solid var(--line);padding:14px 10px;display:flex;flex-direction:column;gap:2px;position:sticky;top:0;height:100vh;overflow-y:auto}
@@ -175,6 +186,9 @@ ICONS = {
     "ext": '<svg class=ext viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M7 17L17 7M8 7h9v9"/></svg>',
     "google": '<svg viewBox="0 0 48 48" aria-hidden="true"><path fill="#EA4335" d="M24 9.5c3.54 0 6.71 1.22 9.21 3.6l6.85-6.85C35.9 2.38 30.47 0 24 0 14.62 0 6.51 5.38 2.56 13.22l7.98 6.19C12.43 13.72 17.74 9.5 24 9.5z"/><path fill="#4285F4" d="M46.98 24.55c0-1.57-.15-3.09-.38-4.55H24v9.02h12.94c-.58 2.96-2.26 5.48-4.78 7.18l7.73 6c4.51-4.18 7.09-10.36 7.09-17.65z"/><path fill="#FBBC05" d="M10.53 28.59c-.48-1.45-.76-2.99-.76-4.59s.27-3.14.76-4.59l-7.98-6.19C.92 16.46 0 20.12 0 24c0 3.88.92 7.54 2.56 10.78l7.97-6.19z"/><path fill="#34A853" d="M24 48c6.48 0 11.93-2.13 15.89-5.81l-7.73-6c-2.15 1.45-4.92 2.3-8.16 2.3-6.26 0-11.57-4.22-13.47-9.91l-7.98 6.19C6.51 42.62 14.62 48 24 48z"/></svg>',
     "github": '<svg viewBox="0 0 16 16" fill="currentColor" aria-hidden="true"><path d="M8 0C3.58 0 0 3.58 0 8c0 3.54 2.29 6.53 5.47 7.59.4.07.55-.17.55-.38 0-.19-.01-.82-.01-1.49-2.01.37-2.53-.49-2.69-.94-.09-.23-.48-.94-.82-1.13-.28-.15-.68-.52-.01-.53.63-.01 1.08.58 1.23.82.72 1.21 1.87.87 2.33.66.07-.52.28-.87.51-1.07-1.78-.2-3.64-.89-3.64-3.95 0-.87.31-1.59.82-2.15-.08-.2-.36-1.02.08-2.12 0 0 .67-.21 2.2.82.64-.18 1.32-.27 2-.27.68 0 1.36.09 2 .27 1.53-1.04 2.2-.82 2.2-.82.44 1.1.16 1.92.08 2.12.51.56.82 1.27.82 2.15 0 3.07-1.87 3.75-3.65 3.95.29.25.54.73.54 1.48 0 1.07-.01 1.93-.01 2.2 0 .21.15.46.55.38A8.013 8.013 0 0016 8c0-4.42-3.58-8-8-8z"/></svg>',
+    "user": '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="8" r="4"/><path d="M4 21a8 8 0 0 1 16 0"/></svg>',
+    "sliders": '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M4 6h10M4 12h4M12 12h8M4 18h12"/><circle cx="16" cy="6" r="2"/><circle cx="10" cy="12" r="2"/><circle cx="18" cy="18" r="2"/></svg>',
+    "key": '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="8" cy="15" r="4"/><path d="M10.8 12.2L20 3M16 7l3 3M14 9l2 2"/></svg>',
     "out": '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M9 21H5a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h4M16 17l5-5-5-5M21 12H9"/></svg>',
 }
 
@@ -197,10 +211,15 @@ def _head(title: str) -> str:
             f"<style>{CSS}</style>{turnstile}</head>")
 
 
-def auth(title: str, lead: str, inner: str, script: str = "") -> str:
-    return (_head(title) + f"<body><div class=authwrap><div class=authtop><a href='{SITE}'>{LOGO}</a><a href='/'>Gamma<em>Cloud</em></a></div>"
-            f"<div class='auth card'><h1>{esc(title)}</h1>" + (f"<p class=lead>{lead}</p>" if lead else "") + f"{inner}</div></div>"
+def _auth_shell(title: str, card: str, script: str = "", cls: str = "", top: bool = True) -> str:
+    """The centred card; ``top`` adds the brand bar above it."""
+    bar = f"<div class=authtop><a href='{SITE}'>{LOGO}</a><a href='/'>Gamma<em>Cloud</em></a></div>" if top else ""
+    return (_head(title) + f"<body><div class=authwrap>{bar}<div class='auth card {cls}'>{card}</div></div>"
             f"<script>{JS}{script}</script></body></html>")
+
+
+def auth(title: str, lead: str, inner: str, script: str = "") -> str:
+    return _auth_shell(title, f"<h1>{esc(title)}</h1>" + (f"<p class=lead>{lead}</p>" if lead else "") + inner, script)
 
 
 def app(title: str, lead: str, account: dict, active: str, inner: str, script: str = "", head: str = "") -> str:
@@ -543,7 +562,7 @@ document.querySelectorAll('[data-endsession]').forEach(b => b.onclick = () => ac
   await api('/api/sessions/' + b.dataset.endsession + '/revoke', {}); gone(b.closest('.dev')); }, msg));
 const all = document.getElementById('revokeall');
 if (all) all.onclick = () => {
-  if (!confirm('Sign out every Gamma app and every other browser? Each app's Gamma server ends the sessions it opened within the hour.')) return;
+  if (!confirm("Sign out every Gamma app and every other browser? Each app's Gamma server ends the sessions it opened within the hour.")) return;
   act(all, async () => { await api('/api/devices/revoke-all', {}); location.reload(); }, msg);
 };
 """
@@ -700,6 +719,44 @@ loadAccounts(true);
 
 # --- the authorize page -------------------------------------------------------
 
+# what the scopes give the client, in the consent page's words
+SCOPE_WORDS = (({"openid", "email", "profile"}, "user", "Your username and e-mail"),
+               ({"prefs"}, "sliders", "Your settings, so they follow you"),
+               ({"offline_access"}, "key", "Stay signed in on this device"))
+
+
+def _consent_page(req: dict, account) -> str:
+    """A signed-in, verified person confirms the client that asks: who asks
+    (a hosted server by the origin of its redirect URI, the desktop app as
+    this computer), the account, what the scopes give, then Continue."""
+    client = req["client"]
+    name = client["name"]
+    if client["kind"] == "desktop":
+        where = f"{ICONS['desktop']}<span>on this computer</span>"
+    else:
+        url = urlsplit(req["redirect_uri"])
+        where = f"{ICONS['globe']}<span>{esc(f'{url.scheme}://{url.netloc}')}</span>"
+    scopes = set(req["scope"].split())
+    gets = "".join(f"<li><i>{ICONS[icon]}</i>{words}</li>" for wanted, icon, words in SCOPE_WORDS if scopes & wanted)
+    user = account["username"]
+    card = (f"<div class=cbrand>{LOGO}<span>Gamma<em>Cloud</em></span></div><div class=cbody>"
+            f"<h1>Sign in to {esc(name)}</h1><p class=where>{where}</p>"
+            f"<div class=who><div class=avatar>{esc(user[:1])}</div><div><b>{esc(user)}</b><span>{esc(account['email'])}</span></div></div>"
+            f"<p class=gets>What {esc(name)} gets</p><ul class=scopes>{gets}</ul>"
+            "<div class=go><button class='btn btn--primary' id=go>Continue</button></div>"
+            "<p class=alt><button class=linkbtn id=other>Use another account</button><span class=sep aria-hidden=true>·</span>"
+            "<button class=linkbtn id=cancel>Cancel</button></p><div class=msg id=err></div></div>"
+            "<p class=cfoot>You can sign this device out any time from <a href=/devices>Devices</a>.</p>")
+    rid = json.dumps(req["id"])
+    script = ("const err = document.getElementById('err');"
+              f"document.getElementById('go').onclick = async () => {{ try {{ const d = await api('/authorize/continue', {{request_id: {rid}}}); "
+              "location.href = d.redirect; } catch (e) { err.textContent = e.message; } };"
+              "document.getElementById('other').onclick = (e) => act(e.target, async () => { await api('/api/logout', {}); location.reload(); }, err);"
+              f"document.getElementById('cancel').onclick = (e) => act(e.target, async () => {{ const d = await api('/authorize/cancel', {{request_id: {rid}}}); "
+              "if (d.redirect) location.href = d.redirect; }, err);")
+    return _auth_shell(f"Sign in to {name}", card, script, cls="consent", top=False)
+
+
 def authorize_page(req: dict, account, verify_needed: bool = False, social: dict | None = None) -> str:
     client = req["client"]
     who = esc(client["name"])
@@ -711,17 +768,7 @@ def authorize_page(req: dict, account, verify_needed: bool = False, social: dict
                  "<p class=links><a href=/>Your account</a></p>")
         return auth("Confirm your e-mail first", "", inner, RESEND_JS)
     if account:
-        inner = (f"<p class=lead>Continue as <b>{esc(account['username'])}</b> ({esc(account['email'])})?</p>"
-                 "<button class='btn btn--primary btn--block' id=go>Continue</button>"
-                 "<div class=actions><button class='btn btn--sm' id=other>Use another account</button>"
-                 "<button class='btn btn--sm' id=cancel>Cancel</button></div><div class=msg id=err></div>")
-        script = (f"document.getElementById('go').onclick = async () => {{ try {{ const d = await api('/authorize/continue', {{request_id: {rid}}}); "
-                  f"location.href = d.redirect; }} catch (e) {{ document.getElementById('err').textContent = e.message; }} }};"
-                  f"const err = document.getElementById('err');"
-                  f"document.getElementById('other').onclick = (e) => act(e.target, async () => {{ await api('/api/logout', {{}}); location.reload(); }}, err);"
-                  f"document.getElementById('cancel').onclick = (e) => act(e.target, async () => {{ const d = await api('/authorize/cancel', {{request_id: {rid}}}); "
-                  f"if (d.redirect) location.href = d.redirect; }}, err);")
-        return auth(f"Sign in to {client['name']}", "", inner, script)
+        return _consent_page(req, account)
     tiles, social_js = _social(social)
     inner = f"<form id=f>{_password_fields()}</form>{tiles}{_to_register()}{_terms()}"
     script = (f"bind('f', async d => {{ const r = await api('/authorize/login', {{request_id: {rid}, login: d.login, password: d.password}}); "

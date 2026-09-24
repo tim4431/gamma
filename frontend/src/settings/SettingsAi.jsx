@@ -12,6 +12,7 @@ import { MenuSelect } from "../shared/ui/Menus";
 import { cachedPercent, fmtTokens, usageDetail } from "../chat/tokenUsage";
 import { ModelPicker } from "./ModelPicker";
 import { Section, SubDialog, Step, Field, Empty, PercentMeter, Row, PasswordInput, StatText, Toggle } from "./SettingsKit";
+import { SECTION_PREFS } from "./sectionPrefs.js";
 import { ActivityIcon, GlobeIcon, KeyIcon, MicIcon, PaperIcon, RefreshIcon, SparklesIcon, Trash2Icon, UserIcon } from "../shared/ui/Icons";
 
 const DICTATION_LANGS = [
@@ -654,7 +655,7 @@ export function AiSettings({ value, taskModels, confirm, setStatus }) {
             </div>
           ) : null}
           {canEdit && providers.length ? (
-            <Section title="Connection check">
+            <Section title="Connection check" scope="account" prefs={SECTION_PREFS.connections["Connection check"]}>
               <Row icon={RefreshIcon} label="Check at login"
                 hint="Verify the active provider when Gamma opens"
                 title="Runs a connection check on the active provider at login; a failure (expired ChatGPT sign-in, rejected key, unreachable provider) shows a warning in the chat window instead of surfacing as a broken chat later. The credential check is free — OAuth entries query subscription usage, API keys list models; the test request sends a tiny completion (through the provider's test model — by default your metadata model) and spends a few tokens.">
@@ -682,7 +683,7 @@ export function AiSettings({ value, taskModels, confirm, setStatus }) {
         </>
       ) : null}
       {providers.length ? <>
-      <Section title="Models" action={<span className="setScope">This browser</span>}>
+      <Section title="Models" scope="browser">
         {(value.aiModels || []).length ? <Row icon={SparklesIcon} label="Default chat model"
           hint="Also used by citations and generated titles">
           <MenuSelect label="Default chat model" value={value.chatModel} onChange={value.setChatModel}

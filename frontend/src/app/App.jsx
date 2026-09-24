@@ -28,7 +28,7 @@ import SearchPanel from "../search/SearchPanel";
 import QuickOpen from "../library/QuickOpen";
 import { ContextMenu, MenuItem, MenuLabel, MenuSelect, SubMenuItem } from "../shared/ui/Menus";
 import {
-  ActivityIcon, AlertCircleIcon, ArrowLeftIcon, ArrowUpDownIcon, BookIcon, CheckIcon, CopyIcon, DatabaseIcon, DownloadIcon, ExportIcon,
+  ActivityIcon, AlertCircleIcon, ArrowLeftIcon, ArrowUpDownIcon, BookIcon, BugIcon, CheckIcon, CopyIcon, DatabaseIcon, DownloadIcon, ExportIcon,
   ExternalLinkIcon, EyeIcon, EyeOffIcon, FileGlyph, FileIcon, FileTextIcon, FitWidthIcon, FolderGlyph,
   FilePlusIcon, PaperclipIcon, FolderIcon, FolderOpenIcon, FolderPlusIcon, GlobeIcon, HelpCircleIcon, HomeIcon, ImportIcon, InfoIcon, LabelGlyph, LabelIcon,
   LanguagesIcon, LanguagesOffIcon, LinkIcon, LogOutIcon, MaximizeIcon, MenuIcon, MinimizeIcon, PenIcon, PinIcon, PlusIcon,
@@ -79,6 +79,7 @@ import { applyOps, applyPatch, keepUiFlags } from "../shared/model/blockOps";
 import { PresenceBar } from "../collaboration/Presence";
 import { cleanLinkName, loadLinkName, saveLinkName, LINK_NAME_MAX } from "../collaboration/linkName";
 import SettingsDialog from "../settings/SettingsDialog";
+import ReportProblem from "../support/ReportProblem";
 import { useGuide } from "../guide/useGuide";
 import GuideOverlay from "../guide/GuideOverlay";
 import { guideEvents } from "../guide/events";
@@ -483,7 +484,7 @@ function LibraryApp() {
         }
         setWorkspaceUnavailable(false);
         applyWorkspace(data.user, chosen, list);
-        setAuthUser({ user: data.user, is_guest: data.is_guest, is_admin: data.is_admin });
+        setAuthUser({ user: data.user, is_guest: data.is_guest, is_admin: data.is_admin, build: data.build });
       } else {
         setAuthUser(false);
       }
@@ -2453,6 +2454,8 @@ function LibraryApp() {
   // The settings page (account popover → Settings…): two-column modal,
   // categories on the left, the selected pane on the right.
   const [settingsOpen, setSettingsOpen] = useState(null); // null | pane id — see settingsNavigation.js
+  // "Report a problem" (account menu, Settings → Diagnostics): support/ReportProblem.jsx.
+  const [reportOpen, setReportOpen] = useState(false);
   const [importOpen, setImportOpen] = useState(false);
   const [importReview, setImportReview] = useState(null);
   // Export dialog: one "Export…" menu entry, the shape of the export chosen
@@ -8454,6 +8457,11 @@ function LibraryApp() {
                     }}>AI chat</button>
                 </div>
               </details>
+              <button className="popoverItem" onClick={() => { setOpenPopover(null); setReportOpen(true); }}
+                title="Describe what went wrong; Gamma adds its build, your browser and its recent log lines and opens a GitHub issue for you to review">
+                <BugIcon className="popoverItemIcon" size={15} />
+                Report a problem…
+              </button>
               <div className="popoverDivider" />
               <button className="popoverItem popoverItemDanger" onClick={doLogout}>
                 <LogOutIcon className="popoverItemIcon" size={15} />
@@ -9372,8 +9380,22 @@ function LibraryApp() {
           onSelfRenamed: checkSession, // self-rename re-keys the whole app
           refreshQuota,
         } : null}
-        diagnostics={{ statusBarVisible, setStatusBarVisible, sysLog, setStatus, debugLog, setDebugLog }}
+        diagnostics={{ statusBarVisible, setStatusBarVisible, sysLog, setStatus, debugLog, setDebugLog,
+          openReport: () => { setSettingsOpen(null); setReportOpen(true); } }}
       />
+      {reportOpen ? (
+        <ReportProblem onClose={() => setReportOpen(false)} setStatus={setStatus}
+          facts={{
+            build: authUser?.build,
+            view: { mode: shareMode ? "share" : homeMode ? "home" : "page", pdf: !!pdfUrl, readOnly, phone: isPhone, theme, uiScale },
+            workspace: workspace ? {
+              kind: workspace.mirror_of ? "clone" : workspace.personal ? "personal" : workspace.access === "public" ? "public" : "shared",
+              role: workspace.role,
+            } : null,
+            events: sysLog,
+            isAdmin: !!authUser?.is_admin,
+          }} />
+      ) : null}
       {tabMenu ? (() => {
         // Two pins: the tab pin (this device's tab strip, synced with the
         // tabs) and the library pin (the page's Pinned strip on the home

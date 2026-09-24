@@ -39,27 +39,55 @@ an object and shares the prefs cap of 64 KB, enough for four long custom
 prompts. Step 17 of the migrations turned the old `appearance` key into the
 profile's first two entries.
 
-The account sections' tag shows where that stands. `useProfileSync`
-returns its own state (signed-out / loading / loaded / pending / pushing /
-failed); the dialog passes it on with `GET /api/auth/cloud/sync-status`,
-polled while the dialog is open (every 15 seconds, 6 seconds while the
-server's push to Gamma Cloud is due, and again once a local change is
-saved), through `SettingsSyncContext`. One pure function,
-`profileSyncState` in
-[settings/syncState.js](../../frontend/src/settings/syncState.js), reads
-the two into the tag every `scope="account"` section shows:
+Each account section's tag shows where its own settings stand. A section
+names the preferences it holds (`Section`'s `prefs`, taken from
+`SECTION_PREFS` in
+[settings/sectionPrefs.js](../../frontend/src/settings/sectionPrefs.js),
+pane by pane; `accountPrefs` there throws on a name that is not an
+account-scoped entry of `PREFS`, and `tests/sectionPrefs.test.mjs` checks
+the table against `PREFS` and against every `scope="account"` in the panes'
+sources, and that every account preference is held by a section or listed
+in `UNTAGGED_PREFS` — today only the Advanced pane's default reasoning
+effort, a row above that pane's first section). `useProfileSync` returns its overall state (signed-out / loading
+/ loaded / pending / pushing / failed) and, as sets of preference names:
+`pending` (the value differs from the copy the server last confirmed),
+`inflight` (sent in the PUT now on its way), `failed` (a push of exactly
+this value failed; changing it again makes it pending) and `awaitingCloud`
+(pushed since Gamma Cloud last reported the profile synced). The dialog
+adds `GET /api/auth/cloud/sync-status`, which is account-wide and polled
+while the dialog is open (every 15 seconds, 6 seconds while the server's
+push to Gamma Cloud is due, and again once a local change is saved), and
+passes both through `SettingsSyncContext`. Every answer also goes to the
+hook's `noteCloud`, which clears `awaitingCloud` once the cloud reports
+synced at a time after the last push (the PUT's `updated_at`).
+`profileSyncState(local, cloud, names)` in
+[settings/syncState.js](../../frontend/src/settings/syncState.js) reads
+them for one section, first rule that applies:
 
 | state | tag | hover |
 |---|---|---|
-| signed out, guest, share view | This browser | kept in this browser only |
-| first load, or the server has not answered yet | Your account | saved with your account on this server |
-| saved here, no Gamma Cloud identity (or its grant is gone) | check + Your account | "Saved on this server. Link a Gamma Cloud account to carry these settings to other servers." |
-| synced with Gamma Cloud | cloud-check + Your account · synced | "Synced with Gamma Cloud at <time>" |
-| a change settling or being sent, here or to Gamma Cloud | spinning refresh + Your account · syncing | |
-| the last save here or the last cloud attempt failed | warning + Your account · not synced, in red | the error |
+| signed out, guest, share view | monitor + browser | kept in this browser only |
+| one of the section's names pending or in flight | spinning refresh + account | saving these settings to your account |
+| one of them failed to save on this server | warning + account, in red | the error |
+| first load, or the server has not answered yet | account | saved with your account on this server |
+| no Gamma Cloud identity (or its grant is gone) | check + account | "Saved on this server. Link a Gamma Cloud account to carry these settings to other servers." |
+| one of them awaiting the cloud, and the cloud failed | warning + account, in red | the cloud's error |
+| otherwise, linked | cloud-check + account | "Synced with Gamma Cloud at <time>" |
 
-`cloudSyncHint` in the same module is meant for the Account pane's Gamma
-Cloud row ("Settings synced 14:37" / "Settings not synced: <error>").
+So changing the Enter key spins only the Notes section, for the second the
+change settles plus its PUT (and at least 700 ms, so a quick save is seen
+rather than flickered). The server's acceptance is the commit: its own
+push to Gamma Cloud is coalesced (5 s) and retried by the hourly check, and
+the tag never waits on it — the cloud's pending state is not shown, only a
+failure of that hop. A cloud error from before any change this
+session shows on no section; the Account pane's Gamma Cloud row still says
+it (`cloudSyncHint` in the same module: "Settings synced 14:37" /
+"Settings not synced: <error>"). Browser sections always show the monitor
+and "browser".
+
+The tag is an icon and one muted word ("account" or "browser") in the
+small caption size; the sentence is its hover `title` and its
+`aria-label`, and `data-sync` carries the state for tests.
 
 The last open page and viewer layout use `app/sessionState.js`, separately from
 synced preferences. Its key is `gamma-session:<user>@<workspace>`. Reads wait
@@ -93,10 +121,10 @@ One dialog, one sidebar in three groups, defined by `PREFERENCE_NAV`,
 [SettingsDialog.jsx](../../frontend/src/settings/SettingsDialog.jsx). Every
 pane is one click from any other; nothing opens a second dialog or a
 "back" link. Panes carry no explanatory subtitle: a section rule's right-hand
-tag ("Your account" / "This browser", `Section`'s `scope` prop, matching the
-settings' scope in `PREFS`; an account tag also shows the profile's sync
-state, above) says where a setting lives, a row's short hint
-what it does, and the hover `title` the rest.
+tag (an icon plus "account" or "browser", `Section`'s `scope` prop, matching
+the settings' scope in `PREFS`; an account tag's icon is the sync state of
+that section's own settings, above) says where a setting lives, a row's
+short hint what it does, and the hover `title` the rest.
 
 Preferences:
 
@@ -189,7 +217,9 @@ instead of App's aiKeys group). API-key services only. Each row has Test,
 Manage and delete; "+ Add provider" is the section's action. A "Guests may
 use it" switch (default off) decides whether the guest account gets them
 ([ai.md](ai.md) "Shared provider entries").
-- **Diagnostics**: browser tracing and the browser session log.
+- **Diagnostics**: browser tracing, the browser session log and, under
+  Help, the Report a problem button (the same dialog as the account menu's
+  entry; [debugging.md](debugging.md) "Report a problem").
 
 Administrators confirm the **Public server URL** under Server: the row shows
 a "confirmed" / "not confirmed" tag and, while the address is unconfirmed or
