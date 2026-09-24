@@ -126,14 +126,22 @@ that fingerprint, kept in the `notices-seen` pref; a new release or a fresh
 error changes the fingerprint and the notice is back by itself. Nothing is
 dismissed for good, and nothing is per browser.
 
-Sources are functions registered with `@source` in `gamma/notices.py`; each
-returns a Notice or None and must be a cached or in-memory read, because
-`GET /api/notices` runs them on every poll. Admin-only sources are skipped
-for members, so a member's poll does no work at all; guests, share views
-and integration tokens get an empty list. The first two sources — the
-release check (behind `version.latest_release`'s six-hour cache; sync
-endpoint on purpose) and the log errors (`logbuf.last_seq("error")`) — both
-point at the Server pane.
+Sources are functions `fn(username)` registered with `@source` in
+`gamma/notices.py`; each returns a Notice or None and must be a cached,
+in-memory or small database read, because `GET /api/notices` runs them on
+every poll. Admin-only sources are skipped for members; guests, share views
+and integration tokens get an empty list. The sources:
+
+| id | who | pane | tone | fires when | fingerprint |
+|---|---|---|---|---|---|
+| `update` | admins | Server | warn | a newer GitHub release than this build (`version.latest_release`, six-hour cache; the endpoint is sync on purpose) | the release version |
+| `log-errors` | admins | Server | error | an error was logged since the last look (`logbuf.last_seq("error")`) | server start time + the newest error's seq |
+| `backup-failed` | everyone | Backups | error | a backup task of the account is in state `failed` (`backup_schedule.list_tasks`) | each failed task's id + its last run |
+| `mirror-conflicts` | everyone | Workspaces | warn | a clone the account owns has open sync conflicts (`sync_engine.open_conflict_mark`) | per clone, the count + the newest conflict id — resolving old ones never brings it back |
+| `cloud-sync` | everyone | Account | warn | the account's Gamma Cloud sync is in its `error` state (`cloud_sync.profile_status`) | the failure's timestamp |
+| `storage` | everyone | Account | warn / error | personal storage past 90 % of the quota / full; only computed for an account under a quota, and the upload walk is remembered ten minutes (`notices.forget_usage`) | `90` / `full` |
+
+Warnings in the log are deliberately not a notice (too noisy for a dot).
 
 The frontend: `app/useNotices.js` (one instance in App.jsx) polls every
 five minutes and on window focus, and `app/notices.js` (pure,

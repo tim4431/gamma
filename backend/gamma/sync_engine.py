@@ -647,6 +647,16 @@ def open_conflicts(ws: str) -> int:
         return conn.execute("SELECT COUNT(*) FROM sync_conflicts WHERE resolved = 0").fetchone()[0]
 
 
+def open_conflict_mark(ws: str) -> tuple[int, int]:
+    """``(count, newest id)`` of the open conflicts — the notice's
+    fingerprint (gamma/notices.py): a new conflict changes it, resolving
+    some of the old ones does not bring the notice back."""
+    with connect_pages_db(ws) as conn:
+        count, newest = conn.execute(
+            "SELECT COUNT(*), COALESCE(MAX(id), 0) FROM sync_conflicts WHERE resolved = 0").fetchone()
+    return int(count), int(newest)
+
+
 def list_conflicts(ws: str, *, resolved: bool = False, page_id: str = "") -> list[dict]:
     """The decisions to look at (or the looked-at ones), newest first, one
     page's only when ``page_id`` is given."""

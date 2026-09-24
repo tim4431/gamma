@@ -330,7 +330,7 @@ archived conversation browsing remains session-only.
 ### Notices (`notices.py`, `gamma/notices.py`) — see [settings.md](settings.md) "Notices"
 | Method | Path | Purpose |
 |---|---|---|
-| GET | `/notices` | `{notices: [{id, fingerprint, tone, pane, title}]}` the account has not looked at yet, strongest `tone` (`info` / `warn` / `error`) first; `pane` is the Settings pane that resolves it. Admin-only sources (`update`: a newer GitHub release; `log-errors`: errors logged since the last look) are skipped for members; guests and integration tokens get `[]`. Sync: the release check may hit the network when its cache is stale |
+| GET | `/notices` | `{notices: [{id, fingerprint, tone, pane, title}]}` the account has not looked at yet, strongest `tone` (`info` / `warn` / `error`) first; `pane` is the Settings pane that resolves it. Sources: `update` and `log-errors` (admins: a newer GitHub release, errors logged since the last look), `backup-failed`, `mirror-conflicts`, `cloud-sync`, `storage` (everyone: a failed backup task, open conflicts in an owned clone, a failed Gamma Cloud sync, personal storage past 90 % or full) — the table in [settings.md](settings.md); guests and integration tokens get `[]`. Sync: the release check may hit the network when its cache is stale |
 | POST | `/notices/{id}/seen` | `{fingerprint}` — the account has seen this version of the notice (kept in the account-wide `notices-seen` pref); it stays quiet until the fingerprint changes. 403 for guests and tokens, 400 for a malformed id or fingerprint |
 
 ### Integrations and MCP (`routers/integrations.py`, `mcp_oauth.py`, `mcp_server.py`) — see [mcp.md](mcp.md)
