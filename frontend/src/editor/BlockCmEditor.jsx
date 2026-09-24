@@ -925,7 +925,24 @@ const BlockCmEditor = React.forwardRef(function BlockCmEditor({
     if (clickPos?.insertLine) view.dispatch({ changes: { from: pos, insert: "\n" }, selection: { anchor: pos } });
     else view.dispatch({ selection: { anchor: pos } });
     if (clickPos) keepUnderPointer(view, pos, clickPos.y);
-    return () => { view.destroy(); viewRef.current = null; };
+    // Opened by a press on the rendered text: while the button stays down
+    // the drag selects, as in any editor — the press landed on the rendered
+    // view, so CodeMirror never saw it start and follows it from here.
+    let stopDrag = null;
+    if (clickPos && !clickPos.insertLine) {
+      const onMove = (e) => {
+        if (!(e.buttons & 1)) { stopDrag(); return; }
+        if (Math.hypot(e.clientX - clickPos.x, e.clientY - clickPos.y) < 4) return;
+        view.dispatch({ selection: { anchor: pos, head: view.posAtCoords({ x: e.clientX, y: e.clientY }, false) } });
+      };
+      stopDrag = () => {
+        window.removeEventListener("mousemove", onMove);
+        window.removeEventListener("mouseup", stopDrag);
+      };
+      window.addEventListener("mousemove", onMove);
+      window.addEventListener("mouseup", stopDrag);
+    }
+    return () => { stopDrag?.(); view.destroy(); viewRef.current = null; };
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
 

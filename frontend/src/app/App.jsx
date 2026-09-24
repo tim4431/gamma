@@ -18,6 +18,8 @@ import {
   useTextScale,
 } from "../shared/ui/Widgets";
 import { BlockTree, _dragState } from "../editor/BlockTree";
+import { scanMathSpans } from "../editor/BlockCmEditor";
+import { sourceRangeOfSelection } from "../editor/clickToSource";
 import { FileChipContext, forgetDocPages, rememberDocPage, setUploadReporter, uploadFilesAsLines, xhrUpload } from "../transfers/FileChip";
 import { CardLabels, KindToggle, ListFindBox, PageCard, ViewToggle } from "../library/FileBrowser";
 import ChatDock from "../chat/ChatDock";
@@ -2858,9 +2860,11 @@ function LibraryApp() {
   }
   // Note chips for the next chat message — blocks attached with Ctrl+click /
   // the ⋮⋮ menu's "Add to chat" ({kind: "block", id, text}; the server serves
-  // their live text with ids, so the agent can edit them) and note text
-  // selected with Ctrl held ({kind: "note", text}). Cleared on send, like
-  // pdfSelections; a page switch drops them (their ids belong to the page).
+  // their live text with ids, so the agent can edit them) and rendered note
+  // text selected with Ctrl held, as the exact source range it covers
+  // ({kind: "note", id, from, to, text} — edit_block mode "selection"
+  // rewrites just that). Cleared on send, like pdfSelections; a page switch
+  // drops them (their ids belong to the page).
   const [chatNotes, setChatNotes] = useState([]);
   function addBlockToChat(block) {
     if (!block?.id || block.id === "root") return;
@@ -2869,13 +2873,40 @@ function LibraryApp() {
       ? prev : prev.length >= 12 ? prev : [...prev, { kind: "block", id: block.id, text }]);
     setStatus("Block attached to your next chat message.");
   }
-  function addNoteSelection(text) {
-    const part = (text || "").trim().slice(0, 4000);
-    if (!part) return;
-    setChatNotes((prev) => prev.some((n) => n.kind === "note" && n.text === part) || prev.length >= 12
-      ? prev : [...prev, { kind: "note", text: part }]);
+  // A Ctrl-selection inside one block's rendered view → its source range;
+  // one that can't be pinned down (it spans blocks, or an end isn't the
+  // note's own text) attaches the block it started in instead.
+  function addNoteSelection(range, rendered) {
+    const rowId = rendered.closest("[data-block-id]")?.getAttribute("data-block-id");
+    const block = rowId && flattenBlocks(blocksRef.current).find((b) => b.id === rowId);
+    if (!block) return;
+    const src = block.content || "";
+    const inOne = rendered.contains(range.startContainer) && rendered.contains(range.endContainer);
+    const at = inOne && sourceRangeOfSelection(rendered, src, range, scanMathSpans(src));
+    if (!at || !src.slice(at.from, at.to).trim()) {
+      addBlockToChat(block);
+      return;
+    }
+    const note = { kind: "note", id: block.id, from: at.from, to: at.to, text: src.slice(at.from, at.to) };
+    setChatNotes((prev) => prev.some((n) => n.kind === "note" && n.id === note.id && n.from === note.from && n.to === note.to)
+      || prev.filter((n) => n.kind === "note").length >= 6 ? prev : [...prev, note]);
   }
   useEffect(() => { setChatNotes([]); }, [focusedBlockId]);
+  // The open editor's selection, for the chat's Cursor chip, which becomes
+  // a "Selection" chip riding with the message as an exact source range.
+  // Kept after the editor closes (clicking into the chat closes it) until
+  // the caret collapses somewhere, the page changes or the message is sent;
+  // settled 120 ms after the last change so a drag doesn't re-render App on
+  // every move.
+  const [noteSel, setNoteSel] = useState(null); // {id, from, to}
+  const noteSelTimerRef = useRef(null);
+  function trackNoteSel(id, from, to) {
+    clearTimeout(noteSelTimerRef.current);
+    noteSelTimerRef.current = setTimeout(() => setNoteSel((prev) => (from === to
+      ? null
+      : prev?.id === id && prev.from === from && prev.to === to ? prev : { id, from, to })), 120);
+  }
+  useEffect(() => { clearTimeout(noteSelTimerRef.current); setNoteSel(null); }, [focusedBlockId]);
   // Figures pending send in the chat (data URLs) — pasted into the chat input
   // or captured by a Ctrl+drag area selection on the PDF. Lives here (not in
   // ChatDock) so the viewer can attach even while the chat window is closed.
@@ -3363,17 +3394,18 @@ function LibraryApp() {
   useEffect(() => {
     function onMouseUp(e) {
       if (!viewerWrapRef.current?.contains(e.target)) {
-        // Notes: Ctrl+select rendered note text attaches it as a chip. Plain
-        // selection is left alone (people select notes to copy them), and
-        // selections inside an open editor are the editor's business.
+        // Notes: Ctrl+select rendered note text attaches its source range as
+        // a chip. (A plain drag opens the editor and selects there — the
+        // Cursor chip's Selection; selections inside an open editor are the
+        // editor's business.)
         if ((e.ctrlKey || e.metaKey) && e.target.closest?.(".blockList")
             && !e.target.closest(".cm-editor, textarea, input")) {
           setTimeout(() => {
             const sel = window.getSelection();
-            const text = sel ? sel.toString().trim() : "";
-            const node = sel?.anchorNode;
-            const el = node?.nodeType === 3 ? node.parentElement : node;
-            if (text && el?.closest?.(".blockRendered")) addNoteSelection(text);
+            if (!sel || sel.isCollapsed || !sel.rangeCount || !sel.toString().trim()) return;
+            const node = sel.anchorNode;
+            const rendered = (node?.nodeType === 3 ? node.parentElement : node)?.closest?.(".blockRendered");
+            if (rendered) addNoteSelection(sel.getRangeAt(0), rendered);
           }, 10);
         }
         return;
@@ -3548,12 +3580,15 @@ function LibraryApp() {
   const [aiLive, setAiLive] = useState(null);
   const [aiScan, setAiScan] = useState(null);
   // The block row the cursor is on, for the chat's "Cursor" chip and
-  // focus_block_id (null on the home page / when no row is focused).
+  // focus_block_id (null on the home page / when no row is focused); `sel`
+  // is the text selected in it ({from, to, text} of its source).
   const focusedNote = useMemo(() => {
     if (!focusedBlockId || !focusedId) return null;
     const b = flattenBlocks(blocks).find((x) => x.id === focusedId);
-    return b ? { id: b.id, text: blockChipText(b) } : null;
-  }, [blocks, focusedId, focusedBlockId]);
+    if (!b) return null;
+    const text = noteSel?.id === b.id ? (b.content || "").slice(noteSel.from, noteSel.to) : "";
+    return { id: b.id, text: blockChipText(b), ...(text.trim() ? { sel: { from: noteSel.from, to: noteSel.to, text } } : {}) };
+  }, [blocks, focusedId, focusedBlockId, noteSel]);
   const aiMarkTimersRef = useRef(new Map());
   const aiMarkSeqRef = useRef(0);
   const autosaveTimerRef = useRef(null);
@@ -4115,7 +4150,7 @@ function LibraryApp() {
       // Only blocks of THIS page can be previewed: an edit targets a block in
       // the tree, a create a parent in it (the page id = a top-level block).
       if (!inTree(ev.tool === "edit_block" ? ev.block_id : ev.parent_id)) return;
-      setAiLive({ tool: ev.tool, blockId: ev.block_id, parentId: ev.parent_id, afterId: ev.after_id, mode: ev.mode || "replace", find: ev.find, content: ev.content || "" });
+      setAiLive({ tool: ev.tool, blockId: ev.block_id, parentId: ev.parent_id, afterId: ev.after_id, mode: ev.mode || "replace", find: ev.find, at: ev.at, content: ev.content || "" });
       return;
     }
     const a = ev.action;
@@ -7649,6 +7684,7 @@ function LibraryApp() {
                   // bookkeeping, and our caret for the others on the page.
                   onCaret: (id, from, to) => {
                     caretRef.current = { id, from, to };
+                    trackNoteSel(id, from, to);
                     collab.sendCursor({ block: id, anchor: from, head: to });
                   },
                   onStartEdit: (id, editMode) => {
@@ -7848,7 +7884,7 @@ function LibraryApp() {
           openTabs={openTabs}
           onOpenPage={openPageLink}
           pdfSelections={pdfSelections} setPdfSelections={setPdfSelections}
-          chatNotes={chatNotes} setChatNotes={setChatNotes} focusedNote={focusedNote}
+          chatNotes={chatNotes} setChatNotes={setChatNotes} focusedNote={focusedNote} onSelectionSent={() => setNoteSel(null)}
           chatImages={chatImages} setChatImages={setChatImages}
           chatModel={chatSendModel} setChatModel={setChatModel}
           chatEffort={chatEffort} setChatEffort={setChatEffort}

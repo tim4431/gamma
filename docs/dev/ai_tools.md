@@ -201,11 +201,20 @@ whitespace-relaxed one so a wrapped quote still hits; zero or several hits
 are refused with the count) and `content` replaces it, an empty `content`
 cutting it, so deleting or correcting one sentence of a long block never
 retypes the rest (`patch_block_text`, also mirrored in `editor/BlockTree.jsx`).
-The spec tells the model to prefer append for
+`selection` replaces exactly the note text the user selected for this
+message (`selection`: its label from the request's `note_selections`, e.g.
+`"S1"`; optional when there is one; the block is the selection's, and a
+different `block_id` is refused): at the recorded offsets while they still
+hold the selected text, else at that text's one occurrence, else refused as
+changed (`replace_selection_text`, mirrored in `editor/BlockTree.jsx`; the
+streamed `progress` carries the selection's text and offset as `find` /
+`at`). The selection then covers the new text, so a second edit in the same
+turn rewrites the first. The spec tells the model that a change to selected
+text is always a selection edit; otherwise to prefer append for
 "add / extend / note that", patch for deleting or fixing one part, and
 replace only for full rewrites. The action carries
 `mode`, and its chip reads "Appended to" / "Prepended to" / "Edited part of" /
-"Edited". Page
+"Edited the selection in" / "Edited". Page
 roots are refused (titles go through `rename_page`); editing a highlight
 block edits its note text, never the anchored passage.
 `create_block` inserts a new block

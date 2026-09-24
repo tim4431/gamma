@@ -69,6 +69,7 @@ Open the chat from the **⋮ menu → AI Chat**. Configure providers in Settings
 - **Context**: in a paper the chat reads that paper's text automatically. The **PDF toggle** attaches the actual file (so the model sees figures and tables); it turns itself off once the file has been sent in a conversation, to avoid re-billing it every message.
 - **Add more**: paste images, Ctrl+drag a region of the page (see [Reading](#reading-and-highlighting)), type **`@`** to attach another paper from your library, or use the **+ menu** to attach files or pick several papers (optionally with your notes and highlights).
 - **Quote passages**: click a highlight to set the chat's "Selection"; Ctrl+click more highlights to add up to six passages.
+- **Change just part of a note**: drag across a note's text — the note opens and the drag selects, and the chat's chip becomes **Selection**. Ask for the change ("make this more concise", "translate this") and the assistant rewrites only the selected text, never the rest of the note. Hold Ctrl while dragging to select without opening the note and to collect several passages.
 - **Citations are clickable**: an answer's `p. 12` link jumps the PDF to the quoted passage and highlights it.
 - **Token counts**: a dim line under each reply shows ↑ tokens sent, ↓ tokens received, and how much the provider served from its cache. Settings → AI → Connections → **Token usage** totals today, the week and the month per model.
 - Per message: **copy**, **edit & re-send** (discards the replies after it), and a **stop** button while streaming. **Ctrl+F inside the panel** finds text in the conversation.
@@ -255,6 +256,7 @@ Preferences apply immediately; browser-only ones (theme, layout) are marked *Thi
 | Ctrl+wheel | Zoom the PDF at the cursor |
 | Ctrl+drag on the page | Capture a region → chat image + optional area highlight |
 | Ctrl+click a highlight | Add its quote to the chat selection |
+| Ctrl+drag across note text | Attach that passage to the chat — the assistant edits only it |
 | Double-click | Open a library card · collapse/expand a window (on its grip) |
 | Middle-click a tab | Close it (pinned tabs are protected) |
 | Ctrl+Shift+S | In the browser extension: save this page to Gamma |

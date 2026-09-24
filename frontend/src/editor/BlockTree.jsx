@@ -733,7 +733,7 @@ function BlockRow({
   // A block the user is editing keeps its editor; the mark still shows.
   const aiMark = aiMarks?.get(block.id) || null;
   const aiText = aiLive?.tool === "edit_block" && aiLive.blockId === block.id && !block.editMode
-    ? joinBlockText(block.content || "", aiLive.content, aiLive.mode, aiLive.find) : null;
+    ? joinBlockText(block.content || "", aiLive.content, aiLive.mode, aiLive.find, aiLive.at) : null;
   // Whole-page read: every row rings once, staggered by its position, so
   // the read visibly sweeps down the outline. A row with its own mark keeps
   // that instead.
@@ -1754,9 +1754,18 @@ function SortableBlockRow({ block, ...rowProps }) {
 // side is a paragraph-level construct. Mode "replace" is just the new text;
 // "patch" swaps the one passage `find` names in place (ai_tools
 // .patch_block_text — exact, else whitespace-relaxed), showing the stored
-// text unchanged until the passage is found once.
+// text unchanged until the passage is found once; "selection" swaps the
+// user's selected range — `find` at offset `at`, else its one occurrence
+// (ai_tools.replace_selection_text).
 const BLOCKY_LINE = /^\s*(#{1,6}\s|[-*+]\s|\d+[.)]\s|>|\||```|\$\$|---)/;
-function joinBlockText(existing, addition, mode, find) {
+function joinBlockText(existing, addition, mode, find, at) {
+  if (mode === "selection") {
+    const cur = existing || "";
+    if (!find) return cur;
+    let start = cur.slice(at, at + find.length) === find ? at : cur.indexOf(find);
+    if (start !== at && (start < 0 || cur.indexOf(find, start + 1) >= 0)) return cur;
+    return cur.slice(0, start) + (addition || "") + cur.slice(start + find.length);
+  }
   if (mode === "patch") {
     const cur = existing || "";
     if (!find) return cur;

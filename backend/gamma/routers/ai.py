@@ -41,6 +41,7 @@ from ..ai_tools import (
     READ_CHARS_MAX,
     agent_system,
     agent_tools,
+    find_selection,
     run_agent_tool,
     tool_action,
 )
@@ -51,6 +52,7 @@ from ..ai_context import (
     gather_inputs as _gather_inputs,
     parse_images as _parse_images,
     pdf_path as _pdf_path,
+    request_note_selections,
 )
 from ..ai_settings import (
     MAX_KEY_LEN,
@@ -109,10 +111,12 @@ class AIChatRequest(BaseModel):
     # What the user pointed the message at inside the NOTES: the block their
     # cursor is on (the agent's "this block"), blocks they attached as chips
     # (ids — resolved server-side to id-labelled text so the agent can edit
-    # them), and note text they selected with Ctrl held (verbatim passages).
+    # them), and note text they selected — exact source ranges
+    # [{block_id, from, to, text}], which edit_block mode "selection" rewrites
+    # without touching the rest of the block (ai_context.request_note_selections).
     focus_block_id: str = ""
     context_blocks: list = Field(default_factory=list)
-    note_passages: list = Field(default_factory=list)
+    note_selections: list = Field(default_factory=list, max_length=12)
     attach_pdf: bool = False  # send the PDF itself instead of extracted text
     effort: str = ""      # reasoning effort; empty = provider default (param omitted)
     system: str = ""      # custom system prompt; empty = built-in default
@@ -1347,6 +1351,8 @@ def ai_chat(payload: AIChatRequest, request: Request):
              # "this block" resolves without a read_block round-trip.
              "focus_block_id": (payload.focus_block_id or "").strip()[:64],
              "context_blocks": [str(b)[:64] for b in payload.context_blocks[:MAX_CONTEXT_BLOCKS]],
+             # What edit_block mode "selection" rewrites (labels S1, S2…).
+             "note_selections": request_note_selections(payload),
              "actor": user, "can_write": ws_role(request) != "viewer"}
     valid_scope = payload.agent_scope in ("folder", "page") and (
         payload.agent_scope != "page" or payload.page_id)
@@ -1431,6 +1437,11 @@ def ai_chat(payload: AIChatRequest, request: Request):
                             continue
                         args = _partial_json_object(data.get("json") or "")
                         target = args.get("block_id" if name == "edit_block" else "parent_id")
+                        sel = (find_selection(scope, args.get("selection"))
+                               if name == "edit_block" and str(args.get("mode") or "").lower() == "selection"
+                               else None)
+                        if sel:
+                            target = sel["block_id"]
                         content = args.get("content")
                         if not target or content is None:
                             continue  # nothing to point at (or say) yet
@@ -1444,7 +1455,13 @@ def ai_chat(payload: AIChatRequest, request: Request):
                             # append/prepend: the preview keeps the stored text
                             # and types the addition in at the right end.
                             mode = str(args.get("mode") or "replace").lower()
-                            if mode in ("append", "prepend"):
+                            if sel:
+                                # selection: the preview swaps the selected
+                                # range (re-found by its text if it moved).
+                                progress.update(mode="selection", find=sel["text"], at=sel["from"])
+                            elif mode == "selection":
+                                continue  # no such selection: nothing to preview
+                            elif mode in ("append", "prepend"):
                                 progress["mode"] = mode
                             elif mode == "patch" and isinstance(args.get("find"), str):
                                 # patch: the preview swaps the passage in place.

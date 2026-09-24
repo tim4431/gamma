@@ -155,10 +155,12 @@ export default function ChatDock({
   readOnly = false,
   docId, pageAttach, focusedBlockId, homeBlocks, pageTitle, openTabs,
   pdfSelections, setPdfSelections,
-  // Note chips ([{kind: "block", id, text} | {kind: "note", text}], App
-  // state like pdfSelections) and the block row the user's cursor is on —
-  // both ride with the next message so "this block" means something.
-  chatNotes, setChatNotes, focusedNote,
+  // Note chips ([{kind: "block", id, text} | {kind: "note", id, from, to,
+  // text}], App state like pdfSelections) and the block row the user's
+  // cursor is on ({id, text, sel?: {from, to, text}} — the text selected in
+  // its editor) — both ride with the next message so "this block" and "the
+  // selection" mean something. onSelectionSent drops the sent selection.
+  chatNotes, setChatNotes, focusedNote, onSelectionSent,
   chatImages, setChatImages,
   chatModel, setChatModel, chatEffort, setChatEffort, chatSystem,
   dictationModel, dictationLang,
@@ -569,13 +571,18 @@ export default function ChatDock({
     const notes = chatNotes || [];
     setChatNotes?.([]);
     const contextBlocks = notes.filter((n) => n.kind === "block").map((n) => n.id);
-    const notePassages = notes.filter((n) => n.kind === "note").map((n) => n.text);
+    // Selected note text goes as exact source ranges (the cursor block's
+    // selection first) — edit_block mode "selection" rewrites only that.
+    const cursorSel = cursorChip?.sel ? [{ id: cursorChip.id, ...cursorChip.sel }] : [];
+    const noteSelections = [...cursorSel, ...notes.filter((n) => n.kind === "note")]
+      .map((n) => ({ block_id: n.id, from: n.from, to: n.to, text: n.text }));
+    if (cursorSel.length) onSelectionSent?.();
     const images = chatImages;
     setChatImages([]);
     const files = chatFiles;
     setChatFiles([]);
     const prevMessages = baseMessages ?? chatMessages;
-    const quoted = [selection, ...notes.map((n) => n.text)].filter(Boolean).join("\n\n---\n\n");
+    const quoted = [selection, ...cursorSel.map((n) => n.text), ...notes.map((n) => n.text)].filter(Boolean).join("\n\n---\n\n");
     const shown = quoted ? `${text}\n\n> ${quoted.slice(0, 280)}${quoted.length > 280 ? "…" : ""}` : text;
     // Names of PDFs that ride along with THIS message (displayed in the bubble)
     const contextIds = [...new Set([focusedBlockId, ...selectedDocs].filter(Boolean))];
@@ -639,7 +646,7 @@ export default function ChatDock({
           selections,
           focus_block_id: cursorChip ? cursorChip.id : "",
           context_blocks: contextBlocks,
-          note_passages: notePassages,
+          note_selections: noteSelections,
           attach_pdf: sendingPdf,
           effort: chatEffort || "",
           system: chatSystem || "",
@@ -1278,10 +1285,17 @@ export default function ChatDock({
       {pdfSelections.length || chatNotes?.length || cursorChip ? (
         <div className="chatSelChips">
           {cursorChip ? (
-            <SelChip kind="isCursor" label="Cursor" text={cursorChip.text}
-              title={`Your cursor is on this block — it rides with the message, so "this block" means it.\n${cursorChip.text}`}
-              onRemove={() => setCursorOff(cursorChip.id)}
-              removeTitle="Don't send the cursor block with this message" />
+            cursorChip.sel ? (
+              <SelChip kind="isCursor" label="Selection" text={cursorChip.sel.text}
+                title={`The text you selected in this note — the assistant changes only this part.\n${cursorChip.sel.text}`}
+                onRemove={() => setCursorOff(cursorChip.id)}
+                removeTitle="Don't send the selection with this message" />
+            ) : (
+              <SelChip kind="isCursor" label="Cursor" text={cursorChip.text}
+                title={`Your cursor is on this block — it rides with the message, so "this block" means it.\n${cursorChip.text}`}
+                onRemove={() => setCursorOff(cursorChip.id)}
+                removeTitle="Don't send the cursor block with this message" />
+            )
           ) : null}
           {pdfSelections.map((s, i) => (
             <SelChip key={`p${i}`} text={s.text}
@@ -1293,7 +1307,7 @@ export default function ChatDock({
           {(chatNotes || []).map((n, i) => (
             <SelChip key={`n${i}`} kind={n.kind === "block" ? "isBlock" : "isNote"} text={n.text}
               label={n.kind === "block" ? "Block" : "Note"}
-              labelTitle={n.kind === "block" ? "A note block attached with Ctrl+click or the ⋮⋮ menu — the assistant gets its text and id" : "Text selected in your notes with Ctrl held"}
+              labelTitle={n.kind === "block" ? "A note block attached with Ctrl+click or the ⋮⋮ menu — the assistant gets its text and id" : "Note text selected with Ctrl held — the assistant changes only this part"}
               onRemove={() => setChatNotes?.((prev) => prev.filter((_, j) => j !== i))}
               removeTitle={n.kind === "block" ? "Detach this block" : "Remove this passage"} />
           ))}
@@ -1435,6 +1449,7 @@ export default function ChatDock({
             : pdfSelections.length ? "Ask about the selection…"
             : chatNotes?.length > 1 ? `Ask about the ${chatNotes.length} attached notes…`
             : chatNotes?.length ? (chatNotes[0].kind === "block" ? "Ask about the attached block…" : "Ask about the selected note…")
+            : cursorChip?.sel ? "Ask about the selection…"
             : cursorChip ? "Ask about this block…"
             : chatDocs.length ? `Ask about ${chatDocs.length} attached page${chatDocs.length > 1 ? "s" : ""}…`
             : agentAsk || "Ask…"

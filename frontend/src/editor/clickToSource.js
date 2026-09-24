@@ -7,7 +7,9 @@
 // than once, the rendered text on either side (matched loosely, skipping
 // markup the source has and the rendered view doesn't) picks the occurrence.
 // The same lookup finds where a rendered block begins, for the hover line in
-// the gap between two blocks that opens the editor on a line between them.
+// the gap between two blocks that opens the editor on a line between them,
+// and the source range a Ctrl-selection of rendered text covers, for the
+// chat's selection chip.
 // `locateInSource` and `gapInSource` are pure; the rest reads the DOM.
 
 const CTX = 40; // characters of context taken on each side of the click
@@ -174,4 +176,38 @@ export function blockStartInSource(container, source, below) {
     return locateInSource(source, contextAt(container, n, n.data.length - n.data.trimStart().length));
   }
   return null;
+}
+
+// ---- a selection made in the rendered view
+
+// A DOM range boundary as a text node + offset: a boundary before a child
+// is the start of that child's first text, one past the last child the end
+// of the element's last text.
+function textPoint(node, offset) {
+  if (node.nodeType === 3) return { node, offset };
+  const next = node.childNodes[offset];
+  if (next) {
+    const t = next.nodeType === 3 ? next : document.createTreeWalker(next, NodeFilter.SHOW_TEXT).nextNode();
+    return t ? { node: t, offset: 0 } : null;
+  }
+  const walker = document.createTreeWalker(node, NodeFilter.SHOW_TEXT);
+  let last = null;
+  for (let t = walker.nextNode(); t; t = walker.nextNode()) last = t;
+  return last ? { node: last, offset: last.data.length } : null;
+}
+
+// The source range {from, to} a selection inside one block's rendered view
+// covers, or null when an end can't be placed. `spans` ([{from, to}]: math)
+// are taken whole — an end inside a formula widens to cover it.
+export function sourceRangeOfSelection(container, source, range, spans = []) {
+  const ends = [textPoint(range.startContainer, range.startOffset), textPoint(range.endContainer, range.endOffset)];
+  if (ends.some((p) => !p)) return null;
+  const [a, b] = ends.map((p) => locateInSource(source, contextAt(container, p.node, p.offset)));
+  if (a == null || b == null) return null;
+  let from = Math.min(a, b), to = Math.max(a, b);
+  for (const sp of spans) {
+    if (from > sp.from && from < sp.to) from = sp.from;
+    if (to > sp.from && to < sp.to) to = sp.to;
+  }
+  return to > from ? { from, to } : null;
 }
