@@ -1,0 +1,20 @@
+{
+  "name": "dsh-gamma",
+  "version": "0.2.1",
+  "description": "Search and read Gamma PDF libraries, pages, highlights, and notes.",
+  "keywords": ["dsh-plugin"],
+  "homepage": "https://github.com/tim4431/Gamma/blob/main/docs/dev/mcp.md",
+  "repository": "https://github.com/tim4431/Gamma",
+  "license": "AGPL-3.0-only",
+  "type": "module",
+  "main": "dsh-skill.js",
+  "files": ["cordis.patch.yml", "dsh-skill.js", "skills/gamma/SKILL.md"],
+  "peerDependencies": {
+    "@deepseek-ai/dsh-skill-filesystem": "*"
+  },
+  "dsh": {
+    "bundle": {
+      "patch": "./cordis.patch.yml"
+    }
+  }
+}

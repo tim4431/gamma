@@ -42,5 +42,6 @@ jobs:
             dist/codex-plugin/*.zip
             dist/codex-plugin/*.ps1
             dist/codex-plugin/*.sh
+            dist/codex-plugin/*.tgz
             dist/codex-plugin/*SHA256SUMS.txt
           if-no-files-found: error

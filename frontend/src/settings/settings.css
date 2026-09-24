@@ -633,6 +633,8 @@
 .integrationAdvanced summary, .integrationDetails summary { cursor: pointer; font-size: calc(13px * var(--ui-font-scale, 1)); }
 .integrationAdvanced > summary { font-weight: 600; }
 .integrationDetails .setStep { margin-bottom: 4px; }
+/* Four assistants no longer fit one line on a phone. */
+.integrationDetails [role="group"] > .segGroup { flex-shrink: 1; flex-wrap: wrap; row-gap: 4px; }
 .integrationCreateControls { display: flex; flex-wrap: wrap; align-items: center; gap: 8px; }
 .integrationCreateControls .aiKeyInput { flex: 1; width: 100px; min-width: 0; margin: 0; }
 

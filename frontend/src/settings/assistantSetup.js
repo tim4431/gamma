@@ -26,3 +26,32 @@ export function claudeConnectCommand(serverUrl, platform, { replace = false } = 
 
 // Run from the parent of the extracted gamma-marketplace directory on either OS.
 export const claudePluginInstallCommands = "claude plugin marketplace add ./gamma-marketplace\nclaude plugin install gamma@gamma-local --scope user";
+
+// DeepSeek Harness installs Gamma as a dsh bundle (plugins/gamma/package.json +
+// cordis.patch.yml). pnpm cannot reuse a remote tarball it has already resolved
+// (a second profile or an update fails for want of an integrity hash), so the
+// command downloads the release tarball to a fixed file in the dsh home and adds
+// that file; running it again updates in place.
+export function dshInstallCommand(platform) {
+  const url = shellQuote(releaseBase + "/dsh-gamma.tgz", platform);
+  if (platform === "windows") {
+    return "$dshHome = if ($env:DSH_HOME) { $env:DSH_HOME } else { Join-Path $HOME '.dsh' }\n"
+      + "New-Item -ItemType Directory -Force $dshHome | Out-Null\n"
+      + "$bundle = Join-Path $dshHome 'dsh-gamma.tgz'\n"
+      + `Invoke-WebRequest -UseBasicParsing ${url} -OutFile $bundle\n`
+      + "npx @deepseek-ai/dsh plugin --profile web add $bundle";
+  }
+  return `(dsh_home="\${DSH_HOME:-$HOME/.dsh}" && mkdir -p "$dsh_home" && curl -fsSL -o "$dsh_home/dsh-gamma.tgz" ${url}`
+    + ` && npx @deepseek-ai/dsh plugin --profile web add "$dsh_home/dsh-gamma.tgz")`;
+}
+
+// dsh's MCP client has no OAuth: the bundle reads the address and a manual
+// token from the environment when dsh starts. The token is typed at a prompt,
+// never into the command, so it stays out of shell history.
+export function dshStartCommand(serverUrl, platform) {
+  const url = shellQuote(serverUrl, platform);
+  if (platform === "windows") {
+    return `$env:GAMMA_URL = ${url}\n$env:GAMMA_TOKEN = Read-Host 'Gamma token'\nnpx @deepseek-ai/dsh web`;
+  }
+  return `export GAMMA_URL=${url}\nprintf 'Gamma token: '; read -r GAMMA_TOKEN; export GAMMA_TOKEN\nnpx @deepseek-ai/dsh web`;
+}

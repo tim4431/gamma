@@ -1,4 +1,4 @@
-# Gamma MCP, Codex, and Claude Code
+# Gamma MCP, Codex, Claude Code, and DeepSeek Harness
 
 Gamma exposes a read-only Streamable HTTP MCP endpoint at `/mcp`, on the same
 server as the app. Gamma's chat and MCP adapter share `gamma/ai_tools.py`:
@@ -16,7 +16,7 @@ servers, and connecting Codex does not invoke Gamma's AI provider.
 | `gamma/routers/integrations.py` | the session-only token management API |
 | `users.db` tables `integration_tokens`, `mcp_oauth` | migrations 6 and 7 ([migrations.md](migrations.md)) |
 | `frontend/src/settings/SettingsIntegrations.jsx`, `frontend/src/auth/McpConsent.jsx` | the Integrations pane, the consent screen |
-| `plugins/gamma/`, `tools/package_plugins.py`, `tools/release_plugins.py`, `.github/workflows/codex-plugin.yml` | the shared Codex / Claude Code plugin and its packaging |
+| `plugins/gamma/`, `tools/package_plugins.py`, `tools/release_plugins.py`, `.github/workflows/codex-plugin.yml` | the shared Codex / Claude Code plugin, the DeepSeek Harness bundle in the same directory, and their packaging |
 
 ## Connect
 
@@ -82,9 +82,63 @@ For local development from this checkout, use `claude --plugin-dir ./plugins/gam
 This loads the shared workflow without creating a marketplace; connect MCP separately.
 See the [plugin README](../../plugins/gamma/README.md) for both clients' setup.
 
+### DeepSeek Harness
+
+[DeepSeek Harness](https://github.com/deepseek-ai/deepseek-harness) (`dsh`) has
+no plugin marketplace; its plugins are npm packages that declare a **bundle**
+(`"dsh": {"bundle": {"patch": ...}}` in `package.json`), installed into a dsh
+profile with `dsh plugin --profile <name> add <package>`, which runs pnpm in the
+profile directory. `plugins/gamma` is such a bundle as well as the Codex /
+Claude Code plugin:
+
+| File | Role |
+|---|---|
+| `package.json` | name `dsh-gamma`, the bundle declaration, `files`; version and description kept equal to the plugin manifests (the builder checks) |
+| `cordis.patch.yml` | inserts two rows: `gamma-mcp` (`@deepseek-ai/dsh-mcp-client`, Streamable HTTP, `url` from `GAMMA_URL`, `Authorization: Bearer` from `GAMMA_TOKEN`) and `gamma-skill` |
+| `dsh-skill.js` | mounts dsh's filesystem skill provider (`@deepseek-ai/dsh-skill-filesystem`, a peer dependency the running dsh supplies) on this package's `skills/` |
+
+dsh's MCP client sends fixed headers and has no OAuth, so it connects with a
+manual token. The address and token are read when dsh starts, so the package
+holds no per-user values. Without `GAMMA_URL` the `gamma-mcp` row is disabled
+(`disabled: !!js "!process.env.GAMMA_URL"`): an undefined `url` fails the MCP
+client's config check, and a failing row stops dsh from booting at all. A patch
+row can name only a plugin module relative to the bundle, not a folder, which is
+why the skill needs `dsh-skill.js` rather than a config value.
+
+**Setup.** **Settings → Integrations → DeepSeek Harness** has three steps: create
+a read-only token named "DeepSeek Harness" (shown once), run the install command
+(`dshInstallCommand` in `frontend/src/settings/assistantSetup.js`), run the start
+command (`dshStartCommand`: sets `GAMMA_URL`, prompts for `GAMMA_TOKEN` so it
+never enters shell history, runs `npx @deepseek-ai/dsh web`). The install command
+downloads `releases/latest/download/dsh-gamma.tgz` to `$DSH_HOME/dsh-gamma.tgz`
+(default `~/.dsh`) and adds that file to the `web` profile; running it again
+updates in place. It deliberately does not pass the URL to `dsh plugin add`:
+pnpm 10 cannot reuse a remote tarball it has already resolved (a second profile
+or a re-add fails with `ERR_PNPM_MISSING_TARBALL_INTEGRITY`), while a local file
+installs into any number of profiles and updates. pnpm warns about the
+unresolved peer dependency on install; that is expected, the running dsh
+provides it. The tab exists only where browser sign-in is available, like the
+other tabs; elsewhere, create the token under **Manual setup** and use the same
+commands.
+
+The tools appear as `mcp__gamma__<tool>` and the skill as `gamma`. An unset,
+expired or revoked token shows in Gamma's log as a 401
+`authentication-required` on `/mcp`; dsh then starts without the tools.
+
+**Build.** `tools/release_plugins.py` writes `dsh-gamma-X.Y.Z.tgz` and a
+byte-identical `dsh-gamma.tgz` (the stable name the install command fetches)
+with `gamma-dsh-SHA256SUMS.txt`. `write_dsh_bundle` in `tools/package_plugins.py`
+builds the tarball in Python (npm layout, `package/` prefix, fixed timestamps,
+reproducible), stamping the release version into `package.json`. For local
+development, `dsh plugin --profile web add ./plugins/gamma` links the checkout;
+that needs dsh 0.1.7 or later, since 0.1.5 does not supply the peer dependency to
+a linked package (use a tarball from `tools/release_plugins.py` there). Verified
+against dsh 0.1.5-rc.3 and 0.1.7-rc.1: tools `mcp__gamma__*`, the `gamma` skill,
+and a clean boot without `GAMMA_URL`.
+
 ### Manual tokens (advanced)
 
-For clients without OAuth, expand **Manual setup (advanced)** in the same panel,
+For other clients without OAuth, expand **Manual setup (advanced)** in the same panel,
 create a named token, and copy it once. Guests cannot create connections. Set `GAMMA_TOKEN` in the environment
 of the process launching Codex. For a temporary PowerShell session:
 
@@ -307,6 +361,7 @@ the computed release version and publishes these assets on the same `vX.Y.Z` rel
 - `gamma-codex-SHA256SUMS.txt`
 - `gamma-claude-code-plugin-X.Y.Z.zip`
 - `gamma-claude-code-SHA256SUMS.txt`
+- `dsh-gamma-X.Y.Z.tgz`, `dsh-gamma.tgz` and `gamma-dsh-SHA256SUMS.txt`
 
 Both ZIPs contain identical bytes; separate names make the client downloads easy
 to find while keeping one build. The Codex installers retain their published names

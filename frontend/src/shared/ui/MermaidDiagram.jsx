@@ -2,7 +2,7 @@ import React, { useEffect, useLayoutEffect, useRef, useState } from "react";
 import { copyText } from "../lib/utils";
 import { renderMermaid } from "../lib/mermaidRenderer.js";
 import { CheckIcon, CodeIcon, CopyIcon, DownloadIcon } from "./Icons";
-import { ResizeGrip, useDragResize } from "./ResizeGrip";
+import { ResizeGrips, useDragResize } from "./ResizeGrip";
 import "./mermaid.css";
 
 export function mermaidCodeProps(children) {
@@ -33,6 +33,7 @@ export function MermaidDiagram({ source, pending = false, width = null, idx, onR
   const figureRef = useRef(null);
   const { dragW, gripProps } = useDragResize({
     measure: () => figureRef.current?.getBoundingClientRect().width,
+    bound: () => figureRef.current?.parentElement,
     onCommit: (w) => onResize?.(idx, w),
   });
   useEffect(() => {
@@ -97,7 +98,7 @@ export function MermaidDiagram({ source, pending = false, width = null, idx, onR
         <div className="mermaidPreview">
           <div ref={figureRef} className={`mermaidFigure${w ? " sized" : ""}`} style={w ? { width: w } : undefined}>
             <div className="mermaidSvg" role="img" aria-label="Mermaid diagram" dangerouslySetInnerHTML={{ __html: active.svg }} />
-            {onResize ? <ResizeGrip as="div" {...gripProps} /> : null}
+            {onResize ? <ResizeGrips as="div" gripProps={gripProps} /> : null}
           </div>
         </div>
       )}

@@ -8,7 +8,7 @@ follow them instead of inventing new patterns.
 Mermaid diagram previews in notes and chat use the shared component and toolbar
 described in [mermaid.md](mermaid.md); the toolbar is the note image's hover
 strip of `ctlBtn` icon buttons, and the diagram resizes with the same
-right-edge grip as an image (`shared/ui/ResizeGrip.jsx`).
+two-sided grips as an image (`shared/ui/ResizeGrip.jsx`).
 
 Reuse the unified classes; never invent a bespoke style for a control that
 already exists. Bespoke CSS classes are for **layout only**.
@@ -154,5 +154,5 @@ a visitor without an account) in its top bar.
 | `editor/LatexEditor.jsx` | LaTeX aids while editing: the live preview docked to the editor column with a caret marker, the `\command` popup, `renderKatex`/`useCaretAnchored` shared helpers; `editor/latexCompletion.js` is the pure catalog (prefix/abbreviation/fuzzy tiers, snippets, Tab-out navigation) it re-exports; `editor/latexInput.js` supplies scalable delimiter pairing. See [LaTeX editing](latex_editing.md) for shortcuts and browser checks |
 | `library/libraryUtils.js` | folder-tag semantics (mirrored by `backend/gamma/foldertags.py`) |
 | `shared/ui/Widgets.jsx`, `shared/ui/Menus.jsx`, `shared/ui/Icons.jsx` | shared components |
-| `shared/ui/MermaidDiagram.jsx`, `shared/ui/ResizeGrip.jsx` | the Mermaid figure with its hover toolbar of `ctlBtn`s ([mermaid.md](mermaid.md)); the right-edge drag grip + `useDragResize` hook that size note images and diagrams alike |
+| `shared/ui/MermaidDiagram.jsx`, `shared/ui/ResizeGrip.jsx` | the Mermaid figure with its hover toolbar of `ctlBtn`s ([mermaid.md](mermaid.md)); the two-sided drag grips (`ResizeGrips`) + `useDragResize` hook that size centred note images and diagrams alike |
 | `shared/ui/menuAim.js` | pointer-trajectory ("safe triangle") hover intent for hierarchical menus — UI-agnostic, consumed by `shared/ui/Menus.jsx` |

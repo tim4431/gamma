@@ -48,10 +48,10 @@ Tap an active pen preset again to choose **Pen** (width follows stylus pressure)
 
 Notes live in the **Notes panel** as a nested outline. Highlights and free notes are the same kind of block, so a paper's notes and a plain page are edited the same way.
 
-- **Editing**: Enter inserts a line break, **Shift+Enter starts a new note** (swap the two in Settings → Reading & editing). **Tab / Shift+Tab** indent and outdent. Backspace in an empty note deletes it. Drag the **⋮⋮ handle** to reorder or re-nest; the **+** under it makes a new block below.
+- **Editing**: Enter inserts a line break, **Shift+Enter starts a new note** (swap the two in Settings → Reading & editing). **Tab / Shift+Tab** indent and outdent. Backspace in an empty note deletes it. Drag the **⋮⋮ handle** to reorder or re-nest; the **+** under it makes a new block below. Clicking a note opens it with the cursor on the character you clicked, and the page scrolls so that spot stays under the pointer. Hover the gap between two paragraphs, formulas or lists inside a note and a line appears; click it to start a new line there.
 - **Live rendering, Obsidian-style**: the block you are on stays raw; everything else renders — headings, bold/italic/code/strike, `==highlight==`, bullets, todos, quotes, `> [!note]` callouts, tables, code fences with syntax colors, images, and links.
 - **Math**: `$…$` inline and `$$…$$` display math render with KaTeX. While typing, a live preview floats over the raw source, brackets are pair-colored, `\command` autocompletes, and **Tab hops between `{}` arguments**. `$` auto-pairs; type `\begin{` to complete an environment.
-- **Pictures**: paste a screenshot or drag an image into a note. Hover it for zoom, caption, download and delete; **drag the grip on its right edge** to resize (stored Obsidian-style as `![alt|300](…)`).
+- **Pictures**: paste a screenshot or drag an image into a note. Pictures sit centred; hover one for zoom, caption, download and delete, and **drag the grip on either side** to resize (stored Obsidian-style as `![alt|300](…)`).
 - **Tables** are edited in place: click a cell to edit, Tab hops cells, hover strips add rows and columns, handles move them by drag, and every edit auto-formats the markdown.
 - **Formatting keys** are Obsidian's: Ctrl+B / I / E / Shift+X / Shift+H toggle bold, italic, code, strike and highlight; Ctrl+K makes a link and fills it from a URL on the clipboard.
 - **`[[` links** between notes and pages, with autocomplete; inserted references are clickable chips, and a **Backlinks** section shows who links here. `![[block]]` **embeds** show the source block and let you edit it right there.
@@ -163,10 +163,11 @@ Many journal PDFs need a subscription your browser has (through the campus netwo
 
 <img alt="Gamma in the middle of an assistant prompt that mentions @Gamma and a paper, the Obsidian, Notion and Zotero import and export arrows, and the Gamma Connector saving a paper with the publisher sign-in kept per journal" src="assets/branding/gamma-connections-light.svg" width="100%">
 
-Codex, Claude Code and any other MCP client can search and read your papers, notes, highlights and PDF text — read-only, for one workspace you approve in the browser. Then, in the assistant: *"@Gamma, in the Rydberg arrays paper, how is the blockade radius measured?"*, or paste a Gamma page or share link with your question.
+Codex, Claude Code, DeepSeek Harness and any other MCP client can search and read your papers, notes, highlights and PDF text — read-only, for one workspace you approve in the browser. Then, in the assistant: *"@Gamma, in the Rydberg arrays paper, how is the blockade radius measured?"*, or paste a Gamma page or share link with your question.
 
 - **Codex**: Settings → AI → Integrations → **Codex CLI**, pick your operating system, copy the one setup command and run it on the computer where you use Codex. It installs the Gamma plugin from a published release and opens Gamma sign-in; approve the workspace and start a new chat. Invoke `$gamma` in the CLI or pick Gamma from the plugin picker.
 - **Claude Code**: the same panel shows the connection command (`claude mcp add --transport http gamma <your-address>/mcp`); the plugin setup is in [plugins/gamma](../plugins/gamma/README.md). Sign in through `/mcp`, then run `/gamma:gamma` or just ask.
+- **DeepSeek Harness**: Settings → AI → Integrations → **DeepSeek Harness**. Create a read-only token (dsh has no browser sign-in), run the install command, which adds the Gamma plugin to dsh's web profile (needs pnpm), then start dsh with the start command and paste the token when asked. Gamma's tools appear as `mcp__gamma__…`; paste a Gamma page link with your question.
 - **Other MCP clients** use the server URL shown in the panel; sign in happens in the browser. Manual tokens are there for clients that cannot.
 - For a Gamma hosted remotely an administrator confirms the **Public server URL** once in Settings → Server, which enables assistant sign-in; no environment variables or restart.
 
@@ -230,7 +231,7 @@ Settings (account menu → Settings) has one sidebar in three groups; the search
 | | Chat | Which tools the agent may use, per chat kind |
 | | Advanced | Reasoning effort, tool limits, context budgets |
 | | Prompts | The system prompts |
-| | Integrations | Codex / Claude Code / MCP connections and tokens |
+| | Integrations | Codex / Claude Code / DeepSeek Harness / MCP connections and tokens |
 | Manage | Workspaces | Personal and shared workspaces, **Clones** (offline copies), export / import |
 | | Backups | Server-side snapshots |
 | | Library maintenance | Storage, search-index rebuild, metadata health table |

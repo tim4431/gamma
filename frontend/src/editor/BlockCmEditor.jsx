@@ -349,6 +349,11 @@ function buildInlineDecos(state, labelsRef) {
       ranges.push(Decoration.replace({
         widget: new ImageWidget(im.url, im.alt, im.width),
       }).range(im.from, im.to));
+      // A picture alone on its line is centred, like the rendered view.
+      const line = state.doc.lineAt(im.from);
+      if (!text.slice(line.from, im.from).trim() && !text.slice(im.to, line.to).trim()) {
+        ranges.push(Decoration.line({ class: "cmImgLine" }).range(line.from));
+      }
     }
   }
 
@@ -797,6 +802,24 @@ const markHotkeys = keymap.of([
   { key: "Mod-k", preventDefault: true, run: runInsertLink },
 ]);
 
+// The raw source is usually taller than the rendered view it replaced, so
+// the clicked text moves when the editor opens: scroll the notes by however
+// far the caret's line landed from the pointer, keeping it where it was.
+function keepUnderPointer(view, pos, y) {
+  const c = view.coordsAtPos(pos);
+  if (!c) return;
+  const delta = (c.top + c.bottom) / 2 - y;
+  if (Math.abs(delta) < 4) return;
+  for (let el = view.dom.parentElement; el; el = el.parentElement) {
+    const oy = getComputedStyle(el).overflowY;
+    if ((oy === "auto" || oy === "scroll") && el.scrollHeight > el.clientHeight) {
+      el.scrollTop += delta;
+      return;
+    }
+  }
+  document.scrollingElement?.scrollBy(0, delta);
+}
+
 const BlockCmEditor = React.forwardRef(function BlockCmEditor({
   value, onChange, onSelect, onKeyDown, onBlur, onPaste,
   placeholder, autoFocus, clickPos, dataBlockId, className, refLabels, remoteCursors,
@@ -890,15 +913,18 @@ const BlockCmEditor = React.forwardRef(function BlockCmEditor({
     const view = new EditorView({ state, parent: hostRef.current });
     viewRef.current = view;
     if (autoFocus) view.focus();
-    // Caret placement on entering edit mode: at the clicked spot when we have
-    // coords (the rendered text and the raw source don't line up exactly —
-    // rendered math is shorter — but posAtCoords gets close), else at the end.
+    // Caret placement on entering edit mode: at the clicked character when
+    // the click mapped to a source offset (clickToSource.js), else at the
+    // clicked coords, else at the end. A click on the gap line between two
+    // blocks may ask for a new empty line there (insertLine) — a normal edit.
     let pos = view.state.doc.length;
     if (clickPos) {
-      const p = view.posAtCoords({ x: clickPos.x, y: clickPos.y });
-      if (p != null) pos = p;
+      const p = clickPos.offset ?? view.posAtCoords({ x: clickPos.x, y: clickPos.y });
+      if (p != null) pos = Math.max(0, Math.min(p, pos));
     }
-    view.dispatch({ selection: { anchor: pos } });
+    if (clickPos?.insertLine) view.dispatch({ changes: { from: pos, insert: "\n" }, selection: { anchor: pos } });
+    else view.dispatch({ selection: { anchor: pos } });
+    if (clickPos) keepUnderPointer(view, pos, clickPos.y);
     return () => { view.destroy(); viewRef.current = null; };
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);

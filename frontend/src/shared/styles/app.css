@@ -862,6 +862,7 @@ body {
   border-radius: 6px;
 }
 .blockEditorCm .cmImgWidget:hover img { box-shadow: 0 0 0 2px var(--accent-bg-light); }
+.blockEditorCm .cm-line.cmImgLine { text-align: center; }
 .blockEditorCm .cmHrLine {
   display: block;
   border-top: 1px solid var(--border);
@@ -1010,6 +1011,28 @@ body {
   line-height: 1.45;
   white-space: normal;
   cursor: text;
+  position: relative;
+}
+/* The hover line in the gap between two of the rendered view's blocks
+   (BlockTree's gapLine): the whole gap is its hit area, the line its middle;
+   clicking it opens the editor on a line between the two. */
+.mdGapLine {
+  position: absolute;
+  left: 0;
+  right: 0;
+  z-index: 1;
+  cursor: text;
+}
+.mdGapLine::after {
+  content: "";
+  position: absolute;
+  left: 0;
+  right: 0;
+  top: calc(50% - 1px);
+  height: 2px;
+  border-radius: 1px;
+  background: var(--accent);
+  opacity: 0.45;
 }
 
 .blockRendered p {
@@ -1208,13 +1231,15 @@ body {
   outline: none;
 }
 
-/* Images (MdImage): hover toolbar pill, right-edge resize grip, alt text
-   shown as a caption line, click-to-zoom lightbox. */
+/* Images (MdImage): centred on their own row, Notion-style, with a hover
+   toolbar pill, a resize grip on each side, alt text shown as a caption line,
+   click-to-zoom lightbox. */
 .mdImgWrap {
   position: relative;
-  display: inline-block;
+  display: block;
+  width: fit-content;
   max-width: 100%;
-  vertical-align: top;
+  margin: 0 auto;
 }
 .mdImgFrame {
   position: relative;
@@ -1241,8 +1266,9 @@ body {
 .mdImgFrame:hover .mdImgTools { opacity: 1; pointer-events: auto; }
 .mdImgTools a.ctlBtn { text-decoration: none; }
 .mdImgTools .ctlBtn.danger:hover { background: rgba(224, 92, 92, 0.15); color: #e05c5c; }
-/* The right-edge drag grip shared by sized figures (note images, Mermaid
-   diagrams — shared/ui/ResizeGrip.jsx); each frame reveals it on hover. */
+/* The edge drag grips shared by sized figures (note images, Mermaid
+   diagrams — shared/ui/ResizeGrip.jsx), one per side; each frame reveals
+   them on hover. */
 .mdResizeGrip {
   position: absolute;
   top: 50%;
@@ -1258,6 +1284,7 @@ body {
   touch-action: none;
   transition: opacity 0.12s;
 }
+.mdResizeGrip.left { right: auto; left: -3px; }
 .mdImgFrame:hover .mdResizeGrip { opacity: 0.55; }
 .mdImgFrame .mdResizeGrip:hover, .mdImgFrame .mdResizeGrip:active { opacity: 0.9; }
 .mdImgCaption {
@@ -1270,7 +1297,8 @@ body {
 .mdImgCaptionInput {
   display: block;
   width: min(100%, 360px);
-  margin: 2px 0 4px;
+  margin: 2px auto 4px;
+  text-align: center;
   padding: 3px 8px;
   font: inherit;
   font-size: calc(12px * var(--ui-font-scale, 1));

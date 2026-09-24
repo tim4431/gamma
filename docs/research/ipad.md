@@ -1,7 +1,7 @@
 # The iPad client: native app or installed web app?
 
 Survey from 2026-09-18, when the upstream feature study
-([todos/upstream-feature-study-2026-09-18.md](../../todos/upstream-feature-study-2026-09-18.md))
+([upstream-features.md](upstream-features.md))
 ranked upstream's native iPad app first. Findings only; what was built is
 in [dev/ipad.md](../dev/ipad.md).
 

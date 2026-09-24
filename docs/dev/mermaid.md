@@ -7,9 +7,10 @@ Hovering a diagram shows its toolbar — the same flat icon buttons as a note
 image's hover strip: show source (`</>`), copy source, download SVG. Ordinary
 code blocks keep their existing behavior.
 
-A note's diagram resizes like a note image: the right-edge grip
-(`shared/ui/ResizeGrip.jsx`, shared with `MdImage`) drags the width, and
-double-clicking it restores the natural size. The size is stored in the
+A note's diagram resizes like a note image: a grip on each side
+(`shared/ui/ResizeGrip.jsx`, shared with `MdImage`) drags the width — the
+figure is centred, so the width changes by twice the pointer's travel — and
+double-clicking a grip restores the natural size. The size is stored in the
 fence's info string after the language — `` ```mermaid width=420 `` —
 which other Markdown renderers ignore, so the source stays portable (the
 diagram analogue of the Obsidian `![alt|420]` image size). `setMermaidWidth`

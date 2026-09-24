@@ -1,0 +1,16 @@
+# The DeepSeek Harness layer: the read-only Gamma MCP connection and the Gamma
+# skill. The address and token come from the environment when dsh starts, so
+# the package holds no per-user values. Without GAMMA_URL the connection row is
+# disabled rather than failing dsh's config check, which would stop dsh booting.
+- insert:
+    - id: gamma-mcp
+      name: '@deepseek-ai/dsh-mcp-client'
+      disabled: !!js "!process.env.GAMMA_URL"
+      config:
+        serverName: gamma
+        transport: streamable-http
+        url: !!js process.env.GAMMA_URL
+        headers:
+          Authorization: !!js '`Bearer ${process.env.GAMMA_TOKEN}`'
+    - id: gamma-skill
+      name: ./dsh-skill.js

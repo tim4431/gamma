@@ -302,6 +302,51 @@ export async function settingsScenarios(env) {
     } finally { await ctx.close(); }
   });
 
+  await step("settings: DeepSeek Harness connects with a token made in its own tab", async () => {
+    const { ctx, page } = await setup();
+    try {
+      await openSettings(page);
+      await nav(page, "Integrations").click();
+      await page.getByRole("button", { name: "DeepSeek Harness", exact: true }).click();
+      const start = page.getByRole("textbox", { name: "DeepSeek Harness start command", exact: true });
+      await page.getByRole("button", { name: "macOS / Linux", exact: true }).click();
+      assert((await start.inputValue()).startsWith(`export GAMMA_URL='${server.base}/mcp'
+`));
+      const install = page.getByRole("textbox", { name: "DeepSeek Harness plugin install command", exact: true });
+      assert((await install.inputValue()).includes("releases/latest/download/dsh-gamma.tgz"));
+      await page.getByRole("button", { name: "Create token", exact: true }).click();
+      const secret = page.getByRole("textbox", { name: "New integration token" });
+      await secret.waitFor();
+      const token = await secret.inputValue();
+      assert(!(await start.inputValue()).includes(token), "the token is typed at a prompt, never copied into a command");
+      await until(() => page.getByRole("button", { name: "Disconnect", exact: true }).count().then((n) => n === 1));
+      const [made] = (await user.api("/api/integrations/tokens")).tokens.filter((t) => t.name === "DeepSeek Harness");
+      assertEq(made.scope, "read");
+      // What dsh sends on startup: an initialize with the bearer header.
+      const init = await fetch(`${server.base}/mcp`, { method: "POST",
+        headers: { "Content-Type": "application/json", Accept: "application/json, text/event-stream", Authorization: `Bearer ${token}` },
+        body: JSON.stringify({ jsonrpc: "2.0", id: 1, method: "initialize",
+          params: { protocolVersion: "2025-11-25", capabilities: {}, clientInfo: { name: "dsh-e2e", version: "0" } } }) });
+      assertEq(init.status, 200);
+      await page.getByText("Manual setup (advanced)", { exact: true }).click();
+      assertEq(await secret.count(), 1, "the one-time token shows only in the tab that made it");
+      await page.getByRole("button", { name: "Windows PowerShell", exact: true }).click();
+      assert((await install.inputValue()).endsWith("npx @deepseek-ai/dsh plugin --profile web add $bundle"));
+      assert((await start.inputValue()).includes("Read-Host 'Gamma token'"));
+      await page.setViewportSize({ width: 390, height: 844 });
+      await start.scrollIntoViewIfNeeded();
+      assert(await page.evaluate(() => document.documentElement.scrollWidth <= innerWidth), "four assistant tabs fit a narrow viewport");
+      if (process.env.GAMMA_MCP_SCREENSHOTS) {
+        await page.screenshot({ path: path.join(process.env.GAMMA_MCP_SCREENSHOTS, "dsh-setup-mobile.png"), fullPage: true });
+      }
+      await page.setViewportSize({ width: 1280, height: 860 });
+      await page.getByRole("button", { name: "Done", exact: true }).click();
+      await secret.waitFor({ state: "detached" });
+      await user.api(`/api/integrations/tokens/${made.id}`, { method: "DELETE" });
+      assertNoProblems(page);
+    } finally { await ctx.close(); }
+  });
+
   await step("settings: navigation, search, scoped management, and preferences survive reload", async () => {
     const { ctx, page } = await setup();
     try {

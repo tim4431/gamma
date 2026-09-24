@@ -86,7 +86,7 @@ export async function mermaidScenarios(env) {
       // Resize: the image grip's drag writes `width=N` into the fence's info
       // string, the figure follows it, double-click clears it again.
       const figure = page.locator(".mermaidFigure");
-      const grip = figure.locator(".mdResizeGrip");
+      const grip = figure.locator(".mdResizeGrip.right");
       await figure.hover();
       const startW = (await figure.boundingBox()).width;
       const box = await grip.boundingBox();

@@ -24,6 +24,7 @@ import {
 } from "./LatexEditor";
 import { BlockCmEditor, scanMathSpans } from "./BlockCmEditor";
 import { expandBlankLines } from "./mdMarks";
+import { blockStartInSource, gapInSource, renderedGaps, sourceOffsetAtPoint } from "./clickToSource";
 import { fenceInnerAt, highlightCode, makeCopyButton, scanFences } from "./codeHighlight";
 import { filterSlashCommands, SlashMenuPopup } from "./SlashMenu";
 import { remarkCallouts } from "./callouts";
@@ -711,6 +712,11 @@ function BlockRow({
 }) {
   const ref = useRef(null);
   const clickPosRef = useRef(null);
+  // The hover line in the gap between two of the rendered view's blocks
+  // (paragraphs, formulas, lists…): clicking it opens the editor on a line
+  // between them. {top (its middle, px in the rendered view), half (its
+  // reach up and down), below (the lower block)}.
+  const [gapLine, setGapLine] = useState(null);
   // Other people on this block (collab presence): avatar chips on the row,
   // a coloured edge while one of them has its editor open, and their
   // carets inside our editor when we have it open too.
@@ -931,8 +937,8 @@ function BlockRow({
     registerRef(block.id, ref);
   }, [block.id, registerRef]);
 
-  // Caret-at-click placement now happens inside BlockCmEditor (posAtCoords on
-  // mount); just drop the captured coords once edit mode is entered so later
+  // Caret-at-click placement happens inside BlockCmEditor on mount (at the
+  // source offset the click mapped to, else posAtCoords); just drop the captured coords once edit mode is entered so later
   // re-renders don't reuse them.
   useEffect(() => {
     if (block.editMode) clickPosRef.current = null;
@@ -955,6 +961,14 @@ function BlockRow({
   // as a card; its content is the caption.
   const isInk = block.properties?.ink_url !== undefined;
   const hasChildren = (block.children?.length || 0) > 0;
+
+  function trackGapLine(e) {
+    const el = e.currentTarget;
+    const gap = renderedGaps(el, el.querySelector(":scope > .mdGapLine"))
+      .find((g) => Math.abs(e.clientY - g.y) <= g.half);
+    const top = gap ? gap.y - el.getBoundingClientRect().top : null;
+    setGapLine((cur) => (cur?.top === top ? cur : gap ? { top, half: gap.half, below: gap.below } : null));
+  }
 
   function handleFileDragOver(e) {
     if (!e.dataTransfer?.types || !Array.from(e.dataTransfer.types).includes("Files")) return;
@@ -1240,7 +1254,22 @@ function BlockRow({
           // and the selection must be allowed to start.
           else if ((e.ctrlKey || e.metaKey) && onAddToChat && !block.editMode) return;
           if (!readOnly && !block.editMode) {
-            clickPosRef.current = { x: e.clientX, y: e.clientY };
+            // The raw source lays out differently from the rendered view it
+            // replaces: find the clicked character in the source by its text
+            // (or, on a gap line, where the block below the gap starts).
+            const content = block.content || "";
+            const rendered = e.currentTarget.querySelector(".blockRendered");
+            const below = e.target.closest(".mdGapLine") && gapLine?.below;
+            const start = below ? blockStartInSource(rendered, content, below) : null;
+            if (start != null) {
+              const spans = [...scanMathSpans(content), ...scanFences(content)];
+              const gap = gapInSource(content, start, spans);
+              clickPosRef.current = { x: e.clientX, y: e.clientY, offset: gap.offset, insertLine: gap.insert };
+            } else {
+              const offset = sourceOffsetAtPoint(rendered, content, e.clientX, e.clientY);
+              clickPosRef.current = { x: e.clientX, y: e.clientY, offset };
+            }
+            setGapLine(null);
             e.preventDefault();
             onStartEdit(block.id, true);
           }
@@ -1494,7 +1523,9 @@ function BlockRow({
               {aiText.trim() ? <BlockMarkdown content={aiText} blockId={block.id} refLabels={refLabels} /> : null}
             </div>
           ) : (
-            <div className="blockRendered" onCopy={handleMarkdownCopy}>
+            <div className="blockRendered" onCopy={handleMarkdownCopy}
+              onMouseMove={readOnly ? undefined : trackGapLine}
+              onMouseLeave={readOnly ? undefined : () => setGapLine(null)}>
               {(block.content || "").trim() ? (
                 <BlockMarkdown content={block.content || ""} blockId={block.id} refLabels={refLabels} onBlockRefClick={stableRefClick}
                   onTaskToggle={readOnly ? undefined : stableTaskToggle}
@@ -1505,6 +1536,7 @@ function BlockRow({
               ) : (
                 <div className="blockPlaceholder">(empty)</div>
               )}
+              {gapLine ? <div className="mdGapLine" data-markdown-copy-ignore="" style={{ top: gapLine.top - gapLine.half, height: 2 * gapLine.half }} /> : null}
             </div>
           )}
 
