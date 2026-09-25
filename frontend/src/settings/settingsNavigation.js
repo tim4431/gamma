@@ -20,6 +20,8 @@ const entries = [
   ["reading", t("Pressure-sensitive strokes"), "handwriting pen ink width"],
   ["reading", t("Translation button"), "translation shortcut viewer"],
   ["reading", t("Translate into"), "translation language"],
+  ["reading", t("Translate a selection"), "translation popup highlight selected text button"],
+  ["reading", t("Translate on select"), "translation popup selected text automatic"],
   ["reading", t("Translate with"), "translation model engine service AI Google Youdao"],
   ["reading", t("Translation services"), "translation engine API key Google Cloud Youdao"],
   ["reading", t("Enter key"), "notes line keyboard shift"],

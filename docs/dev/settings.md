@@ -182,6 +182,7 @@ Preferences:
   stylus-draws-right-away and pressure switches, translation (button and
   language, the section's Speed action jumping to AI › Advanced; "Translate
   with" — a chat model or a set-up translation service, a browser pref; and
+  the selection popup's translate button and translate-on-select switches;
   the Google / Youdao credential rows with Test / Edit / remove,
   [SettingsTranslation.jsx](../../frontend/src/settings/SettingsTranslation.jsx)), the Enter key, and how search opens on the home page and on a
   page (Full panel / Find bar).

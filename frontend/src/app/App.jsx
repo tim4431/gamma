@@ -23,6 +23,8 @@ import {
   useTextScale,
 } from "../shared/ui/Widgets";
 import { BlockTree, _dragState } from "../editor/BlockTree";
+import { dropGapAtPoint, findObject } from "../editor/MdObject";
+import { cutObject, moveObjectInTree } from "../editor/mdObjects";
 import { scanMathSpans } from "../editor/BlockCmEditor";
 import { sourceRangeOfSelection } from "../editor/clickToSource";
 import { FileChipContext, forgetDocPages, rememberDocPage, setUploadReporter, uploadFilesAsLines, xhrUpload } from "../transfers/FileChip";
@@ -2441,6 +2443,7 @@ function LibraryApp({ publicPage = null, initialServerConfig = null }) {
     inkTools, setInkTools, inkEraserMode, setInkEraserMode, inkEraserSize, setInkEraserSize,
     inkLassoMode, setInkLassoMode,
     translateEnabled, setTranslateEnabled,
+    selTranslate, setSelTranslate, selTranslateAuto, setSelTranslateAuto,
     translateLang, setTranslateLang, translateModel, setTranslateModel,
     translateEffort, setTranslateEffort, translateParallel, setTranslateParallel,
     searchDetailsHome, setSearchDetailsHome, searchDetailsPaper, setSearchDetailsPaper,
@@ -3506,6 +3509,7 @@ function LibraryApp({ publicPage = null, initialServerConfig = null }) {
     // onBlockDrop still reads _dragState.dropTarget.
     const reset = () => {
       _dragState.draggingId = null;
+      _dragState.fragment = null;
       _dragState.dropTarget = null;
       setDropTarget(null);
     };
@@ -6181,10 +6185,19 @@ function LibraryApp({ publicPage = null, initialServerConfig = null }) {
       return inEditor || !!applied;
     },
     renameTitle: () => { setTitleDraft(pageTitle || t("Untitled")); setTitleEditing(true); },
-    toggleChat: () => setCollapsedWins((prev) => ({ ...prev, chat: !prev.chat })),
+    toggleChat: () => setChatHidden((v) => !v),
     togglePdf: () => setPdfHidden((v) => !v),
     toggleNotes: () => setNotesVisible((v) => !v),
     openSettings: (pane) => { setOpenPopover(null); setSettingsOpen((cur) => pane || cur || "appearance"); },
+    // The Export dialog, preset to a format (transfers/transferFormats.js).
+    exportAs: (format) => { setExportFolder(null); setExportOpts((o) => ({ ...o, format })); setExportOpen(true); },
+    downloadPdf: () => exportRawPdf(),
+    importDialog: () => { setOpenPopover(null); setImportOpen(true); },
+    newPage: () => createPage(),
+    share: () => setOpenPopover((p) => (p === "share" ? null : "share")),
+    metadata: () => openMetaPopover(),
+    attach: () => setOpenPopover((p) => (p === "attach" ? null : "attach")),
+    reportProblem: () => { setOpenPopover(null); setReportOpen(true); },
   };
   // What the command palette lists right now: the app commands that apply,
   // then the block commands that work on the focused row without an editor.
@@ -6290,7 +6303,30 @@ function LibraryApp({ publicPage = null, initialServerConfig = null }) {
   // first, re-parent server-side (reorder carries parent_id), then drop it
   // locally — this page's next autosave PUT no longer contains the block, and
   // since it already lives under the target page that PUT can't delete it.
+  // An image / table / diagram to the end of another page: a new block there
+  // holding its markdown, the object cut from its block here. The local cut
+  // stays undoable (an undo leaves the copy on the other page).
+  async function doMoveFragment(frag, page) {
+    setMoveBlockDialog(null);
+    const title = (page.content || t("Untitled")).slice(0, 60);
+    const src = findBlock(blocks, frag.sourceId);
+    const obj = src ? findObject(src.content || "", frag.kind, frag.idx) : null;
+    if (!obj) return;
+    const cut = cutObject(src.content || "", obj);
+    try {
+      await apiJson(`${API}/blocks`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ parent_id: page.id, content: cut.md }),
+      });
+      setBlocks((prev) => setBlockText(prev, frag.sourceId, cut.content));
+      setStatus(t("Moved to \"{title}\".", { title: title }));
+    } catch (err) {
+      setStatus(t("Move failed: {message}", { message: err.message }));
+    }
+  }
   async function doMoveBlock(blockId, page) {
+    if (moveBlockDialog?.fragment) return doMoveFragment(moveBlockDialog.fragment, page);
     setMoveBlockDialog(null);
     const title = (page.content || t("Untitled")).slice(0, 60);
     try {
@@ -8031,6 +8067,24 @@ function LibraryApp({ publicPage = null, initialServerConfig = null }) {
                       setMoveBlockDialog({ blockId: id, query: "", pages });
                     } catch (err) { setStatus(t("Could not list pages: {message}", { message: err.message })); }
                   },
+                  // An image / table / diagram (the object frame's menu):
+                  // to a new block above / below its own, or to another
+                  // page through the same picker as a block move.
+                  onMoveObject: async ({ sourceId, kind, idx, target }) => {
+                    if (readOnly) return;
+                    if (target.type === "page") {
+                      try {
+                        const d = await apiJson(`${API}/blocks/root/children`);
+                        const pages = (d.children || []).filter((p) => p.id !== focusedBlockId);
+                        setMoveBlockDialog({ fragment: { sourceId, kind, idx }, query: "", pages });
+                      } catch (err) { setStatus(t("Could not list pages: {message}", { message: err.message })); }
+                      return;
+                    }
+                    const src = findBlock(blocks, sourceId);
+                    const obj = src ? findObject(src.content || "", kind, idx) : null;
+                    const next = obj ? moveObjectInTree(blocks, { sourceId, obj, target }) : null;
+                    if (next) setBlocks(next);
+                  },
                   onPasteBlocks: (id, nodes) => {
                     if (readOnly || !nodes?.length) return;
                     const toBlock = (n) => ({
@@ -8056,15 +8110,33 @@ function LibraryApp({ publicPage = null, initialServerConfig = null }) {
                   onBlockDragOver: (e, block) => {
                     e.preventDefault();
                     e.dataTransfer.dropEffect = "move";
-                    // Only a block's ⋮⋮ drag shows where it lands: an image,
-                    // link or text selection dragged over the notes has no
-                    // handle dragend to take the line away again.
-                    if (!_dragState.draggingId) return;
+                    // Only a block's ⋮⋮ drag or an object frame's drag shows
+                    // where it lands: a link or text selection dragged over
+                    // the notes has no dragend to take the line away again.
+                    const frag = _dragState.fragment;
+                    if (!_dragState.draggingId && !frag) return;
                     const wrap = e.currentTarget.closest(".sortableBlockWrap");
                     const r = wrap ? wrap.getBoundingClientRect() : e.currentTarget.getBoundingClientRect();
                     const px = e.clientX;
                     const py = e.clientY;
-                    const above = (py - r.top) <= 16;
+                    if (frag) {
+                      // An object: over the row's middle it goes INTO the
+                      // block, at the gap nearest the pointer; near the top
+                      // or bottom edge it becomes a block of its own.
+                      const edge = Math.min(14, Math.max(6, r.height * 0.3));
+                      const rendered = e.currentTarget.querySelector(".blockRendered");
+                      if (rendered && py - r.top > edge && r.bottom - py > edge) {
+                        const gap = dropGapAtPoint(rendered, block.content || "", py);
+                        if (gap) {
+                          const rr = rendered.getBoundingClientRect();
+                          const dt = { targetId: block.id, inside: true, offset: gap.offset, rect: { top: gap.y, left: rr.left, width: rr.width } };
+                          _dragState.dropTarget = dt;
+                          setDropTarget(dt);
+                          return;
+                        }
+                      }
+                    }
+                    const above = frag ? py < r.top + r.height / 2 : (py - r.top) <= 16;
                     const td = parseInt((wrap || e.currentTarget).getAttribute("data-depth") || "0", 10);
                     const nested = (px - r.left) > 50;
                     const dt = { targetId: block.id, above, depth: nested ? td + 1 : td, rect: { top: r.top, left: r.left, width: r.width, bottom: r.bottom } };
@@ -8081,25 +8153,38 @@ function LibraryApp({ publicPage = null, initialServerConfig = null }) {
                     setDropTarget(null);
                     _dragState.dropTarget = null;
                     _dragState.draggingId = null;
+                    const frag = _dragState.fragment;
+                    _dragState.fragment = null;
+                    if (!dt || readOnly) return;
+                    // Where the indicator's depth puts a dropped block: under
+                    // the target, beside it, or beside one of its ancestors.
+                    const placement = (tree) => {
+                      const ctx = findBlockContext(tree, dt.targetId);
+                      if (!ctx) return null;
+                      if (dt.depth === ctx.depth + 1) return { type: "child", id: dt.targetId };
+                      if (dt.depth === ctx.depth) return { type: "sibling", id: dt.targetId, above: dt.above };
+                      if (dt.depth < ctx.depth && ctx.ancestors[dt.depth]) return { type: "sibling", id: ctx.ancestors[dt.depth], above: dt.above };
+                      return null;
+                    };
+                    if (frag) {
+                      const src = findBlock(blocks, frag.blockId);
+                      const obj = src ? findObject(src.content || "", frag.kind, frag.idx) : null;
+                      const target = dt.inside ? { type: "inside", id: dt.targetId, offset: dt.offset } : placement(blocks);
+                      const next = obj && target ? moveObjectInTree(blocks, { sourceId: frag.blockId, obj, target }) : null;
+                      if (next) setBlocks(next);
+                      return;
+                    }
                     const sourceId = e.dataTransfer.getData("text/plain");
-                    if (!sourceId || !dt || sourceId === dt.targetId || readOnly) return;
+                    if (!sourceId || sourceId === dt.targetId) return;
                     if (isDescendant(blocks, sourceId, dt.targetId)) return;
                     const extracted = extractBlock(blocks, sourceId);
                     if (!extracted) return;
                     const { extracted: sourceBlock, remaining } = extracted;
-                    const targetCtx = findBlockContext(remaining, dt.targetId);
-                    if (!targetCtx) return;
-                    const targetDepth = targetCtx.depth;
-                    let next;
-                    if (dt.depth === targetDepth + 1) {
-                      next = insertChild(remaining, dt.targetId, sourceBlock, false);
-                    } else if (dt.depth === targetDepth) {
-                      next = insertSibling(remaining, dt.targetId, sourceBlock, !dt.above);
-                    } else if (dt.depth < targetDepth) {
-                      const ancestorId = targetCtx.ancestors[dt.depth];
-                      if (!ancestorId) return;
-                      next = insertSibling(remaining, ancestorId, sourceBlock, !dt.above);
-                    } else { return; }
+                    const where = placement(remaining);
+                    if (!where) return;
+                    const next = where.type === "child"
+                      ? insertChild(remaining, where.id, sourceBlock, false)
+                      : insertSibling(remaining, where.id, sourceBlock, !where.above);
                     if (next) setBlocks(next);
                   },
                 };
@@ -8919,7 +9004,9 @@ function LibraryApp({ publicPage = null, initialServerConfig = null }) {
                   onClick={(e) => {
                     if (transLongFiredRef.current) { transLongFiredRef.current = false; return; }
                     if (pdfTransState.running) { pdfTranslateCtl.current?.halt(); return; }
-                    if (pdfTransState.pages > 0) { pdfTranslateCtl.current?.setShown(!pdfTransState.shown); return; }
+                    // On a translated page: show/hide (all pages). Anywhere
+                    // else: translate this page, which also shows the rest.
+                    if (pdfTransState.current) { pdfTranslateCtl.current?.setShown(!pdfTransState.shown); return; }
                     pdfTranslateCtl.current?.translatePage();
                   }}
                   onContextMenu={(e) => { e.preventDefault(); openTransMenu(e.currentTarget); }}
@@ -8933,11 +9020,11 @@ function LibraryApp({ publicPage = null, initialServerConfig = null }) {
                   onPointerCancel={() => clearTimeout(transLongRef.current)}
                   title={pdfTransState.running
                     ? t("Translating… {progress}% — click to stop (right-click for options)", { progress: Math.round(pdfTransState.progress * 100) })
-                    : pdfTransState.pages > 0
+                    : pdfTransState.current
                       ? (pdfTransState.shown
                           ? t("Hide the translation (all pages; Alt peeks) — right-click for options") : t("Show the translation — right-click for options"))
                       : t("Translate this page into {translateLangLabel} — right-click: whole document & options", { translateLangLabel })}
-                  aria-label={pdfTransState.running ? t("Stop translating") : pdfTransState.pages > 0 ? (pdfTransState.shown ? t("Hide translation") : t("Show translation"))
+                  aria-label={pdfTransState.running ? t("Stop translating") : pdfTransState.current ? (pdfTransState.shown ? t("Hide translation") : t("Show translation"))
                     : t("Translate")}
                 >
                   {pdfTransState.running
@@ -9016,6 +9103,8 @@ function LibraryApp({ publicPage = null, initialServerConfig = null }) {
               translateKey={`${translateLang}|${translateSendModel}`}
               translateParallel={translateParallel}
               onTranslate={shareMode ? undefined : translateChunk}
+              selTranslate={selTranslate ? (selTranslateAuto ? "auto" : "button") : ""}
+              translateLangLabel={translateLangLabel}
               translateCtlRef={pdfTranslateCtl}
               onTranslateState={handleTranslateState}
               areaMode={areaSelectMode && isPhone && !shareMode}
@@ -9240,8 +9329,10 @@ function LibraryApp({ publicPage = null, initialServerConfig = null }) {
       {moveBlockDialog ? (
         <div className="reportOverlay" onClick={() => setMoveBlockDialog(null)}>
           <div className="reportModal confirmModal" onClick={(e) => e.stopPropagation()}>
-            <div className="reportModalTitle">{t("Move block to page")}</div>
-            <div className="reportModalHint confirmMessage">{t("The block and its sub-blocks move to the end of the chosen page.")}</div>
+            <div className="reportModalTitle">{moveBlockDialog.fragment ? t("Move to page") : t("Move block to page")}</div>
+            <div className="reportModalHint confirmMessage">{moveBlockDialog.fragment
+              ? t("It becomes a block of its own at the end of the chosen page.")
+              : t("The block and its sub-blocks move to the end of the chosen page.")}</div>
             <div className="shareRow">
               <input
                 autoFocus
@@ -9415,6 +9506,10 @@ function LibraryApp({ publicPage = null, initialServerConfig = null }) {
           setInkPressure,
           translateEnabled,
           setTranslateEnabled,
+          selTranslate,
+          setSelTranslate,
+          selTranslateAuto,
+          setSelTranslateAuto,
           translateLang,
           setTranslateLang,
           translateModel,

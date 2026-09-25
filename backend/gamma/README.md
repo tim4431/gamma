@@ -13,7 +13,9 @@ auth.py            session middleware → request.state.user; request → worksp
 seed.py            workspace file creation, guest welcome page, first admin
 blocks_store.py    recursive-CTE tree helpers
 storage.py         uploads (content-addressed) + orphan cleanup
-ai_client.py       provider HTTP protocols + streaming response parsing
+ai_protocols/      one adapter per AI wire protocol (request, stream, usage, models, quota)
+ai_client.py       provider-agnostic AI transport (open, read, stream, errors)
+ai_catalog.py      live model listings + context windows (provider, then models.dev)
 ai_context.py      PDF attachments, extraction, and chat context assembly
 logseq_import.py   EDN / Markdown importers
 app.py             assembly + SPA serving

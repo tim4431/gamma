@@ -1,6 +1,8 @@
 // The commands a note block answers to while its editor is open — VSCode's
 // line shortcuts with the block as the line, plus Obsidian's formatting
-// keys — declared once (docs/dev/hotkeys.md). BlockRow's keydown dispatches
+// keys — declared once (docs/dev/hotkeys.md). Only the long-standing keys,
+// the ↑ / ↓ hop and Ctrl+Shift+K have default chords; the rest are palette
+// entries (Ctrl+Shift+P) until the account binds them in Settings → Keyboard. BlockRow's keydown dispatches
 // this catalog (shared/lib/hotkeys.js) after its popups and before the
 // outliner's Enter/Tab/Backspace; the command palette and the Settings →
 // Keyboard pane read the same list, so a key, a menu entry and the cheat
@@ -57,19 +59,19 @@ export const BLOCK_COMMANDS = [
     run: (c) => c.row.onHop?.(c.block.id, 1) === true,
   },
   {
-    id: "block.moveUp", label: t("Move block up"), group: GROUP_NOTES, keys: "Alt-ArrowUp", edits: true,
+    id: "block.moveUp", label: t("Move block up"), group: GROUP_NOTES, keys: null, edits: true,
     run: (c) => c.row.onMoveBlock?.(c.block.id, -1) === true,
   },
   {
-    id: "block.moveDown", label: t("Move block down"), group: GROUP_NOTES, keys: "Alt-ArrowDown", edits: true,
+    id: "block.moveDown", label: t("Move block down"), group: GROUP_NOTES, keys: null, edits: true,
     run: (c) => c.row.onMoveBlock?.(c.block.id, 1) === true,
   },
   {
-    id: "block.duplicateUp", label: t("Duplicate block above"), group: GROUP_NOTES, keys: "Shift-Alt-ArrowUp", edits: true,
+    id: "block.duplicateUp", label: t("Duplicate block above"), group: GROUP_NOTES, keys: null, edits: true,
     run: (c) => { c.row.onDuplicate?.(c.block.id, { above: true }); },
   },
   {
-    id: "block.duplicateDown", label: t("Duplicate block below"), group: GROUP_NOTES, keys: "Shift-Alt-ArrowDown", edits: true,
+    id: "block.duplicateDown", label: t("Duplicate block below"), group: GROUP_NOTES, keys: null, edits: true,
     run: (c) => { c.row.onDuplicate?.(c.block.id, { above: false }); },
   },
   {
@@ -94,29 +96,29 @@ export const BLOCK_COMMANDS = [
     },
   },
   {
-    id: "block.newAbove", label: t("New block above"), group: GROUP_NOTES, keys: "Mod-Shift-Enter", edits: true,
+    id: "block.newAbove", label: t("New block above"), group: GROUP_NOTES, keys: null, edits: true,
     run: (c) => { c.row.onEnterSibling?.(c.block.id, { above: true }); },
   },
   {
-    id: "block.indent", label: t("Indent block"), group: GROUP_NOTES, keys: "Mod-]", edits: true,
+    id: "block.indent", label: t("Indent block"), group: GROUP_NOTES, keys: null, edits: true,
     run: (c) => { c.row.onIndent?.(c.block.id); },
   },
   {
-    id: "block.outdent", label: t("Outdent block"), group: GROUP_NOTES, keys: "Mod-[", edits: true,
+    id: "block.outdent", label: t("Outdent block"), group: GROUP_NOTES, keys: null, edits: true,
     run: (c) => { c.row.onOutdent?.(c.block.id); },
   },
   {
-    id: "block.fold", label: t("Collapse children"), group: GROUP_NOTES, keys: "Mod-Shift-[",
+    id: "block.fold", label: t("Collapse children"), group: GROUP_NOTES, keys: null,
     when: (c) => (c.block.children?.length || 0) > 0 && !c.block.collapsed,
     run: (c) => { c.row.onToggle?.(c.block.id); },
   },
   {
-    id: "block.unfold", label: t("Expand children"), group: GROUP_NOTES, keys: "Mod-Shift-]",
+    id: "block.unfold", label: t("Expand children"), group: GROUP_NOTES, keys: null,
     when: (c) => (c.block.children?.length || 0) > 0 && !!c.block.collapsed,
     run: (c) => { c.row.onToggle?.(c.block.id); },
   },
   {
-    id: "block.todo", label: t("Toggle to-do"), group: GROUP_NOTES, keys: "Mod-Enter", edits: true, needsEditor: true,
+    id: "block.todo", label: t("Toggle to-do"), group: GROUP_NOTES, keys: null, edits: true, needsEditor: true,
     run: (c) => {
       const view = c.editor.view;
       const r = toggleTodoLine(view.state.doc.toString(), view.state.selection.main.head);
@@ -125,7 +127,7 @@ export const BLOCK_COMMANDS = [
     },
   },
   {
-    id: "block.selectAll", label: t("Select block text"), group: GROUP_NOTES, keys: "Mod-l", needsEditor: true,
+    id: "block.selectAll", label: t("Select block text"), group: GROUP_NOTES, keys: null, needsEditor: true,
     run: (c) => { c.editor.setSelectionRange(0, c.editor.value.length); },
   },
   mark("block.bold", t("Bold"), "Mod-b", "**"),
@@ -136,5 +138,20 @@ export const BLOCK_COMMANDS = [
   {
     id: "block.link", label: t("Link"), group: GROUP_FORMAT, keys: "Mod-k", edits: true, needsEditor: true, palette: false,
     run: (c) => runInsertLink(c.editor.view),
+  },
+  // The ⋮⋮ handle menu's entries, for the palette.
+  {
+    id: "block.addToChat", label: t("Add block to chat"), group: GROUP_NOTES, keys: null,
+    when: (c) => !!c.row.onAddToChat,
+    run: (c) => { c.row.onAddToChat(c.block.id); },
+  },
+  {
+    id: "block.moveToPage", label: t("Move block to page…"), group: GROUP_NOTES, keys: null, edits: true,
+    when: (c) => !!c.row.onMoveToPage,
+    run: (c) => { c.row.onMoveToPage(c.block.id); },
+  },
+  {
+    id: "block.delete", label: t("Delete block with its children"), group: GROUP_NOTES, keys: null, edits: true,
+    run: (c) => { c.row.onDelete?.(c.block.id); },
   },
 ];

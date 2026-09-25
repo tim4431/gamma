@@ -12,6 +12,7 @@
 
 import React, { useEffect, useMemo, useRef, useState } from "react";
 import { BookIcon, CommandIcon, FileTextIcon, SearchIcon } from "../shared/ui/Icons";
+import { commandIcon } from "../app/commandIcons.jsx";
 import { CardLabels } from "./FileBrowser";
 import { createLibraryMatcher } from "./librarySearch";
 import { pageAttachment, parseFolderTags } from "./libraryUtils";
@@ -122,6 +123,7 @@ export default function QuickOpen({ open, prefix = "", commands, onClose, pages,
         <div ref={listRef} className="quickOpenList" role="listbox" aria-label={commandMode ? t("Commands") : t("Pages")}>
           {results.map((r, i) => {
             if (r.cmd) {
+              const CmdIcon = commandIcon(r.cmd);
               return (
                 <button
                   type="button" role="option" key={r.key} tabIndex={-1}
@@ -132,7 +134,7 @@ export default function QuickOpen({ open, prefix = "", commands, onClose, pages,
                   onMouseEnter={() => setActive(i)}
                   onClick={() => choose(r)}
                 >
-                  <CommandIcon size={15} />
+                  <CmdIcon size={15} />
                   <span><strong>{t(r.cmd.label)}</strong><small>{t(r.cmd.group)}</small></span>
                   {r.cmd.keyLabel && <em className="quickOpenTag quickOpenKey">{r.cmd.keyLabel}</em>}
                 </button>

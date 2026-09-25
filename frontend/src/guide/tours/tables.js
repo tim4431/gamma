@@ -16,6 +16,6 @@ export default {
     { id: "table-add", anchor: "notes.tableAdd", placement: "bottom", title: T("The + strips add a row or a column") },
     { id: "table-move", anchor: "notes.table", placement: "bottom", title: T("Hover a row or column: drag its handle to move it, click it for options") },
     { id: "table-cell", anchor: "notes.table", placement: "bottom", title: T("Click a cell to edit it; Tab moves to the next") },
-    { id: "table-whole", anchor: "notes.tableCorner", placement: "bottom", title: T("The corner selects the whole table: copy or delete it"), next: T("Done") },
+    { id: "table-whole", anchor: "notes.tableCorner", placement: "bottom", title: T("The corner selects the whole table: move, copy or delete it"), next: T("Done") },
   ],
 };

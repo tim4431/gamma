@@ -54,7 +54,7 @@ Notes live in the **Notes panel** as a nested outline. Highlights and free notes
 - **Pictures**: paste a screenshot or drag an image into a note. Pictures sit centred; hover one for zoom, caption, download and delete, and **drag the grip on either side** to resize (stored Obsidian-style as `![alt|300](…)`).
 - **Tables** are edited in place: click a cell to edit, Tab hops cells, hover strips add rows and columns, handles move them by drag, and every edit auto-formats the markdown.
 - **Formatting keys** are Obsidian's: Ctrl+B / I / E / Shift+X / Shift+H toggle bold, italic, code, strike and highlight; Ctrl+K makes a link and fills it from a URL on the clipboard.
-- **Block keys** are VSCode's, with the note as the line: Alt+↑/↓ moves it, Alt+Shift+↑/↓ duplicates it, Ctrl+Shift+K deletes the line, Ctrl+Shift+Enter starts a note above, Ctrl+Enter toggles a to-do, ↑/↓ on a note's first or last line step into the neighbour. Every key is listed — and changeable — in Settings → Keyboard; Ctrl+Shift+P runs any command by name. The full list: [Shortcut cheat sheet](#shortcut-cheat-sheet).
+- **Block commands**: Ctrl+Shift+K deletes the line (a one-line note as a whole, its children staying), ↑/↓ on a note's first or last line step into the neighbour, and **Ctrl+Shift+P** runs the rest by name — move or duplicate a note, new note above, indent, collapse, toggle a to-do, select its text. Give any of them keys in Settings → Keyboard, where every shortcut is listed and changeable. The full list: [Shortcut cheat sheet](#shortcut-cheat-sheet).
 - **`[[` links** between notes and pages, with autocomplete; inserted references are clickable chips, and a **Backlinks** section shows who links here. `![[block]]` **embeds** show the source block and let you edit it right there.
 - **"/" menu**: type `/` for headings, callouts, code, colored text, and everything else.
 - **Paste**: URLs offer *link / mention / embed*; multi-line text offers *Text / Blocks* (Blocks parses markdown into an outline); a table from Excel or Sheets pastes as a markdown table.
@@ -248,7 +248,7 @@ Preferences apply immediately; browser-only ones (theme, layout) are marked *Thi
 
 ## Shortcut cheat sheet
 
-Every shortcut with a modifier can be changed in **Settings → Keyboard**: click the keys, press new ones (Backspace unbinds). **Ctrl+Shift+P** lists every command by name with its keys. On a Mac, Ctrl is ⌘ and Alt is ⌥.
+**Ctrl+Shift+P** runs any command by name — exporting, sharing, importing, moving or duplicating a note, and more — whether or not it has keys. **Settings → Keyboard** lists every command: click the keys to change them, press new ones, Backspace unbinds; a command without keys gets some the same way. On a Mac, Ctrl is ⌘ and Alt is ⌥.
 
 | Keys | Does |
 |---|---|
@@ -258,19 +258,11 @@ Every shortcut with a modifier can be changed in **Settings → Keyboard**: clic
 | F2 | Rename the page |
 | Ctrl+Z / Ctrl+Y (or Ctrl+Shift+Z) | Undo / redo, one history per page |
 | Alt+← | Back through link jumps |
-| Ctrl+J / Ctrl+\ | Show or hide the chat / the PDF |
-| Ctrl+, | Settings |
 | Enter / Shift+Enter | In search: next / previous match. In notes: line break / new note (swappable). In chat: send / newline |
 | Tab / Shift+Tab | Indent / outdent a note · accept a search filter chip · hop between `{}` arguments in math · hop table cells |
 | ↑ / ↓ | On the first / last line of a note: move into the note above / below |
-| Alt+↑ / Alt+↓ | Move the note up / down among its siblings |
-| Alt+Shift+↑ / Alt+Shift+↓ | Duplicate the note above / below |
 | Ctrl+Shift+K | Delete the line (a one-line note goes as a whole; its children stay) |
-| Ctrl+Shift+Enter | New note above |
-| Ctrl+] / Ctrl+[ | Indent / outdent — also inside code and math, where Tab means something else |
-| Ctrl+Shift+[ / Ctrl+Shift+] | Collapse / expand the note's children (← / → at the text's edge do the same) |
-| Ctrl+Enter | Toggle the line's to-do checkbox |
-| Ctrl+L | Select the note's text |
+| ← / → | At the text's edge: collapse / expand the note's children |
 | Ctrl+B / Ctrl+I / Ctrl+E / Ctrl+Shift+X / Ctrl+Shift+H | Bold / italic / code / strike / highlight |
 | Ctrl+K | Link the selection (fills the URL from the clipboard) |
 | Backspace | On an empty note: delete it |

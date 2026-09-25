@@ -1,7 +1,7 @@
 import React from "react";
 import { API, apiJson, copyText } from "../shared/lib/utils";
 import { PaneHead, Section, Row, Segmented, Step } from "./SettingsKit";
-import { LinkIcon, KeyIcon, CopyIcon, CheckIcon, RefreshIcon, UnlinkIcon } from "../shared/ui/Icons";
+import { LinkIcon, KeyIcon, CopyIcon, CheckIcon, RefreshIcon, UnlinkIcon, ShieldIcon } from "../shared/ui/Icons";
 import { codexSetupCommand, claudeConnectCommand, claudePluginInstallCommands, dshInstallCommand, dshStartCommand } from "./assistantSetup";
 import { t } from "../shared/i18n/i18n.js";
 
@@ -231,14 +231,14 @@ bearer_token_env_var = "GAMMA_TOKEN"` : "";
       <summary>{t("Manual setup (advanced)")}</summary>
       <div className="integrationDetails"><p>{t("Use a token if your assistant does not support browser sign-in.")}</p></div>
       <Section title={t("Create a token")}>
-      <Row label={t("Connection name")} hint={t("Access to the current workspace. Expires after 90 days.")}>
+      <Row icon={KeyIcon} label={t("Connection name")} hint={t("Access to the current workspace. Expires after 90 days.")}>
         <div className="integrationCreateControls">
           <input className="aiKeyInput" aria-label={t("Connection name")} value={name} maxLength={80}
             onChange={(event) => setName(event.target.value)} />
           <button className="uiBtn" disabled={busy || !data || !name.trim() || !!secret} onClick={() => create(name.trim(), scope, "manual")}>{t("Create token")}</button>
         </div>
       </Row>
-      <Row label={t("Scope")} hint={scope === "write"
+      <Row icon={ShieldIcon} label={t("Scope")} hint={scope === "write"
         ? t("Read and write: what an offline copy on another Gamma (Settings → Workspaces → Clones there) signs in with. Assistants only need read.") : t("Read-only: assistants. Choose “Read and write” for an offline copy of this workspace on another Gamma.")}>
         <Segmented value={scope} onChange={setScope} options={[["read", t("Read-only")], ["write", t("Read and write")]]} />
       </Row>

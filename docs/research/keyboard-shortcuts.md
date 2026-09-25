@@ -70,6 +70,11 @@ could bind the reserved ones in its shell; Gamma itself does not.
   profile, edited from a pane that records a chord with the same reader
   the dispatcher matches with. Conflicts are shown, not forbidden: a block
   chord shadowing an app chord while an editor is open can be intended.
+- **Few defaults.** The block and view commands exist and sit in the
+  palette, but only Ctrl+Shift+P, F2 and Ctrl+Shift+K were added as
+  keys: a default binding is a claim on the user's muscle memory and on
+  the browser's, and each one was asked for explicitly. Anything else is
+  one click away in Settings → Keyboard.
 - **Not done, deliberately.** Chords (Ctrl+K Ctrl+0) — Ctrl+K is the link
   key. Multi-cursor — through the textarea facade it would not survive.
   `@` and `:` palette prefixes (go to heading / PDF page) — the palette

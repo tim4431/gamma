@@ -9,7 +9,7 @@ import { MenuSelect } from "../shared/ui/Menus";
 import { Section, Row, Toggle, SubDialog, Field, PasswordInput } from "./SettingsKit";
 import { SECTION_PREFS } from "./sectionPrefs.js";
 import { TRANSLATE_LANGS } from "../app/prefs";
-import { GlobeIcon, KeyIcon, LanguagesIcon, SlidersIcon, SparklesIcon, Trash2Icon } from "../shared/ui/Icons";
+import { GlobeIcon, HighlightIcon, KeyIcon, LanguagesIcon, SlidersIcon, SparklesIcon, TextCursorIcon, Trash2Icon } from "../shared/ui/Icons";
 import { T, t } from "../shared/i18n/i18n.js";
 
 // Per engine: the form's fields in order, with where to get them.
@@ -56,6 +56,23 @@ export function TranslationSettings({ value, onSpeed }) {
             options={TRANSLATE_LANGS}
           />
         </Row>
+        <Toggle
+          icon={HighlightIcon}
+          label={t("Translate a selection")}
+          hint={t("A button next to the highlight colors")}
+          title={t("Selecting text in a PDF shows the highlight colors; this adds a translate button there. The translation opens under the colors, in the language above, with the same model or service as the page translation.")}
+          checked={value.selTranslate}
+          onChange={value.setSelTranslate}
+        />
+        <Toggle
+          icon={TextCursorIcon}
+          label={t("Translate on select")}
+          hint={t("Without clicking the button first")}
+          title={t("Translate as soon as text is selected, instead of when you click the translate button. Every selection is then a translation request.")}
+          checked={value.selTranslateAuto}
+          onChange={value.setSelTranslateAuto}
+          disabled={!value.selTranslate}
+        />
       </Section>
       <Section title={t("Translation engine")} scope="browser">
         <Row

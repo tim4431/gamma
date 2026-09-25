@@ -166,7 +166,7 @@ def test_deepseek_service_preset(alice, monkeypatch):
     # DeepSeek is offered as a named service: the openai protocol at its
     # endpoint. Such an entry is labelled DeepSeek, and its live model list is
     # not narrowed to OpenAI's gpt-/o-families.
-    import gamma.routers.ai as ai_mod
+    from gamma import ai_catalog
 
     g = alice.get("/api/ai/settings").json()
     svc = next(s for s in g["services"] if s["id"] == "deepseek")
@@ -183,7 +183,7 @@ def test_deepseek_service_preset(alice, monkeypatch):
     assert any(m["model"] == "deepseek-flash" and m["provider_name"] == "DeepSeek" for m in models)
 
     seen = {}
-    monkeypatch.setattr(ai_mod, "_model_catalog_json", lambda req: seen.update(url=req.full_url) or {
+    monkeypatch.setattr(ai_catalog, "fetch_json", lambda req: seen.update(url=req.full_url) or {
         "data": [{"id": "deepseek-flash"}, {"id": "deepseek-v4-pro"}, {"id": "deepseek-embed"}]})
     r = alice.post("/api/ai/model-catalog", json={"provider_id": entry["id"]})
     assert r.status_code == 200, r.text
@@ -322,25 +322,25 @@ def test_ai_health_ping_checks_credential_for_free(alice, monkeypatch):
     # "ping" mode never runs a completion: API keys are checked via the
     # provider's model listing; 401 comes back as a broken-credential flag,
     # 404 (gateway without /v1/models) as ok-but-unverified.
-    import gamma.routers.ai as ai_mod
+    from gamma import ai_catalog
 
     pid = alice.get("/api/ai/settings").json()["providers"][0]["id"]
     seen = {}
-    monkeypatch.setattr(ai_mod, "_model_catalog_json", lambda req: seen.update(url=req.full_url) or {})
+    monkeypatch.setattr(ai_catalog, "fetch_json", lambda req: seen.update(url=req.full_url) or {})
     body = alice.post("/api/ai/health", json={"provider_id": pid, "mode": "ping"}).json()
     assert body["configured"] and body["ok"] is True
     assert "/v1/models" in seen["url"]
 
     def dead_key(req):
         raise _http_error(401, '{"error": {"message": "invalid x-api-key"}}')
-    monkeypatch.setattr(ai_mod, "_model_catalog_json", dead_key)
+    monkeypatch.setattr(ai_catalog, "fetch_json", dead_key)
     body = alice.post("/api/ai/health", json={"provider_id": pid, "mode": "ping"}).json()
     assert body["ok"] is False and body["auth"] is True
     assert "invalid x-api-key" in body["error"]
 
     def no_listing(req):
         raise _http_error(404, "")
-    monkeypatch.setattr(ai_mod, "_model_catalog_json", no_listing)
+    monkeypatch.setattr(ai_catalog, "fetch_json", no_listing)
     body = alice.post("/api/ai/health", json={"provider_id": pid, "mode": "ping"}).json()
     assert body["ok"] is True and body["unverified"] is True
 
@@ -491,6 +491,7 @@ def test_every_account_gets_shared_models_after_its_own(alice, admin, shared, mo
 
 def test_admin_tests_and_lists_models_of_a_shared_entry(admin, shared, monkeypatch):
     import gamma.routers.ai as ai_mod
+    from gamma import ai_catalog
     sid = shared["id"]
     seen = {}
     monkeypatch.setattr(ai_mod, "_call_ai", lambda m, s, entry, rt, **kw: seen.update(entry) or "ok")
@@ -500,7 +501,7 @@ def test_admin_tests_and_lists_models_of_a_shared_entry(admin, shared, monkeypat
     def listing(req):
         seen.update(url=req.full_url, auth=req.headers.get("Authorization"))
         return {"data": [{"id": "lab-model"}, {"id": "lab-new"}]}
-    monkeypatch.setattr(ai_mod, "_model_catalog_json", listing)
+    monkeypatch.setattr(ai_catalog, "fetch_json", listing)
     r = admin.post("/api/ai/model-catalog", json={"provider_id": sid})
     assert r.status_code == 200 and r.json()["models"] == ["lab-model", "lab-new"]
     assert seen["url"] == "https://llm.example.org/v1/models" and seen["auth"] == f"Bearer {SHARED_KEY}"

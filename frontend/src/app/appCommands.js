@@ -1,91 +1,70 @@
 // The commands the whole app answers to, wherever focus is (docs/dev/hotkeys.md):
 // App.jsx's one window keydown listener dispatches this catalog
 // (shared/lib/hotkeys.js) with a ctx of handles it refreshes every render;
-// the command palette lists the same entries, and Settings → Keyboard
-// rebinds them. ctx: { shareMode, homeMode, hasPage, hasPdf, readOnly,
-// search(all), palette(prefix), back(), undo(redo), renameTitle(),
-// toggleChat(), togglePdf(), toggleNotes(), openSettings(pane) }.
+// the command palette (Ctrl+Shift+P) lists the same entries, and Settings →
+// Keyboard rebinds them. Only the long-standing keys and F2 have defaults;
+// the rest are palette entries until the account gives them a chord.
+// ctx: { shareMode, homeMode, hasPage, hasPdf, readOnly, search(all),
+// palette(prefix), back(), undo(redo), renameTitle(), toggleChat(),
+// togglePdf(), toggleNotes(), openSettings(pane), exportAs(format),
+// downloadPdf(), importDialog(), newPage(), share(), metadata(), attach(),
+// reportProblem() }.
 import { t } from "../shared/i18n/i18n.js";
 
 export const GROUP_NAVIGATION = t("Navigation");
 export const GROUP_PAGE = t("Page");
 export const GROUP_VIEW = t("View");
+export const GROUP_LIBRARY = t("Library");
 
 const inField = (el) => !!el && (el.tagName === "INPUT" || el.tagName === "TEXTAREA" || el.isContentEditable);
+const cmd = (id, label, group, keys, run, extra = {}) => ({ id, label, group, keys, run, ...extra });
 
 export const APP_COMMANDS = [
-  {
-    // The built-in search over notes, highlights and PDF text — not the
-    // browser's find. Focus in the chat window leaves the key to
-    // ChatDock's find-in-chat; on the home library the plain key goes to
-    // the listing's search box (only rendered there — DOM presence stands
-    // in for homeMode) and Ctrl+Shift+F still opens the full panel.
-    id: "app.search", label: t("Search"), group: GROUP_NAVIGATION, keys: "Mod-f",
-    run: (c) => {
-      if (document.activeElement?.closest?.(".chatPanel")) return false;
-      return c.search(false);
-    },
-  },
-  {
-    id: "app.searchAll", label: t("Search everything"), group: GROUP_NAVIGATION, keys: "Mod-Shift-f",
-    run: (c) => {
-      if (document.activeElement?.closest?.(".chatPanel")) return false;
-      return c.search(true);
-    },
-  },
-  {
-    // A share view has no library to pick from.
-    id: "app.quickOpen", label: t("Go to page"), group: GROUP_NAVIGATION, keys: "Mod-p",
-    when: (c) => !c.shareMode,
-    run: (c) => { c.palette(""); },
-  },
-  {
-    id: "app.commandPalette", label: t("Command palette"), group: GROUP_NAVIGATION, keys: "Mod-Shift-p", palette: false,
-    run: (c) => { c.palette(">"); },
-  },
-  {
-    id: "app.back", label: t("Back to where you were"), group: GROUP_NAVIGATION, keys: "Alt-ArrowLeft",
-    run: (c) => { c.back(); },
-  },
-  {
-    // The page's one undo history — from a block editor too (it has no
-    // history of its own). Other inputs keep the browser's own undo, so
-    // the command declines there.
-    id: "app.undo", label: t("Undo"), group: GROUP_PAGE, keys: "Mod-z",
-    run: (c) => c.undo(false),
-  },
-  {
-    id: "app.redo", label: t("Redo"), group: GROUP_PAGE, keys: ["Mod-y", "Mod-Shift-z"],
-    run: (c) => c.undo(true),
-  },
-  {
-    id: "app.renameTitle", label: t("Rename page"), group: GROUP_PAGE, keys: "F2",
-    when: (c) => c.hasPage && !c.readOnly,
-    run: (c) => { if (inField(document.activeElement) && !document.activeElement.closest(".cm-editor")) return false; c.renameTitle(); },
-  },
-  {
-    id: "app.toggleChat", label: t("Show or hide the chat"), group: GROUP_VIEW, keys: "Mod-j",
-    when: (c) => !c.shareMode,
-    run: (c) => { c.toggleChat(); },
-  },
-  {
-    id: "app.togglePdf", label: t("Show or hide the PDF"), group: GROUP_VIEW, keys: "Mod-\\",
-    when: (c) => c.hasPdf,
-    run: (c) => { c.togglePdf(); },
-  },
-  {
-    id: "app.toggleNotes", label: t("Show or hide the notes"), group: GROUP_VIEW, keys: null,
-    when: (c) => c.hasPdf,
-    run: (c) => { c.toggleNotes(); },
-  },
-  {
-    id: "app.settings", label: t("Open settings"), group: GROUP_VIEW, keys: "Mod-,",
-    when: (c) => !c.shareMode,
-    run: (c) => { c.openSettings(); },
-  },
-  {
-    id: "app.keyboardSettings", label: t("Keyboard shortcuts…"), group: GROUP_VIEW, keys: null,
-    when: (c) => !c.shareMode,
-    run: (c) => { c.openSettings("keyboard"); },
-  },
+  // The built-in search over notes, highlights and PDF text — not the
+  // browser's find. Focus in the chat window leaves the key to ChatDock's
+  // find-in-chat; on the home library the plain key goes to the listing's
+  // search box (only rendered there — DOM presence stands in for homeMode)
+  // and Ctrl+Shift+F still opens the full panel.
+  cmd("app.search", t("Search"), GROUP_NAVIGATION, "Mod-f", (c) => {
+    if (document.activeElement?.closest?.(".chatPanel")) return false;
+    return c.search(false);
+  }),
+  cmd("app.searchAll", t("Search everything"), GROUP_NAVIGATION, "Mod-Shift-f", (c) => {
+    if (document.activeElement?.closest?.(".chatPanel")) return false;
+    return c.search(true);
+  }),
+  // A share view has no library to pick from.
+  cmd("app.quickOpen", t("Go to page"), GROUP_NAVIGATION, "Mod-p", (c) => { c.palette(""); }, { when: (c) => !c.shareMode }),
+  cmd("app.commandPalette", t("Command palette"), GROUP_NAVIGATION, "Mod-Shift-p", (c) => { c.palette(">"); }, { palette: false }),
+  cmd("app.back", t("Back to where you were"), GROUP_NAVIGATION, "Alt-ArrowLeft", (c) => { c.back(); }),
+  cmd("app.settings", t("Open settings"), GROUP_NAVIGATION, null, (c) => { c.openSettings(); }, { when: (c) => !c.shareMode }),
+  cmd("app.keyboardSettings", t("Keyboard shortcuts…"), GROUP_NAVIGATION, null, (c) => { c.openSettings("keyboard"); }, { when: (c) => !c.shareMode }),
+  cmd("app.workspaces", t("Workspaces…"), GROUP_NAVIGATION, null, (c) => { c.openSettings("workspaces"); }, { when: (c) => !c.shareMode }),
+
+  // The page's one undo history — from a block editor too (it has no
+  // history of its own). Other inputs keep the browser's own undo, so the
+  // command declines there.
+  cmd("app.undo", t("Undo"), GROUP_PAGE, "Mod-z", (c) => c.undo(false)),
+  cmd("app.redo", t("Redo"), GROUP_PAGE, ["Mod-y", "Mod-Shift-z"], (c) => c.undo(true)),
+  cmd("app.renameTitle", t("Rename page"), GROUP_PAGE, "F2", (c) => {
+    if (inField(document.activeElement) && !document.activeElement.closest(".cm-editor")) return false;
+    c.renameTitle();
+  }, { when: (c) => c.hasPage && !c.readOnly }),
+  cmd("app.share", t("Share this page…"), GROUP_PAGE, null, (c) => { c.share(); }, { when: (c) => c.hasPage && !c.shareMode }),
+  cmd("app.metadata", t("Paper metadata…"), GROUP_PAGE, null, (c) => { c.metadata(); }, { when: (c) => c.hasPdf }),
+  cmd("app.attach", t("Attach a PDF…"), GROUP_PAGE, null, (c) => { c.attach(); }, { when: (c) => c.hasPage && !c.hasPdf && !c.readOnly }),
+  cmd("app.exportAnnotated", t("Export the annotated PDF"), GROUP_PAGE, null, (c) => { c.exportAs("pdf"); }, { when: (c) => c.hasPdf }),
+  cmd("app.exportNotesPdf", t("Export the notes as a PDF"), GROUP_PAGE, null, (c) => { c.exportAs("notespdf"); }, { when: (c) => c.hasPage }),
+  cmd("app.exportMarkdown", t("Export the notes as Markdown"), GROUP_PAGE, null, (c) => { c.exportAs("markdown"); }, { when: (c) => c.hasPage }),
+  cmd("app.downloadPdf", t("Download the PDF file"), GROUP_PAGE, null, (c) => { c.downloadPdf(); }, { when: (c) => c.hasPdf }),
+
+  cmd("app.toggleChat", t("Show or hide the chat"), GROUP_VIEW, null, (c) => { c.toggleChat(); }, { when: (c) => !c.shareMode }),
+  cmd("app.togglePdf", t("Show or hide the PDF"), GROUP_VIEW, null, (c) => { c.togglePdf(); }, { when: (c) => c.hasPdf }),
+  cmd("app.toggleNotes", t("Show or hide the notes"), GROUP_VIEW, null, (c) => { c.toggleNotes(); }, { when: (c) => c.hasPdf }),
+
+  cmd("app.newPage", t("New page"), GROUP_LIBRARY, null, (c) => { c.newPage(); }, { when: (c) => !c.shareMode }),
+  cmd("app.import", t("Import…"), GROUP_LIBRARY, null, (c) => { c.importDialog(); }, { when: (c) => !c.shareMode }),
+  cmd("app.exportObsidian", t("Export the library as an Obsidian vault"), GROUP_LIBRARY, null, (c) => { c.exportAs("obsidian"); }, { when: (c) => !c.shareMode }),
+  cmd("app.exportGamma", t("Export the library as a Gamma backup"), GROUP_LIBRARY, null, (c) => { c.exportAs("gamma"); }, { when: (c) => !c.shareMode }),
+  cmd("app.reportProblem", t("Report a problem…"), GROUP_LIBRARY, null, (c) => { c.reportProblem(); }, { when: (c) => !c.shareMode }),
 ];

@@ -394,6 +394,14 @@ function OpenTabs({
 
 function BlockDropIndicator({ target }) {
   if (!target) return null;
+  // An object (image / table / diagram) dropped INSIDE a block: the line
+  // sits in the gap between two of its rendered constructs.
+  if (target.inside) {
+    return (
+      <div className="dropIndicator dropIndicatorInside"
+        style={{ top: target.rect.top, left: target.rect.left, width: target.rect.width }} />
+    );
+  }
   const indentStep = 14;
   const baseOffset = 28;
   const left = target.rect.left + baseOffset + target.depth * indentStep;

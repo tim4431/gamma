@@ -1226,8 +1226,21 @@ body {
   display: flex; align-items: center; justify-content: center;
   cursor: pointer; opacity: 0; transition: opacity 0.12s;
 }
-.mdTableWrap:hover .mdTableCorner, .mdTableSelected .mdTableCorner, .mdTableCorner[data-guide-active] { opacity: 1; }
-.mdTableSelected table { outline: 2px solid var(--accent); outline-offset: 1px; }
+.mdTableWrap:hover .mdTableCorner, .mdObjectSelected .mdTableCorner, .mdTableCorner[data-guide-active] { opacity: 1; }
+
+/* The object frame (MdObject.jsx) around every rendered image, table and
+   diagram: a small halo that selects the object on a press instead of
+   opening the editor, a ring while selected, the drag source. It keeps the
+   construct's own placement — a centred picture, a left-aligned table, a
+   full-width diagram. */
+.mdObject { position: relative; display: block; box-sizing: border-box; max-width: 100%; padding: 3px; margin: -3px 0; border-radius: 6px; }
+.mdObject-image { width: fit-content; margin-left: auto; margin-right: auto; }
+.mdObject-table { width: fit-content; }
+.mdObject[draggable="true"] { cursor: grab; }
+.mdObjectSelected { box-shadow: 0 0 0 2px var(--accent); }
+.mdObject.mdObject-mermaid.mdObjectSelected .mermaidDiagram { border-color: transparent; }
+/* Dropping an object inside a block: the line in the gap it lands in. */
+.dropIndicatorInside { transform: translateY(-1px); border-radius: 1px; }
 .mdTableHandle:hover { color: var(--text-bright); background: var(--bg-subtle); }
 /* The in-place cell editor: an input laid exactly over the clicked cell.
    Tab/Shift-Tab move between cells, Enter commits, Esc cancels. */
@@ -1516,6 +1529,32 @@ body {
   border-color: var(--border);
   box-shadow: 0 0 0 2px var(--border);
 }
+
+/* The selection translator under the color row (PdfViewer SelTranslation):
+   a fold-out header, then the selectable translated text. */
+.plainTip:has(.selTrans) { width: min(420px, calc(100vw - 16px)); }
+.selTrans { border-top: 1px solid var(--border-subtle); padding-top: 6px; }
+.selTransHead { display: flex; align-items: center; gap: 4px; }
+.selTransToggle {
+  flex: 1; min-width: 0;
+  display: inline-flex; align-items: center; gap: 6px;
+  padding: 3px 4px; border: none; border-radius: 6px; background: none;
+  font: inherit; font-size: 12px; font-weight: 600; color: var(--text-secondary);
+  cursor: pointer; text-align: left;
+}
+.selTransToggle:hover { background: var(--bg-hover); }
+.selTransChev { transition: transform 0.12s ease; flex-shrink: 0; }
+.selTransChev.open { transform: rotate(90deg); }
+.selTransLang { font-weight: 400; color: var(--text-tertiary); }
+.selTransCopy { flex-shrink: 0; }
+.selTransBody {
+  margin-top: 4px; padding: 2px 4px 0;
+  max-height: min(40vh, 320px); overflow-y: auto;
+  font-size: 13.5px; line-height: 1.55; color: var(--text-primary);
+  white-space: pre-wrap; overflow-wrap: anywhere;
+  user-select: text; cursor: text;
+}
+.selTransBody.error { color: var(--danger); cursor: default; }
 
 /* The AI agent at work on this page (App.handleAgentEvent → rowProps
    aiMarks/aiLive). A block it is reading pulses an accent ring; a block it

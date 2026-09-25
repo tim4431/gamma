@@ -64,14 +64,20 @@ export async function triggeredGuideScenarios(env) {
       const corner = page.locator('[data-guide="notes.tableCorner"]');
       await corner.first().waitFor({ state: "attached" });
       assertEq(await corner.count(), 2, "every editable table has a corner handle");
+      // The tables hint the first table offered sits under the corner; the
+      // object menu it opens is taller than the hint card's clearance.
+      if (await page.locator(".guideCard").count()) {
+        await page.locator(".guideCard .guideClose").click();
+        await until(async () => await page.locator(".guideCard").count() === 0);
+      }
       await page.locator('[data-guide="notes.table"]').first().hover();
       await corner.first().click();
-      await page.waitForSelector(".mdTableSelected");
+      await page.waitForSelector(".mdObjectSelected");
       await page.getByRole("button", { name: "Delete table" }).click();
       await until(async () => await content(byMenu.id) === "before\n\nafter", { what: "the table left its block, the text around it stayed" });
       await page.locator('[data-guide="notes.table"]').first().hover();
       await corner.first().click();
-      await page.waitForSelector(".mdTableSelected");
+      await page.waitForSelector(".mdObjectSelected");
       await page.keyboard.press("Delete");
       await until(async () => (await content(byKey.id)) === "", { what: "Delete removed the selected table" });
       assertEq(await page.locator('[data-guide="notes.table"]').count(), 0);

@@ -1,7 +1,7 @@
 import React, { useEffect, useMemo, useRef, useState } from "react";
 import { API, apiJson, copyText, fmtBytes } from "../shared/lib/utils";
 import { Field, Row, SubDialog, Toggle } from "../settings/SettingsKit";
-import { MonitorIcon } from "../shared/ui/Icons";
+import { ActivityIcon, MonitorIcon } from "../shared/ui/Icons";
 import { buildReport, formatDiagnostics, githubIssueUrl, ISSUES_URL } from "./problemReport.js";
 import { t } from "../shared/i18n/i18n.js";
 
@@ -215,7 +215,7 @@ export default function ReportProblem({ facts, onClose, setStatus }) {
           </span>
         </Row>
       ) : null}
-      <Toggle label={t("Include diagnostics")} hint={t("build, browser, view and recent log lines — no notes, files or names")}
+      <Toggle icon={ActivityIcon} label={t("Include diagnostics")} hint={t("build, browser, view and recent log lines — no notes, files or names")}
         title={t("The version and build of this server, your browser and screen, which kind of view is open, and the app's own log lines from this session (secrets masked). Never the content of your notes or files.")}
         checked={includeDiagnostics} onChange={setIncludeDiagnostics} />
       {includeDiagnostics ? (

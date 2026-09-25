@@ -11,6 +11,7 @@ import { KeyboardIcon } from "../shared/ui/Icons";
 import { KeyBinding, KeyCaps, PaneHead, Row, Section } from "./SettingsKit";
 import { SECTION_PREFS } from "./sectionPrefs.js";
 import { ALL_COMMANDS, GROUPS, fixedKeys } from "../app/commands.js";
+import { FIXED_KEY_ICONS, commandIcon } from "../app/commandIcons.jsx";
 import { chordLabel, conflicts, effectiveKeys } from "../shared/lib/hotkeys.js";
 
 export function KeyboardSettings({ value }) {
@@ -64,7 +65,7 @@ export function KeyboardSettings({ value }) {
                 else if (keys.length > 1) hint = t("Also {keys}", { keys: keys.slice(1).map((k) => chordLabel(k)).join(" · ") });
                 return (
                   <div key={cmd.id} data-conflict={others.length ? "true" : undefined}>
-                    <Row label={label} hint={hint}>
+                    <Row icon={commandIcon(cmd)} label={label} hint={hint}>
                       <KeyBinding
                         chord={keys[0] || null} label={label} fixed={!!cmd.fixed} modified={modified}
                         conflict={others.length > 0}
@@ -81,8 +82,8 @@ export function KeyboardSettings({ value }) {
       </Section>
       {fixed.length ? (
         <Section title={t("Built in")}>
-          {fixed.map(([chords, what]) => (
-            <Row key={what} label={what}>
+          {fixed.map(([chords, what, id]) => (
+            <Row key={what} icon={FIXED_KEY_ICONS[id]} label={what}>
               <span className="keyBinding">
                 {chords.map((chord) => <KeyCaps key={chord} chord={chord} />)}
               </span>

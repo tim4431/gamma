@@ -4,7 +4,6 @@ import hashlib
 import json
 import queue
 import re
-import secrets
 import sqlite3
 import threading
 import time
@@ -12,18 +11,17 @@ import urllib.error
 import urllib.parse
 from collections import OrderedDict
 from concurrent.futures import ThreadPoolExecutor
-from urllib.request import Request as URLRequest, urlopen
+from urllib.request import urlopen
 
 from fastapi import APIRouter, File, Form, HTTPException, Request, UploadFile
 from fastapi.responses import StreamingResponse
 from pydantic import BaseModel, Field, field_validator
 
-from .. import ai_usage, chatgpt_oauth, translate_engines
+from .. import ai_catalog, ai_protocols, ai_usage, chatgpt_oauth, translate_engines
 from ..ai_client import (
     UpstreamError,
     add_usage as _add_usage,
     call_ai as _call_ai,
-    is_openai_platform,
     open_ai as _open_ai,
     partial_json_object as _partial_json_object,
     partial_json_strings as _partial_json_strings,
@@ -77,7 +75,6 @@ from ..ai_settings import (
     update_entry,
 )
 from ..auth import require_user, require_ws, ws_role
-from ..config import AI_PROTOCOLS
 from ..db import page_now, ws_db_path
 from ..logbuf import log
 from ..pdf_text import extract_text
@@ -348,7 +345,7 @@ def _require_editor(request: Request) -> str:
 
 
 class AIProviderRequest(BaseModel):
-    protocol: str = ""      # an API-key key of AI_PROTOCOLS (required on add)
+    protocol: str = ""      # an API-key key of ai_protocols.PROTOCOLS (required on add)
     name: str | None = None      # display label; "" = service / protocol label
     api_key: str | None = None   # required on add; omitted/empty on edit = keep
     base_url: str | None = None  # "" = protocol default
@@ -486,60 +483,10 @@ def ai_provider_test(provider_id: str, request: Request, payload: AIProviderTest
     return _probe_entry(user, entry, payload.model if payload else "")
 
 
-def _usage_window(raw: dict | None, name: str = "") -> dict | None:
-    if not isinstance(raw, dict):
-        return None
-    try:
-        used = max(0.0, min(100.0, float(raw.get("used_percent", 0))))
-    except (TypeError, ValueError):
-        return None
-    try:
-        seconds = max(0, int(raw.get("limit_window_seconds") or 0))
-    except (TypeError, ValueError):
-        seconds = 0
-    try:
-        reset_at = int(raw.get("reset_at") or 0)
-    except (TypeError, ValueError):
-        reset_at = 0
-    if not name:
-        if 4 * 3600 <= seconds <= 6 * 3600:
-            name = "5-hour"
-        elif 6 * 86400 <= seconds <= 8 * 86400:
-            name = "Weekly"
-        elif seconds:
-            name = f"{max(1, round(seconds / 3600))}-hour"
-        else:
-            name = "Usage"
-    return {
-        "name": name,
-        "used_percent": used,
-        "remaining_percent": max(0.0, 100.0 - used),
-        "window_seconds": seconds,
-        "reset_at": reset_at,
-    }
-
-
-def _chatgpt_usage_request(conf: dict) -> URLRequest:
-    """The ChatGPT subscription-usage request (Codex's account client's
-    .../backend-api/wham/usage, sibling of the .../codex model endpoint).
-    Always the administrator-controlled protocol endpoint, never a saved
-    entry value: OAuth entries cannot redirect their bearer token."""
-    base = str(AI_PROTOCOLS["chatgpt"]["base_url"]).rstrip("/")
-    account_base = base[:-len("/codex")] if base.endswith("/codex") else base
-    headers = {
-        "Authorization": f"Bearer {conf['api_key']}",
-        "Accept": "application/json",
-        "User-Agent": "codex-cli",
-    }
-    if conf.get("account_id"):
-        headers["ChatGPT-Account-Id"] = conf["account_id"]
-    return URLRequest(f"{account_base}/wham/usage", headers=headers, method="GET")
-
-
 # Sync def: this read-only account call runs in FastAPI's threadpool.
 @router.post("/ai/providers/{provider_id}/usage")
 def ai_provider_usage(provider_id: str, request: Request):
-    """Return subscription allowance for a ChatGPT OAuth provider.
+    """The subscription allowance of a sign-in entry (Protocol.account_usage).
 
     API-key protocols have no portable quota endpoint: OpenAI-compatible
     gateways and Anthropic-style services all expose different billing/admin
@@ -549,151 +496,45 @@ def ai_provider_usage(provider_id: str, request: Request):
     entry = next((e for e in load_provider_entries(user) if e.get("id") == provider_id), None)
     if not entry:
         raise HTTPException(status_code=404, detail="provider not found")
-    if entry.get("protocol") != "chatgpt":
+    proto = ai_protocols.PROTOCOLS.get(entry.get("protocol"))
+    if not proto or not proto.has_account_usage:
         return {"available": False,
                 "reason": "This API-key provider does not expose a standard remaining-usage percentage."}
 
     clear_refresh_backoff(user, provider_id)
-    rt = ai_runtime(user)
-    conf = rt["providers"].get(provider_id)
+    conf = ai_runtime(user)["providers"].get(provider_id)
     if not conf:
-        return {"available": False, "auth": True,
-                "reason": "Sign in with ChatGPT again to query usage."}
+        return {"available": False, "auth": True, "reason": "Sign in again to query usage."}
     try:
-        data = _model_catalog_json(_chatgpt_usage_request(conf))
+        data = ai_catalog.fetch_json(proto.account_usage_request(conf))
     except urllib.error.HTTPError as e:
         if e.code in (401, 403):
             # Expired/revoked sign-in: an expected state, not a server error —
             # report it in-body so the UI can say "reconnect".
             return {"available": False, "auth": True,
-                    "reason": "ChatGPT sign-in expired — sign in again in this entry's edit form."}
+                    "reason": "The sign-in expired — sign in again in this entry's edit form."}
         raise HTTPException(status_code=502,
                             detail=f"usage inquiry failed: {_upstream_detail(e, 200)}")
     except Exception as e:
         raise HTTPException(status_code=502, detail=f"usage inquiry failed: {e}")
     if not isinstance(data, dict):
         raise HTTPException(status_code=502, detail="usage inquiry returned invalid data")
-
-    rate = data.get("rate_limit")
-    rate = rate if isinstance(rate, dict) else {}
-    windows = [w for w in (
-        _usage_window(rate.get("primary_window")),
-        _usage_window(rate.get("secondary_window")),
-    ) if w]
-    for extra in data.get("additional_rate_limits") or []:
-        if not isinstance(extra, dict):
-            continue
-        extra_rate = extra.get("rate_limit") if isinstance(extra.get("rate_limit"), dict) else {}
-        window = _usage_window(extra_rate.get("primary_window"),
-                               str(extra.get("limit_name") or "Additional limit"))
-        if window:
-            windows.append(window)
-    return {
-        "available": bool(windows),
-        "plan_type": str(data.get("plan_type") or ""),
-        "windows": windows,
-        "credits": data.get("credits") if isinstance(data.get("credits"), dict) else None,
-        "reason": "" if windows else "The provider returned no usage windows.",
-    }
+    usage = proto.account_usage(data)
+    return {"available": bool(usage["windows"]), **usage,
+            "reason": "" if usage["windows"] else "The provider returned no usage windows."}
 
 
-# GET {base}/models gates its answer on the caller's version, so the listing
-# claims the newest Codex CLI release (npm's `latest` tag), looked up live and
-# cached. The floor is only for when npm can't be reached.
-_CODEX_VERSION_URL = "https://registry.npmjs.org/@openai/codex/latest"
-_CODEX_VERSION_FLOOR = "0.156.1"
-_CODEX_VERSION_TTL = 6 * 3600       # a good answer
-_CODEX_VERSION_RETRY = 600          # after a failed lookup
-_codex_version = {"value": "", "until": 0.0}
-_codex_version_lock = threading.Lock()
-_MODEL_CATALOG_TIMEOUT = 5
-
-
-def _codex_client_version() -> str:
-    """The newest Codex CLI version, cached; the last good one (else the
-    floor) while npm is unreachable."""
-    with _codex_version_lock:
-        now = time.time()
-        if now < _codex_version["until"]:
-            return _codex_version["value"] or _CODEX_VERSION_FLOOR
-        try:
-            with urlopen(URLRequest(_CODEX_VERSION_URL, headers={"Accept": "application/json"}),
-                         timeout=_MODEL_CATALOG_TIMEOUT) as resp:
-                version = str(json.loads(resp.read()).get("version") or "").strip()
-            if not re.fullmatch(r"\d+\.\d+\.\d+", version):
-                raise ValueError(f"unexpected version {version!r}")
-            _codex_version.update(value=version, until=now + _CODEX_VERSION_TTL)
-        except Exception as e:
-            log.warning(f"[ai] codex version lookup failed, using "
-                        f"{_codex_version['value'] or _CODEX_VERSION_FLOOR}: {e}")
-            _codex_version["until"] = now + _CODEX_VERSION_RETRY
-        return _codex_version["value"] or _CODEX_VERSION_FLOOR
-
-
-def _model_catalog_json(req: URLRequest) -> dict:
-    """Fetch one model catalog with a short, UI-friendly timeout."""
-    with urlopen(req, timeout=_MODEL_CATALOG_TIMEOUT) as resp:
-        return json.loads(resp.read())
-
-
-def _models_list_request(protocol: str, key: str, base: str) -> URLRequest:
-    """GET /v1/models for an API-key protocol — the free way to check a
-    credential (it 401s on a dead key without spending tokens)."""
-    if protocol == "anthropic":
-        return URLRequest(f"{base}/v1/models?limit=100",
-                          headers={
-                              "x-api-key": key,
-                              "anthropic-version": "2023-06-01",
-                              "Accept": "application/json",
-                              "User-Agent": "Gamma/model-catalog",
-                          })
-    return URLRequest(f"{base}/v1/models", headers={
-        "Authorization": f"Bearer {key}",
-        "Accept": "application/json",
-        "User-Agent": "Gamma/model-catalog",
-    })
-
-
-def _codex_models_request(conf: dict) -> URLRequest:
-    """Codex CLI's own listing call on the ChatGPT backend."""
-    return URLRequest(
-        f"{conf['base_url']}/models?client_version={_codex_client_version()}",
-        headers={
-            "Authorization": f"Bearer {conf['api_key']}",
-            "chatgpt-account-id": conf.get("account_id", ""),
-            "originator": "codex_cli_rs",
-        })
-
-
-def _chatgpt_model_catalog(user: str, provider_id: str = "") -> list:
-    """Live model list from the ChatGPT (codex) backend, Codex CLI's own
-    listing call: GET {base}/models?client_version=… with the OAuth bearer.
-    Needs a connected entry — the list is account-gated, so there is no
-    hardcoded fallback: a failed fetch is an error."""
+def _signed_in_conf(user: str, provider_id: str, proto) -> dict:
+    """A sign-in protocol's model list is account-gated: the named connected
+    entry's, else (the pre-connect "Add" form has no entry yet) any
+    connected entry's of that protocol. There is no fallback list."""
     providers = ai_runtime(user)["providers"]
     conf = providers.get(provider_id)
-    if not conf or conf.get("protocol") != "chatgpt":
-        # Pre-connect "Add key" form has no entry yet — any connected one will do.
-        conf = next((c for c in providers.values() if c.get("protocol") == "chatgpt"), None)
+    if not conf or conf.get("protocol") != proto.id:
+        conf = next((c for c in providers.values() if c.get("protocol") == proto.id), None)
     if not conf:
-        raise HTTPException(status_code=400,
-                            detail="sign in with ChatGPT first — the model list comes from your account")
-    try:
-        data = _model_catalog_json(_codex_models_request(conf))
-        listed, hidden = [], []
-        for m in data.get("models") or []:
-            slug = str(m.get("slug") or "").strip()
-            vis = m.get("visibility") or "list"
-            if not slug or vis == "none":  # "none" = not usable by this account
-                continue
-            (hidden if vis == "hide" else listed).append(slug)
-        # `hide` marks picker-hidden but usable slugs — offer them after the
-        # listed ones rather than dropping them.
-        return list(dict.fromkeys(listed + hidden))
-    except urllib.error.HTTPError as e:
-        raise HTTPException(status_code=502, detail=f"model list failed: {_upstream_detail(e, 200)}")
-    except Exception as e:
-        raise HTTPException(status_code=502, detail=f"model list failed: {e}")
+        raise HTTPException(status_code=400, detail="sign in first — the model list comes from your account")
+    return conf
 
 
 class ModelCatalogRequest(BaseModel):
@@ -703,168 +544,58 @@ class ModelCatalogRequest(BaseModel):
     base_url: str | None = None
 
 
-# Sync def: the upstream /v1/models fetch runs in the threadpool.
+# Sync def: the upstream listing fetch runs in the threadpool.
 @router.post("/ai/model-catalog")
 def ai_model_catalog(payload: ModelCatalogRequest, request: Request):
-    """Model names offered by a provider, for the settings form's model picker.
-    API protocols are asked live (GET /v1/models with the entry's key); the
-    ChatGPT backend is asked via Codex CLI's listing call with the OAuth
-    token (an error until an entry is connected). An admin editing a shared
-    entry names it by its ``server:<id>``."""
+    """Model names offered by a provider, for the settings form's model
+    picker, asked live (ai_catalog.list_models): an API-key protocol with the
+    typed key or the saved entry's, a sign-in protocol with a connected
+    entry's token. An admin editing a shared entry names it by its
+    ``server:<id>``."""
     user = _require_editor(request)
     entry = {}
     protocol = payload.protocol
     if payload.provider_id:
         entry = _saved_entry(request, user, payload.provider_id) or {}
         protocol = protocol or entry.get("protocol")
-    if protocol == "chatgpt":
-        return {"models": _chatgpt_model_catalog(user, payload.provider_id)}
-    if protocol not in AI_PROTOCOLS:
+    proto = ai_protocols.PROTOCOLS.get(protocol)
+    if not proto:
         raise HTTPException(status_code=400, detail="unknown protocol")
-    key = (payload.api_key or "").strip() or (entry.get("api_key") or "").strip()
-    if not key:
-        raise HTTPException(status_code=400, detail="enter the API key first, then load the model list")
-    base = ((payload.base_url if payload.base_url is not None else entry.get("base_url") or "").strip()
-            or AI_PROTOCOLS[protocol]["base_url"]).rstrip("/")
+    if proto.auth == "oauth":
+        conf = _signed_in_conf(user, payload.provider_id, proto)
+    else:
+        key = (payload.api_key or "").strip() or (entry.get("api_key") or "").strip()
+        if not key:
+            raise HTTPException(status_code=400, detail="enter the API key first, then load the model list")
+        base = ((payload.base_url if payload.base_url is not None else entry.get("base_url") or "").strip()
+                or proto.base_url).rstrip("/")
+        conf = {"protocol": proto.id, "api_key": key, "base_url": base, "name": ""}
+    # A key the provider refuses is the form's problem (400); a sign-in's
+    # listing failing is the upstream's (502).
+    status = 502 if proto.auth == "oauth" else 400
     try:
-        data = _model_catalog_json(_models_list_request(protocol, key, base))
+        models = ai_catalog.list_models(conf)
     except urllib.error.HTTPError as e:
-        raise HTTPException(status_code=400, detail=f"model list failed: {_upstream_detail(e, 200)}")
+        raise HTTPException(status_code=status, detail=f"model list failed: {_upstream_detail(e, 200)}")
     except Exception as e:
-        raise HTTPException(status_code=400, detail=f"model list failed: {e}")
-    ids = [str(m.get("id") or "") for m in (data.get("data") or []) if m.get("id")]
-    if protocol == "openai":
-        # Listings include embeddings/audio/image models the chat endpoint
-        # can't use — drop them. OpenAI's own listing is additionally narrowed
-        # to its conversational families; a compatible server (DeepSeek, …)
-        # names its models however it likes.
-        ids = [i for i in ids
-               if not re.search(r"embed|whisper|tts|audio|image|dall-e|moderation|transcribe|realtime|search", i)
-               and (not is_openai_platform(base) or re.match(r"^(gpt-|o\d|chatgpt-)", i))]
-    return {"models": sorted(set(ids))}
-
-
-# A model's context window, for the chat's context ring — looked up live,
-# never a table in the code. First the provider's own listing: Anthropic's
-# max_input_tokens, the Codex backend's context_window, the context_length /
-# max_model_len of OpenRouter, vLLM, Groq, Together, …; OpenAI's and
-# DeepSeek's listings carry no size, so then the public models.dev catalog.
-# Both are cached like the Codex version: a good answer for hours, a failed
-# lookup retried after minutes, the last good answer kept meanwhile.
-_WINDOW_KEYS = ("max_input_tokens", "context_window", "context_length", "max_context_length", "max_model_len")
-_MODELS_DEV_URL = "https://models.dev/api.json"
-_MODELS_DEV_TIMEOUT = 15
-_WINDOW_TTL = 6 * 3600
-_WINDOW_RETRY = 600
-_listing_windows = {}  # "<provider id>|<base url>" -> {"windows": {model: n}, "until": t}
-_listing_windows_lock = threading.Lock()
-_models_dev = {"windows": None, "until": 0.0}  # windows: model name -> [(provider key, n)]
-_models_dev_lock = threading.Lock()
-
-
-def _row_window(row) -> int:
-    if not isinstance(row, dict):
-        return 0
-    for k in _WINDOW_KEYS:
-        v = row.get(k)
-        if isinstance(v, int) and not isinstance(v, bool) and v > 0:
-            return v
-    return 0
-
-
-def _provider_windows(pid: str, conf: dict) -> dict:
-    """{model: window} from the entry's own model listing, cached."""
-    key = f"{pid}|{conf['base_url']}"
-    with _listing_windows_lock:
-        now = time.time()
-        cached = _listing_windows.get(key)
-        if cached and now < cached["until"]:
-            return cached["windows"]
-        try:
-            if conf["protocol"] == "chatgpt":
-                rows = _model_catalog_json(_codex_models_request(conf)).get("models") or []
-                id_key = "slug"
-            else:
-                rows = _model_catalog_json(_models_list_request(
-                    conf["protocol"], conf["api_key"], conf["base_url"])).get("data") or []
-                id_key = "id"
-            windows = {str(r[id_key]): n for r in rows
-                       if isinstance(r, dict) and r.get(id_key) and (n := _row_window(r))}
-            _listing_windows[key] = {"windows": windows, "until": now + _WINDOW_TTL}
-        except Exception as e:
-            log.warning(f"[ai] model listing for context windows failed ({conf.get('name')}): {e}")
-            windows = cached["windows"] if cached else {}
-            _listing_windows[key] = {"windows": windows, "until": now + _WINDOW_RETRY}
-        return _listing_windows[key]["windows"]
-
-
-def _models_dev_windows() -> dict:
-    """models.dev's catalog as {lowercased model id: [(provider key, window)]},
-    cached; also indexed by the part after a "vendor/" prefix."""
-    with _models_dev_lock:
-        now = time.time()
-        if now < _models_dev["until"]:
-            return _models_dev["windows"] or {}
-        try:
-            with urlopen(URLRequest(_MODELS_DEV_URL, headers={"Accept": "application/json",
-                                                              "User-Agent": "Gamma/model-catalog"}),
-                         timeout=_MODELS_DEV_TIMEOUT) as resp:
-                data = json.loads(resp.read())
-            windows = {}
-            for pkey, prov in (data.items() if isinstance(data, dict) else []):
-                for mid, m in ((prov or {}).get("models") or {}).items():
-                    n = (m or {}).get("limit", {}).get("context") if isinstance(m, dict) else None
-                    if not isinstance(n, int) or n <= 0:
-                        continue
-                    name = str(m.get("id") or mid).lower()
-                    for alias in {name, name.rsplit("/", 1)[-1]}:
-                        windows.setdefault(alias, []).append((str(pkey).lower(), n))
-            if not windows:
-                raise ValueError("empty catalog")
-            _models_dev.update(windows=windows, until=now + _WINDOW_TTL)
-        except Exception as e:
-            log.warning(f"[ai] models.dev catalog lookup failed: {e}")
-            _models_dev["until"] = now + _WINDOW_RETRY
-        return _models_dev["windows"] or {}
-
-
-def _catalog_window(model: str, conf: dict) -> int:
-    """The model's window per models.dev. Several providers may list one
-    model (often with their own caps): the one this entry talks to wins —
-    named in its host, or the vendor behind its protocol — else the value
-    most of them agree on."""
-    windows = _models_dev_windows()
-    name = model.lower()
-    found = windows.get(name) or windows.get(name.rsplit("/", 1)[-1]) or []
-    if not found:
-        return 0
-    host = urllib.parse.urlparse(conf.get("base_url") or "").hostname or ""
-    vendor = {"anthropic": "anthropic", "chatgpt": "openai"}.get(conf.get("protocol"), "")
-    for pkey, n in found:
-        if pkey == vendor or (pkey and pkey in host):
-            return n
-    counts = {}
-    for _, n in found:
-        counts[n] = counts.get(n, 0) + 1
-    return max(counts, key=lambda n: (counts[n], n))
+        raise HTTPException(status_code=status, detail=f"model list failed: {e}")
+    return {"models": [m["id"] for m in models]}
 
 
 # Sync def: the listing / catalog fetches run in the threadpool.
 @router.get("/ai/context-window")
 def ai_context_window(request: Request, model: str = ""):
     """The context window of a chat model ("<provider id>:<model>"; "" = the
-    default one): {model, context_window, source: "provider" | "models.dev"},
+    default one), for the chat's context ring: {model, context_window,
+    source: "provider" | "models.dev"} — ai_catalog.context_window;
     context_window null when neither source knows the model."""
     rt = ai_runtime(require_user(request))
     m = next((x for x in rt["models"] if x["id"] == model), None) or rt["default"]
     conf = rt["providers"].get(m["provider"]) if m else None
     if not conf:
         return {"model": "", "context_window": None, "source": ""}
-    n = _provider_windows(m["provider"], conf).get(m["model"])
-    if n:
-        return {"model": m["model"], "context_window": n, "source": "provider"}
-    n = _catalog_window(m["model"], conf)
-    return {"model": m["model"], "context_window": n or None, "source": "models.dev" if n else ""}
+    window, source = ai_catalog.context_window(m["provider"], conf, m["model"])
+    return {"model": m["model"], "context_window": window or None, "source": source}
 
 
 class AIHealthRequest(BaseModel):
@@ -878,8 +609,8 @@ class AIHealthRequest(BaseModel):
 def ai_health(payload: AIHealthRequest, request: Request):
     """Startup connection check for one provider entry, so a broken credential
     surfaces at login instead of as a failed chat later. "ping" spends no
-    tokens: OAuth entries ask the subscription usage endpoint, API keys list
-    /v1/models — both 401 on a dead credential. "test" runs the same tiny
+    tokens (Protocol.ping_request: API keys list the models, sign-ins ask the
+    quota endpoint) — it 401s on a dead credential. "test" runs the same tiny
     completion as the Test button (through the entry's test model). Always
     answers in-body: {configured, ok, auth?, error?, ...}. The entries are
     the ones the account can use: its own, then the server's shared ones."""
@@ -898,10 +629,7 @@ def ai_health(payload: AIHealthRequest, request: Request):
     if not conf:
         return {**result, **_no_credential(entry)}
     try:
-        if conf["protocol"] == "chatgpt":
-            _model_catalog_json(_chatgpt_usage_request(conf))
-        else:
-            _model_catalog_json(_models_list_request(conf["protocol"], conf["api_key"], conf["base_url"]))
+        ai_catalog.fetch_json(ai_protocols.of(conf).ping_request(conf))
     except urllib.error.HTTPError as e:
         if e.code in (401, 403):
             return {**result, "ok": False, "auth": True, "error": _upstream_detail(e, 200)}
@@ -1304,20 +1032,6 @@ _TRANSCRIBE_FALLBACK = "whisper-1"
 _TRANSCRIBE_MAX_BYTES = 25 * 1024 * 1024  # OpenAI's audio upload limit
 
 
-def _multipart_body(fields: dict, filename: str, content_type: str, data: bytes):
-    """Encode fields + one file as multipart/form-data (urllib has no helper)."""
-    boundary = secrets.token_hex(16)
-    parts = []
-    for name, value in fields.items():
-        parts.append(f'--{boundary}\r\nContent-Disposition: form-data; name="{name}"\r\n\r\n{value}\r\n'.encode())
-    parts.append(
-        f'--{boundary}\r\nContent-Disposition: form-data; name="file"; filename="{filename}"\r\n'
-        f"Content-Type: {content_type}\r\n\r\n".encode() + data + b"\r\n"
-    )
-    parts.append(f"--{boundary}--\r\n".encode())
-    return b"".join(parts), f"multipart/form-data; boundary={boundary}"
-
-
 # Sync def: the provider upload runs in the threadpool.
 @router.post("/ai/transcribe")
 def ai_transcribe(request: Request, file: UploadFile = File(...),
@@ -1331,17 +1045,16 @@ def ai_transcribe(request: Request, file: UploadFile = File(...),
     # Needs an OpenAI credential, not chat models: an entry with none picked
     # still transcribes.
     rt = ai_runtime(user)
-    # Only openai-protocol entries can transcribe, and of those OpenAI itself
-    # surely can while a compatible server (DeepSeek) may not: the chat's own
-    # entry if it is OpenAI, else any OpenAI entry, else the chat's compatible
-    # entry, else any compatible one.
+    # The entry that surely transcribes (Protocol.transcription: OpenAI
+    # itself) before one that may (a compatible server), the chat's own entry
+    # first within each.
     # (A shared entry's ids have a colon of their own: "server:<id>:<model>".)
     hinted = rt["providers"].get(next((m["provider"] for m in rt["models"] if m["id"] == model_hint),
                                       (model_hint or "").split(":", 1)[0]))
-    speakers = [c for c in ([hinted] if hinted else []) + list(rt["providers"].values())
-                if c["protocol"] == "openai"]
-    conf = next((c for c in speakers if is_openai_platform(c["base_url"])),
-                speakers[0] if speakers else None)
+    candidates = [(ai_protocols.of(c).transcription(c), c)
+                  for c in ([hinted] if hinted else []) + list(rt["providers"].values())]
+    best = max((rank for rank, _ in candidates), default=0)
+    conf = next((c for rank, c in candidates if rank == best), None) if best else None
     if not conf:
         raise HTTPException(status_code=503,
                             detail="Voice input needs an OpenAI API key (Settings → AI → Connections) — "
@@ -1362,18 +1075,14 @@ def ai_transcribe(request: Request, file: UploadFile = File(...),
     if _TRANSCRIBE_FALLBACK not in candidates:
         candidates.append(_TRANSCRIBE_FALLBACK)
     detail = ""
+    proto = ai_protocols.of(conf)
     for model in candidates:
-        fields = {"model": model, **({"language": language} if language else {})}
-        body, content_type = _multipart_body(
-            fields, filename, file.content_type or "application/octet-stream", audio)
-        req = URLRequest(f"{conf['base_url']}/v1/audio/transcriptions", data=body, headers={
-            "Authorization": f"Bearer {conf['api_key']}",
-            "Content-Type": content_type,
-        })
+        req = proto.transcription_request(conf, model, language, filename,
+                                          file.content_type or "application/octet-stream", audio)
         try:
             with urlopen(req, timeout=120) as resp:
                 data = json.loads(resp.read())
-            return {"text": (data.get("text") or "").strip(), "model": model}
+            return {"text": proto.transcript(data), "model": model}
         except urllib.error.HTTPError as error:
             detail = _upstream_detail(error)
             log.warning(f"[transcribe] {model}: {detail}")
@@ -1466,7 +1175,7 @@ def chatgpt_auth_complete(payload: ChatGPTAuthComplete, request: Request):
             # back through ai_runtime.
             save_provider_entries(user, entries)
             try:
-                live = _chatgpt_model_catalog(user, entry["id"])
+                live = [m["id"] for m in ai_catalog.list_models(ai_runtime(user)["providers"][entry["id"]])]
             except Exception:
                 live = []
             entry["models"] = ", ".join(live[:2])[:MAX_MODELS_LEN]

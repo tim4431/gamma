@@ -30,7 +30,7 @@ export const SECTION_PREFS = Object.freeze({
   }),
   reading: sections({
     "PDF viewer": ["embAnnots"],
-    Translation: ["translateEnabled", "translateLang"],
+    Translation: ["translateEnabled", "translateLang", "selTranslate", "selTranslateAuto"],
     Notes: ["enterNewNote"],
     "Search opens as": ["searchDetailsHome", "searchDetailsPaper"],
   }),

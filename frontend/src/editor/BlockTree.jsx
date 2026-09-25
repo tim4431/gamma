@@ -15,7 +15,9 @@ import { gammaLinkId, gammaLinkIds, parseGammaLink, relativeGammaLink } from "..
 import { InkCard } from "../ink/InkLayer";
 import { GammaLinkCard, handleMarkdownCopy } from "../shared/ui/Widgets";
 import { MermaidDiagram, mermaidCodeProps } from "../shared/ui/MermaidDiagram";
-import { mapOutsideCodeFences, remarkMermaid, setMermaidWidth } from "../shared/lib/mermaidMarkdown.js";
+import { mapOutsideCodeFences, remarkMermaid, scanMermaidFences, setMermaidWidth } from "../shared/lib/mermaidMarkdown.js";
+import { MdObject, findObject } from "./MdObject";
+import { cutObject } from "./mdObjects";
 import { LinkIcon, PenIcon } from "../shared/ui/Icons";
 import { FileChip, parseUploadUrl, postFile, uploadFilesAsLines } from "../transfers/FileChip";
 import {
@@ -42,7 +44,9 @@ import {
 } from "./MdTools";
 
 // Module-level ref for native HTML5 drag-and-drop (shared with App's drop handlers)
-const _dragState = { draggingId: null, dropTarget: null };
+// draggingId: the block a ⋮⋮ handle drags; fragment: {blockId, kind, idx},
+// an image / table / diagram dragged out of a block's rendered view.
+const _dragState = { draggingId: null, dropTarget: null, fragment: null };
 
 // Source → markdown the renderer understands: sized images (Obsidian
 // ![alt|300] and legacy Logseq {:width}), ![[embeds]],
@@ -496,7 +500,7 @@ function HighlightedCodePre({ children }) {
 // labels are resolved by the caller so the comparison here stays a string
 // check. onBlockRefClick/onTaskToggle are deliberately excluded from the
 // comparison — the caller passes identity-stable wrappers.
-const BlockMarkdown = React.memo(function BlockMarkdown({ content, blockId, refLabels, onBlockRefClick, onTaskToggle, onEmbedEdit, onImageEdit, onTableEdit, onMermaidEdit, nested }) {
+const BlockMarkdown = React.memo(function BlockMarkdown({ content, blockId, refLabels, onBlockRefClick, onTaskToggle, onEmbedEdit, onImageEdit, onTableEdit, onMermaidEdit, onObjectAction, nested }) {
   // GFM task-list checkboxes render in document order; this counter maps the
   // nth rendered checkbox back to the nth `[ ]`/`[x]` marker in the source so
   // clicking one toggles the right marker. Reset per render — the whole
@@ -508,6 +512,7 @@ const BlockMarkdown = React.memo(function BlockMarkdown({ content, blockId, refL
   // Source-order table list; entries inside blockquotes are editable:false
   // (they still consume an index so the mapping stays aligned).
   const tableInfo = useMemo(() => scanTables(content || ""), [content]);
+  const mermaidInfo = useMemo(() => scanMermaidFences(content || ""), [content]);
   return (
     <ReactMarkdown
       // remark-breaks: a single Enter inside a note renders as a real line
@@ -584,25 +589,36 @@ const BlockMarkdown = React.memo(function BlockMarkdown({ content, blockId, refL
           const diagram = mermaidCodeProps(children);
           if (!diagram) return <HighlightedCodePre>{children}</HighlightedCodePre>;
           mermaidIdx += 1;
-          return <MermaidDiagram {...diagram} idx={mermaidIdx} onResize={onMermaidEdit} />;
+          const f = mermaidInfo[mermaidIdx];
+          return (
+            <MdObject kind="mermaid" idx={mermaidIdx} editable={!!(f?.closed && !f.prefix.trim())} onAction={onObjectAction}>
+              <MermaidDiagram {...diagram} idx={mermaidIdx} onResize={onMermaidEdit} />
+            </MdObject>
+          );
         },
         img: ({ node, src, alt, width }) => {
           imgIdx += 1;
-          return <MdImage src={src} alt={alt} width={width} idx={imgIdx} onEdit={onImageEdit} />;
+          return (
+            <MdObject as="span" kind="image" idx={imgIdx} onAction={onObjectAction}>
+              <MdImage src={src} alt={alt} width={width} idx={imgIdx} onEdit={onImageEdit} />
+            </MdObject>
+          );
         },
         table: ({ node, children }) => {
           tableIdx += 1;
           const info = tableInfo[tableIdx];
           const editable = !!(info?.editable && onTableEdit);
           return (
-            <MdTableWrap
-              idx={tableIdx}
-              onEdit={editable ? onTableEdit : undefined}
-              model={editable ? parseTable(content.slice(info.from, info.to)) : null}
-              editKey={editable ? `${blockId}:${tableIdx}` : null}
-            >
-              {children}
-            </MdTableWrap>
+            <MdObject kind="table" idx={tableIdx} editable={!!info?.editable} onAction={onObjectAction}>
+              <MdTableWrap
+                idx={tableIdx}
+                onEdit={editable ? onTableEdit : undefined}
+                model={editable ? parseTable(content.slice(info.from, info.to)) : null}
+                editKey={editable ? `${blockId}:${tableIdx}` : null}
+              >
+                {children}
+              </MdTableWrap>
+            </MdObject>
           );
         },
         input: ({ node, type, checked, disabled, ...props }) => {
@@ -718,6 +734,9 @@ function BlockRow({
   onHop,
   onMoveBlock,
   onDuplicate,
+  onMoveToPage,
+  onMoveObject,
+  onStatus,
 }) {
   const ref = useRef(null);
   const clickPosRef = useRef(null);
@@ -807,6 +826,41 @@ function BlockRow({
     }
   };
   const stableTableEdit = useRef((i, o) => tableEditRef.current?.(i, o)).current;
+  // The object frame's menu and drag (MdObject.jsx): the nth image / table /
+  // diagram of this block as a source range. "Edit source" opens the raw
+  // editor with the caret on it (the click-to-source path with a known
+  // offset); a move is App's one-transition tree edit (onMoveObject); the
+  // drag publishes the object for App's block drop handlers.
+  const objectActionRef = useRef(null);
+  objectActionRef.current = (kind, idx, action, e) => {
+    const content = block.content || "";
+    const obj = findObject(content, kind, idx);
+    if (!obj) return;
+    if (action === "editRaw") {
+      clickPosRef.current = { x: e?.clientX || 0, y: e?.clientY || 0, offset: obj.from };
+      setFocusedId(block.id);
+      onStartEdit(block.id, true);
+    } else if (action === "copy") {
+      copyText(content.slice(obj.from, obj.to));
+      onStatus?.(t("Copied as markdown"));
+    } else if (action === "delete") {
+      onChangeText(block.id, cutObject(content, obj).content);
+    } else if (action === "moveNewAbove" || action === "moveNewBelow") {
+      onMoveObject?.({ sourceId: block.id, kind, idx, target: { type: "sibling", id: block.id, above: action === "moveNewAbove" } });
+    } else if (action === "moveToPage") {
+      onMoveObject?.({ sourceId: block.id, kind, idx, target: { type: "page" } });
+    } else if (action === "dragStart") {
+      const md = cutObject(content, obj).md;
+      e.dataTransfer.setData("text/plain", md);
+      e.dataTransfer.effectAllowed = "move";
+      _dragState.fragment = { blockId: block.id, kind, idx };
+    } else if (action === "dragEnd") {
+      _dragState.fragment = null;
+      _dragState.dropTarget = null;
+      window._gammaSetDropTarget?.(null);
+    }
+  };
+  const stableObjectAction = useRef((k, i, a, e) => objectActionRef.current?.(k, i, a, e)).current;
   // Resolve [[ref]] chip labels here (cheap per render) so BlockMarkdown's
   // memo can compare them as strings instead of depending on allBlocks,
   // whose identity changes on every edit.
@@ -1434,7 +1488,7 @@ function BlockRow({
                 // A handled key stops here; the outliner's own keys follow.
                 if (dispatchHotkey(BLOCK_COMMANDS, e, {
                   block, tree, readOnly, editor: ref.current,
-                  row: { onHop, onMoveBlock, onDuplicate, onDelete, onEnterSibling, onIndent, onOutdent, onToggle },
+                  row: { onHop, onMoveBlock, onDuplicate, onDelete, onEnterSibling, onIndent, onOutdent, onToggle, onAddToChat, onMoveToPage },
                 }, keybindings)) return;
                 // Tab inside raw math (popup closed) hops between argument
                 // groups snippet-style — \frac{1|}{} lands in the second {} —
@@ -1556,7 +1610,8 @@ function BlockRow({
                   onEmbedEdit={readOnly ? undefined : stableEmbedEdit}
                   onImageEdit={readOnly ? undefined : stableImageEdit}
                   onTableEdit={readOnly ? undefined : stableTableEdit}
-                  onMermaidEdit={readOnly ? undefined : stableMermaidEdit} />
+                  onMermaidEdit={readOnly ? undefined : stableMermaidEdit}
+                  onObjectAction={readOnly ? undefined : stableObjectAction} />
               ) : (
                 <div className="blockPlaceholder">{t("(empty)")}</div>
               )}

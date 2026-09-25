@@ -40,22 +40,30 @@ const FENCE_LINE = /^((?:[ \t]*>[ \t]?)*(?:[ \t]*(?:[-+*]|\d+[.)])[ \t]+)?[ \t]*
 // The Mermaid fences of a note in source order — the same order the
 // rendered view shows them, so the nth diagram is the nth entry (quotes and
 // list items included, like mapOutsideCodeFences). Each: the opener line's
-// range and its info string split into {lang, meta, width}.
+// range {from, to} and its info string split into {lang, meta, width}, plus
+// `end`, where the whole fence ends (the closing line's end; the text's end
+// while it is still open, `closed: false`).
 export function scanMermaidFences(text) {
   const out = [];
-  let fence = null, pos = 0;
+  let fence = null, open = null, pos = 0;
   for (const line of (text || "").split("\n")) {
     const end = pos + line.length;
     const m = FENCE_LINE.exec(line);
     if (fence) {
-      if (m && m[2][0] === fence[0] && m[2].length >= fence.length && !m[3].trim()) fence = null;
+      if (m && m[2][0] === fence[0] && m[2].length >= fence.length && !m[3].trim()) {
+        if (open) { open.end = end; open.closed = true; }
+        fence = null;
+        open = null;
+      }
     } else if (m && !(m[2][0] === "`" && m[3].includes("`"))) {
       fence = m[2];
       const info = m[3].trim();
       const lang = info.split(/\s+/)[0] || "";
       if (/^mermaid$/i.test(lang)) {
         const meta = info.slice(lang.length).trim();
-        out.push({ from: pos, to: end, prefix: m[1], ticks: m[2], lang, meta, width: mermaidWidth(meta) });
+        open = { from: pos, to: end, prefix: m[1], ticks: m[2], lang, meta, width: mermaidWidth(meta),
+          end: (text || "").length, closed: false };
+        out.push(open);
       }
     }
     pos = end + 1;

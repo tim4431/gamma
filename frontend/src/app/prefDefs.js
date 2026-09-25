@@ -138,6 +138,11 @@ export const PREFS = {
   // --- Translation (Settings → Reading, AI → Advanced) ---
   // Master switch: off removes the translate button from the viewer.
   translateEnabled: flag("gamma-translate-enabled", ACCOUNT, true),
+  // Selection translation: a translate button in the text-selection popup
+  // (next to the highlight colors), and whether it translates as soon as
+  // text is selected instead of on click.
+  selTranslate: flag("gamma-sel-translate", ACCOUNT, true),
+  selTranslateAuto: flag("gamma-sel-translate-auto", ACCOUNT, false),
   // Target language for the translated view (the 文A button in the viewer).
   translateLang: pref("gamma-translate-lang", ACCOUNT, "zh-CN", oneOf(TRANSLATE_LANGS.map(([code]) => code))),
   // Parallel translation requests: chunks of a page are translated this many

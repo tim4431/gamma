@@ -1,7 +1,8 @@
 // In-place editing tools for the rendered notes: the image hover toolbar
 // (drag-resize writing the Obsidian `![alt|300]` size, caption = the alt
-// text, lightbox, delete)
-// and the table hover controls (add/delete row & column, alignment). Every
+// text, lightbox, delete) and the table hover controls (add/delete row &
+// column, alignment). Selecting, moving and deleting a whole image / table /
+// diagram is the object frame around them, MdObject.jsx. Every
 // operation is a text transform on the block's markdown source — scanImages/
 // scanTables locate the nth rendered construct so the components can address
 // "their" source range without a position map from the renderer.
@@ -11,6 +12,7 @@ import { scanMathSpans } from "./BlockCmEditor";
 import { scanFences } from "./codeHighlight";
 import { scanImageSyntax } from "./mdMarks";
 import { ContextMenu, MenuItem } from "../shared/ui/Menus";
+import { useObjectMenu } from "./MdObject";
 import { ResizeGrips, useDragResize } from "../shared/ui/ResizeGrip";
 import { Segmented } from "../settings/SettingsKit";
 import { t } from "../shared/i18n/i18n.js";
@@ -297,7 +299,13 @@ export function MdImage({ src, alt, width, idx, onEdit }) {
   const imgRef = useRef(null);
   const { dragW, gripProps } = useDragResize({
     measure: () => imgRef.current?.getBoundingClientRect().width,
-    bound: () => imgRef.current?.closest(".mdImgWrap")?.parentElement,
+    // The room to grow into: the note's column, past the object frame
+    // (MdObject, fit-content — it would bound the picture to its own width).
+    bound: () => {
+      const wrap = imgRef.current?.closest(".mdImgWrap");
+      const outer = wrap?.parentElement?.classList.contains("mdObject") ? wrap.parentElement : wrap;
+      return outer?.parentElement;
+    },
     onCommit: (w) => onEdit(idx, "width", w),
   });
 
@@ -326,7 +334,6 @@ export function MdImage({ src, alt, width, idx, onEdit }) {
           alt={alt || ""}
           width={w || undefined}
           draggable={false}
-          onMouseDown={stop}
           onClick={(e) => { e.stopPropagation(); setLightbox(true); }}
         />
         {onEdit ? (
@@ -400,22 +407,12 @@ export function MdTableWrap({ idx, onEdit, model, editKey, children }) {
   const [menu, setMenu] = useState(null); // {x,y,kind,at}
   const [cellEdit, setCellEdit] = useState(null); // {row,col,text,rect}
   const [drag, setDrag] = useState(null); // drop-line: {kind, x|y, top/left, size}
-  // The corner handle selects the whole table (outlined) and opens its menu;
-  // while selected, Delete or Backspace removes it.
-  const [selected, setSelected] = useState(false);
+  // The corner handle selects the whole table and opens its menu. Inside an
+  // MdObject frame (the notes) that is the object menu — source, move, copy,
+  // delete — and the frame owns the selection + Delete key; elsewhere (an
+  // embed card) a small copy / delete menu of its own.
+  const objectMenu = useObjectMenu();
   const editable = !!onEdit;
-  useEffect(() => {
-    if (!selected) return undefined;
-    const onKey = (e) => {
-      if (e.key !== "Delete" && e.key !== "Backspace") return;
-      e.preventDefault();
-      e.stopPropagation();
-      setSelected(false);
-      pick({ type: "deleteTable" });
-    };
-    document.addEventListener("keydown", onKey, true);
-    return () => document.removeEventListener("keydown", onKey, true);
-  });
   useEffect(() => { if (editable) guideEvents.emit("table.shown"); }, [editable]);
   const dragRef = useRef(null); // {kind, at, from, startX, startY, moved, to}
 
@@ -597,7 +594,7 @@ export function MdTableWrap({ idx, onEdit, model, editKey, children }) {
 
   return (
     <div
-      className={`mdTableWrap${onEdit ? " mdTableEditable" : ""}${selected ? " mdTableSelected" : ""}`}
+      className={`mdTableWrap${onEdit ? " mdTableEditable" : ""}`}
       data-guide={onEdit ? "notes.table" : undefined}
       ref={wrapRef}
       onMouseOver={onOver}
@@ -637,9 +634,12 @@ export function MdTableWrap({ idx, onEdit, model, editKey, children }) {
             onMouseDown={stop}
             onClick={(e) => { stop(e); onEdit(idx, { type: "addCol", at: counts().nCols }); }}>+</button>
           <button type="button" className="mdTableHandle mdTableCorner" data-guide="notes.tableCorner"
-            title={t("Select the table: copy or delete it")} aria-label={t("Table options")}
-            onMouseDown={stop}
-            onClick={(e) => { stop(e); setSelected(true); setMenu({ x: e.clientX, y: e.clientY, kind: "table" }); }}>
+            title={t("Select the table: move, copy or delete it")} aria-label={t("Table options")}
+            onClick={(e) => {
+              stop(e);
+              if (objectMenu) objectMenu.openMenu(e);
+              else setMenu({ x: e.clientX, y: e.clientY, kind: "table" });
+            }}>
             <GridIcon size={10} aria-hidden="true" />
           </button>
           <button type="button" className="mdTableAdd mdTableAddRow" title={t("Add row")} data-guide="notes.tableAdd"
@@ -683,9 +683,9 @@ export function MdTableWrap({ idx, onEdit, model, editKey, children }) {
             </ContextMenu>
           ) : null}
           {menu?.kind === "table" ? (
-            <ContextMenu x={menu.x} y={menu.y} onClose={() => { setMenu(null); setSelected(false); }}>
-              <MenuItem icon={CopyIcon} onClick={() => { setMenu(null); setSelected(false); if (model) copyText(serializeTable(model)); }}>{t("Copy table")}</MenuItem>
-              <MenuItem danger icon={Trash2Icon} onClick={() => { setSelected(false); pick({ type: "deleteTable" }); }}>{t("Delete table")}</MenuItem>
+            <ContextMenu x={menu.x} y={menu.y} onClose={() => setMenu(null)}>
+              <MenuItem icon={CopyIcon} onClick={() => { setMenu(null); if (model) copyText(serializeTable(model)); }}>{t("Copy table")}</MenuItem>
+              <MenuItem danger icon={Trash2Icon} onClick={() => pick({ type: "deleteTable" })}>{t("Delete table")}</MenuItem>
             </ContextMenu>
           ) : null}
           {menu?.kind === "row" ? (
