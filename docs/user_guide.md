@@ -144,9 +144,9 @@ Your library lives on your server and opens from any browser — the office desk
 **Making one**
 
 - **Desktop app** (the easy way): open the remote server, open the workspace switcher, and click the **clone** chip on the workspace's row. The app creates a local server if needed, sets up the copy and opens it; from then on it syncs in the background whichever server the window shows, and the row's chip reads *open clone*.
-- **Any Gamma**: on the *server*, make a **read-and-write token** in Settings → AI → Integrations. On the Gamma that will hold the copy, Settings → Workspaces → **Clones → Clone a remote workspace**: the server's address, the token, a name, and the direction. You can also clone *into* an existing workspace (say, one restored from a backup); pages that exist on both sides adopt the server's version and differing blocks become conflicts to resolve.
+- **Any Gamma**: on the *server*, make a **read-and-write token** in Settings → AI → Integrations. On the Gamma that will hold the copy, Settings → Account & sync → **Clones → Clone a remote workspace**: the server's address, the token, a name, and the direction. You can also clone *into* an existing workspace (say, one restored from a backup); pages that exist on both sides adopt the server's version and differing blocks become conflicts to resolve.
 
-A copy can be **detached** (it stops syncing and behaves like an ordinary workspace, keeping everything) and **reattached** later — the next round merges what both sides did meanwhile. **Remove origin** drops the link and keeps the workspace. Settings → Workspaces → Clones lists every copy with its state, conflicts and these actions.
+A copy can be **detached** (it stops syncing and behaves like an ordinary workspace, keeping everything) and **reattached** later — the next round merges what both sides did meanwhile. **Remove origin** drops the link and keeps the workspace. Settings → Account & sync → Clones lists every copy with its state, conflicts and these actions.
 
 ## Gamma Connector
 
@@ -229,16 +229,16 @@ Settings (account menu → Settings) has one sidebar in three groups; the search
 
 | Group | Pane | What's there |
 |---|---|---|
-| Preferences | Appearance | Theme (system + seven), flip page colors, control size |
-| | Reading & editing | Imported annotations, handwriting (pen only / pen and finger, pressure), translation, the Enter key, how search opens |
-| | Library | Card thumbnails / folders / labels, open-access fallback, metadata auto-fetch, saving external PDFs |
-| | Account | Your account and storage meter |
+| Preferences | Appearance | Theme (system + seven), language, flip page colors, library cards (thumbnails / folders / labels), interface size, tour suggestions |
+| | Reading & editing | PDFs (imported annotations, open-access fallback, metadata auto-fetch, saving external PDFs), handwriting (pen only / pen and finger, pressure), translation (button, language, selection, model or service and its keys, speed), the Enter key, how search opens |
+| | Keyboard | Every shortcut, rebindable |
+| | Account & sync | Your account, storage meter and Gamma Cloud link; published pages, **Clones** (offline copies) and the sync pill |
 | AI | Connections | Providers and keys, ChatGPT sign-in, default models, token usage |
-| | Chat | Which tools the agent may use, per chat kind |
-| | Advanced | Reasoning effort, tool limits, context budgets |
+| | Chat | Default reasoning effort, snapshot clearing, which tools the agent may use per chat kind |
+| | Advanced | Tool limits, context budgets |
 | | Prompts | The system prompts |
 | | Integrations | Codex / Claude Code / DeepSeek Harness / MCP connections and tokens |
-| Manage | Workspaces | Personal and shared workspaces, **Clones** (offline copies), export / import |
+| Manage | Workspaces | Personal and shared workspaces, export / import |
 | | Backups | Server-side snapshots |
 | | Library maintenance | Storage, search-index rebuild, metadata health table |
 | | Users, Server | Administrators: accounts, the dashboard, public URL, storage defaults, shared workspaces, server backups, the log |

@@ -86,9 +86,9 @@ export function MermaidDiagram({ source, pending = false, width = null, idx, onR
           aria-label={t("Source")} title={showSource ? t("Show diagram") : t("Show source")}
           aria-pressed={showSource} onClick={() => setShowSource(!showSource)}><CodeIcon /></button>
         <button type="button" className="ctlBtn" aria-label={t("Copy source")}
-          title={copyStatus || t("Copy source")} onClick={async () =>
-            setCopyStatus(await copyText(source) ? t("Copied") : t("Copy failed"))}>
-          {copyStatus === t("Copied") ? <CheckIcon /> : <CopyIcon />}
+          title={copyStatus === "copied" ? t("Copied") : copyStatus === "failed" ? t("Copy failed") : t("Copy source")}
+          onClick={async () => setCopyStatus(await copyText(source) ? "copied" : "failed")}>
+          {copyStatus === "copied" ? <CheckIcon /> : <CopyIcon />}
         </button>
         <button type="button" className="ctlBtn" aria-label={t("Download SVG")} title={t("Download SVG")}
           disabled={!active?.svg} onClick={download}><DownloadIcon /></button>

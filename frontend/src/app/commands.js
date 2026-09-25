@@ -13,8 +13,6 @@ export const ALL_COMMANDS = Object.freeze([...APP_COMMANDS, ...BLOCK_COMMANDS]);
 // The pane's order.
 export const GROUPS = Object.freeze([GROUP_NAVIGATION, GROUP_PAGE, GROUP_VIEW, GROUP_LIBRARY, GROUP_NOTES, GROUP_FORMAT]);
 
-export const commandById = (id) => ALL_COMMANDS.find((c) => c.id === id) || null;
-
 // Keys the outliner and its popups own outright — no command, no rebinding —
 // listed so the pane and the cheat sheet can show the whole picture. Each
 // is [chords, what it does, id] (the id names its icon in

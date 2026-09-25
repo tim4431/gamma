@@ -125,7 +125,7 @@ def test_mirror_conflicts_count_new_ones_only(nuser, monkeypatch):
     assert _only(nuser, "mirror-conflicts") is None
     marks["ws-clone"] = (3, 7)
     notice = _only(nuser, "mirror-conflicts")
-    assert notice["pane"] == "workspaces" and notice["tone"] == "warn" and notice["title"].startswith("3 sync conflicts")
+    assert notice["pane"] == "account" and notice["tone"] == "warn" and notice["title"].startswith("3 sync conflicts")
     nuser.post("/api/notices/mirror-conflicts/seen", json={"fingerprint": notice["fingerprint"]})
     marks["ws-clone"] = (3, 7)
     assert _only(nuser, "mirror-conflicts") is None
@@ -140,7 +140,7 @@ def test_publication_conflicts_point_at_the_sync_pane(nuser, monkeypatch):
     monkeypatch.setattr(notices.sync_engine, "open_conflict_mark", lambda ws: marks[ws])
     assert _only(nuser, "mirror-conflicts") is None
     notice = _only(nuser, "publish-conflicts")
-    assert notice["pane"] == "sync" and notice["title"].startswith("2 sync conflicts")
+    assert notice["pane"] == "account" and notice["title"].startswith("2 sync conflicts")
     marks["ws-clone"] = (1, 9)
     assert _only(nuser, "mirror-conflicts")["title"].startswith("1 sync conflict ")
 

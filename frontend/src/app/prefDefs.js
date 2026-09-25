@@ -42,7 +42,11 @@ const CONTEXT_CHARS = intIn(100, 1000000);
 export const FILE_LABEL_MODES = ["off", "labels", "folders", "both"];
 
 // Target languages for the PDF translated view. Codes mirror the backend's
-// allowlist (TRANSLATE_LANGS in gamma/routers/ai.py) — keep the two in sync.
+// allowlist (TRANSLATE_LANGS in gamma/translate_engines.py) — keep the two in sync.
+// The translation service that needs no setup (Microsoft's free endpoint):
+// what "Translate with" defaults to when there is no chat model to follow.
+export const FREE_TRANSLATE_ENGINE = "engine:microsoft";
+
 export const TRANSLATE_LANGS = [
   ["zh-CN", "中文（简体）"], ["zh-TW", "中文（繁體）"], ["en", "English"],
   ["ja", "日本語"], ["ko", "한국어"], ["de", "Deutsch"], ["fr", "Français"],
@@ -115,7 +119,7 @@ export const PREFS = {
   // (guide/triggers.js); off leaves only Account › Tours.
   suggestTours: flag("gamma-suggest-tours", ACCOUNT, true),
 
-  // --- Library display (Settings → Library) ---
+  // --- Library display (Settings → Appearance › Library) ---
   // Recently-viewed cards on the home page (only — library cards always use
   // the glyph): cover thumbnails (a snapshot of the PDF at the last-read
   // spot). Off shows the file icon instead and stops capturing new ones.
@@ -123,7 +127,7 @@ export const PREFS = {
   // Folder/label chips on home file cards and list rows.
   fileLabels: pref("gamma-home-file-labels", ACCOUNT, "both", oneOf(FILE_LABEL_MODES)),
 
-  // --- Papers (Settings → Library) ---
+  // --- Papers (Settings → Reading › PDFs) ---
   oaFallback: flag("gamma-oa-fallback", ACCOUNT, true),
   metaAutoFetch: flag("gamma-meta-auto", ACCOUNT, true),
   pdfSaveLocal: flag("gamma-pdf-save", ACCOUNT, true),

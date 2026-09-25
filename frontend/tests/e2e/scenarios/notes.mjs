@@ -240,24 +240,25 @@ export async function noteScenarios({ server, browser, alice, step, until, sleep
     return src;
   });
 
-  await step("notes: in the editor an untouched image shows the picture, the caret on it shows the source", async () => {
+  await step("notes: in the editor an image stays a picture with the caret beside it; right-click shows the source", async () => {
     const up = await alice2.upload("/api/upload-image", PNG_1PX, "dot2.png", "image/png");
     await editRow(page, "buy milk");
     await page.keyboard.press("Enter"); // a line break; list continuation makes line 2 a new todo item
     await page.keyboard.type(`![](${up.url})`);
     const widgets = () => page.$$eval(".blockEditorCm .cmImgWidget img", (els) => els.map((e) => [e.getAttribute("src"), e.naturalWidth]));
-    // The caret sits at the end of the image it just typed: raw source.
-    assertEq((await widgets()).length, 0, "typed image stays raw under the caret");
-    await page.keyboard.press("Control+Home"); // line 1: the image is untouched now
+    // The caret sits right after the image it just typed: the boundary keeps the picture.
     await until(async () => {
       const imgs = await widgets();
       return imgs.length === 1 && imgs[0][0].includes(`ws=${second.id}`) && imgs[0][1] === 1;
     }, { what: "image widget in the editor" });
-    await page.keyboard.press("Control+End"); // back onto the image: raw again
+    await page.keyboard.press("Control+Home");
+    await page.keyboard.press("Control+End"); // back to the image's end: still a picture
+    assertEq((await widgets()).length, 1, "the caret at the image's end keeps the picture");
+    await page.locator(".blockEditorCm .cmImgWidget").click({ button: "right" });
     await until(async () => {
       const raw = await page.$eval(".blockEditorCm .cm-content", (el) => el.textContent);
       return (await widgets()).length === 0 && raw.includes("![](");
-    }, { what: "raw image source under the caret" });
+    }, { what: "right-click reveals the raw image source" });
     await closeEditor(page);
     await until(async () => JSON.stringify(await tree(alice2, pageId)).includes(`- [ ] ![](${up.url})`), { what: "image line saved" });
     assertNoProblems(page);
@@ -430,16 +431,22 @@ export async function noteScenarios({ server, browser, alice, step, until, sleep
     const content = async (id) => (await children()).find((b) => b.id === id)?.content;
     const frameOf = (id, kind) => p.locator(`.blockRowWrap[data-block-id="${id}"] .mdObject-${kind}`);
 
-    // A press on the frame's margin selects the object; the editor stays closed.
+    // A press on the frame's margin still opens the editor there (click to
+    // source) — and in the editor the table stays a table.
     const tableFrame = frameOf(withTable.id, "table");
     await tableFrame.waitFor();
     await tableFrame.scrollIntoViewIfNeeded();
     const fb = await tableFrame.boundingBox();
-    await p.mouse.click(fb.x + 1, fb.y + 1);
-    await p.waitForSelector(".mdObjectSelected");
-    assertEq(await p.locator(".blockEditorCm").count(), 0, "a press beside the table selects it instead of opening the editor");
+    await p.mouse.click(fb.x + fb.width - 1, fb.y + fb.height - 1); // the margin, clear of the corner handle
+    await p.waitForSelector(".blockEditorCm .cm-content", { timeout: 5000 });
+    await p.locator(".blockEditorCm .cmTableWidget").waitFor();
+    assertEq(await p.locator(".mdObjectSelected").count(), 0, "the margin press did not select the table");
+    await closeEditor(p);
+    // A press on the table's own body (a cell) edits the cell, not the source.
+    await frameOf(withTable.id, "table").locator("td").first().click();
+    await p.locator(".mdTableCellInput").waitFor();
+    assertEq(await p.locator(".blockEditorCm").count(), 0, "a cell press never opens the raw editor");
     await p.keyboard.press("Escape");
-    await p.waitForSelector(".mdObjectSelected", { state: "detached" });
 
     // One HTML5 drag of an object frame: dragstart on it, dragover on the
     // target row ("top": its top edge → a new block above; "gap": between the
@@ -472,39 +479,72 @@ export async function noteScenarios({ server, browser, alice, step, until, sleep
 
     // The table to the landing row's top edge: a block of its own, right above it.
     await dragTo(`.blockRowWrap[data-block-id="${withTable.id}"] .mdObject-table`, landing.id, "top");
-    assertEq(await p.locator(".dropIndicator").count(), 1, "the between-blocks line shows before the drop");
+    await p.locator(".dropIndicator").waitFor({ timeout: 3000 }); // the between-blocks line shows before the drop
     await release();
     await until(async () => (await content(withTable.id)) === "intro\n\nafter", { what: "the table left its block, the blank lines closed up" });
+    // Closing the raw editor above pretty-printed the table (formatTables).
+    const sameTable = (c) => (c || "").replace(/[ -]+/g, "") === table.replace(/[ -]+/g, "");
     const kids = await children();
-    const tableBlock = kids.find((b) => b.content === table);
+    const tableBlock = kids.find((b) => sameTable(b.content));
     assert(tableBlock, "the table is a block of its own");
     assertEq(kids[kids.indexOf(tableBlock) + 1]?.id, landing.id, "the new block sits right above the landing row");
     assertEq(await p.locator(".dropIndicator").count(), 0, "the line is gone after the drop");
 
     // The image into the gap between the landing block's two paragraphs.
     await dragTo(`.blockRowWrap[data-block-id="${withImage.id}"] .mdObject-image`, landing.id, "gap");
-    assertEq(await p.locator(".dropIndicatorInside").count(), 1, "the inside-block line shows in the gap");
+    await p.locator(".dropIndicatorInside").waitFor({ timeout: 3000 }); // the inside-block line shows in the gap
     await release();
     await until(async () => (await content(landing.id)) === `para one\n\n![|20](${up.url})\n\npara two`, { what: "the image landed between the paragraphs" });
     assertEq(await content(withImage.id), "", "its old block is empty");
 
-    // Select the moved image, Delete removes it.
-    const imgFrame = frameOf(landing.id, "image");
-    await imgFrame.waitFor();
-    await imgFrame.scrollIntoViewIfNeeded();
-    const ib = await imgFrame.boundingBox();
-    await p.mouse.click(ib.x + 1, ib.y + 1);
-    await p.waitForSelector(".mdObjectSelected");
-    await p.keyboard.press("Delete");
-    await until(async () => (await content(landing.id)) === "para one\n\npara two", { what: "Delete removed the selected image" });
+    // Out of the block being edited, with a real mouse drag of the editor's
+    // picture widget: back to the (now empty) block it came from.
+    await frameOf(landing.id, "image").click({ button: "right", position: { x: 2, y: 2 } });
+    await p.getByRole("button", { name: "Edit markdown source" }).click();
+    await p.waitForSelector(".blockEditorCm .cm-content", { timeout: 5000 });
+    await p.keyboard.press("Control+End");
+    const widget = p.locator(".blockEditorCm .cmImgWidget");
+    await widget.waitFor();
+    const wb = await widget.boundingBox();
+    const tb = await p.locator(`.blockRowWrap[data-block-id="${withImage.id}"]`).boundingBox();
+    await p.mouse.move(wb.x + wb.width / 2, wb.y + wb.height / 2);
+    await p.mouse.down();
+    await p.mouse.move(wb.x + wb.width / 2 + 6, wb.y + wb.height / 2 + 6);
+    await p.mouse.move(tb.x + 20, tb.y + 3, { steps: 10 });
+    await p.mouse.move(tb.x + 22, tb.y + 4); // the engine here sends no repeat dragover: nudge once
+    await p.locator(".dropIndicator").waitFor({ timeout: 3000 });
+    await p.mouse.up();
+    await until(async () => (await content(withImage.id)) === `![|20](${up.url})`, { what: "the picture dragged out of the editor into a block of its own" });
+    assertEq(await content(landing.id), "para one\n\npara two", "the edited block lost the picture");
+    await closeEditor(p).catch(() => {});
 
-    // Right-click → "Edit markdown source": the editor opens with the caret on the table.
+    // A press on the picture itself selects it; Delete removes it.
+    const img = frameOf(withImage.id, "image").locator("img.mdImg");
+    await img.waitFor();
+    await img.click();
+    await p.waitForSelector(".mdObjectSelected");
+    assertEq(await p.locator(".blockEditorCm").count(), 0, "pressing the picture selects it, no editor");
+    await p.keyboard.press("Delete");
+    await until(async () => (await content(withImage.id)) === "", { what: "Delete removed the selected image" });
+
+    // Right-click → "Edit markdown source": the editor opens with the caret
+    // inside the table, so its source shows; with the caret past its end the
+    // table is a widget again, and that widget drags like the frame does.
     await frameOf(tableBlock.id, "table").click({ button: "right", position: { x: 2, y: 2 } });
     await p.getByRole("button", { name: "Edit markdown source" }).click();
     await p.waitForSelector(".blockEditorCm .cm-content", { timeout: 5000 });
-    await p.keyboard.type("X");
+    assertEq(await p.locator(".blockEditorCm .cmTableWidget").count(), 0, "the source shows with the caret inside the table");
+    assert((await p.$eval(".blockEditorCm .cm-content", (el) => el.textContent)).includes("| a | b |"), "raw table text in the editor");
+    await p.keyboard.press("Control+End");
+    await p.locator(".blockEditorCm .cmTableWidget").waitFor();
+    await dragTo(".blockEditorCm .cmTableWidget", landing.id, "top");
+    await p.locator(".dropIndicator").waitFor({ timeout: 3000 }); // a drag from the editor's widget shows the line too
+    await release();
+    await until(async () => (await content(tableBlock.id)) === "", { what: "the table left the block being edited" });
+    const after = await children();
+    const moved = after.find((b) => sameTable(b.content));
+    assertEq(after[after.indexOf(moved) + 1]?.id, landing.id, "dragged out of the editor into a new block above the landing row");
     await closeEditor(p);
-    await until(async () => (await content(tableBlock.id)) === `X${table}`, { what: "typed at the table's first character" });
     assertNoProblems(p);
     await ctxO.close();
   });

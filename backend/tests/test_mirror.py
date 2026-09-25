@@ -251,6 +251,36 @@ def test_a_file_missing_from_the_copy_is_fetched_again():
     assert sync_engine.missing_uploads(local.ws) == set()
 
 
+def test_rounds_reuse_whoami_until_one_fails(monkeypatch):
+    """A round trusts the last round's whoami (WHOAMI_TTL_S); a round that
+    fails forgets it, so the next one asks again."""
+    remote, local, _ = _pair()
+    calls = []
+    inner = sync_engine.default_fetch
+    fail = [False]
+
+    def fetch(method, path, body, headers):
+        calls.append(path.split("?")[0])
+        if fail[0] and path.startswith("/api/sync/changes"):
+            fail[0] = False
+            return 503, b'{"detail": "down for a moment"}'
+        return inner(method, path, body, headers)
+
+    monkeypatch.setattr(sync_engine, "default_fetch", fetch)
+    _sync(local)
+    _sync(local)
+    assert calls.count("/api/sync/whoami") == 1 and calls.count("/api/sync/changes") == 2
+    fail[0] = True
+    r = local.client.post(f"/api/mirrors/{local.ws}/sync?wait=1")
+    assert "down for a moment" in r.json()["status"]["last_error"]
+    calls.clear()
+    _sync(local)
+    assert calls.count("/api/sync/whoami") == 1
+    # the pill's conflict fingerprint rides on the mirror's answer
+    info = local.client.get(f"/api/mirrors/{local.ws}").json()
+    assert info["conflicts_open"] == 0 and info["conflicts_newest"] == 0
+
+
 def test_pull_only_with_a_read_token():
     remote, local, mirror = _pair(scope="read")
     assert mirror["mode"] == "pull"

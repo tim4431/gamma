@@ -154,8 +154,8 @@ export function dispatch(commands, e, ctx, bindings, mac = IS_MAC) {
 
 // chord → the commands bound to it, for every chord more than one command
 // answers to. Same-scope collisions are real conflicts; a block chord that
-// shadows an app chord only applies while an editor is open, so the pane
-// shows both kinds and says which.
+// shadows an app chord only applies while an editor is open. The pane flags
+// both kinds alike.
 export function conflicts(commands, bindings) {
   const byChord = new Map();
   for (const cmd of commands) {

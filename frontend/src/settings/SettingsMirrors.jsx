@@ -1,4 +1,4 @@
-// Settings → Workspaces → Clones: the mirrors of this account — local
+// Settings → Account & sync → Clones: the mirrors of this account — local
 // workspaces that follow a workspace on another Gamma server, in git's
 // words a clone and its origin (docs/dev/mirror.md, GUI for /api/mirrors*).
 // A row per clone, its avatar the clone's state (syncing, up to date, a
@@ -11,7 +11,7 @@
 //
 // A publication (a mirror with a page filter, the pages a workspace
 // publishes to Gamma Cloud; docs/dev/mirror.md "Publishing") is not a clone:
-// PublishingSection lists it in Settings → Sync with its state, the count
+// PublishingSection lists it in Settings → Account & sync with its state, the count
 // of published pages and a "more" menu of Sync now and Stop publishing all
 // (DELETE /api/pages/{id}/publish for each page), never the clone actions.
 import React from "react";
@@ -298,7 +298,7 @@ export function MirrorsSection({ mirrors, refresh, workspaces, currentId, switch
   );
 }
 
-// Settings → Sync → Publishing: the workspaces that publish pages to Gamma
+// Settings → Account & sync → Publishing: the workspaces that publish pages to Gamma
 // Cloud, each with its state, the count of pages, Conflicts when any wait,
 // and a "more" menu of Sync now and Stop publishing all.
 export function PublishingSection({ mirrors, refresh, currentId, closeSettings, confirm, setStatus }) {
@@ -312,7 +312,7 @@ export function PublishingSection({ mirrors, refresh, currentId, closeSettings, 
     const pages = m.page_filter || [];
     confirm({
       title: T("Stop publishing all"),
-      message: t("The {pages} of “{name}” leave Gamma Cloud: their cloud links stop working and the copies there are deleted. The pages here stay.", { pages: n(pages.length, t("published page")), name: nameOf(m) }),
+      message: t("The {pages} of “{name}” leave Gamma Cloud: their cloud links stop working and the copies there are deleted. The pages here stay.", { pages: n(pages.length, "published page"), name: nameOf(m) }),
       confirmLabel: t("Stop publishing"), danger: true,
       onConfirm: async () => {
         setBusy(true);
@@ -363,7 +363,7 @@ export function PublishingSection({ mirrors, refresh, currentId, closeSettings, 
             {m.conflicts_open ? <span className="uiTag warn">{n(m.conflicts_open, "conflict")}</span> : null}
           </span>
           <span className="aiProvDesc" title={m.remote_url}>
-            {n(pages.length, t("published page"))} · {hostOf(m.remote_url)}
+            {n(pages.length, "published page")} · {hostOf(m.remote_url)}
           </span>
           <span className="aiProvDesc">{mirrorStatusLine(m)}</span>
         </span>

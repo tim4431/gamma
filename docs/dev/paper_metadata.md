@@ -74,7 +74,7 @@ record claiming to be a paper, or a DOI/ISBN fallback whose registry title
 isn't in the text (it may belong to a work the document cites). Unverified
 records get a red "!" badge on the metadata button, a red Source row in the
 popover, a red "!" + source tag beside the slide citation in the share
-popover, and a red cell in the Settings → Library table. The wording lives
+popover, and a red cell in the Settings → Library maintenance table. The wording lives
 in one place, `metaSourceInfo` in `frontend/src/shared/lib/utils.js`; the predicate
 `isUnverifiedPaperMeta(source, kind, unverified)` falls back to the old
 "AI-extracted paper" rule for records stored before the flag existed. The
@@ -109,7 +109,7 @@ is configured.
 
 `GET /api/metadata/status` reports library-wide health (per paper: metadata
 present/failed + source/kind, extracted-text chars and index state from the
-FTS tables) — it feeds the Settings → Library pane's status table and its
+FTS tables) — it feeds the Settings → Library maintenance pane's status table and its
 adaptive batch retry (selected, else missing + unverified-AI; plus "Refetch
 all"/"Refetch shown" → sequential `metadata/fetch` with `force`).
 

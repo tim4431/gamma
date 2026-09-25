@@ -528,7 +528,6 @@ def _v17_profile(conn: sqlite3.Connection) -> None:
     conn.commit()
 
 
-
 def _v18_cloud_grant(conn: sqlite3.Connection) -> None:
     """``sessions`` gains ``via`` ('' a password or the guest, 'cloud' a
     Gamma Cloud sign-in) and ``identities`` gains ``revoked_at``: the grant

@@ -1,8 +1,8 @@
-import { t } from "../shared/i18n/i18n.js";
 // Token usage as the providers report it — one normalized shape from the
-// server ({input, output, cache_read, cache_write}, see gamma/ai_client.py
-// normalize_usage): the per-reply line under an AI bubble, the running
-// total of a conversation, and the Settings → AI tiles all format it here.
+// server ({input, output, cache_read, cache_write}, see Protocol.usage in
+// gamma/ai_protocols/base.py): the per-reply line under an AI bubble, the
+// running total of a conversation, and the Settings → AI tiles all format it here.
+import { t } from "../shared/i18n/i18n.js";
 
 const KEYS = ["input", "output", "cache_read", "cache_write"];
 

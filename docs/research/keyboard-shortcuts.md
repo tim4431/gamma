@@ -55,8 +55,9 @@ could bind the reserved ones in its shell; Gamma itself does not.
   the outliner: moving, duplicating and deleting a block, with the caret's
   line only inside a multi-line block. Deleting a block with children lifts
   the children into its place, what deleting a line does to the indented
-  lines under it. Tab / Shift+Tab stay the outliner's, and Ctrl+] / [ are
-  the escape hatch where Tab means something else (fences, math snippets).
+  lines under it. Tab / Shift+Tab stay the outliner's; the Indent / Outdent
+  block commands (unbound by default) are the escape hatch where Tab means
+  something else (fences, math snippets).
 - **One catalog, key as an attribute.** A command is declared once with
   its default chord; dispatch, palette, Settings pane and the cheat-sheet
   test read the same object. The catalog replaces the library keymap

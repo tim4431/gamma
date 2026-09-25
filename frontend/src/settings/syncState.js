@@ -14,13 +14,17 @@ import { t } from "../shared/i18n/i18n.js";
 // An error message as a sentence, so the next one can follow it.
 const sentence = (text) => (/[.!?…]$/.test(text) ? text : `${text}.`);
 
+// The server's last push of the profile to Gamma Cloud failed (a pending
+// push that carries an error is being retried after one).
+const cloudFailed = (profile) => profile.state === "error" || (profile.state === "pending" && !!profile.error);
+
 // "14:37" today, "Sep 3, 14:37" another day, in the viewer's time zone.
 export function syncClock(at, now = new Date()) {
-  const t = new Date(at);
-  if (!at || Number.isNaN(t.getTime())) return "";
-  const time = t.toLocaleTimeString([], { hour: "2-digit", minute: "2-digit" });
-  return t.toDateString() === now.toDateString() ? time
-    : `${t.toLocaleDateString([], { month: "short", day: "numeric" })}, ${time}`;
+  const d = new Date(at);
+  if (!at || Number.isNaN(d.getTime())) return "";
+  const time = d.toLocaleTimeString([], { hour: "2-digit", minute: "2-digit" });
+  return d.toDateString() === now.toDateString() ? time
+    : `${d.toLocaleDateString([], { month: "short", day: "numeric" })}, ${time}`;
 }
 
 const tag = (state, icon, title, extra = {}) => ({
@@ -62,12 +66,10 @@ export function profileSyncState(local, cloud, names = [], clock = syncClock) {
       ? t("Saved on this server. Sign in with Gamma Cloud again to carry these settings to other servers.")
       : t("Saved on this server. Link a Gamma Cloud account to carry these settings to other servers."));
   }
-  if (holds(local?.awaitingCloud)) {
-    if (profile.state === "error" || (profile.state === "pending" && profile.error)) {
-      return tag("error", "alert",
-        t("Saved on this server, not synced with Gamma Cloud: {error} Tried again at the next check.", { error: sentence(profile.error || t("unknown error")) }),
-        { tone: "error" });
-    }
+  if (holds(local?.awaitingCloud) && cloudFailed(profile)) {
+    return tag("error", "alert",
+      t("Saved on this server, not synced with Gamma Cloud: {error} Tried again at the next check.", { error: sentence(profile.error || t("unknown error")) }),
+      { tone: "error" });
   }
   const when = profile.state === "synced" ? clock(profile.at) : "";
   return tag("synced", "cloudCheck", when ? t("Synced with Gamma Cloud at {when}", { when }) : t("Synced with Gamma Cloud"));
@@ -80,7 +82,7 @@ export function cloudSyncHint(cloud, clock = syncClock) {
   const profile = cloud?.profile;
   if (!cloud?.identity?.linked || !profile) return "";
   if (profile.state === "synced") return `Settings synced ${clock(profile.at)}`.trim();
-  if (profile.state === "error" || (profile.state === "pending" && profile.error)) {
+  if (cloudFailed(profile)) {
     return t("Settings not synced: {error}", { error: profile.error || t("unknown error") });
   }
   if (profile.state === "pending") return t("Settings syncing…");

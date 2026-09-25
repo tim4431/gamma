@@ -194,7 +194,7 @@ The scenarios live in `tests/e2e/scenarios/`:
   host anonymously, changes the cloud share's audience, syncs, checks the
   pill and Settings' Publishing row, unpublishes, and stops publishing
   from Settings. `--only publish`.
-- `mirror.mjs`: Settings → Workspaces → Clones — the server clones one of
+- `mirror.mjs`: Settings → Account & sync → Clones — the server clones one of
   its own workspaces through the dialog with a write token made via the
   API: Sync, the empty conflicts list, opening the clone, the sync pill's
   log and settings (cadence, detach, reattach), a same-block conflict

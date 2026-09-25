@@ -8,7 +8,6 @@ import sqlite3
 import threading
 import time
 import urllib.error
-import urllib.parse
 from collections import OrderedDict
 from concurrent.futures import ThreadPoolExecutor
 from urllib.request import urlopen
@@ -79,6 +78,7 @@ from ..db import page_now, ws_db_path
 from ..logbuf import log
 from ..pdf_text import extract_text
 from ..textnorm import INDEX_VERSION
+from ..translate_engines import TRANSLATE_LANGS
 
 # Note editors whose in-flight arguments the chat streams as "progress"
 # events: the notes panel types the markdown into the block as the model
@@ -281,7 +281,6 @@ CITE_PROMPT = (
 )
 
 
-
 # Sync def: ai_runtime may refresh a ChatGPT token (a network round trip).
 @router.get("/ai/models")
 def ai_models(request: Request):
@@ -412,16 +411,12 @@ async def ai_provider_delete(provider_id: str, request: Request):
     return _masked_settings(request)
 
 
-def _is_oauth_entry(entry: dict) -> bool:
-    return _is_oauth_protocol(entry.get("protocol"))
-
-
 def _no_credential(entry: dict) -> dict:
     """The in-body failure for an entry ``ai_runtime`` dropped: no key, or a
     ChatGPT sign-in whose refresh failed."""
     return {"ok": False, "auth": True,
             "error": "ChatGPT sign-in expired or disconnected — sign in again"
-            if _is_oauth_entry(entry)
+            if _is_oauth_protocol(entry.get("protocol"))
             else "entry has no usable credential — set an API key or sign in again"}
 
 
@@ -718,13 +713,8 @@ def keepalive_lines(lines, what="ai", interval=KEEPALIVE_INTERVAL):
 # persisted to disk, the cache just makes retries, re-shows and halted-job
 # resumes free until the server restarts.
 
-# Allowlisted target languages (code → name spliced into the prompt). Mirrored
-# in frontend/src/app/prefs.js TRANSLATE_LANGS — keep the two in sync.
-TRANSLATE_LANGS = {
-    "en": "English", "zh-CN": "Simplified Chinese", "zh-TW": "Traditional Chinese",
-    "ja": "Japanese", "ko": "Korean", "de": "German", "fr": "French",
-    "es": "Spanish", "pt": "Portuguese", "it": "Italian", "ru": "Russian",
-}
+# The allowlisted target languages are translate_engines.TRANSLATE_LANGS
+# (code → the name spliced into the prompt), shared with the engines.
 
 _TRANSLATE_PROMPT = (
     "You translate paragraphs extracted from an academic paper into {lang}. "
@@ -1014,8 +1004,9 @@ def translate_engine_test(engine: str, payload: TranslateEngineTestRequest, requ
     user = _require_editor(request)
     conf = translate_engines.credentials(user, engine)
     lang = payload.lang if payload.lang in TRANSLATE_LANGS else "zh-CN"
+    sample = ("Le vif renard brun saute par-dessus le chien paresseux." if lang == "en"
+              else "The quick brown fox jumps over the lazy dog.")
     try:
-        sample = "Le vif renard brun saute par-dessus le chien paresseux." if lang == "en"             else "The quick brown fox jumps over the lazy dog."
         text = translate_engines.translate(engine, conf, [sample], lang)[0]
     except translate_engines.EngineError as e:
         return {"ok": False, "error": str(e)}
@@ -1181,8 +1172,6 @@ def chatgpt_auth_complete(payload: ChatGPTAuthComplete, request: Request):
             entry["models"] = ", ".join(live[:2])[:MAX_MODELS_LEN]
     save_provider_entries(user, entries)
     return _masked_settings(request)
-
-
 
 
 # Providers whose backend refused native input_file parts — skip the wasted

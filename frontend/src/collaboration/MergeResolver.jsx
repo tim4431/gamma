@@ -239,7 +239,7 @@ function Decision({ conflict }) {
 }
 
 // A mirror's open conflicts and their resolution, for the lists (the sync
-// pill's review view, Settings → Workspaces → Clones): `[items, busy,
+// pill's review view, Settings → Account & sync → Clones): `[items, busy,
 // resolve]` — `items` null while loading; `resolve(conflict, choice)` posts
 // the choice, drops the row and raises `gamma:mirror` so the page's chips
 // and the pill follow; `onError(message)` hears a failed post.

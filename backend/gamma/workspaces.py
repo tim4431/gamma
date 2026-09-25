@@ -471,10 +471,7 @@ def cloud_lookup_username(name: str, by: str = "") -> dict | None:
     cfg = cloud_auth.settings()
     if not cfg["enabled"]:
         raise CloudLookupError("Gamma Cloud sign-in is not set up on this server.")
-    token = _cloud_access_token(by)
-    if not token:
-        raise CloudLookupError("This server has no Gamma Cloud access token to look usernames up with.")
-    return lookup_with_token(cfg["issuer"], token, name)
+    return lookup_with_token(cfg["issuer"], _cloud_access_token(by), name)
 
 
 def lookup_cloud_username(name, by: str = "") -> dict | None:

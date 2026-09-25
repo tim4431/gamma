@@ -6,7 +6,7 @@ import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { API, apiJson, usePersistedState } from "../shared/lib/utils";
 import { ACCOUNT_PREFS, PREFS, profileOf, readProfile, setterName } from "./prefDefs.js";
 
-export { CHAT_KINDS, FILE_LABEL_MODES, THEMES, TRANSLATE_LANGS, UI_SCALE } from "./prefDefs.js";
+export { CHAT_KINDS, FILE_LABEL_MODES, FREE_TRANSLATE_ENGINE, THEMES, TRANSLATE_LANGS, UI_SCALE } from "./prefDefs.js";
 
 const PREF_NAMES = Object.keys(PREFS);
 

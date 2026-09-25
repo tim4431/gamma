@@ -443,9 +443,6 @@ export const MoreIcon = (p) => (
 export const KeyboardIcon = (p) => (
   <Icon {...p}><rect x="2" y="5" width="20" height="14" rx="2" /><path d="M6 9h.01" /><path d="M10 9h.01" /><path d="M14 9h.01" /><path d="M18 9h.01" /><path d="M6 13h.01" /><path d="M18 13h.01" /><path d="M9 13h6" /><path d="M8 16h8" /></Icon>
 );
-export const CommandIcon = (p) => (
-  <Icon {...p}><path d="M15 6v12a3 3 0 1 0 3-3H6a3 3 0 1 0 3 3V6a3 3 0 1 0-3 3h12a3 3 0 1 0-3-3" /></Icon>
-);
 // Settings → Keyboard and the command palette: one glyph per command
 // (app/commandIcons.jsx) — text marks, outliner moves, the keys themselves.
 export const BoldIcon = (p) => (

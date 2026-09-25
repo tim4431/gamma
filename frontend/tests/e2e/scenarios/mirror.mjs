@@ -1,4 +1,4 @@
-// Clones (docs/dev/mirror.md): Settings → Workspaces → Clones. The server
+// Clones (docs/dev/mirror.md): Settings → Account & sync → Clones. The server
 // clones one of its own workspaces over its real HTTP API with a write
 // token made through the API: the dialog, the row and its status, Sync,
 // the (empty) conflicts list, opening the clone, the sync pill with
@@ -24,7 +24,7 @@ export async function mirrorScenarios(env) {
       await page.getByRole("button", { name: "Account & settings", exact: true }).click();
       await page.getByRole("button", { name: "Settings…", exact: true }).click();
       await page.getByRole("dialog", { name: "Settings", exact: true }).waitFor();
-      await page.getByRole("navigation", { name: "Settings categories" }).getByRole("button", { name: "Workspaces", exact: true }).click();
+      await page.getByRole("navigation", { name: "Settings categories" }).getByRole("button", { name: "Account & sync", exact: true }).click();
       await page.getByText("No clones yet.", { exact: true }).waitFor();
 
       await page.getByRole("button", { name: "Clone a remote workspace", exact: true }).click();
@@ -121,7 +121,7 @@ export async function mirrorScenarios(env) {
       await page.getByRole("button", { name: "Account & settings", exact: true }).click();
       await page.getByRole("button", { name: "Settings…", exact: true }).click();
       await page.getByRole("dialog", { name: "Settings", exact: true }).waitFor();
-      await page.getByRole("navigation", { name: "Settings categories" }).getByRole("button", { name: "Workspaces", exact: true }).click();
+      await page.getByRole("navigation", { name: "Settings categories" }).getByRole("button", { name: "Account & sync", exact: true }).click();
       await page.locator(".aiProvRow", { hasText: "clone of" }).getByRole("button", { name: "More", exact: true }).click();
       await page.getByRole("button", { name: "Remove origin", exact: true }).click(); // the menu row
       await page.getByRole("button", { name: "Remove origin", exact: true }).click(); // the confirm

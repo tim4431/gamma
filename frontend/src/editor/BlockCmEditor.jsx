@@ -18,6 +18,7 @@ import { latexErrors, visibleLatexErrors } from "./latexLint";
 import { calloutType } from "./callouts";
 import { fenceInnerAt, highlightCode, makeCopyButton, scanFences } from "./codeHighlight";
 import { scanColorSpans, scanImageSyntax, scanMarks, toggleMark } from "./mdMarks";
+import { parseTable, scanImages, scanTables } from "./mdScan";
 import { scanMathSpans } from "./markCommands";
 import { assetUrl } from "../shared/lib/utils";
 
@@ -157,18 +158,60 @@ class HrWidget extends WidgetType {
 }
 
 // An `![alt](url)` the caret isn't touching shows the picture (sized like the
-// rendered view, alt as its caption). Clicking it drops the caret into the
-// alt text so the source expands. The upload URL gets the workspace / share
-// token like the rendered view's <img> — the browser fetches it without the
-// API header.
+// rendered view, alt as its caption). A picture is an object, not text: the
+// caret stepping onto its line or resting at either end keeps the picture
+// (only a selection reaching INSIDE the span shows the source), a click puts
+// the caret after it, and a right-click drops the caret into the alt text so
+// the source expands — the editor's counterpart of the rendered view's
+// "Edit markdown source". The upload URL gets the workspace / share token
+// like the rendered view's <img> — the browser fetches it without the API
+// header.
+// The object behaviour the image and table widgets share (the editor's
+// counterpart of the rendered view's MdObject frame): a click puts the caret
+// after the object, a right-click drops it inside so the source expands
+// ("Edit markdown source"), and the widget is a drag source — ctx.objectDrag
+// (BlockRow's object action) publishes it for App's block drop handlers, so
+// a picture or table can be dragged to another block while its own block is
+// being edited. The mousedown is left to the browser: preventing it would
+// cancel the native drag.
+function objectWidget(view, el, { kind, idx, length, ctx }) {
+  el.dataset.kind = kind;
+  el.dataset.idx = idx;
+  el.draggable = idx >= 0;
+  el.addEventListener("click", (e) => {
+    if (e.button !== 0) return;
+    e.preventDefault();
+    const pos = view.posAtDOM(el);
+    view.dispatch({ selection: { anchor: pos + length } });
+    view.focus();
+  });
+  el.addEventListener("contextmenu", (e) => {
+    e.preventDefault();
+    placeCaretInside(view, el, 1);
+  });
+  el.addEventListener("dragstart", (e) => {
+    e.stopPropagation();
+    if (idx < 0 || !ctx.objectDrag) { e.preventDefault(); return; }
+    ctx.objectDrag(kind, idx, "start", e);
+  });
+  el.addEventListener("dragend", (e) => ctx.objectDrag?.(kind, idx, "end", e));
+  return el;
+}
+
 class ImageWidget extends WidgetType {
-  constructor(url, alt, width) {
+  constructor(url, alt, width, idx, length, ctx) {
     super();
     this.url = url;
     this.alt = alt;
     this.width = width;
+    this.idx = idx;
+    this.length = length;
+    this.ctx = ctx;
   }
-  eq(other) { return other.url === this.url && other.alt === this.alt && other.width === this.width; }
+  eq(other) {
+    return other.url === this.url && other.alt === this.alt && other.width === this.width
+      && other.idx === this.idx && other.length === this.length;
+  }
   toDOM(view) {
     const span = document.createElement("span");
     span.className = "cmImgWidget";
@@ -188,12 +231,49 @@ class ImageWidget extends WidgetType {
       cap.textContent = this.alt;
       span.appendChild(cap);
     }
-    span.addEventListener("mousedown", (e) => {
-      e.preventDefault();
-      placeCaretInside(view, span, 2);
-    });
-    return span;
+    return objectWidget(view, span, { kind: "image", idx: this.idx, length: this.length, ctx: this.ctx });
   }
+}
+
+// A GFM table as a plain read-only table (cells as their raw text), the same
+// object rules as the picture: it stays a table while the caret steps past
+// it, right-click shows the source, and it can be dragged to another block.
+// Cells are edited in the rendered view, never as raw text (mdTools).
+class TableWidget extends WidgetType {
+  constructor(source, idx, ctx) {
+    super();
+    this.source = source;
+    this.idx = idx;
+    this.ctx = ctx;
+  }
+  eq(other) { return other.source === this.source && other.idx === this.idx; }
+  toDOM(view) {
+    const box = document.createElement("div");
+    box.className = "cmTableWidget";
+    const model = parseTable(this.source);
+    const table = document.createElement("table");
+    const cell = (tag, text, c) => {
+      const td = document.createElement(tag);
+      td.textContent = (text || "").replace(/\\\|/g, "|");
+      if (model.aligns[c]) td.style.textAlign = model.aligns[c];
+      return td;
+    };
+    const thead = document.createElement("thead");
+    const hr = document.createElement("tr");
+    model.header.forEach((h, c) => hr.appendChild(cell("th", h, c)));
+    thead.appendChild(hr);
+    table.appendChild(thead);
+    const tbody = document.createElement("tbody");
+    for (const row of model.body) {
+      const tr = document.createElement("tr");
+      model.header.forEach((_, c) => tr.appendChild(cell("td", row[c], c)));
+      tbody.appendChild(tr);
+    }
+    table.appendChild(tbody);
+    box.appendChild(table);
+    return objectWidget(view, box, { kind: "table", idx: this.idx, length: this.source.length, ctx: this.ctx });
+  }
+  ignoreEvent() { return true; }
 }
 
 // Live inline rendering (Obsidian-style): math as KaTeX, [[id]] refs as
@@ -201,9 +281,11 @@ class ImageWidget extends WidgetType {
 // line styled, **bold** / *italic* / `code` / ~~strike~~ / [text](url) shown
 // formatted with their delimiters hidden. Any construct the selection
 // touches stays raw source (boundaries inclusive, so stepping the caret onto
-// it expands it). labelsRef is read lazily so freshly resolved ref labels
-// show up on the next rebuild.
-function buildInlineDecos(state, labelsRef) {
+// it expands it) — except the objects (pictures, tables), which only a
+// selection reaching inside expands. ctx is read lazily: `labels` so freshly
+// resolved ref labels show up on the next rebuild, `objectDrag` the row's
+// drag hook for the object widgets.
+function buildInlineDecos(state, ctx) {
   const text = state.doc.toString();
   const sel = state.selection.main;
   const ranges = [];
@@ -228,6 +310,20 @@ function buildInlineDecos(state, labelsRef) {
     } else {
       rawFences.push(f);
     }
+  }
+
+  // GFM tables (outside fences / display math, which scanTables skips):
+  // a table widget unless the selection reaches inside it. Claimed so the
+  // pipes and dashes never read as marks. Quoted tables stay raw text.
+  if (text.includes("|")) {
+    scanTables(text).forEach((tb, idx) => {
+      if (!tb.editable || overlapsClaimed(tb.from, tb.to)) return;
+      claimed.push([tb.from, tb.to]);
+      if (sel.from < tb.to && sel.to > tb.from) return;
+      ranges.push(Decoration.replace({
+        widget: new TableWidget(text.slice(tb.from, tb.to), idx, ctx),
+      }).range(tb.from, tb.to));
+    });
   }
 
   // Raw (caret-touched) math spans collect here for the bracket rainbow pass.
@@ -314,7 +410,7 @@ function buildInlineDecos(state, labelsRef) {
     if (overlapsClaimed(from, to)) continue;
     claimed.push([from, to]);
     if (touched(from, to)) continue;
-    const label = labelsRef.current?.[m[1]]?.content || m[1];
+    const label = ctx.labels?.[m[1]]?.content || m[1];
     ranges.push(Decoration.replace({
       widget: new RefChipWidget(label, m[0].startsWith("!")),
     }).range(from, to));
@@ -325,13 +421,18 @@ function buildInlineDecos(state, labelsRef) {
   // `*` in the URL or alt never reads as emphasis, and skipped inside code
   // and math like every other construct.
   if (text.includes("![")) {
+    // The object index the rendered view would give this picture (its
+    // scan skips images in code and math like the claims here do).
+    const objects = scanImages(text);
     for (const im of scanImageSyntax(text)) {
       if (overlapsClaimed(im.from, im.to)) continue;
       claimed.push([im.from, im.to]);
-      if (touched(im.from, im.to)) continue;
-      ranges.push(Decoration.replace({
-        widget: new ImageWidget(im.url, im.alt, im.width),
-      }).range(im.from, im.to));
+      // Strictly inside: a caret at either end (stepping through the lines,
+      // End on its line) keeps the picture; the widget's right-click reveals.
+      if (sel.from < im.to && sel.to > im.from) continue;
+      const idx = objects.findIndex((o) => o.from === im.from);
+      const widget = new ImageWidget(im.url, im.alt, im.width, idx, im.to - im.from, ctx);
+      ranges.push(Decoration.replace({ widget }).range(im.from, im.to));
       // A picture alone on its line is centred, like the rendered view.
       const line = state.doc.lineAt(im.from);
       if (!text.slice(line.from, im.from).trim() && !text.slice(im.to, line.to).trim()) {
@@ -489,11 +590,11 @@ function buildInlineDecos(state, labelsRef) {
 // (multi-line $$math$$, ``` fences) are only allowed from state-level
 // decoration sources — a plugin throws "Decorations that replace line breaks
 // may not be specified via plugins".
-function inlineRenderField(labelsRef) {
+function inlineRenderField(ctx) {
   return StateField.define({
-    create: (state) => buildInlineDecos(state, labelsRef),
+    create: (state) => buildInlineDecos(state, ctx),
     update: (deco, tr) =>
-      tr.docChanged || tr.selection ? buildInlineDecos(tr.state, labelsRef) : deco,
+      tr.docChanged || tr.selection ? buildInlineDecos(tr.state, ctx) : deco,
     provide: (f) => EditorView.decorations.from(f),
   });
 }
@@ -747,14 +848,16 @@ function keepUnderPointer(view, pos, y) {
 
 const BlockCmEditor = React.forwardRef(function BlockCmEditor({
   value, onChange, onSelect, onKeyDown, onBlur, onPaste,
-  placeholder, autoFocus, clickPos, dataBlockId, className, refLabels, remoteCursors,
+  placeholder, autoFocus, clickPos, dataBlockId, className, refLabels, remoteCursors, onObjectDrag,
 }, forwardedRef) {
   const hostRef = useRef(null);
   const viewRef = useRef(null);
   const cbRef = useRef({});
   cbRef.current = { onChange, onSelect, onKeyDown, onBlur, onPaste };
-  const labelsRef = useRef(refLabels);
-  labelsRef.current = refLabels;
+  // What the decoration pass reads lazily (see buildInlineDecos).
+  const labelsRef = useRef({ labels: refLabels, objectDrag: onObjectDrag }).current;
+  labelsRef.labels = refLabels;
+  labelsRef.objectDrag = onObjectDrag;
   const chipCompartment = useRef(new Compartment()).current;
 
   const api = useMemo(() => ({

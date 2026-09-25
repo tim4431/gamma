@@ -20,11 +20,11 @@ export function LibraryDisplaySettings({ value }) {
           folders={[t("Reading list")]} labels={[t("Research")]} labelMode={value.fileLabels} />
       </figure>
       <div className="libraryDisplayControls" role="group" aria-label={t("Card elements")}>
-        <div data-setting="Recents thumbnails">
+        <div data-setting={t("Recents thumbnails")}>
           <Toggle icon={EyeIcon} label={t("Thumbnails")} hint={t("Preview the page you last read.")}
             checked={value.recentThumbs} onChange={value.setRecentThumbs} />
         </div>
-        <div data-setting="File labels">
+        <div data-setting={t("File labels")}>
           <Toggle icon={FolderIcon} label={t("Folders")} hint={t("Show the folders a file belongs to.")}
             checked={folders} onChange={(on) => setChips(on, labels)} />
           <Toggle icon={LabelIcon} label={t("Labels")} hint={t("Show the labels on a file.")}

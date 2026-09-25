@@ -31,7 +31,7 @@ export default {
         { wait: 500 },
         { type: "add.urlInput", text: "{demoUrl}" },
         { wait: 500 },
-        { press: t("Enter"), on: "add.urlInput" },
+        { press: "Enter", on: "add.urlInput" },
         { waitFor: { event: "page.opened" } },
         { wait: 800 },
       ],
@@ -79,7 +79,7 @@ export default {
       do: [
         { click: "page.labels" },
         { type: "page.labelInput", text: "llm" },
-        { press: t("Enter"), on: "page.labelInput" },
+        { press: "Enter", on: "page.labelInput" },
         { wait: 900 },
       ],
     },

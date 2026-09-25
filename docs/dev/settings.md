@@ -41,15 +41,18 @@ prompts. Step 17 of the migrations turned the old `appearance` key into the
 profile's first two entries.
 
 Each account section's tag shows where its own settings stand. A section
-names the preferences it holds (`Section`'s `prefs`, taken from
-`SECTION_PREFS` in
-[settings/sectionPrefs.js](../../frontend/src/settings/sectionPrefs.js),
-pane by pane; `accountPrefs` there throws on a name that is not an
-account-scoped entry of `PREFS`, and `tests/sectionPrefs.test.mjs` checks
-the table against `PREFS` and against every `scope="account"` in the panes'
-sources, and that every account preference is held by a section or listed
-in `UNTAGGED_PREFS` — today only the Advanced pane's default reasoning
-effort, a row above that pane's first section). `useProfileSync` returns its overall state (signed-out / loading
+names the preferences it holds: `Section`'s `prefs`, taken pane by pane
+from `SECTION_PREFS` in
+[settings/sectionPrefs.js](../../frontend/src/settings/sectionPrefs.js).
+`accountPrefs` there throws on a name that is not an account-scoped entry
+of `PREFS`. `tests/sectionPrefs.test.mjs` checks the table against `PREFS`
+and against every `scope="account"` in the panes' sources. It also checks
+that every account preference is held by a section or listed in
+`UNTAGGED_PREFS`, which is empty today. A browser preference inside an
+account section carries its own tag on its row (`Row`'s `scope="browser"`):
+"Translate with" in Reading › Translation is the one case.
+
+`useProfileSync` returns its overall state (signed-out / loading
 / loaded / pending / pushing / failed) and, as sets of preference names:
 `pending` (the value differs from the copy the server last confirmed),
 `inflight` (sent in the PUT now on its way), `failed` (a push of exactly
@@ -137,8 +140,8 @@ and integration tokens get an empty list. The sources:
 | `update` | admins | Server | warn | a newer GitHub release than this build (`version.latest_release`, six-hour cache; the endpoint is sync on purpose) | the release version |
 | `log-errors` | admins | Server | error | an error was logged since the last look (`logbuf.last_seq("error")`) | server start time + the newest error's seq |
 | `backup-failed` | everyone | Backups | error | a backup task of the account is in state `failed` (`backup_schedule.list_tasks`) | each failed task's id + its last run |
-| `mirror-conflicts` | everyone | Workspaces | warn | a clone the account owns has open sync conflicts (`sync_engine.open_conflict_mark`) | per clone, the count + the newest conflict id — resolving old ones never brings it back |
-| `publish-conflicts` | everyone | Sync | warn | a workspace publishing pages to Gamma Cloud has open sync conflicts | per publication, as `mirror-conflicts` |
+| `mirror-conflicts` | everyone | Account | warn | a clone the account owns has open sync conflicts (`sync_engine.open_conflict_mark`) | per clone, the count + the newest conflict id — resolving old ones never brings it back |
+| `publish-conflicts` | everyone | Account | warn | a workspace publishing pages to Gamma Cloud has open sync conflicts | per publication, as `mirror-conflicts` |
 | `cloud-sync` | everyone | Account | warn | the account's Gamma Cloud sync is in its `error` state (`cloud_sync.profile_status`) | the failure's timestamp |
 | `storage` | everyone | Account | warn / error | personal storage past 90 % of the quota / full; only computed for an account under a quota, and the upload walk is remembered ten minutes (`notices.forget_usage`) | `90` / `full` |
 
@@ -170,21 +173,32 @@ short hint what it does, and the hover `title` the rest.
 
 Preferences:
 
-- **Appearance**: the eight theme cards (`PictureChoices`), the interface
-  language (a `MenuSelect`: System / English / 中文, [i18n.md](i18n.md)), the dark-page
-  switch with its live PDF sample, **Suggest tours**
+- **Appearance** ([SettingsAppearance.jsx](../../frontend/src/settings/SettingsAppearance.jsx)):
+  how things look. The eight theme cards (`PictureChoices`), the interface
+  language (a `MenuSelect`: System / English / 中文, [i18n.md](i18n.md)), the
+  dark-page switch with its live PDF sample, **Library**: the live card demo
+  with the thumbnails / folders / labels switches
+  ([SettingsLibraryDisplay.jsx](../../frontend/src/settings/SettingsLibraryDisplay.jsx)),
+  interface size and the status bar, and last **Suggest tours**
   (`suggestTours`: off, no tour or hint is offered by itself,
-  [onboarding.md](onboarding.md)), interface size and the status bar.
-  [SettingsAppearance.jsx](../../frontend/src/settings/SettingsAppearance.jsx).
-- **Reading & editing**: imported annotations (a Keep / Remove segmented
-  choice), handwriting as two `IconChoices` tiles ("Draws with": pen only /
-  pen and finger — the stored preference is still `inkPenOnly`) plus the
-  stylus-draws-right-away and pressure switches, translation (button and
-  language, the section's Speed action jumping to AI › Advanced; "Translate
-  with" — a chat model or a set-up translation service, a browser pref; and
-  the selection popup's translate button and translate-on-select switches;
-  the Google / Youdao credential rows with Test / Edit / remove,
-  [SettingsTranslation.jsx](../../frontend/src/settings/SettingsTranslation.jsx)), the Enter key, and how search opens on the home page and on a
+  [onboarding.md](onboarding.md)). The old `library` pane id is an alias of
+  this pane.
+- **Reading & editing**: how papers and notes behave, one section per
+  subject. **PDFs**: imported annotations (a Keep / Remove segmented choice),
+  open-access fallback, metadata auto-fetch and saving external PDFs.
+  **Handwriting**: two `IconChoices` tiles ("Draws with": pen only / pen and
+  finger — the stored preference is still `inkPenOnly`) plus the
+  stylus-draws-right-away and pressure switches. **Translation**, everything
+  translation in one section
+  ([SettingsTranslation.jsx](../../frontend/src/settings/SettingsTranslation.jsx)):
+  the viewer's button and the language, the selection popup's translate
+  button and translate-on-select, "Translate with" (a chat model or a set-up
+  translation service; a browser pref, tagged on its row), the Microsoft
+  (free) row with only Test (no key), the Google / Youdao credential rows
+  with Test / Edit / remove, then translation effort (hidden while a
+  translation service is picked, or with no AI connection) and parallel
+  requests.
+  **Notes**: the Enter key. **Search opens as**: on the home page and on a
   page (Full panel / Find bar).
 - **Keyboard** ([SettingsKeyboard.jsx](../../frontend/src/settings/SettingsKeyboard.jsx),
   [hotkeys.md](hotkeys.md)): a filter box in the head, then **Shortcuts**
@@ -193,10 +207,30 @@ Preferences:
   click-then-press to rebind, Backspace unbinds, a reset button when it
   differs from the default, red caps and "Also used by …" when two commands
   share a chord — and **Built in**, the outliner's fixed keys read-only.
-- **Library**: the live card demo with the thumbnails / folders / labels
-  switches ([SettingsLibraryDisplay.jsx](../../frontend/src/settings/SettingsLibraryDisplay.jsx)),
-  open-access fallback, metadata auto-fetch and saving external PDFs.
-- **Account**: the signed-in account's row and storage meter.
+- **Account & sync** (pane id `account`; `sync` is an alias): the signed-in
+  account's row, storage meter and Gamma Cloud link row.
+  Under it, the sync sections
+  ([SettingsSync.jsx](../../frontend/src/settings/SettingsSync.jsx)):
+  **Publishing** lists the workspaces that publish pages to Gamma Cloud
+  (`PublishingSection` in SettingsMirrors.jsx: the count of pages, the
+  state, Conflicts when any wait, a "more" menu with Sync now and Stop
+  publishing all; an empty state for the signed-in with nothing published).
+  **Clones** (`MirrorsSection` in
+  [SettingsMirrors.jsx](../../frontend/src/settings/SettingsMirrors.jsx))
+  lists the account's mirrors of remote workspaces in git's words (each row:
+  status line, Open, Sync or Reattach, Conflicts — the conflict cards, each
+  resolved there or opened on its block — and a "more" `ActionMenu` with
+  Force pull / Force push, Detach, Remove origin) and offers "Clone a remote
+  workspace" (a `SubDialog`: origin server, write token, into a new or an
+  existing workspace, name, direction) — [mirror.md](mirror.md). Both
+  sections are hidden for the guest. The same state sits in the header as
+  the sync pill (`collaboration/MirrorPopover.jsx`) while a clone is open;
+  the clone's own settings (cadence, direction, force pull / push, detach /
+  reattach, remove origin) live in that pill's gear view, stored on the
+  server per mirror (`mirrors.poll_s`, `on_change`, `mode`). Last comes
+  **Sync status**, the sync pill's scope (a `Segmented`: synced pages only,
+  or every page of a workspace that syncs some — `syncPillScope`,
+  [mirror.md](mirror.md) "Publishing").
 
 AI:
 
@@ -207,13 +241,13 @@ AI:
   dictation) and the account's token usage
   ([ai.md](ai.md) "Token usage"). The check, models and usage sections
   appear only once a provider exists.
-- **Chat**: the tools master switch and, per chat kind (folder / PDF /
-  notes), the tool chips (`AgentToolPicker`, the same `ToggleGroup` the chat
-  header's settings popover shows for the open chat). No presets.
-- **Advanced**: reasoning effort, tool limits, the context budgets (the
-  section's action is the Standard / Larger / Custom preset), translation
-  effort (hidden while a translation service is picked) and parallel
-  requests, and the snapshot-clearing switch.
+- **Chat**: **Chat** (the default reasoning effort and the
+  snapshot-clearing switch), then **Tools**: the master switch and, per chat
+  kind (folder / PDF / notes), the tool chips (`AgentToolPicker`, the same
+  `ToggleGroup` the chat header's settings popover shows for the open chat).
+  No presets.
+- **Advanced**: tool limits and the context budgets (the section's action
+  is the Standard / Larger / Custom preset).
 - **Prompts**: the accordion with one Cancel / Save pair.
 - **Integrations** ([SettingsIntegrations.jsx](../../frontend/src/settings/SettingsIntegrations.jsx)):
   the workspace's assistant connections, the MCP URL, Claude Code connection,
@@ -232,30 +266,8 @@ Manage:
   Open, a Data menu with export and import, Manage — an inline detail page;
   rename and invite are small editor dialogs), New workspace, Export all.
   The empty Shared section offers admins "New shared workspace" (a jump to
-  Server). The account popover's "Workspaces…" opens this pane. Between
-  Personal and Shared, **Clones**
-  ([SettingsMirrors.jsx](../../frontend/src/settings/SettingsMirrors.jsx)):
-  the account's mirrors of remote workspaces in git's words (each row:
-  status line, Open, Sync or Reattach, Conflicts — the conflict cards, each
-  resolved there or opened on its block — and a "more" `ActionMenu` with
-  Force pull / Force push, Detach, Remove origin) and "Clone a remote
-  workspace" (a `SubDialog`: origin server, write token, into a new or an
-  existing workspace, name, direction) — [mirror.md](mirror.md).
-  The same state sits in the header as the sync pill
-  (`collaboration/MirrorPopover.jsx`) while a clone is open; the clone's
-  own settings (cadence, direction, force pull / push, detach / reattach,
-  remove origin)
-  live in that pill's gear view, stored on the server per mirror
-  (`mirrors.poll_s`, `on_change`, `mode`).
-- **Sync** ([SettingsSync.jsx](../../frontend/src/settings/SettingsSync.jsx)):
-  **Publishing** lists the workspaces that publish pages to Gamma Cloud
-  (`PublishingSection` in SettingsMirrors.jsx: the count of pages, the
-  state, Conflicts when any wait, a "more" menu with Sync now and Stop
-  publishing all; an empty state for the signed-in with nothing published,
-  hidden for the guest), then **Sync status**, the sync pill's scope (a
-  `Segmented`: synced pages only, or every page of a workspace that syncs
-  some — `syncPillScope`, [mirror.md](mirror.md) "Publishing"). Clones stay
-  under Workspaces: each is a workspace of its own.
+  Server). The account popover's "Workspaces…" opens this pane. Clones are
+  not listed here (they are under Account & sync).
 - **Backups** ([SettingsBackups.jsx](../../frontend/src/settings/SettingsBackups.jsx)):
   the task table first ([BackupTasks.jsx](../../frontend/src/settings/BackupTasks.jsx):
   Add task opens the editor `SubDialog`; each row has an Enabled switch and
@@ -354,7 +366,9 @@ the exact values without changing them.
 [SettingsKit.jsx](../../frontend/src/settings/SettingsKit.jsx) provides `PaneHead`,
 `Section`, `Row`, `Toggle`, `SubDialog` and the shared controls.
 Ordinary rows show a small icon, a label, a short hint and a control, with the
-shared hover background. Put consequences in the visible
+shared hover background. A section holds one subject; its settings stay in
+it even when a few are stored differently (a row's own `scope` tag says so)
+rather than splitting into a second section of the same subject. Put consequences in the visible
 hint; supplementary `title` text appears on hover, without a Details toggle.
 Use the existing shared controls: `PictureChoices` for illustrated choices,
 `IconChoices` for a small exclusive set pictured as icon tiles (the share

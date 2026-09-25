@@ -1,15 +1,16 @@
-// Settings → Reading › Translation: the viewer's translate button, target
-// language, what translates (a chat model or a machine-translation engine),
-// and the engines' credentials (Google Cloud Translation, Youdao). The keys
-// are write-only like the AI keys: /api/translate/engines masks them.
+// Settings → Reading › Translation, everything translation in one section:
+// the viewer's translate button, target language, what translates (a chat
+// model or a machine-translation engine), the engines' credentials (Google
+// Cloud Translation, Youdao) and the speed (effort, parallel requests). The
+// keys are write-only like the AI keys: /api/translate/engines masks them.
 import React from "react";
 import { API, apiJson } from "../shared/lib/utils";
 import { friendlyApiError } from "../library/libraryUtils";
 import { MenuSelect } from "../shared/ui/Menus";
-import { Section, Row, Toggle, SubDialog, Field, PasswordInput } from "./SettingsKit";
+import { Section, Row, Toggle, SubDialog, Field, PasswordInput, UnitInput } from "./SettingsKit";
 import { SECTION_PREFS } from "./sectionPrefs.js";
-import { TRANSLATE_LANGS } from "../app/prefs";
-import { GlobeIcon, HighlightIcon, KeyIcon, LanguagesIcon, SlidersIcon, SparklesIcon, TextCursorIcon, Trash2Icon } from "../shared/ui/Icons";
+import { FREE_TRANSLATE_ENGINE, TRANSLATE_LANGS } from "../app/prefs";
+import { ActivityIcon, GlobeIcon, HighlightIcon, KeyIcon, LanguagesIcon, RefreshIcon, SparklesIcon, TextCursorIcon, Trash2Icon } from "../shared/ui/Icons";
 import { T, t } from "../shared/i18n/i18n.js";
 
 // Per engine: the form's fields in order, with where to get them.
@@ -27,66 +28,99 @@ const ENGINE_FORMS = {
   },
 };
 
-export function TranslationSettings({ value, onSpeed }) {
+// One section, in the order a reader meets it: what shows in the viewer,
+// then what translates (a model or a service, and the services' keys), then
+// how fast. "Translate with" names this server's provider entries, so it
+// alone stays with the browser (its row's own tag).
+export function TranslationSettings({ value }) {
   return (
-    <>
-      <Section title={t("Translation")} scope="account" prefs={SECTION_PREFS.reading["Translation"]} action={
-        <button className="uiBtn sm" onClick={onSpeed} title={t("Translation effort and parallel requests (AI › Advanced)")}>
-          <SlidersIcon size={13} /> {t("Speed")}
-        </button>
-      }>
-        <Toggle
-          icon={LanguagesIcon}
-          label={t("Translation button")}
-          hint={t("In the viewer; nothing translates until you ask")}
-          title={t("Show the translate button in the PDF viewer. Click translates the current page (or shows/hides an existing translation); right-click or long-press opens the options, including translating the whole document. Nothing translates until you ask.")}
-          checked={value.translateEnabled}
-          onChange={value.setTranslateEnabled}
+    <Section title={t("Translation")} scope="account" prefs={SECTION_PREFS.reading["Translation"]}>
+      <Toggle
+        icon={LanguagesIcon}
+        label={t("Translation button")}
+        hint={t("In the viewer; nothing translates until you ask")}
+        title={t("Show the translate button in the PDF viewer. Click translates the current page (or shows/hides an existing translation); right-click or long-press opens the options, including translating the whole document. Nothing translates until you ask.")}
+        checked={value.translateEnabled}
+        onChange={value.setTranslateEnabled}
+      />
+      <Row
+        icon={GlobeIcon}
+        label={t("Translate into")}
+        hint={t("The translated view's language")}
+        title={t("The translated view (the languages button in the PDF viewer's zoom column) redraws each paragraph in this language in place — figures and layout stay put, and holding Alt peeks at the original. Paragraph translations are cached per language and model, so re-reading a page is free.")}
+      >
+        <MenuSelect
+          label={t("Translation language")}
+          value={value.translateLang}
+          onChange={value.setTranslateLang}
+          options={TRANSLATE_LANGS}
         />
-        <Row
-          icon={GlobeIcon}
-          label={t("Translate into")}
-          hint={t("The translated view's language")}
-          title={t("The translated view (the languages button in the PDF viewer's zoom column) redraws each paragraph in this language in place — figures and layout stay put, and holding Alt peeks at the original. Paragraph translations are cached per language and model, so re-reading a page is free.")}
-        >
-          <MenuSelect
-            label={t("Translation language")}
-            value={value.translateLang}
-            onChange={value.setTranslateLang}
-            options={TRANSLATE_LANGS}
-          />
-        </Row>
-        <Toggle
-          icon={HighlightIcon}
-          label={t("Translate a selection")}
-          hint={t("A button next to the highlight colors")}
-          title={t("Selecting text in a PDF shows the highlight colors; this adds a translate button there. The translation opens under the colors, in the language above, with the same model or service as the page translation.")}
-          checked={value.selTranslate}
-          onChange={value.setSelTranslate}
-        />
-        <Toggle
-          icon={TextCursorIcon}
-          label={t("Translate on select")}
-          hint={t("Without clicking the button first")}
-          title={t("Translate as soon as text is selected, instead of when you click the translate button. Every selection is then a translation request.")}
-          checked={value.selTranslateAuto}
-          onChange={value.setSelTranslateAuto}
-          disabled={!value.selTranslate}
-        />
-      </Section>
-      <Section title={t("Translation engine")} scope="browser">
-        <Row
-          icon={SparklesIcon}
-          label={t("Translate with")}
-          hint={t("A chat model, or a translation service below")}
-          title={t("What translates page text. A chat model keeps formulas and citations intact and follows the paper's register; a translation service (Google, Youdao) is faster and cheaper per page and needs no AI connection. Translation is a bulk job — a fast, cheap model usually reads fine.")}
-        >
-          <TranslateModelSelect value={value} />
-        </Row>
-      </Section>
+      </Row>
+      <Toggle
+        icon={HighlightIcon}
+        label={t("Translate a selection")}
+        hint={t("A button next to the highlight colors")}
+        title={t("Selecting text in a PDF shows the highlight colors; this adds a translate button there. The translation opens under the colors, in the language above, with the same model or service as the page translation.")}
+        checked={value.selTranslate}
+        onChange={value.setSelTranslate}
+      />
+      <Toggle
+        icon={TextCursorIcon}
+        label={t("Translate on select")}
+        hint={t("Without clicking the button first")}
+        title={t("Translate as soon as text is selected, instead of when you click the translate button. Every selection is then a translation request.")}
+        checked={value.selTranslateAuto}
+        onChange={value.setSelTranslateAuto}
+        disabled={!value.selTranslate}
+      />
+      <Row
+        icon={SparklesIcon}
+        label={t("Translate with")}
+        scope="browser"
+        hint={t("A chat model, or a translation service below")}
+        title={t("What translates page text. A chat model keeps formulas and citations intact and follows the paper's register; a translation service (Google, Youdao) is faster and cheaper per page and needs no AI connection. Translation is a bulk job — a fast, cheap model usually reads fine.")}
+      >
+        <TranslateModelSelect value={value} />
+      </Row>
       <TranslationServices value={value} />
-    </>
+      <TranslationPerformance value={value} />
+    </Section>
   );
+}
+
+// Effort means nothing to a translation service ("engine:<id>"), so its row
+// hides while one is picked.
+function TranslationPerformance({ value }) {
+  // Also hidden with no AI connection: then only services translate.
+  const engine = (value.translateEngines || []).some((e) => e.id === value.translateModel)
+    || !(value.aiModels || []).length;
+  return <>
+    {!engine ? <Row
+      icon={ActivityIcon}
+      label={t("Translation effort")}
+      hint={t("Low makes reasoning models translate much faster")}
+      title={t("Reasoning effort sent with translation calls. Reasoning models spend their thinking budget before writing any output, which is wasted on translation — Low or Minimal typically cuts a page from ~20s to a few seconds. Default omits the parameter (some models reject it).")}
+    >
+      <MenuSelect
+        label={t("Translation effort")}
+        value={value.translateEffort}
+        onChange={value.setTranslateEffort}
+        options={[["", t("Default")], ["minimal", t("Minimal")], ["low", t("Low")], ["medium", t("Medium")], ["high", t("High")]]}
+      />
+    </Row> : null}
+    <Row
+      icon={RefreshIcon}
+      label={t("Parallel requests")}
+      hint={t("Translation calls in flight at once (1–32)")}
+      title={t("A page is translated in small chunks, this many at a time; a whole-document job streams chunks across pages and never exceeds it. Higher is faster until your provider's rate limit pushes back.")}
+    >
+      <UnitInput value={value.translateParallel} unit="calls" min={1}
+        onCommit={(raw) => {
+          const n = Number.parseInt(raw, 10);
+          if (Number.isFinite(n)) value.setTranslateParallel(Math.max(1, Math.min(32, n)));
+        }} />
+    </Row>
+  </>;
 }
 
 // "" = follow the chat model; a set-up engine ("engine:<id>") or a model id.
@@ -97,11 +131,14 @@ function TranslateModelSelect({ value }) {
   const engines = value.translateEngines || [];
   const multiProvider = new Set(models.map((m) => m.provider)).size > 1;
   const known = [...engines, ...models].some((m) => m.id === value.translateModel);
+  // No chat model to follow: the default is the free service (App sends it).
+  const free = !models.length && engines.find((e) => e.id === FREE_TRANSLATE_ENGINE);
   return (
     <MenuSelect
       label={t("Translate with")} value={known ? value.translateModel : ""} onChange={value.setTranslateModel}
       options={[
-        ["", t("Same as chat: {default}", { default: value.chatModelName || t("provider default") })],
+        ["", free ? t("Default: {name}", { name: free.label })
+          : t("Same as chat: {default}", { default: value.chatModelName || t("provider default") })],
         ...engines.map((e) => [e.id, e.label]),
         ...models.map((m) => [m.id, multiProvider ? `${m.model} · ${m.provider_name || m.provider}` : m.model]),
       ]}
@@ -163,14 +200,27 @@ function TranslationServices({ value }) {
 
   const canEdit = info?.can_edit;
   return (
-    <Section title={t("Translation services")}>
+    // The key rows sit right under "Translate with"; the wrapper is the
+    // search target for "Translation services".
+    <div data-setting={t("Translation services")}>
       {info?.engines.map((engine) => {
         const result = tests[engine.id];
         const secret = ENGINE_FORMS[engine.id]?.fields.find((f) => f.secret);
         const hint = result?.busy ? t("Testing…")
           : result ? (result.ok ? `✓ ${result.text}` : result.error)
+          : !engine.needs_key ? t("No key needed")
           : engine.configured ? t("Key {hint}", { hint: engine.fields?.[secret?.id] || "" })
           : t("Not set up");
+        // A service without a key has nothing to edit or remove — just Test.
+        if (!engine.needs_key) return (
+          <Row key={engine.id} icon={GlobeIcon} label={engine.label} hint={hint}
+            title={t("The endpoint Microsoft Edge's built-in page translation uses: free and without an account, but unofficial — Microsoft may change or throttle it without notice. Set up Google or Youdao as a fallback.")}>
+            {canEdit ? <button className="uiBtn sm" disabled={result?.busy}
+              title={t("Translate one sentence with this service to check it responds")} onClick={() => test(engine)}>
+              {t("Test")}
+            </button> : null}
+          </Row>
+        );
         return (
           <Row key={engine.id} icon={KeyIcon} label={engine.label} hint={hint}>
             {canEdit ? (engine.configured ? <span className="setRowControls">
@@ -213,6 +263,6 @@ function TranslationServices({ value }) {
           </div>
         </SubDialog>
       ) : null}
-    </Section>
+    </div>
   );
 }

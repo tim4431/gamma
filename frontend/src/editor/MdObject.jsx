@@ -4,7 +4,8 @@
 // the block's raw editor; a right-click (or the table's corner handle) opens
 // one menu for all three kinds — edit the markdown source, move it to a new
 // block or another page, copy it, delete it — and Delete removes a selected
-// object. The frame is also the drag source: dragging it carries the
+// object; a press on the frame's margin is left to the row (click-to-source
+// opens the editor there). The frame is also the drag source: dragging it carries the
 // object's source range (`_dragState.fragment`, read by App's block drop
 // handlers), which lands between two blocks as a new block or inside a block
 // at the gap the pointer is nearest to. Nothing here touches the stored
@@ -17,7 +18,7 @@ import {
 import { t } from "../shared/i18n/i18n.js";
 import { scanImages, scanTables } from "./MdTools";
 import { scanMermaidFences } from "../shared/lib/mermaidMarkdown.js";
-import { scanMathSpans } from "./BlockCmEditor";
+import { scanMathSpans } from "./markCommands";
 import { scanFences } from "./codeHighlight";
 import { blockStartInSource, gapInSource, renderedGaps } from "./clickToSource";
 
@@ -144,9 +145,18 @@ export function MdObject({ as: Tag = "div", kind, idx, editable = true, onAction
       data-kind={kind}
       data-idx={idx}
       draggable={editable ? "true" : undefined}
-      // The block row opens its raw editor on mousedown; a press on the
-      // object (its margins included) selects it instead.
-      onMouseDown={(e) => { e.stopPropagation(); if (e.button === 0) setSelected(true); }}
+      // The block row opens its raw editor on mousedown. A press on the
+      // object's own body (the picture, the table, the diagram) selects it
+      // instead; one on the frame's margin still reaches the row, so
+      // clicking beside a figure opens the editor at that spot — where the
+      // figure stays a picture, since the editor only expands an object the
+      // selection reaches inside.
+      onMouseDown={(e) => {
+        const body = e.target.closest?.(".mdImgFrame, .mdTableWrap, .mermaidDiagram");
+        if (!body || !ref.current?.contains(body)) return;
+        e.stopPropagation();
+        if (e.button === 0) setSelected(true);
+      }}
       onContextMenu={openMenu}
       onDragStart={(e) => {
         e.stopPropagation();

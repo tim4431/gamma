@@ -236,14 +236,14 @@ export function SharedAiProviderSettings({ setStatus, confirm }) {
   }, [base]);
   const editor = useProviderEditor({ info, setInfo, base, onSaved: () => setStatus?.(t("Shared AI provider saved.")) });
   async function test(p) {
-    setTests((t) => ({ ...t, [p.id]: { busy: true } }));
+    setTests((prev) => ({ ...prev, [p.id]: { busy: true } }));
     let result;
     try {
       result = await apiJson(`${API}/ai/providers/${encodeURIComponent(p.id)}/test`, { method: "POST" });
     } catch (err) {
       result = { ok: false, error: err.message };
     }
-    setTests((t) => ({ ...t, [p.id]: result }));
+    setTests((prev) => ({ ...prev, [p.id]: result }));
   }
   const run = async (call) => {
     try { setInfo(await call()); } catch (err) { setLoadError(err.message); }

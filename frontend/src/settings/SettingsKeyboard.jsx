@@ -25,8 +25,8 @@ export function KeyboardSettings({ value }) {
 
   const q = filter.trim().toLowerCase();
   const matches = (cmd) => !q
-    || t(cmd.label).toLowerCase().includes(q)
-    || t(cmd.group).toLowerCase().includes(q)
+    || cmd.label.toLowerCase().includes(q)
+    || cmd.group.toLowerCase().includes(q)
     || effectiveKeys(cmd, bindings).some((k) => chordLabel(k).toLowerCase().includes(q));
   const fixed = fixedKeys(enterNewNote).filter(([chords, what]) => !q
     || what.toLowerCase().includes(q) || chords.some((c) => chordLabel(c).toLowerCase().includes(q)));
@@ -52,22 +52,21 @@ export function KeyboardSettings({ value }) {
           if (!cmds.length) return null;
           return (
             <React.Fragment key={group}>
-              <div className="keyGroupLabel">{t(group)}</div>
+              <div className="keyGroupLabel">{group}</div>
               {cmds.map((cmd) => {
                 const keys = effectiveKeys(cmd, bindings);
                 const defaults = effectiveKeys(cmd, {});
                 const modified = Object.prototype.hasOwnProperty.call(bindings, cmd.id);
                 const others = keys.flatMap((k) => (clashes.get(k) || []).filter((c) => c.id !== cmd.id));
-                const label = t(cmd.label);
                 let hint = "";
-                if (others.length) hint = t("Also used by {names}", { names: others.map((c) => t(c.label)).join(", ") });
+                if (others.length) hint = t("Also used by {names}", { names: others.map((c) => c.label).join(", ") });
                 else if (modified) hint = defaults.length ? t("Default: {keys}", { keys: defaults.map((k) => chordLabel(k)).join(" · ") }) : t("No default");
                 else if (keys.length > 1) hint = t("Also {keys}", { keys: keys.slice(1).map((k) => chordLabel(k)).join(" · ") });
                 return (
                   <div key={cmd.id} data-conflict={others.length ? "true" : undefined}>
-                    <Row icon={commandIcon(cmd)} label={label} hint={hint}>
+                    <Row icon={commandIcon(cmd)} label={cmd.label} hint={hint}>
                       <KeyBinding
-                        chord={keys[0] || null} label={label} fixed={!!cmd.fixed} modified={modified}
+                        chord={keys[0] || null} label={cmd.label} fixed={!!cmd.fixed} modified={modified}
                         conflict={others.length > 0}
                         onChange={(chord) => bind(cmd.id, chord)} onReset={() => reset(cmd.id)}
                       />

@@ -287,7 +287,10 @@ def dave(client):
 def test_engine_settings_are_masked_and_reserved(dave):
     body = dave.get("/api/translate/engines").json()
     assert body["can_edit"] is True
-    assert {e["id"]: e["configured"] for e in body["engines"]} == {"google": False, "youdao": False}
+    # Microsoft needs no key: always ready, nothing to store.
+    assert {e["id"]: e["configured"] for e in body["engines"]} == {"microsoft": True, "google": False, "youdao": False}
+    assert [e["id"] for e in body["engines"] if not e["needs_key"]] == ["microsoft"]
+    assert dave.put("/api/translate/engines/microsoft", json={"fields": {}}).status_code == 400
 
     assert dave.put("/api/translate/engines/google", json={"fields": {}}).status_code == 400
     assert dave.put("/api/translate/engines/bing", json={"fields": {"api_key": "x"}}).status_code == 404
@@ -310,10 +313,10 @@ def test_engine_settings_are_masked_and_reserved(dave):
     assert dave.put("/api/prefs/translate-engines", json={"value": {}}).status_code == 400
 
     models = dave.get("/api/ai/models").json()
-    assert [e["id"] for e in models["translate_engines"]] == ["engine:google", "engine:youdao"]
+    assert [e["id"] for e in models["translate_engines"]] == ["engine:microsoft", "engine:google", "engine:youdao"]
 
     r = dave.delete("/api/translate/engines/youdao")
-    assert [e["id"] for e in r.json()["engines"] if e["configured"]] == ["google"]
+    assert [e["id"] for e in r.json()["engines"] if e["configured"]] == ["microsoft", "google"]
 
 
 def test_guest_cannot_store_engine_keys():
@@ -401,6 +404,46 @@ def test_translate_with_youdao(dave, monkeypatch):
                         _fake_urlopen(lambda req: {"errorCode": "202"})[0])
     r = dave.post("/api/translate/engines/youdao/test", json={"lang": "zh-CN"})
     assert r.json()["ok"] is False and "signature" in r.json()["error"]
+
+
+def test_translate_with_microsoft(dave, monkeypatch):
+    from urllib.parse import parse_qs, urlsplit
+
+    monkeypatch.setattr("gamma.routers.ai._call_ai", lambda *a, **k: pytest.fail("no LLM on the engine path"))
+
+    def reply(req):
+        texts = json.loads(req.data)
+        # Translator v3's shape; the second text comes back without a translation.
+        return [{"detectedLanguage": {"language": "en", "score": 1.0},
+                 "translations": [{"text": f"M:{t}", "to": "zh-Hant"}] if j != 1 else []}
+                for j, t in enumerate(texts)]
+
+    fake, calls = _fake_urlopen(reply)
+    monkeypatch.setattr("gamma.translate_engines.urlopen", fake)
+    r = dave.post("/api/ai/translate", json={"texts": ["Edge one.", "Edge two.", "Edge three."],
+                                             "lang": "zh-TW", "model": "engine:microsoft"})
+    assert r.status_code == 200, r.text
+    # No setup, no key; a text without a translation stays as it was.
+    assert r.json()["translations"] == ["M:Edge one.", "Edge two.", "M:Edge three."]
+    (req,) = calls
+    url = urlsplit(req.full_url)
+    assert url.netloc == "edge.microsoft.com" and url.path == "/translate/translatetext"
+    assert parse_qs(url.query) == {"to": ["zh-Hant"], "isEnterpriseClient": ["false"]}
+    assert req.get_header("Authorization") is None
+    assert json.loads(req.data) == ["Edge one.", "Edge two.", "Edge three."]
+
+    # A plain-text error body is surfaced as it is.
+    from urllib.error import HTTPError
+    import io
+
+    def too_big(req, timeout=None):
+        raise HTTPError(req.full_url, 400, "Bad Request", {},
+                        io.BytesIO(b"Request exceeds the maximum allowed translation size."))
+
+    monkeypatch.setattr("gamma.translate_engines.urlopen", too_big)
+    r = dave.post("/api/translate/engines/microsoft/test", json={"lang": "ja"})
+    assert r.json() == {"ok": False,
+                        "error": "Microsoft: HTTP 400 \u2014 Request exceeds the maximum allowed translation size."}
 
 
 def test_youdao_sign_shortens_long_input():

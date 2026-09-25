@@ -13,10 +13,11 @@
 // block as a diff (added, removed, changed with a word diff); an arrow
 // opens the page. The gear turns the popover into the clone's sync
 // settings (settings-kit rows: cadence, push after an edit, direction,
-// then force pull / force push, detach / reattach, remove origin). Polls
-// /api/mirrors/{ws} every 20 s, every 2 s while a round runs or a local
-// edit waits (the page's collab session raises `gamma:local-edit` when it
-// queues ops); the log too while open.
+// then force pull / force push, detach / reattach, remove origin). While the
+// pill is shown and the tab visible, polls /api/mirrors/{ws} every 20 s,
+// every 2 s while a round runs or a local edit waits (the page's collab
+// session raises `gamma:local-edit` when it queues ops); the log too while
+// open.
 //
 // A publication (a mirror with a page filter: the pages this workspace
 // publishes to Gamma Cloud, docs/dev/mirror.md "Publishing") gets the same
@@ -409,17 +410,21 @@ export function MirrorPopover({ wsId, mirrorOf, publication: listedAsPublication
   // A local edit the page's session just queued: pending until a poll
   // (after the grace) says the server pushed it.
   const [editAt, setEditAt] = React.useState(0);
-  // A round that ran on its own (the loop, an edit) changes the numbers:
-  // the page's merge chips (App) hear about it through "gamma:mirror-changed".
+  // A round that ran on its own (the loop, an edit) may open or close
+  // conflicts: the page's merge chips (App) hear about it through
+  // "gamma:mirror-changed", raised when the open conflicts' (count, newest
+  // id) moves — not on every round.
   const seenRef = React.useRef("");
+  const loadedAtRef = React.useRef(0);
   const load = React.useCallback(async () => {
+    loadedAtRef.current = Date.now();
     try {
       const next = await apiJson(`${API}/mirrors/${encodeURIComponent(wsId)}`);
       setInfo(next);
       if (!next.pending_local && !next.status?.running) {
         setEditAt((at) => (at && Date.now() - at >= PENDING_GRACE_MS ? 0 : at));
       }
-      const mark = `${next.conflicts_open}|${next.status?.last_sync || ""}`;
+      const mark = `${next.conflicts_open}|${next.conflicts_newest ?? ""}`;
       if (seenRef.current && seenRef.current !== mark) window.dispatchEvent(new CustomEvent("gamma:mirror-changed"));
       seenRef.current = mark;
     } catch {}
@@ -429,11 +434,27 @@ export function MirrorPopover({ wsId, mirrorOf, publication: listedAsPublication
   }, [wsId]);
   const running = Boolean(info?.status?.running) || busy;
   const pending = Boolean(editAt) || Boolean(info?.pending_local);
+  const publication = info ? isPublication(info) : listedAsPublication;
+  // A clone syncs the whole workspace, so its pill is on every page; a
+  // publication syncs the pages in its filter, so its pill is on those
+  // pages only (and nowhere until the filter is known) — unless Settings →
+  // Sync → Sync pill says every page.
+  const shown = !publication || everyPage || Boolean(pageId && info?.page_filter?.includes(pageId));
+  const shownRef = React.useRef(shown);
+  shownRef.current = shown;
+  // One read on mount and whenever the pill comes into view (unless a read
+  // just ran — the mount read is what shows a publication's pill); the polls
+  // only while it is shown and the tab is visible (a tab coming back reads at
+  // once). A hidden publication pill still reloads on "gamma:mirror" (a
+  // publish or unpublish here changes its filter).
+  React.useEffect(() => { if (Date.now() - loadedAtRef.current > 2000) load(); }, [load, shown]);
   React.useEffect(() => {
-    load();
-    const t = setInterval(load, running || pending ? 2000 : 20000);
-    return () => clearInterval(t);
-  }, [load, running, pending]);
+    if (!shown) return undefined;
+    const poll = () => { if (!document.hidden) load(); };
+    const t = setInterval(poll, running || pending ? 2000 : 20000);
+    document.addEventListener("visibilitychange", poll);
+    return () => { clearInterval(t); document.removeEventListener("visibilitychange", poll); };
+  }, [load, running, pending, shown]);
   React.useEffect(() => { if (open) { setView("main"); load(); loadLog(); } }, [open, load, loadLog]);
   const lastSync = info?.status?.last_sync;
   React.useEffect(() => { if (open) loadLog(); }, [open, loadLog, lastSync]);
@@ -446,7 +467,8 @@ export function MirrorPopover({ wsId, mirrorOf, publication: listedAsPublication
   // page's session says when it queued a local edit.
   React.useEffect(() => {
     const h = () => { load(); if (open) loadLog(); };
-    const edited = () => setEditAt(Date.now());
+    // an edit on a page the pill does not cover (a publication's other pages) waits for nothing
+    const edited = () => { if (shownRef.current) setEditAt(Date.now()); };
     window.addEventListener("gamma:mirror", h);
     window.addEventListener("gamma:local-edit", edited);
     return () => { window.removeEventListener("gamma:mirror", h); window.removeEventListener("gamma:local-edit", edited); };
@@ -469,13 +491,8 @@ export function MirrorPopover({ wsId, mirrorOf, publication: listedAsPublication
   const s = info?.status || {};
   const host = hostOf(info?.remote_url);
   const pull = isPullOnly(info);
-  const publication = info ? isPublication(info) : listedAsPublication;
   const name = publication ? t("Published to Gamma Cloud") : mirrorOf;
-  // A clone syncs the whole workspace, so its pill is on every page; a
-  // publication syncs the pages in its filter, so its pill is on those
-  // pages only (and nowhere until the filter is known) — unless Settings →
-  // Sync → Sync pill says every page.
-  if (publication && !everyPage && !(pageId && info?.page_filter?.includes(pageId))) return null;
+  if (!shown) return null;
 
   return (
     <span data-popover="mirror" className="popoverAnchor">

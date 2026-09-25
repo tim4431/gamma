@@ -26,20 +26,17 @@ export const SECTION_PREFS = Object.freeze({
     Theme: ["theme"],
     Language: ["language"],
     "PDF pages": ["pdfDarkPage"],
+    Library: ["recentThumbs", "fileLabels"],
     Tours: ["suggestTours"],
   }),
   reading: sections({
-    "PDF viewer": ["embAnnots"],
-    Translation: ["translateEnabled", "translateLang", "selTranslate", "selTranslateAuto"],
+    PDFs: ["embAnnots", "oaFallback", "metaAutoFetch", "pdfSaveLocal"],
+    Translation: ["translateEnabled", "translateLang", "selTranslate", "selTranslateAuto", "translateEffort", "translateParallel"],
     Notes: ["enterNewNote"],
     "Search opens as": ["searchDetailsHome", "searchDetailsPaper"],
   }),
   keyboard: sections({
     Shortcuts: ["keybindings"],
-  }),
-  library: sections({
-    Display: ["recentThumbs", "fileLabels"],
-    PDFs: ["oaFallback", "metaAutoFetch", "pdfSaveLocal"],
   }),
   sync: sections({
     "Sync status": ["syncPillScope"],
@@ -48,19 +45,18 @@ export const SECTION_PREFS = Object.freeze({
     "Connection check": ["aiLoginCheck"],
   }),
   assistant: sections({
+    Chat: ["chatEffort", "chatImgAutoClear"],
     Tools: ["agentEnabled", "agentPerms"],
   }),
   advanced: sections({
     "Tool limits": ["toolRounds", "agentReadChars"],
     "Context size": ["chatContextChars", "metaContextChars", "multiContextChars"],
-    "Translation performance": ["translateEffort", "translateParallel"],
-    Chat: ["chatImgAutoClear"],
   }),
   prompts: sections({
     Prompts: ["chatSystem", "metaPrompt", "citePrompt", "agentSystem"],
   }),
 });
 
-// Account preferences set from Settings outside any tagged section: the
-// Advanced pane's default reasoning effort row sits above its first section.
-export const UNTAGGED_PREFS = accountPrefs(["chatEffort"]);
+// Account preferences set from Settings outside any tagged section (none
+// today; the list stays so a future exception is declared, not missed).
+export const UNTAGGED_PREFS = accountPrefs([]);

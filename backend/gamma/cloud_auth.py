@@ -239,7 +239,8 @@ def share_host_url() -> str:
     if not raw:
         return ""
     parts = urlsplit(raw)
-    if parts.scheme not in ("http", "https") or not parts.netloc or parts.query or parts.fragment             or parts.path not in ("", "/") or any(c.isspace() for c in raw):
+    if (parts.scheme not in ("http", "https") or not parts.netloc or parts.query or parts.fragment
+            or parts.path not in ("", "/") or any(c.isspace() for c in raw)):
         raise CloudAuthError("the account server names a share host that is not a server address")
     return raw
 
@@ -493,8 +494,7 @@ def refresh_grant(refresh_token: str) -> dict:
     if secret:
         form["client_secret"] = secret
     return _http(doc["token_endpoint"], data=urllib.parse.urlencode(form).encode(),
-                 headers={"Content-Type": "application/x-www-form-urlencoded",
-                          "User-Agent": _user_agent(server_url() or "no address")})
+                 headers={"Content-Type": "application/x-www-form-urlencoded"})
 
 
 def access_token_for(username: str, *, fresh: bool = False) -> str | None:

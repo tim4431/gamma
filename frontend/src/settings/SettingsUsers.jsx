@@ -334,7 +334,7 @@ export function UsersSettings({ value, selfOnly = false }) {
 
   return (
     <>
-      {isAdmin && !selfOnly ? <PaneHead icon={UsersIcon} title={t("Users")} /> : <PaneHead icon={UserIcon} title={t("Account")} />}
+      {isAdmin && !selfOnly ? <PaneHead icon={UsersIcon} title={t("Users")} /> : <PaneHead icon={UserIcon} title={t("Account & sync")} />}
       {isAdmin && !info && !error ? <Empty icon={UsersIcon}>{t("Loading…")}</Empty> : null}
       {(selfOnly ? rows.filter((row) => row.username === me) : rows).map(userRow)}
       {!isGuest && (selfOnly || !isAdmin) ? <CloudIdentityRow setStatus={setStatus} confirm={confirm} /> : null}

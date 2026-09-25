@@ -7,7 +7,6 @@ import {
   Stat, Empty, QuotaMeter, LogBox, SettingsDraftContext, SettingsSyncContext, useSettingsDraft,
 } from "./SettingsKit";
 import { SECTION_PREFS } from "./sectionPrefs.js";
-import { LibraryDisplaySettings } from "./SettingsLibraryDisplay";
 import { AppearanceSettings } from "./SettingsAppearance";
 import { KeyboardSettings } from "./SettingsKeyboard";
 import { AiSettings } from "./SettingsAi";
@@ -61,8 +60,7 @@ const PREFERENCE_NAV = [
   ["appearance", T("Appearance"), ContrastIcon],
   ["reading", T("Reading & editing"), BookIcon],
   ["keyboard", T("Keyboard"), KeyboardIcon],
-  ["library", T("Library"), ListIcon],
-  ["account", T("Account"), UserIcon],
+  ["account", T("Account & sync"), UserIcon],
 ];
 const AI_NAV = [
   ["ai", T("Connections"), SparklesIcon],
@@ -73,7 +71,6 @@ const AI_NAV = [
 ];
 const MANAGEMENT_NAV = [
   ["workspaces", T("Workspaces"), UsersIcon],
-  ["sync", T("Sync"), RefreshIcon],
   ["backups", T("Backups"), DatabaseIcon],
   ["maintenance", T("Library maintenance"), HardDriveIcon],
   ["users", T("Users"), UsersIcon],
@@ -94,7 +91,7 @@ function ViewerSettings({ value }) {
   return (
     <>
 
-      <Section title={t("PDF viewer")} scope="account" prefs={SECTION_PREFS.reading["PDF viewer"]}>
+      <Section title={t("PDFs")} scope="account" prefs={SECTION_PREFS.reading["PDFs"]}>
         <Row
           icon={HighlightIcon}
           label={t("Imported annotations")}
@@ -104,9 +101,33 @@ function ViewerSettings({ value }) {
           <Segmented value={value.embAnnots} onChange={value.setEmbAnnots}
             options={[["hide", t("Keep originals")], ["strip", t("Remove originals")]]} />
         </Row>
+        <Toggle
+          icon={CloudDownloadIcon}
+          label={t("Open-access fallback")}
+          hint={t("Fetch a free copy when a publisher blocks the PDF")}
+          title={t("When a publisher PDF is paywalled or refuses to download, load a legal open-access copy instead — usually the arXiv version. A note tells you when the substitute isn't the published version.")}
+          checked={value.oaFallback}
+          onChange={value.setOaFallback}
+        />
+        <Toggle
+          icon={SparklesIcon}
+          label={t("Auto-fetch metadata")}
+          hint={t("Title, authors and BibTeX on first open")}
+          title={t("Look up title, authors, venue and BibTeX the first time a paper opens (arXiv → DOI → AI). Turn this off to fetch only via the refresh button in the metadata popover.")}
+          checked={value.metaAutoFetch}
+          onChange={value.setMetaAutoFetch}
+        />
+        <Toggle
+          icon={HardDriveIcon}
+          label={t("Save external PDFs")}
+          hint={t("Keep a server copy of PDFs opened from a URL")}
+          title={t("Keep a server copy of PDFs opened from a URL, so they load instantly next time and survive dead links.")}
+          checked={value.pdfSaveLocal}
+          onChange={value.setPdfSaveLocal}
+        />
       </Section>
       <Section title={t("Handwriting")} scope="browser">
-        <div data-setting="Draws with">
+        <div data-setting={t("Draws with")}>
           <IconChoices label={t("Draws with")} value={value.inkPenOnly ? "pen" : "any"}
             onChange={(choice) => value.setInkPenOnly(choice === "pen")} options={DRAW_WITH} />
         </div>
@@ -129,39 +150,6 @@ function ViewerSettings({ value }) {
       </Section>
     </>
   );
-}
-
-// AI › Advanced › Translation performance. Effort means nothing to a
-// translation service ("engine:<id>"), so its row hides while one is picked.
-function TranslationPerformance({ value }) {
-  const engine = (value.translateEngines || []).some((e) => e.id === value.translateModel);
-  return <>
-        {!engine ? <Row
-          icon={ActivityIcon}
-          label={t("Translation effort")}
-          hint={t("Low makes reasoning models translate much faster")}
-          title={t("Reasoning effort sent with translation calls. Reasoning models spend their thinking budget before writing any output, which is wasted on translation — Low or Minimal typically cuts a page from ~20s to a few seconds. Default omits the parameter (some models reject it).")}
-        >
-          <MenuSelect
-            label={t("Translation effort")}
-            value={value.translateEffort}
-            onChange={value.setTranslateEffort}
-            options={[["", t("Default")], ["minimal", t("Minimal")], ["low", t("Low")], ["medium", t("Medium")], ["high", t("High")]]}
-          />
-        </Row> : null}
-        <Row
-          icon={RefreshIcon}
-          label={t("Parallel requests")}
-          hint={t("Translation calls in flight at once (1–32)")}
-          title={t("A page is translated in small chunks, this many at a time; a whole-document job streams chunks across pages and never exceeds it. Higher is faster until your provider's rate limit pushes back.")}
-        >
-          <UnitInput value={value.translateParallel} unit="calls" min={1}
-            onCommit={(raw) => {
-              const n = Number.parseInt(raw, 10);
-              if (Number.isFinite(n)) value.setTranslateParallel(Math.max(1, Math.min(32, n)));
-            }} />
-        </Row>
-  </>;
 }
 
 const SEARCH_SHAPES = [["panel", t("Full panel")], ["bar", t("Find bar")]];
@@ -238,48 +226,6 @@ function StorageCard() {
       </div>
       <QuotaMeter usedBytes={q.used_bytes} quotaMb={q.quota_mb} barOnly />
     </div>
-  );
-}
-
-// Whole-library import from Zotero: the user zips their File → Export Library
-// → "Zotero RDF" folder (with files, notes and annotations) and uploads it.
-// Collections become folders, tags labels, notes child blocks; annotations ride
-// inside the exported PDFs and reuse the embedded-annotations importer (the
-// strip-vs-hide choice follows the standing Settings → PDF viewer preference).
-function LibrarySettings({ value }) {
-  return (
-    <>
-      <PaneHead icon={ListIcon} title={t("Library")} />
-      <Section title={t("Display")} scope="account" prefs={SECTION_PREFS.library["Display"]}>
-        <LibraryDisplaySettings value={value} />
-      </Section>
-      <Section title={t("PDFs")} scope="account" prefs={SECTION_PREFS.library["PDFs"]}>
-        <Toggle
-          icon={CloudDownloadIcon}
-          label={t("Open-access fallback")}
-          hint={t("Fetch a free copy when a publisher blocks the PDF")}
-          title={t("When a publisher PDF is paywalled or refuses to download, load a legal open-access copy instead — usually the arXiv version. A note tells you when the substitute isn't the published version.")}
-          checked={value.oaFallback}
-          onChange={value.setOaFallback}
-        />
-        <Toggle
-          icon={SparklesIcon}
-          label={t("Auto-fetch metadata")}
-          hint={t("Title, authors and BibTeX on first open")}
-          title={t("Look up title, authors, venue and BibTeX the first time a paper opens (arXiv → DOI → AI). Turn this off to fetch only via the refresh button in the metadata popover.")}
-          checked={value.metaAutoFetch}
-          onChange={value.setMetaAutoFetch}
-        />
-        <Toggle
-          icon={HardDriveIcon}
-          label={t("Save external PDFs")}
-          hint={t("Keep a server copy of PDFs opened from a URL")}
-          title={t("Keep a server copy of PDFs opened from a URL, so they load instantly next time and survive dead links.")}
-          checked={value.pdfSaveLocal}
-          onChange={value.setPdfSaveLocal}
-        />
-      </Section>
-    </>
   );
 }
 
@@ -744,25 +690,42 @@ export function AgentToolPicker({ kind, perms, setPerms, disabled }) {
   );
 }
 
-// Chat: the tools each chat kind may use, one chip row per kind — the same
-// chips the chat header's settings popover shows for the open chat.
-function AssistantSettings({ value }) {
+// Chat: how chats behave (reasoning effort, snapshot clearing), then the
+// tools each chat kind may use, one chip row per kind — the same chips the
+// chat header's settings popover shows for the open chat.
+function AssistantSettings({ value, ai }) {
   return (
-    <Section title={t("Tools")} scope="account" prefs={SECTION_PREFS.assistant["Tools"]}>
-      <Toggle icon={SparklesIcon} label={t("Assistant tools")}
-        hint={t("Let chats read, search and edit your library")}
-        title={t("The master switch for tools in every chat. Off keeps your per-chat choices below for when you turn it on again.")}
-        checked={value.agentEnabled} onChange={value.setAgentEnabled} />
-      {CHAT_KIND_ROWS.map(([kind, icon, label, hint]) => (
-        <Row key={kind} icon={icon} label={label} hint={hint}>
-          <AgentToolPicker kind={kind} perms={value.agentPerms} setPerms={value.setAgentPerms} disabled={!value.agentEnabled} />
+    <>
+      <Section title={t("Chat")} scope="account" prefs={SECTION_PREFS.assistant["Chat"]}>
+        <Row icon={ActivityIcon} label={t("Default reasoning effort")} hint={t("Leave Default unless your model supports it")}>
+          <MenuSelect label={t("Default reasoning effort")} value={ai.chatEffort} onChange={ai.setChatEffort}
+            options={[["", t("Default")], ...(ai.aiInfo?.efforts || ["low", "medium", "high"]).map((v) => [v, v])]} />
         </Row>
-      ))}
-    </Section>
+        <Toggle
+          icon={RectSelectIcon}
+          label={t("Clear snapshots on click")}
+          hint={t("A plain click in the PDF also drops pending snapshots")}
+          title={t("A plain click in the PDF clears the quoted text selections under the chat. Turn this on to also drop pending rectangle snapshots with that click — images pasted into the chat are never touched.")}
+          checked={value.chatImgAutoClear}
+          onChange={value.setChatImgAutoClear}
+        />
+      </Section>
+      <Section title={t("Tools")} scope="account" prefs={SECTION_PREFS.assistant["Tools"]}>
+        <Toggle icon={SparklesIcon} label={t("Assistant tools")}
+          hint={t("Let chats read, search and edit your library")}
+          title={t("The master switch for tools in every chat. Off keeps your per-chat choices below for when you turn it on again.")}
+          checked={value.agentEnabled} onChange={value.setAgentEnabled} />
+        {CHAT_KIND_ROWS.map(([kind, icon, label, hint]) => (
+          <Row key={kind} icon={icon} label={label} hint={hint}>
+            <AgentToolPicker kind={kind} perms={value.agentPerms} setPerms={value.setAgentPerms} disabled={!value.agentEnabled} />
+          </Row>
+        ))}
+      </Section>
+    </>
   );
 }
 
-function AdvancedAiSettings({ value, ai, papers }) {
+function AdvancedAiSettings({ value }) {
   const budgets = [value.chatContextChars, value.metaContextChars, value.multiContextChars];
   const contextPreset = budgets.every((n, i) => n === [60000, 6000, 120000][i]) ? "standard" : budgets.every((n, i) => n === [120000, 12000, 240000][i]) ? "larger" : "custom";
   const shared = t("Extracted PDF text is measured in characters. Larger budgets can improve answers but cost more tokens.");
@@ -777,11 +740,6 @@ function AdvancedAiSettings({ value, ai, papers }) {
   ];
 
   return <>
-
-        <Row icon={ActivityIcon} label={t("Default reasoning effort")} hint={t("Leave Default unless your model supports it")}>
-          <MenuSelect label={t("Default reasoning effort")} value={ai.chatEffort} onChange={ai.setChatEffort}
-            options={[["", t("Default")], ...(ai.aiInfo?.efforts || ["low", "medium", "high"]).map((v) => [v, v])]} />
-        </Row>
         <Section title={t("Tool limits")} scope="account" prefs={SECTION_PREFS.advanced["Tool limits"]}>
         <Row icon={RefreshIcon} label={t("Tool rounds")}
           hint={t("AI ↔ tool round-trips per message")}
@@ -819,17 +777,6 @@ function AdvancedAiSettings({ value, ai, papers }) {
           </Row>
         ))}
       </Section>
-        <Section title={t("Translation performance")} scope="account" prefs={SECTION_PREFS.advanced["Translation performance"]}><TranslationPerformance value={papers} /></Section>
-        <Section title={t("Chat")} scope="account" prefs={SECTION_PREFS.advanced["Chat"]}>
-          <Toggle
-            icon={RectSelectIcon}
-            label={t("Clear snapshots on click")}
-            hint={t("A plain click in the PDF also drops pending snapshots")}
-            title={t("A plain click in the PDF clears the quoted text selections under the chat. Turn this on to also drop pending rectangle snapshots with that click — images pasted into the chat are never touched.")}
-            checked={value.chatImgAutoClear}
-            onChange={value.setChatImgAutoClear}
-          />
-        </Section>
   </>;
 }
 
@@ -927,7 +874,7 @@ export default function SettingsDialog({
   const available = (id) => {
     if (id === "integrations") return !!users && !users.isGuest;
     if (["account", "users"].includes(id)) return !!users && (id !== "users" || users.isAdmin);
-    if (["workspaces", "sync", "backups"].includes(id)) return !!workspace;
+    if (["workspaces", "backups"].includes(id)) return !!workspace;
     if (id === "server") return !!server;
     return true;
   };
@@ -1036,11 +983,10 @@ export default function SettingsDialog({
                 {pane === "reading" ? <>
                   <PaneHead icon={BookIcon} title={t("Reading & editing")} />
                   <ViewerSettings value={papers} />
-                  <TranslationSettings value={paperValue} onSpeed={() => navigate("ai-advanced", t("Parallel requests"))} />
+                  <TranslationSettings value={paperValue} />
                   <NotesSettings value={notes} /><SearchSettings value={search} />
                 </> : null}
                 {pane === "keyboard" && keyboard ? <KeyboardSettings value={keyboard} /> : null}
-                {pane === "library" ? <LibrarySettings value={{ ...papers, ...library }} /> : null}
                 {pane === "maintenance" ? <MaintenanceSettings value={library} /> : null}
                 {pane === "ai" ? <>
                   <PaneHead icon={SparklesIcon} title={t("Connections")} />
@@ -1049,18 +995,20 @@ export default function SettingsDialog({
                 </> : null}
                 {pane === "assistant" ? <>
                   <PaneHead icon={MessageSquareIcon} title={t("Chat")} />
-                  <AssistantSettings value={context} />
+                  <AssistantSettings value={context} ai={aiValue} />
                 </> : null}
                 {pane === "ai-advanced" ? <>
                   <PaneHead icon={ActivityIcon} title={t("Advanced")} />
-                  <AdvancedAiSettings value={context} ai={aiValue} papers={paperValue} />
+                  <AdvancedAiSettings value={context} />
                 </> : null}
                 {pane === "prompts" ? <PromptsSettings value={prompts} /> : null}
                 {pane === "integrations" ? <IntegrationSettings key={getCurrentWorkspace()} workspaceId={getCurrentWorkspace()} /> : null}
-                {pane === "account" ? <UsersSettings value={users} selfOnly /> : null}
+                {pane === "account" ? <>
+                  <UsersSettings value={users} selfOnly />
+                  {workspace ? <SyncSettings value={workspace} papers={papers} /> : null}
+                </> : null}
                 {pane === "users" ? <UsersSettings value={users} /> : null}
                 {pane === "workspaces" ? <WorkspacesSettings value={workspace} onServer={available("server") ? () => navigate("server", t("Shared workspaces")) : null} /> : null}
-                {pane === "sync" ? <SyncSettings value={workspace} papers={papers} /> : null}
                 {pane === "backups" && backups ? <WorkspaceBackups value={backups} /> : null}
                 {pane === "server" ? <ServerSettings value={server} /> : null}
                 {pane === "diagnostics" ? <AdvancedSettings value={diagnostics} /> : null}

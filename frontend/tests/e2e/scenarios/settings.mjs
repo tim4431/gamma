@@ -38,6 +38,13 @@ export async function settingsScenarios(env) {
     try {
       await openSettings(page);
       await nav(page, "Reading & editing").click();
+      // Microsoft's free service needs no setup: only a Test button.
+      const microsoft = row(page, "Microsoft (free)");
+      assert((await microsoft.innerText()).includes("No key needed"));
+      assertEq(await microsoft.getByRole("button").count(), 1);
+      await page.route("**/api/translate/engines/microsoft/test", (route) => route.fulfill({ json: { ok: true, text: "TEST-OK" } }));
+      await microsoft.getByRole("button", { name: "Test", exact: true }).click();
+      await until(() => microsoft.innerText().then((text) => text.includes("TEST-OK")));
       const google = row(page, "Google Cloud Translation");
       assert((await google.innerText()).includes("Not set up"));
       await google.getByRole("button", { name: "Set up", exact: true }).click();
@@ -54,14 +61,13 @@ export async function settingsScenarios(env) {
       await row(page, "Translate with").getByRole("button", { name: "Translate with", exact: true }).click();
       await page.locator(".uiSelectMenu").getByRole("button", { name: "Google Cloud Translation" }).click();
       await until(() => page.evaluate(() => localStorage.getItem("gamma-translate-model")).then((v) => v === "engine:google"));
-      // Reasoning effort means nothing to a translation service.
-      await nav(page, "Advanced").click();
+      // Reasoning effort means nothing to a translation service; the speed
+      // rows sit in the same Translation section.
       await row(page, "Parallel requests").waitFor();
       assertEq(await row(page, "Translation effort").count(), 0);
-      await nav(page, "Reading & editing").click();
       await google.getByRole("button", { name: "Remove key", exact: true }).click();
       await until(() => google.innerText().then((text) => text.includes("Not set up")));
-      assertEq((await user.api("/api/ai/models")).translate_engines.length, 0);
+      assertEq((await user.api("/api/ai/models")).translate_engines.map((e) => e.id).join(), "engine:microsoft");
       assertNoProblems(page);
     } finally {
       await ctx.close();
@@ -442,7 +448,7 @@ export async function settingsScenarios(env) {
       await row(page, "Enter key").getByRole("button", { name: "New note", exact: true }).click();
       await until(() => sync("Notes").then((v) => v === "syncing"));
       assertEq(await sync("Search opens as"), "saved");
-      assertEq(await sync("PDF viewer"), "saved");
+      assertEq(await sync("PDFs"), "saved");
       await until(() => sync("Notes").then((v) => v === "saved"));
       assertEq((await user.api("/api/prefs/profile")).value?.enterNewNote, true);
       await nav(page, "Appearance").click();
@@ -496,7 +502,7 @@ export async function settingsScenarios(env) {
       if (flags.keep) await page.screenshot({ path: `${server.dir}/settings-appearance.png`, animations: "disabled" });
       await nav(page, "Diagnostics").click();
       assertEq(await nav(page, "Back to settings").count(), 0, "one sidebar: no second-level navigation");
-      await nav(page, "Library").click();
+      await nav(page, "Appearance").click();
       if (flags.keep) await page.screenshot({ path: `${server.dir}/settings-library.png`, animations: "disabled" });
       await page.getByRole("checkbox", { name: "Labels", exact: true }).uncheck();
       await page.getByRole("checkbox", { name: "Thumbnails", exact: true }).uncheck();
@@ -539,7 +545,7 @@ export async function settingsScenarios(env) {
       await page.getByRole("button", { name: "Account & settings", exact: true }).waitFor();
       await openSettings(page);
       assertEq(await page.getByRole("button", { name: "Solarized Light", exact: true }).getAttribute("aria-pressed"), "true");
-      await nav(page, "Library").click();
+      await nav(page, "Appearance").click();
       assertEq(await page.getByRole("checkbox", { name: "Folders", exact: true }).isChecked(), true);
       assertEq(await page.getByRole("checkbox", { name: "Labels", exact: true }).isChecked(), false);
       assertEq(await page.getByRole("checkbox", { name: "Thumbnails", exact: true }).isChecked(), false);
@@ -719,7 +725,7 @@ export async function settingsScenarios(env) {
       await row(page, "Enter key").getByRole("button", { name: "New note", exact: true }).click();
       assert((await row(page, "Enter key").innerText()).includes("Shift+Enter inserts a new line"));
       await page.getByRole("button", { name: "Back", exact: true }).click();
-      await nav(page, "Library").click();
+      await nav(page, "Appearance").click();
       for (const [folders, labels, mode] of [[false, false, "off"], [false, true, "labels"], [true, false, "folders"], [true, true, "both"]]) {
         await page.getByRole("checkbox", { name: "Folders", exact: true }).setChecked(folders);
         await page.getByRole("checkbox", { name: "Labels", exact: true }).setChecked(labels);
@@ -825,7 +831,7 @@ export async function settingsScenarios(env) {
     const { ctx, page } = await setup();
     try {
       await openSettings(page);
-      await nav(page, "Account").click();
+      await nav(page, "Account & sync").click();
       await page.locator(".settingsPane .aiProvRow").waitFor();
       assertEq(await page.locator(".settingsPane .aiProvRow").count(), 1);
       await nav(page, "Server").click();

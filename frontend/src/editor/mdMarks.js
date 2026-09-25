@@ -237,7 +237,7 @@ export function colorSpan(color, background) {
   return `<span style="${background ? `background:${color}55` : `color:${color}`}">`;
 }
 
-// Ctrl+Enter on a line: "- [ ] " ↔ "- [x] "; a line without a checkbox gets
+// Toggle to-do (editor/blockCommands.js) on a line: "- [ ] " ↔ "- [x] "; a line without a checkbox gets
 // one in front of its text (after a list marker it already has). Returns
 // the new text and where the caret lands, moved by the inserted marker,
 // plus the line's replacement ({from, to, insert}) for a minimal dispatch.

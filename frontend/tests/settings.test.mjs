@@ -19,7 +19,7 @@ test("permission presets preserve explicit restrictions and the applicable tools
 });
 
 test("settings search finds controls on nested AI pages without exposing inaccessible management pages", () => {
-  const allowed = ["appearance", "reading", "library", "ai", "assistant", "ai-advanced", "prompts", "account", "maintenance", "diagnostics"];
+  const allowed = ["appearance", "reading", "ai", "assistant", "ai-advanced", "prompts", "account", "maintenance", "diagnostics"];
   assert.equal(searchSettings("translation concurrency", allowed)[0].label, "Parallel requests");
   assert.equal(searchSettings("  FLIP colors  ", allowed)[0].pane, "appearance");
   assert.equal(searchSettings("password", allowed).some((item) => item.pane === "users"), false);
@@ -31,6 +31,7 @@ test("settings search finds controls on nested AI pages without exposing inacces
 test("legacy settings destinations resolve to the reorganized pages", () => {
   for (const old of ["notes", "viewer", "search"]) assert.equal(resolveSettingsPane(old), "reading");
   assert.equal(resolveSettingsPane("context"), "ai-advanced");
+  assert.equal(resolveSettingsPane("library"), "appearance");
   for (const id of ["assistant", "prompts", "ai-advanced"]) assert.equal(resolveSettingsPane(id), id);
   assert.equal(resolveSettingsPane("general"), "appearance");
   assert.equal(resolveSettingsPane("workspace"), "workspaces");

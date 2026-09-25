@@ -29,17 +29,23 @@ All state is SQLite + files on disk under a data directory (env
     `access` private/public, `public_role`, `quota_mb`) and
     `workspace_members` (`workspace_id`, `username`, `role`
     owner/editor/viewer — a personal workspace has exactly its account);
+  - `pending_memberships` — shared-workspace invitations by Gamma Cloud
+    username, keyed by workspace and cloud `subject`, waiting for that
+    person's first sign-in ([workspaces.md](workspaces.md) "Pending
+    invitations");
   - `shares` — page share links, one per `(workspace_id, page_id)`, with
     `created_by`, `audience` anyone/users/list, `role` view/edit and the
     comma-separated `allowed_users`;
   - `user_prefs` — small JSON values per `(username, workspace_id, key)`:
-    workspace `''` for the account-wide keys (`db.USER_PREF_KEYS`:
-    appearance, the active AI provider, the AI provider entries with their
-    secrets), the workspace id for everything that names its pages (open
+    workspace `''` for the account-wide keys (`db.USER_PREF_KEYS`: the
+    preference `profile`, the active AI provider, the AI provider entries
+    and the machine-translation keys with their secrets, the seen notices),
+    the workspace id for everything that names its pages (open
     tabs, recents, pinned folders, reading positions);
   - `settings` — admin-tunable server settings (KV), including the
-    admin-confirmed `public_url` and the shared AI provider entries
-    (`ai_providers`, keys encrypted, [ai.md](ai.md));
+    admin-confirmed `public_url`, the shared AI provider entries
+    (`ai_providers`, keys encrypted, [ai.md](ai.md)) and the `cloud_*`
+    keys of the cloud sign-in (below);
   - `publisher_sessions` — encrypted publisher cookie snapshots per
     `(username, host)`, imported by the Connector ([extension.md](extension.md));
   - `integration_tokens` — hashed assistant tokens per account and workspace
@@ -47,8 +53,8 @@ All state is SQLite + files on disk under a data directory (env
     expiring records ([mcp.md](mcp.md));
   - `mirrors` — the offline copies of remote workspaces: the local workspace,
     the remote's address and workspace, the write token (Fernet-encrypted
-    with the data directory's key), the feed cursors and the last round's
-    status ([mirror.md](mirror.md)).
+    with the data directory's key), the feed cursors, the last round's
+    status and the `page_filter` of a publication ([mirror.md](mirror.md)).
 - `workspaces/<id>/pages.db` — the core data model: the `unified_blocks`
   table. Everything is a block (self-referential `parent_id`, fractional-index
   `position` strings like `a0`, `a0V` from the `fractional-indexing` package).
@@ -133,12 +139,15 @@ token, finds the `identities` row (or links, claims or provisions one per
 the admin's policy), inserts the same `sessions` row the password login
 does (marked `via = 'cloud'`) and sets the same cookie. The hourly grant
 check (`gamma/cloud_sync.py`) deletes those rows, and only those, once the
-account server refuses the account's grant. An account the cloud provisioned has an
-EMPTY password hash and the password login refuses it. `manage.py
-set-password` gives it one. The settings live in the `settings` KV:
-`cloud_issuer`, `cloud_client_id`, `cloud_client_secret` (Fernet-encrypted
-with the data directory's key) and `cloud_policy`. A provisioned container
-takes them from `GAMMA_CLOUD_*` instead.
+account server refuses the account's grant. An account the cloud
+provisioned has an EMPTY password hash and the password login refuses it.
+`manage.py set-password` gives it one. The settings live in the `settings`
+KV: `cloud_issuer`, `cloud_client_id`, `cloud_client_secret`
+(Fernet-encrypted with the data directory's key), `cloud_policy` and
+`cloud_share_host`. A provisioned container takes them from `GAMMA_CLOUD_*`
+instead. The same KV keeps `cloud_device_id` (this install's name at the
+account server) and `cloud_server_url` (a sidecar's loopback address for the
+server list).
 
 ## First-run seeding
 

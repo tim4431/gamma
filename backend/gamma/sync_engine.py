@@ -67,6 +67,7 @@ MODES = ("two-way", "pull", "off")   # off = detached: the link (token, cursors,
 ADOPT = ("theirs", "mine")           # whose version a never-reconciled page takes (a linked workspace, a force)
 DEBOUNCE_S = 1.0                     # a local edit → a round once things have been quiet this long (the loop wakes for it)
 TICK_S = 1                           # the loop's clock
+WHOAMI_TTL_S = 900                   # how long a round trusts the remote's last whoami (a failed round asks again)
 STREAM_CHUNK = 256 * 1024
 default_fetch = None       # the tests point this at an in-process TestClient; None = urllib
 UPLOAD_NAME_RE = re.compile(r"^[0-9a-f]{8,64}\.[a-z0-9]{1,8}$")
@@ -279,6 +280,23 @@ def whoami(remote: Remote) -> dict:
     """The remote's view of the token: ``{user, workspace: {id, name}, role,
     scope}`` (``GET /api/sync/whoami``)."""
     return remote.get("/api/sync/whoami")
+
+
+_whoami_seen: dict[str, tuple[tuple, float, dict]] = {}  # ws -> ((url, remote ws, token), when, answer)
+
+
+def _round_whoami(ws: str, mirror: dict, remote: Remote) -> dict:
+    """``whoami`` for a round: the answer an earlier round got for the same
+    link while it is younger than ``WHOAMI_TTL_S``, else a fresh one. A
+    round that ends with any error forgets it (``_round``), so a revoked
+    token or a lowered role is seen by the next round."""
+    key = (mirror["remote_url"], mirror["remote_ws"], mirror["token"])
+    seen = _whoami_seen.get(ws)
+    if seen and seen[0] == key and time.monotonic() - seen[1] < WHOAMI_TTL_S:
+        return seen[2]
+    me = whoami(remote)
+    _whoami_seen[ws] = (key, time.monotonic(), me)
+    return me
 
 
 def _check_remote(remote_url: str, token: str, mode: str, fetch) -> tuple[str, dict, str]:
@@ -1212,7 +1230,7 @@ def _round(ws: str, mirror: dict, fetch) -> dict:
     report["progress"] = file_progress
     mode = mirror["mode"]
     try:
-        me = whoami(remote)
+        me = _round_whoami(ws, mirror, remote)
         role = me.get("role") if me else None
         if mode == "two-way" and (me.get("scope") != "write" or role == "viewer"):
             report["errors"].append("the token or your role on the remote is read-only: pulling only")
@@ -1267,6 +1285,8 @@ def _round(ws: str, mirror: dict, fetch) -> dict:
     except Exception as e:  # noqa: BLE001 — whatever happens, the running flag comes down
         status = {**status, "running": False, "last_error": str(e), "last_attempt": page_now()}
         log.warning(f"[mirror] {ws}: {e}")
+    if status.get("last_error"):
+        _whoami_seen.pop(ws, None)
     status.pop("errors", None)
     status.pop("progress", None)
     _save(ws, status=status)

@@ -1,5 +1,6 @@
-"""Machine-translation engines for the PDF translated view: Google Cloud
-Translation and Youdao, next to the LLM path in routers/ai.py.
+"""Machine-translation engines for the PDF translated view: Microsoft (the
+Edge browser's free endpoint, no key), Google Cloud Translation and Youdao,
+next to the LLM path in routers/ai.py.
 
 An engine is picked like a model: the viewer sends ``model: "engine:<id>"``
 to /api/ai/translate, which then calls ``translate()`` here instead of a chat
@@ -29,18 +30,39 @@ MODEL_PREFIX = "engine:"
 MAX_FIELD_LEN = 512
 TIMEOUT = 60
 
+# Microsoft: the endpoint the Edge browser's own page translation calls —
+# unauthenticated, unofficial and undocumented (it replaced the
+# /translate/auth token flow, which Microsoft retired in July 2026), so it
+# may change or throttle without notice. Same reply shape as Translator v3.
+MICROSOFT_URL = "https://edge.microsoft.com/translate/translatetext"
 GOOGLE_URL = "https://translation.googleapis.com/language/translate/v2"
 YOUDAO_URL = "https://openapi.youdao.com/v2/api"
 
-# Per engine: its credential fields (secret ones are masked when listed) and
-# its codes for the viewer's target languages (TRANSLATE_LANGS in
-# routers/ai.py).
+# The viewer's allowlisted target languages, for both translation paths:
+# code → the name the LLM prompt (routers/ai.py) splices in. Mirrored in
+# frontend/src/app/prefDefs.js TRANSLATE_LANGS — keep the two in sync.
+TRANSLATE_LANGS = {
+    "en": "English", "zh-CN": "Simplified Chinese", "zh-TW": "Traditional Chinese",
+    "ja": "Japanese", "ko": "Korean", "de": "German", "fr": "French",
+    "es": "Spanish", "pt": "Portuguese", "it": "Italian", "ru": "Russian",
+}
+
+# Per engine: its credential fields (secret ones are masked when listed; an
+# engine without fields needs no setup and is always offered) and its codes
+# for TRANSLATE_LANGS.
 ENGINES = {
+    "microsoft": {
+        "label": "Microsoft (free)",
+        "fields": [],
+        "langs": {"en": "en", "zh-CN": "zh-Hans", "zh-TW": "zh-Hant", "ja": "ja", "ko": "ko",
+                  "de": "de", "fr": "fr", "es": "es", "pt": "pt", "it": "it", "ru": "ru"},
+        # Refuses requests past ~50k characters (measured); stay well under.
+        "batch": (100, 20000),
+    },
     "google": {
         "label": "Google Cloud Translation",
         "fields": [{"id": "api_key", "secret": True}],
-        "langs": {code: code for code in (
-            "en", "zh-CN", "zh-TW", "ja", "ko", "de", "fr", "es", "pt", "it", "ru")},
+        "langs": {code: code for code in TRANSLATE_LANGS},
         # Google's documented cap is 128 segments per request; the character
         # cap keeps each request well under its payload limit.
         "batch": (100, 25000),
@@ -70,6 +92,8 @@ def load(user: str) -> dict:
 
 
 def _complete(engine: str, conf: dict | None) -> bool:
+    if not ENGINES[engine]["fields"]:
+        return True  # nothing to set up
     return bool(conf) and all((conf.get(f["id"]) or "").strip() for f in ENGINES[engine]["fields"])
 
 
@@ -93,7 +117,8 @@ def masked(user: str, can_edit: bool) -> dict:
             value = (conf.get(f["id"]) or "").strip()
             fields[f["id"]] = ("…" + value[-4:] if len(value) > 8 else "set") if f["secret"] and value else value
         rows.append({"id": eid, "label": e["label"], "configured": _complete(eid, conf),
-                     "fields": fields, "updated_at": conf.get("updated_at", "")})
+                     "needs_key": bool(e["fields"]), "fields": fields,
+                     "updated_at": conf.get("updated_at", "")})
     return {"engines": rows, "can_edit": can_edit}
 
 
@@ -102,6 +127,8 @@ def save(user: str, engine: str, fields: dict) -> None:
     value (the form never sees it); a plain field is taken as given."""
     if engine not in ENGINES:
         raise HTTPException(status_code=404, detail="unknown translation engine")
+    if not ENGINES[engine]["fields"]:
+        raise HTTPException(status_code=400, detail=f"{ENGINES[engine]['label']} needs no key")
     saved = load(user)
     old = saved.get(engine) or {}
     conf = {}
@@ -142,7 +169,7 @@ def credentials(user: str, engine: str) -> dict:
     if not _complete(engine, conf):
         raise HTTPException(status_code=503,
                             detail=f"{ENGINES[engine]['label']} is not set up — add its key in Settings → Reading")
-    return conf
+    return conf or {}
 
 
 # --- translation --------------------------------------------------------------
@@ -154,7 +181,7 @@ def translate(engine: str, conf: dict, texts: list, lang: str) -> list:
     target = e["langs"].get(lang)
     if not target:
         raise EngineError(f"{e['label']} does not translate into {lang}")
-    call = _google if engine == "google" else _youdao
+    call = {"microsoft": _microsoft, "google": _google, "youdao": _youdao}[engine]
     out = []
     for batch in _batches(texts, *e["batch"]):
         out.extend(call(conf, batch, target))
@@ -178,10 +205,16 @@ def _send(req: Request, name: str) -> dict:
         with urlopen(req, timeout=TIMEOUT) as resp:
             return json.loads(resp.read().decode("utf-8"))
     except HTTPError as err:
+        # A JSON {"error": {"message"}} body (Google, Microsoft), else the
+        # start of a plain-text one.
         detail = ""
         try:
-            body = json.loads(err.read().decode("utf-8"))
-            detail = (body.get("error") or {}).get("message", "") if isinstance(body, dict) else ""
+            raw = err.read().decode("utf-8", "replace")
+            try:
+                body = json.loads(raw)
+                detail = (body.get("error") or {}).get("message", "") if isinstance(body, dict) else ""
+            except ValueError:
+                detail = raw.strip()[:200]
         except Exception:
             pass
         raise EngineError(f"{name}: HTTP {err.code}{' — ' + detail if detail else ''}") from None
@@ -189,6 +222,22 @@ def _send(req: Request, name: str) -> dict:
         raise EngineError(f"{name}: {getattr(err, 'reason', err)}") from None
     except ValueError:
         raise EngineError(f"{name}: unreadable reply") from None
+
+
+def _microsoft(conf: dict, texts: list, target: str) -> list:
+    # No "from": the service detects the source language per text.
+    query = urlencode({"to": target, "isEnterpriseClient": "false"})
+    req = Request(f"{MICROSOFT_URL}?{query}", data=json.dumps(texts).encode("utf-8"), method="POST",
+                  headers={"Content-Type": "application/json"})
+    data = _send(req, "Microsoft")
+    if not isinstance(data, list) or len(data) != len(texts):
+        raise EngineError("Microsoft: unexpected reply")
+    out = []
+    for item, t in zip(data, texts):
+        tr = (item.get("translations") or [{}])[0] if isinstance(item, dict) else {}
+        text = tr.get("text") if isinstance(tr, dict) else None
+        out.append(str(text) if text else t)
+    return out
 
 
 def _google(conf: dict, texts: list, target: str) -> list:

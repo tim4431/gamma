@@ -864,6 +864,16 @@ body {
 }
 .blockEditorCm .cmImgWidget:hover img { box-shadow: 0 0 0 2px var(--accent-bg-light); }
 .blockEditorCm .cm-line.cmImgLine { text-align: center; }
+.blockEditorCm .cmImgWidget[draggable="true"] { cursor: grab; }
+/* The editor's table widget: the rendered table's look, read-only (cells are
+   edited in the rendered view); a click puts the caret after it, right-click
+   shows the source, and it drags like the picture. */
+.blockEditorCm .cmTableWidget { display: inline-block; max-width: 100%; overflow-x: auto; margin: 4px 0; border-radius: 6px; cursor: grab; vertical-align: top; }
+.blockEditorCm .cmTableWidget table { border-collapse: collapse; font-size: 0.95em; }
+.blockEditorCm .cmTableWidget :is(th, td) { border: 1px solid var(--border); padding: 3px 8px; text-align: left; min-width: 36px; white-space: nowrap; }
+.blockEditorCm .cmTableWidget :is(th, td):empty::after { content: "\00a0"; }
+.blockEditorCm .cmTableWidget th { background: var(--bg-block); font-weight: 600; }
+.blockEditorCm .cmTableWidget:hover { box-shadow: 0 0 0 2px var(--accent-bg-light); }
 .blockEditorCm .cmHrLine {
   display: block;
   border-top: 1px solid var(--border);
@@ -1219,8 +1229,10 @@ body {
 .mdTableAlignRow { display: flex; justify-content: center; padding: 6px 10px 5px; }
 .mdTableColHandle { top: -7px; transform: translateX(-50%); width: 22px; height: 13px; }
 .mdTableRowHandle { left: -8px; transform: translateY(-50%); width: 13px; height: 22px; }
+.mdTableHandle:hover { color: var(--text-bright); background: var(--bg-subtle); }
 /* The whole-table handle in the top-left corner: shows with the + strips,
-   selects the table and opens its menu (copy, delete). */
+   selects the table and opens its menu (the object menu; in an embed card,
+   copy / delete). */
 .mdTableCorner {
   top: -8px; left: -9px; width: 15px; height: 15px;
   display: flex; align-items: center; justify-content: center;
@@ -1241,7 +1253,6 @@ body {
 .mdObject.mdObject-mermaid.mdObjectSelected .mermaidDiagram { border-color: transparent; }
 /* Dropping an object inside a block: the line in the gap it lands in. */
 .dropIndicatorInside { transform: translateY(-1px); border-radius: 1px; }
-.mdTableHandle:hover { color: var(--text-bright); background: var(--bg-subtle); }
 /* The in-place cell editor: an input laid exactly over the clicked cell.
    Tab/Shift-Tab move between cells, Enter commits, Esc cancels. */
 .mdTableCellInput {
@@ -1274,6 +1285,7 @@ body {
   max-width: 100%;
 }
 .mdImgFrame .mdImg { display: block; cursor: zoom-in; }
+.mdObject[draggable="true"] .mdImg { cursor: grab; }
 .mdImgTools {
   position: absolute;
   top: 6px;
@@ -2585,7 +2597,7 @@ mark.merge-del { background: color-mix(in srgb, var(--danger) 16%, transparent);
 .shareLinkBtns { display: inline-flex; align-items: center; gap: 6px; }
 /* Gamma Cloud (PublishSection): the not-published row's sentence or refusal
    wraps; the state line's Sync-now button sits at its end. */
-.sharePopover .setRow[data-setting="Publish"] .settingDesc { white-space: normal; }
+.sharePopover .publishRow .settingDesc { white-space: normal; }
 .sharePopover .publishState { padding: 0 8px 6px 16px; }
 .publishState .mirrorStateLine { align-items: center; }
 .sharePopover .mirrorConfirm { padding: 4px 8px 6px 16px; }
@@ -5446,7 +5458,7 @@ html.appFocusFullscreen, html.appFocusFullscreen body { overflow: hidden; oversc
 .mcpConnectionDetails summary { cursor: pointer; color: var(--text-secondary); }
 .mcpConsentActions { display: grid; gap: 8px; margin-bottom: 16px; }
 
-/* Key caps: a chord shown as its keys (settings kit KeyCaps, the palette) */
+/* Key caps: a chord shown as its keys (settings kit KeyCaps) */
 .keyCaps { display: inline-flex; align-items: center; gap: 3px; }
 .keyCap {
   display: inline-block;

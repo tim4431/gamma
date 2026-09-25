@@ -27,6 +27,7 @@ const MAX_RECORDING_SECONDS = 180;
 const RECORDING_TYPES = ["video/webm;codecs=vp9", "video/webm;codecs=vp8", "video/webm", "video/mp4"];
 
 const fmtClock = (s) => `${Math.floor(s / 60)}:${String(s % 60).padStart(2, "0")}`;
+const stopTracks = (stream) => stream.getTracks().forEach((track) => track.stop());
 
 export default function ReportProblem({ facts, onClose, setStatus }) {
   const [description, setDescription] = useState("");
@@ -77,7 +78,7 @@ export default function ReportProblem({ facts, onClose, setStatus }) {
   // Leaving the dialog mid-capture (a reload, a route change) ends it.
   useEffect(() => () => {
     const l = liveRef.current;
-    if (l) { try { l.recorder.stop(); } catch {} l.stream.getTracks().forEach((t) => t.stop()); }
+    if (l) { try { l.recorder.stop(); } catch {} stopTracks(l.stream); }
   }, []);
   useEffect(() => () => { if (recording?.url) URL.revokeObjectURL(recording.url); }, [recording]);
 
@@ -91,12 +92,12 @@ export default function ReportProblem({ facts, onClose, setStatus }) {
       setStatus(t("Screen recording was not allowed."));
       return;
     }
-    const type = RECORDING_TYPES.find((t) => MediaRecorder.isTypeSupported(t)) || "";
+    const type = RECORDING_TYPES.find((mime) => MediaRecorder.isTypeSupported(mime)) || "";
     let recorder;
     try {
       recorder = new MediaRecorder(stream, { ...(type ? { mimeType: type } : {}), videoBitsPerSecond: 1500000 });
     } catch {
-      stream.getTracks().forEach((t) => t.stop());
+      stopTracks(stream);
       setStatus(t("This browser cannot record the screen."));
       return;
     }
@@ -104,7 +105,7 @@ export default function ReportProblem({ facts, onClose, setStatus }) {
     const startedAt = Date.now();
     recorder.ondataavailable = (e) => { if (e.data?.size) chunks.push(e.data); };
     recorder.onstop = () => {
-      stream.getTracks().forEach((t) => t.stop());
+      stopTracks(stream);
       const blob = new Blob(chunks, { type: recorder.mimeType || type || "video/webm" });
       const ext = /mp4/.test(blob.type) ? "mp4" : "webm";
       const stamp = new Date().toISOString().slice(0, 16).replace(/[-:]/g, "").replace("T", "-");

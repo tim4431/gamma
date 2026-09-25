@@ -45,5 +45,5 @@ export function useNotices(enabled) {
     }
   }, []);
   const summary = useMemo(() => summarizeNotices(list), [list]);
-  return useMemo(() => ({ list, ...summary, markSeen, refresh }), [list, summary, markSeen, refresh]);
+  return useMemo(() => ({ ...summary, markSeen }), [summary, markSeen]);
 }

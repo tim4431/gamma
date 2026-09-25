@@ -113,25 +113,25 @@ def _conflict_marks(username, publications):
 
 @source()
 def mirror_conflicts(username):
-    """Open conflicts in the clones the account owns (Settings →
-    Workspaces → Clones). Fingerprint: per clone, the count and the newest
+    """Open conflicts in the clones the account owns (Settings → Account & sync →
+    Clones). Fingerprint: per clone, the count and the newest
     conflict — a new one brings the notice back, resolving old ones does
     not."""
     marks, total = _conflict_marks(username, publications=False)
     if not total:
         return None
-    return Notice("mirror-conflicts", ",".join(marks), "warn", "workspaces",
+    return Notice("mirror-conflicts", ",".join(marks), "warn", "account",
                   f"{_plural(total, 'sync conflict')} to look at in your clones")
 
 
 @source()
 def publish_conflicts(username):
     """Open conflicts in the pages the account publishes to Gamma Cloud
-    (Settings → Sync → Publishing), fingerprinted like the clones'."""
+    (Settings → Account & sync → Publishing), fingerprinted like the clones'."""
     marks, total = _conflict_marks(username, publications=True)
     if not total:
         return None
-    return Notice("publish-conflicts", ",".join(marks), "warn", "sync",
+    return Notice("publish-conflicts", ",".join(marks), "warn", "account",
                   f"{_plural(total, 'sync conflict')} to look at in your published pages")
 
 

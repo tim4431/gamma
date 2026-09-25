@@ -7,8 +7,8 @@ import json
 import re
 from urllib.request import Request as URLRequest
 
-from .base import (TOOL_IMAGES_NOTE, Protocol, as_int, attach_index, multipart_body, parse_tool_args,
-                   tool_image_turns)
+from .base import (EMPTY_REPLY_HINT, TOOL_IMAGES_NOTE, Protocol, as_int, attach_index, multipart_body,
+                   parse_tool_args, tool_image_turns)
 from .responses import OPENAI_RESPONSES
 
 # Listings include models the chat endpoint can't use.
@@ -92,9 +92,7 @@ class OpenAIChat(Protocol):
         text = (choices[0].get("message") or {}).get("content") or ""
         if not text.strip():
             reason = choices[0].get("finish_reason", "unknown")
-            raise RuntimeError(
-                f"empty response (finish_reason={reason} — a reasoning model may have spent "
-                "the whole token budget thinking; try effort: low or a shorter request)")
+            raise RuntimeError(f"empty response (finish_reason={reason} — {EMPTY_REPLY_HINT})")
         return text
 
     def usage(self, raw):

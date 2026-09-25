@@ -264,8 +264,8 @@ export default function SearchPanel({
   useEffect(() => { if (open) setShowDetails(detailsDefault); }, [open]);
 
   const kindBadge = (r) => (
-    r.kind === t("highlight") ? <span className="searchKindBadge">{t("highlight")}</span>
-      : r.kind === t("link") ? <span className="searchKindBadge">{t("link")}</span> : null
+    r.kind === "highlight" ? <span className="searchKindBadge">{t("highlight")}</span>
+      : r.kind === "link" ? <span className="searchKindBadge">{t("link")}</span> : null
   );
   const noteRow = (r) => (
     <button key={r.id} className="searchResult" onClick={() => openNoteHit(r)}>

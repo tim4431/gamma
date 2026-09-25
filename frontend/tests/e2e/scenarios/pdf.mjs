@@ -441,8 +441,7 @@ export async function pdfScenarios({ server, browser, alice, makePdf, step, unti
       await button.click();
       await page.locator('[data-page="1"] .pdfTransPara').first().waitFor();
       await page.getByRole("button", { name: "Hide translation", exact: true }).waitFor();
-      // Page 2 isn't translated yet: the button offers to translate it
-      // (it used to only hide page 1's translation from here).
+      // Page 2 isn't translated yet: the button offers to translate it.
       await goTo(2);
       await button.click();
       await page.locator('[data-page="2"] .pdfTransPara').first().waitFor();

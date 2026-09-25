@@ -54,8 +54,8 @@ function useMinimumSpin(spin) {
     if (spin) { since.current = Date.now(); setHeld(true); return undefined; }
     const left = MIN_SPIN_MS - (Date.now() - since.current);
     if (left <= 0) { setHeld(false); return undefined; }
-    const t = setTimeout(() => setHeld(false), left);
-    return () => clearTimeout(t);
+    const timer = setTimeout(() => setHeld(false), left);
+    return () => clearTimeout(timer);
   }, [spin]);
   return spin || held;
 }
@@ -93,13 +93,14 @@ export function Section({ title, scope, prefs, action, guide, children }) {
 }
 
 // Keep the row compact: icon, label, short hint, and a shared control.
-// Longer explanations use the native hover tooltip.
-export function Row({ icon: Icon, label, hint, title, children }) {
+// Longer explanations use the native hover tooltip. `scope="browser"` tags
+// the one row of an account section whose value stays with this browser.
+export function Row({ icon: Icon, label, hint, title, scope, className = "", children }) {
   return (
-    <div className="settingRow setRow" data-setting={label} title={title}>
+    <div className={`settingRow setRow ${className}`} data-setting={label} title={title}>
       <span className="setIcon">{Icon ? <Icon size={15} /> : null}</span>
       <div className="settingText">
-        <span className="settingLabel">{label}</span>
+        <span className="settingLabel">{label}{scope ? <ScopeTag scope={scope} /> : null}</span>
         {hint ? <span className="settingDesc">{hint}</span> : null}
       </div>
       {children}
@@ -490,12 +491,12 @@ export function AccountPicker({ accounts, exclude = [], value, onChange, placeho
   React.useEffect(() => {
     if (!hidden || !typed) { setFound([]); return undefined; }
     let live = true;
-    const t = setTimeout(() => {
+    const timer = setTimeout(() => {
       apiJson(`${API}/accounts?q=${encodeURIComponent(typed)}`)
         .then((d) => { if (live) setFound(d.accounts || []); })
         .catch(() => { if (live) setFound([]); });
     }, 250);
-    return () => { live = false; clearTimeout(t); };
+    return () => { live = false; clearTimeout(timer); };
   }, [hidden, typed]);
   const directory = hidden ? found : accounts;
   const skip = new Set(exclude);

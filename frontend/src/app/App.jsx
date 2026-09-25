@@ -82,7 +82,7 @@ import { loadSession, saveSession, clearSession, setSessionScope } from "./sessi
 import { ROLE_LABEL, workspaceMeta } from "../settings/SettingsWorkspace";
 import { AuthLoading, LoginPage, SessionConflictPage, ShareBlockedPage, WorkspaceUnavailablePage } from "../auth/LoginPage";
 import { McpAuthorization } from "../auth/McpConsent";
-import { TRANSLATE_LANGS, useAppPrefs, useProfileSync } from "./prefs";
+import { FREE_TRANSLATE_ENGINE, TRANSLATE_LANGS, useAppPrefs, useProfileSync } from "./prefs";
 import { useNotices } from "./useNotices";
 import { dotTone } from "./notices";
 import { useBlockHistory } from "../editor/blockHistory.js";
@@ -2369,6 +2369,10 @@ function LibraryApp({ publicPage = null, initialServerConfig = null }) {
   // `tasksNonce` (wakeTasks) so the first fast poll happens right away.
   const [tasksNonce, setTasksNonce] = useState(0);
   const wakeTasks = useCallback(() => setTasksNonce((n) => n + 1), []);
+  // Booleans, so other popovers and the first answer's `active: false`
+  // don't re-run the effect (each run fetches at once).
+  const tasksPopoverOpen = openPopover === "downloads";
+  const indexingActive = Boolean(indexTask?.active);
   useEffect(() => {
     if (!authUser?.user || shareMode) return;
     let cancelled = false;
@@ -2383,8 +2387,7 @@ function LibraryApp({ publicPage = null, initialServerConfig = null }) {
         .catch(() => {});
     };
     refresh();
-    const fast = openPopover === "downloads" || indexTask?.active;
-    const t = setInterval(refresh, fast ? 2000 : 60000);
+    const t = setInterval(refresh, tasksPopoverOpen || indexingActive ? 2000 : 60000);
     const onVisible = () => { if (!document.hidden) refresh(); };
     document.addEventListener("visibilitychange", onVisible);
     return () => {
@@ -2392,7 +2395,7 @@ function LibraryApp({ publicPage = null, initialServerConfig = null }) {
       clearInterval(t);
       document.removeEventListener("visibilitychange", onVisible);
     };
-  }, [openPopover, authUser?.user, shareMode, indexTask?.active, tasksNonce]);
+  }, [tasksPopoverOpen, authUser?.user, shareMode, indexingActive, tasksNonce]);
 
   // Every folder path in use (from page tags + manually created empties),
   // plus all ancestor prefixes — "readout" exists once "readout/destructive"
@@ -2680,9 +2683,14 @@ function LibraryApp({ publicPage = null, initialServerConfig = null }) {
     const timer = setTimeout(checkAiHealth, 1500);
     return () => clearTimeout(timer);
   }, [authUser?.user, shareMode]);
-  // Entering the AI pane always refetches the masked key list.
+  // Entering the AI panes from elsewhere refetches the masked key list;
+  // moving between them keeps it (their edits refresh it themselves).
+  const prevSettingsPaneRef = useRef(null);
   useEffect(() => {
-    if (["ai", "assistant", "ai-advanced", "context", "prompts"].includes(settingsOpen) && authUser?.user && !shareMode) loadAiKeys();
+    const aiPanes = ["ai", "assistant", "ai-advanced", "context", "prompts"];
+    const cameFrom = prevSettingsPaneRef.current;
+    prevSettingsPaneRef.current = settingsOpen;
+    if (aiPanes.includes(settingsOpen) && !aiPanes.includes(cameFrom) && authUser?.user && !shareMode) loadAiKeys();
   }, [settingsOpen]);
 
   function openAiKeysEditor() {
@@ -3077,13 +3085,17 @@ function LibraryApp({ publicPage = null, initialServerConfig = null }) {
   // The button prompts "this page or whole document"; the queue itself lives
   // in PdfViewer (translateCtl), which calls back into translateParagraphs
   // below for each page. Language and model/engine live in Settings →
-  // Reading › Translation, effort and parallelism in AI › Advanced.
+  // Reading › Translation, effort and parallelism included.
   // A machine-translation engine ("engine:<id>", set up under Settings →
-  // Reading) or a model; a stale pick falls back to the chat model.
+  // Reading) or a model; a stale pick falls back to the chat model — or,
+  // with no AI connection at all, to the free Microsoft service, so the
+  // translate button works out of the box.
   const translateEngines = aiInfo?.translate_engines || [];
   const translateSendModel = translateModel && [...translateEngines, ...scopedAiModels].some((m) => m.id === translateModel)
     ? translateModel
-    : chatSendModel;
+    : !scopedAiModels.length && translateEngines.some((e) => e.id === FREE_TRANSLATE_ENGINE)
+      ? FREE_TRANSLATE_ENGINE
+      : chatSendModel;
   const translateLangLabel = (TRANSLATE_LANGS.find(([code]) => code === translateLang) || ["", ""])[1];
   const pdfTranslateCtl = useRef(null); // imperative surface set by PdfViewer
   const [pdfTransState, setPdfTransState] = useState({ running: false, progress: 0, shown: true, pages: 0 });
@@ -3498,6 +3510,7 @@ function LibraryApp({ publicPage = null, initialServerConfig = null }) {
   const pendingJumpRef = useRef(null);
   // Phase B2a: drop indicator state
   const [dropTarget, setDropTarget] = useState(null); // { targetId, above, rect }
+  const dragLeaveTimer = useRef(null);
 
   useEffect(() => {
     window._gammaSetDropTarget = setDropTarget;
@@ -3696,12 +3709,9 @@ function LibraryApp({ publicPage = null, initialServerConfig = null }) {
       setMerges(map.size ? map : null);
     } catch { setMerges(null); }
   }, [mirrorWs, focusedBlockId, authUser?.user]);
-  useEffect(() => {
-    loadMerges();
-    if (!mirrorWs || !focusedBlockId) return undefined;
-    const t = setInterval(loadMerges, 15000); // rounds run on their own; the pill also signals them
-    return () => clearInterval(t);
-  }, [loadMerges, mirrorWs, focusedBlockId]);
+  // No timer of its own: the sync pill polls the mirror and raises
+  // "gamma:mirror-changed" when its open conflicts move.
+  useEffect(() => { loadMerges(); }, [loadMerges]);
   useEffect(() => {
     window.addEventListener("gamma:mirror", loadMerges);
     window.addEventListener("gamma:mirror-changed", loadMerges);
@@ -8110,6 +8120,7 @@ function LibraryApp({ publicPage = null, initialServerConfig = null }) {
                   onBlockDragOver: (e, block) => {
                     e.preventDefault();
                     e.dataTransfer.dropEffect = "move";
+                    clearTimeout(dragLeaveTimer.current);
                     // Only a block's ⋮⋮ drag or an object frame's drag shows
                     // where it lands: a link or text selection dragged over
                     // the notes has no dragend to take the line away again.
@@ -8143,9 +8154,16 @@ function LibraryApp({ publicPage = null, initialServerConfig = null }) {
                     _dragState.dropTarget = dt;
                     setDropTarget(dt);
                   },
+                  // Hides the line, deferred: a dragleave is followed by
+                  // the next row's dragover within a frame when the pointer
+                  // just crossed rows (and in some engines its relatedTarget
+                  // is null, which would read as "left the notes"). The
+                  // computed target stays — a drop right after a leave still
+                  // lands where the line was; a drop elsewhere goes through
+                  // the window's drop/dragend reset instead.
                   onBlockDragLeave: () => {
-                    setDropTarget(null);
-                    _dragState.dropTarget = null;
+                    clearTimeout(dragLeaveTimer.current);
+                    dragLeaveTimer.current = setTimeout(() => setDropTarget(null), 80);
                   },
                   onBlockDrop: (e, block) => {
                     e.preventDefault();
@@ -8649,7 +8667,7 @@ function LibraryApp({ publicPage = null, initialServerConfig = null }) {
           open={openPopover === "mirror"}
           onToggle={() => setOpenPopover(openPopover === "mirror" ? null : "mirror")}
           jumpTo={(pageId, blockId) => jumpToRef.current?.(pageId, blockId)}
-          onOpenSettings={() => { setSettingsOpen(!workspace.mirror_of && workspace.publishing ? "sync" : "workspaces"); setOpenPopover(null); }}
+          onOpenSettings={() => { setSettingsOpen("account"); setOpenPopover(null); }}
         />
       ) : null}
       {authUser?.user && (
@@ -9529,6 +9547,8 @@ function LibraryApp({ publicPage = null, initialServerConfig = null }) {
           setRecentThumbs,
           fileLabels,
           setFileLabels,
+          syncPillScope: appPrefs.syncPillScope,
+          setSyncPillScope: appPrefs.setSyncPillScope,
           isAdmin: !!authUser?.is_admin,
           setStatus,
           refreshQuota, // keep the client-side pre-upload size check in sync without a re-login

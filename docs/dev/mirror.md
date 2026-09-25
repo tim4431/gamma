@@ -13,7 +13,7 @@ Code: `gamma/sync_engine.py` (the engine and the mirror registry),
 on the remote), `gamma/routers/mirrors.py` (the mirror API on the server
 that holds the copy), `gamma/publish.py` + `gamma/routers/publish.py`
 (publishing a page to the share host, below), `frontend/src/settings/SettingsMirrors.jsx` (Settings →
-Workspaces → Clones), `frontend/src/collaboration/MirrorPopover.jsx`
+Account & sync → Clones), `frontend/src/collaboration/MirrorPopover.jsx`
 (the header's sync pill, its settings and review views),
 `frontend/src/collaboration/MergeResolver.jsx` (the merge chip on a block
 row), `desktop/main.js` `keepOffline` (the shell's one-click flow). Why the
@@ -93,7 +93,10 @@ deleted after it, as one time-ordered stream ([collab.md](collab.md) "The
 change feed" has the cursor rules). The feed is a hint: the engine compares
 each listed page's `seq` with the one it holds and fetches the tree only
 when they differ. `GET /api/sync/whoami` tells the engine who its token is,
-which workspace and role it has there, and whether it may write.
+which workspace and role it has there, and whether it may write. A round
+reuses an earlier round's answer for the same link for 15 minutes
+(`WHOAMI_TTL_S`); a round that ends with an error forgets it, so a revoked
+token or a lowered role shows on the next round.
 
 The local server has the same feed, read in-process, so local edits are
 found the same way; the engine's own writes are tagged client `sync` and
@@ -247,8 +250,12 @@ Shown while a clone is open, in the desktop app and in a browser alike.
   (state, icon, tone, line, tooltip, badge or dot) that the pill, the
   popover and the Settings row share.
 - Polls the mirror every 20 s, every 2 s while a round runs or an edit is
-  pending (the log too while open). When a poll sees the numbers move it
-  raises `gamma:mirror-changed` so the page's conflict chips refresh.
+  pending (the log too while open), only while the pill is shown and the tab
+  is visible; a tab coming back reads at once. A publication's pill off its
+  pages does not poll, and edits there are not pending for it; it reloads on
+  `gamma:mirror` (a publish or unpublish here). When a poll sees the open
+  conflicts move (`conflicts_open` / `conflicts_newest`) it raises
+  `gamma:mirror-changed` so the page's conflict chips refresh.
 
 Click: a popover of icons and numbers.
 
@@ -302,11 +309,12 @@ open (`mergeOpen`) and the page's conflicts in tree order (`mergeOrder`):
 the card's ‹ n / N › step through them, and a decision opens the next one
 down the page, so a page of conflicts is worked through in one pass. App
 reads the page's conflicts (`GET /api/mirrors/{ws}/conflicts?page=`) on
-open, every 15 s and on `gamma:mirror` / `gamma:mirror-changed`; a decision
+open and on `gamma:mirror` / `gamma:mirror-changed` (no timer of its own:
+the pill's poll raises the latter); a decision
 is an ordinary edit the next round pushes. The lists in the pill and in
 Settings jump to the block (`gamma:jump`).
 
-### Settings → Workspaces → Clones (`SettingsMirrors.jsx`)
+### Settings → Account & sync → Clones (`SettingsMirrors.jsx`)
 
 - One row per clone. Its avatar is its state (the same reading as the pill:
   a spinning refresh while a round runs, a check when up to date, a warning
@@ -351,7 +359,7 @@ mirror's own answer apart.
     the cap's refusal (a 409 carrying `limit`) adds an *Open account* button
     to the issuer's portal, the Settings Account row's target.
   - Not published, refused: the `reason` as the row's hint. When the reason
-    is the sign-in one, *Link Gamma Cloud account* opens Settings → Account,
+    is the sign-in one, *Link Gamma Cloud account* opens Settings → Account & sync,
     where the existing link flow runs.
   - Published: the cloud link as the row hint with *Copy link* — the
     answer's `public_url`, the page's pretty address when the share host
@@ -369,17 +377,16 @@ mirror's own answer apart.
 - **The header's sync pill** shows for a publication only on a published
   page (a clone syncs the whole workspace, so its pill is on every page; a
   publication syncs the pages in its filter, so its pill is on those;
-  Settings → Sync → Sync pill, *Synced pages* / *Every page*, can put it on every page instead). Its
+  Settings → Account & sync → Sync pill, *Synced pages* / *Every page*, can put it on every page instead). Its
   tooltip and name line say *Published to Gamma Cloud* with the count of
   pages and the host; its gear keeps *Automatic sync* and *Sync after an
   edit* and hides *Direction*, the forces, *Detach* and *Remove origin*,
   which would break it (a detached publication still offers *Reattach*).
   The first publication in a workspace sets `publishing` on the open
   workspace, so the pill appears without a reload.
-- **Settings → Sync** (`SettingsSync.jsx`, `PublishingSection` in
-  `SettingsMirrors.jsx`) lists publications under *Publishing* (Settings →
-  Workspaces keeps only the clones; the pill's gear link opens Sync for a
-  publication, Workspaces for a clone): the state avatar, the workspace's
+- **Settings → Account & sync** (the sync sections in `SettingsSync.jsx`,
+  `PublishingSection` in `SettingsMirrors.jsx`) lists publications under
+  *Publishing*, above *Clones* (the pill's gear link opens this pane for both): the state avatar, the workspace's
   name with its tags, *N published pages · host*, the status line, a
   *Conflicts* button when any wait, and a "more" menu with *Sync now* and
   a danger *Stop publishing all* (confirmed, then
@@ -416,7 +423,7 @@ log under that account with client `sync`.
   the page's session, starts (or makes) a local server, signs into it with
   the seeded admin credentials, creates the mirror there and moves the
   window to it ([desktop/docs/architecture.md](../../desktop/docs/architecture.md)).
-- **Any Gamma**: Settings → Workspaces → Clones → *Clone a remote
+- **Any Gamma**: Settings → Account & sync → Clones → *Clone a remote
   workspace*: the server address and a write token made there.
 
 **Detach and reattach.** *Detach* (`POST /api/mirrors/{ws}/detach`) sets
@@ -568,7 +575,7 @@ is listed in `GET /api/mirrors` with the clones; the UI shows it apart
 |---|---|---|
 | GET | `/api/mirrors` | the caller's mirrors with status |
 | POST | `/api/mirrors` | `{remote_url, token, name?, mode?, workspace_id?, adopt?}` → the mirror (validated against the remote's `whoami` first; a read token or a viewer's role makes it `pull`; `workspace_id` links an existing workspace of the caller's under the `adopt` policy); the first fill runs in the background |
-| GET | `/api/mirrors/{ws}` | one mirror, with `conflicts_open`, `pending_local` (a local write no round has pushed yet; two-way copies only), `poll_s`, `on_change`, `detached`, `interval_s` (0 = the loop is off), `page_filter` (null = every page) |
+| GET | `/api/mirrors/{ws}` | one mirror, with `conflicts_open` and `conflicts_newest` (the newest open conflict's id: the pair changes exactly when the open conflicts do), `pending_local` (a local write no round has pushed yet; two-way copies only), `poll_s`, `on_change`, `detached`, `interval_s` (0 = the loop is off), `page_filter` (null = every page) |
 | PATCH | `/api/mirrors/{ws}` | `{poll_s?, on_change?, mode?}` — the cadence and direction |
 | POST | `/api/mirrors/{ws}/sync[?wait=1]` | a round now |
 | POST | `/api/mirrors/{ws}/detach` | detach (the link is kept) |

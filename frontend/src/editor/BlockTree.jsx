@@ -24,7 +24,8 @@ import {
   envCompletions, findMathAtCursor, latexCompletionEdit, latexCompletions,
   LatexAcPopup, MathLivePreview, mathTabJump,
 } from "./LatexEditor";
-import { BlockCmEditor, scanMathSpans } from "./BlockCmEditor";
+import { BlockCmEditor } from "./BlockCmEditor";
+import { scanMathSpans } from "./markCommands";
 import { expandBlankLines } from "./mdMarks";
 import { BLOCK_COMMANDS } from "./blockCommands.js";
 import { dispatch as dispatchHotkey } from "../shared/lib/hotkeys.js";
@@ -837,7 +838,9 @@ function BlockRow({
     const obj = findObject(content, kind, idx);
     if (!obj) return;
     if (action === "editRaw") {
-      clickPosRef.current = { x: e?.clientX || 0, y: e?.clientY || 0, offset: obj.from };
+      // One character in: the editor keeps an object whose boundary the
+      // caret merely touches, so the source shows only from inside it.
+      clickPosRef.current = { x: e?.clientX || 0, y: e?.clientY || 0, offset: obj.from + 1 };
       setFocusedId(block.id);
       onStartEdit(block.id, true);
     } else if (action === "copy") {
@@ -861,6 +864,9 @@ function BlockRow({
     }
   };
   const stableObjectAction = useRef((k, i, a, e) => objectActionRef.current?.(k, i, a, e)).current;
+  // The editor's picture / table widgets drag through the same action.
+  const stableObjectDrag = useRef((k, i, phase, e) =>
+    objectActionRef.current?.(k, i, phase === "start" ? "dragStart" : "dragEnd", e)).current;
   // Resolve [[ref]] chip labels here (cheap per render) so BlockMarkdown's
   // memo can compare them as strings instead of depending on allBlocks,
   // whose identity changes on every edit.
@@ -1326,6 +1332,22 @@ function BlockRow({
             // (or, on a gap line, where the block below the gap starts).
             const content = block.content || "";
             const rendered = e.currentTarget.querySelector(".blockRendered");
+            // A press on an object frame's margin (beside a picture or
+            // table): the caret goes to the object's near end — the editor
+            // keeps it rendered there, and the caret is right where the
+            // press was. (Its body never gets here: the frame selects.)
+            const frame = e.target.closest(".mdObject");
+            const obj = frame && rendered?.contains(frame)
+              ? findObject(content, frame.dataset.kind, Number(frame.dataset.idx)) : null;
+            if (obj) {
+              const fr = frame.getBoundingClientRect();
+              const offset = e.clientY < fr.top + fr.height / 2 ? obj.from : obj.to;
+              clickPosRef.current = { x: e.clientX, y: e.clientY, offset };
+              setGapLine(null);
+              e.preventDefault();
+              onStartEdit(block.id, true);
+              return;
+            }
             const below = e.target.closest(".mdGapLine") && gapLine?.below;
             const start = below ? blockStartInSource(rendered, content, below) : null;
             if (start != null) {
@@ -1425,6 +1447,7 @@ function BlockRow({
               clickPos={clickPosRef.current}
               refLabels={refLabels}
               remoteCursors={remoteCursors}
+              onObjectDrag={stableObjectDrag}
               value={block.content || ""}
               onChange={(e) => {
                 onChangeText(block.id, e.target.value, e.selectionBefore);
@@ -1578,8 +1601,8 @@ function BlockRow({
                 } else if (e.key === "ArrowRight" && (block.children?.length || 0) > 0 && block.collapsed
                   && ref.current && ref.current.selectionEnd === ref.current.value.length) {
                   // At the text's end / start the arrows fold the children;
-                  // anywhere else they move the caret (Ctrl+Shift+[ / ] fold
-                  // from anywhere).
+                  // anywhere else they move the caret (the Collapse / Expand
+                  // children commands fold from anywhere).
                   e.preventDefault();
                   onToggle(block.id);
                 } else if (e.key === "ArrowLeft" && (block.children?.length || 0) > 0 && !block.collapsed

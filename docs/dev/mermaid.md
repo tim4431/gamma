@@ -16,8 +16,11 @@ which other Markdown renderers ignore, so the source stays portable (the
 diagram analogue of the Obsidian `![alt|420]` image size). `setMermaidWidth`
 in `shared/lib/mermaidMarkdown.js` rewrites only the nth diagram's opening
 line (fences in quotes and list items included, in rendered order — the
-same nth-construct idiom as images and tables in `editor/MdTools.jsx`; `scanMermaidFences` also reports each fence's `end` and `closed`, which the object frame in `editor/MdObject.jsx` uses to move or delete a whole diagram — see [ui-design.md](ui-design.md));
-`remarkMermaid` carries the width into the HTML as `data-mermaid-width`. The
+same nth-construct idiom as images and tables in `editor/MdTools.jsx`);
+`remarkMermaid` carries the width into the HTML as `data-mermaid-width`.
+`scanMermaidFences` also reports where each fence ends (`end`, `closed`);
+the object frame in `editor/MdObject.jsx` uses that to move or delete a
+whole diagram ([ui-design.md](ui-design.md)). The
 figure hugs the drawing even without a stored size (it reads Mermaid's own
 `max-width` cap), so the grip always sits at the diagram's edge. Read-only
 views and chat replies show no grip.

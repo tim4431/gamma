@@ -46,9 +46,9 @@ show Done before advancing automatically.
 ## Triggered tours and hints (implemented)
 
 A tour with a `trigger` is also offered by itself, once per `version`, right
-**after** the thing it explains happened — never on contact with a control
-(an earlier build offered the AI chat tour on focusing the composer; that
-was removed). The offer is a card beside the anchor with the tour's name,
+**after** the thing it explains happened, never on mere contact with a
+control (focusing the chat composer offers nothing). The offer is a card
+beside the anchor with the tour's name,
 its length and **Show me** / **Not now**; it does not dim the app or move
 focus. A **hint** (`hint: true`) is a one-step triggered guide: its card is
 the whole thing, with **Got it**.
@@ -94,7 +94,7 @@ Rules the engine keeps (`useGuide.js`, `triggers.js`):
   leaves (the popover closed, the formula ended), the offer goes and counts
   as dismissed. An anchorless hint is a card in the corner.
 
-Engine abilities the new tours needed, available to every step:
+Engine abilities available to every step:
 
 - **Reveal by `open` path.** A step whose anchor is registered with
   `open: [...]` is revealed by clicking through that path (skipping the
@@ -440,7 +440,7 @@ frontend/src/guide/
   guide.css
 backend/gamma/onboarding/welcome.md   the seeded page (and the sample PDF's source)
 backend/gamma/seed.py                 imports it; renders the PDF; commit_ops
-frontend/tests/guide.test.js          schema, anchor references, event names, unique ids
+frontend/tests/guide.test.mjs         schema, anchor references, event names, unique ids
 frontend/tests/e2e/scenarios/guide.mjs            the first-run tour end to end, home anchors present
 frontend/tests/e2e/scenarios/contextualGuide.mjs  the AI chat tour on desktop and phone
 frontend/tests/e2e/scenarios/triggeredGuide.mjs   offers and hints: tables, sharing (offered, and from

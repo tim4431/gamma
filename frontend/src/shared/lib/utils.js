@@ -263,7 +263,7 @@ async function copyRich(html, plain) {
 
 // Metadata that nothing tied to THIS document — the UI flags it (red "!" on
 // the metadata button and beside the slide citation, red cell in the
-// Settings → Library table) so nobody cites it unchecked. The server stores
+// Settings → Library maintenance table) so nobody cites it unchecked. The server stores
 // `meta.unverified` (AI paper records; DOIs/ISBNs printed in the text whose
 // registry title isn't); records from before the flag existed fall back to
 // the old rule: AI-extracted and claiming to be a paper (non-paper kinds have
@@ -274,7 +274,7 @@ const isUnverifiedPaperMeta = (source, kind, unverified = null) =>
 
 // Where a page's metadata came from, worded once for every surface that
 // shows it: the metadata popover's Source row, the share popover's citation
-// header, the Settings → Library table (`short`). `warn` = cite with care.
+// header, the Settings → Library maintenance table (`short`). `warn` = cite with care.
 const META_SOURCE_NAMES = {
   arxiv: "arXiv", doi: "doi.org", crossref: "Crossref search", isbn: "ISBN lookup",
   openlibrary: "Open Library", googlebooks: "Google Books", manual: "edited by hand",

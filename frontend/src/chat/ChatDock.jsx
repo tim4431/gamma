@@ -77,7 +77,7 @@ function ContextCoverage({ items }) {
         ? t("pages 1–{pages} of {pages2}", { pages: Math.min(c.pages_shown, c.pages), pages2: c.pages })
         : around ? (place ? t("text around {place}", { place }) : t("selected passages + head")) : `${(c.chars || 0).toLocaleString()} characters`;
       const short = refused && !c.partial
-        ? t("PDF file not accepted — sent as text", {  })
+        ? t("PDF file not accepted — sent as text")
         : refused
           ? t("PDF file not accepted — text only, {span}", { span })
           : t("Model saw {span}", { span });
@@ -977,10 +977,7 @@ export default function ChatDock({
       ) : null}
       <div className="ctlBtnRow chatPanelHeaderBtns">
         {headerModels.length > 0 ? (() => {
-          const models = headerModels;
-          const multiProvider = new Set(models.map((m) => m.provider)).size > 1;
-          const currentId = headerModel.id;
-          const currentModel = headerModel;
+          const multiProvider = new Set(headerModels.map((m) => m.provider)).size > 1;
           const totalUsage = conversationUsage(chatMessages);
           const usageTitle = totalUsage ? t("; this conversation: {input} tokens in, {output} out", { input: fmtTokens(totalUsage.input), output: fmtTokens(totalUsage.output) }) : "";
           const ctxText = !ctxUsed ? ""
@@ -991,14 +988,14 @@ export default function ChatDock({
             <span data-popover="chatsettings" className="popoverAnchor">
               {ctxUsed && ctxWindow ? (
                 <button type="button" className="ctlBtn" onClick={toggleSettings}
-                  title={t("{ctxText} — the last reply's prompt and answer in {model}'s context window", { ctxText, model: currentModel.model })}
+                  title={t("{ctxText} — the last reply's prompt and answer in {model}'s context window", { ctxText, model: headerModel.model })}
                   aria-label={ctxText}>
                   <ContextRing fraction={ctxUsed / ctxWindow} />
                 </button>
               ) : null}
               <button type="button" data-guide="chat.settings" className={`ctlBtn ${settingsOpen ? "modeActive" : ""}`}
                 onClick={toggleSettings}
-                title={t("Chat settings — {model}{chatEffort}, context {chatContextChars} chars{usageTitle}", { model: currentModel?.model || "model", chatEffort: chatEffort ? `, effort: ${chatEffort}` : "", chatContextChars: chatContextChars.toLocaleString(), usageTitle })}
+                title={t("Chat settings — {model}{chatEffort}, context {chatContextChars} chars{usageTitle}", { model: headerModel.model || "model", chatEffort: chatEffort ? `, effort: ${chatEffort}` : "", chatContextChars: chatContextChars.toLocaleString(), usageTitle })}
                 aria-label={t("Chat settings")} aria-expanded={settingsOpen}>
                 <SettingsIcon size={15} />
               </button>
@@ -1009,9 +1006,9 @@ export default function ChatDock({
                   <MenuSelect
                     block
                     label={t("Switch model")}
-                    value={currentId}
+                    value={headerModel.id}
                     onChange={setChatModel}
-                    options={models.map((m) => [
+                    options={headerModels.map((m) => [
                       m.id,
                       multiProvider ? `${m.model} · ${m.provider_name || m.provider}` : m.model,
                     ])}

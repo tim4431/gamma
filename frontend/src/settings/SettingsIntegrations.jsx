@@ -239,7 +239,7 @@ bearer_token_env_var = "GAMMA_TOKEN"` : "";
         </div>
       </Row>
       <Row icon={ShieldIcon} label={t("Scope")} hint={scope === "write"
-        ? t("Read and write: what an offline copy on another Gamma (Settings → Workspaces → Clones there) signs in with. Assistants only need read.") : t("Read-only: assistants. Choose “Read and write” for an offline copy of this workspace on another Gamma.")}>
+        ? t("Read and write: what an offline copy on another Gamma (Settings → Account & sync → Clones there) signs in with. Assistants only need read.") : t("Read-only: assistants. Choose “Read and write” for an offline copy of this workspace on another Gamma.")}>
         <Segmented value={scope} onChange={setScope} options={[["read", t("Read-only")], ["write", t("Read and write")]]} />
       </Row>
       {secret?.origin === "manual" ? tokenField : null}

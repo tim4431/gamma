@@ -22,7 +22,7 @@ import { segmentPage, selectionParagraphs } from "./pdfTranslate";
 import { BACKFILL_DELAY_MS, chooseTransport, docIdOf, layoutFromManifest, rangeOpenOptions } from "./pdfSource";
 import { normalizeChars } from "../shared/lib/textnorm";
 import { apiJson, copyText, withShare, withWorkspace } from "../shared/lib/utils";
-import { ChatMarkdown } from "../shared/ui/Widgets";
+import { ChatMarkdown, useCopied } from "../shared/ui/Widgets";
 import { PdfCitationOverlay } from "./PdfCitationOverlay";
 import { citationRuns, runChars } from "./pdfCitation.js";
 import { noteBadgeAnchor } from "./noteAnchor.js";
@@ -2384,7 +2384,7 @@ function PlainTip({ onConfirm, onLink, translate }) {
 // language, a spinner while it arrives and a copy button), and the text —
 // selectable, typed in as it streams.
 function SelTranslation({ trans, langLabel, tooLong, onToggle, keep }) {
-  const [copied, setCopied] = useState(false);
+  const [copied, flashCopied] = useCopied(1200);
   const loading = trans.status === "loading";
   return (
     <div className="selTrans">
@@ -2399,7 +2399,7 @@ function SelTranslation({ trans, langLabel, tooLong, onToggle, keep }) {
         {trans.status === "done" ? (
           <button type="button" className="ctlBtn selTransCopy" title={t("Copy translation")} aria-label={t("Copy translation")}
             onMouseDown={keep}
-            onClick={async () => { if (await copyText(trans.text)) { setCopied(true); setTimeout(() => setCopied(false), 1200); } }}>
+            onClick={async () => { if (await copyText(trans.text)) flashCopied(); }}>
             {copied ? <CheckIcon size={13} /> : <CopyIcon size={13} />}
           </button>
         ) : null}

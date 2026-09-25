@@ -8,7 +8,7 @@ import assert from "node:assert/strict";
 import fs from "node:fs";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
-import { ALL_COMMANDS, GROUPS, commandById, fixedKeys } from "../src/app/commands.js";
+import { ALL_COMMANDS, GROUPS, fixedKeys } from "../src/app/commands.js";
 import { APP_COMMANDS } from "../src/app/appCommands.js";
 import { BLOCK_COMMANDS } from "../src/editor/blockCommands.js";
 import { chordLabel, conflicts, effectiveKeys, normalizeChord } from "../src/shared/lib/hotkeys.js";
@@ -27,9 +27,9 @@ test("every command has a unique id, a label, a known group and canonical defaul
     assert.equal(typeof cmd.run, "function", `${cmd.id} has no run`);
     for (const k of effectiveKeys(cmd, {})) assert.equal(k, normalizeChord(k), `${cmd.id}: "${k}" is not canonical`);
   }
-  assert.equal(commandById("block.deleteLine")?.keys, "Mod-Shift-k");
-  assert.equal(commandById("app.renameTitle")?.keys, "F2");
-  assert.equal(commandById("nope"), null);
+  const byId = (id) => ALL_COMMANDS.find((c) => c.id === id);
+  assert.equal(byId("block.deleteLine")?.keys, "Mod-Shift-k");
+  assert.equal(byId("app.renameTitle")?.keys, "F2");
 });
 
 test("no two defaults share a chord within a scope", () => {

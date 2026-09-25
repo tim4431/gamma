@@ -2,11 +2,12 @@
 // line shortcuts with the block as the line, plus Obsidian's formatting
 // keys — declared once (docs/dev/hotkeys.md). Only the long-standing keys,
 // the ↑ / ↓ hop and Ctrl+Shift+K have default chords; the rest are palette
-// entries (Ctrl+Shift+P) until the account binds them in Settings → Keyboard. BlockRow's keydown dispatches
-// this catalog (shared/lib/hotkeys.js) after its popups and before the
-// outliner's Enter/Tab/Backspace; the command palette and the Settings →
-// Keyboard pane read the same list, so a key, a menu entry and the cheat
-// sheet can never disagree.
+// entries (Ctrl+Shift+P) until the account binds them in Settings →
+// Keyboard. BlockRow's keydown dispatches this catalog
+// (shared/lib/hotkeys.js) after its popups and before the outliner's
+// Enter/Tab/Backspace; the command palette and the Settings → Keyboard pane
+// read the same list, so a key, a menu entry and the cheat sheet can never
+// disagree.
 //
 // ctx: { block, tree (the page's blocks), row (BlockTree's rowProps —
 // onMoveBlock, onDuplicate, onDelete, …), editor (the open editor's facade:
@@ -143,7 +144,7 @@ export const BLOCK_COMMANDS = [
   {
     id: "block.addToChat", label: t("Add block to chat"), group: GROUP_NOTES, keys: null,
     when: (c) => !!c.row.onAddToChat,
-    run: (c) => { c.row.onAddToChat(c.block.id); },
+    run: (c) => { c.row.onAddToChat(c.block); },
   },
   {
     id: "block.moveToPage", label: t("Move block to page…"), group: GROUP_NOTES, keys: null, edits: true,

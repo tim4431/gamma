@@ -21,7 +21,6 @@ import {
   CheckIcon, DatabaseIcon, ExportIcon, GlobeIcon, HardDriveIcon, ImportIcon, LogOutIcon, PenIcon,
   PlusIcon, ShieldIcon, Trash2Icon, UserIcon, UsersIcon,
 } from "../shared/ui/Icons";
-import { MirrorsSection, useMirrors } from "./SettingsMirrors";
 import { T, t } from "../shared/i18n/i18n.js";
 
 // Workspace roles as the UI words them (docs/dev/workspaces.md); the account
@@ -574,16 +573,14 @@ export function WorkspacesSettings({ value, onServer }) {
   const [busy, setBusy] = React.useState(false);
   const accounts = useAccounts();
   const currentId = workspace?.id;
-  const [mirrors, refreshMirrors] = useMirrors(!!me && me !== "guest");
 
   const refresh = React.useCallback(() => {
     apiJson(`${API}/workspaces/mine`).then(setData).catch((err) => setError(err.message));
-    refreshMirrors();
-  }, [refreshMirrors]);
+  }, []);
   React.useEffect(() => { refresh(); }, [refresh]);
 
   const all = data?.workspaces || [];
-  const personal = all.filter((w) => w.personal && !w.mirror_of);  // mirrors have their own section
+  const personal = all.filter((w) => w.personal && !w.mirror_of);  // clones are listed in Settings → Account & sync
   const shared = all.filter((w) => !w.personal);
 
   async function submitCreate(name) {
@@ -690,10 +687,6 @@ export function WorkspacesSettings({ value, onServer }) {
           >
             {personal.map(row)}
           </Section>
-          {!me || me === "guest" ? null : (
-            <MirrorsSection mirrors={mirrors} refresh={refresh} workspaces={all} currentId={currentId}
-              switchWorkspace={switchWorkspace} closeSettings={closeSettings} confirm={confirm} setStatus={setStatus} />
-          )}
           <Section title={t("Shared")}>
             {shared.length ? shared.map(row) : (
               <Empty icon={UsersIcon}>

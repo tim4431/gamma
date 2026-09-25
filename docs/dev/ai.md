@@ -12,7 +12,7 @@ loop runs, and what the user controls. The tools themselves are catalogued in
 ## Provider and models
 
 There are NO env API keys; providers are GUI entries: each account's own
-(Settings → Provider and models), plus the server's shared ones an admin adds
+(Settings → AI › Connections), plus the server's shared ones an admin adds
 (below). An account's entries are stored under the reserved account-wide
 `ai-settings` pref in `users.db` — a LIST of `{id, name, protocol, api_key, base_url, models}` managed
 via `POST/PUT/DELETE /api/ai/providers[/{id}]`. An entry offers exactly the
@@ -36,8 +36,8 @@ details are summarized before display everywhere (`upstream_detail` in
 (a proxy's 502 page) to their `<title>`.
 
 `POST /api/ai/health` ({provider_id, mode}; "" = first entry) is the login
-connection check (Settings → Provider and models → "Check at login",
-localStorage `gamma-ai-login-check`, default on): mode `"ping"` verifies the
+connection check (Settings → AI › Connections → "Check at login",
+account pref `gamma-ai-login-check`, default `ping`): mode `"ping"` verifies the
 credential for free — OAuth entries hit the usage endpoint, API keys list
 `/v1/models`, both 401 on a dead credential (404/405 = gateway without a
 listing → ok-but-unverified, no false alarm) — and `"test"` runs the same tiny
@@ -70,7 +70,7 @@ absent: Anthropic's terms forbid third-party apps from routing requests
 through Free/Pro/Max plan credentials, so Claude is reached with a Console API
 key.
 
-The Provider and models pane also exposes `POST /api/ai/providers/{id}/usage`. For a
+The Connections pane also exposes `POST /api/ai/providers/{id}/usage`. For a
 ChatGPT OAuth entry it reads normalized subscription rate-limit windows
 (`used_percent`, `remaining_percent`, and reset time) without exposing the
 bearer token. Opening the pane queries OAuth usage automatically (the Usage
@@ -454,11 +454,11 @@ Rounds and the ≤200-mutation ceiling are runaway guards, not workload caps.
 ### The tool loop
 
 The router runs a loop (`agent_events`) over `ai_client.sse_events`, which
-parses tool calls from all three protocols' SSE (tool defs +
-`tool_calls`/`role:"tool"` message extensions are translated per wire in the
-request builders; the Responses builders enable `parallel_tool_calls` when
-tools ride along, so bulk renames batch per round): the model calls tools →
-the server executes them → results go back → repeat until it answers.
+parses tool calls from every wire's SSE (`Protocol.events`): the model calls
+tools → the server executes them → results go back → repeat until it
+answers. Each adapter's `request` maps the tool defs and the
+`tool_calls`/`role:"tool"` turns to its wire. The Responses body enables
+`parallel_tool_calls` when tools ride along, so bulk renames batch per round.
 
 Every tool call streams back as an
 `{"action": {kind, summary, tool, args, result}}` NDJSON line (kinds
@@ -523,7 +523,7 @@ call again before quoting or editing. The base prompt says the same, so a
 request to read, show or check something is answered from a fresh call, not
 last turn's outline (the agent's own edits change what `read_block`
 returns). Results share `TOOL_REPLAY_BUDGET` chars newest-first
-(older ones elided), and `_anthropic_messages` folds a plain user turn into a
+(older ones elided), and `_messages` in `ai_protocols/anthropic.py` folds a plain user turn into a
 preceding tool_result turn to keep roles alternating. Plain chats never replay
 (providers reject tool blocks without tool defs). Renamed tools replay under
 their current name (`ai_context.DEPRECATED_TOOLS`, e.g. the saved
@@ -542,15 +542,21 @@ gateways keep chat-completions tools.
 ## PDF translation
 
 `POST /api/ai/translate` backs the viewer's translated view. ONE 文A button
-in the PDF zoom column does everything by state: on the page being read,
-click translates it unless it is already fully translated under the current
-language+model — then click toggles show/hide for ALL pages (the viewer
-reports `current` next to `pages` in its state; a page a halted job left
-half-done counts as untranslated, so a click finishes it from the cache;
-switching language or model in Settings makes the button translate afresh;
-hidden = slashed icon; holding Alt peeks) — and it halts a running job; right-click (long-press on touch) opens the option
-menu — Translate this page / Translate whole document / Show
-original·translation (Stop translating while running). A whole-document job
+in the PDF zoom column does everything by state:
+
+- On the page being read, a click translates it unless it is already fully
+  translated under the current language and model. On such a page a click
+  toggles show/hide for ALL pages (the viewer reports `current` next to
+  `pages` in its state).
+- A page a halted job left half-done counts as untranslated, so a click
+  finishes it from the cache. Switching language or model in Settings makes
+  the button translate afresh.
+- Hidden = slashed icon; holding Alt peeks. A click during a job halts it.
+- Right-click (long-press on touch) opens the option menu: Translate this
+  page / Translate whole document / Show original·translation (Stop
+  translating while running).
+
+A whole-document job
 queues pages nearest the current page first (forward before backward at
 equal distance), so the page being read paints immediately. The queue lives
 in `pdf/PdfViewer.jsx` (`translateCtl`), producer/consumer style: the producer
@@ -595,53 +601,75 @@ cloned background — so figures a paragraph brushes against are never painted
 over, and the layout never moves. Translated text is selectable/copyable;
 while shown, the invisible original text layer stands down.
 
-Targets are the allowlisted `TRANSLATE_LANGS` codes (mirrored in
+Targets are the allowlisted `TRANSLATE_LANGS` codes
+(`gamma/translate_engines.py`, shared by both translation paths; mirrored in
 `frontend/src/app/prefDefs.js`). What translates is Settings → Reading ›
 "Translate with" (`translateModel`, a browser pref; "" follows the chat
-model); reasoning `effort` is AI › Advanced (omitted unless picked —
-Low/Minimal is the speed lever for reasoning models). The Translation
+model). Reasoning `effort` and parallel requests sit in the same
+Translation section; effort is omitted unless picked, and Low/Minimal is
+the speed lever for reasoning models. The Translation
 section's button switch turns the whole feature off.
+
+The server keeps an **in-memory only** LRU (~5k entries, lock-guarded
+because requests run in the threadpool) per (user, language, bare model
+name, source text). Nothing goes to disk; the cache makes
+halts/retries/re-shows free until a restart. Duplicate paragraphs within a
+request go upstream once. Caps: 200 texts / 60k chars per request.
 
 **Selection translation.** The text-selection popup (`PlainTip` in
 `pdf/PdfViewer.jsx`, the highlight colors + link) carries a 文A button
 when Settings → Reading › "Translate a selection" is on (`selTranslate`,
-account pref, default on). It sends the selection — lines rejoined by
-`selectionParagraphs` (`pdf/pdfTranslate.js`, the same hyphen/CJK rules as
-page blocks), capped at 5000 characters — as ONE text through the page
-translator's request (`translateChunk`: same model or service, language,
-server cache, streamed partials), and shows the result under the colors
-as a fold-out panel (header with the language, spinner and copy button;
-the button refolds it; selectable text). "Translate on select"
-(`selTranslateAuto`, default off) starts it as soon as the popup opens. The
-popup is keyed by the selection, so a new selection starts over and aborts
-the previous request; a click or selection inside the popup keeps it open
-(the viewer's selection sync ignores a selection anchored in `.plainTip`),
-and `TipFrame` flips it above the selection when it would run past the
-window's bottom. Like the popup itself, it needs edit rights on the page.
+account pref, default on).
 
-**Machine-translation services.** "Translate with" also offers Google Cloud
-Translation (v2 basic, API key sent as `X-Goog-Api-Key`, `format: "text"`)
-and Youdao (`openapi.youdao.com/v2/api` batch, v3 SHA-256 signature over the
+- It sends the selection as ONE text through the page translator's request
+  (`translateChunk`: same model or service, language, server cache,
+  streamed partials). Lines are rejoined by `selectionParagraphs`
+  (`pdf/pdfTranslate.js`, the page blocks' hyphen/CJK rules), capped at
+  5000 characters.
+- The result shows under the colors as a fold-out panel: a header with the
+  language, spinner and copy button, then selectable text. The button
+  refolds it.
+- "Translate on select" (`selTranslateAuto`, default off) starts it as soon
+  as the popup opens.
+- The popup is keyed by the selection, so a new selection starts over and
+  aborts the previous request. A click or selection inside the popup keeps
+  it open (the viewer's selection sync ignores a selection anchored in
+  `.plainTip`).
+- `TipFrame` flips the popup above the selection when it would run past the
+  window's bottom. Like the popup itself, it needs edit rights on the page.
+
+**Machine-translation services.** "Translate with" also offers
+**Microsoft (free)** with no setup at all, plus Google Cloud Translation (v2
+basic, API key sent as `X-Goog-Api-Key`, `format: "text"`) and Youdao
+(`openapi.youdao.com/v2/api` batch, v3 SHA-256 signature over the
 concatenated queries) once their credentials are set up in the same
-section. The viewer then sends `model: "engine:<id>"`, and
+section. Microsoft is the endpoint Edge's own page translation calls,
+`POST edge.microsoft.com/translate/translatetext?to=<code>&isEnterpriseClient=false`
+with a JSON array of strings, no key or token, answering Translator v3's
+shape (`[{detectedLanguage, translations: [{text, to}]}]`, source
+auto-detected). It replaced the `/translate/auth` token flow Microsoft
+retired in July 2026; it is unofficial and undocumented, so it can change
+or throttle without notice — keep Google or Youdao as the fallback. It
+refuses requests past about 50k characters (measured), so batches stay at
+100 texts / 20k characters. With no AI connection, a stale or default
+"Translate with" sends `engine:microsoft` (`FREE_TRANSLATE_ENGINE` in
+`app/prefDefs.js`) instead of a chat model, so the translate button works
+out of the box. The viewer then sends `model: "engine:<id>"`, and
 `/api/ai/translate` hands the misses to `gamma/translate_engines.py`
-instead of a chat model: no AI provider needed, no effort, no streamed
-partials (the stream is just the final line), no token usage, and nothing
-to salvage — the APIs answer aligned lists; a Youdao query in `errorIndex`
-comes back verbatim, uncached. Each adapter maps the target codes to its
-own (Youdao `zh-CHS`/`zh-CHT`) and splits a request by its batch limits.
-Cache, validation and dedup are the LLM path's, keyed on `engine:<id>`.
-Credentials are per account under the reserved `translate-engines` pref
-(like `ai-settings`: refused by `/api/prefs`, read only masked through
-`GET /api/translate/engines`; guests can't store any). Unlike a chat model
-these engines don't know to leave math, `[12]` citation markers or URLs
-alone; PDF text carries no LaTeX and math-heavy paragraphs are skipped
-client-side, so in practice the damage is small. The server keeps an
-**in-memory only** LRU (~5k entries, lock-guarded — requests run in the
-threadpool) per (user, language, bare model name, source text) —
-deliberately nothing on disk; it makes halts/retries/re-shows free until a
-restart. Duplicate paragraphs within a request go upstream once. Caps: 200
-texts / 60k chars per request.
+instead of a chat model. That path needs no AI provider and has no effort,
+no streamed partials (the stream is just the final line) and no token
+usage. There is nothing to salvage either: the APIs answer aligned lists,
+and a Youdao query in `errorIndex` comes back verbatim, uncached. Each
+engine maps the target codes to its own (Youdao `zh-CHS`/`zh-CHT`) and
+splits a request by its batch limits. Cache, validation and dedup are the
+LLM path's, keyed on `engine:<id>`.
+
+Credentials are per account under the reserved `translate-engines` pref.
+Like `ai-settings`, `/api/prefs` refuses it and the only read path is the
+masked `GET /api/translate/engines`; guests can't store any. Unlike a chat
+model, these engines don't know to leave math, `[12]` citation markers or
+URLs alone. PDF text carries no LaTeX and math-heavy paragraphs are skipped
+client-side, so in practice the damage is small.
 
 ## Token usage
 

@@ -263,7 +263,7 @@ the request's workspace — the extension names none, so its personal one.
 | POST | `/metadata/fetch` | resolve a paper or book (arXiv → DOI → ISBN via Open Library/Google Books → Crossref search → AI extraction, verified against Crossref / the book registries), cache meta + BibTeX + the slide citation on the page. Body also takes `cite_prompt`/`cite_model`; returns `meta` (with `unverified`), `bibtex`, `ppt_cite` (`""` when AI is off or that call failed), `source`, `cached`, `page_title` (the page's title after the write — always, since a concurrent lookup may have renamed it) and `title_updated` (this call replaced the automatic title) |
 | POST | `/metadata/update` | save hand-edited fields incl. `publisher`/`isbn` (rebuilds BibTeX, keeps the document kind, drops the cached citation) |
 | POST | `/metadata/cite` | BibTeX → PPT-style citation via AI (regenerate / fallback; the fetch already produces one) |
-| GET | `/metadata/status` | library-wide health table (feeds Settings → Library): every page with a PDF attachment plus pages carrying `properties.meta` without one (`has_file: false`); per paper `meta_source`, `meta_kind`, `meta_unverified` (null for pre-flag records) |
+| GET | `/metadata/status` | library-wide health table (feeds Settings → Library maintenance): every page with a PDF attachment plus pages carrying `properties.meta` without one (`has_file: false`); per paper `meta_source`, `meta_kind`, `meta_unverified` (null for pre-flag records) |
 
 ### AI (`ai.py`) — all config is GUI entries (each account's own plus the server's shared ones), no env API keys
 | Method | Path | Purpose |
@@ -282,8 +282,8 @@ the request's workspace — the extension names none, so its personal one.
 | POST | `/ai/oauth/chatgpt/start`, `/complete` | ChatGPT OAuth (PKCE, pasted callback URL) |
 | POST | `/ai/transcribe` | voice dictation |
 | POST | `/ai/translate` | translate paragraph texts for the viewer's translated view (`{texts, lang, model, effort, stream}` → `{translations}`; with `stream: true` an NDJSON stream of `{i: [indices], text}` partials as each paragraph is written, then the same final object; in-memory per-paragraph cache). `model: "engine:google"` / `"engine:youdao"` translates with that machine-translation service instead — no AI provider needed, 503 when it isn't set up, never streams partials |
-| GET | `/translate/engines` | the account's machine-translation services (`{engines: [{id, label, configured, fields, updated_at}], can_edit}`; secret fields as a `…last4` hint) |
-| PUT / DELETE | `/translate/engines/{id}` | set (`{fields: {…}}`, an empty secret keeps the stored one) or remove a service's credentials; guests 403; answers the GET shape |
+| GET | `/translate/engines` | the account's machine-translation services (`{engines: [{id, label, configured, needs_key, fields, updated_at}], can_edit}`; secret fields as a `…last4` hint; `microsoft` needs no key and is always configured) |
+| PUT / DELETE | `/translate/engines/{id}` | set (`{fields: {…}}`, an empty secret keeps the stored one) or remove a service's credentials (400 for a service that needs no key); guests 403; answers the GET shape |
 | POST | `/translate/engines/{id}/test` | translate one sentence into `{lang}` with the stored credentials; in-body `{ok, text}` / `{ok: false, error}` |
 | GET | `/pdf-text-status` | whether a doc has extractable text |
 
@@ -352,7 +352,7 @@ A manual token (`gamma_…`, not an OAuth one) is also accepted on every `/api/*
 |---|---|---|
 | GET | `/mirrors` | the caller's offline copies with their sync status |
 | POST | `/mirrors` | `{remote_url, token, name?, mode?: two-way \| pull, workspace_id?, adopt?: theirs \| mine}` → the mirror: a new personal workspace that follows the remote workspace the token belongs to, or with `workspace_id` an existing personal workspace of the caller's whose pages adopt one side's version (validated against the remote's `/sync/whoami` first; a read token or a viewer's role gives `pull`); the first fill runs in the background |
-| GET | `/mirrors/{ws}` | one mirror, with `conflicts_open` (unresolved merges), `pending_local` (a local write no round has pushed yet; two-way copies only), `poll_s` / `on_change` (its cadence), `detached`, `interval_s` (0 = the loop is off), `page_filter` (null = every page travels, else the ids of the only pages that do — a publication); `status.progress` `{done, total, page, first, file?}` while a round runs |
+| GET | `/mirrors/{ws}` | one mirror, with `conflicts_open` (unresolved merges) and `conflicts_newest` (the newest open one's id), `pending_local` (a local write no round has pushed yet; two-way copies only), `poll_s` / `on_change` (its cadence), `detached`, `interval_s` (0 = the loop is off), `page_filter` (null = every page travels, else the ids of the only pages that do — a publication); `status.progress` `{done, total, page, first, file?}` while a round runs |
 | PATCH | `/mirrors/{ws}` | `{poll_s?, on_change?, mode?}` |
 | POST | `/mirrors/{ws}/detach` | detach, the link kept |
 | POST | `/mirrors/{ws}/relink` | `{token?, remote_url?, adopt?}` — link again |

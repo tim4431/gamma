@@ -11,7 +11,7 @@
 // filtered by the same matcher on the label and group, Enter runs the pick.
 
 import React, { useEffect, useMemo, useRef, useState } from "react";
-import { BookIcon, CommandIcon, FileTextIcon, SearchIcon } from "../shared/ui/Icons";
+import { BookIcon, FileTextIcon, SearchIcon, TerminalIcon } from "../shared/ui/Icons";
 import { commandIcon } from "../app/commandIcons.jsx";
 import { CardLabels } from "./FileBrowser";
 import { createLibraryMatcher } from "./librarySearch";
@@ -55,7 +55,7 @@ export default function QuickOpen({ open, prefix = "", commands, onClose, pages,
     if (commandMode) {
       const match = createLibraryMatcher(query.slice(1));
       return commandList
-        .map((cmd) => ({ cmd, score: match ? match(t(cmd.label), [t(cmd.group)]) : 1 }))
+        .map((cmd) => ({ cmd, score: match ? match(cmd.label, [cmd.group]) : 1 }))
         .filter((r) => r.score > 0)
         .sort((a, b) => b.score - a.score)
         .slice(0, MAX_ROWS)
@@ -96,7 +96,7 @@ export default function QuickOpen({ open, prefix = "", commands, onClose, pages,
     <div className="reportOverlay quickOpenOverlay" onMouseDown={(e) => { if (e.target === e.currentTarget) onClose(); }}>
       <div className="reportModal quickOpen" role="dialog" aria-label={commandMode ? t("Command palette") : t("Open a page")}>
         <div className="quickOpenInput">
-          {commandMode ? <CommandIcon size={15} /> : <SearchIcon size={15} />}
+          {commandMode ? <TerminalIcon size={15} /> : <SearchIcon size={15} />}
           <input
             ref={inputRef}
             autoFocus
@@ -129,13 +129,13 @@ export default function QuickOpen({ open, prefix = "", commands, onClose, pages,
                   type="button" role="option" key={r.key} tabIndex={-1}
                   aria-selected={i === active}
                   className={`slashMenuItem chatMentionOption quickOpenRow${i === active ? " selected" : ""}`}
-                  title={t(r.cmd.label)}
+                  title={r.cmd.label}
                   onPointerDown={(e) => e.preventDefault()}
                   onMouseEnter={() => setActive(i)}
                   onClick={() => choose(r)}
                 >
                   <CmdIcon size={15} />
-                  <span><strong>{t(r.cmd.label)}</strong><small>{t(r.cmd.group)}</small></span>
+                  <span><strong>{r.cmd.label}</strong><small>{r.cmd.group}</small></span>
                   {r.cmd.keyLabel && <em className="quickOpenTag quickOpenKey">{r.cmd.keyLabel}</em>}
                 </button>
               );

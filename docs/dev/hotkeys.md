@@ -27,7 +27,8 @@ A **command** is declared once, as an object in one of two catalogs:
 
 [frontend/src/app/commands.js](../../frontend/src/app/commands.js) joins the
 two lists (`ALL_COMMANDS`, `GROUPS`) and lists the keys the outliner owns
-outright (`fixedKeys`: Enter, Tab, Backspace on an empty note, `/`, Esc) for
+outright (`fixedKeys`: Enter, Tab, Backspace on an empty note, ←/→ folding
+at the text's edge, `/`, Esc) for
 the surfaces that show the whole picture.
 
 The three surfaces read that catalog and nothing else:
@@ -54,9 +55,9 @@ is the pure core (no DOM, `tests/hotkeys.test.mjs`):
 - `chordLabel` / `chordParts` render a chord for the platform: `Ctrl+Shift+K` or `⇧⌘K` (Mac order ⌃⌥⇧⌘, like the system menus). `bindable` refuses a chord that would replace typing (a bare letter, digit or punctuation); function keys and anything with a modifier pass.
 - `conflicts(commands, bindings)` maps each chord more than one command answers to onto those commands.
 
-**Order.** A block row's `onKeyDown` ([editor/BlockTree.jsx](../../frontend/src/editor/BlockTree.jsx)) first serves its popups (the paste chooser, the `[[` search, the slash menu, the math autocomplete), then dispatches the block catalog, then the outliner's own keys (Tab in math and fences, Enter, Tab, ←/→ folding at the text's edge, Backspace on an empty note). A handled key never reaches the window, so a block chord shadows an app chord while an editor is open (the pane says so). App's window listener dispatches the app catalog and then handles Escape, which is not a command: it always closes popovers and clears selections.
+**Order.** A block row's `onKeyDown` ([editor/BlockTree.jsx](../../frontend/src/editor/BlockTree.jsx)) first serves its popups (the paste chooser, the `[[` search, the slash menu, the math autocomplete), then dispatches the block catalog, then the outliner's own keys (Tab in math and fences, Enter, Tab, ←/→ folding at the text's edge, Backspace on an empty note). A handled key never reaches the window, so a block chord shadows an app chord while an editor is open. App's window listener dispatches the app catalog and then handles Escape, which is not a command: it always closes popovers and clears selections.
 
-**CodeMirror.** The block editor installs only `standardKeymap` (caret movement, Home/End, selection by word). Everything above that — the formatting marks, line and block operations — is a command, so nothing arrives from a library keymap by accident (the previous `defaultKeymap` brought Ctrl+M's tab-focus mode along, which silently stopped Tab from indenting).
+**CodeMirror.** The block editor installs only `standardKeymap` (caret movement, Home/End, selection by word). Everything above that — the formatting marks, line and block operations — is a command, so nothing arrives from a library keymap by accident. `defaultKeymap` is not used: its Ctrl+M tab-focus mode stops Tab from indenting ([research note](../research/keyboard-shortcuts.md)).
 
 ## The block commands' plumbing
 
@@ -68,7 +69,7 @@ The block context is `{ block, tree, row, editor, readOnly }`: `editor` is the o
 - **Ctrl+Shift+K** — the caret's line of a multi-line block (a CodeMirror change); a one-line block goes as a whole through `onDelete(id, {keepChildren: true, focus: prev})`: `removeBlockKeepChildren` lifts its children into its place (indented lines under a deleted line stay), and the block above gets the caret at its end. The handle menu's Delete still removes the subtree.
 - **New block above**, **indent / outdent**, **collapse / expand** (unbound) → the existing `onEnterSibling(id, {above})`, indent / outdent (they work inside code fences and math, where Tab means something else), toggle collapse.
 - **Toggle to-do** (unbound) → `toggleTodoLine` (mdMarks.js): `- [ ]` ↔ `- [x]` on the caret's line, a line without a box gets one after its list marker. **Select block text** (unbound) selects it. The handle menu's add-to-chat, move-to-page and delete-subtree are palette entries too.
-- **Ctrl+B / I / E / Shift+X / Shift+H / K** → `runToggleMark` / `runInsertLink` in [editor/markCommands.js](../../frontend/src/editor/markCommands.js) (plain JS, moved out of BlockCmEditor.jsx so node can load the catalog; swallowed inside math, fences and inline code).
+- **Ctrl+B / I / E / Shift+X / Shift+H / K** → `runToggleMark` / `runInsertLink` in [editor/markCommands.js](../../frontend/src/editor/markCommands.js). They are plain JS so node can load the catalog, and are swallowed inside math, fences and inline code.
 
 From the palette a block command runs on the **focused row** with `editor: null` (opening the palette closes any editor); `needsEditor` commands are left out there.
 
@@ -76,7 +77,7 @@ From the palette a block command runs on the **focused row** with `editor: null`
 
 The account preference `keybindings` (`PREFS` in [app/prefDefs.js](../../frontend/src/app/prefDefs.js), scope `account`, so it travels in the profile — [settings.md](settings.md)) is `{ command id → chord | null }`: a chord rebinds, `null` unbinds, an absent id keeps the default. The codec keeps only well-formed entries and does not check ids against the catalog, so an entry for a command that no longer exists is ignored rather than dropped.
 
-Settings → Keyboard lists every command by group with its effective chord as key caps (`KeyBinding` / `KeyCaps` in the settings kit). Click a chord and press the new one: the recorder uses `chordFromEvent`, the very reader the dispatcher matches with, so what it shows is what fires. Backspace or Delete alone unbinds, Escape cancels, a bare letter is refused with "Add a modifier…". A row whose chord differs from its default shows a reset button; the section's action is "Reset all". A chord two commands answer to is flagged on both rows ("Also used by …") and the caps turn red; the pane does not forbid it (a block chord shadowing an app chord can be intended). The filter box narrows by label, group or chord. A "Built in" section shows the fixed keys read-only, the Enter rows following the Enter preference. Each row carries its command's icon — one map keyed by command id (and by the fixed rows' ids) in [app/commandIcons.jsx](../../frontend/src/app/commandIcons.jsx), which the palette reads too; a command missing there shows the generic command glyph, so give a new command its icon in the same change.
+Settings → Keyboard lists every command by group with its effective chord as key caps (`KeyBinding` / `KeyCaps` in the settings kit). Click a chord and press the new one: the recorder uses `chordFromEvent`, the very reader the dispatcher matches with, so what it shows is what fires. Backspace or Delete alone unbinds, Escape cancels, a bare letter is refused with "Add a modifier…". A row whose chord differs from its default shows a reset button; the section's action is "Reset all". A chord two commands answer to is flagged on both rows ("Also used by …") and the caps turn red. The pane does not forbid it: a block chord shadowing an app chord can be intended. The filter box narrows by label, group or chord. A "Built in" section shows the fixed keys read-only, the Enter rows following the Enter preference. Each row carries its command's icon — one map keyed by command id (and by the fixed rows' ids) in [app/commandIcons.jsx](../../frontend/src/app/commandIcons.jsx), which the palette reads too; a command missing there shows the generic command glyph, so give a new command its icon in the same change.
 
 Browsers keep a few chords for themselves whatever the page does: Chrome's Ctrl+T / W / N, Ctrl+Tab and Ctrl+PageUp / PageDown cannot be bound. The desktop app is not a browser and could take them in its shell; Gamma itself does not.
 

@@ -17,8 +17,8 @@ export function factsMatch(requires, facts) {
   return Object.entries(requires || {}).every(([key, value]) => facts[key] === value);
 }
 
-// Whether a trigger's event just fired; `seen` counts it (with earlier ones
-// of this page load) toward `count`.
+// Whether `event` is the tour's trigger event (its `count` is checked by
+// canOffer).
 export function triggerMatches(tour, event) {
   return !!tour.trigger?.event && !!event && eventMatches(tour.trigger, event.name, event.payload);
 }

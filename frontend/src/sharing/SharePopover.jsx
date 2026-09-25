@@ -54,8 +54,9 @@ const CLOUD_AUDIENCE_TILES = [
   { ...AUDIENCE_TILES[2], hint: T("people invited there") },
 ];
 
-// The refusal publish.py answers for an account without a Gamma Cloud identity.
-export const PUBLISH_SIGN_IN = t("Sign in with Gamma Cloud to publish.");
+// The refusal publish.py answers for an account without a Gamma Cloud identity,
+// compared against the server's text, so it stays untranslated.
+export const PUBLISH_SIGN_IN = T("Sign in with Gamma Cloud to publish.");
 
 // The one sentence that says what the tiles + toggle add up to.
 function accessSummary(settings, invited) {
@@ -162,7 +163,7 @@ function PublishSection({ state, busy, error, copied, onCopy, canEdit, onPublish
   if (!published) {
     return (
       <Section title={t("Gamma Cloud")}>
-        <Row icon={CloudIcon} label={t("Publish")}
+        <Row icon={CloudIcon} label={t("Publish")} className="publishRow"
           hint={!state.can_publish ? state.reason : counted || t("Keep this page reachable while this computer is off.")}
           title={"Keep this page reachable while this computer is off: publishing copies it to the Gamma Cloud share host "
             + "and shares it there; edits keep syncing both ways."}>
