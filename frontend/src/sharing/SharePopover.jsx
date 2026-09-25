@@ -29,6 +29,7 @@ import { MenuSelect } from "../shared/ui/Menus";
 import { AccountPicker, Empty, IconChoices, Row, Section, Segmented } from "../settings/SettingsKit";
 import { useAccounts } from "../settings/SettingsWorkspace";
 import { mirrorState } from "../collaboration/MirrorPopover";
+import { T, t } from "../shared/i18n/i18n.js";
 import {
   AlertCircleIcon, CheckIcon, CloudIcon, CloudOffIcon, CloudUploadIcon, CopyIcon, ExternalLinkIcon, EyeIcon, GlobeIcon, LinkIcon,
   PenIcon, PlusIcon, RefreshIcon, ShieldIcon, Trash2Icon, UserIcon, UsersIcon,
@@ -41,16 +42,16 @@ const ROLE_SEGMENTS = [
 ];
 
 const AUDIENCE_TILES = [
-  { value: "anyone", label: "Anyone", hint: "with the link", Icon: GlobeIcon },
-  { value: "users", label: "Signed in", hint: "any account here", Icon: UsersIcon },
-  { value: "list", label: "Invited only", hint: "the people below", Icon: ShieldIcon },
+  { value: "anyone", label: T("Anyone"), hint: T("with the link"), Icon: GlobeIcon },
+  { value: "users", label: T("Signed in"), hint: T("any account here"), Icon: UsersIcon },
+  { value: "list", label: T("Invited only"), hint: T("the people below"), Icon: ShieldIcon },
 ];
 
 // The cloud share's tiles: the same three, their hints in the share host's terms.
 const CLOUD_AUDIENCE_TILES = [
   AUDIENCE_TILES[0],
-  { ...AUDIENCE_TILES[1], hint: "any Gamma Cloud account" },
-  { ...AUDIENCE_TILES[2], hint: "people invited there" },
+  { ...AUDIENCE_TILES[1], hint: T("any Gamma Cloud account") },
+  { ...AUDIENCE_TILES[2], hint: T("people invited there") },
 ];
 
 // The refusal publish.py answers for an account without a Gamma Cloud identity.
@@ -76,10 +77,10 @@ function ShareInviteForm({ exclude, error, onSubmit, onCancel }) {
     <div className="shareInvite">
       <AccountPicker accounts={accounts} exclude={exclude} value={username} onChange={setUsername} autoFocus compact />
       <div className="shareInviteRow">
-        <MenuSelect value={role} label="Access" options={SHARE_ROLE_OPTIONS} onChange={setRole} />
+        <MenuSelect value={role} label={t("Access")} options={SHARE_ROLE_OPTIONS} onChange={setRole} />
         <span className="shareInviteBtns">
-          <button type="button" className="uiBtn sm" onClick={onCancel}>Cancel</button>
-          <button type="button" className="uiBtn sm primary" disabled={!username} onClick={() => onSubmit(username, role)}>Invite</button>
+          <button type="button" className="uiBtn sm" onClick={onCancel}>{t("Cancel")}</button>
+          <button type="button" className="uiBtn sm primary" disabled={!username} onClick={() => onSubmit(username, role)}>{t("Invite")}</button>
         </span>
       </div>
       {error ? <div className="settingsPaneHint aiKeysError">{error}</div> : null}
@@ -141,7 +142,7 @@ function PublishSection({ state, busy, error, copied, onCopy, canEdit, onPublish
       {capped && accountUrl ? (
         <div className="publishAccount">
           <a className="uiBtn sm" href={accountUrl} target="_blank" rel="noopener"
-            title="Your Gamma Cloud account: plan, devices, sign-in methods">
+            title={t("Your Gamma Cloud account: plan, devices, sign-in methods")}>
             <ExternalLinkIcon size={13} />Open account
           </a>
         </div>
@@ -155,16 +156,16 @@ function PublishSection({ state, busy, error, copied, onCopy, canEdit, onPublish
 
   if (!state) {
     return (
-      <Section title="Gamma Cloud">
-        <Row icon={CloudIcon} label="Publish" hint="Loading…" />
+      <Section title={t("Gamma Cloud")}>
+        <Row icon={CloudIcon} label={t("Publish")} hint={t("Loading…")} />
       </Section>
     );
   }
   if (!published) {
     return (
-      <Section title="Gamma Cloud">
-        <Row icon={CloudIcon} label="Publish"
-          hint={!state.can_publish ? state.reason : counted || "Keep this page reachable while this computer is off."}
+      <Section title={t("Gamma Cloud")}>
+        <Row icon={CloudIcon} label={t("Publish")}
+          hint={!state.can_publish ? state.reason : counted || t("Keep this page reachable while this computer is off.")}
           title={"Keep this page reachable while this computer is off: publishing copies it to the Gamma Cloud share host "
             + "and shares it there; edits keep syncing both ways."}>
           {state.can_publish && canEdit ? (
@@ -183,7 +184,7 @@ function PublishSection({ state, busy, error, copied, onCopy, canEdit, onPublish
   }
   return (
     <Section
-      title="Gamma Cloud"
+      title={t("Gamma Cloud")}
       action={share && share.audience !== "list" && canEdit ? (
         <Segmented
           value={share.role} options={ROLE_SEGMENTS} disabled={!!busy}
@@ -191,8 +192,8 @@ function PublishSection({ state, busy, error, copied, onCopy, canEdit, onPublish
         />
       ) : null}
     >
-      <Row icon={CloudIcon} label="Cloud link" hint={link || "no link on the share host"}
-        title={link && link !== state.url ? `${link}\nAlso works: ${state.url}` : link}>
+      <Row icon={CloudIcon} label={t("Cloud link")} hint={link || t("no link on the share host")}
+        title={link && link !== state.url ? t("{link}\nAlso works: {url}", { link: link, url: state.url }) : link}>
         <span className="shareLinkBtns">
           {link ? (
             <button type="button" className={`uiBtn sm ${copied ? "on" : ""}`} onClick={onCopy} title={link}>
@@ -202,8 +203,8 @@ function PublishSection({ state, busy, error, copied, onCopy, canEdit, onPublish
           ) : null}
           {canEdit ? (
             <button type="button" className={`uiBtn sm iconSq danger ${confirming ? "on" : ""}`} disabled={!!busy}
-              onClick={() => setConfirming((v) => !v)} aria-label="Unpublish"
-              title="Unpublish: the cloud link stops working and the copy on Gamma Cloud is deleted; this page stays here.">
+              onClick={() => setConfirming((v) => !v)} aria-label={t("Unpublish")}
+              title={t("Unpublish: the cloud link stops working and the copy on Gamma Cloud is deleted; this page stays here.")}>
               {spinning("unpublish") || <CloudOffIcon size={13} />}
             </button>
           ) : null}
@@ -215,8 +216,8 @@ function PublishSection({ state, busy, error, copied, onCopy, canEdit, onPublish
           <span>Unpublish? The cloud link stops working and the copy there is deleted; this page stays here.</span>
           <span className="mirrorConfirmBtns">
             <button type="button" className="uiBtn sm danger dangerBtn" disabled={!!busy}
-              onClick={async () => { await onUnpublish(); setConfirming(false); }}>Unpublish</button>
-            <button type="button" className="uiBtn sm" disabled={!!busy} onClick={() => setConfirming(false)}>Cancel</button>
+              onClick={async () => { await onUnpublish(); setConfirming(false); }}>{t("Unpublish")}</button>
+            <button type="button" className="uiBtn sm" disabled={!!busy} onClick={() => setConfirming(false)}>{t("Cancel")}</button>
           </span>
         </div>
       ) : null}
@@ -227,7 +228,7 @@ function PublishSection({ state, busy, error, copied, onCopy, canEdit, onPublish
             <div className="mirrorStateLine">
               <span>{st.text}</span>
               <button type="button" className={`iconBtn sm ${running ? "mirrorSpin" : ""}`} disabled={running || !!busy}
-                onClick={onSync} aria-label="Sync now" title={running ? "A round is running" : "Sync now"}>
+                onClick={onSync} aria-label={t("Sync now")} title={running ? t("A round is running") : t("Sync now")}>
                 <RefreshIcon size={14} />
               </button>
             </div>
@@ -237,7 +238,7 @@ function PublishSection({ state, busy, error, copied, onCopy, canEdit, onPublish
       {share ? (
         <>
           <IconChoices
-            label="Who can open the cloud link" value={share.audience} options={CLOUD_AUDIENCE_TILES}
+            label={t("Who can open the cloud link")} value={share.audience} options={CLOUD_AUDIENCE_TILES}
             onChange={(audience) => {
               if (!canEdit || busy || audience === share.audience) return;
               onPublish(audience === "anyone" ? { audience, role: "view" } : { audience });
@@ -278,17 +279,17 @@ export function SharePopover({
   }
 
   return (
-    <div className="popover sharePopover" role="dialog" aria-label="Share this page">
+    <div className="popover sharePopover" role="dialog" aria-label={t("Share this page")}>
       <div className="sharePopoverHead">
-        <span className="popoverTitle">Share this page</span>
-        <button type="button" className="uiClose" onClick={onClose} aria-label="Close" title="Close">×</button>
+        <span className="popoverTitle">{t("Share this page")}</span>
+        <button type="button" className="uiClose" onClick={onClose} aria-label={t("Close")} title={t("Close")}>×</button>
       </div>
       <div className="settingsForm">
-        {settings === null ? <Empty icon={LinkIcon}>Loading…</Empty> : null}
+        {settings === null ? <Empty icon={LinkIcon}>{t("Loading…")}</Empty> : null}
         {settings && !shared ? (
-          <Section title="Link">
-            <Row icon={LinkIcon} label="Share link" hint="not shared yet"
-              title="A link lets people open this page — read-only or editable, for anyone or only for accounts you name.">
+          <Section title={t("Link")}>
+            <Row icon={LinkIcon} label={t("Share link")} hint={t("not shared yet")}
+              title={t("A link lets people open this page — read-only or editable, for anyone or only for accounts you name.")}>
               <button type="button" className="uiBtn sm primary" onClick={onCreate}>
                 <LinkIcon size={13} />Create link
               </button>
@@ -297,23 +298,23 @@ export function SharePopover({
         ) : null}
         {shared ? (
           <>
-            <Section title="Link">
-              <Row icon={LinkIcon} label="Share link" hint={shareUrl} title={shareUrl}>
+            <Section title={t("Link")}>
+              <Row icon={LinkIcon} label={t("Share link")} hint={shareUrl} title={shareUrl}>
                 <span className="shareLinkBtns">
                   <button type="button" className={`uiBtn sm ${copied ? "on" : ""}`} onClick={onCopy} title={shareUrl}>
                     {copied ? <CheckIcon size={13} /> : <LinkIcon size={13} />}
                     {copied ? "Copied" : "Copy link"}
                   </button>
                   <button type="button" className="uiBtn sm iconSq danger" onClick={onStop}
-                    aria-label="Stop sharing"
-                    title="Stop sharing — the link stops working; sharing again later makes a new link with default settings.">
+                    aria-label={t("Stop sharing")}
+                    title={t("Stop sharing — the link stops working; sharing again later makes a new link with default settings.")}>
                     <Trash2Icon size={13} />
                   </button>
                 </span>
               </Row>
             </Section>
             <Section
-              title="Access"
+              title={t("Access")}
               action={settings.audience !== "list" ? (
                 <Segmented
                   value={settings.role} options={ROLE_SEGMENTS}
@@ -322,7 +323,7 @@ export function SharePopover({
               ) : null}
             >
               <IconChoices
-                label="Who can open the link" value={settings.audience} options={AUDIENCE_TILES}
+                label={t("Who can open the link")} value={settings.audience} options={AUDIENCE_TILES}
                 onChange={(audience) => {
                   if (audience === settings.audience) return;
                   // Opening a link up to everyone never silently makes it editable.
@@ -338,7 +339,7 @@ export function SharePopover({
               </div>
             </Section>
             <Section
-              title="People"
+              title={t("People")}
               action={
                 <button type="button" className={`uiBtn sm ${inviting ? "on" : ""}`} onClick={() => setInviting((v) => !v)}>
                   <PlusIcon size={13} /> Invite
@@ -354,7 +355,7 @@ export function SharePopover({
                   />
                   <button
                     type="button" className="uiBtn sm iconSq"
-                    title={`Remove ${u.name}`} aria-label={`Remove ${u.name}`}
+                    title={t("Remove {name}", { name: u.name })} aria-label={t("Remove {name}", { name: u.name })}
                     onClick={() => onRemove(u.name)}
                   >
                     <Trash2Icon size={13} />

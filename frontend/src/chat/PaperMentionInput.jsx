@@ -3,6 +3,7 @@ import { AutoGrowTextarea } from "../shared/ui/Widgets";
 import { BookIcon, CheckIcon } from "../shared/ui/Icons";
 import { createTitleScorer } from "../library/librarySearch";
 import { insertMention, mentionAt, MAX_CHAT_REFERENCES } from "./paperMentions";
+import { t } from "../shared/i18n/i18n.js";
 
 export default function PaperMentionInput({ value, onChange, pages, openTabs, selected, onAttach, onSend, ...props }) {
   const input = useRef(null);
@@ -38,26 +39,26 @@ export default function PaperMentionInput({ value, onChange, pages, openTabs, se
   };
   return <div className="chatMentionInput">
     {mention && <div className="chatMentionPicker">
-      <div className="chatMentionHeading">Mention a library page <span>↑↓ choose · Enter add · Esc close</span></div>
-      <div ref={list} id={listId} role="listbox" aria-label="Library pages">
+      <div className="chatMentionHeading">{t("Mention a library page")} <span>{t("↑↓ choose · Enter add · Esc close")}</span></div>
+      <div ref={list} id={listId} role="listbox" aria-label={t("Library pages")}>
         {results.map((page, i) => {
           const meta = page.properties?.meta || {};
           const authors = (meta.authors || []).slice(0, 2).join(", ");
           const detail = [authors, meta.year, meta.venue, page.properties?.folder].filter(Boolean).join(" · ");
           const disabled = !selected.includes(page.id) && selected.length >= MAX_CHAT_REFERENCES;
           return <button type="button" role="option" id={`${listId}-${i}`} key={page.id} tabIndex={-1}
-            title={[page.content || "Untitled", detail].filter(Boolean).join("\n")}
+            title={[page.content || t("Untitled"), detail].filter(Boolean).join("\n")}
             aria-selected={i === active} aria-disabled={disabled} className={`slashMenuItem chatMentionOption${i === active ? " selected" : ""}`}
             onPointerDown={(e) => e.preventDefault()} onMouseEnter={() => setActive(i)} onClick={() => choose(page)}>
             <BookIcon size={15} /><span><strong>{page.content || "Untitled"}</strong>{detail && <small>{detail}</small>}</span>
             {selected.includes(page.id) && <CheckIcon size={13} />}
           </button>;
         })}
-        {!results.length && <div className="popoverHint">No matching pages. Try another title.</div>}
+        {!results.length && <div className="popoverHint">{t("No matching pages. Try another title.")}</div>}
       </div>
       <div className="chatMentionHint">{selected.length >= MAX_CHAT_REFERENCES ? `Up to ${MAX_CHAT_REFERENCES} attached pages. Remove one to add another.` : "Adds paper details and text to chat context. Tools can read more."}</div>
     </div>}
-    <AutoGrowTextarea {...props} ref={input} value={value} role="combobox" aria-label="Message AI"
+    <AutoGrowTextarea {...props} ref={input} value={value} role="combobox" aria-label={t("Message AI")}
       aria-autocomplete="list" aria-expanded={!!mention} aria-controls={mention ? listId : undefined}
       aria-activedescendant={mention && results[active] ? `${listId}-${active}` : undefined}
       onChange={(e) => { onChange(e.target.value); scan(e.target); }}

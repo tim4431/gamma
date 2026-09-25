@@ -9,6 +9,7 @@
 // pointer before the source changes. `bound` (optional) returns the element
 // the figure sits in; its content width caps the drag.
 import React, { useRef, useState } from "react";
+import { t } from "../../shared/i18n/i18n.js";
 
 function contentWidth(el) {
   if (!el) return Infinity;
@@ -42,7 +43,7 @@ export function useDragResize({ measure, onCommit, bound, min = 60, max = 1600 }
   }
   const gripProps = (side) => ({
     className: `mdResizeGrip ${side}`,
-    title: "Drag to resize · double-click for natural size",
+    title: t("Drag to resize · double-click for natural size"),
     onMouseDown: stop,
     onClick: stop,
     onPointerDown: (e) => start(e, side === "left" ? -1 : 1),

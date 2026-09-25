@@ -714,21 +714,19 @@ Two more settings shape what a share host serves, both environment only
   service with the suffix. Deploying it takes a wildcard DNS record,
   `*.gammapdf.com` pointing at the share host (named records such as
   `account` keep precedence over the wildcard), and a wildcard site in
-  front of the container. With Caddy, whose wildcard certificate needs the
-  DNS-01 challenge (a build with the DNS provider's module):
+  front of the container. Behind Cloudflare in "Full" mode Caddy's internal
+  certificate covers the wildcard, so no DNS challenge is needed
+  (`cloud/deploy/Caddyfile`, the `share` service of
+  `cloud/deploy/compose.yml`, its settings in `share.env.example`):
 
   ```
   *.gammapdf.com {
-  	tls {
-  		dns cloudflare {env.CLOUDFLARE_API_TOKEN}
-  	}
+  	tls internal
   	@pages header_regexp Host ^[a-z0-9-]+-pages\.gammapdf\.com$
-  	handle @pages {
-  		reverse_proxy gamma-share:8000
-  	}
-  	handle {
-  		respond 404
-  	}
+  	@share host share.gammapdf.com
+  	handle @share { reverse_proxy share:9001 }
+  	handle @pages { reverse_proxy share:9001 }
+  	handle { respond 404 }
   }
   ```
 

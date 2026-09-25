@@ -13,6 +13,7 @@ import { scanImageSyntax } from "./mdMarks";
 import { ContextMenu, MenuItem } from "../shared/ui/Menus";
 import { ResizeGrips, useDragResize } from "../shared/ui/ResizeGrip";
 import { Segmented } from "../settings/SettingsKit";
+import { t } from "../shared/i18n/i18n.js";
 import {
   AlignCenterIcon, AlignLeftIcon, AlignRightIcon, CaptionIcon, DownloadIcon,
   PlusIcon, Trash2Icon, ZoomInIcon,
@@ -330,12 +331,12 @@ export function MdImage({ src, alt, width, idx, onEdit }) {
         />
         {onEdit ? (
           <span className="mdImgTools" onMouseDown={stop} onClick={stop}>
-            <button type="button" className="ctlBtn" title="Zoom"
+            <button type="button" className="ctlBtn" title={t("Zoom")}
               onClick={() => setLightbox(true)}><ZoomInIcon /></button>
-            <button type="button" className="ctlBtn" title={alt ? "Edit caption" : "Add caption"}
+            <button type="button" className="ctlBtn" title={alt ? t("Edit caption") : t("Add caption")}
               onClick={() => setCaption(alt || "")}><CaptionIcon /></button>
-            <a className="ctlBtn" title="Download" href={src} download><DownloadIcon /></a>
-            <button type="button" className="ctlBtn danger" title="Remove image"
+            <a className="ctlBtn" title={t("Download")} href={src} download><DownloadIcon /></a>
+            <button type="button" className="ctlBtn danger" title={t("Remove image")}
               onClick={() => onEdit(idx, "delete")}><Trash2Icon /></button>
           </span>
         ) : null}
@@ -346,7 +347,7 @@ export function MdImage({ src, alt, width, idx, onEdit }) {
           className="mdImgCaptionInput"
           autoFocus
           value={caption}
-          placeholder="Caption…"
+          placeholder={t("Caption…")}
           onChange={(e) => setCaption(e.target.value)}
           onMouseDown={stop}
           onClick={stop}
@@ -614,22 +615,22 @@ export function MdTableWrap({ idx, onEdit, model, editKey, children }) {
       ) : null}
       {onEdit ? (
         <>
-          <button type="button" className="mdTableAdd mdTableAddCol" title="Add column"
+          <button type="button" className="mdTableAdd mdTableAddCol" title={t("Add column")}
             onMouseDown={stop}
             onClick={(e) => { stop(e); onEdit(idx, { type: "addCol", at: counts().nCols }); }}>+</button>
-          <button type="button" className="mdTableAdd mdTableAddRow" title="Add row"
+          <button type="button" className="mdTableAdd mdTableAddRow" title={t("Add row")}
             onMouseDown={stop}
             onClick={(e) => { stop(e); onEdit(idx, { type: "addRow", at: counts().nBody }); }}>+</button>
           {hover ? (
             <>
               <button type="button" className="mdTableHandle mdTableColHandle"
-                style={{ left: hover.colX }} title="Drag to move · click for options"
+                style={{ left: hover.colX }} title={t("Drag to move · click for options")}
                 onMouseDown={stop}
                 onPointerDown={handleDown("col")} onPointerMove={handleDragMove}
                 onPointerUp={handleUp} onPointerCancel={cancelDrag}>⋯</button>
               <button type="button" className="mdTableHandle mdTableRowHandle"
                 style={{ top: hover.rowY }}
-                title={hover.row > 0 ? "Drag to move · click for options" : "Row options"}
+                title={hover.row > 0 ? t("Drag to move · click for options") : t("Row options")}
                 onMouseDown={stop}
                 onPointerDown={handleDown("row")} onPointerMove={handleDragMove}
                 onPointerUp={handleUp} onPointerCancel={cancelDrag}>⋮</button>
@@ -647,24 +648,24 @@ export function MdTableWrap({ idx, onEdit, model, editKey, children }) {
                 <Segmented
                   value={model?.aligns?.[menu.at] ?? null}
                   onChange={(dir) => pick({ type: "align", col: menu.at, dir })}
-                  options={[["left", "", AlignLeftIcon, "Align left"],
-                    ["center", "", AlignCenterIcon, "Align center"],
-                    ["right", "", AlignRightIcon, "Align right"]]}
+                  options={[["left", "", AlignLeftIcon, t("Align left")],
+                    ["center", "", AlignCenterIcon, t("Align center")],
+                    ["right", "", AlignRightIcon, t("Align right")]]}
                 />
               </div>
-              <MenuItem icon={PlusIcon} onClick={() => pick({ type: "addCol", at: menu.at })}>Insert left</MenuItem>
-              <MenuItem icon={PlusIcon} onClick={() => pick({ type: "addCol", at: menu.at + 1 })}>Insert right</MenuItem>
-              <MenuItem danger icon={Trash2Icon} onClick={() => pick({ type: "delCol", at: menu.at })}>Delete column</MenuItem>
+              <MenuItem icon={PlusIcon} onClick={() => pick({ type: "addCol", at: menu.at })}>{t("Insert left")}</MenuItem>
+              <MenuItem icon={PlusIcon} onClick={() => pick({ type: "addCol", at: menu.at + 1 })}>{t("Insert right")}</MenuItem>
+              <MenuItem danger icon={Trash2Icon} onClick={() => pick({ type: "delCol", at: menu.at })}>{t("Delete column")}</MenuItem>
             </ContextMenu>
           ) : null}
           {menu?.kind === "row" ? (
             <ContextMenu x={menu.x} y={menu.y} onClose={() => setMenu(null)}>
               {menu.at > 0 ? (
-                <MenuItem icon={PlusIcon} onClick={() => pick({ type: "addRow", at: menu.at - 1 })}>Insert above</MenuItem>
+                <MenuItem icon={PlusIcon} onClick={() => pick({ type: "addRow", at: menu.at - 1 })}>{t("Insert above")}</MenuItem>
               ) : null}
-              <MenuItem icon={PlusIcon} onClick={() => pick({ type: "addRow", at: menu.at })}>Insert below</MenuItem>
+              <MenuItem icon={PlusIcon} onClick={() => pick({ type: "addRow", at: menu.at })}>{t("Insert below")}</MenuItem>
               {menu.at > 0 ? (
-                <MenuItem danger icon={Trash2Icon} onClick={() => pick({ type: "delRow", at: menu.at - 1 })}>Delete row</MenuItem>
+                <MenuItem danger icon={Trash2Icon} onClick={() => pick({ type: "delRow", at: menu.at - 1 })}>{t("Delete row")}</MenuItem>
               ) : null}
             </ContextMenu>
           ) : null}

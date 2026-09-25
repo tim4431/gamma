@@ -17,7 +17,10 @@ own: `.github/workflows/cloud.yml`, dispatched from ANY branch, runs the
 
 The folder's `data/` is the service's whole state and its secret (signing
 keys, token hashes) and `.env` holds the SMTP/Turnstile/OAuth credentials —
-never read them out, copy them off the host, or overwrite them.
+never read them out, copy them off the host, or overwrite them. The same
+goes for `share.env` (the share host's client secret) and `share-data/`
+(its published pages); the `share` service is a Gamma image pinned by tag
+in `compose.yml` and is updated only by changing that tag.
 
 ## Publish from the branch
 

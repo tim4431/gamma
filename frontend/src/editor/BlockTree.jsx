@@ -32,6 +32,7 @@ import { PeerChips } from "../collaboration/Presence";
 import { ContextMenu, MenuItem } from "../shared/ui/Menus";
 import { API, apiJson, assetUrl, copyText, withWorkspace } from "../shared/lib/utils";
 import { CopyIcon, ExportIcon, MessageSquareIcon, PlusIcon, Trash2Icon } from "../shared/ui/Icons";
+import { T, t } from "../shared/i18n/i18n.js";
 import {
   applyImageEdit, applyTableEdit, formatTables, htmlTableToMarkdown,
   MdImage, MdTableWrap, parseTable, scanTables, tsvToMarkdown,
@@ -425,7 +426,7 @@ function BlockEmbedCard({ refId, refBlock, refLabels, onBlockRefClick, onEmbedEd
               // Escape saves and exits, same as blurring a normal block.
               if (e.key === "Escape") { e.preventDefault(); save(); }
             }}
-            placeholder="Edit the source note…"
+            placeholder={t("Edit the source note…")}
           />
         ) : refBlock?.content ? (
           <BlockMarkdown content={refBlock.content} blockId={`embed:${refId}`} refLabels={refLabels}
@@ -435,7 +436,7 @@ function BlockEmbedCard({ refId, refBlock, refLabels, onBlockRefClick, onEmbedEd
             onTableEdit={editable ? stableTbl : undefined}
             onMermaidEdit={editable ? stableMermaid : undefined} />
         ) : (
-          <span className="blockPlaceholder">embedded note…</span>
+          <span className="blockPlaceholder">{t("embedded note…")}</span>
         )}
       </span>
       {draft != null && mathUi ? (
@@ -450,7 +451,7 @@ function BlockEmbedCard({ refId, refBlock, refLabels, onBlockRefClick, onEmbedEd
         <span
           className="blockEmbedSrc"
           role="link"
-          title="Open the source block"
+          title={t("Open the source block")}
           onClick={(e) => { e.stopPropagation(); onBlockRefClick?.(refId); }}
         >{refBlock.page_title}</span>
       ) : null}
@@ -523,7 +524,7 @@ const BlockMarkdown = React.memo(function BlockMarkdown({ content, blockId, refL
               <a
                 href={`?block=${refId}`}
                 className="blockRefChip"
-                title={ref?.page_title ? `From: ${ref.page_title}` : undefined}
+                title={ref?.page_title ? t("From: {page_title}", { page_title: ref.page_title }) : undefined}
                 onClick={(e) => {
                   if (e.metaKey || e.ctrlKey) return;
                   e.preventDefault();
@@ -657,7 +658,7 @@ function AreaSnapshot({ block, captureArea, docNonce }) {
   // Reserve the crop's aspect ratio while it renders so the card doesn't jump.
   const ratio = r && r.y2 > r.y1 ? (r.x2 - r.x1) / (r.y2 - r.y1) : null;
   return src ? (
-    <img className="blockAreaSnap" src={src} alt="Area selection" draggable={false}
+    <img className="blockAreaSnap" src={src} alt={t("Area selection")} draggable={false}
       style={{ borderLeftColor: block.color || undefined }} />
   ) : (
     <div className="blockAreaSnap blockAreaSnapPending"
@@ -1017,26 +1018,26 @@ function BlockRow({
     if (link?.kind === "block") {
       const blockId = link.blockId;
       return [
-        { name: "mention", glyph: "@", label: "Mention", hint: "inline chip", make: () => `[[${blockId}]]` },
-        { name: "synced", glyph: "⧉", label: "Synced block", hint: "live embed", make: () => `![[${blockId}]]` },
-        { name: "url", glyph: "🔗", label: "URL", hint: "keep the link" },
+        { name: "mention", glyph: "@", label: T("Mention"), hint: T("inline chip"), make: () => `[[${blockId}]]` },
+        { name: "synced", glyph: "⧉", label: T("Synced block"), hint: T("live embed"), make: () => `![[${blockId}]]` },
+        { name: "url", glyph: "🔗", label: "URL", hint: T("keep the link") },
       ];
     }
     if (link?.kind === "citation") {
       return [
-        { name: "gamma", glyph: "❝", label: "Citation", hint: `passage on p. ${link.page}` },
-        { name: "url", glyph: "🔗", label: "URL", hint: "keep the link" },
+        { name: "gamma", glyph: "❝", label: T("Citation"), hint: t("passage on p. {page}", { page: link.page }) },
+        { name: "url", glyph: "🔗", label: "URL", hint: T("keep the link") },
       ];
     }
     if (link?.kind === "page") {
       return [
-        { name: "gamma", glyph: "📄", label: "Page link", hint: "card with the title" },
-        { name: "url", glyph: "🔗", label: "URL", hint: "keep the link" },
+        { name: "gamma", glyph: "📄", label: T("Page link"), hint: T("card with the title") },
+        { name: "url", glyph: "🔗", label: "URL", hint: T("keep the link") },
       ];
     }
     return [
-      { name: "url", glyph: "🔗", label: "URL", hint: "link chip" },
-      { name: "titled", glyph: "🔖", label: "Titled link", hint: "fetch the page title" },
+      { name: "url", glyph: "🔗", label: "URL", hint: T("link chip") },
+      { name: "titled", glyph: "🔖", label: T("Titled link"), hint: T("fetch the page title") },
     ];
   }
 
@@ -1178,9 +1179,9 @@ function BlockRow({
           userEvent: "input",
         });
         const items = [
-          ...(tsvMd ? [{ name: "table", glyph: "▦", label: "Table", hint: "markdown table", block: true, make: () => tsvMd }] : []),
-          { name: "text", glyph: "¶", label: "Text", hint: "keep in this block" },
-          { name: "blocks", glyph: "≡", label: "Blocks", hint: "split into nested blocks" },
+          ...(tsvMd ? [{ name: "table", glyph: "▦", label: T("Table"), hint: T("markdown table"), block: true, make: () => tsvMd }] : []),
+          { name: "text", glyph: "¶", label: T("Text"), hint: T("keep in this block") },
+          { name: "blocks", glyph: "≡", label: T("Blocks"), hint: T("split into nested blocks") },
         ];
         const anchor = ta.caretCoords(start);
         requestAnimationFrame(() => {
@@ -1322,14 +1323,14 @@ function BlockRow({
             {!block.position && block.properties?.linked_highlight_id && onUnlinkHighlight ? (
               <button
                 className="collapseBtn attachModeBtn"
-                title="Unlink highlight"
+                title={t("Unlink highlight")}
                 onClick={(e) => { e.stopPropagation(); onUnlinkHighlight(block.id); }}
               >⊘</button>
             ) : null}
             {!block.position && !block.properties?.linked_highlight_id && onEnterAttachMode ? (
               <button
                 className="collapseBtn attachModeBtn"
-                title="Attach to a PDF highlight"
+                title={t("Attach to a PDF highlight")}
                 onClick={(e) => { e.stopPropagation(); onEnterAttachMode(block.id); }}
               >⊕</button>
             ) : null}
@@ -1338,7 +1339,7 @@ function BlockRow({
           <button
             className="collapseBtn highlightDotBtn dotSlot"
             onClick={(e) => { e.stopPropagation(); onInkJump?.(block.id); }}
-            title={block.page ? `Handwriting on page ${block.page} — click to show it` : "Handwriting"}
+            title={block.page ? t("Handwriting on page {page} — click to show it", { page: block.page }) : t("Handwriting")}
           >
             <span className="inkMarker"><PenIcon size={9} strokeWidth={2.4} /></span>
           </button>
@@ -1513,7 +1514,7 @@ function BlockRow({
                   onDelete(block.id);
                 }
               }}
-              placeholder="Type — '/' for commands"
+              placeholder={t("Type — '/' for commands")}
             />
           ) : aiText != null ? (
             // The AI agent is writing this block's new text right now: show
@@ -1553,7 +1554,7 @@ function BlockRow({
             <button
               type="button"
               className="blockLinkChip"
-              title={block.properties.link_url || "Open linked page"}
+              title={block.properties.link_url || t("Open linked page")}
               onClick={(e) => { e.stopPropagation(); onOpenLinkTarget?.(block); }}
             >
               <LinkIcon size={11} strokeWidth={2.4} />
@@ -1566,7 +1567,7 @@ function BlockRow({
         {!readOnly && block.id !== "root" ? (
           <button
             className="uiClose uiCloseSm uiCloseDanger blockDeleteBtn"
-            title="Delete block"
+            title={t("Delete block")}
             onClick={(e) => { e.stopPropagation(); onDelete(block.id); }}
           >×</button>
         ) : null}
@@ -1583,7 +1584,7 @@ function BlockRow({
         <SlashMenuPopup items={slashMenu.items} selected={slashIdx} anchor={slashMenu.anchor} onPick={runSlashCommand} />
       ) : null}
       {!readOnly && block.editMode && pasteMenu ? (
-        <SlashMenuPopup title="Paste as" items={pasteMenu.items} selected={pasteIdx} anchor={pasteMenu.anchor} onPick={applyPasteAs} />
+        <SlashMenuPopup title={t("Paste as")} items={pasteMenu.items} selected={pasteIdx} anchor={pasteMenu.anchor} onPick={applyPasteAs} />
       ) : null}
       {refPopup && searchResults.length > 0 && (
         <div
@@ -1681,8 +1682,8 @@ function SortableBlockRow({ block, ...rowProps }) {
           onDragStart={onDragStart}
           onDragEnd={onDragEnd}
           onClick={onHandleClick}
-          aria-label="Drag to move, click for menu"
-          title="Drag to move · click for menu"
+          aria-label={t("Drag to move, click for menu")}
+          title={t("Drag to move · click for menu")}
         >⋮⋮</span>
         {block.id !== "root" && rowProps.onEnterSibling && !rowProps.readOnly ? (
           <button
@@ -1690,8 +1691,8 @@ function SortableBlockRow({ block, ...rowProps }) {
             className="addHandle"
             onClick={onAddClick}
             onMouseDown={(e) => e.preventDefault()}
-            aria-label="Add a block below (Alt+click: above)"
-            title={"Click to add a block below\nAlt+click to add above"}
+            aria-label={t("Add a block below (Alt+click: above)")}
+            title={t("Click to add a block below\nAlt+click to add above")}
           ><PlusIcon size={15} strokeWidth={2} /></button>
         ) : null}
       </span>
@@ -1699,7 +1700,7 @@ function SortableBlockRow({ block, ...rowProps }) {
         <ContextMenu x={handleMenu.x} y={handleMenu.y} onClose={() => setHandleMenu(null)}>
           <MenuItem
             icon={LinkIcon}
-            title="Paste it in a note to choose mention / synced block, or open it anywhere"
+            title={t("Paste it in a note to choose mention / synced block, or open it anywhere")}
             onClick={() => copy(
               withWorkspace(`${window.location.origin}/?block=${encodeURIComponent(block.id)}`),
               "Block link copied — paste into a note for mention / synced block",
@@ -1707,7 +1708,7 @@ function SortableBlockRow({ block, ...rowProps }) {
           >Copy link to block</MenuItem>
           <MenuItem
             icon={CopyIcon}
-            title="Copy this block's markdown source (sub-blocks become an indented list)"
+            title={t("Copy this block's markdown source (sub-blocks become an indented list)")}
             onClick={() => copy(
               block.children?.length ? subtreeMarkdown(block, 0) : block.content || "",
               "Copied block as markdown",
@@ -1716,21 +1717,21 @@ function SortableBlockRow({ block, ...rowProps }) {
           {block.id !== "root" && rowProps.onAddToChat ? (
             <MenuItem
               icon={MessageSquareIcon}
-              title="Attach this block (with its sub-blocks) to your next chat message — Ctrl+click a block does the same"
+              title={t("Attach this block (with its sub-blocks) to your next chat message — Ctrl+click a block does the same")}
               onClick={() => { setHandleMenu(null); rowProps.onAddToChat(block); }}
             >Add to chat</MenuItem>
           ) : null}
           {block.id !== "root" ? (
             <MenuItem
               icon={CopyIcon}
-              title="Insert a copy below (sub-blocks included; highlight anchors are not copied)"
+              title={t("Insert a copy below (sub-blocks included; highlight anchors are not copied)")}
               onClick={() => { setHandleMenu(null); rowProps.onDuplicate?.(block.id); }}
             >Duplicate</MenuItem>
           ) : null}
           {block.id !== "root" ? (
             <MenuItem
               icon={ExportIcon}
-              title="Move this block and its sub-blocks to the end of another page"
+              title={t("Move this block and its sub-blocks to the end of another page")}
               onClick={() => { setHandleMenu(null); rowProps.onMoveToPage?.(block.id); }}
             >Move to page…</MenuItem>
           ) : null}

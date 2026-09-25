@@ -27,6 +27,7 @@ import React from "react";
 import { API, apiJson, fmtBytes } from "../shared/lib/utils";
 import { Row, Segmented, Toggle } from "../settings/SettingsKit";
 import { ConflictCard, Marked, useConflicts, wordDiff } from "./MergeResolver";
+import { T, t } from "../shared/i18n/i18n.js";
 import {
   ActivityIcon, AlertCircleIcon, ArrowDownIcon, ArrowLeftIcon, ArrowUpDownIcon, ArrowUpIcon, CheckIcon,
   ClockIcon, CloudDownloadIcon, ExternalLinkIcon, HandIcon, HistoryIcon, LinkIcon, PenIcon, RefreshIcon,
@@ -81,7 +82,7 @@ export function diffStat(stats) {
 export function DiffStat({ stats, title }) {
   if (!stats || !(stats.add || stats.del || stats.mod)) return null;
   return (
-    <span className="mirrorDiff" title={title || "blocks added · removed · changed"}>
+    <span className="mirrorDiff" title={title || t("blocks added · removed · changed")}>
       {stats.add ? <span className="add">+{stats.add}</span> : null}
       {stats.del ? <span className="del">−{stats.del}</span> : null}
       {stats.mod ? <span className="mod">~{stats.mod}</span> : null}
@@ -131,16 +132,16 @@ export function mirrorState(info, { busy = false, pending = false } = {}) {
   const p = s.progress;
   if (info?.detached || info?.mode === "off") {
     return { state: "detached", tone: "", Icon: UnlinkIcon, text: `Detached${s.detached_at ? ` · ${clock(s.detached_at)}` : ""}`,
-      title: "Detached: nothing is pulled or pushed until you reattach. Nothing is lost." };
+      title: T("Detached: nothing is pulled or pushed until you reattach. Nothing is lost.") };
   }
   if (s.running || busy) {
     return { state: "busy", tone: "busy", Icon: RefreshIcon,
       text: `${p?.first ? "Cloning" : "Syncing"}${p?.total ? ` ${p.done} / ${p.total}` : "…"}`,
-      detail: p?.page || "", title: "A round is running" };
+      detail: p?.page || "", title: T("A round is running") };
   }
   if (info?.conflicts_open) {
     return { state: "conflicts", tone: "warn", Icon: RefreshIcon, badge: info.conflicts_open,
-      text: n(info.conflicts_open, "conflict"), title: "Blocks both sides changed wait for a decision" };
+      text: n(info.conflicts_open, "conflict"), title: T("Blocks both sides changed wait for a decision") };
   }
   if (s.last_error) {
     const unreachable = /cannot reach|timed out|refused|unreachable/i.test(s.last_error);
@@ -157,13 +158,13 @@ export function mirrorState(info, { busy = false, pending = false } = {}) {
     // spins from the edit until the round is confirmed done, so a round too
     // short for a poll to catch still reads as "syncing"
     if (info?.on_change) {
-      return { state: "busy", tone: "busy", Icon: RefreshIcon, text: "Syncing your edits…", title: "A round follows every edit; your changes are on their way." };
+      return { state: "busy", tone: "busy", Icon: RefreshIcon, text: T("Syncing your edits…"), title: T("A round follows every edit; your changes are on their way.") };
     }
-    return { state: "pending", tone: "pending", Icon: RefreshIcon, dot: true, text: "Local edits not synced yet",
-      title: "Press Sync to send them, or wait for the next automatic round." };
+    return { state: "pending", tone: "pending", Icon: RefreshIcon, dot: true, text: T("Local edits not synced yet"),
+      title: T("Press Sync to send them, or wait for the next automatic round.") };
   }
   const moved = roundSummary(s);
-  return { state: "ok", tone: "ok", Icon: RefreshIcon, dot: true, text: `Up to date · ${clock(s.last_sync)}`, stats: roundBlocks(s),
+  return { state: "ok", tone: "ok", Icon: RefreshIcon, dot: true, text: t("Up to date · {last_sync}", { last_sync: clock(s.last_sync) }), stats: roundBlocks(s),
     title: `Up to date since ${clock(s.last_sync)}. Last round: ${moved || "nothing had changed on either side"}.${info?.poll_s ? ` The remote is checked every ${info.poll_s} s.` : " The remote is checked only when you sync."}` };
 }
 
@@ -187,7 +188,7 @@ export function Progress({ progress: p }) {
     <>
       {p.total ? <div className="mirrorBar"><span style={{ width: `${Math.round((100 * p.done) / p.total)}%` }} /></div> : null}
       {f ? (
-        <div className="mirrorFile" title={f.dir === "up" ? "Pushing to the remote" : "Pulling from the remote"}>
+        <div className="mirrorFile" title={f.dir === "up" ? t("Pushing to the remote") : t("Pulling from the remote")}>
           {f.dir === "up" ? <ArrowUpIcon size={12} /> : <ArrowDownIcon size={12} />}
           <span className="mirrorEllipsis">{f.name}</span>
           <span className="mirrorFileBytes">{fmtBytes(f.done)}{f.total ? ` / ${fmtBytes(f.total)}` : ""}</span>
@@ -204,20 +205,20 @@ function StateBlock({ info, busy, pending, onConflicts }) {
   const st = mirrorState(info, { busy, pending });
   const p = info?.status?.progress;
   return (
-    <div className={`mirrorState ${st.tone}`} title={st.title}>
+    <div className={`mirrorState ${st.tone}`} title={t(st.title)}>
       <st.Icon size={14} />
       <div className="mirrorStateBody">
         <div className="mirrorStateLine">
-          <span>{st.text}</span>
+          <span>{t(st.text)}</span>
           {st.detail ? <span className="popoverHint mirrorEllipsis" title={st.detail}>{st.detail}</span> : null}
-          {st.stats ? <DiffStat stats={st.stats} title="Last round: blocks added · removed · changed" /> : null}
+          {st.stats ? <DiffStat stats={st.stats} title={t("Last round: blocks added · removed · changed")} /> : null}
           {info?.conflicts_open && st.state !== "conflicts" ? (
-            <button className="uiBtn sm mirrorConflictBtn" onClick={onConflicts} title="Blocks both sides changed: resolve them here, or open each on its block">
+            <button className="uiBtn sm mirrorConflictBtn" onClick={onConflicts} title={t("Blocks both sides changed: resolve them here, or open each on its block")}>
               <AlertCircleIcon size={13} /> {n(info.conflicts_open, "conflict")}
             </button>
           ) : null}
           {st.state === "conflicts" ? (
-            <button className="uiBtn sm primary" onClick={onConflicts} title="Resolve them here, or open each on its block">Resolve</button>
+            <button className="uiBtn sm primary" onClick={onConflicts} title={t("Resolve them here, or open each on its block")}>{t("Resolve")}</button>
           ) : null}
         </div>
         {st.tone === "busy" ? <Progress progress={p} /> : null}
@@ -237,8 +238,8 @@ function Confirm({ what, busy, onYes, onNo }) {
       <AlertCircleIcon size={14} />
       <span>{text}</span>
       <span className="mirrorConfirmBtns">
-        <button className="uiBtn sm danger" disabled={busy} onClick={onYes}>Yes</button>
-        <button className="uiBtn sm" disabled={busy} onClick={onNo}>No</button>
+        <button className="uiBtn sm danger" disabled={busy} onClick={onYes}>{t("Yes")}</button>
+        <button className="uiBtn sm" disabled={busy} onClick={onNo}>{t("No")}</button>
       </span>
     </div>
   );
@@ -265,25 +266,25 @@ function SettingsView({ info, wsId, publication, onBack, reload, onOpenSettings 
   return (
     <>
       <div className="mirrorPopHead">
-        <button className="iconBtn sm" onClick={onBack} title="Back" aria-label="Back"><ArrowLeftIcon size={14} /></button>
-        <span className="popoverTitle">Sync settings</span>
+        <button className="iconBtn sm" onClick={onBack} title={t("Back")} aria-label={t("Back")}><ArrowLeftIcon size={14} /></button>
+        <span className="popoverTitle">{t("Sync settings")}</span>
       </div>
-      <Row icon={ClockIcon} label="Automatic sync" hint="how often the remote is checked"
-        title="A sync round every so often. Live: every 5 s. Manual: only when you press Sync.">
+      <Row icon={ClockIcon} label={t("Automatic sync")} hint={t("how often the remote is checked")}
+        title={t("A sync round every so often. Live: every 5 s. Manual: only when you press Sync.")}>
         <Segmented value={info?.poll_s ?? 30} onChange={(v) => call("", "PATCH", { poll_s: v })} options={CADENCE} />
       </Row>
       <Toggle icon={PenIcon} checked={Boolean(info?.on_change)} disabled={busy} onChange={(v) => call("", "PATCH", { on_change: v })}
-        label="Sync after an edit" hint="a round about a second after you change something" />
+        label={t("Sync after an edit")} hint={t("a round about a second after you change something")} />
       {!publication ? (
-        <Row icon={ArrowUpDownIcon} label="Direction"
-          title="Two-way: your changes go to the remote. Receive only: the remote's changes arrive, yours stay here until you switch back.">
+        <Row icon={ArrowUpDownIcon} label={t("Direction")}
+          title={t("Two-way: your changes go to the remote. Receive only: the remote's changes arrive, yours stay here until you switch back.")}>
           <Segmented value={pull ? "pull" : "two-way"} onChange={(v) => call("", "PATCH", { mode: v })} options={DIRECTION} />
         </Row>
       ) : null}
       {publication && !detached ? null : <div className="popoverDivider" />}
       {publication ? (detached ? (
         <div className="mirrorSetActions">
-          <button className="uiBtn sm primary" disabled={busy} onClick={() => call("/relink", "POST", {})} title="Publish again; what both sides did meanwhile merges">
+          <button className="uiBtn sm primary" disabled={busy} onClick={() => call("/relink", "POST", {})} title={t("Publish again; what both sides did meanwhile merges")}>
             <LinkIcon size={13} /> Reattach
           </button>
         </div>
@@ -293,21 +294,21 @@ function SettingsView({ info, wsId, publication, onBack, reload, onOpenSettings 
       ) : (
         <div className="mirrorSetActions">
           {!detached ? <>
-            <button className="uiBtn sm" disabled={busy} onClick={() => setConfirm("pull")} title="Make this clone identical to the remote (only differing pages are written)">
+            <button className="uiBtn sm" disabled={busy} onClick={() => setConfirm("pull")} title={t("Make this clone identical to the remote (only differing pages are written)")}>
               <CloudDownloadIcon size={13} /> Force pull
             </button>
-            <button className="uiBtn sm" disabled={busy || pull} onClick={() => setConfirm("push")} title={pull ? "A receive-only clone cannot force push" : "Make the remote identical to this clone (only differing pages are written)"}>
+            <button className="uiBtn sm" disabled={busy || pull} onClick={() => setConfirm("push")} title={pull ? t("A receive-only clone cannot force push") : t("Make the remote identical to this clone (only differing pages are written)")}>
               <UploadIcon size={13} /> Force push
             </button>
-            <button className="uiBtn sm" disabled={busy} onClick={() => call("/detach", "POST")} title="Stop pulling and pushing for now; reattach later and both sides merge">
+            <button className="uiBtn sm" disabled={busy} onClick={() => call("/detach", "POST")} title={t("Stop pulling and pushing for now; reattach later and both sides merge")}>
               <UnlinkIcon size={13} /> Detach
             </button>
           </> : (
-            <button className="uiBtn sm primary" disabled={busy} onClick={() => call("/relink", "POST", {})} title="Follow the remote again; what both sides did meanwhile merges">
+            <button className="uiBtn sm primary" disabled={busy} onClick={() => call("/relink", "POST", {})} title={t("Follow the remote again; what both sides did meanwhile merges")}>
               <LinkIcon size={13} /> Reattach
             </button>
           )}
-          <button className="uiBtn sm danger" disabled={busy} onClick={() => setConfirm("forget")} title="Forget the origin for good; the workspace stays as an ordinary one">
+          <button className="uiBtn sm danger" disabled={busy} onClick={() => setConfirm("forget")} title={t("Forget the origin for good; the workspace stays as an ordinary one")}>
             <TrashIcon size={13} /> Remove origin
           </button>
         </div>
@@ -325,18 +326,18 @@ function ReviewView({ wsId, onBack, jumpTo }) {
   return (
     <>
       <div className="mirrorPopHead">
-        <button className="iconBtn sm" onClick={onBack} title="Back" aria-label="Back"><ArrowLeftIcon size={14} /></button>
-        <span className="popoverTitle">Conflicts</span>
+        <button className="iconBtn sm" onClick={onBack} title={t("Back")} aria-label={t("Back")}><ArrowLeftIcon size={14} /></button>
+        <span className="popoverTitle">{t("Conflicts")}</span>
         {items?.length ? <span className="popoverHint">{items.length}</span> : null}
       </div>
-      {items === null ? <div className="popoverHint">Loading…</div>
+      {items === null ? <div className="popoverHint">{t("Loading…")}</div>
         : items.length ? (
           <div className="mirrorCards">
             {items.map((c) => (
               <ConflictCard key={c.id} conflict={c} busy={busy} showPage onResolve={resolve} onOpen={() => jumpTo(c.page_id, c.block_id)} />
             ))}
           </div>
-        ) : <div className="mirrorState ok"><CheckIcon size={14} /><span>No conflicts — every change merged cleanly.</span></div>}
+        ) : <div className="mirrorState ok"><CheckIcon size={14} /><span>{t("No conflicts — every change merged cleanly.")}</span></div>}
     </>
   );
 }
@@ -376,16 +377,16 @@ function LogList({ log, jumpTo }) {
           <li key={c.id} className={open ? "open" : ""}>
             <div className="mirrorPopItemRow">
               <button className="popoverItem mirrorPopItem" aria-expanded={open} onClick={() => setOpenId(open ? null : c.id)}
-                title={`${ACTION_TEXT[c.action] || c.action} — click for the changes`}>
+                title={t("{action} — click for the changes", { action: ACTION_TEXT[c.action] || c.action })}>
                 <span className="mirrorPopItemTitle"><Icon size={12} /> {c.title || c.page_id}</span>
                 <span className="mirrorPopItemMeta">{clock(c.at)}<DiffStat stats={c.stats} /></span>
               </button>
               <button className="ctlBtn mirrorPopOpen" disabled={!c.exists} onClick={() => jumpTo(c.page_id)}
-                aria-label="Open the page" title={c.exists ? "Open the page" : "The page is gone"}>
+                aria-label={t("Open the page")} title={c.exists ? t("Open the page") : t("The page is gone")}>
                 <ExternalLinkIcon size={13} />
               </button>
             </div>
-            {open ? (c.changes?.length ? <ChangeList changes={c.changes} /> : <div className="popoverHint mirrorChangesNone">No block-level detail for this row.</div>) : null}
+            {open ? (c.changes?.length ? <ChangeList changes={c.changes} /> : <div className="popoverHint mirrorChangesNone">{t("No block-level detail for this row.")}</div>) : null}
           </li>
         );
       })}
@@ -397,7 +398,7 @@ const PENDING_GRACE_MS = 6000; // how long a local edit counts as pending before
 
 // `publication` says what the workspace listing knows before the mirror's
 // own answer (its page filter) arrives.
-export function MirrorPopover({ wsId, mirrorOf, publication: listedAsPublication = false, open, onToggle, jumpTo, onOpenSettings }) {
+export function MirrorPopover({ wsId, mirrorOf, publication: listedAsPublication = false, pageId = "", open, onToggle, jumpTo, onOpenSettings }) {
   const [info, setInfo] = React.useState(null);
   const [log, setLog] = React.useState(null);
   const [busy, setBusy] = React.useState(false);
@@ -467,6 +468,10 @@ export function MirrorPopover({ wsId, mirrorOf, publication: listedAsPublication
   const pull = isPullOnly(info);
   const publication = info ? isPublication(info) : listedAsPublication;
   const name = publication ? "Published to Gamma Cloud" : mirrorOf;
+  // A clone syncs the whole workspace, so its pill is on every page; a
+  // publication syncs the pages in its filter, so its pill is on those
+  // pages only (and nowhere until the filter is known).
+  if (publication && !(pageId && info?.page_filter?.includes(pageId))) return null;
 
   return (
     <span data-popover="mirror" className="popoverAnchor">
@@ -474,21 +479,21 @@ export function MirrorPopover({ wsId, mirrorOf, publication: listedAsPublication
         className={`iconBtn mirrorPill ${st.tone} ${open ? "activeIcon" : ""}`}
         data-state={st.state}
         onClick={onToggle}
-        title={`${publication ? name : `Clone of ${mirrorOf}`}${host ? ` on ${host}` : ""} — ${st.text}`}
-        aria-label="Sync status"
+        title={[publication ? name : t("Clone of {name}", { name: mirrorOf }), host ? t("on {host}", { host }) : "", "—", t(st.text)].filter(Boolean).join(" ")}
+        aria-label={t("Sync status")}
       >
         <st.Icon size={15} />
         {st.badge ? <span className={`mirrorPillBadge ${st.tone}`}>{st.badge}</span>
           : st.dot ? <span className={`mirrorPillDot ${st.tone}`} /> : null}
       </button>
       {open ? (
-        <div className="popover mirrorPopover" role="dialog" aria-label="Sync status">
+        <div className="popover mirrorPopover" role="dialog" aria-label={t("Sync status")}>
           {view === "settings" ? <SettingsView info={info} wsId={wsId} publication={publication} onBack={() => setView("main")} reload={load} onOpenSettings={onOpenSettings} />
             : view === "review" ? <ReviewView wsId={wsId} onBack={() => setView("main")} jumpTo={jumpTo} />
             : (
               <>
                 <div className="mirrorPopHead">
-                  <span className="mirrorPopIcon" title={pull ? "Receive only: the remote's changes arrive here, yours stay here" : "Two-way: your changes go to the remote, the remote's arrive here"}>
+                  <span className="mirrorPopIcon" title={pull ? t("Receive only: the remote's changes arrive here, yours stay here") : t("Two-way: your changes go to the remote, the remote's arrive here")}>
                     {pull ? <ArrowDownIcon size={15} /> : <ArrowUpDownIcon size={15} />}
                   </span>
                   <span className="mirrorPopTitle">
@@ -498,16 +503,16 @@ export function MirrorPopover({ wsId, mirrorOf, publication: listedAsPublication
                     </span>
                   </span>
                   <span className="mirrorPopBtns">
-                    <button className={`iconBtn sm ${running ? "mirrorSpin" : ""}`} disabled={running || info?.detached} onClick={syncNow} aria-label="Sync"
-                      title={running ? "A round is running" : info?.detached ? "Detached — reattach in the sync settings" : pull ? "Receive the remote's changes now" : "Sync now"}>
+                    <button className={`iconBtn sm ${running ? "mirrorSpin" : ""}`} disabled={running || info?.detached} onClick={syncNow} aria-label={t("Sync")}
+                      title={running ? t("A round is running") : info?.detached ? t("Detached — reattach in the sync settings") : pull ? t("Receive the remote's changes now") : t("Sync now")}>
                       <RefreshIcon size={14} />
                     </button>
-                    <button className="iconBtn sm" onClick={() => setView("settings")} title="Sync settings" aria-label="Sync settings"><SettingsIcon size={14} /></button>
+                    <button className="iconBtn sm" onClick={() => setView("settings")} title={t("Sync settings")} aria-label={t("Sync settings")}><SettingsIcon size={14} /></button>
                   </span>
                 </div>
                 <StateBlock info={info} busy={busy} pending={Boolean(editAt)} onConflicts={() => setView("review")} />
-                <div className="popoverLabel"><HistoryIcon size={12} /><span>Log</span></div>
-                {log === null ? <div className="popoverHint">Loading…</div>
+                <div className="popoverLabel"><HistoryIcon size={12} /><span>{t("Log")}</span></div>
+                {log === null ? <div className="popoverHint">{t("Loading…")}</div>
                   : log.length ? <LogList log={log} jumpTo={jumpTo} />
                   : <div className="popoverHint">{running ? "Pages show up here as they are pulled." : s.last_sync ? "Nothing pulled or pushed yet." : "Nothing cloned yet."}</div>}
               </>

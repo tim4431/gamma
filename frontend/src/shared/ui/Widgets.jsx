@@ -13,6 +13,7 @@ import { parseGammaLink } from "../model/gammaLinks.js";
 import { remarkPaperLinks } from "../lib/remarkPaperLinks.js";
 import { mermaidFence, normalizeChatMarkdown, remarkMermaid } from "../lib/mermaidMarkdown.js";
 import { MermaidDiagram, mermaidCodeProps } from "./MermaidDiagram";
+import { t } from "../../shared/i18n/i18n.js";
 
 // Shared chrome for every dockable window: one grip (drag to move/reorder,
 // double-click to collapse), the close button right beside it, then the
@@ -26,10 +27,10 @@ function DockWindow({ title, onGrip, onGripDoubleClick, onClose, headerContent, 
           className="dockGrip"
           onPointerDown={onGrip}
           onDoubleClick={onGripDoubleClick}
-          title="Drag to move this window · double-click to collapse/expand"
+          title={t("Drag to move this window · double-click to collapse/expand")}
         >⠿ {title}</span>
         {onClose ? (
-          <button className="uiClose" onClick={onClose} title="Close window (reopen from the ⋮ menu)" aria-label={`Close ${title}`}>×</button>
+          <button className="uiClose" onClick={onClose} title={t("Close window (reopen from the ⋮ menu)")} aria-label={t("Close {title}", { title: title })}>×</button>
         ) : null}
         <span className="dockHeaderSpacer" />
         {collapsed ? null : headerContent}
@@ -157,8 +158,8 @@ function ChatCopyBlock({ as: Tag, children }) {
     <div className={`chatCopyBlock ${isCode ? "chatCopyCode" : "chatCopyQuote"}`}>
       <div className="chatCopyTools" data-markdown-copy-ignore="">
         <button type="button" className="chatCopyButton" onClick={copyContent}
-          aria-label={isCode ? "Copy code" : "Copy quoted text"}
-          title={failed ? "Copy failed — select the text and press Ctrl+C" : "Copy only this block's content"}>
+          aria-label={isCode ? t("Copy code") : t("Copy quoted text")}
+          title={failed ? t("Copy failed — select the text and press Ctrl+C") : t("Copy only this block's content")}>
           {copied ? <CheckIcon size={12} /> : <CopyIcon size={12} />}
           <span aria-live="polite">{failed ? "Try again" : copied ? "Copied" : "Copy"}</span>
         </button>
@@ -204,7 +205,7 @@ function GammaLinkCard({ link, label, children }) {
     : "Open this page";
   return (
     <a href={link.href || "#"} className={`gammaLinkCard gammaLink-${link.kind}`}
-      title={label && label !== text ? `${label} — ${title}` : title}
+      title={label && label !== text ? t("{label} — {title}", { label: label, title: title }) : title}
       onMouseDown={(e) => e.stopPropagation()}
       onClick={(e) => {
         if (e.metaKey || e.ctrlKey || e.shiftKey || e.altKey || !nav) return;
@@ -378,8 +379,8 @@ function OpenTabs({
                 event.stopPropagation();
                 onClose(tab.id);
               }}
-              title="Close tab"
-              aria-label={`Close ${tab.title}`}
+              title={t("Close tab")}
+              aria-label={t("Close {title}", { title: tab.title })}
             >
               ×
             </button>

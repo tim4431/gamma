@@ -11,6 +11,7 @@ import { API, apiJson } from "../shared/lib/utils";
 import { Row, Segmented, PasswordInput, SettingsSyncContext, Toggle, useSettingsDraft } from "./SettingsKit";
 import { cloudSyncHint } from "./syncState.js";
 import { CloudIcon, ExternalLinkIcon, GlobeIcon, KeyIcon, UserIcon } from "../shared/ui/Icons";
+import { T, t } from "../shared/i18n/i18n.js";
 
 const POLICIES = [
   ["refuse", "Refuse", null, "Only accounts already linked to a cloud account can sign in"],
@@ -60,38 +61,38 @@ export function CloudSignInSettings({ setStatus, action }) {
     return () => action?.(null);
   }, [dirty, busy, draft]); // eslint-disable-line react-hooks/exhaustive-deps
   return <>
-    <Row icon={CloudIcon} label="Account server"
-      hint={managed ? "Set by the server's environment" : "The Gamma Cloud address people sign in through; empty turns it off"}
-      title="Sign in with Gamma Cloud: this server becomes an OpenID Connect client of the account server. Its login page gets a second button.">
+    <Row icon={CloudIcon} label={t("Account server")}
+      hint={managed ? t("Set by the server's environment") : t("The Gamma Cloud address people sign in through; empty turns it off")}
+      title={t("Sign in with Gamma Cloud: this server becomes an OpenID Connect client of the account server. Its login page gets a second button.")}>
       <span className="setRowControls">
         {saved ? <span className={`uiTag ${saved.enabled ? "ok" : ""}`}>{saved.enabled ? "on" : "off"}</span> : null}
-        <input className="aiKeyInput" type="url" aria-label="Account server" value={draft.issuer} spellCheck={false}
+        <input className="aiKeyInput" type="url" aria-label={t("Account server")} value={draft.issuer} spellCheck={false}
           autoComplete="off" name="gamma-cloud-issuer" disabled={disabled} placeholder="https://account.gammapdf.com" onChange={(e) => set("issuer")(e.target.value)} />
       </span>
     </Row>
-    <Row icon={KeyIcon} label="Server client"
-      hint="How this server identifies itself to the account server. Leave empty on your own machine; a hosted server enters the client id and secret it was given"
-      title="Not a person: the OpenID Connect client this Gamma is. Empty = the account server's built-in public desktop client (loopback callback, PKCE only). A server the account server provisioned was handed a confidential client id and secret at creation.">
+    <Row icon={KeyIcon} label={t("Server client")}
+      hint={t("How this server identifies itself to the account server. Leave empty on your own machine; a hosted server enters the client id and secret it was given")}
+      title={t("Not a person: the OpenID Connect client this Gamma is. Empty = the account server's built-in public desktop client (loopback callback, PKCE only). A server the account server provisioned was handed a confidential client id and secret at creation.")}>
       <span className="setRowControls">
-        <input className="aiKeyInput" type="text" aria-label="Client id" value={draft.client_id} spellCheck={false}
-          autoComplete="off" name="gamma-cloud-client-id" disabled={disabled} placeholder="empty = desktop client"
+        <input className="aiKeyInput" type="text" aria-label={t("Client id")} value={draft.client_id} spellCheck={false}
+          autoComplete="off" name="gamma-cloud-client-id" disabled={disabled} placeholder={t("empty = desktop client")}
           onChange={(e) => set("client_id")(e.target.value)} />
         {draft.client_id.trim() || saved?.has_secret ? (
-          <PasswordInput aria-label="Client secret" value={draft.secret} disabled={disabled} autoComplete="new-password"
-            name="gamma-cloud-client-secret" placeholder={saved?.has_secret ? "secret set — type to replace" : "client secret"}
+          <PasswordInput aria-label={t("Client secret")} value={draft.secret} disabled={disabled} autoComplete="new-password"
+            name="gamma-cloud-client-secret" placeholder={saved?.has_secret ? t("secret set — type to replace") : t("client secret")}
             onChange={(e) => set("secret")(e.target.value)} />
         ) : null}
       </span>
     </Row>
-    <Row icon={UserIcon} label="Unknown cloud accounts"
-      hint="What a cloud account that is not linked to an account here may do"
-      title="Refuse: only linked accounts. Claim: a cloud username equal to an unlinked username here takes it over — for a server whose accounts were created under cloud usernames. Provision: every verified cloud account gets an account — the free share host.">
+    <Row icon={UserIcon} label={t("Unknown cloud accounts")}
+      hint={t("What a cloud account that is not linked to an account here may do")}
+      title={t("Refuse: only linked accounts. Claim: a cloud username equal to an unlinked username here takes it over — for a server whose accounts were created under cloud usernames. Provision: every verified cloud account gets an account — the free share host.")}>
       <Segmented value={draft.policy} onChange={set("policy")} options={POLICIES} disabled={disabled} />
     </Row>
     {draft.policy === "provision" ? (
-      <Toggle icon={GlobeIcon} label="Accept published pages" checked={draft.share_host} onChange={set("share_host")}
-        disabled={disabled} hint="This server is the share host people publish pages to"
-        title="The free share host: a Gamma Cloud account may publish pages here from its own Gamma. Also turns off the guest account and limits the account list to exact names." />
+      <Toggle icon={GlobeIcon} label={t("Accept published pages")} checked={draft.share_host} onChange={set("share_host")}
+        disabled={disabled} hint={t("This server is the share host people publish pages to")}
+        title={t("The free share host: a Gamma Cloud account may publish pages here from its own Gamma. Also turns off the guest account and limits the account list to exact names.")} />
     ) : null}
     {error ? <p className="settingsPaneHint aiKeysError" role="alert">{error}</p> : null}
   </>;
@@ -119,11 +120,11 @@ export function CloudIdentityRow({ setStatus, confirm }) {
   }
   function unlink() {
     if (!confirm) { doUnlink(); return; }
-    confirm({ title: "Unlink Gamma Cloud", message: `This account will no longer sign in as "${id.username}". You can link it again any time.`,
+    confirm({ title: T("Unlink Gamma Cloud"), message: t("This account will no longer sign in as \"{username}\". You can link it again any time.", { username: id.username }),
       confirmLabel: "Unlink", onConfirm: doUnlink });
   }
   return <>
-    <Row icon={CloudIcon} label="Gamma Cloud"
+    <Row icon={CloudIcon} label={t("Gamma Cloud")}
       hint={id ? `${id.username}${id.email ? ` · ${id.email}` : ""}${id.plan ? ` · ${id.plan} plan` : ""}${syncHint ? ` · ${syncHint}` : ""}`
         : "Sign in here with your Gamma Cloud account"}
       title={id ? `Linked ${id.linked_at ? id.linked_at.slice(0, 10) : ""}. Signing in with this cloud account opens this account.`
@@ -132,11 +133,11 @@ export function CloudIdentityRow({ setStatus, confirm }) {
         {id ? <span className="uiTag ok">linked</span> : null}
         {id && state.issuer ? (
           <a className="uiBtn sm" href={`${state.issuer}/`} target="_blank" rel="noopener"
-            title="Your Gamma Cloud account: plan, devices, sign-in methods">
+            title={t("Your Gamma Cloud account: plan, devices, sign-in methods")}>
             <ExternalLinkIcon size={14} /> Open account
           </a>) : null}
-        {id ? <button className="uiBtn sm" onClick={unlink}>Unlink</button>
-            : <button className="uiBtn sm primary" onClick={link}>Link Gamma Cloud account</button>}
+        {id ? <button className="uiBtn sm" onClick={unlink}>{t("Unlink")}</button>
+            : <button className="uiBtn sm primary" onClick={link}>{t("Link Gamma Cloud account")}</button>}
       </span>
     </Row>
     {error ? <p className="settingsPaneHint aiKeysError" role="alert">{error}</p> : null}

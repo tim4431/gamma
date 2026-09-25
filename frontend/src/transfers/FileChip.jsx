@@ -17,6 +17,7 @@ import { DownloadIcon, ExternalLinkIcon, FileIcon, PaperIcon, PlusIcon } from ".
 import { ContextMenu, MenuItem } from "../shared/ui/Menus";
 import { API, apiJson, assetUrl } from "../shared/lib/utils";
 import { xhrUpload } from "../shared/lib/xhrUpload";
+import { t } from "../shared/i18n/i18n.js";
 export { xhrUpload };
 
 // What the page around the chip provides: navigation and promotion come from
@@ -188,7 +189,7 @@ export function FileChip({ href, text }) {
   let pageItem = null;
   if (canOpen && page) {
     pageItem = (
-      <MenuItem icon={PaperIcon} title={`Open "${page.title || name}"`} onClick={() => { close(); openPage(); }}>Open page</MenuItem>
+      <MenuItem icon={PaperIcon} title={t("Open \"{name}\"", { name: page.title || name })} onClick={() => { close(); openPage(); }}>{t("Open page")}</MenuItem>
     );
   } else if (canOpen && page === null && !ctx.readOnly) {
     pageItem = (
@@ -196,13 +197,13 @@ export function FileChip({ href, text }) {
         title={isPdf
           ? "Make a page for this PDF: the viewer, highlights, chat and metadata — the file is not uploaded again"
           : "Import this markdown as a note page — a copy; the file stays as it is"}
-        onClick={() => { close(); makePage(); }}>Add to library</MenuItem>
+        onClick={() => { close(); makePage(); }}>{t("Add to library")}</MenuItem>
     );
   }
   return (
     <span
       className="fileChip"
-      title={`${fileKindLabel(ext)} — ${name}`}
+      title={t("{ext} — {name}", { ext: fileKindLabel(ext), name: name })}
       onMouseDown={stop}
       onClick={stop}
       onContextMenu={(e) => { e.preventDefault(); e.stopPropagation(); setMenu({ x: e.clientX, y: e.clientY }); }}
@@ -214,18 +215,18 @@ export function FileChip({ href, text }) {
         <span className="linkChipText">{name}</span>
       </a>
       {canOpen && page ? (
-        <button type="button" className="fileChipBtn fileChipOpen" title={`Open the page "${page.title || name}"`} aria-label="Open page"
+        <button type="button" className="fileChipBtn fileChipOpen" title={t("Open the page \"{name}\"", { name: page.title || name })} aria-label={t("Open page")}
           onClick={openPage}>
           <ExternalLinkIcon size={12} />
         </button>
       ) : null}
-      <a className="fileChipBtn fileChipDownload" href={url} download={name} title="Download" aria-label="Download">
+      <a className="fileChipBtn fileChipDownload" href={url} download={name} title={t("Download")} aria-label={t("Download")}>
         <DownloadIcon size={12} />
       </a>
       {menu ? (
         <ContextMenu x={menu.x} y={menu.y} onClose={close}>
           {pageItem}
-          <MenuItem icon={DownloadIcon} onClick={() => { close(); const a = document.createElement("a"); a.href = url; a.download = name; a.click(); }}>Download</MenuItem>
+          <MenuItem icon={DownloadIcon} onClick={() => { close(); const a = document.createElement("a"); a.href = url; a.download = name; a.click(); }}>{t("Download")}</MenuItem>
         </ContextMenu>
       ) : null}
     </span>

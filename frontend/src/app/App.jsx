@@ -3,7 +3,10 @@ import { Panel, PanelGroup, PanelResizeHandle } from "react-resizable-panels";
 import PdfViewer, { clampZoom } from "../pdf/PdfViewer";
 import { highlightSpot, rangeSpot } from "../pdf/pdfSelectionSpot";
 import { COLORS } from "../shared/model/highlightColors.js";
-import { applyLanguage, t } from "../shared/i18n/i18n.js";
+import { applyLanguage, getLocale, resolveLocale, t, T } from "../shared/i18n/i18n.js";
+
+// sessionStorage: the Settings pane to reopen after the language-change remount.
+const REOPEN_SETTINGS_KEY = "gamma-reopen-settings";
 import { ExportDialog, ImportDialog } from "../transfers/ImportExport";
 import ImportReviewDialog from "../transfers/ImportReviewDialog";
 import { parseGammaLink } from "../shared/model/gammaLinks.js";
@@ -323,7 +326,7 @@ function TransferRow({ status, icon, name, info, progress, onStop }) {
       </span>
       <span className="transferInfo">{info || ""}</span>
       {onStop ? (
-        <button type="button" className="uiClose uiCloseSm transferStop" title="Stop" aria-label={`Stop ${name}`}
+        <button type="button" className="uiClose uiCloseSm transferStop" title={t("Stop")} aria-label={t("Stop {name}", { name: name })}
           onClick={(e) => { e.stopPropagation(); onStop(); }}>×</button>
       ) : <span className="transferStopSlot" />}
     </div>
@@ -366,7 +369,7 @@ function PageHostGate() {
     })();
     return () => { active = false; };
   }, [boot]);
-  if (!boot) return <div id="splash"><div className="spin" /><div>Loading Gamma…</div></div>;
+  if (!boot) return <div id="splash"><div className="spin" /><div>{t("Loading Gamma…")}</div></div>;
   return <LibraryApp publicPage={boot.publicPage || null} initialServerConfig={boot.serverConfig || null} />;
 }
 
@@ -674,12 +677,12 @@ function LibraryApp({ publicPage = null, initialServerConfig = null }) {
       setTimeout(() => URL.revokeObjectURL(a.href), 30000);
       updateTransfer(tid, { status: "done", info: fmtBytes(blob.size) });
       postPill("backup", null);
-      setStatus(`Backup downloaded (${fmtBytes(blob.size)}).`);
+      setStatus(t("Backup downloaded ({size}).", { size: fmtBytes(blob.size) }));
     } catch (err) {
       clearInterval(zipPoll);
       updateTransfer(tid, { status: "error", info: String(err.message || err) });
       postPill("backup", null);
-      if (!ctl.signal.aborted) setStatus(`Export failed: ${err.message}`);
+      if (!ctl.signal.aborted) setStatus(t("Export failed: {message}", { message: err.message }));
     }
   }
 
@@ -700,20 +703,20 @@ function LibraryApp({ publicPage = null, initialServerConfig = null }) {
       const f = inp.files?.[0];
       if (!f) return;
       setConfirmBox(mode === "merge" ? {
-        title: "Merge backup",
+        title: T("Merge backup"),
         message: (
           <>Merge "{f.name}" ({fmtBytes(f.size)}) into the workspace "{who}"?
           {" "}Pages and chats from the backup that don't exist there yet will be <b>added</b>.
-          {" "}Everything already in that workspace is <b>kept unchanged</b>.</>
+          {" "}Everything already in that workspace is <b>{t("kept unchanged")}</b>.</>
         ),
         confirmLabel: "Merge",
         onConfirm: () => runBackupImport(f, mode, target),
       } : {
-        title: "Replace all data",
+        title: T("Replace all data"),
         message: (
           <>Restore "{f.name}" ({fmtBytes(f.size)}) into the workspace "{who}"?
-          {" "}<b>ALL of that workspace's notes and chats will be REPLACED</b> by the backup.
-          {" "}Uploaded PDFs are merged in (nothing is deleted). <b>This cannot be undone.</b></>
+          {" "}<b>{t("ALL of that workspace's notes and chats will be REPLACED")}</b> by the backup.
+          {" "}Uploaded PDFs are merged in (nothing is deleted). <b>{t("This cannot be undone.")}</b></>
         ),
         confirmLabel: "Replace",
         danger: true,
@@ -760,7 +763,7 @@ function LibraryApp({ publicPage = null, initialServerConfig = null }) {
       postPill("backup", null);
       const msg = err?.message || "failed";
       updateTransfer(tid, { status: "error", info: String(msg) });
-      setStatus(`Import failed: ${msg}`);
+      setStatus(t("Import failed: {msg}", { msg: msg }));
     });
   }
 
@@ -1073,15 +1076,15 @@ function LibraryApp({ publicPage = null, initialServerConfig = null }) {
   // Commit a grid-tile rename (list rows rename inline via the block editor).
   function commitPageRename(id, text) {
     setHomeEditingId(null);
-    const t = (text || "").trim();
+    const tt = (text || "").trim();
     const cur = homeBlocks.find((b) => b.id === id)?.content || "";
-    if (!t || t === cur) return;
-    setHomeBlocks((prev) => prev.map((b) => (b.id === id ? { ...b, content: t } : b)));
+    if (!tt || tt === cur) return;
+    setHomeBlocks((prev) => prev.map((b) => (b.id === id ? { ...b, content: tt } : b)));
     apiJson(`${API}/blocks/${id}`, {
       method: "PUT",
       headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ content: t }),
-    }).catch((err) => setStatus(`Rename failed: ${err}`));
+      body: JSON.stringify({ content: tt }),
+    }).catch((err) => setStatus(t("Rename failed: {err}", { err: err })));
   }
 
   // Deep-copy a page: new root block + a subtree clone with fresh block ids
@@ -1128,7 +1131,7 @@ function LibraryApp({ publicPage = null, initialServerConfig = null }) {
       await fetchHomeBlocks();
       setStatus(`Copied ${ids.length} page${ids.length === 1 ? "" : "s"}.`);
     } catch (err) {
-      setStatus(`Copy failed: ${err.message}`);
+      setStatus(t("Copy failed: {message}", { message: err.message }));
     }
   }
 
@@ -1201,7 +1204,7 @@ function LibraryApp({ publicPage = null, initialServerConfig = null }) {
       }
       await fetchHomeBlocks();
     } catch (err) {
-      setStatus(`Pin failed: ${err.message || err}`);
+      setStatus(t("Pin failed: {err}", { err: err.message || err }));
     }
   }
 
@@ -1251,7 +1254,7 @@ function LibraryApp({ publicPage = null, initialServerConfig = null }) {
   async function removePagesFromLabel(ids, name) {
     await retagPages(ids, "category",
       (tags) => (tags.includes(name) ? tags.filter((t) => t !== name) : null));
-    setStatus(`Removed ${plural(ids.length)} from “${name}”.`);
+    setStatus(t("Removed {pages} from “{name}”.", { pages: plural(ids.length), name: name }));
   }
 
   // Remove one folder tag (exact path). With path = "" strips ALL folder tags.
@@ -1314,7 +1317,7 @@ function LibraryApp({ publicPage = null, initialServerConfig = null }) {
     if (!newName || newPath === oldPath) return;
     await moveFolderChats([[oldPath, newPath]]);
     await applyFolderMap(prefixMapTag(oldPath, newPath));
-    setStatus(`Folder renamed to “${newPath}”.`);
+    setStatus(t("Folder renamed to “{newPath}”.", { newPath: newPath }));
   }
 
   // Move folders (with their subtrees) under a new parent path ("" = top
@@ -1370,7 +1373,7 @@ function LibraryApp({ publicPage = null, initialServerConfig = null }) {
   function dropOnLabel(e, name, onPages = (ids) => (name === NO_LABEL ? clearPagesLabels(ids) : addPagesToLabel(ids, name))) {
     e.preventDefault();
     setFolderDragOver(null);
-    if (droppedFolderPaths(e)) { setStatus("Folders can’t carry labels — drop pages instead."); return; }
+    if (droppedFolderPaths(e)) { setStatus(t("Folders can’t carry labels — drop pages instead.")); return; }
     const ids = droppedPageIds(e);
     if (ids) onPages(ids);
   }
@@ -1401,8 +1404,8 @@ function LibraryApp({ publicPage = null, initialServerConfig = null }) {
     };
     if (!members.length) {
       setConfirmBox({
-        title: "Delete folder",
-        message: `Delete the empty folder “${path}”?`,
+        title: T("Delete folder"),
+        message: t("Delete the empty folder “{path}”?", { path: path }),
         confirmLabel: "Delete folder",
         onConfirm: () => cleanupAfter(`Folder “${path}” deleted.`),
       });
@@ -1411,7 +1414,7 @@ function LibraryApp({ publicPage = null, initialServerConfig = null }) {
     const n = members.length;
     const papers = `${n} page${n === 1 ? "" : "s"}`;
     setConfirmBox({
-      title: "Delete folder",
+      title: T("Delete folder"),
       message: `Delete “${path}”? It contains ${papers}. Keep ${n === 1 ? "it" : "them"} in the library (only the folder goes away), or delete ${n === 1 ? "it and its" : "them and their"} notes too — pages linked into other folders are deleted as well.`,
       confirmLabel: "Keep pages",
       onConfirm: async () => {
@@ -1472,14 +1475,14 @@ function LibraryApp({ publicPage = null, initialServerConfig = null }) {
   function deleteLabelByName(name) {
     const members = homeBlocks.filter((b) => parseFolderTags(b.properties?.category).includes(name));
     setConfirmBox({
-      title: "Delete label",
+      title: T("Delete label"),
       message: members.length
         ? `Delete “${name}”? The label is removed from its ${members.length} page${members.length === 1 ? "" : "s"} — no pages are deleted.`
         : `Delete the label “${name}”?`,
       confirmLabel: "Delete label",
       onConfirm: async () => {
         await applyLabelMap((t) => (t === name ? null : t));
-        setStatus(`Label “${name}” deleted.`);
+        setStatus(t("Label “{name}” deleted.", { name: name }));
       },
     });
   }
@@ -1736,7 +1739,7 @@ function LibraryApp({ publicPage = null, initialServerConfig = null }) {
       // while it's still on screen here) — merged and pushed back.
       const fid = focusedBlockIdRef.current;
       if (fid && !tabs.some((t) => t.id === fid)) {
-        tabs = [...tabs, prev.find((t) => t.id === fid) || { id: fid, title: "Untitled" }];
+        tabs = [...tabs, prev.find((t) => t.id === fid) || { id: fid, title: T("Untitled") }];
         pushTabsToServer(tabs);
       }
       try { localStorage.setItem(`gamma-tabs:${user}`, JSON.stringify(tabs)); } catch {}
@@ -2495,7 +2498,14 @@ function LibraryApp({ publicPage = null, initialServerConfig = null }) {
 
   // The settings page (account popover → Settings…): two-column modal,
   // categories on the left, the selected pane on the right.
-  const [settingsOpen, setSettingsOpen] = useState(null); // null | pane id — see settingsNavigation.js
+  const [settingsOpen, setSettingsOpen] = useState(() => { // null | pane id — see settingsNavigation.js
+    // A language change remounts the app (main.jsx); the pane it was made on comes back.
+    try {
+      const pane = sessionStorage.getItem(REOPEN_SETTINGS_KEY);
+      if (pane) { sessionStorage.removeItem(REOPEN_SETTINGS_KEY); return pane; }
+    } catch {}
+    return null;
+  });
   // What wants a look (a newer release, errors in the log — app/notices.js):
   // the dot on the account button and on the Settings panes that resolve it;
   // "Settings…" lands on the strongest one.
@@ -2816,8 +2826,8 @@ function LibraryApp({ publicPage = null, initialServerConfig = null }) {
   function deleteAiProvider(p) {
     const label = p.label || p.protocol;
     setConfirmBox({
-      title: "Remove AI key",
-      message: `Remove the "${label}" key? AI requests through it will stop working. This cannot be undone.`,
+      title: T("Remove AI key"),
+      message: t("Remove the \"{label}\" key? AI requests through it will stop working. This cannot be undone.", { label: label }),
       confirmLabel: "Remove",
       danger: true,
       onConfirm: async () => {
@@ -2876,7 +2886,7 @@ function LibraryApp({ publicPage = null, initialServerConfig = null }) {
     const text = blockChipText(block).slice(0, 4000);
     setChatNotes((prev) => prev.some((n) => n.kind === "block" && n.id === block.id)
       ? prev : prev.length >= 12 ? prev : [...prev, { kind: "block", id: block.id, text }]);
-    setStatus("Block attached to your next chat message.");
+    setStatus(t("Block attached to your next chat message."));
   }
   // A Ctrl-selection inside one block's rendered view → its source range;
   // one that can't be pinned down (it spans blocks, or an end isn't the
@@ -2994,7 +3004,7 @@ function LibraryApp({ publicPage = null, initialServerConfig = null }) {
       if (retryMeta && d.ok && !pageMeta && focusedBlock) fetchMetadata(focusedBlock, true);
     } catch (err) {
       setPdfTextInfo({ error: friendlyApiError(err) });
-      if (retryMeta) setStatus(`Text check failed: ${err.message}`);
+      if (retryMeta) setStatus(t("Text check failed: {message}", { message: err.message }));
     }
   }
   useEffect(() => {
@@ -3011,7 +3021,7 @@ function LibraryApp({ publicPage = null, initialServerConfig = null }) {
       const d = await apiJson(`${API}/pdf-text-status?doc_id=${encodeURIComponent(docId)}&preview=12000`);
       setPdfTextPreview({ text: d.text || "(no text)" });
     } catch (err) {
-      setPdfTextPreview({ text: `Preview failed: ${friendlyApiError(err)}` });
+      setPdfTextPreview({ text: t("Preview failed: {err}", { err: friendlyApiError(err) }) });
     }
   }
 
@@ -3038,9 +3048,9 @@ function LibraryApp({ publicPage = null, initialServerConfig = null }) {
         await renameTitle(data.meta.title);
       }
       fetchHomeBlocks(); // keep the library's meta fresh for DOI-link matching
-      setStatus("Metadata saved.");
+      setStatus(t("Metadata saved."));
     } catch (err) {
-      setStatus(`Metadata save failed: ${err.message}`);
+      setStatus(t("Metadata save failed: {message}", { message: err.message }));
     }
   }
   // Draft copies of the editable prompts (empty = server default), rebuilt
@@ -3143,7 +3153,7 @@ function LibraryApp({ publicPage = null, initialServerConfig = null }) {
       });
       return final?.translations || null;
     } catch (err) {
-      if (err.name !== "AbortError") setStatus(`Translation failed: ${err.message}`);
+      if (err.name !== "AbortError") setStatus(t("Translation failed: {message}", { message: err.message }));
       return null;
     }
   }
@@ -3196,7 +3206,7 @@ function LibraryApp({ publicPage = null, initialServerConfig = null }) {
 
   async function fetchMetadata(block, force) {
     if (!block?.id) return;
-    if (force) setStatus("Refreshing paper metadata…");
+    if (force) setStatus(t("Refreshing paper metadata…"));
     try {
       const data = await fetchMetadataRequest(block, force);
       if (focusedBlockIdRef.current !== block.id) return;
@@ -3216,7 +3226,7 @@ function LibraryApp({ publicPage = null, initialServerConfig = null }) {
         fetchHomeBlocks(); // keep the library's meta fresh for DOI-link matching
       }
     } catch (err) {
-      if (focusedBlockIdRef.current === block.id) setStatus(`Metadata: ${err.message}`);
+      if (focusedBlockIdRef.current === block.id) setStatus(t("Metadata: {message}", { message: err.message }));
       // Mirror the server's negative-cache marker into the client copy —
       // otherwise the next autosave PUTs the stale properties and resurrects
       // the auto-retry on every open.
@@ -3318,7 +3328,7 @@ function LibraryApp({ publicPage = null, initialServerConfig = null }) {
       return res;
     } catch (err) {
       updateTransfer(taskId, { status: "error", info: (err.message || "failed") });
-      if (!silent) setStatus(`Annotation import failed: ${err.message}`);
+      if (!silent) setStatus(t("Annotation import failed: {message}", { message: err.message }));
     }
   }
 
@@ -3338,7 +3348,7 @@ function LibraryApp({ publicPage = null, initialServerConfig = null }) {
       if (focusedBlockIdRef.current === targetId) setPptCite(data.citation || "");
     } catch (err) {
       updateTransfer(taskId, { status: "error", info: (err.message || "failed") });
-      if (!ctl.signal.aborted) setStatus(`Citation failed: ${err.message}`);
+      if (!ctl.signal.aborted) setStatus(t("Citation failed: {message}", { message: err.message }));
     } finally {
       setPptCiteBusy(false);
     }
@@ -3372,7 +3382,7 @@ function LibraryApp({ publicPage = null, initialServerConfig = null }) {
       ok = await copyText(text || "");
     }
     if (ok) flashCopied(kind);
-    else setStatus("Copy failed — copy manually.");
+    else setStatus(t("Copy failed — copy manually."));
   }
 
   useEffect(() => {
@@ -4032,9 +4042,21 @@ function LibraryApp({ publicPage = null, initialServerConfig = null }) {
     return () => mq.removeEventListener("change", apply);
   }, [theme]);
 
-  // Interface language: loads the catalog, then main.jsx remounts the app
-  // under the new locale (shared/i18n/i18n.js).
-  useEffect(() => { applyLanguage(language); }, [language]);
+  // Interface language (shared/i18n/i18n.js): a change first lands in the
+  // account's profile — the remount main.jsx does under the new locale
+  // starts a fresh profile pull where the server wins, so the server must
+  // already hold the new value — then loads the catalog and remounts, with
+  // the Settings pane the change was made on reopened.
+  useEffect(() => {
+    if (resolveLocale(language) === getLocale()) return undefined;
+    let live = true;
+    profileSync.flush().then(() => {
+      if (!live) return;
+      if (settingsOpen) { try { sessionStorage.setItem(REOPEN_SETTINGS_KEY, settingsOpen); } catch {} }
+      applyLanguage(language);
+    });
+    return () => { live = false; };
+  }, [language]);
 
   // Record a "recently viewed" entry whenever a page is opened. sessionUser
   // in the deps re-fires it once login resolves — a page opened by direct URL
@@ -4294,9 +4316,9 @@ function LibraryApp({ publicPage = null, initialServerConfig = null }) {
         body: JSON.stringify({ content: finalTitle })
       });
       setHomeBlocks((prev) => prev.map((b) => b.id === focusedBlockId ? { ...b, content: finalTitle } : b));
-      setStatus(`Renamed to "${finalTitle}"`);
+      setStatus(t("Renamed to \"{finalTitle}\"", { finalTitle: finalTitle }));
     } catch (err) {
-      setStatus(`Rename failed: ${err.message}`);
+      setStatus(t("Rename failed: {message}", { message: err.message }));
     }
   }
 
@@ -4363,7 +4385,7 @@ function LibraryApp({ publicPage = null, initialServerConfig = null }) {
         folder: [base, folder].filter(Boolean).join("/"),
       }));
     if (!items.length) {
-      setStatus("No PDF or Markdown files found.");
+      setStatus(t("No PDF or Markdown files found."));
       return;
     }
     setLoading(true);
@@ -4395,20 +4417,20 @@ function LibraryApp({ publicPage = null, initialServerConfig = null }) {
         // A single upload opens its page right away.
         const { src, block } = done[0];
         await openBlock(block.id, { viewerUrl: src.viewerUrl });
-        setStatus(`Uploaded ${items[0].filename} (${src.doc_id})`);
+        setStatus(t("Uploaded {filename} ({doc_id})", { filename: items[0].filename, doc_id: src.doc_id }));
       } else if (items.length === 1 && done.length) {
         await fetchHomeBlocks();
         await openBlock(done[0].data.block_id, { pushNav: true });
-        setStatus(`Imported ${items[0].filename} as a note.`);
+        setStatus(t("Imported {filename} as a note.", { filename: items[0].filename }));
       } else if (done.length) {
         fetchHomeBlocks();
         setStatus(failed.length
           ? `Imported ${done.length} of ${items.length} files — failed: ${failed.join(", ")}`
           : `Imported ${done.length} files.`);
       } else if (failed.length) {
-        setStatus(`Upload failed: ${failed.join(", ")}`);
+        setStatus(t("Upload failed: {failed}", { failed: failed.join(", ") }));
       } else if (stopped.length) {
-        setStatus(`Upload stopped: ${stopped.join(", ")}`);
+        setStatus(t("Upload stopped: {stopped}", { stopped: stopped.join(", ") }));
       }
       // Runs after the upload/import UI work and never delays its completion.
       queueMetadataForUploads(pdfDone);
@@ -4424,11 +4446,11 @@ function LibraryApp({ publicPage = null, initialServerConfig = null }) {
     const ednFile = all.find((f) => f.name.endsWith('.edn'));
     const mdFile  = all.find((f) => f.name.endsWith('.md'));
     if (!pdfFile || !ednFile) {
-      setStatus("Select at least a .pdf and .edn file.");
+      setStatus(t("Select at least a .pdf and .edn file."));
       return;
     }
     setLoading(true);
-    setStatus(`Importing ${pdfFile.name}...`);
+    setStatus(t("Importing {name}...", { name: pdfFile.name }));
     try {
       const form = new FormData();
       form.append("pdf", pdfFile);
@@ -4441,16 +4463,16 @@ function LibraryApp({ publicPage = null, initialServerConfig = null }) {
       const block = await getOrCreateBlockForDoc({ doc_id: data.doc_id, source_url: data.source_url, original_filename: pdfFile.name });
       await fetchHomeBlocks();
       await openBlock(block.id);
-      setStatus(`Imported ${data.imported} highlights from ${pdfFile.name}`);
+      setStatus(t("Imported {imported} highlights from {name}", { imported: data.imported, name: pdfFile.name }));
     } catch (err) {
-      setStatus(`Import failed: ${err.message}`);
+      setStatus(t("Import failed: {message}", { message: err.message }));
     } finally {
       setLoading(false);
     }
   }
 
   async function completeLibraryImport(data, summary) {
-    setStatus(`Import: ${summary}.`);
+    setStatus(t("Import: {summary}.", { summary: summary }));
     refreshQuota?.();
     await fetchHomeBlocks();
   }
@@ -4466,7 +4488,7 @@ function LibraryApp({ publicPage = null, initialServerConfig = null }) {
       return;
     }
     setLoading(true);
-    setStatus("Opening PDF...");
+    setStatus(t("Opening PDF..."));
     // Visible from the moment Enter is pressed — resolve can take seconds.
     const taskId = addTransfer({ name: sourceUrl.slice(0, 60), kind: "download", info: "resolving…" });
     try {
@@ -4480,7 +4502,7 @@ function LibraryApp({ publicPage = null, initialServerConfig = null }) {
       setStatus(src.note || `Loaded ${src.doc_id}`);
     } catch (err) {
       updateTransfer(taskId, { status: "error", info: (err.message || "failed") });
-      setStatus(`Open failed: ${err.message}`);
+      setStatus(t("Open failed: {message}", { message: err.message }));
     } finally {
       setLoading(false);
     }
@@ -4503,7 +4525,7 @@ function LibraryApp({ publicPage = null, initialServerConfig = null }) {
       setTitleDraft("");
       setTitleEditing(true);
     } catch (err) {
-      setStatus(`Create failed: ${err.message || err}`);
+      setStatus(t("Create failed: {err}", { err: err.message || err }));
     }
   }
 
@@ -4527,7 +4549,7 @@ function LibraryApp({ publicPage = null, initialServerConfig = null }) {
   async function attachPdfToPage({ file, url }) {
     const pageId = focusedBlockId;
     if (!pageId || shareMode || pageAttach || (!file && !url)) return;
-    if (file && !isPdfFile(file)) { setStatus("Only PDF files can be attached — other files go into a block."); return; }
+    if (file && !isPdfFile(file)) { setStatus(t("Only PDF files can be attached — other files go into a block.")); return; }
     setOpenPopover(null);
     setAttachUrl("");
     setLoading(true);
@@ -4556,13 +4578,13 @@ function LibraryApp({ publicPage = null, initialServerConfig = null }) {
         // The library already holds this PDF on another page — the page is
         // the unit, so open that one rather than duplicating the file.
         updateTransfer(taskId, { status: "done", info: "already in library" });
-        setStatus("That PDF is already attached to another page — opening it.");
+        setStatus(t("That PDF is already attached to another page — opening it."));
         setLoading(false);
         openBlock(err.data.page_id, { pushNav: true });
         return;
       }
       updateTransfer(taskId, { status: "error", info: (err.message || "failed") });
-      setStatus(`Attach failed: ${err.message}`);
+      setStatus(t("Attach failed: {message}", { message: err.message }));
     } finally {
       setLoading(false);
     }
@@ -4575,8 +4597,8 @@ function LibraryApp({ publicPage = null, initialServerConfig = null }) {
     if (!pageId || !pageAttach || readOnly) return;
     setOpenPopover(null);
     setConfirmBox({
-      title: "Detach PDF",
-      message: `Remove "${pageAttach.name || defaultPageTitle(pageAttach)}" from this page? The notes and highlights stay as blocks; the file is deleted unless another page uses it. This can't be undone.`,
+      title: T("Detach PDF"),
+      message: t("Remove \"{pageAttach}\" from this page? The notes and highlights stay as blocks; the file is deleted unless another page uses it. This can't be undone.", { pageAttach: pageAttach.name || defaultPageTitle(pageAttach) }),
       confirmLabel: "Detach",
       danger: true,
       onConfirm: async () => {
@@ -4584,9 +4606,9 @@ function LibraryApp({ publicPage = null, initialServerConfig = null }) {
           await apiJson(`${API}/pages/${encodeURIComponent(pageId)}/attachment`, { method: "DELETE" });
           fetchHomeBlocks();
           if (focusedBlockIdRef.current === pageId) await openBlock(pageId);
-          setStatus("PDF detached.");
+          setStatus(t("PDF detached."));
         } catch (err) {
-          setStatus(`Detach failed: ${err.message}`);
+          setStatus(t("Detach failed: {message}", { message: err.message }));
         }
       },
     });
@@ -4619,7 +4641,7 @@ function LibraryApp({ publicPage = null, initialServerConfig = null }) {
       fetchHomeBlocks();
       await openBlock(page.id, { pushNav: true });
     } catch (err) {
-      setStatus(`Could not add to library: ${err.message}`);
+      setStatus(t("Could not add to library: {message}", { message: err.message }));
     }
   }
   // The file chips reach App through a context: navigation and promotion
@@ -4660,8 +4682,8 @@ function LibraryApp({ publicPage = null, initialServerConfig = null }) {
         if (!u) return;
         updateTransfer(u.tid, ok ? { status: "done", info: fmtBytes(u.size) } : { status: "error", info: detail || "failed" });
         dropPill();
-        if (!ok && !cancelledTransfersRef.current.has(u.tid)) setStatus(`Upload of ${u.name} failed: ${detail || "refused"}`);
-        else if (Date.now() - u.at > 400) setStatus(`Uploaded ${u.name}.`);
+        if (!ok && !cancelledTransfersRef.current.has(u.tid)) setStatus(t("Upload of {name} failed: {refused}", { name: u.name, refused: detail || "refused" }));
+        else if (Date.now() - u.at > 400) setStatus(t("Uploaded {name}.", { name: u.name }));
       },
     });
     return () => setUploadReporter(null);
@@ -4674,7 +4696,7 @@ function LibraryApp({ publicPage = null, initialServerConfig = null }) {
     const pageId = focusedBlockId;
     const lines = await uploadFilesAsLines(files);
     if (focusedBlockIdRef.current !== pageId) return; // navigated away meanwhile
-    if (!lines.length) { setStatus("Nothing added — the upload was refused."); return; }
+    if (!lines.length) { setStatus(t("Nothing added — the upload was refused.")); return; }
     setBlocks((prev) => {
       let out = prev;
       for (const line of lines) {
@@ -4689,7 +4711,7 @@ function LibraryApp({ publicPage = null, initialServerConfig = null }) {
 
   async function resolveShare(token) {
     setLoading(true);
-    setStatus("Resolving share link...");
+    setStatus(t("Resolving share link..."));
     try {
       // Resolved by hand: the status code says whether signing in would help
       // (401 → login gate, 403 → not on the list, 404 → gone).
@@ -4758,7 +4780,7 @@ function LibraryApp({ publicPage = null, initialServerConfig = null }) {
       setReadOnly(!data.can_edit);
       setStatus(data.can_edit ? `Shared by ${data.username} — your edits save to their page.` : "Loaded shared page.");
     } catch (err) {
-      setStatus(`Share open failed: ${err.message}`);
+      setStatus(t("Share open failed: {message}", { message: err.message }));
     } finally {
       setLoading(false);
     }
@@ -4772,7 +4794,7 @@ function LibraryApp({ publicPage = null, initialServerConfig = null }) {
     leaveCurrentPage();
     forgetDocPages(); // the file chips' "which page carries this PDF" cache
     setLoading(true);
-    setStatus("Opening...");
+    setStatus(t("Opening..."));
     try {
       const subtreeData = await apiJson(`${API}/blocks/${blockId}/subtree`);
       const block = subtreeData.block;
@@ -4866,12 +4888,12 @@ function LibraryApp({ publicPage = null, initialServerConfig = null }) {
       // scale ratio is then exactly 1 and the position lands exactly.
       if (savedUi?.pdfScale) setPdfScale(savedUi.pdfScale);
       if (opts?.restoreScroll) restorePdfScroll(tabScrollRef.current[blockId], blockId, openedPdfUrl);
-      setStatus("Ready.");
+      setStatus(t("Ready."));
       // Emit for every successful open, including reopening the same paper.
       guideEvents.emit("page.opened", { id: blockId });
       return openedPdfUrl;
     } catch (err) {
-      setStatus(`Open failed: ${err.message}`);
+      setStatus(t("Open failed: {message}", { message: err.message }));
       // If this was a session restore attempt that failed, clear it
       if (!window.location.search.includes("block=")) clearSession();
     } finally {
@@ -5204,7 +5226,7 @@ function LibraryApp({ publicPage = null, initialServerConfig = null }) {
       // Refresh home blocks so the category carousel updates
       fetchHomeBlocks();
     } catch (err) {
-      setStatus(`Category save failed: ${err.message}`);
+      setStatus(t("Category save failed: {message}", { message: err.message }));
     }
   }
 
@@ -5223,7 +5245,7 @@ function LibraryApp({ publicPage = null, initialServerConfig = null }) {
       applyShareSettings(await apiJson(`${API}/share-settings/${encodeURIComponent(focusedBlockId)}`));
       resetShareCopied();
     } catch (err) {
-      setStatus(`Share failed: ${err.message}`);
+      setStatus(t("Share failed: {message}", { message: err.message }));
     }
   }
   async function createShareLink() {
@@ -5232,7 +5254,7 @@ function LibraryApp({ publicPage = null, initialServerConfig = null }) {
       applyShareSettings(await apiJson(`${API}/share/${encodeURIComponent(focusedBlockId)}`, { method: "POST" }));
       resetShareCopied();
     } catch (err) {
-      setStatus(`Share failed: ${err.message}`);
+      setStatus(t("Share failed: {message}", { message: err.message }));
     }
   }
   async function updateShareSettings(patch) {
@@ -5267,9 +5289,9 @@ function LibraryApp({ publicPage = null, initialServerConfig = null }) {
     try {
       await apiJson(`${API}/share-settings/${encodeURIComponent(focusedBlockId)}`, { method: "DELETE" });
       applyShareSettings({ token: null, page_id: focusedBlockId });
-      setStatus("Sharing stopped — the old link no longer opens.");
+      setStatus(t("Sharing stopped — the old link no longer opens."));
     } catch (err) {
-      setStatus(`Stop sharing failed: ${err.message}`);
+      setStatus(t("Stop sharing failed: {message}", { message: err.message }));
     }
   }
   // Publishing to Gamma Cloud (sharing/SharePopover.jsx PublishSection). POST
@@ -5326,6 +5348,10 @@ function LibraryApp({ publicPage = null, initialServerConfig = null }) {
       setPublishState((prev) => ({
         ...(prev || {}), page: pageId, published: false, url: undefined, share: undefined, mirror: out.mirror,
       }));
+      // the last page unpublished: the publication is invisible again (no pill)
+      if (!(out.mirror?.page_filter || []).length) {
+        setWorkspace((prev) => (prev?.publishing ? { ...prev, publishing: false } : prev));
+      }
       window.dispatchEvent(new CustomEvent("gamma:mirror"));
       loadPublishState({ quiet: true });
     } catch (err) {
@@ -5351,7 +5377,7 @@ function LibraryApp({ publicPage = null, initialServerConfig = null }) {
   async function copyPublishLink() {
     const link = publishState?.public_url || publishState?.url;
     if (link && await copyText(link)) { flashPublishCopied(); return; }
-    setStatus("Copy failed — select the link in the popover instead.");
+    setStatus(t("Copy failed — select the link in the popover instead."));
   }
 
   // The share view's visitor renamed themself: keep it, and rejoin the room
@@ -5368,7 +5394,7 @@ function LibraryApp({ publicPage = null, initialServerConfig = null }) {
 
   async function copyShareLink() {
     if (await copyText(shareUrl)) { flashShareCopied(); return; }
-    setStatus("Copy failed — select the link in the popover instead.");
+    setStatus(t("Copy failed — select the link in the popover instead."));
   }
 
   // Download the current page as Markdown. The server returns a bare .md, or a
@@ -5377,7 +5403,7 @@ function LibraryApp({ publicPage = null, initialServerConfig = null }) {
   // fetch+blob (not a plain navigation) so a 404/401 surfaces as a message
   // instead of silently swapping the SPA for an error page.
   async function downloadExport(path, fallbackName) {
-    setStatus("Exporting page…");
+    setStatus(t("Exporting page…"));
     // Shared views: withShare puts the scoped token on the export URL, so the
     // backend confines it to this page.
     try {
@@ -5403,10 +5429,10 @@ function LibraryApp({ publicPage = null, initialServerConfig = null }) {
       a.click();
       a.remove();
       setTimeout(() => URL.revokeObjectURL(url), 2000);
-      setStatus(`Exported ${filename}`);
+      setStatus(t("Exported {filename}", { filename: filename }));
       return filename;
     } catch (err) {
-      setStatus(`Export failed: ${err.message}`);
+      setStatus(t("Export failed: {message}", { message: err.message }));
       return null;
     }
   }
@@ -5419,7 +5445,7 @@ function LibraryApp({ publicPage = null, initialServerConfig = null }) {
   function runImport(o) {
     setImportOpen(false);
     if (o.source === "annots") {
-      if (!docId || !focusedBlockId) { setStatus("Open a PDF first."); return; }
+      if (!docId || !focusedBlockId) { setStatus(t("Open a PDF first.")); return; }
       importEmbeddedAnnots(focusedBlockId, docId, false, o.strip);
       return;
     }
@@ -5484,7 +5510,7 @@ function LibraryApp({ publicPage = null, initialServerConfig = null }) {
       origin = u.origin;
       token = u.searchParams.get("share") || "";
     } catch {}
-    if (!token) { setStatus("That isn't a Gamma share link (no ?share= in it)."); return; }
+    if (!token) { setStatus(t("That isn't a Gamma share link (no ?share= in it).")); return; }
     const local = origin === window.location.origin;
     const opts = { credentials: local ? "include" : "omit" };
     const tid = addTransfer({ name: `Shared page from ${local ? "this Gamma" : new URL(origin).host}`.slice(0, 60), kind: "download", info: "resolving…" });
@@ -5510,7 +5536,7 @@ function LibraryApp({ publicPage = null, initialServerConfig = null }) {
       runBackupImport(new File([blob], "shared-page.zip", { type: "application/zip" }), "merge", null, { openPage: info.page_id });
     } catch (err) {
       updateTransfer(tid, { status: "error", info: String(err.message) });
-      setStatus(`Import failed: ${err.message}`);
+      setStatus(t("Import failed: {message}", { message: err.message }));
     }
   }
 
@@ -5531,7 +5557,7 @@ function LibraryApp({ publicPage = null, initialServerConfig = null }) {
           const p = await apiJson(`${API}/folders/export-progress`);
           if (p.active && p.total) {
             const pct = Math.round((p.done / p.total) * 100);
-            setStatus(`Exporting “${exportFolder}” — ${p.done}/${p.total} pages (${pct}%)…`);
+            setStatus(t("Exporting “{exportFolder}” — {done}/{total} pages ({pct}%)…", { exportFolder: exportFolder, done: p.done, total: p.total, pct: pct }));
           }
         } catch { /* progress is best-effort */ }
       }, 500);
@@ -5540,15 +5566,15 @@ function LibraryApp({ publicPage = null, initialServerConfig = null }) {
           await downloadExport(`${base}&mode=logseq-graph&${bundle}`, "graph.zip");
         } else if (o.format === "obsidian") {
           if (await downloadExport(`${base}&mode=obsidian&${flags}&${bundle}`, "vault.zip")) {
-            setStatus("Obsidian vault saved — unzip it into a vault, or open the folder as one.");
+            setStatus(t("Obsidian vault saved — unzip it into a vault, or open the folder as one."));
           }
         } else if (o.format === "zotero") {
           if (await downloadExport(`${base}&mode=zotero-rdf&${flags}&${bundle}`, "zotero.zip")) {
-            setStatus("Zotero library saved — unzip it, then import the .rdf in Zotero (File → Import).");
+            setStatus(t("Zotero library saved — unzip it, then import the .rdf in Zotero (File → Import)."));
           }
         } else if (o.format === "gamma") {
           if (await downloadExport(`${base}&mode=gamma`, "gamma.zip")) {
-            setStatus("Gamma export saved — in the other Gamma: Import → Gamma export (.zip).");
+            setStatus(t("Gamma export saved — in the other Gamma: Import → Gamma export (.zip)."));
           }
         } else if (o.format === "notespdf") {
           await downloadExport(`${base}&mode=notes-pdf&${flags}`, "notes.pdf");
@@ -5561,7 +5587,7 @@ function LibraryApp({ publicPage = null, initialServerConfig = null }) {
       return;
     }
     const id = focusedBlock?.id;
-    if (!id) { setStatus("Open a page first to export it."); return; }
+    if (!id) { setStatus(t("Open a page first to export it.")); return; }
     if (o.format === "pdf") {
       if (!o.highlights && !o.notes) { await exportRawPdf(); return; }
       await downloadExport(`/pages/${id}/export-pdf?${flags}`, "export.pdf");
@@ -5579,19 +5605,19 @@ function LibraryApp({ publicPage = null, initialServerConfig = null }) {
     }
     if (o.format === "obsidian") {
       if (await downloadExport(`/pages/${id}/export?mode=obsidian&${flags}&${bundle}`, "vault.zip")) {
-        setStatus("Obsidian vault saved — unzip it into a vault, or open the folder as one.");
+        setStatus(t("Obsidian vault saved — unzip it into a vault, or open the folder as one."));
       }
       return;
     }
     if (o.format === "zotero") {
       if (await downloadExport(`/pages/${id}/export?mode=zotero-rdf&${flags}&${bundle}`, "zotero.zip")) {
-        setStatus("Zotero export saved — unzip it, then in Zotero pick the .rdf file via File → Import (it can't read the .zip itself).");
+        setStatus(t("Zotero export saved — unzip it, then in Zotero pick the .rdf file via File → Import (it can't read the .zip itself)."));
       }
       return;
     }
     if (o.format === "gamma") {
       if (await downloadExport(`/pages/${id}/export?mode=gamma`, "gamma.zip")) {
-        setStatus("Gamma export saved — in the other Gamma: Import → Gamma export (.zip).");
+        setStatus(t("Gamma export saved — in the other Gamma: Import → Gamma export (.zip)."));
       }
       return;
     }
@@ -5601,7 +5627,7 @@ function LibraryApp({ publicPage = null, initialServerConfig = null }) {
   // Download the PDF exactly as stored — no highlight annotations. Reuses the
   // viewer's own URL (uploads route or /pdf proxy), so it works in share views.
   async function exportRawPdf() {
-    if (!pdfUrl) { setStatus("No PDF open."); return; }
+    if (!pdfUrl) { setStatus(t("No PDF open.")); return; }
     setOpenPopover(null);
     const path = pdfUrl.startsWith(API) ? pdfUrl.slice(API.length) : pdfUrl;
     const name = `${(pageTitle || docId || "paper").replace(/[\\/:*?"<>|]/g, "_").slice(0, 80)}.pdf`;
@@ -5614,7 +5640,7 @@ function LibraryApp({ publicPage = null, initialServerConfig = null }) {
   async function aiFillTitle() {
     if (!docId || shareMode || aiTitleBusy) return;
     setAiTitleBusy(true);
-    setStatus("Asking AI for the title…");
+    setStatus(t("Asking AI for the title…"));
     const ctl = new AbortController();
     const taskId = addTransfer({ name: `AI title — ${(pageTitle || "paper").slice(0, 48)}`, kind: "ai", info: "asking…", cancel: () => ctl.abort() });
     try {
@@ -5632,13 +5658,13 @@ function LibraryApp({ publicPage = null, initialServerConfig = null }) {
       updateTransfer(taskId, { status: title ? "done" : "error", info: title ? "" : "no title" });
       if (title) {
         await renameTitle(title);
-        setStatus("Title filled in by AI.");
+        setStatus(t("Title filled in by AI."));
       } else {
-        setStatus("AI returned no title.");
+        setStatus(t("AI returned no title."));
       }
     } catch (err) {
       updateTransfer(taskId, { status: "error", info: (err.message || "failed") });
-      setStatus(`AI title failed: ${err.message}`);
+      setStatus(t("AI title failed: {message}", { message: err.message }));
     } finally {
       setAiTitleBusy(false);
     }
@@ -5655,7 +5681,7 @@ function LibraryApp({ publicPage = null, initialServerConfig = null }) {
     pendingBlockScrollRef.current = withId.id;
     setBlocks(nextBlocks);
     // autosave effect will persist
-    setStatus("Highlight saved.");
+    setStatus(t("Highlight saved."));
     guideEvents.emit("highlight.created", { id: withId.id, kind: withId.position?.area ? "area" : "text" });
   }
 
@@ -5722,7 +5748,7 @@ function LibraryApp({ publicPage = null, initialServerConfig = null }) {
         inkStore.markSaved(id, ink, r.url);
       } catch (err) {
         // The block's insert may still be queued (404): try again shortly.
-        setStatus(`Handwriting not saved yet: ${err.message || err}`);
+        setStatus(t("Handwriting not saved yet: {err}", { err: err.message || err }));
         if (!inkTimerRef.current) inkTimerRef.current = setTimeout(flushInk, 2000);
       }
     }
@@ -5809,7 +5835,7 @@ function LibraryApp({ publicPage = null, initialServerConfig = null }) {
     if (readOnly) return;
     const before = inkOf(blockId);
     if (!before) return;
-    applyInk([{ id: blockId, page, before, after: removeStrokes(before, ids) }], { label: "ink erasure" });
+    applyInk([{ id: blockId, page, before, after: removeStrokes(before, ids) }], { label: T("ink erasure") });
   }
   // The partial eraser fires per pointer move: successive cuts through one
   // group fold into the same history entry, so Ctrl+Z undoes the pass.
@@ -5822,7 +5848,7 @@ function LibraryApp({ publicPage = null, initialServerConfig = null }) {
     const h = inkHistRef.current;
     const last = h.undo[h.undo.length - 1]?.changes;
     const fold = last && last.length === 1 && last[0].id === blockId && last[0].after === before && last[0].pass;
-    applyInk([{ id: blockId, page, before: fold ? last[0].before : before, after, pass: true }], { record: !fold, label: "partial ink erasure" });
+    applyInk([{ id: blockId, page, before: fold ? last[0].before : before, after, pass: true }], { record: !fold, label: T("partial ink erasure") });
     if (fold) last[0].after = after;
   }
   function handleInkSelect(page, items) {
@@ -5868,7 +5894,7 @@ function LibraryApp({ publicPage = null, initialServerConfig = null }) {
         if (!before) continue;
         const count = before.strokes.filter((s) => item.ids.includes(s.id)).length;
         if (before.strokes.length + count > MAX_STROKES) {
-          setStatus("This handwriting note is full. Start a new note before duplicating.");
+          setStatus(t("This handwriting note is full. Start a new note before duplicating."));
           return;
         }
         const result = duplicateStrokes(before, item.ids, value.dx, value.dy);
@@ -5876,7 +5902,7 @@ function LibraryApp({ publicPage = null, initialServerConfig = null }) {
         changes.push({ id: item.id, page: inkSelection.page, before, after: result.ink });
         items.push({ id: item.id, ids: result.ids });
       }
-      applyInk(changes, { label: "ink duplication" });
+      applyInk(changes, { label: T("ink duplication") });
       handleInkSelect(inkSelection.page, items);
     }
   }
@@ -6010,7 +6036,7 @@ function LibraryApp({ publicPage = null, initialServerConfig = null }) {
   function handleDocLink(url) {
     const pid = findPageForUrl(url, homeBlocks);
     if (pid) {
-      setStatus("Already in your library — opening.");
+      setStatus(t("Already in your library — opening."));
       openBlock(pid, { pushNav: true });
       return;
     }
@@ -6046,7 +6072,7 @@ function LibraryApp({ publicPage = null, initialServerConfig = null }) {
       properties: { ...b.properties, link_url: target.url || "", link_page_id: target.pageId || "", link_highlight_id: target.highlightId || "" },
     }));
     setBlocks(next); // autosave persists
-    setStatus("Reference linked.");
+    setStatus(t("Reference linked."));
   }
 
   // Zoom in/out steps to the next multiple of 20%, anchored on the current
@@ -6195,9 +6221,9 @@ function LibraryApp({ publicPage = null, initialServerConfig = null }) {
       // same id in two pages. A cross-page move is not undoable.
       blockHistory.clear();
       setBlocks((prev) => removeBlockTree(prev, blockId));
-      setStatus(`Moved to "${title}".`);
+      setStatus(t("Moved to \"{title}\".", { title: title }));
     } catch (err) {
-      setStatus(`Move failed: ${err.message}`);
+      setStatus(t("Move failed: {message}", { message: err.message }));
     }
   }
   const movePageMatches = (() => {
@@ -6779,7 +6805,7 @@ function LibraryApp({ publicPage = null, initialServerConfig = null }) {
             ) : (
               <h3
                 className={!readOnly && focusedBlockId ? "titleText editable" : "titleText"}
-                title={!readOnly && focusedBlockId ? "Click to rename" : undefined}
+                title={!readOnly && focusedBlockId ? t("Click to rename") : undefined}
                 onClick={() => {
                   if (readOnly || !focusedBlockId) return;
                   setTitleDraft(pageTitle || "Untitled");
@@ -6800,7 +6826,7 @@ function LibraryApp({ publicPage = null, initialServerConfig = null }) {
             ) : null}
             {focusedBlockId && !shareMode ? (
               <div className="categoryFrontmatter">
-                <span className="categoryIcon" title="Labels">
+                <span className="categoryIcon" title={t("Labels")}>
                   <LabelIcon size={13} />
                 </span>
                 {categoryEditing ? (() => {
@@ -6883,7 +6909,7 @@ function LibraryApp({ publicPage = null, initialServerConfig = null }) {
                           }}
                           onBlur={commitAndCloseCategory}
                           autoFocus
-                          placeholder="type to add… (/ = folder)"
+                          placeholder={t("type to add… (/ = folder)")}
                         />
                       </div>
                       {suggestions.length > 0 ? (
@@ -6903,7 +6929,7 @@ function LibraryApp({ publicPage = null, initialServerConfig = null }) {
                       className={`categoryFrontmatterValue ${category ? "" : "empty"}`}
                       data-guide="page.labels"
                       onClick={() => { setCategoryInput(""); setCategorySuggestionIdx(-1); setCategoryEditing(true); }}
-                      title="Click to edit"
+                      title={t("Click to edit")}
                     >
                       {category || pageFolders.length ? (
                         <>
@@ -6911,17 +6937,17 @@ function LibraryApp({ publicPage = null, initialServerConfig = null }) {
                             <span
                               key={`f:${f}`}
                               className="categoryBadge folderChip"
-                              title={`Folder: ${f} — right-click to rename or delete`}
+                              title={t("Folder: {f} — right-click to rename or delete", { f: f })}
                               onContextMenu={openTagMenu("folder", f)}
                             ><FolderIcon size={10} />{f}</span>
                           ))}
-                          {category.split(",").map((t, i) => t.trim() ? (
+                          {category.split(",").map((tt, i) => tt.trim() ? (
                             <span
                               key={i}
                               className="categoryBadge"
-                              title={`Label: ${t.trim()} — right-click to rename or delete`}
-                              onContextMenu={openTagMenu("label", t.trim())}
-                            >{t.trim()}</span>
+                              title={t("Label: {label} — right-click to rename or delete", { label: tt.trim() })}
+                              onContextMenu={openTagMenu("label", tt.trim())}
+                            >{tt.trim()}</span>
                           ) : null)}
                         </>
                       ) : "Add labels..."}
@@ -6939,13 +6965,13 @@ function LibraryApp({ publicPage = null, initialServerConfig = null }) {
                       title={pageAttach
                         ? `Document: ${pageAttach.name || defaultPageTitle(pageAttach)}`
                         : "Attach a PDF as this page's document (URL, arXiv id, DOI, or upload) — it gets the viewer, highlights and metadata. Other files go into blocks."}
-                      aria-label={pageAttach ? "Document" : "Attach document"}
+                      aria-label={pageAttach ? t("Document") : t("Attach document")}
                       disabled={loading}
                       onClick={() => setOpenPopover((p) => (p === "attach" ? null : "attach"))}
                     ><PaperclipIcon size={15} /></button>
                     {openPopover === "attach" && pageAttach ? (
                       <div className="popover addPopover attachPopover">
-                        <div className="popoverTitle">Document</div>
+                        <div className="popoverTitle">{t("Document")}</div>
                         <div className="popoverHint attachFileName" title={attachmentSource(pageAttach)}>
                           <PaperclipIcon size={13} /> {pageAttach.name || defaultPageTitle(pageAttach)}
                         </div>
@@ -6954,34 +6980,34 @@ function LibraryApp({ publicPage = null, initialServerConfig = null }) {
                           {pdfHidden ? "Show the PDF" : "Hide the PDF"}
                         </button>
                         {pdfUrl ? (
-                          <button className="popoverItem" onClick={exportRawPdf} title="Download the PDF file exactly as stored — no highlights or notes">
+                          <button className="popoverItem" onClick={exportRawPdf} title={t("Download the PDF file exactly as stored — no highlights or notes")}>
                             <DownloadIcon className="popoverItemIcon" size={15} />
-                            Download the PDF
+                            {t("Download the PDF")}
                           </button>
                         ) : null}
                         {!readOnly ? (
                           <button className="popoverItem" onClick={detachPdfFromPage}>
                             <ScissorsIcon className="popoverItemIcon" size={15} />
-                            Detach the PDF…
+                            {t("Detach the PDF…")}
                           </button>
                         ) : null}
                       </div>
                     ) : openPopover === "attach" ? (
                       <div className="popover addPopover attachPopover">
-                        <div className="popoverTitle">Attach a document</div>
+                        <div className="popoverTitle">{t("Attach a document")}</div>
                         <input
                           autoFocus
                           className="searchInput"
                           value={attachUrl}
                           onChange={(e) => setAttachUrl(e.target.value)}
-                          placeholder="PDF URL, arXiv id, or DOI — press Enter"
+                          placeholder={t("PDF URL, arXiv id, or DOI — press Enter")}
                           onKeyDown={(e) => {
                             if (e.key === "Enter" && attachUrl.trim() && !loading) attachPdfToPage({ url: attachUrl.trim() });
                             else if (e.key === "Escape") setOpenPopover(null);
                           }}
                         />
                         <label className="popoverItem" aria-disabled={loading || undefined}>
-                          Upload a PDF…
+                          {t("Upload a PDF…")}
                           <input
                             type="file"
                             accept=".pdf,application/pdf"
@@ -7002,9 +7028,9 @@ function LibraryApp({ publicPage = null, initialServerConfig = null }) {
                       title={metaBusy
                         ? "Fetching paper metadata…"
                         : metaSrc?.warn
-                          ? metaSrc.hint
+                          ? t(metaSrc.hint)
                           : "Edit metadata (authors, venue, DOI, source file…)"}
-                      aria-label="Paper metadata"
+                      aria-label={t("Paper metadata")}
                       onClick={() => openMetaPopover()}
                     >
                       {/* Same busy affordance as the translate button: the
@@ -7033,10 +7059,10 @@ function LibraryApp({ publicPage = null, initialServerConfig = null }) {
                         }}
                       >
                         <div className="popoverTitle citeSectionRow">
-                          <span>Paper metadata</span>
+                          <span>{t("Paper metadata")}</span>
                           <button
                             className="searchToggle"
-                            title="Refresh metadata (arXiv → DOI → AI)"
+                            title={t("Refresh metadata (arXiv → DOI → AI)")}
                             disabled={metaBusy}
                             onClick={() => focusedBlock && fetchMetadata(focusedBlock, true)}
                           >{metaBusy ? "…" : "↻"}</button>
@@ -7081,13 +7107,13 @@ function LibraryApp({ publicPage = null, initialServerConfig = null }) {
                                   const site = key === "doi" ? "doi.org" : "arXiv";
                                   return (
                                     <>
-                                      <a className="metaLink" href={url} target="_blank" rel="noreferrer" title={`Open on ${site}`}>
+                                      <a className="metaLink" href={url} target="_blank" rel="noreferrer" title={t("Open on {site}", { site: site })}>
                                         <ExternalLinkIcon size={11} />
                                       </a>
                                       <button
                                         className="chatMsgActionBtn metaRowBtn"
-                                        title={`Copy the ${site} link`}
-                                        aria-label={`Copy ${site} link`}
+                                        title={t("Copy the {site} link", { site: site })}
+                                        aria-label={t("Copy {site} link", { site: site })}
                                         onClick={() => copyFlash(key, url)}
                                       >
                                         {copiedKey === key ? <CheckIcon size={12} /> : <CopyIcon size={12} />}
@@ -7098,8 +7124,8 @@ function LibraryApp({ publicPage = null, initialServerConfig = null }) {
                                 {key === "title" ? (
                                   <button
                                     className="searchToggle metaRowBtn"
-                                    title="AI: read the PDF and fill in the paper's title"
-                                    aria-label="Fill in title with AI"
+                                    title={t("AI: read the PDF and fill in the paper's title")}
+                                    aria-label={t("Fill in title with AI")}
                                     disabled={aiTitleBusy}
                                     onClick={aiFillTitle}
                                   >{aiTitleBusy ? "…" : <SparklesIcon size={13} />}</button>
@@ -7109,14 +7135,14 @@ function LibraryApp({ publicPage = null, initialServerConfig = null }) {
                           ))}
                           {metaSrc ? (
                             <div className="metaRow">
-                              <span className="metaKey">Source</span>
-                              <span className={metaSrc.warn ? "metaVal metaValWarn" : "metaVal"} title={metaSrc.hint}>
-                                {metaSrc.label}
+                              <span className="metaKey">{t("Source")}</span>
+                              <span className={metaSrc.warn ? "metaVal metaValWarn" : "metaVal"} title={t(metaSrc.hint)}>
+                                {t(metaSrc.label)}
                               </span>
                             </div>
                           ) : null}
                           <div className="metaRow">
-                            <span className="metaKey">Status</span>
+                            <span className="metaKey">{t("Status")}</span>
                             <span className="metaVal metaStatus">
                               <span className={`metaCell ${!pdfTextInfo || pdfTextInfo.checking || pdfTextInfo.error ? "muted" : pdfTextInfo.ok ? "ok" : "bad"}`}
                                 title={!pdfTextInfo || pdfTextInfo.checking ? "Checking whether the PDF has a text layer"
@@ -7127,20 +7153,20 @@ function LibraryApp({ publicPage = null, initialServerConfig = null }) {
                                 <i className="setDot" />{!pdfTextInfo || pdfTextInfo.checking ? "checking" : pdfTextInfo.error ? "text ?" : !pdfTextInfo.found ? "no file" : pdfTextInfo.ok ? "text" : "no text"}
                               </span>
                               <span className={`metaCell ${!pdfTextInfo || pdfTextInfo.checking || pdfTextInfo.error || pdfTextInfo.indexed === undefined ? "muted" : pdfTextInfo.indexed ? "ok" : "muted"}`}
-                                title="Whether library-wide search can find text in this paper. Papers index automatically in the background; Settings → Library maintenance → Rebuild forces a full re-index.">
+                                title={t("Whether library-wide search can find text in this paper. Papers index automatically in the background; Settings → Library maintenance → Rebuild forces a full re-index.")}>
                                 <i className="setDot" />{!pdfTextInfo || pdfTextInfo.checking ? "…" : pdfTextInfo.error || pdfTextInfo.indexed === undefined ? "index ?"
                                   : pdfTextInfo.indexed ? "indexed" : pdfTextInfo.index_stale ? "stale index" : "not indexed"}
                               </span>
                               {pdfTextInfo?.ok ? (
                                 <button className="searchToggle metaRowBtn" style={{ marginLeft: "auto" }}
-                                  title="Preview the extracted text (what the AI reads)"
+                                  title={t("Preview the extracted text (what the AI reads)")}
                                   onClick={openPdfTextPreview}><EyeIcon size={13} /></button>
                               ) : null}
                               {pdfTextInfo && !pdfTextInfo.checking && !pdfTextInfo.ok ? (
                                 <button
                                   className="searchToggle metaRowBtn"
                                   style={{ marginLeft: "auto" }}
-                                  title="Re-check text extraction (e.g. after replacing the source file) — retries the metadata lookup if text appears"
+                                  title={t("Re-check text extraction (e.g. after replacing the source file) — retries the metadata lookup if text appears")}
                                   onClick={() => checkPdfText(true)}
                                 >↻</button>
                               ) : null}
@@ -7149,13 +7175,13 @@ function LibraryApp({ publicPage = null, initialServerConfig = null }) {
                           {pdfTextPreview ? (
                             <div className="reportOverlay" onClick={() => setPdfTextPreview(null)}>
                               <div className="reportModal" style={{ width: "min(640px, calc(100vw - 32px))" }} onClick={(e) => e.stopPropagation()}>
-                                <div className="reportModalTitle">Extracted PDF text</div>
+                                <div className="reportModalTitle">{t("Extracted PDF text")}</div>
                                 <div className="reportPageList" style={{ maxHeight: "60vh", whiteSpace: "pre-wrap", fontSize: "calc(12px * var(--ui-font-scale, 1))", color: "var(--text-secondary)", padding: 10 }}>
                                   {pdfTextPreview.loading ? "Extracting…" : pdfTextPreview.text}
                                 </div>
-                                {!pdfTextPreview.loading ? <div className="reportModalHint">First 12,000 characters — the AI context is drawn from this.</div> : null}
+                                {!pdfTextPreview.loading ? <div className="reportModalHint">{t("First 12,000 characters — the AI context is drawn from this.")}</div> : null}
                                 <div className="reportModalBtns">
-                                  <button className="uiBtn" onClick={() => setPdfTextPreview(null)}>Close</button>
+                                  <button className="uiBtn" onClick={() => setPdfTextPreview(null)}>{t("Close")}</button>
                                 </div>
                               </div>
                             </div>
@@ -7170,22 +7196,22 @@ function LibraryApp({ publicPage = null, initialServerConfig = null }) {
                         ) : null}
                         {metaDirty ? (
                           <div className="reportModalBtns">
-                            <button className="uiBtn primary" onClick={saveMetaEdits}>Save metadata</button>
+                            <button className="uiBtn primary" onClick={saveMetaEdits}>{t("Save metadata")}</button>
                           </div>
                         ) : null}
                         {pageAttach ? <>
                         <div className="popoverDivider" />
-                        <div className="popoverSection">Source file</div>
+                        <div className="popoverSection">{t("Source file")}</div>
                         <div className="shareRow">
                           <input
                             value={sourceDraft}
                             onChange={(e) => setSourceDraft(e.target.value)}
-                            placeholder="PDF URL or /api/uploads/…"
+                            placeholder={t("PDF URL or /api/uploads/…")}
                           />
                           <button
                             className="chatMsgActionBtn"
-                            title="Copy the source URL"
-                            aria-label="Copy source URL"
+                            title={t("Copy the source URL")}
+                            aria-label={t("Copy source URL")}
                             disabled={!sourceDraft.trim()}
                             onClick={() => copyFlash("source", sourceDraft.trim())}
                           >
@@ -7206,9 +7232,9 @@ function LibraryApp({ publicPage = null, initialServerConfig = null }) {
                                     body: JSON.stringify({ properties: { source_url: url } }),
                                   });
                                   await openBlock(focusedBlockId);
-                                  setStatus("Source PDF replaced.");
+                                  setStatus(t("Source PDF replaced."));
                                 } catch (err) {
-                                  setStatus(`Replace failed: ${err.message}`);
+                                  setStatus(t("Replace failed: {message}", { message: err.message }));
                                 }
                               }}
                             >Replace source</button>
@@ -7221,11 +7247,11 @@ function LibraryApp({ publicPage = null, initialServerConfig = null }) {
                 ) : null}
                 <button
                   className="pageActionBtn pageDeleteBtn"
-                  title={readOnly ? "You can only view this workspace" : "Delete this page"}
+                  title={readOnly ? t("You can only view this workspace") : t("Delete this page")}
                   disabled={readOnly}
                   onClick={() => setConfirmBox({
-                    title: "Delete page",
-                    message: `Delete "${pageTitle || "this page"}" and all its notes? This can't be undone.`,
+                    title: T("Delete page"),
+                    message: t("Delete \"{page}\" and all its notes? This can't be undone.", { page: pageTitle || "this page" }),
                     confirmLabel: "Delete",
                     danger: true,
                     onConfirm: async () => {
@@ -7262,19 +7288,19 @@ function LibraryApp({ publicPage = null, initialServerConfig = null }) {
             {notesTextScale.badge}
             {!homeMode && backlinks.length > 0 ? (
               <div className="backlinksPanel">
-                <div className="backlinksLabel">Backlinks ({backlinks.length})</div>
+                <div className="backlinksLabel">{t("Backlinks ({n})", { n: backlinks.length })}</div>
                 <div className="backlinksList">
                   {backlinks.map((bl) => {
                     const isPrivate = bl.page_root_id && bl.page_root_id !== focusedBlockId;
                     return isPrivate ? (
                       <div key={bl.id} className="backlinkItem private">
-                        <div className="backlinkContent private">private block</div>
+                        <div className="backlinkContent private">{t("private block")}</div>
                       </div>
                     ) : (
                       <button
                         key={bl.id}
                         className="backlinkItem"
-                        title={bl.page_title ? `From: ${bl.page_title}` : undefined}
+                        title={bl.page_title ? t("From: {page_title}", { page_title: bl.page_title }) : undefined}
                         onClick={() => {
                           const row = document.querySelector(`[data-block-id="${bl.id}"]`);
                           if (row) {
@@ -7303,7 +7329,7 @@ function LibraryApp({ publicPage = null, initialServerConfig = null }) {
                 (the kind toggle's Labels mode) and shown as chips on each row,
                 so this is the only carousel left. */}
             {homeMode && recentViewedPages.length > 0 ? (
-              <CardCarousel label="Recently viewed" className="recentsCarousel">
+              <CardCarousel label={t("Recently viewed")} className="recentsCarousel">
                 {recentViewedPages.map((b) => (
                   <PageCard key={b._pageId} title={b.content} glyph={<FileGlyph isPdf={!!b._attachment} />} preview={b._preview}
                     snap={recentThumbs ? pageSnaps[b._pageId]?.img : null}
@@ -7314,8 +7340,8 @@ function LibraryApp({ publicPage = null, initialServerConfig = null }) {
                     onContextMenu={openPageMenu(b._pageId, b.content)}>
                     <button
                       className="uiClose uiCloseSm pageCardClose"
-                      title="Remove from Recently viewed"
-                      aria-label="Remove from Recently viewed"
+                      title={t("Remove from Recently viewed")}
+                      aria-label={t("Remove from Recently viewed")}
                       onClick={(e) => { e.stopPropagation(); removeRecentView(b._pageId); }}
                     >×</button>
                   </PageCard>
@@ -7324,7 +7350,7 @@ function LibraryApp({ publicPage = null, initialServerConfig = null }) {
             ) : null}
             {homeMode && !categoryFilter && !folderFilter && pinnedItems.length > 0 ? (
               <div className="pinnedSection">
-                <div className="pinnedLabel"><PinIcon filled size={12} /> Pinned</div>
+                <div className="pinnedLabel"><PinIcon filled size={12} /> {t("Pinned")}</div>
                 <div className="pinnedStrip" ref={pinnedStripRef}>
                   {pinnedItems.map((item) => item.kind === "folder" ? (() => { const f = item.path; return (
                     <PageCard
@@ -7338,7 +7364,7 @@ function LibraryApp({ publicPage = null, initialServerConfig = null }) {
                     >
                       <button
                         className="pinBtn tilePinBtn pinned"
-                        title="Unpin"
+                        title={t("Unpin")}
                         onClick={(e) => { e.stopPropagation(); setFoldersPinned([f], false); }}
                       ><PinIcon filled size={12} /></button>
                     </PageCard>
@@ -7361,7 +7387,7 @@ function LibraryApp({ publicPage = null, initialServerConfig = null }) {
                     >
                       <button
                         className="pinBtn tilePinBtn pinned"
-                        title="Unpin"
+                        title={t("Unpin")}
                         onClick={(e) => { e.stopPropagation(); setPagesPinned([b._pageId], false); }}
                       ><PinIcon filled size={12} /></button>
                     </PageCard>
@@ -7384,11 +7410,11 @@ function LibraryApp({ publicPage = null, initialServerConfig = null }) {
                         const parent = folderFilter.includes("/") ? folderFilter.slice(0, folderFilter.lastIndexOf("/")) : "";
                         dropOnFolder(e, parent, (ids) => removePagesFromFolder(ids, folderFilter));
                       }}
-                      title="Back — or drop a page or folder here to move it out of this folder"
+                      title={t("Back — or drop a page or folder here to move it out of this folder")}
                     >
                       <ArrowLeftIcon size={14} />
                       <span className="folderName">{folderFilter.includes("/") ? folderFilter.slice(0, folderFilter.lastIndexOf("/")) : "All files"}</span>
-                      <span className="folderHint">drop here to move out of this folder</span>
+                      <span className="folderHint">{t("drop here to move out of this folder")}</span>
                     </div>
                     ) : null}
                     {/* The label view gets the same back row: it drops the
@@ -7400,16 +7426,16 @@ function LibraryApp({ publicPage = null, initialServerConfig = null }) {
                       onClick={closeLabel}
                       // Inside "No label" there is no label to take off — the
                       // back row is plain navigation there.
-                      {...(categoryFilter === NO_LABEL ? { title: "Back" } : {
+                      {...(categoryFilter === NO_LABEL ? { title: T("Back") } : {
                         onDragOver: (e) => { e.preventDefault(); setFolderDragOver("__label_up__"); },
                         onDragLeave: () => setFolderDragOver(null),
                         onDrop: (e) => dropOnLabel(e, categoryFilter, (ids) => removePagesFromLabel(ids, categoryFilter)),
-                        title: "Back — or drop a page here to take this label off it",
+                        title: T("Back — or drop a page here to take this label off it"),
                       })}
                     >
                       <ArrowLeftIcon size={14} />
                       <span className="folderName">{folderFilter || "All files"}</span>
-                      {categoryFilter === NO_LABEL ? null : <span className="folderHint">drop here to remove this label</span>}
+                      {categoryFilter === NO_LABEL ? null : <span className="folderHint">{t("drop here to remove this label")}</span>}
                     </div>
                     ) : null}
                     <div className="folderCurrent">
@@ -7428,11 +7454,11 @@ function LibraryApp({ publicPage = null, initialServerConfig = null }) {
                         <span>
                           {folderFilter ? <span className="crumbSep">/</span> : null}
                           {categoryFilter === NO_LABEL ? (
-                            <span className="crumbBtn" title="Pages without any label">{NO_LABEL_TITLE}</span>
+                            <span className="crumbBtn" title={t("Pages without any label")}>{NO_LABEL_TITLE}</span>
                           ) : (
                           <button
                             className="crumbBtn"
-                            title="Right-click to rename or delete this label"
+                            title={t("Right-click to rename or delete this label")}
                             onContextMenu={openTagMenu("label", categoryFilter)}
                           >{categoryFilter}</button>
                           )}
@@ -7448,14 +7474,14 @@ function LibraryApp({ publicPage = null, initialServerConfig = null }) {
                 <ListFindBox value={homeQuery} onChange={setHomeQuery} />
                 <MenuSelect
                   icon={ArrowUpDownIcon}
-                  label={categoryFilter ? "Sort this label" : folderFilter ? "Sort this folder — subfolders inherit it" : "Sort the library — folders inherit it"}
+                  label={categoryFilter ? t("Sort this label") : folderFilter ? t("Sort this folder — subfolders inherit it") : t("Sort the library — folders inherit it")}
                   value={homeSort}
                   onChange={changeHomeSort}
                   options={[
-                    ["updated", "Recently modified", PenIcon],
-                    ["created", "Recently added", PlusIcon],
-                    ["viewed", "Recently viewed", EyeIcon],
-                    ["title", "Title A–Z", TypeIcon],
+                    ["updated", t("Recently modified"), PenIcon],
+                    ["created", t("Recently added"), PlusIcon],
+                    ["viewed", t("Recently viewed"), EyeIcon],
+                    ["title", t("Title A–Z"), TypeIcon],
                   ]}
                 />
                 {/* A label holds papers only — nothing to filter by kind there. */}
@@ -7479,7 +7505,7 @@ function LibraryApp({ publicPage = null, initialServerConfig = null }) {
                       <PageCard
                         className="pageCardAdd"
                         glyph={<FilePlusIcon className="tileGlyph" size={null} strokeWidth={1.5} />}
-                        title="New page"
+                        title={t("New page")}
                         tip="Start a blank page here"
                         labelMode={fileLabels}
                         onClick={() => createPage()}
@@ -7496,7 +7522,7 @@ function LibraryApp({ publicPage = null, initialServerConfig = null }) {
                             autoFocus
                             className="tileRenameInput"
                             value={newFolderName}
-                            placeholder="Folder name…"
+                            placeholder={t("Folder name…")}
                             onClick={(e) => e.stopPropagation()}
                             onChange={(e) => setNewFolderName(e.target.value)}
                             onKeyDown={(e) => {
@@ -7511,7 +7537,7 @@ function LibraryApp({ publicPage = null, initialServerConfig = null }) {
                       <PageCard
                         className="pageCardAdd"
                         glyph={<FolderPlusIcon className="tileGlyph" size={null} strokeWidth={1.5} />}
-                        title="New folder"
+                        title={t("New folder")}
                         labelMode={fileLabels}
                         onClick={() => { setNewFolderName(""); setNewFolderOpen(true); }}
                       />
@@ -7599,7 +7625,7 @@ function LibraryApp({ publicPage = null, initialServerConfig = null }) {
                         >
                           <button
                             className={`pinBtn tilePinBtn ${isPinned ? "pinned" : ""}`}
-                            title={isPinned ? "Unpin" : "Pin to top"}
+                            title={isPinned ? t("Unpin") : t("Pin to top")}
                             onClick={(e) => { e.stopPropagation(); setPagesPinned([id], !isPinned); }}
                           ><PinIcon filled={isPinned} size={12} /></button>
                         </PageCard>
@@ -7619,9 +7645,9 @@ function LibraryApp({ publicPage = null, initialServerConfig = null }) {
                   ) : null}
                   <div className="fileList" onClick={(e) => { if (e.target.classList.contains("fileList")) clearSelection(); }}>
                     {newPageAllowed ? (
-                      <button className="folderRow folderNewBtn" onClick={() => createPage()} title="Start a blank page here">
+                      <button className="folderRow folderNewBtn" onClick={() => createPage()} title={t("Start a blank page here")}>
                         <FilePlusIcon size={15} />
-                        <span className="folderName">New page</span>
+                        <span className="folderName">{t("New page")}</span>
                       </button>
                     ) : null}
                     {!newFolderAllowed ? null : newFolderOpen ? (
@@ -7632,7 +7658,7 @@ function LibraryApp({ publicPage = null, initialServerConfig = null }) {
                           className="folderNewInput"
                           value={newFolderName}
                           onChange={(e) => setNewFolderName(e.target.value)}
-                          placeholder="Folder name…"
+                          placeholder={t("Folder name…")}
                           onKeyDown={(e) => {
                             if (e.key === "Enter") { e.preventDefault(); commitNewFolder(); }
                             else if (e.key === "Escape") { setNewFolderOpen(false); setNewFolderName(""); }
@@ -7643,7 +7669,7 @@ function LibraryApp({ publicPage = null, initialServerConfig = null }) {
                     ) : (
                       <button className="folderRow folderNewBtn" onClick={() => { setNewFolderName(""); setNewFolderOpen(true); }}>
                         <FolderPlusIcon size={15} />
-                        <span className="folderName">New folder</span>
+                        <span className="folderName">{t("New folder")}</span>
                       </button>
                     )}
                     {homeVisibleItems.map((item) => {
@@ -7679,7 +7705,7 @@ function LibraryApp({ publicPage = null, initialServerConfig = null }) {
                         onDragOver={(e) => { e.preventDefault(); setFolderDragOver(f); }}
                         onDragLeave={() => setFolderDragOver(null)}
                         onDrop={(e) => dropOnFolder(e, f)}
-                        title="Click to select · double-click to open · right-click to rename or delete · drop a page or folder to move it in"
+                        title={t("Click to select · double-click to open · right-click to rename or delete · drop a page or folder to move it in")}
                       >
                         <FolderIcon size={15} />
                         {folderRenaming?.name === f ? (
@@ -7714,7 +7740,7 @@ function LibraryApp({ publicPage = null, initialServerConfig = null }) {
                           onClick={(e) => handlePageClick(b, e)}
                           onDoubleClick={() => { if (!isEditing) openPage(id); }}
                           onContextMenu={openPageMenu(id, b.content)}
-                          title={`${b.content}\nClick to select · double-click to open`}
+                          title={t("{content}\nClick to select · double-click to open", { content: b.content })}
                         >
                           <span className="fileRowIcon"><FileGlyph isPdf={!!b._attachment} /></span>
                           {isEditing ? (
@@ -7737,7 +7763,7 @@ function LibraryApp({ publicPage = null, initialServerConfig = null }) {
                           <span className="fileRowKind">{pageKindLabel(b._attachment)}</span>
                           <button
                             className={`pinBtn fileRowPin ${isPinned ? "pinned" : ""}`}
-                            title={isPinned ? "Unpin" : "Pin to top"}
+                            title={isPinned ? t("Unpin") : t("Pin to top")}
                             onClick={(e) => { e.stopPropagation(); setPagesPinned([id], !isPinned); }}
                           ><PinIcon filled={isPinned} size={12} /></button>
                         </div>
@@ -7752,7 +7778,7 @@ function LibraryApp({ publicPage = null, initialServerConfig = null }) {
                 </>
             ) : (
             visibleBlocks.length === 0 ? (
-              notesTail || <div className="empty">No blocks yet.</div>
+              notesTail || <div className="empty">{t("No blocks yet.")}</div>
             ) : (
               (() => {
                 const rowProps = {
@@ -7856,7 +7882,7 @@ function LibraryApp({ publicPage = null, initialServerConfig = null }) {
                     if (readOnly) return;
                     setBlocks(removeBlockTree(blocks, id)); // the transition's delete op
 
-                    setStatus("Block deleted — Ctrl+Z to undo.");
+                    setStatus(t("Block deleted — Ctrl+Z to undo."));
                   },
                   // Attach a block to the next chat message (chip with its id).
                   onAddToChat: shareMode ? null : addBlockToChat,
@@ -7875,7 +7901,7 @@ function LibraryApp({ publicPage = null, initialServerConfig = null }) {
                         children: (b.children || []).map(clone) };
                     };
                     setBlocks(insertSibling(blocks, id, clone(src), true));
-                    setStatus("Block duplicated.");
+                    setStatus(t("Block duplicated."));
                   },
                   onMoveToPage: async (id) => {
                     if (readOnly) return;
@@ -7883,7 +7909,7 @@ function LibraryApp({ publicPage = null, initialServerConfig = null }) {
                       const d = await apiJson(`${API}/blocks/root/children`);
                       const pages = (d.children || []).filter((p) => p.id !== focusedBlockId);
                       setMoveBlockDialog({ blockId: id, query: "", pages });
-                    } catch (err) { setStatus(`Could not list pages: ${err.message}`); }
+                    } catch (err) { setStatus(t("Could not list pages: {message}", { message: err.message })); }
                   },
                   onPasteBlocks: (id, nodes) => {
                     if (readOnly || !nodes?.length) return;
@@ -7990,7 +8016,7 @@ function LibraryApp({ publicPage = null, initialServerConfig = null }) {
     };
     if (id === "notes") {
       return (
-        <DockWindow title="Notes" guide="dock.notes" {...common} onClose={() => (isPhone ? setPhonePanel(null) : setNotesVisible(false))}>
+        <DockWindow title={t("Notes")} guide="dock.notes" {...common} onClose={() => (isPhone ? setPhonePanel(null) : setNotesVisible(false))}>
           {notesWindow}
         </DockWindow>
       );
@@ -8075,14 +8101,14 @@ function LibraryApp({ publicPage = null, initialServerConfig = null }) {
       <button
         className={`iconBtn ${openPopover === "menu" ? "activeIcon" : ""}`}
         onClick={() => setOpenPopover((p) => (p === "menu" ? null : "menu"))}
-        title="View — windows, import, export"
-        aria-label="View"
+        title={t("View — windows, import, export")}
+        aria-label={t("View")}
       >
         <MenuIcon size={17} />
       </button>
       {openPopover === "menu" ? (
         <div className="popover menuPopover">
-          <div className="popoverSection">Windows</div>
+          <div className="popoverSection">{t("Windows")}</div>
           {!homeMode && pageAttach ? (
             <button className="popoverItem" onClick={() => setPdfHidden((v) => !v)}>
               <span className="check">{!pdfHidden ? "✓" : ""}</span>
@@ -8106,10 +8132,10 @@ function LibraryApp({ publicPage = null, initialServerConfig = null }) {
             <button
               className="popoverItem"
               onClick={() => { setOpenPopover(null); setImportOpen(true); }}
-              title="Bring in highlights — the ones saved inside this PDF file, a Logseq export, or a whole Zotero library"
+              title={t("Bring in highlights — the ones saved inside this PDF file, a Logseq export, or a whole Zotero library")}
             >
               <ImportIcon className="popoverItemIcon" size={15} />
-              Import…
+              {t("Import…")}
             </button>
           ) : null}
           {(focusedBlock && !homeMode) || (homeMode && folderFilter) ? (
@@ -8127,7 +8153,7 @@ function LibraryApp({ publicPage = null, initialServerConfig = null }) {
                   : "Download this page — the PDF with highlights and notes, Markdown, a Logseq graph, a Zotero library, or a Gamma export"}
               >
                 <ExportIcon className="popoverItemIcon" size={15} />
-                Export…
+                {t("Export…")}
               </button>
             </>
           ) : null}
@@ -8137,10 +8163,10 @@ function LibraryApp({ publicPage = null, initialServerConfig = null }) {
               <button
                 className="popoverItem"
                 onClick={exportRawPdf}
-                title="Download the PDF file exactly as stored — no highlights or notes"
+                title={t("Download the PDF file exactly as stored — no highlights or notes")}
               >
                 <DownloadIcon className="popoverItemIcon" size={15} />
-                Download PDF
+                {t("Download PDF")}
               </button>
             </>
           ) : null}
@@ -8184,33 +8210,33 @@ function LibraryApp({ publicPage = null, initialServerConfig = null }) {
       } : null}
       citation={(pageMeta || pageBibtex) ? (
         <Section
-          title="Citation"
+          title={t("Citation")}
           action={
             <button
               type="button" className="uiBtn sm iconSq"
-              title="Regenerate the citation" aria-label="Regenerate the citation"
+              title={t("Regenerate the citation")} aria-label={t("Regenerate the citation")}
               disabled={pptCiteBusy}
               onClick={() => makePptCitation(true)}
             >{pptCiteBusy ? "…" : <RefreshIcon size={13} />}</button>
           }
         >
           <div className="citeHead">
-            <span className="citeLabel">Slide citation</span>
+            <span className="citeLabel">{t("Slide citation")}</span>
             {/* Provenance right where the citation gets copied: a
                 registry name, or a red "!" when nothing tied the
                 record to this document. */}
             {metaSrc ? (
-              <span className={`citeSourceTag${metaSrc.warn ? " warn" : ""}`} title={metaSrc.hint}>
+              <span className={`citeSourceTag${metaSrc.warn ? " warn" : ""}`} title={t(metaSrc.hint)}>
                 {metaSrc.warn ? <span className="metaWarnDot inline" aria-hidden="true">!</span> : null}
-                {metaSrc.label}
+                {t(metaSrc.label)}
               </span>
             ) : null}
           </div>
-          {metaSrc?.warn ? <div className="settingsPaneHint citeWarnHint">{metaSrc.hint}.</div> : null}
+          {metaSrc?.warn ? <div className="settingsPaneHint citeWarnHint">{t(metaSrc.hint)}.</div> : null}
           {pptCite ? (
             <CopyBox
               copied={copiedKey === "ppt"} onCopy={() => copyFlash("ppt", pptCite)}
-              title="Copy — pastes with real italics/bold into PowerPoint" label="Copy slide citation"
+              title={t("Copy — pastes with real italics/bold into PowerPoint")} label={t("Copy slide citation")}
             >
               <div className="pptCitePreview"><ChatMarkdown text={pptCite} /></div>
             </CopyBox>
@@ -8219,10 +8245,10 @@ function LibraryApp({ publicPage = null, initialServerConfig = null }) {
           )}
           {pageBibtex ? (
             <>
-              <div className="citeHead"><span className="citeLabel">BibTeX</span></div>
+              <div className="citeHead"><span className="citeLabel">{t("BibTeX")}</span></div>
               <CopyBox
                 copied={copiedKey === "bibtex"} onCopy={() => copyFlash("bibtex", pageBibtex)}
-                title="Copy the BibTeX entry" label="Copy BibTeX"
+                title={t("Copy the BibTeX entry")} label={t("Copy BibTeX")}
               >
                 <pre className="bibtexPre">{pageBibtex}</pre>
               </CopyBox>
@@ -8239,8 +8265,8 @@ function LibraryApp({ publicPage = null, initialServerConfig = null }) {
           className={`iconBtn addBtn ${openPopover === "add" ? "activeIcon" : ""}`}
           onClick={() => setOpenPopover((p) => (p === "add" ? null : "add"))}
           data-guide="header.add"
-          title="Add — a new page, a PDF by URL, arXiv id or DOI, or uploaded files"
-          aria-label="Add"
+          title={t("Add — a new page, a PDF by URL, arXiv id or DOI, or uploaded files")}
+          aria-label={t("Add")}
         >
           <PlusIcon size={17} strokeWidth={2.2} />
         </button>
@@ -8252,7 +8278,7 @@ function LibraryApp({ publicPage = null, initialServerConfig = null }) {
               data-guide="add.urlInput"
               value={addUrl}
               onChange={(e) => setAddUrl(e.target.value)}
-              placeholder="Paste a URL, DOI or arXiv id"
+              placeholder={t("Paste a URL, DOI or arXiv id")}
               onKeyDown={(e) => {
                 if (e.key === "Enter" && addUrl.trim() && !loading) {
                   setOpenPopover(null);
@@ -8267,12 +8293,12 @@ function LibraryApp({ publicPage = null, initialServerConfig = null }) {
             />
             {parseGammaShareLink(addUrl) ? (
               <div className="popoverHint">
-                A Gamma share link — Enter copies that page, with its blocks, highlights and PDF, into your library.
+                {t("A Gamma share link — Enter copies that page, with its blocks, highlights and PDF, into your library.")}
               </div>
             ) : null}
             <label className="popoverItem" style={{ cursor: loading ? "not-allowed" : "pointer" }}>
               <UploadIcon className="popoverItemIcon" size={15} />
-              Upload files…
+              {t("Upload files…")}
               <input
                 type="file"
                 accept=".pdf,.md,.markdown,application/pdf,text/markdown"
@@ -8285,10 +8311,10 @@ function LibraryApp({ publicPage = null, initialServerConfig = null }) {
             <label
               className="popoverItem"
               style={{ cursor: loading ? "not-allowed" : "pointer" }}
-              title="Import every PDF and Markdown note in a folder — subfolders become folder labels"
+              title={t("Import every PDF and Markdown note in a folder — subfolders become folder labels")}
             >
               <FolderIcon className="popoverItemIcon" size={15} />
-              Upload folder…
+              {t("Upload folder…")}
               <input
                 type="file"
                 webkitdirectory=""
@@ -8299,7 +8325,7 @@ function LibraryApp({ publicPage = null, initialServerConfig = null }) {
             </label>
             <button className="popoverItem" onClick={() => createPage()}>
               <FilePlusIcon className="popoverItemIcon" size={15} />
-              New page
+              {t("New page")}
             </button>
           </div>
         ) : null}
@@ -8309,8 +8335,8 @@ function LibraryApp({ publicPage = null, initialServerConfig = null }) {
             className={`iconBtn transferBtn ${openPopover === "downloads" ? "activeIcon" : ""}`}
             onClick={() => setOpenPopover((p) => (p === "downloads" ? null : "downloads"))}
             data-guide="header.tasks"
-            title="Background tasks — downloads, uploads, indexing, metadata/AI jobs"
-            aria-label="Background tasks"
+            title={t("Background tasks — downloads, uploads, indexing, metadata/AI jobs")}
+            aria-label={t("Background tasks")}
           >
             <ActivityIcon size={16} />
             {/* Spinner while anything runs, otherwise a red dot for a failed
@@ -8325,10 +8351,10 @@ function LibraryApp({ publicPage = null, initialServerConfig = null }) {
           {openPopover === "downloads" ? (
             <div className="popover downloadsPopover">
               <div className="popoverTitle citeSectionRow">
-                <span>Background tasks</span>
+                <span>{t("Background tasks")}</span>
                 <button
                   className="searchToggle transferClearBtn"
-                  title="Clear finished"
+                  title={t("Clear finished")}
                   onClick={() => {
                     if (!indexTask?.active) setIndexTaskCleared(true);
                     setTransfers((prev) => {
@@ -8343,7 +8369,7 @@ function LibraryApp({ publicPage = null, initialServerConfig = null }) {
                 >Clear</button>
               </div>
               {!transfers.length && !(indexTask && (indexTask.active || (!indexTaskCleared && indexTask.total > 0))) ? (
-                <Empty icon={ActivityIcon}>Nothing running</Empty>
+                <Empty icon={ActivityIcon}>{t("Nothing running")}</Empty>
               ) : null}
               {indexTask && (indexTask.active || (!indexTaskCleared && indexTask.total > 0)) ? (
                 <TransferRow
@@ -8354,17 +8380,17 @@ function LibraryApp({ publicPage = null, initialServerConfig = null }) {
                   onStop={indexTask.active ? cancelIndexing : null}
                 />
               ) : null}
-              {transfers.map((t) => (
+              {transfers.map((tr) => (
                 <TransferRow
-                  key={t.id} status={t.status} name={t.name} info={t.info} progress={t.progress}
-                  icon={t.kind === "upload"
+                  key={tr.id} status={tr.status} name={t(tr.name)} info={tr.info} progress={tr.progress}
+                  icon={tr.kind === "upload"
                     ? <UploadIcon size={12} />
-                    : t.kind === "ai"
+                    : tr.kind === "ai"
                       ? <SparklesIcon size={12} />
-                      : t.kind === "import"
+                      : tr.kind === "import"
                         ? <FileIcon size={12} />
                         : <DownloadIcon size={12} />}
-                  onStop={t.status === "active" && t.cancel ? () => cancelTransfer(t.id) : null}
+                  onStop={tr.status === "active" && tr.cancel ? () => cancelTransfer(tr.id) : null}
                 />
               ))}
             </div>
@@ -8398,8 +8424,8 @@ function LibraryApp({ publicPage = null, initialServerConfig = null }) {
             }}
             disabled={loading}
             data-guide="header.share"
-            title="Share"
-            aria-label="Share"
+            title={t("Share")}
+            aria-label={t("Share")}
           >
             <LinkIcon size={16} />
           </button>
@@ -8412,6 +8438,7 @@ function LibraryApp({ publicPage = null, initialServerConfig = null }) {
           wsId={workspace.id}
           mirrorOf={workspace.mirror_of}
           publication={!workspace.mirror_of && !!workspace.publishing}
+          pageId={focusedBlockId}
           open={openPopover === "mirror"}
           onToggle={() => setOpenPopover(openPopover === "mirror" ? null : "mirror")}
           jumpTo={(pageId, blockId) => jumpToRef.current?.(pageId, blockId)}
@@ -8451,14 +8478,14 @@ function LibraryApp({ publicPage = null, initialServerConfig = null }) {
                   </span>
                 </span>
                 {quotaInfo ? (
-                  <span className="userCardQuota" title="Storage used by your uploaded PDFs and images">
+                  <span className="userCardQuota" title={t("Storage used by your uploaded PDFs and images")}>
                     {fmtBytes(quotaInfo.used_bytes)}
                     {quotaInfo.quota_mb ? ` / ${fmtBytes(quotaInfo.quota_mb * 1024 * 1024)}` : ""}
                   </span>
                 ) : null}
               </div>
               {authUser.is_guest ? (
-                <div className="popoverHint">Guest data resets daily. Ask the admin for an account to keep your work.</div>
+                <div className="popoverHint">{t("Guest data resets daily. Ask the admin for an account to keep your work.")}</div>
               ) : null}
               {quotaInfo?.quota_mb ? (
                 <div className="popoverQuota">
@@ -8468,7 +8495,7 @@ function LibraryApp({ publicPage = null, initialServerConfig = null }) {
               <div className="popoverDivider" />
               {/* The workspace switcher: every library this account belongs
                   to; switching reloads the tab on that workspace's URL. */}
-              {workspaces.length ? <div className="popoverSection">Workspaces</div> : null}
+              {workspaces.length ? <div className="popoverSection">{t("Workspaces")}</div> : null}
               {workspaces.map((w) => (
                 <button
                   key={w.id}
@@ -8591,8 +8618,8 @@ function LibraryApp({ publicPage = null, initialServerConfig = null }) {
               className={`iconBtn homeBtn ${homeMode ? "activeIcon" : ""}`}
               onClick={goHome}
               data-guide="header.home"
-              title="Home"
-              aria-label="Home"
+              title={t("Home")}
+              aria-label={t("Home")}
             >
               <HomeIcon size={17} />
             </button>
@@ -8602,7 +8629,7 @@ function LibraryApp({ publicPage = null, initialServerConfig = null }) {
                 onClick={goBackNav}
                 onContextMenu={(e) => { e.preventDefault(); setNavStack([]); }}
                 title={`Back to where you were${navStackLen > 1 ? ` (${navStackLen} steps)` : ""} — Alt+← · right-click to clear`}
-                aria-label="Back"
+                aria-label={t("Back")}
               >
                 <ArrowLeftIcon size={17} strokeWidth={2.2} />
                 <span className="navBackBadge">{Math.min(navStackLen, 30)}</span>
@@ -8633,13 +8660,13 @@ function LibraryApp({ publicPage = null, initialServerConfig = null }) {
         </>
       ) : (
         <div className="topbar">
-          <button className="iconBtn homeBtn" disabled title="Home" aria-label="Home">
+          <button className="iconBtn homeBtn" disabled title={t("Home")} aria-label={t("Home")}>
             <HomeIcon size={17} />
           </button>
           <span className="readOnlyTitle">{pageTitle}</span>
           {shareInfo ? (
             <span className="uiTag"
-              title={shareInfo.canEdit ? "Your edits save to the owner's page" : "Read-only share link"}>
+              title={shareInfo.canEdit ? t("Your edits save to the owner's page") : t("Read-only share link")}>
               {shareInfo.canEdit ? "Can edit" : "View only"}{shareInfo.owner ? ` · shared by ${shareInfo.owner}` : ""}
             </span>
           ) : null}
@@ -8649,7 +8676,7 @@ function LibraryApp({ publicPage = null, initialServerConfig = null }) {
               autoFocus
               defaultValue={linkName}
               maxLength={LINK_NAME_MAX}
-              aria-label="Your name on this page"
+              aria-label={t("Your name on this page")}
               onKeyDown={(e) => {
                 if (e.key === "Enter") commitLinkName(e.currentTarget.value);
                 else if (e.key === "Escape") setRenamingLink(false);
@@ -8660,7 +8687,7 @@ function LibraryApp({ publicPage = null, initialServerConfig = null }) {
             <button
               type="button"
               className="uiTag linkNameTag"
-              title="How others on this page see you — click to change"
+              title={t("How others on this page see you — click to change")}
               onClick={() => setRenamingLink(true)}
             >as {linkName}</button>
           )) : null}
@@ -8668,14 +8695,14 @@ function LibraryApp({ publicPage = null, initialServerConfig = null }) {
             // The owner landed on their own link: the page is theirs already.
             <button
               className="uiBtn sm"
-              title="This is your page — open it in your library instead of the shared view"
+              title={t("This is your page — open it in your library instead of the shared view")}
               onClick={() => { window.location.href = `${window.location.pathname}?page=${encodeURIComponent(focusedBlockId)}`; }}
             >Open in my library</button>
           ) : shareInfo?.viewer && !shareInfo.viewerIsGuest && focusedBlockId ? (
             <button
               className="uiBtn sm"
               disabled={loading}
-              title="Copy this page — blocks, highlights, its PDF and files — into your own library"
+              title={t("Copy this page — blocks, highlights, its PDF and files — into your own library")}
               onClick={() => importSharedPage(publicPage ? `${window.location.origin}/?share=${encodeURIComponent(initialShare)}` : window.location.href)}
             >Add to my library</button>
           ) : null}
@@ -8685,14 +8712,14 @@ function LibraryApp({ publicPage = null, initialServerConfig = null }) {
 
       {attachModeBlockId && (
         <div className="attachModeBanner">
-          Click a PDF highlight to link it
-          <button onClick={() => { setAttachModeBlockId(null); setAttachContextMenu(null); }}>Cancel</button>
+          {t("Click a PDF highlight to link it")}
+          <button onClick={() => { setAttachModeBlockId(null); setAttachContextMenu(null); }}>{t("Cancel")}</button>
         </div>
       )}
       {attachContextMenu && (
         <ContextMenu x={attachContextMenu.x} y={attachContextMenu.y} onClose={() => setAttachContextMenu(null)}>
           <button className="ctxMenuItem" onClick={() => linkHighlightToBlock(attachModeBlockId, attachContextMenu.highlight)}>
-            Link highlight here
+            {t("Link highlight here")}
           </button>
         </ContextMenu>
       )}
@@ -8700,15 +8727,15 @@ function LibraryApp({ publicPage = null, initialServerConfig = null }) {
         <ContextMenu x={transMenu.x} y={transMenu.y} onClose={() => setTransMenu(null)}>
           {pdfTransState.running ? (
             <MenuItem icon={XIcon} onClick={() => { setTransMenu(null); pdfTranslateCtl.current?.halt(); }}>
-              Stop translating
+              {t("Stop translating")}
             </MenuItem>
           ) : (
             <>
               <MenuItem icon={FileIcon} onClick={() => { setTransMenu(null); pdfTranslateCtl.current?.translatePage(); }}>
-                Translate this page
+                {t("Translate this page")}
               </MenuItem>
               <MenuItem icon={BookIcon} onClick={() => { setTransMenu(null); pdfTranslateCtl.current?.translateDoc(); }}>
-                Translate whole document
+                {t("Translate whole document")}
               </MenuItem>
             </>
           )}
@@ -8743,7 +8770,7 @@ function LibraryApp({ publicPage = null, initialServerConfig = null }) {
             {pillShown.spinner ? <span className="pillSpin" aria-hidden="true" /> : null}
             <span className="pillText">{pillShown.msg}</span>
             {pillShown.retry ? (
-              <button type="button" className="pillRetryBtn" onClick={() => pdfRetryRef.current?.()}>Retry</button>
+              <button type="button" className="pillRetryBtn" onClick={() => pdfRetryRef.current?.()}>{t("Retry")}</button>
             ) : null}
           </div>
         ) : null}
@@ -8752,19 +8779,19 @@ function LibraryApp({ publicPage = null, initialServerConfig = null }) {
             <button
               className="uiClose uiCloseLg pdfCloseBtn"
               onClick={() => setPdfHidden(true)}
-              title="Close PDF"
-              aria-label="Close PDF"
+              title={t("Close PDF")}
+              aria-label={t("Close PDF")}
             >×</button>
           ) : null}
           {pdfUrl && !pdfHidden ? (
             <div className="pdfCtlBox pdfZoomOverlay">
-              <button onClick={() => zoomStep(-1)} title="Zoom out" aria-label="Zoom out">
+              <button onClick={() => zoomStep(-1)} title={t("Zoom out")} aria-label={t("Zoom out")}>
                 <ZoomOutIcon size={15} />
               </button>
-              <button onClick={() => zoomStep(1)} title="Zoom in" aria-label="Zoom in">
+              <button onClick={() => zoomStep(1)} title={t("Zoom in")} aria-label={t("Zoom in")}>
                 <ZoomInIcon size={15} />
               </button>
-              <button className="pdfFitWidthBtn" onClick={() => zoomTo("page-width")} title="Fit to width" aria-label="Fit to width">
+              <button className="pdfFitWidthBtn" onClick={() => zoomTo("page-width")} title={t("Fit to width")} aria-label={t("Fit to width")}>
                 <FitWidthIcon size={15} />
               </button>
               {translateEnabled && !shareMode ? (
@@ -8810,8 +8837,8 @@ function LibraryApp({ publicPage = null, initialServerConfig = null }) {
                 <button
                   className={inkUi.open ? "modeActive" : ""}
                   onClick={() => (inkUi.open ? setInkUi((s) => ({ ...s, open: false, tool: null, options: false })) : openInkStrip())}
-                  title={inkUi.open ? "Close the handwriting tools (Esc)" : "Handwriting: draw on the page with a pen, highlighter or eraser"}
-                  aria-label="Handwriting tools"
+                  title={inkUi.open ? t("Close the handwriting tools (Esc)") : t("Handwriting: draw on the page with a pen, highlighter or eraser")}
+                  aria-label={t("Handwriting tools")}
                 >
                   <PenIcon size={15} />
                 </button>
@@ -8820,8 +8847,8 @@ function LibraryApp({ publicPage = null, initialServerConfig = null }) {
                 <button
                   className={areaSelectMode ? "modeActive" : ""}
                   onClick={() => setAreaSelectMode((v) => !v)}
-                  title={areaSelectMode ? "Rectangle mode — drag draws an area note (tap to switch to text selection)" : "Text mode — drag selects text (tap to switch to rectangle drawing)"}
-                  aria-label="Toggle selection mode"
+                  title={areaSelectMode ? t("Rectangle mode — drag draws an area note (tap to switch to text selection)") : t("Text mode — drag selects text (tap to switch to rectangle drawing)")}
+                  aria-label={t("Toggle selection mode")}
                 >
                   {areaSelectMode ? <RectSelectIcon size={15} /> : <TextCursorIcon size={15} />}
                 </button>
@@ -8852,8 +8879,8 @@ function LibraryApp({ publicPage = null, initialServerConfig = null }) {
                 onPointerUp={fullscreenPointerUp}
                 onPointerCancel={() => { fullscreenTapRef.current.start = null; }}
                 onClick={fullscreenClick}
-                title={isFullscreen || pseudoFullscreen ? "Exit full screen" : "Full screen"}
-                aria-label={isFullscreen || pseudoFullscreen ? "Exit full screen" : "Full screen"}
+                title={isFullscreen || pseudoFullscreen ? t("Exit full screen") : t("Full screen")}
+                aria-label={isFullscreen || pseudoFullscreen ? t("Exit full screen") : t("Full screen")}
               >
                 {isFullscreen || pseudoFullscreen ? (
                   <MinimizeIcon size={15} />
@@ -8935,7 +8962,7 @@ function LibraryApp({ publicPage = null, initialServerConfig = null }) {
               }}
             />
           ) : (
-            <div className="status">No PDF open.</div>
+            <div className="status">{t("No PDF open.")}</div>
           )}
         </div>
 
@@ -8977,8 +9004,8 @@ function LibraryApp({ publicPage = null, initialServerConfig = null }) {
             <button
               className={`phoneTab ${phonePanel === null || (phonePanel === "notes" && centerNotes) ? "active" : ""}`}
               onClick={() => setPhonePanel(null)}
-              title={homeMode ? "Library" : centerNotes ? "Notes" : "PDF"}
-              aria-label={homeMode ? "Library" : centerNotes ? "Notes" : "PDF"}
+              title={homeMode ? t("Library") : centerNotes ? t("Notes") : "PDF"}
+              aria-label={homeMode ? t("Library") : centerNotes ? t("Notes") : "PDF"}
             >
               {homeMode ? <HomeIcon size={16} /> : centerNotes ? <FileTextIcon size={16} /> : <FileIcon size={16} />}
               <span>{homeMode ? "Library" : centerNotes ? "Notes" : "PDF"}</span>
@@ -8987,22 +9014,22 @@ function LibraryApp({ publicPage = null, initialServerConfig = null }) {
               <button
                 className={`phoneTab ${phonePanel === "notes" ? "active" : ""}`}
                 onClick={() => { setNotesVisible(true); setPhonePanel((p) => (p === "notes" ? null : "notes")); }}
-                title="Notes"
-                aria-label="Notes"
+                title={t("Notes")}
+                aria-label={t("Notes")}
               >
                 <FileTextIcon size={16} />
-                <span>Notes</span>
+                <span>{t("Notes")}</span>
               </button>
             ) : null}
             {(!shareMode || focusedBlockId) ? (
               <button
                 className={`phoneTab ${phonePanel === "chat" ? "active" : ""}`}
                 onClick={() => setPhonePanel((p) => (p === "chat" ? null : "chat"))}
-                title="AI chat"
-                aria-label="AI chat"
+                title={t("AI chat")}
+                aria-label={t("AI chat")}
               >
                 <SparklesIcon size={16} />
-                <span>Chat</span>
+                <span>{t("Chat")}</span>
               </button>
             ) : null}
           </div>
@@ -9047,12 +9074,12 @@ function LibraryApp({ publicPage = null, initialServerConfig = null }) {
                 {confirmBox.danger ? <AlertCircleIcon size={16} /> : <InfoIcon size={16} />}
               </span>
               <span className="settingText">
-                <span className="reportModalTitle">{confirmBox.title}</span>
-                <span className="confirmMessage">{confirmBox.message}</span>
+                <span className="reportModalTitle">{t(confirmBox.title)}</span>
+                <span className="confirmMessage">{t(confirmBox.message)}</span>
               </span>
             </div>
             <div className="reportModalBtns">
-              <button className="uiBtn" onClick={() => setConfirmBox(null)} autoFocus>Cancel</button>
+              <button className="uiBtn" onClick={() => setConfirmBox(null)} autoFocus>{t("Cancel")}</button>
               {confirmBox.altLabel ? (
                 <button
                   className={`uiBtn ${confirmBox.altDanger ? "dangerBtn" : ""}`}
@@ -9062,7 +9089,7 @@ function LibraryApp({ publicPage = null, initialServerConfig = null }) {
               <button
                 className={`uiBtn primary ${confirmBox.danger ? "dangerBtn" : ""}`}
                 onClick={() => { const fn = confirmBox.onConfirm; setConfirmBox(null); fn?.(); }}
-              >{confirmBox.confirmLabel || "OK"}</button>
+              >{confirmBox.confirmLabel ? t(confirmBox.confirmLabel) : t("OK")}</button>
             </div>
           </div>
         </div>
@@ -9070,8 +9097,8 @@ function LibraryApp({ publicPage = null, initialServerConfig = null }) {
       {labelRenaming ? (
         <div className="reportOverlay" onClick={() => setLabelRenaming(null)}>
           <div className="reportModal confirmModal" onClick={(e) => e.stopPropagation()}>
-            <div className="reportModalTitle">Rename label</div>
-            <div className="reportModalHint confirmMessage">Renames “{labelRenaming.name}” on every page that carries it.</div>
+            <div className="reportModalTitle">{t("Rename label")}</div>
+            <div className="reportModalHint confirmMessage">{t("Renames “{name}” on every page that carries it.", { name: labelRenaming.name })}</div>
             <div className="shareRow">
               <input
                 autoFocus
@@ -9095,12 +9122,12 @@ function LibraryApp({ publicPage = null, initialServerConfig = null }) {
       {moveBlockDialog ? (
         <div className="reportOverlay" onClick={() => setMoveBlockDialog(null)}>
           <div className="reportModal confirmModal" onClick={(e) => e.stopPropagation()}>
-            <div className="reportModalTitle">Move block to page</div>
-            <div className="reportModalHint confirmMessage">The block and its sub-blocks move to the end of the chosen page.</div>
+            <div className="reportModalTitle">{t("Move block to page")}</div>
+            <div className="reportModalHint confirmMessage">{t("The block and its sub-blocks move to the end of the chosen page.")}</div>
             <div className="shareRow">
               <input
                 autoFocus
-                placeholder="Filter pages…"
+                placeholder={t("Filter pages…")}
                 value={moveBlockDialog.query}
                 onChange={(e) => setMoveBlockDialog((s) => ({ ...s, query: e.target.value }))}
                 onKeyDown={(e) => {
@@ -9118,7 +9145,7 @@ function LibraryApp({ publicPage = null, initialServerConfig = null }) {
                 </MenuItem>
               ))}
               {!movePageMatches.length ? (
-                <div className="confirmMessage">No matching page.</div>
+                <div className="confirmMessage">{t("No matching page.")}</div>
               ) : null}
             </div>
           </div>
@@ -9130,13 +9157,13 @@ function LibraryApp({ publicPage = null, initialServerConfig = null }) {
             <div className="confirmHead">
               <span className="confirmIcon"><LinkIcon size={16} /></span>
               <span className="settingText">
-                <span className="reportModalTitle">External link</span>
-                <span className="confirmMessage">Open this link in a new browser tab, or pull the paper into your library.</span>
+                <span className="reportModalTitle">{t("External link")}</span>
+                <span className="confirmMessage">{t("Open this link in a new browser tab, or pull the paper into your library.")}</span>
               </span>
             </div>
             <div className="linkPromptUrl">{linkPrompt}</div>
             <div className="reportModalBtns">
-              <button className="uiBtn" onClick={() => setLinkPrompt(null)}>Cancel</button>
+              <button className="uiBtn" onClick={() => setLinkPrompt(null)}>{t("Cancel")}</button>
               {(() => {
                 // Right-click always lands here, even for links whose paper is
                 // already in the library — offer that copy instead of a re-fetch.
@@ -9145,20 +9172,20 @@ function LibraryApp({ publicPage = null, initialServerConfig = null }) {
                   <button
                     className="uiBtn"
                     onClick={() => { setLinkPrompt(null); openBlock(pid, { pushNav: true }); }}
-                    title="This paper is already in your library"
-                  ><FileTextIcon size={13} />Open in Gamma</button>
+                    title={t("This paper is already in your library")}
+                  ><FileTextIcon size={13} />{t("Open in Gamma")}</button>
                 ) : (
                   <button
                     className="uiBtn"
                     onClick={() => { const url = linkPrompt; setLinkPrompt(null); pushNav(); openPdf(url); }}
-                    title="Resolve this link as a PDF and open it as a new paper in Gamma"
-                  ><DownloadIcon size={13} />Fetch into Gamma</button>
+                    title={t("Resolve this link as a PDF and open it as a new paper in Gamma")}
+                  ><DownloadIcon size={13} />{t("Fetch into Gamma")}</button>
                 );
               })()}
               <button
                 className="uiBtn primary"
                 onClick={() => { window.open(linkPrompt, "_blank", "noopener"); setLinkPrompt(null); }}
-              ><ExternalLinkIcon size={13} />Open in browser</button>
+              ><ExternalLinkIcon size={13} />{t("Open in browser")}</button>
             </div>
           </div>
         </div>
@@ -9170,11 +9197,11 @@ function LibraryApp({ publicPage = null, initialServerConfig = null }) {
             {linkDialog.content?.text ? (
               <div className="reportModalHint linkRefQuote">“{linkDialog.content.text.slice(0, 160)}{linkDialog.content.text.length > 160 ? "…" : ""}”</div>
             ) : null}
-            <div className="reportModalHint">Paste a DOI, arXiv id, or URL — or pick one of your pages. The selection becomes a clickable link on the PDF.</div>
+            <div className="reportModalHint">{t("Paste a DOI, arXiv id, or URL — or pick one of your pages. The selection becomes a clickable link on the PDF.")}</div>
             <div className="shareRow">
               <input
                 autoFocus
-                placeholder="10.1103/…  ·  1810.11086  ·  https://…"
+                placeholder={t("10.1103/…  ·  1810.11086  ·  https://…")}
                 value={linkDialogInput}
                 onChange={(e) => setLinkDialogInput(e.target.value)}
                 onKeyDown={(e) => {
@@ -9192,11 +9219,11 @@ function LibraryApp({ publicPage = null, initialServerConfig = null }) {
             </div>
             {refPoint && refPoint.pageId !== focusedBlockId ? (
               <>
-                <div className="popoverSection">Copied reference point</div>
+                <div className="popoverSection">{t("Copied reference point")}</div>
                 <button
                   className="reportPageItem linkPageItem"
                   onClick={() => createLinkHighlight({ pageId: refPoint.pageId, highlightId: refPoint.highlightId })}
-                  title="Link to this exact highlight — clicking the link opens the paper and jumps to it"
+                  title={t("Link to this exact highlight — clicking the link opens the paper and jumps to it")}
                 >
                   <span className="reportPageName">{refPoint.pageTitle} — “{refPoint.quote.slice(0, 60)}{refPoint.quote.length > 60 ? "…" : ""}”</span>
                   <span className="linkLikelyBadge">highlight</span>
@@ -9211,7 +9238,7 @@ function LibraryApp({ publicPage = null, initialServerConfig = null }) {
                   .map((b) => ({ b, score: scorePaperMatch(linkDialog.content?.text || "", b) }))
                   .sort((x, y) => y.score - x.score
                     || (y.b.updated_at || "").localeCompare(x.b.updated_at || ""));
-                if (!cands.length) return <div className="popoverHint">No other pages in your library yet.</div>;
+                if (!cands.length) return <div className="popoverHint">{t("No other pages in your library yet.")}</div>;
                 return cands.map(({ b, score }) => (
                   <button key={b.id} className="reportPageItem linkPageItem" onClick={() => createLinkHighlight({ pageId: b.id })}>
                     <span className="reportPageName">{b.content || "Untitled"}</span>
@@ -9222,9 +9249,9 @@ function LibraryApp({ publicPage = null, initialServerConfig = null }) {
             </div>
             <div className="reportModalBtns">
               {linkDialog.editBlockId ? (
-                <button className="uiBtn" onClick={() => createLinkHighlight({})} title="Turn this back into a plain highlight">Remove link</button>
+                <button className="uiBtn" onClick={() => createLinkHighlight({})} title={t("Turn this back into a plain highlight")}>{t("Remove link")}</button>
               ) : null}
-              <button className="uiBtn" onClick={() => setLinkDialog(null)}>Cancel</button>
+              <button className="uiBtn" onClick={() => setLinkDialog(null)}>{t("Cancel")}</button>
             </div>
           </div>
         </div>
@@ -9369,7 +9396,7 @@ function LibraryApp({ publicPage = null, initialServerConfig = null }) {
             setMetaPrompt(normalizePrompt(metaPromptDraft, aiInfo?.metadata_prompt));
             setCitePrompt(normalizePrompt(citePromptDraft, aiInfo?.cite_prompt));
             setAgentSystem(normalizePrompt(agentPromptDraft, aiInfo?.agent_prompt));
-            setStatus("Prompts saved.");
+            setStatus(t("Prompts saved."));
           },
         }}
         context={{
@@ -9393,7 +9420,7 @@ function LibraryApp({ publicPage = null, initialServerConfig = null }) {
             setChatContextChars(60000);
             setMetaContextChars(6000);
             setMultiContextChars(120000);
-            setStatus("AI context limits reset.");
+            setStatus(t("AI context limits reset."));
           },
         }}
         search={{ searchDetailsHome, setSearchDetailsHome, searchDetailsPaper, setSearchDetailsPaper, indexTask, setStatus }}
@@ -9469,12 +9496,12 @@ function LibraryApp({ publicPage = null, initialServerConfig = null }) {
           <MenuItem icon={PinIcon} onClick={() => { setTabMenu(null); toggleTabPinned(tabMenu.id); }}>
             {tabMenu.pinned ? "Unpin tab" : "Pin tab"}
           </MenuItem>
-          <MenuItem icon={HomeIcon} title="Pinned pages sit in the Pinned strip at the top of the library, on every device"
+          <MenuItem icon={HomeIcon} title={t("Pinned pages sit in the Pinned strip at the top of the library, on every device")}
             onClick={() => { setTabMenu(null); setPagesPinned([tabMenu.id], !libPinned); }}>
             {libPinned ? "Unpin from library" : "Pin to library"}
           </MenuItem>
           <MenuItem icon={XIcon} onClick={() => { setTabMenu(null); closeTab(tabMenu.id); }}>
-            Close tab
+            {t("Close tab")}
           </MenuItem>
         </ContextMenu>
         );
@@ -9492,10 +9519,10 @@ function LibraryApp({ publicPage = null, initialServerConfig = null }) {
               return (
                 <>
                   {!many ? (
-                    <MenuItem icon={ExternalLinkIcon} onClick={() => { setHomeMenu(null); clearSelection(); openBlock(homeMenu.id, { restoreScroll: true }); }}>Open</MenuItem>
+                    <MenuItem icon={ExternalLinkIcon} onClick={() => { setHomeMenu(null); clearSelection(); openBlock(homeMenu.id, { restoreScroll: true }); }}>{t("Open")}</MenuItem>
                   ) : null}
                   {!many ? (
-                    <MenuItem icon={PenIcon} onClick={() => { setHomeMenu(null); clearSelection(); setHomeEditingId(homeMenu.id); }}>Rename</MenuItem>
+                    <MenuItem icon={PenIcon} onClick={() => { setHomeMenu(null); clearSelection(); setHomeEditingId(homeMenu.id); }}>{t("Rename")}</MenuItem>
                   ) : null}
                   <MenuItem icon={PinIcon} onClick={() => { setHomeMenu(null); setPagesPinned(ids, !allPinned); }}>
                     {allPinned ? "Unpin" : many ? `Pin ${ids.length} pages` : "Pin"}
@@ -9504,21 +9531,21 @@ function LibraryApp({ publicPage = null, initialServerConfig = null }) {
                   <SubMenuItem
                     id="folders"
                     icon={FolderIcon}
-                    label="Move to folder"
-                    title="A page can sit in several folders — this adds it to the one you pick (same as dragging it onto the folder)."
+                    label={t("Move to folder")}
+                    title={t("A page can sit in several folders — this adds it to the one you pick (same as dragging it onto the folder).")}
                   >
                     {folderMenuPaths.length ? folderMenuPaths.map((f) => (
                       <MenuItem
                         key={f}
                         icon={FolderIcon}
-                        title={ownTags.includes(f) ? `Already in ${f}` : f}
+                        title={ownTags.includes(f) ? t("Already in {f}", { f: f }) : f}
                         trailing={ownTags.includes(f) ? <CheckIcon size={14} className="ctxMenuCheck" /> : null}
                         onClick={() => { setHomeMenu(null); addPagesToFolder(ids, f); }}
                       >{f}</MenuItem>
                     )) : (
-                      <MenuItem disabled>No folders yet</MenuItem>
+                      <MenuItem disabled>{t("No folders yet")}</MenuItem>
                     )}
-                    {folderFilter || ownTags.length ? <MenuLabel>Remove from</MenuLabel> : null}
+                    {folderFilter || ownTags.length ? <MenuLabel>{t("Remove from")}</MenuLabel> : null}
                     {folderFilter ? (
                       <MenuItem icon={FolderOpenIcon} onClick={() => { setHomeMenu(null); removePagesFromFolder(ids, folderFilter); }}>{`“${folderFilter}”`}</MenuItem>
                     ) : null}
@@ -9526,7 +9553,7 @@ function LibraryApp({ publicPage = null, initialServerConfig = null }) {
                       <MenuItem key={`rm:${f}`} icon={FolderOpenIcon} title={f} onClick={() => { setHomeMenu(null); removePagesFromFolder(ids, f); }}>{`“${f}”`}</MenuItem>
                     ))}
                     {folderFilter || ownTags.length ? (
-                      <MenuItem icon={XIcon} onClick={() => { setHomeMenu(null); removePagesFromFolder(ids, ""); }}>All folders</MenuItem>
+                      <MenuItem icon={XIcon} onClick={() => { setHomeMenu(null); removePagesFromFolder(ids, ""); }}>{t("All folders")}</MenuItem>
                     ) : null}
                   </SubMenuItem>
                   <MenuItem icon={TrashIcon} danger onClick={() => { setHomeMenu(null); deletePages(ids); }}>{many ? `Delete ${ids.length} pages` : "Delete"}</MenuItem>
@@ -9534,20 +9561,20 @@ function LibraryApp({ publicPage = null, initialServerConfig = null }) {
               );
             })() : homeMenu.kind === "label" ? (
               <>
-                <MenuItem icon={LabelIcon} onClick={() => { const name = homeMenu.name; setHomeMenu(null); if (!homeMode) goHome(); openLabel(name, homeMode ? folderFilter : ""); }}>Open</MenuItem>
-                <MenuItem icon={PenIcon} onClick={() => { setHomeMenu(null); setLabelRenaming({ name: homeMenu.name, draft: homeMenu.name }); }}>Rename</MenuItem>
-                <MenuItem icon={TrashIcon} danger onClick={() => { setHomeMenu(null); deleteLabelByName(homeMenu.name); }}>Delete</MenuItem>
+                <MenuItem icon={LabelIcon} onClick={() => { const name = homeMenu.name; setHomeMenu(null); if (!homeMode) goHome(); openLabel(name, homeMode ? folderFilter : ""); }}>{t("Open")}</MenuItem>
+                <MenuItem icon={PenIcon} onClick={() => { setHomeMenu(null); setLabelRenaming({ name: homeMenu.name, draft: homeMenu.name }); }}>{t("Rename")}</MenuItem>
+                <MenuItem icon={TrashIcon} danger onClick={() => { setHomeMenu(null); deleteLabelByName(homeMenu.name); }}>{t("Delete")}</MenuItem>
               </>
             ) : (
               <>
-                <MenuItem icon={FolderOpenIcon} onClick={() => { const name = homeMenu.name; setHomeMenu(null); if (!homeMode) goHome(); openFolder(name); }}>Open</MenuItem>
-                <MenuItem icon={PenIcon} onClick={() => { setHomeMenu(null); setFolderRenaming({ name: homeMenu.name, draft: homeMenu.name }); }}>Rename</MenuItem>
+                <MenuItem icon={FolderOpenIcon} onClick={() => { const name = homeMenu.name; setHomeMenu(null); if (!homeMode) goHome(); openFolder(name); }}>{t("Open")}</MenuItem>
+                <MenuItem icon={PenIcon} onClick={() => { setHomeMenu(null); setFolderRenaming({ name: homeMenu.name, draft: homeMenu.name }); }}>{t("Rename")}</MenuItem>
                 {(() => {
                   // Like pages: acting on a selected folder acts on the whole selection
                   const paths = selectedFolders.size > 1 && selectedFolders.has(homeMenu.name) ? [...selectedFolders] : [homeMenu.name];
                   const allPinned = paths.every((p) => pinnedFolders.some((q) => q.path === p));
                   return (
-                    <MenuItem icon={PinIcon} title="Pinned folders sit in the Pinned strip at the top of the library, on every device"
+                    <MenuItem icon={PinIcon} title={t("Pinned folders sit in the Pinned strip at the top of the library, on every device")}
                       onClick={() => { setHomeMenu(null); setFoldersPinned(paths, !allPinned); }}>
                       {allPinned ? "Unpin" : paths.length > 1 ? `Pin ${paths.length} folders` : "Pin"}
                     </MenuItem>
@@ -9555,10 +9582,10 @@ function LibraryApp({ publicPage = null, initialServerConfig = null }) {
                 })()}
                 <MenuItem
                   icon={ExportIcon}
-                  title="Download every page in this folder — Markdown, a Logseq graph, a Zotero library, or a Gamma export"
+                  title={t("Download every page in this folder — Markdown, a Logseq graph, a Zotero library, or a Gamma export")}
                   onClick={() => { const name = homeMenu.name; setHomeMenu(null); setExportFolder(name); setExportOpen(true); }}
                 >Export…</MenuItem>
-                <MenuItem icon={TrashIcon} danger onClick={() => { setHomeMenu(null); deleteFolderByName(homeMenu.name); }}>Delete</MenuItem>
+                <MenuItem icon={TrashIcon} danger onClick={() => { setHomeMenu(null); deleteFolderByName(homeMenu.name); }}>{t("Delete")}</MenuItem>
               </>
             )}
         </ContextMenu>
@@ -9576,7 +9603,7 @@ function LibraryApp({ publicPage = null, initialServerConfig = null }) {
                     changeHighlightColor(highlightMenu.id, c);
                     setHighlightMenu(null);
                   }}
-                  title="Change color"
+                  title={t("Change color")}
                 />
               ))}
             </div>
@@ -9624,7 +9651,7 @@ function LibraryApp({ publicPage = null, initialServerConfig = null }) {
                   copyText(withWorkspace(`${window.location.origin}/?block=${encodeURIComponent(blk.id)}`));
                 }
                 setHighlightMenu(null);
-                setStatus("Reference point copied — paste the link, or pick it in another paper's link dialog.");
+                setStatus(t("Reference point copied — paste the link, or pick it in another paper's link dialog."));
               }}
             >
               Copy as reference point

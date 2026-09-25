@@ -7,6 +7,7 @@ import React from "react";
 import { API, apiJson, copyText, fmtBytes } from "../shared/lib/utils";
 import { AlertCircleIcon, CheckIcon, CloudCheckIcon, EyeIcon, EyeOffIcon, MonitorIcon, RefreshIcon, ShieldIcon, UserIcon } from "../shared/ui/Icons";
 import { BROWSER_TAG, profileSyncState } from "./syncState.js";
+import { t } from "../shared/i18n/i18n.js";
 
 export const SettingsDraftContext = React.createContext(null);
 
@@ -67,7 +68,7 @@ function ScopeTag({ scope, prefs }) {
   const where = tag.label === "browser" ? "Browser setting" : "Account setting";
   return (
     <span className={`setScope ${tag.tone} ${tag.spin ? "mirrorSpin" : ""}`} data-scope={scope} data-sync={tag.state}
-      role="img" aria-label={`${where}. ${tag.title}`} title={tag.title}>
+      role="img" aria-label={t("{where}. {title}", { where: where, title: tag.title })} title={tag.title}>
       {Icon ? <Icon size={14} /> : null}{tag.label}
     </span>
   );
@@ -123,12 +124,12 @@ export function Segmented({ value, onChange, options, disabled }) {
     <span className="segGroup">
       {options.map(([val, label, Icon, tip]) => (
         <button
-          key={val} type="button" title={tip || label} disabled={disabled}
+          key={val} type="button" title={t(tip || label)} disabled={disabled}
           aria-pressed={value === val}
           className={`uiBtn sm ${value === val ? "on" : ""}`}
           onClick={() => onChange(val)}
         >
-          {Icon ? <Icon size={13} /> : null}{label}
+          {Icon ? <Icon size={13} /> : null}{t(label)}
         </button>
       ))}
     </span>
@@ -141,12 +142,12 @@ export function PictureChoices({ label, value, onChange, onConfirm, options, col
   return <div className="setPictureChoices" role="group" aria-label={label} style={{ "--picture-columns": columns }}>
     {options.map(({ value: id, label: name, hint, preview }) => (
       <button key={String(id)} type="button" className={`uiBtn setPictureChoice${value === id ? " on" : ""}`}
-        aria-label={name} aria-description={hint} title={hint} aria-pressed={value === id} onClick={() => onChange(id)}
+        aria-label={t(name)} aria-description={t(hint)} title={t(hint)} aria-pressed={value === id} onClick={() => onChange(id)}
         onDoubleClick={onConfirm ? () => onConfirm(id) : undefined}>
         {preview}
         <span className="setPictureCaption">
-          <span className="setPictureName">{name}</span>
-          {hint ? <span className="setPictureHint">{hint}</span> : null}
+          <span className="setPictureName">{t(name)}</span>
+          {hint ? <span className="setPictureHint">{t(hint)}</span> : null}
           <span className="setPictureCheck" aria-hidden="true">{value === id ? <CheckIcon size={12} /> : null}</span>
         </span>
       </button>
@@ -180,12 +181,12 @@ export function ToggleGroup({ selected, onToggle, options, disabled }) {
     <span className="toggleGroup" role="group">
       {options.map(([val, label, Icon, tip]) => (
         <button
-          key={val} type="button" title={tip || label} disabled={disabled}
+          key={val} type="button" title={t(tip || label)} disabled={disabled}
           className={`uiBtn sm ${on.has(val) ? "on" : ""}`}
           aria-pressed={on.has(val)}
           onClick={() => onToggle(val, !on.has(val))}
         >
-          {Icon ? <Icon size={13} /> : null}{label}
+          {Icon ? <Icon size={13} /> : null}{t(label)}
         </button>
       ))}
     </span>
@@ -235,13 +236,13 @@ export function SubDialog({ title, onClose, children, draft, className = "", clo
         }}>
         {closeButton ? <div className="settingsDialogHeader" inert={confirmClose ? "" : undefined}>
           <div className="reportModalTitle">{title}</div>
-          <button type="button" className="uiClose uiCloseLg" onClick={close} aria-label={`Close ${title}`} title="Close">×</button>
+          <button type="button" className="uiClose uiCloseLg" onClick={close} aria-label={t("Close {title}", { title: title })} title={t("Close")}>×</button>
         </div> : <div className="reportModalTitle">{title}</div>}
         <div className="settingsDialogContent" inert={confirmClose ? "" : undefined}>{children}</div>
-        {confirmClose ? <div className="settingsUnsaved" role="alertdialog" aria-label="Unsaved changes">
-          <span>Discard your unsaved edits?</span>
-          <button className="uiBtn" autoFocus onClick={() => setConfirmClose(false)}>Keep editing</button>
-          <button className="uiBtn danger" onClick={onClose}>Discard changes</button>
+        {confirmClose ? <div className="settingsUnsaved" role="alertdialog" aria-label={t("Unsaved changes")}>
+          <span>{t("Discard your unsaved edits?")}</span>
+          <button className="uiBtn" autoFocus onClick={() => setConfirmClose(false)}>{t("Keep editing")}</button>
+          <button className="uiBtn danger" onClick={onClose}>{t("Discard changes")}</button>
         </div> : null}
       </div>
     </div>
@@ -288,8 +289,8 @@ export function PasswordInput({ className = "aiKeyInput", ...props }) {
       <input {...props} className={className} type={shown ? "text" : "password"} />
       <button
         type="button" className="ctlBtn pwToggle" tabIndex={-1}
-        title={shown ? "Hide password" : "Show password"}
-        aria-label={shown ? "Hide password" : "Show password"}
+        title={shown ? t("Hide password") : t("Show password")}
+        aria-label={shown ? t("Hide password") : t("Show password")}
         aria-pressed={shown}
         onMouseDown={(event) => event.preventDefault()} // keep the input's focus + caret
         onClick={() => setShown((v) => !v)}
@@ -341,15 +342,15 @@ export function Stepper({ value, onChange, min, max, step, format, reset }) {
   const clamp = (n) => Math.round(Math.min(max, Math.max(min, n)) * 1000) / 1000;
   return (
     <span className="stepper">
-      <button type="button" className="uiBtn sm iconSq" aria-label="Smaller"
+      <button type="button" className="uiBtn sm iconSq" aria-label={t("Smaller")}
         disabled={value <= min} onClick={() => onChange(clamp(value - step))}>−</button>
       <button type="button" className="stepperValue" disabled={reset == null || value === reset}
-        title={reset != null ? "Reset to default" : undefined}
+        title={reset != null ? t("Reset to default") : undefined}
         onClick={() => reset != null && onChange(reset)}>{format ? format(value) : value}</button>
-      <button type="button" className="uiBtn sm iconSq" aria-label="Larger"
+      <button type="button" className="uiBtn sm iconSq" aria-label={t("Larger")}
         disabled={value >= max} onClick={() => onChange(clamp(value + step))}>+</button>
       {reset != null ? <button type="button" className="uiBtn sm" disabled={value === reset}
-        onClick={() => onChange(reset)}>Reset</button> : null}
+        onClick={() => onChange(reset)}>{t("Reset")}</button> : null}
     </span>
   );
 }
@@ -444,7 +445,7 @@ export function LogBox({ icon, label, description, entries, emptyText, copyStatu
       <Row icon={icon} label={label} hint={description}>
         <span className="setRowControls">
           {extra}
-          <button className="uiBtn sm" disabled={!entries.length} onClick={copy}>Copy</button>
+          <button className="uiBtn sm" disabled={!entries.length} onClick={copy}>{t("Copy")}</button>
         </span>
       </Row>
       <div className="sysLogBox">
@@ -526,16 +527,16 @@ export function AccountPicker({ accounts, exclude = [], value, onChange, placeho
     <span className="setPick">
       <input
         className="aiKeyInput" type="text" spellCheck={false} autoComplete="off" autoFocus={autoFocus}
-        placeholder={placeholder || "Search accounts…"} value={query}
+        placeholder={placeholder || t("Search accounts…")} value={query}
         onChange={(event) => type(event.target.value)}
         onKeyDown={onKeyDown}
         onFocus={() => setFocused(true)}
         onBlur={() => setTimeout(() => setFocused(false), 120)} // let a click on a row land first
-        aria-label={placeholder || "Search accounts"}
+        aria-label={placeholder || t("Search accounts")}
       />
       {open ? (
         <span className="setPickList" role="listbox">
-          {accounts == null ? <span className="setPickEmpty">Loading accounts…</span> : null}
+          {accounts == null ? <span className="setPickEmpty">{t("Loading accounts…")}</span> : null}
           {accounts != null && !shown.length ? (
             <span className="setPickEmpty">{q ? `No account matches "${query.trim()}"` : hidden ? "Type an exact username" : "No other accounts"}</span>
           ) : null}

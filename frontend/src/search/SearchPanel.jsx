@@ -23,6 +23,7 @@ import { ChevronDownIcon, ChevronRightIcon, ChevronUpIcon, FolderIcon, LabelIcon
 
 import { buildSearchRegex, normalizeQuery } from "../shared/lib/textnorm";
 import { createTitleScorer } from "../library/librarySearch";
+import { t } from "../shared/i18n/i18n.js";
 
 export { buildSearchRegex, normalizeQuery };
 
@@ -289,8 +290,8 @@ export default function SearchPanel({
         className={`iconBtn ${open ? "activeIcon" : ""}`}
         onClick={() => onOpenChange(!open)}
         data-guide="header.search"
-        title="Search everything (Ctrl+F)"
-        aria-label="Search"
+        title={t("Search everything (Ctrl+F)")}
+        aria-label={t("Search")}
       >
         <SearchIcon size={16} />
       </button>
@@ -303,7 +304,7 @@ export default function SearchPanel({
               title={showDetails
                 ? "Collapse result details (compact find — the default is in Settings → Search)"
                 : "Expand result details: titles, notes, and other pages"}
-              aria-label="Toggle result details"
+              aria-label={t("Toggle result details")}
             >
               {showDetails
                 ? <ChevronDownIcon size={12} strokeWidth={2.4} />
@@ -343,7 +344,7 @@ export default function SearchPanel({
                     setLabels((prev) => prev.slice(0, -1));
                   }
                 }}
-                placeholder={labels.length ? "Search within labeled pages…" : "Search titles, notes, and PDF text — Tab adds a label filter"}
+                placeholder={labels.length ? t("Search within labeled pages…") : t("Search titles, notes, and PDF text — Tab adds a label filter")}
               />
               {suggestions.length ? (
                 <div className="categorySuggestions searchLabelSuggest">
@@ -358,7 +359,7 @@ export default function SearchPanel({
                         {s.kind === "folder" ? <FolderIcon size={12} /> : <LabelIcon size={12} />}
                         {s.name}
                       </span>
-                      <span className="searchSuggestHint">Tab</span>
+                      <span className="searchSuggestHint">{t("Tab")}</span>
                     </button>
                   ))}
                 </div>
@@ -366,21 +367,21 @@ export default function SearchPanel({
             </div>
             {showPdfMatches && pdfMatches.length ? (
               <span className="searchNavGroup">
-                <span className="searchFindCount" title="Matches in the open PDF">{findIndex + 1}/{pdfMatches.length}</span>
-                <button className="searchToggle searchNavBtn" onClick={() => gotoFind(findIndex - 1)} title="Previous match (matches are highlighted in the PDF)">
+                <span className="searchFindCount" title={t("Matches in the open PDF")}>{findIndex + 1}/{pdfMatches.length}</span>
+                <button className="searchToggle searchNavBtn" onClick={() => gotoFind(findIndex - 1)} title={t("Previous match (matches are highlighted in the PDF)")}>
                   <ChevronUpIcon size={14} />
                 </button>
-                <button className="searchToggle searchNavBtn" onClick={() => gotoFind(findIndex + 1)} title="Next match (Enter)">
+                <button className="searchToggle searchNavBtn" onClick={() => gotoFind(findIndex + 1)} title={t("Next match (Enter)")}>
                   <ChevronDownIcon size={14} />
                 </button>
               </span>
             ) : null}
-            <button className={`searchToggle ${caseSensitive ? "on" : ""}`} onClick={() => setCaseSensitive((v) => !v)} title="Match case">Aa</button>
-            <button className={`searchToggle ${wholeWord ? "on" : ""}`} onClick={() => setWholeWord((v) => !v)} title="Match whole word"><u>ab</u></button>
+            <button className={`searchToggle ${caseSensitive ? "on" : ""}`} onClick={() => setCaseSensitive((v) => !v)} title={t("Match case")}>{t("Aa")}</button>
+            <button className={`searchToggle ${wholeWord ? "on" : ""}`} onClick={() => setWholeWord((v) => !v)} title={t("Match whole word")}><u>ab</u></button>
           </div>
           <div className="searchResults">
-            {busy ? <div className="searchHint">Searching…</div> : null}
-            {!busy && q && !anything ? <div className="searchHint">No matches.</div> : null}
+            {busy ? <div className="searchHint">{t("Searching…")}</div> : null}
+            {!busy && q && !anything ? <div className="searchHint">{t("No matches.")}</div> : null}
             {showDetails ? (
               <>
                 {labels.length ? (
@@ -391,12 +392,12 @@ export default function SearchPanel({
                     ) : labelMatches.map((b) => titleRow(b, b.properties?.category || b.properties?.folder || ""))}
                   </>
                 ) : null}
-                {titleMatches.length || titlesExtra.length ? <div className="searchSection">Titles</div> : null}
+                {titleMatches.length || titlesExtra.length ? <div className="searchSection">{t("Titles")}</div> : null}
                 {titleMatches.map((b) => titleRow(b, [b.properties?.category, b.properties?.folder].filter(Boolean).join(", ")))}
                 {titlesExtra.map(noteRow)}
-                {notesHere.length ? <div className="searchSection">Notes on this page</div> : null}
+                {notesHere.length ? <div className="searchSection">{t("Notes on this page")}</div> : null}
                 {notesHere.map(noteRow)}
-                {showPdfMatches && pdfMatches.length ? <div className="searchSection">This PDF</div> : null}
+                {showPdfMatches && pdfMatches.length ? <div className="searchSection">{t("This PDF")}</div> : null}
                 {(showPdfMatches ? pdfMatches : []).map((m, i) => (
                   <button
                     key={`pdf-${i}`}
@@ -409,7 +410,7 @@ export default function SearchPanel({
                 ))}
                 {notesElsewhere.length ? <div className="searchSection">{focusedBlockId ? "Other notes" : "Notes"}</div> : null}
                 {notesElsewhere.map(noteRow)}
-                {linkHits.length ? <div className="searchSection">Reference links</div> : null}
+                {linkHits.length ? <div className="searchSection">{t("Reference links")}</div> : null}
                 {linkHits.map(noteRow)}
                 {libElsewhere.length || libIndexing ? (
                   <div className="searchSection">{focusedBlockId ? "Other PDFs" : "Library PDFs"}</div>
@@ -422,7 +423,7 @@ export default function SearchPanel({
                     key={`lib-${i}`}
                     className="searchResult"
                     onClick={() => openLibHit(r)}
-                    title={`Open "${r.title}" at page ${r.page} — the match will be highlighted`}
+                    title={t("Open \"{title}\" at page {page} — the match will be highlighted", { title: r.title, page: r.page })}
                   >
                     <span className="searchResultPage">{r.title.slice(0, 60)} · p. {r.page}</span>
                     <span className="searchResultText">…{r.snippet}…</span>

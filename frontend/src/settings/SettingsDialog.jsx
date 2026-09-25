@@ -83,68 +83,68 @@ const MANAGEMENT_NAV = [
 // What draws on the page with the handwriting tools open: the stored
 // preference is "fingers never draw" (inkPenOnly), pictured as two tiles.
 const DRAW_WITH = [
-  { value: "pen", label: "Pen only", hint: "fingers scroll and zoom", Icon: PenIcon },
-  { value: "any", label: "Pen and finger", hint: "for screens without a stylus", Icon: HandIcon },
+  { value: "pen", label: T("Pen only"), hint: T("fingers scroll and zoom"), Icon: PenIcon },
+  { value: "any", label: T("Pen and finger"), hint: T("for screens without a stylus"), Icon: HandIcon },
 ];
 
 function ViewerSettings({ value, onTranslationModels }) {
   return (
     <>
 
-      <Section title="PDF viewer" scope="account" prefs={SECTION_PREFS.reading["PDF viewer"]}>
+      <Section title={t("PDF viewer")} scope="account" prefs={SECTION_PREFS.reading["PDF viewer"]}>
         <Row
           icon={HighlightIcon}
-          label="Imported annotations"
-          hint="Annotations saved inside a PDF become highlights"
-          title={"Highlights, notes and rectangles saved inside a PDF file (a Gamma export, SumatraPDF, Acrobat…) are imported as regular highlights. Keep originals leaves the file untouched (the viewer hides them); Remove originals rewrites the stored PDF without them."}
+          label={t("Imported annotations")}
+          hint={t("Annotations saved inside a PDF become highlights")}
+          title={t("Highlights, notes and rectangles saved inside a PDF file (a Gamma export, SumatraPDF, Acrobat…) are imported as regular highlights. Keep originals leaves the file untouched (the viewer hides them); Remove originals rewrites the stored PDF without them.")}
         >
           <Segmented value={value.embAnnots} onChange={value.setEmbAnnots}
-            options={[["hide", "Keep originals"], ["strip", "Remove originals"]]} />
+            options={[["hide", t("Keep originals")], ["strip", t("Remove originals")]]} />
         </Row>
       </Section>
-      <Section title="Handwriting" scope="browser">
+      <Section title={t("Handwriting")} scope="browser">
         <div data-setting="Draws with">
-          <IconChoices label="Draws with" value={value.inkPenOnly ? "pen" : "any"}
+          <IconChoices label={t("Draws with")} value={value.inkPenOnly ? "pen" : "any"}
             onChange={(choice) => value.setInkPenOnly(choice === "pen")} options={DRAW_WITH} />
         </div>
         <Toggle
           icon={PenIcon}
-          label="Stylus draws right away"
-          hint="Without opening the tools first"
-          title="With a stylus (Apple Pencil, Surface Pen, Wacom…), touching the page draws with the pen tool even when the handwriting tools are closed. Fingers and the mouse still select text. Turn off if your stylus keeps leaving marks while you navigate."
+          label={t("Stylus draws right away")}
+          hint={t("Without opening the tools first")}
+          title={t("With a stylus (Apple Pencil, Surface Pen, Wacom…), touching the page draws with the pen tool even when the handwriting tools are closed. Fingers and the mouse still select text. Turn off if your stylus keeps leaving marks while you navigate.")}
           checked={value.inkAutoPen}
           onChange={value.setInkAutoPen}
         />
         <Toggle
           icon={ActivityIcon}
-          label="Pressure-sensitive strokes"
-          hint="Pen strokes thicken with pressure"
-          title="Use the stylus pressure for stroke width, like ink on paper. Off gives even strokes. Mouse and finger strokes are always even."
+          label={t("Pressure-sensitive strokes")}
+          hint={t("Pen strokes thicken with pressure")}
+          title={t("Use the stylus pressure for stroke width, like ink on paper. Off gives even strokes. Mouse and finger strokes are always even.")}
           checked={value.inkPressure}
           onChange={value.setInkPressure}
         />
       </Section>
-      <Section title="Translation" scope="account" prefs={SECTION_PREFS.reading["Translation"]} action={
-        <button className="uiBtn sm" onClick={onTranslationModels} title="Translation model, effort and parallel requests (AI › Advanced)">
+      <Section title={t("Translation")} scope="account" prefs={SECTION_PREFS.reading["Translation"]} action={
+        <button className="uiBtn sm" onClick={onTranslationModels} title={t("Translation model, effort and parallel requests (AI › Advanced)")}>
           <SlidersIcon size={13} /> Model & speed
         </button>
       }>
         <Toggle
           icon={LanguagesIcon}
-          label="Translation button"
-          hint="In the viewer; nothing translates until you ask"
-          title="Show the translate button in the PDF viewer. Click translates the current page (or shows/hides an existing translation); right-click or long-press opens the options, including translating the whole document. Nothing translates until you ask."
+          label={t("Translation button")}
+          hint={t("In the viewer; nothing translates until you ask")}
+          title={t("Show the translate button in the PDF viewer. Click translates the current page (or shows/hides an existing translation); right-click or long-press opens the options, including translating the whole document. Nothing translates until you ask.")}
           checked={value.translateEnabled}
           onChange={value.setTranslateEnabled}
         />
         <Row
           icon={GlobeIcon}
-          label="Translate into"
-          hint="The translated view's language"
-          title="The translated view (the languages button in the PDF viewer's zoom column) redraws each paragraph in this language in place — figures and layout stay put, and holding Alt peeks at the original. Paragraph translations are cached per language and model, so re-reading a page is free."
+          label={t("Translate into")}
+          hint={t("The translated view's language")}
+          title={t("The translated view (the languages button in the PDF viewer's zoom column) redraws each paragraph in this language in place — figures and layout stay put, and holding Alt peeks at the original. Paragraph translations are cached per language and model, so re-reading a page is free.")}
         >
           <MenuSelect
-            label="Translation language"
+            label={t("Translation language")}
             value={value.translateLang}
             onChange={value.setTranslateLang}
             options={TRANSLATE_LANGS}
@@ -159,31 +159,31 @@ function TranslationModels({ value, advanced = false }) {
   return <>
         {!advanced ? <Row
           icon={SparklesIcon}
-          label="Translation model"
-          hint="Used when translating pages"
-          title="Model used to translate page text. Translation is a bulk job — a fast, cheap model usually reads fine and costs much less than the chat model."
+          label={t("Translation model")}
+          hint={t("Used when translating pages")}
+          title={t("Model used to translate page text. Translation is a bulk job — a fast, cheap model usually reads fine and costs much less than the chat model.")}
         >
           <TranslateModelSelect value={value} />
         </Row> : null}
         {advanced ? <>
         <Row
           icon={ActivityIcon}
-          label="Translation effort"
-          hint="Low makes reasoning models translate much faster"
-          title="Reasoning effort sent with translation calls. Reasoning models spend their thinking budget before writing any output, which is wasted on translation — Low or Minimal typically cuts a page from ~20s to a few seconds. Default omits the parameter (some models reject it)."
+          label={t("Translation effort")}
+          hint={t("Low makes reasoning models translate much faster")}
+          title={t("Reasoning effort sent with translation calls. Reasoning models spend their thinking budget before writing any output, which is wasted on translation — Low or Minimal typically cuts a page from ~20s to a few seconds. Default omits the parameter (some models reject it).")}
         >
           <MenuSelect
-            label="Translation effort"
+            label={t("Translation effort")}
             value={value.translateEffort}
             onChange={value.setTranslateEffort}
-            options={[["", "Default"], ["minimal", "Minimal"], ["low", "Low"], ["medium", "Medium"], ["high", "High"]]}
+            options={[["", t("Default")], ["minimal", t("Minimal")], ["low", t("Low")], ["medium", t("Medium")], ["high", t("High")]]}
           />
         </Row>
         <Row
           icon={RefreshIcon}
-          label="Parallel requests"
-          hint="Translation calls in flight at once (1–32)"
-          title="A page is translated in small chunks, this many at a time; a whole-document job streams chunks across pages and never exceeds it. Higher is faster until your provider's rate limit pushes back."
+          label={t("Parallel requests")}
+          hint={t("Translation calls in flight at once (1–32)")}
+          title={t("A page is translated in small chunks, this many at a time; a whole-document job streams chunks across pages and never exceeds it. Higher is faster until your provider's rate limit pushes back.")}
         >
           <UnitInput value={value.translateParallel} unit="calls" min={1}
             onCommit={(raw) => {
@@ -203,7 +203,7 @@ function TranslateModelSelect({ value }) {
   const current = value.translateModel && models.some((m) => m.id === value.translateModel) ? value.translateModel : "";
   return (
     <MenuSelect
-      label="Translation model" value={current} onChange={value.setTranslateModel}
+      label={t("Translation model")} value={current} onChange={value.setTranslateModel}
       options={[
         ["", `Same as chat: ${value.chatModelName || "provider default"}`],
         ...models.map((m) => [m.id, multiProvider ? `${m.model} · ${m.provider_name || m.provider}` : m.model]),
@@ -218,14 +218,14 @@ function SearchSettings({ value }) {
   return (
     <>
 
-      <Section title="Search opens as" scope="account" prefs={SECTION_PREFS.reading["Search opens as"]}>
-        <Row icon={HomeIcon} label="On the home page" hint="Full panel: grouped result lists"
-          title="With no PDF open the compact find bar has nothing to show, so the home page defaults to the full panel.">
+      <Section title={t("Search opens as")} scope="account" prefs={SECTION_PREFS.reading["Search opens as"]}>
+        <Row icon={HomeIcon} label={t("On the home page")} hint={t("Full panel: grouped result lists")}
+          title={t("With no PDF open the compact find bar has nothing to show, so the home page defaults to the full panel.")}>
           <Segmented value={value.searchDetailsHome ? "panel" : "bar"} onChange={(v) => value.setSearchDetailsHome(v === "panel")}
             options={SEARCH_SHAPES} />
         </Row>
-        <Row icon={PaperIcon} label="On a page" hint="Find bar: match counter and next / previous"
-          title="On a page, Ctrl+F defaults to the compact browser-style find bar; the full panel adds the grouped result lists.">
+        <Row icon={PaperIcon} label={t("On a page")} hint={t("Find bar: match counter and next / previous")}
+          title={t("On a page, Ctrl+F defaults to the compact browser-style find bar; the full panel adds the grouped result lists.")}>
           <Segmented value={value.searchDetailsPaper ? "panel" : "bar"} onChange={(v) => value.setSearchDetailsPaper(v === "panel")}
             options={SEARCH_SHAPES} />
         </Row>
@@ -238,12 +238,12 @@ function NotesSettings({ value }) {
   return (
     <>
 
-      <Section title="Notes" scope="account" prefs={SECTION_PREFS.reading["Notes"]}>
-        <Row icon={CornerDownLeftIcon} label="Enter key"
-          hint={value.enterNewNote ? "Shift+Enter inserts a new line" : "Shift+Enter creates a new note"}>
+      <Section title={t("Notes")} scope="account" prefs={SECTION_PREFS.reading["Notes"]}>
+        <Row icon={CornerDownLeftIcon} label={t("Enter key")}
+          hint={value.enterNewNote ? t("Shift+Enter inserts a new line") : t("Shift+Enter creates a new note")}>
           <Segmented value={value.enterNewNote ? "note" : "line"}
             onChange={(choice) => value.setEnterNewNote(choice === "note")}
-            options={[["note", "New note"], ["line", "New line"]]} />
+            options={[["note", t("New note")], ["line", t("New line")]]} />
         </Row>
       </Section>
     </>
@@ -261,7 +261,7 @@ async function requestReindex(setStatus, scheduledSuffix, wakeTasks) {
         ? `Re-indexing ${result.scheduled} paper${result.scheduled === 1 ? "" : "s"} ${scheduledSuffix}`
         : "No papers with PDFs to index.");
   } catch (err) {
-    setStatus(`Reindex failed: ${err.message}`);
+    setStatus(t("Reindex failed: {message}", { message: err.message }));
   }
 }
 
@@ -277,8 +277,8 @@ function StorageCard() {
       <div className="setCardHead">
         <span className="setIcon"><HardDriveIcon size={15} /></span>
         <span className="settingText">
-          <span className="settingLabel">Uploaded files</span>
-          <span className="settingDesc">PDFs and images on the server · up to {q.max_upload_mb} MB each</span>
+          <span className="settingLabel">{t("Uploaded files")}</span>
+          <span className="settingDesc">{t("PDFs and images on the server · up to {max_upload_mb} MB each", { max_upload_mb: q.max_upload_mb })}</span>
         </span>
         <span className="setCardVal">
           {fmtBytes(q.used_bytes)}
@@ -298,32 +298,32 @@ function StorageCard() {
 function LibrarySettings({ value }) {
   return (
     <>
-      <PaneHead icon={ListIcon} title="Library" />
-      <Section title="Display" scope="account" prefs={SECTION_PREFS.library["Display"]}>
+      <PaneHead icon={ListIcon} title={t("Library")} />
+      <Section title={t("Display")} scope="account" prefs={SECTION_PREFS.library["Display"]}>
         <LibraryDisplaySettings value={value} />
       </Section>
-      <Section title="PDFs" scope="account" prefs={SECTION_PREFS.library["PDFs"]}>
+      <Section title={t("PDFs")} scope="account" prefs={SECTION_PREFS.library["PDFs"]}>
         <Toggle
           icon={CloudDownloadIcon}
-          label="Open-access fallback"
-          hint="Fetch a free copy when a publisher blocks the PDF"
-          title="When a publisher PDF is paywalled or refuses to download, load a legal open-access copy instead — usually the arXiv version. A note tells you when the substitute isn't the published version."
+          label={t("Open-access fallback")}
+          hint={t("Fetch a free copy when a publisher blocks the PDF")}
+          title={t("When a publisher PDF is paywalled or refuses to download, load a legal open-access copy instead — usually the arXiv version. A note tells you when the substitute isn't the published version.")}
           checked={value.oaFallback}
           onChange={value.setOaFallback}
         />
         <Toggle
           icon={SparklesIcon}
-          label="Auto-fetch metadata"
-          hint="Title, authors and BibTeX on first open"
-          title="Look up title, authors, venue and BibTeX the first time a paper opens (arXiv → DOI → AI). Turn this off to fetch only via the refresh button in the metadata popover."
+          label={t("Auto-fetch metadata")}
+          hint={t("Title, authors and BibTeX on first open")}
+          title={t("Look up title, authors, venue and BibTeX the first time a paper opens (arXiv → DOI → AI). Turn this off to fetch only via the refresh button in the metadata popover.")}
           checked={value.metaAutoFetch}
           onChange={value.setMetaAutoFetch}
         />
         <Toggle
           icon={HardDriveIcon}
-          label="Save external PDFs"
-          hint="Keep a server copy of PDFs opened from a URL"
-          title="Keep a server copy of PDFs opened from a URL, so they load instantly next time and survive dead links."
+          label={t("Save external PDFs")}
+          hint={t("Keep a server copy of PDFs opened from a URL")}
+          title={t("Keep a server copy of PDFs opened from a URL, so they load instantly next time and survive dead links.")}
           checked={value.pdfSaveLocal}
           onChange={value.setPdfSaveLocal}
         />
@@ -338,16 +338,16 @@ function LibrarySettings({ value }) {
 // index, so "unknown" means not visited yet, not broken; Reindex fills it in.
 function MaintenanceSettings({ value }) {
   return <>
-    <PaneHead icon={HardDriveIcon} title="Library maintenance" />
-      <Section title="Storage">
+    <PaneHead icon={HardDriveIcon} title={t("Library maintenance")} />
+      <Section title={t("Storage")}>
         <StorageCard />
       </Section>
-      <Section title="Index">
+      <Section title={t("Index")}>
         <Row
           icon={RefreshIcon}
-          label="PDF text index"
-          hint={value.indexTask?.active ? "Rebuilding — progress in the tasks popover" : "Re-extract every paper if results look stale"}
-          title="Full-text search reads a per-user index built from the extracted PDF text. Rebuild it when library-wide results look stale or incomplete."
+          label={t("PDF text index")}
+          hint={value.indexTask?.active ? t("Rebuilding — progress in the tasks popover") : t("Re-extract every paper if results look stale")}
+          title={t("Full-text search reads a per-user index built from the extracted PDF text. Rebuild it when library-wide results look stale or incomplete.")}
         >
           <button className="uiBtn sm" disabled={value.indexTask?.active} onClick={() => requestReindex(value.setStatus, "in the background.", value.wakeTasks)}>
             {value.indexTask?.active ? "Indexing…" : "Rebuild"}
@@ -405,7 +405,7 @@ function MetaStatusSection({ value }) {
       value.wakeTasks?.();
       pollRefresh();
     } catch (err) {
-      value.setStatus(`Indexing failed: ${err.message}`);
+      value.setStatus(t("Indexing failed: {message}", { message: err.message }));
     }
   }
 
@@ -529,50 +529,50 @@ function MetaStatusSection({ value }) {
 
   return (
     <Section
-      title="Papers"
+      title={t("Papers")}
       action={
         <span className="metaStatActions">
           <MenuSelect
-            label="Show papers" value={filterMode} onChange={setFilterMode}
+            label={t("Show papers")} value={filterMode} onChange={setFilterMode}
             options={[
               ["all", `All (${list.length})`],
-              ["attention", "Needs attention"],
+              ["attention", t("Needs attention")],
               ["unverified", `Unverified AI (${unverified.length})`],
               ["missing", `Missing metadata (${missing.length})`],
-              ["notext", "No text layer"],
+              ["notext", t("No text layer")],
             ]}
           />
           <MenuSelect
-            label="Sort papers" value={sortMode} onChange={setSortMode}
+            label={t("Sort papers")} value={sortMode} onChange={setSortMode}
             options={[
-              ["meta", "Needs work first"],
-              ["text", "Missing text first"],
-              ["updated", "Recently modified"],
+              ["meta", t("Needs work first")],
+              ["text", t("Missing text first")],
+              ["updated", t("Recently modified")],
             ]}
           />
-          <button className="uiBtn sm iconSq" aria-label="Reindex"
-            title="Re-extract every paper into the search index (also fills in the text column)"
+          <button className="uiBtn sm iconSq" aria-label={t("Reindex")}
+            title={t("Re-extract every paper into the search index (also fills in the text column)")}
             onClick={() => { requestReindex(value.setStatus, "— text status fills in as it runs.", value.wakeTasks); pollRefresh(); }}>
             <RefreshIcon size={13} />
           </button>
-          <button className="uiBtn sm iconSq" onClick={refresh} disabled={!!busy} title="Reload this table" aria-label="Reload">
+          <button className="uiBtn sm iconSq" onClick={refresh} disabled={!!busy} title={t("Reload this table")} aria-label={t("Reload")}>
             <ActivityIcon size={13} />
           </button>
         </span>
       }
     >
-      {papers === null ? <Empty icon={ListIcon}>Loading…</Empty> : null}
-      {error ? <Empty icon={ActivityIcon}>Status unavailable — {error}</Empty> : null}
-      {papers !== null && !list.length && !error ? <Empty icon={PaperIcon}>No papers yet — open a PDF first.</Empty> : null}
+      {papers === null ? <Empty icon={ListIcon}>{t("Loading…")}</Empty> : null}
+      {error ? <Empty icon={ActivityIcon}>{t("Status unavailable — {error}", { error: error })}</Empty> : null}
+      {papers !== null && !list.length && !error ? <Empty icon={PaperIcon}>{t("No papers yet — open a PDF first.")}</Empty> : null}
       {list.length ? (
         <>
           <div className="setStats">
             <Stat icon={PaperIcon} label="verified" value={counts.verified} total={list.length}
-              title="Metadata from a registry (arXiv/DOI/Crossref), edited by hand, or a non-paper document — nothing left to verify. Missing and unverified AI records count against this." />
-            <Stat icon={FileTextIcon} label="text layer" value={counts.text} total={list.length}
-              title="Papers whose PDF yielded extractable text" />
+              title={t("Metadata from a registry (arXiv/DOI/Crossref), edited by hand, or a non-paper document — nothing left to verify. Missing and unverified AI records count against this.")} />
+            <Stat icon={FileTextIcon} label={t("text layer")} value={counts.text} total={list.length}
+              title={t("Papers whose PDF yielded extractable text")} />
             <Stat icon={SearchIcon} label="indexed" value={counts.indexed} total={list.length}
-              title="Papers covered by the full-text search index" />
+              title={t("Papers covered by the full-text search index")} />
           </div>
           <div className="metaStatTable">
             <div className="metaStatRow metaStatHeader">
@@ -584,24 +584,24 @@ function MetaStatusSection({ value }) {
                   shown.forEach((p) => (allSelected ? next.delete(p.id) : next.add(p.id)));
                   return next;
                 })}
-                title={allSelected ? "Clear the shown papers from the selection" : "Select all shown papers"}
+                title={allSelected ? t("Clear the shown papers from the selection") : t("Select all shown papers")}
               />
-              <span>Paper</span>
-              <span>Metadata</span>
-              <span>Text</span>
-              <span>Index</span>
+              <span>{t("Paper")}</span>
+              <span>{t("Metadata")}</span>
+              <span>{t("Text")}</span>
+              <span>{t("Index")}</span>
               <span />
             </div>
             {!shown.length ? (
               <div className="metaStatRow" style={{ cursor: "default" }}>
-                <span /><span className="metaStatTitle" style={{ color: "var(--text-dim)" }}>Nothing matches this filter.</span>
+                <span /><span className="metaStatTitle" style={{ color: "var(--text-dim)" }}>{t("Nothing matches this filter.")}</span>
               </div>
             ) : null}
             {shown.map((p) => (
               <label key={p.id} className="metaStatRow">
                 <input type="checkbox" checked={selected.has(p.id)} onChange={() => toggle(p.id)} />
                 <span
-                  className="metaStatTitle" title={`${p.title} — click to open`}
+                  className="metaStatTitle" title={t("{title} — click to open", { title: p.title })}
                   onClick={(e) => {
                     if (!value.openPaper) return;
                     e.preventDefault(); e.stopPropagation();
@@ -613,8 +613,8 @@ function MetaStatusSection({ value }) {
                 {indexCell(p)}
                 {needsIndex(p) ? (
                   <button
-                    className="searchToggle" aria-label={`Index ${p.title}`}
-                    title="Extract this paper's text into the search index now"
+                    className="searchToggle" aria-label={t("Index {title}", { title: p.title })}
+                    title={t("Extract this paper's text into the search index now")}
                     onClick={(e) => { e.preventDefault(); e.stopPropagation(); indexDocs([p.doc_id]); }}
                   >
                     <RefreshIcon size={13} />
@@ -625,8 +625,8 @@ function MetaStatusSection({ value }) {
           </div>
           {busy ? (
             <div className="metaStatBatchRow">
-              <span className="metaStatProgress">Fetching {busy.done + 1}/{busy.total} — {busy.title}</span>
-              <button className="uiBtn sm" onClick={() => { stopRef.current = true; }}>Stop</button>
+              <span className="metaStatProgress">{t("Fetching {done}/{total} — {title}", { done: busy.done + 1, total: busy.total, title: busy.title })}</span>
+              <button className="uiBtn sm" onClick={() => { stopRef.current = true; }}>{t("Stop")}</button>
             </div>
           ) : (
             <div className="metaStatBatchRow">
@@ -683,7 +683,7 @@ function PromptAccordion({ items }) {
           <div key={key} className={`setAcc ${isOpen ? "open" : ""}`}>
             <button className="setAccHead" onClick={() => setOpen(isOpen ? null : key)}>
               <span className="setIcon"><Icon size={14} /></span>
-              <span className="setAccName">{label}</span>
+              <span className="setAccName">{t(label)}</span>
               {custom ? <span className="uiTag">custom</span> : null}
               <span className="setAccChevron">{isOpen ? "▾" : "▸"}</span>
             </button>
@@ -693,7 +693,7 @@ function PromptAccordion({ items }) {
                   onChange={(event) => setDraft(event.target.value)} />
                 <div className="reportModalBtns settingsAlignStart">
                   <button className="uiBtn sm" disabled={!modified} onClick={() => setDraft(defaultValue || "")}>
-                    Restore default
+                    {t("Restore default")}
                   </button>
                 </div>
               </div>
@@ -709,16 +709,16 @@ function PromptAccordion({ items }) {
 // Save button for all of them.
 function PromptsSettings({ value }) {
   const prompts = [
-    { key: "chat", label: "Chat system prompt", icon: MessageSquareIcon,
+    { key: "chat", label: T("Chat system prompt"), icon: MessageSquareIcon,
       draft: value.promptDraft, setDraft: value.setPromptDraft,
       defaultValue: value.aiInfo?.default_prompt, custom: !!value.chatSystem, saved: value.chatSystem },
-    { key: "meta", label: "Metadata extraction", icon: PaperIcon,
+    { key: "meta", label: T("Metadata extraction"), icon: PaperIcon,
       draft: value.metaPromptDraft, setDraft: value.setMetaPromptDraft,
       defaultValue: value.aiInfo?.metadata_prompt, custom: !!value.metaPrompt, saved: value.metaPrompt },
-    { key: "cite", label: "PPT citation", icon: TypeIcon,
+    { key: "cite", label: T("PPT citation"), icon: TypeIcon,
       draft: value.citePromptDraft, setDraft: value.setCitePromptDraft,
       defaultValue: value.aiInfo?.cite_prompt, custom: !!value.citePrompt, saved: value.citePrompt },
-    { key: "agent", label: "Library agent", icon: SparklesIcon,
+    { key: "agent", label: T("Library agent"), icon: SparklesIcon,
       draft: value.agentPromptDraft, setDraft: value.setAgentPromptDraft,
       defaultValue: value.aiInfo?.agent_prompt, custom: !!value.agentSystem, saved: value.agentSystem },
   ];
@@ -729,14 +729,14 @@ function PromptsSettings({ value }) {
   useSettingsDraft("prompts", dirty, discard);
   return (
     <>
-      <PaneHead icon={TypeIcon} title="Custom prompts" />
+      <PaneHead icon={TypeIcon} title={t("Custom prompts")} />
       <Section
-        title="Prompts"
+        title={t("Prompts")}
         scope="account" prefs={SECTION_PREFS.prompts["Prompts"]}
         action={
           <span className="setControlGroup">
-            <button className="uiBtn sm" disabled={!dirty} onClick={discard}>Cancel</button>
-            <button className="uiBtn sm primary" disabled={!dirty} onClick={value.savePrompts}>Save</button>
+            <button className="uiBtn sm" disabled={!dirty} onClick={discard}>{t("Cancel")}</button>
+            <button className="uiBtn sm primary" disabled={!dirty} onClick={value.savePrompts}>{t("Save")}</button>
           </span>
         }
       >
@@ -801,10 +801,10 @@ export function AgentToolPicker({ kind, perms, setPerms, disabled }) {
 // chips the chat header's settings popover shows for the open chat.
 function AssistantSettings({ value }) {
   return (
-    <Section title="Tools" scope="account" prefs={SECTION_PREFS.assistant["Tools"]}>
-      <Toggle icon={SparklesIcon} label="Assistant tools"
-        hint="Let chats read, search and edit your library"
-        title="The master switch for tools in every chat. Off keeps your per-chat choices below for when you turn it on again."
+    <Section title={t("Tools")} scope="account" prefs={SECTION_PREFS.assistant["Tools"]}>
+      <Toggle icon={SparklesIcon} label={t("Assistant tools")}
+        hint={t("Let chats read, search and edit your library")}
+        title={t("The master switch for tools in every chat. Off keeps your per-chat choices below for when you turn it on again.")}
         checked={value.agentEnabled} onChange={value.setAgentEnabled} />
       {CHAT_KIND_ROWS.map(([kind, icon, label, hint]) => (
         <Row key={kind} icon={icon} label={label} hint={hint}>
@@ -832,54 +832,54 @@ function AdvancedAiSettings({ value, ai, papers }) {
 
   return <>
 
-        <Row icon={ActivityIcon} label="Default reasoning effort" hint="Leave Default unless your model supports it">
-          <MenuSelect label="Default reasoning effort" value={ai.chatEffort} onChange={ai.setChatEffort}
-            options={[["", "Default"], ...(ai.aiInfo?.efforts || ["low", "medium", "high"]).map((v) => [v, v])]} />
+        <Row icon={ActivityIcon} label={t("Default reasoning effort")} hint={t("Leave Default unless your model supports it")}>
+          <MenuSelect label={t("Default reasoning effort")} value={ai.chatEffort} onChange={ai.setChatEffort}
+            options={[["", t("Default")], ...(ai.aiInfo?.efforts || ["low", "medium", "high"]).map((v) => [v, v])]} />
         </Row>
-        <Section title="Tool limits" scope="account" prefs={SECTION_PREFS.advanced["Tool limits"]}>
-        <Row icon={RefreshIcon} label="Tool rounds"
-          hint="AI ↔ tool round-trips per message"
-          title="Each round-trip lets the model issue more tool calls. This is a runaway guard — actual work is separately capped at 200 changes per message.">
+        <Section title={t("Tool limits")} scope="account" prefs={SECTION_PREFS.advanced["Tool limits"]}>
+        <Row icon={RefreshIcon} label={t("Tool rounds")}
+          hint={t("AI ↔ tool round-trips per message")}
+          title={t("Each round-trip lets the model issue more tool calls. This is a runaway guard — actual work is separately capped at 200 changes per message.")}>
           <UnitInput value={value.toolRounds} unit="rounds" min={1}
             onCommit={(raw) => {
               const n = Number.parseInt(raw, 10);
               if (Number.isFinite(n)) value.setToolRounds(Math.max(1, Math.min(100, n)));
             }} />
         </Row>
-        <Row icon={BookIcon} label="Read window"
-          hint={`Document text per read tool call · ${approxPages(value.agentReadChars)}`}
-          title="The most extracted PDF text one read_page tool call may return. The agent reads a long paper in windows of this size, continuing where the last call stopped — a larger window means fewer calls but more tokens per message.">
+        <Row icon={BookIcon} label={t("Read window")}
+          hint={t("Document text per read tool call · {pages}", { pages: approxPages(value.agentReadChars) })}
+          title={t("The most extracted PDF text one read_page tool call may return. The agent reads a long paper in windows of this size, continuing where the last call stopped — a larger window means fewer calls but more tokens per message.")}>
           <CharSlider value={value.agentReadChars} onChange={value.setAgentReadChars} />
         </Row>
         </Section>
       <Section
-        title="Context size"
+        title={t("Context size")}
         scope="account" prefs={SECTION_PREFS.advanced["Context size"]}
         action={
-          <MenuSelect label="Context budget" value={contextPreset}
+          <MenuSelect label={t("Context budget")} value={contextPreset}
             onChange={(preset) => {
               if (preset === "custom") return; // the sliders below are the custom values
               const factor = preset === "larger" ? 2 : 1;
               value.setChatContextChars(60000 * factor);
               value.setMetaContextChars(6000 * factor);
               value.setMultiContextChars(120000 * factor);
-            }} options={[["standard", "Standard"], ["larger", "Larger"], ["custom", "Custom"]]} />
+            }} options={[["standard", t("Standard")], ["larger", t("Larger")], ["custom", t("Custom")]]} />
         }
       >
         {limits.map(([icon, label, hint, current, setCurrent, title]) => (
-          <Row key={label} icon={icon} label={label} hint={`${hint} · ${approxPages(current)}`}
+          <Row key={label} icon={icon} label={label} hint={t("{hint} · {current}", { hint: hint, current: approxPages(current) })}
             title={title}>
             <CharSlider value={current} onChange={setCurrent} />
           </Row>
         ))}
       </Section>
-        <Section title="Translation performance" scope="account" prefs={SECTION_PREFS.advanced["Translation performance"]}><TranslationModels value={papers} advanced /></Section>
-        <Section title="Chat" scope="account" prefs={SECTION_PREFS.advanced["Chat"]}>
+        <Section title={t("Translation performance")} scope="account" prefs={SECTION_PREFS.advanced["Translation performance"]}><TranslationModels value={papers} advanced /></Section>
+        <Section title={t("Chat")} scope="account" prefs={SECTION_PREFS.advanced["Chat"]}>
           <Toggle
             icon={RectSelectIcon}
-            label="Clear snapshots on click"
-            hint="A plain click in the PDF also drops pending snapshots"
-            title="A plain click in the PDF clears the quoted text selections under the chat. Turn this on to also drop pending rectangle snapshots with that click — images pasted into the chat are never touched."
+            label={t("Clear snapshots on click")}
+            hint={t("A plain click in the PDF also drops pending snapshots")}
+            title={t("A plain click in the PDF clears the quoted text selections under the chat. Turn this on to also drop pending rectangle snapshots with that click — images pasted into the chat are never touched.")}
             checked={value.chatImgAutoClear}
             onChange={value.setChatImgAutoClear}
           />
@@ -897,21 +897,21 @@ function AdvancedSettings({ value }) {
     .filter((entry) => level === "all" || (level === "warn" ? !!entry.tone : entry.tone === "error"));
   return (
     <>
-      <PaneHead icon={ActivityIcon} title="Diagnostics" />
-      <Section title="Tracing">
+      <PaneHead icon={ActivityIcon} title={t("Diagnostics")} />
+      <Section title={t("Tracing")}>
         <Toggle
           icon={BugIcon}
-          label="Debug logging"
-          hint="Trace reading-position, restore and sync events"
-          title="Trace reading-position tracking, restore and sync events into the system log below (and the browser console)."
+          label={t("Debug logging")}
+          hint={t("Trace reading-position, restore and sync events")}
+          title={t("Trace reading-position tracking, restore and sync events into the system log below (and the browser console).")}
           checked={value.debugLog}
           onChange={value.setDebugLog}
         />
       </Section>
-      <Section title="Logs">
+      <Section title={t("Logs")}>
         <LogBox
           icon={TerminalIcon}
-          label="System log"
+          label={t("System log")}
           description="Application events from this browser session"
           entries={entries}
           emptyText={level === "all" ? "Nothing logged yet this session."
@@ -919,13 +919,13 @@ function AdvancedSettings({ value }) {
           copyStatus="Log copied."
           setStatus={value.setStatus}
           extra={<Segmented value={level} onChange={setLevel}
-            options={[["all", "All"], ["warn", "Warnings", null, "Warnings and errors"], ["error", "Errors"]]} />}
+            options={[["all", t("All")], ["warn", t("Warnings"), null, t("Warnings and errors")], ["error", t("Errors")]]} />}
         />
       </Section>
-      <Section title="Help">
-        <Row icon={BugIcon} label="Report a problem" hint="A GitHub issue prefilled with this log and the build"
-          title="Describe what went wrong; Gamma adds its build, your browser and the recent lines of this log and opens the bug form on GitHub for you to review before posting.">
-          <button type="button" className="uiBtn sm" onClick={value.openReport}>Report…</button>
+      <Section title={t("Help")}>
+        <Row icon={BugIcon} label={t("Report a problem")} hint={t("A GitHub issue prefilled with this log and the build")}
+          title={t("Describe what went wrong; Gamma adds its build, your browser and the recent lines of this log and opens the bug form on GitHub for you to review before posting.")}>
+          <button type="button" className="uiBtn sm" onClick={value.openReport}>{t("Report…")}</button>
         </Row>
       </Section>
     </>
@@ -1088,23 +1088,23 @@ export default function SettingsDialog({
               </> : <>
                 {pane === "appearance" ? <AppearanceSettings value={papers} diagnostics={diagnostics} /> : null}
                 {pane === "reading" ? <>
-                  <PaneHead icon={BookIcon} title="Reading & editing" />
+                  <PaneHead icon={BookIcon} title={t("Reading & editing")} />
                   <ViewerSettings value={papers} onTranslationModels={() => navigate("ai-advanced", "Translation effort")} />
                   <NotesSettings value={notes} /><SearchSettings value={search} />
                 </> : null}
                 {pane === "library" ? <LibrarySettings value={{ ...papers, ...library }} /> : null}
                 {pane === "maintenance" ? <MaintenanceSettings value={library} /> : null}
                 {pane === "ai" ? <>
-                  <PaneHead icon={SparklesIcon} title="Connections" />
+                  <PaneHead icon={SparklesIcon} title={t("Connections")} />
                   <AiSettings value={aiValue} taskModels={<TranslationModels value={paperValue} />}
                     confirm={workspace?.confirm} setStatus={workspace?.setStatus} />
                 </> : null}
                 {pane === "assistant" ? <>
-                  <PaneHead icon={MessageSquareIcon} title="Chat" />
+                  <PaneHead icon={MessageSquareIcon} title={t("Chat")} />
                   <AssistantSettings value={context} />
                 </> : null}
                 {pane === "ai-advanced" ? <>
-                  <PaneHead icon={ActivityIcon} title="Advanced" />
+                  <PaneHead icon={ActivityIcon} title={t("Advanced")} />
                   <AdvancedAiSettings value={context} ai={aiValue} papers={paperValue} />
                 </> : null}
                 {pane === "prompts" ? <PromptsSettings value={prompts} /> : null}
@@ -1118,14 +1118,14 @@ export default function SettingsDialog({
               </>}
             </main>
           </div>
-          {pending ? <div className="settingsUnsaved" role="alertdialog" aria-label="Unsaved changes">
-            <span>You have unsaved edits. Keep editing or discard them to continue.</span>
-            <button className="uiBtn" autoFocus onClick={() => setPending(null)}>Keep editing</button>
+          {pending ? <div className="settingsUnsaved" role="alertdialog" aria-label={t("Unsaved changes")}>
+            <span>{t("You have unsaved edits. Keep editing or discard them to continue.")}</span>
+            <button className="uiBtn" autoFocus onClick={() => setPending(null)}>{t("Keep editing")}</button>
             <button className="uiBtn danger" onClick={() => {
               const action = pending;
               drafts.current.forEach((discard) => discard()); drafts.current.clear();
               setPending(null); action();
-            }}>Discard changes</button>
+            }}>{t("Discard changes")}</button>
           </div> : null}
         </div>
       </div>

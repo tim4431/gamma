@@ -51,6 +51,10 @@ const PULL_MIN_MS = 15000;
 //   way), `failed` (a push of exactly this value failed; the next change
 //   sends it again), `awaitingCloud` (pushed since Gamma Cloud last
 //   reported the profile synced);
+// - `flush()`: sends a settled or pending change now and resolves once the
+//   server has answered (at once when nothing is pending or signed out), for
+//   a caller about to remount or reload — a fresh instance pulls "server
+//   wins", so the change must be there first (the language switch);
 // - `noteCloud(profile)`: the dialog hands it every sync-status answer; a
 //   "synced" at a time after the last push clears `awaitingCloud`.
 const NONE = new Set();
@@ -68,6 +72,7 @@ export function useProfileSync(prefs, user) {
   const timerRef = useRef(null);
   const pushIdRef = useRef(0);
   const sendingRef = useRef(0); // PUTs not answered yet
+  const lastPushRef = useRef(Promise.resolve()); // the newest PUT, for flush()
   const [status, setStatus] = useState(() => ({ state: user ? "loading" : "signed-out", error: "" }));
   const [flight, setFlight] = useState(IDLE);
   const mark = (state, error = "") => setStatus((was) => (was.state === state && was.error === error ? was : { state, error }));
@@ -85,8 +90,8 @@ export function useProfileSync(prefs, user) {
     clearTimeout(timerRef.current);
     timerRef.current = null;
     const { snap: now, user: u } = latest.current;
-    if (!u || syncedRef.current === null) return;
-    if (now === syncedRef.current) { mark("loaded"); return; } // changed back before it went out
+    if (!u || syncedRef.current === null) return Promise.resolve();
+    if (now === syncedRef.current) { mark("loaded"); return lastPushRef.current; } // changed back, or already on its way
     const before = syncedRef.current;
     syncedRef.current = now;
     const request = {
@@ -94,7 +99,7 @@ export function useProfileSync(prefs, user) {
       headers: { "Content-Type": "application/json" },
       body: `{"value":${now}}`,
     };
-    if (keepalive) { fetch(PROFILE_URL, { ...request, keepalive: true, credentials: "same-origin" }).catch(() => {}); return; }
+    if (keepalive) { fetch(PROFILE_URL, { ...request, keepalive: true, credentials: "same-origin" }).catch(() => {}); return Promise.resolve(); }
     const sent = perName(JSON.parse(now));
     const confirmed = confirmedRef.current || {};
     const names = ACCOUNT_PREFS.filter((name) => sent[name] !== confirmed[name]);
@@ -104,7 +109,7 @@ export function useProfileSync(prefs, user) {
     mark("pushing");
     // Only the latest push's answer ends `inflight`.
     const settle = (next) => setFlight((f) => ({ ...next(f), inflight: id === pushIdRef.current ? NONE : f.inflight }));
-    apiJson(PROFILE_URL, request).then((d) => {
+    const done = apiJson(PROFILE_URL, request).then((d) => {
       sendingRef.current -= 1;
       if (latest.current.user !== u) return;
       confirmedRef.current = sent;
@@ -118,7 +123,12 @@ export function useProfileSync(prefs, user) {
       settle((f) => ({ ...f, failed: { ...f.failed, ...Object.fromEntries(names.map((name) => [name, sent[name]])) } }));
       if (!timerRef.current) mark("failed", err?.message || "");
     });
+    lastPushRef.current = done;
+    return done;
   }
+  const pushRef = useRef(push);
+  pushRef.current = push;
+  const flush = useCallback(() => pushRef.current(), []);
 
   function schedule() {
     if (syncedRef.current === null || latest.current.snap === syncedRef.current) return;
@@ -163,6 +173,10 @@ export function useProfileSync(prefs, user) {
 
   useEffect(() => { schedule(); }, [snap, user]);
 
+  // Unmounting (main.jsx remounts the app on a language change) must not
+  // drop a change that was still settling.
+  useEffect(() => () => { if (timerRef.current) pushRef.current(true); }, []);
+
   useEffect(() => {
     let lastPull = 0;
     const onWake = () => {
@@ -198,6 +212,6 @@ export function useProfileSync(prefs, user) {
   const pending = useMemo(() => (pendingKey ? new Set(pendingKey.split(",")) : NONE), [pendingKey]);
   const failed = useMemo(() => (failedKey ? new Set(failedKey.split(",")) : NONE), [failedKey]);
   return useMemo(() => ({
-    ...status, pending, inflight: flight.inflight, failed, awaitingCloud: flight.awaiting, noteCloud,
-  }), [status, pending, flight.inflight, failed, flight.awaiting, noteCloud]);
+    ...status, pending, inflight: flight.inflight, failed, awaitingCloud: flight.awaiting, noteCloud, flush,
+  }), [status, pending, flight.inflight, failed, flight.awaiting, noteCloud, flush]);
 }

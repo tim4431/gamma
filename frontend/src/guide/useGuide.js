@@ -10,6 +10,7 @@ import { previewHighlight } from "./previewHighlight.js";
 import { previewArea } from "./previewArea.js";
 import { typeDemoNote } from "./typeDemoNote.js";
 import { createGuideProgress, factsMatch } from "./triggers.js";
+import { t } from "../shared/i18n/i18n.js";
 
 const VARS_KEY = "gamma-guide-vars"; // {name: value} overriding a tour's vars (tests, demos)
 const ANCHOR_WAIT_MS = 4000;
@@ -76,7 +77,7 @@ async function runAction(action, vars, live, cancelled, seen, onCleanup, service
   }
   if (action.type) {
     const el = await waitAnchor(action.type);
-    const text = fill(action.text, vars);
+    const text = fill(t(action.text), vars);
     const original = el.value;
     if (action.preserveDraft) onCleanup(() => {
       if (el.isConnected && text.startsWith(el.value) && (original || el.value !== text)) setInputValue(el, original);

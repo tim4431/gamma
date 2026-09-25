@@ -2,6 +2,7 @@
 
 import { useEffect, useState } from "react";
 import { makeBlockId } from "../model/blockModel";
+import { t, T } from "../../shared/i18n/i18n.js";
 
 const API = "/api";
 
@@ -284,15 +285,15 @@ function metaSourceInfo(meta) {
   const unverified = isUnverifiedPaperMeta(meta.source, kind, meta.unverified);
   if (meta.source === "ai") {
     return unverified
-      ? { label: "AI-extracted — unverified", short: "AI", warn: true,
-          hint: "Read by AI from the PDF text and not confirmed by any registry (arXiv, Crossref, Open Library) — fields may be wrong, verify before citing" }
-      : { label: `AI-extracted (${kind})`, short: `AI (${kind})`, warn: false,
-          hint: "Not a published paper, so there is no registry record to verify against" };
+      ? { label: T("AI-extracted — unverified"), short: "AI", warn: true,
+          hint: T("Read by AI from the PDF text and not confirmed by any registry (arXiv, Crossref, Open Library) — fields may be wrong, verify before citing") }
+      : { label: t("AI-extracted ({kind})", { kind: kind }), short: t("AI ({kind})", { kind: kind }), warn: false,
+          hint: T("Not a published paper, so there is no registry record to verify against") };
   }
   const name = META_SOURCE_NAMES[meta.source] || meta.source;
   if (unverified) {
-    return { label: `${name} — unconfirmed`, short: `${name} ?`, warn: true,
-             hint: "Resolved from an identifier printed in the PDF, but the record's title isn't in the text — it may belong to a work this document cites. Verify before citing" };
+    return { label: t("{name} — unconfirmed", { name: name }), short: t("{name} ?", { name: name }), warn: true,
+             hint: T("Resolved from an identifier printed in the PDF, but the record's title isn't in the text — it may belong to a work this document cites. Verify before citing") };
   }
   return { label: name, short: name, warn: false,
            hint: meta.source === "manual" ? "Fields edited by hand" : `Registry record via ${name}` };

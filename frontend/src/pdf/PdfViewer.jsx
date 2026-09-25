@@ -27,6 +27,7 @@ import { PdfCitationOverlay } from "./PdfCitationOverlay";
 import { citationRuns, runChars } from "./pdfCitation.js";
 import { noteBadgeAnchor } from "./noteAnchor.js";
 import { COLORS } from "../shared/model/highlightColors.js";
+import { t } from "../shared/i18n/i18n.js";
 pdfjsLib.GlobalWorkerOptions.workerSrc = pdfWorkerUrl;
 // One worker for every document. pdf.js otherwise starts a fresh worker per
 // getDocument — the 1.3 MB script fetched and compiled again per open — and
@@ -1560,8 +1561,8 @@ function PdfViewer({ url, citation = null, highlights, pdfScaleValue, scrollRef,
           <button
             className={outlineOpen ? "modeActive" : ""}
             onClick={() => setOutlineOpen((o) => !o)}
-            title={outlineOpen ? "Hide table of contents" : "Table of contents"}
-            aria-label="Toggle table of contents"
+            title={outlineOpen ? t("Hide table of contents") : t("Table of contents")}
+            aria-label={t("Toggle table of contents")}
             type="button"
           >
             <OutlineIcon size={15} />
@@ -1569,7 +1570,7 @@ function PdfViewer({ url, citation = null, highlights, pdfScaleValue, scrollRef,
         </div>
       ) : null}
       {numPages > 0 ? (
-        <div className="pdfPageWidget" title="Type a page number and press Enter to jump">
+        <div className="pdfPageWidget" title={t("Type a page number and press Enter to jump")}>
           <input
             type="text"
             inputMode="numeric"
@@ -1588,7 +1589,7 @@ function PdfViewer({ url, citation = null, highlights, pdfScaleValue, scrollRef,
               }
             }}
             onBlur={() => setPageInput(null)}
-            aria-label="Current page"
+            aria-label={t("Current page")}
           />
           <span className="pdfPageTotal">/ {numPages}</span>
         </div>
@@ -1679,7 +1680,7 @@ function OutlineNode({ item, depth, onDest, onUrl }) {
           <button
             className={"pdfOutlineChevron" + (open ? " open" : "")}
             onClick={() => setOpen((o) => !o)}
-            aria-label={open ? "Collapse section" : "Expand section"}
+            aria-label={open ? t("Collapse section") : t("Expand section")}
             type="button"
           >
             <ChevronRightIcon size={10} strokeWidth={2.5} />
@@ -1763,7 +1764,7 @@ function NoteBadge({ hlId, text, style, onClick, onContextMenu }) {
   return (
     <>
       <span className="pdfNoteAnchor" style={style}>
-        <button ref={btnRef} type="button" className="pdfNoteBadge" data-hl-id={hlId} aria-label="Show highlight note"
+        <button ref={btnRef} type="button" className="pdfNoteBadge" data-hl-id={hlId} aria-label={t("Show highlight note")}
           onPointerDown={(e) => { touchRef.current = e.pointerType !== "mouse"; }}
           onMouseEnter={show} onMouseLeave={hide}
           onClick={(e) => {
@@ -2148,7 +2149,7 @@ const PdfPage = React.memo(function PdfPage({ citation, pageNumber, pdfDoc, scal
         <div
           key={`lnk-${i}`}
           className="pdfLinkBox"
-          title={l.url || "Jump to reference"}
+          title={l.url || t("Jump to reference")}
           style={{
             left: l.left * scale,
             top: l.top * scale,
@@ -2211,7 +2212,7 @@ const PdfPage = React.memo(function PdfPage({ citation, pageNumber, pdfDoc, scal
             ...(isLink ? (isArea
               ? { border: "2px solid rgba(70, 130, 255, 0.9)" }
               : { borderBottom: "2px solid rgba(70, 130, 255, 0.9)", borderRadius: 1 }) : {}),
-          }} title={isLink ? (h.linkTarget.pageId ? "Open linked paper" : h.linkTarget.url) : (h.comment?.text || "")}
+          }} title={isLink ? (h.linkTarget.pageId ? t("Open linked paper") : h.linkTarget.url) : (h.comment?.text || "")}
             onClick={function (e) {
               e.stopPropagation();
               if (isLink) onLinkHighlight?.(h);
@@ -2273,7 +2274,7 @@ function PlainTip({ onConfirm, onLink }) {
             style={{ background: c }}
             onMouseDown={(e) => { e.preventDefault(); e.stopPropagation(); onConfirm("", c); }}
             type="button"
-            title="Highlight in this color"
+            title={t("Highlight in this color")}
           />
         ))}
         {onLink ? (
@@ -2281,7 +2282,7 @@ function PlainTip({ onConfirm, onLink }) {
             className="colorBtn linkTipBtn"
             onMouseDown={(e) => { e.preventDefault(); e.stopPropagation(); onLink(); }}
             type="button"
-            title="Link this reference to a paper (DOI / arXiv / existing PDF)"
+            title={t("Link this reference to a paper (DOI / arXiv / existing PDF)")}
           >
             <LinkIcon size={13} />
           </button>

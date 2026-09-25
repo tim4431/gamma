@@ -21,12 +21,18 @@
 // The active locale is a tiny external store: main.jsx renders the app
 // under `key={locale}`, so changing the language remounts it with every
 // string re-read — no component needs to subscribe.
-import { createElement, Fragment, useSyncExternalStore } from "react";
+// A default import: the module also loads under plain node (the tests import
+// modules that translate their tables), where React is CommonJS.
+import React from "react";
 import { TAGS, resolveLocale } from "./locales.js";
 
 export { LANGUAGES, LOCALES, resolveLocale } from "./locales.js";
 
-const catalogs = import.meta.glob("./locales/*.json", { import: "default" });
+// Vite turns the glob call into lazy imports (the property itself never
+// exists at runtime, so it cannot be tested for); under plain node the call
+// throws and the catalogs stay empty.
+let catalogs = {};
+try { catalogs = import.meta.glob("./locales/*.json", { import: "default" }); } catch { /* node */ }
 
 let locale = "en";
 let catalog = {};
@@ -45,7 +51,7 @@ export function setLocale(code, loaded) {
   if (code === locale) return;
   locale = code;
   catalog = loaded || {};
-  document.documentElement.lang = TAGS[code] || code;
+  if (typeof document !== "undefined") document.documentElement.lang = TAGS[code] || code;
   for (const fn of listeners) fn();
 }
 
@@ -59,7 +65,7 @@ export async function applyLanguage(pref) {
 export const getLocale = () => locale;
 export const localeTag = () => TAGS[locale] || locale;
 const subscribe = (fn) => { listeners.add(fn); return () => listeners.delete(fn); };
-export const useLocale = () => useSyncExternalStore(subscribe, getLocale);
+export const useLocale = () => React.useSyncExternalStore(subscribe, getLocale);
 
 // Fills `{name}` placeholders. With an element among the values the result
 // is an array of strings and elements (React renders it as children).
@@ -72,7 +78,7 @@ function fill(text, args) {
     if (i % 2 === 0) return part;
     const value = args[part];
     if (value === undefined) return `{${part}}`;
-    if (value !== null && typeof value === "object") { elements = true; return createElement(Fragment, { key: i }, value); }
+    if (value !== null && typeof value === "object") { elements = true; return React.createElement(React.Fragment, { key: i }, value); }
     return String(value);
   });
   return elements ? out.filter((part) => part !== "") : out.join("");

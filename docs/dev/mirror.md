@@ -366,7 +366,9 @@ mirror's own answer apart.
     `POST /api/pages/{id}/publish {audience, role}`, shown at once and put
     back when the server refuses.
   - A viewer of the workspace sees the state and the link but no buttons.
-- **The header's sync pill** shows for a publication as for a clone. Its
+- **The header's sync pill** shows for a publication only on a published
+  page (a clone syncs the whole workspace, so its pill is on every page; a
+  publication syncs the pages in its filter, so its pill is on those). Its
   tooltip and name line say *Published to Gamma Cloud* with the count of
   pages and the host; its gear keeps *Automatic sync* and *Sync after an
   edit* and hides *Direction*, the forces, *Detach* and *Remove origin*,

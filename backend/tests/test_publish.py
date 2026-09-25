@@ -337,6 +337,8 @@ def test_publish_end_to_end(publishing, monkeypatch):
     r = local.delete(f"/api/pages/{page['id']}/publish")
     assert r.status_code == 200, r.text
     assert r.json()["published"] is False and r.json()["mirror"]["page_filter"] == []
+    # nothing published: the workspace no longer reads as publishing (no header pill)
+    assert next(w for w in local.get("/api/workspaces/mine").json()["workspaces"] if w["id"] == local_ws)["publishing"] is False
     assert anonymous().get(f"/api/share/{token}").status_code == 404
     assert page["id"] not in page_ids(host)
     assert texts(local, page["id"]) == {"pb_n1": "my note, edited there"}

@@ -15,6 +15,7 @@ import { BackupTasks } from "./BackupTasks";
 import { ActionMenu } from "../shared/ui/Menus";
 import { PaneHead, Section, Empty } from "./SettingsKit";
 import { DatabaseIcon, DownloadIcon, HardDriveIcon, ImportIcon, PlusIcon, Trash2Icon } from "../shared/ui/Icons";
+import { T, t } from "../shared/i18n/i18n.js";
 
 // The one date format of this pane: "Sep 23, 3:00 AM UTC" — the time zone
 // matters because tasks are scheduled in UTC. `fallback` when there is no
@@ -47,16 +48,16 @@ export function WorkspaceBackups({ value }) {
 
   async function backUp(w, uploads) {
     setBusy(w.id);
-    setStatus(`Backing up ${w.name}…`);
+    setStatus(t("Backing up {name}…", { name: w.name }));
     try {
       const b = await apiJson(`${API}/workspaces/${encodeURIComponent(w.id)}/backups`, {
         method: "POST", headers: { "Content-Type": "application/json" },
         body: JSON.stringify({ label: uploads ? "full" : "db", uploads }),
       });
-      setStatus(`Backed up ${w.name} (${fmtBytes(b.size_bytes)}).`);
+      setStatus(t("Backed up {name} ({size_bytes}).", { name: w.name, size_bytes: fmtBytes(b.size_bytes) }));
       await loadList(w.id);
     } catch (e) {
-      setStatus(`Backup of ${w.name} failed: ${e.message}`);
+      setStatus(t("Backup of {name} failed: {message}", { name: w.name, message: e.message }));
     } finally {
       setBusy(null);
     }
@@ -68,7 +69,7 @@ export function WorkspaceBackups({ value }) {
     setBusy("all");
     let done = 0;
     for (const w of targets) {
-      setStatus(`Backing up ${w.name} (${done + 1} of ${targets.length})…`);
+      setStatus(t("Backing up {name} ({done} of {targets})…", { name: w.name, done: done + 1, targets: targets.length }));
       try {
         await apiJson(`${API}/workspaces/${encodeURIComponent(w.id)}/backups`, {
           method: "POST", headers: { "Content-Type": "application/json" },
@@ -76,7 +77,7 @@ export function WorkspaceBackups({ value }) {
         });
         done += 1;
       } catch (e) {
-        setStatus(`Backup of ${w.name} failed: ${e.message}`);
+        setStatus(t("Backup of {name} failed: {message}", { name: w.name, message: e.message }));
       }
       await loadList(w.id);
     }
@@ -122,15 +123,15 @@ export function WorkspaceBackups({ value }) {
 
   function remove(w, b) {
     confirm({
-      title: "Delete backup",
-      message: `Delete the snapshot of "${w.name}" from ${when(b)} (${fmtBytes(b.size_bytes)})? This can't be undone.`,
+      title: T("Delete backup"),
+      message: t("Delete the snapshot of \"{name}\" from {b} ({size_bytes})? This can't be undone.", { name: w.name, b: when(b), size_bytes: fmtBytes(b.size_bytes) }),
       confirmLabel: "Delete", danger: true,
       onConfirm: async () => {
         try {
           await apiJson(`${API}/workspaces/${encodeURIComponent(w.id)}/backups/${encodeURIComponent(b.name)}`, { method: "DELETE" });
-          setStatus("Backup deleted.");
+          setStatus(t("Backup deleted."));
           loadList(w.id);
-        } catch (e) { setStatus(`Delete failed: ${e.message}`); }
+        } catch (e) { setStatus(t("Delete failed: {message}", { message: e.message })); }
       },
     });
   }
@@ -154,17 +155,17 @@ export function WorkspaceBackups({ value }) {
         )}
         action={owner ? (
           <ActionMenu
-            label="Back up now" icon={PlusIcon} disabled={busy != null || full}
+            label={t("Back up now")} icon={PlusIcon} disabled={busy != null || full}
             items={[
-              { icon: HardDriveIcon, label: "Everything", title: "Databases plus every uploaded PDF and image — a complete copy",
+              { icon: HardDriveIcon, label: T("Everything"), title: T("Databases plus every uploaded PDF and image — a complete copy"),
                 onClick: () => backUp(w, true) },
-              { icon: DatabaseIcon, label: "Databases only", title: "Notes, chats and indexes — small and quick; uploaded PDFs are not copied",
+              { icon: DatabaseIcon, label: T("Databases only"), title: T("Notes, chats and indexes — small and quick; uploaded PDFs are not copied"),
                 onClick: () => backUp(w, false) },
             ]}
           />
         ) : null}
       >
-        {!list ? <Empty icon={DatabaseIcon}>Loading…</Empty> : null}
+        {!list ? <Empty icon={DatabaseIcon}>{t("Loading…")}</Empty> : null}
         {list?.error ? <div className="settingsPaneHint aiKeysError">{list.error}</div> : null}
         {list && !list.error && !list.backups.length ? (
           <div className="settingsPaneHint">{owner ? "No snapshots yet." : "No snapshots yet — only an owner takes them."}</div>
@@ -184,46 +185,46 @@ export function WorkspaceBackups({ value }) {
               </span>
             </span>
             <span className="aiProvActions">
-              <button className="uiBtn sm iconSq" title="Download as a zip" aria-label="Download" onClick={() => download(w, b)}>
+              <button className="uiBtn sm iconSq" title={t("Download as a zip")} aria-label={t("Download")} onClick={() => download(w, b)}>
                 <DownloadIcon size={13} />
               </button>
               {w.role !== "viewer" ? (
                 <ActionMenu
-                  label="Restore" icon={ImportIcon}
+                  label={t("Restore")} icon={ImportIcon}
                   items={[
-                    ...(owner ? [{ icon: ImportIcon, label: "Replace…", title: "Put the workspace back exactly as it was in this snapshot", onClick: () => restore(w, b, "replace") }] : []),
-                    { icon: PlusIcon, label: "Merge…", title: "Add what the snapshot has and the workspace lacks", onClick: () => restore(w, b, "merge") },
+                    ...(owner ? [{ icon: ImportIcon, label: T("Replace…"), title: T("Put the workspace back exactly as it was in this snapshot"), onClick: () => restore(w, b, "replace") }] : []),
+                    { icon: PlusIcon, label: T("Merge…"), title: T("Add what the snapshot has and the workspace lacks"), onClick: () => restore(w, b, "merge") },
                   ]}
                 />
               ) : null}
               {owner ? (
-                <button className="uiBtn sm iconSq" title="Delete this snapshot" aria-label="Delete" onClick={() => remove(w, b)}>
+                <button className="uiBtn sm iconSq" title={t("Delete this snapshot")} aria-label={t("Delete")} onClick={() => remove(w, b)}>
                   <Trash2Icon size={13} />
                 </button>
               ) : null}
             </span>
           </div>
         ))}
-        {full ? <div className="settingsPaneHint">This workspace holds its maximum of {list.max} manual snapshots — delete one to take another. Automatic backups have their own retention.</div> : null}
+        {full ? <div className="settingsPaneHint">{t("This workspace holds its maximum of {max} manual snapshots — delete one to take another. Automatic backups have their own retention.", { max: list.max })}</div> : null}
       </Section>
     );
   }
 
   return (
     <>
-      <PaneHead icon={DatabaseIcon} title="Backups">Server-kept snapshots and the tasks that take them.</PaneHead>
-      {!mine && !error ? <Empty icon={DatabaseIcon}>Loading…</Empty> : null}
-      {error ? <Empty icon={DatabaseIcon}>Backups unavailable — {error}</Empty> : null}
+      <PaneHead icon={DatabaseIcon} title={t("Backups")}>{t("Server-kept snapshots and the tasks that take them.")}</PaneHead>
+      {!mine && !error ? <Empty icon={DatabaseIcon}>{t("Loading…")}</Empty> : null}
+      {error ? <Empty icon={DatabaseIcon}>{t("Backups unavailable — {error}", { error: error })}</Empty> : null}
       {mine ? (
         <>
           <BackupTasks workspaces={mine} confirm={confirm} onRefresh={loadList} />
-          <Section title="Saved snapshots" />
+          <Section title={t("Saved snapshots")} />
           <div className="reportModalBtns settingsAlignStart">
             <ActionMenu
               label={`Back up all ${owned.length} workspace${owned.length === 1 ? "" : "s"}`} icon={PlusIcon} disabled={busy != null || !owned.length}
               items={[
-                { icon: HardDriveIcon, label: "Everything", title: "One complete snapshot per workspace you own", onClick: () => backUpAll(true) },
-                { icon: DatabaseIcon, label: "Databases only", title: "One small snapshot per workspace you own — no uploaded PDFs", onClick: () => backUpAll(false) },
+                { icon: HardDriveIcon, label: T("Everything"), title: T("One complete snapshot per workspace you own"), onClick: () => backUpAll(true) },
+                { icon: DatabaseIcon, label: T("Databases only"), title: T("One small snapshot per workspace you own — no uploaded PDFs"), onClick: () => backUpAll(false) },
               ]}
             />
           </div>
@@ -253,11 +254,11 @@ export function ServerBackups({ setStatus, confirm }) {
         method: "POST", headers: { "Content-Type": "application/json" },
         body: JSON.stringify({ label: uploads ? "full" : "db", uploads }),
       });
-      setStatus(`Backup ${b.name} created (${fmtBytes(b.size_bytes)}).`);
+      setStatus(t("Backup {name} created ({size_bytes}).", { name: b.name, size_bytes: fmtBytes(b.size_bytes) }));
       refresh();
     } catch (e) {
       setError(e.message);
-      setStatus(`Backup failed: ${e.message}`);
+      setStatus(t("Backup failed: {message}", { message: e.message }));
     } finally {
       setBusy(false);
     }
@@ -275,14 +276,14 @@ export function ServerBackups({ setStatus, confirm }) {
 
   function remove(b) {
     confirm({
-      title: "Delete backup",
-      message: `Delete the snapshot ${b.name} (${fmtBytes(b.size_bytes)})? This can't be undone.`,
+      title: T("Delete backup"),
+      message: t("Delete the snapshot {name} ({size_bytes})? This can't be undone.", { name: b.name, size_bytes: fmtBytes(b.size_bytes) }),
       confirmLabel: "Delete",
       danger: true,
       onConfirm: async () => {
         try {
           await apiJson(`${API}/admin/backups/${encodeURIComponent(b.name)}`, { method: "DELETE" });
-          setStatus(`Deleted ${b.name}.`);
+          setStatus(t("Deleted {name}.", { name: b.name }));
           refresh();
         } catch (e) { setError(e.message); }
       },
@@ -293,21 +294,21 @@ export function ServerBackups({ setStatus, confirm }) {
 
   return (
     <Section
-      title="Server backups"
+      title={t("Server backups")}
       action={(
         <ActionMenu
-          label="Back up now" icon={PlusIcon} disabled={busy}
+          label={t("Back up now")} icon={PlusIcon} disabled={busy}
           items={[
-            { icon: DatabaseIcon, label: "Databases only", title: "Every account's and workspace's database — small and quick; uploaded PDFs are not copied",
+            { icon: DatabaseIcon, label: T("Databases only"), title: T("Every account's and workspace's database — small and quick; uploaded PDFs are not copied"),
               onClick: () => create(false) },
-            { icon: HardDriveIcon, label: "Everything", title: "Databases plus every uploaded PDF and image — a complete copy of the data directory",
+            { icon: HardDriveIcon, label: T("Everything"), title: T("Databases plus every uploaded PDF and image — a complete copy of the data directory"),
               onClick: () => create(true) },
           ]}
         />
       )}
     >
-      {rows === null && !error ? <Empty icon={DatabaseIcon}>Loading…</Empty> : null}
-      {rows && !rows.length ? <Empty icon={DatabaseIcon}>No snapshots yet. The server also takes one before every data upgrade.</Empty> : null}
+      {rows === null && !error ? <Empty icon={DatabaseIcon}>{t("Loading…")}</Empty> : null}
+      {rows && !rows.length ? <Empty icon={DatabaseIcon}>{t("No snapshots yet. The server also takes one before every data upgrade.")}</Empty> : null}
       {(rows || []).map((b) => (
         <div key={b.name} className="aiProvRow">
           <span className={`aiProvAvatar ${b.uploads ? "active" : ""}`}>
@@ -325,10 +326,10 @@ export function ServerBackups({ setStatus, confirm }) {
             </span>
           </span>
           <span className="aiProvActions">
-            <button className="uiBtn sm iconSq" title="Download as a zip" aria-label="Download" onClick={() => download(b)}>
+            <button className="uiBtn sm iconSq" title={t("Download as a zip")} aria-label={t("Download")} onClick={() => download(b)}>
               <DownloadIcon size={13} />
             </button>
-            <button className="uiBtn sm iconSq" title="Delete this snapshot" aria-label="Delete" disabled={busy} onClick={() => remove(b)}>
+            <button className="uiBtn sm iconSq" title={t("Delete this snapshot")} aria-label={t("Delete")} disabled={busy} onClick={() => remove(b)}>
               <Trash2Icon size={13} />
             </button>
           </span>

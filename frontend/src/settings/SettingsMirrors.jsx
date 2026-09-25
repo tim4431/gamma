@@ -24,6 +24,7 @@ import {
 } from "../shared/ui/Icons";
 import { clock, hostOf, isPublication, isPullOnly, mirrorState, n, roundSummary } from "../collaboration/MirrorPopover";
 import { ConflictCard, useConflicts } from "../collaboration/MergeResolver";
+import { T, t } from "../shared/i18n/i18n.js";
 
 // The account's mirrors (null while loading). `enabled` false (a guest, or
 // signed out) reads nothing: the endpoint would refuse.
@@ -55,8 +56,8 @@ export function mirrorStatusLine(m) {
 }
 
 const DIRECTION_TILES = [
-  { value: "two-way", label: "Two-way", hint: "your edits go to the remote too", Icon: ArrowUpDownIcon },
-  { value: "pull", label: "Receive only", hint: "the remote's edits arrive here", Icon: ArrowDownIcon },
+  { value: "two-way", label: T("Two-way"), hint: T("your edits go to the remote too"), Icon: ArrowUpDownIcon },
+  { value: "pull", label: T("Receive only"), hint: T("the remote's edits arrive here"), Icon: ArrowDownIcon },
 ];
 
 export function MirrorDialog({ busy, error, onSubmit, onClose, candidates = [] }) {
@@ -68,35 +69,35 @@ export function MirrorDialog({ busy, error, onSubmit, onClose, candidates = [] }
   const [adopt, setAdopt] = React.useState("theirs");
   const ok = url.trim() && token.trim();
   return (
-    <SubDialog title="Clone a remote workspace" onClose={onClose} draft={url || token}>
+    <SubDialog title={t("Clone a remote workspace")} onClose={onClose} draft={url || token}>
       <div className="settingsForm">
-      <Field label="Origin server" hint="the other Gamma, e.g. https://nas.local:8000">
+      <Field label={t("Origin server")} hint={t("the other Gamma, e.g. https://nas.local:8000")}>
         <input className="aiKeyInput" value={url} autoFocus placeholder="https://" onChange={(e) => setUrl(e.target.value)} />
       </Field>
-      <Field label="Token" hint="made on that server: Settings → Integrations → Manual setup, with the “Read and write” scope, for the workspace to clone">
-        <input className="aiKeyInput" type="password" value={token} placeholder="gamma_…" onChange={(e) => setToken(e.target.value)} />
+      <Field label={t("Token")} hint={t("made on that server: Settings → Integrations → Manual setup, with the “Read and write” scope, for the workspace to clone")}>
+        <input className="aiKeyInput" type="password" value={token} placeholder={t("gamma_…")} onChange={(e) => setToken(e.target.value)} />
       </Field>
       {candidates.length ? (
-        <Field label="Into" hint="a new workspace, or one of yours that already holds a copy (an imported backup, a clone whose origin was removed)">
+        <Field label={t("Into")} hint={t("a new workspace, or one of yours that already holds a copy (an imported backup, a clone whose origin was removed)")}>
           <MenuSelect block value={into} onChange={setInto}
-            options={[["", "A new workspace"], ...candidates.map((w) => [w.id, w.name])]} />
+            options={[["", t("A new workspace")], ...candidates.map((w) => [w.id, w.name])]} />
         </Field>
       ) : null}
       {into ? (
-        <Field label="If a page differs" hint="both versions are kept; the other waits under Conflicts">
-          <Segmented value={adopt} onChange={setAdopt} options={[["theirs", "Take remote's"], ["mine", "Keep local"]]} />
+        <Field label={t("If a page differs")} hint={t("both versions are kept; the other waits under Conflicts")}>
+          <Segmented value={adopt} onChange={setAdopt} options={[["theirs", t("Take remote's")], ["mine", t("Keep local")]]} />
         </Field>
       ) : (
-        <Field label="Name here" hint="optional — defaults to the origin workspace's name">
+        <Field label={t("Name here")} hint={t("optional — defaults to the origin workspace's name")}>
           <input className="aiKeyInput" value={name} onChange={(e) => setName(e.target.value)} />
         </Field>
       )}
-      <Field label="Direction">
-        <IconChoices label="Direction" value={mode} onChange={setMode} options={DIRECTION_TILES} />
+      <Field label={t("Direction")}>
+        <IconChoices label={t("Direction")} value={mode} onChange={setMode} options={DIRECTION_TILES} />
       </Field>
       {error ? <div className="settingsPaneHint aiKeysError">{error}</div> : null}
       <div className="reportModalBtns">
-        <button className="uiBtn" onClick={onClose} disabled={busy}>Cancel</button>
+        <button className="uiBtn" onClick={onClose} disabled={busy}>{t("Cancel")}</button>
         <button className="uiBtn primary" disabled={!ok || busy}
           onClick={() => onSubmit({ remote_url: url.trim(), token: token.trim(), name: name.trim(), mode, workspace_id: into, adopt })}>
           {busy ? "Connecting…" : "Clone"}
@@ -115,10 +116,10 @@ export function MirrorConflicts({ mirror, onClose, setStatus, closeSettings }) {
     window.dispatchEvent(new CustomEvent("gamma:jump", { detail: { page: c.page_id, block: c.block_id } }));
   }
   return (
-    <Section title={`Conflicts · ${mirror.name}`} action={<button className="uiBtn sm" onClick={onClose}>Back</button>}>
-      {items === null ? <Empty icon={HardDriveIcon}>Loading…</Empty>
+    <Section title={t("Conflicts · {name}", { name: mirror.name })} action={<button className="uiBtn sm" onClick={onClose}>{t("Back")}</button>}>
+      {items === null ? <Empty icon={HardDriveIcon}>{t("Loading…")}</Empty>
         : items.length ? <div className="mirrorCards">{items.map((c) => <ConflictCard key={c.id} conflict={c} busy={busy} showPage onResolve={resolve} onOpen={open} />)}</div>
-        : <Empty icon={CheckIcon}>No conflicts — every change merged cleanly.</Empty>}
+        : <Empty icon={CheckIcon}>{t("No conflicts — every change merged cleanly.")}</Empty>}
     </Section>
   );
 }
@@ -189,8 +190,8 @@ export function MirrorsSection({ mirrors, refresh, workspaces, currentId, switch
   }
   function forget(m) {
     confirm({
-      title: "Remove origin",
-      message: `“${nameOf(m)}” stays as an ordinary workspace of yours; it never pulls from or pushes to ${m.remote_name} again.`,
+      title: T("Remove origin"),
+      message: t("“{name}” stays as an ordinary workspace of yours; it never pulls from or pushes to {remote} again.", { name: nameOf(m), remote: m.remote_name }),
       confirmLabel: "Remove origin", danger: true,
       onConfirm: async () => {
         if (m.workspace_id === currentId) window.dispatchEvent(new CustomEvent("gamma:mirror-gone"));
@@ -204,8 +205,8 @@ export function MirrorsSection({ mirrors, refresh, workspaces, currentId, switch
   function stopPublishing(m) {
     const pages = m.page_filter || [];
     confirm({
-      title: "Stop publishing all",
-      message: `The ${n(pages.length, "published page")} of “${nameOf(m)}” leave Gamma Cloud: their cloud links stop working and the copies there are deleted. The pages here stay.`,
+      title: T("Stop publishing all"),
+      message: t("The {pages} of “{name}” leave Gamma Cloud: their cloud links stop working and the copies there are deleted. The pages here stay.", { pages: n(pages.length, "published page"), name: nameOf(m) }),
       confirmLabel: "Stop publishing", danger: true,
       onConfirm: async () => {
         setBusy(true);
@@ -236,16 +237,16 @@ export function MirrorsSection({ mirrors, refresh, workspaces, currentId, switch
     const pullOnly = isPullOnly(m);
     const st = mirrorState(m);
     const more = detached ? [
-      { icon: LinkIcon, label: "Reattach", title: "Follow origin again; what both sides did meanwhile merges",
+      { icon: LinkIcon, label: T("Reattach"), title: T("Follow origin again; what both sides did meanwhile merges"),
         onClick: () => call(m, "/relink", json({}), "Reattached — syncing in the background.") },
     ] : [
-      { icon: CloudDownloadIcon, label: "Force pull", title: "Make this clone identical to origin", onClick: () => force(m, "pull") },
-      { icon: UploadIcon, label: "Force push", title: pullOnly ? "A receive-only clone cannot force push" : "Make the remote identical to this clone",
+      { icon: CloudDownloadIcon, label: T("Force pull"), title: T("Make this clone identical to origin"), onClick: () => force(m, "pull") },
+      { icon: UploadIcon, label: T("Force push"), title: pullOnly ? "A receive-only clone cannot force push" : "Make the remote identical to this clone",
         disabled: pullOnly, onClick: () => force(m, "push") },
-      { icon: UnlinkIcon, label: "Detach", title: "Stop pulling and pushing for now; origin is kept, so reattaching merges what both sides did meanwhile",
+      { icon: UnlinkIcon, label: T("Detach"), title: T("Stop pulling and pushing for now; origin is kept, so reattaching merges what both sides did meanwhile"),
         onClick: () => call(m, "/detach", { method: "POST" }, "Detached — reattach whenever you like.") },
     ];
-    more.push({ icon: TrashIcon, label: "Remove origin", danger: true, title: "Remove origin for good; the workspace stays as an ordinary one", onClick: () => forget(m) });
+    more.push({ icon: TrashIcon, label: T("Remove origin"), danger: true, title: T("Remove origin for good; the workspace stays as an ordinary one"), onClick: () => forget(m) });
     return (
       <div key={m.workspace_id} className="aiProvRow">
         <span className={`aiProvAvatar mirrorAvatar ${st.tone} ${current ? "active" : ""}`} title={st.title}>
@@ -255,10 +256,10 @@ export function MirrorsSection({ mirrors, refresh, workspaces, currentId, switch
           <span className="aiProvName">
             {nameOf(m)}
             {current ? <span className="uiTag">open</span> : null}
-            {pullOnly ? <span className="uiTag" title="The remote's changes arrive here; yours stay here until you switch to two-way">receive only</span> : null}
+            {pullOnly ? <span className="uiTag" title={t("The remote's changes arrive here; yours stay here until you switch to two-way")}>{t("receive only")}</span> : null}
             {detached ? <span className="uiTag">detached</span> : null}
             {!detached && s.last_error ? <span className="uiTag warn">problem</span> : null}
-            {!detached && !s.last_error && m.pending_local ? <span className="uiTag pending" title="Local edits the next round pushes">unpushed edits</span> : null}
+            {!detached && !s.last_error && m.pending_local ? <span className="uiTag pending" title={t("Local edits the next round pushes")}>{t("unpushed edits")}</span> : null}
             {m.conflicts_open ? <span className="uiTag warn">{m.conflicts_open} conflict{m.conflicts_open === 1 ? "" : "s"}</span> : null}
           </span>
           <span className="aiProvDesc" title={m.remote_url}>
@@ -267,23 +268,23 @@ export function MirrorsSection({ mirrors, refresh, workspaces, currentId, switch
           <span className="aiProvDesc">{mirrorStatusLine(m)}</span>
         </span>
         <span className="aiProvActions">
-          {!current ? <button className="uiBtn sm" onClick={() => { closeSettings?.(); switchWorkspace(m.workspace_id); }}>Open</button> : null}
+          {!current ? <button className="uiBtn sm" onClick={() => { closeSettings?.(); switchWorkspace(m.workspace_id); }}>{t("Open")}</button> : null}
           {detached ? (
-            <button className="uiBtn sm primary" disabled={busy} title="Follow origin again; what both sides did meanwhile merges"
+            <button className="uiBtn sm primary" disabled={busy} title={t("Follow origin again; what both sides did meanwhile merges")}
               onClick={() => call(m, "/relink", json({}), "Reattached — syncing in the background.")}>
               <LinkIcon size={13} /> Reattach
             </button>
           ) : (
             <button className="uiBtn sm" disabled={busy || s.running} onClick={() => syncNow(m)}
-              title={pullOnly ? "Receive the remote's changes now" : "Sync now"}>
+              title={pullOnly ? t("Receive the remote's changes now") : t("Sync now")}>
               <RefreshIcon size={13} /> Sync
             </button>
           )}
           <button className={`uiBtn sm ${m.conflicts_open ? "primary" : ""}`} disabled={busy} onClick={() => setConflictsOf({ ...m, name: nameOf(m) })}
-            title="Blocks both sides changed: the sync merged them or took one side; they wait here for you to resolve">
+            title={t("Blocks both sides changed: the sync merged them or took one side; they wait here for you to resolve")}>
             <AlertCircleIcon size={13} /> Conflicts{m.conflicts_open ? ` (${m.conflicts_open})` : ""}
           </button>
-          <ActionMenu label="More" icon={MoreIcon} iconOnly disabled={busy} items={more} />
+          <ActionMenu label={t("More")} icon={MoreIcon} iconOnly disabled={busy} items={more} />
         </span>
       </div>
     );
@@ -297,10 +298,10 @@ export function MirrorsSection({ mirrors, refresh, workspaces, currentId, switch
     const st = mirrorState(m);
     const pages = m.page_filter || [];
     const more = [
-      { icon: RefreshIcon, label: "Sync now", disabled: s.running || m.detached || m.mode === "off",
-        title: "Send local edits and bring back edits made through the cloud links", onClick: () => syncNow(m) },
-      { icon: CloudOffIcon, label: "Stop publishing all", danger: true, disabled: !pages.length,
-        title: "Every page leaves Gamma Cloud; the pages here stay", onClick: () => stopPublishing(m) },
+      { icon: RefreshIcon, label: T("Sync now"), disabled: s.running || m.detached || m.mode === "off",
+        title: T("Send local edits and bring back edits made through the cloud links"), onClick: () => syncNow(m) },
+      { icon: CloudOffIcon, label: T("Stop publishing all"), danger: true, disabled: !pages.length,
+        title: T("Every page leaves Gamma Cloud; the pages here stay"), onClick: () => stopPublishing(m) },
     ];
     return (
       <div key={m.workspace_id} className="aiProvRow" data-publication={m.workspace_id}>
@@ -312,7 +313,7 @@ export function MirrorsSection({ mirrors, refresh, workspaces, currentId, switch
             {nameOf(m)}
             {current ? <span className="uiTag">open</span> : null}
             {s.last_error ? <span className="uiTag warn">problem</span> : null}
-            {!s.last_error && m.pending_local ? <span className="uiTag pending" title="Local edits the next round sends">unsynced edits</span> : null}
+            {!s.last_error && m.pending_local ? <span className="uiTag pending" title={t("Local edits the next round sends")}>{t("unsynced edits")}</span> : null}
             {m.conflicts_open ? <span className="uiTag warn">{n(m.conflicts_open, "conflict")}</span> : null}
           </span>
           <span className="aiProvDesc" title={m.remote_url}>
@@ -323,37 +324,38 @@ export function MirrorsSection({ mirrors, refresh, workspaces, currentId, switch
         <span className="aiProvActions">
           {m.conflicts_open ? (
             <button className="uiBtn sm primary" disabled={busy} onClick={() => setConflictsOf({ ...m, name: nameOf(m) })}
-              title="Blocks edited both here and through a cloud link wait for you to resolve">
+              title={t("Blocks edited both here and through a cloud link wait for you to resolve")}>
               <AlertCircleIcon size={13} /> Conflicts ({m.conflicts_open})
             </button>
           ) : null}
-          <ActionMenu label="More" icon={MoreIcon} iconOnly disabled={busy} items={more} />
+          <ActionMenu label={t("More")} icon={MoreIcon} iconOnly disabled={busy} items={more} />
         </span>
       </div>
     );
   }
 
   const clones = (mirrors || []).filter((m) => !isPublication(m));
-  const publications = (mirrors || []).filter(isPublication);
+  // a publication with nothing published (its last page unpublished) is not shown
+  const publications = (mirrors || []).filter((m) => isPublication(m) && (m.page_filter || []).length);
 
   return (
     <>
       <Section
-        title="Clones"
+        title={t("Clones")}
         action={(
           <button className="uiBtn sm" disabled={busy} onClick={() => { setCreateError(""); setCreating(true); }}>
             <PlusIcon size={13} /> Clone a remote workspace
           </button>
         )}
       >
-        {mirrors === null ? <Empty icon={CloudDownloadIcon}>Loading…</Empty>
+        {mirrors === null ? <Empty icon={CloudDownloadIcon}>{t("Loading…")}</Empty>
           : clones.length ? clones.map(row)
           : <Empty icon={CloudDownloadIcon}>
-              <span>No clones yet.</span>
-              <span className="settingDesc">A clone follows a workspace on another Gamma server, pulling and pushing changes, and opens without a connection.</span>
+              <span>{t("No clones yet.")}</span>
+              <span className="settingDesc">{t("A clone follows a workspace on another Gamma server, pulling and pushing changes, and opens without a connection.")}</span>
             </Empty>}
       </Section>
-      {publications.length ? <Section title="Publishing">{publications.map(publicationRow)}</Section> : null}
+      {publications.length ? <Section title={t("Publishing")}>{publications.map(publicationRow)}</Section> : null}
       {creating ? (
         <MirrorDialog busy={busy} error={createError} onSubmit={submit} onClose={() => setCreating(false)}
           candidates={(workspaces || []).filter((w) => w.personal && !w.mirror_of && !(mirrors || []).some((m) => m.workspace_id === w.id))} />

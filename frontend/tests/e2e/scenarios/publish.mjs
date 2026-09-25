@@ -144,6 +144,12 @@ export async function publishScenarios(env) {
         assertEq(await page.locator(".mirrorPopover").getByText(hidden, { exact: false }).count(), 0, `no ${hidden} for a publication`);
       }
       await pill.click();
+      // the pill belongs to the published page: none on the home page, back on the page
+      await page.goto(new URL("/", pageUrl).href);
+      await page.getByRole("button", { name: "Account & settings", exact: true }).waitFor();
+      assertEq(await page.locator(".mirrorPill").count(), 0, "no sync pill away from the published page");
+      await page.goto(pageUrl);
+      await pill.waitFor();
       // Settings → Workspaces: under Publishing, not among the clones
       await page.getByRole("button", { name: "Account & settings", exact: true }).click();
       await page.getByRole("button", { name: "Settings…", exact: true }).click();
@@ -166,6 +172,7 @@ export async function publishScenarios(env) {
       assertEq((await fetch(`${host.base}/api/share/${token}`)).status, 404, "the cloud link no longer opens");
       assertEq((await user.api(`/api/pages/${paper.id}/publish`)).published, false, "not published");
       assert((await page.locator(".blockRow", { hasText: "a note for the cloud" }).count()) === 1, "the page stays here");
+      await until(() => page.locator(".mirrorPill").count().then((c) => c === 0), { what: "the sync pill goes with the last published page" });
       assertNoProblems(page);
     });
 
@@ -181,7 +188,7 @@ export async function publishScenarios(env) {
       await row.getByRole("button", { name: "More" }).click();
       await page.locator(".ctxMenu button", { hasText: "Stop publishing all" }).click();
       await page.getByRole("button", { name: "Stop publishing", exact: true }).click();
-      await until(() => row.textContent().then((t) => t.includes("0 published pages")), { timeout: 20000, what: "nothing published" });
+      await until(() => row.count().then((c) => c === 0), { timeout: 20000, what: "an empty publication leaves the list" });
       assertEq((await fetch(`${host.base}/api/share/${token}`)).status, 404, "the cloud link no longer opens");
       await page.keyboard.press("Escape");
       assertNoProblems(page);

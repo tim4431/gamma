@@ -17,6 +17,7 @@ import { guideEvents } from "../guide/events.js";
 import { CharSlider, approxPages } from "../settings/SettingsKit";
 import { AgentToolPicker, CHAT_KIND_ROWS } from "../settings/SettingsDialog";
 import { AlertCircleIcon, ArrowDownIcon, ArrowUpIcon, BookIcon, CheckIcon, ChevronDownIcon, ChevronUpIcon, CloudDownloadIcon, CopyIcon, EyeIcon, FileIcon, FolderIcon, GlobeIcon, HighlightIcon, HistoryIcon, InfoIcon, ListIcon, MicIcon, OutlineIcon, PaperclipIcon, PencilIcon, PlusIcon, QuoteIcon, SearchIcon, SettingsIcon, SlidersIcon, StopIcon, TextCursorIcon, TrashIcon, XIcon } from "../shared/ui/Icons";
+import { T, t } from "../shared/i18n/i18n.js";
 
 const JSON_HEADERS = { "Content-Type": "application/json" };
 
@@ -87,7 +88,7 @@ function ContextCoverage({ items }) {
     }
     if ((c.selection?.passages || []).some((p) => p.crop)) {
       out.push({
-        short: "Picture of the selection sent",
+        short: T("Picture of the selection sent"),
         long: "The selected text looked like a formula or table (or wasn't in the extracted text), so the model also got a picture of that region of the page.",
         refused: false,
       });
@@ -119,7 +120,7 @@ function UsageLine({ usage, className = "chatMsgUsage" }) {
   const cached = cachedPercent(usage);
   const live = !!usage.estimate;
   return (
-    <span className={className} title={live ? "Counting while the reply streams — the provider's own count replaces the estimate when it finishes" : usageDetail(usage)}>
+    <span className={className} title={live ? t("Counting while the reply streams — the provider's own count replaces the estimate when it finishes") : usageDetail(usage)}>
       {usage.input ? <span className="chatMsgUsagePart"><ArrowUpIcon size={9} />{fmtTokens(usage.input)}</span> : null}
       <span className="chatMsgUsagePart"><ArrowDownIcon size={9} />{live ? "~" : ""}{fmtTokens(usage.output)}</span>
       {cached && !live ? <span className="chatMsgUsagePart">{cached}% cached</span> : null}
@@ -149,7 +150,7 @@ function SelChip({ kind, icon, label, n, labelTitle, text, title, onRemove, remo
   return (
     <div className={`chatSelChip${kind ? ` ${kind}` : ""}`} title={title ?? text}>
       <span className="chatSelChipLabel" role="img" aria-label={label}
-        title={labelTitle ? `${label} — ${labelTitle}` : label}>
+        title={labelTitle ? t("{label} — {labelTitle}", { label: label, labelTitle: labelTitle }) : label}>
         <Glyph size={13} />{n ? <span className="chatSelChipNum">{n}</span> : null}
       </span>
       <span className="chatSelChipText">{text.slice(0, 140)}{text.length > 140 ? "…" : ""}</span>
@@ -353,7 +354,7 @@ export default function ChatDock({
           showLoaded(latest?.messages || data.messages || [], data.title);
         }
       })
-      .catch((err) => { if (!cancelled && !session.getSnapshot().replies.has(chatKey)) setLoadError(`Could not load chat: ${err.message}`); });
+      .catch((err) => { if (!cancelled && !session.getSnapshot().replies.has(chatKey)) setLoadError(t("Could not load chat: {message}", { message: err.message })); });
     return () => { cancelled = true; };
   }, [chatKey, docId, readOnly, session]);
 
@@ -374,7 +375,7 @@ export default function ChatDock({
     let cancelled = false;
     apiJson(`${API}/chat-history?bucket=${encodeURIComponent(chatKey)}`)
       .then((data) => { if (!cancelled) setHistory(data.sessions || []); })
-      .catch((err) => { if (!cancelled) { setHistory([]); setStatus(`Chat history: ${err.message}`); } });
+      .catch((err) => { if (!cancelled) { setHistory([]); setStatus(t("Chat history: {message}", { message: err.message })); } });
     return () => { cancelled = true; };
   }, [historyOpen, history, chatKey, readOnly]);
   const activeTitle = chatTitle || deriveTitle(chatMessages) || "Untitled";
@@ -392,7 +393,7 @@ export default function ChatDock({
       await session.flush(chatKey);
       await apiJson(`${API}/chat-history/archive`, { method: "POST", headers: JSON_HEADERS, body: JSON.stringify(payload) });
     } catch (err) {
-      setStatus(`Couldn't keep the conversation in history: ${err.message}`);
+      setStatus(t("Couldn't keep the conversation in history: {message}", { message: err.message }));
       return;
     }
     session.forget(chatKey);
@@ -420,7 +421,7 @@ export default function ChatDock({
       setOpenPopover(null);
       chatStickRef.current = true;
     } catch (err) {
-      setStatus(`Couldn't open the conversation: ${err.message}`);
+      setStatus(t("Couldn't open the conversation: {message}", { message: err.message }));
     }
   }
 
@@ -443,7 +444,7 @@ export default function ChatDock({
           { method: "PUT", headers: JSON_HEADERS, body: JSON.stringify({ title }) });
       }
     } catch (err) {
-      setStatus(`Couldn't rename the conversation: ${err.message}`);
+      setStatus(t("Couldn't rename the conversation: {message}", { message: err.message }));
     }
   }
 
@@ -453,13 +454,13 @@ export default function ChatDock({
       try {
         await apiJson(`${API}/chat-history/${entry.id}`, { method: "DELETE" });
       } catch (err) {
-        setStatus(`Couldn't delete the conversation: ${err.message}`);
+        setStatus(t("Couldn't delete the conversation: {message}", { message: err.message }));
         setHistory(null);
       }
     };
     askConfirm({
-      title: "Delete conversation",
-      message: `Delete “${entry.title || "Untitled"}” from this chat's history? This can't be undone.`,
+      title: T("Delete conversation"),
+      message: t("Delete “{title}” from this chat's history? This can't be undone.", { title: entry.title || t("Untitled") }),
       confirmLabel: "Delete", danger: true, onConfirm: run,
     });
   }
@@ -478,17 +479,17 @@ export default function ChatDock({
   function addChatFiles(files) {
     for (const f of files) {
       if (isPdfFile(f)) {
-        if (f.size > 15 * 1024 * 1024) { setStatus(`"${f.name}" is too large to attach (max 15 MB).`); continue; }
+        if (f.size > 15 * 1024 * 1024) { setStatus(t("\"{name}\" is too large to attach (max 15 MB).", { name: f.name })); continue; }
         const reader = new FileReader();
         reader.onload = () => setChatFiles((prev) => prev.length >= 4 ? prev : [...prev, { name: f.name || "file.pdf", data: reader.result }]);
         reader.readAsDataURL(f);
       } else if (f.type?.startsWith("image/")) {
-        if (f.size > 6 * 1024 * 1024) { setStatus("Image too large to attach (max 6 MB)."); continue; }
+        if (f.size > 6 * 1024 * 1024) { setStatus(t("Image too large to attach (max 6 MB).")); continue; }
         const reader = new FileReader();
         reader.onload = () => setChatImages((prev) => prev.length >= 4 ? prev : [...prev, reader.result]);
         reader.readAsDataURL(f);
       } else {
-        setStatus(`Can't attach "${f.name}" — only images and PDFs are supported.`);
+        setStatus(t("Can't attach \"{name}\" — only images and PDFs are supported.", { name: f.name }));
       }
     }
   }
@@ -619,7 +620,7 @@ export default function ChatDock({
     const sendKey = chatKey; // reply belongs to THIS conversation, even if the user navigates away
     const showReply = (aiMsg, final) => {
       const saved = session.update(sendKey, [...prevMessages, userMsg, aiMsg], final);
-      saved?.catch((err) => setStatus(`Couldn't save the conversation: ${err.message}`));
+      saved?.catch((err) => setStatus(t("Couldn't save the conversation: {message}", { message: err.message })));
     };
     chatStickRef.current = true; // sending always snaps back to the bottom
     const ctrl = new AbortController();
@@ -751,14 +752,14 @@ export default function ChatDock({
   async function startDictation() {
     if (dictation) return;
     if (!navigator.mediaDevices?.getUserMedia || !window.MediaRecorder) {
-      setStatus("Voice input needs HTTPS or localhost — the browser blocks the microphone on plain HTTP.");
+      setStatus(t("Voice input needs HTTPS or localhost — the browser blocks the microphone on plain HTTP."));
       return;
     }
     let stream;
     try {
       stream = await navigator.mediaDevices.getUserMedia({ audio: true });
     } catch {
-      setStatus("Microphone access was denied.");
+      setStatus(t("Microphone access was denied."));
       return;
     }
     // Chrome/Firefox record webm/opus; Safari only mp4 (m4a to OpenAI).
@@ -820,7 +821,7 @@ export default function ChatDock({
         setChatInput((prev) => (prev.trim() ? `${prev.replace(/\s+$/, "")} ${text}` : text));
       }
     } catch (e) {
-      setStatus(`Voice input: ${e.message}`);
+      setStatus(t("Voice input: {message}", { message: e.message }));
     } finally {
       setDictation("");
       recRef.current = null;
@@ -909,7 +910,7 @@ export default function ChatDock({
   const findBtn = (
     <button type="button" className={`ctlBtn ${chatFindOpen ? "modeActive" : ""}`}
       onClick={() => { setChatFindOpen((v) => !v); setChatFind(""); }}
-      title="Find in this conversation" aria-label="Find in this conversation">
+      title={t("Find in this conversation")} aria-label={t("Find in this conversation")}>
       <SearchIcon size={15} />
     </button>
   );
@@ -917,8 +918,8 @@ export default function ChatDock({
     <>
       {aiInfo && !aiInfo.enabled && openAiKeysEditor ? (
         <button className="uiBtn sm" onClick={openAiKeysEditor}
-          title="AI needs an API key — add a provider to enable chat">
-          Set up AI…
+          title={t("AI needs an API key — add a provider to enable chat")}>
+          {t("Set up AI…")}
         </button>
       ) : null}
       <div className="ctlBtnRow chatPanelHeaderBtns">
@@ -938,16 +939,16 @@ export default function ChatDock({
               <button type="button" data-guide="chat.settings" className={`ctlBtn ${settingsOpen ? "modeActive" : ""}`}
                 onClick={() => setOpenPopover((p) => (p === "chatsettings" ? null : "chatsettings"))}
                 title={`Chat settings — ${currentModel?.model || "model"}${chatEffort ? `, effort: ${chatEffort}` : ""}, context ${chatContextChars.toLocaleString()} chars${usageTitle}`}
-                aria-label="Chat settings" aria-expanded={settingsOpen}>
+                aria-label={t("Chat settings")} aria-expanded={settingsOpen}>
                 <SettingsIcon size={15} />
               </button>
               {settingsOpen ? (
                 <div className="popover chatSettingsPop">
-                  <div className="popoverHint">Global settings for all chats in this browser. Changes also appear in Settings.</div>
-                  <div className="popoverSection">Model</div>
+                  <div className="popoverHint">{t("Global settings for all chats in this browser. Changes also appear in Settings.")}</div>
+                  <div className="popoverSection">{t("Model")}</div>
                   <MenuSelect
                     block
-                    label="Switch model"
+                    label={t("Switch model")}
                     value={currentId}
                     onChange={setChatModel}
                     options={models.map((m) => [
@@ -955,10 +956,10 @@ export default function ChatDock({
                       multiProvider ? `${m.model} · ${m.provider_name || m.provider}` : m.model,
                     ])}
                   />
-                  <div className="popoverSection">Reasoning effort</div>
+                  <div className="popoverSection">{t("Reasoning effort")}</div>
                   <MenuSelect
                     block
-                    label="Reasoning effort — leave on 'default' unless the model supports it"
+                    label={t("Reasoning effort — leave on 'default' unless the model supports it")}
                     value={chatEffort}
                     onChange={setChatEffort}
                     options={[
@@ -966,16 +967,16 @@ export default function ChatDock({
                       ...(aiInfo.efforts || ["low", "medium", "high"]).map((ef) => [ef, ef]),
                     ]}
                   />
-                  <div className="popoverSection">Context per page · {approxPages(chatContextChars)}</div>
+                  <div className="popoverSection">{t("Context per page · {pages}", { pages: approxPages(chatContextChars) })}</div>
                   <CharSlider value={chatContextChars} onChange={setChatContextChars} />
                   <div className="popoverHint">
-                    Extracted PDF text sent with each message. The multi-page total and the agent's read window are in Settings / AI / Advanced AI settings.
+                    {t("Extracted PDF text sent with each message. The multi-page total and the agent's read window are in Settings / AI / Advanced AI settings.")}
                   </div>
-                  <div className="popoverSection">Tools</div>
-                  <label className="chatToolPermRow" title="Allow assistant tools in all chats">
+                  <div className="popoverSection">{t("Tools")}</div>
+                  <label className="chatToolPermRow" title={t("Allow assistant tools in all chats")}>
                     <input type="checkbox" checked={toolsEnabled} onChange={toggleTools} />
                     <SlidersIcon size={13} />
-                    <span>Allow tools in all chats</span>
+                    <span>{t("Allow tools in all chats")}</span>
                   </label>
                   <div className="chatToolPicker">
                     <AgentToolPicker kind={chatKind} perms={agentPerms} setPerms={setAgentPerms} disabled={!toolsEnabled} />
@@ -983,14 +984,14 @@ export default function ChatDock({
                   <div className="popoverHint">
                     Applies to all {chatKindLabel.toLowerCase()} conversations in this browser.
                   </div>
-                  <div className="popoverSection">Tokens · this conversation</div>
+                  <div className="popoverSection">{t("Tokens · this conversation")}</div>
                   {totalUsage ? (
                     <div className="chatUsageTotal" title={usageDetail(totalUsage)}>
                       <UsageLine usage={totalUsage} className="chatMsgUsage inline" />
                       <span className="popoverHint">{chatMessages.filter((m) => m.role === "ai" && m.usage).length} replies counted, as the provider reported them. Totals per day and model: Settings / AI / Token usage.</span>
                     </div>
                   ) : (
-                    <div className="popoverHint">No token counts yet — they appear under each reply once the provider reports them.</div>
+                    <div className="popoverHint">{t("No token counts yet — they appear under each reply once the provider reports them.")}</div>
                   )}
                 </div>
               ) : null}
@@ -1013,7 +1014,7 @@ export default function ChatDock({
           <button type="button" className={`ctlBtn ${historyOpen ? "modeActive" : ""}`}
             onClick={() => setOpenPopover((p) => (p === "chathistory" ? null : "chathistory"))}
             title={`Chat history — earlier conversations of ${folderChat ? "this folder" : "this page"}`}
-            aria-label="Chat history" aria-expanded={historyOpen}>
+            aria-label={t("Chat history")} aria-expanded={historyOpen}>
             <HistoryIcon size={15} />
           </button>
           {historyOpen ? (
@@ -1023,7 +1024,7 @@ export default function ChatDock({
                 className="searchInput"
                 value={historyQuery}
                 onChange={(e) => setHistoryQuery(e.target.value)}
-                placeholder="Search conversations…"
+                placeholder={t("Search conversations…")}
                 onKeyDown={(e) => { if (e.key === "Escape") { e.preventDefault(); setOpenPopover(null); } }}
               />
               <div className="chatHistList">
@@ -1033,7 +1034,7 @@ export default function ChatDock({
                       autoFocus
                       className="aiKeyInput"
                       value={renaming.text}
-                      placeholder="Conversation name"
+                      placeholder={t("Conversation name")}
                       onChange={(e) => setRenaming({ id: s.id, text: e.target.value })}
                       onKeyDown={(e) => {
                         if (e.key === "Enter") { e.preventDefault(); e.currentTarget.blur(); }
@@ -1045,18 +1046,18 @@ export default function ChatDock({
                 ) : (
                   <div key={s.id} className={`chatHistRow${s.active ? " active" : ""}`}
                     role="button" tabIndex={0}
-                    title={s.active ? "The conversation shown now" : `${s.preview || s.title}${s.count ? ` · ${s.count} messages` : ""}`}
+                    title={s.active ? t("The conversation shown now") : `${s.preview || s.title}${s.count ? ` · ${s.count} messages` : ""}`}
                     onClick={() => { if (!s.active) openHistory(s.id); }}
                     onKeyDown={(e) => { if (e.key === "Enter" && !s.active) openHistory(s.id); }}>
                     <span className="chatHistTitle">{s.title || "Untitled"}</span>
                     <span className="chatHistAge">{s.active ? "now" : relAge(s.updated_at)}</span>
                     <span className="ctlBtnRow chatHistActs" onClick={(e) => e.stopPropagation()}>
-                      <button type="button" className="ctlBtn" title="Rename" aria-label="Rename conversation"
+                      <button type="button" className="ctlBtn" title={t("Rename")} aria-label={t("Rename conversation")}
                         onClick={() => { renameCancelRef.current = false; setRenaming({ id: s.id, text: s.active ? chatTitle : s.title || "" }); }}>
                         <PencilIcon size={13} />
                       </button>
                       {!s.active ? (
-                        <button type="button" className="ctlBtn" title="Delete" aria-label="Delete conversation"
+                        <button type="button" className="ctlBtn" title={t("Delete")} aria-label={t("Delete conversation")}
                           onClick={() => deleteHistory(s)}>
                           <TrashIcon size={13} />
                         </button>
@@ -1064,16 +1065,16 @@ export default function ChatDock({
                     </span>
                   </div>
                 ))}
-                {history == null ? <div className="popoverHint">Loading…</div>
-                  : historyRows.length <= 1 && !historyQuery.trim() ? <div className="popoverHint">No earlier conversations — New chat keeps the current one here.</div>
-                  : !historyRows.length ? <div className="popoverHint">No conversation matches.</div>
+                {history == null ? <div className="popoverHint">{t("Loading…")}</div>
+                  : historyRows.length <= 1 && !historyQuery.trim() ? <div className="popoverHint">{t("No earlier conversations — New chat keeps the current one here.")}</div>
+                  : !historyRows.length ? <div className="popoverHint">{t("No conversation matches.")}</div>
                   : null}
               </div>
             </div>
           ) : null}
         </span>
         <button type="button" className="ctlBtn" onClick={newChat} disabled={busyHere}
-          title="New chat — keeps this conversation in history and starts a fresh one" aria-label="New chat">
+          title={t("New chat — keeps this conversation in history and starts a fresh one")} aria-label={t("New chat")}>
           <PlusIcon size={16} />
         </button>
       </div>
@@ -1081,9 +1082,9 @@ export default function ChatDock({
   );
 
   return (
-    <DockWindow title="Chat" onGrip={onGrip} onGripDoubleClick={onGripDoubleClick}
+    <DockWindow title={t("Chat")} onGrip={onGrip} onGripDoubleClick={onGripDoubleClick}
       collapsed={collapsed} onClose={onClose} headerContent={readOnly ? <>
-        <span className="uiTag">Read only</span>
+        <span className="uiTag">{t("Read only")}</span>
         {findBtn}
       </> : headerContent}>
     <div className="chatPanel chatWindow">
@@ -1098,9 +1099,9 @@ export default function ChatDock({
               : `connection failed — ${aiHealth.error || "provider unreachable"}`}
           </span>
           {openAiKeysEditor ? (
-            <button className="uiBtn sm" onClick={openAiKeysEditor}>Fix…</button>
+            <button className="uiBtn sm" onClick={openAiKeysEditor}>{t("Fix…")}</button>
           ) : null}
-          <button className="uiClose" onClick={dismissAiHealth} title="Dismiss" aria-label="Dismiss">×</button>
+          <button className="uiClose" onClick={dismissAiHealth} title={t("Dismiss")} aria-label={t("Dismiss")}>×</button>
         </div>
       ) : null}
       {chatFindOpen ? (
@@ -1110,20 +1111,20 @@ export default function ChatDock({
             className="searchInput"
             value={chatFind}
             onChange={(e) => setChatFind(e.target.value)}
-            placeholder="Find in chat…"
+            placeholder={t("Find in chat…")}
             onKeyDown={(e) => {
               if (e.key === "Enter") { e.preventDefault(); gotoChatFind(e.shiftKey ? chatFindIdx - 1 : chatFindIdx + 1); }
               else if (e.key === "Escape") { e.preventDefault(); setChatFindOpen(false); setChatFind(""); }
             }}
           />
           <span className="chatFindCount">{chatFind.trim() ? `${chatFindMatches.length ? chatFindIdx + 1 : 0}/${chatFindMatches.length}` : ""}</span>
-          <button className="searchToggle searchNavBtn" onClick={() => gotoChatFind(chatFindIdx - 1)} disabled={!chatFindMatches.length} title="Previous match">
+          <button className="searchToggle searchNavBtn" onClick={() => gotoChatFind(chatFindIdx - 1)} disabled={!chatFindMatches.length} title={t("Previous match")}>
             <ChevronUpIcon size={14} />
           </button>
-          <button className="searchToggle searchNavBtn" onClick={() => gotoChatFind(chatFindIdx + 1)} disabled={!chatFindMatches.length} title="Next match">
+          <button className="searchToggle searchNavBtn" onClick={() => gotoChatFind(chatFindIdx + 1)} disabled={!chatFindMatches.length} title={t("Next match")}>
             <ChevronDownIcon size={14} />
           </button>
-          <button className="uiClose" onClick={() => { setChatFindOpen(false); setChatFind(""); }} title="Close find" aria-label="Close find">×</button>
+          <button className="uiClose" onClick={() => { setChatFindOpen(false); setChatFind(""); }} title={t("Close find")} aria-label={t("Close find")}>×</button>
         </div>
       ) : null}
       <div
@@ -1152,7 +1153,7 @@ export default function ChatDock({
           <div className="chatEmpty">
             {loadError || (readOnly ? "No saved conversation for this page." : aiInfo && !aiInfo.enabled ? (
               openAiKeysEditor ? (
-                <>Connect an AI provider to start — <button className="chatEmptyLink" onClick={openAiKeysEditor}>Set up AI</button>.</>
+                <>Connect an AI provider to start — <button className="chatEmptyLink" onClick={openAiKeysEditor}>{t("Set up AI")}</button>.</>
               ) : "AI is not configured."
             ) : focusedBlockId ? "Ask AI about this page…"
               : agentIntro || "Ask AI anything, or generate a report from your pages…")}
@@ -1183,7 +1184,7 @@ export default function ChatDock({
                         }}
                       />
                       <div className="chatEditBtns">
-                        <button type="button" className="uiBtn sm" onClick={() => setEditingMsg(null)}>Cancel</button>
+                        <button type="button" className="uiBtn sm" onClick={() => setEditingMsg(null)}>{t("Cancel")}</button>
                         <button type="button" className="uiBtn sm chatEditSend"
                           disabled={!editingMsg.text.trim() || busyHere}
                           onClick={() => {
@@ -1192,7 +1193,7 @@ export default function ChatDock({
                             setEditingMsg(null);
                             sendChat(text, { baseMessages: base, referenceMessage: m });
                           }}
-                          title="Re-send — replaces this message and everything after it">Send</button>
+                          title={t("Re-send — replaces this message and everything after it")}>{t("Send")}</button>
                       </div>
                     </div>
                   </div>
@@ -1205,7 +1206,7 @@ export default function ChatDock({
                   <div className={`chatBubble ${isUser ? "user" : "ai"}${m.error ? " error" : ""}`}>
                     {m.images?.length ? (
                       <div className="chatMsgImages">
-                        {m.images.map((src, j) => <img key={j} src={src} className="chatMsgImage" alt="pasted figure" />)}
+                        {m.images.map((src, j) => <img key={j} src={src} className="chatMsgImage" alt={t("pasted figure")} />)}
                       </div>
                     ) : null}
                     {m.pdfs?.length ? (
@@ -1235,7 +1236,7 @@ export default function ChatDock({
                               {hasDetail ? (
                                 <button type="button" className="chatToolActionHead"
                                   onClick={() => toggleAction(key)}
-                                  title={open ? "Hide tool output" : "Show tool output"}>
+                                  title={open ? t("Hide tool output") : t("Show tool output")}>
                                   <Icon size={11} />
                                   <span>{a.summary}</span>
                                   {open ? <ChevronUpIcon size={10} /> : <ChevronDownIcon size={10} />}
@@ -1259,7 +1260,7 @@ export default function ChatDock({
                       ? <div className="chatUserText">{m.text}</div>
                       : m.text ? <ChatMarkdown text={m.text} copyBlocks /> : null}
                     {isResponding ? (
-                      <div className="chatThinking" role="status" aria-label={m.text ? "AI is responding" : "AI is thinking"}>
+                      <div className="chatThinking" role="status" aria-label={m.text ? t("AI is responding") : t("AI is thinking")}>
                         <span aria-hidden="true">{m.text ? "Responding" : "Thinking"}</span>
                         <span className="chatTyping" aria-hidden="true"><span /><span /><span /></span>
                         <UsageLine usage={liveUsage(m.usage, m.live)} className="chatMsgUsage live" />
@@ -1269,14 +1270,14 @@ export default function ChatDock({
                   {!isResponding ? <div className="chatMsgFoot">
                     {!isUser ? <UsageLine usage={m.usage} /> : null}
                     <div className="chatMsgActions">
-                    <button type="button" className="chatMsgActionBtn" title="Copy message"
+                    <button type="button" className="chatMsgActionBtn" title={t("Copy message")}
                       onClick={() => copyChatMessage(i, m.text)}>
                       {copiedMsgIdx === i
                         ? <CheckIcon size={13} />
                         : <CopyIcon size={13} />}
                     </button>
                     {!readOnly && isUser && !busyHere ? (
-                      <button type="button" className="chatMsgActionBtn" title="Edit and re-send (removes later messages)"
+                      <button type="button" className="chatMsgActionBtn" title={t("Edit and re-send (removes later messages)")}
                         onClick={() => setEditingMsg({ idx: i, text: m.text })}>
                         <PencilIcon size={13} />
                       </button>
@@ -1294,27 +1295,29 @@ export default function ChatDock({
         <div className="chatSelChips">
           {cursorChip ? (
             cursorChip.sel ? (
-              <SelChip kind="isCursor" icon="selection" label="Selection" text={cursorChip.sel.text}
-                title={`The text you selected in this note — the assistant changes only this part.\n${cursorChip.sel.text}`}
+              <SelChip kind="isCursor" icon="selection" label={t("Selection")} text={cursorChip.sel.text}
+                title={t("The text you selected in this note — the assistant changes only this part.\
+{text}", { text: cursorChip.sel.text })}
                 onRemove={() => setCursorOff(cursorChip.id)}
                 removeTitle="Don't send the selection with this message" />
             ) : (
-              <SelChip kind="isCursor" icon="cursor" label="Cursor" text={cursorChip.text}
-                title={`Your cursor is on this block — it rides with the message, so "this block" means it.\n${cursorChip.text}`}
+              <SelChip kind="isCursor" icon="cursor" label={t("Cursor")} text={cursorChip.text}
+                title={t("Your cursor is on this block — it rides with the message, so \"this block\" means it.\
+{text}", { text: cursorChip.text })}
                 onRemove={() => setCursorOff(cursorChip.id)}
                 removeTitle="Don't send the cursor block with this message" />
             )
           ) : null}
           {pdfSelections.map((s, i) => (
             <SelChip key={`p${i}`} text={s.text} icon="passage"
-              label={pdfSelections.length > 1 ? `Passage ${i + 1}` : "Selection"} n={pdfSelections.length > 1 ? i + 1 : null}
+              label={pdfSelections.length > 1 ? t("Passage {i}", { i: i + 1 }) : t("Selection")} n={pdfSelections.length > 1 ? i + 1 : null}
               labelTitle={`${s.page ? `From PDF page ${s.page}. ` : ""}Hold Ctrl while selecting in the PDF to add more passages`}
               onRemove={() => setPdfSelections((prev) => prev.filter((_, j) => j !== i))}
               removeTitle="Remove this passage" />
           ))}
           {(chatNotes || []).map((n, i) => (
             <SelChip key={`n${i}`} kind={n.kind === "block" ? "isBlock" : "isNote"} text={n.text}
-              icon={n.kind === "block" ? "block" : "selection"} label={n.kind === "block" ? "Block" : "Note selection"}
+              icon={n.kind === "block" ? "block" : "selection"} label={n.kind === "block" ? t("Block") : t("Note selection")}
               labelTitle={n.kind === "block" ? "A note block attached with Ctrl+click or the ⋮⋮ menu — the assistant gets its text and id" : "Note text selected with Ctrl held — the assistant changes only this part"}
               onRemove={() => setChatNotes?.((prev) => prev.filter((_, j) => j !== i))}
               removeTitle={n.kind === "block" ? "Detach this block" : "Remove this passage"} />
@@ -1322,10 +1325,10 @@ export default function ChatDock({
         </div>
       ) : null}
       {chatDocs.length ? (
-        <div className="chatReferenceStrip" aria-label="Attached library pages">
-          <span className="chatReferenceLabel" title="Paper details and text stay in context for follow-up questions. Notes are optional in the library picker.">Context</span>
+        <div className="chatReferenceStrip" aria-label={t("Attached library pages")}>
+          <span className="chatReferenceLabel" title={t("Paper details and text stay in context for follow-up questions. Notes are optional in the library picker.")}>{t("Context")}</span>
           {chatDocs.map((id) => <span className="chatReferenceChip" key={id}>
-            <button type="button" className="crumbBtn" title={homeBlocks.find((b) => b.id === id)?.content || "Unavailable page"} onClick={() => onOpenPage?.(id)}><BookIcon size={12} /><span className="linkChipText">{homeBlocks.find((b) => b.id === id)?.content || "Unavailable page"}</span></button>
+            <button type="button" className="crumbBtn" title={homeBlocks.find((b) => b.id === id)?.content || t("Unavailable page")} onClick={() => onOpenPage?.(id)}><BookIcon size={12} /><span className="linkChipText">{homeBlocks.find((b) => b.id === id)?.content || "Unavailable page"}</span></button>
             <button type="button" className="uiClose uiCloseSm" aria-label={`Remove ${homeBlocks.find((b) => b.id === id)?.content || "page"} from context`} onClick={() => setChatDocs((prev) => prev.filter((p) => p !== id))}><XIcon size={11} /></button>
           </span>)}
         </div>
@@ -1333,10 +1336,10 @@ export default function ChatDock({
       {chatFiles.length ? (
         <div className="chatImgPreviewRow">
           {chatFiles.map((f, i) => (
-            <span key={i} className="chatFileChip" title={nativePdf ? `${f.name} — sent with your next message` : `${f.name} — ${nativePdfNote}`}>
+            <span key={i} className="chatFileChip" title={nativePdf ? t("{name} — sent with your next message", { name: f.name }) : t("{name} — {nativePdfNote}", { name: f.name, nativePdfNote: nativePdfNote })}>
               {nativePdf ? <FileIcon size={12} /> : <AlertCircleIcon size={12} />}
               <span className="chatFileChipName">{f.name}</span>
-              <button type="button" className="uiClose uiCloseSm chatFileChipRemove" title="Remove file"
+              <button type="button" className="uiClose uiCloseSm chatFileChipRemove" title={t("Remove file")}
                 onClick={() => setChatFiles((prev) => prev.filter((_, j) => j !== i))}>×</button>
             </span>
           ))}
@@ -1346,8 +1349,8 @@ export default function ChatDock({
         <div className="chatImgPreviewRow" data-guide="chat.imageContext">
           {chatImages.map((src, i) => (
             <span key={i} className="chatImgPreview">
-              <img src={src} alt="pasted figure" />
-              <button type="button" className="uiClose uiCloseSm uiCloseDanger chatImgRemove" title="Remove image"
+              <img src={src} alt={t("pasted figure")} />
+              <button type="button" className="uiClose uiCloseSm uiCloseDanger chatImgRemove" title={t("Remove image")}
                 onClick={() => setChatImages((prev) => prev.filter((_, j) => j !== i))}>×</button>
             </span>
           ))}
@@ -1360,7 +1363,7 @@ export default function ChatDock({
       >
         {dictation === "rec" ? (
           <>
-            <button className="uiBtn chatCircleBtn chatMicBtn" type="button" onClick={() => finishDictation("cancel")} title="Cancel recording" aria-label="Cancel recording">
+            <button className="uiBtn chatCircleBtn chatMicBtn" type="button" onClick={() => finishDictation("cancel")} title={t("Cancel recording")} aria-label={t("Cancel recording")}>
               <XIcon size={13} />
             </button>
             <canvas ref={waveCanvasRef} className="chatWaveCanvas" />
@@ -1368,10 +1371,10 @@ export default function ChatDock({
               <span className="chatRecDot" />
               {Math.floor(recSecs / 60)}:{String(recSecs % 60).padStart(2, "0")}
             </span>
-            <button className="uiBtn chatCircleBtn chatMicBtn" type="button" onClick={() => finishDictation("insert")} title="Stop — put the transcript in the input" aria-label="Stop and transcribe">
+            <button className="uiBtn chatCircleBtn chatMicBtn" type="button" onClick={() => finishDictation("insert")} title={t("Stop — put the transcript in the input")} aria-label={t("Stop and transcribe")}>
               <StopIcon size={11} />
             </button>
-            <button className="uiBtn primary chatCircleBtn" type="button" onClick={() => finishDictation("send")} title="Stop and send" aria-label="Stop, transcribe and send">
+            <button className="uiBtn primary chatCircleBtn" type="button" onClick={() => finishDictation("send")} title={t("Stop and send")} aria-label={t("Stop, transcribe and send")}>
               <ArrowUpIcon size={14} strokeWidth={2.4} />
             </button>
           </>
@@ -1383,8 +1386,8 @@ export default function ChatDock({
             className={`chatAttachToggle chatPlusBtn ${(chatDocs.length || chatIncludeNotes) ? "on" : ""}`}
             data-guide="chat.context"
             onClick={() => setOpenPopover((p) => (p === "chatdocs" ? null : "chatdocs"))}
-            title="Add photos & files, or pages from your library"
-            aria-label="Add attachments or chat context"
+            title={t("Add photos & files, or pages from your library")}
+            aria-label={t("Add attachments or chat context")}
           >
             +{chatDocs.length ? <span className="chatPlusCount">{chatDocs.length}</span> : null}
           </button>
@@ -1396,14 +1399,14 @@ export default function ChatDock({
                   <PaperclipIcon size={15} />
                 </span>
                 <span className="chatPlusMenuLabel">Add photos &amp; files</span>
-                <span className="chatPlusMenuHint">Images or PDFs from your computer</span>
+                <span className="chatPlusMenuHint">{t("Images or PDFs from your computer")}</span>
               </button>
               <button type="button" className="chatPlusMenuItem"
                 onClick={() => { setOpenPopover(null); setDocPickerQuery(""); setDocPicker(true); }}>
                 <span className="chatPlusMenuIcon">
                   <BookIcon size={15} />
                 </span>
-                <span className="chatPlusMenuLabel">Add pages from library</span>
+                <span className="chatPlusMenuLabel">{t("Add pages from library")}</span>
                 <span className="chatPlusMenuHint">{chatDocs.length ? `${chatDocs.length} selected` : "Search your pages"}</span>
               </button>
             </div>
@@ -1434,7 +1437,7 @@ export default function ChatDock({
         {attachPdf && !nativePdf ? (
           <button type="button" className="chatAttachToggle chatPdfToggle chatPdfWarn"
             onClick={() => setStatus(nativePdfNote)} title={nativePdfNote}
-            aria-label="This provider cannot accept PDF files">
+            aria-label={t("This provider cannot accept PDF files")}>
             <AlertCircleIcon size={12} />
           </button>
         ) : null}
@@ -1464,19 +1467,19 @@ export default function ChatDock({
           ) + " (@ paper)"}
         />
         {busyHere ? (
-          <button className="uiBtn chatCircleBtn chatStopBtn" type="button" onClick={stopChat} title="Stop generating" aria-label="Stop generating">
+          <button className="uiBtn chatCircleBtn chatStopBtn" type="button" onClick={stopChat} title={t("Stop generating")} aria-label={t("Stop generating")}>
             <StopIcon size={11} />
           </button>
         ) : dictation === "busy" ? (
-          <button className="uiBtn chatCircleBtn chatMicBtn" type="button" disabled title="Transcribing…" aria-label="Transcribing">
+          <button className="uiBtn chatCircleBtn chatMicBtn" type="button" disabled title={t("Transcribing…")} aria-label={t("Transcribing")}>
             <span className="transferSpin inline" />
           </button>
         ) : (
           <>
-            <button className="uiBtn chatCircleBtn chatMicBtn" data-guide="chat.voice" type="button" onClick={startDictation} title="Dictate — transcribed with your OpenAI key" aria-label="Start dictation">
+            <button className="uiBtn chatCircleBtn chatMicBtn" data-guide="chat.voice" type="button" onClick={startDictation} title={t("Dictate — transcribed with your OpenAI key")} aria-label={t("Start dictation")}>
               <MicIcon size={13} />
             </button>
-            <button className="uiBtn primary chatCircleBtn" type="submit" disabled={!chatInput.trim()} title="Send" aria-label="Send">
+            <button className="uiBtn primary chatCircleBtn" type="submit" disabled={!chatInput.trim()} title={t("Send")} aria-label={t("Send")}>
               <ArrowUpIcon size={14} strokeWidth={2.4} />
             </button>
           </>
@@ -1488,7 +1491,7 @@ export default function ChatDock({
       {docPicker ? (
         <div className="reportOverlay" onClick={() => setDocPicker(false)}>
           <div className="reportModal docPickerModal" onClick={(e) => e.stopPropagation()}>
-            <div className="reportModalTitle">Add pages to the chat</div>
+            <div className="reportModalTitle">{t("Add pages to the chat")}</div>
             <div className="reportModalHint">
               Selected pages (their PDF text, and optionally your notes) are sent with every question —
               pick a few and just ask for a report.
@@ -1496,7 +1499,7 @@ export default function ChatDock({
             <input
               autoFocus
               className="searchInput"
-              placeholder="Search your pages…"
+              placeholder={t("Search your pages…")}
               value={docPickerQuery}
               onChange={(e) => setDocPickerQuery(e.target.value)}
               onKeyDown={(e) => { if (e.key === "Escape") { e.preventDefault(); setDocPicker(false); } }}
@@ -1506,7 +1509,7 @@ export default function ChatDock({
                 // Every page can be context — a page of notes as much as a
                 // paper; the server adds PDF text for pages that carry one.
                 const pages = homeBlocks;
-                if (!pages.length) return <div className="popoverHint">No pages yet — create one first.</div>;
+                if (!pages.length) return <div className="popoverHint">{t("No pages yet — create one first.")}</div>;
                 const title = (b) => b.content || "Untitled";
                 const byRecency = (x, y) => (y.updated_at || "").localeCompare(x.updated_at || "");
                 const row = (b, badge) => (
@@ -1531,7 +1534,7 @@ export default function ChatDock({
                     .sort((a, b) => score(b) - score(a) || byRecency(a, b));
                   return hits.length
                     ? hits.map((b) => row(b))
-                    : <div className="popoverHint">No pages match “{docPickerQuery.trim()}”.</div>;
+                    : <div className="popoverHint">{t("No pages match “{docPickerQuery}”.", { docPickerQuery: docPickerQuery.trim() })}</div>;
                 }
                 // No search: pages open as tabs first (the likely candidates),
                 // then the rest of the library by recency.
@@ -1540,10 +1543,10 @@ export default function ChatDock({
                 const rest = pages.filter((b) => !tabIds.includes(b.id)).sort(byRecency);
                 return (
                   <>
-                    {inTabs.length ? <div className="popoverSection">Open tabs</div> : null}
+                    {inTabs.length ? <div className="popoverSection">{t("Open tabs")}</div> : null}
                     {inTabs.map((b) => row(b, b.id === focusedBlockId
                       ? <span className="docPickerBadge">current</span> : null))}
-                    {rest.length ? <div className="popoverSection">Library</div> : null}
+                    {rest.length ? <div className="popoverSection">{t("Library")}</div> : null}
                     {rest.map((b) => row(b))}
                   </>
                 );
@@ -1554,13 +1557,13 @@ export default function ChatDock({
               <span className="attachName">Include my notes &amp; highlights</span>
             </label>
             {!chatDocs.length && docId ? (
-              <div className="popoverHint">Nothing selected — the open page is used.</div>
+              <div className="popoverHint">{t("Nothing selected — the open page is used.")}</div>
             ) : null}
             <div className="reportModalBtns">
               {chatDocs.length ? (
-                <button className="uiBtn" onClick={() => setChatDocs([])}>Clear selection</button>
+                <button className="uiBtn" onClick={() => setChatDocs([])}>{t("Clear selection")}</button>
               ) : null}
-              <button className="uiBtn primary" onClick={() => setDocPicker(false)}>Done</button>
+              <button className="uiBtn primary" onClick={() => setDocPicker(false)}>{t("Done")}</button>
             </div>
           </div>
         </div>

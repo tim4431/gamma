@@ -1,10 +1,11 @@
 import { API, apiJson } from "../shared/lib/utils";
 import { xhrUpload } from "../shared/lib/xhrUpload";
+import { t, T } from "../shared/i18n/i18n.js";
 
 const FORMATS = {
-  zotero: { label: "Zotero", endpoint: "zotero", instructions: "Collections become folders. Additional PDFs become separate pages. Existing PDFs are kept." },
-  markdown: { label: "Markdown", endpoint: "markdown-zip", instructions: "Notes become pages; linked files travel with the selected notes. Links to deselected notes stay as written." },
-  gamma: { label: "Gamma", endpoint: "gamma", instructions: "Selected pages include their notes, attachments and chats. Pages already in your library are kept unchanged." },
+  zotero: { label: T("Zotero"), endpoint: "zotero", instructions: T("Collections become folders. Additional PDFs become separate pages. Existing PDFs are kept.") },
+  markdown: { label: T("Markdown"), endpoint: "markdown-zip", instructions: T("Notes become pages; linked files travel with the selected notes. Links to deselected notes stay as written.") },
+  gamma: { label: T("Gamma"), endpoint: "gamma", instructions: T("Selected pages include their notes, attachments and chats. Pages already in your library are kept unchanged.") },
 };
 export function importFormat(source, file) {
   const format = FORMATS[source];

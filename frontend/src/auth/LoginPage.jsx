@@ -1,12 +1,13 @@
 import React from "react";
 import { PasswordInput } from "../settings/SettingsKit";
+import { t } from "../shared/i18n/i18n.js";
 
 function AuthShell({ children }) {
   return (
     <div className="app">
       <div className="loginPage">
         <div className="loginCard">
-          <div className="loginTitle">Gamma</div>
+          <div className="loginTitle">{t("Gamma")}</div>
           {children}
         </div>
       </div>
@@ -15,19 +16,18 @@ function AuthShell({ children }) {
 }
 
 export function AuthLoading() {
-  return <AuthShell><p className="loginLoading">Loading...</p></AuthShell>;
+  return <AuthShell><p className="loginLoading">{t("Loading...")}</p></AuthShell>;
 }
 
 export function WorkspaceUnavailablePage() {
   return (
     <AuthShell>
-      <p className="loginSubtitle">This workspace is unavailable</p>
+      <p className="loginSubtitle">{t("This workspace is unavailable")}</p>
       <p className="loginConflictText">
-        It may have been deleted, or your account may no longer have access.
-        Ask a workspace owner to invite you if you need access.
+        {t("It may have been deleted, or your account may no longer have access. Ask a workspace owner to invite you if you need access.")}
       </p>
       <button type="button" className="loginBtn" onClick={() => window.location.assign("/")}>
-        Open my workspaces
+        {t("Open my workspaces")}
       </button>
     </AuthShell>
   );
@@ -40,7 +40,7 @@ export function WorkspaceUnavailablePage() {
 export function SessionConflictPage({ tabUser, activeUser, onReload }) {
   return (
     <AuthShell>
-      <p className="loginSubtitle">Signed in elsewhere</p>
+      <p className="loginSubtitle">{t("Signed in elsewhere")}</p>
       <p className="loginConflictText">
         This tab was open as <b>{tabUser}</b>, but this browser is now signed in
         as <b>{activeUser}</b> (from another tab). This tab has been paused so the
@@ -50,8 +50,7 @@ export function SessionConflictPage({ tabUser, activeUser, onReload }) {
         Continue as {activeUser}
       </button>
       <p className="loginConflictHint">
-        To use both accounts at the same time, open one of them in a private
-        window or a separate browser profile.
+        {t("To use both accounts at the same time, open one of them in a private window or a separate browser profile.")}
       </p>
     </AuthShell>
   );
@@ -88,8 +87,8 @@ export function LoginPage({
       <p className="loginSubtitle">{subtitle || "Annotate PDFs, Share Your Thinking"}</p>
       {cloudLogin?.enabled ? (
         <a className="loginBtn loginCloudBtn" href={`/api/auth/cloud/start?next=${encodeURIComponent(next)}`}
-          title={`Sign in through ${cloudLogin.issuer}`}>
-          Sign in with Gamma Cloud
+          title={t("Sign in through {issuer}", { issuer: cloudLogin.issuer })}>
+          {t("Sign in with Gamma Cloud")}
         </a>
       ) : null}
       {cloudError ? <div className="loginError" role="alert">{cloudError}</div> : null}
@@ -98,24 +97,24 @@ export function LoginPage({
           type="text"
           value={username}
           onChange={(event) => onUsernameChange(event.target.value)}
-          placeholder="Username"
+          placeholder={t("Username")}
           className="loginInput"
           autoFocus
         />
         <PasswordInput
           value={password}
           onChange={(event) => onPasswordChange(event.target.value)}
-          placeholder="Password"
+          placeholder={t("Password")}
           className="loginInput"
           autoComplete="current-password"
         />
         {error ? <div className="loginError">{error}</div> : null}
         <button type="submit" className="loginBtn" disabled={!username.trim() || !password.trim()}>
-          Log in
+          {t("Log in")}
         </button>
         {onGuestLogin ? (
           <button type="button" className="loginGuestBtn" onClick={onGuestLogin}>
-            Continue as guest
+            {t("Continue as guest")}
           </button>
         ) : null}
       </form>
@@ -136,7 +135,7 @@ export function ShareBlockedPage({ reason, viewer, onSwitchAccount }) {
           : `This page is shared with specific people only${viewer ? `, and ${viewer} isn't one of them` : ""}. Ask the owner to add your username.`}
       </p>
       {!missing && onSwitchAccount ? (
-        <button type="button" className="loginBtn" onClick={onSwitchAccount}>Sign in as someone else</button>
+        <button type="button" className="loginBtn" onClick={onSwitchAccount}>{t("Sign in as someone else")}</button>
       ) : null}
     </AuthShell>
   );

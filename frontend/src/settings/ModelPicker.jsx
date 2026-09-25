@@ -1,5 +1,6 @@
 import React, { useEffect, useId, useRef, useState } from "react";
 import { ContextMenu } from "../shared/ui/Menus";
+import { t } from "../shared/i18n/i18n.js";
 
 // Native datalist popups can grow beyond the screen, especially over RDP.
 // Keep focus in the input while the portalled, bounded list handles scrolling.
@@ -39,11 +40,11 @@ export function ModelPicker({ models, value, onChange, onAdd, loading }) {
   }, [menu]);
   return <>
     <input ref={input} className="aiKeyInput" type="text" spellCheck={false}
-      role="combobox" aria-label="Add a model" aria-autocomplete="list"
+      role="combobox" aria-label={t("Add a model")} aria-autocomplete="list"
       aria-expanded={!!menu} aria-controls={menu ? id : undefined}
       aria-activedescendant={menu && active >= 0 ? `${id}-${active}` : undefined}
       autoComplete="off"
-      placeholder={loading ? "Loading models…" : `Add a model — type or pick${models.length ? ` (${models.length} available)` : ""}`}
+      placeholder={loading ? t("Loading models…") : `Add a model — type or pick${models.length ? ` (${models.length} available)` : ""}`}
       value={value} onFocus={open} onClick={open}
       onBlur={() => setMenu(null)}
       onChange={(event) => { onChange(event.target.value); setActive(-1); open(); }}
@@ -62,7 +63,7 @@ export function ModelPicker({ models, value, onChange, onAdd, loading }) {
         }
       }} />
     {menu ? <ContextMenu {...menu} onClose={() => setMenu(null)} ignoreRef={input} className="aiModelMenu">
-      <div ref={list} id={id} role="listbox" aria-label="Available models" className="aiModelOptions">
+      <div ref={list} id={id} role="listbox" aria-label={t("Available models")} className="aiModelOptions">
         {matches.map((model, index) => <button type="button" role="option" tabIndex={-1}
           id={`${id}-${index}`} aria-selected={index === active} key={model}
           className="ctxMenuItem" onMouseDown={(event) => event.preventDefault()}

@@ -14,3 +14,29 @@
 		-Server
 	}
 }
+
+# The share host and every account's page host (share.gammapdf.com and
+# <username>-pages.gammapdf.com) — one wildcard site. Named records such as
+# account.gammapdf.com win over the wildcard, and the internal certificate
+# covers *.gammapdf.com, so no DNS challenge is needed (Cloudflare "Full").
+# Anything else under the wildcard is a 404.
+*.gammapdf.com {
+	tls internal
+	encode gzip
+	@pages header_regexp Host ^[a-z0-9-]+-pages\.gammapdf\.com$
+	@share host share.gammapdf.com
+	handle @share {
+		reverse_proxy share:9001
+	}
+	handle @pages {
+		reverse_proxy share:9001
+	}
+	handle {
+		respond 404
+	}
+	header {
+		Strict-Transport-Security "max-age=31536000"
+		X-Content-Type-Options nosniff
+		-Server
+	}
+}

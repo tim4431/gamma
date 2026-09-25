@@ -15,28 +15,29 @@ import { PublicUrlSettings } from "./SettingsPublicUrl";
 import { CloudSignInSettings } from "./SettingsCloudSignIn";
 import { SharedAiProviderSettings } from "./SettingsAi";
 import { ActivityIcon, AlertCircleIcon, CloudDownloadIcon, ImportIcon, ServerIcon } from "../shared/ui/Icons";
+import { t } from "../shared/i18n/i18n.js";
 
 export function ServerSettings({ value }) {
   const [signInAction, setSignInAction] = React.useState(null);
   return (
     <>
-      <PaneHead icon={ServerIcon} title="Server" />
-      <Section title="Dashboard">
+      <PaneHead icon={ServerIcon} title={t("Server")} />
+      <Section title={t("Dashboard")}>
         <ServerDashboard />
       </Section>
-      <Section title="Assistant connections">
+      <Section title={t("Assistant connections")}>
         <PublicUrlSettings setStatus={value.setStatus} />
       </Section>
-      <Section title="Sign-in" action={signInAction}>
+      <Section title={t("Sign-in")} action={signInAction}>
         <CloudSignInSettings setStatus={value.setStatus} action={setSignInAction} />
       </Section>
-      <Section title="Storage defaults">
+      <Section title={t("Storage defaults")}>
         <ServerLimitRows setStatus={value.setStatus} refreshQuota={value.refreshQuota} />
       </Section>
       <SharedAiProviderSettings setStatus={value.setStatus} confirm={value.confirm} />
       <WorkspacesAdmin value={value} />
       <ServerBackups setStatus={value.setStatus} confirm={value.confirm} />
-      <Section title="Log">
+      <Section title={t("Log")}>
         <ServerLogBox setStatus={value.setStatus} />
       </Section>
     </>
@@ -86,8 +87,8 @@ function ServerDashboard() {
     return () => clearInterval(timer);
   }, [load]);
   if (!info) {
-    return error ? <p className="settingsPaneHint aiKeysError" role="alert">Dashboard unavailable: {error}</p>
-      : <p className="setNotice">Loading…</p>;
+    return error ? <p className="settingsPaneHint aiKeysError" role="alert">{t("Dashboard unavailable: {error}", { error: error })}</p>
+      : <p className="setNotice">{t("Loading…")}</p>;
   }
   const counts = info.log_counts || {};
   const logTone = counts.error ? "error" : counts.warning ? "warn" : "";
@@ -95,19 +96,19 @@ function ServerDashboard() {
   return <>
     <div className="setStats">
       <StatText icon={ServerIcon} label="version" value={info.version ? `v${info.version}` : "dev build"}
-        hint={info.commit ? `build ${info.commit}` : info.frozen ? "desktop app" : "run from a checkout"}
-        title={`Gamma ${info.label} · Python ${info.python} · ${info.platform} · data schema ${info.schema_version}`} />
+        hint={info.commit ? t("build {commit}", { commit: info.commit }) : info.frozen ? t("desktop app") : t("run from a checkout")}
+        title={t("Gamma {label} · Python {python} · {platform} · data schema {schema_version}", { label: info.label, python: info.python, platform: info.platform, schema_version: info.schema_version })} />
       <StatText icon={ActivityIcon} label="uptime" value={fmtUptime(info.uptime_seconds)}
-        hint={`since ${new Date(info.started_at).toLocaleString()}`} />
-      <StatText icon={AlertCircleIcon} label="warnings · errors" value={`${counts.warning || 0} · ${counts.error || 0}`}
-        hint={`${counts.info || 0} info lines since start`} tone={logTone}
-        title="Lines logged since the server started, by level. The log below shows the most recent ones." />
+        hint={t("since {started}", { started: new Date(info.started_at).toLocaleString() })} />
+      <StatText icon={AlertCircleIcon} label={t("warnings · errors")} value={`${counts.warning || 0} · ${counts.error || 0}`}
+        hint={t("{info} info lines since start", { info: counts.info || 0 })} tone={logTone}
+        title={t("Lines logged since the server started, by level. The log below shows the most recent ones.")} />
     </div>
-    <Row icon={CloudDownloadIcon} label="Updates" hint={updateHint(info)}
-      title="Compared against the newest GitHub release. Checked at most every six hours; Check now asks again.">
+    <Row icon={CloudDownloadIcon} label={t("Updates")} hint={updateHint(info)}
+      title={t("Compared against the newest GitHub release. Checked at most every six hours; Check now asks again.")}>
       <span className="setRowControls">
         {info.latest?.url ? (
-          <button className="uiBtn sm" onClick={() => window.open(info.latest.url, "_blank", "noopener")}>Release notes</button>
+          <button className="uiBtn sm" onClick={() => window.open(info.latest.url, "_blank", "noopener")}>{t("Release notes")}</button>
         ) : null}
         <button className={`uiBtn sm ${updateTone ? "primary" : ""}`} disabled={checking} onClick={() => load(true)}>
           {checking ? "Checking…" : "Check now"}
@@ -144,20 +145,20 @@ function ServerLimitRows({ setStatus, refreshQuota }) {
         body: JSON.stringify({ [key]: n }),
       });
       setSaved(value); refreshQuota?.();
-      setStatus("Storage defaults saved.");
-    } catch (err) { setError(`Could not save: ${err.message}`); }
+      setStatus(t("Storage defaults saved."));
+    } catch (err) { setError(t("Could not save: {message}", { message: err.message })); }
   }
   return <>
     {saved ? <>
-      <Row icon={ImportIcon} label="Default max upload" hint="Largest single file; Users can override per account">
+      <Row icon={ImportIcon} label={t("Default max upload")} hint={t("Largest single file; Users can override per account")}>
         <UnitInput unit="MB" min={1} value={String(saved.max_upload_mb)}
           onCommit={(raw) => commit("max_upload_mb", raw, 1)} />
       </Row>
-      <Row icon={ServerIcon} label="Default quota" hint="Personal uploads per account; 0 = unlimited">
+      <Row icon={ServerIcon} label={t("Default quota")} hint={t("Personal uploads per account; 0 = unlimited")}>
         <UnitInput unit="MB" min={0} value={String(saved.quota_mb)}
           onCommit={(raw) => commit("quota_mb", raw, 0)} />
       </Row>
-    </> : !error ? <p className="setNotice">Loading…</p> : null}
+    </> : !error ? <p className="setNotice">{t("Loading…")}</p> : null}
     {error ? <p className="settingsPaneHint aiKeysError" role="alert">{error}</p> : null}
   </>;
 }
@@ -200,7 +201,7 @@ function ServerLogBox({ setStatus }) {
   return (
     <LogBox
       icon={ServerIcon}
-      label="Server log"
+      label={t("Server log")}
       description="Backend events since startup · secrets masked"
       entries={shown}
       emptyText={error ? `Server log unavailable: ${error}`

@@ -1,3 +1,4 @@
+import { t, T } from "../../shared/i18n/i18n.js";
 // The first-run tour. Data only: anchors from guide/anchors.js, events from
 // guide/events.js. A step with no anchor is a centred card. A step with `do`
 // is a demo: the guide performs the actions itself (click / type / press /
@@ -9,7 +10,7 @@
 export default {
   id: "first-run",
   version: 2,
-  title: "Your first paper",
+  title: T("Your first paper"),
   vars: {
     demoUrl: "https://arxiv.org/abs/1706.03762", // Attention Is All You Need
   },
@@ -17,14 +18,14 @@ export default {
     {
       id: "welcome",
       anchor: null,
-      title: "Welcome to Gamma",
-      next: "Start",
+      title: T("Welcome to Gamma"),
+      next: T("Start"),
     },
     {
       id: "add-demo",
       anchor: "header.add",
       placement: "left",
-      title: "Adding a paper",
+      title: T("Adding a paper"),
       do: [
         { click: "header.add" },
         { wait: 500 },
@@ -39,42 +40,42 @@ export default {
       id: "highlight-demo",
       anchor: "pdf.viewer",
       placement: "inside",
-      title: "Highlight a passage",
+      title: T("Highlight a passage"),
       do: [{ previewHighlight: true }],
     },
     {
       id: "highlight",
       anchor: "pdf.viewer",
       placement: "inside",
-      title: "Select text, then choose a colour",
+      title: T("Select text, then choose a colour"),
       advanceOn: { event: "highlight.created", match: { kind: "text" } },
     },
     {
       id: "area-demo",
       anchor: "pdf.viewer",
       placement: "inside",
-      title: "Highlight a figure or equation",
+      title: T("Highlight a figure or equation"),
       do: [{ previewArea: true }],
     },
     {
       id: "area",
       anchor: "pdf.viewer",
       placement: "inside",
-      title: "Ctrl-drag a box, then choose a colour",
+      title: T("Ctrl-drag a box, then choose a colour"),
       advanceOn: { event: "highlight.created", match: { kind: "area" } },
     },
     {
       id: "notes",
       anchor: "dock.notes",
       placement: "left",
-      title: "Add a note",
+      title: T("Add a note"),
       do: [{ note: "Attention compares queries with keys, then uses those scores to combine the values. Scaling keeps the scores stable." }],
     },
     {
       id: "label",
       anchor: "page.labels",
       placement: "left",
-      title: "Add the llm label",
+      title: T("Add the llm label"),
       do: [
         { click: "page.labels" },
         { type: "page.labelInput", text: "llm" },
@@ -86,9 +87,9 @@ export default {
       id: "home",
       anchor: "header.home",
       placement: "bottom",
-      title: "Back to your library",
+      title: T("Back to your library"),
       advanceOn: { event: "home.opened" },
-      next: "Finish",
+      next: T("Finish"),
     },
   ],
 };

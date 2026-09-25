@@ -3,6 +3,7 @@ import { API, apiJson, copyText, fmtBytes } from "../shared/lib/utils";
 import { Field, Row, SubDialog, Toggle } from "../settings/SettingsKit";
 import { MonitorIcon } from "../shared/ui/Icons";
 import { buildReport, formatDiagnostics, githubIssueUrl, ISSUES_URL } from "./problemReport.js";
+import { t } from "../shared/i18n/i18n.js";
 
 // "Report a problem" (account menu, Settings → Diagnostics): what happened
 // in the reporter's words, how to bring it back, the diagnostics Gamma can
@@ -87,7 +88,7 @@ export default function ReportProblem({ facts, onClose, setStatus }) {
         video: { frameRate: 15 }, audio: false, preferCurrentTab: true, selfBrowserSurface: "include",
       });
     } catch {
-      setStatus("Screen recording was not allowed.");
+      setStatus(t("Screen recording was not allowed."));
       return;
     }
     const type = RECORDING_TYPES.find((t) => MediaRecorder.isTypeSupported(t)) || "";
@@ -96,7 +97,7 @@ export default function ReportProblem({ facts, onClose, setStatus }) {
       recorder = new MediaRecorder(stream, { ...(type ? { mimeType: type } : {}), videoBitsPerSecond: 1500000 });
     } catch {
       stream.getTracks().forEach((t) => t.stop());
-      setStatus("This browser cannot record the screen.");
+      setStatus(t("This browser cannot record the screen."));
       return;
     }
     const chunks = [];
@@ -114,7 +115,7 @@ export default function ReportProblem({ facts, onClose, setStatus }) {
       });
       liveRef.current = null;
       setLive(null);
-      if (!blob.size) setStatus("The recording came out empty.");
+      if (!blob.size) setStatus(t("The recording came out empty."));
     };
     // The browser's own "Stop sharing" bar ends the capture too.
     stream.getVideoTracks()[0]?.addEventListener("ended", () => { if (recorder.state !== "inactive") recorder.stop(); });
@@ -164,7 +165,7 @@ export default function ReportProblem({ facts, onClose, setStatus }) {
     });
     const win = window.open(url, "_blank", "noopener");
     if (!win && !copied) {
-      setStatus(`The browser blocked the GitHub tab — open ${ISSUES_URL} and paste the report.`);
+      setStatus(t("The browser blocked the GitHub tab — open {ISSUES_URL} and paste the report.", { ISSUES_URL: ISSUES_URL }));
       return;
     }
     const notes = [];
@@ -179,54 +180,54 @@ export default function ReportProblem({ facts, onClose, setStatus }) {
     return (
       <div className="reportRecordPill" role="status" aria-live="polite">
         <span className="reportRecordDot" aria-hidden="true" />
-        <span className="reportRecordText">Recording {fmtClock(elapsed)} — show the problem, then</span>
-        <button type="button" className="uiBtn sm primary" onClick={stopRecording}>Stop</button>
+        <span className="reportRecordText">{t("Recording {elapsed} — show the problem, then", { elapsed: fmtClock(elapsed) })}</span>
+        <button type="button" className="uiBtn sm primary" onClick={stopRecording}>{t("Stop")}</button>
       </div>
     );
   }
 
   return (
-    <SubDialog title="Report a problem" onClose={onClose} className="reportProblem" closeButton
+    <SubDialog title={t("Report a problem")} onClose={onClose} className="reportProblem" closeButton
       draft={description || steps || recordingName}>
-      <Field label="What happened" hint="what you did, what you expected, what you saw">
+      <Field label={t("What happened")} hint={t("what you did, what you expected, what you saw")}>
         <textarea className="reportProblemText" rows={3} autoFocus value={description}
-          onChange={(e) => setDescription(e.target.value)} placeholder="A blue line stays on the notes after…" />
+          onChange={(e) => setDescription(e.target.value)} placeholder={t("A blue line stays on the notes after…")} />
       </Field>
-      <Field label="How to reproduce" hint="the steps that bring it back, if you found them">
+      <Field label={t("How to reproduce")} hint={t("the steps that bring it back, if you found them")}>
         <textarea className="reportProblemText" rows={3} value={steps}
-          onChange={(e) => setSteps(e.target.value)} placeholder={"1. Open a page with notes\n2. Drag a block by its handle…\n3. …"} />
+          onChange={(e) => setSteps(e.target.value)} placeholder={t("1. Open a page with notes\n2. Drag a block by its handle…\n3. …")} />
       </Field>
       {canRecord ? (
-        <Row icon={MonitorIcon} label="Screen recording"
+        <Row icon={MonitorIcon} label={t("Screen recording")}
           hint={recording
             ? `${recording.name} · ${fmtClock(recording.seconds)} · ${fmtBytes(recording.blob.size)}${recording.saved ? " · saved" : ""}`
             : "Show the problem as it happens; the saved file goes into the GitHub form"}
-          title={`Records your screen (or one window or tab — the browser asks which) for up to ${MAX_RECORDING_SECONDS / 60} minutes, without sound. The file stays on your computer: save it and drop it into the GitHub form, where it is uploaded as part of the issue.`}>
+          title={t("Records your screen (or one window or tab — the browser asks which) for up to {MAX_RECORDING_SECONDS} minutes, without sound. The file stays on your computer: save it and drop it into the GitHub form, where it is uploaded as part of the issue.", { MAX_RECORDING_SECONDS: MAX_RECORDING_SECONDS / 60 })}>
           <span className="setRowControls">
             {recording ? (
               <>
-                <button type="button" className="uiBtn sm" onClick={saveRecording}>Save</button>
-                <button type="button" className="uiBtn sm" onClick={discardRecording}>Discard</button>
+                <button type="button" className="uiBtn sm" onClick={saveRecording}>{t("Save")}</button>
+                <button type="button" className="uiBtn sm" onClick={discardRecording}>{t("Discard")}</button>
               </>
             ) : (
-              <button type="button" className="uiBtn sm" onClick={startRecording}>Record…</button>
+              <button type="button" className="uiBtn sm" onClick={startRecording}>{t("Record…")}</button>
             )}
           </span>
         </Row>
       ) : null}
-      <Toggle label="Include diagnostics" hint="build, browser, view and recent log lines — no notes, files or names"
-        title="The version and build of this server, your browser and screen, which kind of view is open, and the app's own log lines from this session (secrets masked). Never the content of your notes or files."
+      <Toggle label={t("Include diagnostics")} hint={t("build, browser, view and recent log lines — no notes, files or names")}
+        title={t("The version and build of this server, your browser and screen, which kind of view is open, and the app's own log lines from this session (secrets masked). Never the content of your notes or files.")}
         checked={includeDiagnostics} onChange={setIncludeDiagnostics} />
       {includeDiagnostics ? (
         <details className="reportPreview">
-          <summary>Preview the report</summary>
+          <summary>{t("Preview the report")}</summary>
           <pre>{diagnostics}</pre>
         </details>
       ) : null}
       <div className="reportModalBtns">
-        <button type="button" className="uiBtn" onClick={copy} title="Copy the whole report as text — to paste in an e-mail, a chat or an issue you write by hand">Copy report</button>
+        <button type="button" className="uiBtn" onClick={copy} title={t("Copy the whole report as text — to paste in an e-mail, a chat or an issue you write by hand")}>{t("Copy report")}</button>
         <button type="button" className="uiBtn primary" onClick={openIssue} disabled={!description.trim()}
-          title="Open the bug form on GitHub with the report filled in; you review it there before it is posted">Open GitHub issue</button>
+          title={t("Open the bug form on GitHub with the report filled in; you review it there before it is posted")}>{t("Open GitHub issue")}</button>
       </div>
     </SubDialog>
   );

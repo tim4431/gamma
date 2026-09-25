@@ -8,6 +8,7 @@
 import { useEffect, useLayoutEffect, useRef, useState } from "react";
 import { anchorElement } from "./anchors.js";
 import "./guide.css";
+import { t } from "../shared/i18n/i18n.js";
 
 const PAD = 6;          // spotlight padding around the anchor
 const GAP = 12;         // card distance from the spotlight
@@ -138,8 +139,8 @@ export default function GuideOverlay({ guide }) {
   const hole = rect
     ? `M${rect.left},${rect.top} h${rect.width} a8,8 0 0 1 8,8 v${rect.height - 16} a8,8 0 0 1 -8,8 h${-rect.width} a8,8 0 0 1 -8,-8 v${-(rect.height - 16)} a8,8 0 0 1 8,-8 z`
     : "";
-  const primaryLabel = step.next
-    || (index + 1 >= count ? "Done" : live?.failed || (step.advanceOn && !done) ? "Skip" : "Next");
+  const primaryLabel = step.next ? t(step.next)
+    : index + 1 >= count ? t("Done") : live?.failed || (step.advanceOn && !done) ? t("Skip") : t("Next");
 
   return (
     <div className={`guideRoot ${inviting ? "guideInvitation" : ""} ${done ? "done" : ""} ${busy ? "busy" : ""}`} data-guide-overlay={inviting ? undefined : step.id} data-guide-offer={inviting ? offer.id : undefined} data-guide-busy={busy ? "1" : undefined}>
@@ -172,25 +173,25 @@ export default function GuideOverlay({ guide }) {
           style={cardPos ? { top: cardPos.top, left: cardPos.left, width: CARD_W } : undefined}
           role="dialog"
           aria-live="polite"
-          aria-label={step.title}
+          aria-label={t(step.title)}
         >
           <div className="guideHead">
             <span className="guideStep">
               {inviting ? `Quick guide · ${offer.estimate}` : `${index + 1} / ${count}`}
-              {!inviting && done ? <span className="guideDone">✓ Done</span> : null}
+              {!inviting && done ? <span className="guideDone">{t("✓ Done")}</span> : null}
               {busy ? <span className="guideBusy">watch</span> : null}
-              {live?.failed ? <span className="guideFailed">couldn't finish</span> : null}
+              {live?.failed ? <span className="guideFailed">{t("couldn't finish")}</span> : null}
             </span>
-            <button className="uiClose uiCloseSm guideClose" onClick={dismiss} title={inviting ? "Dismiss guide (Esc)" : "Leave the tour (Esc)"} aria-label={inviting ? "Dismiss guide" : "Leave the tour"}>×</button>
+            <button className="uiClose uiCloseSm guideClose" onClick={dismiss} title={inviting ? t("Dismiss guide (Esc)") : t("Leave the tour (Esc)")} aria-label={inviting ? t("Dismiss guide") : t("Leave the tour")}>×</button>
           </div>
-          <div className="guideTitle">{step.title}</div>
-          {step.body ? <div className="guideBody">{renderBody(step.body)}</div> : null}
+          <div className="guideTitle">{t(step.title)}</div>
+          {t(step.body) ? <div className="guideBody">{renderBody(t(step.body))}</div> : null}
           <div className="guideFoot">
             {!inviting ? <span className="guideDots" aria-hidden="true">
               {Array.from({ length: count }, (_, i) => <i key={i} className={i === index ? "on" : i < index ? "done" : ""} />)}
-            </span> : <button className="uiBtn sm" onClick={dismiss}>Not now</button>}
+            </span> : <button className="uiBtn sm" onClick={dismiss}>{t("Not now")}</button>}
             <span className="guideBtns">
-              {!inviting && index > 0 && !busy && !done ? <button className="uiBtn" onClick={back}>Back</button> : null}
+              {!inviting && index > 0 && !busy && !done ? <button className="uiBtn" onClick={back}>{t("Back")}</button> : null}
               {!busy && (!done || inviting) ? <button className="uiBtn primary" onClick={next}>{inviting ? "Show me" : primaryLabel}</button> : null}
             </span>
           </div>

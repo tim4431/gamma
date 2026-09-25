@@ -3,6 +3,7 @@
 // room's per-peer index (CSS --peer-N); an open editor shows as a full
 // avatar, a mere viewer as a faded one.
 import React from "react";
+import { t } from "../shared/i18n/i18n.js";
 
 function initial(peer) {
   const name = (peer?.name || "").trim();
@@ -42,7 +43,7 @@ export function PeerChips({ peers }) {
 export function PresenceBar({ peers, onJump }) {
   if (!peers?.length) return null;
   return (
-    <span className="presenceBar" aria-label="People on this page">
+    <span className="presenceBar" aria-label={t("People on this page")}>
       {peers.map((p) => (
         <PeerAvatar
           key={p.client}

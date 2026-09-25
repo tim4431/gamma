@@ -10,6 +10,7 @@ import { BookIcon, FileTextIcon, SearchIcon } from "../shared/ui/Icons";
 import { CardLabels } from "./FileBrowser";
 import { createLibraryMatcher } from "./librarySearch";
 import { pageAttachment, parseFolderTags } from "./libraryUtils";
+import { t } from "../shared/i18n/i18n.js";
 
 const MAX_ROWS = 40;
 
@@ -62,15 +63,15 @@ export default function QuickOpen({ open, onClose, pages, recentViews, openTabs,
   const choose = (page) => { if (page) { onClose(); onOpen(page.id); } };
   return (
     <div className="reportOverlay quickOpenOverlay" onMouseDown={(e) => { if (e.target === e.currentTarget) onClose(); }}>
-      <div className="reportModal quickOpen" role="dialog" aria-label="Open a page">
+      <div className="reportModal quickOpen" role="dialog" aria-label={t("Open a page")}>
         <div className="quickOpenInput">
           <SearchIcon size={15} />
           <input
             ref={inputRef}
             autoFocus
             className="searchInput"
-            placeholder="Search pages by title or label"
-            aria-label="Search pages by title or label"
+            placeholder={t("Search pages by title or label")}
+            aria-label={t("Search pages by title or label")}
             value={query}
             onChange={(e) => setQuery(e.target.value)}
             onKeyDown={(e) => {
@@ -88,7 +89,7 @@ export default function QuickOpen({ open, onClose, pages, recentViews, openTabs,
             }}
           />
         </div>
-        <div ref={listRef} className="quickOpenList" role="listbox" aria-label="Pages">
+        <div ref={listRef} className="quickOpenList" role="listbox" aria-label={t("Pages")}>
           {results.map(({ page, tag }, i) => {
             const meta = page.properties?.meta || {};
             const authors = (meta.authors || []).slice(0, 2).join(", ");
@@ -115,7 +116,7 @@ export default function QuickOpen({ open, onClose, pages, recentViews, openTabs,
           })}
           {!results.length && <div className="popoverHint">{pages.length ? "No matching pages." : "No pages yet."}</div>}
         </div>
-        <div className="chatMentionHint">↑↓ choose · Enter open · Esc close</div>
+        <div className="chatMentionHint">{t("↑↓ choose · Enter open · Esc close")}</div>
       </div>
     </div>
   );

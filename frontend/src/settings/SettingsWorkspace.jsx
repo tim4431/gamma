@@ -22,6 +22,7 @@ import {
   PlusIcon, ShieldIcon, Trash2Icon, UserIcon, UsersIcon,
 } from "../shared/ui/Icons";
 import { MirrorsSection, useMirrors } from "./SettingsMirrors";
+import { T, t } from "../shared/i18n/i18n.js";
 
 // Workspace roles as the UI words them (docs/dev/workspaces.md); the account
 // menu's switcher in App.jsx reads the same table.
@@ -128,31 +129,31 @@ export function AccessRows({ info, canEdit, onUpdate }) {
   return (
     <>
       <Row
-        icon={isPublic ? GlobeIcon : UsersIcon} label="Access"
-        hint={isPublic ? "every account on this server can open it" : "members only, by invitation"}
-        title="Private: only invited members can open the workspace. Public: every signed-in account on this server can open it with the role below; invited members keep their own role. Set by server admins."
+        icon={isPublic ? GlobeIcon : UsersIcon} label={t("Access")}
+        hint={isPublic ? t("every account on this server can open it") : t("members only, by invitation")}
+        title={t("Private: only invited members can open the workspace. Public: every signed-in account on this server can open it with the role below; invited members keep their own role. Set by server admins.")}
       >
         {canEdit ? (
           <MenuSelect
-            value={info.access} label="Access" options={ACCESS_OPTIONS}
+            value={info.access} label={t("Access")} options={ACCESS_OPTIONS}
             onChange={(access) => { if (access !== info.access) onUpdate({ access, public_role: info.public_role }); }}
           />
         ) : <span className="settingDesc">{isPublic ? "Public" : "Private"}</span>}
       </Row>
       {isPublic ? (
-        <Row icon={UserIcon} label="Public role" hint="what everyone gets"
-          title="The role every signed-in account holds in this workspace unless they are invited with another.">
+        <Row icon={UserIcon} label={t("Public role")} hint={t("what everyone gets")}
+          title={t("The role every signed-in account holds in this workspace unless they are invited with another.")}>
           {canEdit ? (
             <MenuSelect
-              value={info.public_role} label="Public role" options={PUBLIC_ROLE_OPTIONS}
+              value={info.public_role} label={t("Public role")} options={PUBLIC_ROLE_OPTIONS}
               onChange={(public_role) => { if (public_role !== info.public_role) onUpdate({ access: "public", public_role }); }}
             />
           ) : <span className="settingDesc">{PUBLIC_ROLE_OPTIONS.find(([r]) => r === info.public_role)?.[1]}</span>}
         </Row>
       ) : null}
       {canEdit && info.quota != null ? (
-        <Row icon={HardDriveIcon} label="Workspace quota" hint="total uploads · blank or 0 = unlimited"
-          title="A shared workspace's own storage cap. It counts against nobody's personal quota; the per-file limit is the server default.">
+        <Row icon={HardDriveIcon} label={t("Workspace quota")} hint={t("total uploads · blank or 0 = unlimited")}
+          title={t("A shared workspace's own storage cap. It counts against nobody's personal quota; the per-file limit is the server default.")}>
           <UnitInput
             unit="MB" min={0} placeholder="unlimited" value={info.quota_mb ?? ""}
             onCommit={(raw) => {
@@ -176,8 +177,8 @@ export function StorageRow({ quota, me }) {
     ? `${fmtBytes(quota.workspace_bytes)} here · counts against ${quota.account === me ? "your" : `${quota.account}'s`} storage`
     : quota.quota_mb ? `this workspace's own quota · ${quota.quota_mb} MB` : "this workspace's own quota · unlimited";
   return (
-    <Row icon={DatabaseIcon} label="Storage" hint={who}
-      title="Uploads into a personal workspace count against its account's quota, together with the account's other personal workspaces; a shared workspace has its own optional quota set by an admin.">
+    <Row icon={DatabaseIcon} label={t("Storage")} hint={who}
+      title={t("Uploads into a personal workspace count against its account's quota, together with the account's other personal workspaces; a shared workspace has its own optional quota set by an admin.")}>
       {quota.account
         ? <QuotaMeter usedBytes={quota.used_bytes} quotaMb={quota.quota_mb} />
         : <span className="settingDesc">{fmtBytes(quota.workspace_bytes)}</span>}
@@ -205,7 +206,7 @@ export function MembersList({ info, me, canManage, busy, onSetRole, onRemove, on
           <span className="aiProvName">
             {m.username}
             {self ? <span className="uiTag">you</span> : null}
-            {m.pending ? <span className="uiTag" title="Invited by Gamma Cloud username; joins on their first sign-in to this server">pending</span> : null}
+            {m.pending ? <span className="uiTag" title={t("Invited by Gamma Cloud username; joins on their first sign-in to this server")}>pending</span> : null}
           </span>
           <span className="aiProvDesc">
             {ROLE_OPTIONS.find(([r]) => r === m.role)?.[1] || m.role}
@@ -216,7 +217,7 @@ export function MembersList({ info, me, canManage, busy, onSetRole, onRemove, on
           {m.pending && canManage ? (
             <button
               className="uiBtn sm iconSq" disabled={busy}
-              title={`Withdraw the invitation to ${m.username}`} aria-label="Remove"
+              title={t("Withdraw the invitation to {username}", { username: m.username })} aria-label={t("Remove")}
               onClick={() => onCancel(m)}
             >
               <Trash2Icon size={13} />
@@ -224,14 +225,14 @@ export function MembersList({ info, me, canManage, busy, onSetRole, onRemove, on
           ) : null}
           {canManage && !m.pending ? (
             <MenuSelect
-              value={m.role} label="Role" options={ROLE_OPTIONS}
+              value={m.role} label={t("Role")} options={ROLE_OPTIONS}
               onChange={(r) => { if (r !== m.role) onSetRole(m.username, r); }}
             />
           ) : null}
           {canManage && !m.pending && !self && !stuck ? (
             <button
               className="uiBtn sm iconSq" disabled={busy}
-              title={`Remove ${m.username}`} aria-label="Remove"
+              title={t("Remove {username}", { username: m.username })} aria-label={t("Remove")}
               onClick={() => onRemove(m.username)}
             >
               <Trash2Icon size={13} />
@@ -264,15 +265,15 @@ export function InviteDialog({ name, accounts, exclude, cloud, busy, error, onSu
     if (next === "cloud" && role === "owner") setRole("editor");
   }
   return (
-    <SubDialog title={`Invite to ${name}`} onClose={onClose} draft={{ username, cloudName, role }}>
+    <SubDialog title={t("Invite to {name}", { name: name })} onClose={onClose} draft={{ username, cloudName, role }}>
       <div className="settingsForm">
         {cloud ? (
-          <Field label="Find by">
+          <Field label={t("Find by")}>
             <Segmented value={via} onChange={pickVia} options={INVITE_VIA} disabled={busy} />
           </Field>
         ) : null}
         {byCloud ? (
-          <Field label="Gamma Cloud username" hint="they join on their first sign-in here">
+          <Field label={t("Gamma Cloud username")} hint={t("they join on their first sign-in here")}>
             <input
               className="aiKeyInput" type="text" autoFocus spellCheck={false} autoCapitalize="none"
               placeholder="username" value={cloudName}
@@ -281,17 +282,17 @@ export function InviteDialog({ name, accounts, exclude, cloud, busy, error, onSu
             />
           </Field>
         ) : (
-          <Field label="Account" hint="anyone with an account on this server">
+          <Field label={t("Account")} hint={t("anyone with an account on this server")}>
             <AccountPicker accounts={accounts} exclude={exclude} value={username} onChange={setUsername} autoFocus />
           </Field>
         )}
-        <Field label="Role" hint={byCloud ? "editors write; viewers read" : "owners manage members; editors write; viewers read"}>
-          <MenuSelect value={role} label="Role" options={byCloud ? CLOUD_ROLE_OPTIONS : ROLE_OPTIONS} block onChange={setRole} />
+        <Field label={t("Role")} hint={byCloud ? t("editors write; viewers read") : t("owners manage members; editors write; viewers read")}>
+          <MenuSelect value={role} label={t("Role")} options={byCloud ? CLOUD_ROLE_OPTIONS : ROLE_OPTIONS} block onChange={setRole} />
         </Field>
         {error ? <div className="settingsPaneHint aiKeysError">{error}</div> : null}
         <div className="reportModalBtns">
-          <button className="uiBtn" onClick={onClose}>Cancel</button>
-          <button className="uiBtn primary" disabled={busy || !who} onClick={submit}>Invite</button>
+          <button className="uiBtn" onClick={onClose}>{t("Cancel")}</button>
+          <button className="uiBtn primary" disabled={busy || !who} onClick={submit}>{t("Invite")}</button>
         </div>
       </div>
     </SubDialog>
@@ -313,7 +314,7 @@ export function NameDialog({ title, label, hint, initial, submitLabel, busy, err
         </Field>
         {error ? <div className="settingsPaneHint aiKeysError">{error}</div> : null}
         <div className="reportModalBtns">
-          <button className="uiBtn" onClick={onClose}>Cancel</button>
+          <button className="uiBtn" onClick={onClose}>{t("Cancel")}</button>
           <button className="uiBtn primary" disabled={busy || !name.trim()} onClick={() => onSubmit(name.trim())}>{submitLabel}</button>
         </div>
       </div>
@@ -330,8 +331,8 @@ export function NameDialog({ title, label, hint, initial, submitLabel, busy, err
 // one). `personalCount` hides Delete on an account's last personal workspace.
 function WorkspacePage({ title, onClose, children }) {
   return <>
-    <button className="uiBtn sm settingsInlineLink" onClick={onClose}>Back to workspaces</button>
-    <PaneHead icon={UsersIcon} title={title}>Workspace settings</PaneHead>
+    <button className="uiBtn sm settingsInlineLink" onClick={onClose}>{t("Back to workspaces")}</button>
+    <PaneHead icon={UsersIcon} title={title}>{t("Workspace settings")}</PaneHead>
     {children}
   </>;
 }
@@ -374,8 +375,8 @@ export function ManageWorkspaceDialog({ wsId, me, admin, accounts, confirm, setS
 
   function cancelInvite(m) {
     confirm({
-      title: "Withdraw invitation",
-      message: `Withdraw the invitation to ${m.username} for "${info?.name}"?`,
+      title: T("Withdraw invitation"),
+      message: t("Withdraw the invitation to {username} for \"{name}\"?", { username: m.username, name: info?.name }),
       confirmLabel: "Withdraw", danger: true,
       onConfirm: async () => {
         const d = await ws.cancelInvite(m.subject);
@@ -403,7 +404,7 @@ export function ManageWorkspaceDialog({ wsId, me, admin, accounts, confirm, setS
 
   function destroy() {
     confirm({
-      title: "Delete workspace",
+      title: T("Delete workspace"),
       message: `Delete "${info?.name}" with ALL its pages, PDFs, chats and backups${isPersonal ? "" : ", for every member"}? This can't be undone.`,
       confirmLabel: "Delete", danger: true,
       onConfirm: async () => {
@@ -439,28 +440,28 @@ export function ManageWorkspaceDialog({ wsId, me, admin, accounts, confirm, setS
     <Surface title={title} onClose={onClose}>
       <div className="settingsForm">
         {subtitle ? <div className="settingsPaneHint">{subtitle}</div> : null}
-        {!info && !ws.error ? <Empty icon={UsersIcon}>Loading…</Empty> : null}
+        {!info && !ws.error ? <Empty icon={UsersIcon}>{t("Loading…")}</Empty> : null}
         {info ? (
           <>
-            <Section title="General">
-              <Row icon={PenIcon} label="Name" hint={info.name}>
-                {manages ? <button className="uiBtn sm" disabled={ws.busy} onClick={() => setRenaming(true)}>Rename</button> : null}
+            <Section title={t("General")}>
+              <Row icon={PenIcon} label={t("Name")} hint={info.name}>
+                {manages ? <button className="uiBtn sm" disabled={ws.busy} onClick={() => setRenaming(true)}>{t("Rename")}</button> : null}
               </Row>
               <StorageRow quota={info.quota} me={me} />
             </Section>
             {!isPersonal ? (
-              <Section title="Access">
+              <Section title={t("Access")}>
                 <AccessRows info={info} canEdit={!!admin} onUpdate={async (patch) => {
                   const d = await ws.update(patch);
                   if (d && patch.access) done(d.access === "public" ? `${d.name} is open to everyone on this server.` : `${d.name} is private.`);
                   else if (d && "quota_mb" in patch) done(d.quota_mb ? `Workspace quota set to ${d.quota_mb} MB.` : "Workspace quota removed.");
                 }} />
-                {!admin ? <div className="settingsPaneHint">Access and the workspace's quota are set by a server admin.</div> : null}
+                {!admin ? <div className="settingsPaneHint">{t("Access and the workspace's quota are set by a server admin.")}</div> : null}
               </Section>
             ) : null}
             {!isPersonal ? (
               <Section
-                title="Members"
+                title={t("Members")}
                 action={manages ? (
                   <button className="uiBtn sm" disabled={ws.busy} onClick={() => { ws.setError(""); setInviting(true); }}>
                     <PlusIcon size={13} /> Invite
@@ -469,52 +470,52 @@ export function ManageWorkspaceDialog({ wsId, me, admin, accounts, confirm, setS
               >
                 <MembersList info={info} me={me} canManage={manages} busy={ws.busy} onSetRole={ws.setRole} onRemove={remove} onCancel={cancelInvite} />
                 {info.access === "public" && !explicitMember ? (
-                  <div className="settingsPaneHint">You are in because the workspace is public — everyone on this server is.</div>
+                  <div className="settingsPaneHint">{t("You are in because the workspace is public — everyone on this server is.")}</div>
                 ) : manages ? (
                   <div className="settingsPaneHint">Naming someone Owner hands the workspace on; the role menu is how ownership moves.</div>
                 ) : null}
               </Section>
             ) : null}
-            <Section title="Actions">
+            <Section title={t("Actions")}>
               {mine && !info.default ? (
-                <Row icon={CheckIcon} label="Default workspace" hint="where the extension and plain links land"
-                  title="Requests that name no workspace — the browser extension's clips, older clients, a link without a workspace — land in your default workspace.">
+                <Row icon={CheckIcon} label={t("Default workspace")} hint={t("where the extension and plain links land")}
+                  title={t("Requests that name no workspace — the browser extension's clips, older clients, a link without a workspace — land in your default workspace.")}>
                   <button className="uiBtn sm" disabled={ws.busy} onClick={async () => { const d = await ws.update({ default: true }); if (d) done(`${d.name} is now your default workspace.`); }}>
-                    Make default
+                    {t("Make default")}
                   </button>
                 </Row>
               ) : null}
               {isPersonal && !admin ? (
-                <Row icon={UsersIcon} label="Sharing" hint="a personal workspace is just you"
-                  title="Share a page with a link, or ask a server admin for a shared workspace to work with others.">
-                  <span className="settingDesc">page links only</span>
+                <Row icon={UsersIcon} label={t("Sharing")} hint={t("a personal workspace is just you")}
+                  title={t("Share a page with a link, or ask a server admin for a shared workspace to work with others.")}>
+                  <span className="settingDesc">{t("page links only")}</span>
                 </Row>
               ) : null}
               {admin && isPersonal ? (
-                <Row icon={UsersIcon} label="Convert to shared" hint="let people in; the owner stays owner, it stops counting against them">
-                  <button className="uiBtn sm" disabled={ws.busy} onClick={() => convert("shared")}>Make shared</button>
+                <Row icon={UsersIcon} label={t("Convert to shared")} hint={t("let people in; the owner stays owner, it stops counting against them")}>
+                  <button className="uiBtn sm" disabled={ws.busy} onClick={() => convert("shared")}>{t("Make shared")}</button>
                 </Row>
               ) : null}
               {admin && !isPersonal && members.length === 1 ? (
-                <Row icon={UserIcon} label="Convert to personal" hint={`hand it to ${members[0].username} as a personal workspace`}>
-                  <button className="uiBtn sm" disabled={ws.busy} onClick={() => convert("personal")}>Make personal</button>
+                <Row icon={UserIcon} label={t("Convert to personal")} hint={t("hand it to {username} as a personal workspace", { username: members[0].username })}>
+                  <button className="uiBtn sm" disabled={ws.busy} onClick={() => convert("personal")}>{t("Make personal")}</button>
                 </Row>
               ) : null}
               {admin && !isPersonal && !explicitMember ? (
-                <Row icon={ShieldIcon} label="Join as owner" hint={info.access === "public" ? "everyone can already open it; this adds you as an owner" : "add yourself so you can open it"}>
+                <Row icon={ShieldIcon} label={t("Join as owner")} hint={info.access === "public" ? t("everyone can already open it; this adds you as an owner") : t("add yourself so you can open it")}>
                   <button className="uiBtn sm" disabled={ws.busy} onClick={async () => { const d = await ws.setRole(me, "owner"); if (d) done(`You now own ${d.name}.`); }}>
-                    Join
+                    {t("Join")}
                   </button>
                 </Row>
               ) : null}
               {!isPersonal && explicitMember && !soleOwner ? (
-                <Row icon={LogOutIcon} label="Leave" hint="you will need a new invitation to come back">
-                  <button className="uiBtn sm" disabled={ws.busy} onClick={() => remove(me)}>Leave</button>
+                <Row icon={LogOutIcon} label={t("Leave")} hint={t("you will need a new invitation to come back")}>
+                  <button className="uiBtn sm" disabled={ws.busy} onClick={() => remove(me)}>{t("Leave")}</button>
                 </Row>
               ) : null}
               {canDelete ? (
-                <Row icon={Trash2Icon} label="Delete workspace" hint={isPersonal ? "everything in it, and its backups" : "everything in it, for every member"}>
-                  <button className="uiBtn sm danger" disabled={ws.busy} onClick={destroy}>Delete…</button>
+                <Row icon={Trash2Icon} label={t("Delete workspace")} hint={isPersonal ? t("everything in it, and its backups") : t("everything in it, for every member")}>
+                  <button className="uiBtn sm danger" disabled={ws.busy} onClick={destroy}>{t("Delete…")}</button>
                 </Row>
               ) : null}
             </Section>
@@ -522,12 +523,12 @@ export function ManageWorkspaceDialog({ wsId, me, admin, accounts, confirm, setS
         ) : null}
         {ws.error && !inviting && !renaming ? <div className="settingsPaneHint aiKeysError">{ws.error}</div> : null}
         <div className="reportModalBtns">
-          {canOpen || explicitMember ? <button className="uiBtn" onClick={onOpen}>Open</button> : null}
-          <button className="uiBtn primary" onClick={onClose}>Done</button>
+          {canOpen || explicitMember ? <button className="uiBtn" onClick={onOpen}>{t("Open")}</button> : null}
+          <button className="uiBtn primary" onClick={onClose}>{t("Done")}</button>
         </div>
       </div>
       {renaming ? (
-        <NameDialog title="Rename workspace" label="Name" initial={info?.name} submitLabel="Save"
+        <NameDialog title={t("Rename workspace")} label={t("Name")} initial={info?.name} submitLabel="Save"
           busy={ws.busy} error={ws.error} onSubmit={saveName} onClose={() => { setRenaming(false); ws.setError(""); }} />
       ) : null}
       {inviting ? (
@@ -548,18 +549,18 @@ export function ManageWorkspaceDialog({ wsId, me, admin, accounts, confirm, setS
 export function WorkspaceDataMenus({ w, exportWorkspace, importWorkspace, closeSettings }) {
   const run = (fn) => { closeSettings?.(); fn(); }; // progress shows in the status pill, the confirm wants the screen
   const items = [
-    { icon: ExportIcon, label: "Export everything (.zip)", title: `A zip of ${w.name}: its databases + every uploaded PDF`,
+    { icon: ExportIcon, label: T("Export everything (.zip)"), title: t("A zip of {name}: its databases + every uploaded PDF", { name: w.name }),
       onClick: () => run(() => exportWorkspace(w.id, true)) },
-    { icon: DatabaseIcon, label: "Export databases only (.zip)", title: "A small zip with just the databases — no uploaded PDFs",
+    { icon: DatabaseIcon, label: T("Export databases only (.zip)"), title: T("A small zip with just the databases — no uploaded PDFs"),
       onClick: () => run(() => exportWorkspace(w.id, false)) },
   ];
   if (w.role !== "viewer") {
-    items.push({ icon: PlusIcon, label: "Merge a backup into it…", title: "Add the backup's pages that are not there yet; nothing existing changes",
+    items.push({ icon: PlusIcon, label: T("Merge a backup into it…"), title: T("Add the backup's pages that are not there yet; nothing existing changes"),
       onClick: () => run(() => importWorkspace(w.id, "merge")) });
-    if (w.role === "owner") items.push({ icon: ImportIcon, label: "Restore from a backup (replace)…", title: `Replace ${w.name}'s pages and chats with a backup zip`,
+    if (w.role === "owner") items.push({ icon: ImportIcon, label: T("Restore from a backup (replace)…"), title: t("Replace {name}'s pages and chats with a backup zip", { name: w.name }),
       onClick: () => run(() => importWorkspace(w.id, "replace")) });
   }
-  return <ActionMenu label="Data" icon={DatabaseIcon} items={items} />;
+  return <ActionMenu label={t("Data")} icon={DatabaseIcon} items={items} />;
 }
 
 export function WorkspacesSettings({ value, onServer }) {
@@ -635,9 +636,9 @@ export function WorkspacesSettings({ value, onServer }) {
           </span>
         </span>
         <span className="aiProvActions">
-          {!current ? <button className="uiBtn sm" onClick={() => { closeSettings?.(); switchWorkspace(w.id); }}>Open</button> : null}
+          {!current ? <button className="uiBtn sm" onClick={() => { closeSettings?.(); switchWorkspace(w.id); }}>{t("Open")}</button> : null}
           <WorkspaceDataMenus w={w} exportWorkspace={exportWorkspace} importWorkspace={importWorkspace} closeSettings={closeSettings} />
-          <button className="uiBtn sm" onClick={() => setManage(w.id)} title={`Manage ${w.name}`}>
+          <button className="uiBtn sm" onClick={() => setManage(w.id)} title={t("Manage {name}", { name: w.name })}>
             <PenIcon size={13} /> Manage
           </button>
         </span>
@@ -657,27 +658,27 @@ export function WorkspacesSettings({ value, onServer }) {
 
   return (
     <>
-      <PaneHead icon={UsersIcon} title="Workspaces" />
-      {!data && !error ? <Empty icon={UsersIcon}>Loading…</Empty> : null}
-      {error ? <Empty icon={UsersIcon}>Workspaces unavailable — {error}</Empty> : null}
+      <PaneHead icon={UsersIcon} title={t("Workspaces")} />
+      {!data && !error ? <Empty icon={UsersIcon}>{t("Loading…")}</Empty> : null}
+      {error ? <Empty icon={UsersIcon}>{t("Workspaces unavailable — {error}", { error: error })}</Empty> : null}
       {data ? (
         <>
-          <Section title="Storage">
-            <Row icon={DatabaseIcon} label="Your storage" hint={`all personal workspaces${data.account.max_upload_mb ? ` · max ${data.account.max_upload_mb} MB per file` : ""}`}
-              title="Uploads into your personal workspaces count against your account's quota. Shared workspaces carry their own.">
+          <Section title={t("Storage")}>
+            <Row icon={DatabaseIcon} label={t("Your storage")} hint={`all personal workspaces${data.account.max_upload_mb ? ` · max ${data.account.max_upload_mb} MB per file` : ""}`}
+              title={t("Uploads into your personal workspaces count against your account's quota. Shared workspaces carry their own.")}>
               <QuotaMeter usedBytes={data.account.used_bytes} quotaMb={data.account.quota_mb} />
             </Row>
           </Section>
           <Section
-            title="Personal"
+            title={t("Personal")}
             action={(
               <span className="aiProvActions">
                 <ActionMenu
-                  label="Export all" icon={ExportIcon} disabled={!personal.length}
+                  label={t("Export all")} icon={ExportIcon} disabled={!personal.length}
                   items={[
-                    { icon: ExportIcon, label: "Everything (.zip)", title: "One zip holding an export of each personal workspace, PDFs included",
+                    { icon: ExportIcon, label: T("Everything (.zip)"), title: T("One zip holding an export of each personal workspace, PDFs included"),
                       onClick: () => { closeSettings?.(); exportAll(true); } },
-                    { icon: DatabaseIcon, label: "Databases only (.zip)", title: "One zip holding a database-only export of each personal workspace",
+                    { icon: DatabaseIcon, label: T("Databases only (.zip)"), title: T("One zip holding a database-only export of each personal workspace"),
                       onClick: () => { closeSettings?.(); exportAll(false); } },
                   ]}
                 />
@@ -693,12 +694,12 @@ export function WorkspacesSettings({ value, onServer }) {
             <MirrorsSection mirrors={mirrors} refresh={refresh} workspaces={all} currentId={currentId}
               switchWorkspace={switchWorkspace} closeSettings={closeSettings} confirm={confirm} setStatus={setStatus} />
           )}
-          <Section title="Shared">
+          <Section title={t("Shared")}>
             {shared.length ? shared.map(row) : (
               <Empty icon={UsersIcon}>
-                <span>No shared workspaces yet.</span>
-                {onServer ? <button className="uiBtn sm" onClick={onServer}><PlusIcon size={13} /> New shared workspace</button>
-                  : <span className="settingDesc">An admin makes them.</span>}
+                <span>{t("No shared workspaces yet.")}</span>
+                {onServer ? <button className="uiBtn sm" onClick={onServer}><PlusIcon size={13} /> {t("New shared workspace")}</button>
+                  : <span className="settingDesc">{t("An admin makes them.")}</span>}
               </Empty>
             )}
           </Section>
@@ -706,8 +707,8 @@ export function WorkspacesSettings({ value, onServer }) {
       ) : null}
 
       {creating ? (
-        <NameDialog title="New personal workspace" label="Name"
-          hint="a separate library of your own — work, life, play"
+        <NameDialog title={t("New personal workspace")} label={t("Name")}
+          hint={t("a separate library of your own — work, life, play")}
           submitLabel="Create and open" busy={busy} error={createError} onSubmit={submitCreate} onClose={() => setCreating(false)} />
       ) : null}
     </>

@@ -5,6 +5,7 @@
 import React, { useEffect } from "react";
 import { useCaretAnchored } from "./LatexEditor";
 import { TEXT_COLORS, colorSpan } from "./mdMarks";
+import { t, T } from "../shared/i18n/i18n.js";
 
 // Every command edits through ctx:
 //   { value, start, cursor, setText(newVal, selStart, selEnd),
@@ -47,69 +48,69 @@ const MERMAID_MD = "```mermaid\nflowchart LR\n  A[Start] --> B[Finish]\n```";
 
 export const SLASH_COMMANDS = [
   {
-    name: "link", label: "Link to note", glyph: "[[", hint: "reference another block",
+    name: "link", label: T("Link to note"), glyph: "[[", hint: T("reference another block"),
     keywords: ["ref", "page", "block", "mention"],
     run: (ctx) => { replaceRange(ctx, "[["); ctx.openRefPopup(); },
   },
   {
-    name: "embed", label: "Embed note", glyph: "⧉", hint: "show a block inline",
+    name: "embed", label: T("Embed note"), glyph: "⧉", hint: T("show a block inline"),
     keywords: ["transclude", "include", "block"],
     run: (ctx) => { replaceRange(ctx, "![["); ctx.openRefPopup(); },
   },
   {
-    name: "highlight", label: "Highlight text", glyph: "==", hint: "==marked==",
+    name: "highlight", label: T("Highlight text"), glyph: "==", hint: "==marked==",
     keywords: ["mark", "yellow", "emphasize"],
     run: (ctx) => replaceRange(ctx, "==x==", 2, 1),
   },
   {
-    name: "math", label: "Inline equation", glyph: "$x$", hint: "LaTeX, rendered in place",
+    name: "math", label: T("Inline equation"), glyph: "$x$", hint: T("LaTeX, rendered in place"),
     keywords: ["equation", "latex", "tex"],
     run: (ctx) => replaceRange(ctx, "$x$", 1, 1),
   },
   {
-    name: "equation", label: "Equation block", glyph: "$$", hint: "display math",
+    name: "equation", label: T("Equation block"), glyph: "$$", hint: T("display math"),
     keywords: ["display", "math", "latex"],
     run: (ctx) => replaceRange(ctx, "$$x$$", 2, 1),
   },
-  { name: "h1", label: "Heading 1", glyph: "H1", keywords: ["heading", "title"], run: (ctx) => applyLinePrefix(ctx, "# ") },
-  { name: "h2", label: "Heading 2", glyph: "H2", keywords: ["heading"], run: (ctx) => applyLinePrefix(ctx, "## ") },
-  { name: "h3", label: "Heading 3", glyph: "H3", keywords: ["heading"], run: (ctx) => applyLinePrefix(ctx, "### ") },
+  { name: "h1", label: T("Heading 1"), glyph: "H1", keywords: ["heading", "title"], run: (ctx) => applyLinePrefix(ctx, "# ") },
+  { name: "h2", label: T("Heading 2"), glyph: "H2", keywords: ["heading"], run: (ctx) => applyLinePrefix(ctx, "## ") },
+  { name: "h3", label: T("Heading 3"), glyph: "H3", keywords: ["heading"], run: (ctx) => applyLinePrefix(ctx, "### ") },
   {
-    name: "todo", label: "To-do", glyph: "☐", hint: "checkbox item",
+    name: "todo", label: T("To-do"), glyph: "☐", hint: T("checkbox item"),
     keywords: ["task", "checkbox", "check"],
     run: (ctx) => applyLinePrefix(ctx, "- [ ] "),
   },
-  { name: "bullet", label: "Bulleted list", glyph: "•", keywords: ["list", "ul"], run: (ctx) => applyLinePrefix(ctx, "- ") },
-  { name: "number", label: "Numbered list", glyph: "1.", keywords: ["list", "ol", "ordered"], run: (ctx) => applyLinePrefix(ctx, "1. ") },
-  { name: "quote", label: "Quote", glyph: "❝", keywords: ["blockquote", "cite"], run: (ctx) => applyLinePrefix(ctx, "> ") },
+  { name: "bullet", label: T("Bulleted list"), glyph: "•", keywords: ["list", "ul"], run: (ctx) => applyLinePrefix(ctx, "- ") },
+  { name: "number", label: T("Numbered list"), glyph: "1.", keywords: ["list", "ol", "ordered"], run: (ctx) => applyLinePrefix(ctx, "1. ") },
+  { name: "quote", label: T("Quote"), glyph: "❝", keywords: ["blockquote", "cite"], run: (ctx) => applyLinePrefix(ctx, "> ") },
   {
-    name: "callout", label: "Callout", glyph: "[!]", hint: "note · tip · warning · danger",
+    name: "callout", label: T("Callout"), glyph: "[!]", hint: T("note · tip · warning · danger"),
     keywords: ["admonition", "aside", "banner", "note", "tip", "warning"],
     run: (ctx) => applyLinePrefix(ctx, "> [!note] "),
   },
   {
-    name: "code", label: "Code block", glyph: "</>", hint: "fenced code",
+    name: "code", label: T("Code block"), glyph: "</>", hint: T("fenced code"),
     keywords: ["fence", "pre", "snippet"],
     run: (ctx) => blockInsert(ctx, "```\n\n```", 4),
   },
   {
-    name: "mermaid", label: "Mermaid diagram", glyph: "◇", hint: "flowchart or sequence diagram",
+    name: "mermaid", label: T("Mermaid diagram"), glyph: "◇", hint: T("flowchart or sequence diagram"),
     keywords: ["diagram", "flowchart", "sequence", "chart"],
     run: (ctx) => blockInsert(ctx, MERMAID_MD, MERMAID_MD.indexOf("Start"), 5),
   },
-  { name: "divider", label: "Divider", glyph: "—", keywords: ["hr", "rule", "separator", "line"], run: (ctx) => blockInsert(ctx, "---\n") },
+  { name: "divider", label: T("Divider"), glyph: "—", keywords: ["hr", "rule", "separator", "line"], run: (ctx) => blockInsert(ctx, "---\n") },
   {
-    name: "table", label: "Table", glyph: "▦", hint: "2×2 markdown table",
+    name: "table", label: T("Table"), glyph: "▦", hint: T("2×2 markdown table"),
     keywords: ["grid"],
     run: (ctx) => blockInsert(ctx, TABLE_MD, 2, 8),
   },
   {
-    name: "image", label: "Image", glyph: "▣", hint: "upload from disk",
+    name: "image", label: T("Image"), glyph: "▣", hint: T("upload from disk"),
     keywords: ["picture", "photo", "upload", "figure"],
     run: (ctx) => { replaceRange(ctx, ""); ctx.pickImage(); },
   },
   {
-    name: "date", label: "Today's date", glyph: "@", keywords: ["today", "now", "time"],
+    name: "date", label: T("Today's date"), glyph: "@", keywords: ["today", "now", "time"],
     run: (ctx) => replaceRange(ctx, new Date().toISOString().slice(0, 10)),
   },
   // Colored text / background tint, Notion's palette written as Obsidian-
@@ -134,7 +135,7 @@ export function filterSlashCommands(query) {
   if (!q) return SLASH_COMMANDS.filter((c) => !c.hidden);
   const scored = [];
   for (const c of SLASH_COMMANDS) {
-    const names = [c.name, ...(c.keywords || []), ...c.label.toLowerCase().split(/\s+/)];
+    const names = [c.name, ...(c.keywords || []), ...c.label.toLowerCase().split(/\s+/), ...t(c.label).toLowerCase().split(/\s+/)];
     const tier = names.some((n) => n.startsWith(q)) ? 0
       : names.some((n) => n.includes(q)) ? 1 : -1;
     if (tier >= 0) scored.push([tier, scored.length, c]);
@@ -164,8 +165,8 @@ export function SlashMenuPopup({ items, selected, anchor, onPick, title }) {
           onClick={() => onPick(c)}
         >
           <span className="slashMenuGlyph" style={c.glyphStyle}>{c.glyph}</span>
-          <span className="slashMenuLabel">{c.label}</span>
-          {c.hint ? <span className="slashMenuHint">{c.hint}</span> : null}
+          <span className="slashMenuLabel">{t(c.label)}</span>
+          {c.hint ? <span className="slashMenuHint">{t(c.hint)}</span> : null}
         </button>
       ))}
     </div>
