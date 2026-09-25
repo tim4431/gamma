@@ -20,6 +20,7 @@ notes. Ordinary prose and fenced code retain their usual typing behavior.
 | `\mbb`, `\lra`, `\Ra`, `\ooo`, `\xx`, `\del` + Tab | Fuzzy and abbreviation matches: `\mathbb{}`, `\leftrightarrow`, `\Rightarrow`, `\infty`, `\times`, `\partial` |
 | Tab / Shift+Tab | Moves forward / backward between argument slots; Tab also skips a `\right` delimiter or leaves the math span |
 | Backspace inside an empty `\left...\right` pair | Removes the whole pair |
+| A `\command` KaTeX doesn't know, a mismatched `\end`, a stray closer | A wavy underline under it; hovering shows KaTeX's message |
 
 Command completion also accepts Enter. The list ranks an exact name first,
 then names the typed letters prefix (a bare `\left` puts `\left(` before
@@ -51,9 +52,23 @@ visible viewport and refreshed after scrolling, resizing, or font/layout
 changes. Long and tall equations scroll within the preview; clicking it
 retains editor focus; its height is capped at 45% of the window.
 
+Error underlines: the raw span under the caret is parsed by KaTeX on every
+change (`katex.__parse`, memoized, the same options as the preview) and the
+error it reports is underlined where its position points — an undefined
+`\command` at the command, `\begin{aligned}…\end{align}` at the `\end`, a
+stray `}` at the brace. An unfinished formula reports a zero-length error at
+the end of the input, which lands on the last character. The range the
+caret touches is hidden, so a half-typed `\fo` or the open tail of
+`\frac{a}{` is never flagged until the caret moves on; the message is the
+mark's hover title. Only raw spans are checked — a span the caret has left
+renders as a widget, where KaTeX's own red error text shows. Unmatched
+brackets keep their separate mark from the bracket-pair pass.
+
 Implementation: `editor/latexInput.js` contains delimiter edits and the shared
-`escapedAt` check. `editor/BlockCmEditor.jsx` applies
-delimiter edits as atomic CodeMirror transactions. `editor/latexCompletion.js`
+`escapedAt` check. `editor/latexLint.js` (pure) turns KaTeX's parse error
+into the underline range and applies the caret rule. `editor/BlockCmEditor.jsx`
+applies delimiter edits as atomic CodeMirror transactions and draws the
+underlines in its decoration field. `editor/latexCompletion.js`
 (pure, node-testable) holds the command catalog, the matching tiers, snippet
 insertion, the math span under the caret and Tab navigation;
 `editor/LatexEditor.jsx` re-exports it and holds the preview and popup
@@ -64,7 +79,7 @@ editor's box and the span's first/last lines.
 Validation (from `frontend`):
 
 ```sh
-node --test tests/latexInput.test.mjs tests/latexCompletion.test.mjs
+node --test tests/latexInput.test.mjs tests/latexCompletion.test.mjs tests/latexLint.test.mjs
 npm run e2e:latex
 ```
 

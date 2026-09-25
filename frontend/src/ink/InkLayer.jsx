@@ -693,6 +693,7 @@ export function InkToolbar({ tools, active, options, eraserMode, eraserSize, las
   const tap = (id) => (id === active ? onToggleOptions() : onPick(id));
   const btn = (id, label, icon, extra) => (
     <button key={id} type="button" className={"ctlBtn inkToolBtn" + (active === id ? " modeActive" : "")}
+      data-guide={id === "eraser" ? "ink.eraser" : id === "select" ? "ink.lasso" : undefined}
       onClick={() => tap(id)} title={label} aria-label={label} aria-pressed={active === id}>{icon}{extra}</button>
   );
   const edit = (patch) => onChangeTools(tools.map((t) => (t.id === active ? { ...t, ...patch } : t)));
@@ -732,13 +733,13 @@ export function InkToolbar({ tools, active, options, eraserMode, eraserSize, las
           aria-pressed={active === null}><HandIcon size={15} /></button>
         <span className="pdfInkSep" />
         <button type="button" className="ctlBtn" onClick={onClose} title={t("Close the handwriting tools (Esc)")}><XIcon size={15} /></button>
-        <span className="pdfInkHistory">
+        <span className="pdfInkHistory" data-guide="ink.history">
           <button type="button" className="ctlBtn" aria-label={t("Undo ink")} title={t("Undo handwriting")} disabled={!canUndo} onClick={onUndo}><UndoIcon aria-hidden="true" /></button>
           <button type="button" className="ctlBtn" aria-label={t("Redo ink")} title={t("Redo handwriting")} disabled={!canRedo} onClick={onRedo}><RedoIcon aria-hidden="true" /></button>
         </span>
       </div>
       {options && preset ? (
-        <div className="pdfInkSub" data-ink-options="tool">
+        <div className="pdfInkSub" data-ink-options="tool" data-guide="ink.options">
           {preset.kind === "pen" ? <>
             {seg(preset.brush !== "monoline", t("Pen"), <PenIcon size={14} />, () => edit({ brush: "pen" }), t("Pen: width follows stylus pressure"))}
             {seg(preset.brush === "monoline", t("Monoline"), <LineWidthIcon size={14} />, () => edit({ brush: "monoline" }), t("Monoline: an even line at every pressure"))}

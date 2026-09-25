@@ -369,19 +369,22 @@ mirror's own answer apart.
 - **The header's sync pill** shows for a publication only on a published
   page (a clone syncs the whole workspace, so its pill is on every page; a
   publication syncs the pages in its filter, so its pill is on those;
-  Settings → Appearance → Sync pill, *Synced pages* / *Every page*, can put it on every page instead). Its
+  Settings → Sync → Sync pill, *Synced pages* / *Every page*, can put it on every page instead). Its
   tooltip and name line say *Published to Gamma Cloud* with the count of
   pages and the host; its gear keeps *Automatic sync* and *Sync after an
   edit* and hides *Direction*, the forces, *Detach* and *Remove origin*,
   which would break it (a detached publication still offers *Reattach*).
   The first publication in a workspace sets `publishing` on the open
   workspace, so the pill appears without a reload.
-- **Settings → Workspaces** lists publications under their own
-  *Publishing* heading below Clones: the state avatar, the workspace's
+- **Settings → Sync** (`SettingsSync.jsx`, `PublishingSection` in
+  `SettingsMirrors.jsx`) lists publications under *Publishing* (Settings →
+  Workspaces keeps only the clones; the pill's gear link opens Sync for a
+  publication, Workspaces for a clone): the state avatar, the workspace's
   name with its tags, *N published pages · host*, the status line, a
   *Conflicts* button when any wait, and a "more" menu with *Sync now* and
   a danger *Stop publishing all* (confirmed, then
   `DELETE /api/pages/{id}/publish?ws=` for every page in the filter).
+  Open conflicts there raise the `publish-conflicts` notice on that pane.
 
 ### The desktop switcher
 

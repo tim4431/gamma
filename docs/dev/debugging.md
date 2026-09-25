@@ -161,8 +161,9 @@ tablet dimensions and DPR 2. That is browser emulation, not an iPad measurement.
 
 `frontend/tests/e2e/run.mjs` starts an ISOLATED backend (the project venv's
 python — or the interpreter `GAMMA_E2E_PYTHON` names — over a fresh
-`GAMMA_DATA_DIR` under the OS temp dir, on a free port, serving
-`frontend/dist`), creates the accounts `alice` / `bob`, and drives Playwright's
+`GAMMA_DATA_DIR` under the OS temp dir, on a free port, serving a copy of
+`frontend/dist` taken at start, so a build during the run cannot break its
+page loads), creates the accounts `alice` / `bob`, and drives Playwright's
 Chromium (`playwright` is a devDependency; the browser is downloaded once on
 first launch). A failed step saves a screenshot of every open page plus the
 pages' recorded problems and the server log's tail under the temp dir's

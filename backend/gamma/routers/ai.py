@@ -9,6 +9,7 @@ import sqlite3
 import threading
 import time
 import urllib.error
+import urllib.parse
 from collections import OrderedDict
 from concurrent.futures import ThreadPoolExecutor
 from urllib.request import Request as URLRequest, urlopen
@@ -17,7 +18,7 @@ from fastapi import APIRouter, File, Form, HTTPException, Request, UploadFile
 from fastapi.responses import StreamingResponse
 from pydantic import BaseModel, Field, field_validator
 
-from .. import ai_usage, chatgpt_oauth
+from .. import ai_usage, chatgpt_oauth, translate_engines
 from ..ai_client import (
     UpstreamError,
     add_usage as _add_usage,
@@ -293,6 +294,9 @@ def ai_models(request: Request):
         "enabled": rt["enabled"],
         "models": rt["models"],             # [{id: "<pid>:<model>", provider, provider_name, model}, ...]
         "default": rt["default"]["id"] if rt["default"] else "",
+        # Set-up machine-translation engines [{id: "engine:<id>", label}] —
+        # the translation picker offers them next to the models.
+        "translate_engines": translate_engines.configured(user),
         "efforts": ["low", "medium", "high"],  # offered in the UI; omitted unless picked
         "default_prompt": _SYSTEM_PROMPT,   # shown in the prompt editor
         "metadata_prompt": METADATA_PROMPT,  # AI metadata-extraction fallback
@@ -650,6 +654,17 @@ def _models_list_request(protocol: str, key: str, base: str) -> URLRequest:
     })
 
 
+def _codex_models_request(conf: dict) -> URLRequest:
+    """Codex CLI's own listing call on the ChatGPT backend."""
+    return URLRequest(
+        f"{conf['base_url']}/models?client_version={_codex_client_version()}",
+        headers={
+            "Authorization": f"Bearer {conf['api_key']}",
+            "chatgpt-account-id": conf.get("account_id", ""),
+            "originator": "codex_cli_rs",
+        })
+
+
 def _chatgpt_model_catalog(user: str, provider_id: str = "") -> list:
     """Live model list from the ChatGPT (codex) backend, Codex CLI's own
     listing call: GET {base}/models?client_version=… with the OAuth bearer.
@@ -664,14 +679,7 @@ def _chatgpt_model_catalog(user: str, provider_id: str = "") -> list:
         raise HTTPException(status_code=400,
                             detail="sign in with ChatGPT first — the model list comes from your account")
     try:
-        req = URLRequest(
-            f"{conf['base_url']}/models?client_version={_codex_client_version()}",
-            headers={
-                "Authorization": f"Bearer {conf['api_key']}",
-                "chatgpt-account-id": conf.get("account_id", ""),
-                "originator": "codex_cli_rs",
-            })
-        data = _model_catalog_json(req)
+        data = _model_catalog_json(_codex_models_request(conf))
         listed, hidden = [], []
         for m in data.get("models") or []:
             slug = str(m.get("slug") or "").strip()
@@ -734,6 +742,129 @@ def ai_model_catalog(payload: ModelCatalogRequest, request: Request):
                if not re.search(r"embed|whisper|tts|audio|image|dall-e|moderation|transcribe|realtime|search", i)
                and (not is_openai_platform(base) or re.match(r"^(gpt-|o\d|chatgpt-)", i))]
     return {"models": sorted(set(ids))}
+
+
+# A model's context window, for the chat's context ring — looked up live,
+# never a table in the code. First the provider's own listing: Anthropic's
+# max_input_tokens, the Codex backend's context_window, the context_length /
+# max_model_len of OpenRouter, vLLM, Groq, Together, …; OpenAI's and
+# DeepSeek's listings carry no size, so then the public models.dev catalog.
+# Both are cached like the Codex version: a good answer for hours, a failed
+# lookup retried after minutes, the last good answer kept meanwhile.
+_WINDOW_KEYS = ("max_input_tokens", "context_window", "context_length", "max_context_length", "max_model_len")
+_MODELS_DEV_URL = "https://models.dev/api.json"
+_MODELS_DEV_TIMEOUT = 15
+_WINDOW_TTL = 6 * 3600
+_WINDOW_RETRY = 600
+_listing_windows = {}  # "<provider id>|<base url>" -> {"windows": {model: n}, "until": t}
+_listing_windows_lock = threading.Lock()
+_models_dev = {"windows": None, "until": 0.0}  # windows: model name -> [(provider key, n)]
+_models_dev_lock = threading.Lock()
+
+
+def _row_window(row) -> int:
+    if not isinstance(row, dict):
+        return 0
+    for k in _WINDOW_KEYS:
+        v = row.get(k)
+        if isinstance(v, int) and not isinstance(v, bool) and v > 0:
+            return v
+    return 0
+
+
+def _provider_windows(pid: str, conf: dict) -> dict:
+    """{model: window} from the entry's own model listing, cached."""
+    key = f"{pid}|{conf['base_url']}"
+    with _listing_windows_lock:
+        now = time.time()
+        cached = _listing_windows.get(key)
+        if cached and now < cached["until"]:
+            return cached["windows"]
+        try:
+            if conf["protocol"] == "chatgpt":
+                rows = _model_catalog_json(_codex_models_request(conf)).get("models") or []
+                id_key = "slug"
+            else:
+                rows = _model_catalog_json(_models_list_request(
+                    conf["protocol"], conf["api_key"], conf["base_url"])).get("data") or []
+                id_key = "id"
+            windows = {str(r[id_key]): n for r in rows
+                       if isinstance(r, dict) and r.get(id_key) and (n := _row_window(r))}
+            _listing_windows[key] = {"windows": windows, "until": now + _WINDOW_TTL}
+        except Exception as e:
+            log.warning(f"[ai] model listing for context windows failed ({conf.get('name')}): {e}")
+            windows = cached["windows"] if cached else {}
+            _listing_windows[key] = {"windows": windows, "until": now + _WINDOW_RETRY}
+        return _listing_windows[key]["windows"]
+
+
+def _models_dev_windows() -> dict:
+    """models.dev's catalog as {lowercased model id: [(provider key, window)]},
+    cached; also indexed by the part after a "vendor/" prefix."""
+    with _models_dev_lock:
+        now = time.time()
+        if now < _models_dev["until"]:
+            return _models_dev["windows"] or {}
+        try:
+            with urlopen(URLRequest(_MODELS_DEV_URL, headers={"Accept": "application/json",
+                                                              "User-Agent": "Gamma/model-catalog"}),
+                         timeout=_MODELS_DEV_TIMEOUT) as resp:
+                data = json.loads(resp.read())
+            windows = {}
+            for pkey, prov in (data.items() if isinstance(data, dict) else []):
+                for mid, m in ((prov or {}).get("models") or {}).items():
+                    n = (m or {}).get("limit", {}).get("context") if isinstance(m, dict) else None
+                    if not isinstance(n, int) or n <= 0:
+                        continue
+                    name = str(m.get("id") or mid).lower()
+                    for alias in {name, name.rsplit("/", 1)[-1]}:
+                        windows.setdefault(alias, []).append((str(pkey).lower(), n))
+            if not windows:
+                raise ValueError("empty catalog")
+            _models_dev.update(windows=windows, until=now + _WINDOW_TTL)
+        except Exception as e:
+            log.warning(f"[ai] models.dev catalog lookup failed: {e}")
+            _models_dev["until"] = now + _WINDOW_RETRY
+        return _models_dev["windows"] or {}
+
+
+def _catalog_window(model: str, conf: dict) -> int:
+    """The model's window per models.dev. Several providers may list one
+    model (often with their own caps): the one this entry talks to wins —
+    named in its host, or the vendor behind its protocol — else the value
+    most of them agree on."""
+    windows = _models_dev_windows()
+    name = model.lower()
+    found = windows.get(name) or windows.get(name.rsplit("/", 1)[-1]) or []
+    if not found:
+        return 0
+    host = urllib.parse.urlparse(conf.get("base_url") or "").hostname or ""
+    vendor = {"anthropic": "anthropic", "chatgpt": "openai"}.get(conf.get("protocol"), "")
+    for pkey, n in found:
+        if pkey == vendor or (pkey and pkey in host):
+            return n
+    counts = {}
+    for _, n in found:
+        counts[n] = counts.get(n, 0) + 1
+    return max(counts, key=lambda n: (counts[n], n))
+
+
+# Sync def: the listing / catalog fetches run in the threadpool.
+@router.get("/ai/context-window")
+def ai_context_window(request: Request, model: str = ""):
+    """The context window of a chat model ("<provider id>:<model>"; "" = the
+    default one): {model, context_window, source: "provider" | "models.dev"},
+    context_window null when neither source knows the model."""
+    rt = ai_runtime(require_user(request))
+    m = next((x for x in rt["models"] if x["id"] == model), None) or rt["default"]
+    conf = rt["providers"].get(m["provider"]) if m else None
+    if not conf:
+        return {"model": "", "context_window": None, "source": ""}
+    n = _provider_windows(m["provider"], conf).get(m["model"])
+    if n:
+        return {"model": m["model"], "context_window": n, "source": "provider"}
+    n = _catalog_window(m["model"], conf)
+    return {"model": m["model"], "context_window": n or None, "source": "models.dev" if n else ""}
 
 
 class AIHealthRequest(BaseModel):
@@ -957,9 +1088,16 @@ def ai_translate(payload: AITranslateRequest, request: Request):
     if sum(len(t) for t in texts) > _TRANSLATE_MAX_CHARS:
         raise HTTPException(status_code=413, detail="too much text in one request")
 
-    rt = require_ai_runtime(user)
-    entry = _resolve_model(rt, payload.model)
-    model_name = entry["model"]
+    # A machine-translation engine ("engine:<id>", Settings → Reading) needs
+    # no AI provider; anything else resolves to a chat model.
+    engine = translate_engines.engine_of(payload.model)
+    if engine:
+        engine_conf = translate_engines.credentials(user, engine)
+        model_id = model_name = translate_engines.MODEL_PREFIX + engine
+    else:
+        rt = require_ai_runtime(user)
+        entry = _resolve_model(rt, payload.model)
+        model_id, model_name = entry["id"], entry["model"]
 
     keys = [_translate_key(user, lang, model_name, t) for t in texts]
     # hits: key → translation, for every paragraph that won't need the model.
@@ -975,15 +1113,38 @@ def ai_translate(payload: AITranslateRequest, request: Request):
         if keys[i] not in hits and keys[i] not in queued and t.strip():
             queued.add(keys[i])
             miss.append(i)
-    if not miss:
-        out = [hits.get(k, texts[i]) for i, k in enumerate(keys)]
-        final = {"translations": out, "model": entry["id"], "cached": True}
+    def reply_with(final):
+        # The whole answer at once; a streaming client reads it as the
+        # final NDJSON line.
         if not payload.stream:
             return final
-        return StreamingResponse(iter([json.dumps(final) + "\n"]),
+        return StreamingResponse(iter([json.dumps(final, ensure_ascii=False) + "\n"]),
                                  media_type="application/x-ndjson")
 
+    def settle(translated, cached):
+        """Record the misses' translations (cache + hits) and build the final
+        response object."""
+        for i, t in zip(miss, translated):
+            hits[keys[i]] = t
+            if t and t != texts[i]:  # identity fallbacks stay uncached so a retry can improve them
+                _cache_put(keys[i], t)
+        out = [hits.get(k, texts[i]) for i, k in enumerate(keys)]
+        return {"translations": out, "model": model_id, "cached": cached}
+
+    if not miss:
+        return reply_with(settle([], True))
+
     miss_texts = [texts[i] for i in miss]
+    if engine:
+        # One engine call per batch limit, no streaming: the reply is aligned
+        # by the API, so there is nothing to salvage either.
+        try:
+            translated = translate_engines.translate(engine, engine_conf, miss_texts, lang)
+        except translate_engines.EngineError as e:
+            log.warning(f"[ai_translate] {e}")
+            raise HTTPException(status_code=502, detail=f"translation failed: {e}")
+        return reply_with(settle(translated, False))
+
     system = _TRANSLATE_PROMPT.format(lang=TRANSLATE_LANGS[lang])
     effort = _resolve_effort(payload.effort)
 
@@ -1040,12 +1201,7 @@ def ai_translate(payload: AITranslateRequest, request: Request):
 
             with ThreadPoolExecutor(max_workers=min(4, len(miss_texts))) as pool:
                 translated = list(pool.map(salvage, miss_texts))
-        for i, t in zip(miss, translated):
-            hits[keys[i]] = t
-            if t and t != texts[i]:  # identity fallbacks stay uncached so a retry can improve them
-                _cache_put(keys[i], t)
-        out = [hits.get(k, texts[i]) for i, k in enumerate(keys)]
-        return {"translations": out, "model": entry["id"], "cached": False}
+        return settle(translated, False)
 
     if not payload.stream:
         try:
@@ -1088,6 +1244,54 @@ def ai_translate(payload: AITranslateRequest, request: Request):
 
     return StreamingResponse(keepalive_lines(ndjson(), "ai_translate"),
                              media_type="application/x-ndjson")
+
+
+# --- Machine-translation engine credentials (Settings → Reading) --------------
+# Write-only like the AI keys: GET masks the secrets. Guests can't store keys
+# (the guest account is shared by every visitor).
+
+class TranslateEngineRequest(BaseModel):
+    fields: dict = Field(default_factory=dict)  # {field id: value}; empty secret = keep
+
+
+class TranslateEngineTestRequest(BaseModel):
+    lang: str = "zh-CN"
+
+
+@router.get("/translate/engines")
+def translate_engines_get(request: Request):
+    user = require_user(request)
+    return translate_engines.masked(user, can_edit=not request.state.is_guest)
+
+
+@router.put("/translate/engines/{engine}")
+def translate_engine_save(engine: str, payload: TranslateEngineRequest, request: Request):
+    user = _require_editor(request)
+    translate_engines.save(user, engine, payload.fields)
+    return translate_engines.masked(user, can_edit=True)
+
+
+@router.delete("/translate/engines/{engine}")
+def translate_engine_remove(engine: str, request: Request):
+    user = _require_editor(request)
+    translate_engines.remove(user, engine)
+    return translate_engines.masked(user, can_edit=True)
+
+
+# Sync def: the engine call runs in the threadpool.
+@router.post("/translate/engines/{engine}/test")
+def translate_engine_test(engine: str, payload: TranslateEngineTestRequest, request: Request):
+    """Translate one short sentence with the stored credentials: {ok, text}
+    or {ok: false, error} (in the body, like the AI provider test)."""
+    user = _require_editor(request)
+    conf = translate_engines.credentials(user, engine)
+    lang = payload.lang if payload.lang in TRANSLATE_LANGS else "zh-CN"
+    try:
+        sample = "Le vif renard brun saute par-dessus le chien paresseux." if lang == "en"             else "The quick brown fox jumps over the lazy dog."
+        text = translate_engines.translate(engine, conf, [sample], lang)[0]
+    except translate_engines.EngineError as e:
+        return {"ok": False, "error": str(e)}
+    return {"ok": True, "text": text}
 
 
 # --- Voice dictation ----------------------------------------------------------

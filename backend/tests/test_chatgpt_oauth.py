@@ -468,3 +468,73 @@ def test_chatgpt_sse_deltas_join_and_fail():
     empty = [b'data: {"type":"response.completed","response":{"status":"completed"}}\n']
     with pytest.raises(RuntimeError, match="empty response"):
         list(_sse_deltas(empty, "chatgpt"))
+
+
+def test_context_window_comes_from_the_listing_then_models_dev(erin, monkeypatch):
+    import gamma.routers.ai as ai_mod
+
+    monkeypatch.setattr(ai_mod, "_listing_windows", {})
+    monkeypatch.setattr(ai_mod, "_models_dev", {"windows": None, "until": 0.0})
+    monkeypatch.setattr(ai_mod, "_codex_client_version", lambda: "9.9.9")
+    entry = next(p for p in erin.get("/api/ai/settings").json()["providers"]
+                 if p["protocol"] == "chatgpt")
+    model = next(m for m in erin.get("/api/ai/models").json()["models"] if m["provider"] == entry["id"])
+    calls = []
+    listing = {"models": [{"slug": model["model"], "context_window": 272_000}]}
+    catalog = {
+        "openai": {"models": {model["model"]: {"id": model["model"], "limit": {"context": 400_000}}}},
+        "gateway": {"models": {f"openai/{model['model']}": {"limit": {"context": 128_000}}}},
+    }
+
+    def fake_urlopen(req, timeout=0):
+        calls.append(req.full_url)
+        return _FakeResp(catalog if "models.dev" in req.full_url else listing)
+
+    monkeypatch.setattr(ai_mod, "urlopen", fake_urlopen)
+    ask = lambda: erin.get("/api/ai/context-window", params={"model": model["id"]}).json()
+
+    # The provider's own listing says it; asked once, then cached.
+    assert ask() == {"model": model["model"], "context_window": 272_000, "source": "provider"}
+    assert ask()["context_window"] == 272_000
+    assert len(calls) == 1 and "/models?client_version=9.9.9" in calls[0]
+
+    # A listing without sizes: models.dev, the vendor behind the protocol winning.
+    listing = {"models": [{"slug": model["model"]}]}
+    ai_mod._listing_windows.clear()
+    assert ask() == {"model": model["model"], "context_window": 400_000, "source": "models.dev"}
+
+    # Nobody knows it: null, never a guess.
+    catalog = {"openai": {"models": {}}}
+    ai_mod._listing_windows.clear()
+    ai_mod._models_dev.update(windows=None, until=0.0)
+    assert ask() == {"model": model["model"], "context_window": None, "source": ""}
+
+
+def test_context_window_lookups_keep_the_last_good_answer(monkeypatch):
+    import gamma.routers.ai as ai_mod
+
+    monkeypatch.setattr(ai_mod, "_listing_windows", {})
+    monkeypatch.setattr(ai_mod, "_models_dev", {"windows": None, "until": 0.0})
+    conf = {"protocol": "openai", "api_key": "k", "base_url": "https://api.deepseek.com", "name": "DeepSeek"}
+    monkeypatch.setattr(ai_mod, "urlopen", lambda req, timeout=0: _FakeResp(
+        {"data": [{"id": "llama", "max_model_len": 32_768}, {"id": "bare"}]} if "/v1/models" in req.full_url else {
+            "deepseek": {"models": {"deepseek-chat": {"limit": {"context": 131_072}}}},
+            "a": {"models": {"deepseek-chat": {"limit": {"context": 64_000}}}},
+            "b": {"models": {"deepseek-chat": {"limit": {"context": 64_000}}}},
+        }))
+    assert ai_mod._provider_windows("p", conf) == {"llama": 32_768}
+    # The provider named in the entry's host wins over the majority...
+    assert ai_mod._catalog_window("deepseek-chat", conf) == 131_072
+    # ...and without one, the value most providers agree on.
+    assert ai_mod._catalog_window("deepseek-chat", {**conf, "base_url": "https://example.org"}) == 64_000
+
+    # Expired + offline: the last good answers stay, retried only later.
+    def down(req, timeout=0):
+        raise OSError("offline")
+
+    monkeypatch.setattr(ai_mod, "urlopen", down)
+    for cached in ai_mod._listing_windows.values():
+        cached["until"] = 0.0
+    ai_mod._models_dev["until"] = 0.0
+    assert ai_mod._provider_windows("p", conf) == {"llama": 32_768}
+    assert ai_mod._catalog_window("deepseek-chat", conf) == 131_072

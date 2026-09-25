@@ -1,11 +1,12 @@
 // The building blocks every settings pane is composed from — and nothing
 // else: PaneHead › Section › Row/Toggle for the panes themselves, SubDialog ›
 // Step/Field for the editor dialogs they open, plus the small shared controls
-// (Segmented, PictureChoices, Stepper, UnitInput, CharSlider, AccountPicker, LogBox, Stat, Empty, QuotaMeter/PercentMeter). New settings
+// (Segmented, PictureChoices, Stepper, UnitInput, CharSlider, AccountPicker, LogBox, Stat, Empty, QuotaMeter/PercentMeter, KeyBinding). New settings
 // UI should reuse these; bespoke classes are for layout only.
 import React from "react";
 import { API, apiJson, copyText, fmtBytes } from "../shared/lib/utils";
-import { AlertCircleIcon, CheckIcon, CloudCheckIcon, EyeIcon, EyeOffIcon, MonitorIcon, RefreshIcon, ShieldIcon, UserIcon } from "../shared/ui/Icons";
+import { AlertCircleIcon, CheckIcon, CloudCheckIcon, EyeIcon, EyeOffIcon, MonitorIcon, RefreshIcon, ShieldIcon, UndoIcon, UserIcon } from "../shared/ui/Icons";
+import { bindable, chordFromEvent, chordParts } from "../shared/lib/hotkeys.js";
 import { BROWSER_TAG, profileSyncState } from "./syncState.js";
 import { t } from "../shared/i18n/i18n.js";
 
@@ -607,6 +608,61 @@ export function PercentMeter({ percent, barOnly, caption = "" }) {
         <span className={`quotaBarFill${state}`} style={{ width: `${pct ? Math.max(pct, 2) : 0}%` }} />
       </span>
       {barOnly ? null : <span className="settingDesc">{caption || `${Math.round(pct)}% used`}</span>}
+    </span>
+  );
+}
+
+// The keys of a chord as <kbd> caps: "Ctrl" "Shift" "K", or ⇧⌘K on a Mac.
+export function KeyCaps({ chord }) {
+  return <span className="keyCaps">{chordParts(chord).map((part, i) => <kbd key={i} className="keyCap">{part}</kbd>)}</span>;
+}
+
+// One shortcut, VSCode-style: the chord as key caps; click, then press the
+// new chord (recorded with the same reader the dispatcher matches with).
+// Backspace or Delete alone unbinds, Escape cancels, a bare letter is
+// refused (it would replace typing — add a modifier). `modified` shows the
+// reset button; `fixed` shows the chord read-only. `conflict` colours the
+// caps: another command answers to the same keys.
+export function KeyBinding({ chord, label, fixed, modified, conflict, onChange, onReset }) {
+  const [recording, setRecording] = React.useState(false);
+  const [refused, setRefused] = React.useState(false);
+  const stop = () => { setRecording(false); setRefused(false); };
+  const onKeyDown = (event) => {
+    if (!recording) return;
+    event.preventDefault();
+    event.stopPropagation();
+    if (event.key === "Escape") { stop(); return; }
+    if ((event.key === "Backspace" || event.key === "Delete") && !event.ctrlKey && !event.metaKey && !event.altKey && !event.shiftKey) {
+      onChange(null); stop(); return;
+    }
+    const next = chordFromEvent(event.nativeEvent || event);
+    if (!next) return; // a modifier alone: keep waiting
+    if (!bindable(next)) { setRefused(true); return; }
+    onChange(next);
+    stop();
+  };
+  const state = recording ? (refused ? t("Add a modifier…") : t("Press keys…")) : null;
+  const cls = ["uiBtn", "sm", "keyChip", recording ? "recording" : "", !chord && !recording ? "unbound" : "", conflict ? "conflict" : ""]
+    .filter(Boolean).join(" ");
+  return (
+    <span className="keyBinding">
+      <button
+        type="button"
+        className={cls}
+        aria-label={fixed ? label : t("Change the shortcut for {name}", { name: label })}
+        title={fixed ? t("Built in — cannot be changed") : conflict ? t("Another command uses these keys") : t("Click, then press the new keys · Backspace unbinds · Esc cancels")}
+        disabled={fixed}
+        onClick={() => { if (!recording) setRecording(true); }}
+        onKeyDown={onKeyDown}
+        onBlur={stop}
+      >
+        {state ? <span className="keyState">{state}</span> : chord ? <KeyCaps chord={chord} /> : <span className="keyState">{t("Not bound")}</span>}
+      </button>
+      {modified && !fixed ? (
+        <button type="button" className="uiBtn sm iconSq" title={t("Reset to default")} aria-label={t("Reset {name} to its default shortcut", { name: label })} onClick={onReset}>
+          <UndoIcon size={13} />
+        </button>
+      ) : null}
     </span>
   );
 }

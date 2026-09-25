@@ -151,6 +151,34 @@ export async function noteScenarios({ server, browser, alice, step, until, sleep
     assertNoProblems(page);
   });
 
+  await step("notes: keyboard commands — Ctrl+Shift+Enter, Alt+↓, Ctrl+Shift+K, F2", async () => {
+    await editRow(page, "third");
+    await page.keyboard.press("Control+Shift+Enter");
+    await page.keyboard.type("before");
+    await saved([{ content: "first", children: [{ content: "second", children: [] }] }, { content: "before", children: [] }, { content: "third", children: [] }], "new block above");
+    await page.keyboard.press("Alt+ArrowDown");
+    await saved([{ content: "first", children: [{ content: "second", children: [] }] }, { content: "third", children: [] }, { content: "before", children: [] }], "moved down");
+    // The moved block keeps its editor and caret.
+    await until(() => page.evaluate(() => document.activeElement?.closest(".cm-content")?.textContent === "before"), { what: "the moved block keeps its editor" });
+    await page.keyboard.press("Control+Shift+k");
+    await saved([{ content: "first", children: [{ content: "second", children: [] }] }, { content: "third", children: [] }], "line deleted");
+    await until(() => page.evaluate(() => document.activeElement?.closest(".cm-content")?.textContent === "third"), { what: "the caret moves to the block above" });
+    await page.keyboard.press("Control+Enter");
+    await until(async () => JSON.stringify(await tree(alice2, pageId)).includes("- [ ] third"), { what: "to-do toggled on" });
+    await page.keyboard.press("Control+Enter");
+    await until(async () => JSON.stringify(await tree(alice2, pageId)).includes("- [x] third"), { what: "to-do checked" });
+    // Ctrl+L selects the block's text; typing over it restores the block.
+    await page.keyboard.press("Control+l");
+    await page.keyboard.type("third");
+    await saved([{ content: "first", children: [{ content: "second", children: [] }] }, { content: "third", children: [] }], "text restored over the selection");
+    await closeEditor(page);
+    await page.keyboard.press("F2");
+    await page.locator(".titleEdit").waitFor();
+    await page.keyboard.press("Escape");
+    await until(async () => (await page.locator(".titleEdit").count()) === 0, { what: "rename cancelled" });
+    assertNoProblems(page);
+  });
+
   await step("notes: dragging a block's handle moves it; the drop line never outlives the drag (#88)", async () => {
     const handle = (text) => page.locator(".sortableBlockWrap", { hasText: text }).first().locator(".dragHandle").first().elementHandle();
     const line = page.locator(".dropIndicator");

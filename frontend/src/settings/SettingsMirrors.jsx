@@ -11,7 +11,7 @@
 //
 // A publication (a mirror with a page filter, the pages a workspace
 // publishes to Gamma Cloud; docs/dev/mirror.md "Publishing") is not a clone:
-// it is listed under its own "Publishing" heading with its state, the count
+// PublishingSection lists it in Settings → Sync with its state, the count
 // of published pages and a "more" menu of Sync now and Stop publishing all
 // (DELETE /api/pages/{id}/publish for each page), never the clone actions.
 import React from "react";
@@ -19,7 +19,7 @@ import { API, apiJson, fmtBytes } from "../shared/lib/utils";
 import { Section, SubDialog, Field, IconChoices, Segmented, Empty } from "./SettingsKit";
 import { ActionMenu, MenuSelect } from "../shared/ui/Menus";
 import {
-  AlertCircleIcon, ArrowDownIcon, ArrowUpDownIcon, CheckIcon, CloudDownloadIcon, CloudOffIcon, HardDriveIcon, LinkIcon,
+  AlertCircleIcon, ArrowDownIcon, ArrowUpDownIcon, CheckIcon, CloudDownloadIcon, CloudIcon, CloudOffIcon, HardDriveIcon, LinkIcon,
   MoreIcon, PlusIcon, RefreshIcon, TrashIcon, UnlinkIcon, UploadIcon,
 } from "../shared/ui/Icons";
 import { clock, hostOf, isPublication, isPullOnly, mirrorState, n, roundSummary } from "../collaboration/MirrorPopover";
@@ -53,6 +53,27 @@ export function mirrorStatusLine(m) {
   if (!s.last_sync) return s.interrupted ? t("interrupted · continues at the next round") : t("not cloned yet");
   if (m.pending_local) return t("local edits not pushed yet · up to date {last_sync}", { last_sync: clock(s.last_sync) });
   return t("up to date {last_sync} · {changed}", { last_sync: clock(s.last_sync), changed: roundSummary(s) || t("nothing had changed") });
+}
+
+// Busy flag plus "Sync now" for one mirror, waiting for the round and
+// reporting its outcome.
+function useSyncNow(refresh, setStatus) {
+  const [busy, setBusy] = React.useState(false);
+  async function syncNow(m) {
+    setBusy(true);
+    try {
+      const d = await apiJson(`${API}/mirrors/${encodeURIComponent(m.workspace_id)}/sync?wait=1`, { method: "POST" });
+      const s = d.status || {};
+      setStatus?.(s.last_error ? t("Sync problem: {last_error}", { last_error: s.last_error })
+        : t("Up to date — {side}.", { side: roundSummary(s) || t("nothing had changed on either side") }));
+    } catch (err) {
+      setStatus?.(t("Sync failed: {message}", { message: err.message }));
+    } finally {
+      setBusy(false);
+      refresh();
+    }
+  }
+  return [busy, setBusy, syncNow];
 }
 
 const DIRECTION_TILES = [
@@ -127,7 +148,7 @@ export function MirrorConflicts({ mirror, onClose, setStatus, closeSettings }) {
 export function MirrorsSection({ mirrors, refresh, workspaces, currentId, switchWorkspace, closeSettings, confirm, setStatus }) {
   const [creating, setCreating] = React.useState(false);
   const [createError, setCreateError] = React.useState("");
-  const [busy, setBusy] = React.useState(false);
+  const [busy, setBusy, syncNow] = useSyncNow(refresh, setStatus);
   const [conflictsOf, setConflictsOf] = React.useState(null);
   const byWs = Object.fromEntries((workspaces || []).map((w) => [w.id, w]));
 
@@ -144,20 +165,6 @@ export function MirrorsSection({ mirrors, refresh, workspaces, currentId, switch
       setCreateError(err.message);
     } finally {
       setBusy(false);
-    }
-  }
-  async function syncNow(m) {
-    setBusy(true);
-    try {
-      const d = await apiJson(`${API}/mirrors/${encodeURIComponent(m.workspace_id)}/sync?wait=1`, { method: "POST" });
-      const s = d.status || {};
-      setStatus?.(s.last_error ? t("Sync problem: {last_error}", { last_error: s.last_error })
-        : t("Up to date — {side}.", { side: roundSummary(s) || t("nothing had changed on either side") }));
-    } catch (err) {
-      setStatus?.(t("Sync failed: {message}", { message: err.message }));
-    } finally {
-      setBusy(false);
-      refresh();
     }
   }
   async function call(m, path, init, ok, gone = false) {
@@ -196,32 +203,6 @@ export function MirrorsSection({ mirrors, refresh, workspaces, currentId, switch
       onConfirm: async () => {
         if (m.workspace_id === currentId) window.dispatchEvent(new CustomEvent("gamma:mirror-gone"));
         await call(m, "", { method: "DELETE" }, undefined, true);
-      },
-    });
-  }
-
-  // Stop publishing every page of a publication: one DELETE per page, in
-  // that workspace (?ws=), each stopping the share there and deleting the copy.
-  function stopPublishing(m) {
-    const pages = m.page_filter || [];
-    confirm({
-      title: T("Stop publishing all"),
-      message: t("The {pages} of “{name}” leave Gamma Cloud: their cloud links stop working and the copies there are deleted. The pages here stay.", { pages: n(pages.length, t("published page")), name: nameOf(m) }),
-      confirmLabel: t("Stop publishing"), danger: true,
-      onConfirm: async () => {
-        setBusy(true);
-        const failed = [];
-        for (const id of pages) {
-          try {
-            await apiJson(`${API}/pages/${encodeURIComponent(id)}/publish?ws=${encodeURIComponent(m.workspace_id)}`, { method: "DELETE" });
-          } catch (err) {
-            failed.push(err.message);
-          }
-        }
-        setBusy(false);
-        setStatus?.(failed.length ? t("Could not stop {page}: {failed}", { page: n(failed.length, "page"), failed: failed[0] }) : t("Stopped publishing."));
-        refresh();
-        window.dispatchEvent(new CustomEvent("gamma:mirror"));
       },
     });
   }
@@ -290,6 +271,71 @@ export function MirrorsSection({ mirrors, refresh, workspaces, currentId, switch
     );
   }
 
+  const clones = (mirrors || []).filter((m) => !isPublication(m));
+
+  return (
+    <>
+      <Section
+        title={t("Clones")}
+        action={(
+          <button className="uiBtn sm" disabled={busy} onClick={() => { setCreateError(""); setCreating(true); }}>
+            <PlusIcon size={13} /> {t("Clone a remote workspace")}
+          </button>
+        )}
+      >
+        {mirrors === null ? <Empty icon={CloudDownloadIcon}>{t("Loading…")}</Empty>
+          : clones.length ? clones.map(row)
+          : <Empty icon={CloudDownloadIcon}>
+              <span>{t("No clones yet.")}</span>
+              <span className="settingDesc">{t("A clone follows a workspace on another Gamma server, pulling and pushing changes, and opens without a connection.")}</span>
+            </Empty>}
+      </Section>
+      {creating ? (
+        <MirrorDialog busy={busy} error={createError} onSubmit={submit} onClose={() => setCreating(false)}
+          candidates={(workspaces || []).filter((w) => w.personal && !w.mirror_of && !(mirrors || []).some((m) => m.workspace_id === w.id))} />
+      ) : null}
+    </>
+  );
+}
+
+// Settings → Sync → Publishing: the workspaces that publish pages to Gamma
+// Cloud, each with its state, the count of pages, Conflicts when any wait,
+// and a "more" menu of Sync now and Stop publishing all.
+export function PublishingSection({ mirrors, refresh, currentId, closeSettings, confirm, setStatus }) {
+  const [busy, setBusy, syncNow] = useSyncNow(refresh, setStatus);
+  const [conflictsOf, setConflictsOf] = React.useState(null);
+  const nameOf = (m) => m.name || t("this workspace");
+
+  // Stop publishing every page of a publication: one DELETE per page, in
+  // that workspace (?ws=), each stopping the share there and deleting the copy.
+  function stopPublishing(m) {
+    const pages = m.page_filter || [];
+    confirm({
+      title: T("Stop publishing all"),
+      message: t("The {pages} of “{name}” leave Gamma Cloud: their cloud links stop working and the copies there are deleted. The pages here stay.", { pages: n(pages.length, t("published page")), name: nameOf(m) }),
+      confirmLabel: t("Stop publishing"), danger: true,
+      onConfirm: async () => {
+        setBusy(true);
+        const failed = [];
+        for (const id of pages) {
+          try {
+            await apiJson(`${API}/pages/${encodeURIComponent(id)}/publish?ws=${encodeURIComponent(m.workspace_id)}`, { method: "DELETE" });
+          } catch (err) {
+            failed.push(err.message);
+          }
+        }
+        setBusy(false);
+        setStatus?.(failed.length ? t("Could not stop {page}: {failed}", { page: n(failed.length, "page"), failed: failed[0] }) : t("Stopped publishing."));
+        refresh();
+        window.dispatchEvent(new CustomEvent("gamma:mirror"));
+      },
+    });
+  }
+
+  if (conflictsOf) {
+    return <MirrorConflicts mirror={conflictsOf} setStatus={setStatus} closeSettings={closeSettings} onClose={() => { setConflictsOf(null); refresh(); }} />;
+  }
+
   // A publication's row: its state, the pages it publishes, Sync now and
   // Stop publishing all.
   function publicationRow(m) {
@@ -334,32 +380,16 @@ export function MirrorsSection({ mirrors, refresh, workspaces, currentId, switch
     );
   }
 
-  const clones = (mirrors || []).filter((m) => !isPublication(m));
   // a publication with nothing published (its last page unpublished) is not shown
   const publications = (mirrors || []).filter((m) => isPublication(m) && (m.page_filter || []).length);
-
   return (
-    <>
-      <Section
-        title={t("Clones")}
-        action={(
-          <button className="uiBtn sm" disabled={busy} onClick={() => { setCreateError(""); setCreating(true); }}>
-            <PlusIcon size={13} /> {t("Clone a remote workspace")}
-          </button>
-        )}
-      >
-        {mirrors === null ? <Empty icon={CloudDownloadIcon}>{t("Loading…")}</Empty>
-          : clones.length ? clones.map(row)
-          : <Empty icon={CloudDownloadIcon}>
-              <span>{t("No clones yet.")}</span>
-              <span className="settingDesc">{t("A clone follows a workspace on another Gamma server, pulling and pushing changes, and opens without a connection.")}</span>
-            </Empty>}
-      </Section>
-      {publications.length ? <Section title={t("Publishing")}>{publications.map(publicationRow)}</Section> : null}
-      {creating ? (
-        <MirrorDialog busy={busy} error={createError} onSubmit={submit} onClose={() => setCreating(false)}
-          candidates={(workspaces || []).filter((w) => w.personal && !w.mirror_of && !(mirrors || []).some((m) => m.workspace_id === w.id))} />
-      ) : null}
-    </>
+    <Section title={t("Publishing")}>
+      {mirrors === null ? <Empty icon={CloudIcon}>{t("Loading…")}</Empty>
+        : publications.length ? publications.map(publicationRow)
+        : <Empty icon={CloudIcon}>
+            <span>{t("No published pages yet.")}</span>
+            <span className="settingDesc">{t("Publish a page from its Share button to give it a Gamma Cloud link; its edits sync both ways.")}</span>
+          </Empty>}
+    </Section>
   );
 }

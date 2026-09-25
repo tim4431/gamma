@@ -9,7 +9,7 @@ import { DockWindow, ChatMarkdown, AutoGrowTextarea, useCopied, useTextScale } f
 import PaperMentionInput from "./PaperMentionInput";
 import { MAX_CHAT_REFERENCES } from "./paperMentions";
 import { READ_TOOLS, WRITE_TOOLS, toolsForKind } from "./chatSettings";
-import { addUsage, cachedPercent, conversationUsage, fmtTokens, liveUsage, usageDetail } from "./tokenUsage";
+import { addUsage, cachedPercent, contextUsed, conversationUsage, fmtTokens, liveUsage, usageDetail } from "./tokenUsage";
 import { createTitleScorer } from "../library/librarySearch";
 import { pageAttachment } from "../library/libraryUtils";
 import { MenuSelect } from "../shared/ui/Menus";
@@ -126,6 +126,41 @@ function UsageLine({ usage, className = "chatMsgUsage" }) {
       <span className="chatMsgUsagePart"><ArrowDownIcon size={9} />{live ? "~" : ""}{fmtTokens(usage.output)}</span>
       {cached && !live ? <span className="chatMsgUsagePart">{cached}{t("% cached")}</span> : null}
     </span>
+  );
+}
+
+// A chat model's context window in tokens, asked once per model per page
+// load: the server reads it from the provider's own model listing, else the
+// public models.dev catalog (GET /api/ai/context-window). Null while
+// unknown — nothing is guessed from the name.
+const contextWindows = new Map(); // model id -> Promise<number | null>
+function useContextWindow(modelId) {
+  const [known, setKnown] = useState({ id: "", size: null });
+  useEffect(() => {
+    if (!modelId) return undefined;
+    if (!contextWindows.has(modelId)) {
+      contextWindows.set(modelId, apiJson(`${API}/ai/context-window?model=${encodeURIComponent(modelId)}`)
+        .then((r) => r.context_window || null)
+        .catch(() => { contextWindows.delete(modelId); return null; }));
+    }
+    let live = true;
+    contextWindows.get(modelId).then((size) => { if (live) setKnown({ id: modelId, size }); });
+    return () => { live = false; };
+  }, [modelId]);
+  return known.id === modelId ? known.size : null;
+}
+
+// Claude Code's context ring: the share of the model's window the
+// conversation fills (tokenUsage.contextUsed against useContextWindow),
+// drawn in the icon colour and turning red past 80%.
+function ContextRing({ fraction }) {
+  const f = Math.max(0, Math.min(1, fraction));
+  const c = 2 * Math.PI * 6;
+  return (
+    <svg width="15" height="15" viewBox="0 0 16 16" className={`chatContextRing${f >= 0.8 ? " full" : ""}`} aria-hidden="true">
+      <circle cx="8" cy="8" r="6" className="chatContextRingTrack" />
+      <circle cx="8" cy="8" r="6" className="chatContextRingFill" strokeDasharray={`${f * c} ${c}`} transform="rotate(-90 8 8)" />
+    </svg>
   );
 }
 
@@ -273,6 +308,17 @@ export default function ChatDock({
   // falls back to extracted text — so there the PDF button must not
   // default on, and turning it on by hand gets a warning, not silence.
   const activeModel = (aiInfo?.models || []).find((m) => m.id === chatModel) || null;
+  // The header's model list is scoped to the active key (Settings → AI & API
+  // keys); all models only when no key is selected or the selected one is gone.
+  const headerModels = aiInfo?.models?.length
+    ? (aiProvider && aiInfo.models.some((m) => m.provider === aiProvider)
+      ? aiInfo.models.filter((m) => m.provider === aiProvider) : aiInfo.models)
+    : [];
+  const headerModel = headerModels.find((m) => m.id === chatModel) || headerModels[0] || null;
+  // The context ring: the latest reply's size against the model's window,
+  // which is asked only once there is something to show.
+  const ctxUsed = contextUsed(chatMessages);
+  const ctxWindow = useContextWindow(ctxUsed ? headerModel?.id : "");
   const nativePdf = activeModel ? activeModel.native_pdf !== false : true;
   const nativePdfNote = nativePdf ? "" :
     t("{provider} does not accept PDF files — the PDF is sent as extracted text instead (first {chatContextChars} characters; Settings / AI / Advanced AI settings / Context size).", { provider: activeModel?.provider_name || t("This provider"), chatContextChars: (chatContextChars || 0).toLocaleString() });
@@ -633,6 +679,7 @@ export default function ChatDock({
     const actions = []; // organizer mutations streamed for this reply
     let coverage = null; // {"context": [...]} — what the model was given, per document
     let usage = null; // the provider's token report, summed over the reply's rounds
+    let lastRound = null; // the latest round's report alone — the context ring's figure
     let liveChars = 0; // characters received since the last report — the running estimate
     const liveArgs = new Map(); // tool call id -> argument chars previewed so far (cumulative)
     const aiMsg = (extra = {}) => ({
@@ -640,6 +687,7 @@ export default function ChatDock({
       ...(actions.length ? { actions: [...actions] } : {}),
       ...(coverage ? { context: coverage } : {}),
       ...(usage ? { usage } : {}),
+      ...(lastRound ? { context_tokens: (lastRound.input || 0) + (lastRound.output || 0) } : {}),
       ...extra,
     });
     try {
@@ -695,6 +743,7 @@ export default function ChatDock({
           } else if (ev.usage) {
             // The round is counted for real now; the estimate starts over.
             usage = addUsage(usage, ev.usage);
+            lastRound = ev.usage;
             liveChars = 0;
             liveArgs.clear();
           } else {
@@ -907,7 +956,8 @@ export default function ChatDock({
   }
 
   // Header: one icon strip (the PDF zoom column's buttons, laid flat) —
-  // ⚙ chat settings (model, reasoning effort, context size — the same prefs
+  // the context ring (opens the settings popover, whose Tokens section
+  // spells it out), ⚙ chat settings (model, reasoning effort, context size — the same prefs
   // Settings / AI edits, in a popover), Tools, Find, New chat.
   const settingsOpen = openPopover === "chatsettings";
   const findBtn = (
@@ -926,21 +976,28 @@ export default function ChatDock({
         </button>
       ) : null}
       <div className="ctlBtnRow chatPanelHeaderBtns">
-        {aiInfo?.models?.length > 0 ? (() => {
-          // Scoped to the active key (Settings → AI & API keys); all models
-          // only when no key is selected or the selected one is gone.
-          const models = aiProvider && aiInfo.models.some((m) => m.provider === aiProvider)
-            ? aiInfo.models.filter((m) => m.provider === aiProvider)
-            : aiInfo.models;
+        {headerModels.length > 0 ? (() => {
+          const models = headerModels;
           const multiProvider = new Set(models.map((m) => m.provider)).size > 1;
-          const currentId = models.some((m) => m.id === chatModel) ? chatModel : models[0].id;
-          const currentModel = models.find((m) => m.id === currentId);
+          const currentId = headerModel.id;
+          const currentModel = headerModel;
           const totalUsage = conversationUsage(chatMessages);
           const usageTitle = totalUsage ? t("; this conversation: {input} tokens in, {output} out", { input: fmtTokens(totalUsage.input), output: fmtTokens(totalUsage.output) }) : "";
+          const ctxText = !ctxUsed ? ""
+            : ctxWindow ? t("Context: {used} of {size} tokens ({percent}%)", { used: fmtTokens(ctxUsed), size: fmtTokens(ctxWindow), percent: Math.round((ctxUsed / ctxWindow) * 100) })
+            : t("Context: {used} tokens", { used: fmtTokens(ctxUsed) });
+          const toggleSettings = () => setOpenPopover((p) => (p === "chatsettings" ? null : "chatsettings"));
           return (
             <span data-popover="chatsettings" className="popoverAnchor">
+              {ctxUsed && ctxWindow ? (
+                <button type="button" className="ctlBtn" onClick={toggleSettings}
+                  title={t("{ctxText} — the last reply's prompt and answer in {model}'s context window", { ctxText, model: currentModel.model })}
+                  aria-label={ctxText}>
+                  <ContextRing fraction={ctxUsed / ctxWindow} />
+                </button>
+              ) : null}
               <button type="button" data-guide="chat.settings" className={`ctlBtn ${settingsOpen ? "modeActive" : ""}`}
-                onClick={() => setOpenPopover((p) => (p === "chatsettings" ? null : "chatsettings"))}
+                onClick={toggleSettings}
                 title={t("Chat settings — {model}{chatEffort}, context {chatContextChars} chars{usageTitle}", { model: currentModel?.model || "model", chatEffort: chatEffort ? `, effort: ${chatEffort}` : "", chatContextChars: chatContextChars.toLocaleString(), usageTitle })}
                 aria-label={t("Chat settings")} aria-expanded={settingsOpen}>
                 <SettingsIcon size={15} />
@@ -991,6 +1048,7 @@ export default function ChatDock({
                   {totalUsage ? (
                     <div className="chatUsageTotal" title={usageDetail(totalUsage)}>
                       <UsageLine usage={totalUsage} className="chatMsgUsage inline" />
+                      {ctxUsed ? <span className="chatMsgUsage inline">{ctxWindow ? <ContextRing fraction={ctxUsed / ctxWindow} /> : null}{ctxText}</span> : null}
                       <span className="popoverHint">{t("{n} replies counted, as the provider reported them. Totals per day and model: Settings / AI / Token usage.", { n: chatMessages.filter((m) => m.role === "ai" && m.usage).length })}</span>
                     </div>
                   ) : (

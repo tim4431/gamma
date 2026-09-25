@@ -133,6 +133,18 @@ def test_mirror_conflicts_count_new_ones_only(nuser, monkeypatch):
     assert _only(nuser, "mirror-conflicts")["title"].startswith("2 sync conflicts")
 
 
+def test_publication_conflicts_point_at_the_sync_pane(nuser, monkeypatch):
+    mirrors = [{"workspace_id": "ws-clone"}, {"workspace_id": "ws-pub", "page_filter": ["p1"]}]
+    marks = {"ws-clone": (0, 0), "ws-pub": (2, 5)}
+    monkeypatch.setattr(notices.sync_engine, "list_mirrors", lambda owner: mirrors if owner == "nuser" else [])
+    monkeypatch.setattr(notices.sync_engine, "open_conflict_mark", lambda ws: marks[ws])
+    assert _only(nuser, "mirror-conflicts") is None
+    notice = _only(nuser, "publish-conflicts")
+    assert notice["pane"] == "sync" and notice["title"].startswith("2 sync conflicts")
+    marks["ws-clone"] = (1, 9)
+    assert _only(nuser, "mirror-conflicts")["title"].startswith("1 sync conflict ")
+
+
 def test_cloud_sync_error_names_the_reason(nuser, monkeypatch):
     status = {"state": "off", "at": "", "error": ""}
     monkeypatch.setattr(notices.cloud_sync, "profile_status", lambda username: status)

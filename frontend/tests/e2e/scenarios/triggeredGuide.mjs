@@ -6,6 +6,7 @@
 // no earlier scenario has seen these offers.
 import { Account } from "../harness.mjs";
 import { editRow } from "./notes.mjs";
+import { waitForPdf } from "./pdf.mjs";
 
 export async function triggeredGuideScenarios(env) {
   const { server, browser, step, until, assert, assertEq, assertNoProblems, openPage, makePdf, flags } = env;
@@ -28,7 +29,7 @@ export async function triggeredGuideScenarios(env) {
     try {
       await page.waitForSelector('[data-guide-offer="tables"] .guideCard');
       assertEq(await page.locator(".guideDim").count(), 0, "an offer does not dim the app");
-      assertEq(await page.locator(".guideCard .guideStep").textContent(), "Quick tour · 3 steps");
+      assertEq(await page.locator(".guideCard .guideStep").textContent(), "Quick tour · 4 steps", "the add-a-table step is dropped: there is one");
       await page.getByRole("button", { name: "Show me" }).click();
       await page.waitForSelector('[data-guide-overlay="table-add"] .guideCard');
       const add = page.locator('[data-guide="notes.tableAdd"]');
@@ -40,12 +41,40 @@ export async function triggeredGuideScenarios(env) {
       await primary(page).click();
       await page.waitForSelector('[data-guide-overlay="table-cell"]');
       await primary(page).click();
+      await page.waitForSelector('[data-guide-overlay="table-whole"]');
+      await primary(page).click();
       await until(async () => await page.locator(".guideCard").count() === 0);
       assertEq(await progress(page, "tables"), "done");
       await page.reload();
       await page.waitForSelector('[data-guide="notes.table"]');
       await page.waitForTimeout(1500);
       assertEq(await page.locator("[data-guide-offer]").count(), 0, "offered once per version");
+      assertNoProblems(page);
+    } finally { await ctx.close(); }
+  });
+
+  await step("triggered guide: the table's corner handle selects the whole table; the menu or Delete removes it", async () => {
+    const pg = await user.api("/api/pages", { method: "POST", body: { title: "Table removal" } });
+    const table = "| a | b |\n|---|---|\n| 1 | 2 |";
+    const byMenu = await user.api("/api/blocks", { method: "POST", body: { parent_id: pg.id, content: `before\n\n${table}\n\nafter` } });
+    const byKey = await user.api("/api/blocks", { method: "POST", body: { parent_id: pg.id, content: table } });
+    const content = async (id) => (await user.api(`/api/blocks/${pg.id}/subtree`)).block.children.find((b) => b.id === id)?.content;
+    const { ctx, page } = await open(`&page=${pg.id}`, { suggestTours: false });
+    try {
+      const corner = page.locator('[data-guide="notes.tableCorner"]');
+      await corner.first().waitFor({ state: "attached" });
+      assertEq(await corner.count(), 2, "every editable table has a corner handle");
+      await page.locator('[data-guide="notes.table"]').first().hover();
+      await corner.first().click();
+      await page.waitForSelector(".mdTableSelected");
+      await page.getByRole("button", { name: "Delete table" }).click();
+      await until(async () => await content(byMenu.id) === "before\n\nafter", { what: "the table left its block, the text around it stayed" });
+      await page.locator('[data-guide="notes.table"]').first().hover();
+      await corner.first().click();
+      await page.waitForSelector(".mdTableSelected");
+      await page.keyboard.press("Delete");
+      await until(async () => (await content(byKey.id)) === "", { what: "Delete removed the selected table" });
+      assertEq(await page.locator('[data-guide="notes.table"]').count(), 0);
       assertNoProblems(page);
     } finally { await ctx.close(); }
   });
@@ -69,6 +98,34 @@ export async function triggeredGuideScenarios(env) {
       await page.click('[data-guide="header.account"]');
       await page.click('[data-guide="account.tour"]');
       assertEq(await page.locator('[data-tour="sharing"]').count(), 1, "the menu offers the sharing tour on a shared page");
+      assertNoProblems(page);
+    } finally { await ctx.close(); }
+  });
+
+  await step("triggered guide: from the menu, the sharing tour has the user create the link only when there is none", async () => {
+    const pg = await user.api("/api/pages", { method: "POST", body: { title: "Menu shared page" } });
+    const { ctx, page } = await open(`&page=${pg.id}`);
+    const startSharing = async () => {
+      await page.click('[data-guide="header.account"]');
+      await page.click('[data-guide="account.tour"]');
+      await page.click('[data-tour="sharing"]');
+    };
+    try {
+      await startSharing();
+      await page.waitForSelector('[data-guide-overlay="share-create"] .guideCard');
+      await page.getByRole("button", { name: "Create link" }).click();
+      await page.waitForSelector('[data-guide-overlay="share-access"] .guideCard');
+      await page.keyboard.press("Escape");
+      await until(async () => await page.locator(".guideCard").count() === 0);
+      // Shared now: the link shows up only once the popover has loaded, and
+      // the create step passes by without a card or a warning.
+      await page.reload();
+      await page.waitForSelector('[data-guide="header.share"]');
+      const warnings = [];
+      page.on("console", (m) => { if (m.type() === "warning" && m.text().startsWith("guide:")) warnings.push(m.text()); });
+      await startSharing();
+      await page.waitForSelector('[data-guide-overlay="share-access"] .guideCard');
+      assertEq(warnings.length, 0, `no anchor warning: ${warnings.join("; ")}`);
       assertNoProblems(page);
     } finally { await ctx.close(); }
   });
@@ -179,6 +236,51 @@ export async function triggeredGuideScenarios(env) {
       await until(async () => await a.page.locator(".guideCard").count() === 0);
       assertNoProblems(a.page);
     } finally { await a.ctx.close(); await b.ctx.close(); }
+  });
+
+  await step("triggered guide: the handwriting tour has the user draw first, then covers style, eraser and undo", async () => {
+    const upload = await user.upload("/api/uploads", makePdf([["A page to write on"]]), "ink-tour.pdf", "application/pdf");
+    const paper = await user.api(`/api/blocks/by-doc/${upload.doc_id}`, { method: "POST", body: { default_title: "Ink tour paper", source_url: upload.source_url } });
+    const { ctx, page } = await open(`&page=${paper.id}`);
+    const line = async (from, to) => {
+      await page.mouse.move(...from);
+      await page.mouse.down();
+      await page.mouse.move(...to, { steps: 12 });
+      await page.mouse.up();
+    };
+    try {
+      await waitForPdf(page, 1);
+      await page.click('[data-guide="header.account"]');
+      await page.click('[data-guide="account.tour"]');
+      await page.click('[data-tour="handwriting"]');
+      // Nothing drawn yet: the tour opens the tools and asks for a drawing.
+      await page.waitForSelector('[data-guide-overlay="ink-draw"] .guideCard');
+      await page.waitForSelector(".pdfInkBar");
+      const box = await page.locator('[data-page="1"]').boundingBox();
+      await line([box.x + 100, box.y + 150], [box.x + 260, box.y + 170]);
+      await page.waitForSelector('[data-guide-overlay="ink-style"] .guideCard');
+      await page.click(".pdfInkBar .inkToolBtn.modeActive");
+      await page.waitForSelector('[data-guide-overlay="ink-options"] .guideCard');
+      await primary(page).click();
+      await page.waitForSelector('[data-guide-overlay="ink-erase"] .guideCard');
+      await page.click('[data-guide="ink.eraser"]');
+      await line([box.x + 180, box.y + 120], [box.x + 180, box.y + 200]);
+      await page.waitForSelector('[data-guide-overlay="ink-undo"] .guideCard');
+      await page.getByRole("button", { name: "Undo ink", exact: true }).click();
+      await page.waitForSelector('[data-guide-overlay="ink-lasso"] .guideCard');
+      await primary(page).click();
+      await page.waitForSelector('[data-guide-overlay="ink-note"] .guideCard');
+      await primary(page).click();
+      await until(async () => await page.locator(".guideCard").count() === 0);
+      assertEq(await progress(page, "handwriting"), "done");
+      // With a drawing on the page, a replay starts at the tools instead.
+      await page.click('[data-guide="header.account"]');
+      await page.click('[data-guide="account.tour"]');
+      await page.click('[data-tour="handwriting"]');
+      await page.waitForSelector('[data-guide-overlay="ink-style"] .guideCard');
+      await page.keyboard.press("Escape");
+      assertNoProblems(page);
+    } finally { await ctx.close(); }
   });
 
   await step("triggered guide: Suggest tours off in Settings stops offers on every device", async () => {

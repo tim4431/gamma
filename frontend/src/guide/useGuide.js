@@ -127,6 +127,7 @@ const offerAnchor = (tour) => tour.offerAnchor || tour.steps[0]?.anchor || null;
 const TRIGGERED = Object.values(TOURS).filter((tour) => tour.trigger);
 const TRIGGER_EVENTS = new Set(TRIGGERED.flatMap((tour) => [tour.trigger.event, tour.trigger.doneOn?.event]).filter(Boolean));
 const SETTLE_MS = 3000; // state-triggered offers wait for the app to settle after load
+const CREATES_GRACE_MS = 1500; // what turns up this soon was there already
 
 // enabled: the guide may run at all (signed in, not a share view). suggest:
 // the account's "Suggest tours" preference — off, nothing is offered by
@@ -154,9 +155,12 @@ export function useGuide({ enabled = true, suggest = true, scope = "", facts = {
   const factsRef = useRef(facts);
   factsRef.current = facts;
 
-  // Steps whose `requires` don't hold are dropped from this run.
+  // Steps whose `requires` don't hold are dropped from this run, and so is a
+  // step that has the user make something (`creates: anchor`) when that
+  // thing is already there — the tour points at the existing one instead.
   const steps = run?.steps || [];
-  const stepsFor = (tour) => tour.steps.filter((s) => factsMatch(s.requires, factsRef.current));
+  const stepsFor = (tour) => tour.steps.filter((s) => factsMatch(s.requires, factsRef.current)
+    && !(s.creates && anchorElement(s.creates)));
 
   const start = useCallback((tourId, at = 0) => {
     const tour = TOURS[tourId];
@@ -192,17 +196,20 @@ export function useGuide({ enabled = true, suggest = true, scope = "", facts = {
     activity.current = null;
   }, []);
 
-  const next = useCallback(() => {
+  // Moves on from step `from`, or from wherever the run is (null): a pass-over
+  // the engine scheduled for one step never moves a later one.
+  const advance = useCallback((from = null) => {
     setRun((r) => {
-      if (!r) return r;
-      if (r.index + 1 >= steps.length) {
+      if (!r || (from !== null && r.index !== from)) return r;
+      if (r.index + 1 >= r.steps.length) {
         progress.current.write(r.tour, r.scope, { state: "done" });
         activity.current = null;
         return null;
       }
       return { ...r, index: r.index + 1, done: false };
     });
-  }, [steps.length]);
+  }, []);
+  const next = useCallback(() => advance(), [advance]);
 
   const back = useCallback(() => {
     setRun((r) => (r && r.index > 0 ? { ...r, index: r.index - 1, done: false } : r));
@@ -310,7 +317,8 @@ export function useGuide({ enabled = true, suggest = true, scope = "", facts = {
   // navigating clears the timer so an old completion cannot skip a new step.
   useEffect(() => {
     if (!run?.done || !step?.advanceOn) return undefined;
-    const timer = setTimeout(() => nextRef.current(), 1100);
+    const at = run.index;
+    const timer = setTimeout(() => advance(at), 1100);
     return () => clearTimeout(timer);
   }, [run?.done, step]);
   useEffect(() => {
@@ -342,20 +350,32 @@ export function useGuide({ enabled = true, suggest = true, scope = "", facts = {
   }, [step]);
 
   // Before a step shows: an anchor inside a closed surface is revealed
-  // through its `open` path; any other anchor gets the app tidied (a popover
-  // the previous step opened goes away). An `optional` step whose anchor is
-  // not on screen — avatars on a block when nobody is on one — is passed
-  // over silently.
+  // through its `open` path — or the step's `reveal` anchor is, when the
+  // spotlight points elsewhere but needs that surface up (the pen tools
+  // while the user draws on the page); any other step gets the app tidied
+  // (a popover the previous step opened goes away). An `optional` step whose
+  // anchor is not on screen — avatars on a block when nobody is on one — is
+  // passed over silently. So is a `creates` step whose thing turns up as the
+  // step opens, too soon for the user to have made it (the Share popover
+  // loads its link after it opens).
   const tidyRef = useRef(tidy);
   tidyRef.current = tidy;
   useEffect(() => {
     if (!step) return undefined;
     let cancelled = false;
-    if (ANCHORS[step.anchor]?.open) revealAnchor(step.anchor, () => cancelled);
+    const needed = step.reveal || step.anchor;
+    if (ANCHORS[needed]?.open) revealAnchor(needed, () => cancelled);
     else tidyRef.current?.();
+    const at = run.index;
     const timer = step.optional
-      ? setTimeout(() => { if (!anchorElement(step.anchor)) nextRef.current(); }, 300) : 0;
-    return () => { cancelled = true; clearTimeout(timer); };
+      ? setTimeout(() => { if (!anchorElement(step.anchor)) advance(at); }, 300) : 0;
+    const until = performance.now() + CREATES_GRACE_MS;
+    const watch = step.creates ? setInterval(() => {
+      if (anchorElement(step.creates)) advance(at);
+      else if (performance.now() < until) return;
+      clearInterval(watch);
+    }, 50) : 0;
+    return () => { cancelled = true; clearTimeout(timer); clearInterval(watch); };
   }, [step]);
 
   // Keys: Esc leaves, → / Enter advance, ← goes back — never inside an editor.

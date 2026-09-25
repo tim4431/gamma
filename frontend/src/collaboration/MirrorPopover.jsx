@@ -474,7 +474,7 @@ export function MirrorPopover({ wsId, mirrorOf, publication: listedAsPublication
   // A clone syncs the whole workspace, so its pill is on every page; a
   // publication syncs the pages in its filter, so its pill is on those
   // pages only (and nowhere until the filter is known) — unless Settings →
-  // Appearance → Sync pill says every page.
+  // Sync → Sync pill says every page.
   if (publication && !everyPage && !(pageId && info?.page_filter?.includes(pageId))) return null;
 
   return (

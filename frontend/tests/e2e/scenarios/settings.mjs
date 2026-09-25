@@ -12,9 +12,10 @@ export async function settingsScenarios(env) {
     protocol: "openai", name: "Test connection", api_key: "test-settings-only",
     base_url: server.base, models: "test-model-a, test-model-b",
   } });
-  async function setup(viewport) {
+  async function setup(viewport, prepare) {
     const ctx = await user.context(browser, viewport ? { viewport } : {});
     await ctx.addInitScript(() => localStorage.setItem("gamma-ai-login-check", "off"));
+    await prepare?.(ctx);
     const page = await openPage(ctx, server.base);
     await page.waitForSelector(".folderNewBtn");
     return { ctx, page };
@@ -31,6 +32,78 @@ export async function settingsScenarios(env) {
     await page.locator(".settingsSearchResult").filter({ has: page.getByText(label, { exact: true }) }).click();
     await row(page, label).waitFor({ state: "visible" });
   }
+
+  await step("settings: a translation service is set up under Reading and picked as the translator", async () => {
+    const { ctx, page } = await setup();
+    try {
+      await openSettings(page);
+      await nav(page, "Reading & editing").click();
+      const google = row(page, "Google Cloud Translation");
+      assert((await google.innerText()).includes("Not set up"));
+      await google.getByRole("button", { name: "Set up", exact: true }).click();
+      const dialog = page.getByRole("dialog", { name: "Google Cloud Translation", exact: true });
+      await dialog.locator('input[autocomplete="new-password"]').fill("AIza-e2e-key-4321");
+      await dialog.getByRole("button", { name: "Save", exact: true }).click();
+      await until(() => dialog.count().then((n) => n === 0));
+      await until(() => google.innerText().then((text) => text.includes("…4321")));
+      if (flags.keep) {
+        await row(page, "Translation services").scrollIntoViewIfNeeded();
+        await page.screenshot({ path: `${server.dir}/settings-translation.png`, animations: "disabled" });
+      }
+      // The saved service joins the picker next to the chat models.
+      await row(page, "Translate with").getByRole("button", { name: "Translate with", exact: true }).click();
+      await page.locator(".uiSelectMenu").getByRole("button", { name: "Google Cloud Translation" }).click();
+      await until(() => page.evaluate(() => localStorage.getItem("gamma-translate-model")).then((v) => v === "engine:google"));
+      // Reasoning effort means nothing to a translation service.
+      await nav(page, "Advanced").click();
+      await row(page, "Parallel requests").waitFor();
+      assertEq(await row(page, "Translation effort").count(), 0);
+      await nav(page, "Reading & editing").click();
+      await google.getByRole("button", { name: "Remove key", exact: true }).click();
+      await until(() => google.innerText().then((text) => text.includes("Not set up")));
+      assertEq((await user.api("/api/ai/models")).translate_engines.length, 0);
+      assertNoProblems(page);
+    } finally {
+      await ctx.close();
+      await user.api("/api/translate/engines/google", { method: "DELETE" });
+    }
+  });
+
+  await step("settings: Keyboard lists the shortcuts, rebinds one, flags a clash and resets", async () => {
+    const { ctx, page } = await setup();
+    try {
+      await openSettings(page);
+      await nav(page, "Keyboard").click();
+      const caps = async (r) => (await r.locator(".keyCap").allTextContents()).join(" ");
+      const del = row(page, "Delete line");
+      await del.waitFor();
+      assertEq(await caps(del), "Ctrl Shift K", "the default chord");
+      await del.getByRole("button", { name: "Change the shortcut for Delete line" }).click();
+      await del.getByText("Press keys…").waitFor();
+      await page.keyboard.press("Control+Alt+d");
+      await until(async () => (await caps(del)) === "Ctrl Alt D", { what: "rebound" });
+      await del.getByRole("button", { name: "Reset Delete line to its default shortcut" }).waitFor();
+      await until(async () => (await user.api("/api/prefs/profile")).value?.keybindings?.["block.deleteLine"] === "Mod-Alt-d", { what: "the binding reaches the profile" });
+      // Two commands on one chord are flagged on both rows.
+      const ren = row(page, "Rename page");
+      await ren.getByRole("button", { name: "Change the shortcut for Rename page" }).click();
+      await page.keyboard.press("Control+Alt+d");
+      await ren.getByText("Also used by Delete line").waitFor();
+      await del.getByText("Also used by Rename page").waitFor();
+      // A bare letter is refused.
+      await ren.getByRole("button", { name: "Change the shortcut for Rename page" }).click();
+      await page.keyboard.press("x");
+      await ren.getByText("Add a modifier…").waitFor();
+      await page.keyboard.press("Escape");
+      await del.waitFor();
+      await page.getByRole("button", { name: "Reset all", exact: true }).click();
+      await until(async () => (await caps(del)) === "Ctrl Shift K", { what: "reset" });
+      assertEq(await caps(ren), "F2", "the clash is gone with the reset");
+      await page.getByRole("searchbox", { name: "Filter shortcuts" }).fill("duplicate");
+      await until(async () => (await page.locator(".keyboardPane .setRow").count()) === 2, { what: "filtered to the two duplicate rows" });
+      assertNoProblems(page);
+    } finally { await ctx.close(); }
+  });
 
   await step("settings: model discovery updates automatically and long lists scroll", async () => {
     const { ctx, page } = await setup({ width: 800, height: 650 });
@@ -602,6 +675,29 @@ export async function settingsScenarios(env) {
     } finally { await ctx.close(); }
   });
 
+  await step("settings: the chat header's context ring shows the last reply's size", async () => {
+    // An agent reply: usage sums its rounds, context_tokens is the last round alone.
+    await user.api("/api/chats/home", { method: "PUT", body: { messages: [
+      { role: "user", text: "hi" },
+      { role: "ai", text: "hello", actions: [{ kind: "read" }], context_tokens: 64000,
+        usage: { input: 90000, output: 500, cache_read: 0, cache_write: 0 } },
+    ] } });
+    // The window lookup (provider listing, then models.dev) is pinned by the
+    // backend tests; here the server's answer is stubbed to stay offline.
+    const { ctx, page } = await setup(undefined, (c) => c.route("**/api/ai/context-window?**", (route) => route.fulfill({
+      json: { model: "test-model-a", context_window: 128000, source: "provider" } })));
+    try {
+      const ring = page.getByRole("button", { name: "Context: 64k of 128k tokens (50%)", exact: true });
+      await ring.waitFor();
+      await ring.click();
+      assert((await page.locator(".chatSettingsPop").innerText()).includes("Context: 64k of 128k tokens (50%)"));
+      assertNoProblems(page);
+    } finally {
+      await ctx.close();
+      await user.api("/api/chats/home", { method: "PUT", body: { messages: [] } });
+    }
+  });
+
   await step("settings: mobile uses labeled navigation and fits a narrow viewport", async () => {
     const { ctx, page } = await setup({ width: 390, height: 844 });
     try {
@@ -635,8 +731,8 @@ export async function settingsScenarios(env) {
       assertEq(await page.locator(".libraryDisplayCard img").count(), 1);
       assert(!(await page.locator(".settingsPane").evaluate((el) => el.scrollWidth > el.clientWidth + 1)), "library display fits the phone");
       if (flags.keep) await page.screenshot({ path: `${server.dir}/settings-library-mobile.png`, animations: "disabled" });
-      await search(page, "translation model", "Translation model");
-      assert(await row(page, "Translation model").isVisible());
+      await search(page, "translation model", "Translate with");
+      assert(await row(page, "Translate with").isVisible());
       const overflow = await page.locator(".settingsPane").evaluate((el) => el.scrollWidth > el.clientWidth + 1);
       assert(!overflow, "settings content fits the phone without horizontal scrolling");
       if (flags.keep) await page.screenshot({ path: `${server.dir}/settings-mobile.png`, animations: "disabled" });

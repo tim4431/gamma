@@ -11,40 +11,15 @@ import {
   Decoration, EditorView, WidgetType, keymap,
   placeholder as cmPlaceholder,
 } from "@codemirror/view";
-import { defaultKeymap } from "@codemirror/commands";
+import { standardKeymap } from "@codemirror/commands";
 import { findMathAtCursor, renderKatex } from "./LatexEditor";
 import { emptyLeftPair, escapedAt, leftDelimiterEdit, rightDelimiterAt } from "./latexInput";
+import { latexErrors, visibleLatexErrors } from "./latexLint";
 import { calloutType } from "./callouts";
 import { fenceInnerAt, highlightCode, makeCopyButton, scanFences } from "./codeHighlight";
-import { insertLink, isUrl, scanColorSpans, scanImageSyntax, scanMarks, toggleMark } from "./mdMarks";
+import { scanColorSpans, scanImageSyntax, scanMarks, toggleMark } from "./mdMarks";
+import { scanMathSpans } from "./markCommands";
 import { assetUrl } from "../shared/lib/utils";
-
-// All CLOSED math spans in the text: [{from, to, display}] with from/to
-// including the delimiters. Same tokenizer as latexEditor's findMathAtCursor
-// (escaped \$ skipped), but only complete pairs — an unclosed opener stays
-// raw text while it's being typed. Inline spans must sit on one line and be
-// non-empty; "$5 and $3" across prose otherwise pairs into a bogus formula.
-function scanMathSpans(text) {
-  const re = /\$\$?/g;
-  const spans = [];
-  let m, open = null;
-  while ((m = re.exec(text))) {
-    if (escapedAt(text, m.index)) continue;
-    const tok = { i: m.index, len: m[0].length };
-    if (!open) {
-      open = tok;
-    } else if (tok.len === open.len) {
-      const inner = text.slice(open.i + open.len, tok.i);
-      const ok = inner.trim() && (open.len === 2 || !inner.includes("\n"));
-      if (ok) spans.push({ from: open.i, to: tok.i + tok.len, display: open.len === 2 });
-      open = null;
-    } else {
-      // Mismatched pair ($ ... $$): treat the later token as a fresh opener.
-      open = tok;
-    }
-  }
-  return spans;
-}
 
 // Clicking a rendered widget drops the caret just inside it, which un-renders
 // the span (the caret now touches it) so the source is editable in place.
@@ -263,7 +238,7 @@ function buildInlineDecos(state, labelsRef) {
     claimed.push([s.from, s.to]);
     const dlen = s.display ? 2 : 1;
     if (touched(s.from, s.to)) {
-      rawMath.push({ from: s.from + dlen, to: s.to - dlen });
+      rawMath.push({ from: s.from + dlen, to: s.to - dlen, display: s.display });
       ranges.push(Decoration.mark({ class: "cmMathRaw" }).range(s.from, s.to));
       continue;
     }
@@ -277,7 +252,7 @@ function buildInlineDecos(state, labelsRef) {
     if (um
       && !mathSpans.some((s) => um.start >= s.from && um.end <= s.to)
       && !fences.some((f) => um.start >= f.from && um.start < f.to)) {
-      rawMath.push({ from: um.start, to: um.end });
+      rawMath.push({ from: um.start, to: um.end, display: um.display });
       ranges.push(Decoration.mark({ class: "cmMathRaw" })
         .range(um.start - (um.display ? 2 : 1), um.end));
     }
@@ -314,6 +289,14 @@ function buildInlineDecos(state, labelsRef) {
       ranges.push(Decoration.mark({ class: cls }).range(pr.close, pr.close + 1));
     }
     for (const p of loose) ranges.push(Decoration.mark({ class: "cmBkErr" }).range(p, p + 1));
+    // KaTeX's own verdict, underlined where it points (latexLint.js), the
+    // message as the hover title. The range under the caret is being typed
+    // and waits until the caret moves on.
+    const caret = sel.empty && sel.head >= r.from && sel.head <= r.to ? sel.head - r.from : null;
+    for (const e of visibleLatexErrors(latexErrors(text.slice(r.from, r.to), r.display), caret)) {
+      ranges.push(Decoration.mark({ class: "cmLatexErr", attributes: { title: e.message } })
+        .range(r.from + e.from, r.from + e.to));
+    }
     // The \command the caret sits on lights up, like the active bracket pair.
     if (sel.empty) {
       for (const m of text.slice(r.from, r.to).matchAll(/\\[a-zA-Z]+/g)) {
@@ -744,64 +727,6 @@ const mathBracketBackspace = keymap.of([{
   },
 }]);
 
-// --- formatting hotkeys -------------------------------------------------------
-// Obsidian's bindings (Ctrl/Cmd+B bold, +I italic, +K link) plus the marks it
-// leaves unbound: Ctrl+E inline code (Notion's key), Ctrl+Shift+X strike,
-// Ctrl+Shift+H highlight. Toggle semantics live in mdMarks.toggleMark. Inside
-// math, a code fence or inline code the key is swallowed and does nothing —
-// letting it through would hand Ctrl+B to the browser (Firefox: bookmarks).
-const MARK_KEYS = [
-  ["Mod-b", "**"], ["Mod-i", "*"], ["Mod-e", "`"],
-  ["Mod-Shift-x", "~~"], ["Mod-Shift-h", "=="],
-];
-
-function markBlockedAt(doc, from, to, marker) {
-  if (fenceInnerAt(doc, from) || fenceInnerAt(doc, to)) return true;
-  if (scanMathSpans(doc).some((s) => s.from < to && from < s.to)) return true;
-  if (marker === "`") return false;
-  return scanMarks(doc).some((s) => s.marker === "`" && s.from < from && to < s.to);
-}
-
-function runToggleMark(view, marker) {
-  const doc = view.state.doc.toString();
-  const { from, to } = view.state.selection.main;
-  if (markBlockedAt(doc, from, to, marker)) return true;
-  const r = toggleMark(doc, from, to, marker);
-  if (r) view.dispatch({ changes: r.changes, selection: r.selection, userEvent: "input" });
-  return true;
-}
-
-function runInsertLink(view) {
-  const doc = view.state.doc.toString();
-  const { from, to } = view.state.selection.main;
-  if (markBlockedAt(doc, from, to, "")) return true;
-  const r = insertLink(doc, from, to);
-  view.dispatch({ changes: r.changes, selection: r.selection, userEvent: "input" });
-  // A URL on the clipboard fills the empty (…) slot — read asynchronously
-  // (and not at all on plain-HTTP origins, where navigator.clipboard is
-  // missing); only applied if the doc hasn't moved on meanwhile.
-  const slot = from + 1 + (to - from) + 2;
-  const expect = view.state.doc.toString();
-  navigator.clipboard?.readText?.().then((clip) => {
-    if (!isUrl(clip) || view.state.doc.toString() !== expect) return;
-    const url = clip.trim();
-    const label = to - from;
-    view.dispatch({
-      changes: { from: slot, insert: url },
-      selection: { anchor: label ? slot + url.length + 1 : from + 1 },
-      userEvent: "input",
-    });
-  }).catch(() => {});
-  return true;
-}
-
-const markHotkeys = keymap.of([
-  ...MARK_KEYS.map(([key, marker]) => ({
-    key, preventDefault: true, run: (view) => runToggleMark(view, marker),
-  })),
-  { key: "Mod-k", preventDefault: true, run: runInsertLink },
-]);
-
 // The raw source is usually taller than the rendered view it replaced, so
 // the clicked text moves when the editor opens: scroll the notes by however
 // far the caret's line landed from the pointer, keeping it where it was.
@@ -888,8 +813,12 @@ const BlockCmEditor = React.forwardRef(function BlockCmEditor({
         dollarBackspace,
         mathBracketPairing,
         mathBracketBackspace,
-        markHotkeys,
-        keymap.of(defaultKeymap),
+        // Only the basic editing keys (caret movement, Home/End, selection
+        // by word…): every shortcut above that — formatting, line and block
+        // operations — is a command of editor/blockCommands.js, dispatched by
+        // the row's keydown before this keymap sees the event, so the
+        // catalog is the one place a key is declared (docs/dev/hotkeys.md).
+        keymap.of(standardKeymap),
         cmPlaceholder(placeholder || ""),
         chipCompartment.of(inlineRenderField(labelsRef)),
         remoteCursorField,

@@ -278,9 +278,13 @@ the request's workspace — the extension names none, so its personal one.
 | DELETE | `/ai/usage` | forget the account's usage rows |
 | POST | `/ai/health` | login connection check of one entry the account can use, its own or shared (`{provider_id, mode}`; `""` = the first): `mode: "ping"` is the free credential check (OAuth → usage endpoint, API key → `/v1/models`), `"test"` the tiny live completion; always answers in-body `{configured, ok, auth?, error?}` |
 | POST | `/ai/model-catalog` | list models available to a credential: the typed key, or a saved entry's (`provider_id`; admins may name a shared `server:<id>`) |
+| GET | `/ai/context-window?model=<pid>:<model>` | the chat model's context window for the context ring: `{model, context_window, source: "provider" \| "models.dev"}`, from the entry's own model listing, else the models.dev catalog; `context_window` null when neither knows it (`""` = the default model) |
 | POST | `/ai/oauth/chatgpt/start`, `/complete` | ChatGPT OAuth (PKCE, pasted callback URL) |
 | POST | `/ai/transcribe` | voice dictation |
-| POST | `/ai/translate` | translate paragraph texts for the viewer's translated view (`{texts, lang, model, effort, stream}` → `{translations}`; with `stream: true` an NDJSON stream of `{i: [indices], text}` partials as each paragraph is written, then the same final object; in-memory per-paragraph cache) |
+| POST | `/ai/translate` | translate paragraph texts for the viewer's translated view (`{texts, lang, model, effort, stream}` → `{translations}`; with `stream: true` an NDJSON stream of `{i: [indices], text}` partials as each paragraph is written, then the same final object; in-memory per-paragraph cache). `model: "engine:google"` / `"engine:youdao"` translates with that machine-translation service instead — no AI provider needed, 503 when it isn't set up, never streams partials |
+| GET | `/translate/engines` | the account's machine-translation services (`{engines: [{id, label, configured, fields, updated_at}], can_edit}`; secret fields as a `…last4` hint) |
+| PUT / DELETE | `/translate/engines/{id}` | set (`{fields: {…}}`, an empty secret keeps the stored one) or remove a service's credentials; guests 403; answers the GET shape |
+| POST | `/translate/engines/{id}/test` | translate one sentence into `{lang}` with the stored credentials; in-body `{ok, text}` / `{ok: false, error}` |
 | GET | `/pdf-text-status` | whether a doc has extractable text |
 
 ### Chats (`chats.py`, prefix `/api/chats`)

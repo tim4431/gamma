@@ -376,13 +376,14 @@ def connect_users_db() -> sqlite3.Connection:
 
 
 # Prefs that follow the account regardless of workspace (stored with
-# workspace_id ''): the AI provider entries, the active entry, and the
-# preference profile. Everything else is per account + workspace, because the
+# workspace_id ''): the AI provider entries, the active entry, the
+# translation engine keys (gamma/translate_engines.py), and the preference
+# profile. Everything else is per account + workspace, because the
 # value names that workspace's pages (open tabs, recents, pinned folders,
 # reading positions).
 PROFILE_PREF_KEY = "profile"
 NOTICES_SEEN_PREF_KEY = "notices-seen"  # gamma/notices.py: {notice id: fingerprint seen}
-USER_PREF_KEYS = frozenset({"ai-settings", "ai-provider", PROFILE_PREF_KEY, NOTICES_SEEN_PREF_KEY})
+USER_PREF_KEYS = frozenset({"ai-settings", "ai-provider", "translate-engines", PROFILE_PREF_KEY, NOTICES_SEEN_PREF_KEY})
 
 
 def pref_scope(key: str, ws: str) -> str:

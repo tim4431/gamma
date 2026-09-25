@@ -898,6 +898,9 @@ body {
 .blockEditorCm .cmBk1 { color: var(--bracket-2); }
 .blockEditorCm .cmBk2 { color: var(--bracket-3); }
 .blockEditorCm .cmBkErr { color: var(--bracket-err); text-decoration: underline wavy var(--bracket-err); }
+/* What KaTeX rejects inside raw math (an undefined \command, a mismatched
+   \end): the squiggle only, the text keeps its color. */
+.blockEditorCm .cmLatexErr { text-decoration: underline wavy var(--bracket-err); text-decoration-skip-ink: none; }
 /* The \command the caret sits on, inside raw math. */
 .blockEditorCm .cmMathCmdActive {
   background: var(--bracket-active-bg);
@@ -1216,6 +1219,15 @@ body {
 .mdTableAlignRow { display: flex; justify-content: center; padding: 6px 10px 5px; }
 .mdTableColHandle { top: -7px; transform: translateX(-50%); width: 22px; height: 13px; }
 .mdTableRowHandle { left: -8px; transform: translateY(-50%); width: 13px; height: 22px; }
+/* The whole-table handle in the top-left corner: shows with the + strips,
+   selects the table and opens its menu (copy, delete). */
+.mdTableCorner {
+  top: -8px; left: -9px; width: 15px; height: 15px;
+  display: flex; align-items: center; justify-content: center;
+  cursor: pointer; opacity: 0; transition: opacity 0.12s;
+}
+.mdTableWrap:hover .mdTableCorner, .mdTableSelected .mdTableCorner, .mdTableCorner[data-guide-active] { opacity: 1; }
+.mdTableSelected table { outline: 2px solid var(--accent); outline-offset: 1px; }
 .mdTableHandle:hover { color: var(--text-bright); background: var(--bg-subtle); }
 /* The in-place cell editor: an input laid exactly over the clicked cell.
    Tab/Shift-Tab move between cells, Enter commits, Esc cancels. */
@@ -3990,6 +4002,12 @@ html.appFocusFullscreen, html.appFocusFullscreen body { overflow: hidden; oversc
 .chatMsgUsagePart { display: inline-flex; align-items: center; gap: 2px; }
 .chatMsgUsagePart svg { opacity: 0.8; }
 .chatUsageTotal { display: flex; flex-direction: column; gap: 4px; padding: 2px 0 4px; }
+.chatUsageTotal .chatMsgUsage { gap: 5px; }
+.chatContextRing { display: block; flex: none; }
+.chatContextRing circle { fill: none; stroke: currentColor; stroke-width: 2.5; }
+.chatContextRingTrack { opacity: 0.22; }
+.chatContextRingFill { stroke-linecap: round; transition: stroke-dasharray 0.3s; }
+.chatContextRing.full .chatContextRingFill { stroke: var(--danger); }
 .chatUsageTotal .popoverHint { padding: 0; }
 .chatMsgActions {
   display: flex;
@@ -5211,7 +5229,12 @@ html.appFocusFullscreen, html.appFocusFullscreen body { overflow: hidden; oversc
   position: relative; display: inline-block; width: 0; height: 1.15em;
   vertical-align: text-bottom; border-left: 2px solid var(--peer); margin-left: -1px;
 }
-.cmRemoteCaret::after {
+/* over a rendered block (Presence.jsx RenderedCarets): the same caret, placed by text */
+.peerCaret {
+  position: absolute; width: 0; z-index: 2; pointer-events: none;
+  border-left: 2px solid var(--peer); margin-left: -1px;
+}
+.cmRemoteCaret::after, .peerCaret::after {
   content: attr(data-name); position: absolute; top: -1.35em; left: -2px;
   background: var(--peer); color: #fff; font-size: calc(9px * var(--ui-font-scale, 1)); line-height: 1.2;
   padding: 1px 4px; border-radius: 3px; white-space: nowrap; pointer-events: none;
@@ -5383,3 +5406,18 @@ html.appFocusFullscreen, html.appFocusFullscreen body { overflow: hidden; oversc
 .mcpConnectionDetails { margin: 16px 0; font-size: calc(13px * var(--ui-font-scale, 1)); }
 .mcpConnectionDetails summary { cursor: pointer; color: var(--text-secondary); }
 .mcpConsentActions { display: grid; gap: 8px; margin-bottom: 16px; }
+
+/* Key caps: a chord shown as its keys (settings kit KeyCaps, the palette) */
+.keyCaps { display: inline-flex; align-items: center; gap: 3px; }
+.keyCap {
+  display: inline-block;
+  min-width: 18px;
+  padding: 0 5px;
+  font: 500 calc(11px * var(--ui-font-scale, 1)) / 18px ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
+  text-align: center;
+  color: var(--text-secondary);
+  background: var(--bg-block);
+  border: 1px solid var(--border-hover);
+  border-bottom-width: 2px;
+  border-radius: 4px;
+}

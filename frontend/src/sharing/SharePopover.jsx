@@ -285,7 +285,7 @@ export function SharePopover({
       <div className="settingsForm">
         {settings === null ? <Empty icon={LinkIcon}>{t("Loading…")}</Empty> : null}
         {settings && !shared ? (
-          <Section title={t("Link")}>
+          <Section title={t("Link")} guide="share.link">
             <Row icon={LinkIcon} label={t("Share link")} hint={t("not shared yet")}
               title={t("A link lets people open this page — read-only or editable, for anyone or only for accounts you name.")}>
               <button type="button" className="uiBtn sm primary" onClick={onCreate}>

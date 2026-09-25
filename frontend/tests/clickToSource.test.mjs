@@ -3,7 +3,7 @@
 // text around the click the way the module reads it from the DOM.
 import assert from "node:assert/strict";
 import { test } from "node:test";
-import { gapInSource, locateInSource } from "../src/editor/clickToSource.js";
+import { gapInSource, locateInRendered, locateInSource } from "../src/editor/clickToSource.js";
 
 test("text inside markup maps to the same character in the source", () => {
   const src = "# Title\n\nsome **bold words** here";
@@ -50,4 +50,32 @@ test("a gap with no blank line (two adjacent $$ formulas) asks for a new line", 
   // moves the gap to the formula's first line.
   const spans = [{ from: 0, to: 5 }, { from: 6, to: 14 }];
   assert.deepEqual(gapInSource(src, src.indexOf("b"), spans), { offset: 6, insert: true });
+});
+
+// The reverse: a source offset (another person's caret) → the rendered text.
+test("a caret in plain text lands on the same character of the rendered text", () => {
+  const src = "some **bold words** here";
+  const text = "some bold words here";
+  const hit = locateInRendered(text, src, src.indexOf("ld words"));
+  assert.deepEqual(hit, { index: text.indexOf("ld words"), end: false });
+});
+
+test("repeated text is told apart by the source around it", () => {
+  const src = "every input position can attend to every input position.";
+  const text = src;
+  const at = src.lastIndexOf("osition");
+  assert.equal(locateInRendered(text, src, at).index, at);
+});
+
+test("a caret inside a link's URL goes to the end of the link text", () => {
+  const src = "the entire input [p. 5](/?page=abc&pdf_page=5&quote=Attention).";
+  const text = "the entire input p. 5.";
+  const hit = locateInRendered(text, src, src.indexOf("pdf_page"));
+  assert.deepEqual(hit, { index: text.indexOf("p. 5") + 4, end: true });
+});
+
+test("a caret between markup characters goes to the text after it", () => {
+  const src = "**bold** tail";
+  assert.deepEqual(locateInRendered("bold tail", src, 1), { index: 0, end: false });
+  assert.equal(locateInRendered("", src, 1), null);
 });

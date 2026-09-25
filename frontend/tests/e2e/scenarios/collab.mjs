@@ -41,7 +41,20 @@ export async function collabScenarios({ server, browser, alice, bob, makePdf, st
     await until(async () => (await A.$$(".blockRowWrap .peerChips .peerAvatar")).length >= 1, { what: "row chip on alice's side" });
     await B.keyboard.type(" from bob");
     await bodyHas(A, "beta from bob");
+    // Alice isn't editing: bob's caret is drawn over her rendered row, right
+    // after what he typed.
+    await until(() => A.evaluate(() => {
+      const caret = document.querySelector(".blockRendered .peerCaret");
+      if (!caret) return false;
+      const walker = document.createTreeWalker(caret.parentElement, NodeFilter.SHOW_TEXT);
+      let n = walker.nextNode();
+      while (n && !n.data.includes("from bob")) n = walker.nextNode();
+      if (!n) return false;
+      const r = document.createRange(); r.selectNodeContents(n);
+      return Math.abs(caret.getBoundingClientRect().left - r.getBoundingClientRect().right) < 4;
+    }), { what: "bob's caret at the end of his text on alice's rendered row" });
     await closeEditor(B);
+    await until(async () => !(await A.$(".blockRendered .peerCaret")), { what: "bob's caret gone once he stops editing" });
     assertNoProblems(A); assertNoProblems(B);
   });
 

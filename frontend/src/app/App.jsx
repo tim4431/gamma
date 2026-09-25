@@ -69,7 +69,13 @@ import {
   normalizeBlocks,
   cloneBlocks,
   findBlock,
+  moveSibling,
+  removeBlockKeepChildren,
+  visibleNeighbor,
 } from "../shared/model/blockModel";
+import { chordLabel, dispatch as dispatchHotkey, effectiveKeys } from "../shared/lib/hotkeys.js";
+import { APP_COMMANDS } from "./appCommands.js";
+import { BLOCK_COMMANDS } from "../editor/blockCommands.js";
 import { loadSession, saveSession, clearSession, setSessionScope } from "./sessionState";
 import { ROLE_LABEL, workspaceMeta } from "../settings/SettingsWorkspace";
 import { AuthLoading, LoginPage, SessionConflictPage, ShareBlockedPage, WorkspaceUnavailablePage } from "../auth/LoginPage";
@@ -2289,7 +2295,19 @@ function LibraryApp({ publicPage = null, initialServerConfig = null }) {
   const [collapsedWins, setCollapsedWins] = useState({}); // window id -> collapsed to header bar
   // One popover open at a time; any click outside a [data-popover] container closes it.
   const [openPopover, setOpenPopover] = useState(null); // "menu" | "share" | "user" | "search"
-  const [quickOpen, setQuickOpen] = useState(false); // the Ctrl+P page palette
+  // The Ctrl+P palette (library/QuickOpen.jsx): null, or {prefix} — "" lists
+  // pages, ">" the commands (Ctrl+Shift+P).
+  const [quickOpen, setQuickOpen] = useState(null);
+  // The app commands' context (app/appCommands.js) and the account's
+  // keybindings, refreshed every render for the once-mounted key listener.
+  const appCmdRef = useRef(null);
+  const bindingsRef = useRef({});
+  // The notes tree's row handlers of the last render, so the palette can
+  // run a block command on the focused row without an open editor.
+  const rowPropsRef = useRef(null);
+  // A block just moved by a keyboard command: the DOM move blurs its
+  // editor in some browsers, and that blur must not close it (onStartEdit).
+  const keepEditRef = useRef(null);
   useEffect(() => {
     if (!openPopover) return;
     function onDown(e) {
@@ -2391,49 +2409,13 @@ function LibraryApp({ publicPage = null, initialServerConfig = null }) {
   }, [homeBlocks, extraFolders]);
   useEffect(() => {
     function onKey(e) {
-      // Ctrl+F (and Ctrl+Shift+F) open the built-in search instead of the
-      // browser find — it covers notes, highlights, AND the PDF text.
-      if ((e.ctrlKey || e.metaKey) && !e.altKey && e.key.toLowerCase() === "f") {
-        // Focus in the chat window → ChatDock's own listener opens find-in-chat
-        if (document.activeElement?.closest?.(".chatPanel")) return;
-        e.preventDefault();
-        // On the home library, plain Ctrl+F targets the listing search box
-        // (only rendered there — DOM presence stands in for homeMode, which
-        // this once-mounted listener can't read). Ctrl+Shift+F still opens
-        // the full search panel.
-        if (!e.shiftKey) {
-          const homeFind = document.querySelector(".homeFindInput");
-          if (homeFind) { homeFind.focus(); homeFind.select(); return; }
-        }
-        setOpenPopover((p) => (p === "search" && !e.shiftKey ? null : "search"));
-      } else if ((e.ctrlKey || e.metaKey) && !e.altKey && !e.shiftKey && e.key.toLowerCase() === "p") {
-        // Ctrl+P: the quick-open page palette (library/QuickOpen.jsx) instead
-        // of the browser's print. A share view has no library to pick from.
-        if (shareMode) return;
-        e.preventDefault();
+      // The app commands (app/appCommands.js, docs/dev/hotkeys.md): search,
+      // the palettes, back, undo/redo, rename, the panes… under the
+      // account's keybindings. Escape is not a command: it always clears.
+      if (appCmdRef.current && dispatchHotkey(APP_COMMANDS, e, appCmdRef.current, bindingsRef.current)) return;
+      if (e.key === "Escape") {
         setOpenPopover(null);
-        setQuickOpen((v) => !v);
-      } else if (e.altKey && e.key === "ArrowLeft") {
-        e.preventDefault();
-        goBackNavRef.current?.();
-      } else if ((e.ctrlKey || e.metaKey) && !e.altKey && ["z", "y"].includes(e.key.toLowerCase())) {
-        // The page's one undo history — from a block editor too (it has no
-        // history of its own). Other inputs keep the browser's own undo.
-        if (e.isComposing) return;
-        const active = document.activeElement;
-        const inEditor = !!active?.closest?.(".cm-editor");
-        if (!inEditor && active && (active.tagName === "INPUT" || active.tagName === "TEXTAREA" || active.isContentEditable)) return;
-        const redo = e.key.toLowerCase() === "y" || e.shiftKey;
-        const applied = blockHistory.undo(redo, inEditor);
-        if (applied || inEditor || !active || active === document.body) {
-          setStatus(applied ? `${redo ? "Redone" : "Undone"}: ${applied}.` : (redo ? t("Nothing to redo in notes.") : t("Nothing to undo in notes.")));
-        }
-        // Always swallowed in an editor: the browser's native contenteditable
-        // undo would otherwise mutate CodeMirror's DOM behind its back.
-        if (inEditor || applied) e.preventDefault();
-      } else if (e.key === "Escape") {
-        setOpenPopover(null);
-        setQuickOpen(false);
+        setQuickOpen(null);
         setHomeMenu(null);
         setSelectedPages((prev) => (prev.size ? new Set() : prev));
       }
@@ -2463,6 +2445,7 @@ function LibraryApp({ publicPage = null, initialServerConfig = null }) {
     translateEffort, setTranslateEffort, translateParallel, setTranslateParallel,
     searchDetailsHome, setSearchDetailsHome, searchDetailsPaper, setSearchDetailsPaper,
     enterNewNote, setEnterNewNote,
+    keybindings, setKeybindings,
     statusBarVisible, setStatusBarVisible, suggestTours, setSuggestTours,
     chatEffort, setChatEffort, aiLoginCheck, setAiLoginCheck, metaModel, setMetaModel,
     dictationModel, setDictationModel, dictationLang, setDictationLang,
@@ -3090,9 +3073,12 @@ function LibraryApp({ publicPage = null, initialServerConfig = null }) {
   // --- PDF translation (the 文A button in the viewer's zoom column) ---
   // The button prompts "this page or whole document"; the queue itself lives
   // in PdfViewer (translateCtl), which calls back into translateParagraphs
-  // below for each page. Language, model, effort and parallelism live in
-  // Settings → Reading → PDF viewer.
-  const translateSendModel = translateModel && scopedAiModels.some((m) => m.id === translateModel)
+  // below for each page. Language and model/engine live in Settings →
+  // Reading › Translation, effort and parallelism in AI › Advanced.
+  // A machine-translation engine ("engine:<id>", set up under Settings →
+  // Reading) or a model; a stale pick falls back to the chat model.
+  const translateEngines = aiInfo?.translate_engines || [];
+  const translateSendModel = translateModel && [...translateEngines, ...scopedAiModels].some((m) => m.id === translateModel)
     ? translateModel
     : chatSendModel;
   const translateLangLabel = (TRANSLATE_LANGS.find(([code]) => code === translateLang) || ["", ""])[1];
@@ -3669,12 +3655,25 @@ function LibraryApp({ publicPage = null, initialServerConfig = null }) {
   }
 
   useEffect(() => {
-    if (!pendingFocusRef.current || readOnly) return;
-    const id = pendingFocusRef.current;
+    // A request is a block id, or {id, caret: "start" | "end" | offset,
+    // reopen} from a keyboard command: the caret lands where the command
+    // says, and `reopen` counts the tries at re-opening an editor a DOM
+    // move closed (the blur a browser fires when a focused node moves).
+    const req = pendingFocusRef.current;
+    if (!req || readOnly) return;
+    const id = typeof req === "string" ? req : req.id;
     const ref = blockRefs.current[id];
     if (ref?.current) {
       ref.current.focus();
+      if (typeof req === "object" && req.caret != null) {
+        const len = ref.current.value.length;
+        const pos = req.caret === "end" ? len : req.caret === "start" ? 0 : Math.min(req.caret, len);
+        ref.current.setSelectionRange(pos, pos);
+      }
       pendingFocusRef.current = null;
+    } else if (typeof req === "object" && req.reopen > 0 && findBlock(blocks, id) && !findBlock(blocks, id).editMode) {
+      req.reopen -= 1;
+      setBlocks((prev) => setBlockEditMode(prev, id, true));
     }
   }, [blocks, readOnly]);
 
@@ -5821,6 +5820,7 @@ function LibraryApp({ publicPage = null, initialServerConfig = null }) {
     setInkHistoryState({ undo: h.undo.length, redo: h.redo.length });
     setInkSelection(null);
     setStatus(`${redo ? t("Redone") : t("Undone")}: ${entry.label} (page ${entry.changes[0].page}).`);
+    if (!redo) guideEvents.emit("ink.undone");
     return true;
   }
 
@@ -5843,6 +5843,7 @@ function LibraryApp({ publicPage = null, initialServerConfig = null }) {
     const before = inkOf(blockId);
     if (!before) return;
     applyInk([{ id: blockId, page, before, after: removeStrokes(before, ids) }], { label: T("ink erasure") });
+    guideEvents.emit("ink.erased");
   }
   // The partial eraser fires per pointer move: successive cuts through one
   // group fold into the same history entry, so Ctrl+Z undoes the pass.
@@ -5857,6 +5858,7 @@ function LibraryApp({ publicPage = null, initialServerConfig = null }) {
     const fold = last && last.length === 1 && last[0].id === blockId && last[0].after === before && last[0].pass;
     applyInk([{ id: blockId, page, before: fold ? last[0].before : before, after, pass: true }], { record: !fold, label: T("partial ink erasure") });
     if (fold) last[0].after = after;
+    guideEvents.emit("ink.erased");
   }
   function handleInkSelect(page, items) {
     if (readOnly) return;
@@ -6150,6 +6152,62 @@ function LibraryApp({ publicPage = null, initialServerConfig = null }) {
   // affordances (docs/dev/block_centric.md). pdfUrl is only the viewer's input.
   const pageAttach = useMemo(() => pageAttachment(focusedBlock), [focusedBlock]);
   const homeMode = !focusedBlockId && !shareMode;
+  bindingsRef.current = keybindings;
+  appCmdRef.current = {
+    shareMode, homeMode, readOnly, hasPage: !!focusedBlockId && !homeMode, hasPdf: !!pdfUrl && !homeMode,
+    search: (all) => {
+      if (!all) {
+        const homeFind = document.querySelector(".homeFindInput");
+        if (homeFind) { homeFind.focus(); homeFind.select(); return true; }
+      }
+      setOpenPopover((p) => (p === "search" && !all ? null : "search"));
+      return true;
+    },
+    palette: (prefix) => {
+      setOpenPopover(null);
+      setQuickOpen((v) => (v && v.prefix === prefix ? null : { prefix }));
+    },
+    back: () => goBackNavRef.current?.(),
+    undo: (redo) => {
+      const active = document.activeElement;
+      const inEditor = !!active?.closest?.(".cm-editor");
+      if (!inEditor && active && (active.tagName === "INPUT" || active.tagName === "TEXTAREA" || active.isContentEditable)) return false;
+      const applied = blockHistory.undo(redo, inEditor);
+      if (applied || inEditor || !active || active === document.body) {
+        setStatus(applied ? `${redo ? "Redone" : "Undone"}: ${applied}.` : (redo ? t("Nothing to redo in notes.") : t("Nothing to undo in notes.")));
+      }
+      // Always swallowed in an editor: the browser's native contenteditable
+      // undo would otherwise mutate CodeMirror's DOM behind its back.
+      return inEditor || !!applied;
+    },
+    renameTitle: () => { setTitleDraft(pageTitle || t("Untitled")); setTitleEditing(true); },
+    toggleChat: () => setCollapsedWins((prev) => ({ ...prev, chat: !prev.chat })),
+    togglePdf: () => setPdfHidden((v) => !v),
+    toggleNotes: () => setNotesVisible((v) => !v),
+    openSettings: (pane) => { setOpenPopover(null); setSettingsOpen((cur) => pane || cur || "appearance"); },
+  };
+  // What the command palette lists right now: the app commands that apply,
+  // then the block commands that work on the focused row without an editor.
+  function paletteCommands() {
+    const ctx = appCmdRef.current;
+    const entry = (cmd, run) => ({
+      id: cmd.id, label: cmd.label, group: cmd.group, run,
+      keyLabel: effectiveKeys(cmd, keybindings).map((k) => chordLabel(k)).join(" · "),
+    });
+    const out = APP_COMMANDS
+      .filter((cmd) => cmd.palette !== false && (!cmd.when || cmd.when(ctx)))
+      .map((cmd) => entry(cmd, () => cmd.run(ctx)));
+    const row = rowPropsRef.current;
+    const block = !homeMode && focusedId ? findBlock(blocks, focusedId) : null;
+    if (row && block && !readOnly) {
+      const bctx = { block, tree: blocks, readOnly, editor: null, row };
+      for (const cmd of BLOCK_COMMANDS) {
+        if (cmd.palette === false || cmd.needsEditor || (cmd.when && !cmd.when(bctx))) continue;
+        out.push(entry(cmd, () => cmd.run(bctx)));
+      }
+    }
+    return out;
+  }
   // The guide (docs/dev/onboarding.md): tours point at data-guide anchors
   // and advance on the events emitted below — some are offered by those
   // events (guide/triggers.js); never in the share view.
@@ -6192,7 +6250,8 @@ function LibraryApp({ publicPage = null, initialServerConfig = null }) {
       pdfChatVisible: !!pageAttach && !pdfHidden && !collapsedWins.pdf && !isPhone,
       guideAvailable: !settingsOpen,
       sharedWorkspace: workspaces.some((w) => !w.personal),
-      pageShared: !!focusedBlockId && !!shareSettings?.token,
+      onPage: !homeMode && !!focusedBlockId,
+      editable: !readOnly,
       unfiledLibrary,
       installable: HOME_SCREEN_INSTALLABLE,
     },
@@ -6200,6 +6259,7 @@ function LibraryApp({ publicPage = null, initialServerConfig = null }) {
   });
   useEffect(() => { if (openPopover) guideEvents.emit("popover.opened", { name: openPopover }); }, [openPopover]);
   useEffect(() => { if (quickOpen) guideEvents.emit("palette.opened"); }, [quickOpen]);
+  useEffect(() => { if (inkUi.options) guideEvents.emit("ink.options"); }, [inkUi.options]);
   const othersHere = !!focusedBlockId && collab.peers.length > 0;
   useEffect(() => { if (othersHere) guideEvents.emit("peer.joined"); }, [othersHere]);
   // The props a folder card shares between the pinned strip and the library
@@ -7848,7 +7908,12 @@ function LibraryApp({ publicPage = null, initialServerConfig = null }) {
                   onStartEdit: (id, editMode) => {
                     if (readOnly) return;
                     if (editMode) pendingFocusRef.current = id;
-                    else {
+                    else if (keepEditRef.current?.id === id && performance.now() < keepEditRef.current.until) {
+                      // The blur of a DOM move (onMoveBlock); the focus
+                      // effect puts the caret back.
+                      keepEditRef.current = null;
+                      return;
+                    } else {
                       saveNowRef.current = true;
                       if (caretRef.current?.id === id) caretRef.current = null;
                       collab.sendCursor({ block: id });
@@ -7892,15 +7957,54 @@ function LibraryApp({ publicPage = null, initialServerConfig = null }) {
                     const next = toggleCollapsed(blocks, id);
                     setBlocks(next);
                   },
-                  onDelete: (id) => {
+                  // Delete the subtree (the handle menu) or, from the
+                  // keyboard's "delete line", the block alone with its
+                  // children lifted into its place, the caret moving to
+                  // the end of the block above (`focus`).
+                  onDelete: (id, { keepChildren = false, focus = null } = {}) => {
                     if (readOnly) return;
-                    setBlocks(removeBlockTree(blocks, id)); // the transition's delete op
-
+                    let next = keepChildren ? removeBlockKeepChildren(blocks, id) : removeBlockTree(blocks, id);
+                    if (focus && findBlock(next, focus)) {
+                      next = setBlockEditMode(next, focus, true);
+                      pendingFocusRef.current = { id: focus, caret: "end" };
+                      setFocusedId(focus);
+                    }
+                    setBlocks(next); // the transition's delete op
                     setStatus(t("Block deleted — Ctrl+Z to undo."));
                   },
+                  // ↑ / ↓ at the editor's first / last line: the editor
+                  // moves to the block shown above / below, caret at its
+                  // end / start. False when there is none (the key then
+                  // stays with the editor).
+                  onHop: (id, dir) => {
+                    if (readOnly) return false;
+                    const target = visibleNeighbor(blocks, id, dir);
+                    if (!target) return false;
+                    pendingFocusRef.current = { id: target.id, caret: dir < 0 ? "end" : "start" };
+                    setBlocks((prev) => setBlockEditMode(prev, target.id, true));
+                    setFocusedId(target.id);
+                    return true;
+                  },
+                  // Alt+↑ / ↓: one step among the siblings, the editor
+                  // staying open with its caret (the transition's move op).
+                  onMoveBlock: (id, dir) => {
+                    if (readOnly) return false;
+                    const next = moveSibling(blocks, id, dir);
+                    if (next === blocks) return false;
+                    const editor = blockRefs.current[id]?.current;
+                    keepEditRef.current = { id, until: performance.now() + 500 };
+                    pendingFocusRef.current = { id, caret: editor ? editor.selectionStart : "end", reopen: 2 };
+                    setBlocks(next);
+                    setFocusedId(id);
+                    return true;
+                  },
+                  tree: blocks,
+                  keybindings,
                   // Attach a block to the next chat message (chip with its id).
                   onAddToChat: shareMode ? null : addBlockToChat,
-                  onDuplicate: (id) => {
+                  // `above` puts the copy before the original (the
+                  // keyboard's Shift+Alt+↑).
+                  onDuplicate: (id, { above = false } = {}) => {
                     if (readOnly) return;
                     const src = findBlock(blocks, id);
                     if (!src) return;
@@ -7914,7 +8018,9 @@ function LibraryApp({ publicPage = null, initialServerConfig = null }) {
                       return { ...b, id: makeId(), editMode: false, properties: props,
                         children: (b.children || []).map(clone) };
                     };
-                    setBlocks(insertSibling(blocks, id, clone(src), true));
+                    const copy = clone(src);
+                    setBlocks(insertSibling(blocks, id, copy, !above));
+                    setFocusedId(copy.id);
                     setStatus(t("Block duplicated."));
                   },
                   onMoveToPage: async (id) => {
@@ -7997,6 +8103,7 @@ function LibraryApp({ publicPage = null, initialServerConfig = null }) {
                     if (next) setBlocks(next);
                   },
                 };
+                rowPropsRef.current = rowProps;
                 return (
                   <>
                     <FileChipContext.Provider value={fileChipCtx}>
@@ -8457,7 +8564,7 @@ function LibraryApp({ publicPage = null, initialServerConfig = null }) {
           open={openPopover === "mirror"}
           onToggle={() => setOpenPopover(openPopover === "mirror" ? null : "mirror")}
           jumpTo={(pageId, blockId) => jumpToRef.current?.(pageId, blockId)}
-          onOpenSettings={() => { setSettingsOpen("workspaces"); setOpenPopover(null); }}
+          onOpenSettings={() => { setSettingsOpen(!workspace.mirror_of && workspace.publishing ? "sync" : "workspaces"); setOpenPopover(null); }}
         />
       ) : null}
       {authUser?.user && (
@@ -8786,7 +8893,7 @@ function LibraryApp({ publicPage = null, initialServerConfig = null }) {
             ) : null}
           </div>
         ) : null}
-        <div className={`viewerWrap ${(pdfHidden || homeMode || pageOnly) ? "pdfHidden" : ""}`} ref={viewerWrapRef}>
+        <div className={`viewerWrap ${(pdfHidden || homeMode || pageOnly) ? "pdfHidden" : ""}`} ref={viewerWrapRef} data-guide="pdf.pane">
           {pdfUrl && !pdfHidden ? (
             <button
               className="uiClose uiCloseLg pdfCloseBtn"
@@ -9268,8 +9375,10 @@ function LibraryApp({ publicPage = null, initialServerConfig = null }) {
         </div>
       ) : null}
       <QuickOpen
-        open={quickOpen}
-        onClose={() => setQuickOpen(false)}
+        open={!!quickOpen}
+        prefix={quickOpen?.prefix || ""}
+        commands={paletteCommands}
+        onClose={() => setQuickOpen(null)}
         pages={homeBlocks}
         recentViews={recentViews}
         openTabs={openTabs}
@@ -9314,7 +9423,9 @@ function LibraryApp({ publicPage = null, initialServerConfig = null }) {
           setTranslateEffort,
           translateParallel,
           setTranslateParallel,
-          aiModels: scopedAiModels, // the Translation-model picker's registry
+          aiModels: scopedAiModels, // the translation picker's registry
+          translateEngines, // …and the translation services set up for it
+          refreshAiModels, // saving a service's key updates that list
           pdfDarkPage,
           setPdfDarkPage,
           suggestTours,
@@ -9331,6 +9442,7 @@ function LibraryApp({ publicPage = null, initialServerConfig = null }) {
           enterNewNote,
           setEnterNewNote,
         }}
+        keyboard={{ keybindings, setKeybindings, enterNewNote }}
         library={{
           // batch metadata retry uses the same prompt/model/context prefs as
           // the per-paper fetch in the metadata popover

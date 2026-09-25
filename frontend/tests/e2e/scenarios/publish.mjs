@@ -150,14 +150,17 @@ export async function publishScenarios(env) {
       assertEq(await page.locator(".mirrorPill").count(), 0, "no sync pill away from the published page");
       await page.goto(pageUrl);
       await pill.waitFor();
-      // Settings → Workspaces: under Publishing, not among the clones
+      // Settings → Sync lists it under Publishing; Workspaces keeps it out of the clones
       await page.getByRole("button", { name: "Account & settings", exact: true }).click();
       await page.getByRole("button", { name: "Settings…", exact: true }).click();
-      await page.getByRole("navigation", { name: "Settings categories" }).getByRole("button", { name: "Workspaces", exact: true }).click();
+      const nav = page.getByRole("navigation", { name: "Settings categories" });
+      await nav.getByRole("button", { name: "Sync", exact: true }).click();
       const row = page.locator(".aiProvRow[data-publication]");
       await row.waitFor();
       assert((await row.textContent()).includes("1 published page"), "the count of published pages");
+      await nav.getByRole("button", { name: "Workspaces", exact: true }).click();
       await page.getByText("No clones yet.", { exact: true }).waitFor();
+      assertEq(await row.count(), 0, "no publication among the workspaces");
       await page.keyboard.press("Escape");
       assertNoProblems(page);
     });
@@ -182,7 +185,7 @@ export async function publishScenarios(env) {
       await page.keyboard.press("Escape");
       await page.getByRole("button", { name: "Account & settings", exact: true }).click();
       await page.getByRole("button", { name: "Settings…", exact: true }).click();
-      await page.getByRole("navigation", { name: "Settings categories" }).getByRole("button", { name: "Workspaces", exact: true }).click();
+      await page.getByRole("navigation", { name: "Settings categories" }).getByRole("button", { name: "Sync", exact: true }).click();
       const row = page.locator(".aiProvRow[data-publication]");
       await until(() => row.textContent().then((t) => t.includes("1 published page")), { what: "the row counts the page again" });
       await row.getByRole("button", { name: "More" }).click();

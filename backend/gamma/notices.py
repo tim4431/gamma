@@ -97,22 +97,42 @@ def backup_failed(username):
     return Notice("backup-failed", mark, "error", "backups", title)
 
 
+def _conflict_marks(username, publications):
+    """Per clone (or per publication), the open conflict count and newest
+    conflict id; a mirror with a page filter is a publication."""
+    marks, total = [], 0
+    for mirror in sync_engine.list_mirrors(username):
+        if (mirror.get("page_filter") is not None) != publications:
+            continue
+        count, newest = sync_engine.open_conflict_mark(mirror["workspace_id"])
+        if count:
+            marks.append(f"{mirror['workspace_id']}:{count}:{newest}")
+            total += count
+    return marks, total
+
+
 @source()
 def mirror_conflicts(username):
     """Open conflicts in the clones the account owns (Settings →
     Workspaces → Clones). Fingerprint: per clone, the count and the newest
     conflict — a new one brings the notice back, resolving old ones does
     not."""
-    marks, total = [], 0
-    for mirror in sync_engine.list_mirrors(username):
-        count, newest = sync_engine.open_conflict_mark(mirror["workspace_id"])
-        if count:
-            marks.append(f"{mirror['workspace_id']}:{count}:{newest}")
-            total += count
+    marks, total = _conflict_marks(username, publications=False)
     if not total:
         return None
     return Notice("mirror-conflicts", ",".join(marks), "warn", "workspaces",
                   f"{_plural(total, 'sync conflict')} to look at in your clones")
+
+
+@source()
+def publish_conflicts(username):
+    """Open conflicts in the pages the account publishes to Gamma Cloud
+    (Settings → Sync → Publishing), fingerprinted like the clones'."""
+    marks, total = _conflict_marks(username, publications=True)
+    if not total:
+        return None
+    return Notice("publish-conflicts", ",".join(marks), "warn", "sync",
+                  f"{_plural(total, 'sync conflict')} to look at in your published pages")
 
 
 @source()

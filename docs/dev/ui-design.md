@@ -23,6 +23,7 @@ already exists. Bespoke CSS classes are for **layout only**.
 | `MenuSelect` / `ActionMenu` ([Menus.jsx](../../frontend/src/shared/ui/Menus.jsx)) | every dropdown: Codex-style pill trigger + checkmarked `ContextMenu`. No native `<select>` anywhere |
 | `MenuItem` / `MenuLabel` / `SubMenuItem` ([Menus.jsx](../../frontend/src/shared/ui/Menus.jsx)) | every row inside a menu: icon column + ellipsizing label (+ `danger`, `trailing`). `SubMenuItem` is the nested flyout — hover-opened, safe-triangle guarded |
 | `categoryTag`, `uiTag` | chips and small badges |
+| `KeyCaps` / `KeyBinding` ([SettingsKit.jsx](../../frontend/src/settings/SettingsKit.jsx)) | a keyboard chord as `.keyCap` key caps; `KeyBinding` is the rebindable version (click, press the new keys; reset button when changed) — [hotkeys.md](hotkeys.md) |
 | `popoverAnchor` | the `position: relative; inline-flex` wrapper every popover trigger sits in (`data-popover="…"` on the same element) — never inline that style |
 | `Section`'s `scope` tag (`.setScope`, [settings.md](settings.md)) | where a settings section's values live: a 14 px icon and one muted word in the small caption size, "account" or "browser". An account tag's icon is the sync state of that section's own settings (check, cloud-check, spinning refresh, warning — the only colour); the sentence is the hover `title` and `aria-label`, never text |
 

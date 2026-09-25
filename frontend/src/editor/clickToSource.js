@@ -9,8 +9,10 @@
 // The same lookup finds where a rendered block begins, for the hover line in
 // the gap between two blocks that opens the editor on a line between them,
 // and the source range a Ctrl-selection of rendered text covers, for the
-// chat's selection chip.
-// `locateInSource` and `gapInSource` are pure; the rest reads the DOM.
+// chat's selection chip. The reverse lookup places another person's caret
+// (a source offset) on the rendered view.
+// `locateInSource`, `locateInRendered` and `gapInSource` are pure; the rest
+// reads the DOM.
 
 const CTX = 40; // characters of context taken on each side of the click
 const GAP = 12; // markup characters a context character may skip over
@@ -154,7 +156,8 @@ export function gapInSource(source, at, spans = []) {
 // gap plus up to 6px into each block (a third of the shorter one at most, so
 // the reaches around a short block — an empty line — never meet).
 export function renderedGaps(container, skip) {
-  const kids = [...container.children].filter((k) => k !== skip && k.getClientRects().length);
+  const kids = [...container.children].filter((k) => k !== skip
+    && !k.hasAttribute("data-markdown-copy-ignore") && k.getClientRects().length);
   const gaps = [];
   for (let i = 1; i < kids.length; i++) {
     const a = kids[i - 1].getBoundingClientRect(), b = kids[i].getBoundingClientRect();
@@ -173,6 +176,103 @@ export function blockStartInSource(container, source, below) {
     return locateInSource(source, contextAt(container, n, n.data.length - n.data.trimStart().length));
   }
   return null;
+}
+
+// ---- a source offset shown in the rendered view (another person's caret)
+
+// Source characters that are (or may be) markup: a run of the others is text
+// the rendered view shows as is. Newlines end a run too.
+const MARKUP = /[\n*_~=`$\\[\](){}<>#|^!]/;
+
+// The run of non-markup characters around source index `at`, at most CTX on
+// each side: [from, to].
+function plainRun(source, at) {
+  let from = at, to = at;
+  while (from > 0 && at - from < CTX && !MARKUP.test(source[from - 1])) from--;
+  while (to < source.length && to - at < CTX && !MARKUP.test(source[to])) to++;
+  return [from, to];
+}
+
+// Where source offset `at` falls in `text`, a block's rendered text: {index,
+// end} (end: the caret belongs after the text before it, not before the
+// text after it), or null. The plain run around the offset is looked up by
+// text, the source around it picking among repeats — locateInSource with the
+// roles swapped. An offset in markup that renders as nothing (a link's URL,
+// a formula) goes to the end of the nearest earlier text that is found, else
+// the start of the nearest later one.
+export function locateInRendered(text, source, at) {
+  if (!text || !source) return null;
+  at = Math.max(0, Math.min(at, source.length));
+  const find = (from, to, anchor) => {
+    const core = source.slice(from, to);
+    if (!core.trim()) return null;
+    return locateInSource(text, {
+      core, anchor,
+      before: source.slice(Math.max(0, from - CTX), from),
+      after: source.slice(to, to + CTX),
+      nth: indexesOf(source.slice(0, from + core.length - 1), core).length,
+    });
+  };
+  const [from, to] = plainRun(source, at);
+  const here = find(from, to, at - from);
+  if (here != null) return { index: here, end: false };
+  // Up to a few runs back, then forward — past a URL's pieces, say.
+  for (let j = from - 1, tries = 0; j >= 0 && tries < 8; j--) {
+    if (MARKUP.test(source[j]) || !source[j].trim()) continue;
+    const [f, t] = plainRun(source, j + 1);
+    const hit = find(f, t, j + 1 - f);
+    if (hit != null) return { index: hit, end: true };
+    j = f;
+    tries++;
+  }
+  for (let j = to, tries = 0; j < source.length && tries < 8; j++) {
+    if (MARKUP.test(source[j]) || !source[j].trim()) continue;
+    const [f, t] = plainRun(source, j);
+    const hit = find(f, t, j - f);
+    if (hit != null) return { index: hit, end: false };
+    j = t;
+    tries++;
+  }
+  return null;
+}
+
+// Where source offset `at` shows in `container` (a block's rendered view):
+// {left, top, height} in px from the container's top-left, or null when it
+// can't be placed. An offset inside one of `spans` ([{from, to}]: math) goes
+// to the span's start, before the formula.
+export function renderedCaretRect(container, source, at, spans = []) {
+  const span = spans.find((sp) => at > sp.from && at < sp.to);
+  if (span) at = span.from;
+  const nodes = [];
+  let text = "";
+  const walker = document.createTreeWalker(container, NodeFilter.SHOW_TEXT);
+  for (let n = walker.nextNode(); n; n = walker.nextNode()) {
+    if (n.parentElement?.closest(SKIP)) continue;
+    nodes.push({ node: n, from: text.length });
+    text += n.data;
+  }
+  const hit = locateInRendered(text, source, at);
+  if (!hit) return null;
+  // The node holding the caret: for an `end` caret the one whose text it
+  // follows, so a caret at a paragraph's end doesn't jump to the next line.
+  const i = hit.index;
+  const pick = hit.end
+    ? nodes.find((n) => i > n.from && i <= n.from + n.node.data.length)
+    : nodes.find((n) => i >= n.from && i < n.from + n.node.data.length);
+  const holder = pick || nodes.findLast((n) => n.from <= i);
+  if (!holder) return null;
+  const node = holder.node, off = Math.min(i - holder.from, node.data.length);
+  // A character's box is steadier than a collapsed range's: the caret sits
+  // on the left edge of the character after it, or the right of the one before.
+  const after = off < node.data.length && !hit.end;
+  const range = document.createRange();
+  range.setStart(node, after ? off : Math.max(0, off - 1));
+  range.setEnd(node, after ? off + 1 : off);
+  const rects = range.getClientRects();
+  const r = after ? rects[0] : rects[rects.length - 1];
+  if (!r) return null;
+  const box = container.getBoundingClientRect();
+  return { left: (after || off === 0 ? r.left : r.right) - box.left, top: r.top - box.top, height: r.height };
 }
 
 // ---- a selection made in the rendered view

@@ -1,8 +1,8 @@
 import React from "react";
-import { PaneHead, Section, Row, Toggle, Stepper, PictureChoices, Segmented } from "./SettingsKit";
+import { PaneHead, Section, Row, Toggle, Stepper, PictureChoices } from "./SettingsKit";
 import { SECTION_PREFS } from "./sectionPrefs.js";
 import { MenuSelect } from "../shared/ui/Menus";
-import { CloudIcon, ContrastIcon, GlobeIcon, HelpCircleIcon, LayoutIcon, MaximizeIcon, MoonIcon } from "../shared/ui/Icons";
+import { ContrastIcon, GlobeIcon, HelpCircleIcon, LayoutIcon, MaximizeIcon, MoonIcon } from "../shared/ui/Icons";
 import { ThemePreview, PdfPreview } from "../shared/illustrations";
 import { UI_SCALE } from "../app/prefs";
 import { LANGUAGES, T, t } from "../shared/i18n/i18n.js";
@@ -47,14 +47,6 @@ export function AppearanceSettings({ value, diagnostics }) {
               checked={value.pdfDarkPage} onChange={value.setPdfDarkPage} />
           </div>
         </div>
-      </Section>
-
-      <Section title={t("Sync status")} scope="account" prefs={SECTION_PREFS.appearance["Sync status"]}>
-        <Row icon={CloudIcon} label={t("Sync pill")} hint={t("Where the header shows a page's sync with Gamma Cloud.")}
-          title={t("Synced pages: the pill appears only on pages that sync with Gamma Cloud. Every page: it stays in the header on every page of a workspace that syncs some. A clone of another server shows it on every page either way.")}>
-          <Segmented value={value.syncPillScope} onChange={value.setSyncPillScope}
-            options={[["synced", t("Synced pages")], ["all", t("Every page")]]} />
-        </Row>
       </Section>
 
       <Section title={t("Tours")} scope="account" prefs={SECTION_PREFS.appearance["Tours"]}>

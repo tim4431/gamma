@@ -26,7 +26,6 @@ export const SECTION_PREFS = Object.freeze({
     Theme: ["theme"],
     Language: ["language"],
     "PDF pages": ["pdfDarkPage"],
-    "Sync status": ["syncPillScope"],
     Tours: ["suggestTours"],
   }),
   reading: sections({
@@ -35,9 +34,15 @@ export const SECTION_PREFS = Object.freeze({
     Notes: ["enterNewNote"],
     "Search opens as": ["searchDetailsHome", "searchDetailsPaper"],
   }),
+  keyboard: sections({
+    Shortcuts: ["keybindings"],
+  }),
   library: sections({
     Display: ["recentThumbs", "fileLabels"],
     PDFs: ["oaFallback", "metaAutoFetch", "pdfSaveLocal"],
+  }),
+  sync: sections({
+    "Sync status": ["syncPillScope"],
   }),
   connections: sections({
     "Connection check": ["aiLoginCheck"],

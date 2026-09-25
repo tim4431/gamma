@@ -558,10 +558,30 @@ over, and the layout never moves. Translated text is selectable/copyable;
 while shown, the invisible original text layer stands down.
 
 Targets are the allowlisted `TRANSLATE_LANGS` codes (mirrored in
-`frontend/src/app/prefDefs.js`); model and reasoning `effort` come from Settings →
-Reading (model follows the chat model by default; effort omitted unless
-picked — Low/Minimal is the speed lever for reasoning models); the whole
-Translation section can be switched off there too. The server keeps an
+`frontend/src/app/prefDefs.js`). What translates is Settings → Reading ›
+"Translate with" (`translateModel`, a browser pref; "" follows the chat
+model); reasoning `effort` is AI › Advanced (omitted unless picked —
+Low/Minimal is the speed lever for reasoning models). The Translation
+section's button switch turns the whole feature off.
+
+**Machine-translation services.** "Translate with" also offers Google Cloud
+Translation (v2 basic, API key sent as `X-Goog-Api-Key`, `format: "text"`)
+and Youdao (`openapi.youdao.com/v2/api` batch, v3 SHA-256 signature over the
+concatenated queries) once their credentials are set up in the same
+section. The viewer then sends `model: "engine:<id>"`, and
+`/api/ai/translate` hands the misses to `gamma/translate_engines.py`
+instead of a chat model: no AI provider needed, no effort, no streamed
+partials (the stream is just the final line), no token usage, and nothing
+to salvage — the APIs answer aligned lists; a Youdao query in `errorIndex`
+comes back verbatim, uncached. Each adapter maps the target codes to its
+own (Youdao `zh-CHS`/`zh-CHT`) and splits a request by its batch limits.
+Cache, validation and dedup are the LLM path's, keyed on `engine:<id>`.
+Credentials are per account under the reserved `translate-engines` pref
+(like `ai-settings`: refused by `/api/prefs`, read only masked through
+`GET /api/translate/engines`; guests can't store any). Unlike a chat model
+these engines don't know to leave math, `[12]` citation markers or URLs
+alone; PDF text carries no LaTeX and math-heavy paragraphs are skipped
+client-side, so in practice the damage is small. The server keeps an
 **in-memory only** LRU (~5k entries, lock-guarded — requests run in the
 threadpool) per (user, language, bare model name, source text) —
 deliberately nothing on disk; it makes halts/retries/re-shows free until a
@@ -601,6 +621,24 @@ show what a week cost. Code: `gamma/ai_usage.py`, `ai_client.normalize_usage`,
   (`estimateTokens`: characters received / 4, text deltas and previewed
   tool arguments alike; reset when that round's report lands). Replies
   saved before this carry no counts and show nothing.
+- **Context ring.** Left of the chat header's ⚙, Claude Code style: how full
+  the model's window is. The figure is the latest reply's LAST round alone
+  (its input + output, which the next message carries as history), saved on
+  the reply as `context_tokens` — the summed `usage` would overcount an
+  agent reply. A reply saved before that field counts only when it had no
+  tool rounds. The window is looked up live, never tabled in the code:
+  `GET /api/ai/context-window?model=<pid>:<model>` reads the entry's own
+  model listing first (Anthropic's `max_input_tokens`, the Codex backend's
+  `context_window`, the `context_length` / `max_model_len` of OpenRouter,
+  vLLM, Groq, …), then the public models.dev catalog for listings that carry
+  no size (OpenAI's, DeepSeek's) — there the provider this entry talks to
+  wins, else the value most providers agree on. Both are cached like the
+  Codex version (6 h; a failed lookup retried after 10 min, the last good
+  answer kept). A model neither knows gets `null`: no ring, and the popover
+  shows the token count alone. The client asks once per model per page load
+  (`useContextWindow` in `ChatDock.jsx`). The ring turns red past 80%;
+  clicking it opens the chat-settings popover, whose Tokens section spells
+  the figure out (`contextUsed`).
 - **Stored.** `ai_usage.record` writes one row per call to `ai_usage` in
   `users.db` (account, time, kind, provider id + name, model, the four
   counts); `ai_usage.recorder(kind, entry, rt)` is the `on_usage` callback the

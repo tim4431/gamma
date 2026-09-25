@@ -584,7 +584,7 @@ function AiUsageSection({ confirm, setStatus }) {
   );
 }
 
-export function AiSettings({ value, taskModels, confirm, setStatus }) {
+export function AiSettings({ value, confirm, setStatus }) {
   const closeKeyForm = () => { value.setAiKeysForm(null); value.setAiKeysError(""); };
   const activeKeyId = value.aiKeysInfo?.providers.some((item) => item.id === value.aiProvider)
     ? value.aiProvider
@@ -726,7 +726,6 @@ export function AiSettings({ value, taskModels, confirm, setStatus }) {
             ]}
           />
         </Row>
-      {taskModels}
       </Section>
       {value.aiKeysInfo?.can_edit ? <AiUsageSection confirm={confirm} setStatus={setStatus} /> : null}
       </> : null}

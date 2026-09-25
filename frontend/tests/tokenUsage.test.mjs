@@ -1,6 +1,6 @@
 import assert from "node:assert/strict";
 import { test } from "node:test";
-import { addUsage, cachedPercent, conversationUsage, estimateTokens, fmtTokens, liveUsage, usageDetail } from "../src/chat/tokenUsage.js";
+import { addUsage, cachedPercent, contextUsed, conversationUsage, estimateTokens, fmtTokens, liveUsage, usageDetail } from "../src/chat/tokenUsage.js";
 
 test("the live line estimates the streaming round and keeps reported rounds exact", () => {
   assert.equal(estimateTokens(0), 0);
@@ -51,4 +51,16 @@ test("usageDetail spells the counts out", () => {
   assert.match(text, /20 output tokens/);
   assert.match(text, /1,200 read from the prompt cache \(80% of the input\)/);
   assert.equal(usageDetail(null), "");
+});
+
+test("contextUsed reads the latest reply's last round", () => {
+  assert.equal(contextUsed([]), null);
+  assert.equal(contextUsed([{ role: "ai", text: "old" }]), null);
+  // An agent reply's usage sums its rounds; context_tokens is the last one alone.
+  const agent = { role: "ai", actions: [{}], usage: { input: 9000, output: 300 }, context_tokens: 3500 };
+  assert.equal(contextUsed([{ role: "user" }, agent, { role: "user", text: "next" }]), 3500);
+  // A reply saved before context_tokens: single round → its usage; tool rounds → skipped.
+  const plain = { role: "ai", usage: { input: 1000, output: 50 } };
+  assert.equal(contextUsed([plain, { role: "ai", error: true }]), 1050);
+  assert.equal(contextUsed([plain, { role: "ai", actions: [{}], usage: { input: 9000, output: 1 } }]), 1050);
 });

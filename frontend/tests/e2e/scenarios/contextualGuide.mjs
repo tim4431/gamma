@@ -35,7 +35,8 @@ export async function contextualGuideScenarios(env) {
           await page.click('[data-guide="account.tour"]');
           const tours = page.getByRole("menu", { name: "Tours" });
           assertEq(await tours.locator('[data-tour="first-run"], [data-tour="ai-chat"]').count(), 2, "submenu lists both tours");
-          assertEq(await tours.locator('[data-tour="sharing"], [data-tour="math-keys"]').count(), 0, "a tour that cannot start here and hints are not listed");
+          assertEq(await tours.locator('[data-tour="sharing"]').count(), paperId ? 1 : 0, "sharing is listed on a page, not in the library");
+          assertEq(await tours.locator('[data-tour="math-keys"], [data-tour="quick-open"]').count(), 0, "hints are never listed");
           await page.click('[data-tour="ai-chat"]');
         };
         await start();

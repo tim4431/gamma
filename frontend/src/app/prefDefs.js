@@ -16,6 +16,7 @@
 // breaks the app. Plain strings need no codec.
 import { DEFAULT_TOOLS, normalizeTools } from "../ink/ink.js";
 import { LANGUAGES } from "../shared/i18n/locales.js";
+import { normalizeChord } from "../shared/lib/hotkeys.js";
 
 export const ACCOUNT = "account";
 export const BROWSER = "browser";
@@ -161,6 +162,20 @@ export const PREFS = {
   // Enter key in the note editor: off (default) = Enter types a line break and
   // Shift+Enter starts a new note; on = the Logseq-style swap of the two.
   enterNewNote: flag("gamma-enter-new-note", ACCOUNT, false),
+  // Keyboard shortcuts (Settings → Keyboard, docs/dev/hotkeys.md): command
+  // id → chord ("Mod-Shift-k") or null for unbound; a command not named
+  // keeps its default. Unknown shapes are dropped, the ids are not checked
+  // here (the catalog lives in app/commands.js) so a removed command's
+  // entry is simply ignored.
+  keybindings: pref("gamma-keybindings", ACCOUNT, {}, json((value) => {
+    if (!value || typeof value !== "object" || Array.isArray(value)) return undefined;
+    const out = {};
+    for (const [id, chord] of Object.entries(value)) {
+      if (chord === null) out[id] = null;
+      else if (typeof chord === "string" && normalizeChord(chord)) out[id] = normalizeChord(chord);
+    }
+    return out;
+  })),
 
   // --- Models (Settings → AI → Connections) ---
   // Model picks name entries of this server's provider list ("<entry>:<model>"),

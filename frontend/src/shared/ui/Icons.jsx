@@ -440,3 +440,9 @@ export const ClockIcon = (p) => (
 export const MoreIcon = (p) => (
   <Icon {...p}><circle cx="12" cy="12" r="1" /><circle cx="19" cy="12" r="1" /><circle cx="5" cy="12" r="1" /></Icon>
 );
+export const KeyboardIcon = (p) => (
+  <Icon {...p}><rect x="2" y="5" width="20" height="14" rx="2" /><path d="M6 9h.01" /><path d="M10 9h.01" /><path d="M14 9h.01" /><path d="M18 9h.01" /><path d="M6 13h.01" /><path d="M18 13h.01" /><path d="M9 13h6" /><path d="M8 16h8" /></Icon>
+);
+export const CommandIcon = (p) => (
+  <Icon {...p}><path d="M15 6v12a3 3 0 1 0 3-3H6a3 3 0 1 0 3 3V6a3 3 0 1 0-3 3h12a3 3 0 1 0-3-3" /></Icon>
+);

@@ -450,3 +450,50 @@ export function insertChild(blocks, parentId, newBlock, atEnd = false) {
   }
   return list;
 }
+
+// --- Keyboard block commands (editor/blockCommands.js) ---------------------
+
+// Move a block one step among its siblings (dir -1 up, +1 down); the
+// tree comes back unchanged (same reference) at the edge of its parent.
+export function moveSibling(blocks, id, dir) {
+  const list = blocks || [];
+  const i = list.findIndex((b) => b.id === id);
+  if (i >= 0) {
+    const j = i + dir;
+    if (j < 0 || j >= list.length) return list;
+    const next = [...list];
+    [next[i], next[j]] = [next[j], next[i]];
+    return next;
+  }
+  for (let k = 0; k < list.length; k++) {
+    const b = list[k];
+    if (!b.children?.length) continue;
+    const children = moveSibling(b.children, id, dir);
+    if (children !== b.children) {
+      return [...list.slice(0, k), { ...b, children }, ...list.slice(k + 1)];
+    }
+  }
+  return list;
+}
+
+// Remove a block, its children taking its place among the siblings (what
+// deleting a line does to the indented lines under it: nothing).
+export function removeBlockKeepChildren(blocks, id) {
+  const list = blocks || [];
+  const i = list.findIndex((b) => b.id === id);
+  if (i >= 0) return [...list.slice(0, i), ...(list[i].children || []), ...list.slice(i + 1)];
+  return list.map((b) => {
+    if (!b.children?.length) return b;
+    const children = removeBlockKeepChildren(b.children, id);
+    return children === b.children ? b : { ...b, children };
+  });
+}
+
+// The block shown right above (dir -1) or below (+1) `id` in the outliner,
+// collapsed subtrees skipped, or null at either end.
+export function visibleNeighbor(blocks, id, dir) {
+  const flat = flattenBlocks(blocks);
+  const i = flat.findIndex((b) => b.id === id);
+  if (i < 0) return null;
+  return flat[i + dir] || null;
+}

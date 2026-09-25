@@ -24,11 +24,13 @@ import {
 } from "./LatexEditor";
 import { BlockCmEditor, scanMathSpans } from "./BlockCmEditor";
 import { expandBlankLines } from "./mdMarks";
+import { BLOCK_COMMANDS } from "./blockCommands.js";
+import { dispatch as dispatchHotkey } from "../shared/lib/hotkeys.js";
 import { blockStartInSource, gapInSource, renderedGaps, sourceOffsetAtPoint } from "./clickToSource";
 import { fenceInnerAt, highlightCode, makeCopyButton, scanFences } from "./codeHighlight";
 import { filterSlashCommands, SlashMenuPopup } from "./SlashMenu";
 import { remarkCallouts } from "./callouts";
-import { PeerChips } from "../collaboration/Presence";
+import { PeerChips, RenderedCarets } from "../collaboration/Presence";
 import { ContextMenu, MenuItem } from "../shared/ui/Menus";
 import { API, apiJson, assetUrl, copyText, withWorkspace } from "../shared/lib/utils";
 import { CopyIcon, ExportIcon, MessageSquareIcon, PlusIcon, Trash2Icon } from "../shared/ui/Icons";
@@ -711,6 +713,11 @@ function BlockRow({
   mergeOpen,
   onMergeOpen,
   mergeNav,
+  keybindings,
+  tree,
+  onHop,
+  onMoveBlock,
+  onDuplicate,
 }) {
   const ref = useRef(null);
   const clickPosRef = useRef(null);
@@ -721,10 +728,12 @@ function BlockRow({
   const [gapLine, setGapLine] = useState(null);
   // Other people on this block (collab presence): avatar chips on the row,
   // a coloured edge while one of them has its editor open, and their
-  // carets inside our editor when we have it open too.
+  // carets — inside our editor when we have it open too, else over the
+  // rendered view.
+  const renderedRef = useRef(null);
   const rowPeers = peers?.length ? peers.filter((p) => p.block === block.id) : null;
   const peerEditing = rowPeers?.find((p) => p.anchor >= 0) || null;
-  const remoteCursors = rowPeers?.length
+  const remoteCursors = peerEditing
     ? rowPeers.filter((p) => p.anchor >= 0).map((p) => ({
       client: p.client, rev: p.rev || 0, anchor: p.anchor, head: p.head, color: p.color, name: p.name,
     }))
@@ -1419,6 +1428,14 @@ function BlockRow({
                   if (e.key === "Tab" || e.key === "Enter") { e.preventDefault(); acceptLatexAc(mathUi.ac.items[mathAcIdx]); return; }
                   if (e.key === "Escape") { e.preventDefault(); setMathUi((u) => u ? { ...u, ac: null } : null); return; }
                 }
+                // The block commands (blockCommands.js, docs/dev/hotkeys.md):
+                // move / duplicate / delete the block, formatting, the hop to
+                // the neighbouring block at the caret's top or bottom line…
+                // A handled key stops here; the outliner's own keys follow.
+                if (dispatchHotkey(BLOCK_COMMANDS, e, {
+                  block, tree, readOnly, editor: ref.current,
+                  row: { onHop, onMoveBlock, onDuplicate, onDelete, onEnterSibling, onIndent, onOutdent, onToggle },
+                }, keybindings)) return;
                 // Tab inside raw math (popup closed) hops between argument
                 // groups snippet-style — \frac{1|}{} lands in the second {} —
                 // Shift+Tab hops back. Only when there's somewhere to go;
@@ -1504,10 +1521,15 @@ function BlockRow({
                 } else if (e.key === "Tab" && e.shiftKey) {
                   e.preventDefault();
                   onOutdent(block.id);
-                } else if (e.key === "ArrowRight" && (block.children?.length || 0) > 0 && block.collapsed) {
+                } else if (e.key === "ArrowRight" && (block.children?.length || 0) > 0 && block.collapsed
+                  && ref.current && ref.current.selectionEnd === ref.current.value.length) {
+                  // At the text's end / start the arrows fold the children;
+                  // anywhere else they move the caret (Ctrl+Shift+[ / ] fold
+                  // from anywhere).
                   e.preventDefault();
                   onToggle(block.id);
-                } else if (e.key === "ArrowLeft" && (block.children?.length || 0) > 0 && !block.collapsed) {
+                } else if (e.key === "ArrowLeft" && (block.children?.length || 0) > 0 && !block.collapsed
+                  && ref.current && ref.current.selectionStart === 0) {
                   e.preventDefault();
                   onToggle(block.id);
                 } else if (e.key === "Backspace" && (block._isEmpty || !(block.content || "").trim()) && !(block.quote || "").trim()) {
@@ -1525,7 +1547,7 @@ function BlockRow({
               {aiText.trim() ? <BlockMarkdown content={aiText} blockId={block.id} refLabels={refLabels} /> : null}
             </div>
           ) : (
-            <div className="blockRendered" onCopy={handleMarkdownCopy}
+            <div className="blockRendered" ref={renderedRef} onCopy={handleMarkdownCopy}
               onMouseMove={readOnly ? undefined : trackGapLine}
               onMouseLeave={readOnly ? undefined : () => setGapLine(null)}>
               {(block.content || "").trim() ? (
@@ -1539,6 +1561,7 @@ function BlockRow({
                 <div className="blockPlaceholder">{t("(empty)")}</div>
               )}
               {gapLine ? <div className="mdGapLine" data-markdown-copy-ignore="" style={{ top: gapLine.top - gapLine.half, height: 2 * gapLine.half }} /> : null}
+              {remoteCursors ? <RenderedCarets peers={remoteCursors} source={block.content || ""} containerRef={renderedRef} /> : null}
             </div>
           )}
 

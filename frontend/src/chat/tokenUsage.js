@@ -55,6 +55,23 @@ export function conversationUsage(messages) {
   return total;
 }
 
+// How much of the model's window the conversation fills now: the latest
+// reply's LAST round — its prompt plus what it wrote, which the next message
+// carries as history (a reply's `usage` sums every tool round, so it
+// overcounts). Replies record it as `context_tokens`; one saved before that
+// without tool calls was a single round, so its usage is the same figure.
+// Null until some reply reported counts.
+export function contextUsed(messages) {
+  const list = messages || [];
+  for (let i = list.length - 1; i >= 0; i--) {
+    const m = list[i];
+    if (m.role !== "ai") continue;
+    if (m.context_tokens) return m.context_tokens;
+    if (m.usage && !m.actions?.length) return (m.usage.input || 0) + (m.usage.output || 0);
+  }
+  return null;
+}
+
 // The long form for a tooltip: every count spelled out.
 export function usageDetail(usage) {
   if (!usage) return "";

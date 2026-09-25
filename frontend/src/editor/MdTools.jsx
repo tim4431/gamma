@@ -15,9 +15,10 @@ import { ResizeGrips, useDragResize } from "../shared/ui/ResizeGrip";
 import { Segmented } from "../settings/SettingsKit";
 import { t } from "../shared/i18n/i18n.js";
 import { guideEvents } from "../guide/events.js";
+import { copyText } from "../shared/lib/utils";
 import {
-  AlignCenterIcon, AlignLeftIcon, AlignRightIcon, CaptionIcon, DownloadIcon,
-  PlusIcon, Trash2Icon, ZoomInIcon,
+  AlignCenterIcon, AlignLeftIcon, AlignRightIcon, CaptionIcon, CopyIcon, DownloadIcon,
+  GridIcon, PlusIcon, Trash2Icon, ZoomInIcon,
 } from "../shared/ui/Icons";
 
 // ---------------------------------------------------------------- source scan
@@ -164,6 +165,10 @@ export function serializeTable({ header, aligns, body }) {
 export function applyTableEdit(content, idx, op) {
   const t = scanTables(content)[idx];
   if (!t || !t.editable) return null;
+  // The whole table goes, and the blank lines it leaves close up.
+  const withoutTable = () => (content.slice(0, t.from) + content.slice(t.to))
+    .replace(/\n{3,}/g, "\n\n").replace(/^\n+|\n+$/g, "");
+  if (op.type === "deleteTable") return withoutTable();
   const tbl = parseTable(content.slice(t.from, t.to));
   const clampAt = (at, len) => Math.max(0, Math.min(len, at));
   switch (op.type) {
@@ -182,11 +187,7 @@ export function applyTableEdit(content, idx, op) {
       break;
     }
     case "delCol": {
-      if (tbl.header.length <= 1) {
-        // last column: the whole table goes
-        const out = content.slice(0, t.from) + content.slice(t.to);
-        return out.replace(/\n{3,}/g, "\n\n").replace(/^\n+|\n+$/g, "");
-      }
+      if (tbl.header.length <= 1) return withoutTable(); // the last column: the table goes
       if (op.at < 0 || op.at >= tbl.header.length) return null;
       tbl.header.splice(op.at, 1);
       tbl.aligns.splice(op.at, 1);
@@ -399,7 +400,22 @@ export function MdTableWrap({ idx, onEdit, model, editKey, children }) {
   const [menu, setMenu] = useState(null); // {x,y,kind,at}
   const [cellEdit, setCellEdit] = useState(null); // {row,col,text,rect}
   const [drag, setDrag] = useState(null); // drop-line: {kind, x|y, top/left, size}
+  // The corner handle selects the whole table (outlined) and opens its menu;
+  // while selected, Delete or Backspace removes it.
+  const [selected, setSelected] = useState(false);
   const editable = !!onEdit;
+  useEffect(() => {
+    if (!selected) return undefined;
+    const onKey = (e) => {
+      if (e.key !== "Delete" && e.key !== "Backspace") return;
+      e.preventDefault();
+      e.stopPropagation();
+      setSelected(false);
+      pick({ type: "deleteTable" });
+    };
+    document.addEventListener("keydown", onKey, true);
+    return () => document.removeEventListener("keydown", onKey, true);
+  });
   useEffect(() => { if (editable) guideEvents.emit("table.shown"); }, [editable]);
   const dragRef = useRef(null); // {kind, at, from, startX, startY, moved, to}
 
@@ -581,7 +597,7 @@ export function MdTableWrap({ idx, onEdit, model, editKey, children }) {
 
   return (
     <div
-      className={`mdTableWrap${onEdit ? " mdTableEditable" : ""}`}
+      className={`mdTableWrap${onEdit ? " mdTableEditable" : ""}${selected ? " mdTableSelected" : ""}`}
       data-guide={onEdit ? "notes.table" : undefined}
       ref={wrapRef}
       onMouseOver={onOver}
@@ -620,6 +636,12 @@ export function MdTableWrap({ idx, onEdit, model, editKey, children }) {
           <button type="button" className="mdTableAdd mdTableAddCol" title={t("Add column")}
             onMouseDown={stop}
             onClick={(e) => { stop(e); onEdit(idx, { type: "addCol", at: counts().nCols }); }}>+</button>
+          <button type="button" className="mdTableHandle mdTableCorner" data-guide="notes.tableCorner"
+            title={t("Select the table: copy or delete it")} aria-label={t("Table options")}
+            onMouseDown={stop}
+            onClick={(e) => { stop(e); setSelected(true); setMenu({ x: e.clientX, y: e.clientY, kind: "table" }); }}>
+            <GridIcon size={10} aria-hidden="true" />
+          </button>
           <button type="button" className="mdTableAdd mdTableAddRow" title={t("Add row")} data-guide="notes.tableAdd"
             onMouseDown={stop}
             onClick={(e) => { stop(e); onEdit(idx, { type: "addRow", at: counts().nBody }); }}>+</button>
@@ -658,6 +680,12 @@ export function MdTableWrap({ idx, onEdit, model, editKey, children }) {
               <MenuItem icon={PlusIcon} onClick={() => pick({ type: "addCol", at: menu.at })}>{t("Insert left")}</MenuItem>
               <MenuItem icon={PlusIcon} onClick={() => pick({ type: "addCol", at: menu.at + 1 })}>{t("Insert right")}</MenuItem>
               <MenuItem danger icon={Trash2Icon} onClick={() => pick({ type: "delCol", at: menu.at })}>{t("Delete column")}</MenuItem>
+            </ContextMenu>
+          ) : null}
+          {menu?.kind === "table" ? (
+            <ContextMenu x={menu.x} y={menu.y} onClose={() => { setMenu(null); setSelected(false); }}>
+              <MenuItem icon={CopyIcon} onClick={() => { setMenu(null); setSelected(false); if (model) copyText(serializeTable(model)); }}>{t("Copy table")}</MenuItem>
+              <MenuItem danger icon={Trash2Icon} onClick={() => { setSelected(false); pick({ type: "deleteTable" }); }}>{t("Delete table")}</MenuItem>
             </ContextMenu>
           ) : null}
           {menu?.kind === "row" ? (

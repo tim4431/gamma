@@ -236,3 +236,28 @@ export function scanColorSpans(text) {
 export function colorSpan(color, background) {
   return `<span style="${background ? `background:${color}55` : `color:${color}`}">`;
 }
+
+// Ctrl+Enter on a line: "- [ ] " ↔ "- [x] "; a line without a checkbox gets
+// one in front of its text (after a list marker it already has). Returns
+// the new text and where the caret lands, moved by the inserted marker,
+// plus the line's replacement ({from, to, insert}) for a minimal dispatch.
+export function toggleTodoLine(text, pos) {
+  const start = text.lastIndexOf("\n", pos - 1) + 1;
+  const endNl = text.indexOf("\n", pos);
+  const end = endNl < 0 ? text.length : endNl;
+  const line = text.slice(start, end);
+  const box = /^(\s*(?:[-*+]|\d+\.)\s+)\[([ xX])\]\s?/.exec(line);
+  let next;
+  if (box) {
+    const checked = box[2] !== " ";
+    next = `${box[1]}[${checked ? " " : "x"}]${line.slice(box[0].length - (/\s$/.test(box[0]) ? 1 : 0))}`;
+  } else {
+    const marker = /^(\s*)((?:[-*+]|\d+\.)\s+)?/.exec(line);
+    next = `${marker[1]}${marker[2] || "- "}[ ] ${line.slice(marker[0].length)}`;
+  }
+  const delta = next.length - line.length;
+  return {
+    text: text.slice(0, start) + next + text.slice(end), pos: Math.max(start, pos + delta),
+    from: start, to: end, insert: next,
+  };
+}

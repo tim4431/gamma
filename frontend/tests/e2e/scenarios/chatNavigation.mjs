@@ -76,6 +76,7 @@ export async function chatNavigationScenarios(env) {
           });
           assertEq(saved.messages.length, 2);
           assertEq(saved.messages.at(-1).usage.input, 1200, "the reply keeps the summed token report");
+          assertEq(saved.messages.at(-1).context_tokens, 204, "the context ring's figure is the last round alone");
           const usageLine = page.locator(".chatBubbleRow.ai .chatMsgUsage");
           await usageLine.waitFor();
           assert((await usageLine.innerText()).replace(/\s+/g, " ").includes("1.2k"), "input tokens shown under the reply");

@@ -59,12 +59,16 @@ export class Server {
     if (!fs.existsSync(path.join(DIST, "index.html"))) throw new Error("frontend/dist is missing: run `npm run build` first");
     if (path.isAbsolute(PYTHON) && !fs.existsSync(PYTHON)) throw new Error(`backend venv python not found at ${PYTHON}`);
     fs.mkdirSync(this.dataDir, { recursive: true });
+    // Serve a copy of the build: an `npm run build` elsewhere during a run
+    // replaces dist/ and would otherwise 500 every page load until it ends.
+    const dist = path.join(this.dir, "dist");
+    fs.cpSync(DIST, dist, { recursive: true });
     this.manage("setup");
     this.port = await freePort();
     const log = fs.openSync(this.logPath, "a");
     this.proc = spawn(PYTHON, ["-m", "uvicorn", "app:app", "--host", "127.0.0.1", "--port", String(this.port)], {
       cwd: BACKEND, stdio: ["ignore", log, log],
-      env: { ...process.env, GAMMA_DATA_DIR: this.dataDir, GAMMA_STATIC_DIR: DIST, PYTHONIOENCODING: "utf-8", GAMMA_UPDATE_CHECK: "off", ...this.env },
+      env: { ...process.env, GAMMA_DATA_DIR: this.dataDir, GAMMA_STATIC_DIR: dist, PYTHONIOENCODING: "utf-8", GAMMA_UPDATE_CHECK: "off", ...this.env },
     });
     const t0 = Date.now();
     while (Date.now() - t0 < 30000) {

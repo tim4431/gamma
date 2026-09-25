@@ -23,10 +23,13 @@ The account menu's **Tours** submenu lists the tours that can start where the
 user is (`guide.startable()`): a tour's `requires` hold and its first step's
 anchor, or the control that reveals it, is on screen. A tour with `show`
 brings up its own surface first (AI chat opens the chat). So **Your first
-paper** and **AI chat** are always listed; **Sharing a page** only on a
-shared page; **Editing tables** only where the notes hold a table. Hints are
-never listed. `?guide=` URLs never start a tour, and the chat header has no
-guide button. Cards use short titles, without body paragraphs.
+paper** and **AI chat** are always listed; **Sharing a page** and **Editing
+tables** on any page you can edit, **Handwriting** on any PDF you can edit —
+each begins by having you make the thing it explains when there is none yet
+(see "Steps that have the user make something"); **Working together** only
+while someone else is on the page. Hints are never listed. `?guide=` URLs
+never start a tour, and the chat header has no guide button. Cards use short
+titles, without body paragraphs. In Chinese a tour is 教程.
 
 AI chat starts in the message box and types `summarize the paper for me`, then
 points to voice input. Existing drafts are restored after the example; an
@@ -53,9 +56,9 @@ the whole thing, with **Got it**.
 | Guide | Offered when | Points at |
 |---|---|---|
 | Citations in answers | an AI reply finishes with a citation link (`chat.cited`) | the link; a demo clicks it and waits for `citation.shown`, then the marked passage in the PDF |
-| Sharing a page | the page gets its first share link (`share.created`) | access, people, the link — inside the Share popover |
-| Editing tables | an editable table renders in the notes (`table.shown`) | the + strips, row/column handles, cells |
-| Handwriting | the first stroke (`ink.stroke`) | the tool strip, then the ink block in the notes |
+| Sharing a page | the page gets its first share link (`share.created`) | (create the link,) access, people, the link — inside the Share popover |
+| Editing tables | an editable table renders in the notes (`table.shown`) | (add one with /table,) the + strips, row/column handles, cells, the corner handle (copy or delete the whole table) |
+| Handwriting | the first stroke (`ink.stroke`) | (draw something,) tap the pen again for colour, width and pen vs monoline, erase part of it, undo, the lasso, the ink block in the notes |
 | Working together | someone else comes onto the page (`peer.joined`) | the avatar stack, their block, undo |
 | Resolving a conflict | a clone conflict's versions show (`conflict.shown`) | the versions, Apply |
 | Shared workspaces | the account belongs to a shared workspace (state) | the account menu's switcher and card |
@@ -102,6 +105,21 @@ Engine abilities the new tours needed, available to every step:
 - **The card is inert to the page.** It never takes focus (mousedown is
   prevented, so an editor keeps its caret) and never counts as a click
   outside the popover it points into (pointer and mouse down stop at it).
+- **Steps that have the user make something** (`creates: anchor`). When a
+  later step needs something to point at that may not exist — a drawing, a
+  table, a share link — the step before it asks the user to make one, with
+  `advanceOn` the event that says they did. It is dropped when the tour
+  starts if that anchor is already on screen, and passed over when the
+  anchor turns up within 1.5 s of the step opening (too soon for the user to
+  have made it: the Share popover loads its link after it opens). A tour
+  triggered by the thing itself therefore starts right after it.
+- **`reveal: anchor`** on a step: a surface to bring up (through that
+  anchor's `open` path) while the spotlight points elsewhere — the practice
+  steps of handwriting spotlight the whole PDF pane (`pdf.pane`) with the
+  tool strip revealed, so the user picks a tool and uses it in one hole.
+- **Pass-overs never skip two steps.** The engine's own moves (an optional
+  step's pass-over, a `creates` step's, the Done acknowledgment) advance only
+  from the step that scheduled them.
 - **`optional` steps.** Passed over silently when their anchor is not on
   screen: when the step starts, or when it leaves while showing (the block
   someone else was on, once they go).
@@ -425,8 +443,10 @@ backend/gamma/seed.py                 imports it; renders the PDF; commit_ops
 frontend/tests/guide.test.js          schema, anchor references, event names, unique ids
 frontend/tests/e2e/scenarios/guide.mjs            the first-run tour end to end, home anchors present
 frontend/tests/e2e/scenarios/contextualGuide.mjs  the AI chat tour on desktop and phone
-frontend/tests/e2e/scenarios/triggeredGuide.mjs   offers and hints: tables, sharing, citations, math,
-                                                  Ctrl+P, workspaces, presence, Suggest tours off
+frontend/tests/e2e/scenarios/triggeredGuide.mjs   offers and hints: tables, sharing (offered, and from
+                                                  the menu with and without a link), citations, math,
+                                                  Ctrl+P, workspaces, presence, handwriting from the
+                                                  menu (draw, style, erase, undo), Suggest tours off
 ```
 
 ## Validation

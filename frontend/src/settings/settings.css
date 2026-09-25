@@ -679,3 +679,23 @@
   .metaStatRow { grid-template-columns: 18px minmax(0, 1fr) 58px 58px 58px 24px; padding: 3px 6px; font-size: calc(11px * var(--ui-font-scale, 1)); }
   .settingsUnsaved { padding: 12px; }
 }
+
+/* --- Keyboard pane (SettingsKeyboard.jsx): layout only --------------------- */
+.keyFilter { width: 220px; margin: 0; }
+.keyGroupLabel {
+  margin: 10px 8px 2px;
+  font-size: calc(11px * var(--ui-font-scale, 1));
+  font-weight: 600;
+  letter-spacing: 0.04em;
+  text-transform: uppercase;
+  color: var(--text-dim);
+}
+.keyBinding { display: inline-flex; align-items: center; gap: 6px; }
+.keyChip { min-width: 72px; justify-content: center; }
+.keyChip:disabled { opacity: 1; cursor: default; }
+.keyChip .keyState { font-size: calc(11px * var(--ui-font-scale, 1)); color: var(--text-muted); }
+.keyChip.recording { border-color: var(--accent); box-shadow: 0 0 0 2px var(--accent-bg); }
+.keyChip.unbound .keyState { font-style: italic; }
+.keyChip.conflict .keyCap { border-color: var(--danger); color: var(--danger); }
+.keyboardPane [data-conflict="true"] .settingDesc { color: var(--danger); }
+.keyboardPane .setRow:has(.keyBinding) { padding-block: 5px; }

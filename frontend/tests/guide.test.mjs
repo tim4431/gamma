@@ -41,6 +41,10 @@ test("tours reference registered anchors and catalogued events", () => {
       ids.add(step.id);
       if (step.anchor) assert.ok(ANCHORS[step.anchor], `${tour.id}/${step.id}: unregistered anchor ${step.anchor}`);
       if (step.advanceOn) assert.ok(EVENTS.includes(step.advanceOn.event), `${tour.id}/${step.id}: unknown event ${step.advanceOn.event}`);
+      for (const key of ["creates", "reveal"]) {
+        if (step[key]) assert.ok(ANCHORS[step[key]], `${tour.id}/${step.id}: unregistered ${key} anchor ${step[key]}`);
+      }
+      if (step.creates) assert.ok(step.advanceOn, `${tour.id}/${step.id}: a step that has the user make something completes when they do`);
     }
   }
 });
@@ -76,8 +80,11 @@ test("progress survives reload, separates accounts, and tolerates broken browser
 test("every data-guide attribute in the source is registered", () => {
   const used = new Set();
   for (const file of walk(new URL("../src", import.meta.url).pathname.replace(/^\/([A-Za-z]:)/, "$1"))) {
-    // guide="id", or a conditional guide={… ? "id" : …}.
-    for (const m of readFileSync(file, "utf8").matchAll(/\bguide=(?:"([^"]+)"|\{[^}]*?"([a-z]+\.[A-Za-z]+)")/g)) used.add(m[1] || m[2]);
+    // guide="id", or every id in a conditional guide={… ? "id" : …}.
+    for (const m of readFileSync(file, "utf8").matchAll(/\bguide=(?:"([^"]+)"|\{([^}]*)\})/g)) {
+      if (m[1]) used.add(m[1]);
+      else for (const id of m[2].matchAll(/"([a-z]+\.[A-Za-z]+)"/g)) used.add(id[1]);
+    }
   }
   for (const id of used) assert.ok(ANCHORS[id], `data-guide="${id}" is not in guide/anchors.js`); // DockWindow passes it as guide="…"
   for (const id of Object.keys(ANCHORS)) assert.ok(used.has(id), `anchor ${id} is registered but no element carries it`);
@@ -89,7 +96,7 @@ test("eventMatches honours the payload match", () => {
   assert.equal(eventMatches({ event: "popover.opened" }, "page.opened", {}), false);
 });
 
-const facts = { view: "page", hasPdf: true, guideAvailable: true };
+const facts = { view: "page", onPage: true, editable: true, hasPdf: true, guideAvailable: true };
 const at = (name, payload = {}) => ({ name, payload });
 
 test("a triggered tour is offered after its event, once per version", () => {

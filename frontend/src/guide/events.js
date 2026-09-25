@@ -16,6 +16,9 @@ export const EVENTS = [
   "share.created",    // the page got a share link
   "peer.joined",      // someone else came onto the open page
   "ink.stroke",       // a handwriting stroke was drawn
+  "ink.options",      // the armed tool's options row opened
+  "ink.erased",       // handwriting was erased
+  "ink.undone",       // a handwriting change was undone
   "table.shown",      // an editable table rendered in the notes
   "conflict.shown",   // a clone conflict's versions were shown
   "ref.search",       // the [[ block search opened with results

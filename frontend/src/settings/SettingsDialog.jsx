@@ -9,15 +9,17 @@ import {
 import { SECTION_PREFS } from "./sectionPrefs.js";
 import { LibraryDisplaySettings } from "./SettingsLibraryDisplay";
 import { AppearanceSettings } from "./SettingsAppearance";
+import { KeyboardSettings } from "./SettingsKeyboard";
 import { AiSettings } from "./SettingsAi";
 import { IntegrationSettings } from "./SettingsIntegrations";
 import { UsersSettings } from "./SettingsUsers";
 import { WorkspacesSettings } from "./SettingsWorkspace";
+import { SyncSettings } from "./SettingsSync";
 import { WorkspaceBackups } from "./SettingsBackups";
 import { ServerSettings } from "./SettingsServer";
 import { dotTone } from "../app/notices";
 import { resolveSettingsPane, searchSettings } from "./settingsNavigation";
-import { TRANSLATE_LANGS } from "../app/prefs";
+import { TranslationSettings } from "./SettingsTranslation";
 import {
   ActivityIcon,
   BookIcon,
@@ -35,7 +37,6 @@ import {
   HardDriveIcon,
   HighlightIcon,
   HomeIcon,
-  LanguagesIcon,
   ListIcon,
   MessageSquareIcon,
   OutlineIcon,
@@ -46,12 +47,12 @@ import {
   RefreshIcon,
   SearchIcon,
   ServerIcon,
-  SlidersIcon,
   SparklesIcon,
   TerminalIcon,
   TypeIcon,
   UserIcon,
   UsersIcon,
+  KeyboardIcon,
 } from "../shared/ui/Icons";
 
 // One sidebar, three groups: everyday preferences, AI, management. Every
@@ -59,6 +60,7 @@ import {
 const PREFERENCE_NAV = [
   ["appearance", T("Appearance"), ContrastIcon],
   ["reading", T("Reading & editing"), BookIcon],
+  ["keyboard", T("Keyboard"), KeyboardIcon],
   ["library", T("Library"), ListIcon],
   ["account", T("Account"), UserIcon],
 ];
@@ -71,6 +73,7 @@ const AI_NAV = [
 ];
 const MANAGEMENT_NAV = [
   ["workspaces", T("Workspaces"), UsersIcon],
+  ["sync", T("Sync"), RefreshIcon],
   ["backups", T("Backups"), DatabaseIcon],
   ["maintenance", T("Library maintenance"), HardDriveIcon],
   ["users", T("Users"), UsersIcon],
@@ -87,7 +90,7 @@ const DRAW_WITH = [
   { value: "any", label: T("Pen and finger"), hint: T("for screens without a stylus"), Icon: HandIcon },
 ];
 
-function ViewerSettings({ value, onTranslationModels }) {
+function ViewerSettings({ value }) {
   return (
     <>
 
@@ -124,49 +127,16 @@ function ViewerSettings({ value, onTranslationModels }) {
           onChange={value.setInkPressure}
         />
       </Section>
-      <Section title={t("Translation")} scope="account" prefs={SECTION_PREFS.reading["Translation"]} action={
-        <button className="uiBtn sm" onClick={onTranslationModels} title={t("Translation model, effort and parallel requests (AI › Advanced)")}>
-          <SlidersIcon size={13} /> {t("Model & speed")}
-        </button>
-      }>
-        <Toggle
-          icon={LanguagesIcon}
-          label={t("Translation button")}
-          hint={t("In the viewer; nothing translates until you ask")}
-          title={t("Show the translate button in the PDF viewer. Click translates the current page (or shows/hides an existing translation); right-click or long-press opens the options, including translating the whole document. Nothing translates until you ask.")}
-          checked={value.translateEnabled}
-          onChange={value.setTranslateEnabled}
-        />
-        <Row
-          icon={GlobeIcon}
-          label={t("Translate into")}
-          hint={t("The translated view's language")}
-          title={t("The translated view (the languages button in the PDF viewer's zoom column) redraws each paragraph in this language in place — figures and layout stay put, and holding Alt peeks at the original. Paragraph translations are cached per language and model, so re-reading a page is free.")}
-        >
-          <MenuSelect
-            label={t("Translation language")}
-            value={value.translateLang}
-            onChange={value.setTranslateLang}
-            options={TRANSLATE_LANGS}
-          />
-        </Row>
-      </Section>
     </>
   );
 }
 
-function TranslationModels({ value, advanced = false }) {
+// AI › Advanced › Translation performance. Effort means nothing to a
+// translation service ("engine:<id>"), so its row hides while one is picked.
+function TranslationPerformance({ value }) {
+  const engine = (value.translateEngines || []).some((e) => e.id === value.translateModel);
   return <>
-        {!advanced ? <Row
-          icon={SparklesIcon}
-          label={t("Translation model")}
-          hint={t("Used when translating pages")}
-          title={t("Model used to translate page text. Translation is a bulk job — a fast, cheap model usually reads fine and costs much less than the chat model.")}
-        >
-          <TranslateModelSelect value={value} />
-        </Row> : null}
-        {advanced ? <>
-        <Row
+        {!engine ? <Row
           icon={ActivityIcon}
           label={t("Translation effort")}
           hint={t("Low makes reasoning models translate much faster")}
@@ -178,7 +148,7 @@ function TranslationModels({ value, advanced = false }) {
             onChange={value.setTranslateEffort}
             options={[["", t("Default")], ["minimal", t("Minimal")], ["low", t("Low")], ["medium", t("Medium")], ["high", t("High")]]}
           />
-        </Row>
+        </Row> : null}
         <Row
           icon={RefreshIcon}
           label={t("Parallel requests")}
@@ -191,25 +161,7 @@ function TranslationModels({ value, advanced = false }) {
               if (Number.isFinite(n)) value.setTranslateParallel(Math.max(1, Math.min(32, n)));
             }} />
         </Row>
-        </> : null}
   </>;
-}
-
-// Same shape as MetaModelSelect below: "" = follow the chat model, stale
-// picks fall back.
-function TranslateModelSelect({ value }) {
-  const models = value.aiModels || [];
-  const multiProvider = new Set(models.map((m) => m.provider)).size > 1;
-  const current = value.translateModel && models.some((m) => m.id === value.translateModel) ? value.translateModel : "";
-  return (
-    <MenuSelect
-      label={t("Translation model")} value={current} onChange={value.setTranslateModel}
-      options={[
-        ["", t("Same as chat: {default}", { default: value.chatModelName || t("provider default") })],
-        ...models.map((m) => [m.id, multiProvider ? `${m.model} · ${m.provider_name || m.provider}` : m.model]),
-      ]}
-    />
-  );
 }
 
 const SEARCH_SHAPES = [["panel", t("Full panel")], ["bar", t("Find bar")]];
@@ -867,7 +819,7 @@ function AdvancedAiSettings({ value, ai, papers }) {
           </Row>
         ))}
       </Section>
-        <Section title={t("Translation performance")} scope="account" prefs={SECTION_PREFS.advanced["Translation performance"]}><TranslationModels value={papers} advanced /></Section>
+        <Section title={t("Translation performance")} scope="account" prefs={SECTION_PREFS.advanced["Translation performance"]}><TranslationPerformance value={papers} /></Section>
         <Section title={t("Chat")} scope="account" prefs={SECTION_PREFS.advanced["Chat"]}>
           <Toggle
             icon={RectSelectIcon}
@@ -961,7 +913,7 @@ function useCloudSyncStatus(open, local) {
 }
 
 export default function SettingsDialog({
-  activePane, onPaneChange, onClose, papers, notes, library, ai, prompts,
+  activePane, onPaneChange, onClose, papers, notes, keyboard, library, ai, prompts,
   context, search, users, workspace, backups, server, diagnostics, profileSync, notices,
 }) {
   const syncState = useCloudSyncStatus(!!activePane, profileSync);
@@ -975,7 +927,7 @@ export default function SettingsDialog({
   const available = (id) => {
     if (id === "integrations") return !!users && !users.isGuest;
     if (["account", "users"].includes(id)) return !!users && (id !== "users" || users.isAdmin);
-    if (["workspaces", "backups"].includes(id)) return !!workspace;
+    if (["workspaces", "sync", "backups"].includes(id)) return !!workspace;
     if (id === "server") return !!server;
     return true;
   };
@@ -1083,14 +1035,16 @@ export default function SettingsDialog({
                 {pane === "appearance" ? <AppearanceSettings value={papers} diagnostics={diagnostics} /> : null}
                 {pane === "reading" ? <>
                   <PaneHead icon={BookIcon} title={t("Reading & editing")} />
-                  <ViewerSettings value={papers} onTranslationModels={() => navigate("ai-advanced", t("Translation effort"))} />
+                  <ViewerSettings value={papers} />
+                  <TranslationSettings value={paperValue} onSpeed={() => navigate("ai-advanced", t("Parallel requests"))} />
                   <NotesSettings value={notes} /><SearchSettings value={search} />
                 </> : null}
+                {pane === "keyboard" && keyboard ? <KeyboardSettings value={keyboard} /> : null}
                 {pane === "library" ? <LibrarySettings value={{ ...papers, ...library }} /> : null}
                 {pane === "maintenance" ? <MaintenanceSettings value={library} /> : null}
                 {pane === "ai" ? <>
                   <PaneHead icon={SparklesIcon} title={t("Connections")} />
-                  <AiSettings value={aiValue} taskModels={<TranslationModels value={paperValue} />}
+                  <AiSettings value={aiValue}
                     confirm={workspace?.confirm} setStatus={workspace?.setStatus} />
                 </> : null}
                 {pane === "assistant" ? <>
@@ -1106,6 +1060,7 @@ export default function SettingsDialog({
                 {pane === "account" ? <UsersSettings value={users} selfOnly /> : null}
                 {pane === "users" ? <UsersSettings value={users} /> : null}
                 {pane === "workspaces" ? <WorkspacesSettings value={workspace} onServer={available("server") ? () => navigate("server", t("Shared workspaces")) : null} /> : null}
+                {pane === "sync" ? <SyncSettings value={workspace} papers={papers} /> : null}
                 {pane === "backups" && backups ? <WorkspaceBackups value={backups} /> : null}
                 {pane === "server" ? <ServerSettings value={server} /> : null}
                 {pane === "diagnostics" ? <AdvancedSettings value={diagnostics} /> : null}
