@@ -25,7 +25,7 @@ export async function guideScenarios(env) {
     try {
       await page.click('[data-guide="header.account"]');
       await page.click('[data-guide="account.tour"]');
-      await page.click('[data-guide="account.firstRun"]');
+      await page.click('[data-tour="first-run"]');
       await page.waitForSelector('[data-guide-overlay="welcome"] .guideCard');
       for (const id of anchorsForView("home").filter((id) => !ANCHORS[id].open)) {
         assertEq(await page.locator(`[data-guide="${id}"]`).count(), 1, `anchor ${id} (${ANCHORS[id].description}) present once`);
@@ -110,7 +110,7 @@ export async function guideScenarios(env) {
       // Manual re-entry through the Tours submenu.
       await page.click('[data-guide="header.account"]');
       await page.click('[data-guide="account.tour"]');
-      await page.click('[data-guide="account.firstRun"]');
+      await page.click('[data-tour="first-run"]');
       await page.waitForSelector('[data-guide-overlay="welcome"] .guideCard');
       await until(async () => await page.locator(".userPopover").count() === 0);
       // Replaying with the same PDF already open must still complete.
@@ -130,7 +130,7 @@ export async function guideScenarios(env) {
       await page.goto(`${server.base}/?ws=${alice.ws}`);
       await page.click('[data-guide="header.account"]');
       await page.click('[data-guide="account.tour"]');
-      await page.click('[data-guide="account.firstRun"]');
+      await page.click('[data-tour="first-run"]');
       await page.waitForSelector('[data-guide-overlay="welcome"] .guideCard');
       await page.evaluate(() => localStorage.removeItem("gamma-guide-vars"));
       const unexpected = [];
@@ -147,7 +147,7 @@ export async function guideScenarios(env) {
       await page.keyboard.press("Escape");
       await page.click('[data-guide="header.account"]');
       await page.click('[data-guide="account.tour"]');
-      await page.click('[data-guide="account.firstRun"]');
+      await page.click('[data-tour="first-run"]');
       await page.click(".guideCard .uiBtn.primary");
       await page.waitForSelector('[data-guide="add.urlInput"]:focus');
       await page.keyboard.press("Escape");

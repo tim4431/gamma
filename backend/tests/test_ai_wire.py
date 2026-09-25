@@ -5,17 +5,16 @@ tool history is replayed into the next request."""
 
 import json
 
-from gamma.ai_client import (
-    anthropic_request,
-    chatgpt_request,
-    openai_request,
-    openai_responses_request,
-    sse_events,
-    wire_protocol,
-)
+from gamma.ai_client import sse_events, wire_protocol
+from gamma.ai_protocols import WIRES
 from gamma.ai_context import TOOL_REPLAY_BUDGET, build_messages
 
 from ai_fixtures import ALL_TOOLS, CONF, TURNS, payload, sse
+
+anthropic_request = WIRES["anthropic"].request
+openai_request = WIRES["openai"].request
+openai_responses_request = WIRES["openai-responses"].request
+chatgpt_request = WIRES["chatgpt"].request
 
 
 def test_anthropic_wire_tools_and_results():

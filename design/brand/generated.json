@@ -7,8 +7,9 @@
     "design/brand/tokens.json": "8778598768aefb172e4dc17f43e060fff18f87717ffa00977b64494e341c397f",
     "frontend/package-lock.json": "abe9fbcd79def8f77486d434b0699da29b27142ce726b32717172439e08cf1e2",
     "frontend/src/shared/illustrations/brands/LICENSE.md": "9046848b63a5c92bff14e4accca80bd987e0623b74adf9226ce5198d312b79d5",
-    "frontend/src/shared/illustrations/brands/README.md": "ca093f73aa381e7d039c82076cff0f83166edd525102e904640815b08418a4c5",
+    "frontend/src/shared/illustrations/brands/README.md": "e03bdd31f59c2c1f152f3316539084a18d1c8f3925e98a7530573102fd1e2b24",
     "frontend/src/shared/illustrations/brands/claude.svg": "2d6fda79eb18ddccca35b799eeb3cece0dfabc22520ce3b10abd25668df9fa93",
+    "frontend/src/shared/illustrations/brands/deepseek.svg": "7a55a0a7391d116eba7d32807d6838478f9209f6034612941e74fbb14934e2ef",
     "frontend/src/shared/illustrations/brands/logseq.svg": "5888e86163ec7064fa77d4eb7825b1782ae26600888397f7fce25c7f26d6df1c",
     "frontend/src/shared/illustrations/brands/notion.svg": "b17d2a2b592a06252efef522d5205f0c7a958f748d40df1011ed081417e42f85",
     "frontend/src/shared/illustrations/brands/obsidian.svg": "ceee016a3e7afcfa931e19b3dfa9eb26685fc8a9b4f177ff921e358d628abb33",
@@ -16,7 +17,7 @@
     "frontend/src/shared/illustrations/brands/zotero.png": "30c76a7a6441884df75567287db08ee40be6b763af7309f452a434800e069cd4",
     "tools/branding/branding.py": "85382fce3e48b5935c66c9df18c56e892e2f4f98463b24a1ac3aa2a29b44ace3",
     "tools/branding/build-anywhere.py": "ff525cc5769d79a0489c98ff052f7b431dc7cf0d5f59086c9e5d25d31687f8f8",
-    "tools/branding/build-connections.py": "dd736751e1d26f53361aa3ce9aacca82c32705b1bd73c879b142ae657bf550cb",
+    "tools/branding/build-connections.py": "a86fef54e560430ce91df2bd18e25d96ef45b5e0e567c5cdfcca2c5f0c958bc4",
     "tools/branding/build-demos.py": "11ee38fd99d2c30bafbde6991f1d29d20deddce15b7583e825dc4e9ef8c24c91",
     "tools/branding/build-library.py": "a3a65d14cbb9763674632f3e05a6506017c3267857b3f96323d634c5a3818673",
     "tools/branding/build-workspaces.py": "36f319915fac8ebd446c6a8a6c37013320e1754beb5a472befa4d2750e85af9e",
@@ -83,7 +84,7 @@
         1920,
         1080
       ],
-      "sha256": "5ed331696e6c0e2513bd5f735b5e949c8f51f32a0c7dcf382e4e80f79cb292e5"
+      "sha256": "23efcd5de455e5cee23b67dbd919697a902e62f2a8972fc9f12d5965c29c81c3"
     },
     "docs/assets/branding/gamma-demo-annotate-light.svg": {
       "source": "tools/branding/build-demos.py",

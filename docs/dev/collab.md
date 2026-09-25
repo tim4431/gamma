@@ -268,7 +268,16 @@ state in App instead of the tree.
   put while we type and shifts correctly when someone else edits before
   it). External value changes reach the editor as the minimal prefix/suffix
   replacement, tagged so they are not re-reported as local edits — the
-  caret maps through instead of jumping.
+  caret maps through instead of jumping;
+- on a block whose editor we don't have open, the same caret and name tag
+  over its rendered view (`RenderedCarets` in `Presence.jsx`). The offset is
+  placed by text, the reverse of how a click opens the editor
+  (`locateInRendered` / `renderedCaretRect` in `editor/clickToSource.js`):
+  the plain run around it is looked up in the rendered text, and an offset
+  in markup that renders as nothing (a link's URL) goes to the end of the
+  text before it, one inside math to before the formula. It is re-placed
+  when the text, the caret or the view's size changes; a caret that can't be
+  placed is not drawn.
 
 ## Testing
 
@@ -289,7 +298,8 @@ state in App instead of the tree.
 - End to end: `npm run e2e -- --only collab` from `frontend/`
   (`tests/e2e/scenarios/collab.mjs`, [debugging.md](debugging.md)): two
   browser contexts on one page of a shared workspace — presence stack and row
-  chips, typing in one tab appears in the other, edits to different blocks
+  chips, typing in one tab appears in the other (with the typist's caret on
+  the other tab's rendered row), edits to different blocks
   converge, same-block typing keeps both people's text (and edits at both
   ends of one long block both survive with the carets in place), a caret after a
   mid-block edit sits where the person typed (and the other caret shifts

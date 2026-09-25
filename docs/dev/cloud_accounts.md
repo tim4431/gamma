@@ -7,10 +7,11 @@ their plan, billing and hosted container. It holds no pages, files or
 notes, and a Gamma server never calls it on a data request: an ID token is
 verified locally with the published keys. Code: `cloud/` (package
 `gammacloud`, entry `cloud/app.py`, CLI `cloud/manage.py`), tests
-`cloud/tests/`. It imports nothing from `backend/`; the two small pieces it
-shares with Gamma (the fixed-window rate limiter, the PKCE rules) are
-copies, so the account server can move to its own repository without a
-change. The rate limiter has drifted from `backend/`'s: it drops
+`cloud/tests/`. It imports nothing from `backend/`. The three small pieces
+it shares with Gamma are copies, so the account server can move to its own
+repository without a change: the fixed-window rate limiter, the PKCE rules
+and the public-URL rules (`servers.norm_url`, from
+`server_settings.validate_public_url`). The rate limiter has drifted from `backend/`'s: it drops
 `on_first_exceed` and prunes stale keys.
 
 Status: **v0**, plus the preference profile, the linked-server list and
@@ -135,15 +136,15 @@ page) and the **app** shell (a sidebar and a content column):
   A *Get started* checklist (account created, e-mail confirmed, signed in
   from a Gamma app — `app_signed_in_at`, so signing everything out does not
   undo it) with a progress bar, hidden once all three are done. Then the
-  signed-in Gamma apps and, under them, the Gamma servers the account is
-  linked on (`servers.of_account`): each name links to the server's
+  signed-in Gamma apps, and under them the Gamma servers the account is
+  linked on (`servers.of_account`). Each server's name links to its
   address, with the last time it checked in; a loopback address (the
-  desktop sidecar) is *This computer*, not a link. Beside them a plan card
-  (a placeholder pointing at self-hosting until hosted servers exist) and
-  an account summary:
-  username, e-mail state, member since, and the account id with a copy
-  button — what Gamma servers key on; it never changes. `?mail=failed`
-  (registration could not send the mail) changes the verify notice.
+  desktop sidecar) is *This computer*, not a link. Beside them sit a plan
+  card (a placeholder pointing at self-hosting until hosted servers exist)
+  and an account summary: username, e-mail state, member since, and the
+  account id with a copy button. The id is what Gamma servers key on; it
+  never changes. `?mail=failed` (registration could not send the mail)
+  changes the verify notice.
 - **Devices** (`/devices`): two lists.
   - *Gamma apps*: every live grant, titled by the machine's name when the
     app sent one (`device_name`), else the client's name; then the client,
@@ -159,10 +160,10 @@ page) and the **app** shell (a sidebar and a content column):
   A row signed out leaves in place. *Sign out everywhere else* is
   `accounts.revoke_everything` behind a confirm. The page says what
   signing an app out does: its key stops working, and its Gamma server
-  ends the sessions it opened with it at its next hourly grant check (see
-  "The Gamma side" below). Dates are UTC on the server and shown in the viewer's time
-  zone by the page's script (`<time datetime>`, `data-at`). On a phone the
-  rows stack: the details take the width, the time and the button go
+  ends the sessions it opened with that key at its next hourly grant check
+  ("The Gamma side" below). Dates are UTC on the server and shown in the
+  viewer's time zone by the page's script (`<time datetime>`, `data-at`).
+  On a phone the rows stack: the details take the width, the time and the button go
   under them.
 - **Settings** (`/settings`): labelled rows.
   - Display name.
@@ -176,7 +177,8 @@ page) and the **app** shell (a sidebar and a content column):
   - Deletion in a danger zone, its form revealed by a first click.
 - **Admin** (`/admin`, `is_admin` only, 404 otherwise): four tabs.
   - Accounts: search by username, e-mail or id, paged; plan select,
-    verify, resend, admin on/off, rename, delete.
+    verify, resend, admin on/off, rename, delete. A deleted account (the
+    `deleted` pill) offers only Restore and Purge now.
   - Invites: create with uses, plan and note; delete.
   - Clients: the OIDC clients of hosted servers — create (the secret is
     shown once as the two env lines a container needs) and delete.
@@ -213,23 +215,29 @@ page) and the **app** shell (a sidebar and a content column):
 - **Change password** and **sign out everywhere** revoke every portal
   session, every grant and every code not yet exchanged
   (`accounts.revoke_everything`), keeping only the browser that asked.
-- **Delete** (`/api/me/delete`, password required): soft — `deleted_at`,
-  password cleared, everything revoked, the preference profile and the
-  server list dropped; `manage.py purge-deleted --days 30`
-  removes the rows later. Tearing down a paid container is the provisioner's
-  job (v1).
+- **Delete** (`/api/me/delete`, password required) is soft: it sets
+  `deleted_at`, clears the password, revokes everything and drops the
+  preference profile and the server list. `manage.py purge-deleted --days
+  30` removes the rows later (nothing schedules it). Within the grace
+  period an admin can **restore** it (`POST /api/admin/accounts/{id}/restore`,
+  `manage.py restore-account`): the row comes back with its id, name and
+  e-mail, but not what the delete dropped, so the person signs back in
+  through a password reset or Google/GitHub on the same e-mail. **Purge
+  now** (`POST /api/admin/accounts/{id}/purge`, `manage.py purge-account`)
+  takes only a deleted account and frees its name and e-mail at once. Tearing down a paid container is the
+  provisioner's job (v1).
 - `PATCH /api/admin/accounts/{id}` takes `plan`, `is_admin`, `verified`
   and `username`; the rest of the admin API is listed under "Admin".
 - `GET /api/me`: the account, the signed-in devices (portal session only),
   `share_host` (the share host's address, "" when none is configured) and
-  `servers` — provisioned ones (none until v1), then the linked ones,
+  `servers`: the provisioned ones (none until v1), then the linked ones,
   latest seen first, each `{url, name, kind: "linked", local, linked_at,
-  last_seen_at}` (a provisioned one will be `kind: "provisioned"` with its
-  `plan`). It also accepts any bearer access token, which is how a Gamma
-  sidecar discovers the person's servers. The account itself — profile,
-  password, e-mail, username, deletion, devices — and all of `/api/admin`
-  are portal session only: a token minted for a Gamma server can never
-  change the account. What a token may do is the next section.
+  last_seen_at}`. It also accepts any bearer access token, which is how a
+  Gamma sidecar discovers the person's servers.
+- The account itself (profile, password, e-mail, username, deletion,
+  devices) and all of `/api/admin` are portal session only: a token minted
+  for a Gamma server can never change the account. What a token may do is
+  the next section.
 
 ### What Gamma servers call with a token
 
@@ -250,12 +258,12 @@ own call carries neither `Sec-Fetch-Site` nor `Origin` and passes.
 **The preference profile** is one JSON value per key: at most 64 KB
 serialized (413 past it), 20 keys per account (a 21st is a 400), keys of
 1–40 `[a-z0-9-]` (a 400 otherwise). `updated_at` is the version,
-per-key last-writer-wins. A write may carry the time the change was made:
-any ISO 8601 time, stored in the database's fixed-width UTC form, a time
-in the future clamped to now so a fast clock cannot pin a value. One older
-than the stored time is refused with a 409 carrying the stored value, and
-the writer takes that side; the same time wins, so a retry is harmless; no
-time means now. The answer's `updated_at` is what was stored, the one the
+per-key last-writer-wins. A write may carry the time the change was made,
+any ISO 8601 time; no time means now. It is stored in the database's
+fixed-width UTC form, and a time in the future is clamped to now so a fast
+clock cannot pin a value. A write older than the stored time is refused
+with a 409 carrying the stored value, and the writer takes that side. The
+same time wins, so a retry is harmless. The answer's `updated_at` is what was stored, the one the
 writer keeps. Deletion is not versioned: the key is gone, and a server
 still holding an older copy can write it back. Writes (PUT and DELETE) are
 limited to 120 per 10 minutes per account (429 with `Retry-After`) and are
@@ -265,19 +273,18 @@ the scope answers 403 with
 Deleting an account drops its profile at once.
 
 **The server list.** A Gamma server registers itself when a person links
-their identity there, with its confirmed public URL and its display name
-(at most 80 printable characters; empty means the host), and removes
-itself on unlink. Posting again refreshes the name and `last_seen_at`, so
-a server may check in periodically. The URL goes through the rules of
-Gamma's own public-URL setting (copied from
-`server_settings.validate_public_url`): `https://host[:port]` with no
-path, query or fragment — a trailing slash dropped, the host lowercased,
-a default port removed — or plain HTTP for a loopback host; anything else
-is a 400. It takes any access token (every token carries `openid`), never
+their identity there and removes itself on unlink. It sends its confirmed
+public URL and its display name (at most 80 printable characters; empty
+means the host). Posting again refreshes the name and `last_seen_at`, so a
+server may check in periodically. The URL follows Gamma's own public-URL
+rules (`servers.norm_url`): `https://host[:port]` with no path, query or
+fragment, or plain HTTP for a loopback host. A trailing slash is dropped,
+the host lowercased and a default port removed; anything else is a 400.
+Both calls take any access token (every token carries `openid`) and never
 the portal session: registering is what a server does, not a person. A
 confidential client may only name an address on the origin of one of its
 redirect URIs (a 403 otherwise, on POST and DELETE alike), so a container
-cannot put another site on someone's list; the public desktop client may
+cannot put another site on someone's list. The public desktop client may
 name any address, since every sidecar is that client. A loopback address
 is one row per account whatever the machine: two laptops on the same port
 share it. At most 50 servers per account, 60 writes an hour. Deleting an
@@ -288,11 +295,11 @@ which is how a container admin invites `alice` before she ever signed in
 there. Only a verified, live account is found; a deleted, unconfirmed or
 unknown name, a prefix and an e-mail address are all the same 404. It is
 an enumeration surface: anyone holding an access token can test whether a
-username exists (usernames are semi-public already: they label a paid
-container's hostname). So the limits are tight — 30 per 10 minutes per IP
-(counted before the token is checked), 20 per 10 minutes per token, 60 an
-hour per account — and the answer carries nothing beyond the id and the
-name: no e-mail, display name or plan.
+username exists. Usernames are semi-public already, since they label a
+paid container's hostname. So the limits are tight: 30 per 10 minutes per
+IP (counted before the token is checked), 20 per 10 minutes per token and
+60 an hour per account. The answer carries only the id and the name, never
+the e-mail, display name or plan.
 
 ### Sign in with Google and GitHub
 
@@ -385,14 +392,14 @@ which is what the profile endpoints check.
 **The authorize page.** `GET /authorize` validates the client and redirect
 URI first (a bad one is shown, never followed), the rest is redirected
 back as an OAuth error, and a valid request is stored as pending. A
-signed-in, verified person sees a Google-style confirm card
-(`pages._consent_page`): a Gamma Cloud brand strip, "Sign in to *client
-name*" with the asker's address under it (a hosted server's redirect-URI
-origin, or "on this computer" for the desktop app), the account as an
+signed-in, verified person sees a confirm card (`pages._consent_page`)
+under a Gamma Cloud brand strip. It reads "Sign in to *client name*", with
+the asker's address under it: a hosted server's redirect-URI origin, or
+"on this computer" for the desktop app. Below come the account as an
 avatar row, what the requested scopes give in plain words
 (`pages.SCOPE_WORDS`, never scope ids), a primary *Continue* with *use
-another account* and *cancel* as text links beneath, and a footnote
-pointing at Devices. A signed-out person signs in on the page
+another account* and *cancel* as text links, and a footnote pointing at
+Devices. A signed-out person signs in on the page
 (`POST /authorize/login`, which also sets the portal cookie so the next
 server is one click); an unverified person sees the verify notice. Nothing
 is granted per scope: every client is first party, and the card only says
@@ -402,8 +409,9 @@ who asks and what it gets.
 client, redirect URI, expiry and PKCE verifier; a replayed code revokes
 what its first exchange issued — that grant or that access token, nothing
 else of the account. The answer is an opaque access token, an ID token and,
-with `offline_access`, a refresh token. A client may send `device_id` (8–64 of `[A-Za-z0-9_-]`, else dropped) and
-`device_name` with the code; a new grant revokes the live grant of the
+with `offline_access`, a refresh token. A client may send `device_id`
+(8–64 of `[A-Za-z0-9_-]`, else dropped) and `device_name` with the code; a
+new grant revokes the live grant of the
 same account, client and `device_id`, so a machine that signs in again is
 one row on the Devices page, not two.
 
@@ -441,7 +449,7 @@ stays in the JWKS for a week so tokens it signed still verify.
 
 `manage.py`: `setup`, `migrate`, `backup`, `list-accounts`,
 `create-account`, `set-password`, `set-admin`, `set-plan`, `verify`,
-`delete-account`, `purge-deleted`, `invite`, `invites`, `create-client`,
+`delete-account`, `restore-account`, `purge-account`, `purge-deleted`, `invite`, `invites`, `create-client`,
 `clients`, `delete-client`, `rotate-key`. Every command but `setup` and
 `migrate` refuses an outdated `cloud.db`. `/api/admin/*`
 (`routers/admin.py`, admins through a portal session only): search and
@@ -517,11 +525,11 @@ the account server refused that grant and cleared by the next sign-in.
 **The device.** The desktop client names this install on the code
 exchange (`cloud_auth.device`): `device_id`, made once and kept in the
 `settings` KV as `cloud_device_id`, and `device_name`, the machine's host
-name; the user agent is `Gamma/<version> (<system>; <address>)`, and every
+name. The user agent is `Gamma/<version> (<system>; <address>)`. Every
 call this server makes to another (the account server, the username
-lookup, a mirror's remote) carries it — Cloudflare in front of the account
-server blocks the bare Python-urllib signature. A refresh
-token this server stops holding is revoked at the account server
+lookup, a mirror's remote) carries it, since Cloudflare in front of the
+account server blocks the bare Python-urllib signature. A refresh token
+this server stops holding is revoked at the account server
 (`revoke_later`, RFC 7009, on a background thread, failures logged as
 warnings): the one a newer sign-in replaced (`link` returns it), the one a
 refused sign-in or a failed ID-token check leaves behind, and the one an
@@ -588,8 +596,8 @@ Gamma servers call with a token": a refresh-token grant at the token
 endpoint (client secret included for a confidential client). The rotated
 refresh token is saved before the access token is used, and a lock per
 account keeps it to one refresh at a time, as the reuse detection
-requires. A refresh that lost a race with a new sign-in or an unlink keeps
-their token and revokes its own. The access token stays in memory until
+requires. A refresh that loses a race with a new sign-in or an unlink
+leaves their token in place and revokes the one it got. The access token stays in memory until
 two minutes before its `expires_in`; the sign-in's own access token
 starts the cache. A 401 from the account server drops the cached token.
 
@@ -608,31 +616,59 @@ such as an invitation's lookup, signs out the same way. The check then
 syncs the profile and refreshes the server list entry.
 
 **The preference profile.** The account-wide `profile` pref
-([settings.md](settings.md)) is kept equal to the account server's
-`profile` key, last writer wins by `updated_at` compared to the
-millisecond (the account server's precision):
+([settings.md](settings.md)) is kept in step with the account server's
+`profile` key the way VS Code's settings sync works: merged preference by
+preference, with explicit fetch and push when you want one side to win
+(`cloud_sync.sync_profile`):
 
-- the callback pulls it before it redirects (5 s timeout), so the browser's
-  first load already sees the synced profile and never seeds an empty one
-  from its localStorage; every grant check pulls or pushes it again;
-- the newer side wins. A pulled copy is stored with the account server's
-  time (`set_pref(..., updated_at=)`, which never replaces a newer local
-  row and never pushes back). When the local side is newer, or the account
-  server has none, it is pushed with its local `updated_at`;
-- a change made here (`set_pref` storing `profile`) is pushed 5 seconds
-  after the changes settle, on a timer thread that never blocks the request.
-  A 409 means the account server holds a newer profile, which is taken. A
-  failed push waits for the next check. A local edit is stamped at least a
-  millisecond after the stored time, so an edit made right after a pull
-  from a faster clock still counts as newer. When the account server
-  stores a pushed value under another time (clamped from the future, or
-  cut to the millisecond), the local row takes that time, so the next
-  check agrees;
-- `ai-settings` and `ai-provider` never sync, and nothing syncs without
-  cloud sign-in or without a linked identity holding a token. A
-  self-hosted server makes no call at all (a test asserts it).
+- **Merge.** `profile-base` (a `users.db` pref never served by
+  `/api/prefs`) holds the copy both sides last agreed on, with the cloud
+  subject it was agreed with (a base agreed with another cloud account is
+  no base). Each sync merges the two copies against it: a preference changed
+  on one side only takes that side's value; one changed on both takes the
+  newer profile's (`updated_at` compared to the millisecond, the account
+  server's precision). The result is written here and pushed there as
+  needed, then becomes the new base.
+- **First sync.** Without a base, one side missing takes the other, and
+  equal copies just record the base. Two different copies wait for the
+  person (state `choose`): nothing is replaced, the notice
+  `cloud-sync-choice` lights the dot, the profile's `GET` answers
+  `cloud_choice: true` and the app opens Settings → Account once per page
+  load. There the Settings sync row offers **Merge** (the web app's
+  defaults as the base, `defaultProfile()` in `prefDefs.js`, so each side
+  keeps what it changed from them), **Use cloud's** and **Use this
+  server's**. An account linked before this merge existed gets the same
+  question once if its two copies differ.
+- **By hand.** The same row, once synced, offers **Sync now** (the merge),
+  **Fetch from cloud** (the cloud's copy replaces this one) and **Push to
+  cloud** (the other way round), both confirmed, through `POST
+  /api/auth/cloud/sync`.
+- **When.** The callback syncs before it redirects (5 s timeout), so the
+  browser's first load already sees the synced profile. A browser reading
+  the profile (a load, a refocused tab) syncs first when the last attempt
+  is over a minute old (`sync_if_stale`), so a change made on another
+  server shows up as soon as you switch to this one. A change made here
+  syncs once changes have settled for 5 seconds, on a timer thread that
+  never blocks the request. Every grant check syncs again.
+- **Browsers.** The web app saves with `PATCH /api/prefs/profile`, only the
+  entries it changed (`db.patch_profile`): a tab loaded before a cloud
+  change arrived still holds the old value of every other entry, and a
+  whole-object save would read to the merge as a local change back to it.
+- **Races.** One sync per account at a time. A push the account server
+  refuses as older (409, another server pushed meanwhile) and a local write
+  that finds the profile changed since it was read
+  (`db.replace_profile_if`) both read the two sides again and merge anew,
+  against the base that is still the old one.
+- **Clocks.** A local edit is stamped at least a millisecond after the
+  stored time. A push is stamped now or a millisecond past the cloud's
+  copy, whichever is later; when the account server stores it under
+  another time (clamped from the future, or cut to the millisecond), the
+  local row takes that time.
+- **Never.** `ai-settings` and `ai-provider` never sync. Nothing syncs
+  without cloud sign-in or without a linked identity holding a token, so a
+  server without cloud sign-in makes no call at all (a test asserts it).
 
-The last outcome per account (`synced` / `pending` / `error`, `off`
+The last outcome per account (`synced` / `pending` / `error` / `choose`, `off`
 worked out on each read) is kept in memory by `cloud_sync` and read, with
 no network, from `GET /api/auth/cloud/sync-status`, which the Settings
 dialog's account tags show ([settings.md](settings.md)).
@@ -664,29 +700,81 @@ every Gamma server (`GAMMA_CLOUD_SHARE_HOST_URL`, surfaced as
 `gamma_share_host` in discovery and `share_host` in `/api/me`). The switch
 does three things:
 
-- **The exchange.** `POST /api/auth/cloud/exchange` (`gamma/publish.py`
-  `exchange`, `routers/publish.py`) takes a Gamma Cloud access token as
-  `Authorization: Bearer` — the token a publishing server got for the person
-  through `access_token_for` — and checks it at the account server's
-  `/userinfo` (the endpoint from the cached discovery document; nothing about
-  the token or its answer is cached). An unconfirmed e-mail is refused. The
-  account is resolved by `resolve_account` under the server's policy exactly
-  as a first sign-in would (provisioned with its personal workspace under
-  `provision`; pending invitations claimed), but no session is minted and no
-  refresh token is stored. The answer is `{token, workspace_id, username,
-  url}`: a write-scope integration token for 365 days on the account's
-  default personal workspace, named "Published pages from <server>" after
-  the caller's `{server}` (at most one live per account and name: the
-  previous one is revoked), and this server's address. Limits: 20 per IP and
-  10 per cloud account in 10 minutes. Refused with 403 while the switch is
-  off, before the account server is asked. The publishing side is
-  [mirror.md](mirror.md) "Publishing".
+- **The exchange.** `POST /api/auth/cloud/exchange` trades a person's
+  Gamma Cloud access token for a write token on their workspace here
+  (below).
 - **No guest.** `/api/login-guest` answers 403 and `/api/server-config`
   says `guest: false`; the login page then hides its guest button.
 - **No account directory.** `GET /api/accounts` answers admins in full and
   anyone else only with the account named exactly `?q=`. The pickers
   (`AccountPicker`) take an empty directory as a hidden one and look the
   typed name up with `?q=`.
+
+**The exchange** (`gamma/publish.py` `exchange`, `routers/publish.py`)
+takes a Gamma Cloud access token as `Authorization: Bearer`: the token a
+publishing server got for the person through `access_token_for`. It checks
+the token at the account server's `/userinfo` (the endpoint from the cached
+discovery document; nothing about the token or its answer is cached) and
+refuses an unconfirmed e-mail. The account is resolved by
+`resolve_account` under the server's policy exactly as a first sign-in
+would: provisioned with its personal workspace under `provision`, pending
+invitations claimed. No session is minted and no refresh token is stored.
+The answer is `{token, workspace_id, username, url}`: a write-scope
+integration token for 365 days on the account's default personal
+workspace, and this server's address. The token is named "Published pages
+from <server>" after the caller's `{server}`, one live per account and
+name (the previous one is revoked). Limits: 20 per IP and 10 per cloud
+account in 10 minutes. While the switch is off the exchange is a 403,
+before the account server is asked. The publishing side is
+[mirror.md](mirror.md) "Publishing".
+
+Two more settings shape what a share host serves, both environment only
+([mirror.md](mirror.md) "Publishing" has the mechanics).
+
+**The plan's cap.** How many pages each plan may publish is
+`config.PLAN_PAGE_LIMITS` in `gamma/config.py`:
+
+| plan | published pages |
+|---|---|
+| `free` | 5 (`GAMMA_FREE_PAGE_LIMIT` overrides it; 0 lifts the cap) |
+| `plus`, `pro`, anything else | unlimited |
+
+The plan is the `plan` claim the share host stored for the identity at its
+last exchange or sign-in. A publish that finds the workspace full
+exchanges once more, so an upgrade counts at once.
+
+**Page hosts.** `GAMMA_PAGE_HOST` is the hostname pattern of the
+per-account page hosts, with one `{username}` placeholder:
+`{username}-pages.gammapdf.com` gives every published page the address
+`https://<username>-pages.gammapdf.com/<slug>-<page id>`. Empty (the
+default) means token links only. The server refuses to start on a pattern
+without exactly one `{username}`, or on one that is otherwise not a
+hostname. Cloud usernames are single DNS labels (`[a-z0-9-]`, 3 to 32
+characters), and the `-pages` suffix keeps every page host apart from a
+service hostname, so `accounts.RESERVED_USERNAMES` need not change; name no
+service with the suffix.
+
+Deploying page hosts takes a wildcard DNS record, `*.gammapdf.com` pointing
+at the share host (named records such as `account` keep precedence over
+the wildcard), and a wildcard site in front of the container. Behind
+Cloudflare in "Full" mode Caddy's internal certificate covers the
+wildcard, so no DNS challenge is needed (`cloud/deploy/Caddyfile`, the
+`share` service of `cloud/deploy/compose.yml`, its settings in
+`share.env.example`):
+
+```
+*.gammapdf.com {
+	tls internal
+	@pages header_regexp Host ^[a-z0-9-]+-pages\.gammapdf\.com$
+	@share host share.gammapdf.com
+	handle @share { reverse_proxy share:9001 }
+	handle @pages { reverse_proxy share:9001 }
+	handle { respond 404 }
+}
+```
+
+The proxy passes the `Host` header through (Caddy does by default); the
+app reads the username out of it.
 
 The rest of the plan's cloud mode is configuration, not code: registration
 is already off on every Gamma (accounts come from the admin or the cloud),

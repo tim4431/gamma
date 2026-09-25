@@ -116,6 +116,17 @@ function joinLine(out, s) {
   return out + " " + s;
 }
 
+// A text selection's string as one paragraph for the selection translator:
+// the text layer puts a line break at every visual line, rejoined the same
+// way as a segmented block's lines. Blank lines (a selection spanning
+// paragraphs) stay paragraph breaks.
+export function selectionParagraphs(text) {
+  return (text || "").split(/\n\s*\n/)
+    .map((para) => para.split("\n").map((l) => l.trim()).filter(Boolean).reduce(joinLine, ""))
+    .filter(Boolean)
+    .join("\n\n");
+}
+
 // Whether a block's text should go to the model. Mostly-symbolic content
 // (equations, tables of numbers, page footers) is left in place.
 export function isTranslatable(text) {

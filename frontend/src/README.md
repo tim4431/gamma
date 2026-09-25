@@ -6,14 +6,14 @@ through barrel files. `main.jsx` remains the Vite entry point.
 
 | Folder | Responsibility and entry points |
 | --- | --- |
-| `app/` | `App.jsx` connects the application views, navigation, saves, and docks; `prefDefs.js` declares every preference (key, default, codec, browser or account scope), `prefs.js` turns them into state and syncs the account ones, `sessionState.js` handles session restoration; `notices.js` + `useNotices.js` are the red dot's model and feed (what wants a look, resolved by visiting its Settings pane) |
+| `app/` | `App.jsx` connects the application views, navigation, saves, and docks; `prefDefs.js` declares every preference (key, default, codec, browser or account scope), `prefs.js` turns them into state and syncs the account ones, `sessionState.js` handles session restoration; `notices.js` + `useNotices.js` are the red dot's model and feed (what wants a look, resolved by visiting its Settings pane); `appCommands.js` is the app-scope shortcut catalog and `commands.js` joins it with the block one for the palette and the Keyboard pane ([docs/dev/hotkeys.md](../../docs/dev/hotkeys.md)) |
 | `auth/` | Login, session/share access screens (`LoginPage.jsx`) and MCP authorization (`McpConsent.jsx`) |
 | `chat/` | AI conversation panel (`ChatDock.jsx`), paper mentions, chat permission settings, and the token-usage formatting (`tokenUsage.js`) shared with Settings |
 | `collaboration/` | `usePageCollab.js`, the pure `collabSession.js` state machine, presence UI, `MirrorPopover.jsx` — the header's sync pill of a clone with its settings and conflicts views — and `MergeResolver.jsx`, the conflict chip on a block row ([docs/dev/mirror.md](../../docs/dev/mirror.md)) |
-| `editor/` | Outliner (`BlockTree.jsx`), CodeMirror (`BlockCmEditor.jsx`), undo history, Markdown and LaTeX editing, and slash commands |
+| `editor/` | Outliner (`BlockTree.jsx`), CodeMirror (`BlockCmEditor.jsx`), undo history, Markdown and LaTeX editing, slash commands, the block-scope shortcut catalog (`blockCommands.js`) with the formatting runners (`markCommands.js`) and the pure fence scanner (`fences.js`); the object frame around rendered images, tables and diagrams (`MdObject.jsx`) with its pure move algebra (`mdObjects.js`) and the image / table scanners every consumer shares (`mdScan.js`) |
 | `guide/` | First-run and contextual guides: `anchors.js` (the `data-guide` registry), `events.js` (event bus), `triggers.js` (eligibility and account-scoped progress), `useGuide.js` + `GuideOverlay.jsx` (engine, invitation and spotlight), `tours/` (one data file per tour) — [docs/dev/onboarding.md](../../docs/dev/onboarding.md) |
 | `ink/` | Handwriting codec and geometry, input sampling, draft storage, and `InkLayer.jsx` |
-| `library/` | Library cards and browsing controls (`FileBrowser.jsx`), the Ctrl+P page palette (`QuickOpen.jsx`), folder/page rules, title scoring, and `library.css` |
+| `library/` | Library cards and browsing controls (`FileBrowser.jsx`), the Ctrl+P page palette and Ctrl+Shift+P command palette (`QuickOpen.jsx`), folder/page rules, title scoring, and `library.css` |
 | `pdf/` | `PdfViewer.jsx`, document loading, citations, translation, and scroll alignment |
 | `search/` | Workspace search (`SearchPanel.jsx`) |
 | `settings/` | `SettingsDialog.jsx`, individual settings panes, shared pane controls (`SettingsKit.jsx`), the profile sync reading (`syncState.js`), navigation, integration setup, and `settings.css` |
@@ -21,7 +21,8 @@ through barrel files. `main.jsx` remains the Vite entry point.
 | `support/` | Report a problem: the dialog (`ReportProblem.jsx`) and the pure report builder it and the tests share (`problemReport.js`) |
 | `transfers/` | Import/export dialogs (`ImportExport.jsx`), the import review (`ImportReviewDialog.jsx`, `ImportTree.jsx`, `importApi.js`, `importReview.js`), format rules, and upload/file chips (`FileChip.jsx`) |
 | `shared/model/` | Block tree helpers (`blockModel.js`), block operations (`blockOps.js`), and highlight colors |
-| `shared/lib/` | API transport and helpers (`utils.js`), the multipart upload (`xhrUpload.js`), search text normalization, and canvas sizing |
+| `shared/i18n/` | Interface language: `i18n.js` (`t`, `tn`, `T`, the locale store, Intl formatters), `locales.js` (the language list, pure), `locales/<code>.json` (one catalog per language) — [docs/dev/i18n.md](../../docs/dev/i18n.md); `tools/i18n.mjs` keeps the catalogs complete |
+| `shared/lib/` | API transport and helpers (`utils.js`), the multipart upload (`xhrUpload.js`), search text normalization, canvas sizing, published pages' slugs and page hosts (`slug.js`), and keyboard chords + the shortcut dispatcher (`hotkeys.js`) |
 | `shared/ui/` | Reused widgets, menus, icons, and menu hover intent |
 | `shared/illustrations/` | Decorative settings/import previews and their local image assets |
 | `shared/styles/` | `app.css`: theme, base controls, and cross-application styles |

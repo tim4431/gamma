@@ -1,9 +1,9 @@
-import { Account } from "../harness.mjs";
+import { Account, wanted } from "../harness.mjs";
 
 // Ctrl+P: the quick-open page palette (library/QuickOpen.jsx).
 export async function quickOpenScenarios(env) {
   const { server, browser, step, openPage, assert, assertEq, assertNoProblems, until, flags } = env;
-  if (flags.only && !"quickopen".includes(flags.only)) return;
+  if (!wanted("quickopen")) return;
   server.manage("create-user", "quickopen-user", "quickopen-pw");
   const user = await new Account(server, "quickopen-user", "quickopen-pw").login();
   const titles = ["Cavity readout", "Cavity sensors", "Quantum correction", "Atomic clocks"];
@@ -45,6 +45,34 @@ export async function quickOpenScenarios(env) {
       await dialog.waitFor();
       await page.keyboard.press("Escape");
       assertEq(await page.getByRole("dialog", { name: "Open a page" }).count(), 0, "Escape closes the palette");
+      assertNoProblems(page);
+    } finally { await ctx.close(); }
+  });
+
+  await step("quickopen: Ctrl+Shift+P is the command palette; a pick runs", async () => {
+    const ctx = await user.context(browser);
+    const page = await openPage(ctx, `${server.base}/?page=${papers["Atomic clocks"].id}&ws=${user.ws}`);
+    try {
+      await page.locator(".blockList").first().waitFor();
+      await page.keyboard.press("Control+Shift+p");
+      const dialog = page.getByRole("dialog", { name: "Command palette" });
+      await dialog.waitFor();
+      const input = dialog.getByRole("textbox", { name: "Type a command" });
+      assertEq(await input.inputValue(), ">", "the command prefix is typed");
+      await until(async () => (await dialog.getByRole("option").count()) > 3, { what: "commands listed" });
+      assert((await dialog.getByRole("option", { name: /Rename page/ }).textContent()).includes("F2"), "a command shows its keys");
+      await input.fill(">rename");
+      await until(async () => /Rename page/.test(await dialog.locator('[role="option"][aria-selected="true"]').textContent()), { what: "the match is selected" });
+      await page.keyboard.press("Enter");
+      await page.locator(".titleEdit").waitFor();
+      assertEq(await page.getByRole("dialog", { name: "Command palette" }).count(), 0, "running closes the palette");
+      await page.keyboard.press("Escape");
+      // ">" typed into Ctrl+P is the same palette.
+      await page.keyboard.press("Control+p");
+      await page.getByRole("dialog", { name: "Open a page" }).waitFor();
+      await page.keyboard.type(">");
+      await page.getByRole("dialog", { name: "Command palette" }).waitFor();
+      await page.keyboard.press("Escape");
       assertNoProblems(page);
     } finally { await ctx.close(); }
   });

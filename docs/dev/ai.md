@@ -5,13 +5,14 @@ request/stream shape, and the library agent: what it can reach, how the tool
 loop runs, and what the user controls. The tools themselves are catalogued in
 [ai_tools.md](ai_tools.md); how long papers reach the model is
 [ai_context.md](ai_context.md). Code: `gamma/ai_settings.py`,
-`gamma/ai_client.py`, `gamma/ai_context.py`, `gamma/ai_tools.py`,
+`gamma/ai_protocols/` (one adapter per wire), `gamma/ai_client.py`,
+`gamma/ai_catalog.py`, `gamma/ai_context.py`, `gamma/ai_tools.py`,
 `gamma/chatgpt_oauth.py`, `gamma/routers/ai.py` + the chat-history router.
 
 ## Provider and models
 
 There are NO env API keys; providers are GUI entries: each account's own
-(Settings → Provider and models), plus the server's shared ones an admin adds
+(Settings → AI › Connections), plus the server's shared ones an admin adds
 (below). An account's entries are stored under the reserved account-wide
 `ai-settings` pref in `users.db` — a LIST of `{id, name, protocol, api_key, base_url, models}` managed
 via `POST/PUT/DELETE /api/ai/providers[/{id}]`. An entry offers exactly the
@@ -35,8 +36,8 @@ details are summarized before display everywhere (`upstream_detail` in
 (a proxy's 502 page) to their `<title>`.
 
 `POST /api/ai/health` ({provider_id, mode}; "" = first entry) is the login
-connection check (Settings → Provider and models → "Check at login",
-localStorage `gamma-ai-login-check`, default on): mode `"ping"` verifies the
+connection check (Settings → AI › Connections → "Check at login",
+account pref `gamma-ai-login-check`, default `ping`): mode `"ping"` verifies the
 credential for free — OAuth entries hit the usage endpoint, API keys list
 `/v1/models`, both 401 on a dead credential (404/405 = gateway without a
 listing → ok-but-unverified, no false alarm) — and `"test"` runs the same tiny
@@ -54,13 +55,13 @@ module-level config constants for credentials or model routing. Env vars set
 each protocol's administrator-controlled default base URL, including
 `GAMMA_AI_CHATGPT_BASE_URL`.
 
-Named services (`AI_SERVICES` in `gamma/config.py`, sent as `services` with the
+Named services (`SERVICES` in `gamma/ai_protocols/__init__.py`, sent as `services` with the
 settings) are form presets: a protocol plus a fixed endpoint, listed in the
 form's service menu between the protocols and "Custom endpoint". DeepSeek is
 the `openai` protocol at `https://api.deepseek.com`. An entry made from one
 stores only protocol + base URL; `provider_label` recognizes the pair and
 names the entry after the service when it has no name of its own. The
-`openai` wire follows the endpoint (`is_openai_platform` in `ai_client.py`):
+`openai` wire follows the endpoint (`is_openai_platform` in `ai_protocols/openai.py`):
 only OpenAI itself gets `max_completion_tokens`, the Responses API for tool
 calls, and the gpt-/o-family filter on its model listing. Compatible servers
 get `max_tokens`, Chat Completions tools and their full listing (minus
@@ -69,7 +70,7 @@ absent: Anthropic's terms forbid third-party apps from routing requests
 through Free/Pro/Max plan credentials, so Claude is reached with a Console API
 key.
 
-The Provider and models pane also exposes `POST /api/ai/providers/{id}/usage`. For a
+The Connections pane also exposes `POST /api/ai/providers/{id}/usage`. For a
 ChatGPT OAuth entry it reads normalized subscription rate-limit windows
 (`used_percent`, `remaining_percent`, and reset time) without exposing the
 bearer token. Opening the pane queries OAuth usage automatically (the Usage
@@ -86,6 +87,42 @@ protocol URL, not an entry field, and OAuth entries cannot edit their API key
 or base URL; this prevents a settings request from redirecting a bearer token.
 The ChatGPT account endpoint is provider-specific and may require maintenance
 if its upstream contract changes.
+
+### Protocol adapters
+
+Everything that differs between providers lives on one adapter per wire in
+`gamma/ai_protocols/` (`base.Protocol`), and nothing outside that package
+branches on a protocol id. Routes, the chat loop, `ai_settings` and
+`ai_client` ask the entry's adapter (`ai_protocols.of(conf)`):
+
+| Concern | Adapter member |
+|---|---|
+| what the form offers | `label`, `base_url` (env default, `config.AI_BASE_URLS`), `auth` (`"key"` / `"oauth"` + the `oauth` module that refreshes tokens), `entry` |
+| the chat call | `wire(conf, tools)` (a sibling wire for some calls), `request(...)`, `reply_text`, `read_reply`, `streams_only` |
+| the stream | `events` (one loop in the base) over `stream_event` / `stream_end` |
+| token counts | `usage(raw)` → `{input, output, cache_read, cache_write}` |
+| models | `models_request`, `models(data, conf)` → `[{id, context_window}]`, `catalog_hints` |
+| credential check | `ping_request` (default: the model listing) |
+| quota | `has_account_usage`, `account_usage_request`, `account_usage` |
+| attachments, dictation | `native_pdf`, `transcription` (a rank), `transcription_request`, `transcript` |
+
+The wires: `anthropic.py` (Messages API), `openai.py` (Chat Completions for
+OpenAI and every compatible server), `responses.py` (the Responses API that
+OpenAI's platform and the ChatGPT backend both speak; `openai-responses` is
+the variant an OpenAI entry switches to for tool calls, never an entry's own
+protocol), `chatgpt.py` (the Codex backend: its listing, quota and client
+version). `ai_client.py` is the transport (open, read, stream, errors);
+`ai_catalog.py` fetches and caches listings and context windows
+(`fetch_json` is the one fetch every listing, quota and ping goes through).
+The sign-in flow itself (`chatgpt_oauth.py`, `/api/ai/oauth/chatgpt/*`) is
+provider-specific by nature.
+
+A new service on an existing wire (a gateway, a hosted model) is a
+`SERVICES` preset or just a custom base URL. A new wire is one module
+subclassing `Protocol` (or `ResponsesWire`) that overrides what differs from
+the OpenAI-shaped defaults, plus one line in `WIRES` and its default URL in
+`config.AI_BASE_URLS`; `tests/test_ai_wire.py` pins each wire's request and
+stream shapes.
 
 ### Shared provider entries
 
@@ -129,13 +166,13 @@ deltas), and PDF attachments go as native `input_file` parts with an automatic
 retry as extracted text if the backend rejects them. That retry applies to
 any provider that answers a native-PDF request with a 4xx other than
 401/403/429 (compatible servers may refuse `file` parts too). Anthropic has
-no `minimal` effort; `anthropic_request` sends `low` for it.
+no `minimal` effort; its adapter sends `low` for it.
 
 Its model list (`POST /api/ai/model-catalog`) is Codex CLI's own listing call,
 `GET {base}/models?client_version=…`, made with the entry's token. The backend
 hides models newer than the client version it is told, so Gamma claims the
 newest Codex CLI release: npm's `latest` for `@openai/codex`, cached for 6 h
-(`_codex_client_version`; on a failed lookup the last good version, else a
+(`codex_client_version` in `ai_protocols/chatgpt.py`; on a failed lookup the last good version, else a
 floor constant, with a retry after 10 min). No model names are hardcoded. A
 failed listing is a 502 the picker shows, and a fresh connect whose listing
 fails starts with no models. The sign-in `state` belongs to the account that
@@ -417,11 +454,11 @@ Rounds and the ≤200-mutation ceiling are runaway guards, not workload caps.
 ### The tool loop
 
 The router runs a loop (`agent_events`) over `ai_client.sse_events`, which
-parses tool calls from all three protocols' SSE (tool defs +
-`tool_calls`/`role:"tool"` message extensions are translated per wire in the
-request builders; the Responses builders enable `parallel_tool_calls` when
-tools ride along, so bulk renames batch per round): the model calls tools →
-the server executes them → results go back → repeat until it answers.
+parses tool calls from every wire's SSE (`Protocol.events`): the model calls
+tools → the server executes them → results go back → repeat until it
+answers. Each adapter's `request` maps the tool defs and the
+`tool_calls`/`role:"tool"` turns to its wire. The Responses body enables
+`parallel_tool_calls` when tools ride along, so bulk renames batch per round.
 
 Every tool call streams back as an
 `{"action": {kind, summary, tool, args, result}}` NDJSON line (kinds
@@ -486,7 +523,7 @@ call again before quoting or editing. The base prompt says the same, so a
 request to read, show or check something is answered from a fresh call, not
 last turn's outline (the agent's own edits change what `read_block`
 returns). Results share `TOOL_REPLAY_BUDGET` chars newest-first
-(older ones elided), and `_anthropic_messages` folds a plain user turn into a
+(older ones elided), and `_messages` in `ai_protocols/anthropic.py` folds a plain user turn into a
 preceding tool_result turn to keep roles alternating. Plain chats never replay
 (providers reject tool blocks without tool defs). Renamed tools replay under
 their current name (`ai_context.DEPRECATED_TOOLS`, e.g. the saved
@@ -497,7 +534,7 @@ dispatch, and the resulting action chip carries the current name. Old names
 are never offered as tools.
 
 OpenAI-protocol calls that carry tools are rerouted to the platform
-`/v1/responses` (`wire_protocol`) — gpt-5.x rejects function tools on chat
+`/v1/responses` (`OpenAIChat.wire`) — gpt-5.x rejects function tools on chat
 completions — but only against the official api.openai.com base URL; custom
 gateways keep chat-completions tools.
 
@@ -505,15 +542,21 @@ gateways keep chat-completions tools.
 ## PDF translation
 
 `POST /api/ai/translate` backs the viewer's translated view. ONE 文A button
-in the PDF zoom column does everything by state: click translates the
-current page when nothing is translated yet, toggles show/hide for ALL pages
-once translations exist under the current language+model (switching either
-in Settings makes the button translate afresh; hidden = slashed icon;
-holding Alt peeks), and
-halts a running job; right-click (long-press on touch) opens the option
-menu — Translate this page / Translate whole document / Show
-original·translation (Stop translating while running). A whole-document job
-queues pages nearest the current page first (forward before backward at
+in the PDF zoom column does everything by state:
+
+- On the page being read, a click translates it unless it is already fully
+  translated under the current language and model. On such a page a click
+  toggles show/hide for ALL pages (the viewer reports `current` next to
+  `pages` in its state).
+- A page a halted job left half-done counts as untranslated, so a click
+  finishes it from the cache. Switching language or model in Settings makes
+  the button translate afresh.
+- Hidden = slashed icon; holding Alt peeks. A click during a job halts it.
+- Right-click (long-press on touch) opens the option menu: Translate this
+  page / Translate whole document / Show original·translation (Stop
+  translating while running).
+
+A whole-document job queues pages nearest the current page first (forward before backward at
 equal distance), so the page being read paints immediately. The queue lives
 in `pdf/PdfViewer.jsx` (`translateCtl`), producer/consumer style: the producer
 segments queued pages in order and feeds one flat list of ~6-paragraph /
@@ -557,16 +600,84 @@ cloned background — so figures a paragraph brushes against are never painted
 over, and the layout never moves. Translated text is selectable/copyable;
 while shown, the invisible original text layer stands down.
 
-Targets are the allowlisted `TRANSLATE_LANGS` codes (mirrored in
-`frontend/src/app/prefDefs.js`); model and reasoning `effort` come from Settings →
-Reading (model follows the chat model by default; effort omitted unless
-picked — Low/Minimal is the speed lever for reasoning models); the whole
-Translation section can be switched off there too. The server keeps an
-**in-memory only** LRU (~5k entries, lock-guarded — requests run in the
-threadpool) per (user, language, bare model name, source text) —
-deliberately nothing on disk; it makes halts/retries/re-shows free until a
-restart. Duplicate paragraphs within a request go upstream once. Caps: 200
-texts / 60k chars per request.
+Targets are the allowlisted `TRANSLATE_LANGS` codes
+(`gamma/translate_engines.py`, shared by both translation paths; mirrored in
+`frontend/src/app/prefDefs.js`). What translates is Settings → Reading ›
+"Translate with" (`translateModel`, a browser pref; "" is the default).
+`translateModelFor` (`app/prefDefs.js`) turns the pick into what is sent:
+the pick while it is still offered, the free Microsoft service when there
+is no chat model at all, else the chat model. Reasoning `effort` and
+parallel requests sit in the same Translation section. Effort is omitted
+unless picked; Low/Minimal is the speed lever for reasoning models. The
+"Translation button" switch hides the viewer's button; the selection
+translator has its own switch.
+
+The server keeps an **in-memory only** LRU (~5k entries, lock-guarded
+because requests run in the threadpool) per (user, language, bare model
+name, source text). Nothing goes to disk; the cache makes
+halts/retries/re-shows free until a restart. Duplicate paragraphs within a
+request go upstream once. Caps: 200 texts / 60k chars per request.
+
+**Selection translation.** The text-selection popup (`PlainTip` in
+`pdf/PdfViewer.jsx`, the highlight colors + link) carries a 文A button
+when Settings → Reading › "Translate a selection" is on (`selTranslate`,
+account pref, default on).
+
+- It sends the selection as ONE text through the page translator's request
+  (`translateChunk`: same model or service, language, server cache,
+  streamed partials). Lines are rejoined by `selectionParagraphs`
+  (`pdf/pdfTranslate.js`, the page blocks' hyphen/CJK rules), capped at
+  5000 characters.
+- The result shows under the colors as a fold-out panel: a header with the
+  language, spinner and copy button, then selectable text. The button
+  refolds it.
+- "Translate on select" (`selTranslateAuto`, default off) starts it as soon
+  as the popup opens.
+- The popup is keyed by the selection, so a new selection starts over and
+  aborts the previous request. A click or selection inside the popup keeps
+  it open (the viewer's selection sync ignores a selection anchored in
+  `.plainTip`).
+- `TipFrame` flips the popup above the selection when it would run past the
+  window's bottom. Like the popup itself, it needs edit rights on the page.
+
+**Machine-translation services.** "Translate with" also offers the services
+in `gamma/translate_engines.py`. The viewer then sends `model:
+"engine:<id>"`, and `/api/ai/translate` hands the misses to
+`translate_engines.translate` instead of a chat model.
+
+- **Microsoft (free)** needs no setup. It is the endpoint Edge's own page
+  translation calls: `POST
+  edge.microsoft.com/translate/translatetext?to=<code>&isEnterpriseClient=false`
+  with a JSON array of strings and no key or token. The reply has
+  Translator v3's shape (`[{detectedLanguage, translations: [{text, to}]}]`);
+  the source language is detected per text.
+- The endpoint is unofficial and undocumented, so it can change or throttle
+  without notice; Google and Youdao are the fallback. The older
+  `/translate/auth` token flow answers 404 since July 2026.
+- Microsoft refuses requests past about 50k characters (measured), so
+  batches stay at 100 texts / 20k characters.
+- Its consecutive failures are counted in memory. From `FREE_ALERT_AFTER`
+  (3) on, the server log gets one warning per streak and each account that
+  met them gets the `free-translate` notice ([settings.md](settings.md)
+  "Notices"); the Settings row shows the error. One success ends the streak.
+- **Google Cloud Translation**: v2 basic, the API key sent as
+  `X-Goog-Api-Key`, `format: "text"`.
+- **Youdao**: the `openapi.youdao.com/v2/api` batch, with a v3 SHA-256
+  signature over the concatenated queries. A query listed in `errorIndex`
+  comes back verbatim and uncached.
+- Each service maps the target codes to its own (Microsoft `zh-Hans`,
+  Youdao `zh-CHS`) and splits a request by its batch limits.
+- The service path needs no AI provider. It has no effort, no streamed
+  partials (the stream is just the final line), no token usage and nothing
+  to salvage, since the APIs answer aligned lists.
+- Cache, validation and dedup are the LLM path's, keyed on `engine:<id>`.
+
+Credentials are per account under the reserved `translate-engines` pref.
+Like `ai-settings`, `/api/prefs` refuses it and the only read path is the
+masked `GET /api/translate/engines`; guests can't store any. Unlike the LLM
+prompt, nothing tells these services to leave math, `[12]` citation markers
+or URLs alone. PDF text carries no LaTeX and math-heavy paragraphs are
+skipped client-side, so the risk is small.
 
 ## Token usage
 
@@ -601,6 +712,27 @@ show what a week cost. Code: `gamma/ai_usage.py`, `ai_client.normalize_usage`,
   (`estimateTokens`: characters received / 4, text deltas and previewed
   tool arguments alike; reset when that round's report lands). Replies
   saved before this carry no counts and show nothing.
+- **Context ring.** Left of the chat header's ⚙, Claude Code style: how full
+  the model's window is. The figure is the latest reply's LAST round alone
+  (its input + output, which the next message carries as history), saved on
+  the reply as `context_tokens` — the summed `usage` would overcount an
+  agent reply. A reply saved before that field counts only when it had no
+  tool rounds. The window is looked up live, never tabled in the code
+  (`ai_catalog.context_window`, for every protocol alike):
+  `GET /api/ai/context-window?model=<pid>:<model>` reads the entry's own
+  model listing first (`Protocol.models` — Anthropic's `max_input_tokens`,
+  the Codex backend's `context_window`, the `context_length` /
+  `max_model_len` of OpenRouter, vLLM, Groq, …), then the public models.dev
+  catalog for listings that carry no size (OpenAI's, DeepSeek's) — there the
+  provider this entry talks to wins (`Protocol.catalog_hints`: the
+  endpoint's host labels, OpenAI for the ChatGPT backend), else the value
+  most providers agree on. Both are cached like the
+  Codex version (6 h; a failed lookup retried after 10 min, the last good
+  answer kept). A model neither knows gets `null`: no ring, and the popover
+  shows the token count alone. The client asks once per model per page load
+  (`useContextWindow` in `ChatDock.jsx`). The ring turns red past 80%;
+  clicking it opens the chat-settings popover, whose Tokens section spells
+  the figure out (`contextUsed`).
 - **Stored.** `ai_usage.record` writes one row per call to `ai_usage` in
   `users.db` (account, time, kind, provider id + name, model, the four
   counts); `ai_usage.recorder(kind, entry, rt)` is the `on_usage` callback the

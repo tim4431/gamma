@@ -1,7 +1,8 @@
 // Token usage as the providers report it — one normalized shape from the
-// server ({input, output, cache_read, cache_write}, see gamma/ai_client.py
-// normalize_usage): the per-reply line under an AI bubble, the running
-// total of a conversation, and the Settings → AI tiles all format it here.
+// server ({input, output, cache_read, cache_write}, see Protocol.usage in
+// gamma/ai_protocols/base.py): the per-reply line under an AI bubble, the
+// running total of a conversation, and the Settings → AI tiles all format it here.
+import { t } from "../shared/i18n/i18n.js";
 
 const KEYS = ["input", "output", "cache_read", "cache_write"];
 
@@ -54,12 +55,29 @@ export function conversationUsage(messages) {
   return total;
 }
 
+// How much of the model's window the conversation fills now: the latest
+// reply's LAST round — its prompt plus what it wrote, which the next message
+// carries as history (a reply's `usage` sums every tool round, so it
+// overcounts). Replies record it as `context_tokens`; one saved before that
+// without tool calls was a single round, so its usage is the same figure.
+// Null until some reply reported counts.
+export function contextUsed(messages) {
+  const list = messages || [];
+  for (let i = list.length - 1; i >= 0; i--) {
+    const m = list[i];
+    if (m.role !== "ai") continue;
+    if (m.context_tokens) return m.context_tokens;
+    if (m.usage && !m.actions?.length) return (m.usage.input || 0) + (m.usage.output || 0);
+  }
+  return null;
+}
+
 // The long form for a tooltip: every count spelled out.
 export function usageDetail(usage) {
   if (!usage) return "";
-  const parts = [`${(usage.input || 0).toLocaleString()} input tokens`,
-    `${(usage.output || 0).toLocaleString()} output tokens`];
-  if (usage.cache_read) parts.push(`${usage.cache_read.toLocaleString()} read from the prompt cache (${cachedPercent(usage)}% of the input)`);
-  if (usage.cache_write) parts.push(`${usage.cache_write.toLocaleString()} written to the prompt cache`);
+  const parts = [t("{input} input tokens", { input: (usage.input || 0).toLocaleString() }),
+    t("{output} output tokens", { output: (usage.output || 0).toLocaleString() })];
+  if (usage.cache_read) parts.push(t("{cache_read} read from the prompt cache ({usage}% of the input)", { cache_read: usage.cache_read.toLocaleString(), usage: cachedPercent(usage) }));
+  if (usage.cache_write) parts.push(t("{cache_write} written to the prompt cache", { cache_write: usage.cache_write.toLocaleString() }));
   return parts.join(" · ");
 }

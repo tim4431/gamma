@@ -152,8 +152,10 @@ def list_for_user(username: str) -> list[dict]:
     the top), then by name. ``members`` counts explicit members; ``mirror_of``
     names the remote workspace a mirror follows ("" otherwise);
     ``publishing`` is true for a workspace that publishes pages to the share
-    host (a filtered mirror, gamma/publish.py), which is not a clone:
-    ``mirror_of`` stays "" for it."""
+    host (a filtered mirror with at least one page in its filter,
+    gamma/publish.py), which is not a clone: ``mirror_of`` stays "" for it.
+    A publication whose last page was unpublished keeps its mirror row (the
+    token, for the next publish) but is invisible: nothing is published."""
     with connect_users_db() as conn:
         me = conn.execute(
             "SELECT default_workspace, is_guest FROM users WHERE username = ?", (username,)).fetchone()
@@ -164,7 +166,7 @@ def list_for_user(username: str) -> list[dict]:
             "(SELECT remote_name FROM mirrors mi WHERE mi.workspace_id = w.id AND mi.mode != 'off' "
             "AND mi.page_filter IS NULL), "
             "EXISTS (SELECT 1 FROM mirrors mp WHERE mp.workspace_id = w.id AND mp.mode != 'off' "
-            "AND mp.page_filter IS NOT NULL) "
+            "AND mp.page_filter IS NOT NULL AND mp.page_filter != '[]') "
             "FROM workspaces w WHERE w.access = 'public' "
             "OR EXISTS (SELECT 1 FROM workspace_members m WHERE m.workspace_id = w.id AND m.username = ?)",
             (username, username)).fetchall()
@@ -469,10 +471,7 @@ def cloud_lookup_username(name: str, by: str = "") -> dict | None:
     cfg = cloud_auth.settings()
     if not cfg["enabled"]:
         raise CloudLookupError("Gamma Cloud sign-in is not set up on this server.")
-    token = _cloud_access_token(by)
-    if not token:
-        raise CloudLookupError("This server has no Gamma Cloud access token to look usernames up with.")
-    return lookup_with_token(cfg["issuer"], token, name)
+    return lookup_with_token(cfg["issuer"], _cloud_access_token(by), name)
 
 
 def lookup_cloud_username(name, by: str = "") -> dict | None:

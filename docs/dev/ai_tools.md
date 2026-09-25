@@ -121,8 +121,8 @@ picture reaches the model once and is never saved into the chat or replayed
 Anthropic `tool_result` carries the image blocks after the text; the OpenAI
 chat-completions and Responses wires only take text in a tool result, so
 their pictures follow the round's results as one user turn ("Pictures
-returned by the tool calls above, in call order"; `ai_client.py`
-`_tool_image_turns`) — never the turn the user's own attachments ride on.
+returned by the tool calls above, in call order"; `ai_protocols/base.py`
+`tool_image_turns`) — never the turn the user's own attachments ride on.
 The armed prompt tells the model when a picture is worth its tokens
 (missing or garbled extracted text, a figure, handwriting) and to say when
 an answer was read from one. A page without a PDF, a page number past the

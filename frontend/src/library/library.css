@@ -528,3 +528,4 @@
 .quickOpenRow .fileRowLabels { flex: 0 1 auto; }
 .quickOpenTag { flex-shrink: 0; font-style: normal; font-size: calc(10px * var(--ui-font-scale, 1)); color: var(--text-dim); }
 .quickOpen .chatMentionHint { padding: 6px 6px 0; }
+.quickOpenKey { font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace; }

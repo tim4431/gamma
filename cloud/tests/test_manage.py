@@ -41,6 +41,21 @@ def test_purge_deleted(client):
         conn.commit()
 
 
+def test_restore_and_purge_account(capsys):
+    manage.main(["create-account", "dave@example.org", "dave", "--password", "correct horse battery"])
+    with pytest.raises(SystemExit):
+        manage.main(["restore-account", "dave"])  # not deleted
+    manage.main(["delete-account", "dave"])
+    manage.main(["restore-account", "dave"])
+    with closing(db.connect()) as conn:
+        assert accounts.by_username(conn, "dave")
+    manage.main(["delete-account", "dave"])
+    manage.main(["purge-account", "dave"])
+    assert "dave: purged" in capsys.readouterr().out
+    with closing(db.connect()) as conn:
+        assert not conn.execute("SELECT 1 FROM accounts WHERE username = 'dave'").fetchone()
+
+
 def test_newer_db_refused():
     with closing(db.connect()) as conn:
         conn.execute(f"PRAGMA user_version = {db.SCHEMA_VERSION + 1}")

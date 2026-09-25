@@ -5,6 +5,11 @@
 #            directory on ./data — that
 #            directory IS the secret (signing keys, token hashes): back it up
 #            encrypted, never share it.
+#   share    the free share host: a Gamma (ghcr.io/tim4431/gamma) in cloud
+#            mode holding every free account's published pages, its data on
+#            ./share-data and its settings in share.env (share.env.example).
+#            Reached only through caddy (no host port). Pinned to an image
+#            tag: bump it with the desktop release.
 #   caddy    TLS on the host's own 80/443 with its internal certificate
 #            (`tls internal`; Cloudflare holds the public one), for a host
 #            with a public address (a VPS). The DNS record for the hostname
@@ -24,6 +29,15 @@ services:
     ports:
       - "127.0.0.1:9002:9002"
 
+  share:
+    image: ghcr.io/tim4431/gamma:sha-a0d31c6
+    restart: unless-stopped
+    env_file: share.env
+    volumes:
+      - ./share-data:/data
+    depends_on:
+      - account
+
   caddy:
     image: caddy:2-alpine
     restart: unless-stopped
@@ -38,6 +52,7 @@ services:
       - caddy-config:/config
     depends_on:
       - account
+      - share
 
 volumes:
   caddy-data:

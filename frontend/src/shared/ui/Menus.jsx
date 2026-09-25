@@ -8,6 +8,7 @@ import React, { createContext, useContext, useEffect, useLayoutEffect, useRef, u
 import { createPortal } from "react-dom";
 import { CheckIcon, ChevronDownIcon, ChevronRightIcon } from "./Icons";
 import { useMenuAim } from "./menuAim";
+import { t } from "../../shared/i18n/i18n.js";
 
 // Every ContextMenu publishes its submenu state so the rows inside it — at
 // any nesting depth — can open/close flyouts without the caller wiring state.
@@ -209,7 +210,7 @@ function MenuSelect({ value, onChange, options, label, block, icon: TriggerIcon,
   const [menu, close, triggerProps, triggerRef] = useDropdown();
   const current = options.find(([v]) => v === value) || options[0];
   const CurrentIcon = current?.[2];
-  const title = TriggerIcon ? `${current?.[1]} — ${label}` : label;
+  const title = TriggerIcon ? `${t(current?.[1])} — ${label}` : label;
   return (
     <>
       <button type="button" className={`uiBtn sm uiSelectBtn ${block ? "block" : ""} ${TriggerIcon && iconOnly ? "iconSq" : ""}`}
@@ -219,7 +220,7 @@ function MenuSelect({ value, onChange, options, label, block, icon: TriggerIcon,
         ) : (
           <>
             {CurrentIcon ? <CurrentIcon size={13} /> : null}
-            <span className="uiSelectLabel">{current?.[1]}</span>
+            <span className="uiSelectLabel">{t(current?.[1])}</span>
           </>
         )}
         {!iconOnly ? <ChevronDownIcon size={13} className="uiSelectChev" /> : null}
@@ -230,7 +231,7 @@ function MenuSelect({ value, onChange, options, label, block, icon: TriggerIcon,
             <button key={val} className="ctxMenuItem ctxMenuItemIconed"
               onClick={() => { close(); onChange(val); }}>
               {OptIcon ? <span className="ctxMenuIcon"><OptIcon size={14} /></span> : null}
-              {lab}
+              {t(lab)}
               {val === value ? <CheckIcon size={14} className="ctxMenuCheck" /> : null}
             </button>
           ))}
@@ -249,16 +250,16 @@ function ActionMenu({ label, icon: Icon, items, disabled, iconOnly = false }) {
   return (
     <>
       <button type="button" className={`uiBtn sm uiSelectBtn ${iconOnly ? "iconSq" : ""}`} disabled={disabled}
-        aria-label={label} title={iconOnly ? label : undefined} {...triggerProps}>
-        {Icon ? <Icon size={13} /> : null}{iconOnly ? null : label}
+        aria-label={t(label)} title={iconOnly ? t(label) : undefined} {...triggerProps}>
+        {Icon ? <Icon size={13} /> : null}{iconOnly ? null : t(label)}
         {iconOnly ? null : <ChevronDownIcon size={13} className="uiSelectChev" />}
       </button>
       {menu ? (
         <ContextMenu x={menu.x} y={menu.y} anchorRight onClose={close} ignoreRef={triggerRef}>
           {items.map(({ icon: ItemIcon, label: lab, title, onClick, danger, disabled: off }) => (
-            <MenuItem key={lab} icon={ItemIcon} title={title} danger={danger} disabled={off}
+            <MenuItem key={lab} icon={ItemIcon} title={t(title)} danger={danger} disabled={off}
               onClick={() => { close(); onClick(); }}>
-              {lab}
+              {t(lab)}
             </MenuItem>
           ))}
         </ContextMenu>

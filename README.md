@@ -36,8 +36,9 @@ Open a paper by pasting any link — arXiv, DOI, or a publisher page; Gamma find
 - **Highlight** — select text or drag a box around a figure, pick a color, add a comment. Each highlight becomes a block in your notes. Highlights already saved in the file by Acrobat, Preview or SumatraPDF come in as blocks too.
 - **Draw** — with a stylus or the mouse: circle a claim, sketch an arrow, highlight freely. Lasso strokes to move, resize, rotate or recolor them; erase whole strokes or part of one. Ink is a note block linked to its place on the page.
 - **Follow citations** — references in the PDF are clickable; a global **← Back** unwinds jumps across documents, and a cited arXiv/DOI paper is one click from your library.
+- **Translate** — redraw a page in your language in place, figures untouched, or translate just a selected sentence. Microsoft's free service works with no setup; a chat model, Google or Youdao are one setting away.
 
-→ Guide: [Reading and highlighting](./docs/user_guide.md#reading-and-highlighting) · [Draw with a pen](./docs/user_guide.md#draw-with-a-pen) · [Links inside the PDF](./docs/user_guide.md#links-inside-the-pdf)
+→ Guide: [Reading and highlighting](./docs/user_guide.md#reading-and-highlighting) · [Draw with a pen](./docs/user_guide.md#draw-with-a-pen) · [Links inside the PDF](./docs/user_guide.md#links-inside-the-pdf) · [Translate a paper](./docs/user_guide.md#translate-a-paper)
 
 ## Take notes
 

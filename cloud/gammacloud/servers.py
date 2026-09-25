@@ -21,8 +21,8 @@ from urllib.parse import urlsplit
 
 from .accounts import Problem
 from .db import now
+from .oidc import LOOPBACK_HOSTS
 
-LOOPBACK_HOSTS = frozenset({"localhost", "127.0.0.1", "::1"})
 MAX_NAME = 80
 MAX_SERVERS = 50
 

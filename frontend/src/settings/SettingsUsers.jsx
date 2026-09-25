@@ -16,6 +16,7 @@ import { PaneHead, SubDialog, Field, UnitInput, Empty, QuotaMeter, PasswordInput
 import { CloudIdentityRow } from "./SettingsCloudSignIn";
 import { ManageWorkspaceDialog, useAccounts } from "./SettingsWorkspace";
 import { BookIcon, HardDriveIcon, PenIcon, PlusIcon, ShieldIcon, Trash2Icon, UserIcon, UsersIcon } from "../shared/ui/Icons";
+import { T, t } from "../shared/i18n/i18n.js";
 
 export function UsersSettings({ value, selfOnly = false }) {
   const { setStatus, confirm, onSelfRenamed, refreshQuota, isAdmin, me, isGuest, quotaInfo,
@@ -134,12 +135,12 @@ export function UsersSettings({ value, selfOnly = false }) {
     if (renaming) {
       const d = await usersCall(`/${encodeURIComponent(u.username)}/rename`, "POST", { new_username: newName });
       if (!d) return;
-      if (d.renamed) setStatus(`Renamed ${d.renamed.from} → ${d.renamed.to}. Sessions keep working.`);
+      if (d.renamed) setStatus(t("Renamed {from} → {to}. Sessions keep working.", { from: d.renamed.from, to: d.renamed.to }));
       // Renamed yourself? Re-read the session so the whole app re-keys
       // (avatar, per-user prefs, synced tabs all follow the new name).
       if (d.renamed?.from === myName) onSelfRenamed?.();
     } else {
-      setStatus(`Updated ${u.username}.`);
+      setStatus(t("Updated {username}.", { username: u.username }));
     }
     setEdit(null);
   }
@@ -149,7 +150,7 @@ export function UsersSettings({ value, selfOnly = false }) {
     const maxMb = parseLimit(edit.max_upload_mb);
     const quotaMb = parseLimit(edit.quota_mb);
     if (Number.isNaN(maxMb) || Number.isNaN(quotaMb)) {
-      setError("Storage limits must be whole numbers of MB, or blank for the server default.");
+      setError(t("Storage limits must be whole numbers of MB, or blank for the server default."));
       return;
     }
     const payload = {};
@@ -157,7 +158,7 @@ export function UsersSettings({ value, selfOnly = false }) {
     if (quotaMb !== (u.quota_mb ?? null)) payload.quota_mb = quotaMb;
     if (Object.keys(payload).length) {
       if (!await usersCall(`/${encodeURIComponent(u.username)}`, "PUT", payload)) return;
-      setStatus(`Storage limits updated for ${u.username}.`);
+      setStatus(t("Storage limits updated for {username}.", { username: u.username }));
       if (u.username === myName) refreshQuota?.();
     }
     setEdit(null);
@@ -165,9 +166,9 @@ export function UsersSettings({ value, selfOnly = false }) {
 
   function deleteAccount(u) {
     confirm({
-      title: "Delete user",
-      message: `Delete "${u.username}" and ALL their data (notes, PDFs, settings)? This can't be undone.`,
-      confirmLabel: "Delete",
+      title: T("Delete user"),
+      message: t("Delete \"{username}\" and ALL their data (notes, PDFs, settings)? This can't be undone.", { username: u.username }),
+      confirmLabel: t("Delete"),
       danger: true,
       onConfirm: async () => {
         const d = await usersCall(`/${encodeURIComponent(u.username)}`, "DELETE");
@@ -180,11 +181,11 @@ export function UsersSettings({ value, selfOnly = false }) {
 
   async function submitAdd() {
     const f = addForm;
-    if (!f?.username.trim() || !f?.password) { setError("Username and password are required."); return; }
+    if (!f?.username.trim() || !f?.password) { setError(t("Username and password are required.")); return; }
     const d = await usersCall("", "POST",
       { username: f.username.trim(), password: f.password, is_admin: !!f.is_admin });
     if (!d) return;
-    setStatus(`Created ${f.username.trim()}.`);
+    setStatus(t("Created {username}.", { username: f.username.trim() }));
     setAddForm(null);
   }
 
@@ -193,38 +194,38 @@ export function UsersSettings({ value, selfOnly = false }) {
   function accountDialog() {
     const u = edit.original;
     return (
-      <SubDialog title={`Edit ${u.username}`} onClose={closeEdit} draft={edit}>
+      <SubDialog title={t("Edit {username}", { username: u.username })} onClose={closeEdit} draft={edit}>
         <div className="settingsForm">
-          <Field label="Username" hint="renaming keeps sessions and share links working">
+          <Field label={t("Username")} hint={t("renaming keeps sessions and share links working")}>
             <input
               className="aiKeyInput" type="text" spellCheck={false}
               value={edit.username}
               onChange={(e) => setEdit((f) => ({ ...f, username: e.target.value }))}
             />
           </Field>
-          <Field label="New password" hint="blank keeps the current one">
+          <Field label={t("New password")} hint={t("blank keeps the current one")}>
             <PasswordInput
               autoComplete="new-password"
               value={edit.password}
               onChange={(e) => setEdit((f) => ({ ...f, password: e.target.value }))}
             />
           </Field>
-          <label className="uiCheckRow" title={lastAdmin(u) ? "The last admin can't be demoted" : ""}>
+          <label className="uiCheckRow" title={lastAdmin(u) ? t("The last admin can't be demoted") : ""}>
             <input
               type="checkbox" checked={edit.is_admin} disabled={lastAdmin(u)}
               onChange={(e) => setEdit((f) => ({ ...f, is_admin: e.target.checked }))}
             />
-            <ShieldIcon size={13} /> Admin privilege
+            <ShieldIcon size={13} /> {t("Admin privilege")}
           </label>
           {error ? <div className="settingsPaneHint aiKeysError">{error}</div> : null}
           <div className="reportModalBtns">
             {u.username !== myName ? (
               <button className="uiBtn danger" disabled={busy} onClick={() => deleteAccount(u)}>
-                <Trash2Icon size={13} /> Delete…
+                <Trash2Icon size={13} /> {t("Delete…")}
               </button>
             ) : null}
-            <button className="uiBtn" onClick={closeEdit}>Cancel</button>
-            <button className="uiBtn primary" disabled={busy} onClick={saveAccount}>Save</button>
+            <button className="uiBtn" onClick={closeEdit}>{t("Cancel")}</button>
+            <button className="uiBtn primary" disabled={busy} onClick={saveAccount}>{t("Save")}</button>
           </div>
         </div>
       </SubDialog>
@@ -235,22 +236,22 @@ export function UsersSettings({ value, selfOnly = false }) {
     const u = edit.original;
     // effective quota = this account's override, else the server default
     const effQuota = u.quota_mb ?? defaults?.quota_mb;
-    const defUpload = defaults ? `server default (${defaults.max_upload_mb})` : "server default";
+    const defUpload = defaults ? t("server default ({max_upload_mb})", { max_upload_mb: defaults.max_upload_mb }) : t("server default");
     const defQuota = defaults
-      ? `server default (${defaults.quota_mb || "unlimited"})`
-      : "server default";
+      ? t("server default ({unlimited})", { unlimited: defaults.quota_mb || t("unlimited") })
+      : t("server default");
     return (
-      <SubDialog title={`Storage limits — ${u.username}`} onClose={closeEdit} draft={edit}>
+      <SubDialog title={t("Storage limits — {username}", { username: u.username })} onClose={closeEdit} draft={edit}>
         <div className="settingsForm">
           <QuotaMeter usedBytes={u.used_bytes} quotaMb={effQuota} />
-          <Field label="Max upload size" hint="largest single PDF or image · blank inherits">
+          <Field label={t("Max upload size")} hint={t("largest single PDF or image · blank inherits")}>
             <UnitInput
               unit="MB" min={1} placeholder={defUpload}
               value={edit.max_upload_mb}
               onChange={(max_upload_mb) => setEdit((f) => ({ ...f, max_upload_mb }))}
             />
           </Field>
-          <Field label="Storage quota" hint="total for all uploads · blank inherits · 0 = unlimited">
+          <Field label={t("Storage quota")} hint={t("total for all uploads · blank inherits · 0 = unlimited")}>
             <UnitInput
               unit="MB" min={0} placeholder={defQuota}
               value={edit.quota_mb}
@@ -259,8 +260,8 @@ export function UsersSettings({ value, selfOnly = false }) {
           </Field>
           {error ? <div className="settingsPaneHint aiKeysError">{error}</div> : null}
           <div className="reportModalBtns">
-            <button className="uiBtn" onClick={closeEdit}>Cancel</button>
-            <button className="uiBtn primary" disabled={busy} onClick={saveStorage}>Save</button>
+            <button className="uiBtn" onClick={closeEdit}>{t("Cancel")}</button>
+            <button className="uiBtn primary" disabled={busy} onClick={saveStorage}>{t("Save")}</button>
           </div>
         </div>
       </SubDialog>
@@ -277,13 +278,13 @@ export function UsersSettings({ value, selfOnly = false }) {
         <span className="aiProvMeta">
           <span className="aiProvName">
             {u.username}
-            {u.username === myName ? <span className="uiTag">you</span> : null}
-            {u.is_admin ? <span className="uiTag admin">admin</span> : null}
-            {u.is_guest ? <span className="uiTag">guest</span> : null}
+            {u.username === myName ? <span className="uiTag">{t("you")}</span> : null}
+            {u.is_admin ? <span className="uiTag admin">{t("admin")}</span> : null}
+            {u.is_guest ? <span className="uiTag">{t("guest")}</span> : null}
           </span>
           {u.is_guest || u.max_upload_mb != null ? (
             <span className="aiProvDesc">
-              {[u.is_guest ? "shared demo workspace, resets daily" : "",
+              {[u.is_guest ? t("shared demo workspace, resets daily") : "",
                 u.max_upload_mb != null ? `max file ${u.max_upload_mb} MB` : ""].filter(Boolean).join(" · ")}
             </span>
           ) : null}
@@ -292,12 +293,12 @@ export function UsersSettings({ value, selfOnly = false }) {
         <span className="aiProvActions">
           {isAdmin ? (
             <>
-              <button className="uiBtn sm" disabled={busy} title={`Storage limits for ${u.username}`} onClick={() => openStorage(u)}>
-                <HardDriveIcon size={13} /> Storage
+              <button className="uiBtn sm" disabled={busy} title={t("Storage limits for {username}", { username: u.username })} onClick={() => openStorage(u)}>
+                <HardDriveIcon size={13} /> {t("Storage")}
               </button>
               {!u.is_guest ? (
-                <button className="uiBtn sm" disabled={busy} title={`Rename ${u.username}, set a password, or grant admin`} onClick={() => openAccount(u)}>
-                  <PenIcon size={13} /> Edit
+                <button className="uiBtn sm" disabled={busy} title={t("Rename {username}, set a password, or grant admin", { username: u.username })} onClick={() => openAccount(u)}>
+                  <PenIcon size={13} /> {t("Edit")}
                 </button>
               ) : null}
             </>
@@ -311,16 +312,16 @@ export function UsersSettings({ value, selfOnly = false }) {
                 <span className="aiProvSubMeta">
                   <span className="aiProvSubName">
                     {w.name}
-                    {w.default ? <span className="uiTag">default</span> : null}
+                    {w.default ? <span className="uiTag">{t("default")}</span> : null}
                   </span>
-                  <span className="aiProvDesc">personal workspace · {fmtBytes(w.used_bytes)}</span>
+                  <span className="aiProvDesc">{t("personal workspace · {size}", { size: fmtBytes(w.used_bytes) })}</span>
                 </span>
                 <span className="aiProvActions">
                   {openable.has(w.id) ? (
-                    <button className="uiBtn sm" onClick={() => { closeSettings?.(); switchWorkspace?.(w.id); }}>Open</button>
+                    <button className="uiBtn sm" onClick={() => { closeSettings?.(); switchWorkspace?.(w.id); }}>{t("Open")}</button>
                   ) : null}
-                  <button className="uiBtn sm" onClick={() => setManage(w.id)} title={`Manage ${w.name}`}>
-                    <PenIcon size={13} /> Manage
+                  <button className="uiBtn sm" onClick={() => setManage(w.id)} title={t("Manage {name}", { name: w.name })}>
+                    <PenIcon size={13} /> {t("Manage")}
                   </button>
                 </span>
               </div>
@@ -333,8 +334,8 @@ export function UsersSettings({ value, selfOnly = false }) {
 
   return (
     <>
-      {isAdmin && !selfOnly ? <PaneHead icon={UsersIcon} title="Users" /> : <PaneHead icon={UserIcon} title="Account" />}
-      {isAdmin && !info && !error ? <Empty icon={UsersIcon}>Loading…</Empty> : null}
+      {isAdmin && !selfOnly ? <PaneHead icon={UsersIcon} title={t("Users")} /> : <PaneHead icon={UserIcon} title={t("Account & sync")} />}
+      {isAdmin && !info && !error ? <Empty icon={UsersIcon}>{t("Loading…")}</Empty> : null}
       {(selfOnly ? rows.filter((row) => row.username === me) : rows).map(userRow)}
       {!isGuest && (selfOnly || !isAdmin) ? <CloudIdentityRow setStatus={setStatus} confirm={confirm} /> : null}
       {edit?.kind === "account" ? accountDialog() : null}
@@ -348,16 +349,16 @@ export function UsersSettings({ value, selfOnly = false }) {
         />
       ) : null}
       {!isAdmin || selfOnly ? null : addForm ? (
-        <SubDialog title="Add user" draft={addForm} onClose={() => { setAddForm(null); setError(""); }}>
+        <SubDialog title={t("Add user")} draft={addForm} onClose={() => { setAddForm(null); setError(""); }}>
           <div className="settingsForm">
-          <Field label="Username" hint="letters, digits, _ . -">
+          <Field label={t("Username")} hint={t("letters, digits, _ . -")}>
             <input
               className="aiKeyInput" type="text" spellCheck={false} autoFocus
               value={addForm.username}
               onChange={(e) => setAddForm((f) => ({ ...f, username: e.target.value }))}
             />
           </Field>
-          <Field label="Password">
+          <Field label={t("Password")}>
             <PasswordInput
               autoComplete="new-password"
               value={addForm.password}
@@ -370,13 +371,13 @@ export function UsersSettings({ value, selfOnly = false }) {
               type="checkbox" checked={!!addForm.is_admin}
               onChange={(e) => setAddForm((f) => ({ ...f, is_admin: e.target.checked }))}
             />
-            <ShieldIcon size={13} /> Grant the admin privilege
+            <ShieldIcon size={13} /> {t("Grant the admin privilege")}
           </label>
           {error ? <div className="settingsPaneHint aiKeysError">{error}</div> : null}
           <div className="reportModalBtns">
-            <button className="uiBtn" onClick={() => { setAddForm(null); setError(""); }}>Cancel</button>
+            <button className="uiBtn" onClick={() => { setAddForm(null); setError(""); }}>{t("Cancel")}</button>
             <button className="uiBtn primary" disabled={busy} onClick={submitAdd}>
-              {busy ? "Creating…" : "Create user"}
+              {busy ? t("Creating…") : t("Create user")}
             </button>
           </div>
           </div>
@@ -384,7 +385,7 @@ export function UsersSettings({ value, selfOnly = false }) {
       ) : info ? (
         <div className="reportModalBtns settingsAlignStart">
           <button className="uiBtn" onClick={() => { setError(""); setEdit(null); setAddForm({ username: "", password: "", is_admin: false }); }}>
-            + Add user
+            {t("+ Add user")}
           </button>
         </div>
       ) : null}

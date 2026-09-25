@@ -1,22 +1,24 @@
 import React from "react";
 import { API, apiJson, fmtBytes, isUnverifiedPaperMeta, metaSourceInfo, getCurrentWorkspace } from "../shared/lib/utils";
 import { MenuSelect } from "../shared/ui/Menus";
+import { T, t, tn } from "../shared/i18n/i18n.js";
 import {
   PaneHead, Section, Row, Toggle, Segmented, ToggleGroup, IconChoices, UnitInput, CharSlider, approxPages,
   Stat, Empty, QuotaMeter, LogBox, SettingsDraftContext, SettingsSyncContext, useSettingsDraft,
 } from "./SettingsKit";
 import { SECTION_PREFS } from "./sectionPrefs.js";
-import { LibraryDisplaySettings } from "./SettingsLibraryDisplay";
 import { AppearanceSettings } from "./SettingsAppearance";
+import { KeyboardSettings } from "./SettingsKeyboard";
 import { AiSettings } from "./SettingsAi";
 import { IntegrationSettings } from "./SettingsIntegrations";
 import { UsersSettings } from "./SettingsUsers";
 import { WorkspacesSettings } from "./SettingsWorkspace";
+import { SyncSettings } from "./SettingsSync";
 import { WorkspaceBackups } from "./SettingsBackups";
 import { ServerSettings } from "./SettingsServer";
 import { dotTone } from "../app/notices";
 import { resolveSettingsPane, searchSettings } from "./settingsNavigation";
-import { TRANSLATE_LANGS } from "../app/prefs";
+import { TranslationSettings } from "./SettingsTranslation";
 import {
   ActivityIcon,
   BookIcon,
@@ -34,7 +36,6 @@ import {
   HardDriveIcon,
   HighlightIcon,
   HomeIcon,
-  LanguagesIcon,
   ListIcon,
   MessageSquareIcon,
   OutlineIcon,
@@ -45,36 +46,36 @@ import {
   RefreshIcon,
   SearchIcon,
   ServerIcon,
-  SlidersIcon,
   SparklesIcon,
   TerminalIcon,
   TypeIcon,
   UserIcon,
   UsersIcon,
+  KeyboardIcon,
 } from "../shared/ui/Icons";
 
 // One sidebar, three groups: everyday preferences, AI, management. Every
 // pane is one click from any other; nothing opens a second dialog.
 const PREFERENCE_NAV = [
-  ["appearance", "Appearance", ContrastIcon],
-  ["reading", "Reading & editing", BookIcon],
-  ["library", "Library", ListIcon],
-  ["account", "Account", UserIcon],
+  ["appearance", T("Appearance"), ContrastIcon],
+  ["reading", T("Reading & editing"), BookIcon],
+  ["keyboard", T("Keyboard"), KeyboardIcon],
+  ["account", T("Account & sync"), UserIcon],
 ];
 const AI_NAV = [
-  ["ai", "Connections", SparklesIcon],
-  ["assistant", "Chat", MessageSquareIcon],
-  ["ai-advanced", "Advanced", ActivityIcon],
-  ["prompts", "Prompts", TypeIcon],
-  ["integrations", "Integrations", LinkIcon],
+  ["ai", T("Connections"), SparklesIcon],
+  ["assistant", T("Chat"), MessageSquareIcon],
+  ["ai-advanced", T("Advanced"), ActivityIcon],
+  ["prompts", T("Prompts"), TypeIcon],
+  ["integrations", T("Integrations"), LinkIcon],
 ];
 const MANAGEMENT_NAV = [
-  ["workspaces", "Workspaces", UsersIcon],
-  ["backups", "Backups", DatabaseIcon],
-  ["maintenance", "Library maintenance", HardDriveIcon],
-  ["users", "Users", UsersIcon],
-  ["server", "Server", ServerIcon],
-  ["diagnostics", "Diagnostics", ActivityIcon],
+  ["workspaces", T("Workspaces"), UsersIcon],
+  ["backups", T("Backups"), DatabaseIcon],
+  ["maintenance", T("Library maintenance"), HardDriveIcon],
+  ["users", T("Users"), UsersIcon],
+  ["server", T("Server"), ServerIcon],
+  ["diagnostics", T("Diagnostics"), ActivityIcon],
 ];
 
 // --- Editor: notes + search + PDF viewer -----------------------------------
@@ -82,149 +83,89 @@ const MANAGEMENT_NAV = [
 // What draws on the page with the handwriting tools open: the stored
 // preference is "fingers never draw" (inkPenOnly), pictured as two tiles.
 const DRAW_WITH = [
-  { value: "pen", label: "Pen only", hint: "fingers scroll and zoom", Icon: PenIcon },
-  { value: "any", label: "Pen and finger", hint: "for screens without a stylus", Icon: HandIcon },
+  { value: "pen", label: T("Pen only"), hint: T("fingers scroll and zoom"), Icon: PenIcon },
+  { value: "any", label: T("Pen and finger"), hint: T("for screens without a stylus"), Icon: HandIcon },
 ];
 
-function ViewerSettings({ value, onTranslationModels }) {
+function ViewerSettings({ value }) {
   return (
     <>
 
-      <Section title="PDF viewer" scope="account" prefs={SECTION_PREFS.reading["PDF viewer"]}>
+      <Section title={t("PDFs")} scope="account" prefs={SECTION_PREFS.reading["PDFs"]}>
         <Row
           icon={HighlightIcon}
-          label="Imported annotations"
-          hint="Annotations saved inside a PDF become highlights"
-          title={"Highlights, notes and rectangles saved inside a PDF file (a Gamma export, SumatraPDF, Acrobat…) are imported as regular highlights. Keep originals leaves the file untouched (the viewer hides them); Remove originals rewrites the stored PDF without them."}
+          label={t("Imported annotations")}
+          hint={t("Annotations saved inside a PDF become highlights")}
+          title={t("Highlights, notes and rectangles saved inside a PDF file (a Gamma export, SumatraPDF, Acrobat…) are imported as regular highlights. Keep originals leaves the file untouched (the viewer hides them); Remove originals rewrites the stored PDF without them.")}
         >
           <Segmented value={value.embAnnots} onChange={value.setEmbAnnots}
-            options={[["hide", "Keep originals"], ["strip", "Remove originals"]]} />
+            options={[["hide", t("Keep originals")], ["strip", t("Remove originals")]]} />
         </Row>
+        <Toggle
+          icon={CloudDownloadIcon}
+          label={t("Open-access fallback")}
+          hint={t("Fetch a free copy when a publisher blocks the PDF")}
+          title={t("When a publisher PDF is paywalled or refuses to download, load a legal open-access copy instead — usually the arXiv version. A note tells you when the substitute isn't the published version.")}
+          checked={value.oaFallback}
+          onChange={value.setOaFallback}
+        />
+        <Toggle
+          icon={SparklesIcon}
+          label={t("Auto-fetch metadata")}
+          hint={t("Title, authors and BibTeX on first open")}
+          title={t("Look up title, authors, venue and BibTeX the first time a paper opens (arXiv → DOI → AI). Turn this off to fetch only via the refresh button in the metadata popover.")}
+          checked={value.metaAutoFetch}
+          onChange={value.setMetaAutoFetch}
+        />
+        <Toggle
+          icon={HardDriveIcon}
+          label={t("Save external PDFs")}
+          hint={t("Keep a server copy of PDFs opened from a URL")}
+          title={t("Keep a server copy of PDFs opened from a URL, so they load instantly next time and survive dead links.")}
+          checked={value.pdfSaveLocal}
+          onChange={value.setPdfSaveLocal}
+        />
       </Section>
-      <Section title="Handwriting" scope="browser">
-        <div data-setting="Draws with">
-          <IconChoices label="Draws with" value={value.inkPenOnly ? "pen" : "any"}
+      <Section title={t("Handwriting")} scope="browser">
+        <div data-setting={t("Draws with")}>
+          <IconChoices label={t("Draws with")} value={value.inkPenOnly ? "pen" : "any"}
             onChange={(choice) => value.setInkPenOnly(choice === "pen")} options={DRAW_WITH} />
         </div>
         <Toggle
           icon={PenIcon}
-          label="Stylus draws right away"
-          hint="Without opening the tools first"
-          title="With a stylus (Apple Pencil, Surface Pen, Wacom…), touching the page draws with the pen tool even when the handwriting tools are closed. Fingers and the mouse still select text. Turn off if your stylus keeps leaving marks while you navigate."
+          label={t("Stylus draws right away")}
+          hint={t("Without opening the tools first")}
+          title={t("With a stylus (Apple Pencil, Surface Pen, Wacom…), touching the page draws with the pen tool even when the handwriting tools are closed. Fingers and the mouse still select text. Turn off if your stylus keeps leaving marks while you navigate.")}
           checked={value.inkAutoPen}
           onChange={value.setInkAutoPen}
         />
         <Toggle
           icon={ActivityIcon}
-          label="Pressure-sensitive strokes"
-          hint="Pen strokes thicken with pressure"
-          title="Use the stylus pressure for stroke width, like ink on paper. Off gives even strokes. Mouse and finger strokes are always even."
+          label={t("Pressure-sensitive strokes")}
+          hint={t("Pen strokes thicken with pressure")}
+          title={t("Use the stylus pressure for stroke width, like ink on paper. Off gives even strokes. Mouse and finger strokes are always even.")}
           checked={value.inkPressure}
           onChange={value.setInkPressure}
         />
-      </Section>
-      <Section title="Translation" scope="account" prefs={SECTION_PREFS.reading["Translation"]} action={
-        <button className="uiBtn sm" onClick={onTranslationModels} title="Translation model, effort and parallel requests (AI › Advanced)">
-          <SlidersIcon size={13} /> Model & speed
-        </button>
-      }>
-        <Toggle
-          icon={LanguagesIcon}
-          label="Translation button"
-          hint="In the viewer; nothing translates until you ask"
-          title="Show the translate button in the PDF viewer. Click translates the current page (or shows/hides an existing translation); right-click or long-press opens the options, including translating the whole document. Nothing translates until you ask."
-          checked={value.translateEnabled}
-          onChange={value.setTranslateEnabled}
-        />
-        <Row
-          icon={GlobeIcon}
-          label="Translate into"
-          hint="The translated view's language"
-          title="The translated view (the languages button in the PDF viewer's zoom column) redraws each paragraph in this language in place — figures and layout stay put, and holding Alt peeks at the original. Paragraph translations are cached per language and model, so re-reading a page is free."
-        >
-          <MenuSelect
-            label="Translation language"
-            value={value.translateLang}
-            onChange={value.setTranslateLang}
-            options={TRANSLATE_LANGS}
-          />
-        </Row>
       </Section>
     </>
   );
 }
 
-function TranslationModels({ value, advanced = false }) {
-  return <>
-        {!advanced ? <Row
-          icon={SparklesIcon}
-          label="Translation model"
-          hint="Used when translating pages"
-          title="Model used to translate page text. Translation is a bulk job — a fast, cheap model usually reads fine and costs much less than the chat model."
-        >
-          <TranslateModelSelect value={value} />
-        </Row> : null}
-        {advanced ? <>
-        <Row
-          icon={ActivityIcon}
-          label="Translation effort"
-          hint="Low makes reasoning models translate much faster"
-          title="Reasoning effort sent with translation calls. Reasoning models spend their thinking budget before writing any output, which is wasted on translation — Low or Minimal typically cuts a page from ~20s to a few seconds. Default omits the parameter (some models reject it)."
-        >
-          <MenuSelect
-            label="Translation effort"
-            value={value.translateEffort}
-            onChange={value.setTranslateEffort}
-            options={[["", "Default"], ["minimal", "Minimal"], ["low", "Low"], ["medium", "Medium"], ["high", "High"]]}
-          />
-        </Row>
-        <Row
-          icon={RefreshIcon}
-          label="Parallel requests"
-          hint="Translation calls in flight at once (1–32)"
-          title="A page is translated in small chunks, this many at a time; a whole-document job streams chunks across pages and never exceeds it. Higher is faster until your provider's rate limit pushes back."
-        >
-          <UnitInput value={value.translateParallel} unit="calls" min={1}
-            onCommit={(raw) => {
-              const n = Number.parseInt(raw, 10);
-              if (Number.isFinite(n)) value.setTranslateParallel(Math.max(1, Math.min(32, n)));
-            }} />
-        </Row>
-        </> : null}
-  </>;
-}
-
-// Same shape as MetaModelSelect below: "" = follow the chat model, stale
-// picks fall back.
-function TranslateModelSelect({ value }) {
-  const models = value.aiModels || [];
-  const multiProvider = new Set(models.map((m) => m.provider)).size > 1;
-  const current = value.translateModel && models.some((m) => m.id === value.translateModel) ? value.translateModel : "";
-  return (
-    <MenuSelect
-      label="Translation model" value={current} onChange={value.setTranslateModel}
-      options={[
-        ["", `Same as chat: ${value.chatModelName || "provider default"}`],
-        ...models.map((m) => [m.id, multiProvider ? `${m.model} · ${m.provider_name || m.provider}` : m.model]),
-      ]}
-    />
-  );
-}
-
-const SEARCH_SHAPES = [["panel", "Full panel"], ["bar", "Find bar"]];
+const SEARCH_SHAPES = [["panel", t("Full panel")], ["bar", t("Find bar")]];
 
 function SearchSettings({ value }) {
   return (
     <>
 
-      <Section title="Search opens as" scope="account" prefs={SECTION_PREFS.reading["Search opens as"]}>
-        <Row icon={HomeIcon} label="On the home page" hint="Full panel: grouped result lists"
-          title="With no PDF open the compact find bar has nothing to show, so the home page defaults to the full panel.">
+      <Section title={t("Search opens as")} scope="account" prefs={SECTION_PREFS.reading["Search opens as"]}>
+        <Row icon={HomeIcon} label={t("On the home page")} hint={t("Full panel: grouped result lists")}
+          title={t("With no PDF open the compact find bar has nothing to show, so the home page defaults to the full panel.")}>
           <Segmented value={value.searchDetailsHome ? "panel" : "bar"} onChange={(v) => value.setSearchDetailsHome(v === "panel")}
             options={SEARCH_SHAPES} />
         </Row>
-        <Row icon={PaperIcon} label="On a page" hint="Find bar: match counter and next / previous"
-          title="On a page, Ctrl+F defaults to the compact browser-style find bar; the full panel adds the grouped result lists.">
+        <Row icon={PaperIcon} label={t("On a page")} hint={t("Find bar: match counter and next / previous")}
+          title={t("On a page, Ctrl+F defaults to the compact browser-style find bar; the full panel adds the grouped result lists.")}>
           <Segmented value={value.searchDetailsPaper ? "panel" : "bar"} onChange={(v) => value.setSearchDetailsPaper(v === "panel")}
             options={SEARCH_SHAPES} />
         </Row>
@@ -237,12 +178,12 @@ function NotesSettings({ value }) {
   return (
     <>
 
-      <Section title="Notes" scope="account" prefs={SECTION_PREFS.reading["Notes"]}>
-        <Row icon={CornerDownLeftIcon} label="Enter key"
-          hint={value.enterNewNote ? "Shift+Enter inserts a new line" : "Shift+Enter creates a new note"}>
+      <Section title={t("Notes")} scope="account" prefs={SECTION_PREFS.reading["Notes"]}>
+        <Row icon={CornerDownLeftIcon} label={t("Enter key")}
+          hint={value.enterNewNote ? t("Shift+Enter inserts a new line") : t("Shift+Enter creates a new note")}>
           <Segmented value={value.enterNewNote ? "note" : "line"}
             onChange={(choice) => value.setEnterNewNote(choice === "note")}
-            options={[["note", "New note"], ["line", "New line"]]} />
+            options={[["note", t("New note")], ["line", t("New line")]]} />
         </Row>
       </Section>
     </>
@@ -255,12 +196,11 @@ async function requestReindex(setStatus, scheduledSuffix, wakeTasks) {
     const result = await apiJson(`${API}/search-reindex`, { method: "POST" });
     if (result.scheduled || result.busy) wakeTasks?.();
     setStatus(result.busy
-      ? "Indexing is already running—see the tasks popover."
-      : result.scheduled
-        ? `Re-indexing ${result.scheduled} paper${result.scheduled === 1 ? "" : "s"} ${scheduledSuffix}`
-        : "No papers with PDFs to index.");
+      ? t("Indexing is already running—see the tasks popover.") : result.scheduled
+        ? t("Re-indexing {scheduled} paper{_s} {scheduledSuffix}", { scheduled: result.scheduled, _s: result.scheduled === 1 ? "" : "s", scheduledSuffix })
+        : t("No papers with PDFs to index."));
   } catch (err) {
-    setStatus(`Reindex failed: ${err.message}`);
+    setStatus(t("Reindex failed: {message}", { message: err.message }));
   }
 }
 
@@ -276,58 +216,16 @@ function StorageCard() {
       <div className="setCardHead">
         <span className="setIcon"><HardDriveIcon size={15} /></span>
         <span className="settingText">
-          <span className="settingLabel">Uploaded files</span>
-          <span className="settingDesc">PDFs and images on the server · up to {q.max_upload_mb} MB each</span>
+          <span className="settingLabel">{t("Uploaded files")}</span>
+          <span className="settingDesc">{t("PDFs and images on the server · up to {max_upload_mb} MB each", { max_upload_mb: q.max_upload_mb })}</span>
         </span>
         <span className="setCardVal">
           {fmtBytes(q.used_bytes)}
-          <em>{q.quota_mb ? ` / ${fmtBytes(q.quota_mb * 1024 * 1024)}` : " · no quota"}</em>
+          <em>{q.quota_mb ? ` / ${fmtBytes(q.quota_mb * 1024 * 1024)}` : t(" · no quota")}</em>
         </span>
       </div>
       <QuotaMeter usedBytes={q.used_bytes} quotaMb={q.quota_mb} barOnly />
     </div>
-  );
-}
-
-// Whole-library import from Zotero: the user zips their File → Export Library
-// → "Zotero RDF" folder (with files, notes and annotations) and uploads it.
-// Collections become folders, tags labels, notes child blocks; annotations ride
-// inside the exported PDFs and reuse the embedded-annotations importer (the
-// strip-vs-hide choice follows the standing Settings → PDF viewer preference).
-function LibrarySettings({ value }) {
-  return (
-    <>
-      <PaneHead icon={ListIcon} title="Library" />
-      <Section title="Display" scope="account" prefs={SECTION_PREFS.library["Display"]}>
-        <LibraryDisplaySettings value={value} />
-      </Section>
-      <Section title="PDFs" scope="account" prefs={SECTION_PREFS.library["PDFs"]}>
-        <Toggle
-          icon={CloudDownloadIcon}
-          label="Open-access fallback"
-          hint="Fetch a free copy when a publisher blocks the PDF"
-          title="When a publisher PDF is paywalled or refuses to download, load a legal open-access copy instead — usually the arXiv version. A note tells you when the substitute isn't the published version."
-          checked={value.oaFallback}
-          onChange={value.setOaFallback}
-        />
-        <Toggle
-          icon={SparklesIcon}
-          label="Auto-fetch metadata"
-          hint="Title, authors and BibTeX on first open"
-          title="Look up title, authors, venue and BibTeX the first time a paper opens (arXiv → DOI → AI). Turn this off to fetch only via the refresh button in the metadata popover."
-          checked={value.metaAutoFetch}
-          onChange={value.setMetaAutoFetch}
-        />
-        <Toggle
-          icon={HardDriveIcon}
-          label="Save external PDFs"
-          hint="Keep a server copy of PDFs opened from a URL"
-          title="Keep a server copy of PDFs opened from a URL, so they load instantly next time and survive dead links."
-          checked={value.pdfSaveLocal}
-          onChange={value.setPdfSaveLocal}
-        />
-      </Section>
-    </>
   );
 }
 
@@ -337,19 +235,19 @@ function LibrarySettings({ value }) {
 // index, so "unknown" means not visited yet, not broken; Reindex fills it in.
 function MaintenanceSettings({ value }) {
   return <>
-    <PaneHead icon={HardDriveIcon} title="Library maintenance" />
-      <Section title="Storage">
+    <PaneHead icon={HardDriveIcon} title={t("Library maintenance")} />
+      <Section title={t("Storage")}>
         <StorageCard />
       </Section>
-      <Section title="Index">
+      <Section title={t("Index")}>
         <Row
           icon={RefreshIcon}
-          label="PDF text index"
-          hint={value.indexTask?.active ? "Rebuilding — progress in the tasks popover" : "Re-extract every paper if results look stale"}
-          title="Full-text search reads a per-user index built from the extracted PDF text. Rebuild it when library-wide results look stale or incomplete."
+          label={t("PDF text index")}
+          hint={value.indexTask?.active ? t("Rebuilding — progress in the tasks popover") : t("Re-extract every paper if results look stale")}
+          title={t("Full-text search reads a per-user index built from the extracted PDF text. Rebuild it when library-wide results look stale or incomplete.")}
         >
-          <button className="uiBtn sm" disabled={value.indexTask?.active} onClick={() => requestReindex(value.setStatus, "in the background.", value.wakeTasks)}>
-            {value.indexTask?.active ? "Indexing…" : "Rebuild"}
+          <button className="uiBtn sm" disabled={value.indexTask?.active} onClick={() => requestReindex(value.setStatus, t("in the background."), value.wakeTasks)}>
+            {value.indexTask?.active ? t("Indexing…") : t("Rebuild")}
           </button>
         </Row>
       </Section>
@@ -399,12 +297,12 @@ function MetaStatusSection({ value }) {
         body: JSON.stringify({ doc_ids: docIds }),
       });
       value.setStatus(r.busy
-        ? "Indexing is already running—try again when it finishes."
-        : `Indexing ${docIds.length === 1 ? "1 paper" : `${docIds.length} papers`} in the background.`);
+        ? t("Indexing is already running—try again when it finishes.")
+        : t("Indexing {papers} in the background.", { papers: docIds.length === 1 ? "1 paper" : `${docIds.length} papers` }));
       value.wakeTasks?.();
       pollRefresh();
     } catch (err) {
-      value.setStatus(`Indexing failed: ${err.message}`);
+      value.setStatus(t("Indexing failed: {message}", { message: err.message }));
     }
   }
 
@@ -474,7 +372,7 @@ function MetaStatusSection({ value }) {
       }
     }
     setBusy(null);
-    value.setStatus(`Metadata: ${ok} fetched${failed ? `, ${failed} failed` : ""}${stopRef.current ? " (stopped)" : ""}.`);
+    value.setStatus(t("Metadata: {ok} fetched{failed}{stopped}.", { ok, failed: failed ? `, ${failed} failed` : "", stopped: stopRef.current ? " (stopped)" : "" }));
     refresh();
   }
 
@@ -502,76 +400,76 @@ function MetaStatusSection({ value }) {
   );
   const metaCell = (p) => {
     if (!p.has_meta) {
-      return p.meta_error ? cell("bad", "failed", p.meta_error) : cell("muted", "none", "No metadata yet");
+      return p.meta_error ? cell("bad", "failed", p.meta_error) : cell("muted", "none", t("No metadata yet"));
     }
     const src = metaSourceInfo({ source: p.meta_source, kind: p.meta_kind, unverified: p.meta_unverified });
-    if (!src) return cell("ok", "yes", "Metadata resolved");
+    if (!src) return cell("ok", "yes", t("Metadata resolved"));
     return cell(src.warn ? "bad" : p.meta_source === "ai" ? "muted" : "ok", src.short, src.hint);
   };
   // Text and index are separate columns: extraction state is only known once
   // the indexer has visited the doc, so an unindexed paper shows "unknown".
   const textCell = (p) => (
     p.text_chars === null
-      ? cell("muted", "unknown", "Unknown until the paper is indexed — Reindex to find out")
+      ? cell("muted", "unknown", t("Unknown until the paper is indexed — Reindex to find out"))
       : textOk(p)
         ? cell("ok", p.text_chars >= 1000 ? `${Math.round(p.text_chars / 1000)}k` : String(p.text_chars),
-          `${p.text_chars.toLocaleString()} characters extracted`)
-        : cell("bad", "no text", p.has_file ? "No text layer — scanned or image-only?" : "PDF file not on the server")
+          t("{text_chars} characters extracted", { text_chars: p.text_chars.toLocaleString() }))
+        : cell("bad", t("no text"), p.has_file ? t("No text layer — scanned or image-only?") : t("PDF file not on the server"))
   );
   const indexCell = (p) => (
     p.indexed
-      ? cell("ok", "indexed", "In the search index")
+      ? cell("ok", "indexed", t("In the search index"))
       : p.index_stale
-        ? cell("muted", "stale", "Indexed with an older extractor version — Reindex refreshes it")
-        : cell("muted", "—", "Not in the search index yet")
+        ? cell("muted", "stale", t("Indexed with an older extractor version — Reindex refreshes it"))
+        : cell("muted", "—", t("Not in the search index yet"))
   );
 
   return (
     <Section
-      title="Papers"
+      title={t("Papers")}
       action={
         <span className="metaStatActions">
           <MenuSelect
-            label="Show papers" value={filterMode} onChange={setFilterMode}
+            label={t("Show papers")} value={filterMode} onChange={setFilterMode}
             options={[
               ["all", `All (${list.length})`],
-              ["attention", "Needs attention"],
-              ["unverified", `Unverified AI (${unverified.length})`],
-              ["missing", `Missing metadata (${missing.length})`],
-              ["notext", "No text layer"],
+              ["attention", t("Needs attention")],
+              ["unverified", t("Unverified AI ({n})", { n: unverified.length })],
+              ["missing", t("Missing metadata ({n})", { n: missing.length })],
+              ["notext", t("No text layer")],
             ]}
           />
           <MenuSelect
-            label="Sort papers" value={sortMode} onChange={setSortMode}
+            label={t("Sort papers")} value={sortMode} onChange={setSortMode}
             options={[
-              ["meta", "Needs work first"],
-              ["text", "Missing text first"],
-              ["updated", "Recently modified"],
+              ["meta", t("Needs work first")],
+              ["text", t("Missing text first")],
+              ["updated", t("Recently modified")],
             ]}
           />
-          <button className="uiBtn sm iconSq" aria-label="Reindex"
-            title="Re-extract every paper into the search index (also fills in the text column)"
-            onClick={() => { requestReindex(value.setStatus, "— text status fills in as it runs.", value.wakeTasks); pollRefresh(); }}>
+          <button className="uiBtn sm iconSq" aria-label={t("Reindex")}
+            title={t("Re-extract every paper into the search index (also fills in the text column)")}
+            onClick={() => { requestReindex(value.setStatus, t("— text status fills in as it runs."), value.wakeTasks); pollRefresh(); }}>
             <RefreshIcon size={13} />
           </button>
-          <button className="uiBtn sm iconSq" onClick={refresh} disabled={!!busy} title="Reload this table" aria-label="Reload">
+          <button className="uiBtn sm iconSq" onClick={refresh} disabled={!!busy} title={t("Reload this table")} aria-label={t("Reload")}>
             <ActivityIcon size={13} />
           </button>
         </span>
       }
     >
-      {papers === null ? <Empty icon={ListIcon}>Loading…</Empty> : null}
-      {error ? <Empty icon={ActivityIcon}>Status unavailable — {error}</Empty> : null}
-      {papers !== null && !list.length && !error ? <Empty icon={PaperIcon}>No papers yet — open a PDF first.</Empty> : null}
+      {papers === null ? <Empty icon={ListIcon}>{t("Loading…")}</Empty> : null}
+      {error ? <Empty icon={ActivityIcon}>{t("Status unavailable — {error}", { error: error })}</Empty> : null}
+      {papers !== null && !list.length && !error ? <Empty icon={PaperIcon}>{t("No papers yet — open a PDF first.")}</Empty> : null}
       {list.length ? (
         <>
           <div className="setStats">
             <Stat icon={PaperIcon} label="verified" value={counts.verified} total={list.length}
-              title="Metadata from a registry (arXiv/DOI/Crossref), edited by hand, or a non-paper document — nothing left to verify. Missing and unverified AI records count against this." />
-            <Stat icon={FileTextIcon} label="text layer" value={counts.text} total={list.length}
-              title="Papers whose PDF yielded extractable text" />
+              title={t("Metadata from a registry (arXiv/DOI/Crossref), edited by hand, or a non-paper document — nothing left to verify. Missing and unverified AI records count against this.")} />
+            <Stat icon={FileTextIcon} label={t("text layer")} value={counts.text} total={list.length}
+              title={t("Papers whose PDF yielded extractable text")} />
             <Stat icon={SearchIcon} label="indexed" value={counts.indexed} total={list.length}
-              title="Papers covered by the full-text search index" />
+              title={t("Papers covered by the full-text search index")} />
           </div>
           <div className="metaStatTable">
             <div className="metaStatRow metaStatHeader">
@@ -583,24 +481,24 @@ function MetaStatusSection({ value }) {
                   shown.forEach((p) => (allSelected ? next.delete(p.id) : next.add(p.id)));
                   return next;
                 })}
-                title={allSelected ? "Clear the shown papers from the selection" : "Select all shown papers"}
+                title={allSelected ? t("Clear the shown papers from the selection") : t("Select all shown papers")}
               />
-              <span>Paper</span>
-              <span>Metadata</span>
-              <span>Text</span>
-              <span>Index</span>
+              <span>{t("Paper")}</span>
+              <span>{t("Metadata")}</span>
+              <span>{t("Text")}</span>
+              <span>{t("Index")}</span>
               <span />
             </div>
             {!shown.length ? (
               <div className="metaStatRow" style={{ cursor: "default" }}>
-                <span /><span className="metaStatTitle" style={{ color: "var(--text-dim)" }}>Nothing matches this filter.</span>
+                <span /><span className="metaStatTitle" style={{ color: "var(--text-dim)" }}>{t("Nothing matches this filter.")}</span>
               </div>
             ) : null}
             {shown.map((p) => (
               <label key={p.id} className="metaStatRow">
                 <input type="checkbox" checked={selected.has(p.id)} onChange={() => toggle(p.id)} />
                 <span
-                  className="metaStatTitle" title={`${p.title} — click to open`}
+                  className="metaStatTitle" title={t("{title} — click to open", { title: p.title })}
                   onClick={(e) => {
                     if (!value.openPaper) return;
                     e.preventDefault(); e.stopPropagation();
@@ -612,8 +510,8 @@ function MetaStatusSection({ value }) {
                 {indexCell(p)}
                 {needsIndex(p) ? (
                   <button
-                    className="searchToggle" aria-label={`Index ${p.title}`}
-                    title="Extract this paper's text into the search index now"
+                    className="searchToggle" aria-label={t("Index {title}", { title: p.title })}
+                    title={t("Extract this paper's text into the search index now")}
                     onClick={(e) => { e.preventDefault(); e.stopPropagation(); indexDocs([p.doc_id]); }}
                   >
                     <RefreshIcon size={13} />
@@ -624,8 +522,8 @@ function MetaStatusSection({ value }) {
           </div>
           {busy ? (
             <div className="metaStatBatchRow">
-              <span className="metaStatProgress">Fetching {busy.done + 1}/{busy.total} — {busy.title}</span>
-              <button className="uiBtn sm" onClick={() => { stopRef.current = true; }}>Stop</button>
+              <span className="metaStatProgress">{t("Fetching {done}/{total} — {title}", { done: busy.done + 1, total: busy.total, title: busy.title })}</span>
+              <button className="uiBtn sm" onClick={() => { stopRef.current = true; }}>{t("Stop")}</button>
             </div>
           ) : (
             <div className="metaStatBatchRow">
@@ -637,25 +535,21 @@ function MetaStatusSection({ value }) {
                        unverified.length && `${unverified.length} unverified (AI)`,
                        toIndex.length && `${toIndex.length} to index`]
                         .filter(Boolean).join(" · ")
-                    : "Everything is verified and indexed"}
+                    : t("Everything is verified and indexed")}
               </span>
               <button className="uiBtn sm primary" disabled={!targets.length} onClick={() => retry(targets)}
-                title={selected.size ? "Fetch metadata for the selected papers"
-                  : "Fetch metadata for papers that are missing it or have an unverified AI record"}>
-                <SparklesIcon size={13} />{selected.size ? "Fetch selected" : "Fetch needed"}
+                title={selected.size ? t("Fetch metadata for the selected papers") : t("Fetch metadata for papers that are missing it or have an unverified AI record")}>
+                <SparklesIcon size={13} />{selected.size ? t("Fetch selected") : t("Fetch needed")}
               </button>
               <button className="uiBtn sm" disabled={!shown.length} onClick={() => retry(shown)}
                 title={filterMode === "all"
-                  ? "Re-fetch metadata for every paper, including ones that already have it"
-                  : "Re-fetch metadata for every paper the current filter shows"}>
-                {filterMode === "all" ? "Refetch all" : "Refetch shown"}
+                  ? t("Re-fetch metadata for every paper, including ones that already have it") : t("Re-fetch metadata for every paper the current filter shows")}>
+                {filterMode === "all" ? t("Refetch all") : t("Refetch shown")}
               </button>
               <button className="uiBtn sm" disabled={!indexTargets.length || indexing}
                 onClick={() => indexDocs(indexTargets.map((p) => p.doc_id))}
-                title={indexing ? "Indexing is already running — progress in the tasks popover"
-                  : selected.size ? "Extract the selected papers' text into the search index"
-                    : "Extract only the papers the search index is missing or holds at an older extractor version"}>
-                <RefreshIcon size={13} />{indexing ? "Indexing…" : selected.size ? "Reindex selected" : "Reindex needed"}
+                title={indexing ? t("Indexing is already running — progress in the tasks popover") : selected.size ? t("Extract the selected papers' text into the search index") : t("Extract only the papers the search index is missing or holds at an older extractor version")}>
+                <RefreshIcon size={13} />{indexing ? t("Indexing…") : selected.size ? t("Reindex selected") : t("Reindex needed")}
               </button>
             </div>
           )}
@@ -682,8 +576,8 @@ function PromptAccordion({ items }) {
           <div key={key} className={`setAcc ${isOpen ? "open" : ""}`}>
             <button className="setAccHead" onClick={() => setOpen(isOpen ? null : key)}>
               <span className="setIcon"><Icon size={14} /></span>
-              <span className="setAccName">{label}</span>
-              {custom ? <span className="uiTag">custom</span> : null}
+              <span className="setAccName">{t(label)}</span>
+              {custom ? <span className="uiTag">{t("custom")}</span> : null}
               <span className="setAccChevron">{isOpen ? "▾" : "▸"}</span>
             </button>
             {isOpen ? (
@@ -692,7 +586,7 @@ function PromptAccordion({ items }) {
                   onChange={(event) => setDraft(event.target.value)} />
                 <div className="reportModalBtns settingsAlignStart">
                   <button className="uiBtn sm" disabled={!modified} onClick={() => setDraft(defaultValue || "")}>
-                    Restore default
+                    {t("Restore default")}
                   </button>
                 </div>
               </div>
@@ -708,16 +602,16 @@ function PromptAccordion({ items }) {
 // Save button for all of them.
 function PromptsSettings({ value }) {
   const prompts = [
-    { key: "chat", label: "Chat system prompt", icon: MessageSquareIcon,
+    { key: "chat", label: T("Chat system prompt"), icon: MessageSquareIcon,
       draft: value.promptDraft, setDraft: value.setPromptDraft,
       defaultValue: value.aiInfo?.default_prompt, custom: !!value.chatSystem, saved: value.chatSystem },
-    { key: "meta", label: "Metadata extraction", icon: PaperIcon,
+    { key: "meta", label: T("Metadata extraction"), icon: PaperIcon,
       draft: value.metaPromptDraft, setDraft: value.setMetaPromptDraft,
       defaultValue: value.aiInfo?.metadata_prompt, custom: !!value.metaPrompt, saved: value.metaPrompt },
-    { key: "cite", label: "PPT citation", icon: TypeIcon,
+    { key: "cite", label: T("PPT citation"), icon: TypeIcon,
       draft: value.citePromptDraft, setDraft: value.setCitePromptDraft,
       defaultValue: value.aiInfo?.cite_prompt, custom: !!value.citePrompt, saved: value.citePrompt },
-    { key: "agent", label: "Library agent", icon: SparklesIcon,
+    { key: "agent", label: T("Library agent"), icon: SparklesIcon,
       draft: value.agentPromptDraft, setDraft: value.setAgentPromptDraft,
       defaultValue: value.aiInfo?.agent_prompt, custom: !!value.agentSystem, saved: value.agentSystem },
   ];
@@ -728,14 +622,14 @@ function PromptsSettings({ value }) {
   useSettingsDraft("prompts", dirty, discard);
   return (
     <>
-      <PaneHead icon={TypeIcon} title="Custom prompts" />
+      <PaneHead icon={TypeIcon} title={t("Custom prompts")} />
       <Section
-        title="Prompts"
+        title={t("Prompts")}
         scope="account" prefs={SECTION_PREFS.prompts["Prompts"]}
         action={
           <span className="setControlGroup">
-            <button className="uiBtn sm" disabled={!dirty} onClick={discard}>Cancel</button>
-            <button className="uiBtn sm primary" disabled={!dirty} onClick={value.savePrompts}>Save</button>
+            <button className="uiBtn sm" disabled={!dirty} onClick={discard}>{t("Cancel")}</button>
+            <button className="uiBtn sm primary" disabled={!dirty} onClick={value.savePrompts}>{t("Save")}</button>
           </span>
         }
       >
@@ -750,33 +644,33 @@ function PromptsSettings({ value }) {
 // offer it ("folder" = library/folder chat, "page" = page chat), short is
 // the chip name in the ToggleGroup.
 const AGENT_PERM_ROWS = [
-  ["list", ListIcon, "List pages",
-   "See the folder's page titles, labels and metadata", ["folder"], "List"],
-  ["read", BookIcon, "Read pages",
-   "Read a page's PDF text plus your highlights and notes", ["folder", "page"], "Read"],
-  ["block_read", OutlineIcon, "Read note blocks",
-   "Read a page's note outline with block ids", ["folder", "page"], "Blocks"],
-  ["view", EyeIcon, "View PDF pages",
-   "Show the model a picture of a PDF page (scans without a text layer, figures)", ["folder", "page"], "View"],
-  ["search", SearchIcon, "Search",
-   "Full-text search across the folder's notes and PDFs", ["folder", "page"], "Search"],
-  ["web_search", GlobeIcon, "Search papers online",
-   "Look papers up on Crossref and arXiv (e.g. a reference a paper cites)", ["folder", "page"], "Papers"],
-  ["web_read", CloudDownloadIcon, "Fetch documents",
-   "Read a paper or web page by DOI, arXiv id or URL without adding it to the library", ["folder", "page"], "Fetch"],
-  ["rename", PenIcon, "Rename pages", "Change page titles on request", ["folder"], "Rename"],
-  ["move", FolderIcon, "Move pages",
-   "File pages into folders (a new path creates the folder)", ["folder"], "Move"],
-  ["block_edit", PencilIcon, "Edit note blocks",
-   "Edit, create and move note blocks on request (never deletes)", ["folder", "page"], "Edit"],
+  ["list", ListIcon, t("List pages"),
+   t("See the folder's page titles, labels and metadata"), ["folder"], t("List")],
+  ["read", BookIcon, t("Read pages"),
+   t("Read a page's PDF text plus your highlights and notes"), ["folder", "page"], t("Read")],
+  ["block_read", OutlineIcon, t("Read note blocks"),
+   t("Read a page's note outline with block ids"), ["folder", "page"], t("Blocks")],
+  ["view", EyeIcon, t("View PDF pages"),
+   t("Show the model a picture of a PDF page (scans without a text layer, figures)"), ["folder", "page"], t("View")],
+  ["search", SearchIcon, t("Search"),
+   t("Full-text search across the folder's notes and PDFs"), ["folder", "page"], t("Search")],
+  ["web_search", GlobeIcon, t("Search papers online"),
+   t("Look papers up on Crossref and arXiv (e.g. a reference a paper cites)"), ["folder", "page"], t("Papers")],
+  ["web_read", CloudDownloadIcon, t("Fetch documents"),
+   t("Read a paper or web page by DOI, arXiv id or URL without adding it to the library"), ["folder", "page"], t("Fetch")],
+  ["rename", PenIcon, t("Rename pages"), t("Change page titles on request"), ["folder"], t("Rename")],
+  ["move", FolderIcon, t("Move pages"),
+   t("File pages into folders (a new path creates the folder)"), ["folder"], t("Move")],
+  ["block_edit", PencilIcon, t("Edit note blocks"),
+   t("Edit, create and move note blocks on request (never deletes)"), ["folder", "page"], t("Edit")],
 ];
 
 // The three chat kinds, each with its own permission map (prefs.js
 // CHAT_KINDS): [kind, icon, label, hint, agent scope].
 export const CHAT_KIND_ROWS = [
-  ["folder", FolderIcon, "Folder chat", "Home and folder views", "folder"],
-  ["pdf", FileTextIcon, "PDF chat", "Pages with a PDF", "page"],
-  ["notes", OutlineIcon, "Notes chat", "Note pages", "page"],
+  ["folder", FolderIcon, t("Folder chat"), t("Home and folder views"), "folder"],
+  ["pdf", FileTextIcon, t("PDF chat"), t("Pages with a PDF"), "page"],
+  ["notes", OutlineIcon, t("Notes chat"), t("Note pages"), "page"],
 ];
 
 // One chat kind's tool chips (a ToggleGroup) bound to the stored permission
@@ -796,93 +690,93 @@ export function AgentToolPicker({ kind, perms, setPerms, disabled }) {
   );
 }
 
-// Chat: the tools each chat kind may use, one chip row per kind — the same
-// chips the chat header's settings popover shows for the open chat.
-function AssistantSettings({ value }) {
+// Chat: how chats behave (reasoning effort, snapshot clearing), then the
+// tools each chat kind may use, one chip row per kind — the same chips the
+// chat header's settings popover shows for the open chat.
+function AssistantSettings({ value, ai }) {
   return (
-    <Section title="Tools" scope="account" prefs={SECTION_PREFS.assistant["Tools"]}>
-      <Toggle icon={SparklesIcon} label="Assistant tools"
-        hint="Let chats read, search and edit your library"
-        title="The master switch for tools in every chat. Off keeps your per-chat choices below for when you turn it on again."
-        checked={value.agentEnabled} onChange={value.setAgentEnabled} />
-      {CHAT_KIND_ROWS.map(([kind, icon, label, hint]) => (
-        <Row key={kind} icon={icon} label={label} hint={hint}>
-          <AgentToolPicker kind={kind} perms={value.agentPerms} setPerms={value.setAgentPerms} disabled={!value.agentEnabled} />
+    <>
+      <Section title={t("Chat")} scope="account" prefs={SECTION_PREFS.assistant["Chat"]}>
+        <Row icon={ActivityIcon} label={t("Default reasoning effort")} hint={t("Leave Default unless your model supports it")}>
+          <MenuSelect label={t("Default reasoning effort")} value={ai.chatEffort} onChange={ai.setChatEffort}
+            options={[["", t("Default")], ...(ai.aiInfo?.efforts || ["low", "medium", "high"]).map((v) => [v, v])]} />
         </Row>
-      ))}
-    </Section>
+        <Toggle
+          icon={RectSelectIcon}
+          label={t("Clear snapshots on click")}
+          hint={t("A plain click in the PDF also drops pending snapshots")}
+          title={t("A plain click in the PDF clears the quoted text selections under the chat. Turn this on to also drop pending rectangle snapshots with that click — images pasted into the chat are never touched.")}
+          checked={value.chatImgAutoClear}
+          onChange={value.setChatImgAutoClear}
+        />
+      </Section>
+      <Section title={t("Tools")} scope="account" prefs={SECTION_PREFS.assistant["Tools"]}>
+        <Toggle icon={SparklesIcon} label={t("Assistant tools")}
+          hint={t("Let chats read, search and edit your library")}
+          title={t("The master switch for tools in every chat. Off keeps your per-chat choices below for when you turn it on again.")}
+          checked={value.agentEnabled} onChange={value.setAgentEnabled} />
+        {CHAT_KIND_ROWS.map(([kind, icon, label, hint]) => (
+          <Row key={kind} icon={icon} label={label} hint={hint}>
+            <AgentToolPicker kind={kind} perms={value.agentPerms} setPerms={value.setAgentPerms} disabled={!value.agentEnabled} />
+          </Row>
+        ))}
+      </Section>
+    </>
   );
 }
 
-function AdvancedAiSettings({ value, ai, papers }) {
+function AdvancedAiSettings({ value }) {
   const budgets = [value.chatContextChars, value.metaContextChars, value.multiContextChars];
-  const contextPreset = budgets.every((n, i) => n === [60000, 6000, 120000][i]) ? "standard"
-    : budgets.every((n, i) => n === [120000, 12000, 240000][i]) ? "larger" : "custom";
-  const shared = "Extracted PDF text is measured in characters. Larger budgets can improve answers but cost more tokens.";
+  const contextPreset = budgets.every((n, i) => n === [60000, 6000, 120000][i]) ? "standard" : budgets.every((n, i) => n === [120000, 12000, 240000][i]) ? "larger" : "custom";
+  const shared = t("Extracted PDF text is measured in characters. Larger budgets can improve answers but cost more tokens.");
   const limits = [
-    [FileTextIcon, "Single paper", "Read from the open paper for one chat message",
+    [FileTextIcon, t("Single paper"), t("Read from the open paper for one chat message"),
       value.chatContextChars, value.setChatContextChars,
-      `${shared} When you ask about selected passages, this budget is spent around them (a grounding slice from the start plus text around each selection's page) instead of only the start of the paper.`],
-    [PaperIcon, "Metadata extraction", "Read while detecting identifiers and extracting fields",
+      t("{shared} When you ask about selected passages, this budget is spent around them (a grounding slice from the start plus text around each selection's page) instead of only the start of the paper.", { shared })],
+    [PaperIcon, t("Metadata extraction"), t("Read while detecting identifiers and extracting fields"),
       value.metaContextChars, value.setMetaContextChars, shared],
-    [BookIcon, "Multi-paper total", "Shared evenly by every selected paper",
+    [BookIcon, t("Multi-paper total"), t("Shared evenly by every selected paper"),
       value.multiContextChars, value.setMultiContextChars, shared],
   ];
 
   return <>
-
-        <Row icon={ActivityIcon} label="Default reasoning effort" hint="Leave Default unless your model supports it">
-          <MenuSelect label="Default reasoning effort" value={ai.chatEffort} onChange={ai.setChatEffort}
-            options={[["", "Default"], ...(ai.aiInfo?.efforts || ["low", "medium", "high"]).map((v) => [v, v])]} />
-        </Row>
-        <Section title="Tool limits" scope="account" prefs={SECTION_PREFS.advanced["Tool limits"]}>
-        <Row icon={RefreshIcon} label="Tool rounds"
-          hint="AI ↔ tool round-trips per message"
-          title="Each round-trip lets the model issue more tool calls. This is a runaway guard — actual work is separately capped at 200 changes per message.">
+        <Section title={t("Tool limits")} scope="account" prefs={SECTION_PREFS.advanced["Tool limits"]}>
+        <Row icon={RefreshIcon} label={t("Tool rounds")}
+          hint={t("AI ↔ tool round-trips per message")}
+          title={t("Each round-trip lets the model issue more tool calls. This is a runaway guard — actual work is separately capped at 200 changes per message.")}>
           <UnitInput value={value.toolRounds} unit="rounds" min={1}
             onCommit={(raw) => {
               const n = Number.parseInt(raw, 10);
               if (Number.isFinite(n)) value.setToolRounds(Math.max(1, Math.min(100, n)));
             }} />
         </Row>
-        <Row icon={BookIcon} label="Read window"
-          hint={`Document text per read tool call · ${approxPages(value.agentReadChars)}`}
-          title="The most extracted PDF text one read_page tool call may return. The agent reads a long paper in windows of this size, continuing where the last call stopped — a larger window means fewer calls but more tokens per message.">
+        <Row icon={BookIcon} label={t("Read window")}
+          hint={t("Document text per read tool call · {pages}", { pages: approxPages(value.agentReadChars) })}
+          title={t("The most extracted PDF text one read_page tool call may return. The agent reads a long paper in windows of this size, continuing where the last call stopped — a larger window means fewer calls but more tokens per message.")}>
           <CharSlider value={value.agentReadChars} onChange={value.setAgentReadChars} />
         </Row>
         </Section>
       <Section
-        title="Context size"
+        title={t("Context size")}
         scope="account" prefs={SECTION_PREFS.advanced["Context size"]}
         action={
-          <MenuSelect label="Context budget" value={contextPreset}
+          <MenuSelect label={t("Context budget")} value={contextPreset}
             onChange={(preset) => {
               if (preset === "custom") return; // the sliders below are the custom values
               const factor = preset === "larger" ? 2 : 1;
               value.setChatContextChars(60000 * factor);
               value.setMetaContextChars(6000 * factor);
               value.setMultiContextChars(120000 * factor);
-            }} options={[["standard", "Standard"], ["larger", "Larger"], ["custom", "Custom"]]} />
+            }} options={[["standard", t("Standard")], ["larger", t("Larger")], ["custom", t("Custom")]]} />
         }
       >
         {limits.map(([icon, label, hint, current, setCurrent, title]) => (
-          <Row key={label} icon={icon} label={label} hint={`${hint} · ${approxPages(current)}`}
+          <Row key={label} icon={icon} label={label} hint={t("{hint} · {current}", { hint: hint, current: approxPages(current) })}
             title={title}>
             <CharSlider value={current} onChange={setCurrent} />
           </Row>
         ))}
       </Section>
-        <Section title="Translation performance" scope="account" prefs={SECTION_PREFS.advanced["Translation performance"]}><TranslationModels value={papers} advanced /></Section>
-        <Section title="Chat" scope="account" prefs={SECTION_PREFS.advanced["Chat"]}>
-          <Toggle
-            icon={RectSelectIcon}
-            label="Clear snapshots on click"
-            hint="A plain click in the PDF also drops pending snapshots"
-            title="A plain click in the PDF clears the quoted text selections under the chat. Turn this on to also drop pending rectangle snapshots with that click — images pasted into the chat are never touched."
-            checked={value.chatImgAutoClear}
-            onChange={value.setChatImgAutoClear}
-          />
-        </Section>
   </>;
 }
 
@@ -896,35 +790,35 @@ function AdvancedSettings({ value }) {
     .filter((entry) => level === "all" || (level === "warn" ? !!entry.tone : entry.tone === "error"));
   return (
     <>
-      <PaneHead icon={ActivityIcon} title="Diagnostics" />
-      <Section title="Tracing">
+      <PaneHead icon={ActivityIcon} title={t("Diagnostics")} />
+      <Section title={t("Tracing")}>
         <Toggle
           icon={BugIcon}
-          label="Debug logging"
-          hint="Trace reading-position, restore and sync events"
-          title="Trace reading-position tracking, restore and sync events into the system log below (and the browser console)."
+          label={t("Debug logging")}
+          hint={t("Trace reading-position, restore and sync events")}
+          title={t("Trace reading-position tracking, restore and sync events into the system log below (and the browser console).")}
           checked={value.debugLog}
           onChange={value.setDebugLog}
         />
       </Section>
-      <Section title="Logs">
+      <Section title={t("Logs")}>
         <LogBox
           icon={TerminalIcon}
-          label="System log"
-          description="Application events from this browser session"
+          label={t("System log")}
+          description={t("Application events from this browser session")}
           entries={entries}
-          emptyText={level === "all" ? "Nothing logged yet this session."
-            : `No ${level === "warn" ? "warnings or errors" : "errors"} logged this session.`}
-          copyStatus="Log copied."
+          emptyText={level === "all" ? t("Nothing logged yet this session.")
+            : t("No {errors} logged this session.", { errors: level === "warn" ? t("warnings or errors") : t("errors") })}
+          copyStatus={t("Log copied.")}
           setStatus={value.setStatus}
           extra={<Segmented value={level} onChange={setLevel}
-            options={[["all", "All"], ["warn", "Warnings", null, "Warnings and errors"], ["error", "Errors"]]} />}
+            options={[["all", t("All")], ["warn", t("Warnings"), null, t("Warnings and errors")], ["error", t("Errors")]]} />}
         />
       </Section>
-      <Section title="Help">
-        <Row icon={BugIcon} label="Report a problem" hint="A GitHub issue prefilled with this log and the build"
-          title="Describe what went wrong; Gamma adds its build, your browser and the recent lines of this log and opens the bug form on GitHub for you to review before posting.">
-          <button type="button" className="uiBtn sm" onClick={value.openReport}>Report…</button>
+      <Section title={t("Help")}>
+        <Row icon={BugIcon} label={t("Report a problem")} hint={t("A GitHub issue prefilled with this log and the build")}
+          title={t("Describe what went wrong; Gamma adds its build, your browser and the recent lines of this log and opens the bug form on GitHub for you to review before posting.")}>
+          <button type="button" className="uiBtn sm" onClick={value.openReport}>{t("Report…")}</button>
         </Row>
       </Section>
     </>
@@ -942,8 +836,11 @@ const SYNC_SOON_MS = 6000; // the server pushes to Gamma Cloud 5 s after a chang
 // account-wide), polled every 15 s, again as soon as a local change has been
 // saved, and sooner while a push waits. Every answer also goes to the local
 // hook's noteCloud, which then knows when its last push reached the cloud.
+// `refresh()` polls again at once (after Settings → Account synced by hand).
 function useCloudSyncStatus(open, local) {
   const [cloud, setCloud] = React.useState(null);
+  const [tick, setTick] = React.useState(0);
+  const refresh = React.useCallback(() => setTick((n) => n + 1), []);
   const signedIn = !!local && local.state !== "signed-out";
   const saved = local?.state === "loaded";
   const noteCloud = local?.noteCloud;
@@ -961,12 +858,12 @@ function useCloudSyncStatus(open, local) {
     };
     poll();
     return () => { stopped = true; clearTimeout(timer); };
-  }, [open, signedIn, saved, noteCloud]);
-  return React.useMemo(() => ({ local, cloud }), [local, cloud]);
+  }, [open, signedIn, saved, noteCloud, tick]);
+  return React.useMemo(() => ({ local, cloud, refresh }), [local, cloud, refresh]);
 }
 
 export default function SettingsDialog({
-  activePane, onPaneChange, onClose, papers, notes, library, ai, prompts,
+  activePane, onPaneChange, onClose, papers, notes, keyboard, library, ai, prompts,
   context, search, users, workspace, backups, server, diagnostics, profileSync, notices,
 }) {
   const syncState = useCloudSyncStatus(!!activePane, profileSync);
@@ -999,8 +896,8 @@ export default function SettingsDialog({
   });
   React.useEffect(() => {
     if (!activePane) { setQuery(""); setPending(null); setMobileIndex(false); return; }
-    const legacyTarget = { notes: "Enter key", search: "On the home page", viewer: "Imported annotations",
-      context: "Single paper" }[activePane];
+    const legacyTarget = { notes: t("Enter key"), search: t("On the home page"), viewer: t("Imported annotations"),
+      context: t("Single paper") }[activePane];
     if (legacyTarget) setJump({ label: legacyTarget });
   }, [activePane]);
   // Looking at a pane resolves the notices pointing at it (app/useNotices.js).
@@ -1031,7 +928,7 @@ export default function SettingsDialog({
   const navButton = ([id, label, Icon]) => <button key={id} type="button"
     className={`settingsNavBtn ${pane === id && !query ? "active" : ""}`}
     aria-current={pane === id && !query ? "page" : undefined} onClick={() => navigate(id)}>
-    <Icon size={17} /><span>{label}</span>
+    <Icon size={17} /><span>{t(label)}</span>
     {notices?.panes?.[id] ? <i className={`noticeDot inline ${dotTone(notices.panes[id])}`} data-tone={notices.panes[id]} aria-hidden="true" /> : null}
   </button>;
   return (
@@ -1039,7 +936,7 @@ export default function SettingsDialog({
       <SettingsSyncContext.Provider value={syncState}>
       <div className="reportOverlay" onClick={() => guard(onClose)}>
         <div className={`settingsModal ${mobileIndex ? "settingsIndexOpen" : ""}`}
-          role="dialog" aria-modal="true" aria-label="Settings"
+          role="dialog" aria-modal="true" aria-label={t("Settings")}
           tabIndex={-1} ref={modalRef} onClick={(event) => event.stopPropagation()}
           onKeyDown={(event) => {
             if (event.key === "Escape") {
@@ -1057,74 +954,78 @@ export default function SettingsDialog({
             }
           }}>
           <div className="settingsTopbar">
-            <button className="uiBtn sm settingsMobileBack" onClick={() => guard(() => { setMobileIndex(true); setQuery(""); })}>Back</button>
-            <span className="settingsTopTitle">Settings</span>
+            <button className="uiBtn sm settingsMobileBack" onClick={() => guard(() => { setMobileIndex(true); setQuery(""); })}>{t("Back")}</button>
+            <span className="settingsTopTitle">{t("Settings")}</span>
             <div className="settingsSearch">
               <SearchIcon size={16} />
-              <input className="aiKeyInput" type="search" aria-label="Search settings" placeholder="Search settings..." value={query}
+              <input className="aiKeyInput" type="search" aria-label={t("Search settings")} placeholder={t("Search settings...")} value={query}
                 onChange={(event) => {
                   const next = event.target.value;
                   guard(() => { setQuery(next); setMobileIndex(false); });
                 }} />
-              {query ? <button className="uiClose uiCloseSm" aria-label="Clear search" onClick={() => setQuery("")}>×</button> : null}
+              {query ? <button className="uiClose uiCloseSm" aria-label={t("Clear search")} onClick={() => setQuery("")}>×</button> : null}
             </div>
-            <button className="uiClose uiCloseLg" onClick={() => guard(onClose)} aria-label="Close settings">×</button>
+            <button className="uiClose uiCloseLg" onClick={() => guard(onClose)} aria-label={t("Close settings")}>×</button>
           </div>
           <div className="settingsBody" inert={pending ? "" : undefined}>
-            <nav className="settingsSidebar" aria-label="Settings categories">
+            <nav className="settingsSidebar" aria-label={t("Settings categories")}>
               {PREFERENCE_NAV.filter(([id]) => available(id)).map(navButton)}
-              <div className="settingsNavGroup">AI</div>
+              <div className="settingsNavGroup">{t("AI")}</div>
               {AI_NAV.filter(([id]) => available(id)).map(navButton)}
-              <div className="settingsNavGroup">Manage</div>
+              <div className="settingsNavGroup">{t("Manage")}</div>
               {MANAGEMENT_NAV.filter(([id]) => available(id)).map(navButton)}
             </nav>
             <main className="settingsPane" ref={paneRef} key={pane}>
               {query.trim() ? <>
-                <PaneHead icon={SearchIcon} title="Search settings">{results.length} matching settings</PaneHead>
+                <PaneHead icon={SearchIcon} title={t("Search settings")}>{tn("{n} matching setting", "{n} matching settings", results.length)}</PaneHead>
                 {results.length ? results.map(({ pane: id, label }) => <button key={`${id}:${label}`} className="uiBtn settingsSearchResult"
-                  onClick={() => navigate(id, label)}><span>{label}</span><small>{allNav.find(([key]) => key === id)?.[1]}</small></button>)
-                  : <Empty icon={SearchIcon}>No settings found. Try "model", "PDF", or "storage".</Empty>}
+                  onClick={() => navigate(id, label)}><span>{t(label)}</span><small>{t(allNav.find(([key]) => key === id)?.[1] || "")}</small></button>)
+                  : <Empty icon={SearchIcon}>{t('No settings found. Try "model", "PDF", or "storage".')}</Empty>}
               </> : <>
                 {pane === "appearance" ? <AppearanceSettings value={papers} diagnostics={diagnostics} /> : null}
                 {pane === "reading" ? <>
-                  <PaneHead icon={BookIcon} title="Reading & editing" />
-                  <ViewerSettings value={papers} onTranslationModels={() => navigate("ai-advanced", "Translation effort")} />
+                  <PaneHead icon={BookIcon} title={t("Reading & editing")} />
+                  <ViewerSettings value={papers} />
+                  <TranslationSettings value={paperValue} />
                   <NotesSettings value={notes} /><SearchSettings value={search} />
                 </> : null}
-                {pane === "library" ? <LibrarySettings value={{ ...papers, ...library }} /> : null}
+                {pane === "keyboard" && keyboard ? <KeyboardSettings value={keyboard} /> : null}
                 {pane === "maintenance" ? <MaintenanceSettings value={library} /> : null}
                 {pane === "ai" ? <>
-                  <PaneHead icon={SparklesIcon} title="Connections" />
-                  <AiSettings value={aiValue} taskModels={<TranslationModels value={paperValue} />}
+                  <PaneHead icon={SparklesIcon} title={t("Connections")} />
+                  <AiSettings value={aiValue}
                     confirm={workspace?.confirm} setStatus={workspace?.setStatus} />
                 </> : null}
                 {pane === "assistant" ? <>
-                  <PaneHead icon={MessageSquareIcon} title="Chat" />
-                  <AssistantSettings value={context} />
+                  <PaneHead icon={MessageSquareIcon} title={t("Chat")} />
+                  <AssistantSettings value={context} ai={aiValue} />
                 </> : null}
                 {pane === "ai-advanced" ? <>
-                  <PaneHead icon={ActivityIcon} title="Advanced" />
-                  <AdvancedAiSettings value={context} ai={aiValue} papers={paperValue} />
+                  <PaneHead icon={ActivityIcon} title={t("Advanced")} />
+                  <AdvancedAiSettings value={context} />
                 </> : null}
                 {pane === "prompts" ? <PromptsSettings value={prompts} /> : null}
                 {pane === "integrations" ? <IntegrationSettings key={getCurrentWorkspace()} workspaceId={getCurrentWorkspace()} /> : null}
-                {pane === "account" ? <UsersSettings value={users} selfOnly /> : null}
+                {pane === "account" ? <>
+                  <UsersSettings value={users} selfOnly />
+                  {workspace ? <SyncSettings value={workspace} papers={papers} /> : null}
+                </> : null}
                 {pane === "users" ? <UsersSettings value={users} /> : null}
-                {pane === "workspaces" ? <WorkspacesSettings value={workspace} onServer={available("server") ? () => navigate("server", "Shared workspaces") : null} /> : null}
+                {pane === "workspaces" ? <WorkspacesSettings value={workspace} onServer={available("server") ? () => navigate("server", t("Shared workspaces")) : null} /> : null}
                 {pane === "backups" && backups ? <WorkspaceBackups value={backups} /> : null}
                 {pane === "server" ? <ServerSettings value={server} /> : null}
                 {pane === "diagnostics" ? <AdvancedSettings value={diagnostics} /> : null}
               </>}
             </main>
           </div>
-          {pending ? <div className="settingsUnsaved" role="alertdialog" aria-label="Unsaved changes">
-            <span>You have unsaved edits. Keep editing or discard them to continue.</span>
-            <button className="uiBtn" autoFocus onClick={() => setPending(null)}>Keep editing</button>
+          {pending ? <div className="settingsUnsaved" role="alertdialog" aria-label={t("Unsaved changes")}>
+            <span>{t("You have unsaved edits. Keep editing or discard them to continue.")}</span>
+            <button className="uiBtn" autoFocus onClick={() => setPending(null)}>{t("Keep editing")}</button>
             <button className="uiBtn danger" onClick={() => {
               const action = pending;
               drafts.current.forEach((discard) => discard()); drafts.current.clear();
               setPending(null); action();
-            }}>Discard changes</button>
+            }}>{t("Discard changes")}</button>
           </div> : null}
         </div>
       </div>

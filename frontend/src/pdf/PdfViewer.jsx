@@ -14,19 +14,20 @@ import * as pdfjsLib from "pdfjs-dist/legacy/build/pdf.mjs";
 import pdfWorkerUrl from "pdfjs-dist/legacy/build/pdf.worker.min.mjs?url";
 import "pdfjs-dist/web/pdf_viewer.css";
 import { createPortal } from "react-dom";
-import { ChevronRightIcon, LinkIcon, MessageSquareIcon, OutlineIcon } from "../shared/ui/Icons";
+import { CheckIcon, ChevronRightIcon, CopyIcon, LanguagesIcon, LinkIcon, MessageSquareIcon, OutlineIcon } from "../shared/ui/Icons";
 import { InkLayer } from "../ink/InkLayer";
 import { canvasSize } from "../shared/lib/canvasSize.js";
 import { installVerticalScrollSnap } from "./verticalScrollSnap.js";
-import { segmentPage } from "./pdfTranslate";
+import { segmentPage, selectionParagraphs } from "./pdfTranslate";
 import { BACKFILL_DELAY_MS, chooseTransport, docIdOf, layoutFromManifest, rangeOpenOptions } from "./pdfSource";
 import { normalizeChars } from "../shared/lib/textnorm";
-import { apiJson, withShare, withWorkspace } from "../shared/lib/utils";
-import { ChatMarkdown } from "../shared/ui/Widgets";
+import { apiJson, copyText, withShare, withWorkspace } from "../shared/lib/utils";
+import { ChatMarkdown, useCopied } from "../shared/ui/Widgets";
 import { PdfCitationOverlay } from "./PdfCitationOverlay";
 import { citationRuns, runChars } from "./pdfCitation.js";
 import { noteBadgeAnchor } from "./noteAnchor.js";
 import { COLORS } from "../shared/model/highlightColors.js";
+import { t } from "../shared/i18n/i18n.js";
 pdfjsLib.GlobalWorkerOptions.workerSrc = pdfWorkerUrl;
 // One worker for every document. pdf.js otherwise starts a fresh worker per
 // getDocument — the 1.3 MB script fetched and compiled again per open — and
@@ -335,7 +336,7 @@ async function fetchPdfData(url, onLoadState, isCancelled) {
     if (!isCancelled()) {
       onLoadState?.(url, {
         phase: "error",
-        detail: stalled ? `no data for ${Math.round(STALL_MS / 1000)}s — server not responding` : (e.message || "network error"),
+        detail: stalled ? t("no data for {STALL_MS}s — server not responding", { STALL_MS: Math.round(STALL_MS / 1000) }) : (e.message || t("network error")),
       });
     }
     return null;
@@ -349,7 +350,7 @@ async function fetchPdfData(url, onLoadState, isCancelled) {
 // inkPenTool what a stylus draws with when nothing is armed, inkFlash
 // {id, nonce} outlines a group after a jump; strokes and erasures report
 // back through onInkStroke / onInkErase, a click on ink through onInkJump.
-function PdfViewer({ url, citation = null, highlights, pdfScaleValue, scrollRef, onJump, onHighlightJump, onLinkHighlight, onSelectionFinished, onAreaSelection, onHighlightContext, searchRef, captureRef, onEffectiveScale, onZoomTo, findMarks, onExternalLink, onLinkContext, onBeforeLinkJump, onLoadState, retryRef, areaMode, hideEmbeddedAnnots, darkPage = false, translateKey = "", translateParallel = 3, onTranslate, translateCtlRef, onTranslateState, inkBlocks = EMPTY_MARKS, inkTool = null, inkPenTool = null, inkPenOnly = true, inkPressure = true, inkEraserMode = "stroke", inkEraserSize = 1, inkLassoMode = "free", inkSelection = null, inkFlash = null, onInkStroke, onInkErase, onInkErasePartial, onInkSelect, onInkAction, onInkMoveSelection, onInkJump }) {
+function PdfViewer({ url, citation = null, highlights, pdfScaleValue, scrollRef, onJump, onHighlightJump, onLinkHighlight, onSelectionFinished, onAreaSelection, onHighlightContext, searchRef, captureRef, onEffectiveScale, onZoomTo, findMarks, onExternalLink, onLinkContext, onBeforeLinkJump, onLoadState, retryRef, areaMode, hideEmbeddedAnnots, darkPage = false, translateKey = "", translateParallel = 3, onTranslate, translateCtlRef, onTranslateState, selTranslate = "", translateLangLabel = "", inkBlocks = EMPTY_MARKS, inkTool = null, inkPenTool = null, inkPenOnly = true, inkPressure = true, inkEraserMode = "stroke", inkEraserSize = 1, inkLassoMode = "free", inkSelection = null, inkFlash = null, onInkStroke, onInkErase, onInkErasePartial, onInkSelect, onInkAction, onInkMoveSelection, onInkJump }) {
   const viewerRef = useRef(null);
   const [pdfDoc, setPdfDoc] = useState(null);
   const [numPages, setNumPages] = useState(0);
@@ -878,7 +879,7 @@ function PdfViewer({ url, citation = null, highlights, pdfScaleValue, scrollRef,
         }
         heightsExactRef.current = true; // layout is final — the zoom settle loop can stand down
       } catch (e) {
-        if (!cancelled) onLoadState?.(url, { phase: "error", detail: e?.message || "failed to open the PDF" });
+        if (!cancelled) onLoadState?.(url, { phase: "error", detail: e?.message || t("failed to open the PDF") });
       }
     })();
     return () => {
@@ -1145,14 +1146,19 @@ function PdfViewer({ url, citation = null, highlights, pdfScaleValue, scrollRef,
   // `pages` counts only pages with visible translated text under the CURRENT
   // language/model key — entries from a previous key don't render, and
   // counting them would leave the button a dead show/hide toggle after a
-  // settings switch instead of translating afresh.
+  // settings switch instead of translating afresh. `current`: the page being
+  // read is fully translated under that key — the button toggles show/hide
+  // there, and translates this page anywhere else (a halted, half-done page
+  // counts as untranslated, so a click finishes it from the cache).
   useEffect(() => {
     let pages = 0;
     for (const e of transMap.values()) {
       if (e.key === translateKey && e.texts.some(Boolean)) pages += 1;
     }
-    cbRef.current.onTranslateState?.({ ...transStatus, shown: transShown, pages });
-  }, [transStatus, transShown, transMap, translateKey]);
+    const cur = transMap.get(curPage);
+    const current = !!(cur && cur.key === translateKey && cur.done);
+    cbRef.current.onTranslateState?.({ ...transStatus, shown: transShown, pages, current });
+  }, [transStatus, transShown, transMap, translateKey, curPage]);
 
   // A document swap invalidates geometry and translations wholesale.
   useEffect(() => {
@@ -1452,6 +1458,10 @@ function PdfViewer({ url, citation = null, highlights, pdfScaleValue, scrollRef,
       // created it ends in a mouseup with an empty selection by design.
       const keepArea = (p) => (p && p.kind === "area" ? p : null);
       const sel = window.getSelection();
+      // A click or selection inside the popup (its translation text) moves
+      // the document selection there — the popup stays, with the snapshot
+      // of the PDF selection it was opened for.
+      if (sel?.anchorNode && document.querySelector(".plainTip")?.contains(sel.anchorNode)) return;
       if (!sel || !sel.toString().trim()) { setSelPopup(keepArea); return; }
       const range = sel.getRangeAt(0);
       if (!range) { setSelPopup(keepArea); return; }
@@ -1560,8 +1570,8 @@ function PdfViewer({ url, citation = null, highlights, pdfScaleValue, scrollRef,
           <button
             className={outlineOpen ? "modeActive" : ""}
             onClick={() => setOutlineOpen((o) => !o)}
-            title={outlineOpen ? "Hide table of contents" : "Table of contents"}
-            aria-label="Toggle table of contents"
+            title={outlineOpen ? t("Hide table of contents") : t("Table of contents")}
+            aria-label={t("Toggle table of contents")}
             type="button"
           >
             <OutlineIcon size={15} />
@@ -1569,7 +1579,7 @@ function PdfViewer({ url, citation = null, highlights, pdfScaleValue, scrollRef,
         </div>
       ) : null}
       {numPages > 0 ? (
-        <div className="pdfPageWidget" title="Type a page number and press Enter to jump">
+        <div className="pdfPageWidget" title={t("Type a page number and press Enter to jump")}>
           <input
             type="text"
             inputMode="numeric"
@@ -1588,7 +1598,7 @@ function PdfViewer({ url, citation = null, highlights, pdfScaleValue, scrollRef,
               }
             }}
             onBlur={() => setPageInput(null)}
-            aria-label="Current page"
+            aria-label={t("Current page")}
           />
           <span className="pdfPageTotal">/ {numPages}</span>
         </div>
@@ -1653,13 +1663,17 @@ function PdfViewer({ url, citation = null, highlights, pdfScaleValue, scrollRef,
       ))}
       </div>
       {selPopup && onSelectionFinished && (
-        <div style={{
-          position: "fixed", zIndex: 9999,
-          top: selPopup.kind === "area" ? selPopup.tip.top : selPopup.rect.bottom + 8,
-          left: selPopup.kind === "area" ? selPopup.tip.left : selPopup.rect.left,
-        }}>
-          <PlainTip onConfirm={handleSelConfirm} onLink={() => handleSelConfirm("", null, { link: true })} />
-        </div>
+        <TipFrame anchor={selPopup.kind === "area"
+          ? { top: selPopup.tip.top, bottom: selPopup.tip.top, left: selPopup.tip.left, gap: 0 }
+          : { top: selPopup.rect.top, bottom: selPopup.rect.bottom, left: selPopup.rect.left, gap: 8 }}>
+          {/* keyed by the selection: a new one starts with no translation */}
+          <PlainTip key={selPopup.kind === "area" ? "area" : selPopup.text}
+            onConfirm={handleSelConfirm} onLink={() => handleSelConfirm("", null, { link: true })}
+            translate={selTranslate && selPopup.kind !== "area" && selPopup.text && onTranslate ? {
+              text: selPopup.text, auto: selTranslate === "auto", langLabel: translateLangLabel,
+              run: (...args) => cbRef.current.onTranslate?.(...args),
+            } : null} />
+        </TipFrame>
       )}
       </div>
     </div>
@@ -1679,7 +1693,7 @@ function OutlineNode({ item, depth, onDest, onUrl }) {
           <button
             className={"pdfOutlineChevron" + (open ? " open" : "")}
             onClick={() => setOpen((o) => !o)}
-            aria-label={open ? "Collapse section" : "Expand section"}
+            aria-label={open ? t("Collapse section") : t("Expand section")}
             type="button"
           >
             <ChevronRightIcon size={10} strokeWidth={2.5} />
@@ -1763,7 +1777,7 @@ function NoteBadge({ hlId, text, style, onClick, onContextMenu }) {
   return (
     <>
       <span className="pdfNoteAnchor" style={style}>
-        <button ref={btnRef} type="button" className="pdfNoteBadge" data-hl-id={hlId} aria-label="Show highlight note"
+        <button ref={btnRef} type="button" className="pdfNoteBadge" data-hl-id={hlId} aria-label={t("Show highlight note")}
           onPointerDown={(e) => { touchRef.current = e.pointerType !== "mouse"; }}
           onMouseEnter={show} onMouseLeave={hide}
           onClick={(e) => {
@@ -1777,7 +1791,7 @@ function NoteBadge({ hlId, text, style, onClick, onContextMenu }) {
       </span>
       {tip ? createPortal(
         <div ref={tipRef} className="pdfNoteTip" style={tip} onMouseEnter={hold} onMouseLeave={hide}>
-          {text ? <ChatMarkdown text={text} /> : "This highlight has a note"}
+          {text ? <ChatMarkdown text={text} /> : t("This highlight has a note")}
         </div>,
         document.body
       ) : null}
@@ -2148,7 +2162,7 @@ const PdfPage = React.memo(function PdfPage({ citation, pageNumber, pdfDoc, scal
         <div
           key={`lnk-${i}`}
           className="pdfLinkBox"
-          title={l.url || "Jump to reference"}
+          title={l.url || t("Jump to reference")}
           style={{
             left: l.left * scale,
             top: l.top * scale,
@@ -2211,7 +2225,7 @@ const PdfPage = React.memo(function PdfPage({ citation, pageNumber, pdfDoc, scal
             ...(isLink ? (isArea
               ? { border: "2px solid rgba(70, 130, 255, 0.9)" }
               : { borderBottom: "2px solid rgba(70, 130, 255, 0.9)", borderRadius: 1 }) : {}),
-          }} title={isLink ? (h.linkTarget.pageId ? "Open linked paper" : h.linkTarget.url) : (h.comment?.text || "")}
+          }} title={isLink ? (h.linkTarget.pageId ? t("Open linked paper") : h.linkTarget.url) : (h.comment?.text || "")}
             onClick={function (e) {
               e.stopPropagation();
               if (isLink) onLinkHighlight?.(h);
@@ -2261,7 +2275,65 @@ const PdfPage = React.memo(function PdfPage({ citation, pageNumber, pdfDoc, scal
   );
 });
 
-function PlainTip({ onConfirm, onLink }) {
+// Fixed-position frame for the selection popup: under the selection, or
+// above it when the popup (a long translation) would run past the bottom of
+// the window; clamped inside the window horizontally. Re-measured whenever
+// the popup's size changes.
+function TipFrame({ anchor, children }) {
+  const ref = useRef(null);
+  const [pos, setPos] = useState({ top: anchor.bottom + anchor.gap, left: anchor.left });
+  useLayoutEffect(() => {
+    const el = ref.current;
+    if (!el) return undefined;
+    const place = () => {
+      const { width, height } = el.getBoundingClientRect();
+      const below = anchor.bottom + anchor.gap;
+      const above = anchor.top - anchor.gap - height;
+      const top = below + height > window.innerHeight - 8 && above >= 8 ? above : below;
+      const left = Math.max(8, Math.min(anchor.left, window.innerWidth - width - 8));
+      setPos((p) => (p.top === top && p.left === left ? p : { top, left }));
+    };
+    place();
+    const ro = new ResizeObserver(place);
+    ro.observe(el);
+    return () => ro.disconnect();
+  }, [anchor.top, anchor.bottom, anchor.left, anchor.gap]);
+  return <div ref={ref} style={{ position: "fixed", zIndex: 9999, top: pos.top, left: pos.left }}>{children}</div>;
+}
+
+// Longest selection the popup translates (characters, after rejoining lines).
+const SEL_TRANSLATE_MAX = 5000;
+
+// Selection popup: highlight colors, the reference link and, when enabled
+// (Settings → Reading › Translation), the selection translator. `translate`:
+// {text, auto, langLabel, run(texts, signal, onPartial) → [translation] |
+// null} — run is the page translator's request, so the same model/engine,
+// language and server cache apply. Auto starts it on open; the button starts
+// it, then folds/unfolds the result.
+function PlainTip({ onConfirm, onLink, translate }) {
+  const [trans, setTrans] = useState(null); // {status: "loading"|"done"|"error", text, open}
+  const ctlRef = useRef(null);
+  const source = useMemo(() => (translate ? selectionParagraphs(translate.text) : ""), [translate?.text]);
+  const tooLong = source.length > SEL_TRANSLATE_MAX;
+  function start() {
+    ctlRef.current?.abort();
+    if (tooLong) { setTrans({ status: "error", text: "", open: true }); return; }
+    const ctl = new AbortController();
+    ctlRef.current = ctl;
+    setTrans({ status: "loading", text: "", open: true });
+    Promise.resolve(translate.run([source], ctl.signal, (_, partial) => {
+      if (!ctl.signal.aborted) setTrans((prev) => prev && { ...prev, text: partial });
+    })).catch(() => null).then((res) => {
+      if (ctl.signal.aborted) return;
+      setTrans((prev) => ({ open: prev?.open ?? true, ...(res?.[0] ? { status: "done", text: res[0] } : { status: "error", text: "" }) }));
+    });
+  }
+  useEffect(() => {
+    if (translate?.auto) start();
+    return () => ctlRef.current?.abort();
+  }, []);
+  const keep = (e) => { e.preventDefault(); e.stopPropagation(); }; // keep the PDF selection
+  const fold = () => setTrans((prev) => ({ ...prev, open: !prev.open }));
   return (
     <div className="plainTip">
       <div className="colorRow">
@@ -2271,22 +2343,76 @@ function PlainTip({ onConfirm, onLink }) {
             className="colorBtn"
             data-guide="pdf.highlightColor"
             style={{ background: c }}
-            onMouseDown={(e) => { e.preventDefault(); e.stopPropagation(); onConfirm("", c); }}
+            onMouseDown={(e) => { keep(e); onConfirm("", c); }}
             type="button"
-            title="Highlight in this color"
+            title={t("Highlight in this color")}
           />
         ))}
         {onLink ? (
           <button
             className="colorBtn linkTipBtn"
-            onMouseDown={(e) => { e.preventDefault(); e.stopPropagation(); onLink(); }}
+            onMouseDown={(e) => { keep(e); onLink(); }}
             type="button"
-            title="Link this reference to a paper (DOI / arXiv / existing PDF)"
+            title={t("Link this reference to a paper (DOI / arXiv / existing PDF)")}
           >
             <LinkIcon size={13} />
           </button>
         ) : null}
+        {translate ? (
+          <button
+            className={`colorBtn linkTipBtn ${trans ? "selected" : ""}`}
+            onMouseDown={(e) => {
+              keep(e);
+              if (!trans || trans.status === "error") start();
+              else fold();
+            }}
+            type="button"
+            aria-label={t("Translate selection")}
+            aria-expanded={!!trans?.open}
+            title={t("Translate the selected text into {lang}", { lang: translate.langLabel })}
+          >
+            <LanguagesIcon size={13} />
+          </button>
+        ) : null}
       </div>
+      {translate && trans ? <SelTranslation trans={trans} langLabel={translate.langLabel} tooLong={tooLong}
+        onToggle={fold} keep={keep} /> : null}
+    </div>
+  );
+}
+
+// The popup's translation: a header that folds the result (with the target
+// language, a spinner while it arrives and a copy button), and the text —
+// selectable, typed in as it streams.
+function SelTranslation({ trans, langLabel, tooLong, onToggle, keep }) {
+  const [copied, flashCopied] = useCopied(1200);
+  const loading = trans.status === "loading";
+  return (
+    <div className="selTrans">
+      <div className="selTransHead">
+        <button type="button" className="selTransToggle" aria-expanded={trans.open}
+          onMouseDown={keep} onClick={onToggle}>
+          <ChevronRightIcon size={13} className={`selTransChev ${trans.open ? "open" : ""}`} />
+          <span>{t("Translation")}</span>
+          <span className="selTransLang">{langLabel}</span>
+          {loading ? <span className="pillSpin" aria-hidden="true" /> : null}
+        </button>
+        {trans.status === "done" ? (
+          <button type="button" className="ctlBtn selTransCopy" title={t("Copy translation")} aria-label={t("Copy translation")}
+            onMouseDown={keep}
+            onClick={async () => { if (await copyText(trans.text)) flashCopied(); }}>
+            {copied ? <CheckIcon size={13} /> : <CopyIcon size={13} />}
+          </button>
+        ) : null}
+      </div>
+      {trans.open ? (
+        <div className={`selTransBody ${trans.status === "error" ? "error" : ""}`} aria-live="polite">
+          {trans.status === "error"
+            ? (tooLong ? t("Select less text to translate (up to {n} characters).", { n: SEL_TRANSLATE_MAX })
+              : t("Translation failed — click the button to retry."))
+            : trans.text || (loading ? t("Translating…") : "")}
+        </div>
+      ) : null}
     </div>
   );
 }

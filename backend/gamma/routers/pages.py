@@ -16,7 +16,7 @@ from fastapi import APIRouter, HTTPException, Request
 from fastapi.responses import JSONResponse
 from pydantic import BaseModel
 
-from .. import block_index
+from .. import block_index, publish
 from ..auth import require_ws
 from ..blocks_store import (
     BLOCK_COLUMNS,
@@ -68,7 +68,10 @@ def _load_page(conn, page_id: str):
 async def create_page_endpoint(payload: PageCreate, request: Request):
     """A new text-only page: ``{title?, folder?}`` → the page's block dict.
     Title defaults to "Untitled"; ``folder`` (a path like ``a/b``) becomes
-    ``properties.folder``."""
+    ``properties.folder``. On a share host, 402 with ``{detail, limit,
+    used, plan}`` when the owner's plan allows no more pages in the
+    workspace (the path a publishing mirror creates its pages by;
+    gamma/publish.py page_cap)."""
     ws = require_ws(request, write=True)
     props = dict(payload.properties or {})
     folder = clean_path(payload.folder or "")
@@ -79,6 +82,9 @@ async def create_page_endpoint(payload: PageCreate, request: Request):
     with connect_pages_db(ws) as conn:
         if payload.id and conn.execute("SELECT 1 FROM unified_blocks WHERE id = ?", (payload.id,)).fetchone():
             raise HTTPException(status_code=409, detail="a block with that id exists")
+        refusal = publish.cap_refusal(ws)  # only a new page counts
+        if refusal:
+            return JSONResponse(status_code=402, content=refusal)
         return create_page(conn, payload.title, props, block_id=payload.id)
 
 

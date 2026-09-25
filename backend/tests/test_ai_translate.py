@@ -234,3 +234,268 @@ def test_translate_stream_reports_upstream_failure_in_band(carol, monkeypatch):
     assert r.status_code == 200
     lines = [json.loads(l) for l in r.text.splitlines() if l.strip()]
     assert lines == [{"error": "translation failed: provider down"}]
+
+
+# --- machine-translation engines (Google Cloud Translation, Youdao) ----------
+
+class _FakeResp:
+    def __init__(self, body):
+        self.body = json.dumps(body).encode()
+
+    def read(self):
+        return self.body
+
+    def __enter__(self):
+        return self
+
+    def __exit__(self, *a):
+        return False
+
+
+def _fake_urlopen(reply):
+    """A urlopen stand-in for gamma.translate_engines: records each request,
+    answers `reply(req)` as the JSON body."""
+    calls = []
+
+    def fake(req, timeout=None):
+        calls.append(req)
+        return _FakeResp(reply(req))
+
+    return fake, calls
+
+
+@pytest.fixture(scope="module")
+def dave(client):
+    """An account with NO AI provider — the engine path must not need one."""
+    from gamma.app import app
+    from gamma.db import connect_users_db, page_now
+    from gamma import workspaces
+
+    with connect_users_db() as conn:
+        if not conn.execute("SELECT 1 FROM users WHERE username = 'translate_dave'").fetchone():
+            conn.execute(
+                "INSERT INTO users (username, password_hash, is_guest, created_at) VALUES (?, ?, 0, ?)",
+                ("translate_dave", bcrypt.hashpw(b"pw", bcrypt.gensalt()).decode(), page_now()),
+            )
+            conn.commit()
+    workspaces.ensure_personal("translate_dave")
+    c = TestClient(app)
+    assert c.post("/api/login", json={"username": "translate_dave", "password": "pw"}).status_code == 200
+    return c
+
+
+def test_engine_settings_are_masked_and_reserved(dave):
+    body = dave.get("/api/translate/engines").json()
+    assert body["can_edit"] is True
+    # Microsoft needs no key: always ready, nothing to store.
+    assert {e["id"]: e["configured"] for e in body["engines"]} == {"microsoft": True, "google": False, "youdao": False}
+    assert [e["id"] for e in body["engines"] if not e["needs_key"]] == ["microsoft"]
+    assert dave.put("/api/translate/engines/microsoft", json={"fields": {}}).status_code == 400
+
+    assert dave.put("/api/translate/engines/google", json={"fields": {}}).status_code == 400
+    assert dave.put("/api/translate/engines/bing", json={"fields": {"api_key": "x"}}).status_code == 404
+    r = dave.put("/api/translate/engines/google", json={"fields": {"api_key": "AIza-secret-key-9876"}})
+    assert r.status_code == 200, r.text
+    google = next(e for e in r.json()["engines"] if e["id"] == "google")
+    assert google["configured"] is True
+    assert google["fields"]["api_key"] == "…9876"
+    assert "AIza-secret-key-9876" not in r.text
+
+    # An empty secret on edit keeps the stored one; the plain app key shows.
+    r = dave.put("/api/translate/engines/youdao", json={"fields": {"app_key": "app-1", "app_secret": "s3cret-value-1234"}})
+    assert r.status_code == 200
+    r = dave.put("/api/translate/engines/youdao", json={"fields": {"app_key": "app-2", "app_secret": ""}})
+    youdao = next(e for e in r.json()["engines"] if e["id"] == "youdao")
+    assert youdao["configured"] and youdao["fields"] == {"app_key": "app-2", "app_secret": "…1234"}
+
+    # The raw key never leaves through the generic prefs endpoints.
+    assert dave.get("/api/prefs/translate-engines").status_code == 400
+    assert dave.put("/api/prefs/translate-engines", json={"value": {}}).status_code == 400
+
+    models = dave.get("/api/ai/models").json()
+    assert [e["id"] for e in models["translate_engines"]] == ["engine:microsoft", "engine:google", "engine:youdao"]
+
+    r = dave.delete("/api/translate/engines/youdao")
+    assert [e["id"] for e in r.json()["engines"] if e["configured"]] == ["microsoft", "google"]
+
+
+def test_guest_cannot_store_engine_keys():
+    from gamma.app import app
+
+    c = TestClient(app)
+    assert c.post("/api/login-guest").status_code == 200
+    assert c.get("/api/translate/engines").json()["can_edit"] is False
+    assert c.put("/api/translate/engines/google", json={"fields": {"api_key": "k" * 20}}).status_code == 403
+
+
+def test_translate_with_google(dave, monkeypatch):
+    dave.put("/api/translate/engines/google", json={"fields": {"api_key": "AIza-secret-key-9876"}})
+    monkeypatch.setattr("gamma.routers.ai._call_ai", lambda *a, **k: pytest.fail("no LLM on the engine path"))
+    fake, calls = _fake_urlopen(lambda req: {"data": {"translations": [
+        {"translatedText": f"G:{t}"} for t in json.loads(req.data)["q"]]}})
+    monkeypatch.setattr("gamma.translate_engines.urlopen", fake)
+
+    texts = ["Google one.", "  ", "Google two.", "Google one."]
+    r = dave.post("/api/ai/translate", json={"texts": texts, "lang": "zh-TW", "model": "engine:google"})
+    assert r.status_code == 200, r.text
+    assert r.json() == {"translations": ["G:Google one.", "  ", "G:Google two.", "G:Google one."],
+                        "model": "engine:google", "cached": False}
+    (req,) = calls
+    assert req.get_header("X-goog-api-key") == "AIza-secret-key-9876"
+    assert "key=" not in req.full_url
+    assert json.loads(req.data) == {"q": ["Google one.", "Google two."], "target": "zh-TW", "format": "text"}
+
+    # Cached per engine; the streamed form answers with the final line.
+    r = dave.post("/api/ai/translate", json={"texts": ["Google two."], "lang": "zh-TW",
+                                             "model": "engine:google", "stream": True})
+    assert [json.loads(line) for line in r.text.splitlines() if line.strip()] == [
+        {"translations": ["G:Google two."], "model": "engine:google", "cached": True}]
+    assert len(calls) == 1
+
+
+def test_translate_with_engine_errors(dave, monkeypatch):
+    import io
+    from urllib.error import HTTPError
+
+    # Not set up: 503, like a missing AI provider.
+    dave.delete("/api/translate/engines/youdao")
+    r = dave.post("/api/ai/translate", json={"texts": ["x y"], "lang": "de", "model": "engine:youdao"})
+    assert r.status_code == 503
+
+    dave.put("/api/translate/engines/google", json={"fields": {"api_key": "AIza-secret-key-9876"}})
+
+    def denied(req, timeout=None):
+        raise HTTPError(req.full_url, 403, "Forbidden", {},
+                        io.BytesIO(json.dumps({"error": {"message": "API key not valid"}}).encode()))
+
+    monkeypatch.setattr("gamma.translate_engines.urlopen", denied)
+    r = dave.post("/api/ai/translate", json={"texts": ["An uncached line."], "lang": "de", "model": "engine:google"})
+    assert r.status_code == 502
+    assert "API key not valid" in r.json()["detail"]
+    r = dave.post("/api/translate/engines/google/test", json={"lang": "de"})
+    assert r.json() == {"ok": False, "error": "Google: HTTP 403 — API key not valid"}
+
+
+def test_translate_with_youdao(dave, monkeypatch):
+    from urllib.parse import parse_qs
+    from gamma import translate_engines
+
+    dave.put("/api/translate/engines/youdao", json={"fields": {"app_key": "app-1", "app_secret": "sec-1"}})
+
+    def reply(req):
+        form = parse_qs(req.data.decode())
+        qs = form["q"]
+        assert form["to"] == ["zh-CHS"] and form["from"] == ["auto"] and form["signType"] == ["v3"]
+        assert form["sign"] == [translate_engines.youdao_sign(
+            "app-1", "sec-1", qs, form["salt"][0], form["curtime"][0])]
+        # The second query failed upstream: listed in errorIndex, absent from the results.
+        return {"errorCode": "0", "errorIndex": [1],
+                "translateResults": [{"query": q, "translation": f"Y:{q}"} for j, q in enumerate(qs) if j != 1]}
+
+    fake, calls = _fake_urlopen(reply)
+    monkeypatch.setattr("gamma.translate_engines.urlopen", fake)
+    r = dave.post("/api/ai/translate", json={"texts": ["Youdao a.", "Youdao b.", "Youdao c."],
+                                             "lang": "zh-CN", "model": "engine:youdao"})
+    assert r.status_code == 200, r.text
+    # The failed one comes back verbatim (and stays uncached for a retry).
+    assert r.json()["translations"] == ["Y:Youdao a.", "Youdao b.", "Y:Youdao c."]
+
+    monkeypatch.setattr("gamma.translate_engines.urlopen",
+                        _fake_urlopen(lambda req: {"errorCode": "202"})[0])
+    r = dave.post("/api/translate/engines/youdao/test", json={"lang": "zh-CN"})
+    assert r.json()["ok"] is False and "signature" in r.json()["error"]
+
+
+def test_translate_with_microsoft(dave, monkeypatch):
+    from urllib.parse import parse_qs, urlsplit
+
+    monkeypatch.setattr("gamma.routers.ai._call_ai", lambda *a, **k: pytest.fail("no LLM on the engine path"))
+
+    def reply(req):
+        texts = json.loads(req.data)
+        # Translator v3's shape; the second text comes back without a translation.
+        return [{"detectedLanguage": {"language": "en", "score": 1.0},
+                 "translations": [{"text": f"M:{t}", "to": "zh-Hant"}] if j != 1 else []}
+                for j, t in enumerate(texts)]
+
+    fake, calls = _fake_urlopen(reply)
+    monkeypatch.setattr("gamma.translate_engines.urlopen", fake)
+    r = dave.post("/api/ai/translate", json={"texts": ["Edge one.", "Edge two.", "Edge three."],
+                                             "lang": "zh-TW", "model": "engine:microsoft"})
+    assert r.status_code == 200, r.text
+    # No setup, no key; a text without a translation stays as it was.
+    assert r.json()["translations"] == ["M:Edge one.", "Edge two.", "M:Edge three."]
+    (req,) = calls
+    url = urlsplit(req.full_url)
+    assert url.netloc == "edge.microsoft.com" and url.path == "/translate/translatetext"
+    assert parse_qs(url.query) == {"to": ["zh-Hant"], "isEnterpriseClient": ["false"]}
+    assert req.get_header("Authorization") is None
+    assert json.loads(req.data) == ["Edge one.", "Edge two.", "Edge three."]
+
+    # A plain-text error body is surfaced as it is.
+    from urllib.error import HTTPError
+    import io
+
+    def too_big(req, timeout=None):
+        raise HTTPError(req.full_url, 400, "Bad Request", {},
+                        io.BytesIO(b"Request exceeds the maximum allowed translation size."))
+
+    monkeypatch.setattr("gamma.translate_engines.urlopen", too_big)
+    r = dave.post("/api/translate/engines/microsoft/test", json={"lang": "ja"})
+    assert r.json() == {"ok": False,
+                        "error": "Microsoft: HTTP 400 \u2014 Request exceeds the maximum allowed translation size."}
+
+
+def test_free_service_failures_warn_and_notify_until_it_answers(dave, carol, monkeypatch):
+    from urllib.error import URLError
+    from gamma import logbuf, translate_engines
+
+    monkeypatch.setattr(translate_engines, "_health",
+                        {"failures": 0, "since": "", "error": "", "users": set(), "warned": False})
+    notices = lambda c: [n for n in c.get("/api/notices").json()["notices"] if n["id"] == "free-translate"]
+
+    def down(req, timeout=None):
+        raise URLError("connection refused")
+
+    monkeypatch.setattr("gamma.translate_engines.urlopen", down)
+    start = logbuf.last_seq("warning")
+    streak_warnings = lambda: sum("times in a row" in e["msg"] for e in logbuf.tail(start))
+    for i in range(translate_engines.FREE_ALERT_AFTER):
+        assert notices(dave) == []  # not before the streak is long enough
+        r = dave.post("/api/ai/translate", json={"texts": [f"down {i}"], "lang": "de", "model": "engine:microsoft"})
+        assert r.status_code == 502
+    (notice,) = notices(dave)
+    assert notice["pane"] == "reading" and notice["tone"] == "warn"
+    assert notices(carol) == []  # an account that never met the failures isn't told
+    row = next(e for e in dave.get("/api/translate/engines").json()["engines"] if e["id"] == "microsoft")
+    assert row["failing"] == {"since": notice["fingerprint"], "error": "Microsoft: connection refused"}
+    # One streak warning in the log, however long the streak gets.
+    assert streak_warnings() == 1
+    dave.post("/api/ai/translate", json={"texts": ["down again"], "lang": "de", "model": "engine:microsoft"})
+    assert streak_warnings() == 1
+
+    # One answer ends the streak: the notice and the row's error are gone.
+    monkeypatch.setattr("gamma.translate_engines.urlopen", _fake_urlopen(
+        lambda req: [{"translations": [{"text": "wieder da"}]} for _ in json.loads(req.data)])[0])
+    assert dave.post("/api/ai/translate", json={"texts": ["back up"], "lang": "de",
+                                                "model": "engine:microsoft"}).status_code == 200
+    assert notices(dave) == []
+    row = next(e for e in dave.get("/api/translate/engines").json()["engines"] if e["id"] == "microsoft")
+    assert row["failing"] is None
+
+
+def test_youdao_sign_shortens_long_input():
+    import hashlib
+    from gamma.translate_engines import youdao_sign
+
+    assert youdao_sign("k", "s", ["hello"], "salt", "1") == hashlib.sha256(b"khellosalt1s").hexdigest()
+    texts = ["abcdefghijKLMN", "OPQRSTUVWXyz0123456789"]  # 36 chars joined
+    assert youdao_sign("k", "s", texts, "salt", "1") == hashlib.sha256(b"kabcdefghij360123456789salt1s").hexdigest()
+
+
+def test_engine_batches_split_on_limits():
+    from gamma.translate_engines import _batches
+
+    assert list(_batches(["a" * 3, "b" * 3, "c" * 3], 10, 6)) == [["aaa", "bbb"], ["ccc"]]
+    assert list(_batches(["x"] * 5, 2, 100)) == [["x", "x"], ["x", "x"], ["x"]]
+    assert list(_batches(["y" * 50], 2, 10)) == [["y" * 50]]  # an oversize text goes alone

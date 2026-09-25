@@ -2,7 +2,6 @@
 a revoke, code replay, sign-out-everywhere, the refresh retry window and
 reuse detection, one grant per device, last activity, and the page."""
 
-import re
 import sqlite3
 import threading
 import time
@@ -55,6 +54,29 @@ def in_thread(fn):
     t = threading.Thread(target=lambda: box.append(fn()))
     t.start()
     return t, box
+
+
+def _open_quote(line):
+    """The quote of a JS string still open at the end of ``line``, else None.
+    Skips escapes, ``//`` comments and regex literals outside strings."""
+    quote, in_class, i = None, False, 0
+    while i < len(line):
+        c = line[i]
+        if quote:
+            if c == "\\":
+                i += 1
+            elif quote == "/" and c in "[]":
+                in_class = c == "["
+            elif c == quote and not in_class:
+                quote = None
+        elif c in "'\"`":
+            quote = c
+        elif line.startswith("//", i):
+            break
+        elif c == "/" and line[:i].rstrip()[-1:] in "(,=:[!&|?{};":
+            quote = "/"
+        i += 1
+    return quote
 
 
 # --- races --------------------------------------------------------------------
@@ -198,9 +220,8 @@ def test_the_devices_page(client):
     # the inline script must parse: an apostrophe inside a single-quoted JS
     # string once broke every button on this page
     script = page[page.rindex("<script>") + 8:page.rindex("</script>")]
-    for quoted in re.findall(r"'((?:[^'\
-]|\.)*)'", script):
-        assert "'" not in quoted
+    for line in script.splitlines():
+        assert _open_quote(line) is None, line
     assert 'confirm("Sign out every Gamma app' in script
 
 

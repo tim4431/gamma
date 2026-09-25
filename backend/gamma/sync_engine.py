@@ -67,6 +67,7 @@ MODES = ("two-way", "pull", "off")   # off = detached: the link (token, cursors,
 ADOPT = ("theirs", "mine")           # whose version a never-reconciled page takes (a linked workspace, a force)
 DEBOUNCE_S = 1.0                     # a local edit → a round once things have been quiet this long (the loop wakes for it)
 TICK_S = 1                           # the loop's clock
+WHOAMI_TTL_S = 900                   # how long a round trusts the remote's last whoami (a failed round asks again)
 STREAM_CHUNK = 256 * 1024
 default_fetch = None       # the tests point this at an in-process TestClient; None = urllib
 UPLOAD_NAME_RE = re.compile(r"^[0-9a-f]{8,64}\.[a-z0-9]{1,8}$")
@@ -275,10 +276,51 @@ def _save(ws: str, **fields) -> None:
         conn.commit()
 
 
+_status_guard = threading.Lock()  # every read-modify-write of a mirror's status JSON (and its cursors)
+
+
+def _patch_status(ws: str, patch, *, drop=()) -> dict:
+    """Change some keys of the mirror's stored status and leave the rest as
+    they are now — one read-modify-write under a lock, so a round and the
+    actions taken while it runs (detach, a force, the filter, a direction
+    change) never overwrite each other's keys. ``patch`` is a dict laid over
+    the status, or a function of the current status returning the new one;
+    ``drop`` names keys to remove first. Returns the status as saved."""
+    with _status_guard:
+        mirror = get_mirror(ws)
+        status = {k: v for k, v in (mirror["status"] if mirror else {}).items() if k not in drop}
+        status = patch(status) if callable(patch) else {**status, **patch}
+        _save(ws, status=status)
+    return status
+
+
+def _stored_mode(ws: str) -> str:
+    with connect_users_db() as conn:
+        row = conn.execute("SELECT mode FROM mirrors WHERE workspace_id = ?", (ws,)).fetchone()
+    return row[0] if row else "off"
+
+
 def whoami(remote: Remote) -> dict:
     """The remote's view of the token: ``{user, workspace: {id, name}, role,
     scope}`` (``GET /api/sync/whoami``)."""
     return remote.get("/api/sync/whoami")
+
+
+_whoami_seen: dict[str, tuple[tuple, float, dict]] = {}  # ws -> ((url, remote ws, token), when, answer)
+
+
+def _round_whoami(ws: str, mirror: dict, remote: Remote) -> dict:
+    """``whoami`` for a round: the answer an earlier round got for the same
+    link while it is younger than ``WHOAMI_TTL_S``, else a fresh one. A
+    round that ends with any error forgets it (``_round``), so a revoked
+    token or a lowered role is seen by the next round."""
+    key = (mirror["remote_url"], mirror["remote_ws"], mirror["token"])
+    seen = _whoami_seen.get(ws)
+    if seen and seen[0] == key and time.monotonic() - seen[1] < WHOAMI_TTL_S:
+        return seen[2]
+    me = whoami(remote)
+    _whoami_seen[ws] = (key, time.monotonic(), me)
+    return me
 
 
 def _check_remote(remote_url: str, token: str, mode: str, fetch) -> tuple[str, dict, str]:
@@ -376,15 +418,12 @@ def filter_add(ws: str, page_id: str, *, adopt: str = "") -> dict:
     mirror = get_mirror(ws)
     if not mirror:
         raise ValueError("not a mirror")
-    fields = {}
+    if adopt and adopt not in ADOPT:
+        raise ValueError("adopt must be theirs or mine")
     if mirror["page_filter"] is not None and page_id not in mirror["page_filter"]:
-        fields["page_filter"] = json.dumps(mirror["page_filter"] + [page_id])
+        _save(ws, page_filter=json.dumps(mirror["page_filter"] + [page_id]))
     if adopt:
-        if adopt not in ADOPT:
-            raise ValueError("adopt must be theirs or mine")
-        fields["status"] = {**mirror["status"], "adopt": adopt}
-    if fields:
-        _save(ws, **fields)
+        _patch_status(ws, {"adopt": adopt})
     return get_mirror(ws)
 
 
@@ -397,10 +436,8 @@ def filter_remove(ws: str, page_ids) -> dict | None:
     if not mirror or mirror["page_filter"] is None:
         return mirror
     drop = set(page_ids)
-    status = mirror["status"]
-    retry = {k: v for k, v in (status.get("retry") or {}).items() if k not in drop}
-    _save(ws, page_filter=json.dumps([p for p in mirror["page_filter"] if p not in drop]),
-          status={**status, "retry": retry})
+    _save(ws, page_filter=json.dumps([p for p in mirror["page_filter"] if p not in drop]))
+    _patch_status(ws, lambda s: {**s, "retry": {k: v for k, v in (s.get("retry") or {}).items() if k not in drop}})
     with connect_pages_db(ws) as conn:
         for page_id in drop:
             _drop_state(conn, page_id)
@@ -417,18 +454,21 @@ def set_cadence(ws: str, *, poll_s: int | None = None, on_change: bool | None = 
         fields["poll_s"] = max(0, min(int(poll_s), 86400))
     if on_change is not None:
         fields["on_change"] = 1 if on_change else 0
-    if mode is not None:
-        if mode not in ("two-way", "pull"):
-            raise ValueError("mode must be two-way or pull")
-        fields["mode"] = mode
-        # a receive-only round moves the local cursor past edits it did not
-        # push: back in two-way, the next round looks at every page changed
-        # here since the beginning (one tree compare each) and pushes them
-        current = get_mirror(ws)
-        if current and current["mode"] == "pull" and mode == "two-way":
-            fields["local_cursor"] = ""
-    if fields:
-        _save(ws, **fields)
+    with _status_guard:  # the cursor reset must not race a round's cursor save
+        if mode is not None:
+            if mode not in ("two-way", "pull"):
+                raise ValueError("mode must be two-way or pull")
+            current = get_mirror(ws)
+            if current and current["mode"] == "off":
+                raise ValueError("the copy is detached — reattach it first")
+            fields["mode"] = mode
+            # a receive-only round leaves the local cursor where it is, so the
+            # first two-way round pushes what it kept; copies from before that
+            # rule moved it, so back in two-way the cursor starts over anyway
+            if current and current["mode"] == "pull" and mode == "two-way":
+                fields["local_cursor"] = ""
+        if fields:
+            _save(ws, **fields)
     return get_mirror(ws)
 
 
@@ -440,9 +480,12 @@ def detach_mirror(ws: str) -> dict:
     mirror = get_mirror(ws)
     if not mirror:
         raise ValueError("not a mirror")
-    status = {**mirror["status"], "running": False, "detached_at": page_now(), "detached_mode": mirror["mode"]}
-    status.pop("progress", None)
-    _save(ws, mode="off", status=status)
+    if mirror["mode"] == "off":
+        return mirror
+    # a round in flight stops at its next page (``_round`` checks the stored mode) and
+    # brings ``running`` down itself; a force asked for but not yet run is forgotten
+    _save(ws, mode="off")
+    _patch_status(ws, {"detached_at": page_now(), "detached_mode": mirror["mode"]}, drop=("force",))
     return get_mirror(ws)
 
 
@@ -462,16 +505,17 @@ def relink_mirror(ws: str, *, token: str = "", remote_url: str = "", adopt: str 
     remote_url, me, mode = _check_remote(remote_url or mirror["remote_url"], token or mirror["token"], wanted, fetch)
     token = (token or mirror["token"]).strip()
     remote_ws, remote_name = me["workspace"]["id"], me["workspace"].get("name") or "Workspace"
-    status = {k: v for k, v in mirror["status"].items() if k not in ("detached_at", "detached_mode", "last_error")}
-    status.update(remote_user=me.get("user"), remote_role=me.get("role"))
+    patch = {"remote_user": me.get("user"), "remote_role": me.get("role")}
     fields = {"mode": mode, "remote_url": remote_url, "remote_ws": remote_ws, "remote_name": remote_name,
               "token": _seal(token)}
     if remote_url != mirror["remote_url"] or remote_ws != mirror["remote_ws"]:
         # a different original: the saved bases mean nothing, its pages are adopted
         _clear_bases(ws)
         fields.update(remote_cursor="", local_cursor="")
-        status["adopt"] = adopt
-    _save(ws, status=status, **fields)
+        patch["adopt"] = adopt
+    with _status_guard:
+        _save(ws, **fields)
+    _patch_status(ws, patch, drop=("detached_at", "detached_mode", "last_error"))
     return get_mirror(ws)
 
 
@@ -481,7 +525,10 @@ def force_sync(ws: str, direction: str) -> None:
     texts they had are kept in ``diverged`` conflicts), ``push`` replaces the
     original with this copy. Every page is reconciled from scratch under the
     adopt policy and pages the losing side alone has are deleted there. The
-    round runs in the background."""
+    round runs in the background: the force is noted on the status
+    (``force``) and the next round, under the round lock, starts from it —
+    clearing the bases and cursors while a round is in flight would leave
+    that round's bookkeeping and the force's fighting over them."""
     if direction not in ("pull", "push"):
         raise ValueError("direction must be pull or push")
     mirror = get_mirror(ws)
@@ -491,10 +538,22 @@ def force_sync(ws: str, direction: str) -> None:
         raise ValueError("the copy is detached — link it again first")
     if direction == "push" and mirror["mode"] != "two-way":
         raise ValueError("a read-only copy cannot replace the original")
-    _clear_bases(ws)
-    status = {**mirror["status"], "adopt": "theirs" if direction == "pull" else "mine", "prune": True}
-    _save(ws, remote_cursor="", local_cursor="", status=status)
+    _patch_status(ws, {"force": direction})
     sync_in_background(ws)
+
+
+def _start_force(ws: str, mirror: dict) -> dict:
+    """The first thing a round does under its lock: a force asked for
+    (``status.force``) becomes the round's policy — every base and both
+    cursors cleared, ``adopt`` and ``prune`` set. Returns the mirror to run."""
+    direction = mirror["status"].get("force")
+    if direction not in ("pull", "push"):
+        return mirror
+    _clear_bases(ws)
+    with _status_guard:
+        _save(ws, remote_cursor="", local_cursor="")
+    status = _patch_status(ws, {"adopt": "theirs" if direction == "pull" else "mine", "prune": True}, drop=("force",))
+    return {**mirror, "remote_cursor": "", "local_cursor": "", "status": status}
 
 
 def remove_mirror(ws: str) -> None:
@@ -647,6 +706,16 @@ def open_conflicts(ws: str) -> int:
         return conn.execute("SELECT COUNT(*) FROM sync_conflicts WHERE resolved = 0").fetchone()[0]
 
 
+def open_conflict_mark(ws: str) -> tuple[int, int]:
+    """``(count, newest id)`` of the open conflicts — the notice's
+    fingerprint (gamma/notices.py): a new conflict changes it, resolving
+    some of the old ones does not bring the notice back."""
+    with connect_pages_db(ws) as conn:
+        count, newest = conn.execute(
+            "SELECT COUNT(*), COALESCE(MAX(id), 0) FROM sync_conflicts WHERE resolved = 0").fetchone()
+    return int(count), int(newest)
+
+
 def list_conflicts(ws: str, *, resolved: bool = False, page_id: str = "") -> list[dict]:
     """The decisions to look at (or the looked-at ones), newest first, one
     page's only when ``page_id`` is given."""
@@ -671,16 +740,18 @@ def resolve_conflict(ws: str, conflict_id: int, choice: str) -> dict | None:
         if not row:
             return None
         page_id, block_id, kind, mine, theirs, result = row
-        conn.execute("UPDATE sync_conflicts SET resolved = 1 WHERE id = ?", (conflict_id,))
-        conn.commit()
-        exists = conn.execute("SELECT 1 FROM unified_blocks WHERE id = ?", (block_id,)).fetchone()
-    if choice != "keep" and kind in ("merged", "diverged") and exists:
+        # the block's page now: it may have moved to another page since the conflict was recorded
+        home = page_root_id(conn, block_id) if choice != "keep" and kind in ("merged", "diverged") else None
+    if home:
         # written as an edit from the text the conflict recorded: whatever was
         # typed into the block since is merged over the chosen version, not lost
         op = {"op": "set", "id": block_id, "content": mine if choice == "mine" else theirs}
         if result:
             op["base"] = result
-        commit_ops(ws, page_id, [op], actor=ACTOR)
+        commit_ops(ws, home, [op], actor=ACTOR)  # an OpError leaves the conflict open
+    with connect_pages_db(ws) as conn:
+        conn.execute("UPDATE sync_conflicts SET resolved = 1 WHERE id = ?", (conflict_id,))
+        conn.commit()
     return {"id": conflict_id, "resolved": True}
 
 
@@ -839,7 +910,11 @@ def _push(remote: Remote, page_id: str, ops: list[dict]) -> None:
 def _reconcile_remote_ops(conn, page_id: str, base: dict, local: dict, remote: dict) -> list[dict]:
     """The remote's diff from base, adjusted so an edit beats a delete:
     remote deletes of subtrees edited here are dropped, and subtrees
-    deleted here that the remote edited inside come back whole."""
+    deleted here that the remote edited inside come back whole. A block the
+    remote moved *out* of a subtree deleted here is not part of that
+    deletion any more: it comes back whole where the remote put it (the
+    subtree it left stays deleted unless something still inside it was
+    touched there)."""
     remote_ops = diff(base, remote, page_id)
     local_ops = diff(base, local, page_id)
     local_edited = {op["id"] for op in local_ops if op["op"] in ("set", "move", "insert")}
@@ -852,33 +927,50 @@ def _reconcile_remote_ops(conn, page_id: str, base: dict, local: dict, remote: d
     remote_touched = {op["id"] for op in remote_ops if op["op"] in ("set", "move", "insert")}
     remote_touched |= {op["parent"] for op in remote_ops if op["op"] in ("insert", "move")}
 
-    out, restored, restored_tops = [], set(), []
+    out, restored, restored_tops, escaped = [], set(), [], set()
     for top in local_deleted:
         if top not in remote:
             continue  # the remote let it go too
         gone = subtree_ids(base, top)
-
-        def inside(bid):
-            return bid in gone or any(a in gone for a in ancestors(remote, bid))
-
-        if any(inside(bid) for bid in remote_touched):
-            restored |= subtree_ids(remote, top)
+        still = subtree_ids(remote, top)  # what the remote keeps inside it now
+        left = {bid for bid in gone - still if bid in remote}
+        # the top-most blocks that left the subtree there: each comes back with its remote subtree
+        escaped |= {bid for bid in left if not any(a in left for a in ancestors(remote, bid))}
+        if any(bid in still for bid in remote_touched):
+            restored |= still
             restored_tops.append(top)
+    inserted = set()
+
+    def insert_remote(bid):
+        r = remote[bid]
+        known = r["parent"] in local or r["parent"] in restored or r["parent"] in inserted
+        inserted.add(bid)
+        out.append({"op": "insert", "id": bid, "parent": r["parent"] if known else page_id,
+                    "position": r["position"], "content": r["content"], "props": dict(r["props"])})
+
     if restored:
         # re-insert the remote's version of each restored subtree, in tree order
+        # (a block that exists here — moved in there — is moved by its own op below)
         for bid in tree_order(remote, page_id):
-            if bid in restored:
-                r = remote[bid]
-                parent = r["parent"] if (r["parent"] in local or r["parent"] in restored) else page_id
-                out.append({"op": "insert", "id": bid, "parent": parent, "position": r["position"],
-                            "content": r["content"], "props": dict(r["props"])})
+            if bid in restored and bid not in local:
+                insert_remote(bid)
         for top in restored_tops:
             _conflict(conn, page_id, top, "restored_remote_edit", theirs=remote[top]["content"],
                       result="kept the other side's version of a subtree deleted here")
     for op in remote_ops:
         bid = op["id"]
-        if bid in restored:
+        if bid in inserted:
             continue  # already re-inserted whole
+        if op["op"] == "move" and bid in escaped:
+            # it left a subtree deleted here: back whole, where the remote moved it, with its own
+            # subtree (its later set/move ops are covered by the insert; blocks that exist here
+            # and were moved under it there keep their own move ops)
+            for eid in [bid] + [d for d in tree_order(remote, page_id) if d != bid and bid in ancestors(remote, d)]:
+                if eid not in local:
+                    insert_remote(eid)
+            _conflict(conn, page_id, bid, "restored_remote_edit", theirs=remote[bid]["content"],
+                      result="kept a block the other side moved out of a subtree deleted here")
+            continue
         if op["op"] == "delete" and (bid in touched_here or any(x in touched_here for x in subtree_ids(local, bid))):
             _conflict(conn, page_id, bid, "kept_local_edit", mine=local.get(bid, {}).get("content", ""),
                       result="kept a subtree edited here that the other side deleted")
@@ -887,8 +979,10 @@ def _reconcile_remote_ops(conn, page_id: str, base: dict, local: dict, remote: d
             continue  # gone here, not restored: the other side's change to it is dropped (a delete of
             # a block already gone — deleted on both sides, or moved to another page here — is done)
         if op["op"] in ("insert", "move") and op["parent"] not in local and op["parent"] not in restored \
-                and not any(o["op"] == "insert" and o["id"] == op["parent"] for o in out):
+                and op["parent"] not in inserted:
             op = {**op, "parent": page_id}  # its parent is gone here: land at the page's top level
+        if op["op"] == "insert":
+            inserted.add(bid)
         out.append(op)
     return out
 
@@ -1161,18 +1255,21 @@ def _local_feed_all(ws: str, cursor: str) -> tuple[set, set, str]:
 def sync_workspace(ws: str, *, fetch=None) -> dict:
     """One round for the mirror ``ws``. Returns the status saved on the
     mirror (``{last_sync, last_error, pages_pulled, pages_pushed, ...}``).
-    Rounds for one workspace never overlap; a second caller waits."""
-    mirror = get_mirror(ws, with_token=True)
-    if not mirror:
-        raise ValueError("not a mirror")
+    Rounds for one workspace never overlap; a second caller waits — and
+    reads the mirror only once it holds the lock, so what changed while it
+    waited (a page unpublished, a detach, a force) is what it runs with."""
     lock = _lock(ws)
     with lock:
+        mirror = get_mirror(ws, with_token=True)
+        if not mirror:
+            raise ValueError("not a mirror")
         return _round(ws, mirror, fetch)
 
 
 def _round(ws: str, mirror: dict, fetch) -> dict:
     if mirror["mode"] == "off":
         return mirror["status"]  # detached: nothing runs until it is linked again
+    mirror = _start_force(ws, mirror)
     if mirror["page_filter"] is not None:
         mirror = {**mirror, "page_filter": _prune_filter(ws, mirror["page_filter"])}
         if not mirror["page_filter"]:
@@ -1180,13 +1277,14 @@ def _round(ws: str, mirror: dict, fetch) -> dict:
     remote = Remote(mirror["remote_url"], mirror["remote_ws"], mirror["token"], fetch)
     first = not mirror["status"].get("last_sync")  # the first fill (or one that never completed)
     started = time.monotonic()  # local writes up to here are this round's to push
-    status = {**mirror["status"], "running": True, "started_at": page_now(), "progress": None}
-    status.pop("interrupted", None)
-    _save(ws, status=status)
+    # the status is only ever patched: what a detach, a force or the filter write
+    # to it while the round runs stays (``_patch_status``)
+    _patch_status(ws, {"running": True, "started_at": page_now(), "progress": None}, drop=("interrupted",))
     report = {"pages_pulled": 0, "pages_pushed": 0, "pages_deleted": 0, "files_pulled": 0,
               "files_pushed": 0, "blocks_added": 0, "blocks_removed": 0, "blocks_changed": 0,
               "errors": [], "adopt": mirror["status"].get("adopt"),
               "prune": bool(mirror["status"].get("prune"))}
+    progress: dict = {}
     last_file_save = [0.0]
 
     def file_progress(name, done, total, direction):
@@ -1195,22 +1293,25 @@ def _round(ws: str, mirror: dict, fetch) -> dict:
         if done < total and now - last_file_save[0] < 0.3:
             return
         last_file_save[0] = now
-        status["progress"] = {**(status.get("progress") or {}),
-                              "file": {"name": name, "done": done, "total": total, "dir": direction}}
-        _save(ws, status=status)
+        progress["file"] = {"name": name, "done": done, "total": total, "dir": direction}
+        _patch_status(ws, {"progress": dict(progress)})
 
     report["progress"] = file_progress
     mode = mirror["mode"]
     try:
-        me = whoami(remote)
+        me = _round_whoami(ws, mirror, remote)
         role = me.get("role") if me else None
         if mode == "two-way" and (me.get("scope") != "write" or role == "viewer"):
             report["errors"].append("the token or your role on the remote is read-only: pulling only")
             mode = "pull"
         remote_pages, remote_deleted, remote_cursor = _feed_all(remote, mirror["remote_cursor"])
-        local_pages, local_deleted, local_cursor = _local_feed_all(ws, mirror["local_cursor"])
-        if mode != "two-way":
-            local_pages, local_deleted = set(), set()
+        if mode == "two-way" or (report["prune"] and (report["adopt"] or "theirs") == "theirs"):
+            # (a force pull reads the local feed whatever the mode: pages only this copy has go)
+            local_pages, local_deleted, local_cursor = _local_feed_all(ws, mirror["local_cursor"])
+        else:
+            # receive only, or read-only on the remote for now: the local feed is not walked and
+            # its cursor stays put, so the first round that may push finds every edit made here
+            local_pages, local_deleted, local_cursor = set(), set(), mirror["local_cursor"]
         todo = {}
         for page_id in set(remote_pages) | set(remote_deleted) | local_pages | local_deleted:
             todo[page_id] = {"seq": remote_pages.get(page_id),
@@ -1223,12 +1324,17 @@ def _round(ws: str, mirror: dict, fetch) -> dict:
         if mirror["page_filter"] is not None:
             todo = _filtered(ws, mirror["page_filter"], todo, force=report["prune"])
         failed = {}
-        for n, page_id in enumerate(sorted(todo)):
+        order = sorted(todo)
+        for n, page_id in enumerate(order):
             flags = todo[page_id]
+            if _stored_mode(ws) == "off":
+                # detached while running: the rest waits for a reattach (the cursors move past it)
+                failed.update({p: todo[p] for p in order[n:]})
+                break
             # the pill and the popover read this while the round runs: "21 of 79 pages"
-            status["progress"] = {"done": n, "total": len(todo), "page": _title_of(ws, page_id),
-                                  "first": first, "at": page_now()}
-            _save(ws, status=status)
+            progress.clear()
+            progress.update(done=n, total=len(todo), page=_title_of(ws, page_id), first=first, at=page_now())
+            _patch_status(ws, {"progress": dict(progress)})
             try:
                 _sync_page(ws, remote, page_id, remote_seq_hint=flags["seq"], remote_gone=flags["remote_gone"],
                            local_gone=flags["local_gone"], mode=mode, report=report)
@@ -1242,24 +1348,37 @@ def _round(ws: str, mirror: dict, fetch) -> dict:
         # files the copy's pages reference but its uploads folder lacks (an
         # interrupted round, a file lost on disk): fetched again every round
         _pull_files(ws, remote, missing_uploads(ws, mirror["page_filter"]), report)
-        # cursors move only when the round could talk to the remote at all
-        _save(ws, remote_cursor=remote_cursor, local_cursor=local_cursor)
+        # cursors move only when the round could talk to the remote at all, and only
+        # when nothing reset them meanwhile (a direction change; a force waits its turn)
+        with _status_guard:
+            now = get_mirror(ws)
+            if now and now["remote_cursor"] == mirror["remote_cursor"] and now["local_cursor"] == mirror["local_cursor"]:
+                _save(ws, remote_cursor=remote_cursor, local_cursor=local_cursor)
         report = {k: v for k, v in report.items() if k not in ("adopt", "prune", "progress")}
-        status = {**status, **report, "running": False, "last_sync": page_now(), "mode": mode,
-                  "remote_role": role, "remote_user": me.get("user") if me else None,
-                  "last_error": report["errors"][0] if report["errors"] else "", "retry": failed}
-        if not failed:
-            # a link's or a force's policy is spent once every page went through
-            status.pop("adopt", None)
-            status.pop("prune", None)
-        if not report["errors"] and _dirty.get(ws, float("inf")) <= started:
+        errors = report.pop("errors")
+        patch = {**report, "running": False, "last_sync": page_now(), "mode": mode,
+                 "remote_role": role, "remote_user": me.get("user") if me else None,
+                 "last_error": errors[0] if errors else "", "retry": failed}
+
+        def finish(current):
+            current = {**current, **patch}
+            if not failed:
+                # a link's or a force's policy is spent once every page went through — unless
+                # a newer one was asked for while the round ran
+                for key in ("adopt", "prune"):
+                    if current.get(key) == mirror["status"].get(key):
+                        current.pop(key, None)
+            return current
+
+        status = _patch_status(ws, finish, drop=("progress",))
+        if not errors and _dirty.get(ws, float("inf")) <= started:
             _dirty.pop(ws, None)  # everything written before the round started went out with it
     except Exception as e:  # noqa: BLE001 — whatever happens, the running flag comes down
-        status = {**status, "running": False, "last_error": str(e), "last_attempt": page_now()}
+        status = _patch_status(ws, {"running": False, "last_error": str(e), "last_attempt": page_now()},
+                               drop=("progress",))
         log.warning(f"[mirror] {ws}: {e}")
-    status.pop("errors", None)
-    status.pop("progress", None)
-    _save(ws, status=status)
+    if status.get("last_error"):
+        _whoami_seen.pop(ws, None)
     return status
 
 

@@ -403,6 +403,98 @@ export async function pdfScenarios({ server, browser, alice, makePdf, step, unti
     await waitForPdf(page);
   });
 
+  // The translate endpoint, answered locally: every text comes back as
+  // "译:<text>" in one final NDJSON line (a translation service's shape).
+  async function mockTranslate(requests) {
+    await page.route("**/api/ai/translate", async (route) => {
+      const body = route.request().postDataJSON();
+      requests.push(body);
+      await route.fulfill({ contentType: "application/x-ndjson",
+        body: `${JSON.stringify({ translations: body.texts.map((t) => `译:${t}`), model: "engine:google", cached: false })}\n` });
+    });
+  }
+
+  await step("pdf: the translate button translates the page being read, and shows/hides only on a translated one", async () => {
+    await page.reload();
+    await waitForPdf(page, 2);
+    await sleep(1000); // the saved reading position is restored after the first paint
+    const requests = [];
+    await mockTranslate(requests);
+    const button = page.getByRole("button", { name: "Translate", exact: true });
+    // Scroll the visible viewer (another tab's stays mounted, hidden) so
+    // `pn` is the page being read.
+    const goTo = async (pn) => {
+      await page.evaluate((pn) => {
+        const v = [...document.querySelectorAll(".pdfViewer")].find((el) => el.offsetParent !== null);
+        const el = v.querySelector(`[data-page="${pn}"]`);
+        v.scrollTop = pn === 1 ? 0 : el.getBoundingClientRect().top - v.getBoundingClientRect().top + v.scrollTop;
+        v.dispatchEvent(new Event("scroll"));
+      }, pn);
+      await until(() => page.evaluate(() => [...document.querySelectorAll("input[aria-label='Current page']")]
+        .find((el) => el.offsetParent !== null)?.value).then((v) => v === String(pn)), { what: `page ${pn} is the one being read` });
+      await sleep(300);
+      assertEq(await page.evaluate(() => [...document.querySelectorAll("input[aria-label='Current page']")]
+        .find((el) => el.offsetParent !== null)?.value), String(pn), "the viewer stays on the page");
+    };
+    try {
+      await goTo(1);
+      await button.click();
+      await page.locator('[data-page="1"] .pdfTransPara').first().waitFor();
+      await page.getByRole("button", { name: "Hide translation", exact: true }).waitFor();
+      // Page 2 isn't translated yet: the button offers to translate it.
+      await goTo(2);
+      await button.click();
+      await page.locator('[data-page="2"] .pdfTransPara').first().waitFor();
+      assert(requests.some((r) => r.texts.some((t) => t.includes("says hello"))), "page 2's text was sent");
+      // On a translated page the button hides every page's translation.
+      await page.getByRole("button", { name: "Hide translation", exact: true }).click();
+      await page.getByRole("button", { name: "Show translation", exact: true }).waitFor();
+      assertNoProblems(page);
+    } finally {
+      await page.unroute("**/api/ai/translate");
+      await page.reload(); // drop the translated view: later steps select PDF text
+      await waitForPdf(page, 2);
+    }
+  });
+
+  await step("pdf: the selection popup translates the selected text, or on select once that is on", async () => {
+    const requests = [];
+    await mockTranslate(requests);
+    const { value: profile } = await account.api("/api/prefs/profile");
+    try {
+      await selectPdfText(page, 2, "says hello");
+      await page.getByRole("button", { name: "Translate selection", exact: true }).click();
+      const body = page.locator(".plainTip .selTransBody");
+      await until(async () => (await body.textContent()) === "译:says hello", { what: "the translation under the colors" });
+      assertEq(JSON.stringify(requests.at(-1).texts), JSON.stringify(["says hello"]));
+      // The header folds the result; clicking into the text keeps the popup.
+      await page.locator(".selTransToggle").click();
+      assertEq(await body.count(), 0);
+      await page.locator(".selTransToggle").click();
+      await body.click();
+      await sleep(150);
+      assertEq(await page.locator(".plainTip").count(), 1, "the popup stays while reading the translation");
+
+      // Translate on select: the result opens without a click.
+      await account.api("/api/prefs/profile", { method: "PUT", body: { value: { ...(profile || {}), selTranslateAuto: true } } });
+      await page.reload();
+      await waitForPdf(page, 2);
+      await until(() => page.evaluate(() => localStorage.getItem("gamma-sel-translate-auto")).then((v) => v === "1" || v === "true"),
+        { what: "the profile's translate-on-select" });
+      const before = requests.length;
+      await selectPdfText(page, 1, "Second line");
+      await until(async () => (await page.locator(".plainTip .selTransBody").textContent().catch(() => "")) === "译:Second line",
+        { what: "the translation, opened by itself" });
+      assertEq(requests.length, before + 1);
+      assertNoProblems(page);
+    } finally {
+      await page.unroute("**/api/ai/translate");
+      await account.api("/api/prefs/profile", { method: "PUT", body: { value: { ...(profile || {}), selTranslateAuto: false } } });
+      await page.reload();
+      await waitForPdf(page);
+    }
+  });
+
   await step("pdf: the home library lists the paper and double-click opens it", async () => {
     await page.click("button[aria-label='Home']");
     const card = page.locator(".pageCard", { hasText: "Rydberg paper" }).first();

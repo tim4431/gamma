@@ -1,6 +1,7 @@
+import { wanted } from "../harness.mjs";
 export async function chatNavigationScenarios(env) {
   const { server, browser, alice, makePdf, step, until, assert, assertEq, assertNoProblems, openPage, flags } = env;
-  if (flags.only && !"chat navigation".includes(flags.only)) return;
+  if (!wanted("chat navigation")) return;
   const target = await alice.api("/api/pages", { method: "POST", body: { title: "Linked paper" } });
   const upload = await alice.upload("/api/uploads", makePdf([["Chat navigation paper"]]), "chat-navigation.pdf", "application/pdf");
   const pdf = await alice.api(`/api/blocks/by-doc/${upload.doc_id}`, { method: "POST", body: {
@@ -76,6 +77,7 @@ export async function chatNavigationScenarios(env) {
           });
           assertEq(saved.messages.length, 2);
           assertEq(saved.messages.at(-1).usage.input, 1200, "the reply keeps the summed token report");
+          assertEq(saved.messages.at(-1).context_tokens, 204, "the context ring's figure is the last round alone");
           const usageLine = page.locator(".chatBubbleRow.ai .chatMsgUsage");
           await usageLine.waitFor();
           assert((await usageLine.innerText()).replace(/\s+/g, " ").includes("1.2k"), "input tokens shown under the reply");

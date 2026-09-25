@@ -3,11 +3,12 @@ import { HighlightIcon, PaperclipIcon, PenIcon, ScissorsIcon } from "../shared/u
 import { PictureChoices, Step, SubDialog, Toggle } from "../settings/SettingsKit";
 import { ExportPreview, ImportPreview, FormatIllustration } from "../shared/illustrations";
 import { CATEGORIES, resolveExport, resolveImport, exportSummary } from "./transferFormats";
+import { T, t } from "../shared/i18n/i18n.js";
 
 const EXPORT_CONTROLS = {
-  highlights: { icon: HighlightIcon, label: "Highlights" },
-  notes: { icon: PenIcon, label: "Notes" },
-  bundle: { icon: PaperclipIcon, label: "Bundle the files" },
+  highlights: { icon: HighlightIcon, label: T("Highlights") },
+  notes: { icon: PenIcon, label: T("Notes") },
+  bundle: { icon: PaperclipIcon, label: T("Bundle the files") },
 };
 
 function FormatChoices({ label, value, onChange, onConfirm, options }) {
@@ -15,9 +16,9 @@ function FormatChoices({ label, value, onChange, onConfirm, options }) {
     {CATEGORIES.map((type) => {
       const group = options.filter((option) => option.category === type);
       if (!group.length) return null;
-      return <section key={type} className={`transferFormatRow${group.length < 3 ? " transferFormatRowWide" : ""}`} aria-label={type}>
-        <h3>{type}</h3>
-        <PictureChoices label={`${type} choices`} value={value} onChange={onChange} columns={Math.min(group.length, 4)}
+      return <section key={type} className={`transferFormatRow${group.length < 3 ? " transferFormatRowWide" : ""}`} aria-label={t(type)}>
+        <h3>{t(type)}</h3>
+        <PictureChoices label={t("{type} choices", { type: type })} value={value} onChange={onChange} columns={Math.min(group.length, 4)}
           onConfirm={onConfirm}
           options={group.map(({ id, label, hint }) => ({ value: id, label, hint,
             preview: <FormatIllustration format={id} />,
@@ -31,11 +32,11 @@ function TransferDialog({ title, step, setStep, firstTitle, secondTitle, onCance
   const head = React.useRef(null);
   React.useEffect(() => { head.current?.focus(); }, [step]);
   return <SubDialog title={title} onClose={onCancel} className="transferModal" closeButton>
-    <nav className="transferProgress" aria-label={`Step ${step + 1} of ${needsReview ? 2 : 1}`}>
+    <nav className="transferProgress" aria-label={t("Step {step} of {total}", { step: step + 1, total: needsReview ? 2 : 1 })}>
       {step > 0 ? <button type="button" className="crumbBtn" onClick={() => setStep(0)}>1. {firstTitle}</button>
         : <span aria-current="step">{needsReview ? "1. " : ""}{firstTitle}</span>}
       {needsReview ? <><span aria-hidden="true">/</span>
-      <span aria-current={step === 1 ? "step" : undefined}>2. Review</span></> : null}
+      <span aria-current={step === 1 ? "step" : undefined}>{t("2. Review")}</span></> : null}
     </nav>
     <div className="transferStep" key={step}>
       <h2 ref={head} tabIndex={-1}>{step === 0 ? firstTitle : secondTitle}</h2>
@@ -43,7 +44,7 @@ function TransferDialog({ title, step, setStep, firstTitle, secondTitle, onCance
     </div>
     <div className="reportModalBtns transferFooter">
       <button type="button" className="uiBtn primary" disabled={busy}
-        onClick={step === 0 ? onContinue : action}>{step === 0 && needsReview ? "Next" : actionLabel}</button>
+        onClick={step === 0 ? onContinue : action}>{step === 0 && needsReview ? t("Next") : actionLabel}</button>
     </div>
   </SubDialog>;
 }
@@ -64,14 +65,14 @@ export function ExportDialog({ opts, setOpts, hasPdf, pdfStored, folder, onCance
   };
   const summary = exportSummary(resolved, folder);
 
-  return <TransferDialog title={folder ? `Export “${folder}”` : "Export"} step={step} setStep={setStep}
-    firstTitle="Choose a format" secondTitle={definition.label} needsReview={needsReview} onContinue={() => advance()}
-    onCancel={onCancel} actionLabel="Export" action={() => onExport(payload)}>
+  return <TransferDialog title={folder ? t("Export “{folder}”", { folder: folder }) : t("Export")} step={step} setStep={setStep}
+    firstTitle={t("Choose a format")} secondTitle={t(definition.label)} needsReview={needsReview} onContinue={() => advance()}
+    onCancel={onCancel} actionLabel={t("Export")} action={() => onExport(payload)}>
     {step === 0 ? <>
-      <FormatChoices label="Export format" value={format} onChange={(format) => set({ format })} onConfirm={advance} options={formats} />
+      <FormatChoices label={t("Export format")} value={format} onChange={(format) => set({ format })} onConfirm={advance} options={formats} />
       {!needsReview ? <p className="reportModalHint">{summary}</p> : null}
     </> : <>
-      <p className="reportModalHint">Choose what to include.</p>
+      <p className="reportModalHint">{t("Choose what to include.")}</p>
       <div className="transferReview">
         <ExportPreview {...payload} />
         <div className="transferControls">
@@ -80,19 +81,19 @@ export function ExportDialog({ opts, setOpts, hasPdf, pdfStored, folder, onCance
             return <Toggle key={key} icon={icon} label={label} hint={hint} title={title}
               checked={payload[key]} disabled={disabled} onChange={(value) => set({ [key]: value })} />;
           })}
-          {isZotero && !bundle ? <p className="reportModalHint">Highlights travel inside PDF files. Turn on file bundling to include them.</p> : null}
+          {isZotero && !bundle ? <p className="reportModalHint">{t("Highlights travel inside PDF files. Turn on file bundling to include them.")}</p> : null}
         </div>
       </div>
       {isZotero ? (
         // Same numbered-step guide as the Zotero import dialog — the .zip
         // trap (Zotero can't read one) is worth spelling out every time.
-        <details className="transferHelp"><summary>Open this export in Zotero</summary><div className="importSteps">
-          <Step n={1} title="Download the .zip"
-            hint={`Metadata, ${folder ? "subfolders" : "folders"} as collections, tags, notes${bundle ? `; the PDF${folder ? "s" : ""}${highlights ? " with highlights embedded" : ""} and note images` : ""}.`} />
-          <Step n={2} title="Unzip it"
-            hint="Keep the .rdf and the files/ folder together." />
-          <Step n={3} title="Import the .rdf in Zotero"
-            hint={'File → Import… → "A file" → pick the .rdf — never the .zip (Zotero calls it an unsupported format). Untick "Place imported collections… into a new collection" to skip the extra wrapper folder.'} />
+        <details className="transferHelp"><summary>{t("Open this export in Zotero")}</summary><div className="importSteps">
+          <Step n={1} title={t("Download the .zip")}
+            hint={t("Metadata, {folders} as collections, tags, notes{images}.", { folders: folder ? "subfolders" : "folders", images: bundle ? t("; the PDF{_s}{embedded} and note images", { _s: folder ? "s" : "", embedded: highlights ? t(" with highlights embedded") : "" }) : "" })} />
+          <Step n={2} title={t("Unzip it")}
+            hint={t("Keep the .rdf and the files/ folder together.")} />
+          <Step n={3} title={t("Import the .rdf in Zotero")}
+            hint={t('File → Import… → "A file" → pick the .rdf — never the .zip (Zotero calls it an unsupported format). Untick "Place imported collections… into a new collection" to skip the extra wrapper folder.')} />
         </div></details>
       ) : (
         <div className="reportModalHint">{summary}</div>
@@ -120,21 +121,21 @@ export function ImportDialog({ hasPdf, stripDefault, busy, onCancel, onImport })
     if (next.needsReview) setStep(1);
     else onImport(next.payload);
   };
-  return <TransferDialog title="Import" step={step} setStep={setStep} onCancel={onCancel} busy={busy}
-    firstTitle="Choose a source" secondTitle={definition.label} needsReview={needsReview} onContinue={() => advance()}
-    actionLabel={definition.actionLabel} action={() => onImport(payload)}>
+  return <TransferDialog title={t("Import")} step={step} setStep={setStep} onCancel={onCancel} busy={busy}
+    firstTitle={t("Choose a source")} secondTitle={t(definition.label)} needsReview={needsReview} onContinue={() => advance()}
+    actionLabel={t(definition.actionLabel)} action={() => onImport(payload)}>
     {step === 0 ? <>
-      <FormatChoices label="Import from" value={src} onChange={setSource} onConfirm={advance} options={formats} />
-      {!needsReview ? <p className="reportModalHint">{definition.instructions}</p> : null}
+      <FormatChoices label={t("Import from")} value={src} onChange={setSource} onConfirm={advance} options={formats} />
+      {!needsReview ? <p className="reportModalHint">{t(definition.instructions)}</p> : null}
     </> : <>
       <div className="transferReview">
         <ImportPreview annotations strip={payload.strip} />
         <div className="transferControls">
           <Toggle
             icon={ScissorsIcon}
-            label="Strip the originals"
-            hint={src === "annots" ? "Rewrite the stored PDF without them" : "Rewrite the imported PDFs without them"}
-            title="Rewrite the stored file without the annotations you're importing, so only Gamma's copies remain. Off: they stay in the file and the viewer hides them."
+            label={t("Strip the originals")}
+            hint={src === "annots" ? t("Rewrite the stored PDF without them") : t("Rewrite the imported PDFs without them")}
+            title={t("Rewrite the stored file without the annotations you're importing, so only Gamma's copies remain. Off: they stay in the file and the viewer hides them.")}
             checked={payload.strip}
             onChange={setStrip}
           />
@@ -143,15 +144,15 @@ export function ImportDialog({ hasPdf, stripDefault, busy, onCancel, onImport })
       {src === "zotero" ? (
         // Same numbered-step guide as the add-API-key wizard.
         <div className="importSteps">
-          <Step n={1} title="Export from Zotero"
-            hint={'File → Export Library… (or right-click a collection), format "Zotero RDF".'} />
-          <Step n={2} title="Include the files and notes"
-            hint={'Check "Export Files" and "Export Notes" — the files carry your PDFs and the annotations you made in Zotero\'s reader.'} />
-          <Step n={3} title="Zip the exported folder and pick it here"
-            hint="Papers arrive with their metadata; collections become folders, tags labels, notes blocks. Importing again updates instead of duplicating." />
+          <Step n={1} title={t("Export from Zotero")}
+            hint={t('File → Export Library… (or right-click a collection), format "Zotero RDF".')} />
+          <Step n={2} title={t("Include the files and notes")}
+            hint={t('Check "Export Files" and "Export Notes" — the files carry your PDFs and the annotations you made in Zotero\'s reader.')} />
+          <Step n={3} title={t("Zip the exported folder and pick it here")}
+            hint={t("Papers arrive with their metadata; collections become folders, tags labels, notes blocks. Importing again updates instead of duplicating.")} />
         </div>
       ) : (
-        <div className="reportModalHint">{definition.instructions}</div>
+        <div className="reportModalHint">{t(definition.instructions)}</div>
       )}
     </>}
   </TransferDialog>;

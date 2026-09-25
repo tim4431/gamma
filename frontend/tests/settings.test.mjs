@@ -19,7 +19,7 @@ test("permission presets preserve explicit restrictions and the applicable tools
 });
 
 test("settings search finds controls on nested AI pages without exposing inaccessible management pages", () => {
-  const allowed = ["appearance", "reading", "library", "ai", "assistant", "ai-advanced", "prompts", "account", "maintenance", "diagnostics"];
+  const allowed = ["appearance", "reading", "ai", "assistant", "ai-advanced", "prompts", "account", "maintenance", "diagnostics"];
   assert.equal(searchSettings("translation concurrency", allowed)[0].label, "Parallel requests");
   assert.equal(searchSettings("  FLIP colors  ", allowed)[0].pane, "appearance");
   assert.equal(searchSettings("password", allowed).some((item) => item.pane === "users"), false);
@@ -31,6 +31,7 @@ test("settings search finds controls on nested AI pages without exposing inacces
 test("legacy settings destinations resolve to the reorganized pages", () => {
   for (const old of ["notes", "viewer", "search"]) assert.equal(resolveSettingsPane(old), "reading");
   assert.equal(resolveSettingsPane("context"), "ai-advanced");
+  assert.equal(resolveSettingsPane("library"), "appearance");
   for (const id of ["assistant", "prompts", "ai-advanced"]) assert.equal(resolveSettingsPane(id), id);
   assert.equal(resolveSettingsPane("general"), "appearance");
   assert.equal(resolveSettingsPane("workspace"), "workspaces");
@@ -82,4 +83,17 @@ test("the profile codec keeps valid entries and drops the rest", async () => {
   for (const bad of [null, "x", [], 3]) assert.deepEqual(readProfile(bad), {});
   const bytes = JSON.stringify({ value: profileOf({ ...defaults, chatSystem: "p".repeat(12000), agentSystem: "p".repeat(12000) }) }).length;
   assert.ok(bytes < 64 * 1024, "fits the prefs size cap");
+});
+
+test("the translation pick resolves to what is sent: the pick, the free service, or the chat model", async () => {
+  const { FREE_TRANSLATE_ENGINE, translateModelFor } = await import("../src/app/prefDefs.js");
+  const free = { id: FREE_TRANSLATE_ENGINE }, google = { id: "engine:google" }, model = { id: "p1:gpt" };
+  assert.equal(translateModelFor("engine:google", [free, google], [model]), "engine:google");
+  assert.equal(translateModelFor("p1:gpt", [free], [model]), "p1:gpt");
+  // A stale pick (the service removed) follows the chat model while there is one...
+  assert.equal(translateModelFor("engine:youdao", [free], [model]), "");
+  assert.equal(translateModelFor("", [free], [model]), "");
+  // ...and falls to the free service when there is no chat model at all.
+  assert.equal(translateModelFor("engine:youdao", [free], []), FREE_TRANSLATE_ENGINE);
+  assert.equal(translateModelFor("", [], []), "");
 });

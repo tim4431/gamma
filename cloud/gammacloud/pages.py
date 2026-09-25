@@ -670,12 +670,13 @@ def admin_page(account: dict) -> str:
 const PLANS = %s; let offset = 0, query = '';
 document.querySelectorAll('.tabs button').forEach(b => b.onclick = () => { document.querySelectorAll('.tabs button').forEach(x => x.classList.toggle('on', x === b));
   for (const t of ['accounts','invites','clients','audit']) document.getElementById('tab-' + t).hidden = t !== b.dataset.tab; if (b.dataset.tab !== 'accounts') load(b.dataset.tab); });
-function planSelect(a){ return '<select class=sm data-plan="' + a.id + '">' + PLANS.map(p => '<option' + (p === a.plan ? ' selected' : '') + '>' + p + '</option>').join('') + '</select>'; }
+function planSelect(a){ return '<select class=sm data-plan="' + a.id + '"' + (a.deleted_at ? ' disabled' : '') + '>' + PLANS.map(p => '<option' + (p === a.plan ? ' selected' : '') + '>' + p + '</option>').join('') + '</select>'; }
 function accountRow(a){
   const status = (a.deleted_at ? '<span class=pill>deleted</span> ' : '') + (a.email_verified ? '<span class="pill pill--ok">verified</span>' : '<span class="pill pill--warn">unverified</span>') + (a.is_admin ? ' <span class=pill>admin</span>' : '');
   return '<tr data-id="' + esc(a.id) + '"><td><b>' + esc(a.username) + '</b><br><span class=mono>' + esc(a.id) + '</span></td><td>' + esc(a.email) + '</td><td>' + planSelect(a) + '</td><td>' + status + '</td><td>' + esc(a.created_at.slice(0,10)) + '</td>'
-    + '<td><select class=sm data-act="' + esc(a.id) + '"><option value="">Actions…</option>' + (a.email_verified ? '' : '<option value=verify>Mark verified</option><option value=resend>Resend verify mail</option>')
-    + '<option value=rename>Rename…</option><option value=' + (a.is_admin ? 'unadmin>Remove admin' : 'admin>Make admin') + '</option>' + (a.deleted_at ? '' : '<option value=delete>Delete</option>') + '</select></td></tr>';
+    + '<td><select class=sm data-act="' + esc(a.id) + '"><option value="">Actions…</option>' + (a.deleted_at ? '<option value=restore>Restore</option><option value=purge>Purge now</option>'
+    : (a.email_verified ? '' : '<option value=verify>Mark verified</option><option value=resend>Resend verify mail</option>')
+    + '<option value=rename>Rename…</option><option value=' + (a.is_admin ? 'unadmin>Remove admin' : 'admin>Make admin') + '</option><option value=delete>Delete</option>') + '</select></td></tr>';
 }
 async function loadAccounts(reset){
   if (reset) { offset = 0; document.getElementById('accounts').innerHTML = ''; }
@@ -694,6 +695,8 @@ function wire(){
       else if (v === 'admin' || v === 'unadmin') await api('/api/admin/accounts/' + id, {is_admin: v === 'admin'}, 'PATCH');
       else if (v === 'rename') { const u = prompt('New username (lowercase letters, digits, hyphens):'); if (!u) return; await api('/api/admin/accounts/' + id, {username: u}, 'PATCH'); }
       else if (v === 'delete') { if (!confirm('Delete this account? It is signed out everywhere and purged after the grace period.')) return; await api('/api/admin/accounts/' + id + '/delete', {}); }
+      else if (v === 'restore') { await api('/api/admin/accounts/' + id + '/restore', {}); alert('Restored. They sign back in with a password reset, or Google/GitHub on the same e-mail.'); }
+      else if (v === 'purge') { if (!confirm('Purge this account now? Its username and e-mail become free for a new account. This cannot be undone.')) return; await api('/api/admin/accounts/' + id + '/purge', {}); }
       else return;
       loadAccounts(true);
     } catch (e) { alert(e.message); }

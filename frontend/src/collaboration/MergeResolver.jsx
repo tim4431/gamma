@@ -12,6 +12,8 @@
 // none) show the two texts against each other instead.
 import React from "react";
 import { API, apiJson } from "../shared/lib/utils";
+import { T, t } from "../shared/i18n/i18n.js";
+import { guideEvents } from "../guide/events.js";
 import {
   AlertCircleIcon, ArrowDownIcon, ArrowUpIcon, CheckIcon, ChevronLeftIcon, ChevronRightIcon, ExternalLinkIcon,
   HardDriveIcon, MergeIcon, ServerIcon,
@@ -114,12 +116,12 @@ function mergedParts(base, mine, theirs, result) {
 
 // The sync_conflicts kinds, in git's words (local = this clone, remote = origin).
 export const MERGE_KIND = {
-  merged: { short: "Auto-merged", long: "Both sides changed this block; the two edits were merged into one text.", Icon: MergeIcon },
-  diverged: { short: "Diverged", long: "Local and remote differed when the clone was attached; one was taken, the other is here.", Icon: AlertCircleIcon },
-  kept_local_edit: { short: "Kept local", long: "Remote deleted this, but it was edited here, so it stayed and was pushed back.", Icon: ArrowUpIcon },
-  restored_remote_edit: { short: "Restored remote", long: "This was deleted here, but remote edited it, so it was pulled back.", Icon: ArrowDownIcon },
-  page_restored: { short: "Page restored on remote", long: "Remote deleted this page; it was edited here, so it was pushed back.", Icon: ArrowUpIcon },
-  page_restored_from_remote: { short: "Page restored from remote", long: "This page was deleted here but edited on remote, so it was pulled back.", Icon: ArrowDownIcon },
+  merged: { short: T("Auto-merged"), long: T("Both sides changed this block; the two edits were merged into one text."), Icon: MergeIcon },
+  diverged: { short: T("Diverged"), long: T("Local and remote differed when the clone was attached; one was taken, the other is here."), Icon: AlertCircleIcon },
+  kept_local_edit: { short: T("Kept local"), long: T("Remote deleted this, but it was edited here, so it stayed and was pushed back."), Icon: ArrowUpIcon },
+  restored_remote_edit: { short: T("Restored remote"), long: T("This was deleted here, but remote edited it, so it was pulled back."), Icon: ArrowDownIcon },
+  page_restored: { short: T("Page restored on remote"), long: T("Remote deleted this page; it was edited here, so it was pushed back."), Icon: ArrowUpIcon },
+  page_restored_from_remote: { short: T("Page restored from remote"), long: T("This page was deleted here but edited on remote, so it was pulled back."), Icon: ArrowDownIcon },
 };
 
 export function kindOf(conflict) {
@@ -134,9 +136,9 @@ export function isTextual(conflict) {
 
 // The sides: a glyph, a word, where it lives. (The API keeps mine / theirs.)
 const SIDE = {
-  mine: { label: "Local", hint: "this clone", Icon: HardDriveIcon },
-  theirs: { label: "Remote", hint: "origin", Icon: ServerIcon },
-  result: { label: "Merged", hint: "both edits in one text", Icon: MergeIcon },
+  mine: { label: T("Local"), hint: T("this clone"), Icon: HardDriveIcon },
+  theirs: { label: T("Remote"), hint: "origin", Icon: ServerIcon },
+  result: { label: T("Merged"), hint: T("both edits in one text"), Icon: MergeIcon },
 };
 
 // Neighbouring tokens of one tag become one run, the whitespace between
@@ -167,15 +169,15 @@ function Version({ side, parts, current, hint, group, selected, onSelect, busy }
   const pickable = Boolean(onSelect);
   return (
     <section className={`mergeVersion ${side} ${current ? "current" : ""} ${selected === side ? "selected" : ""}`}
-      aria-label={`${s.label} (${s.hint})`} onClick={pickable ? () => onSelect(side) : undefined}>
+      aria-label={t("{label} ({hint})", { label: t(s.label), hint: t(s.hint) })} onClick={pickable ? () => onSelect(side) : undefined}>
       <header className="mergeVersionHead">
         {pickable ? (
           <input type="radio" className="mergePick" name={group} value={side} checked={selected === side} disabled={busy}
-            onChange={() => onSelect(side)} aria-label={s.label} title={`Put the ${s.label.toLowerCase()} text into the block`} />
+            onChange={() => onSelect(side)} aria-label={t(s.label)} title={t("Put the {side} text into the block", { side: t(s.label).toLowerCase() })} />
         ) : null}
-        <span className={`mergeSide ${side}`} title={hint || s.hint}><s.Icon size={12} />{s.label}</span>
-        <span className="popoverHint mergeSideHint">{hint || s.hint}</span>
-        {current ? <span className="uiTag">in the block</span> : null}
+        <span className={`mergeSide ${side}`} title={hint || t(s.hint)}><s.Icon size={12} />{t(s.label)}</span>
+        <span className="popoverHint mergeSideHint">{hint || t(s.hint)}</span>
+        {current ? <span className="uiTag">{t("in the block")}</span> : null}
       </header>
       <div className="mergeText"><Marked parts={parts} /></div>
     </section>
@@ -199,11 +201,12 @@ function Versions({ conflict, busy, onUse }) {
   const theirsParts = base ? sideParts(base, c.theirs, "theirs") : onlyIn(c.theirs, c.mine, "theirs");
   const pick = { group, selected, onSelect: setSelected, busy };
   const keeps = selected === currentSide;
+  React.useEffect(() => { guideEvents.emit("conflict.shown"); }, []);
   return (
     <>
-      <div className={`mergeVersions ${diverged ? "two" : "three"}`}>
-        <Version side="mine" parts={mineParts} current={currentSide === "mine"} hint={base ? "changed here" : undefined} {...pick} />
-        <Version side="theirs" parts={theirsParts} current={currentSide === "theirs"} hint={base ? "changed on origin" : undefined} {...pick} />
+      <div className={`mergeVersions ${diverged ? "two" : "three"}`} data-guide="merge.versions">
+        <Version side="mine" parts={mineParts} current={currentSide === "mine"} hint={base ? t("changed here") : undefined} {...pick} />
+        <Version side="theirs" parts={theirsParts} current={currentSide === "theirs"} hint={base ? t("changed on origin") : undefined} {...pick} />
         {diverged ? null : (
           <Version side="result" current {...pick}
             parts={base ? mergedParts(base, c.mine, c.theirs, c.result) : attribute(c.result, c.mine, c.theirs)} />
@@ -211,11 +214,11 @@ function Versions({ conflict, busy, onUse }) {
       </div>
       <div className="mergeActions">
         <span className="popoverHint mergeActionsHint">
-          {keeps ? "Keeps the text as it is and marks the conflict resolved" : `Puts the ${SIDE[selected].label.toLowerCase()} text into the block`}
+          {keeps ? t("Keeps the text as it is and marks the conflict resolved") : t("Puts the {side} text into the block", { side: t(SIDE[selected].label).toLowerCase() })}
         </span>
-        <button type="button" className="uiBtn sm primary" disabled={busy} onClick={() => onUse(keeps ? "keep" : selected)}
-          title={keeps ? "Mark resolved as it is" : "Write the chosen text; the next round pushes it"}>
-          <CheckIcon size={13} /> Apply
+        <button type="button" className="uiBtn sm primary" data-guide="merge.apply" disabled={busy} onClick={() => onUse(keeps ? "keep" : selected)}
+          title={keeps ? t("Mark resolved as it is") : t("Write the chosen text; the next round pushes it")}>
+          <CheckIcon size={13} /> {t("Apply")}
         </button>
       </div>
     </>
@@ -230,13 +233,13 @@ function Decision({ conflict }) {
   if (!text) return null;
   return (
     <div className="mergeVersions one">
-      <Version side={ours ? "mine" : "theirs"} parts={[{ text, tag: "same" }]} hint={ours ? "kept and pushed back" : "pulled back"} />
+      <Version side={ours ? "mine" : "theirs"} parts={[{ text, tag: "same" }]} hint={ours ? t("kept and pushed back") : t("pulled back")} />
     </div>
   );
 }
 
 // A mirror's open conflicts and their resolution, for the lists (the sync
-// pill's review view, Settings → Workspaces → Clones): `[items, busy,
+// pill's review view, Settings → Account & sync → Clones): `[items, busy,
 // resolve]` — `items` null while loading; `resolve(conflict, choice)` posts
 // the choice, drops the row and raises `gamma:mirror` so the page's chips
 // and the pill follow; `onError(message)` hears a failed post.
@@ -277,20 +280,20 @@ export function ConflictCard({ conflict, busy, onResolve, nav, onOpen, showPage 
         <span className="mergeKindIcon"><kind.Icon size={14} /></span>
         <span className="mergeHeadText">
           <span className="popoverTitle">
-            {kind.short}
+            {t(kind.short)}
             {showPage && conflict.page_title ? <span className="mergePage" title={conflict.page_title}> · {conflict.page_title}</span> : null}
           </span>
-          <span className="popoverHint">{kind.long}</span>
+          <span className="popoverHint">{t(kind.long)}</span>
         </span>
         {many ? (
-          <span className="mergeNav" title="The page's conflicts, one by one">
-            <button type="button" className="ctlBtn" onClick={() => nav.onStep(-1)} aria-label="Previous conflict"><ChevronLeftIcon size={14} /></button>
+          <span className="mergeNav" title={t("The page's conflicts, one by one")}>
+            <button type="button" className="ctlBtn" onClick={() => nav.onStep(-1)} aria-label={t("Previous conflict")}><ChevronLeftIcon size={14} /></button>
             <span className="mergeNavCount">{nav.index} / {nav.total}</span>
-            <button type="button" className="ctlBtn" onClick={() => nav.onStep(1)} aria-label="Next conflict"><ChevronRightIcon size={14} /></button>
+            <button type="button" className="ctlBtn" onClick={() => nav.onStep(1)} aria-label={t("Next conflict")}><ChevronRightIcon size={14} /></button>
           </span>
         ) : null}
         {onOpen ? (
-          <button type="button" className="uiBtn sm iconSq" onClick={() => onOpen(conflict)} aria-label="Open the block" title="Open the page on this block">
+          <button type="button" className="uiBtn sm iconSq" onClick={() => onOpen(conflict)} aria-label={t("Open the block")} title={t("Open the page on this block")}>
             <ExternalLinkIcon size={13} />
           </button>
         ) : null}
@@ -298,8 +301,8 @@ export function ConflictCard({ conflict, busy, onResolve, nav, onOpen, showPage 
       {textual ? <Versions conflict={conflict} busy={busy} onUse={(choice) => onResolve(conflict, choice)} /> : <Decision conflict={conflict} />}
       {textual ? null : (
         <div className="mergeActions">
-          <button type="button" className="uiBtn sm primary" disabled={busy} onClick={() => onResolve(conflict, "keep")} title="Mark it seen">
-            <CheckIcon size={13} /> OK
+          <button type="button" className="uiBtn sm primary" disabled={busy} onClick={() => onResolve(conflict, "keep")} title={t("Mark it seen")}>
+            <CheckIcon size={13} /> {t("OK")}
           </button>
         </div>
       )}
@@ -332,12 +335,12 @@ export function MergeChip({ conflict, onResolve, open: openProp, onOpenChange, n
   }
   return (
     <span className="mergeChipWrap" ref={ref} onMouseDown={(e) => e.stopPropagation()}>
-      <button type="button" className={`mergeChip ${open ? "on" : ""}`} title={`${kind.short} — click to resolve`}
-        aria-label="Conflict to resolve" onClick={(e) => { e.stopPropagation(); setOpen(!open); }}>
+      <button type="button" className={`mergeChip ${open ? "on" : ""}`} title={t("{short} — click to resolve", { short: t(kind.short) })}
+        aria-label={t("Conflict to resolve")} onClick={(e) => { e.stopPropagation(); setOpen(!open); }}>
         <kind.Icon size={12} />
       </button>
       {open ? (
-        <div className="popover mergePopover" role="dialog" aria-label="Merge">
+        <div className="popover mergePopover" role="dialog" aria-label={t("Merge")}>
           <ConflictCard conflict={conflict} busy={busy} onResolve={resolve} nav={nav} />
         </div>
       ) : null}

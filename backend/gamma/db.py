@@ -376,13 +376,18 @@ def connect_users_db() -> sqlite3.Connection:
 
 
 # Prefs that follow the account regardless of workspace (stored with
-# workspace_id ''): the AI provider entries, the active entry, and the
-# preference profile. Everything else is per account + workspace, because the
+# workspace_id ''): the AI provider entries, the active entry, the
+# translation engine keys (gamma/translate_engines.py), and the preference
+# profile. Everything else is per account + workspace, because the
 # value names that workspace's pages (open tabs, recents, pinned folders,
 # reading positions).
 PROFILE_PREF_KEY = "profile"
+# gamma/cloud_sync.py: the profile as this server and Gamma Cloud last agreed
+# on it, the base of the next three-way merge. Never served by /api/prefs.
+PROFILE_BASE_PREF_KEY = "profile-base"
 NOTICES_SEEN_PREF_KEY = "notices-seen"  # gamma/notices.py: {notice id: fingerprint seen}
-USER_PREF_KEYS = frozenset({"ai-settings", "ai-provider", PROFILE_PREF_KEY, NOTICES_SEEN_PREF_KEY})
+USER_PREF_KEYS = frozenset({"ai-settings", "ai-provider", "translate-engines", PROFILE_PREF_KEY,
+                            PROFILE_BASE_PREF_KEY, NOTICES_SEEN_PREF_KEY})
 
 
 def pref_scope(key: str, ws: str) -> str:
@@ -482,6 +487,41 @@ def set_profile(username: str, value: dict, *, updated_at: str | None = None) ->
     if not isinstance(value, dict):
         raise ValueError("a profile is a JSON object")
     return set_pref(username, PROFILE_PREF_KEY, value, updated_at=updated_at)
+
+
+def replace_profile_if(username: str, value: dict, old: str, new: str) -> bool:
+    """Store ``value`` under ``new`` only while the profile is still at
+    ``old`` ("" = none stored yet): the cloud sync's write, which loses to a
+    change made meanwhile. Never pushes back."""
+    with connect_users_db() as db:
+        if old:
+            cur = db.execute("UPDATE user_prefs SET value = ?, updated_at = ? WHERE username = ? AND workspace_id = '' "
+                             "AND key = ? AND updated_at = ?", (json.dumps(value), new, username, PROFILE_PREF_KEY, old))
+        else:
+            cur = db.execute("INSERT OR IGNORE INTO user_prefs (username, workspace_id, key, value, updated_at) "
+                             "VALUES (?, '', ?, ?, ?)", (username, PROFILE_PREF_KEY, json.dumps(value), new))
+        db.commit()
+    return bool(cur.rowcount)
+
+
+def patch_profile(username: str, changes: dict) -> tuple[dict, str]:
+    """Set the preferences in ``changes`` and keep every other entry as
+    stored: how a browser saves, so its stale copy of a preference it did not
+    touch never undoes one synced from elsewhere. A change made here (pushed
+    like set_profile's). Returns (profile, updated_at)."""
+    for _ in range(5):  # another write landed between the read and this one: read again
+        value, at = get_profile(username)
+        merged = {**value, **changes}
+        stamp = page_now()
+        if at and at >= stamp:
+            stamp = _stamp_after(at)
+        if replace_profile_if(username, merged, at, stamp):
+            break
+    else:  # an unreadable stored row: replace it
+        return merged, set_profile(username, merged)
+    from . import cloud_sync  # local: cloud_sync imports this module
+    cloud_sync.profile_changed(username)
+    return merged, stamp
 
 
 # --- workspace files ---------------------------------------------------------

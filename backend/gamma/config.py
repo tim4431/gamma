@@ -57,6 +57,31 @@ def cloud_env() -> dict:
             "share_host": os.environ.get("GAMMA_CLOUD_SHARE_HOST", "").strip().lower() in ("1", "true", "yes", "on")}
 
 
+# The share host's published-page cap per Gamma Cloud plan (gamma/publish.py
+# page_cap): a plan missing here is unlimited. GAMMA_FREE_PAGE_LIMIT
+# overrides the free plan's number (0 lifts the cap).
+PLAN_PAGE_LIMITS = {"free": 5}
+
+
+def plan_page_limits() -> dict:
+    limits = dict(PLAN_PAGE_LIMITS)
+    raw = os.environ.get("GAMMA_FREE_PAGE_LIMIT", "").strip()
+    if raw:
+        n = int(raw)  # checked at startup (publish.check_config)
+        if n > 0:
+            limits["free"] = n
+        else:
+            limits.pop("free", None)
+    return limits
+
+
+def page_host_pattern() -> str:
+    """``GAMMA_PAGE_HOST``: the share host's per-account page hostname with
+    a ``{username}`` placeholder, e.g. ``{username}-pages.gammapdf.com``
+    ("" = no pretty addresses, token links only; gamma/publish.py)."""
+    return os.environ.get("GAMMA_PAGE_HOST", "").strip().lower()
+
+
 def sync_interval_s() -> int:
     """Seconds between mirror sync rounds (gamma/sync_engine.py); 0 turns
     the background loop off (the API's "sync now" still works)."""
@@ -70,49 +95,20 @@ MAX_UPLOAD_BYTES = 50 * 1024 * 1024  # 50 MB
 
 # --- AI chat -----------------------------------------------------------------
 # AI configuration is per-user, not env: each user adds provider entries in the
-# GUI (Settings → AI → Connections) — a protocol + credential + optional label,
-# base URL, and model list — stored server-side in users.db and resolved per
-# request by gamma/ai_settings.ai_runtime(). Three protocols exist:
-#   "anthropic" — Anthropic Messages API (Anthropic, Kimi, GLM, ...)
-#   "openai"    — OpenAI Chat Completions API (OpenAI, DeepSeek and compatible)
-#   "chatgpt"   — ChatGPT subscription sign-in (the Codex Responses backend)
-# No model names live here: an entry offers the models picked for it from the
-# provider's live listing. The env can only override each protocol's default
-# base URL (shown as the placeholder in the GUI and used when an entry leaves
-# it blank): GAMMA_AI_ANTHROPIC_BASE_URL / GAMMA_AI_OPENAI_BASE_URL /
-# GAMMA_AI_CHATGPT_BASE_URL (legacy GAMMA_AI_BASE_URL / ANTHROPIC_BASE_URL
-# alias the anthropic slot).
+# GUI (Settings → AI → Connections), resolved per request by
+# gamma/ai_settings.ai_runtime(); the protocols themselves are the adapters in
+# gamma/ai_protocols/. The env can only override each protocol's default base
+# URL (shown as the placeholder in the GUI and used when an entry leaves it
+# blank). Legacy GAMMA_AI_BASE_URL / ANTHROPIC_BASE_URL alias the anthropic
+# slot.
 
 _legacy_url = os.environ.get("GAMMA_AI_BASE_URL", "") or os.environ.get("ANTHROPIC_BASE_URL", "")
 
-AI_PROTOCOLS = {
-    "anthropic": {
-        "label": "Anthropic Messages API",
-        "base_url": (os.environ.get("GAMMA_AI_ANTHROPIC_BASE_URL", "") or _legacy_url
-                     or "https://api.anthropic.com").rstrip("/"),
-    },
-    "openai": {
-        "label": "OpenAI Chat Completions API",
-        "base_url": (os.environ.get("GAMMA_AI_OPENAI_BASE_URL", "")
-                     or "https://api.openai.com").rstrip("/"),
-    },
-    # No API key: the entry holds OAuth tokens from signing in with a ChatGPT
-    # account (Codex CLI's flow) — usage is billed to the subscription. The
-    # base URL is the Codex Responses endpoint on the ChatGPT backend.
-    # auth "oauth" marks sign-in protocols for the settings form and the
-    # provider CRUD guards (default is "key").
-    "chatgpt": {
-        "label": "ChatGPT (subscription sign-in)",
-        "base_url": (os.environ.get("GAMMA_AI_CHATGPT_BASE_URL", "")
-                     or "https://chatgpt.com/backend-api/codex").rstrip("/"),
-        "auth": "oauth",
-    },
+AI_BASE_URLS = {
+    "anthropic": (os.environ.get("GAMMA_AI_ANTHROPIC_BASE_URL", "") or _legacy_url
+                  or "https://api.anthropic.com").rstrip("/"),
+    "openai": (os.environ.get("GAMMA_AI_OPENAI_BASE_URL", "")
+               or "https://api.openai.com").rstrip("/"),
+    "chatgpt": (os.environ.get("GAMMA_AI_CHATGPT_BASE_URL", "")
+                or "https://chatgpt.com/backend-api/codex").rstrip("/"),
 }
-
-# Named services the settings form offers next to the raw protocols: one of
-# the protocols above plus that service's endpoint. An entry made from one is
-# just protocol + base URL; the preset only names it (form, provider label).
-AI_SERVICES = [
-    {"id": "deepseek", "label": "DeepSeek", "protocol": "openai",
-     "base_url": "https://api.deepseek.com"},
-]

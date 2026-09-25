@@ -23,7 +23,7 @@ const FUNCTIONS = [
   "sin", "cos", "tan", "cot", "sec", "csc", "arcsin", "arccos", "arctan",
   "sinh", "cosh", "tanh", "coth", "log", "ln", "lg", "exp", "lim", "limsup",
   "liminf", "max", "min", "sup", "inf", "det", "gcd", "deg", "dim", "ker",
-  "arg", "Pr", "tr",
+  "arg", "Pr",
 ];
 const SYMBOLS = [
   "infty", "partial", "nabla", "hbar", "ell", "imath", "jmath", "Re", "Im",
@@ -108,6 +108,8 @@ CATALOG.push(
   { name: "argmax", ins: "\\operatorname*{arg\\,max}_{}", caret: 26, sample: "\\operatorname*{arg\\,max}_{x}" },
   { name: "argmin", ins: "\\operatorname*{arg\\,min}_{}", caret: 26, sample: "\\operatorname*{arg\\,min}_{x}" },
   { name: "sgn", ins: "\\operatorname{sgn}", sample: "\\operatorname{sgn}" },
+  // KaTeX has no \tr; the trace is an operator name like \sgn.
+  { name: "tr", ins: "\\operatorname{tr}", sample: "\\operatorname{tr}" },
 );
 // Fonts.
 for (const [name, args, sample] of [

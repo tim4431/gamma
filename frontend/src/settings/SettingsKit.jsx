@@ -1,12 +1,14 @@
 // The building blocks every settings pane is composed from — and nothing
 // else: PaneHead › Section › Row/Toggle for the panes themselves, SubDialog ›
 // Step/Field for the editor dialogs they open, plus the small shared controls
-// (Segmented, PictureChoices, Stepper, UnitInput, CharSlider, AccountPicker, LogBox, Stat, Empty, QuotaMeter/PercentMeter). New settings
+// (Segmented, PictureChoices, Stepper, UnitInput, CharSlider, AccountPicker, LogBox, Stat, Empty, QuotaMeter/PercentMeter, KeyBinding). New settings
 // UI should reuse these; bespoke classes are for layout only.
 import React from "react";
 import { API, apiJson, copyText, fmtBytes } from "../shared/lib/utils";
-import { AlertCircleIcon, CheckIcon, CloudCheckIcon, EyeIcon, EyeOffIcon, MonitorIcon, RefreshIcon, ShieldIcon, UserIcon } from "../shared/ui/Icons";
+import { AlertCircleIcon, CheckIcon, CloudCheckIcon, EyeIcon, EyeOffIcon, MonitorIcon, RefreshIcon, ShieldIcon, UndoIcon, UserIcon } from "../shared/ui/Icons";
+import { bindable, chordFromEvent, chordParts } from "../shared/lib/hotkeys.js";
 import { BROWSER_TAG, profileSyncState } from "./syncState.js";
+import { t } from "../shared/i18n/i18n.js";
 
 export const SettingsDraftContext = React.createContext(null);
 
@@ -35,7 +37,7 @@ export function PaneHead({ icon: Icon, title, children }) {
 // the signed-in account, app/prefDefs.js) or "browser" (this device only).
 // An account section also names the preferences it holds (`prefs`, from
 // settings/sectionPrefs.js), and its tag reads their live sync state from
-// SettingsSyncContext ({local, cloud}, provided by the dialog;
+// SettingsSyncContext ({local, cloud, refresh}, provided by the dialog;
 // settings/syncState.js). The tag is an icon and one muted word; the
 // sentence is its hover title and accessible name.
 export const SettingsSyncContext = React.createContext(null);
@@ -52,8 +54,8 @@ function useMinimumSpin(spin) {
     if (spin) { since.current = Date.now(); setHeld(true); return undefined; }
     const left = MIN_SPIN_MS - (Date.now() - since.current);
     if (left <= 0) { setHeld(false); return undefined; }
-    const t = setTimeout(() => setHeld(false), left);
-    return () => clearTimeout(t);
+    const timer = setTimeout(() => setHeld(false), left);
+    return () => clearTimeout(timer);
   }, [spin]);
   return spin || held;
 }
@@ -64,17 +66,19 @@ function ScopeTag({ scope, prefs }) {
   const spinning = useMinimumSpin(read.spin);
   const tag = spinning && !read.spin ? { ...read, state: "syncing", icon: "refresh", spin: true } : read;
   const Icon = SYNC_ICONS[tag.icon];
-  const where = tag.label === "browser" ? "Browser setting" : "Account setting";
+  const where = tag.state === "browser" ? t("Browser setting") : t("Account setting");
   return (
     <span className={`setScope ${tag.tone} ${tag.spin ? "mirrorSpin" : ""}`} data-scope={scope} data-sync={tag.state}
-      role="img" aria-label={`${where}. ${tag.title}`} title={tag.title}>
+      role="img" aria-label={t("{where}. {title}", { where: where, title: tag.title })} title={tag.title}>
       {Icon ? <Icon size={14} /> : null}{tag.label}
     </span>
   );
 }
 
-export function Section({ title, scope, prefs, action, children }) {
-  return (
+// `guide`: a data-guide anchor id (guide/anchors.js) for the whole section,
+// header and rows, which then sit in one box a tour can point at.
+export function Section({ title, scope, prefs, action, guide, children }) {
+  const body = (
     <>
       <div className="setSection" data-setting={title}>
         <span className="setSectionLabel">{title}</span>
@@ -85,16 +89,18 @@ export function Section({ title, scope, prefs, action, children }) {
       {children}
     </>
   );
+  return guide ? <div className="setSectionGroup" data-guide={guide}>{body}</div> : body;
 }
 
 // Keep the row compact: icon, label, short hint, and a shared control.
-// Longer explanations use the native hover tooltip.
-export function Row({ icon: Icon, label, hint, title, children }) {
+// Longer explanations use the native hover tooltip. `scope="browser"` tags
+// the one row of an account section whose value stays with this browser.
+export function Row({ icon: Icon, label, hint, title, scope, className = "", children }) {
   return (
-    <div className="settingRow setRow" data-setting={label} title={title}>
+    <div className={`settingRow setRow ${className}`} data-setting={label} title={title}>
       <span className="setIcon">{Icon ? <Icon size={15} /> : null}</span>
       <div className="settingText">
-        <span className="settingLabel">{label}</span>
+        <span className="settingLabel">{label}{scope ? <ScopeTag scope={scope} /> : null}</span>
         {hint ? <span className="settingDesc">{hint}</span> : null}
       </div>
       {children}
@@ -123,12 +129,12 @@ export function Segmented({ value, onChange, options, disabled }) {
     <span className="segGroup">
       {options.map(([val, label, Icon, tip]) => (
         <button
-          key={val} type="button" title={tip || label} disabled={disabled}
+          key={val} type="button" title={t(tip || label)} disabled={disabled}
           aria-pressed={value === val}
           className={`uiBtn sm ${value === val ? "on" : ""}`}
           onClick={() => onChange(val)}
         >
-          {Icon ? <Icon size={13} /> : null}{label}
+          {Icon ? <Icon size={13} /> : null}{t(label)}
         </button>
       ))}
     </span>
@@ -141,12 +147,12 @@ export function PictureChoices({ label, value, onChange, onConfirm, options, col
   return <div className="setPictureChoices" role="group" aria-label={label} style={{ "--picture-columns": columns }}>
     {options.map(({ value: id, label: name, hint, preview }) => (
       <button key={String(id)} type="button" className={`uiBtn setPictureChoice${value === id ? " on" : ""}`}
-        aria-label={name} aria-description={hint} title={hint} aria-pressed={value === id} onClick={() => onChange(id)}
+        aria-label={t(name)} aria-description={t(hint)} title={t(hint)} aria-pressed={value === id} onClick={() => onChange(id)}
         onDoubleClick={onConfirm ? () => onConfirm(id) : undefined}>
         {preview}
         <span className="setPictureCaption">
-          <span className="setPictureName">{name}</span>
-          {hint ? <span className="setPictureHint">{hint}</span> : null}
+          <span className="setPictureName">{t(name)}</span>
+          {hint ? <span className="setPictureHint">{t(hint)}</span> : null}
           <span className="setPictureCheck" aria-hidden="true">{value === id ? <CheckIcon size={12} /> : null}</span>
         </span>
       </button>
@@ -180,12 +186,12 @@ export function ToggleGroup({ selected, onToggle, options, disabled }) {
     <span className="toggleGroup" role="group">
       {options.map(([val, label, Icon, tip]) => (
         <button
-          key={val} type="button" title={tip || label} disabled={disabled}
+          key={val} type="button" title={t(tip || label)} disabled={disabled}
           className={`uiBtn sm ${on.has(val) ? "on" : ""}`}
           aria-pressed={on.has(val)}
           onClick={() => onToggle(val, !on.has(val))}
         >
-          {Icon ? <Icon size={13} /> : null}{label}
+          {Icon ? <Icon size={13} /> : null}{t(label)}
         </button>
       ))}
     </span>
@@ -215,7 +221,7 @@ export function SubDialog({ title, onClose, children, draft, className = "", clo
       <div className={`reportModal ${className}`} role="dialog" aria-modal="true" aria-label={title}
         ref={ref} tabIndex={-1} onClick={(event) => event.stopPropagation()}
         onClickCapture={(event) => {
-          if (dirty && event.target.closest("button")?.textContent.trim() === "Cancel") {
+          if (dirty && event.target.closest("button")?.textContent.trim() === t("Cancel")) {
             event.preventDefault(); event.stopPropagation(); close();
           }
         }}
@@ -235,13 +241,13 @@ export function SubDialog({ title, onClose, children, draft, className = "", clo
         }}>
         {closeButton ? <div className="settingsDialogHeader" inert={confirmClose ? "" : undefined}>
           <div className="reportModalTitle">{title}</div>
-          <button type="button" className="uiClose uiCloseLg" onClick={close} aria-label={`Close ${title}`} title="Close">×</button>
+          <button type="button" className="uiClose uiCloseLg" onClick={close} aria-label={t("Close {title}", { title: title })} title={t("Close")}>×</button>
         </div> : <div className="reportModalTitle">{title}</div>}
         <div className="settingsDialogContent" inert={confirmClose ? "" : undefined}>{children}</div>
-        {confirmClose ? <div className="settingsUnsaved" role="alertdialog" aria-label="Unsaved changes">
-          <span>Discard your unsaved edits?</span>
-          <button className="uiBtn" autoFocus onClick={() => setConfirmClose(false)}>Keep editing</button>
-          <button className="uiBtn danger" onClick={onClose}>Discard changes</button>
+        {confirmClose ? <div className="settingsUnsaved" role="alertdialog" aria-label={t("Unsaved changes")}>
+          <span>{t("Discard your unsaved edits?")}</span>
+          <button className="uiBtn" autoFocus onClick={() => setConfirmClose(false)}>{t("Keep editing")}</button>
+          <button className="uiBtn danger" onClick={onClose}>{t("Discard changes")}</button>
         </div> : null}
       </div>
     </div>
@@ -288,8 +294,8 @@ export function PasswordInput({ className = "aiKeyInput", ...props }) {
       <input {...props} className={className} type={shown ? "text" : "password"} />
       <button
         type="button" className="ctlBtn pwToggle" tabIndex={-1}
-        title={shown ? "Hide password" : "Show password"}
-        aria-label={shown ? "Hide password" : "Show password"}
+        title={shown ? t("Hide password") : t("Show password")}
+        aria-label={shown ? t("Hide password") : t("Show password")}
         aria-pressed={shown}
         onMouseDown={(event) => event.preventDefault()} // keep the input's focus + caret
         onClick={() => setShown((v) => !v)}
@@ -341,15 +347,15 @@ export function Stepper({ value, onChange, min, max, step, format, reset }) {
   const clamp = (n) => Math.round(Math.min(max, Math.max(min, n)) * 1000) / 1000;
   return (
     <span className="stepper">
-      <button type="button" className="uiBtn sm iconSq" aria-label="Smaller"
+      <button type="button" className="uiBtn sm iconSq" aria-label={t("Smaller")}
         disabled={value <= min} onClick={() => onChange(clamp(value - step))}>−</button>
       <button type="button" className="stepperValue" disabled={reset == null || value === reset}
-        title={reset != null ? "Reset to default" : undefined}
+        title={reset != null ? t("Reset to default") : undefined}
         onClick={() => reset != null && onChange(reset)}>{format ? format(value) : value}</button>
-      <button type="button" className="uiBtn sm iconSq" aria-label="Larger"
+      <button type="button" className="uiBtn sm iconSq" aria-label={t("Larger")}
         disabled={value >= max} onClick={() => onChange(clamp(value + step))}>+</button>
       {reset != null ? <button type="button" className="uiBtn sm" disabled={value === reset}
-        onClick={() => onChange(reset)}>Reset</button> : null}
+        onClick={() => onChange(reset)}>{t("Reset")}</button> : null}
     </span>
   );
 }
@@ -437,14 +443,14 @@ export function LogBox({ icon, label, description, entries, emptyText, copyStatu
     const text = entries
       .map((entry) => `${new Date(entry.timeMs).toLocaleTimeString([], { hour12: false })} ${prefix(entry)}${entry.text}`)
       .join("\n");
-    copyText(text).then((ok) => setStatus(ok ? copyStatus : "Copy failed—copy manually."));
+    copyText(text).then((ok) => setStatus(ok ? copyStatus : t("Copy failed—copy manually.")));
   }
   return (
     <>
       <Row icon={icon} label={label} hint={description}>
         <span className="setRowControls">
           {extra}
-          <button className="uiBtn sm" disabled={!entries.length} onClick={copy}>Copy</button>
+          <button className="uiBtn sm" disabled={!entries.length} onClick={copy}>{t("Copy")}</button>
         </span>
       </Row>
       <div className="sysLogBox">
@@ -485,12 +491,12 @@ export function AccountPicker({ accounts, exclude = [], value, onChange, placeho
   React.useEffect(() => {
     if (!hidden || !typed) { setFound([]); return undefined; }
     let live = true;
-    const t = setTimeout(() => {
+    const timer = setTimeout(() => {
       apiJson(`${API}/accounts?q=${encodeURIComponent(typed)}`)
         .then((d) => { if (live) setFound(d.accounts || []); })
         .catch(() => { if (live) setFound([]); });
     }, 250);
-    return () => { live = false; clearTimeout(t); };
+    return () => { live = false; clearTimeout(timer); };
   }, [hidden, typed]);
   const directory = hidden ? found : accounts;
   const skip = new Set(exclude);
@@ -526,18 +532,18 @@ export function AccountPicker({ accounts, exclude = [], value, onChange, placeho
     <span className="setPick">
       <input
         className="aiKeyInput" type="text" spellCheck={false} autoComplete="off" autoFocus={autoFocus}
-        placeholder={placeholder || "Search accounts…"} value={query}
+        placeholder={placeholder || t("Search accounts…")} value={query}
         onChange={(event) => type(event.target.value)}
         onKeyDown={onKeyDown}
         onFocus={() => setFocused(true)}
         onBlur={() => setTimeout(() => setFocused(false), 120)} // let a click on a row land first
-        aria-label={placeholder || "Search accounts"}
+        aria-label={placeholder || t("Search accounts")}
       />
       {open ? (
         <span className="setPickList" role="listbox">
-          {accounts == null ? <span className="setPickEmpty">Loading accounts…</span> : null}
+          {accounts == null ? <span className="setPickEmpty">{t("Loading accounts…")}</span> : null}
           {accounts != null && !shown.length ? (
-            <span className="setPickEmpty">{q ? `No account matches "${query.trim()}"` : hidden ? "Type an exact username" : "No other accounts"}</span>
+            <span className="setPickEmpty">{q ? t("No account matches \"{query}\"", { query: query.trim() }) : hidden ? t("Type an exact username") : t("No other accounts")}</span>
           ) : null}
           {shown.map((a, i) => (
             <button
@@ -549,12 +555,12 @@ export function AccountPicker({ accounts, exclude = [], value, onChange, placeho
             >
               <span className="setPickAvatar">{a.is_admin ? <ShieldIcon size={13} /> : <UserIcon size={13} />}</span>
               <span className="setPickName">{a.username}</span>
-              {a.is_admin ? <span className="uiTag admin">admin</span> : null}
+              {a.is_admin ? <span className="uiTag admin">{t("admin")}</span> : null}
               {a.username === value ? <CheckIcon size={13} className="setPickCheck" /> : null}
             </button>
           ))}
           {matches.length > shown.length ? (
-            <span className="setPickEmpty">{matches.length - shown.length} more — keep typing</span>
+            <span className="setPickEmpty">{t("{n} more — keep typing", { n: matches.length - shown.length })}</span>
           ) : null}
         </span>
       ) : null}
@@ -581,8 +587,8 @@ export function QuotaMeter({ usedBytes, quotaMb, barOnly }) {
       {barOnly ? null : (
         <span className="settingDesc">
           {quotaBytes
-            ? `${fmtBytes(usedBytes)} of ${fmtBytes(quotaBytes)} used (${Math.round(pct)}%)`
-            : `${fmtBytes(usedBytes)} used — no quota`}
+            ? t("{used} of {quota} used ({pct}%)", { used: fmtBytes(usedBytes), quota: fmtBytes(quotaBytes), pct: Math.round(pct) })
+            : t("{used} used — no quota", { used: fmtBytes(usedBytes) })}
         </span>
       )}
     </span>
@@ -603,6 +609,61 @@ export function PercentMeter({ percent, barOnly, caption = "" }) {
         <span className={`quotaBarFill${state}`} style={{ width: `${pct ? Math.max(pct, 2) : 0}%` }} />
       </span>
       {barOnly ? null : <span className="settingDesc">{caption || `${Math.round(pct)}% used`}</span>}
+    </span>
+  );
+}
+
+// The keys of a chord as <kbd> caps: "Ctrl" "Shift" "K", or ⇧⌘K on a Mac.
+export function KeyCaps({ chord }) {
+  return <span className="keyCaps">{chordParts(chord).map((part, i) => <kbd key={i} className="keyCap">{part}</kbd>)}</span>;
+}
+
+// One shortcut, VSCode-style: the chord as key caps; click, then press the
+// new chord (recorded with the same reader the dispatcher matches with).
+// Backspace or Delete alone unbinds, Escape cancels, a bare letter is
+// refused (it would replace typing — add a modifier). `modified` shows the
+// reset button; `fixed` shows the chord read-only. `conflict` colours the
+// caps: another command answers to the same keys.
+export function KeyBinding({ chord, label, fixed, modified, conflict, onChange, onReset }) {
+  const [recording, setRecording] = React.useState(false);
+  const [refused, setRefused] = React.useState(false);
+  const stop = () => { setRecording(false); setRefused(false); };
+  const onKeyDown = (event) => {
+    if (!recording) return;
+    event.preventDefault();
+    event.stopPropagation();
+    if (event.key === "Escape") { stop(); return; }
+    if ((event.key === "Backspace" || event.key === "Delete") && !event.ctrlKey && !event.metaKey && !event.altKey && !event.shiftKey) {
+      onChange(null); stop(); return;
+    }
+    const next = chordFromEvent(event.nativeEvent || event);
+    if (!next) return; // a modifier alone: keep waiting
+    if (!bindable(next)) { setRefused(true); return; }
+    onChange(next);
+    stop();
+  };
+  const state = recording ? (refused ? t("Add a modifier…") : t("Press keys…")) : null;
+  const cls = ["uiBtn", "sm", "keyChip", recording ? "recording" : "", !chord && !recording ? "unbound" : "", conflict ? "conflict" : ""]
+    .filter(Boolean).join(" ");
+  return (
+    <span className="keyBinding">
+      <button
+        type="button"
+        className={cls}
+        aria-label={fixed ? label : t("Change the shortcut for {name}", { name: label })}
+        title={fixed ? t("Built in — cannot be changed") : conflict ? t("Another command uses these keys") : t("Click, then press the new keys · Backspace unbinds · Esc cancels")}
+        disabled={fixed}
+        onClick={() => { if (!recording) setRecording(true); }}
+        onKeyDown={onKeyDown}
+        onBlur={stop}
+      >
+        {state ? <span className="keyState">{state}</span> : chord ? <KeyCaps chord={chord} /> : <span className="keyState">{t("Not bound")}</span>}
+      </button>
+      {modified && !fixed ? (
+        <button type="button" className="uiBtn sm iconSq" title={t("Reset to default")} aria-label={t("Reset {name} to its default shortcut", { name: label })} onClick={onReset}>
+          <UndoIcon size={13} />
+        </button>
+      ) : null}
     </span>
   );
 }

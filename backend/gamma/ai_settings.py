@@ -2,7 +2,7 @@
 server's shared ones.
 
 Users manage a LIST of provider entries (Settings → AI → Connections), each:
-  {"id", "name", "protocol": a key of config.AI_PROTOCOLS, "api_key" (or
+  {"id", "name", "protocol": a key of ai_protocols.PROTOCOLS, "api_key" (or
    "oauth" tokens for a sign-in protocol), "base_url": "" = protocol default,
    "models": "a, b" = comma list ("" = none offered yet), "test_model",
    "created_at"}
@@ -32,8 +32,7 @@ import time
 from cryptography.fernet import InvalidToken
 from fastapi import HTTPException
 
-from . import chatgpt_oauth
-from .config import AI_PROTOCOLS, AI_SERVICES
+from . import ai_protocols
 from .db import connect_users_db, get_pref, page_now, set_pref
 from .logbuf import log
 from .publisher_sessions import cipher
@@ -66,7 +65,8 @@ def new_provider_id() -> str:
 
 def is_oauth_protocol(protocol) -> bool:
     """Sign-in protocols (ChatGPT) hold OAuth tokens instead of an API key."""
-    return AI_PROTOCOLS.get(protocol, {}).get("auth") == "oauth"
+    proto = ai_protocols.PROTOCOLS.get(protocol)
+    return bool(proto) and proto.auth == "oauth"
 
 
 def apply_provider_fields(entry: dict, fields) -> None:
@@ -104,7 +104,7 @@ def apply_provider_fields(entry: dict, fields) -> None:
 def new_key_entry(fields, entry_id: str) -> dict:
     """A new API-key entry from an add request (``fields.protocol`` plus the
     editable fields); 400 on a sign-in or unknown protocol or a missing key."""
-    if fields.protocol not in AI_PROTOCOLS or is_oauth_protocol(fields.protocol):
+    if fields.protocol not in ai_protocols.PROTOCOLS or is_oauth_protocol(fields.protocol):
         raise HTTPException(status_code=400, detail="unknown protocol")
     if not (fields.api_key or "").strip():
         raise HTTPException(status_code=400, detail="API key required")
@@ -121,7 +121,7 @@ def update_entry(entry: dict, fields) -> None:
     ignored, so the other fields of such a request (reset for the new
     service) don't land on the old entry."""
     if fields.protocol and fields.protocol != entry.get("protocol"):
-        if fields.protocol not in AI_PROTOCOLS:
+        if fields.protocol not in ai_protocols.PROTOCOLS:
             raise HTTPException(status_code=400, detail="unknown protocol")
         if is_oauth_protocol(fields.protocol) != is_oauth_protocol(entry.get("protocol")):
             raise HTTPException(status_code=400,
@@ -159,12 +159,11 @@ def protocol_choices(key_only: bool = False) -> dict:
     """What the settings form offers: the protocols (auth "oauth" = sign-in
     entries, no API key field) and the named services. ``key_only`` drops
     the sign-in protocols."""
-    protocols = [{"id": pid, "label": conf["label"], "default_base_url": conf["base_url"],
-                  "auth": conf.get("auth", "key")}
-                 for pid, conf in AI_PROTOCOLS.items()
-                 if not (key_only and is_oauth_protocol(pid))]
+    protocols = [{"id": pid, "label": proto.label, "default_base_url": proto.base_url, "auth": proto.auth}
+                 for pid, proto in ai_protocols.PROTOCOLS.items()
+                 if not (key_only and proto.auth == "oauth")]
     ids = {p["id"] for p in protocols}
-    return {"protocols": protocols, "services": [s for s in AI_SERVICES if s["protocol"] in ids]}
+    return {"protocols": protocols, "services": [s for s in ai_protocols.SERVICES if s["protocol"] in ids]}
 
 
 # --- the server's shared entries ----------------------------------------------
@@ -252,11 +251,12 @@ def provider_label(entry: dict) -> str:
         return name
     protocol = entry.get("protocol")
     base = (entry.get("base_url") or "").strip().rstrip("/")
-    service = next((s for s in AI_SERVICES
+    service = next((s for s in ai_protocols.SERVICES
                     if s["protocol"] == protocol and s["base_url"] == base), None)
     if service:
         return service["label"]
-    return AI_PROTOCOLS.get(protocol, {}).get("label") or protocol or ""
+    proto = ai_protocols.PROTOCOLS.get(protocol)
+    return proto.label if proto else protocol or ""
 
 
 def entry_models(entry: dict) -> list:
@@ -266,9 +266,9 @@ def entry_models(entry: dict) -> list:
     return [m.strip() for m in (entry.get("models") or "").split(",") if m.strip()]
 
 
-# A failed ChatGPT token refresh isn't retried for this long: ai_runtime runs
+# A failed sign-in token refresh isn't retried for this long: ai_runtime runs
 # on every AI request, and retrying a dead grant each time would add a full
-# auth.openai.com round trip to chat/metadata/model calls.
+# round trip to the identity provider to chat/metadata/model calls.
 REFRESH_BACKOFF_S = 300
 
 # One refresh at a time per account. OpenAI rotates refresh tokens, so of two
@@ -283,10 +283,11 @@ def _refresh_lock(user: str) -> threading.Lock:
         return _refresh_locks.setdefault(user, threading.Lock())
 
 
-def _refreshed_oauth(user: str, provider_id: str) -> dict | None:
-    """Refresh one ChatGPT entry's tokens under the account's lock, reading
-    the entries fresh so a refresh another request just did is reused, not
-    repeated. Returns the entry's current oauth dict."""
+def _refreshed_oauth(user: str, provider_id: str, flow) -> dict | None:
+    """Refresh one sign-in entry's tokens through its protocol's OAuth
+    ``flow`` under the account's lock, reading the entries fresh so a
+    refresh another request just did is reused, not repeated. Returns the
+    entry's current oauth dict."""
     with _refresh_lock(user):
         entries = load_provider_entries(user)
         e = next((x for x in entries if x.get("id") == provider_id), None)
@@ -294,9 +295,9 @@ def _refreshed_oauth(user: str, provider_id: str) -> dict | None:
         if not oauth or not oauth.get("access_token"):
             return None
         failed_at = oauth.get("refresh_failed_at") or 0
-        if not chatgpt_oauth.needs_refresh(oauth) or time.time() - failed_at <= REFRESH_BACKOFF_S:
+        if not flow.needs_refresh(oauth) or time.time() - failed_at <= REFRESH_BACKOFF_S:
             return oauth
-        refreshed = chatgpt_oauth.refresh(oauth)
+        refreshed = flow.refresh(oauth)
         if refreshed:
             e["oauth"] = oauth = refreshed
         else:
@@ -320,24 +321,25 @@ def ai_runtime(user: str) -> dict:
     providers, models = {}, []
     for e in own + shared:
         protocol = e.get("protocol")
+        proto = ai_protocols.PROTOCOLS.get(protocol)
         pid = str(e.get("id") or "")
-        if protocol not in AI_PROTOCOLS or not pid or pid in providers:
+        if not proto or not pid or pid in providers:
             continue
         name = provider_label(e)
         conf = {
-            "base_url": ((e.get("base_url") or "").strip() or AI_PROTOCOLS[protocol]["base_url"]).rstrip("/"),
+            "base_url": ((e.get("base_url") or "").strip() or proto.base_url).rstrip("/"),
             "protocol": protocol,
             "name": name,
         }
-        if protocol == "chatgpt":
-            # OAuth entry: the bearer token comes from the ChatGPT sign-in and
-            # is refreshed lazily here (persisted so other requests reuse it).
+        if proto.auth == "oauth":
+            # Sign-in entry: the bearer token comes from the sign-in and is
+            # refreshed lazily here (persisted so other requests reuse it).
             oauth = e.get("oauth") if isinstance(e.get("oauth"), dict) else None
             if not oauth or not oauth.get("access_token"):
                 continue
             failed_at = oauth.get("refresh_failed_at") or 0
-            if chatgpt_oauth.needs_refresh(oauth) and time.time() - failed_at > REFRESH_BACKOFF_S:
-                oauth = _refreshed_oauth(user, pid) or oauth
+            if proto.oauth.needs_refresh(oauth) and time.time() - failed_at > REFRESH_BACKOFF_S:
+                oauth = _refreshed_oauth(user, pid, proto.oauth) or oauth
             conf["api_key"] = oauth["access_token"]
             conf["account_id"] = oauth.get("account_id") or ""
         else:
@@ -351,10 +353,9 @@ def ai_runtime(user: str) -> dict:
             if mid not in [m["id"] for m in models]:
                 models.append({"id": mid, "provider": pid, "provider_name": name, "model": model,
                                # Whether the provider takes the PDF file itself
-                               # (native document part). The ChatGPT sign-in wire
-                               # is the Codex backend, which refuses input_file
-                               # parts — the chat falls back to extracted text.
-                               "native_pdf": protocol != "chatgpt",
+                               # (native document part); if not, the chat sends
+                               # extracted text.
+                               "native_pdf": proto.native_pdf,
                                "shared": is_server_id(pid)})
     return {
         "user": user,  # whose config this is — the usage recorder's key

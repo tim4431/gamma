@@ -94,3 +94,103 @@ def test_strongest_first_and_bad_acks(nadmin, monkeypatch):
         nadmin.post(f"/api/notices/{n['id']}/seen", json={"fingerprint": n["fingerprint"]})
     assert _ids(nadmin) == []
     assert set(notices.seen_map("nadmin")) == {"update", "log-errors"}
+
+
+# --- the account sources (their helpers stubbed: each is a plain read) ------
+
+def _only(client, notice_id):
+    found = [n for n in client.get("/api/notices").json()["notices"] if n["id"] == notice_id]
+    return found[0] if found else None
+
+
+def test_backup_failed_until_seen_and_again_on_the_next_failure(nuser, monkeypatch):
+    tasks = [{"id": "a" * 32, "name": "Nightly", "state": "finished", "last_run": "2026-09-20T01:00:00"}]
+    monkeypatch.setattr(notices.backup_schedule, "list_tasks", lambda owner: tasks if owner == "nuser" else [])
+    assert _only(nuser, "backup-failed") is None
+    tasks[0].update(state="failed", last_run="2026-09-21T01:00:00", last_error="disk full")
+    notice = _only(nuser, "backup-failed")
+    assert notice["tone"] == "error" and notice["pane"] == "backups" and 'task "Nightly" failed' in notice["title"]
+    nuser.post("/api/notices/backup-failed/seen", json={"fingerprint": notice["fingerprint"]})
+    assert _only(nuser, "backup-failed") is None
+    tasks[0]["last_run"] = "2026-09-22T01:00:00"  # failed again
+    assert _only(nuser, "backup-failed")["fingerprint"] != notice["fingerprint"]
+    tasks.append({"id": "b" * 32, "name": "Weekly", "state": "failed", "last_run": "2026-09-22T02:00:00"})
+    assert _only(nuser, "backup-failed")["title"] == "2 backup tasks failed"
+
+
+def test_mirror_conflicts_count_new_ones_only(nuser, monkeypatch):
+    marks = {"ws-clone": (0, 0)}
+    monkeypatch.setattr(notices.sync_engine, "list_mirrors", lambda owner: [{"workspace_id": "ws-clone"}] if owner == "nuser" else [])
+    monkeypatch.setattr(notices.sync_engine, "open_conflict_mark", lambda ws: marks[ws])
+    assert _only(nuser, "mirror-conflicts") is None
+    marks["ws-clone"] = (3, 7)
+    notice = _only(nuser, "mirror-conflicts")
+    assert notice["pane"] == "account" and notice["tone"] == "warn" and notice["title"].startswith("3 sync conflicts")
+    nuser.post("/api/notices/mirror-conflicts/seen", json={"fingerprint": notice["fingerprint"]})
+    marks["ws-clone"] = (3, 7)
+    assert _only(nuser, "mirror-conflicts") is None
+    marks["ws-clone"] = (2, 8)  # one resolved, one new
+    assert _only(nuser, "mirror-conflicts")["title"].startswith("2 sync conflicts")
+
+
+def test_publication_conflicts_point_at_the_sync_pane(nuser, monkeypatch):
+    mirrors = [{"workspace_id": "ws-clone"}, {"workspace_id": "ws-pub", "page_filter": ["p1"]}]
+    marks = {"ws-clone": (0, 0), "ws-pub": (2, 5)}
+    monkeypatch.setattr(notices.sync_engine, "list_mirrors", lambda owner: mirrors if owner == "nuser" else [])
+    monkeypatch.setattr(notices.sync_engine, "open_conflict_mark", lambda ws: marks[ws])
+    assert _only(nuser, "mirror-conflicts") is None
+    notice = _only(nuser, "publish-conflicts")
+    assert notice["pane"] == "account" and notice["title"].startswith("2 sync conflicts")
+    marks["ws-clone"] = (1, 9)
+    assert _only(nuser, "mirror-conflicts")["title"].startswith("1 sync conflict ")
+
+
+def test_cloud_sync_error_names_the_reason(nuser, monkeypatch):
+    status = {"state": "off", "at": "", "error": ""}
+    monkeypatch.setattr(notices.cloud_sync, "profile_status", lambda username: status)
+    assert _only(nuser, "cloud-sync") is None
+    status.update(state="error", at="2026-09-24T10:00:00Z", error="Gamma Cloud could not be reached.")
+    notice = _only(nuser, "cloud-sync")
+    assert notice["pane"] == "account" and notice["title"] == "Gamma Cloud sync failed: Gamma Cloud could not be reached"
+    assert notice["fingerprint"] == "2026-09-24T10:00:00Z"
+    status.update(state="synced")
+    assert _only(nuser, "cloud-sync") is None
+
+
+def test_storage_thresholds_and_the_remembered_walk(nuser, monkeypatch):
+    limits = {"quota_mb": 0}
+    walks = []
+
+    def usage(username):
+        walks.append(username)
+        return used[0]
+    used = [0]
+    monkeypatch.setattr(notices.server_settings, "user_limits", lambda username: dict(limits))
+    monkeypatch.setattr(notices.server_settings, "usage_bytes", usage)
+    notices.forget_usage()
+    assert _only(nuser, "storage") is None and walks == []  # no quota: no walk at all
+    limits["quota_mb"] = 100
+    used[0] = 50 * notices.MB
+    assert _only(nuser, "storage") is None and walks == ["nuser"]
+    nuser.get("/api/notices")
+    assert walks == ["nuser"]  # remembered
+    notices.forget_usage("nuser")
+    used[0] = 95 * notices.MB
+    notice = _only(nuser, "storage")
+    assert notice["tone"] == "warn" and notice["fingerprint"] == "90" and "95 of 100 MB" in notice["title"]
+    nuser.post("/api/notices/storage/seen", json={"fingerprint": "90"})
+    assert _only(nuser, "storage") is None
+    notices.forget_usage()
+    used[0] = 100 * notices.MB
+    notice = _only(nuser, "storage")
+    assert notice["tone"] == "error" and notice["fingerprint"] == "full"
+
+
+def test_many_clones_with_conflicts_still_fit_one_fingerprint(nuser, monkeypatch):
+    mirrors = [{"workspace_id": f"ws-clone-{i:02d}"} for i in range(15)]
+    monkeypatch.setattr(notices.sync_engine, "list_mirrors", lambda owner: mirrors if owner == "nuser" else [])
+    monkeypatch.setattr(notices.sync_engine, "open_conflict_mark", lambda ws: (12, 345))
+    notice = _only(nuser, "mirror-conflicts")
+    assert notice["title"].startswith("180 sync conflicts") and len(notice["fingerprint"]) <= 32
+    assert nuser.post("/api/notices/mirror-conflicts/seen", json={"fingerprint": notice["fingerprint"]}).status_code == 200
+    assert _only(nuser, "mirror-conflicts") is None

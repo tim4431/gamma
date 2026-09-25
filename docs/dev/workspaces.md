@@ -50,7 +50,7 @@ username". Such an invitation grants edit or view access, never ownership:
    `workspaces.claim_pending_memberships(username, subject)` from
    `cloud_auth.resolve_account`, after the local account is known. The local
    account can be newly provisioned, claimed by username, linked from
-   Settings → Account, or already linked. Every pending row for that subject
+   Settings → Account & sync, or already linked. Every pending row for that subject
    becomes a `workspace_members` row with its role, and the pending rows are
    deleted. If the person is already a member, the existing role stays.
    Rows for a workspace that is gone or no longer shared are dropped.
@@ -253,8 +253,8 @@ The app lifespan runs `run_due` every 30 s; each task is processed under an
 OS file lock (`<id>.lock`, `msvcrt`/`fcntl`), so several workers never run
 one task twice. A task whose `next_run` passed while the server was down
 runs once on the next round, then reschedules from the cron.
-A failed run is retried after an hour; "run now" sets `requested` and
-keeps the scheduled `next_run`. Snapshots are pruned per task and workspace
+A failed run is retried after an hour; "run now" sets `requested`, keeps
+the scheduled `next_run` and wakes the loop for a round at once (`_wake`). Snapshots are pruned per task and workspace
 after every run.
 
 ## Clones (mirrors)
@@ -264,7 +264,7 @@ server — a *clone* of its *origin* in the UI's git vocabulary: it holds a
 copy, edits made in it are pushed to the origin when it is reachable, and
 edits made there are pulled. The desktop app makes one from the switcher
 (the *clone* chip on a remote workspace's row); any Gamma makes one from
-Settings → Workspaces → Clones with the server's address and a write-scope
+Settings → Account & sync → Clones with the server's address and a write-scope
 integration token made there. `GET /workspaces/mine` marks such a workspace
 with `mirror_of`; a workspace that publishes pages to Gamma Cloud (a
 filtered mirror of the share host) is not a clone and is marked

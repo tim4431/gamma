@@ -1,7 +1,9 @@
+from contextlib import closing
+
 from conftest import invite, make_admin, register
 from fastapi.testclient import TestClient
 
-from gammacloud import mail
+from gammacloud import accounts, db, mail
 
 
 def test_admin_only(client):
@@ -34,6 +36,16 @@ def test_accounts_admin_flow(client):
     assert client.post(f"/api/admin/accounts/{me['id']}/delete").status_code == 400
     assert client.post(f"/api/admin/accounts/{bob['id']}/delete").status_code == 200
     assert client.get(f"/api/admin/accounts/{bob['id']}").json()["account"]["deleted_at"]
+    # restore brings the row back; purge only takes a deleted account and frees the name and address
+    assert client.post(f"/api/admin/accounts/{bob['id']}/restore").json()["account"]["username"] == "robert"
+    assert client.post(f"/api/admin/accounts/{bob['id']}/restore").status_code == 409
+    assert client.post(f"/api/admin/accounts/{bob['id']}/purge").status_code == 409
+    assert client.post(f"/api/admin/accounts/{bob['id']}/delete").status_code == 200
+    assert client.post(f"/api/admin/accounts/{bob['id']}/purge").status_code == 200
+    assert client.get(f"/api/admin/accounts/{bob['id']}").status_code == 404
+    assert client.post("/api/admin/accounts/nope/restore").status_code == 404
+    with closing(db.connect()) as conn:
+        accounts.create(conn, email="bob@example.org", username="robert", password=None)
 
 
 def test_invites_and_clients(client):

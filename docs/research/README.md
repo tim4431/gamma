@@ -20,6 +20,7 @@ duplicate.
 | [website.md](website.md) | What thirteen note and reading apps (Obsidian, Zotero, Readwise, Paperpile, Joplin, …) put on their front page, which patterns recur and which are optional, and the section order and tone gammapdf.com took from them. |
 | [upstream-features.md](upstream-features.md) | What the upstream fork (`amogadget/Gamma`) built that this one had not as of September 2026 (native iPad app, offline downloads, audio-synced note replay, recording blocks, durable offline edits, model-catalog refresh, server previews, MRC flattening), ranked, with what was already here or done differently and what to revisit. |
 | [hosting.md](hosting.md) | What running Gamma as a multi-tenant service with open registration would take: where the code assumes one machine (local uploads, per-workspace SQLite, in-process rooms, native sync work), the sharded-SQLite-plus-R2 shape picked over Supabase Postgres, R2 as a cache-backed primary and a two-layer backup target, and the registration, limit, abuse and operations gaps. |
+| [keyboard-shortcuts.md](keyboard-shortcuts.md) | What VS Code, Obsidian, Logseq and Notion bind for line and block operations, palettes and renaming, which chords a browser keeps for itself, what CodeMirror's default keymap had been doing in the block editor, and why Gamma treats the block as the line, reads physical keys and stores rebindings in the profile. |
 
 Conventions: one file per topic, dated where the survey has a shelf life,
 written after the fact from what was actually found. Add a row here for

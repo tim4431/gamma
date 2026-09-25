@@ -6,6 +6,7 @@
 // in App.jsx alongside the shared handlers.
 import React from "react";
 import { FileIcon, FolderFilesIcon, FolderIcon, GridIcon, ListIcon, LabelIcon, SearchIcon } from "../shared/ui/Icons";
+import { t } from "../shared/i18n/i18n.js";
 
 // Folder + label chips for a page, filtered by the Settings → General "File
 // labels" preference ("off" | "labels" | "folders" | "both"). Purely
@@ -20,7 +21,7 @@ function CardLabels({ folders, labels, mode = "both", onLabelMenu, className = "
   return (
     <span className={className}>
       {showFolders ? folders.map((f) => (
-        <span key={`f:${f}`} className="folderTagBadge" title={`In folder ${f}`}>
+        <span key={`f:${f}`} className="folderTagBadge" title={t("In folder {f}", { f })}>
           <FolderIcon size={10} />
           {f}
         </span>
@@ -29,7 +30,7 @@ function CardLabels({ folders, labels, mode = "both", onLabelMenu, className = "
         <span
           key={`l:${l}`}
           className="labelTagBadge"
-          title={onLabelMenu ? `Label: ${l} — right-click to rename or delete` : `Label: ${l}`}
+          title={onLabelMenu ? t("Label: {l} — right-click to rename or delete", { l: l }) : t("Label: {l}", { l: l })}
           onContextMenu={onLabelMenu ? onLabelMenu(l) : undefined}
         >
           <LabelIcon size={10} />
@@ -61,7 +62,7 @@ function PageCard({
           : glyph}
       </div>
       <div className="pageCardBody">
-        {renameNode || <div className="pageCardTitle">{title || "Untitled"}</div>}
+        {renameNode || <div className="pageCardTitle">{title || t("Untitled")}</div>}
         <CardLabels folders={folders} labels={labels} mode={labelMode} onLabelMenu={onLabelMenu} />
         {kind || count != null || time ? (
           <div className="pageCardMeta">
@@ -79,11 +80,11 @@ function PageCard({
 // List / Grid segmented control.
 function ViewToggle({ view, onChange }) {
   return (
-    <div className="homeViewToggle" role="group" aria-label="View mode">
+    <div className="homeViewToggle" role="group" aria-label={t("View mode")}>
       <button
         className={`homeViewBtn ${view === "list" ? "active" : ""}`}
         onClick={() => onChange("list")}
-        title="List view"
+        title={t("List view")}
         aria-pressed={view === "list"}
       >
         <ListIcon size={15} />
@@ -91,7 +92,7 @@ function ViewToggle({ view, onChange }) {
       <button
         className={`homeViewBtn ${view === "grid" ? "active" : ""}`}
         onClick={() => onChange("grid")}
-        title="Grid view"
+        title={t("Grid view")}
         aria-pressed={view === "grid"}
       >
         <GridIcon size={15} />
@@ -105,13 +106,13 @@ function ViewToggle({ view, onChange }) {
 // in App.jsx).
 function KindToggle({ value, onChange, scopeLabel }) {
   const kinds = [
-    ["all", "Folders & files", FolderFilesIcon],
-    ["folders", "Folders only", FolderIcon],
-    ["files", "Files only", FileIcon],
-    ["labels", "Labels", LabelIcon],
+    ["all", t("Folders & files"), FolderFilesIcon],
+    ["folders", t("Folders only"), FolderIcon],
+    ["files", t("Files only"), FileIcon],
+    ["labels", t("Labels"), LabelIcon],
   ];
   return (
-    <div className="homeViewToggle" role="group" aria-label={scopeLabel || "Shown items"} title={scopeLabel || undefined}>
+    <div className="homeViewToggle" role="group" aria-label={scopeLabel || t("Shown items")} title={scopeLabel || undefined}>
       {kinds.map(([val, label, Icon]) => (
         <button
           key={val}
@@ -130,7 +131,8 @@ function KindToggle({ value, onChange, scopeLabel }) {
 // Listing search box: matching items float to the top of the current sort,
 // the rest stay put but dimmed. Live as you type — the caller debounces
 // nothing, the listing is already memoized.
-function ListFindBox({ value, onChange, placeholder = "Search…" }) {
+function ListFindBox({ value, onChange, placeholder }) {
+  placeholder = placeholder ?? t("Search…");
   return (
     <div className={`homeFindBox ${value ? "active" : ""}`}>
       <SearchIcon size={13} />
@@ -138,12 +140,12 @@ function ListFindBox({ value, onChange, placeholder = "Search…" }) {
         className="homeFindInput"
         value={value}
         placeholder={placeholder}
-        aria-label="Search this listing"
+        aria-label={t("Search this listing")}
         onChange={(e) => onChange(e.target.value)}
         onKeyDown={(e) => { if (e.key === "Escape" && value) { e.stopPropagation(); onChange(""); } }}
       />
       {value ? (
-        <button className="uiClose uiCloseSm homeFindClear" title="Clear search" aria-label="Clear search" onClick={() => onChange("")}>×</button>
+        <button className="uiClose uiCloseSm homeFindClear" title={t("Clear search")} aria-label={t("Clear search")} onClick={() => onChange("")}>×</button>
       ) : null}
     </div>
   );

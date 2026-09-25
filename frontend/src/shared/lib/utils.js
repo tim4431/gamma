@@ -2,6 +2,7 @@
 
 import { useEffect, useState } from "react";
 import { makeBlockId } from "../model/blockModel";
+import { t, T } from "../../shared/i18n/i18n.js";
 
 const API = "/api";
 
@@ -262,7 +263,7 @@ async function copyRich(html, plain) {
 
 // Metadata that nothing tied to THIS document — the UI flags it (red "!" on
 // the metadata button and beside the slide citation, red cell in the
-// Settings → Library table) so nobody cites it unchecked. The server stores
+// Settings → Library maintenance table) so nobody cites it unchecked. The server stores
 // `meta.unverified` (AI paper records; DOIs/ISBNs printed in the text whose
 // registry title isn't); records from before the flag existed fall back to
 // the old rule: AI-extracted and claiming to be a paper (non-paper kinds have
@@ -273,7 +274,7 @@ const isUnverifiedPaperMeta = (source, kind, unverified = null) =>
 
 // Where a page's metadata came from, worded once for every surface that
 // shows it: the metadata popover's Source row, the share popover's citation
-// header, the Settings → Library table (`short`). `warn` = cite with care.
+// header, the Settings → Library maintenance table (`short`). `warn` = cite with care.
 const META_SOURCE_NAMES = {
   arxiv: "arXiv", doi: "doi.org", crossref: "Crossref search", isbn: "ISBN lookup",
   openlibrary: "Open Library", googlebooks: "Google Books", manual: "edited by hand",
@@ -284,15 +285,15 @@ function metaSourceInfo(meta) {
   const unverified = isUnverifiedPaperMeta(meta.source, kind, meta.unverified);
   if (meta.source === "ai") {
     return unverified
-      ? { label: "AI-extracted — unverified", short: "AI", warn: true,
-          hint: "Read by AI from the PDF text and not confirmed by any registry (arXiv, Crossref, Open Library) — fields may be wrong, verify before citing" }
-      : { label: `AI-extracted (${kind})`, short: `AI (${kind})`, warn: false,
-          hint: "Not a published paper, so there is no registry record to verify against" };
+      ? { label: T("AI-extracted — unverified"), short: "AI", warn: true,
+          hint: T("Read by AI from the PDF text and not confirmed by any registry (arXiv, Crossref, Open Library) — fields may be wrong, verify before citing") }
+      : { label: t("AI-extracted ({kind})", { kind: kind }), short: t("AI ({kind})", { kind: kind }), warn: false,
+          hint: T("Not a published paper, so there is no registry record to verify against") };
   }
   const name = META_SOURCE_NAMES[meta.source] || meta.source;
   if (unverified) {
-    return { label: `${name} — unconfirmed`, short: `${name} ?`, warn: true,
-             hint: "Resolved from an identifier printed in the PDF, but the record's title isn't in the text — it may belong to a work this document cites. Verify before citing" };
+    return { label: t("{name} — unconfirmed", { name: name }), short: t("{name} ?", { name: name }), warn: true,
+             hint: T("Resolved from an identifier printed in the PDF, but the record's title isn't in the text — it may belong to a work this document cites. Verify before citing") };
   }
   return { label: name, short: name, warn: false,
            hint: meta.source === "manual" ? "Fields edited by hand" : `Registry record via ${name}` };
@@ -322,8 +323,14 @@ async function apiError(r) {
 // The share view (/?share=<token>): every same-origin API call carries the
 // token, so reads — and, when the link grants editing, writes — resolve to
 // the sharing owner's page rather than the visitor's own account. Callers
-// that already put a share= on the URL are left alone.
-const SHARE_TOKEN = new URLSearchParams(window.location.search).get("share") || "";
+// that already put a share= on the URL are left alone. A page host's pretty
+// address sets the token it resolved to before the app mounts (setShareView).
+let SHARE_TOKEN = new URLSearchParams(window.location.search).get("share") || "";
+let SHARE_VIEW = Boolean(SHARE_TOKEN);
+function setShareView(token) {
+  SHARE_TOKEN = token || "";
+  SHARE_VIEW = true;
+}
 function withShare(url) {
   if (!SHARE_TOKEN || typeof url !== "string" || !url.startsWith(`${API}/`)) return url;
   if (/[?&]share=/.test(url)) return url;
@@ -333,8 +340,7 @@ function withShare(url) {
 async function apiJson(url, options = {}) {
   const r = await fetch(withShare(url), { ...options, credentials: "include" });
   if (r.status === 401) {
-    const isShareView = new URLSearchParams(window.location.search).get("share");
-    if (!isShareView) {
+    if (!SHARE_VIEW) {
       window.dispatchEvent(new CustomEvent("gamma-auth-expired"));
     }
     throw new Error("401 Unauthorized");
@@ -392,4 +398,4 @@ async function readNdjson(res, onBatch) {
   }
 }
 
-export { API, makeId, fmtBytes, sha256, getDocIdForUrl, isPdfFile, isMarkdownFile, isUnverifiedPaperMeta, metaSourceInfo, apiJson, withShare, withWorkspace, assetUrl, setCurrentWorkspace, getCurrentWorkspace, setLinkName, getLinkName, resolvePdfUrl, pdfProxyUrl, probePdfUrl, setExpectedUser, getExpectedUser, usePersistedState, usePersistedFlag, copyText, copyRich, readNdjson };
+export { API, makeId, fmtBytes, sha256, getDocIdForUrl, isPdfFile, isMarkdownFile, isUnverifiedPaperMeta, metaSourceInfo, apiJson, setShareView, withShare, withWorkspace, assetUrl, setCurrentWorkspace, getCurrentWorkspace, setLinkName, getLinkName, resolvePdfUrl, pdfProxyUrl, probePdfUrl, setExpectedUser, getExpectedUser, usePersistedState, usePersistedFlag, copyText, copyRich, readNdjson };

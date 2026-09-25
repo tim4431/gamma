@@ -147,6 +147,19 @@ try {
       return r && r.left >= 7 && r.top >= 7 && r.right <= innerWidth - 7 && r.bottom <= innerHeight - 7;
     }, selector);
   };
+  // KaTeX error underlines: an undefined \command gets the squiggle with the
+  // message as its hover title, except while the caret is on it.
+  const errs = () => page.locator(".cm-content .cmLatexErr")
+    .evaluateAll((els) => els.map((el) => [el.textContent, el.title]));
+  await reset("$\\frac{a}{b} \\foo x$", "$\\frac{a}{b} \\foo x".length);
+  assert.deepEqual(await errs(), [["\\foo", "Undefined control sequence: \\foo"]]);
+  await reset("$\\frac{a}{b} \\foo x$", "$\\frac{a}{b} \\fo".length);
+  assert.deepEqual(await errs(), [], "the command under the caret waits");
+  await reset("$x^$", 1);
+  assert.deepEqual((await errs()).map(([t]) => t), ["^"]);
+  await reset("$x^$", 3);
+  assert.deepEqual(await errs(), [], "a half-typed tail at the caret is not flagged");
+
   const live = "$$\n" + long + "\n$$";
   await reset(live, live.length - 3);
   const typingStart = performance.now();

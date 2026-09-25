@@ -3,10 +3,15 @@ import { Panel, PanelGroup, PanelResizeHandle } from "react-resizable-panels";
 import PdfViewer, { clampZoom } from "../pdf/PdfViewer";
 import { highlightSpot, rangeSpot } from "../pdf/pdfSelectionSpot";
 import { COLORS } from "../shared/model/highlightColors.js";
+import { getLocale, resolveLocale, t, T } from "../shared/i18n/i18n.js";
+
+// sessionStorage: the Settings pane to reopen after the language-change reload.
+const REOPEN_SETTINGS_KEY = "gamma-reopen-settings";
 import { ExportDialog, ImportDialog } from "../transfers/ImportExport";
 import ImportReviewDialog from "../transfers/ImportReviewDialog";
 import { parseGammaLink } from "../shared/model/gammaLinks.js";
-import { API, apiJson, withShare, withWorkspace, setCurrentWorkspace, getCurrentWorkspace, setLinkName, makeId, fmtBytes, getDocIdForUrl, isPdfFile, isMarkdownFile, metaSourceInfo, resolvePdfUrl, pdfProxyUrl, probePdfUrl, setExpectedUser, getExpectedUser, usePersistedState, usePersistedFlag, copyText, copyRich, readNdjson } from "../shared/lib/utils";
+import { pageHostUser, publicPath } from "../shared/lib/slug.js";
+import { API, apiJson, setShareView, withShare, withWorkspace, setCurrentWorkspace, getCurrentWorkspace, setLinkName, makeId, fmtBytes, getDocIdForUrl, isPdfFile, isMarkdownFile, metaSourceInfo, resolvePdfUrl, pdfProxyUrl, probePdfUrl, setExpectedUser, getExpectedUser, usePersistedState, usePersistedFlag, copyText, copyRich, readNdjson } from "../shared/lib/utils";
 import {
   BlockDropIndicator,
   ChatMarkdown,
@@ -18,6 +23,8 @@ import {
   useTextScale,
 } from "../shared/ui/Widgets";
 import { BlockTree, _dragState } from "../editor/BlockTree";
+import { dropGapAtPoint, findObject } from "../editor/MdObject";
+import { cutObject, moveObjectInTree } from "../editor/mdObjects";
 import { scanMathSpans } from "../editor/BlockCmEditor";
 import { sourceRangeOfSelection } from "../editor/clickToSource";
 import { FileChipContext, forgetDocPages, rememberDocPage, setUploadReporter, uploadFilesAsLines, xhrUpload } from "../transfers/FileChip";
@@ -64,12 +71,18 @@ import {
   normalizeBlocks,
   cloneBlocks,
   findBlock,
+  moveSibling,
+  removeBlockKeepChildren,
+  visibleNeighbor,
 } from "../shared/model/blockModel";
+import { chordLabel, dispatch as dispatchHotkey, effectiveKeys } from "../shared/lib/hotkeys.js";
+import { APP_COMMANDS } from "./appCommands.js";
+import { BLOCK_COMMANDS } from "../editor/blockCommands.js";
 import { loadSession, saveSession, clearSession, setSessionScope } from "./sessionState";
 import { ROLE_LABEL, workspaceMeta } from "../settings/SettingsWorkspace";
 import { AuthLoading, LoginPage, SessionConflictPage, ShareBlockedPage, WorkspaceUnavailablePage } from "../auth/LoginPage";
 import { McpAuthorization } from "../auth/McpConsent";
-import { TRANSLATE_LANGS, useAppPrefs, useProfileSync } from "./prefs";
+import { TRANSLATE_LANGS, translateModelFor, useAppPrefs, useProfileSync } from "./prefs";
 import { useNotices } from "./useNotices";
 import { dotTone } from "./notices";
 import { useBlockHistory } from "../editor/blockHistory.js";
@@ -137,6 +150,11 @@ function useIsPhone() {
   }, []);
   return UA_MOBILE || mqPhone;
 }
+// Safari on an iPhone or iPad (desktop-class UA plus touch points), not yet
+// running as the installed home-screen app (docs/dev/ipad.md).
+const HOME_SCREEN_INSTALLABLE = (/iPad|iPhone/.test(navigator.userAgent)
+  || (/Macintosh/.test(navigator.userAgent) && navigator.maxTouchPoints > 1))
+  && !(window.matchMedia?.("(display-mode: standalone)").matches || navigator.standalone);
 
 // Drag payload prefix marking a folder drag (page cards drag their bare id).
 const FOLDER_DRAG = "gamma-folder:";
@@ -221,7 +239,7 @@ const RECENTS_CAP = 24;
 const AI_BLOCK_TOOLS = ["edit_block", "create_block", "move_block"];
 // A block's text for a chat chip (cursor block, attached block): its note,
 // else its highlight quote.
-const blockChipText = (b) => (b.content || "").trim() || blockQuote(b).trim() || "(empty block)";
+const blockChipText = (b) => (b.content || "").trim() || blockQuote(b).trim() || t("(empty block)");
 function captureViewerSnapshot() {
   const scroller = document.querySelector(".pdfViewer");
   if (!scroller) return null;
@@ -321,7 +339,7 @@ function TransferRow({ status, icon, name, info, progress, onStop }) {
       </span>
       <span className="transferInfo">{info || ""}</span>
       {onStop ? (
-        <button type="button" className="uiClose uiCloseSm transferStop" title="Stop" aria-label={`Stop ${name}`}
+        <button type="button" className="uiClose uiCloseSm transferStop" title={t("Stop")} aria-label={t("Stop {name}", { name: name })}
           onClick={(e) => { e.stopPropagation(); onStop(); }}>×</button>
       ) : <span className="transferStopSlot" />}
     </div>
@@ -332,24 +350,61 @@ export default function App() {
   // Authorization must never mount library effects (saved-page restore,
   // autosave, navigation hotkeys). They can otherwise replace its URL.
   const requestId = new URLSearchParams(window.location.search).get("gamma_oauth");
-  return requestId ? <McpAuthorization requestId={requestId} /> : <LibraryApp />;
+  return requestId ? <McpAuthorization requestId={requestId} /> : <PageHostGate />;
 }
 
-function LibraryApp() {
-  const params = new URLSearchParams(window.location.search);
+// A page host (the share host's hostname per account, server-config's
+// `page_host`; docs/dev/mirror.md "Publishing") serves published pages
+// only: its path, /<slug>-<page id>, names the page, which opens in the share
+// view as if its ?share= token were in the URL while the pretty address
+// stays in the address bar. Any other path there is the share view's "not
+// found". Everywhere else the app boots as before, with the server config it
+// read here (a ?share= link knows it is a share view without asking).
+function PageHostGate() {
+  const [boot, setBoot] = useState(() => (new URLSearchParams(window.location.search).get("share") ? {} : null));
+  useEffect(() => {
+    if (boot) return undefined;
+    let active = true;
+    (async () => {
+      let config = null;
+      try { config = await apiJson(`${API}/server-config`); } catch {}
+      if (!active) return;
+      if (!pageHostUser(config?.page_host, window.location.hostname)) { setBoot({ serverConfig: config }); return; }
+      let found = null;
+      try {
+        const q = new URLSearchParams({ host: window.location.host, path: window.location.pathname });
+        const r = await fetch(`${API}/pages/resolve-public?${q}`);
+        if (r.ok) found = await r.json();
+      } catch {}
+      if (!active) return;
+      setShareView(found?.share || "");
+      setBoot({ publicPage: found?.share ? found : { missing: true } });
+    })();
+    return () => { active = false; };
+  }, [boot]);
+  if (!boot) return <div id="splash"><div className="spin" /><div>{t("Loading Gamma…")}</div></div>;
+  return <LibraryApp publicPage={boot.publicPage || null} initialServerConfig={boot.serverConfig || null} />;
+}
+
+// `publicPage`: opened on a page host — {share, page_id} (resolved), or
+// {missing: true}. `initialServerConfig`: GET /api/server-config, already read.
+function LibraryApp({ publicPage = null, initialServerConfig = null }) {
+  const params = new URLSearchParams(publicPage ? "" : window.location.search);
   const initialUrl = params.get("src") || params.get("url") || "";
-  const initialShare = params.get("share") || "";
+  const initialShare = publicPage ? (publicPage.share || "") : (params.get("share") || "");
   const initialBlockId = params.get("block") || params.get("page") || "";
   const initialCategory = params.get("unlabelled") ? NO_LABEL : (params.get("category") || "");
   const initialFolder = params.get("folder") || "";
-  // shareMode: this tab shows a page through a ?share= link — no account of
-  // its own, no library, no chat, no prefs sync. readOnly: the block tree
-  // can't be edited; every share view starts read-only and stays so unless
-  // the link resolves with edit rights (Share → "They can: Edit notes").
-  const shareMode = Boolean(initialShare);
+  // shareMode: this tab shows a page through a ?share= link (or a page
+  // host's pretty address) — no account of its own, no library, no chat, no
+  // prefs sync. readOnly: the block tree can't be edited; every share view
+  // starts read-only and stays so unless the link resolves with edit rights
+  // (Share → "They can: Edit notes").
+  const shareMode = Boolean(initialShare) || Boolean(publicPage);
   const [readOnly, setReadOnly] = useState(shareMode);
   const [shareInfo, setShareInfo] = useState(null); // resolved share: {owner, role, canEdit, audience, viewer}
-  const [shareGate, setShareGate] = useState(null); // "login" | "forbidden" | "missing" while the share can't open
+  // "login" | "forbidden" | "missing" while the share can't open
+  const [shareGate, setShareGate] = useState(publicPage?.missing ? "missing" : null);
   const [linkName, setLinkNameState] = useState(""); // the share view's display name when the viewer has no account
   const [renamingLink, setRenamingLink] = useState(false);
 
@@ -466,9 +521,9 @@ function LibraryApp() {
   }
 
   // What the login page offers besides a password: read once, unauthenticated.
-  const [serverConfig, setServerConfig] = useState(null);
+  const [serverConfig, setServerConfig] = useState(initialServerConfig);
   useEffect(() => {
-    if (shareMode) return;
+    if (shareMode || initialServerConfig) return;
     let active = true;
     apiJson(`${API}/server-config`).then((c) => { if (active) setServerConfig(c); }).catch(() => {});
     return () => { active = false; };
@@ -530,9 +585,9 @@ function LibraryApp() {
         body: JSON.stringify({ username: loginUser, password: loginPass }),
         credentials: "include",
       });
-      if (!res.ok) { setLoginError("Invalid credentials"); return; }
+      if (!res.ok) { setLoginError(t("Invalid credentials")); return; }
       await then();
-    } catch { setLoginError("Login failed"); }
+    } catch { setLoginError(t("Login failed")); }
   }
 
   async function doGuestLogin() {
@@ -541,10 +596,10 @@ function LibraryApp() {
         method: "POST",
         credentials: "include",
       });
-      if (!res.ok) { setLoginError("Guest login failed"); return; }
+      if (!res.ok) { setLoginError(t("Guest login failed")); return; }
       const data = await res.json();
       setAuthUser({ user: data.username, is_guest: true });
-    } catch { setLoginError("Guest login failed"); }
+    } catch { setLoginError(t("Guest login failed")); }
   }
 
   // A share link that needs an account (signed-in users / specific people):
@@ -577,13 +632,13 @@ function LibraryApp() {
   function exportAll(withUploads) {
     return downloadWorkspaceExport({
       url: `${API}/export-all?uploads=${withUploads ? 1 : 0}`,
-      label: withUploads ? "Export all workspaces" : "Export all databases",
+      label: withUploads ? t("Export all workspaces") : t("Export all databases"),
     });
   }
   async function downloadWorkspaceExport({ url, progressUrl, label }) {
     const ctl = new AbortController();
-    const tid = addTransfer({ name: label, kind: "download", info: "preparing…", cancel: () => ctl.abort() });
-    postPill("backup", { msg: "Preparing export — the server is zipping your data…", spinner: true });
+    const tid = addTransfer({ name: label, kind: "download", info: t("preparing…"), cancel: () => ctl.abort() });
+    postPill("backup", { msg: t("Preparing export — the server is zipping your data…"), spinner: true });
     // The response only starts once the server finished zipping; until then,
     // poll the zipping percent from the export-progress side-channel.
     const zipPoll = progressUrl && setInterval(async () => {
@@ -591,7 +646,7 @@ function LibraryApp() {
         const p = await apiJson(progressUrl);
         if (p.active && p.total) {
           const pct = Math.min(99, Math.floor((p.done / p.total) * 100));
-          postPill("backup", { msg: `Preparing export — zipping… ${pct}% (${fmtBytes(p.done)} of ${fmtBytes(p.total)})`, spinner: true });
+          postPill("backup", { msg: t("Preparing export — zipping… {pct}% ({done} of {total})", { pct, done: fmtBytes(p.done), total: fmtBytes(p.total) }), spinner: true });
           updateTransfer(tid, { info: `zipping… ${pct}%`, progress: p.done / p.total });
         }
       } catch {}
@@ -620,8 +675,8 @@ function LibraryApp() {
         lastUiAt = now;
         postPill("backup", {
           msg: total
-            ? `Downloading backup… ${pct}% (${fmtBytes(loaded)} of ${fmtBytes(total)})`
-            : `Downloading backup… ${fmtBytes(loaded)}`,
+            ? t("Downloading backup… {pct}% ({loaded} of {total})", { pct, loaded: fmtBytes(loaded), total: fmtBytes(total) })
+            : t("Downloading backup… {loaded}", { loaded: fmtBytes(loaded) }),
           spinner: true,
         });
         updateTransfer(tid, { info: total ? `${fmtBytes(loaded)} / ${fmtBytes(total)}` : fmtBytes(loaded), progress: total ? loaded / total : undefined });
@@ -635,12 +690,12 @@ function LibraryApp() {
       setTimeout(() => URL.revokeObjectURL(a.href), 30000);
       updateTransfer(tid, { status: "done", info: fmtBytes(blob.size) });
       postPill("backup", null);
-      setStatus(`Backup downloaded (${fmtBytes(blob.size)}).`);
+      setStatus(t("Backup downloaded ({size}).", { size: fmtBytes(blob.size) }));
     } catch (err) {
       clearInterval(zipPoll);
       updateTransfer(tid, { status: "error", info: String(err.message || err) });
       postPill("backup", null);
-      if (!ctl.signal.aborted) setStatus(`Export failed: ${err.message}`);
+      if (!ctl.signal.aborted) setStatus(t("Export failed: {message}", { message: err.message }));
     }
   }
 
@@ -653,7 +708,7 @@ function LibraryApp() {
   // this one alone.
   function importWorkspace(wsId, mode = "replace") {
     const target = wsId && wsId !== getCurrentWorkspace() ? wsId : null;
-    const who = (target ? workspaces.find((w) => w.id === target)?.name : workspace?.name) || "this workspace";
+    const who = (target ? workspaces.find((w) => w.id === target)?.name : workspace?.name) || t("this workspace");
     const inp = document.createElement("input");
     inp.type = "file";
     inp.accept = ".zip,application/zip";
@@ -661,22 +716,22 @@ function LibraryApp() {
       const f = inp.files?.[0];
       if (!f) return;
       setConfirmBox(mode === "merge" ? {
-        title: "Merge backup",
+        title: T("Merge backup"),
         message: (
-          <>Merge "{f.name}" ({fmtBytes(f.size)}) into the workspace "{who}"?
-          {" "}Pages and chats from the backup that don't exist there yet will be <b>added</b>.
-          {" "}Everything already in that workspace is <b>kept unchanged</b>.</>
+          <>{t("Merge “{file}” ({size}) into the workspace “{workspace}”? Pages and chats from the backup that don't exist there yet will be {added}. Everything already in that workspace is {kept}.", {
+            file: f.name, size: fmtBytes(f.size), workspace: who, added: <b>{t("added")}</b>, kept: <b>{t("kept unchanged")}</b> })}</>
         ),
-        confirmLabel: "Merge",
+        confirmLabel: t("Merge"),
         onConfirm: () => runBackupImport(f, mode, target),
       } : {
-        title: "Replace all data",
+        title: T("Replace all data"),
         message: (
-          <>Restore "{f.name}" ({fmtBytes(f.size)}) into the workspace "{who}"?
-          {" "}<b>ALL of that workspace's notes and chats will be REPLACED</b> by the backup.
-          {" "}Uploaded PDFs are merged in (nothing is deleted). <b>This cannot be undone.</b></>
+          <>{t("Restore “{file}” ({size}) into the workspace “{workspace}”? {replaced} Uploaded PDFs are merged in (nothing is deleted). {final}", {
+            file: f.name, size: fmtBytes(f.size), workspace: who,
+            replaced: <b>{t("ALL of that workspace's notes and chats will be REPLACED by the backup.")}</b>,
+            final: <b>{t("This cannot be undone.")}</b> })}</>
         ),
-        confirmLabel: "Replace",
+        confirmLabel: t("Replace"),
         danger: true,
         onConfirm: () => runBackupImport(f, mode, target),
       });
@@ -693,7 +748,7 @@ function LibraryApp() {
   function runBackupImport(f, mode, target, after = {}) {
     const merging = mode === "merge";
     const other = target && target !== getCurrentWorkspace() ? target : null;
-    const tid = addTransfer({ name: `${merging ? "Merge" : "Restore"} ${f.name}`.slice(0, 60), kind: "upload", info: "uploading…" });
+    const tid = addTransfer({ name: `${merging ? "Merge" : "Restore"} ${f.name}`.slice(0, 60), kind: "upload", info: t("uploading…") });
     const fd = new FormData();
     fd.append("file", f);
     let lastPct = -1;
@@ -706,12 +761,12 @@ function LibraryApp() {
         updateTransfer(tid, { info: `${fmtBytes(loaded)} / ${fmtBytes(total)}` });
       },
       onProcessing: () => {
-        postPill("backup", { msg: merging ? "Merging backup into your library…" : "Restoring backup…", spinner: true });
-        updateTransfer(tid, { info: merging ? "merging…" : "restoring…" });
+        postPill("backup", { msg: merging ? t("Merging backup into your library…") : t("Restoring backup…"), spinner: true });
+        updateTransfer(tid, { info: merging ? t("merging…") : t("restoring…") });
       },
     }).then((d) => {
       postPill("backup", null);
-      updateTransfer(tid, { status: "done", info: merging ? `${d?.pages_added ?? 0} pages added` : "restored" });
+      updateTransfer(tid, { status: "done", info: merging ? t("{pages_added} pages added", { pages_added: d?.pages_added ?? 0 }) : "restored" });
       // Another workspace's data changed, not this one's — nothing here
       // is stale, so stay put instead of throwing the session away.
       if (other) setStatus(`${merging ? "Merged into" : "Restored"} ${workspaces.find((w) => w.id === other)?.name || "the workspace"}.`);
@@ -721,7 +776,7 @@ function LibraryApp() {
       postPill("backup", null);
       const msg = err?.message || "failed";
       updateTransfer(tid, { status: "error", info: String(msg) });
-      setStatus(`Import failed: ${msg}`);
+      setStatus(t("Import failed: {msg}", { msg: msg }));
     });
   }
 
@@ -1034,15 +1089,15 @@ function LibraryApp() {
   // Commit a grid-tile rename (list rows rename inline via the block editor).
   function commitPageRename(id, text) {
     setHomeEditingId(null);
-    const t = (text || "").trim();
+    const tt = (text || "").trim();
     const cur = homeBlocks.find((b) => b.id === id)?.content || "";
-    if (!t || t === cur) return;
-    setHomeBlocks((prev) => prev.map((b) => (b.id === id ? { ...b, content: t } : b)));
+    if (!tt || tt === cur) return;
+    setHomeBlocks((prev) => prev.map((b) => (b.id === id ? { ...b, content: tt } : b)));
     apiJson(`${API}/blocks/${id}`, {
       method: "PUT",
       headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ content: t }),
-    }).catch((err) => setStatus(`Rename failed: ${err}`));
+      body: JSON.stringify({ content: tt }),
+    }).catch((err) => setStatus(t("Rename failed: {err}", { err: err })));
   }
 
   // Deep-copy a page: new root block + a subtree clone with fresh block ids
@@ -1082,22 +1137,23 @@ function LibraryApp() {
     return created.id;
   }
   async function duplicatePages(ids) {
-    setStatus(`Copying ${ids.length} page${ids.length === 1 ? "" : "s"}…`);
+    setStatus(t("Copying {n} page{_s}…", { n: ids.length, _s: ids.length === 1 ? "" : "s" }));
     try {
       for (const id of ids) await duplicatePage(id);
       clearSelection();
       await fetchHomeBlocks();
-      setStatus(`Copied ${ids.length} page${ids.length === 1 ? "" : "s"}.`);
+      setStatus(t("Copied {n} page{_s}.", { n: ids.length, _s: ids.length === 1 ? "" : "s" }));
     } catch (err) {
-      setStatus(`Copy failed: ${err.message}`);
+      setStatus(t("Copy failed: {message}", { message: err.message }));
     }
   }
 
   function deletePages(ids) {
     setConfirmBox({
-      title: ids.length === 1 ? "Delete page" : `Delete ${ids.length} pages`,
-      message: `Delete ${ids.length === 1 ? "this page" : `these ${ids.length} pages`} and all their notes? This can't be undone.`,
-      confirmLabel: "Delete",
+      title: ids.length === 1 ? t("Delete page") : t("Delete {n} pages", { n: ids.length }),
+      message: ids.length === 1 ? t("Delete this page and all its notes? This can't be undone.")
+        : t("Delete these {n} pages and all their notes? This can't be undone.", { n: ids.length }),
+      confirmLabel: t("Delete"),
       danger: true,
       onConfirm: async () => {
         for (const id of ids) {
@@ -1106,7 +1162,7 @@ function LibraryApp() {
         updateTabs((prev) => prev.filter((t) => !ids.includes(t.id)));
         clearSelection();
         await fetchHomeBlocks();
-        setStatus(`Deleted ${ids.length} page${ids.length === 1 ? "" : "s"}.`);
+        setStatus(t("Deleted {n} page{_s}.", { n: ids.length, _s: ids.length === 1 ? "" : "s" }));
       },
     });
   }
@@ -1162,7 +1218,7 @@ function LibraryApp() {
       }
       await fetchHomeBlocks();
     } catch (err) {
-      setStatus(`Pin failed: ${err.message || err}`);
+      setStatus(t("Pin failed: {err}", { err: err.message || err }));
     }
   }
 
@@ -1182,7 +1238,7 @@ function LibraryApp() {
     await fetchHomeBlocks();
     return changed;
   }
-  const plural = (n) => `${n} page${n === 1 ? "" : "s"}`;
+  const plural = (n) => t("{n} page{_s}", { n, _s: n === 1 ? "" : "s" });
 
   // Add pages to a folder (soft link — other folder tags are kept). The only
   // tag removed is an ancestor of the target: dragging a "readout" paper into
@@ -1191,7 +1247,7 @@ function LibraryApp() {
     updateExtraFolders((prev) => prev.filter((f) => f !== path));
     const changed = await retagPages(ids, "folder",
       (tags) => (tags.includes(path) ? null : addFolderTag(tags, path)));
-    setStatus(changed ? `Added ${plural(changed)} to “${path}”.` : `Already in “${path}”.`);
+    setStatus(changed ? t("Added {changed} to “{path}”.", { changed: plural(changed), path }) : t("Already in “{path}”.", { path }));
   }
 
   // Label mirror — labels are flat, so a soft add with no ancestor
@@ -1199,20 +1255,20 @@ function LibraryApp() {
   async function addPagesToLabel(ids, name) {
     const changed = await retagPages(ids, "category",
       (tags) => (tags.includes(name) ? null : [...tags, name]));
-    setStatus(changed ? `Labelled ${plural(changed)} “${name}”.` : `Already labelled “${name}”.`);
+    setStatus(changed ? `Labelled ${plural(changed)} “${name}”.` : t("Already labelled “{name}”.", { name }));
   }
 
   // Strip every label (the "No label" tile's drop target).
   async function clearPagesLabels(ids) {
     const changed = await retagPages(ids, "category", (tags) => (tags.length ? [] : null));
-    setStatus(changed ? `Cleared the labels on ${plural(changed)}.` : "No labels to clear.");
+    setStatus(changed ? t("Cleared the labels on {changed}.", { changed: plural(changed) }) : t("No labels to clear."));
   }
 
   // Remove one label from pages (the label view's back-row drop target).
   async function removePagesFromLabel(ids, name) {
     await retagPages(ids, "category",
       (tags) => (tags.includes(name) ? tags.filter((t) => t !== name) : null));
-    setStatus(`Removed ${plural(ids.length)} from “${name}”.`);
+    setStatus(t("Removed {pages} from “{name}”.", { pages: plural(ids.length), name: name }));
   }
 
   // Remove one folder tag (exact path). With path = "" strips ALL folder tags.
@@ -1221,7 +1277,7 @@ function LibraryApp() {
       const next = path ? tags.filter((t) => t !== path) : [];
       return next.length === tags.length ? null : next;
     });
-    setStatus(path ? `Removed ${plural(ids.length)} from “${path}”.` : "Cleared folder tags.");
+    setStatus(path ? t("Removed {ids} from “{path}”.", { ids: plural(ids.length), path }) : t("Cleared folder tags."));
   }
 
   // Apply a path-rewriting map to every folder tag in the library: pages, the
@@ -1275,7 +1331,7 @@ function LibraryApp() {
     if (!newName || newPath === oldPath) return;
     await moveFolderChats([[oldPath, newPath]]);
     await applyFolderMap(prefixMapTag(oldPath, newPath));
-    setStatus(`Folder renamed to “${newPath}”.`);
+    setStatus(t("Folder renamed to “{newPath}”.", { newPath: newPath }));
   }
 
   // Move folders (with their subtrees) under a new parent path ("" = top
@@ -1299,7 +1355,9 @@ function LibraryApp() {
       return t;
     });
     clearSelection();
-    setStatus(`Moved ${moves.length === 1 ? `“${moves[0][0]}”` : `${moves.length} folders`} to “${newParent || "All files"}”.`);
+    setStatus(moves.length === 1
+      ? t("Moved “{name}” to “{to}”.", { name: moves[0][0], to: newParent || t("All files") })
+      : t("Moved {n} folders to “{to}”.", { n: moves.length, to: newParent || t("All files") }));
   }
 
   // Folders share the "text/plain" drag channel with page cards — prefixed so
@@ -1331,7 +1389,7 @@ function LibraryApp() {
   function dropOnLabel(e, name, onPages = (ids) => (name === NO_LABEL ? clearPagesLabels(ids) : addPagesToLabel(ids, name))) {
     e.preventDefault();
     setFolderDragOver(null);
-    if (droppedFolderPaths(e)) { setStatus("Folders can’t carry labels — drop pages instead."); return; }
+    if (droppedFolderPaths(e)) { setStatus(t("Folders can’t carry labels — drop pages instead.")); return; }
     const ids = droppedPageIds(e);
     if (ids) onPages(ids);
   }
@@ -1362,26 +1420,26 @@ function LibraryApp() {
     };
     if (!members.length) {
       setConfirmBox({
-        title: "Delete folder",
-        message: `Delete the empty folder “${path}”?`,
-        confirmLabel: "Delete folder",
-        onConfirm: () => cleanupAfter(`Folder “${path}” deleted.`),
+        title: T("Delete folder"),
+        message: t("Delete the empty folder “{path}”?", { path: path }),
+        confirmLabel: t("Delete folder"),
+        onConfirm: () => cleanupAfter(t("Folder “{path}” deleted.", { path })),
       });
       return;
     }
     const n = members.length;
     const papers = `${n} page${n === 1 ? "" : "s"}`;
     setConfirmBox({
-      title: "Delete folder",
-      message: `Delete “${path}”? It contains ${papers}. Keep ${n === 1 ? "it" : "them"} in the library (only the folder goes away), or delete ${n === 1 ? "it and its" : "them and their"} notes too — pages linked into other folders are deleted as well.`,
-      confirmLabel: "Keep pages",
+      title: T("Delete folder"),
+      message: t("Delete “{path}”? It contains {papers}. Keep {them} in the library (only the folder goes away), or delete {their} notes too — pages linked into other folders are deleted as well.", { path, papers, them: n === 1 ? t("it") : t("them"), their: n === 1 ? t("it and its") : t("them and their") }),
+      confirmLabel: t("Keep pages"),
       onConfirm: async () => {
         for (const b of members) {
           try { await writePageFolders(b.id, parseFolderTags(b.properties?.folder).filter((t) => !inPath(t))); } catch {}
         }
-        await cleanupAfter(`Folder “${path}” deleted — its ${papers} stay in the library.`);
+        await cleanupAfter(t("Folder “{path}” deleted — its {papers} stay in the library.", { path, papers }));
       },
-      altLabel: `Delete ${papers} too`,
+      altLabel: t("Delete {papers} too", { papers }),
       altDanger: true,
       onAlt: async () => {
         const ids = members.map((b) => b.id);
@@ -1389,7 +1447,7 @@ function LibraryApp() {
           try { await apiJson(`${API}/blocks/${id}`, { method: "DELETE" }); } catch {}
         }
         updateTabs((prev) => prev.filter((t) => !ids.includes(t.id)));
-        await cleanupAfter(`Folder “${path}” and its ${papers} deleted.`);
+        await cleanupAfter(t("Folder “{path}” and its {papers} deleted.", { path, papers }));
       },
     });
   }
@@ -1427,20 +1485,20 @@ function LibraryApp() {
     setLabelRenaming(null);
     if (!newName || newName === oldName) return;
     const changed = await applyLabelMap((t) => (t === oldName ? newName : t));
-    setStatus(`Label renamed to “${newName}” on ${changed} page${changed === 1 ? "" : "s"}.`);
+    setStatus(t("Label renamed to “{newName}” on {changed} page{_s}.", { newName, changed, _s: changed === 1 ? "" : "s" }));
   }
 
   function deleteLabelByName(name) {
     const members = homeBlocks.filter((b) => parseFolderTags(b.properties?.category).includes(name));
     setConfirmBox({
-      title: "Delete label",
+      title: T("Delete label"),
       message: members.length
-        ? `Delete “${name}”? The label is removed from its ${members.length} page${members.length === 1 ? "" : "s"} — no pages are deleted.`
-        : `Delete the label “${name}”?`,
-      confirmLabel: "Delete label",
+        ? t("Delete “{name}”? The label is removed from its {n} page{_s} — no pages are deleted.", { name, n: members.length, _s: members.length === 1 ? "" : "s" })
+        : t("Delete the label “{name}”?", { name }),
+      confirmLabel: t("Delete label"),
       onConfirm: async () => {
         await applyLabelMap((t) => (t === name ? null : t));
-        setStatus(`Label “${name}” deleted.`);
+        setStatus(t("Label “{name}” deleted.", { name: name }));
       },
     });
   }
@@ -1534,7 +1592,7 @@ function LibraryApp() {
   // or clears it (entry = null). Final entries linger 1s, then fade out.
   // When several channels are active: error > lingering final > ongoing,
   // ties broken by recency.
-  const [status, setStatusRaw] = useState("Ready.");
+  const [status, setStatusRaw] = useState(t("Ready."));
   // System log (Settings → Diagnostics): status messages, PDF load activity,
   // and uncaught errors from this session. In-memory only.
   const [sysLog, setSysLog] = useState([]); // [{t, msg, tone}], capped
@@ -1697,7 +1755,7 @@ function LibraryApp() {
       // while it's still on screen here) — merged and pushed back.
       const fid = focusedBlockIdRef.current;
       if (fid && !tabs.some((t) => t.id === fid)) {
-        tabs = [...tabs, prev.find((t) => t.id === fid) || { id: fid, title: "Untitled" }];
+        tabs = [...tabs, prev.find((t) => t.id === fid) || { id: fid, title: T("Untitled") }];
         pushTabsToServer(tabs);
       }
       try { localStorage.setItem(`gamma-tabs:${user}`, JSON.stringify(tabs)); } catch {}
@@ -2158,23 +2216,23 @@ function LibraryApp() {
     // so load progress and status messages can never stack.
     if (st.phase === "start") {
       // Escalates if the server keeps us waiting with no bytes.
-      postPill("pdf-load", { msg: "Requesting PDF…", spinner: true },
-        { after: [6000, { msg: "Still waiting — the server may be fetching the PDF from its source…" }] });
+      postPill("pdf-load", { msg: t("Requesting PDF…"), spinner: true },
+        { after: [6000, { msg: t("Still waiting — the server may be fetching the PDF from its source…") }] });
     } else if (st.phase === "progress") {
       postPill("pdf-load", {
         msg: st.total
-          ? `Downloading… ${fmtBytes(st.loaded)} of ${fmtBytes(st.total)} (${Math.min(99, Math.floor((st.loaded / st.total) * 100))}%)`
+          ? t("Downloading… {loaded} of {total} ({total2}%)", { loaded: fmtBytes(st.loaded), total: fmtBytes(st.total), total2: Math.min(99, Math.floor((st.loaded / st.total) * 100)) })
           : `Downloading… ${fmtBytes(st.loaded)}`,
         spinner: true,
       });
     } else if (st.phase === "done" || st.phase === "cached") {
-      postPill("pdf-load", { msg: "Preparing document…", spinner: true });
+      postPill("pdf-load", { msg: t("Preparing document…"), spinner: true });
     } else if (st.phase === "parsing") {
-      postPill("pdf-load", { msg: "Preparing document — parsing…", spinner: true });
+      postPill("pdf-load", { msg: t("Preparing document — parsing…"), spinner: true });
     } else if (st.phase === "measuring") {
-      postPill("pdf-load", { msg: `Preparing document — measuring page ${st.done + 1} of ${st.total}…`, spinner: true });
+      postPill("pdf-load", { msg: t("Preparing document — measuring page {done} of {total}…", { done: st.done + 1, total: st.total }), spinner: true });
     } else if (st.phase === "error") {
-      postPill("pdf-load", { msg: `PDF load failed — ${st.detail || "unknown error"}`, error: true, retry: true });
+      postPill("pdf-load", { msg: t("PDF load failed — {error}", { error: st.detail || t("unknown error") }), error: true, retry: true });
     } else if (st.phase === "cancelled" || st.phase === "painted") {
       postPill("pdf-load", null);
     }
@@ -2183,7 +2241,7 @@ function LibraryApp() {
       // still loading: the reader lands on their page now — the exact tab
       // position here, the last-read page through the coarse restore below,
       // which accepts a laid-out skeleton as "pages in the DOM".
-      postPill("pdf-load", { msg: "Preparing document…", spinner: true });
+      postPill("pdf-load", { msg: t("Preparing document…"), spinner: true });
       pdfLaidOutUrlRef.current = url;
       applyPendingRestore(url);
       return;
@@ -2192,7 +2250,7 @@ function LibraryApp() {
       // Pages are in the DOM but the first canvas paint is still in flight —
       // keep the pill up until the viewer reports "painted". Safety-capped so
       // a paint that errors out can't leave the spinner stuck forever.
-      postPill("pdf-load", { msg: "Rendering page…", spinner: true }, { after: [20000, null] });
+      postPill("pdf-load", { msg: t("Rendering page…"), spinner: true }, { after: [20000, null] });
       pdfRenderedUrlRef.current = url; // this document's pages are now in the DOM
       setPdfDocNonce((n) => n + 1);    // lets a pinned search re-find its matches here
       applyPendingRestore(url);
@@ -2210,11 +2268,11 @@ function LibraryApp() {
     if (st.phase === "start") {
       const prevId = transferByUrlRef.current[url];
       if (prevId) {
-        reviveTransfer(prevId, { status: "active", info: "downloading…", cancel: st.cancel, progress: undefined });
+        reviveTransfer(prevId, { status: "active", info: t("downloading…"), cancel: st.cancel, progress: undefined });
         return;
       }
       const name = (pageTitle || decodeURIComponent((url.split("source_url=")[1] || url).split("/").pop() || "PDF")).slice(0, 60);
-      transferByUrlRef.current[url] = addTransfer({ name, kind: "download", info: "downloading…", cancel: st.cancel });
+      transferByUrlRef.current[url] = addTransfer({ name, kind: "download", info: t("downloading…"), cancel: st.cancel });
     } else if (st.phase === "progress") {
       const id = transferByUrlRef.current[url];
       if (id) updateTransfer(id, {
@@ -2239,7 +2297,19 @@ function LibraryApp() {
   const [collapsedWins, setCollapsedWins] = useState({}); // window id -> collapsed to header bar
   // One popover open at a time; any click outside a [data-popover] container closes it.
   const [openPopover, setOpenPopover] = useState(null); // "menu" | "share" | "user" | "search"
-  const [quickOpen, setQuickOpen] = useState(false); // the Ctrl+P page palette
+  // The Ctrl+P palette (library/QuickOpen.jsx): null, or {prefix} — "" lists
+  // pages, ">" the commands (Ctrl+Shift+P).
+  const [quickOpen, setQuickOpen] = useState(null);
+  // The app commands' context (app/appCommands.js) and the account's
+  // keybindings, refreshed every render for the once-mounted key listener.
+  const appCmdRef = useRef(null);
+  const bindingsRef = useRef({});
+  // The notes tree's row handlers of the last render, so the palette can
+  // run a block command on the focused row without an open editor.
+  const rowPropsRef = useRef(null);
+  // A block just moved by a keyboard command: the DOM move blurs its
+  // editor in some browsers, and that blur must not close it (onStartEdit).
+  const keepEditRef = useRef(null);
   useEffect(() => {
     if (!openPopover) return;
     function onDown(e) {
@@ -2267,7 +2337,7 @@ function LibraryApp() {
     && !!authUser?.user && !authUser?.is_guest;
   const [publishState, setPublishState] = useState(null);
   const [publishBusy, setPublishBusy] = useState("");
-  const [publishError, setPublishError] = useState("");
+  const [publishError, setPublishError] = useState(""); // a refusal's detail, or {message, limit} for the plan's cap
   const [publishCopied, flashPublishCopied, resetPublishCopied] = useCopied();
   // The publication's state while the share popover is open: every 5 s while
   // a round runs or a local edit waits to be synced, else every 20 s.
@@ -2299,6 +2369,10 @@ function LibraryApp() {
   // `tasksNonce` (wakeTasks) so the first fast poll happens right away.
   const [tasksNonce, setTasksNonce] = useState(0);
   const wakeTasks = useCallback(() => setTasksNonce((n) => n + 1), []);
+  // Booleans, so other popovers and the first answer's `active: false`
+  // don't re-run the effect (each run fetches at once).
+  const tasksPopoverOpen = openPopover === "downloads";
+  const indexingActive = Boolean(indexTask?.active);
   useEffect(() => {
     if (!authUser?.user || shareMode) return;
     let cancelled = false;
@@ -2313,8 +2387,7 @@ function LibraryApp() {
         .catch(() => {});
     };
     refresh();
-    const fast = openPopover === "downloads" || indexTask?.active;
-    const t = setInterval(refresh, fast ? 2000 : 60000);
+    const t = setInterval(refresh, tasksPopoverOpen || indexingActive ? 2000 : 60000);
     const onVisible = () => { if (!document.hidden) refresh(); };
     document.addEventListener("visibilitychange", onVisible);
     return () => {
@@ -2322,7 +2395,7 @@ function LibraryApp() {
       clearInterval(t);
       document.removeEventListener("visibilitychange", onVisible);
     };
-  }, [openPopover, authUser?.user, shareMode, indexTask?.active, tasksNonce]);
+  }, [tasksPopoverOpen, authUser?.user, shareMode, indexingActive, tasksNonce]);
 
   // Every folder path in use (from page tags + manually created empties),
   // plus all ancestor prefixes — "readout" exists once "readout/destructive"
@@ -2341,49 +2414,13 @@ function LibraryApp() {
   }, [homeBlocks, extraFolders]);
   useEffect(() => {
     function onKey(e) {
-      // Ctrl+F (and Ctrl+Shift+F) open the built-in search instead of the
-      // browser find — it covers notes, highlights, AND the PDF text.
-      if ((e.ctrlKey || e.metaKey) && !e.altKey && e.key.toLowerCase() === "f") {
-        // Focus in the chat window → ChatDock's own listener opens find-in-chat
-        if (document.activeElement?.closest?.(".chatPanel")) return;
-        e.preventDefault();
-        // On the home library, plain Ctrl+F targets the listing search box
-        // (only rendered there — DOM presence stands in for homeMode, which
-        // this once-mounted listener can't read). Ctrl+Shift+F still opens
-        // the full search panel.
-        if (!e.shiftKey) {
-          const homeFind = document.querySelector(".homeFindInput");
-          if (homeFind) { homeFind.focus(); homeFind.select(); return; }
-        }
-        setOpenPopover((p) => (p === "search" && !e.shiftKey ? null : "search"));
-      } else if ((e.ctrlKey || e.metaKey) && !e.altKey && !e.shiftKey && e.key.toLowerCase() === "p") {
-        // Ctrl+P: the quick-open page palette (library/QuickOpen.jsx) instead
-        // of the browser's print. A share view has no library to pick from.
-        if (shareMode) return;
-        e.preventDefault();
+      // The app commands (app/appCommands.js, docs/dev/hotkeys.md): search,
+      // the palettes, back, undo/redo, rename, the panes… under the
+      // account's keybindings. Escape is not a command: it always clears.
+      if (appCmdRef.current && dispatchHotkey(APP_COMMANDS, e, appCmdRef.current, bindingsRef.current)) return;
+      if (e.key === "Escape") {
         setOpenPopover(null);
-        setQuickOpen((v) => !v);
-      } else if (e.altKey && e.key === "ArrowLeft") {
-        e.preventDefault();
-        goBackNavRef.current?.();
-      } else if ((e.ctrlKey || e.metaKey) && !e.altKey && ["z", "y"].includes(e.key.toLowerCase())) {
-        // The page's one undo history — from a block editor too (it has no
-        // history of its own). Other inputs keep the browser's own undo.
-        if (e.isComposing) return;
-        const t = document.activeElement;
-        const inEditor = !!t?.closest?.(".cm-editor");
-        if (!inEditor && t && (t.tagName === "INPUT" || t.tagName === "TEXTAREA" || t.isContentEditable)) return;
-        const redo = e.key.toLowerCase() === "y" || e.shiftKey;
-        const applied = blockHistory.undo(redo, inEditor);
-        if (applied || inEditor || !t || t === document.body) {
-          setStatus(applied ? `${redo ? "Redone" : "Undone"}: ${applied}.` : (redo ? "Nothing to redo in notes." : "Nothing to undo in notes."));
-        }
-        // Always swallowed in an editor: the browser's native contenteditable
-        // undo would otherwise mutate CodeMirror's DOM behind its back.
-        if (inEditor || applied) e.preventDefault();
-      } else if (e.key === "Escape") {
-        setOpenPopover(null);
-        setQuickOpen(false);
+        setQuickOpen(null);
         setHomeMenu(null);
         setSelectedPages((prev) => (prev.size ? new Set() : prev));
       }
@@ -2401,6 +2438,7 @@ function LibraryApp() {
   const profileSync = useProfileSync(appPrefs, authUser?.user && !authUser.is_guest && !shareMode ? authUser.user : "");
   const {
     theme, setTheme, pdfDarkPage, setPdfDarkPage, uiScale, setUiScale, recentThumbs, setRecentThumbs,
+    language, setLanguage,
     fileLabels, setFileLabels,
     oaFallback, setOaFallback, metaAutoFetch, setMetaAutoFetch, pdfSaveLocal, setPdfSaveLocal,
     embAnnots, setEmbAnnots,
@@ -2408,11 +2446,13 @@ function LibraryApp() {
     inkTools, setInkTools, inkEraserMode, setInkEraserMode, inkEraserSize, setInkEraserSize,
     inkLassoMode, setInkLassoMode,
     translateEnabled, setTranslateEnabled,
+    selTranslate, setSelTranslate, selTranslateAuto, setSelTranslateAuto,
     translateLang, setTranslateLang, translateModel, setTranslateModel,
     translateEffort, setTranslateEffort, translateParallel, setTranslateParallel,
     searchDetailsHome, setSearchDetailsHome, searchDetailsPaper, setSearchDetailsPaper,
     enterNewNote, setEnterNewNote,
-    statusBarVisible, setStatusBarVisible,
+    keybindings, setKeybindings,
+    statusBarVisible, setStatusBarVisible, suggestTours, setSuggestTours,
     chatEffort, setChatEffort, aiLoginCheck, setAiLoginCheck, metaModel, setMetaModel,
     dictationModel, setDictationModel, dictationLang, setDictationLang,
     chatSystem, setChatSystem, agentSystem, setAgentSystem,
@@ -2455,7 +2495,22 @@ function LibraryApp() {
 
   // The settings page (account popover → Settings…): two-column modal,
   // categories on the left, the selected pane on the right.
-  const [settingsOpen, setSettingsOpen] = useState(null); // null | pane id — see settingsNavigation.js
+  const [settingsOpen, setSettingsOpen] = useState(() => { // null | pane id — see settingsNavigation.js
+    // A language change reloads the page; the pane it was made on comes back.
+    try {
+      const pane = sessionStorage.getItem(REOPEN_SETTINGS_KEY);
+      if (pane) { sessionStorage.removeItem(REOPEN_SETTINGS_KEY); return pane; }
+    } catch {}
+    return null;
+  });
+  // The first settings sync with Gamma Cloud found two different copies:
+  // Settings → Account asks which to keep, opened once per page load.
+  const askedCloudChoice = useRef(false);
+  useEffect(() => {
+    if (!profileSync.cloudChoice || askedCloudChoice.current) return;
+    askedCloudChoice.current = true;
+    setSettingsOpen((cur) => cur || "account");
+  }, [profileSync.cloudChoice]);
   // What wants a look (a newer release, errors in the log — app/notices.js):
   // the dot on the account button and on the Settings panes that resolve it;
   // "Settings…" lands on the strongest one.
@@ -2636,9 +2691,14 @@ function LibraryApp() {
     const timer = setTimeout(checkAiHealth, 1500);
     return () => clearTimeout(timer);
   }, [authUser?.user, shareMode]);
-  // Entering the AI pane always refetches the masked key list.
+  // Entering the AI panes from elsewhere refetches the masked key list;
+  // moving between them keeps it (their edits refresh it themselves).
+  const prevSettingsPaneRef = useRef(null);
   useEffect(() => {
-    if (["ai", "assistant", "ai-advanced", "context", "prompts"].includes(settingsOpen) && authUser?.user && !shareMode) loadAiKeys();
+    const aiPanes = ["ai", "assistant", "ai-advanced", "context", "prompts"];
+    const cameFrom = prevSettingsPaneRef.current;
+    prevSettingsPaneRef.current = settingsOpen;
+    if (aiPanes.includes(settingsOpen) && !aiPanes.includes(cameFrom) && authUser?.user && !shareMode) loadAiKeys();
   }, [settingsOpen]);
 
   function openAiKeysEditor() {
@@ -2743,9 +2803,9 @@ function LibraryApp() {
     if (!f) return;
     const oauth = isOauthProto(f.protocol);
     const oauthCb = oauth ? (f.oauthCallback || "").trim() : "";
-    if (oauth && !oauthCb && !f.id) { setAiKeysError("Sign in with ChatGPT and paste the callback URL to connect."); return; }
-    if (oauthCb && !f.oauthState) { setAiKeysError('Hit "Open ChatGPT sign-in" first, then paste the URL it ends on.'); return; }
-    if (!oauth && !f.id && !f.api_key.trim()) { setAiKeysError("An API key is required."); return; }
+    if (oauth && !oauthCb && !f.id) { setAiKeysError(t("Sign in with ChatGPT and paste the callback URL to connect.")); return; }
+    if (oauthCb && !f.oauthState) { setAiKeysError(t("Hit “Open ChatGPT sign-in” first, then paste the URL it ends on.")); return; }
+    if (!oauth && !f.id && !f.api_key.trim()) { setAiKeysError(t("An API key is required.")); return; }
     // Complete the OAuth exchange when a callback was pasted; otherwise a
     // plain field edit (name/models — plus key/base URL for key entries).
     const req = oauthCb
@@ -2776,9 +2836,9 @@ function LibraryApp() {
   function deleteAiProvider(p) {
     const label = p.label || p.protocol;
     setConfirmBox({
-      title: "Remove AI key",
-      message: `Remove the "${label}" key? AI requests through it will stop working. This cannot be undone.`,
-      confirmLabel: "Remove",
+      title: T("Remove AI key"),
+      message: t("Remove the \"{label}\" key? AI requests through it will stop working. This cannot be undone.", { label: label }),
+      confirmLabel: t("Remove"),
       danger: true,
       onConfirm: async () => {
         // Close a form that edits this entry — saving it would 404 ("provider
@@ -2836,7 +2896,7 @@ function LibraryApp() {
     const text = blockChipText(block).slice(0, 4000);
     setChatNotes((prev) => prev.some((n) => n.kind === "block" && n.id === block.id)
       ? prev : prev.length >= 12 ? prev : [...prev, { kind: "block", id: block.id, text }]);
-    setStatus("Block attached to your next chat message.");
+    setStatus(t("Block attached to your next chat message."));
   }
   // A Ctrl-selection inside one block's rendered view → its source range;
   // one that can't be pinned down (it spans blocks, or an end isn't the
@@ -2954,7 +3014,7 @@ function LibraryApp() {
       if (retryMeta && d.ok && !pageMeta && focusedBlock) fetchMetadata(focusedBlock, true);
     } catch (err) {
       setPdfTextInfo({ error: friendlyApiError(err) });
-      if (retryMeta) setStatus(`Text check failed: ${err.message}`);
+      if (retryMeta) setStatus(t("Text check failed: {message}", { message: err.message }));
     }
   }
   useEffect(() => {
@@ -2969,9 +3029,9 @@ function LibraryApp() {
     setPdfTextPreview({ loading: true });
     try {
       const d = await apiJson(`${API}/pdf-text-status?doc_id=${encodeURIComponent(docId)}&preview=12000`);
-      setPdfTextPreview({ text: d.text || "(no text)" });
+      setPdfTextPreview({ text: d.text || t("(no text)") });
     } catch (err) {
-      setPdfTextPreview({ text: `Preview failed: ${friendlyApiError(err)}` });
+      setPdfTextPreview({ text: t("Preview failed: {err}", { err: friendlyApiError(err) }) });
     }
   }
 
@@ -2998,9 +3058,9 @@ function LibraryApp() {
         await renameTitle(data.meta.title);
       }
       fetchHomeBlocks(); // keep the library's meta fresh for DOI-link matching
-      setStatus("Metadata saved.");
+      setStatus(t("Metadata saved."));
     } catch (err) {
-      setStatus(`Metadata save failed: ${err.message}`);
+      setStatus(t("Metadata save failed: {message}", { message: err.message }));
     }
   }
   // Draft copies of the editable prompts (empty = server default), rebuilt
@@ -3030,16 +3090,16 @@ function LibraryApp() {
   };
 
   // --- PDF translation (the 文A button in the viewer's zoom column) ---
-  // The button prompts "this page or whole document"; the queue itself lives
-  // in PdfViewer (translateCtl), which calls back into translateParagraphs
-  // below for each page. Language, model, effort and parallelism live in
-  // Settings → Reading → PDF viewer.
-  const translateSendModel = translateModel && scopedAiModels.some((m) => m.id === translateModel)
-    ? translateModel
-    : chatSendModel;
+  // The queue lives in PdfViewer (translateCtl), which calls translateChunk
+  // below for each chunk; the selection popup uses the same request. The
+  // settings live in Settings → Reading › Translation. What is sent: a
+  // machine-translation service ("engine:<id>") or a model, per
+  // translateModelFor, else the chat model.
+  const translateEngines = aiInfo?.translate_engines || [];
+  const translateSendModel = translateModelFor(translateModel, translateEngines, scopedAiModels) || chatSendModel;
   const translateLangLabel = (TRANSLATE_LANGS.find(([code]) => code === translateLang) || ["", ""])[1];
   const pdfTranslateCtl = useRef(null); // imperative surface set by PdfViewer
-  const [pdfTransState, setPdfTransState] = useState({ running: false, progress: 0, shown: true, pages: 0 });
+  const [pdfTransState, setPdfTransState] = useState({ running: false, progress: 0, shown: true, pages: 0, current: false });
   const [transMenu, setTransMenu] = useState(null); // {x, y} while the button's option menu is open
   const transTaskRef = useRef(null); // background-tasks row for the running job
   const transLongRef = useRef(0); // long-press timer (touch): opens the menu like right-click does
@@ -3061,7 +3121,7 @@ function LibraryApp() {
         updateTransfer(transTaskRef.current, { info: `${Math.round(st.progress * 100)}%`, progress: st.progress });
       } else {
         const full = st.progress >= 0.999;
-        updateTransfer(transTaskRef.current, { status: "done", info: full ? "100%" : `stopped at ${Math.round(st.progress * 100)}%` });
+        updateTransfer(transTaskRef.current, { status: "done", info: full ? "100%" : t("stopped at {progress}%", { progress: Math.round(st.progress * 100) }) });
         transTaskRef.current = null;
       }
     }
@@ -3103,7 +3163,7 @@ function LibraryApp() {
       });
       return final?.translations || null;
     } catch (err) {
-      if (err.name !== "AbortError") setStatus(`Translation failed: ${err.message}`);
+      if (err.name !== "AbortError") setStatus(t("Translation failed: {message}", { message: err.message }));
       return null;
     }
   }
@@ -3113,7 +3173,7 @@ function LibraryApp() {
   // failure (with the task already marked).
   async function fetchMetadataRequest(block, force = false) {
     const ctl = new AbortController();
-    const taskId = addTransfer({ name: `Metadata — ${(block.content || "paper").slice(0, 48)}`, kind: "ai", info: "fetching…", cancel: () => ctl.abort() });
+    const taskId = addTransfer({ name: `Metadata — ${(block.content || "paper").slice(0, 48)}`, kind: "ai", info: t("fetching…"), cancel: () => ctl.abort() });
     setMetaFetchingIds((prev) => new Set(prev).add(block.id));
     try {
       const data = await apiJson(`${API}/metadata/fetch`, {
@@ -3130,7 +3190,7 @@ function LibraryApp() {
           cite_model: chatSendModel || "",
         }),
       });
-      updateTransfer(taskId, { status: "done", info: data.cached ? "cached" : data.source === "ai" ? "AI-extracted" : data.source || "" });
+      updateTransfer(taskId, { status: "done", info: data.cached ? "cached" : data.source === "ai" ? t("AI-extracted") : data.source || "" });
       return data;
     } catch (err) {
       updateTransfer(taskId, { status: "error", info: (err.message || "failed") });
@@ -3156,7 +3216,7 @@ function LibraryApp() {
 
   async function fetchMetadata(block, force) {
     if (!block?.id) return;
-    if (force) setStatus("Refreshing paper metadata…");
+    if (force) setStatus(t("Refreshing paper metadata…"));
     try {
       const data = await fetchMetadataRequest(block, force);
       if (focusedBlockIdRef.current !== block.id) return;
@@ -3172,11 +3232,11 @@ function LibraryApp() {
       // resurface in the link dialog / home list.
       if (data.page_title && focusedBlockIdRef.current === block.id) setPageTitle(data.page_title);
       if (!data.cached) {
-        setStatus(`Paper metadata found (${data.source === "ai" ? "AI-extracted" : data.source}).`);
+        setStatus(t("Paper metadata found ({source}).", { source: data.source === "ai" ? t("AI-extracted") : data.source }));
         fetchHomeBlocks(); // keep the library's meta fresh for DOI-link matching
       }
     } catch (err) {
-      if (focusedBlockIdRef.current === block.id) setStatus(`Metadata: ${err.message}`);
+      if (focusedBlockIdRef.current === block.id) setStatus(t("Metadata: {message}", { message: err.message }));
       // Mirror the server's negative-cache marker into the client copy —
       // otherwise the next autosave PUTs the stale properties and resurrects
       // the auto-retry on every open.
@@ -3250,7 +3310,7 @@ function LibraryApp() {
   // Defaults to the Settings preference; the import dialog can override it for
   // one run (auto-import on open always follows the preference).
   async function importEmbeddedAnnots(blockId, targetDocId, silent, strip = embAnnots === "strip") {
-    const taskId = addTransfer({ name: "Importing embedded PDF annotations", kind: "import", info: "scanning…" });
+    const taskId = addTransfer({ name: "Importing embedded PDF annotations", kind: "import", info: t("scanning…") });
     try {
       const res = await apiJson(`${API}/import/pdf-annotations`, {
         method: "POST",
@@ -3259,11 +3319,11 @@ function LibraryApp() {
       });
       updateTransfer(taskId, {
         status: "done",
-        info: res.imported > 0 ? `${res.imported} imported` : res.found > 0 ? "already imported" : "none found",
+        info: res.imported > 0 ? `${res.imported} imported` : res.found > 0 ? t("already imported") : t("none found"),
       });
       if (res.imported > 0) {
         if (focusedBlockIdRef.current === blockId) await loadBlocksForBlock(blockId);
-        setStatus(`Imported ${res.imported} annotation${res.imported === 1 ? "" : "s"} embedded in the PDF.`);
+        setStatus(t("Imported {imported} annotation{_s} embedded in the PDF.", { imported: res.imported, _s: res.imported === 1 ? "" : "s" }));
       }
       if (res.stripped > 0 && focusedBlockIdRef.current === blockId) {
         // The stored file changed — cache-bust so the open viewer re-renders
@@ -3272,13 +3332,12 @@ function LibraryApp() {
       }
       if (res.imported === 0 && !silent) {
         setStatus(res.found > 0
-          ? "All embedded annotations were already imported."
-          : "No annotations embedded in this PDF.");
+          ? t("All embedded annotations were already imported.") : t("No annotations embedded in this PDF."));
       }
       return res;
     } catch (err) {
       updateTransfer(taskId, { status: "error", info: (err.message || "failed") });
-      if (!silent) setStatus(`Annotation import failed: ${err.message}`);
+      if (!silent) setStatus(t("Annotation import failed: {message}", { message: err.message }));
     }
   }
 
@@ -3287,7 +3346,7 @@ function LibraryApp() {
     if (!targetId || pptCiteBusy) return;
     setPptCiteBusy(true);
     const ctl = new AbortController();
-    const taskId = addTransfer({ name: `Slide citation — ${(blockArg?.content || pageTitle || "paper").slice(0, 48)}`, kind: "ai", info: "generating…", cancel: () => ctl.abort() });
+    const taskId = addTransfer({ name: `Slide citation — ${(blockArg?.content || pageTitle || "paper").slice(0, 48)}`, kind: "ai", info: t("generating…"), cancel: () => ctl.abort() });
     try {
       const data = await apiJson(`${API}/metadata/cite`, {
         method: "POST", signal: ctl.signal,
@@ -3298,7 +3357,7 @@ function LibraryApp() {
       if (focusedBlockIdRef.current === targetId) setPptCite(data.citation || "");
     } catch (err) {
       updateTransfer(taskId, { status: "error", info: (err.message || "failed") });
-      if (!ctl.signal.aborted) setStatus(`Citation failed: ${err.message}`);
+      if (!ctl.signal.aborted) setStatus(t("Citation failed: {message}", { message: err.message }));
     } finally {
       setPptCiteBusy(false);
     }
@@ -3332,7 +3391,7 @@ function LibraryApp() {
       ok = await copyText(text || "");
     }
     if (ok) flashCopied(kind);
-    else setStatus("Copy failed — copy manually.");
+    else setStatus(t("Copy failed — copy manually."));
   }
 
   useEffect(() => {
@@ -3452,9 +3511,10 @@ function LibraryApp() {
   const pendingJumpRef = useRef(null);
   // Phase B2a: drop indicator state
   const [dropTarget, setDropTarget] = useState(null); // { targetId, above, rect }
+  const dragLeaveTimer = useRef(null);
 
   useEffect(() => {
-    window._gammaSetDropTarget = setDropTarget;
+    window._gammaSetDropTarget = (dt) => { clearTimeout(dragLeaveTimer.current); setDropTarget(dt); };
     // The indicator is fixed to the viewport, so a drag end the rows miss (a
     // row re-rendered under the pointer, the dragend of a handle the move
     // detached) would leave a line hanging over the notes (#88). Every drag
@@ -3463,6 +3523,7 @@ function LibraryApp() {
     // onBlockDrop still reads _dragState.dropTarget.
     const reset = () => {
       _dragState.draggingId = null;
+      _dragState.fragment = null;
       _dragState.dropTarget = null;
       setDropTarget(null);
     };
@@ -3541,7 +3602,7 @@ function LibraryApp() {
   useEffect(() => {
     document.title = pageTitle
       ? `${pageTitle} — Gamma`
-      : "Gamma — Annotate PDFs, Share Your Thinking";
+      : t("Gamma — Annotate PDFs, Share Your Thinking");
   }, [pageTitle]);
 
   const scrollToRef = useRef(() => {});
@@ -3612,12 +3673,25 @@ function LibraryApp() {
   }
 
   useEffect(() => {
-    if (!pendingFocusRef.current || readOnly) return;
-    const id = pendingFocusRef.current;
+    // A request is a block id, or {id, caret: "start" | "end" | offset,
+    // reopen} from a keyboard command: the caret lands where the command
+    // says, and `reopen` counts the tries at re-opening an editor a DOM
+    // move closed (the blur a browser fires when a focused node moves).
+    const req = pendingFocusRef.current;
+    if (!req || readOnly) return;
+    const id = typeof req === "string" ? req : req.id;
     const ref = blockRefs.current[id];
     if (ref?.current) {
       ref.current.focus();
+      if (typeof req === "object" && req.caret != null) {
+        const len = ref.current.value.length;
+        const pos = req.caret === "end" ? len : req.caret === "start" ? 0 : Math.min(req.caret, len);
+        ref.current.setSelectionRange(pos, pos);
+      }
       pendingFocusRef.current = null;
+    } else if (typeof req === "object" && req.reopen > 0 && findBlock(blocks, id) && !findBlock(blocks, id).editMode) {
+      req.reopen -= 1;
+      setBlocks((prev) => setBlockEditMode(prev, id, true));
     }
   }, [blocks, readOnly]);
 
@@ -3636,12 +3710,9 @@ function LibraryApp() {
       setMerges(map.size ? map : null);
     } catch { setMerges(null); }
   }, [mirrorWs, focusedBlockId, authUser?.user]);
-  useEffect(() => {
-    loadMerges();
-    if (!mirrorWs || !focusedBlockId) return undefined;
-    const t = setInterval(loadMerges, 15000); // rounds run on their own; the pill also signals them
-    return () => clearInterval(t);
-  }, [loadMerges, mirrorWs, focusedBlockId]);
+  // No timer of its own: the sync pill polls the mirror and raises
+  // "gamma:mirror-changed" when its open conflicts move.
+  useEffect(() => { loadMerges(); }, [loadMerges]);
   useEffect(() => {
     window.addEventListener("gamma:mirror", loadMerges);
     window.addEventListener("gamma:mirror-changed", loadMerges);
@@ -3760,7 +3831,7 @@ function LibraryApp() {
     if (pageId !== focusedBlockId) return;
     for (const op of ops) {
       if (op.op !== "set" || op.id !== pageId) continue;
-      if (op.content !== undefined) setPageTitle(op.content || "Untitled");
+      if (op.content !== undefined) setPageTitle(op.content || t("Untitled"));
       setFocusedBlock((b) => {
         if (!b) return b;
         const props = op.props ? applyPatch(b.properties, op.props) : b.properties;
@@ -3926,6 +3997,7 @@ function LibraryApp() {
     if (!wsReady || bootedRef.current) return;
     bootedRef.current = true;
     if (initialShare) resolveShare(initialShare);
+    else if (shareMode) return; // a page host's address that names no shared page: "not found" is up
     else if (initialBlockId) {
       (async () => {
         try {
@@ -3991,6 +4063,25 @@ function LibraryApp() {
     return () => mq.removeEventListener("change", apply);
   }, [theme]);
 
+  // Interface language (shared/i18n/i18n.js): a change reloads the page, so
+  // every module evaluates its text again under the new catalog (main.jsx).
+  // It first lands in the account's profile — the reloaded app pulls the
+  // profile and the server wins, so the server must already hold the new
+  // value — and the Settings pane the change was made on reopens after it.
+  useEffect(() => {
+    if (resolveLocale(language) === getLocale()) return undefined;
+    let live = true;
+    profileSync.flush().then(() => {
+      if (!live) return;
+      try {
+        localStorage.setItem("gamma-language", language);
+        if (settingsOpen) sessionStorage.setItem(REOPEN_SETTINGS_KEY, settingsOpen);
+      } catch {}
+      window.location.reload();
+    });
+    return () => { live = false; };
+  }, [language]);
+
   // Record a "recently viewed" entry whenever a page is opened. sessionUser
   // in the deps re-fires it once login resolves — a page opened by direct URL
   // shows before the session check finishes, and the first run skips.
@@ -4002,7 +4093,7 @@ function LibraryApp() {
   // Keep the tab strip in sync with the open page.
   useEffect(() => {
     if (!focusedBlockId || shareMode || !prefsUserRef.current) return;
-    const title = (pageTitle || "Untitled").slice(0, 60);
+    const title = (pageTitle || t("Untitled")).slice(0, 60);
     updateTabs((prev) => {
       const existing = prev.find((t) => t.id === focusedBlockId);
       if (existing && existing.title === title) return prev;
@@ -4039,11 +4130,7 @@ function LibraryApp() {
     recordScrollPageRef.current = (n) => {
       const reason = shareMode ? "readonly"
         : !focusedBlockId ? "no-focused-block"
-        : !pdfUrl ? "no-pdf-url"
-        : pdfRenderedUrlRef.current !== pdfUrl ? "doc-not-rendered"
-        : restoringForRef.current === focusedBlockId ? "exact-restore-inflight"
-        : coarseRestorePendingRef.current ? "coarse-restore-pending"
-        : "";
+        : !pdfUrl ? "no-pdf-url" : pdfRenderedUrlRef.current !== pdfUrl ? "doc-not-rendered" : restoringForRef.current === focusedBlockId ? "exact-restore-inflight" : coarseRestorePendingRef.current ? "coarse-restore-pending" : "";
       if (reason !== trackPauseReasonRef.current) {
         trackPauseReasonRef.current = reason;
         dbg(reason ? `tracker paused (${reason}) at page ${n}` : `tracker recording from page ${n}`);
@@ -4228,7 +4315,7 @@ function LibraryApp() {
     const doc_id = await getDocIdForUrl(source_url);
     const known = await apiJson(`${API}/blocks/by-doc/${doc_id}`).catch(() => null);
     if (!known) {
-      updateTransfer(taskId, { info: "checking link…" });
+      updateTransfer(taskId, { info: t("checking link…") });
       await probePdfUrl(source_url);
     }
     const viewerUrl = pdfProxyUrl(source_url, { save: pdfSaveLocal });
@@ -4249,9 +4336,9 @@ function LibraryApp() {
         body: JSON.stringify({ content: finalTitle })
       });
       setHomeBlocks((prev) => prev.map((b) => b.id === focusedBlockId ? { ...b, content: finalTitle } : b));
-      setStatus(`Renamed to "${finalTitle}"`);
+      setStatus(t("Renamed to \"{finalTitle}\"", { finalTitle: finalTitle }));
     } catch (err) {
-      setStatus(`Rename failed: ${err.message}`);
+      setStatus(t("Rename failed: {message}", { message: err.message }));
     }
   }
 
@@ -4318,7 +4405,7 @@ function LibraryApp() {
         folder: [base, folder].filter(Boolean).join("/"),
       }));
     if (!items.length) {
-      setStatus("No PDF or Markdown files found.");
+      setStatus(t("No PDF or Markdown files found."));
       return;
     }
     setLoading(true);
@@ -4331,7 +4418,7 @@ function LibraryApp() {
         // server's check_upload_allowed decide (its 413 detail is surfaced
         // per file below).
         if (isPdfFile(file) && quotaInfo && file.size > quotaInfo.max_upload_mb * 1024 * 1024) {
-          failed.push(`${filename} (max ${quotaInfo.max_upload_mb} MB)`);
+          failed.push(t("{filename} (max {max_upload_mb} MB)", { filename, max_upload_mb: quotaInfo.max_upload_mb }));
           continue;
         }
         setStatus(`${isPdfFile(file) ? "Uploading" : "Importing"} ${filename}...`);
@@ -4350,20 +4437,20 @@ function LibraryApp() {
         // A single upload opens its page right away.
         const { src, block } = done[0];
         await openBlock(block.id, { viewerUrl: src.viewerUrl });
-        setStatus(`Uploaded ${items[0].filename} (${src.doc_id})`);
+        setStatus(t("Uploaded {filename} ({doc_id})", { filename: items[0].filename, doc_id: src.doc_id }));
       } else if (items.length === 1 && done.length) {
         await fetchHomeBlocks();
         await openBlock(done[0].data.block_id, { pushNav: true });
-        setStatus(`Imported ${items[0].filename} as a note.`);
+        setStatus(t("Imported {filename} as a note.", { filename: items[0].filename }));
       } else if (done.length) {
         fetchHomeBlocks();
         setStatus(failed.length
-          ? `Imported ${done.length} of ${items.length} files — failed: ${failed.join(", ")}`
-          : `Imported ${done.length} files.`);
+          ? t("Imported {n} of {n2} files — failed: {failed}", { n: done.length, n2: items.length, failed: failed.join(", ") })
+          : t("Imported {n} files.", { n: done.length }));
       } else if (failed.length) {
-        setStatus(`Upload failed: ${failed.join(", ")}`);
+        setStatus(t("Upload failed: {failed}", { failed: failed.join(", ") }));
       } else if (stopped.length) {
-        setStatus(`Upload stopped: ${stopped.join(", ")}`);
+        setStatus(t("Upload stopped: {stopped}", { stopped: stopped.join(", ") }));
       }
       // Runs after the upload/import UI work and never delays its completion.
       queueMetadataForUploads(pdfDone);
@@ -4379,11 +4466,11 @@ function LibraryApp() {
     const ednFile = all.find((f) => f.name.endsWith('.edn'));
     const mdFile  = all.find((f) => f.name.endsWith('.md'));
     if (!pdfFile || !ednFile) {
-      setStatus("Select at least a .pdf and .edn file.");
+      setStatus(t("Select at least a .pdf and .edn file."));
       return;
     }
     setLoading(true);
-    setStatus(`Importing ${pdfFile.name}...`);
+    setStatus(t("Importing {name}...", { name: pdfFile.name }));
     try {
       const form = new FormData();
       form.append("pdf", pdfFile);
@@ -4396,16 +4483,16 @@ function LibraryApp() {
       const block = await getOrCreateBlockForDoc({ doc_id: data.doc_id, source_url: data.source_url, original_filename: pdfFile.name });
       await fetchHomeBlocks();
       await openBlock(block.id);
-      setStatus(`Imported ${data.imported} highlights from ${pdfFile.name}`);
+      setStatus(t("Imported {imported} highlights from {name}", { imported: data.imported, name: pdfFile.name }));
     } catch (err) {
-      setStatus(`Import failed: ${err.message}`);
+      setStatus(t("Import failed: {message}", { message: err.message }));
     } finally {
       setLoading(false);
     }
   }
 
   async function completeLibraryImport(data, summary) {
-    setStatus(`Import: ${summary}.`);
+    setStatus(t("Import: {summary}.", { summary: summary }));
     refreshQuota?.();
     await fetchHomeBlocks();
   }
@@ -4421,21 +4508,21 @@ function LibraryApp() {
       return;
     }
     setLoading(true);
-    setStatus("Opening PDF...");
+    setStatus(t("Opening PDF..."));
     // Visible from the moment Enter is pressed — resolve can take seconds.
-    const taskId = addTransfer({ name: sourceUrl.slice(0, 60), kind: "download", info: "resolving…" });
+    const taskId = addTransfer({ name: sourceUrl.slice(0, 60), kind: "download", info: t("resolving…") });
     try {
       const src = await resolvePdfSource({ url: sourceUrl }, taskId);
       const block = await getOrCreateBlockForDoc(src);
       updateTransfer(taskId, {
-        name: (block.content || "Untitled").slice(0, 60),
-        ...(src.viewerUrl.startsWith(`${API}/uploads/`) ? { status: "done", info: "local file" } : { info: "downloading…" }),
+        name: (block.content || t("Untitled")).slice(0, 60),
+        ...(src.viewerUrl.startsWith(`${API}/uploads/`) ? { status: "done", info: t("local file") } : { info: t("downloading…") }),
       });
       await openBlock(block.id, { viewerUrl: src.viewerUrl });
       setStatus(src.note || `Loaded ${src.doc_id}`);
     } catch (err) {
       updateTransfer(taskId, { status: "error", info: (err.message || "failed") });
-      setStatus(`Open failed: ${err.message}`);
+      setStatus(t("Open failed: {message}", { message: err.message }));
     } finally {
       setLoading(false);
     }
@@ -4458,7 +4545,7 @@ function LibraryApp() {
       setTitleDraft("");
       setTitleEditing(true);
     } catch (err) {
-      setStatus(`Create failed: ${err.message || err}`);
+      setStatus(t("Create failed: {err}", { err: err.message || err }));
     }
   }
 
@@ -4482,13 +4569,13 @@ function LibraryApp() {
   async function attachPdfToPage({ file, url }) {
     const pageId = focusedBlockId;
     if (!pageId || shareMode || pageAttach || (!file && !url)) return;
-    if (file && !isPdfFile(file)) { setStatus("Only PDF files can be attached — other files go into a block."); return; }
+    if (file && !isPdfFile(file)) { setStatus(t("Only PDF files can be attached — other files go into a block.")); return; }
     setOpenPopover(null);
     setAttachUrl("");
     setLoading(true);
     const taskId = addTransfer(file
       ? { name: uploadLeafName(file, "upload.pdf"), kind: "upload", info: fmtBytes(file.size) }
-      : { name: url.slice(0, 60), kind: "download", info: "resolving…" });
+      : { name: url.slice(0, 60), kind: "download", info: t("resolving…") });
     try {
       const { viewerUrl, note, ...src } = await resolvePdfSource({ file, url }, taskId);
       await apiJson(`${API}/pages/${encodeURIComponent(pageId)}/attachment`, {
@@ -4505,19 +4592,19 @@ function LibraryApp() {
       if (focusedBlockIdRef.current !== pageId) return; // navigated away meanwhile
       await openBlock(pageId, { viewerUrl });
       setPdfHidden(false);
-      setStatus(note || "PDF attached.");
+      setStatus(note || t("PDF attached."));
     } catch (err) {
       if (err.status === 409 && err.data?.page_id) {
         // The library already holds this PDF on another page — the page is
         // the unit, so open that one rather than duplicating the file.
-        updateTransfer(taskId, { status: "done", info: "already in library" });
-        setStatus("That PDF is already attached to another page — opening it.");
+        updateTransfer(taskId, { status: "done", info: t("already in library") });
+        setStatus(t("That PDF is already attached to another page — opening it."));
         setLoading(false);
         openBlock(err.data.page_id, { pushNav: true });
         return;
       }
       updateTransfer(taskId, { status: "error", info: (err.message || "failed") });
-      setStatus(`Attach failed: ${err.message}`);
+      setStatus(t("Attach failed: {message}", { message: err.message }));
     } finally {
       setLoading(false);
     }
@@ -4530,18 +4617,18 @@ function LibraryApp() {
     if (!pageId || !pageAttach || readOnly) return;
     setOpenPopover(null);
     setConfirmBox({
-      title: "Detach PDF",
-      message: `Remove "${pageAttach.name || defaultPageTitle(pageAttach)}" from this page? The notes and highlights stay as blocks; the file is deleted unless another page uses it. This can't be undone.`,
-      confirmLabel: "Detach",
+      title: T("Detach PDF"),
+      message: t("Remove \"{pageAttach}\" from this page? The notes and highlights stay as blocks; the file is deleted unless another page uses it. This can't be undone.", { pageAttach: pageAttach.name || defaultPageTitle(pageAttach) }),
+      confirmLabel: t("Detach"),
       danger: true,
       onConfirm: async () => {
         try {
           await apiJson(`${API}/pages/${encodeURIComponent(pageId)}/attachment`, { method: "DELETE" });
           fetchHomeBlocks();
           if (focusedBlockIdRef.current === pageId) await openBlock(pageId);
-          setStatus("PDF detached.");
+          setStatus(t("PDF detached."));
         } catch (err) {
-          setStatus(`Detach failed: ${err.message}`);
+          setStatus(t("Detach failed: {message}", { message: err.message }));
         }
       },
     });
@@ -4574,7 +4661,7 @@ function LibraryApp() {
       fetchHomeBlocks();
       await openBlock(page.id, { pushNav: true });
     } catch (err) {
-      setStatus(`Could not add to library: ${err.message}`);
+      setStatus(t("Could not add to library: {message}", { message: err.message }));
     }
   }
   // The file chips reach App through a context: navigation and promotion
@@ -4615,8 +4702,8 @@ function LibraryApp() {
         if (!u) return;
         updateTransfer(u.tid, ok ? { status: "done", info: fmtBytes(u.size) } : { status: "error", info: detail || "failed" });
         dropPill();
-        if (!ok && !cancelledTransfersRef.current.has(u.tid)) setStatus(`Upload of ${u.name} failed: ${detail || "refused"}`);
-        else if (Date.now() - u.at > 400) setStatus(`Uploaded ${u.name}.`);
+        if (!ok && !cancelledTransfersRef.current.has(u.tid)) setStatus(t("Upload of {name} failed: {refused}", { name: u.name, refused: detail || "refused" }));
+        else if (Date.now() - u.at > 400) setStatus(t("Uploaded {name}.", { name: u.name }));
       },
     });
     return () => setUploadReporter(null);
@@ -4629,7 +4716,7 @@ function LibraryApp() {
     const pageId = focusedBlockId;
     const lines = await uploadFilesAsLines(files);
     if (focusedBlockIdRef.current !== pageId) return; // navigated away meanwhile
-    if (!lines.length) { setStatus("Nothing added — the upload was refused."); return; }
+    if (!lines.length) { setStatus(t("Nothing added — the upload was refused.")); return; }
     setBlocks((prev) => {
       let out = prev;
       for (const line of lines) {
@@ -4639,12 +4726,12 @@ function LibraryApp() {
       return out;
     });
     refreshQuota();
-    setStatus(`Added ${lines.length} file${lines.length === 1 ? "" : "s"}.`);
+    setStatus(t("Added {n} file{_s}.", { n: lines.length, _s: lines.length === 1 ? "" : "s" }));
   }
 
   async function resolveShare(token) {
     setLoading(true);
-    setStatus("Resolving share link...");
+    setStatus(t("Resolving share link..."));
     try {
       // Resolved by hand: the status code says whether signing in would help
       // (401 → login gate, 403 → not on the list, 404 → gone).
@@ -4679,6 +4766,10 @@ function LibraryApp() {
       // API call in a share view (utils.withShare) — never a bare ?user=.
       let block = null;
       try { block = await apiJson(`${API}/blocks/${encodeURIComponent(data.page_id)}`); } catch {}
+      if (publicPage && block) {
+        // the address bar keeps the page host's pretty address, its slug following the title
+        window.history.replaceState(window.history.state, "", publicPath(block.content, data.page_id) + window.location.hash);
+      }
 
       let childBlocks = [];
       if (block) {
@@ -4707,9 +4798,9 @@ function LibraryApp() {
       // Edit rights arrive with the share; the autosave effect's suppress flag
       // (set above) swallows the first blocks change either way.
       setReadOnly(!data.can_edit);
-      setStatus(data.can_edit ? `Shared by ${data.username} — your edits save to their page.` : "Loaded shared page.");
+      setStatus(data.can_edit ? t("Shared by {username} — your edits save to their page.", { username: data.username }) : t("Loaded shared page."));
     } catch (err) {
-      setStatus(`Share open failed: ${err.message}`);
+      setStatus(t("Share open failed: {message}", { message: err.message }));
     } finally {
       setLoading(false);
     }
@@ -4723,7 +4814,7 @@ function LibraryApp() {
     leaveCurrentPage();
     forgetDocPages(); // the file chips' "which page carries this PDF" cache
     setLoading(true);
-    setStatus("Opening...");
+    setStatus(t("Opening..."));
     try {
       const subtreeData = await apiJson(`${API}/blocks/${blockId}/subtree`);
       const block = subtreeData.block;
@@ -4735,7 +4826,7 @@ function LibraryApp() {
       suppressAutosaveRef.current = true;
       setFocusedBlockId(blockId);
       setFocusedBlock(block);
-      setPageTitle(block.content || "Untitled");
+      setPageTitle(block.content || t("Untitled"));
       setSummary(props.summary || "");
       setCategory(props.category || "");
       setPageFolders(parseFolderTags(props.folder));
@@ -4817,12 +4908,12 @@ function LibraryApp() {
       // scale ratio is then exactly 1 and the position lands exactly.
       if (savedUi?.pdfScale) setPdfScale(savedUi.pdfScale);
       if (opts?.restoreScroll) restorePdfScroll(tabScrollRef.current[blockId], blockId, openedPdfUrl);
-      setStatus("Ready.");
+      setStatus(t("Ready."));
       // Emit for every successful open, including reopening the same paper.
       guideEvents.emit("page.opened", { id: blockId });
       return openedPdfUrl;
     } catch (err) {
-      setStatus(`Open failed: ${err.message}`);
+      setStatus(t("Open failed: {message}", { message: err.message }));
       // If this was a session restore attempt that failed, clear it
       if (!window.location.search.includes("block=")) clearSession();
     } finally {
@@ -5155,7 +5246,7 @@ function LibraryApp() {
       // Refresh home blocks so the category carousel updates
       fetchHomeBlocks();
     } catch (err) {
-      setStatus(`Category save failed: ${err.message}`);
+      setStatus(t("Category save failed: {message}", { message: err.message }));
     }
   }
 
@@ -5174,7 +5265,7 @@ function LibraryApp() {
       applyShareSettings(await apiJson(`${API}/share-settings/${encodeURIComponent(focusedBlockId)}`));
       resetShareCopied();
     } catch (err) {
-      setStatus(`Share failed: ${err.message}`);
+      setStatus(t("Share failed: {message}", { message: err.message }));
     }
   }
   async function createShareLink() {
@@ -5182,8 +5273,9 @@ function LibraryApp() {
     try {
       applyShareSettings(await apiJson(`${API}/share/${encodeURIComponent(focusedBlockId)}`, { method: "POST" }));
       resetShareCopied();
+      guideEvents.emit("share.created");
     } catch (err) {
-      setStatus(`Share failed: ${err.message}`);
+      setStatus(t("Share failed: {message}", { message: err.message }));
     }
   }
   async function updateShareSettings(patch) {
@@ -5218,9 +5310,9 @@ function LibraryApp() {
     try {
       await apiJson(`${API}/share-settings/${encodeURIComponent(focusedBlockId)}`, { method: "DELETE" });
       applyShareSettings({ token: null, page_id: focusedBlockId });
-      setStatus("Sharing stopped — the old link no longer opens.");
+      setStatus(t("Sharing stopped — the old link no longer opens."));
     } catch (err) {
-      setStatus(`Stop sharing failed: ${err.message}`);
+      setStatus(t("Stop sharing failed: {message}", { message: err.message }));
     }
   }
   // Publishing to Gamma Cloud (sharing/SharePopover.jsx PublishSection). POST
@@ -5256,11 +5348,12 @@ function LibraryApp() {
       });
       setPublishState((prev) => ({
         ...(prev || {}), page: pageId, published: true, can_publish: true, reason: undefined, error: undefined,
-        url: out.url, share: out.share, mirror: out.mirror, status: out.mirror?.status,
+        url: out.url, public_url: out.public_url, share: out.share, mirror: out.mirror, status: out.mirror?.status,
       }));
       markPublishing();
     } catch (err) {
-      setPublishError(err.message);
+      // the plan's cap carries its count: the section offers the account page with it
+      setPublishError(err.data?.limit ? { message: err.message, limit: err.data.limit } : err.message);
       if (patch) loadPublishState({ quiet: true }); // the tiles go back to what the share host holds
     } finally {
       setPublishBusy("");
@@ -5276,6 +5369,10 @@ function LibraryApp() {
       setPublishState((prev) => ({
         ...(prev || {}), page: pageId, published: false, url: undefined, share: undefined, mirror: out.mirror,
       }));
+      // the last page unpublished: the publication is invisible again (no pill)
+      if (!(out.mirror?.page_filter || []).length) {
+        setWorkspace((prev) => (prev?.publishing ? { ...prev, publishing: false } : prev));
+      }
       window.dispatchEvent(new CustomEvent("gamma:mirror"));
       loadPublishState({ quiet: true });
     } catch (err) {
@@ -5299,8 +5396,9 @@ function LibraryApp() {
     window.dispatchEvent(new CustomEvent("gamma:mirror"));
   }
   async function copyPublishLink() {
-    if (publishState?.url && await copyText(publishState.url)) { flashPublishCopied(); return; }
-    setStatus("Copy failed — select the link in the popover instead.");
+    const link = publishState?.public_url || publishState?.url;
+    if (link && await copyText(link)) { flashPublishCopied(); return; }
+    setStatus(t("Copy failed — select the link in the popover instead."));
   }
 
   // The share view's visitor renamed themself: keep it, and rejoin the room
@@ -5317,7 +5415,7 @@ function LibraryApp() {
 
   async function copyShareLink() {
     if (await copyText(shareUrl)) { flashShareCopied(); return; }
-    setStatus("Copy failed — select the link in the popover instead.");
+    setStatus(t("Copy failed — select the link in the popover instead."));
   }
 
   // Download the current page as Markdown. The server returns a bare .md, or a
@@ -5326,7 +5424,7 @@ function LibraryApp() {
   // fetch+blob (not a plain navigation) so a 404/401 surfaces as a message
   // instead of silently swapping the SPA for an error page.
   async function downloadExport(path, fallbackName) {
-    setStatus("Exporting page…");
+    setStatus(t("Exporting page…"));
     // Shared views: withShare puts the scoped token on the export URL, so the
     // backend confines it to this page.
     try {
@@ -5352,10 +5450,10 @@ function LibraryApp() {
       a.click();
       a.remove();
       setTimeout(() => URL.revokeObjectURL(url), 2000);
-      setStatus(`Exported ${filename}`);
+      setStatus(t("Exported {filename}", { filename: filename }));
       return filename;
     } catch (err) {
-      setStatus(`Export failed: ${err.message}`);
+      setStatus(t("Export failed: {message}", { message: err.message }));
       return null;
     }
   }
@@ -5368,7 +5466,7 @@ function LibraryApp() {
   function runImport(o) {
     setImportOpen(false);
     if (o.source === "annots") {
-      if (!docId || !focusedBlockId) { setStatus("Open a PDF first."); return; }
+      if (!docId || !focusedBlockId) { setStatus(t("Open a PDF first.")); return; }
       importEmbeddedAnnots(focusedBlockId, docId, false, o.strip);
       return;
     }
@@ -5433,10 +5531,10 @@ function LibraryApp() {
       origin = u.origin;
       token = u.searchParams.get("share") || "";
     } catch {}
-    if (!token) { setStatus("That isn't a Gamma share link (no ?share= in it)."); return; }
+    if (!token) { setStatus(t("That isn't a Gamma share link (no ?share= in it).")); return; }
     const local = origin === window.location.origin;
     const opts = { credentials: local ? "include" : "omit" };
-    const tid = addTransfer({ name: `Shared page from ${local ? "this Gamma" : new URL(origin).host}`.slice(0, 60), kind: "download", info: "resolving…" });
+    const tid = addTransfer({ name: `Shared page from ${local ? "this Gamma" : new URL(origin).host}`.slice(0, 60), kind: "download", info: t("resolving…") });
     try {
       let r;
       try {
@@ -5446,12 +5544,11 @@ function LibraryApp() {
       }
       if (r.status === 401 || r.status === 403) {
         throw new Error(local
-          ? "that link is shared with specific people only"
-          : "that link isn't open to anyone — only public share links can be imported from another Gamma");
+          ? t("that link is shared with specific people only") : t("that link isn't open to anyone — only public share links can be imported from another Gamma"));
       }
       if (!r.ok) throw new Error("share link not found");
       const info = await r.json();
-      updateTransfer(tid, { info: "downloading…" });
+      updateTransfer(tid, { info: t("downloading…") });
       r = await fetch(`${origin}${API}/pages/${encodeURIComponent(info.page_id)}/export?mode=gamma&share=${encodeURIComponent(token)}`, opts);
       if (!r.ok) throw new Error(r.status === 404 ? "that Gamma is too old to export pages for another Gamma" : `export failed (${r.status})`);
       const blob = await r.blob();
@@ -5459,7 +5556,7 @@ function LibraryApp() {
       runBackupImport(new File([blob], "shared-page.zip", { type: "application/zip" }), "merge", null, { openPage: info.page_id });
     } catch (err) {
       updateTransfer(tid, { status: "error", info: String(err.message) });
-      setStatus(`Import failed: ${err.message}`);
+      setStatus(t("Import failed: {message}", { message: err.message }));
     }
   }
 
@@ -5480,7 +5577,7 @@ function LibraryApp() {
           const p = await apiJson(`${API}/folders/export-progress`);
           if (p.active && p.total) {
             const pct = Math.round((p.done / p.total) * 100);
-            setStatus(`Exporting “${exportFolder}” — ${p.done}/${p.total} pages (${pct}%)…`);
+            setStatus(t("Exporting “{exportFolder}” — {done}/{total} pages ({pct}%)…", { exportFolder: exportFolder, done: p.done, total: p.total, pct: pct }));
           }
         } catch { /* progress is best-effort */ }
       }, 500);
@@ -5489,15 +5586,15 @@ function LibraryApp() {
           await downloadExport(`${base}&mode=logseq-graph&${bundle}`, "graph.zip");
         } else if (o.format === "obsidian") {
           if (await downloadExport(`${base}&mode=obsidian&${flags}&${bundle}`, "vault.zip")) {
-            setStatus("Obsidian vault saved — unzip it into a vault, or open the folder as one.");
+            setStatus(t("Obsidian vault saved — unzip it into a vault, or open the folder as one."));
           }
         } else if (o.format === "zotero") {
           if (await downloadExport(`${base}&mode=zotero-rdf&${flags}&${bundle}`, "zotero.zip")) {
-            setStatus("Zotero library saved — unzip it, then import the .rdf in Zotero (File → Import).");
+            setStatus(t("Zotero library saved — unzip it, then import the .rdf in Zotero (File → Import)."));
           }
         } else if (o.format === "gamma") {
           if (await downloadExport(`${base}&mode=gamma`, "gamma.zip")) {
-            setStatus("Gamma export saved — in the other Gamma: Import → Gamma export (.zip).");
+            setStatus(t("Gamma export saved — in the other Gamma: Import → Gamma export (.zip)."));
           }
         } else if (o.format === "notespdf") {
           await downloadExport(`${base}&mode=notes-pdf&${flags}`, "notes.pdf");
@@ -5510,7 +5607,7 @@ function LibraryApp() {
       return;
     }
     const id = focusedBlock?.id;
-    if (!id) { setStatus("Open a page first to export it."); return; }
+    if (!id) { setStatus(t("Open a page first to export it.")); return; }
     if (o.format === "pdf") {
       if (!o.highlights && !o.notes) { await exportRawPdf(); return; }
       await downloadExport(`/pages/${id}/export-pdf?${flags}`, "export.pdf");
@@ -5528,19 +5625,19 @@ function LibraryApp() {
     }
     if (o.format === "obsidian") {
       if (await downloadExport(`/pages/${id}/export?mode=obsidian&${flags}&${bundle}`, "vault.zip")) {
-        setStatus("Obsidian vault saved — unzip it into a vault, or open the folder as one.");
+        setStatus(t("Obsidian vault saved — unzip it into a vault, or open the folder as one."));
       }
       return;
     }
     if (o.format === "zotero") {
       if (await downloadExport(`/pages/${id}/export?mode=zotero-rdf&${flags}&${bundle}`, "zotero.zip")) {
-        setStatus("Zotero export saved — unzip it, then in Zotero pick the .rdf file via File → Import (it can't read the .zip itself).");
+        setStatus(t("Zotero export saved — unzip it, then in Zotero pick the .rdf file via File → Import (it can't read the .zip itself)."));
       }
       return;
     }
     if (o.format === "gamma") {
       if (await downloadExport(`/pages/${id}/export?mode=gamma`, "gamma.zip")) {
-        setStatus("Gamma export saved — in the other Gamma: Import → Gamma export (.zip).");
+        setStatus(t("Gamma export saved — in the other Gamma: Import → Gamma export (.zip)."));
       }
       return;
     }
@@ -5550,7 +5647,7 @@ function LibraryApp() {
   // Download the PDF exactly as stored — no highlight annotations. Reuses the
   // viewer's own URL (uploads route or /pdf proxy), so it works in share views.
   async function exportRawPdf() {
-    if (!pdfUrl) { setStatus("No PDF open."); return; }
+    if (!pdfUrl) { setStatus(t("No PDF open.")); return; }
     setOpenPopover(null);
     const path = pdfUrl.startsWith(API) ? pdfUrl.slice(API.length) : pdfUrl;
     const name = `${(pageTitle || docId || "paper").replace(/[\\/:*?"<>|]/g, "_").slice(0, 80)}.pdf`;
@@ -5563,9 +5660,9 @@ function LibraryApp() {
   async function aiFillTitle() {
     if (!docId || shareMode || aiTitleBusy) return;
     setAiTitleBusy(true);
-    setStatus("Asking AI for the title…");
+    setStatus(t("Asking AI for the title…"));
     const ctl = new AbortController();
-    const taskId = addTransfer({ name: `AI title — ${(pageTitle || "paper").slice(0, 48)}`, kind: "ai", info: "asking…", cancel: () => ctl.abort() });
+    const taskId = addTransfer({ name: `AI title — ${(pageTitle || "paper").slice(0, 48)}`, kind: "ai", info: t("asking…"), cancel: () => ctl.abort() });
     try {
       const data = await apiJson(`${API}/ai/chat`, {
         method: "POST", signal: ctl.signal,
@@ -5578,16 +5675,16 @@ function LibraryApp() {
         }),
       });
       const title = (data.response || "").trim().replace(/^["'\s]+|["'\s]+$/g, "").split("\n")[0].slice(0, 200);
-      updateTransfer(taskId, { status: title ? "done" : "error", info: title ? "" : "no title" });
+      updateTransfer(taskId, { status: title ? "done" : "error", info: title ? "" : t("no title") });
       if (title) {
         await renameTitle(title);
-        setStatus("Title filled in by AI.");
+        setStatus(t("Title filled in by AI."));
       } else {
-        setStatus("AI returned no title.");
+        setStatus(t("AI returned no title."));
       }
     } catch (err) {
       updateTransfer(taskId, { status: "error", info: (err.message || "failed") });
-      setStatus(`AI title failed: ${err.message}`);
+      setStatus(t("AI title failed: {message}", { message: err.message }));
     } finally {
       setAiTitleBusy(false);
     }
@@ -5604,7 +5701,7 @@ function LibraryApp() {
     pendingBlockScrollRef.current = withId.id;
     setBlocks(nextBlocks);
     // autosave effect will persist
-    setStatus("Highlight saved.");
+    setStatus(t("Highlight saved."));
     guideEvents.emit("highlight.created", { id: withId.id, kind: withId.position?.area ? "area" : "text" });
   }
 
@@ -5671,7 +5768,7 @@ function LibraryApp() {
         inkStore.markSaved(id, ink, r.url);
       } catch (err) {
         // The block's insert may still be queued (404): try again shortly.
-        setStatus(`Handwriting not saved yet: ${err.message || err}`);
+        setStatus(t("Handwriting not saved yet: {err}", { err: err.message || err }));
         if (!inkTimerRef.current) inkTimerRef.current = setTimeout(flushInk, 2000);
       }
     }
@@ -5707,7 +5804,7 @@ function LibraryApp() {
   // on the stroke history, the upload is scheduled. A group whose block is
   // not in the tree (undone away, or erased empty and deleted) gets its
   // block back first.
-  function applyInk(changes, { record = true, label = "ink stroke" } = {}) {
+  function applyInk(changes, { record = true, label = t("ink stroke") } = {}) {
     if (!changes.length) return;
     const present = new Set(flattenBlocks(blocksRef.current).map((b) => b.id));
     const missing = changes.filter((c) => c.after.strokes.length && !present.has(c.id));
@@ -5731,13 +5828,14 @@ function LibraryApp() {
     if (readOnly) return false;
     const h = inkHistRef.current;
     const entry = (redo ? h.redo : h.undo).pop();
-    if (!entry) { setStatus(redo ? "Nothing to redo in handwriting." : "Nothing to undo in handwriting."); return false; }
+    if (!entry) { setStatus(redo ? t("Nothing to redo in handwriting.") : t("Nothing to undo in handwriting.")); return false; }
     // Entries are stored forward (before → after); undo applies them backward.
     applyInk(redo ? entry.changes : entry.changes.map((c) => ({ ...c, before: c.after, after: c.before })), { record: false });
     (redo ? h.undo : h.redo).push(entry);
     setInkHistoryState({ undo: h.undo.length, redo: h.redo.length });
     setInkSelection(null);
-    setStatus(`${redo ? "Redone" : "Undone"}: ${entry.label} (page ${entry.changes[0].page}).`);
+    setStatus(`${redo ? t("Redone") : t("Undone")}: ${entry.label} (page ${entry.changes[0].page}).`);
+    if (!redo) guideEvents.emit("ink.undone");
     return true;
   }
 
@@ -5753,12 +5851,14 @@ function LibraryApp() {
       ? await inkStore.loadInk(existing.properties.ink_url) : null;
     const before = inkStore.draft(id)?.ink || loaded || newInk(page, size.width, size.height);
     applyInk([{ id, page, before, after: appendStroke(before, stroke) }]);
+    guideEvents.emit("ink.stroke");
   }
   function handleInkErase(page, blockId, ids) {
     if (readOnly) return;
     const before = inkOf(blockId);
     if (!before) return;
-    applyInk([{ id: blockId, page, before, after: removeStrokes(before, ids) }], { label: "ink erasure" });
+    applyInk([{ id: blockId, page, before, after: removeStrokes(before, ids) }], { label: T("ink erasure") });
+    guideEvents.emit("ink.erased");
   }
   // The partial eraser fires per pointer move: successive cuts through one
   // group fold into the same history entry, so Ctrl+Z undoes the pass.
@@ -5771,8 +5871,9 @@ function LibraryApp() {
     const h = inkHistRef.current;
     const last = h.undo[h.undo.length - 1]?.changes;
     const fold = last && last.length === 1 && last[0].id === blockId && last[0].after === before && last[0].pass;
-    applyInk([{ id: blockId, page, before: fold ? last[0].before : before, after, pass: true }], { record: !fold, label: "partial ink erasure" });
+    applyInk([{ id: blockId, page, before: fold ? last[0].before : before, after, pass: true }], { record: !fold, label: T("partial ink erasure") });
     if (fold) last[0].after = after;
+    guideEvents.emit("ink.erased");
   }
   function handleInkSelect(page, items) {
     if (readOnly) return;
@@ -5792,16 +5893,16 @@ function LibraryApp() {
     applyInk(changes, { label });
   }
   function handleInkMoveSelection(page, dx, dy) {
-    editInkSelection((ink, ids) => translateStrokes(ink, ids, dx, dy), "ink move");
+    editInkSelection((ink, ids) => translateStrokes(ink, ids, dx, dy), t("ink move"));
   }
   function deleteInkSelection() {
-    editInkSelection(removeStrokes, "ink deletion");
+    editInkSelection(removeStrokes, t("ink deletion"));
     setInkSelection(null);
   }
   function handleInkAction(action, value) {
     if (readOnly || !inkSelection) return;
-    if (action === "style") editInkSelection((ink, ids) => restyleStrokes(ink, ids, value), value.color ? "ink color change" : "ink width change");
-    else if (action === "transform") editInkSelection((ink, ids) => transformStrokes(ink, ids, value), value.angle ? "ink rotation" : "ink resize");
+    if (action === "style") editInkSelection((ink, ids) => restyleStrokes(ink, ids, value), value.color ? t("ink color change") : t("ink width change"));
+    else if (action === "transform") editInkSelection((ink, ids) => transformStrokes(ink, ids, value), value.angle ? t("ink rotation") : t("ink resize"));
     else if (action === "delete") deleteInkSelection();
     else if (action === "select-note") {
       handleInkSelect(inkSelection.page, inkSelection.items.map((item) => ({
@@ -5817,7 +5918,7 @@ function LibraryApp() {
         if (!before) continue;
         const count = before.strokes.filter((s) => item.ids.includes(s.id)).length;
         if (before.strokes.length + count > MAX_STROKES) {
-          setStatus("This handwriting note is full. Start a new note before duplicating.");
+          setStatus(t("This handwriting note is full. Start a new note before duplicating."));
           return;
         }
         const result = duplicateStrokes(before, item.ids, value.dx, value.dy);
@@ -5825,7 +5926,7 @@ function LibraryApp() {
         changes.push({ id: item.id, page: inkSelection.page, before, after: result.ink });
         items.push({ id: item.id, ids: result.ids });
       }
-      applyInk(changes, { label: "ink duplication" });
+      applyInk(changes, { label: T("ink duplication") });
       handleInkSelect(inkSelection.page, items);
     }
   }
@@ -5959,7 +6060,7 @@ function LibraryApp() {
   function handleDocLink(url) {
     const pid = findPageForUrl(url, homeBlocks);
     if (pid) {
-      setStatus("Already in your library — opening.");
+      setStatus(t("Already in your library — opening."));
       openBlock(pid, { pushNav: true });
       return;
     }
@@ -5979,7 +6080,7 @@ function LibraryApp() {
         ...b,
         properties: { ...b.properties, link_url: target.url || "", link_page_id: target.pageId || "", link_highlight_id: target.highlightId || "" },
       })));
-      setStatus(target.url || target.pageId ? "Link updated." : "Link removed.");
+      setStatus(target.url || target.pageId ? t("Link updated.") : t("Link removed."));
       return;
     }
     const id = makeId();
@@ -5995,7 +6096,7 @@ function LibraryApp() {
       properties: { ...b.properties, link_url: target.url || "", link_page_id: target.pageId || "", link_highlight_id: target.highlightId || "" },
     }));
     setBlocks(next); // autosave persists
-    setStatus("Reference linked.");
+    setStatus(t("Reference linked."));
   }
 
   // Zoom in/out steps to the next multiple of 20%, anchored on the current
@@ -6010,7 +6111,7 @@ function LibraryApp() {
   function zoomTo(next) {
     if (next === "page-width") {
       setPdfScale("page-width");
-      postPill("pdf-zoom", { msg: "Fit to width", final: true });
+      postPill("pdf-zoom", { msg: t("Fit to width"), final: true });
       return;
     }
     const s = clampZoom(next);
@@ -6066,10 +6167,84 @@ function LibraryApp() {
   // affordances (docs/dev/block_centric.md). pdfUrl is only the viewer's input.
   const pageAttach = useMemo(() => pageAttachment(focusedBlock), [focusedBlock]);
   const homeMode = !focusedBlockId && !shareMode;
-  // The first-run guide (docs/dev/onboarding.md): tours point at data-guide
-  // anchors and advance on the events emitted below; never in the share view.
+  bindingsRef.current = keybindings;
+  appCmdRef.current = {
+    shareMode, homeMode, readOnly, hasPage: !!focusedBlockId && !homeMode, hasPdf: !!pdfUrl && !homeMode,
+    search: (all) => {
+      if (!all) {
+        const homeFind = document.querySelector(".homeFindInput");
+        if (homeFind) { homeFind.focus(); homeFind.select(); return true; }
+      }
+      setOpenPopover((p) => (p === "search" && !all ? null : "search"));
+      return true;
+    },
+    palette: (prefix) => {
+      setOpenPopover(null);
+      setQuickOpen((v) => (v && v.prefix === prefix ? null : { prefix }));
+    },
+    back: () => goBackNavRef.current?.(),
+    undo: (redo) => {
+      const active = document.activeElement;
+      const inEditor = !!active?.closest?.(".cm-editor");
+      if (!inEditor && active && (active.tagName === "INPUT" || active.tagName === "TEXTAREA" || active.isContentEditable)) return false;
+      const applied = blockHistory.undo(redo, inEditor);
+      if (applied || inEditor || !active || active === document.body) {
+        setStatus(applied ? `${redo ? "Redone" : "Undone"}: ${applied}.` : (redo ? t("Nothing to redo in notes.") : t("Nothing to undo in notes.")));
+      }
+      // Always swallowed in an editor: the browser's native contenteditable
+      // undo would otherwise mutate CodeMirror's DOM behind its back.
+      return inEditor || !!applied;
+    },
+    renameTitle: () => { setTitleDraft(pageTitle || t("Untitled")); setTitleEditing(true); },
+    toggleChat: () => setChatHidden((v) => !v),
+    togglePdf: () => setPdfHidden((v) => !v),
+    toggleNotes: () => setNotesVisible((v) => !v),
+    openSettings: (pane) => { setOpenPopover(null); setSettingsOpen((cur) => pane || cur || "appearance"); },
+    // The Export dialog, preset to a format (transfers/transferFormats.js).
+    exportAs: (format) => { setExportFolder(null); setExportOpts((o) => ({ ...o, format })); setExportOpen(true); },
+    downloadPdf: () => exportRawPdf(),
+    importDialog: () => { setOpenPopover(null); setImportOpen(true); },
+    newPage: () => createPage(),
+    share: () => setOpenPopover((p) => (p === "share" ? null : "share")),
+    metadata: () => openMetaPopover(),
+    attach: () => setOpenPopover((p) => (p === "attach" ? null : "attach")),
+    reportProblem: () => { setOpenPopover(null); setReportOpen(true); },
+  };
+  // What the command palette lists right now: the app commands that apply,
+  // then the block commands that work on the focused row without an editor.
+  function paletteCommands() {
+    const ctx = appCmdRef.current;
+    const entry = (cmd, run) => ({
+      id: cmd.id, label: cmd.label, group: cmd.group, run,
+      keyLabel: effectiveKeys(cmd, keybindings).map((k) => chordLabel(k)).join(" · "),
+    });
+    const out = APP_COMMANDS
+      .filter((cmd) => cmd.palette !== false && (!cmd.when || cmd.when(ctx)))
+      .map((cmd) => entry(cmd, () => cmd.run(ctx)));
+    const row = rowPropsRef.current;
+    const block = !homeMode && focusedId ? findBlock(blocks, focusedId) : null;
+    if (row && block && !readOnly) {
+      const bctx = { block, tree: blocks, readOnly, editor: null, row };
+      for (const cmd of BLOCK_COMMANDS) {
+        if (cmd.palette === false || cmd.needsEditor || (cmd.when && !cmd.when(bctx))) continue;
+        out.push(entry(cmd, () => cmd.run(bctx)));
+      }
+    }
+    return out;
+  }
+  // The guide (docs/dev/onboarding.md): tours point at data-guide anchors
+  // and advance on the events emitted below — some are offered by those
+  // events (guide/triggers.js); never in the share view.
+  const unfiledLibrary = useMemo(() => homeBlocks.length >= 10
+    && homeBlocks.every((b) => !b.properties?.folder && !b.properties?.category), [homeBlocks]);
   const guide = useGuide({
     services: {
+      show: (surface) => {
+        if (surface !== "chat") return;
+        setChatHidden(false);
+        setCollapsedWins((prev) => ({ ...prev, chat: false }));
+        if (isPhone) setPhonePanel("chat");
+      },
       findEquation: async () => {
         const hits = await pdfSearchRef.current?.(/Attention\s*\(/i);
         return hits?.[0] || null;
@@ -6089,6 +6264,8 @@ function LibraryApp() {
       },
     },
     enabled: !shareMode && wsReady && !!authUser?.user,
+    // Nothing is suggested before the account's synced profile says whether to.
+    suggest: suggestTours && profileSync.state !== "loading",
     scope: authUser?.user || "",
     facts: {
       view: homeMode ? "home" : pageAttach ? "pdf" : "page", hasPdf: !!pageAttach,
@@ -6096,10 +6273,19 @@ function LibraryApp() {
       chatVisible: isPhone ? phonePanel === "chat" : !chatHidden && !collapsedWins.chat,
       pdfChatVisible: !!pageAttach && !pdfHidden && !collapsedWins.pdf && !isPhone,
       guideAvailable: !settingsOpen,
+      sharedWorkspace: workspaces.some((w) => !w.personal),
+      onPage: !homeMode && !!focusedBlockId,
+      editable: !readOnly,
+      unfiledLibrary,
+      installable: HOME_SCREEN_INSTALLABLE,
     },
-    onStepChange: () => setOpenPopover(null),
+    tidy: () => setOpenPopover(null),
   });
   useEffect(() => { if (openPopover) guideEvents.emit("popover.opened", { name: openPopover }); }, [openPopover]);
+  useEffect(() => { if (quickOpen) guideEvents.emit("palette.opened"); }, [quickOpen]);
+  useEffect(() => { if (inkUi.options) guideEvents.emit("ink.options"); }, [inkUi.options]);
+  const othersHere = !!focusedBlockId && collab.peers.length > 0;
+  useEffect(() => { if (othersHere) guideEvents.emit("peer.joined"); }, [othersHere]);
   // The props a folder card shares between the pinned strip and the library
   // grid: glyph, title, count, selection/drag/drop behaviour and the context
   // menu. Each site adds its own className, tip, time and extras.
@@ -6128,9 +6314,46 @@ function LibraryApp() {
   // first, re-parent server-side (reorder carries parent_id), then drop it
   // locally — this page's next autosave PUT no longer contains the block, and
   // since it already lives under the target page that PUT can't delete it.
-  async function doMoveBlock(blockId, page) {
+  // An image / table / diagram to the end of another page: a new block there
+  // holding its markdown, the object cut from its block here. The local cut
+  // stays undoable (an undo leaves the copy on the other page).
+  // The nth image / table / diagram of a block on this page, as a source
+  // range — null once either is gone.
+  function objectAt(sourceId, kind, idx) {
+    const src = findBlock(blocks, sourceId);
+    const obj = src ? findObject(src.content || "", kind, idx) : null;
+    return obj ? { src, obj } : null;
+  }
+  // The "move to page" picker, for a block (`blockId`) or an object (`fragment`).
+  async function pickMovePage(what) {
+    try {
+      const d = await apiJson(`${API}/blocks/root/children`);
+      const pages = (d.children || []).filter((p) => p.id !== focusedBlockId);
+      setMoveBlockDialog({ ...what, query: "", pages });
+    } catch (err) { setStatus(t("Could not list pages: {message}", { message: err.message })); }
+  }
+  async function doMoveFragment(frag, page) {
     setMoveBlockDialog(null);
-    const title = (page.content || "Untitled").slice(0, 60);
+    const title = (page.content || t("Untitled")).slice(0, 60);
+    const found = objectAt(frag.sourceId, frag.kind, frag.idx);
+    if (!found) return;
+    const cut = cutObject(found.src.content || "", found.obj);
+    try {
+      await apiJson(`${API}/blocks`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ parent_id: page.id, content: cut.md }),
+      });
+      setBlocks((prev) => setBlockText(prev, frag.sourceId, cut.content));
+      setStatus(t("Moved to \"{title}\".", { title: title }));
+    } catch (err) {
+      setStatus(t("Move failed: {message}", { message: err.message }));
+    }
+  }
+  async function doMoveBlock(blockId, page) {
+    if (moveBlockDialog?.fragment) return doMoveFragment(moveBlockDialog.fragment, page);
+    setMoveBlockDialog(null);
+    const title = (page.content || t("Untitled")).slice(0, 60);
     try {
       await persistBlocks(blocks);
       const kids = await apiJson(`${API}/blocks/${page.id}/children`);
@@ -6144,9 +6367,9 @@ function LibraryApp() {
       // same id in two pages. A cross-page move is not undoable.
       blockHistory.clear();
       setBlocks((prev) => removeBlockTree(prev, blockId));
-      setStatus(`Moved to "${title}".`);
+      setStatus(t("Moved to \"{title}\".", { title: title }));
     } catch (err) {
-      setStatus(`Move failed: ${err.message}`);
+      setStatus(t("Move failed: {message}", { message: err.message }));
     }
   }
   const movePageMatches = (() => {
@@ -6165,7 +6388,7 @@ function LibraryApp() {
   const pageBlocks = useMemo(() => {
     return homeBlocks.map((b) => ({
       id: b.id,
-      content: b.content || "Untitled",
+      content: b.content || t("Untitled"),
       _pageId: b.id,
       _attachment: pageAttachment(b),
       _preview: b.preview || "",
@@ -6332,13 +6555,11 @@ function LibraryApp() {
   const newPageAllowed = !categoryFilter && homeKinds !== "folders" && homeKinds !== "labels";
   // What an empty listing says — the view it is empty for, not the library.
   const homeEmptyText = categoryFilter === NO_LABEL
-    ? "Every page here carries a label."
-    : categoryFilter
-    ? `Nothing is labelled “${categoryFilter}” here — drop a page on a label to add it.`
+    ? t("Every page here carries a label.") : categoryFilter
+    ? t("Nothing is labelled “{categoryFilter}” here — drop a page on a label to add it.", { categoryFilter })
     : homeKinds === "labels"
-      ? (folderFilter ? "No labels on the pages in this folder yet." : "No labels yet — add one from a page’s label field.")
-      : folderFilter ? "This folder is empty — start a page here or drag pages onto it from the library."
-        : "No pages yet — start with “New page”, or open a PDF from the + button above.";
+      ? (folderFilter ? t("No labels on the pages in this folder yet.") : t("No labels yet — add one from a page’s label field."))
+      : folderFilter ? t("This folder is empty — start a page here or drag pages onto it from the library.") : t("No pages yet — start with “New page”, or open a PDF from the + button above.");
   // Timestamp shown on a library card follows the active sort: sorted by view
   // time → viewed (falling back to modified, same as the sort), by added →
   // created; modified otherwise (incl. Title A–Z).
@@ -6625,7 +6846,7 @@ function LibraryApp() {
         onPasswordChange={setLoginPass}
         onSubmit={doShareLogin}
         cloudLogin={serverConfig?.cloud}
-        subtitle="Sign in to open this shared page"
+        subtitle={t("Sign in to open this shared page")}
       />
     ) : (
       <ShareBlockedPage reason={shareGate} viewer={shareInfo?.viewer || ""} onSwitchAccount={shareSwitchAccount} />
@@ -6692,13 +6913,13 @@ function LibraryApp() {
   const notesTail = !homeMode && !readOnly && focusedBlockId ? (
     <div className={"notesTail" + (blocks.length ? "" : " isEmpty")}
       onMouseDown={(e) => { e.preventDefault(); editTail(); }}>
-      {blocks.length ? null : "Click to start writing"}
+      {blocks.length ? null : t("Click to start writing")}
     </div>
   ) : null;
 
   // The notes window - docked via notesDock, or filling the center when no PDF is shown.
   const notesWindow = notesVisible ? (
-    <div className="sidebar">
+    <div className="sidebar" data-guide="dock.notes">
           {!homeMode && <div className="pageTitleRow">
             <div className="pageTitleMain">
             {titleEditing && !readOnly && focusedBlockId ? (
@@ -6728,13 +6949,13 @@ function LibraryApp() {
             ) : (
               <h3
                 className={!readOnly && focusedBlockId ? "titleText editable" : "titleText"}
-                title={!readOnly && focusedBlockId ? "Click to rename" : undefined}
+                title={!readOnly && focusedBlockId ? t("Click to rename") : undefined}
                 onClick={() => {
                   if (readOnly || !focusedBlockId) return;
-                  setTitleDraft(pageTitle || "Untitled");
+                  setTitleDraft(pageTitle || t("Untitled"));
                   setTitleEditing(true);
                 }}
-              >{focusedBlockId ? (pageTitle || "Untitled") : "Notes"}</h3>
+              >{focusedBlockId ? (pageTitle || t("Untitled")) : t("Notes")}</h3>
             )}
             {focusedBlockId && collab.peers.length ? (
               <PresenceBar
@@ -6749,7 +6970,7 @@ function LibraryApp() {
             ) : null}
             {focusedBlockId && !shareMode ? (
               <div className="categoryFrontmatter">
-                <span className="categoryIcon" title="Labels">
+                <span className="categoryIcon" title={t("Labels")}>
                   <LabelIcon size={13} />
                 </span>
                 {categoryEditing ? (() => {
@@ -6832,7 +7053,7 @@ function LibraryApp() {
                           }}
                           onBlur={commitAndCloseCategory}
                           autoFocus
-                          placeholder="type to add… (/ = folder)"
+                          placeholder={t("type to add… (/ = folder)")}
                         />
                       </div>
                       {suggestions.length > 0 ? (
@@ -6852,7 +7073,7 @@ function LibraryApp() {
                       className={`categoryFrontmatterValue ${category ? "" : "empty"}`}
                       data-guide="page.labels"
                       onClick={() => { setCategoryInput(""); setCategorySuggestionIdx(-1); setCategoryEditing(true); }}
-                      title="Click to edit"
+                      title={t("Click to edit")}
                     >
                       {category || pageFolders.length ? (
                         <>
@@ -6860,20 +7081,20 @@ function LibraryApp() {
                             <span
                               key={`f:${f}`}
                               className="categoryBadge folderChip"
-                              title={`Folder: ${f} — right-click to rename or delete`}
+                              title={t("Folder: {f} — right-click to rename or delete", { f: f })}
                               onContextMenu={openTagMenu("folder", f)}
                             ><FolderIcon size={10} />{f}</span>
                           ))}
-                          {category.split(",").map((t, i) => t.trim() ? (
+                          {category.split(",").map((tt, i) => tt.trim() ? (
                             <span
                               key={i}
                               className="categoryBadge"
-                              title={`Label: ${t.trim()} — right-click to rename or delete`}
-                              onContextMenu={openTagMenu("label", t.trim())}
-                            >{t.trim()}</span>
+                              title={t("Label: {label} — right-click to rename or delete", { label: tt.trim() })}
+                              onContextMenu={openTagMenu("label", tt.trim())}
+                            >{tt.trim()}</span>
                           ) : null)}
                         </>
-                      ) : "Add labels..."}
+                      ) : t("Add labels...")}
                     </span>
                   )}
               </div>
@@ -6886,51 +7107,51 @@ function LibraryApp() {
                     <button
                       className={`pageActionBtn ${pageAttach ? "active" : ""}`}
                       title={pageAttach
-                        ? `Document: ${pageAttach.name || defaultPageTitle(pageAttach)}`
-                        : "Attach a PDF as this page's document (URL, arXiv id, DOI, or upload) — it gets the viewer, highlights and metadata. Other files go into blocks."}
-                      aria-label={pageAttach ? "Document" : "Attach document"}
+                        ? t("Document: {name}", { name: pageAttach.name || defaultPageTitle(pageAttach) })
+                        : t("Attach a PDF as this page's document (URL, arXiv id, DOI, or upload) — it gets the viewer, highlights and metadata. Other files go into blocks.")}
+                      aria-label={pageAttach ? t("Document") : t("Attach document")}
                       disabled={loading}
                       onClick={() => setOpenPopover((p) => (p === "attach" ? null : "attach"))}
                     ><PaperclipIcon size={15} /></button>
                     {openPopover === "attach" && pageAttach ? (
                       <div className="popover addPopover attachPopover">
-                        <div className="popoverTitle">Document</div>
+                        <div className="popoverTitle">{t("Document")}</div>
                         <div className="popoverHint attachFileName" title={attachmentSource(pageAttach)}>
                           <PaperclipIcon size={13} /> {pageAttach.name || defaultPageTitle(pageAttach)}
                         </div>
                         <button className="popoverItem" onClick={() => { setPdfHidden((h) => !h); setOpenPopover(null); }}>
                           {pdfHidden ? <EyeIcon className="popoverItemIcon" size={15} /> : <EyeOffIcon className="popoverItemIcon" size={15} />}
-                          {pdfHidden ? "Show the PDF" : "Hide the PDF"}
+                          {pdfHidden ? t("Show the PDF") : t("Hide the PDF")}
                         </button>
                         {pdfUrl ? (
-                          <button className="popoverItem" onClick={exportRawPdf} title="Download the PDF file exactly as stored — no highlights or notes">
+                          <button className="popoverItem" onClick={exportRawPdf} title={t("Download the PDF file exactly as stored — no highlights or notes")}>
                             <DownloadIcon className="popoverItemIcon" size={15} />
-                            Download the PDF
+                            {t("Download the PDF")}
                           </button>
                         ) : null}
                         {!readOnly ? (
                           <button className="popoverItem" onClick={detachPdfFromPage}>
                             <ScissorsIcon className="popoverItemIcon" size={15} />
-                            Detach the PDF…
+                            {t("Detach the PDF…")}
                           </button>
                         ) : null}
                       </div>
                     ) : openPopover === "attach" ? (
                       <div className="popover addPopover attachPopover">
-                        <div className="popoverTitle">Attach a document</div>
+                        <div className="popoverTitle">{t("Attach a document")}</div>
                         <input
                           autoFocus
                           className="searchInput"
                           value={attachUrl}
                           onChange={(e) => setAttachUrl(e.target.value)}
-                          placeholder="PDF URL, arXiv id, or DOI — press Enter"
+                          placeholder={t("PDF URL, arXiv id, or DOI — press Enter")}
                           onKeyDown={(e) => {
                             if (e.key === "Enter" && attachUrl.trim() && !loading) attachPdfToPage({ url: attachUrl.trim() });
                             else if (e.key === "Escape") setOpenPopover(null);
                           }}
                         />
                         <label className="popoverItem" aria-disabled={loading || undefined}>
-                          Upload a PDF…
+                          {t("Upload a PDF…")}
                           <input
                             type="file"
                             accept=".pdf,application/pdf"
@@ -6949,11 +7170,10 @@ function LibraryApp() {
                       ref={metaBtnRef}
                       className="pageActionBtn"
                       title={metaBusy
-                        ? "Fetching paper metadata…"
-                        : metaSrc?.warn
-                          ? metaSrc.hint
-                          : "Edit metadata (authors, venue, DOI, source file…)"}
-                      aria-label="Paper metadata"
+                        ? t("Fetching paper metadata…") : metaSrc?.warn
+                          ? t(metaSrc.hint)
+                          : t("Edit metadata (authors, venue, DOI, source file…)")}
+                      aria-label={t("Paper metadata")}
                       onClick={() => openMetaPopover()}
                     >
                       {/* Same busy affordance as the translate button: the
@@ -6982,10 +7202,10 @@ function LibraryApp() {
                         }}
                       >
                         <div className="popoverTitle citeSectionRow">
-                          <span>Paper metadata</span>
+                          <span>{t("Paper metadata")}</span>
                           <button
                             className="searchToggle"
-                            title="Refresh metadata (arXiv → DOI → AI)"
+                            title={t("Refresh metadata (arXiv → DOI → AI)")}
                             disabled={metaBusy}
                             onClick={() => focusedBlock && fetchMetadata(focusedBlock, true)}
                           >{metaBusy ? "…" : "↻"}</button>
@@ -6996,14 +7216,14 @@ function LibraryApp() {
                               stays visible either way. */}
                           {(() => {
                             const isBook = pageMeta?.kind === "book" || !!(metaDraft?.publisher || metaDraft?.isbn);
-                            const journal = [["Venue", "venue"], ["Volume", "volume"], ["Pages", "pages"]];
+                            const journal = [[t("Venue"), "venue"], [t("Volume"), "volume"], [t("Pages"), "pages"]];
                             return [
-                              ["Title", "title"],
-                              ["Authors", "authors"],
+                              [t("Title"), "title"],
+                              [t("Authors"), "authors"],
                               ...(isBook
-                                ? [["Publisher", "publisher"], ["Year", "year"], ["ISBN", "isbn"],
+                                ? [[t("Publisher"), "publisher"], [t("Year"), "year"], ["ISBN", "isbn"],
                                    ...journal.filter(([, k]) => metaDraft?.[k])]
-                                : [journal[0], ["Year", "year"], journal[1], journal[2]]),
+                                : [journal[0], [t("Year"), "year"], journal[1], journal[2]]),
                               ["DOI", "doi"],
                               ["arXiv", "arxiv_id"],
                             ];
@@ -7030,13 +7250,13 @@ function LibraryApp() {
                                   const site = key === "doi" ? "doi.org" : "arXiv";
                                   return (
                                     <>
-                                      <a className="metaLink" href={url} target="_blank" rel="noreferrer" title={`Open on ${site}`}>
+                                      <a className="metaLink" href={url} target="_blank" rel="noreferrer" title={t("Open on {site}", { site: site })}>
                                         <ExternalLinkIcon size={11} />
                                       </a>
                                       <button
                                         className="chatMsgActionBtn metaRowBtn"
-                                        title={`Copy the ${site} link`}
-                                        aria-label={`Copy ${site} link`}
+                                        title={t("Copy the {site} link", { site: site })}
+                                        aria-label={t("Copy {site} link", { site: site })}
                                         onClick={() => copyFlash(key, url)}
                                       >
                                         {copiedKey === key ? <CheckIcon size={12} /> : <CopyIcon size={12} />}
@@ -7047,8 +7267,8 @@ function LibraryApp() {
                                 {key === "title" ? (
                                   <button
                                     className="searchToggle metaRowBtn"
-                                    title="AI: read the PDF and fill in the paper's title"
-                                    aria-label="Fill in title with AI"
+                                    title={t("AI: read the PDF and fill in the paper's title")}
+                                    aria-label={t("Fill in title with AI")}
                                     disabled={aiTitleBusy}
                                     onClick={aiFillTitle}
                                   >{aiTitleBusy ? "…" : <SparklesIcon size={13} />}</button>
@@ -7058,38 +7278,34 @@ function LibraryApp() {
                           ))}
                           {metaSrc ? (
                             <div className="metaRow">
-                              <span className="metaKey">Source</span>
-                              <span className={metaSrc.warn ? "metaVal metaValWarn" : "metaVal"} title={metaSrc.hint}>
-                                {metaSrc.label}
+                              <span className="metaKey">{t("Source")}</span>
+                              <span className={metaSrc.warn ? "metaVal metaValWarn" : "metaVal"} title={t(metaSrc.hint)}>
+                                {t(metaSrc.label)}
                               </span>
                             </div>
                           ) : null}
                           <div className="metaRow">
-                            <span className="metaKey">Status</span>
+                            <span className="metaKey">{t("Status")}</span>
                             <span className="metaVal metaStatus">
                               <span className={`metaCell ${!pdfTextInfo || pdfTextInfo.checking || pdfTextInfo.error ? "muted" : pdfTextInfo.ok ? "ok" : "bad"}`}
-                                title={!pdfTextInfo || pdfTextInfo.checking ? "Checking whether the PDF has a text layer"
-                                  : pdfTextInfo.error ? `Text check failed — ${pdfTextInfo.error}`
-                                  : !pdfTextInfo.found ? "The PDF file is not on the server"
-                                  : pdfTextInfo.ok ? "The PDF has a text layer — the AI and search can read it"
-                                  : "No text layer — scanned or image-only? The AI can't read it"}>
-                                <i className="setDot" />{!pdfTextInfo || pdfTextInfo.checking ? "checking" : pdfTextInfo.error ? "text ?" : !pdfTextInfo.found ? "no file" : pdfTextInfo.ok ? "text" : "no text"}
+                                title={!pdfTextInfo || pdfTextInfo.checking ? t("Checking whether the PDF has a text layer") : pdfTextInfo.error ? t("Text check failed — {error}", { error: pdfTextInfo.error })
+                                  : !pdfTextInfo.found ? t("The PDF file is not on the server") : pdfTextInfo.ok ? t("The PDF has a text layer — the AI and search can read it") : t("No text layer — scanned or image-only? The AI can't read it")}>
+                                <i className="setDot" />{!pdfTextInfo || pdfTextInfo.checking ? "checking" : pdfTextInfo.error ? t("text ?") : !pdfTextInfo.found ? t("no file") : pdfTextInfo.ok ? "text" : t("no text")}
                               </span>
                               <span className={`metaCell ${!pdfTextInfo || pdfTextInfo.checking || pdfTextInfo.error || pdfTextInfo.indexed === undefined ? "muted" : pdfTextInfo.indexed ? "ok" : "muted"}`}
-                                title="Whether library-wide search can find text in this paper. Papers index automatically in the background; Settings → Library maintenance → Rebuild forces a full re-index.">
-                                <i className="setDot" />{!pdfTextInfo || pdfTextInfo.checking ? "…" : pdfTextInfo.error || pdfTextInfo.indexed === undefined ? "index ?"
-                                  : pdfTextInfo.indexed ? "indexed" : pdfTextInfo.index_stale ? "stale index" : "not indexed"}
+                                title={t("Whether library-wide search can find text in this paper. Papers index automatically in the background; Settings → Library maintenance → Rebuild forces a full re-index.")}>
+                                <i className="setDot" />{!pdfTextInfo || pdfTextInfo.checking ? "…" : pdfTextInfo.error || pdfTextInfo.indexed === undefined ? t("index ?") : pdfTextInfo.indexed ? "indexed" : pdfTextInfo.index_stale ? t("stale index") : t("not indexed")}
                               </span>
                               {pdfTextInfo?.ok ? (
                                 <button className="searchToggle metaRowBtn" style={{ marginLeft: "auto" }}
-                                  title="Preview the extracted text (what the AI reads)"
+                                  title={t("Preview the extracted text (what the AI reads)")}
                                   onClick={openPdfTextPreview}><EyeIcon size={13} /></button>
                               ) : null}
                               {pdfTextInfo && !pdfTextInfo.checking && !pdfTextInfo.ok ? (
                                 <button
                                   className="searchToggle metaRowBtn"
                                   style={{ marginLeft: "auto" }}
-                                  title="Re-check text extraction (e.g. after replacing the source file) — retries the metadata lookup if text appears"
+                                  title={t("Re-check text extraction (e.g. after replacing the source file) — retries the metadata lookup if text appears")}
                                   onClick={() => checkPdfText(true)}
                                 >↻</button>
                               ) : null}
@@ -7098,13 +7314,13 @@ function LibraryApp() {
                           {pdfTextPreview ? (
                             <div className="reportOverlay" onClick={() => setPdfTextPreview(null)}>
                               <div className="reportModal" style={{ width: "min(640px, calc(100vw - 32px))" }} onClick={(e) => e.stopPropagation()}>
-                                <div className="reportModalTitle">Extracted PDF text</div>
+                                <div className="reportModalTitle">{t("Extracted PDF text")}</div>
                                 <div className="reportPageList" style={{ maxHeight: "60vh", whiteSpace: "pre-wrap", fontSize: "calc(12px * var(--ui-font-scale, 1))", color: "var(--text-secondary)", padding: 10 }}>
-                                  {pdfTextPreview.loading ? "Extracting…" : pdfTextPreview.text}
+                                  {pdfTextPreview.loading ? t("Extracting…") : pdfTextPreview.text}
                                 </div>
-                                {!pdfTextPreview.loading ? <div className="reportModalHint">First 12,000 characters — the AI context is drawn from this.</div> : null}
+                                {!pdfTextPreview.loading ? <div className="reportModalHint">{t("First 12,000 characters — the AI context is drawn from this.")}</div> : null}
                                 <div className="reportModalBtns">
-                                  <button className="uiBtn" onClick={() => setPdfTextPreview(null)}>Close</button>
+                                  <button className="uiBtn" onClick={() => setPdfTextPreview(null)}>{t("Close")}</button>
                                 </div>
                               </div>
                             </div>
@@ -7112,29 +7328,27 @@ function LibraryApp() {
                         </div>
                         {!pageMeta ? (
                           <div className="popoverHint">{metaBusy
-                            ? "Fetching metadata…"
-                            : focusedBlock?.properties?.meta_error
-                              ? "A previous lookup found nothing — it won't retry automatically. Fill the fields in by hand, or hit ↻ to retry."
-                              : "No metadata found — fill the fields in by hand, or hit ↻ to retry."}</div>
+                            ? t("Fetching metadata…") : focusedBlock?.properties?.meta_error
+                              ? t("A previous lookup found nothing — it won't retry automatically. Fill the fields in by hand, or hit ↻ to retry.") : t("No metadata found — fill the fields in by hand, or hit ↻ to retry.")}</div>
                         ) : null}
                         {metaDirty ? (
                           <div className="reportModalBtns">
-                            <button className="uiBtn primary" onClick={saveMetaEdits}>Save metadata</button>
+                            <button className="uiBtn primary" onClick={saveMetaEdits}>{t("Save metadata")}</button>
                           </div>
                         ) : null}
                         {pageAttach ? <>
                         <div className="popoverDivider" />
-                        <div className="popoverSection">Source file</div>
+                        <div className="popoverSection">{t("Source file")}</div>
                         <div className="shareRow">
                           <input
                             value={sourceDraft}
                             onChange={(e) => setSourceDraft(e.target.value)}
-                            placeholder="PDF URL or /api/uploads/…"
+                            placeholder={t("PDF URL or /api/uploads/…")}
                           />
                           <button
                             className="chatMsgActionBtn"
-                            title="Copy the source URL"
-                            aria-label="Copy source URL"
+                            title={t("Copy the source URL")}
+                            aria-label={t("Copy source URL")}
                             disabled={!sourceDraft.trim()}
                             onClick={() => copyFlash("source", sourceDraft.trim())}
                           >
@@ -7155,12 +7369,12 @@ function LibraryApp() {
                                     body: JSON.stringify({ properties: { source_url: url } }),
                                   });
                                   await openBlock(focusedBlockId);
-                                  setStatus("Source PDF replaced.");
+                                  setStatus(t("Source PDF replaced."));
                                 } catch (err) {
-                                  setStatus(`Replace failed: ${err.message}`);
+                                  setStatus(t("Replace failed: {message}", { message: err.message }));
                                 }
                               }}
-                            >Replace source</button>
+                            >{t("Replace source")}</button>
                           </div>
                         ) : null}
                         </> : null}
@@ -7170,12 +7384,12 @@ function LibraryApp() {
                 ) : null}
                 <button
                   className="pageActionBtn pageDeleteBtn"
-                  title={readOnly ? "You can only view this workspace" : "Delete this page"}
+                  title={readOnly ? t("You can only view this workspace") : t("Delete this page")}
                   disabled={readOnly}
                   onClick={() => setConfirmBox({
-                    title: "Delete page",
-                    message: `Delete "${pageTitle || "this page"}" and all its notes? This can't be undone.`,
-                    confirmLabel: "Delete",
+                    title: T("Delete page"),
+                    message: t("Delete \"{page}\" and all its notes? This can't be undone.", { page: pageTitle || t("this page") }),
+                    confirmLabel: t("Delete"),
                     danger: true,
                     onConfirm: async () => {
                       try {
@@ -7211,19 +7425,19 @@ function LibraryApp() {
             {notesTextScale.badge}
             {!homeMode && backlinks.length > 0 ? (
               <div className="backlinksPanel">
-                <div className="backlinksLabel">Backlinks ({backlinks.length})</div>
+                <div className="backlinksLabel">{t("Backlinks ({n})", { n: backlinks.length })}</div>
                 <div className="backlinksList">
                   {backlinks.map((bl) => {
                     const isPrivate = bl.page_root_id && bl.page_root_id !== focusedBlockId;
                     return isPrivate ? (
                       <div key={bl.id} className="backlinkItem private">
-                        <div className="backlinkContent private">private block</div>
+                        <div className="backlinkContent private">{t("private block")}</div>
                       </div>
                     ) : (
                       <button
                         key={bl.id}
                         className="backlinkItem"
-                        title={bl.page_title ? `From: ${bl.page_title}` : undefined}
+                        title={bl.page_title ? t("From: {page_title}", { page_title: bl.page_title }) : undefined}
                         onClick={() => {
                           const row = document.querySelector(`[data-block-id="${bl.id}"]`);
                           if (row) {
@@ -7252,7 +7466,7 @@ function LibraryApp() {
                 (the kind toggle's Labels mode) and shown as chips on each row,
                 so this is the only carousel left. */}
             {homeMode && recentViewedPages.length > 0 ? (
-              <CardCarousel label="Recently viewed" className="recentsCarousel">
+              <CardCarousel label={t("Recently viewed")} className="recentsCarousel">
                 {recentViewedPages.map((b) => (
                   <PageCard key={b._pageId} title={b.content} glyph={<FileGlyph isPdf={!!b._attachment} />} preview={b._preview}
                     snap={recentThumbs ? pageSnaps[b._pageId]?.img : null}
@@ -7263,8 +7477,8 @@ function LibraryApp() {
                     onContextMenu={openPageMenu(b._pageId, b.content)}>
                     <button
                       className="uiClose uiCloseSm pageCardClose"
-                      title="Remove from Recently viewed"
-                      aria-label="Remove from Recently viewed"
+                      title={t("Remove from Recently viewed")}
+                      aria-label={t("Remove from Recently viewed")}
                       onClick={(e) => { e.stopPropagation(); removeRecentView(b._pageId); }}
                     >×</button>
                   </PageCard>
@@ -7273,21 +7487,21 @@ function LibraryApp() {
             ) : null}
             {homeMode && !categoryFilter && !folderFilter && pinnedItems.length > 0 ? (
               <div className="pinnedSection">
-                <div className="pinnedLabel"><PinIcon filled size={12} /> Pinned</div>
+                <div className="pinnedLabel"><PinIcon filled size={12} /> {t("Pinned")}</div>
                 <div className="pinnedStrip" ref={pinnedStripRef}>
                   {pinnedItems.map((item) => item.kind === "folder" ? (() => { const f = item.path; return (
                     <PageCard
                       key={item.key}
                       {...folderCardProps(f)}
                       className={`${folderDragOver === f ? "dragOver" : ""} ${selectedFolders.has(f) ? "selected" : ""}`}
-                      tip={`${f}\nClick to select · double-click to open · drop a page or folder to move it in`}
+                      tip={t("{f}\nClick to select · double-click to open · drop a page or folder to move it in", { f })}
                       time={formatRelativeTime(folderMeta[f]?.updated)}
                       draggable
                       onDoubleClick={() => openFolder(f)}
                     >
                       <button
                         className="pinBtn tilePinBtn pinned"
-                        title="Unpin"
+                        title={t("Unpin")}
                         onClick={(e) => { e.stopPropagation(); setFoldersPinned([f], false); }}
                       ><PinIcon filled size={12} /></button>
                     </PageCard>
@@ -7298,7 +7512,7 @@ function LibraryApp() {
                       glyph={<FileGlyph isPdf={!!b._attachment} />}
                       preview={b._preview}
                       title={b.content}
-                      tip={`${b.content}\nClick to select · double-click to open`}
+                      tip={t("{content}\nClick to select · double-click to open", { content: b.content })}
                       kind={pageKindLabel(b._attachment)}
                       time={formatRelativeTime(b._updatedAt)}
                       folders={b._folders} labels={b._labels} labelMode={fileLabels}
@@ -7310,7 +7524,7 @@ function LibraryApp() {
                     >
                       <button
                         className="pinBtn tilePinBtn pinned"
-                        title="Unpin"
+                        title={t("Unpin")}
                         onClick={(e) => { e.stopPropagation(); setPagesPinned([b._pageId], false); }}
                       ><PinIcon filled size={12} /></button>
                     </PageCard>
@@ -7333,11 +7547,11 @@ function LibraryApp() {
                         const parent = folderFilter.includes("/") ? folderFilter.slice(0, folderFilter.lastIndexOf("/")) : "";
                         dropOnFolder(e, parent, (ids) => removePagesFromFolder(ids, folderFilter));
                       }}
-                      title="Back — or drop a page or folder here to move it out of this folder"
+                      title={t("Back — or drop a page or folder here to move it out of this folder")}
                     >
                       <ArrowLeftIcon size={14} />
-                      <span className="folderName">{folderFilter.includes("/") ? folderFilter.slice(0, folderFilter.lastIndexOf("/")) : "All files"}</span>
-                      <span className="folderHint">drop here to move out of this folder</span>
+                      <span className="folderName">{folderFilter.includes("/") ? folderFilter.slice(0, folderFilter.lastIndexOf("/")) : t("All files")}</span>
+                      <span className="folderHint">{t("drop here to move out of this folder")}</span>
                     </div>
                     ) : null}
                     {/* The label view gets the same back row: it drops the
@@ -7349,16 +7563,16 @@ function LibraryApp() {
                       onClick={closeLabel}
                       // Inside "No label" there is no label to take off — the
                       // back row is plain navigation there.
-                      {...(categoryFilter === NO_LABEL ? { title: "Back" } : {
+                      {...(categoryFilter === NO_LABEL ? { title: T("Back") } : {
                         onDragOver: (e) => { e.preventDefault(); setFolderDragOver("__label_up__"); },
                         onDragLeave: () => setFolderDragOver(null),
                         onDrop: (e) => dropOnLabel(e, categoryFilter, (ids) => removePagesFromLabel(ids, categoryFilter)),
-                        title: "Back — or drop a page here to take this label off it",
+                        title: T("Back — or drop a page here to take this label off it"),
                       })}
                     >
                       <ArrowLeftIcon size={14} />
-                      <span className="folderName">{folderFilter || "All files"}</span>
-                      {categoryFilter === NO_LABEL ? null : <span className="folderHint">drop here to remove this label</span>}
+                      <span className="folderName">{folderFilter || t("All files")}</span>
+                      {categoryFilter === NO_LABEL ? null : <span className="folderHint">{t("drop here to remove this label")}</span>}
                     </div>
                     ) : null}
                     <div className="folderCurrent">
@@ -7377,11 +7591,11 @@ function LibraryApp() {
                         <span>
                           {folderFilter ? <span className="crumbSep">/</span> : null}
                           {categoryFilter === NO_LABEL ? (
-                            <span className="crumbBtn" title="Pages without any label">{NO_LABEL_TITLE}</span>
+                            <span className="crumbBtn" title={t("Pages without any label")}>{NO_LABEL_TITLE}</span>
                           ) : (
                           <button
                             className="crumbBtn"
-                            title="Right-click to rename or delete this label"
+                            title={t("Right-click to rename or delete this label")}
                             onContextMenu={openTagMenu("label", categoryFilter)}
                           >{categoryFilter}</button>
                           )}
@@ -7391,20 +7605,20 @@ function LibraryApp() {
               </div>
             ) : null}
             {homeMode ? (
-              <div className="homeListBar">
-                <span className="homeListLabel">{categoryFilter === NO_LABEL ? "Unlabelled" : categoryFilter ? "Labelled" : folderFilter ? "Contents" : "Library"}</span>
+              <div className="homeListBar" data-guide="home.listing">
+                <span className="homeListLabel">{categoryFilter === NO_LABEL ? t("Unlabelled") : categoryFilter ? t("Labelled") : folderFilter ? t("Contents") : t("Library")}</span>
                 <span className="homeListSpacer" />
                 <ListFindBox value={homeQuery} onChange={setHomeQuery} />
                 <MenuSelect
                   icon={ArrowUpDownIcon}
-                  label={categoryFilter ? "Sort this label" : folderFilter ? "Sort this folder — subfolders inherit it" : "Sort the library — folders inherit it"}
+                  label={categoryFilter ? t("Sort this label") : folderFilter ? t("Sort this folder — subfolders inherit it") : t("Sort the library — folders inherit it")}
                   value={homeSort}
                   onChange={changeHomeSort}
                   options={[
-                    ["updated", "Recently modified", PenIcon],
-                    ["created", "Recently added", PlusIcon],
-                    ["viewed", "Recently viewed", EyeIcon],
-                    ["title", "Title A–Z", TypeIcon],
+                    ["updated", t("Recently modified"), PenIcon],
+                    ["created", t("Recently added"), PlusIcon],
+                    ["viewed", t("Recently viewed"), EyeIcon],
+                    ["title", t("Title A–Z"), TypeIcon],
                   ]}
                 />
                 {/* A label holds papers only — nothing to filter by kind there. */}
@@ -7412,7 +7626,7 @@ function LibraryApp() {
                   <KindToggle
                     value={homeKinds}
                     onChange={changeHomeKinds}
-                    scopeLabel={folderFilter ? "Shown in this folder — subfolders inherit it" : "Shown in the library — folders inherit it"}
+                    scopeLabel={folderFilter ? t("Shown in this folder — subfolders inherit it") : t("Shown in the library — folders inherit it")}
                   />
                 )}
                 <ViewToggle view={homeView} onChange={changeHomeView} />
@@ -7428,8 +7642,8 @@ function LibraryApp() {
                       <PageCard
                         className="pageCardAdd"
                         glyph={<FilePlusIcon className="tileGlyph" size={null} strokeWidth={1.5} />}
-                        title="New page"
-                        tip="Start a blank page here"
+                        title={t("New page")}
+                        tip={t("Start a blank page here")}
                         labelMode={fileLabels}
                         onClick={() => createPage()}
                       />
@@ -7445,7 +7659,7 @@ function LibraryApp() {
                             autoFocus
                             className="tileRenameInput"
                             value={newFolderName}
-                            placeholder="Folder name…"
+                            placeholder={t("Folder name…")}
                             onClick={(e) => e.stopPropagation()}
                             onChange={(e) => setNewFolderName(e.target.value)}
                             onKeyDown={(e) => {
@@ -7460,7 +7674,7 @@ function LibraryApp() {
                       <PageCard
                         className="pageCardAdd"
                         glyph={<FolderPlusIcon className="tileGlyph" size={null} strokeWidth={1.5} />}
-                        title="New folder"
+                        title={t("New folder")}
                         labelMode={fileLabels}
                         onClick={() => { setNewFolderName(""); setNewFolderOpen(true); }}
                       />
@@ -7474,8 +7688,7 @@ function LibraryApp() {
                         glyph={<LabelGlyph dashed={l === NO_LABEL} />}
                         title={labelTitle(l)}
                         tip={l === NO_LABEL
-                          ? "Pages without any label · double-click to open · drop a page to clear its labels"
-                          : "Click to select · double-click to open · drop a page to label it"}
+                          ? t("Pages without any label · double-click to open · drop a page to clear its labels") : t("Click to select · double-click to open · drop a page to label it")}
                         kind="Label"
                         count={labelMeta[l]?.count || 0}
                         time={cardTime(item)}
@@ -7493,7 +7706,7 @@ function LibraryApp() {
                         key={item.key}
                         {...folderCardProps(f)}
                         className={`${dim} ${folderDragOver === f ? "dragOver" : ""} ${selectedFolders.has(f) ? "selected" : ""}`}
-                        tip="Click to select · double-click to open · drop a page or folder to move it in"
+                        tip={t("Click to select · double-click to open · drop a page or folder to move it in")}
                         time={cardTime(item)}
                         renameNode={folderRenaming?.name === f ? (
                           <input
@@ -7523,7 +7736,7 @@ function LibraryApp() {
                           glyph={<FileGlyph isPdf={!!b._attachment} />}
                           preview={b._preview}
                           title={b.content}
-                          tip={`${b.content}\nClick to select · double-click to open`}
+                          tip={t("{content}\nClick to select · double-click to open", { content: b.content })}
                           kind={pageKindLabel(b._attachment)}
                           time={cardTime(item)}
                           folders={b._folders} labels={b._labels} labelMode={fileLabels}
@@ -7548,7 +7761,7 @@ function LibraryApp() {
                         >
                           <button
                             className={`pinBtn tilePinBtn ${isPinned ? "pinned" : ""}`}
-                            title={isPinned ? "Unpin" : "Pin to top"}
+                            title={isPinned ? t("Unpin") : t("Pin to top")}
                             onClick={(e) => { e.stopPropagation(); setPagesPinned([id], !isPinned); }}
                           ><PinIcon filled={isPinned} size={12} /></button>
                         </PageCard>
@@ -7557,7 +7770,7 @@ function LibraryApp() {
                   </div>
                   {homeItems.length > homeVisibleItems.length ? (
                     <button ref={loadMoreRef} className="loadMoreBtn" onClick={() => setHomeShowCount((c) => c + HOME_PAGE_CHUNK)}>
-                      Showing {homeVisibleItems.length} of {homeItems.length} — load more
+                      {t("Showing {shown} of {total} — load more", { shown: homeVisibleItems.length, total: homeItems.length })}
                     </button>
                   ) : null}
                 </>
@@ -7568,9 +7781,9 @@ function LibraryApp() {
                   ) : null}
                   <div className="fileList" onClick={(e) => { if (e.target.classList.contains("fileList")) clearSelection(); }}>
                     {newPageAllowed ? (
-                      <button className="folderRow folderNewBtn" onClick={() => createPage()} title="Start a blank page here">
+                      <button className="folderRow folderNewBtn" onClick={() => createPage()} title={t("Start a blank page here")}>
                         <FilePlusIcon size={15} />
-                        <span className="folderName">New page</span>
+                        <span className="folderName">{t("New page")}</span>
                       </button>
                     ) : null}
                     {!newFolderAllowed ? null : newFolderOpen ? (
@@ -7581,7 +7794,7 @@ function LibraryApp() {
                           className="folderNewInput"
                           value={newFolderName}
                           onChange={(e) => setNewFolderName(e.target.value)}
-                          placeholder="Folder name…"
+                          placeholder={t("Folder name…")}
                           onKeyDown={(e) => {
                             if (e.key === "Enter") { e.preventDefault(); commitNewFolder(); }
                             else if (e.key === "Escape") { setNewFolderOpen(false); setNewFolderName(""); }
@@ -7592,7 +7805,7 @@ function LibraryApp() {
                     ) : (
                       <button className="folderRow folderNewBtn" onClick={() => { setNewFolderName(""); setNewFolderOpen(true); }}>
                         <FolderPlusIcon size={15} />
-                        <span className="folderName">New folder</span>
+                        <span className="folderName">{t("New folder")}</span>
                       </button>
                     )}
                     {homeVisibleItems.map((item) => {
@@ -7608,8 +7821,7 @@ function LibraryApp() {
                         onDragLeave={() => setFolderDragOver(null)}
                         onDrop={(e) => dropOnLabel(e, l)}
                         title={l === NO_LABEL
-                          ? "Pages without any label · double-click to open · drop a page to clear its labels"
-                          : "Click to select · double-click to open · right-click to rename or delete · drop a page to label it"}
+                          ? t("Pages without any label · double-click to open · drop a page to clear its labels") : t("Click to select · double-click to open · right-click to rename or delete · drop a page to label it")}
                       >
                         <LabelIcon size={15} strokeDasharray={l === NO_LABEL ? "2 1.5" : undefined} />
                         <span className="folderName">{labelTitle(l)}</span>
@@ -7628,7 +7840,7 @@ function LibraryApp() {
                         onDragOver={(e) => { e.preventDefault(); setFolderDragOver(f); }}
                         onDragLeave={() => setFolderDragOver(null)}
                         onDrop={(e) => dropOnFolder(e, f)}
-                        title="Click to select · double-click to open · right-click to rename or delete · drop a page or folder to move it in"
+                        title={t("Click to select · double-click to open · right-click to rename or delete · drop a page or folder to move it in")}
                       >
                         <FolderIcon size={15} />
                         {folderRenaming?.name === f ? (
@@ -7663,7 +7875,7 @@ function LibraryApp() {
                           onClick={(e) => handlePageClick(b, e)}
                           onDoubleClick={() => { if (!isEditing) openPage(id); }}
                           onContextMenu={openPageMenu(id, b.content)}
-                          title={`${b.content}\nClick to select · double-click to open`}
+                          title={t("{content}\nClick to select · double-click to open", { content: b.content })}
                         >
                           <span className="fileRowIcon"><FileGlyph isPdf={!!b._attachment} /></span>
                           {isEditing ? (
@@ -7679,14 +7891,14 @@ function LibraryApp() {
                               onBlur={(e) => commitPageRename(id, e.currentTarget.value)}
                             />
                           ) : (
-                            <span className="fileRowName">{b.content || "Untitled"}</span>
+                            <span className="fileRowName">{b.content || t("Untitled")}</span>
                           )}
                           <CardLabels className="fileRowLabels" folders={b._folders} labels={b._labels}
                             mode={fileLabels} onLabelMenu={(l) => openTagMenu("label", l)} />
                           <span className="fileRowKind">{pageKindLabel(b._attachment)}</span>
                           <button
                             className={`pinBtn fileRowPin ${isPinned ? "pinned" : ""}`}
-                            title={isPinned ? "Unpin" : "Pin to top"}
+                            title={isPinned ? t("Unpin") : t("Pin to top")}
                             onClick={(e) => { e.stopPropagation(); setPagesPinned([id], !isPinned); }}
                           ><PinIcon filled={isPinned} size={12} /></button>
                         </div>
@@ -7695,13 +7907,13 @@ function LibraryApp() {
                   </div>
                   {homeItems.length > homeVisibleItems.length ? (
                     <button ref={loadMoreRef} className="loadMoreBtn" onClick={() => setHomeShowCount((c) => c + HOME_PAGE_CHUNK)}>
-                      Showing {homeVisibleItems.length} of {homeItems.length} — load more
+                      {t("Showing {shown} of {total} — load more", { shown: homeVisibleItems.length, total: homeItems.length })}
                     </button>
                   ) : null}
                 </>
             ) : (
             visibleBlocks.length === 0 ? (
-              notesTail || <div className="empty">No blocks yet.</div>
+              notesTail || <div className="empty">{t("No blocks yet.")}</div>
             ) : (
               (() => {
                 const rowProps = {
@@ -7757,7 +7969,12 @@ function LibraryApp() {
                   onStartEdit: (id, editMode) => {
                     if (readOnly) return;
                     if (editMode) pendingFocusRef.current = id;
-                    else {
+                    else if (keepEditRef.current?.id === id && performance.now() < keepEditRef.current.until) {
+                      // The blur of a DOM move (onMoveBlock); the focus
+                      // effect puts the caret back.
+                      keepEditRef.current = null;
+                      return;
+                    } else {
                       saveNowRef.current = true;
                       if (caretRef.current?.id === id) caretRef.current = null;
                       collab.sendCursor({ block: id });
@@ -7801,15 +8018,54 @@ function LibraryApp() {
                     const next = toggleCollapsed(blocks, id);
                     setBlocks(next);
                   },
-                  onDelete: (id) => {
+                  // Delete the subtree (the handle menu) or, from the
+                  // keyboard's "delete line", the block alone with its
+                  // children lifted into its place, the caret moving to
+                  // the end of the block above (`focus`).
+                  onDelete: (id, { keepChildren = false, focus = null } = {}) => {
                     if (readOnly) return;
-                    setBlocks(removeBlockTree(blocks, id)); // the transition's delete op
-
-                    setStatus("Block deleted — Ctrl+Z to undo.");
+                    let next = keepChildren ? removeBlockKeepChildren(blocks, id) : removeBlockTree(blocks, id);
+                    if (focus && findBlock(next, focus)) {
+                      next = setBlockEditMode(next, focus, true);
+                      pendingFocusRef.current = { id: focus, caret: "end" };
+                      setFocusedId(focus);
+                    }
+                    setBlocks(next); // the transition's delete op
+                    setStatus(t("Block deleted — Ctrl+Z to undo."));
                   },
+                  // ↑ / ↓ at the editor's first / last line: the editor
+                  // moves to the block shown above / below, caret at its
+                  // end / start. False when there is none (the key then
+                  // stays with the editor).
+                  onHop: (id, dir) => {
+                    if (readOnly) return false;
+                    const target = visibleNeighbor(blocks, id, dir);
+                    if (!target) return false;
+                    pendingFocusRef.current = { id: target.id, caret: dir < 0 ? "end" : "start" };
+                    setBlocks((prev) => setBlockEditMode(prev, target.id, true));
+                    setFocusedId(target.id);
+                    return true;
+                  },
+                  // Alt+↑ / ↓: one step among the siblings, the editor
+                  // staying open with its caret (the transition's move op).
+                  onMoveBlock: (id, dir) => {
+                    if (readOnly) return false;
+                    const next = moveSibling(blocks, id, dir);
+                    if (next === blocks) return false;
+                    const editor = blockRefs.current[id]?.current;
+                    keepEditRef.current = { id, until: performance.now() + 500 };
+                    pendingFocusRef.current = { id, caret: editor ? editor.selectionStart : "end", reopen: 2 };
+                    setBlocks(next);
+                    setFocusedId(id);
+                    return true;
+                  },
+                  tree: blocks,
+                  keybindings,
                   // Attach a block to the next chat message (chip with its id).
                   onAddToChat: shareMode ? null : addBlockToChat,
-                  onDuplicate: (id) => {
+                  // `above` puts the copy before the original (the
+                  // keyboard's Shift+Alt+↑).
+                  onDuplicate: (id, { above = false } = {}) => {
                     if (readOnly) return;
                     const src = findBlock(blocks, id);
                     if (!src) return;
@@ -7823,16 +8079,21 @@ function LibraryApp() {
                       return { ...b, id: makeId(), editMode: false, properties: props,
                         children: (b.children || []).map(clone) };
                     };
-                    setBlocks(insertSibling(blocks, id, clone(src), true));
-                    setStatus("Block duplicated.");
+                    const copy = clone(src);
+                    setBlocks(insertSibling(blocks, id, copy, !above));
+                    setFocusedId(copy.id);
+                    setStatus(t("Block duplicated."));
                   },
-                  onMoveToPage: async (id) => {
+                  onMoveToPage: (id) => { if (!readOnly) pickMovePage({ blockId: id }); },
+                  // An image / table / diagram (the object frame's menu):
+                  // to a new block above / below its own, or to another
+                  // page through the same picker as a block move.
+                  onMoveObject: ({ sourceId, kind, idx, target }) => {
                     if (readOnly) return;
-                    try {
-                      const d = await apiJson(`${API}/blocks/root/children`);
-                      const pages = (d.children || []).filter((p) => p.id !== focusedBlockId);
-                      setMoveBlockDialog({ blockId: id, query: "", pages });
-                    } catch (err) { setStatus(`Could not list pages: ${err.message}`); }
+                    if (target.type === "page") { pickMovePage({ fragment: { sourceId, kind, idx } }); return; }
+                    const found = objectAt(sourceId, kind, idx);
+                    const next = found ? moveObjectInTree(blocks, { sourceId, obj: found.obj, target }) : null;
+                    if (next) setBlocks(next);
                   },
                   onPasteBlocks: (id, nodes) => {
                     if (readOnly || !nodes?.length) return;
@@ -7853,30 +8114,56 @@ function LibraryApp() {
                       }
                       return out;
                     });
-                    setStatus(`Pasted ${nodes.length} block${nodes.length === 1 ? "" : "s"}.`);
+                    setStatus(t("Pasted {n} block{_s}.", { n: nodes.length, _s: nodes.length === 1 ? "" : "s" }));
                   },
                   onStatus: (msg) => setStatus(msg),
                   onBlockDragOver: (e, block) => {
                     e.preventDefault();
                     e.dataTransfer.dropEffect = "move";
-                    // Only a block's ⋮⋮ drag shows where it lands: an image,
-                    // link or text selection dragged over the notes has no
-                    // handle dragend to take the line away again.
-                    if (!_dragState.draggingId) return;
+                    clearTimeout(dragLeaveTimer.current);
+                    // Only a block's ⋮⋮ drag or an object frame's drag shows
+                    // where it lands: a link or text selection dragged over
+                    // the notes has no dragend to take the line away again.
+                    const frag = _dragState.fragment;
+                    if (!_dragState.draggingId && !frag) return;
                     const wrap = e.currentTarget.closest(".sortableBlockWrap");
                     const r = wrap ? wrap.getBoundingClientRect() : e.currentTarget.getBoundingClientRect();
                     const px = e.clientX;
                     const py = e.clientY;
-                    const above = (py - r.top) <= 16;
+                    if (frag) {
+                      // An object: over the row's middle it goes INTO the
+                      // block, at the gap nearest the pointer; near the top
+                      // or bottom edge it becomes a block of its own.
+                      const edge = Math.min(14, Math.max(6, r.height * 0.3));
+                      const rendered = e.currentTarget.querySelector(".blockRendered");
+                      if (rendered && py - r.top > edge && r.bottom - py > edge) {
+                        const gap = dropGapAtPoint(rendered, block.content || "", py);
+                        if (gap) {
+                          const rr = rendered.getBoundingClientRect();
+                          const dt = { targetId: block.id, inside: true, offset: gap.offset, rect: { top: gap.y, left: rr.left, width: rr.width } };
+                          _dragState.dropTarget = dt;
+                          setDropTarget(dt);
+                          return;
+                        }
+                      }
+                    }
+                    const above = frag ? py < r.top + r.height / 2 : (py - r.top) <= 16;
                     const td = parseInt((wrap || e.currentTarget).getAttribute("data-depth") || "0", 10);
                     const nested = (px - r.left) > 50;
                     const dt = { targetId: block.id, above, depth: nested ? td + 1 : td, rect: { top: r.top, left: r.left, width: r.width, bottom: r.bottom } };
                     _dragState.dropTarget = dt;
                     setDropTarget(dt);
                   },
+                  // Hides the line, deferred: a dragleave is followed by
+                  // the next row's dragover within a frame when the pointer
+                  // just crossed rows (and in some engines its relatedTarget
+                  // is null, which would read as "left the notes"). The
+                  // computed target stays — a drop right after a leave still
+                  // lands where the line was; a drop elsewhere goes through
+                  // the window's drop/dragend reset instead.
                   onBlockDragLeave: () => {
-                    setDropTarget(null);
-                    _dragState.dropTarget = null;
+                    clearTimeout(dragLeaveTimer.current);
+                    dragLeaveTimer.current = setTimeout(() => setDropTarget(null), 80);
                   },
                   onBlockDrop: (e, block) => {
                     e.preventDefault();
@@ -7884,28 +8171,41 @@ function LibraryApp() {
                     setDropTarget(null);
                     _dragState.dropTarget = null;
                     _dragState.draggingId = null;
+                    const frag = _dragState.fragment;
+                    _dragState.fragment = null;
+                    if (!dt || readOnly) return;
+                    // Where the indicator's depth puts a dropped block: under
+                    // the target, beside it, or beside one of its ancestors.
+                    const placement = (tree) => {
+                      const ctx = findBlockContext(tree, dt.targetId);
+                      if (!ctx) return null;
+                      if (dt.depth === ctx.depth + 1) return { type: "child", id: dt.targetId };
+                      if (dt.depth === ctx.depth) return { type: "sibling", id: dt.targetId, above: dt.above };
+                      if (dt.depth < ctx.depth && ctx.ancestors[dt.depth]) return { type: "sibling", id: ctx.ancestors[dt.depth], above: dt.above };
+                      return null;
+                    };
+                    if (frag) {
+                      const found = objectAt(frag.blockId, frag.kind, frag.idx);
+                      const target = dt.inside ? { type: "inside", id: dt.targetId, offset: dt.offset } : placement(blocks);
+                      const next = found && target ? moveObjectInTree(blocks, { sourceId: frag.blockId, obj: found.obj, target }) : null;
+                      if (next) setBlocks(next);
+                      return;
+                    }
                     const sourceId = e.dataTransfer.getData("text/plain");
-                    if (!sourceId || !dt || sourceId === dt.targetId || readOnly) return;
+                    if (!sourceId || sourceId === dt.targetId) return;
                     if (isDescendant(blocks, sourceId, dt.targetId)) return;
                     const extracted = extractBlock(blocks, sourceId);
                     if (!extracted) return;
                     const { extracted: sourceBlock, remaining } = extracted;
-                    const targetCtx = findBlockContext(remaining, dt.targetId);
-                    if (!targetCtx) return;
-                    const targetDepth = targetCtx.depth;
-                    let next;
-                    if (dt.depth === targetDepth + 1) {
-                      next = insertChild(remaining, dt.targetId, sourceBlock, false);
-                    } else if (dt.depth === targetDepth) {
-                      next = insertSibling(remaining, dt.targetId, sourceBlock, !dt.above);
-                    } else if (dt.depth < targetDepth) {
-                      const ancestorId = targetCtx.ancestors[dt.depth];
-                      if (!ancestorId) return;
-                      next = insertSibling(remaining, ancestorId, sourceBlock, !dt.above);
-                    } else { return; }
+                    const where = placement(remaining);
+                    if (!where) return;
+                    const next = where.type === "child"
+                      ? insertChild(remaining, where.id, sourceBlock, false)
+                      : insertSibling(remaining, where.id, sourceBlock, !where.above);
                     if (next) setBlocks(next);
                   },
                 };
+                rowPropsRef.current = rowProps;
                 return (
                   <>
                     <FileChipContext.Provider value={fileChipCtx}>
@@ -7939,7 +8239,7 @@ function LibraryApp() {
     };
     if (id === "notes") {
       return (
-        <DockWindow title="Notes" guide="dock.notes" {...common} onClose={() => (isPhone ? setPhonePanel(null) : setNotesVisible(false))}>
+        <DockWindow title={t("Notes")} {...common} onClose={() => (isPhone ? setPhonePanel(null) : setNotesVisible(false))}>
           {notesWindow}
         </DockWindow>
       );
@@ -8024,14 +8324,14 @@ function LibraryApp() {
       <button
         className={`iconBtn ${openPopover === "menu" ? "activeIcon" : ""}`}
         onClick={() => setOpenPopover((p) => (p === "menu" ? null : "menu"))}
-        title="View — windows, import, export"
-        aria-label="View"
+        title={t("View — windows, import, export")}
+        aria-label={t("View")}
       >
         <MenuIcon size={17} />
       </button>
       {openPopover === "menu" ? (
         <div className="popover menuPopover">
-          <div className="popoverSection">Windows</div>
+          <div className="popoverSection">{t("Windows")}</div>
           {!homeMode && pageAttach ? (
             <button className="popoverItem" onClick={() => setPdfHidden((v) => !v)}>
               <span className="check">{!pdfHidden ? "✓" : ""}</span>
@@ -8041,13 +8341,13 @@ function LibraryApp() {
           {!homeMode ? (
             <button className="popoverItem" onClick={() => setNotesVisible((v) => !v)}>
               <span className="check">{notesVisible ? "✓" : ""}</span>
-              <FileTextIcon className="popoverItemIcon" size={15} /> Notes
+              <FileTextIcon className="popoverItemIcon" size={15} /> {t("Notes")}
             </button>
           ) : null}
           {(!menuReadOnly || focusedBlockId) ? (
             <button className="popoverItem" onClick={() => setChatHidden((v) => !v)}>
               <span className="check">{!chatHidden ? "✓" : ""}</span>
-              <SparklesIcon className="popoverItemIcon" size={15} /> AI Chat
+              <SparklesIcon className="popoverItemIcon" size={15} /> {t("AI Chat")}
             </button>
           ) : null}
           {!menuReadOnly ? <div className="popoverDivider" /> : null}
@@ -8055,10 +8355,10 @@ function LibraryApp() {
             <button
               className="popoverItem"
               onClick={() => { setOpenPopover(null); setImportOpen(true); }}
-              title="Bring in highlights — the ones saved inside this PDF file, a Logseq export, or a whole Zotero library"
+              title={t("Bring in highlights — the ones saved inside this PDF file, a Logseq export, or a whole Zotero library")}
             >
               <ImportIcon className="popoverItemIcon" size={15} />
-              Import…
+              {t("Import…")}
             </button>
           ) : null}
           {(focusedBlock && !homeMode) || (homeMode && folderFilter) ? (
@@ -8072,11 +8372,11 @@ function LibraryApp() {
                   setExportOpen(true);
                 }}
                 title={homeMode
-                  ? `Download the “${folderFilter}” folder — every page in it as Markdown, a Logseq graph, a Zotero library, or a Gamma export`
-                  : "Download this page — the PDF with highlights and notes, Markdown, a Logseq graph, a Zotero library, or a Gamma export"}
+                  ? t("Download the “{folderFilter}” folder — every page in it as Markdown, a Logseq graph, a Zotero library, or a Gamma export", { folderFilter })
+                  : t("Download this page — the PDF with highlights and notes, Markdown, a Logseq graph, a Zotero library, or a Gamma export")}
               >
                 <ExportIcon className="popoverItemIcon" size={15} />
-                Export…
+                {t("Export…")}
               </button>
             </>
           ) : null}
@@ -8086,10 +8386,10 @@ function LibraryApp() {
               <button
                 className="popoverItem"
                 onClick={exportRawPdf}
-                title="Download the PDF file exactly as stored — no highlights or notes"
+                title={t("Download the PDF file exactly as stored — no highlights or notes")}
               >
                 <DownloadIcon className="popoverItemIcon" size={15} />
-                Download PDF
+                {t("Download PDF")}
               </button>
             </>
           ) : null}
@@ -8129,48 +8429,49 @@ function LibraryApp() {
         onUnpublish: unpublishPage,
         onSync: syncPublication,
         onLink: () => { setOpenPopover(null); setSettingsOpen("account"); },
+        accountUrl: serverConfig?.cloud?.issuer ? `${serverConfig.cloud.issuer}/` : "",
       } : null}
       citation={(pageMeta || pageBibtex) ? (
         <Section
-          title="Citation"
+          title={t("Citation")}
           action={
             <button
               type="button" className="uiBtn sm iconSq"
-              title="Regenerate the citation" aria-label="Regenerate the citation"
+              title={t("Regenerate the citation")} aria-label={t("Regenerate the citation")}
               disabled={pptCiteBusy}
               onClick={() => makePptCitation(true)}
             >{pptCiteBusy ? "…" : <RefreshIcon size={13} />}</button>
           }
         >
           <div className="citeHead">
-            <span className="citeLabel">Slide citation</span>
+            <span className="citeLabel">{t("Slide citation")}</span>
             {/* Provenance right where the citation gets copied: a
                 registry name, or a red "!" when nothing tied the
                 record to this document. */}
             {metaSrc ? (
-              <span className={`citeSourceTag${metaSrc.warn ? " warn" : ""}`} title={metaSrc.hint}>
+              <span className={`citeSourceTag${metaSrc.warn ? " warn" : ""}`} title={t(metaSrc.hint)}>
                 {metaSrc.warn ? <span className="metaWarnDot inline" aria-hidden="true">!</span> : null}
-                {metaSrc.label}
+                {t(metaSrc.label)}
               </span>
             ) : null}
           </div>
-          {metaSrc?.warn ? <div className="settingsPaneHint citeWarnHint">{metaSrc.hint}.</div> : null}
+          {metaSrc?.warn ? <div className="settingsPaneHint citeWarnHint">{t(metaSrc.hint)}.</div> : null}
           {pptCite ? (
             <CopyBox
               copied={copiedKey === "ppt"} onCopy={() => copyFlash("ppt", pptCite)}
-              title="Copy — pastes with real italics/bold into PowerPoint" label="Copy slide citation"
+              title={t("Copy — pastes with real italics/bold into PowerPoint")} label={t("Copy slide citation")}
             >
               <div className="pptCitePreview"><ChatMarkdown text={pptCite} /></div>
             </CopyBox>
           ) : (
-            <div className="settingsPaneHint">{pptCiteBusy ? "Generating…" : "Citation will generate when metadata is ready."}</div>
+            <div className="settingsPaneHint">{pptCiteBusy ? t("Generating…") : t("Citation will generate when metadata is ready.")}</div>
           )}
           {pageBibtex ? (
             <>
-              <div className="citeHead"><span className="citeLabel">BibTeX</span></div>
+              <div className="citeHead"><span className="citeLabel">{t("BibTeX")}</span></div>
               <CopyBox
                 copied={copiedKey === "bibtex"} onCopy={() => copyFlash("bibtex", pageBibtex)}
-                title="Copy the BibTeX entry" label="Copy BibTeX"
+                title={t("Copy the BibTeX entry")} label={t("Copy BibTeX")}
               >
                 <pre className="bibtexPre">{pageBibtex}</pre>
               </CopyBox>
@@ -8187,8 +8488,8 @@ function LibraryApp() {
           className={`iconBtn addBtn ${openPopover === "add" ? "activeIcon" : ""}`}
           onClick={() => setOpenPopover((p) => (p === "add" ? null : "add"))}
           data-guide="header.add"
-          title="Add — a new page, a PDF by URL, arXiv id or DOI, or uploaded files"
-          aria-label="Add"
+          title={t("Add — a new page, a PDF by URL, arXiv id or DOI, or uploaded files")}
+          aria-label={t("Add")}
         >
           <PlusIcon size={17} strokeWidth={2.2} />
         </button>
@@ -8200,7 +8501,7 @@ function LibraryApp() {
               data-guide="add.urlInput"
               value={addUrl}
               onChange={(e) => setAddUrl(e.target.value)}
-              placeholder="Paste a URL, DOI or arXiv id"
+              placeholder={t("Paste a URL, DOI or arXiv id")}
               onKeyDown={(e) => {
                 if (e.key === "Enter" && addUrl.trim() && !loading) {
                   setOpenPopover(null);
@@ -8215,12 +8516,12 @@ function LibraryApp() {
             />
             {parseGammaShareLink(addUrl) ? (
               <div className="popoverHint">
-                A Gamma share link — Enter copies that page, with its blocks, highlights and PDF, into your library.
+                {t("A Gamma share link — Enter copies that page, with its blocks, highlights and PDF, into your library.")}
               </div>
             ) : null}
             <label className="popoverItem" style={{ cursor: loading ? "not-allowed" : "pointer" }}>
               <UploadIcon className="popoverItemIcon" size={15} />
-              Upload files…
+              {t("Upload files…")}
               <input
                 type="file"
                 accept=".pdf,.md,.markdown,application/pdf,text/markdown"
@@ -8233,10 +8534,10 @@ function LibraryApp() {
             <label
               className="popoverItem"
               style={{ cursor: loading ? "not-allowed" : "pointer" }}
-              title="Import every PDF and Markdown note in a folder — subfolders become folder labels"
+              title={t("Import every PDF and Markdown note in a folder — subfolders become folder labels")}
             >
               <FolderIcon className="popoverItemIcon" size={15} />
-              Upload folder…
+              {t("Upload folder…")}
               <input
                 type="file"
                 webkitdirectory=""
@@ -8247,7 +8548,7 @@ function LibraryApp() {
             </label>
             <button className="popoverItem" onClick={() => createPage()}>
               <FilePlusIcon className="popoverItemIcon" size={15} />
-              New page
+              {t("New page")}
             </button>
           </div>
         ) : null}
@@ -8257,8 +8558,8 @@ function LibraryApp() {
             className={`iconBtn transferBtn ${openPopover === "downloads" ? "activeIcon" : ""}`}
             onClick={() => setOpenPopover((p) => (p === "downloads" ? null : "downloads"))}
             data-guide="header.tasks"
-            title="Background tasks — downloads, uploads, indexing, metadata/AI jobs"
-            aria-label="Background tasks"
+            title={t("Background tasks — downloads, uploads, indexing, metadata/AI jobs")}
+            aria-label={t("Background tasks")}
           >
             <ActivityIcon size={16} />
             {/* Spinner while anything runs, otherwise a red dot for a failed
@@ -8273,10 +8574,10 @@ function LibraryApp() {
           {openPopover === "downloads" ? (
             <div className="popover downloadsPopover">
               <div className="popoverTitle citeSectionRow">
-                <span>Background tasks</span>
+                <span>{t("Background tasks")}</span>
                 <button
                   className="searchToggle transferClearBtn"
-                  title="Clear finished"
+                  title={t("Clear finished")}
                   onClick={() => {
                     if (!indexTask?.active) setIndexTaskCleared(true);
                     setTransfers((prev) => {
@@ -8288,10 +8589,10 @@ function LibraryApp() {
                       return kept;
                     });
                   }}
-                >Clear</button>
+                >{t("Clear")}</button>
               </div>
               {!transfers.length && !(indexTask && (indexTask.active || (!indexTaskCleared && indexTask.total > 0))) ? (
-                <Empty icon={ActivityIcon}>Nothing running</Empty>
+                <Empty icon={ActivityIcon}>{t("Nothing running")}</Empty>
               ) : null}
               {indexTask && (indexTask.active || (!indexTaskCleared && indexTask.total > 0)) ? (
                 <TransferRow
@@ -8302,17 +8603,17 @@ function LibraryApp() {
                   onStop={indexTask.active ? cancelIndexing : null}
                 />
               ) : null}
-              {transfers.map((t) => (
+              {transfers.map((tr) => (
                 <TransferRow
-                  key={t.id} status={t.status} name={t.name} info={t.info} progress={t.progress}
-                  icon={t.kind === "upload"
+                  key={tr.id} status={tr.status} name={t(tr.name)} info={tr.info} progress={tr.progress}
+                  icon={tr.kind === "upload"
                     ? <UploadIcon size={12} />
-                    : t.kind === "ai"
+                    : tr.kind === "ai"
                       ? <SparklesIcon size={12} />
-                      : t.kind === "import"
+                      : tr.kind === "import"
                         ? <FileIcon size={12} />
                         : <DownloadIcon size={12} />}
-                  onStop={t.status === "active" && t.cancel ? () => cancelTransfer(t.id) : null}
+                  onStop={tr.status === "active" && tr.cancel ? () => cancelTransfer(tr.id) : null}
                 />
               ))}
             </div>
@@ -8346,8 +8647,8 @@ function LibraryApp() {
             }}
             disabled={loading}
             data-guide="header.share"
-            title="Share"
-            aria-label="Share"
+            title={t("Share")}
+            aria-label={t("Share")}
           >
             <LinkIcon size={16} />
           </button>
@@ -8360,10 +8661,12 @@ function LibraryApp() {
           wsId={workspace.id}
           mirrorOf={workspace.mirror_of}
           publication={!workspace.mirror_of && !!workspace.publishing}
+          pageId={focusedBlockId}
+          everyPage={appPrefs.syncPillScope === "all"}
           open={openPopover === "mirror"}
           onToggle={() => setOpenPopover(openPopover === "mirror" ? null : "mirror")}
           jumpTo={(pageId, blockId) => jumpToRef.current?.(pageId, blockId)}
-          onOpenSettings={() => { setSettingsOpen("workspaces"); setOpenPopover(null); }}
+          onOpenSettings={() => { setSettingsOpen("account"); setOpenPopover(null); }}
         />
       ) : null}
       {authUser?.user && (
@@ -8376,37 +8679,36 @@ function LibraryApp() {
               setOpenPopover(opening ? "user" : null);
             }}
             data-guide="header.account"
-            title="Account & settings"
-            aria-label="Account & settings"
+            title={t("Account & settings")}
+            aria-label={t("Account & settings")}
           >
             <UserIcon size={18} />
             {notices.tone ? <span className={`noticeDot ${dotTone(notices.tone)}`} data-tone={notices.tone} aria-hidden="true" /> : null}
           </button>
           {openPopover === "user" ? (
             <div className="popover userPopover">
-              <div className="userCard">
+              <div className="userCard" data-guide="account.card">
                 <span className="userAvatar" aria-hidden="true">
                   {authUser.is_guest
                     ? <UserIcon size={20} />
                     : <span className="userAvatarInitial">{authUser.user.charAt(0).toUpperCase()}</span>}
                 </span>
                 <span className="userCardMeta">
-                  <span className="userCardName">{authUser.is_guest ? "Guest" : authUser.user}</span>
+                  <span className="userCardName">{authUser.is_guest ? t("Guest") : authUser.user}</span>
                   <span className="userCardRole">
-                    {authUser.is_guest ? "Temporary workspace"
-                      : workspace ? `${workspace.name} · ${workspaceMeta(workspace)}`
-                      : "Signed in"}
+                    {authUser.is_guest ? t("Temporary workspace") : workspace ? `${workspace.name} · ${workspaceMeta(workspace)}`
+                      : t("Signed in")}
                   </span>
                 </span>
                 {quotaInfo ? (
-                  <span className="userCardQuota" title="Storage used by your uploaded PDFs and images">
+                  <span className="userCardQuota" title={t("Storage used by your uploaded PDFs and images")}>
                     {fmtBytes(quotaInfo.used_bytes)}
                     {quotaInfo.quota_mb ? ` / ${fmtBytes(quotaInfo.quota_mb * 1024 * 1024)}` : ""}
                   </span>
                 ) : null}
               </div>
               {authUser.is_guest ? (
-                <div className="popoverHint">Guest data resets daily. Ask the admin for an account to keep your work.</div>
+                <div className="popoverHint">{t("Guest data resets daily. Ask the admin for an account to keep your work.")}</div>
               ) : null}
               {quotaInfo?.quota_mb ? (
                 <div className="popoverQuota">
@@ -8416,13 +8718,14 @@ function LibraryApp() {
               <div className="popoverDivider" />
               {/* The workspace switcher: every library this account belongs
                   to; switching reloads the tab on that workspace's URL. */}
-              {workspaces.length ? <div className="popoverSection">Workspaces</div> : null}
+              <div data-guide="account.workspaces">
+              {workspaces.length ? <div className="popoverSection">{t("Workspaces")}</div> : null}
               {workspaces.map((w) => (
                 <button
                   key={w.id}
                   className={`popoverItem wsItem ${w.id === wsId ? "active" : ""}`}
                   onClick={() => { setOpenPopover(null); switchWorkspace(w.id); }}
-                  title={w.personal ? `Your personal workspace${w.default ? " (default)" : ""}` : `${w.access === "public" ? "Public" : "Shared"} workspace · ${w.members} member${w.members === 1 ? "" : "s"} · you ${ROLE_LABEL[w.role] || w.role}`}
+                  title={w.personal ? t("Your personal workspace{default}", { default: w.default ? t(" (default)") : "" }) : t("{Shared} workspace · {members} member{_s} · you {role}", { Shared: w.access === "public" ? t("Public") : t("Shared"), members: w.members, _s: w.members === 1 ? "" : "s", role: ROLE_LABEL[w.role] || w.role })}
                 >
                   <span className="wsItemBadge" aria-hidden="true">{(w.name || "?").charAt(0).toUpperCase()}</span>
                   <span className="wsItemName">{w.name}</span>
@@ -8430,50 +8733,47 @@ function LibraryApp() {
                   {w.id === wsId ? <CheckIcon size={14} className="wsItemCheck" /> : null}
                 </button>
               ))}
+              </div>
               {!authUser.is_guest ? (
                 <button
                   className="popoverItem"
                   onClick={() => { setSettingsOpen("workspaces"); setOpenPopover(null); }}
-                  title="All your workspaces: rename, members, export and import, create another"
+                  title={t("All your workspaces: rename, members, export and import, create another")}
                 >
                   <UsersIcon className="popoverItemIcon" size={15} />
-                  Workspaces…
+                  {t("Workspaces…")}
                 </button>
               ) : null}
               <div className="popoverDivider" />
               <button className="popoverItem" onClick={() => { setSettingsOpen(notices.firstPane || "general"); setOpenPopover(null); }}>
                 <SettingsIcon className="popoverItemIcon" size={15} />
-                Settings…
+                {t("Settings…")}
                 {notices.tone ? <span className={`noticeDot inline ${dotTone(notices.tone)}`} aria-hidden="true" /> : null}
               </button>
               <div className="popoverDivider" />
               <details className="accountTours">
                 <summary className="popoverItem" data-guide="account.tour">
                   <HelpCircleIcon className="popoverItemIcon" size={15} />
-                  Tours <span className="accountToursArrow" aria-hidden="true">›</span>
+                  {t("Tours")} <span className="accountToursArrow" aria-hidden="true">›</span>
                 </summary>
-                <div className="accountToursMenu" role="menu" aria-label="Tours">
-                  <button className="popoverItem" role="menuitem" data-guide="account.firstRun"
-                    onClick={() => { setOpenPopover(null); guide.start("first-run"); }}>Your first paper</button>
-                  <button className="popoverItem" role="menuitem" data-guide="account.aiChat"
-                    onClick={() => {
-                      setChatHidden(false);
-                      setCollapsedWins((prev) => ({ ...prev, chat: false }));
-                      if (isPhone) setPhonePanel("chat");
-                      setOpenPopover(null);
-                      guide.start("ai-chat");
-                    }}>AI chat</button>
+                {/* The tours that can start here (guide.startable); a tour
+                    whose first step needs no open popover closes this menu. */}
+                <div className="accountToursMenu" role="menu" aria-label={t("Tours")}>
+                  {guide.startable().map((tour) => (
+                    <button key={tour.id} className="popoverItem" role="menuitem" data-tour={tour.id}
+                      onClick={() => guide.start(tour.id)}>{t(tour.title)}</button>
+                  ))}
                 </div>
               </details>
               <button className="popoverItem" onClick={() => { setOpenPopover(null); setReportOpen(true); }}
-                title="Describe what went wrong; Gamma adds its build, your browser and its recent log lines and opens a GitHub issue for you to review">
+                title={t("Describe what went wrong; Gamma adds its build, your browser and its recent log lines and opens a GitHub issue for you to review")}>
                 <BugIcon className="popoverItemIcon" size={15} />
-                Report a problem…
+                {t("Report a problem…")}
               </button>
               <div className="popoverDivider" />
               <button className="popoverItem popoverItemDanger" onClick={doLogout}>
                 <LogOutIcon className="popoverItemIcon" size={15} />
-                Log out
+                {t("Log out")}
               </button>
             </div>
           ) : null}
@@ -8539,8 +8839,8 @@ function LibraryApp() {
               className={`iconBtn homeBtn ${homeMode ? "activeIcon" : ""}`}
               onClick={goHome}
               data-guide="header.home"
-              title="Home"
-              aria-label="Home"
+              title={t("Home")}
+              aria-label={t("Home")}
             >
               <HomeIcon size={17} />
             </button>
@@ -8549,8 +8849,8 @@ function LibraryApp() {
                 className="iconBtn navBackBtn"
                 onClick={goBackNav}
                 onContextMenu={(e) => { e.preventDefault(); setNavStack([]); }}
-                title={`Back to where you were${navStackLen > 1 ? ` (${navStackLen} steps)` : ""} — Alt+← · right-click to clear`}
-                aria-label="Back"
+                title={t("Back to where you were{steps} — Alt+← · right-click to clear", { steps: navStackLen > 1 ? ` (${navStackLen} steps)` : "" })}
+                aria-label={t("Back")}
               >
                 <ArrowLeftIcon size={17} strokeWidth={2.2} />
                 <span className="navBackBadge">{Math.min(navStackLen, 30)}</span>
@@ -8581,14 +8881,14 @@ function LibraryApp() {
         </>
       ) : (
         <div className="topbar">
-          <button className="iconBtn homeBtn" disabled title="Home" aria-label="Home">
+          <button className="iconBtn homeBtn" disabled title={t("Home")} aria-label={t("Home")}>
             <HomeIcon size={17} />
           </button>
           <span className="readOnlyTitle">{pageTitle}</span>
           {shareInfo ? (
             <span className="uiTag"
-              title={shareInfo.canEdit ? "Your edits save to the owner's page" : "Read-only share link"}>
-              {shareInfo.canEdit ? "Can edit" : "View only"}{shareInfo.owner ? ` · shared by ${shareInfo.owner}` : ""}
+              title={shareInfo.canEdit ? t("Your edits save to the owner's page") : t("Read-only share link")}>
+              {shareInfo.canEdit ? t("Can edit") : t("View only")}{shareInfo.owner ? t(" · shared by {owner}", { owner: shareInfo.owner }) : ""}
             </span>
           ) : null}
           {shareInfo?.canEdit && linkName ? (renamingLink ? (
@@ -8597,7 +8897,7 @@ function LibraryApp() {
               autoFocus
               defaultValue={linkName}
               maxLength={LINK_NAME_MAX}
-              aria-label="Your name on this page"
+              aria-label={t("Your name on this page")}
               onKeyDown={(e) => {
                 if (e.key === "Enter") commitLinkName(e.currentTarget.value);
                 else if (e.key === "Escape") setRenamingLink(false);
@@ -8608,24 +8908,24 @@ function LibraryApp() {
             <button
               type="button"
               className="uiTag linkNameTag"
-              title="How others on this page see you — click to change"
+              title={t("How others on this page see you — click to change")}
               onClick={() => setRenamingLink(true)}
-            >as {linkName}</button>
+            >{t("as {name}", { name: linkName })}</button>
           )) : null}
           {shareInfo?.owner && shareInfo.viewer === shareInfo.owner ? (
             // The owner landed on their own link: the page is theirs already.
             <button
               className="uiBtn sm"
-              title="This is your page — open it in your library instead of the shared view"
+              title={t("This is your page — open it in your library instead of the shared view")}
               onClick={() => { window.location.href = `${window.location.pathname}?page=${encodeURIComponent(focusedBlockId)}`; }}
-            >Open in my library</button>
+            >{t("Open in my library")}</button>
           ) : shareInfo?.viewer && !shareInfo.viewerIsGuest && focusedBlockId ? (
             <button
               className="uiBtn sm"
               disabled={loading}
-              title="Copy this page — blocks, highlights, its PDF and files — into your own library"
-              onClick={() => importSharedPage(window.location.href)}
-            >Add to my library</button>
+              title={t("Copy this page — blocks, highlights, its PDF and files — into your own library")}
+              onClick={() => importSharedPage(publicPage ? `${window.location.origin}/?share=${encodeURIComponent(initialShare)}` : window.location.href)}
+            >{t("Add to my library")}</button>
           ) : null}
           {renderOverflowMenu(true)}
         </div>
@@ -8633,14 +8933,14 @@ function LibraryApp() {
 
       {attachModeBlockId && (
         <div className="attachModeBanner">
-          Click a PDF highlight to link it
-          <button onClick={() => { setAttachModeBlockId(null); setAttachContextMenu(null); }}>Cancel</button>
+          {t("Click a PDF highlight to link it")}
+          <button onClick={() => { setAttachModeBlockId(null); setAttachContextMenu(null); }}>{t("Cancel")}</button>
         </div>
       )}
       {attachContextMenu && (
         <ContextMenu x={attachContextMenu.x} y={attachContextMenu.y} onClose={() => setAttachContextMenu(null)}>
           <button className="ctxMenuItem" onClick={() => linkHighlightToBlock(attachModeBlockId, attachContextMenu.highlight)}>
-            Link highlight here
+            {t("Link highlight here")}
           </button>
         </ContextMenu>
       )}
@@ -8648,22 +8948,22 @@ function LibraryApp() {
         <ContextMenu x={transMenu.x} y={transMenu.y} onClose={() => setTransMenu(null)}>
           {pdfTransState.running ? (
             <MenuItem icon={XIcon} onClick={() => { setTransMenu(null); pdfTranslateCtl.current?.halt(); }}>
-              Stop translating
+              {t("Stop translating")}
             </MenuItem>
           ) : (
             <>
               <MenuItem icon={FileIcon} onClick={() => { setTransMenu(null); pdfTranslateCtl.current?.translatePage(); }}>
-                Translate this page
+                {t("Translate this page")}
               </MenuItem>
               <MenuItem icon={BookIcon} onClick={() => { setTransMenu(null); pdfTranslateCtl.current?.translateDoc(); }}>
-                Translate whole document
+                {t("Translate whole document")}
               </MenuItem>
             </>
           )}
           {pdfTransState.pages > 0 ? (
             <MenuItem icon={pdfTransState.shown ? EyeOffIcon : EyeIcon}
               onClick={() => { setTransMenu(null); pdfTranslateCtl.current?.setShown(!pdfTransState.shown); }}>
-              {pdfTransState.shown ? "Show original" : "Show translation"}
+              {pdfTransState.shown ? t("Show original") : t("Show translation")}
             </MenuItem>
           ) : null}
         </ContextMenu>
@@ -8691,28 +8991,28 @@ function LibraryApp() {
             {pillShown.spinner ? <span className="pillSpin" aria-hidden="true" /> : null}
             <span className="pillText">{pillShown.msg}</span>
             {pillShown.retry ? (
-              <button type="button" className="pillRetryBtn" onClick={() => pdfRetryRef.current?.()}>Retry</button>
+              <button type="button" className="pillRetryBtn" onClick={() => pdfRetryRef.current?.()}>{t("Retry")}</button>
             ) : null}
           </div>
         ) : null}
-        <div className={`viewerWrap ${(pdfHidden || homeMode || pageOnly) ? "pdfHidden" : ""}`} ref={viewerWrapRef}>
+        <div className={`viewerWrap ${(pdfHidden || homeMode || pageOnly) ? "pdfHidden" : ""}`} ref={viewerWrapRef} data-guide="pdf.pane">
           {pdfUrl && !pdfHidden ? (
             <button
               className="uiClose uiCloseLg pdfCloseBtn"
               onClick={() => setPdfHidden(true)}
-              title="Close PDF"
-              aria-label="Close PDF"
+              title={t("Close PDF")}
+              aria-label={t("Close PDF")}
             >×</button>
           ) : null}
           {pdfUrl && !pdfHidden ? (
             <div className="pdfCtlBox pdfZoomOverlay">
-              <button onClick={() => zoomStep(-1)} title="Zoom out" aria-label="Zoom out">
+              <button onClick={() => zoomStep(-1)} title={t("Zoom out")} aria-label={t("Zoom out")}>
                 <ZoomOutIcon size={15} />
               </button>
-              <button onClick={() => zoomStep(1)} title="Zoom in" aria-label="Zoom in">
+              <button onClick={() => zoomStep(1)} title={t("Zoom in")} aria-label={t("Zoom in")}>
                 <ZoomInIcon size={15} />
               </button>
-              <button className="pdfFitWidthBtn" onClick={() => zoomTo("page-width")} title="Fit to width" aria-label="Fit to width">
+              <button className="pdfFitWidthBtn" onClick={() => zoomTo("page-width")} title={t("Fit to width")} aria-label={t("Fit to width")}>
                 <FitWidthIcon size={15} />
               </button>
               {translateEnabled && !shareMode ? (
@@ -8721,7 +9021,9 @@ function LibraryApp() {
                   onClick={(e) => {
                     if (transLongFiredRef.current) { transLongFiredRef.current = false; return; }
                     if (pdfTransState.running) { pdfTranslateCtl.current?.halt(); return; }
-                    if (pdfTransState.pages > 0) { pdfTranslateCtl.current?.setShown(!pdfTransState.shown); return; }
+                    // On a translated page: show/hide (all pages). Anywhere
+                    // else: translate this page, which also shows the rest.
+                    if (pdfTransState.current) { pdfTranslateCtl.current?.setShown(!pdfTransState.shown); return; }
                     pdfTranslateCtl.current?.translatePage();
                   }}
                   onContextMenu={(e) => { e.preventDefault(); openTransMenu(e.currentTarget); }}
@@ -8734,15 +9036,13 @@ function LibraryApp() {
                   onPointerUp={() => clearTimeout(transLongRef.current)}
                   onPointerCancel={() => clearTimeout(transLongRef.current)}
                   title={pdfTransState.running
-                    ? `Translating… ${Math.round(pdfTransState.progress * 100)}% — click to stop (right-click for options)`
-                    : pdfTransState.pages > 0
+                    ? t("Translating… {progress}% — click to stop (right-click for options)", { progress: Math.round(pdfTransState.progress * 100) })
+                    : pdfTransState.current
                       ? (pdfTransState.shown
-                          ? "Hide the translation (all pages; Alt peeks) — right-click for options"
-                          : "Show the translation — right-click for options")
-                      : `Translate this page into ${translateLangLabel} — right-click: whole document & options`}
-                  aria-label={pdfTransState.running ? "Stop translating"
-                    : pdfTransState.pages > 0 ? (pdfTransState.shown ? "Hide translation" : "Show translation")
-                    : "Translate"}
+                          ? t("Hide the translation (all pages; Alt peeks) — right-click for options") : t("Show the translation — right-click for options"))
+                      : t("Translate this page into {translateLangLabel} — right-click: whole document & options", { translateLangLabel })}
+                  aria-label={pdfTransState.running ? t("Stop translating") : pdfTransState.current ? (pdfTransState.shown ? t("Hide translation") : t("Show translation"))
+                    : t("Translate")}
                 >
                   {pdfTransState.running
                     ? <span className="pillSpin" aria-hidden="true" />
@@ -8757,9 +9057,10 @@ function LibraryApp() {
               {!readOnly ? (
                 <button
                   className={inkUi.open ? "modeActive" : ""}
+                  data-guide="pdf.inkButton"
                   onClick={() => (inkUi.open ? setInkUi((s) => ({ ...s, open: false, tool: null, options: false })) : openInkStrip())}
-                  title={inkUi.open ? "Close the handwriting tools (Esc)" : "Handwriting: draw on the page with a pen, highlighter or eraser"}
-                  aria-label="Handwriting tools"
+                  title={inkUi.open ? t("Close the handwriting tools (Esc)") : t("Handwriting: draw on the page with a pen, highlighter or eraser")}
+                  aria-label={t("Handwriting tools")}
                 >
                   <PenIcon size={15} />
                 </button>
@@ -8768,8 +9069,8 @@ function LibraryApp() {
                 <button
                   className={areaSelectMode ? "modeActive" : ""}
                   onClick={() => setAreaSelectMode((v) => !v)}
-                  title={areaSelectMode ? "Rectangle mode — drag draws an area note (tap to switch to text selection)" : "Text mode — drag selects text (tap to switch to rectangle drawing)"}
-                  aria-label="Toggle selection mode"
+                  title={areaSelectMode ? t("Rectangle mode — drag draws an area note (tap to switch to text selection)") : t("Text mode — drag selects text (tap to switch to rectangle drawing)")}
+                  aria-label={t("Toggle selection mode")}
                 >
                   {areaSelectMode ? <RectSelectIcon size={15} /> : <TextCursorIcon size={15} />}
                 </button>
@@ -8800,8 +9101,8 @@ function LibraryApp() {
                 onPointerUp={fullscreenPointerUp}
                 onPointerCancel={() => { fullscreenTapRef.current.start = null; }}
                 onClick={fullscreenClick}
-                title={isFullscreen || pseudoFullscreen ? "Exit full screen" : "Full screen"}
-                aria-label={isFullscreen || pseudoFullscreen ? "Exit full screen" : "Full screen"}
+                title={isFullscreen || pseudoFullscreen ? t("Exit full screen") : t("Full screen")}
+                aria-label={isFullscreen || pseudoFullscreen ? t("Exit full screen") : t("Full screen")}
               >
                 {isFullscreen || pseudoFullscreen ? (
                   <MinimizeIcon size={15} />
@@ -8819,6 +9120,8 @@ function LibraryApp() {
               translateKey={`${translateLang}|${translateSendModel}`}
               translateParallel={translateParallel}
               onTranslate={shareMode ? undefined : translateChunk}
+              selTranslate={selTranslate ? (selTranslateAuto ? "auto" : "button") : ""}
+              translateLangLabel={translateLangLabel}
               translateCtlRef={pdfTranslateCtl}
               onTranslateState={handleTranslateState}
               areaMode={areaSelectMode && isPhone && !shareMode}
@@ -8883,7 +9186,7 @@ function LibraryApp() {
               }}
             />
           ) : (
-            <div className="status">No PDF open.</div>
+            <div className="status">{t("No PDF open.")}</div>
           )}
         </div>
 
@@ -8925,32 +9228,32 @@ function LibraryApp() {
             <button
               className={`phoneTab ${phonePanel === null || (phonePanel === "notes" && centerNotes) ? "active" : ""}`}
               onClick={() => setPhonePanel(null)}
-              title={homeMode ? "Library" : centerNotes ? "Notes" : "PDF"}
-              aria-label={homeMode ? "Library" : centerNotes ? "Notes" : "PDF"}
+              title={homeMode ? t("Library") : centerNotes ? t("Notes") : "PDF"}
+              aria-label={homeMode ? t("Library") : centerNotes ? t("Notes") : "PDF"}
             >
               {homeMode ? <HomeIcon size={16} /> : centerNotes ? <FileTextIcon size={16} /> : <FileIcon size={16} />}
-              <span>{homeMode ? "Library" : centerNotes ? "Notes" : "PDF"}</span>
+              <span>{homeMode ? t("Library") : centerNotes ? t("Notes") : "PDF"}</span>
             </button>
             {!centerNotes ? (
               <button
                 className={`phoneTab ${phonePanel === "notes" ? "active" : ""}`}
                 onClick={() => { setNotesVisible(true); setPhonePanel((p) => (p === "notes" ? null : "notes")); }}
-                title="Notes"
-                aria-label="Notes"
+                title={t("Notes")}
+                aria-label={t("Notes")}
               >
                 <FileTextIcon size={16} />
-                <span>Notes</span>
+                <span>{t("Notes")}</span>
               </button>
             ) : null}
             {(!shareMode || focusedBlockId) ? (
               <button
                 className={`phoneTab ${phonePanel === "chat" ? "active" : ""}`}
                 onClick={() => setPhonePanel((p) => (p === "chat" ? null : "chat"))}
-                title="AI chat"
-                aria-label="AI chat"
+                title={t("AI chat")}
+                aria-label={t("AI chat")}
               >
                 <SparklesIcon size={16} />
-                <span>Chat</span>
+                <span>{t("Chat")}</span>
               </button>
             ) : null}
           </div>
@@ -8995,12 +9298,12 @@ function LibraryApp() {
                 {confirmBox.danger ? <AlertCircleIcon size={16} /> : <InfoIcon size={16} />}
               </span>
               <span className="settingText">
-                <span className="reportModalTitle">{confirmBox.title}</span>
-                <span className="confirmMessage">{confirmBox.message}</span>
+                <span className="reportModalTitle">{t(confirmBox.title)}</span>
+                <span className="confirmMessage">{t(confirmBox.message)}</span>
               </span>
             </div>
             <div className="reportModalBtns">
-              <button className="uiBtn" onClick={() => setConfirmBox(null)} autoFocus>Cancel</button>
+              <button className="uiBtn" onClick={() => setConfirmBox(null)} autoFocus>{t("Cancel")}</button>
               {confirmBox.altLabel ? (
                 <button
                   className={`uiBtn ${confirmBox.altDanger ? "dangerBtn" : ""}`}
@@ -9010,7 +9313,7 @@ function LibraryApp() {
               <button
                 className={`uiBtn primary ${confirmBox.danger ? "dangerBtn" : ""}`}
                 onClick={() => { const fn = confirmBox.onConfirm; setConfirmBox(null); fn?.(); }}
-              >{confirmBox.confirmLabel || "OK"}</button>
+              >{confirmBox.confirmLabel ? t(confirmBox.confirmLabel) : t("OK")}</button>
             </div>
           </div>
         </div>
@@ -9018,8 +9321,8 @@ function LibraryApp() {
       {labelRenaming ? (
         <div className="reportOverlay" onClick={() => setLabelRenaming(null)}>
           <div className="reportModal confirmModal" onClick={(e) => e.stopPropagation()}>
-            <div className="reportModalTitle">Rename label</div>
-            <div className="reportModalHint confirmMessage">Renames “{labelRenaming.name}” on every page that carries it.</div>
+            <div className="reportModalTitle">{t("Rename label")}</div>
+            <div className="reportModalHint confirmMessage">{t("Renames “{name}” on every page that carries it.", { name: labelRenaming.name })}</div>
             <div className="shareRow">
               <input
                 autoFocus
@@ -9035,7 +9338,7 @@ function LibraryApp() {
                 className="uiBtn primary"
                 disabled={!labelRenaming.draft.trim()}
                 onClick={() => renameLabel(labelRenaming.name, labelRenaming.draft)}
-              >Rename</button>
+              >{t("Rename")}</button>
             </div>
           </div>
         </div>
@@ -9043,12 +9346,14 @@ function LibraryApp() {
       {moveBlockDialog ? (
         <div className="reportOverlay" onClick={() => setMoveBlockDialog(null)}>
           <div className="reportModal confirmModal" onClick={(e) => e.stopPropagation()}>
-            <div className="reportModalTitle">Move block to page</div>
-            <div className="reportModalHint confirmMessage">The block and its sub-blocks move to the end of the chosen page.</div>
+            <div className="reportModalTitle">{moveBlockDialog.fragment ? t("Move to page") : t("Move block to page")}</div>
+            <div className="reportModalHint confirmMessage">{moveBlockDialog.fragment
+              ? t("It becomes a block of its own at the end of the chosen page.")
+              : t("The block and its sub-blocks move to the end of the chosen page.")}</div>
             <div className="shareRow">
               <input
                 autoFocus
-                placeholder="Filter pages…"
+                placeholder={t("Filter pages…")}
                 value={moveBlockDialog.query}
                 onChange={(e) => setMoveBlockDialog((s) => ({ ...s, query: e.target.value }))}
                 onKeyDown={(e) => {
@@ -9062,11 +9367,11 @@ function LibraryApp() {
             <div className="moveBlockList">
               {movePageMatches.map((p) => (
                 <MenuItem key={p.id} icon={FileTextIcon} onClick={() => doMoveBlock(moveBlockDialog.blockId, p)}>
-                  {p.content || "Untitled"}
+                  {p.content || t("Untitled")}
                 </MenuItem>
               ))}
               {!movePageMatches.length ? (
-                <div className="confirmMessage">No matching page.</div>
+                <div className="confirmMessage">{t("No matching page.")}</div>
               ) : null}
             </div>
           </div>
@@ -9078,13 +9383,13 @@ function LibraryApp() {
             <div className="confirmHead">
               <span className="confirmIcon"><LinkIcon size={16} /></span>
               <span className="settingText">
-                <span className="reportModalTitle">External link</span>
-                <span className="confirmMessage">Open this link in a new browser tab, or pull the paper into your library.</span>
+                <span className="reportModalTitle">{t("External link")}</span>
+                <span className="confirmMessage">{t("Open this link in a new browser tab, or pull the paper into your library.")}</span>
               </span>
             </div>
             <div className="linkPromptUrl">{linkPrompt}</div>
             <div className="reportModalBtns">
-              <button className="uiBtn" onClick={() => setLinkPrompt(null)}>Cancel</button>
+              <button className="uiBtn" onClick={() => setLinkPrompt(null)}>{t("Cancel")}</button>
               {(() => {
                 // Right-click always lands here, even for links whose paper is
                 // already in the library — offer that copy instead of a re-fetch.
@@ -9093,20 +9398,20 @@ function LibraryApp() {
                   <button
                     className="uiBtn"
                     onClick={() => { setLinkPrompt(null); openBlock(pid, { pushNav: true }); }}
-                    title="This paper is already in your library"
-                  ><FileTextIcon size={13} />Open in Gamma</button>
+                    title={t("This paper is already in your library")}
+                  ><FileTextIcon size={13} />{t("Open in Gamma")}</button>
                 ) : (
                   <button
                     className="uiBtn"
                     onClick={() => { const url = linkPrompt; setLinkPrompt(null); pushNav(); openPdf(url); }}
-                    title="Resolve this link as a PDF and open it as a new paper in Gamma"
-                  ><DownloadIcon size={13} />Fetch into Gamma</button>
+                    title={t("Resolve this link as a PDF and open it as a new paper in Gamma")}
+                  ><DownloadIcon size={13} />{t("Fetch into Gamma")}</button>
                 );
               })()}
               <button
                 className="uiBtn primary"
                 onClick={() => { window.open(linkPrompt, "_blank", "noopener"); setLinkPrompt(null); }}
-              ><ExternalLinkIcon size={13} />Open in browser</button>
+              ><ExternalLinkIcon size={13} />{t("Open in browser")}</button>
             </div>
           </div>
         </div>
@@ -9114,15 +9419,15 @@ function LibraryApp() {
       {linkDialog ? (
         <div className="reportOverlay" onClick={() => setLinkDialog(null)}>
           <div className="reportModal confirmModal" onClick={(e) => e.stopPropagation()}>
-            <div className="reportModalTitle">{linkDialog.editBlockId ? "Change reference link" : "Link reference to a page"}</div>
+            <div className="reportModalTitle">{linkDialog.editBlockId ? t("Change reference link") : t("Link reference to a page")}</div>
             {linkDialog.content?.text ? (
               <div className="reportModalHint linkRefQuote">“{linkDialog.content.text.slice(0, 160)}{linkDialog.content.text.length > 160 ? "…" : ""}”</div>
             ) : null}
-            <div className="reportModalHint">Paste a DOI, arXiv id, or URL — or pick one of your pages. The selection becomes a clickable link on the PDF.</div>
+            <div className="reportModalHint">{t("Paste a DOI, arXiv id, or URL — or pick one of your pages. The selection becomes a clickable link on the PDF.")}</div>
             <div className="shareRow">
               <input
                 autoFocus
-                placeholder="10.1103/…  ·  1810.11086  ·  https://…"
+                placeholder={t("10.1103/…  ·  1810.11086  ·  https://…")}
                 value={linkDialogInput}
                 onChange={(e) => setLinkDialogInput(e.target.value)}
                 onKeyDown={(e) => {
@@ -9136,22 +9441,22 @@ function LibraryApp() {
                 className="uiBtn primary"
                 disabled={!linkDialogInput.trim()}
                 onClick={() => createLinkHighlight({ url: normalizeLinkInput(linkDialogInput) })}
-              >Link</button>
+              >{t("Link")}</button>
             </div>
             {refPoint && refPoint.pageId !== focusedBlockId ? (
               <>
-                <div className="popoverSection">Copied reference point</div>
+                <div className="popoverSection">{t("Copied reference point")}</div>
                 <button
                   className="reportPageItem linkPageItem"
                   onClick={() => createLinkHighlight({ pageId: refPoint.pageId, highlightId: refPoint.highlightId })}
-                  title="Link to this exact highlight — clicking the link opens the paper and jumps to it"
+                  title={t("Link to this exact highlight — clicking the link opens the paper and jumps to it")}
                 >
                   <span className="reportPageName">{refPoint.pageTitle} — “{refPoint.quote.slice(0, 60)}{refPoint.quote.length > 60 ? "…" : ""}”</span>
-                  <span className="linkLikelyBadge">highlight</span>
+                  <span className="linkLikelyBadge">{t("highlight")}</span>
                 </button>
               </>
             ) : null}
-            <div className="popoverSection">Your pages (best match first)</div>
+            <div className="popoverSection">{t("Your pages (best match first)")}</div>
             <div className="reportPageList">
               {(() => {
                 const cands = homeBlocks
@@ -9159,27 +9464,29 @@ function LibraryApp() {
                   .map((b) => ({ b, score: scorePaperMatch(linkDialog.content?.text || "", b) }))
                   .sort((x, y) => y.score - x.score
                     || (y.b.updated_at || "").localeCompare(x.b.updated_at || ""));
-                if (!cands.length) return <div className="popoverHint">No other pages in your library yet.</div>;
+                if (!cands.length) return <div className="popoverHint">{t("No other pages in your library yet.")}</div>;
                 return cands.map(({ b, score }) => (
                   <button key={b.id} className="reportPageItem linkPageItem" onClick={() => createLinkHighlight({ pageId: b.id })}>
-                    <span className="reportPageName">{b.content || "Untitled"}</span>
-                    {score >= 6 ? <span className="linkLikelyBadge">likely</span> : null}
+                    <span className="reportPageName">{b.content || t("Untitled")}</span>
+                    {score >= 6 ? <span className="linkLikelyBadge">{t("likely")}</span> : null}
                   </button>
                 ));
               })()}
             </div>
             <div className="reportModalBtns">
               {linkDialog.editBlockId ? (
-                <button className="uiBtn" onClick={() => createLinkHighlight({})} title="Turn this back into a plain highlight">Remove link</button>
+                <button className="uiBtn" onClick={() => createLinkHighlight({})} title={t("Turn this back into a plain highlight")}>{t("Remove link")}</button>
               ) : null}
-              <button className="uiBtn" onClick={() => setLinkDialog(null)}>Cancel</button>
+              <button className="uiBtn" onClick={() => setLinkDialog(null)}>{t("Cancel")}</button>
             </div>
           </div>
         </div>
       ) : null}
       <QuickOpen
-        open={quickOpen}
-        onClose={() => setQuickOpen(false)}
+        open={!!quickOpen}
+        prefix={quickOpen?.prefix || ""}
+        commands={paletteCommands}
+        onClose={() => setQuickOpen(null)}
         pages={homeBlocks}
         recentViews={recentViews}
         openTabs={openTabs}
@@ -9196,6 +9503,8 @@ function LibraryApp() {
         papers={{
           theme,
           setTheme,
+          language,
+          setLanguage,
           uiScale,
           setUiScale,
           oaFallback,
@@ -9214,6 +9523,10 @@ function LibraryApp() {
           setInkPressure,
           translateEnabled,
           setTranslateEnabled,
+          selTranslate,
+          setSelTranslate,
+          selTranslateAuto,
+          setSelTranslateAuto,
           translateLang,
           setTranslateLang,
           translateModel,
@@ -9222,13 +9535,19 @@ function LibraryApp() {
           setTranslateEffort,
           translateParallel,
           setTranslateParallel,
-          aiModels: scopedAiModels, // the Translation-model picker's registry
+          aiModels: scopedAiModels, // the translation picker's registry
+          translateEngines, // …and the translation services set up for it
+          refreshAiModels, // saving a service's key updates that list
           pdfDarkPage,
           setPdfDarkPage,
+          suggestTours,
+          setSuggestTours,
           recentThumbs,
           setRecentThumbs,
           fileLabels,
           setFileLabels,
+          syncPillScope: appPrefs.syncPillScope,
+          setSyncPillScope: appPrefs.setSyncPillScope,
           isAdmin: !!authUser?.is_admin,
           setStatus,
           refreshQuota, // keep the client-side pre-upload size check in sync without a re-login
@@ -9237,6 +9556,7 @@ function LibraryApp() {
           enterNewNote,
           setEnterNewNote,
         }}
+        keyboard={{ keybindings, setKeybindings, enterNewNote }}
         library={{
           // batch metadata retry uses the same prompt/model/context prefs as
           // the per-paper fetch in the metadata popover
@@ -9315,7 +9635,7 @@ function LibraryApp() {
             setMetaPrompt(normalizePrompt(metaPromptDraft, aiInfo?.metadata_prompt));
             setCitePrompt(normalizePrompt(citePromptDraft, aiInfo?.cite_prompt));
             setAgentSystem(normalizePrompt(agentPromptDraft, aiInfo?.agent_prompt));
-            setStatus("Prompts saved.");
+            setStatus(t("Prompts saved."));
           },
         }}
         context={{
@@ -9339,7 +9659,7 @@ function LibraryApp() {
             setChatContextChars(60000);
             setMetaContextChars(6000);
             setMultiContextChars(120000);
-            setStatus("AI context limits reset.");
+            setStatus(t("AI context limits reset."));
           },
         }}
         search={{ searchDetailsHome, setSearchDetailsHome, searchDetailsPaper, setSearchDetailsPaper, indexTask, setStatus }}
@@ -9413,14 +9733,14 @@ function LibraryApp() {
         return (
         <ContextMenu x={tabMenu.x} y={tabMenu.y} onClose={() => setTabMenu(null)}>
           <MenuItem icon={PinIcon} onClick={() => { setTabMenu(null); toggleTabPinned(tabMenu.id); }}>
-            {tabMenu.pinned ? "Unpin tab" : "Pin tab"}
+            {tabMenu.pinned ? t("Unpin tab") : t("Pin tab")}
           </MenuItem>
-          <MenuItem icon={HomeIcon} title="Pinned pages sit in the Pinned strip at the top of the library, on every device"
+          <MenuItem icon={HomeIcon} title={t("Pinned pages sit in the Pinned strip at the top of the library, on every device")}
             onClick={() => { setTabMenu(null); setPagesPinned([tabMenu.id], !libPinned); }}>
-            {libPinned ? "Unpin from library" : "Pin to library"}
+            {libPinned ? t("Unpin from library") : t("Pin to library")}
           </MenuItem>
           <MenuItem icon={XIcon} onClick={() => { setTabMenu(null); closeTab(tabMenu.id); }}>
-            Close tab
+            {t("Close tab")}
           </MenuItem>
         </ContextMenu>
         );
@@ -9438,33 +9758,33 @@ function LibraryApp() {
               return (
                 <>
                   {!many ? (
-                    <MenuItem icon={ExternalLinkIcon} onClick={() => { setHomeMenu(null); clearSelection(); openBlock(homeMenu.id, { restoreScroll: true }); }}>Open</MenuItem>
+                    <MenuItem icon={ExternalLinkIcon} onClick={() => { setHomeMenu(null); clearSelection(); openBlock(homeMenu.id, { restoreScroll: true }); }}>{t("Open")}</MenuItem>
                   ) : null}
                   {!many ? (
-                    <MenuItem icon={PenIcon} onClick={() => { setHomeMenu(null); clearSelection(); setHomeEditingId(homeMenu.id); }}>Rename</MenuItem>
+                    <MenuItem icon={PenIcon} onClick={() => { setHomeMenu(null); clearSelection(); setHomeEditingId(homeMenu.id); }}>{t("Rename")}</MenuItem>
                   ) : null}
                   <MenuItem icon={PinIcon} onClick={() => { setHomeMenu(null); setPagesPinned(ids, !allPinned); }}>
-                    {allPinned ? "Unpin" : many ? `Pin ${ids.length} pages` : "Pin"}
+                    {allPinned ? t("Unpin") : many ? t("Pin {n} pages", { n: ids.length }) : t("Pin")}
                   </MenuItem>
-                  <MenuItem icon={CopyIcon} onClick={() => { setHomeMenu(null); duplicatePages(ids); }}>{many ? `Duplicate ${ids.length} pages` : "Duplicate"}</MenuItem>
+                  <MenuItem icon={CopyIcon} onClick={() => { setHomeMenu(null); duplicatePages(ids); }}>{many ? t("Duplicate {n} pages", { n: ids.length }) : t("Duplicate")}</MenuItem>
                   <SubMenuItem
                     id="folders"
                     icon={FolderIcon}
-                    label="Move to folder"
-                    title="A page can sit in several folders — this adds it to the one you pick (same as dragging it onto the folder)."
+                    label={t("Move to folder")}
+                    title={t("A page can sit in several folders — this adds it to the one you pick (same as dragging it onto the folder).")}
                   >
                     {folderMenuPaths.length ? folderMenuPaths.map((f) => (
                       <MenuItem
                         key={f}
                         icon={FolderIcon}
-                        title={ownTags.includes(f) ? `Already in ${f}` : f}
+                        title={ownTags.includes(f) ? t("Already in {f}", { f: f }) : f}
                         trailing={ownTags.includes(f) ? <CheckIcon size={14} className="ctxMenuCheck" /> : null}
                         onClick={() => { setHomeMenu(null); addPagesToFolder(ids, f); }}
                       >{f}</MenuItem>
                     )) : (
-                      <MenuItem disabled>No folders yet</MenuItem>
+                      <MenuItem disabled>{t("No folders yet")}</MenuItem>
                     )}
-                    {folderFilter || ownTags.length ? <MenuLabel>Remove from</MenuLabel> : null}
+                    {folderFilter || ownTags.length ? <MenuLabel>{t("Remove from")}</MenuLabel> : null}
                     {folderFilter ? (
                       <MenuItem icon={FolderOpenIcon} onClick={() => { setHomeMenu(null); removePagesFromFolder(ids, folderFilter); }}>{`“${folderFilter}”`}</MenuItem>
                     ) : null}
@@ -9472,39 +9792,39 @@ function LibraryApp() {
                       <MenuItem key={`rm:${f}`} icon={FolderOpenIcon} title={f} onClick={() => { setHomeMenu(null); removePagesFromFolder(ids, f); }}>{`“${f}”`}</MenuItem>
                     ))}
                     {folderFilter || ownTags.length ? (
-                      <MenuItem icon={XIcon} onClick={() => { setHomeMenu(null); removePagesFromFolder(ids, ""); }}>All folders</MenuItem>
+                      <MenuItem icon={XIcon} onClick={() => { setHomeMenu(null); removePagesFromFolder(ids, ""); }}>{t("All folders")}</MenuItem>
                     ) : null}
                   </SubMenuItem>
-                  <MenuItem icon={TrashIcon} danger onClick={() => { setHomeMenu(null); deletePages(ids); }}>{many ? `Delete ${ids.length} pages` : "Delete"}</MenuItem>
+                  <MenuItem icon={TrashIcon} danger onClick={() => { setHomeMenu(null); deletePages(ids); }}>{many ? t("Delete {n} pages", { n: ids.length }) : t("Delete")}</MenuItem>
                 </>
               );
             })() : homeMenu.kind === "label" ? (
               <>
-                <MenuItem icon={LabelIcon} onClick={() => { const name = homeMenu.name; setHomeMenu(null); if (!homeMode) goHome(); openLabel(name, homeMode ? folderFilter : ""); }}>Open</MenuItem>
-                <MenuItem icon={PenIcon} onClick={() => { setHomeMenu(null); setLabelRenaming({ name: homeMenu.name, draft: homeMenu.name }); }}>Rename</MenuItem>
-                <MenuItem icon={TrashIcon} danger onClick={() => { setHomeMenu(null); deleteLabelByName(homeMenu.name); }}>Delete</MenuItem>
+                <MenuItem icon={LabelIcon} onClick={() => { const name = homeMenu.name; setHomeMenu(null); if (!homeMode) goHome(); openLabel(name, homeMode ? folderFilter : ""); }}>{t("Open")}</MenuItem>
+                <MenuItem icon={PenIcon} onClick={() => { setHomeMenu(null); setLabelRenaming({ name: homeMenu.name, draft: homeMenu.name }); }}>{t("Rename")}</MenuItem>
+                <MenuItem icon={TrashIcon} danger onClick={() => { setHomeMenu(null); deleteLabelByName(homeMenu.name); }}>{t("Delete")}</MenuItem>
               </>
             ) : (
               <>
-                <MenuItem icon={FolderOpenIcon} onClick={() => { const name = homeMenu.name; setHomeMenu(null); if (!homeMode) goHome(); openFolder(name); }}>Open</MenuItem>
-                <MenuItem icon={PenIcon} onClick={() => { setHomeMenu(null); setFolderRenaming({ name: homeMenu.name, draft: homeMenu.name }); }}>Rename</MenuItem>
+                <MenuItem icon={FolderOpenIcon} onClick={() => { const name = homeMenu.name; setHomeMenu(null); if (!homeMode) goHome(); openFolder(name); }}>{t("Open")}</MenuItem>
+                <MenuItem icon={PenIcon} onClick={() => { setHomeMenu(null); setFolderRenaming({ name: homeMenu.name, draft: homeMenu.name }); }}>{t("Rename")}</MenuItem>
                 {(() => {
                   // Like pages: acting on a selected folder acts on the whole selection
                   const paths = selectedFolders.size > 1 && selectedFolders.has(homeMenu.name) ? [...selectedFolders] : [homeMenu.name];
                   const allPinned = paths.every((p) => pinnedFolders.some((q) => q.path === p));
                   return (
-                    <MenuItem icon={PinIcon} title="Pinned folders sit in the Pinned strip at the top of the library, on every device"
+                    <MenuItem icon={PinIcon} title={t("Pinned folders sit in the Pinned strip at the top of the library, on every device")}
                       onClick={() => { setHomeMenu(null); setFoldersPinned(paths, !allPinned); }}>
-                      {allPinned ? "Unpin" : paths.length > 1 ? `Pin ${paths.length} folders` : "Pin"}
+                      {allPinned ? t("Unpin") : paths.length > 1 ? t("Pin {n} folders", { n: paths.length }) : t("Pin")}
                     </MenuItem>
                   );
                 })()}
                 <MenuItem
                   icon={ExportIcon}
-                  title="Download every page in this folder — Markdown, a Logseq graph, a Zotero library, or a Gamma export"
+                  title={t("Download every page in this folder — Markdown, a Logseq graph, a Zotero library, or a Gamma export")}
                   onClick={() => { const name = homeMenu.name; setHomeMenu(null); setExportFolder(name); setExportOpen(true); }}
-                >Export…</MenuItem>
-                <MenuItem icon={TrashIcon} danger onClick={() => { setHomeMenu(null); deleteFolderByName(homeMenu.name); }}>Delete</MenuItem>
+                >{t("Export…")}</MenuItem>
+                <MenuItem icon={TrashIcon} danger onClick={() => { setHomeMenu(null); deleteFolderByName(homeMenu.name); }}>{t("Delete")}</MenuItem>
               </>
             )}
         </ContextMenu>
@@ -9522,7 +9842,7 @@ function LibraryApp() {
                     changeHighlightColor(highlightMenu.id, c);
                     setHighlightMenu(null);
                   }}
-                  title="Change color"
+                  title={t("Change color")}
                 />
               ))}
             </div>
@@ -9540,7 +9860,7 @@ function LibraryApp() {
                 setHighlightMenu(null);
               }}
             >
-              {highlights.find((x) => x.id === highlightMenu.id)?.linkTarget ? "Change link…" : "Link to page…"}
+              {highlights.find((x) => x.id === highlightMenu.id)?.linkTarget ? t("Change link…") : t("Link to page…")}
             </button>
             {highlights.find((x) => x.id === highlightMenu.id)?.linkTarget?.url ? (
               <button
@@ -9550,7 +9870,7 @@ function LibraryApp() {
                   setHighlightMenu(null);
                 }}
               >
-                Open link in browser…
+                {t("Open link in browser…")}
               </button>
             ) : null}
             <button
@@ -9560,7 +9880,7 @@ function LibraryApp() {
                 const blk = flattenBlocks(blocks).find((b) => b.properties?.highlight_id === highlightMenu.id);
                 setRefPoint({
                   pageId: focusedBlockId,
-                  pageTitle: pageTitle || "Untitled",
+                  pageTitle: pageTitle || t("Untitled"),
                   highlightId: highlightMenu.id,
                   quote: (h?.content?.text || "").slice(0, 200),
                 });
@@ -9570,10 +9890,10 @@ function LibraryApp() {
                   copyText(withWorkspace(`${window.location.origin}/?block=${encodeURIComponent(blk.id)}`));
                 }
                 setHighlightMenu(null);
-                setStatus("Reference point copied — paste the link, or pick it in another paper's link dialog.");
+                setStatus(t("Reference point copied — paste the link, or pick it in another paper's link dialog."));
               }}
             >
-              Copy as reference point
+              {t("Copy as reference point")}
             </button>
             <button
               className="ctxMenuItem"
@@ -9582,7 +9902,7 @@ function LibraryApp() {
                 setHighlightMenu(null);
               }}
             >
-              Delete
+              {t("Delete")}
             </button>
         </ContextMenu>
       ) : null}

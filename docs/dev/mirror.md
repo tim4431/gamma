@@ -13,7 +13,7 @@ Code: `gamma/sync_engine.py` (the engine and the mirror registry),
 on the remote), `gamma/routers/mirrors.py` (the mirror API on the server
 that holds the copy), `gamma/publish.py` + `gamma/routers/publish.py`
 (publishing a page to the share host, below), `frontend/src/settings/SettingsMirrors.jsx` (Settings →
-Workspaces → Clones), `frontend/src/collaboration/MirrorPopover.jsx`
+Account & sync → Clones), `frontend/src/collaboration/MirrorPopover.jsx`
 (the header's sync pill, its settings and review views),
 `frontend/src/collaboration/MergeResolver.jsx` (the merge chip on a block
 row), `desktop/main.js` `keepOffline` (the shell's one-click flow). Why the
@@ -93,7 +93,10 @@ deleted after it, as one time-ordered stream ([collab.md](collab.md) "The
 change feed" has the cursor rules). The feed is a hint: the engine compares
 each listed page's `seq` with the one it holds and fetches the tree only
 when they differ. `GET /api/sync/whoami` tells the engine who its token is,
-which workspace and role it has there, and whether it may write.
+which workspace and role it has there, and whether it may write. A round
+reuses an earlier round's answer for the same link for 15 minutes
+(`WHOAMI_TTL_S`); a round that ends with an error forgets it, so a revoked
+token or a lowered role shows on the next round.
 
 The local server has the same feed, read in-process, so local edits are
 found the same way; the engine's own writes are tagged client `sync` and
@@ -116,7 +119,12 @@ diff to nothing on the next round.
 Inside a page the same rule holds at block level, **an edit beats a
 delete** (a move counts as an edit): a subtree the remote deleted stays when something in it was
 edited here (the push re-inserts it there), and a subtree deleted here
-comes back whole when the remote edited inside it. Same-block text edits
+comes back whole when the remote edited inside it. A block the remote
+moved *out* of a subtree deleted here is no part of that deletion any
+more: it comes back whole (with its own children) where the remote put
+it, while the subtree it left stays deleted unless something still inside
+it was touched there — without this the push would delete the moved block
+on the remote too (`_reconcile_remote_ops`, `escaped`). Same-block text edits
 merge by span through `gamma/textmerge.py` on whichever server applies the
 op; two edits to the same characters resolve by the remote's order.
 
@@ -153,16 +161,23 @@ show what each side changed. Sync never blocks on one: the person looks at
 the list and, for a merge, can put back "mine" or "theirs" — an ordinary
 edit that the next round pushes, written from the text the conflict
 recorded as its `base`, so words typed into the block since the merge are
-kept over the chosen version rather than lost.
+kept over the chosen version rather than lost. The text is written into
+the page the block is in *now* (it may have moved since) and only then is
+the conflict marked resolved; a write the block refuses answers 409 and
+leaves the conflict open.
 
 Pull-only mirrors (a read token, or a viewer's, or the *Receive only*
 direction) apply the remote's changes and never push; local edits stay
 local and survive later remote changes to other spans of the same block,
-since the saved base is always the remote's tree. Such a round still moves
-the local cursor past the edits it left here, so switching the direction
-back to two-way resets the local cursor (`set_cadence`): the next round
-looks at every page changed here since the beginning — one tree compare
-each — and pushes what differs.
+since the saved base is always the remote's tree. Such a round does not
+walk the local feed and leaves the local cursor where it is, so the first
+round that may push — the direction switched back to two-way, or a
+write token or role restored on the remote after a spell as a viewer
+(such a round drops to pull only for its own duration and reports it as
+its error) — finds every edit made here meanwhile; `pending_local` stays
+true until then. (Switching back to two-way also resets the cursor, for
+copies from before this rule.) The direction of a detached copy cannot be
+changed (400): reattaching restores the one it had.
 
 ## Rounds and cadence
 
@@ -184,7 +199,16 @@ shorter than the poll interval). The first pass runs
 `FIRST_PASS_S` (5 s) after startup, so a copy whose first fill was cut short
 by a restart continues at once; "Sync now" (`POST /api/mirrors/{ws}/sync`,
 `?wait=1` for the answer) runs one on demand. Rounds of one mirror never
-overlap. A round that cannot reach the remote records the error on the
+overlap: a second caller waits for the round lock and reads the mirror's
+row only once it holds it, so a page unpublished or a detach done while
+it waited is what it runs with. What the person does *while* a round
+runs is kept too: the round only ever patches its keys of the status JSON
+(`_patch_status`, one read-modify-write under a lock, the same path every
+other writer of the status takes), it saves the feeds' cursors only when
+nothing reset them meanwhile, a detach makes it stop at its next page
+(the pages left over go on the retry list for the reattach), and a force
+is noted as `status.force` and applied by the next round under the lock
+(`_start_force`), never by the running one. A round that cannot reach the remote records the error on the
 mirror and moves no cursor. A page that fails inside a round — whatever the
 exception — is reported, kept on the mirror's `retry` list with the flags
 it had, and worked again next round (the feeds' cursors have moved past
@@ -247,8 +271,12 @@ Shown while a clone is open, in the desktop app and in a browser alike.
   (state, icon, tone, line, tooltip, badge or dot) that the pill, the
   popover and the Settings row share.
 - Polls the mirror every 20 s, every 2 s while a round runs or an edit is
-  pending (the log too while open). When a poll sees the numbers move it
-  raises `gamma:mirror-changed` so the page's conflict chips refresh.
+  pending (the log too while open), only while the pill is shown and the tab
+  is visible; a tab coming back reads at once. A publication's pill off its
+  pages does not poll, and edits there are not pending for it; it reloads on
+  `gamma:mirror` (a publish or unpublish here). When a poll sees the open
+  conflicts move (`conflicts_open` / `conflicts_newest`) it raises
+  `gamma:mirror-changed` so the page's conflict chips refresh.
 
 Click: a popover of icons and numbers.
 
@@ -302,11 +330,12 @@ open (`mergeOpen`) and the page's conflicts in tree order (`mergeOrder`):
 the card's ‹ n / N › step through them, and a decision opens the next one
 down the page, so a page of conflicts is worked through in one pass. App
 reads the page's conflicts (`GET /api/mirrors/{ws}/conflicts?page=`) on
-open, every 15 s and on `gamma:mirror` / `gamma:mirror-changed`; a decision
+open and on `gamma:mirror` / `gamma:mirror-changed` (no timer of its own:
+the pill's poll raises the latter); a decision
 is an ordinary edit the next round pushes. The lists in the pill and in
 Settings jump to the block (`gamma:jump`).
 
-### Settings → Workspaces → Clones (`SettingsMirrors.jsx`)
+### Settings → Account & sync → Clones (`SettingsMirrors.jsx`)
 
 - One row per clone. Its avatar is its state (the same reading as the pill:
   a spinning refresh while a round runs, a check when up to date, a warning
@@ -315,6 +344,8 @@ Settings jump to the block (`gamma:jump`).
   conflicts*), *clone of X · origin host* and one short status line
   (progress and the file in flight while a round runs; *up to date 14:37 ·
   2 pages pulled* after; *local edits not pushed yet* while `pending_local`).
+  The list is read again every 2 s while any row's round runs
+  (`useMirrors`), so the progress moves.
 - Actions: Open, *Sync* (*Reattach* when detached), *Conflicts* (the same
   cards, each resolved there or opened on its block) and a "more"
   `ActionMenu`: *Force pull*, *Force push* (off on a receive-only clone),
@@ -344,35 +375,52 @@ mirror's own answer apart.
   `GET /api/pages/{id}/publish` when the popover opens, then every 5 s while
   a round runs or a local edit waits (`pending_local`), else every 20 s.
   - Not published, allowed: "Keep this page reachable while this computer
-    is off." and a primary **Publish**. While it runs the button is
-    disabled and shows the spinning refresh glyph; a refusal shows its
-    `detail` under the row.
+    is off." and a primary **Publish**; where the plan caps publishing
+    (the answer's `limit` has a `max`) the hint counts instead, "3 of 5
+    pages published". While it runs the button is disabled and shows the
+    spinning refresh glyph; a refusal shows its `detail` under the row, and
+    the cap's refusal (a 409 carrying `limit`) adds an *Open account* button
+    to the issuer's portal, the Settings Account row's target.
   - Not published, refused: the `reason` as the row's hint. When the reason
-    is the sign-in one, *Link Gamma Cloud account* opens Settings → Account,
+    is the sign-in one, *Link Gamma Cloud account* opens Settings → Account & sync,
     where the existing link flow runs.
-  - Published: the cloud link as the row hint with *Copy link*, a danger
+  - Published but without a share there (publishing failed after the page
+    reached the share host): the row says so and offers *Publish again*,
+    the same `POST`, which finishes the job.
+  - Published: the cloud link as the row hint with *Copy link* — the
+    answer's `public_url`, the page's pretty address when the share host
+    has page hosts, with the token link in the row's hover title as the
+    fallback that also works — a danger
     icon button that asks inline before it unpublishes, the state line
     (`mirrorState` of the answer's `mirror`, the pill's icon and words) with
-    a *Sync now* icon button (`POST /api/mirrors/{ws}/sync?wait=1`), and
+    a *Sync now* icon button (`POST /api/mirrors/{ws}/sync?wait=1`; off,
+    and the state line says so, while the publication is detached — the
+    answer's `mirror` carries `mode` and `detached` for that, and the
+    refusal's `reason` shows under the row), and
     the cloud share's access as the local share draws it: the three
     audience tiles (their hints in the share host's terms) and the View /
     Edit segmented as the section's action. A change is
     `POST /api/pages/{id}/publish {audience, role}`, shown at once and put
     back when the server refuses.
   - A viewer of the workspace sees the state and the link but no buttons.
-- **The header's sync pill** shows for a publication as for a clone. Its
+- **The header's sync pill** shows for a publication only on a published
+  page (a clone syncs the whole workspace, so its pill is on every page; a
+  publication syncs the pages in its filter, so its pill is on those;
+  Settings → Account & sync → Sync pill, *Synced pages* / *Every page*, can put it on every page instead). Its
   tooltip and name line say *Published to Gamma Cloud* with the count of
   pages and the host; its gear keeps *Automatic sync* and *Sync after an
   edit* and hides *Direction*, the forces, *Detach* and *Remove origin*,
   which would break it (a detached publication still offers *Reattach*).
   The first publication in a workspace sets `publishing` on the open
   workspace, so the pill appears without a reload.
-- **Settings → Workspaces** lists publications under their own
-  *Publishing* heading below Clones: the state avatar, the workspace's
+- **Settings → Account & sync** (the sync sections in `SettingsSync.jsx`,
+  `PublishingSection` in `SettingsMirrors.jsx`) lists publications under
+  *Publishing*, above *Clones* (the pill's gear link opens this pane for both): the state avatar, the workspace's
   name with its tags, *N published pages · host*, the status line, a
   *Conflicts* button when any wait, and a "more" menu with *Sync now* and
   a danger *Stop publishing all* (confirmed, then
   `DELETE /api/pages/{id}/publish?ws=` for every page in the filter).
+  Open conflicts there raise the `publish-conflicts` notice on that pane.
 
 ### The desktop switcher
 
@@ -404,7 +452,7 @@ log under that account with client `sync`.
   the page's session, starts (or makes) a local server, signs into it with
   the seeded admin credentials, creates the mirror there and moves the
   window to it ([desktop/docs/architecture.md](../../desktop/docs/architecture.md)).
-- **Any Gamma**: Settings → Workspaces → Clones → *Clone a remote
+- **Any Gamma**: Settings → Account & sync → Clones → *Clone a remote
   workspace*: the server address and a write token made there.
 
 **Detach and reattach.** *Detach* (`POST /api/mirrors/{ws}/detach`) sets
@@ -429,11 +477,15 @@ has are created on the other, as always.
 
 **Force.** *Force pull* / *Force push* (`POST /api/mirrors/{ws}/force`
 `{direction: pull | push}`) makes one side identical to the other whatever
-happened: the bases and cursors are cleared, every page goes through the
+happened: the next round starts by clearing the bases and cursors
+(`_start_force`, under the round lock — a round already running finishes
+as it was), every page goes through the
 adopt policy (`theirs` for pull, `mine` for push), and pages the losing side
 alone has — including pages the winner deleted after a sync, whose
 tombstones say nothing during a force — are deleted there (`prune`); what
-the loser had is kept in `diverged` conflicts. Cheap when little differs:
+the loser had is kept in `diverged` conflicts. A force pull reads the local
+feed whatever the direction, so a receive-only clone's own pages go too.
+Cheap when little differs:
 a page whose trees are equal costs one read and no write, and only the
 differing blocks of a page are pushed, files only when the other side lacks
 the hash. Confirmed inline in the popover; a pull-only clone cannot force
@@ -472,8 +524,9 @@ workspace there:
 4. `POST /api/share/{id}` on the share host under the mirror's token makes
    the share (default anyone / view; the request's `audience` / `role` set
    it, on a new link or an existing one through `PUT /api/share-settings`).
-   The answer is the link `<share host>/?share=<token>`, the share and the
-   mirror's status.
+   The answer is the link `<share host>/?share=<token>` (`url`), the
+   page's public address (`public_url`, below), the share and the mirror's
+   status.
 
 From then on the page is an ordinary mirrored page: edits here go there at
 the next round, edits made through an edit share come back, conflicts are
@@ -485,6 +538,62 @@ nothing changes (502). An empty filter leaves the mirror row in place.
 `GET /api/pages/{id}/publish` reads whether the page is published, its live
 share there and the mirror's raw status, plus `can_publish` / `reason` for
 the popover.
+
+**The plan's cap.** The share host limits how many pages a Gamma Cloud
+plan may publish: `config.PLAN_PAGE_LIMITS` (`{"free": 5}`; the env var
+`GAMMA_FREE_PAGE_LIMIT` overrides the free plan's number, 0 lifts it;
+other plans are unlimited). A person's workspace there holds only
+published pages, so the count is its root pages. The one place a
+publishing mirror makes a page there, `POST /api/pages`, answers 402 with
+"Free plan: up to 5 published pages. Unpublish one, or upgrade your Gamma
+Cloud plan." and `{limit, used, plan}` for an account's default personal
+workspace once it holds that many (`publish.cap_refusal`), after the "id
+taken" check, so a round re-creating a page that is already there, and
+every round of a page already published, is never refused. The plan is the
+identity's last `plan` claim, which the share host stores at every exchange
+and sign-in. It applies only while the server is a share host; a
+self-hosted server never counts. On the publishing side, `publish` reads
+`GET /api/publish/limit` on the share host before a page's first round
+there; a full workspace is exchanged once more first, so an upgrade counts
+at once. Still full, the page leaves the filter again and the answer is 409
+with the share host's words and `limit: {used, max, plan}`; a 402 the round
+itself met (the workspace filled up meanwhile) ends the same way.
+Unpublishing deletes the copy there, which frees a slot. `GET
+/api/pages/{id}/publish` carries the same `limit` whenever the account
+holds a publishing token, read fresh on every call.
+
+**Public addresses.** With `GAMMA_PAGE_HOST` set on the share host (a
+pattern such as `{username}-pages.gammapdf.com`, checked at startup: one
+`{username}`, a hostname otherwise), every published page also has a pretty
+address on a hostname per account,
+`https://<username>-pages.gammapdf.com/<slug>-<page id>`. The suffix keeps
+page hosts apart from service hostnames (services are never named with it).
+The slug (`publish.slug`, mirrored in `frontend/src/shared/lib/slug.js`,
+pinned by `tests/shared/slug.json`) is the title ASCII-folded (NFKD, marks
+dropped), lowercased, runs of anything but `[a-z0-9]` turned into one `-`,
+trimmed, at most 60 characters; a title with nothing left (a CJK one) gives
+none and the path is just `/<id>`. It is decoration: routing uses only the
+trailing id, so a renamed page keeps its links. The publishing server
+builds the address (`public_url` in the publish answers) from the share
+host's `page_host` in its `/api/server-config`, the account's username
+there (the mirror's `remote_user`), the page's title and the share host's
+scheme and port; without a pattern it is the token link.
+
+A page host serves the same SPA (asset URLs are root-relative, so any host
+loads them). At boot (`PageHostGate` in `App.jsx`) the app reads
+`/api/server-config`; when `page_host` is set and the hostname matches it,
+it calls `GET /api/pages/resolve-public?host=&path=` and enters the share
+view with the token it returns, as if `?share=<token>` were in the URL
+(`utils.setShareView`); the address bar keeps the pretty address, its slug
+brought in line with the current title. The resolver reads the username out
+of the host, takes the page with the trailing id (a page id may hold a `-`,
+so every tail after a `-` is tried, the longest shared page winning) from
+that account's default personal workspace, and answers its share; the
+share's audience and role apply as for the token link. Any other path on a
+page host, the home included, is the share view's "not found". Cookies are
+per host, so on a page host nobody is signed in: a page shared only with
+signed-in users or invited people shows the sign-in gate there, and its
+token link is the way in.
 
 Limitation: a workspace that is already a copy of another server (a clone
 of the lab's NAS) cannot publish: one remote per copy, and the page's home is
@@ -499,7 +608,7 @@ is listed in `GET /api/mirrors` with the clones; the UI shows it apart
 |---|---|---|
 | GET | `/api/mirrors` | the caller's mirrors with status |
 | POST | `/api/mirrors` | `{remote_url, token, name?, mode?, workspace_id?, adopt?}` → the mirror (validated against the remote's `whoami` first; a read token or a viewer's role makes it `pull`; `workspace_id` links an existing workspace of the caller's under the `adopt` policy); the first fill runs in the background |
-| GET | `/api/mirrors/{ws}` | one mirror, with `conflicts_open`, `pending_local` (a local write no round has pushed yet; two-way copies only), `poll_s`, `on_change`, `detached`, `interval_s` (0 = the loop is off), `page_filter` (null = every page) |
+| GET | `/api/mirrors/{ws}` | one mirror, with `conflicts_open` and `conflicts_newest` (the newest open conflict's id: the pair changes exactly when the open conflicts do), `pending_local` (a local write no round has pushed yet; two-way copies only), `poll_s`, `on_change`, `detached`, `interval_s` (0 = the loop is off), `page_filter` (null = every page) |
 | PATCH | `/api/mirrors/{ws}` | `{poll_s?, on_change?, mode?}` — the cadence and direction |
 | POST | `/api/mirrors/{ws}/sync[?wait=1]` | a round now |
 | POST | `/api/mirrors/{ws}/detach` | detach (the link is kept) |
@@ -525,7 +634,9 @@ created and deleted on either side, files by hash, pull-only, stopping.
 `test_sync_tree.py` pins the diff; `test_token_api.py` the bearer rules;
 `test_sync_feed.py` the feed. `test_mirror_edges.py` is the odd cases:
 typing while a round is in flight, two clones of one remote editing the
-same blocks, a move against a delete, a child added inside a subtree
+same blocks, a move against a delete (both ways: a block moved here out of
+a subtree deleted there, and a block moved there out of a subtree deleted
+here), a child added inside a subtree
 deleted here, a subtree deleted on both sides, the same position taken on
 both sides, the title renamed on both sides, props against text, the same
 edit on both sides, a round cut short after its push, resolving a conflict
@@ -533,7 +644,10 @@ after more typing, a block moved to another page while edited here, edits
 made while the remote is unreachable — each ending with both sides equal. The progress reports, the interrupted-flag
 reset, the retry of a page that failed, detach + re-link, linking an
 existing workspace, the force in both directions, the cadence and the
-sync-on-change trigger are in `test_mirror.py` too. `test_publish.py`
+sync-on-change trigger, a detach and a force asked for while a round runs,
+edits made while the remote had demoted the account, a force pull on a
+receive-only clone, and a conflict resolved after its block moved to
+another page are in `test_mirror.py` too. `test_publish.py`
 covers the page filter (pages and deletions outside it stay put both ways,
 a page added later goes over, a published page removed there leaves the
 filter), the share host's exchange against a fake account server, and

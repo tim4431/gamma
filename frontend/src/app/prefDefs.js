@@ -6,7 +6,8 @@
 // - "account": follows the signed-in account. All of them travel together as
 //   one JSON object, keyed by preference name, under the account-wide
 //   /api/prefs/profile key (useProfileSync in prefs.js): the server copy
-//   wins on load, localStorage stays the instant-paint cache.
+//   wins on load, a change saves only the entries it touched, localStorage
+//   stays the instant-paint cache.
 // - "browser": describes this device and stays in this browser.
 // The AI provider entries and the active AI key are not preferences here:
 // they keep their own account-wide keys (ai-settings, ai-provider).
@@ -15,6 +16,8 @@
 // to fall back to the default), so a stale or hand-edited value never
 // breaks the app. Plain strings need no codec.
 import { DEFAULT_TOOLS, normalizeTools } from "../ink/ink.js";
+import { LANGUAGES } from "../shared/i18n/locales.js";
+import { normalizeChord } from "../shared/lib/hotkeys.js";
 
 export const ACCOUNT = "account";
 export const BROWSER = "browser";
@@ -40,12 +43,25 @@ const CONTEXT_CHARS = intIn(100, 1000000);
 export const FILE_LABEL_MODES = ["off", "labels", "folders", "both"];
 
 // Target languages for the PDF translated view. Codes mirror the backend's
-// allowlist (TRANSLATE_LANGS in gamma/routers/ai.py) — keep the two in sync.
+// allowlist (TRANSLATE_LANGS in gamma/translate_engines.py) — keep the two in sync.
 export const TRANSLATE_LANGS = [
   ["zh-CN", "中文（简体）"], ["zh-TW", "中文（繁體）"], ["en", "English"],
   ["ja", "日本語"], ["ko", "한국어"], ["de", "Deutsch"], ["fr", "Français"],
   ["es", "Español"], ["pt", "Português"], ["it", "Italiano"], ["ru", "Русский"],
 ];
+
+// The translation service that needs no setup (Microsoft's free endpoint).
+export const FREE_TRANSLATE_ENGINE = "engine:microsoft";
+
+// What translation sends for the "Translate with" pick, given the set-up
+// services and the chat models on offer: the pick while it is still
+// offered; with no chat model at all, the free service; else "" (follow
+// the chat model). A service id starts with "engine:".
+export function translateModelFor(pick, engines, models) {
+  if (pick && [...engines, ...models].some((m) => m.id === pick)) return pick;
+  if (!models.length && engines.some((e) => e.id === FREE_TRANSLATE_ENGINE)) return FREE_TRANSLATE_ENGINE;
+  return "";
+}
 
 // Agent per-tool permissions (Settings → Assistant → Tool configuration),
 // one map per chat KIND: "folder" (the home/folder chat), "pdf" (a page with
@@ -88,8 +104,15 @@ export const PREFS = {
   // Solarized Light and Gray also tint PDF pages (app.css). index.html
   // applies a pinned theme from localStorage before first paint.
   theme: pref("gamma-theme", ACCOUNT, "system", oneOf(THEMES)),
+  // Interface language (docs/dev/i18n.md): "system" follows the browser.
+  // main.jsx reads the stored value before the first render.
+  language: pref("gamma-language", ACCOUNT, "system", oneOf(LANGUAGES.map(([code]) => code))),
   // Flip page colors: display-only inverted (night) rendering of the PDF canvas.
   pdfDarkPage: flag("gamma-pdf-dark", ACCOUNT, false),
+  // Where the header's sync pill shows for a publication (pages published
+  // to Gamma Cloud): on the published pages only, or on every page of the
+  // workspace. A clone's pill is on every page regardless (it syncs them all).
+  syncPillScope: pref("gamma-sync-pill", ACCOUNT, "synced", oneOf(["synced", "all"])),
   // Interface size: index.html applies the stored value before first paint,
   // App.jsx keeps `--ui-scale` on the root in sync afterwards. Screens
   // differ, so it stays with the device.
@@ -102,8 +125,11 @@ export const PREFS = {
   // The always-on status bar under the tabs — off by default, the floating
   // pill carries user-facing messages; the bar is a debugging aid.
   statusBarVisible: flag("gamma-status-bar", BROWSER, false),
+  // Tours offered by themselves the first time a feature comes up
+  // (guide/triggers.js); off leaves only Account › Tours.
+  suggestTours: flag("gamma-suggest-tours", ACCOUNT, true),
 
-  // --- Library display (Settings → Library) ---
+  // --- Library display (Settings → Appearance › Library) ---
   // Recently-viewed cards on the home page (only — library cards always use
   // the glyph): cover thumbnails (a snapshot of the PDF at the last-read
   // spot). Off shows the file icon instead and stops capturing new ones.
@@ -111,7 +137,7 @@ export const PREFS = {
   // Folder/label chips on home file cards and list rows.
   fileLabels: pref("gamma-home-file-labels", ACCOUNT, "both", oneOf(FILE_LABEL_MODES)),
 
-  // --- Papers (Settings → Library) ---
+  // --- Papers (Settings → Reading › PDFs) ---
   oaFallback: flag("gamma-oa-fallback", ACCOUNT, true),
   metaAutoFetch: flag("gamma-meta-auto", ACCOUNT, true),
   pdfSaveLocal: flag("gamma-pdf-save", ACCOUNT, true),
@@ -126,6 +152,11 @@ export const PREFS = {
   // --- Translation (Settings → Reading, AI → Advanced) ---
   // Master switch: off removes the translate button from the viewer.
   translateEnabled: flag("gamma-translate-enabled", ACCOUNT, true),
+  // Selection translation: a translate button in the text-selection popup
+  // (next to the highlight colors), and whether it translates as soon as
+  // text is selected instead of on click.
+  selTranslate: flag("gamma-sel-translate", ACCOUNT, true),
+  selTranslateAuto: flag("gamma-sel-translate-auto", ACCOUNT, false),
   // Target language for the translated view (the 文A button in the viewer).
   translateLang: pref("gamma-translate-lang", ACCOUNT, "zh-CN", oneOf(TRANSLATE_LANGS.map(([code]) => code))),
   // Parallel translation requests: chunks of a page are translated this many
@@ -150,6 +181,20 @@ export const PREFS = {
   // Enter key in the note editor: off (default) = Enter types a line break and
   // Shift+Enter starts a new note; on = the Logseq-style swap of the two.
   enterNewNote: flag("gamma-enter-new-note", ACCOUNT, false),
+  // Keyboard shortcuts (Settings → Keyboard, docs/dev/hotkeys.md): command
+  // id → chord ("Mod-Shift-k") or null for unbound; a command not named
+  // keeps its default. Unknown shapes are dropped, the ids are not checked
+  // here (the catalog lives in app/commands.js) so a removed command's
+  // entry is simply ignored.
+  keybindings: pref("gamma-keybindings", ACCOUNT, {}, json((value) => {
+    if (!value || typeof value !== "object" || Array.isArray(value)) return undefined;
+    const out = {};
+    for (const [id, chord] of Object.entries(value)) {
+      if (chord === null) out[id] = null;
+      else if (typeof chord === "string" && normalizeChord(chord)) out[id] = normalizeChord(chord);
+    }
+    return out;
+  })),
 
   // --- Models (Settings → AI → Connections) ---
   // Model picks name entries of this server's provider list ("<entry>:<model>"),
@@ -159,7 +204,8 @@ export const PREFS = {
   metaModel: pref("gamma-meta-model", BROWSER, ""),
   translateModel: pref("gamma-translate-model", BROWSER, ""),
   // Voice dictation (mic button): transcription model + spoken language
-  // ("" = auto-detect); the same Models section.
+  // ("" = the display language, "auto" = let the model detect it); the same
+  // Models section.
   dictationModel: pref("gamma-dictation-model", BROWSER, "gpt-4o-transcribe"),
   dictationLang: pref("gamma-dictation-lang", BROWSER, ""),
 
@@ -224,6 +270,12 @@ export const ACCOUNT_PREFS = Object.keys(PREFS).filter((name) => PREFS[name].sco
 // The profile object for a set of preference values ({name: value, …}).
 export function profileOf(values) {
   return Object.fromEntries(ACCOUNT_PREFS.map((name) => [name, values[name]]));
+}
+
+// The profile of a fresh account: what a first Gamma Cloud merge takes as
+// the copy both sides started from (backend gamma/cloud_sync.py).
+export function defaultProfile() {
+  return Object.fromEntries(ACCOUNT_PREFS.map((name) => [name, PREFS[name].default]));
 }
 
 // One stored profile value checked the way a localStorage value is: it must

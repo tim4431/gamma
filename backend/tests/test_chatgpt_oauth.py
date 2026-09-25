@@ -13,8 +13,11 @@ import pytest
 from fastapi.testclient import TestClient
 
 import gamma.chatgpt_oauth as co
-from gamma.ai_client import chatgpt_request as _chatgpt_request
+from gamma import ai_catalog
+from gamma.ai_protocols import WIRES, chatgpt as chatgpt_proto
 from gamma.routers.ai import _sse_deltas
+
+_chatgpt_request = WIRES["chatgpt"].request
 
 
 def _fake_jwt(claims: dict) -> str:
@@ -104,11 +107,10 @@ def test_model_catalog_needs_signin_before_connect(erin):
 
 
 def test_connect_flow_creates_masked_entry_and_models(erin, monkeypatch):
-    import gamma.routers.ai as ai_mod
-
     monkeypatch.setattr(co, "_token_request", lambda form: _fake_tokens())
+    monkeypatch.setattr(chatgpt_proto, "codex_client_version", lambda: "9.9.9")
     # A fresh connect seeds its model list live from the account (first two).
-    monkeypatch.setattr(ai_mod, "urlopen", lambda req, timeout=0: _FakeResp({"models": [
+    monkeypatch.setattr(ai_catalog, "urlopen", lambda req, timeout=0: _FakeResp({"models": [
         {"slug": "gpt-6-sol", "visibility": "list"},
         {"slug": "gpt-6-terra", "visibility": "list"},
         {"slug": "gpt-6-luna", "visibility": "list"},
@@ -238,7 +240,6 @@ class _FakeResp:
 
 
 def test_chatgpt_provider_usage_reports_remaining_windows(erin, monkeypatch):
-    import gamma.routers.ai as ai_mod
     from gamma.ai_settings import load_provider_entries
 
     entry = next(e for e in load_provider_entries("erin") if e.get("protocol") == "chatgpt")
@@ -273,7 +274,7 @@ def test_chatgpt_provider_usage_reports_remaining_windows(erin, monkeypatch):
             "credits": {"has_credits": False, "balance": "0"},
         })
 
-    monkeypatch.setattr(ai_mod, "urlopen", fake_open)
+    monkeypatch.setattr(ai_catalog, "urlopen", fake_open)
     r = erin.post(f"/api/ai/providers/{entry['id']}/usage")
     assert r.status_code == 200, r.text
     body = r.json()
@@ -286,13 +287,11 @@ def test_chatgpt_provider_usage_reports_remaining_windows(erin, monkeypatch):
 
 
 def test_model_catalog_asks_chatgpt_backend_live(erin, monkeypatch):
-    import gamma.routers.ai as ai_mod
-
     entry = next(p for p in erin.get("/api/ai/settings").json()["providers"]
                  if p["protocol"] == "chatgpt")
     seen = {}
 
-    monkeypatch.setattr(ai_mod, "_codex_client_version", lambda: "9.9.9")
+    monkeypatch.setattr(chatgpt_proto, "codex_client_version", lambda: "9.9.9")
 
     def fake_urlopen(req, timeout=0):
         seen["url"] = req.full_url
@@ -305,7 +304,7 @@ def test_model_catalog_asks_chatgpt_backend_live(erin, monkeypatch):
             {"slug": "gpt-4-gone", "visibility": "none"},        # dropped
         ]})
 
-    monkeypatch.setattr(ai_mod, "urlopen", fake_urlopen)
+    monkeypatch.setattr(ai_catalog, "urlopen", fake_urlopen)
     r = erin.post("/api/ai/model-catalog", json={"provider_id": entry["id"]})
     assert r.status_code == 200
     assert r.json()["models"] == ["gpt-6-codex", "gpt-5.1-codex", "gpt-5-codex-mini"]
@@ -319,44 +318,41 @@ def test_model_catalog_asks_chatgpt_backend_live(erin, monkeypatch):
 
 
 def test_codex_client_version_is_looked_up_and_cached(monkeypatch):
-    import gamma.routers.ai as ai_mod
-
-    monkeypatch.setattr(ai_mod, "_codex_version", {"value": "", "until": 0.0})
+    monkeypatch.setattr(chatgpt_proto, "_codex_version", {"value": "", "until": 0.0})
     calls = []
 
     def npm(req, timeout=0):
         calls.append(req.full_url)
         return _FakeResp({"name": "@openai/codex", "version": "1.2.3"})
 
-    monkeypatch.setattr(ai_mod, "urlopen", npm)
-    assert ai_mod._codex_client_version() == "1.2.3"
-    assert ai_mod._codex_client_version() == "1.2.3"
-    assert calls == [ai_mod._CODEX_VERSION_URL]  # second call served from cache
+    monkeypatch.setattr(chatgpt_proto, "urlopen", npm)
+    assert chatgpt_proto.codex_client_version() == "1.2.3"
+    assert chatgpt_proto.codex_client_version() == "1.2.3"
+    assert calls == [chatgpt_proto.CODEX_VERSION_URL]  # second call served from cache
 
     # Expired + npm down: keep the last good version, and don't retry at once.
     def down(req, timeout=0):
         calls.append(req.full_url)
         raise OSError("offline")
 
-    ai_mod._codex_version["until"] = 0.0
-    monkeypatch.setattr(ai_mod, "urlopen", down)
-    assert ai_mod._codex_client_version() == "1.2.3"
-    assert ai_mod._codex_client_version() == "1.2.3"
+    chatgpt_proto._codex_version["until"] = 0.0
+    monkeypatch.setattr(chatgpt_proto, "urlopen", down)
+    assert chatgpt_proto.codex_client_version() == "1.2.3"
+    assert chatgpt_proto.codex_client_version() == "1.2.3"
     assert len(calls) == 2
 
     # Never looked up successfully: the floor.
-    monkeypatch.setattr(ai_mod, "_codex_version", {"value": "", "until": 0.0})
-    assert ai_mod._codex_client_version() == ai_mod._CODEX_VERSION_FLOOR
+    monkeypatch.setattr(chatgpt_proto, "_codex_version", {"value": "", "until": 0.0})
+    assert chatgpt_proto.codex_client_version() == chatgpt_proto.CODEX_VERSION_FLOOR
 
 
 def test_model_catalog_errors_when_listing_fails(erin, monkeypatch):
-    import gamma.routers.ai as ai_mod
-
     def boom(req, timeout=0):
         raise OSError("no route to host")
 
     # No hardcoded model list to fall back on — the picker shows the error.
-    monkeypatch.setattr(ai_mod, "urlopen", boom)
+    monkeypatch.setattr(chatgpt_proto, "codex_client_version", lambda: "9.9.9")
+    monkeypatch.setattr(ai_catalog, "urlopen", boom)
     r = erin.post("/api/ai/model-catalog", json={"protocol": "chatgpt"})
     assert r.status_code == 502
     assert "no route to host" in r.json()["detail"]
@@ -368,15 +364,13 @@ def test_model_catalog_errors_when_listing_fails(erin, monkeypatch):
 
 
 def test_api_model_catalog_uses_one_short_attempt(erin, monkeypatch):
-    import gamma.routers.ai as ai_mod
-
     calls = []
 
     def timed_out(req, timeout=0):
         calls.append((req, timeout))
         raise TimeoutError("timed out")
 
-    monkeypatch.setattr(ai_mod, "urlopen", timed_out)
+    monkeypatch.setattr(ai_catalog, "urlopen", timed_out)
     r = erin.post("/api/ai/model-catalog", json={
         "protocol": "openai",
         "api_key": "sk-test",
@@ -390,8 +384,6 @@ def test_api_model_catalog_uses_one_short_attempt(erin, monkeypatch):
 
 
 def test_api_model_catalog_does_not_retry_auth_error(erin, monkeypatch):
-    import gamma.routers.ai as ai_mod
-
     calls = 0
 
     def unauthorized(req, timeout=0):
@@ -405,7 +397,7 @@ def test_api_model_catalog_does_not_retry_auth_error(erin, monkeypatch):
             io.BytesIO(b'{"error":{"message":"bad key"}}'),
         )
 
-    monkeypatch.setattr(ai_mod, "urlopen", unauthorized)
+    monkeypatch.setattr(ai_catalog, "urlopen", unauthorized)
     r = erin.post("/api/ai/model-catalog", json={
         "protocol": "openai",
         "api_key": "sk-bad",
@@ -424,7 +416,7 @@ def test_catalog_uses_edited_endpoint_and_protocol(erin, monkeypatch):
         "base_url": "https://old.example",
     }])
     calls = []
-    monkeypatch.setattr(ai_mod, "_model_catalog_json", lambda req: calls.append(req) or {"data": []})
+    monkeypatch.setattr(ai_catalog, "fetch_json", lambda req: calls.append(req) or {"data": []})
     for fields in ({}, {"base_url": ""}, {"protocol": "anthropic", "base_url": "https://new.example"}):
         response = erin.post("/api/ai/model-catalog", json={"provider_id": "saved", **fields})
         assert response.status_code == 200
@@ -468,3 +460,69 @@ def test_chatgpt_sse_deltas_join_and_fail():
     empty = [b'data: {"type":"response.completed","response":{"status":"completed"}}\n']
     with pytest.raises(RuntimeError, match="empty response"):
         list(_sse_deltas(empty, "chatgpt"))
+
+
+def test_context_window_comes_from_the_listing_then_models_dev(erin, monkeypatch):
+    monkeypatch.setattr(ai_catalog, "_listings", {})
+    monkeypatch.setattr(ai_catalog, "_models_dev", {"windows": None, "until": 0.0})
+    monkeypatch.setattr(chatgpt_proto, "codex_client_version", lambda: "9.9.9")
+    entry = next(p for p in erin.get("/api/ai/settings").json()["providers"]
+                 if p["protocol"] == "chatgpt")
+    model = next(m for m in erin.get("/api/ai/models").json()["models"] if m["provider"] == entry["id"])
+    calls = []
+    listing = {"models": [{"slug": model["model"], "context_window": 272_000}]}
+    catalog = {
+        "openai": {"models": {model["model"]: {"id": model["model"], "limit": {"context": 400_000}}}},
+        "gateway": {"models": {f"openai/{model['model']}": {"limit": {"context": 128_000}}}},
+    }
+
+    def fake_urlopen(req, timeout=0):
+        calls.append(req.full_url)
+        return _FakeResp(catalog if "models.dev" in req.full_url else listing)
+
+    monkeypatch.setattr(ai_catalog, "urlopen", fake_urlopen)
+    ask = lambda: erin.get("/api/ai/context-window", params={"model": model["id"]}).json()
+
+    # The provider's own listing says it; asked once, then cached.
+    assert ask() == {"model": model["model"], "context_window": 272_000, "source": "provider"}
+    assert ask()["context_window"] == 272_000
+    assert len(calls) == 1 and "/models?client_version=9.9.9" in calls[0]
+
+    # A listing without sizes: models.dev, the vendor behind the protocol winning.
+    listing = {"models": [{"slug": model["model"]}]}
+    ai_catalog._listings.clear()
+    assert ask() == {"model": model["model"], "context_window": 400_000, "source": "models.dev"}
+
+    # Nobody knows it: null, never a guess.
+    catalog = {"openai": {"models": {}}}
+    ai_catalog._listings.clear()
+    ai_catalog._models_dev.update(windows=None, until=0.0)
+    assert ask() == {"model": model["model"], "context_window": None, "source": ""}
+
+
+def test_context_window_lookups_keep_the_last_good_answer(monkeypatch):
+    monkeypatch.setattr(ai_catalog, "_listings", {})
+    monkeypatch.setattr(ai_catalog, "_models_dev", {"windows": None, "until": 0.0})
+    conf = {"protocol": "openai", "api_key": "k", "base_url": "https://api.deepseek.com", "name": "DeepSeek"}
+    monkeypatch.setattr(ai_catalog, "urlopen", lambda req, timeout=0: _FakeResp(
+        {"data": [{"id": "llama", "max_model_len": 32_768}, {"id": "bare"}]} if "/v1/models" in req.full_url else {
+            "deepseek": {"models": {"deepseek-chat": {"limit": {"context": 131_072}}}},
+            "a": {"models": {"deepseek-chat": {"limit": {"context": 64_000}}}},
+            "b": {"models": {"deepseek-chat": {"limit": {"context": 64_000}}}},
+        }))
+    assert ai_catalog._listed_windows("p", conf) == {"llama": 32_768}
+    # The provider named in the entry's host wins over the majority...
+    assert ai_catalog._catalog_window("deepseek-chat", conf) == 131_072
+    # ...and without one, the value most providers agree on.
+    assert ai_catalog._catalog_window("deepseek-chat", {**conf, "base_url": "https://example.org"}) == 64_000
+
+    # Expired + offline: the last good answers stay, retried only later.
+    def down(req, timeout=0):
+        raise OSError("offline")
+
+    monkeypatch.setattr(ai_catalog, "urlopen", down)
+    for cached in ai_catalog._listings.values():
+        cached["until"] = 0.0
+    ai_catalog._models_dev["until"] = 0.0
+    assert ai_catalog._listed_windows("p", conf) == {"llama": 32_768}
+    assert ai_catalog._catalog_window("deepseek-chat", conf) == 131_072

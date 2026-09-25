@@ -263,3 +263,28 @@ def test_edits_during_an_unreachable_remote_stay_pending_and_land_later(monkeypa
     _sync(local)
     assert remote.texts(page["id"])["o1"] == "text (typed on the train)"
     assert local.client.get(f"/api/mirrors/{local.ws}").json()["pending_local"] is False
+
+
+def test_a_block_moved_out_of_a_subtree_deleted_here_survives():
+    """The remote moves a block (with its own child) out of a section, edits
+    it; this copy deletes the section meanwhile. The moved block is no part
+    of that deletion any more: it comes back here where the remote put it,
+    the section stays deleted, and nothing is deleted on the remote."""
+    remote, local, _ = _pair()
+    page = remote.page("Moved out")
+    remote.insert(page["id"], "mo_x", "section X", position="a0")
+    remote.insert(page["id"], "mo_y", "section Y", position="a1")
+    remote.insert(page["id"], "mo_c", "child of X", parent="mo_x")
+    remote.insert(page["id"], "mo_g", "grandchild", parent="mo_c")
+    _sync(local)
+    local.ops(page["id"], [{"op": "delete", "id": "mo_x"}])
+    remote.ops(page["id"], [{"op": "move", "id": "mo_c", "parent": "mo_y", "position": "a0"},
+                            {"op": "set", "id": "mo_c", "content": "child of X, edited there"}])
+    _sync(local)
+    t = same_tree(remote, local, page["id"])
+    assert "mo_x" not in t, "the section deleted here stays deleted"
+    assert t["mo_c"] == {"parent": "mo_y", "content": "child of X, edited there", "props": {}}
+    assert t["mo_g"]["parent"] == "mo_c"
+    assert [(c["kind"], c["block_id"]) for c in conflicts(local)] == [("restored_remote_edit", "mo_c")]
+    _sync(local)
+    same_tree(remote, local, page["id"])

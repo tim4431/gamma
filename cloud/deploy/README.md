@@ -173,6 +173,39 @@ Restart the container after editing `.env` (`docker compose up -d`).
   page under the username), which makes that person its admin on first
   sign-in.
 
+## The free share host
+
+The compose file also runs `share`: one Gamma in cloud mode
+(`ghcr.io/tim4431/gamma`, pinned to an image tag) that holds every free
+account's published pages and answers `share.gammapdf.com` and the page
+hosts `<username>-pages.gammapdf.com` ([docs/dev/cloud_accounts.md](../../docs/dev/cloud_accounts.md)
+"The share host"). Setting it up once:
+
+1. A wildcard DNS record at Cloudflare: `*` → this host's address, proxied.
+   Named records (`account`) keep precedence; the universal certificate
+   covers the first-level wildcard, and the Caddyfile's `*.gammapdf.com`
+   site serves the internal certificate behind it (SSL mode "Full").
+2. The share host's client on the account server:
+   `docker compose exec account python manage.py create-client "Share host" share-host https://share.gammapdf.com/api/auth/cloud/callback`
+   (the secret is shown once).
+3. `share.env` from `share.env.example`: the client id and secret, and
+   `GAMMA_CLOUD_ADMIN_SUBJECT` = your cloud account id, so your first sign-in
+   there makes you its admin. The image also seeds an `admin` account with a
+   random password printed once to the container's log while no account
+   exists; delete it or set its password from Settings → Users afterwards.
+4. `GAMMA_CLOUD_SHARE_HOST_URL=https://share.gammapdf.com` in `.env`, then
+   `docker compose up -d` (the account server restarts with the new
+   variable, `share` starts) and `docker compose exec caddy caddy reload
+   --config /etc/caddy/Caddyfile` for the new site.
+5. Check: `curl https://share.gammapdf.com/api/health` answers ok,
+   `https://account.gammapdf.com/.well-known/openid-configuration` shows
+   `gamma_share_host`, and from a linked desktop the share popover's
+   Gamma Cloud section offers Publish.
+
+The default storage quota per account on the share host is its Settings →
+Server storage default; set it small. `share-data/` is the share host's
+state (published pages and files) — back it up like `data/`.
+
 ## Updating
 
 ```bash

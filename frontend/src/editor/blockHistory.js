@@ -24,6 +24,7 @@
 // strips editMode so undo never pops editors open. The stack belongs to one
 // page and is cleared when the page id changes.
 import { useCallback, useEffect, useRef } from "react";
+import { t } from "../shared/i18n/i18n.js";
 
 const MAX_ENTRIES = 200;
 const TYPING_MERGE_MS = 500;
@@ -87,23 +88,23 @@ export function describeTransition(before, after) {
     const text = (n?.content || "").replace(/\s+/g, " ").trim();
     return text ? `: “${text.length > 48 ? text.slice(0, 47) + "…" : text}”` : "";
   };
-  if (added.length && removed.length) return `note replacement (${removed.length} removed, ${added.length} added)`;
-  if (added.length) return added.length === 1 ? `note creation${preview(added[0])}` : `creation of ${added.length} notes`;
-  if (removed.length) return removed.length === 1 ? `note deletion${preview(removed[0])}` : `deletion of ${removed.length} notes`;
+  if (added.length && removed.length) return t("note replacement ({n} removed, {n2} added)", { n: removed.length, n2: added.length });
+  if (added.length) return added.length === 1 ? t("note creation{added}", { added: preview(added[0]) }) : t("creation of {n} notes", { n: added.length });
+  if (removed.length) return removed.length === 1 ? t("note deletion{removed}", { removed: preview(removed[0]) }) : t("deletion of {n} notes", { n: removed.length });
   const moved = [...b.values()].filter((n) => a.get(n.id)?.parent !== n.parent || a.get(n.id)?.order !== n.order);
-  if (moved.length) return "note move";
+  if (moved.length) return t("note move");
   const text = [...b.values()].filter((n) => a.get(n.id)?.content !== n.content);
   const props = [...b.values()].filter((n) => !propsEqual(a.get(n.id)?.properties, n.properties));
-  if (text.length && props.length) return "note text and properties edit";
-  if (text.length) return text.length === 1 ? `note text edit${preview(text[0])}` : `text edits in ${text.length} notes`;
+  if (text.length && props.length) return t("note text and properties edit");
+  if (text.length) return text.length === 1 ? t("note text edit{text}", { text: preview(text[0]) }) : t("text edits in {n} notes", { n: text.length });
   if (props.length) {
-    if (props.every((n) => n.properties?.ink_url !== undefined)) return "handwriting note update";
+    if (props.every((n) => n.properties?.ink_url !== undefined)) return t("handwriting note update");
     if (props.every((n) => n.properties?.highlight_id)) {
-      return props.every((n) => a.get(n.id)?.properties?.color !== n.properties.color) ? "highlight color change" : "highlight edit";
+      return props.every((n) => a.get(n.id)?.properties?.color !== n.properties.color) ? t("highlight color change") : t("highlight edit");
     }
-    return "note properties change";
+    return t("note properties change");
   }
-  return "note edit";
+  return t("note edit");
 }
 
 function hasBlock(list, id) {

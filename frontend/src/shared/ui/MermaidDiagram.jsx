@@ -4,6 +4,7 @@ import { renderMermaid } from "../lib/mermaidRenderer.js";
 import { CheckIcon, CodeIcon, CopyIcon, DownloadIcon } from "./Icons";
 import { ResizeGrips, useDragResize } from "./ResizeGrip";
 import "./mermaid.css";
+import { t } from "../../shared/i18n/i18n.js";
 
 export function mermaidCodeProps(children) {
   const code = React.Children.toArray(children).find((child) =>
@@ -82,22 +83,22 @@ export function MermaidDiagram({ source, pending = false, width = null, idx, onR
     <div className={`mermaidDiagram${showSource ? " showingSource" : ""}`} data-mermaid-source={source} data-mermaid-theme={theme}>
       <div className="mermaidTools" data-markdown-copy-ignore="" onMouseDown={stop} onClick={stop}>
         <button type="button" className={`ctlBtn${showSource ? " modeActive" : ""}`}
-          aria-label="Source" title={showSource ? "Show diagram" : "Show source"}
+          aria-label={t("Source")} title={showSource ? t("Show diagram") : t("Show source")}
           aria-pressed={showSource} onClick={() => setShowSource(!showSource)}><CodeIcon /></button>
-        <button type="button" className="ctlBtn" aria-label="Copy source"
-          title={copyStatus || "Copy source"} onClick={async () =>
-            setCopyStatus(await copyText(source) ? "Copied" : "Copy failed")}>
-          {copyStatus === "Copied" ? <CheckIcon /> : <CopyIcon />}
+        <button type="button" className="ctlBtn" aria-label={t("Copy source")}
+          title={copyStatus === "copied" ? t("Copied") : copyStatus === "failed" ? t("Copy failed") : t("Copy source")}
+          onClick={async () => setCopyStatus(await copyText(source) ? "copied" : "failed")}>
+          {copyStatus === "copied" ? <CheckIcon /> : <CopyIcon />}
         </button>
-        <button type="button" className="ctlBtn" aria-label="Download SVG" title="Download SVG"
+        <button type="button" className="ctlBtn" aria-label={t("Download SVG")} title={t("Download SVG")}
           disabled={!active?.svg} onClick={download}><DownloadIcon /></button>
       </div>
-      {!active && <div className="mermaidStatus" role="status">{pending ? "Waiting for the diagram to finish…" : "Rendering diagram…"}</div>}
-      {active?.error && <div className="mermaidError" role="status">Could not render diagram.<pre>{active.error}</pre></div>}
+      {!active && <div className="mermaidStatus" role="status">{pending ? t("Waiting for the diagram to finish…") : t("Rendering diagram…")}</div>}
+      {active?.error && <div className="mermaidError" role="status">{t("Could not render diagram.")}<pre>{active.error}</pre></div>}
       {active?.svg && !showSource && (
         <div className="mermaidPreview">
           <div ref={figureRef} className={`mermaidFigure${w ? " sized" : ""}`} style={w ? { width: w } : undefined}>
-            <div className="mermaidSvg" role="img" aria-label="Mermaid diagram" dangerouslySetInnerHTML={{ __html: active.svg }} />
+            <div className="mermaidSvg" role="img" aria-label={t("Mermaid diagram")} dangerouslySetInnerHTML={{ __html: active.svg }} />
             {onResize ? <ResizeGrips as="div" gripProps={gripProps} /> : null}
           </div>
         </div>

@@ -110,6 +110,36 @@ def admin_delete(account_id: str, request: Request):
     return {"ok": True}
 
 
+def _deleted(conn, account_id: str):
+    if accounts.by_id_deleted(conn, account_id):
+        return
+    if accounts.by_id(conn, account_id):
+        raise Problem(409, "The account is not deleted.")
+    raise HTTPException(404, "no such account")
+
+
+@router.post("/accounts/{account_id}/restore")
+def admin_restore(account_id: str, request: Request):
+    with closing(db.connect()) as conn:
+        admin = require_admin(conn, request)
+        _deleted(conn, account_id)
+        accounts.restore(conn, account_id, admin["id"])
+        conn.commit()
+        return {"account": _row(accounts.by_id(conn, account_id))}
+
+
+@router.post("/accounts/{account_id}/purge")
+def admin_purge(account_id: str, request: Request):
+    """Only a deleted account: a live one is deleted first, so the purge
+    never skips the delete's sign-out."""
+    with closing(db.connect()) as conn:
+        admin = require_admin(conn, request)
+        _deleted(conn, account_id)
+        accounts.purge(conn, account_id, admin["id"])
+        conn.commit()
+    return {"ok": True}
+
+
 # --- invites ------------------------------------------------------------------
 
 class InviteBody(BaseModel):

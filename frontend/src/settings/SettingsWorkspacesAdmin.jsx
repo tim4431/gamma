@@ -11,6 +11,7 @@ import { MenuSelect } from "../shared/ui/Menus";
 import { Section, SubDialog, Field, Empty, UnitInput, AccountPicker } from "./SettingsKit";
 import { ManageWorkspaceDialog, useAccounts, ACCESS_OPTIONS, PUBLIC_ROLE_OPTIONS } from "./SettingsWorkspace";
 import { GlobeIcon, PenIcon, PlusIcon, UsersIcon } from "../shared/ui/Icons";
+import { t } from "../shared/i18n/i18n.js";
 
 export function WorkspacesAdmin({ value }) {
   const { me, workspaces: mine, switchWorkspace, refreshSession, setStatus, confirm, closeSettings } = value;
@@ -39,20 +40,20 @@ export function WorkspacesAdmin({ value }) {
         <span className="aiProvMeta">
           <span className="aiProvName">
             {w.name}
-            {isPublic ? <span className="uiTag">public · everyone {w.public_role === "editor" ? "edits" : "views"}</span> : null}
+            {isPublic ? <span className="uiTag">{w.public_role === "editor" ? t("public · everyone edits") : t("public · everyone views")}</span> : null}
           </span>
           <span className="aiProvDesc">
             {`${owners.length ? `owner ${owners.join(", ")}` : "no owner"} · ${w.members.length} member${w.members.length === 1 ? "" : "s"}`}
             {` · ${fmtBytes(w.used_bytes)}`}
-            {w.quota_mb ? ` of ${w.quota_mb} MB` : ""}
+            {w.quota_mb ? t(" of {quota_mb} MB", { quota_mb: w.quota_mb }) : ""}
           </span>
         </span>
         <span className="aiProvActions">
           {openable.has(w.id) ? (
-            <button className="uiBtn sm" onClick={() => { closeSettings?.(); switchWorkspace(w.id); }}>Open</button>
+            <button className="uiBtn sm" onClick={() => { closeSettings?.(); switchWorkspace(w.id); }}>{t("Open")}</button>
           ) : null}
-          <button className="uiBtn sm" onClick={() => setManage(w.id)} title={`Manage ${w.name}`}>
-            <PenIcon size={13} /> Manage
+          <button className="uiBtn sm" onClick={() => setManage(w.id)} title={t("Manage {name}", { name: w.name })}>
+            <PenIcon size={13} /> {t("Manage")}
           </button>
         </span>
       </div>
@@ -61,23 +62,23 @@ export function WorkspacesAdmin({ value }) {
 
   return (
     <>
-      {!listing && !error ? <Empty icon={UsersIcon}>Loading…</Empty> : null}
-      {error ? <Empty icon={UsersIcon}>Workspaces unavailable — {error}</Empty> : null}
+      {!listing && !error ? <Empty icon={UsersIcon}>{t("Loading…")}</Empty> : null}
+      {error ? <Empty icon={UsersIcon}>{t("Workspaces unavailable — {error}", { error: error })}</Empty> : null}
       {listing ? (
         <>
           <Section
-            title="Shared workspaces"
+            title={t("Shared workspaces")}
             action={(
               <button className="uiBtn sm" onClick={() => setCreating(true)}>
-                <PlusIcon size={13} /> New workspace
+                <PlusIcon size={13} /> {t("New workspace")}
               </button>
             )}
           >
-            {shared.length ? shared.map(row) : <Empty icon={UsersIcon}>No shared workspaces yet.</Empty>}
+            {shared.length ? shared.map(row) : <Empty icon={UsersIcon}>{t("No shared workspaces yet.")}</Empty>}
           </Section>
           {listing.orphans?.length ? (
             <div className="settingsPaneHint">
-              Directories under workspaces/ that no workspace names (inspect or delete by hand): {listing.orphans.join(", ")}
+              {t("Directories under workspaces/ that no workspace names (inspect or delete by hand):")} {listing.orphans.join(", ")}
             </div>
           ) : null}
         </>
@@ -112,10 +113,10 @@ function NewWorkspaceDialog({ me, accounts, setStatus, onCreated, onClose }) {
 
   async function submit() {
     const name = form.name.trim();
-    if (!name) { setError("Give the workspace a name."); return; }
-    if (!form.owner) { setError("Pick an owner."); return; }
+    if (!name) { setError(t("Give the workspace a name.")); return; }
+    if (!form.owner) { setError(t("Pick an owner.")); return; }
     const quota = form.quota_mb.trim() === "" ? 0 : Number.parseInt(form.quota_mb, 10);
-    if (!Number.isFinite(quota) || quota < 0) { setError("The quota must be a whole number of MB, or blank."); return; }
+    if (!Number.isFinite(quota) || quota < 0) { setError(t("The quota must be a whole number of MB, or blank.")); return; }
     setBusy(true);
     setError("");
     try {
@@ -123,7 +124,7 @@ function NewWorkspaceDialog({ me, accounts, setStatus, onCreated, onClose }) {
         method: "POST", headers: { "Content-Type": "application/json" },
         body: JSON.stringify({ name, kind: "shared", owner: form.owner, access: form.access, public_role: form.public_role, quota_mb: quota }),
       });
-      setStatus(`Created ${d.name} for ${form.owner}${d.access === "public" ? ", open to everyone" : ""}.`);
+      setStatus(t("Created {name} for {owner}{everyone}.", { name: d.name, owner: form.owner, everyone: d.access === "public" ? t(", open to everyone") : "" }));
       onCreated(d);
     } catch (err) {
       setError(err.message);
@@ -133,34 +134,34 @@ function NewWorkspaceDialog({ me, accounts, setStatus, onCreated, onClose }) {
   }
 
   return (
-    <SubDialog title="New shared workspace" onClose={onClose} draft={form}>
+    <SubDialog title={t("New shared workspace")} onClose={onClose} draft={form}>
       <div className="settingsForm">
-        <Field label="Name" hint="a lab, a course, a reading room — personal workspaces are made from Manage workspaces">
+        <Field label={t("Name")} hint={t("a lab, a course, a reading room — personal workspaces are made from Manage workspaces")}>
           <input
             className="aiKeyInput" type="text" autoFocus value={form.name}
             onChange={(e) => set({ name: e.target.value })}
             onKeyDown={(e) => { if (e.key === "Enter") submit(); }}
           />
         </Field>
-        <Field label="Owner" hint="who manages it — you unless you pick someone">
+        <Field label={t("Owner")} hint={t("who manages it — you unless you pick someone")}>
           <AccountPicker accounts={accounts} value={form.owner} onChange={(owner) => set({ owner })} compact />
         </Field>
-        <Field label="Access" hint={form.access === "public" ? "every account on this server can open it" : "members only, by invitation"}>
-          <MenuSelect value={form.access} label="Access" options={ACCESS_OPTIONS} block onChange={(access) => set({ access })} />
+        <Field label={t("Access")} hint={form.access === "public" ? t("every account on this server can open it") : t("members only, by invitation")}>
+          <MenuSelect value={form.access} label={t("Access")} options={ACCESS_OPTIONS} block onChange={(access) => set({ access })} />
         </Field>
         {form.access === "public" ? (
-          <Field label="Public role">
-            <MenuSelect value={form.public_role} label="Public role" options={PUBLIC_ROLE_OPTIONS} block onChange={(public_role) => set({ public_role })} />
+          <Field label={t("Public role")}>
+            <MenuSelect value={form.public_role} label={t("Public role")} options={PUBLIC_ROLE_OPTIONS} block onChange={(public_role) => set({ public_role })} />
           </Field>
         ) : null}
-        <Field label="Workspace quota" hint="total uploads · blank = unlimited">
+        <Field label={t("Workspace quota")} hint={t("total uploads · blank = unlimited")}>
           <UnitInput unit="MB" min={0} placeholder="unlimited" value={form.quota_mb} onChange={(quota_mb) => set({ quota_mb })} />
         </Field>
         {error ? <div className="settingsPaneHint aiKeysError">{error}</div> : null}
         <div className="reportModalBtns">
-          <button className="uiBtn" onClick={onClose}>Cancel</button>
+          <button className="uiBtn" onClick={onClose}>{t("Cancel")}</button>
           <button className="uiBtn primary" disabled={busy || !form.name.trim() || !form.owner} onClick={submit}>
-            {busy ? "Creating…" : "Create"}
+            {busy ? t("Creating…") : t("Create")}
           </button>
         </div>
       </div>

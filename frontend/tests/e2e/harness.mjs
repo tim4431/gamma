@@ -28,7 +28,16 @@ export const flags = {
   headed: process.argv.includes("--headed"),
   continueOnFail: process.argv.includes("--continue"),
   only: (() => { const i = process.argv.indexOf("--only"); return i > 0 ? process.argv[i + 1] : ""; })(),
+  group: process.argv.includes("--group"),
 };
+
+// Whether a scenario file with this step prefix should do its setup: an
+// `--only` that is part of the prefix ("mir") or starts with it ("mirror:
+// clone…"), or any `--only` inside an explicit `--group` (the group already
+// chose the file; step() still filters its steps).
+export function wanted(prefix) {
+  return !flags.only || flags.group || prefix.includes(flags.only) || flags.only.startsWith(prefix);
+}
 
 // ---------------------------------------------------------------------------
 // Server
@@ -59,12 +68,16 @@ export class Server {
     if (!fs.existsSync(path.join(DIST, "index.html"))) throw new Error("frontend/dist is missing: run `npm run build` first");
     if (path.isAbsolute(PYTHON) && !fs.existsSync(PYTHON)) throw new Error(`backend venv python not found at ${PYTHON}`);
     fs.mkdirSync(this.dataDir, { recursive: true });
+    // Serve a copy of the build: an `npm run build` elsewhere during a run
+    // replaces dist/ and would otherwise 500 every page load until it ends.
+    const dist = path.join(this.dir, "dist");
+    fs.cpSync(DIST, dist, { recursive: true });
     this.manage("setup");
     this.port = await freePort();
     const log = fs.openSync(this.logPath, "a");
     this.proc = spawn(PYTHON, ["-m", "uvicorn", "app:app", "--host", "127.0.0.1", "--port", String(this.port)], {
       cwd: BACKEND, stdio: ["ignore", log, log],
-      env: { ...process.env, GAMMA_DATA_DIR: this.dataDir, GAMMA_STATIC_DIR: DIST, PYTHONIOENCODING: "utf-8", GAMMA_UPDATE_CHECK: "off", ...this.env },
+      env: { ...process.env, GAMMA_DATA_DIR: this.dataDir, GAMMA_STATIC_DIR: dist, PYTHONIOENCODING: "utf-8", GAMMA_UPDATE_CHECK: "off", ...this.env },
     });
     const t0 = Date.now();
     while (Date.now() - t0 < 30000) {
@@ -150,16 +163,32 @@ export class Account {
 
 export async function launchBrowser() {
   const opts = { headless: !flags.headed };
-  if (process.env.GAMMA_E2E_BROWSER === "webkit") return webkit.launch(opts);
+  if (process.env.GAMMA_E2E_BROWSER === "webkit") return english(await webkit.launch(opts));
   try {
-    return await chromium.launch(opts);
+    return english(await chromium.launch(opts));
   } catch (e) {
     if (!/Executable doesn't exist/.test(String(e.message))) throw e;
     console.log("  (downloading Playwright's Chromium once)");
     execFileSync(process.platform === "win32" ? "npx.cmd" : "npx", ["playwright", "install", "chromium-headless-shell"],
       { cwd: path.join(ROOT, "frontend"), stdio: "inherit", shell: process.platform === "win32" });
-    return await chromium.launch(opts);
+    return english(await chromium.launch(opts));
   }
+}
+
+// The suite selects by English text, and the interface follows the
+// browser's language by default (docs/dev/i18n.md), so every context is
+// English unless a scenario asks for another locale. Tours offered by
+// themselves (docs/dev/onboarding.md) would cover what other scenarios
+// click, so every context turns "Suggest tours" off unless it passes
+// `suggestTours: true`.
+function english(browser) {
+  const newContext = browser.newContext.bind(browser);
+  browser.newContext = async ({ suggestTours = false, ...options } = {}) => {
+    const ctx = await newContext({ locale: "en-US", ...options });
+    await ctx.addInitScript((on) => { try { localStorage.setItem("gamma-suggest-tours", on ? "1" : "0"); } catch {} }, suggestTours);
+    return ctx;
+  };
+  return browser;
 }
 
 // API answers that are a designed "no" rather than a failure.

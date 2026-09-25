@@ -15,30 +15,40 @@ import { gammaLinkId, gammaLinkIds, parseGammaLink, relativeGammaLink } from "..
 import { InkCard } from "../ink/InkLayer";
 import { GammaLinkCard, handleMarkdownCopy } from "../shared/ui/Widgets";
 import { MermaidDiagram, mermaidCodeProps } from "../shared/ui/MermaidDiagram";
-import { mapOutsideCodeFences, remarkMermaid, setMermaidWidth } from "../shared/lib/mermaidMarkdown.js";
+import { mapOutsideCodeFences, remarkMermaid, scanMermaidFences, setMermaidWidth } from "../shared/lib/mermaidMarkdown.js";
+import { MdObject, findObject } from "./MdObject";
+import { cutObject } from "./mdObjects";
+import { blockSpans } from "./mdScan";
 import { LinkIcon, PenIcon } from "../shared/ui/Icons";
 import { FileChip, parseUploadUrl, postFile, uploadFilesAsLines } from "../transfers/FileChip";
 import {
   envCompletions, findMathAtCursor, latexCompletionEdit, latexCompletions,
   LatexAcPopup, MathLivePreview, mathTabJump,
 } from "./LatexEditor";
-import { BlockCmEditor, scanMathSpans } from "./BlockCmEditor";
+import { BlockCmEditor, OBJECT_DRAG_TYPE } from "./BlockCmEditor";
+import { scanMathSpans } from "./markCommands";
 import { expandBlankLines } from "./mdMarks";
+import { BLOCK_COMMANDS } from "./blockCommands.js";
+import { dispatch as dispatchHotkey } from "../shared/lib/hotkeys.js";
 import { blockStartInSource, gapInSource, renderedGaps, sourceOffsetAtPoint } from "./clickToSource";
 import { fenceInnerAt, highlightCode, makeCopyButton, scanFences } from "./codeHighlight";
 import { filterSlashCommands, SlashMenuPopup } from "./SlashMenu";
 import { remarkCallouts } from "./callouts";
-import { PeerChips } from "../collaboration/Presence";
+import { PeerChips, RenderedCarets } from "../collaboration/Presence";
 import { ContextMenu, MenuItem } from "../shared/ui/Menus";
 import { API, apiJson, assetUrl, copyText, withWorkspace } from "../shared/lib/utils";
 import { CopyIcon, ExportIcon, MessageSquareIcon, PlusIcon, Trash2Icon } from "../shared/ui/Icons";
+import { T, t } from "../shared/i18n/i18n.js";
+import { guideEvents } from "../guide/events.js";
 import {
   applyImageEdit, applyTableEdit, formatTables, htmlTableToMarkdown,
   MdImage, MdTableWrap, parseTable, scanTables, tsvToMarkdown,
 } from "./MdTools";
 
 // Module-level ref for native HTML5 drag-and-drop (shared with App's drop handlers)
-const _dragState = { draggingId: null, dropTarget: null };
+// draggingId: the block a ⋮⋮ handle drags; fragment: {blockId, kind, idx},
+// an image / table / diagram dragged out of a block's rendered view.
+const _dragState = { draggingId: null, dropTarget: null, fragment: null };
 
 // Source → markdown the renderer understands: sized images (Obsidian
 // ![alt|300] and legacy Logseq {:width}), ![[embeds]],
@@ -108,7 +118,7 @@ function githubLabel(href) {
     const u = new URL(href);
     if (!/(^|\.)github\.com$/i.test(u.hostname)) return null;
     const p = u.pathname.split("/").filter(Boolean);
-    if (p.length === 0) return "GitHub";
+    if (p.length === 0) return t("GitHub");
     if (p.length === 1) return p[0];
     const repo = `${p[0]}/${p[1]}`;
     if (["issues", "pull", "discussions"].includes(p[2]) && p[3]) return `${repo} #${p[3]}`;
@@ -375,7 +385,7 @@ function BlockEmbedCard({ refId, refBlock, refLabels, onBlockRefClick, onEmbedEd
       className={`blockEmbedCard${draft != null ? " editing" : ""}`}
       role={editable ? undefined : "link"}
       title={draft != null ? undefined
-        : refBlock?.page_title ? `From: ${refBlock.page_title}` : "Embedded note"}
+        : refBlock?.page_title ? `From: ${refBlock.page_title}` : t("Embedded note")}
       onMouseDown={(e) => e.stopPropagation()}
       onClick={(e) => {
         e.preventDefault();
@@ -425,7 +435,7 @@ function BlockEmbedCard({ refId, refBlock, refLabels, onBlockRefClick, onEmbedEd
               // Escape saves and exits, same as blurring a normal block.
               if (e.key === "Escape") { e.preventDefault(); save(); }
             }}
-            placeholder="Edit the source note…"
+            placeholder={t("Edit the source note…")}
           />
         ) : refBlock?.content ? (
           <BlockMarkdown content={refBlock.content} blockId={`embed:${refId}`} refLabels={refLabels}
@@ -435,7 +445,7 @@ function BlockEmbedCard({ refId, refBlock, refLabels, onBlockRefClick, onEmbedEd
             onTableEdit={editable ? stableTbl : undefined}
             onMermaidEdit={editable ? stableMermaid : undefined} />
         ) : (
-          <span className="blockPlaceholder">embedded note…</span>
+          <span className="blockPlaceholder">{t("embedded note…")}</span>
         )}
       </span>
       {draft != null && mathUi ? (
@@ -450,7 +460,7 @@ function BlockEmbedCard({ refId, refBlock, refLabels, onBlockRefClick, onEmbedEd
         <span
           className="blockEmbedSrc"
           role="link"
-          title="Open the source block"
+          title={t("Open the source block")}
           onClick={(e) => { e.stopPropagation(); onBlockRefClick?.(refId); }}
         >{refBlock.page_title}</span>
       ) : null}
@@ -492,7 +502,7 @@ function HighlightedCodePre({ children }) {
 // labels are resolved by the caller so the comparison here stays a string
 // check. onBlockRefClick/onTaskToggle are deliberately excluded from the
 // comparison — the caller passes identity-stable wrappers.
-const BlockMarkdown = React.memo(function BlockMarkdown({ content, blockId, refLabels, onBlockRefClick, onTaskToggle, onEmbedEdit, onImageEdit, onTableEdit, onMermaidEdit, nested }) {
+const BlockMarkdown = React.memo(function BlockMarkdown({ content, blockId, refLabels, onBlockRefClick, onTaskToggle, onEmbedEdit, onImageEdit, onTableEdit, onMermaidEdit, onObjectAction, nested }) {
   // GFM task-list checkboxes render in document order; this counter maps the
   // nth rendered checkbox back to the nth `[ ]`/`[x]` marker in the source so
   // clicking one toggles the right marker. Reset per render — the whole
@@ -504,6 +514,7 @@ const BlockMarkdown = React.memo(function BlockMarkdown({ content, blockId, refL
   // Source-order table list; entries inside blockquotes are editable:false
   // (they still consume an index so the mapping stays aligned).
   const tableInfo = useMemo(() => scanTables(content || ""), [content]);
+  const mermaidInfo = useMemo(() => scanMermaidFences(content || ""), [content]);
   return (
     <ReactMarkdown
       // remark-breaks: a single Enter inside a note renders as a real line
@@ -523,7 +534,7 @@ const BlockMarkdown = React.memo(function BlockMarkdown({ content, blockId, refL
               <a
                 href={`?block=${refId}`}
                 className="blockRefChip"
-                title={ref?.page_title ? `From: ${ref.page_title}` : undefined}
+                title={ref?.page_title ? t("From: {page_title}", { page_title: ref.page_title }) : undefined}
                 onClick={(e) => {
                   if (e.metaKey || e.ctrlKey) return;
                   e.preventDefault();
@@ -580,25 +591,36 @@ const BlockMarkdown = React.memo(function BlockMarkdown({ content, blockId, refL
           const diagram = mermaidCodeProps(children);
           if (!diagram) return <HighlightedCodePre>{children}</HighlightedCodePre>;
           mermaidIdx += 1;
-          return <MermaidDiagram {...diagram} idx={mermaidIdx} onResize={onMermaidEdit} />;
+          const f = mermaidInfo[mermaidIdx];
+          return (
+            <MdObject kind="mermaid" idx={mermaidIdx} editable={!!(f?.closed && !f.prefix.trim())} onAction={onObjectAction}>
+              <MermaidDiagram {...diagram} idx={mermaidIdx} onResize={onMermaidEdit} />
+            </MdObject>
+          );
         },
         img: ({ node, src, alt, width }) => {
           imgIdx += 1;
-          return <MdImage src={src} alt={alt} width={width} idx={imgIdx} onEdit={onImageEdit} />;
+          return (
+            <MdObject as="span" kind="image" idx={imgIdx} onAction={onObjectAction}>
+              <MdImage src={src} alt={alt} width={width} idx={imgIdx} onEdit={onImageEdit} />
+            </MdObject>
+          );
         },
         table: ({ node, children }) => {
           tableIdx += 1;
           const info = tableInfo[tableIdx];
           const editable = !!(info?.editable && onTableEdit);
           return (
-            <MdTableWrap
-              idx={tableIdx}
-              onEdit={editable ? onTableEdit : undefined}
-              model={editable ? parseTable(content.slice(info.from, info.to)) : null}
-              editKey={editable ? `${blockId}:${tableIdx}` : null}
-            >
-              {children}
-            </MdTableWrap>
+            <MdObject kind="table" idx={tableIdx} editable={!!info?.editable} onAction={onObjectAction}>
+              <MdTableWrap
+                idx={tableIdx}
+                onEdit={editable ? onTableEdit : undefined}
+                model={editable ? parseTable(content.slice(info.from, info.to)) : null}
+                editKey={editable ? `${blockId}:${tableIdx}` : null}
+              >
+                {children}
+              </MdTableWrap>
+            </MdObject>
           );
         },
         input: ({ node, type, checked, disabled, ...props }) => {
@@ -657,7 +679,7 @@ function AreaSnapshot({ block, captureArea, docNonce }) {
   // Reserve the crop's aspect ratio while it renders so the card doesn't jump.
   const ratio = r && r.y2 > r.y1 ? (r.x2 - r.x1) / (r.y2 - r.y1) : null;
   return src ? (
-    <img className="blockAreaSnap" src={src} alt="Area selection" draggable={false}
+    <img className="blockAreaSnap" src={src} alt={t("Area selection")} draggable={false}
       style={{ borderLeftColor: block.color || undefined }} />
   ) : (
     <div className="blockAreaSnap blockAreaSnapPending"
@@ -709,6 +731,14 @@ function BlockRow({
   mergeOpen,
   onMergeOpen,
   mergeNav,
+  keybindings,
+  tree,
+  onHop,
+  onMoveBlock,
+  onDuplicate,
+  onMoveToPage,
+  onMoveObject,
+  onStatus,
 }) {
   const ref = useRef(null);
   const clickPosRef = useRef(null);
@@ -719,10 +749,12 @@ function BlockRow({
   const [gapLine, setGapLine] = useState(null);
   // Other people on this block (collab presence): avatar chips on the row,
   // a coloured edge while one of them has its editor open, and their
-  // carets inside our editor when we have it open too.
+  // carets — inside our editor when we have it open too, else over the
+  // rendered view.
+  const renderedRef = useRef(null);
   const rowPeers = peers?.length ? peers.filter((p) => p.block === block.id) : null;
   const peerEditing = rowPeers?.find((p) => p.anchor >= 0) || null;
-  const remoteCursors = rowPeers?.length
+  const remoteCursors = peerEditing
     ? rowPeers.filter((p) => p.anchor >= 0).map((p) => ({
       client: p.client, rev: p.rev || 0, anchor: p.anchor, head: p.head, color: p.color, name: p.name,
     }))
@@ -796,6 +828,71 @@ function BlockRow({
     }
   };
   const stableTableEdit = useRef((i, o) => tableEditRef.current?.(i, o)).current;
+  // The object frame's menu and drag (MdObject.jsx): the nth image / table /
+  // diagram of this block as a source range. "Edit source" opens the raw
+  // editor with the caret on it (the click-to-source path with a known
+  // offset); a move is App's one-transition tree edit (onMoveObject); the
+  // drag publishes the object for App's block drop handlers.
+  const objectActionRef = useRef(null);
+  objectActionRef.current = (kind, idx, action, e) => {
+    const content = block.content || "";
+    const obj = findObject(content, kind, idx);
+    if (!obj) return;
+    if (action === "editRaw") {
+      // One character in: the editor keeps an object whose boundary the
+      // caret merely touches, so the source shows only from inside it.
+      clickPosRef.current = { x: e?.clientX || 0, y: e?.clientY || 0, offset: obj.from + 1 };
+      setFocusedId(block.id);
+      onStartEdit(block.id, true);
+    } else if (action === "copy") {
+      copyText(content.slice(obj.from, obj.to));
+      onStatus?.(t("Copied as markdown"));
+    } else if (action === "delete") {
+      onChangeText(block.id, cutObject(content, obj).content);
+    } else if (action === "moveNewAbove" || action === "moveNewBelow") {
+      onMoveObject?.({ sourceId: block.id, kind, idx, target: { type: "sibling", id: block.id, above: action === "moveNewAbove" } });
+    } else if (action === "moveToPage") {
+      onMoveObject?.({ sourceId: block.id, kind, idx, target: { type: "page" } });
+    } else if (action === "dragStart") {
+      const md = cutObject(content, obj).md;
+      e.dataTransfer.setData("text/plain", md);
+      e.dataTransfer.setData(OBJECT_DRAG_TYPE, kind);
+      e.dataTransfer.effectAllowed = "move";
+      _dragState.fragment = { blockId: block.id, kind, idx };
+    } else if (action === "dragEnd") {
+      _dragState.fragment = null;
+      _dragState.dropTarget = null;
+      window._gammaSetDropTarget?.(null);
+    }
+  };
+  const stableObjectAction = useRef((k, i, a, e) => objectActionRef.current?.(k, i, a, e)).current;
+  // The editor's picture / table widgets drag through the same action.
+  const stableObjectDrag = useRef((k, i, phase, e) =>
+    objectActionRef.current?.(k, i, phase === "start" ? "dragStart" : "dragEnd", e)).current;
+  // An object dragged over / dropped into THIS block's open editor (the
+  // editor's capture handlers): the drop line at the line boundary it would
+  // land on, then App's one-transition move into this block there. A
+  // boundary inside a fence or display math goes to the construct's start.
+  const objectDropRef = useRef(null);
+  objectDropRef.current = {
+    over: ({ offset, rect }) => {
+      const dt = { targetId: block.id, inside: true, offset, rect };
+      _dragState.dropTarget = dt;
+      window._gammaSetDropTarget?.(dt);
+    },
+    drop: ({ offset }) => {
+      const frag = _dragState.fragment;
+      _dragState.fragment = null;
+      _dragState.dropTarget = null;
+      window._gammaSetDropTarget?.(null);
+      if (!frag) return;
+      const content = block.content || "";
+      const at = offset == null ? null : gapInSource(content, offset, blockSpans(content)).offset;
+      onMoveObject?.({ sourceId: frag.blockId, kind: frag.kind, idx: frag.idx, target: { type: "inside", id: block.id, offset: at } });
+    },
+  };
+  const stableObjectDragOver = useRef((p) => objectDropRef.current?.over(p)).current;
+  const stableObjectDrop = useRef((p) => objectDropRef.current?.drop(p)).current;
   // Resolve [[ref]] chip labels here (cheap per render) so BlockMarkdown's
   // memo can compare them as strings instead of depending on allBlocks,
   // whose identity changes on every edit.
@@ -841,6 +938,8 @@ function BlockRow({
     }, 120);
     return () => clearTimeout(timer);
   }, [refPopup?.query, block.id]);
+  const refSearchShown = !!refPopup && searchResults.length > 0;
+  useEffect(() => { if (refSearchShown) guideEvents.emit("ref.search"); }, [refSearchShown]);
 
   // Resolve cross-note refs and Gamma link targets found in content
   useEffect(() => {
@@ -1017,26 +1116,26 @@ function BlockRow({
     if (link?.kind === "block") {
       const blockId = link.blockId;
       return [
-        { name: "mention", glyph: "@", label: "Mention", hint: "inline chip", make: () => `[[${blockId}]]` },
-        { name: "synced", glyph: "⧉", label: "Synced block", hint: "live embed", make: () => `![[${blockId}]]` },
-        { name: "url", glyph: "🔗", label: "URL", hint: "keep the link" },
+        { name: "mention", glyph: "@", label: T("Mention"), hint: T("inline chip"), make: () => `[[${blockId}]]` },
+        { name: "synced", glyph: "⧉", label: T("Synced block"), hint: T("live embed"), make: () => `![[${blockId}]]` },
+        { name: "url", glyph: "🔗", label: "URL", hint: T("keep the link") },
       ];
     }
     if (link?.kind === "citation") {
       return [
-        { name: "gamma", glyph: "❝", label: "Citation", hint: `passage on p. ${link.page}` },
-        { name: "url", glyph: "🔗", label: "URL", hint: "keep the link" },
+        { name: "gamma", glyph: "❝", label: T("Citation"), hint: t("passage on p. {page}", { page: link.page }) },
+        { name: "url", glyph: "🔗", label: "URL", hint: T("keep the link") },
       ];
     }
     if (link?.kind === "page") {
       return [
-        { name: "gamma", glyph: "📄", label: "Page link", hint: "card with the title" },
-        { name: "url", glyph: "🔗", label: "URL", hint: "keep the link" },
+        { name: "gamma", glyph: "📄", label: T("Page link"), hint: T("card with the title") },
+        { name: "url", glyph: "🔗", label: "URL", hint: T("keep the link") },
       ];
     }
     return [
-      { name: "url", glyph: "🔗", label: "URL", hint: "link chip" },
-      { name: "titled", glyph: "🔖", label: "Titled link", hint: "fetch the page title" },
+      { name: "url", glyph: "🔗", label: "URL", hint: T("link chip") },
+      { name: "titled", glyph: "🔖", label: T("Titled link"), hint: T("fetch the page title") },
     ];
   }
 
@@ -1178,9 +1277,9 @@ function BlockRow({
           userEvent: "input",
         });
         const items = [
-          ...(tsvMd ? [{ name: "table", glyph: "▦", label: "Table", hint: "markdown table", block: true, make: () => tsvMd }] : []),
-          { name: "text", glyph: "¶", label: "Text", hint: "keep in this block" },
-          { name: "blocks", glyph: "≡", label: "Blocks", hint: "split into nested blocks" },
+          ...(tsvMd ? [{ name: "table", glyph: "▦", label: T("Table"), hint: T("markdown table"), block: true, make: () => tsvMd }] : []),
+          { name: "text", glyph: "¶", label: T("Text"), hint: T("keep in this block") },
+          { name: "blocks", glyph: "≡", label: T("Blocks"), hint: T("split into nested blocks") },
         ];
         const anchor = ta.caretCoords(start);
         requestAnimationFrame(() => {
@@ -1259,14 +1358,47 @@ function BlockRow({
             // (or, on a gap line, where the block below the gap starts).
             const content = block.content || "";
             const rendered = e.currentTarget.querySelector(".blockRendered");
+            // A press on an object frame's margin (beside a picture or
+            // table): the caret goes to the object's near end — the editor
+            // keeps it rendered there, and the caret is right where the
+            // press was. (Its body never gets here: the frame selects.)
+            // (Frames inside an embed card belong to another block.)
+            const ownFrame = (f) => f && rendered?.contains(f) && !f.closest(".blockEmbedCard") ? f : null;
+            const objectOffset = (f) => {
+              const o = findObject(content, f.dataset.kind, Number(f.dataset.idx));
+              if (!o) return null;
+              const fr = f.getBoundingClientRect();
+              // Beside it (same line): left / right decide; else above / below.
+              const beside = e.clientY >= fr.top && e.clientY <= fr.bottom;
+              const after = beside ? e.clientX > fr.left + fr.width / 2 : e.clientY >= fr.top + fr.height / 2;
+              return after ? o.to : o.from;
+            };
+            const frame = ownFrame(e.target.closest(".mdObject"));
+            const frameOffset = frame ? objectOffset(frame) : null;
+            if (frameOffset != null) {
+              clickPosRef.current = { x: e.clientX, y: e.clientY, offset: frameOffset };
+              setGapLine(null);
+              e.preventDefault();
+              onStartEdit(block.id, true);
+              return;
+            }
             const below = e.target.closest(".mdGapLine") && gapLine?.below;
             const start = below ? blockStartInSource(rendered, content, below) : null;
             if (start != null) {
-              const spans = [...scanMathSpans(content), ...scanFences(content)];
-              const gap = gapInSource(content, start, spans);
+              const gap = gapInSource(content, start, blockSpans(content));
               clickPosRef.current = { x: e.clientX, y: e.clientY, offset: gap.offset, insertLine: gap.insert };
             } else {
-              const offset = sourceOffsetAtPoint(rendered, content, e.clientX, e.clientY);
+              let offset = sourceOffsetAtPoint(rendered, content, e.clientX, e.clientY);
+              if (offset == null && rendered) {
+                // No text under the press — the blank beside a centred
+                // picture, say: the object on that line, before or after it.
+                const near = [...rendered.querySelectorAll(".mdObject")].map(ownFrame).find((f) => {
+                  if (!f) return false;
+                  const r = f.getBoundingClientRect();
+                  return e.clientY >= r.top && e.clientY <= r.bottom;
+                });
+                if (near) offset = objectOffset(near);
+              }
               clickPosRef.current = { x: e.clientX, y: e.clientY, offset };
             }
             setGapLine(null);
@@ -1305,10 +1437,8 @@ function BlockRow({
               onClick={(e) => { e.stopPropagation(); onJump(block.highlightId, e.ctrlKey || e.metaKey); }}
               title={
                 block.position
-                  ? "Jump to highlight"
-                  : block.properties?.linked_highlight_id
-                    ? "Jump to linked highlight"
-                    : "Jump to page (no exact position)"
+                  ? t("Jump to highlight") : block.properties?.linked_highlight_id
+                    ? t("Jump to linked highlight") : t("Jump to page (no exact position)")
               }
             >
               <span className="highlightDot" style={{
@@ -1322,14 +1452,14 @@ function BlockRow({
             {!block.position && block.properties?.linked_highlight_id && onUnlinkHighlight ? (
               <button
                 className="collapseBtn attachModeBtn"
-                title="Unlink highlight"
+                title={t("Unlink highlight")}
                 onClick={(e) => { e.stopPropagation(); onUnlinkHighlight(block.id); }}
               >⊘</button>
             ) : null}
             {!block.position && !block.properties?.linked_highlight_id && onEnterAttachMode ? (
               <button
                 className="collapseBtn attachModeBtn"
-                title="Attach to a PDF highlight"
+                title={t("Attach to a PDF highlight")}
                 onClick={(e) => { e.stopPropagation(); onEnterAttachMode(block.id); }}
               >⊕</button>
             ) : null}
@@ -1338,7 +1468,7 @@ function BlockRow({
           <button
             className="collapseBtn highlightDotBtn dotSlot"
             onClick={(e) => { e.stopPropagation(); onInkJump?.(block.id); }}
-            title={block.page ? `Handwriting on page ${block.page} — click to show it` : "Handwriting"}
+            title={block.page ? t("Handwriting on page {page} — click to show it", { page: block.page }) : t("Handwriting")}
           >
             <span className="inkMarker"><PenIcon size={9} strokeWidth={2.4} /></span>
           </button>
@@ -1360,6 +1490,9 @@ function BlockRow({
               clickPos={clickPosRef.current}
               refLabels={refLabels}
               remoteCursors={remoteCursors}
+              onObjectDrag={stableObjectDrag}
+              onObjectDragOver={stableObjectDragOver}
+              onObjectDrop={stableObjectDrop}
               value={block.content || ""}
               onChange={(e) => {
                 onChangeText(block.id, e.target.value, e.selectionBefore);
@@ -1417,6 +1550,14 @@ function BlockRow({
                   if (e.key === "Tab" || e.key === "Enter") { e.preventDefault(); acceptLatexAc(mathUi.ac.items[mathAcIdx]); return; }
                   if (e.key === "Escape") { e.preventDefault(); setMathUi((u) => u ? { ...u, ac: null } : null); return; }
                 }
+                // The block commands (blockCommands.js, docs/dev/hotkeys.md):
+                // move / duplicate / delete the block, formatting, the hop to
+                // the neighbouring block at the caret's top or bottom line…
+                // A handled key stops here; the outliner's own keys follow.
+                if (dispatchHotkey(BLOCK_COMMANDS, e, {
+                  block, tree, readOnly, editor: ref.current,
+                  row: { onHop, onMoveBlock, onDuplicate, onDelete, onEnterSibling, onIndent, onOutdent, onToggle, onAddToChat, onMoveToPage },
+                }, keybindings)) return;
                 // Tab inside raw math (popup closed) hops between argument
                 // groups snippet-style — \frac{1|}{} lands in the second {} —
                 // Shift+Tab hops back. Only when there's somewhere to go;
@@ -1502,10 +1643,15 @@ function BlockRow({
                 } else if (e.key === "Tab" && e.shiftKey) {
                   e.preventDefault();
                   onOutdent(block.id);
-                } else if (e.key === "ArrowRight" && (block.children?.length || 0) > 0 && block.collapsed) {
+                } else if (e.key === "ArrowRight" && (block.children?.length || 0) > 0 && block.collapsed
+                  && ref.current && ref.current.selectionEnd === ref.current.value.length) {
+                  // At the text's end / start the arrows fold the children;
+                  // anywhere else they move the caret (the Collapse / Expand
+                  // children commands fold from anywhere).
                   e.preventDefault();
                   onToggle(block.id);
-                } else if (e.key === "ArrowLeft" && (block.children?.length || 0) > 0 && !block.collapsed) {
+                } else if (e.key === "ArrowLeft" && (block.children?.length || 0) > 0 && !block.collapsed
+                  && ref.current && ref.current.selectionStart === 0) {
                   e.preventDefault();
                   onToggle(block.id);
                 } else if (e.key === "Backspace" && (block._isEmpty || !(block.content || "").trim()) && !(block.quote || "").trim()) {
@@ -1513,7 +1659,7 @@ function BlockRow({
                   onDelete(block.id);
                 }
               }}
-              placeholder="Type — '/' for commands"
+              placeholder={t("Type — '/' for commands")}
             />
           ) : aiText != null ? (
             // The AI agent is writing this block's new text right now: show
@@ -1523,7 +1669,7 @@ function BlockRow({
               {aiText.trim() ? <BlockMarkdown content={aiText} blockId={block.id} refLabels={refLabels} /> : null}
             </div>
           ) : (
-            <div className="blockRendered" onCopy={handleMarkdownCopy}
+            <div className="blockRendered" ref={renderedRef} onCopy={handleMarkdownCopy}
               onMouseMove={readOnly ? undefined : trackGapLine}
               onMouseLeave={readOnly ? undefined : () => setGapLine(null)}>
               {(block.content || "").trim() ? (
@@ -1532,11 +1678,13 @@ function BlockRow({
                   onEmbedEdit={readOnly ? undefined : stableEmbedEdit}
                   onImageEdit={readOnly ? undefined : stableImageEdit}
                   onTableEdit={readOnly ? undefined : stableTableEdit}
-                  onMermaidEdit={readOnly ? undefined : stableMermaidEdit} />
+                  onMermaidEdit={readOnly ? undefined : stableMermaidEdit}
+                  onObjectAction={readOnly ? undefined : stableObjectAction} />
               ) : (
-                <div className="blockPlaceholder">(empty)</div>
+                <div className="blockPlaceholder">{t("(empty)")}</div>
               )}
               {gapLine ? <div className="mdGapLine" data-markdown-copy-ignore="" style={{ top: gapLine.top - gapLine.half, height: 2 * gapLine.half }} /> : null}
+              {remoteCursors ? <RenderedCarets peers={remoteCursors} source={block.content || ""} containerRef={renderedRef} /> : null}
             </div>
           )}
 
@@ -1553,12 +1701,12 @@ function BlockRow({
             <button
               type="button"
               className="blockLinkChip"
-              title={block.properties.link_url || "Open linked page"}
+              title={block.properties.link_url || t("Open linked page")}
               onClick={(e) => { e.stopPropagation(); onOpenLinkTarget?.(block); }}
             >
               <LinkIcon size={11} strokeWidth={2.4} />
               {block.properties.link_page_id
-                ? "linked page"
+                ? t("linked page")
                 : (block.properties.link_url || "").replace(/^https?:\/\//i, "").slice(0, 48)}
             </button>
           ) : null}
@@ -1566,7 +1714,7 @@ function BlockRow({
         {!readOnly && block.id !== "root" ? (
           <button
             className="uiClose uiCloseSm uiCloseDanger blockDeleteBtn"
-            title="Delete block"
+            title={t("Delete block")}
             onClick={(e) => { e.stopPropagation(); onDelete(block.id); }}
           >×</button>
         ) : null}
@@ -1583,11 +1731,12 @@ function BlockRow({
         <SlashMenuPopup items={slashMenu.items} selected={slashIdx} anchor={slashMenu.anchor} onPick={runSlashCommand} />
       ) : null}
       {!readOnly && block.editMode && pasteMenu ? (
-        <SlashMenuPopup title="Paste as" items={pasteMenu.items} selected={pasteIdx} anchor={pasteMenu.anchor} onPick={applyPasteAs} />
+        <SlashMenuPopup title={t("Paste as")} items={pasteMenu.items} selected={pasteIdx} anchor={pasteMenu.anchor} onPick={applyPasteAs} />
       ) : null}
       {refPopup && searchResults.length > 0 && (
         <div
           className="refPopup"
+          data-guide="editor.refSearch"
           style={{ top: refPopup.rect.bottom + 4, left: refPopup.rect.left }}
         >
           {searchResults.map((b, i) => (
@@ -1681,8 +1830,8 @@ function SortableBlockRow({ block, ...rowProps }) {
           onDragStart={onDragStart}
           onDragEnd={onDragEnd}
           onClick={onHandleClick}
-          aria-label="Drag to move, click for menu"
-          title="Drag to move · click for menu"
+          aria-label={t("Drag to move, click for menu")}
+          title={t("Drag to move · click for menu")}
         >⋮⋮</span>
         {block.id !== "root" && rowProps.onEnterSibling && !rowProps.readOnly ? (
           <button
@@ -1690,8 +1839,8 @@ function SortableBlockRow({ block, ...rowProps }) {
             className="addHandle"
             onClick={onAddClick}
             onMouseDown={(e) => e.preventDefault()}
-            aria-label="Add a block below (Alt+click: above)"
-            title={"Click to add a block below\nAlt+click to add above"}
+            aria-label={t("Add a block below (Alt+click: above)")}
+            title={t("Click to add a block below\nAlt+click to add above")}
           ><PlusIcon size={15} strokeWidth={2} /></button>
         ) : null}
       </span>
@@ -1699,47 +1848,47 @@ function SortableBlockRow({ block, ...rowProps }) {
         <ContextMenu x={handleMenu.x} y={handleMenu.y} onClose={() => setHandleMenu(null)}>
           <MenuItem
             icon={LinkIcon}
-            title="Paste it in a note to choose mention / synced block, or open it anywhere"
+            title={t("Paste it in a note to choose mention / synced block, or open it anywhere")}
             onClick={() => copy(
               withWorkspace(`${window.location.origin}/?block=${encodeURIComponent(block.id)}`),
-              "Block link copied — paste into a note for mention / synced block",
+              t("Block link copied — paste into a note for mention / synced block"),
             )}
-          >Copy link to block</MenuItem>
+          >{t("Copy link to block")}</MenuItem>
           <MenuItem
             icon={CopyIcon}
-            title="Copy this block's markdown source (sub-blocks become an indented list)"
+            title={t("Copy this block's markdown source (sub-blocks become an indented list)")}
             onClick={() => copy(
               block.children?.length ? subtreeMarkdown(block, 0) : block.content || "",
-              "Copied block as markdown",
+              t("Copied block as markdown"),
             )}
-          >Copy as markdown</MenuItem>
+          >{t("Copy as markdown")}</MenuItem>
           {block.id !== "root" && rowProps.onAddToChat ? (
             <MenuItem
               icon={MessageSquareIcon}
-              title="Attach this block (with its sub-blocks) to your next chat message — Ctrl+click a block does the same"
+              title={t("Attach this block (with its sub-blocks) to your next chat message — Ctrl+click a block does the same")}
               onClick={() => { setHandleMenu(null); rowProps.onAddToChat(block); }}
-            >Add to chat</MenuItem>
+            >{t("Add to chat")}</MenuItem>
           ) : null}
           {block.id !== "root" ? (
             <MenuItem
               icon={CopyIcon}
-              title="Insert a copy below (sub-blocks included; highlight anchors are not copied)"
+              title={t("Insert a copy below (sub-blocks included; highlight anchors are not copied)")}
               onClick={() => { setHandleMenu(null); rowProps.onDuplicate?.(block.id); }}
-            >Duplicate</MenuItem>
+            >{t("Duplicate")}</MenuItem>
           ) : null}
           {block.id !== "root" ? (
             <MenuItem
               icon={ExportIcon}
-              title="Move this block and its sub-blocks to the end of another page"
+              title={t("Move this block and its sub-blocks to the end of another page")}
               onClick={() => { setHandleMenu(null); rowProps.onMoveToPage?.(block.id); }}
-            >Move to page…</MenuItem>
+            >{t("Move to page…")}</MenuItem>
           ) : null}
           {block.id !== "root" ? (
             <MenuItem
               icon={Trash2Icon}
               danger
               onClick={() => { setHandleMenu(null); rowProps.onDelete?.(block.id); }}
-            >Delete</MenuItem>
+            >{t("Delete")}</MenuItem>
           ) : null}
         </ContextMenu>
       ) : null}
@@ -1803,7 +1952,7 @@ function AiGhostRow({ content, depth }) {
           <span className="collapseSpacer" />
           <span className="dotSlot dotSlotEmpty"><span className="noteBulletDot" /></span>
           <div className="blockBody">
-            <div className="blockMeta">note</div>
+            <div className="blockMeta">{t("note")}</div>
             <div className="blockRendered aiStreaming">
               {content.trim() ? <BlockMarkdown content={content} blockId="ai-ghost" refLabels={{}} /> : null}
             </div>

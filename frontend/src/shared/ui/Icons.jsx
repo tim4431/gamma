@@ -440,3 +440,50 @@ export const ClockIcon = (p) => (
 export const MoreIcon = (p) => (
   <Icon {...p}><circle cx="12" cy="12" r="1" /><circle cx="19" cy="12" r="1" /><circle cx="5" cy="12" r="1" /></Icon>
 );
+export const KeyboardIcon = (p) => (
+  <Icon {...p}><rect x="2" y="5" width="20" height="14" rx="2" /><path d="M6 9h.01" /><path d="M10 9h.01" /><path d="M14 9h.01" /><path d="M18 9h.01" /><path d="M6 13h.01" /><path d="M18 13h.01" /><path d="M9 13h6" /><path d="M8 16h8" /></Icon>
+);
+// Settings → Keyboard and the command palette: one glyph per command
+// (app/commandIcons.jsx) — text marks, outliner moves, the keys themselves.
+export const BoldIcon = (p) => (
+  <Icon {...p}><path d="M6 12h9a4 4 0 0 1 0 8H7a1 1 0 0 1-1-1V5a1 1 0 0 1 1-1h7a4 4 0 0 1 0 8" /></Icon>
+);
+export const ItalicIcon = (p) => (
+  <Icon {...p}><path d="M19 4h-9" /><path d="M14 20H5" /><path d="M15 4 9 20" /></Icon>
+);
+export const StrikethroughIcon = (p) => (
+  <Icon {...p}><path d="M16 4H9a3 3 0 0 0-2.83 4" /><path d="M14 12a4 4 0 0 1 0 8H6" /><path d="M4 12h16" /></Icon>
+);
+export const IndentIcon = (p) => (
+  <Icon {...p}><path d="M21 6H11" /><path d="M21 12H11" /><path d="M21 18H11" /><path d="m3 8 4 4-4 4" /></Icon>
+);
+export const OutdentIcon = (p) => (
+  <Icon {...p}><path d="M21 6H11" /><path d="M21 12H11" /><path d="M21 18H11" /><path d="m7 8-4 4 4 4" /></Icon>
+);
+export const CollapseIcon = (p) => (
+  <Icon {...p}><path d="m7 20 5-5 5 5" /><path d="m7 4 5 5 5-5" /></Icon>
+);
+export const ExpandIcon = (p) => (
+  <Icon {...p}><path d="m7 15 5 5 5-5" /><path d="m7 9 5-5 5 5" /></Icon>
+);
+export const SquareCheckIcon = (p) => (
+  <Icon {...p}><rect x="3" y="3" width="18" height="18" rx="2" /><path d="m9 12 2 2 4-4" /></Icon>
+);
+// Lines with a magnifier — search across everything, not just this page.
+export const TextSearchIcon = (p) => (
+  <Icon {...p}><path d="M21 5H3" /><path d="M10 12H3" /><path d="M10 19H3" /><circle cx="17" cy="15" r="3" /><path d="m21 19-1.9-1.9" /></Icon>
+);
+export const BackspaceIcon = (p) => (
+  <Icon {...p}><path d="M10 5a2 2 0 0 0-1.34.52l-6.33 5.74a1 1 0 0 0 0 1.48l6.33 5.74A2 2 0 0 0 10 19h10a2 2 0 0 0 2-2V7a2 2 0 0 0-2-2z" /><path d="m12 9 6 6" /><path d="m18 9-6 6" /></Icon>
+);
+export const SlashIcon = (p) => (
+  <Icon {...p}><rect x="3" y="3" width="18" height="18" rx="2" /><path d="M9 15 15 9" /></Icon>
+);
+// A block with a "+" above it — a new block before this one.
+export const InsertAboveIcon = (p) => (
+  <Icon {...p}><rect x="3" y="13" width="18" height="8" rx="2" /><path d="M12 3v6" /><path d="M9 6h6" /></Icon>
+);
+// Three lines, the middle one crossed out — delete the caret's line.
+export const DeleteLineIcon = (p) => (
+  <Icon {...p}><path d="M3 6h18" /><path d="M3 12h10" /><path d="M3 18h18" /><path d="m17 10 4 4" /><path d="m21 10-4 4" /></Icon>
+);

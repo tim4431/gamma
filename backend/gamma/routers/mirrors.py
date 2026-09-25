@@ -7,6 +7,7 @@ from pydantic import BaseModel, Field
 
 from .. import config, sync_engine, workspaces
 from ..auth import require_personal_user
+from ..ops import OpError
 
 router = APIRouter(prefix="/api/mirrors", tags=["mirrors"])
 
@@ -54,8 +55,9 @@ def _mine(request: Request, ws: str) -> dict:
 
 def _info(mirror: dict) -> dict:
     info = workspaces.get(mirror["workspace_id"])
+    count, newest = sync_engine.open_conflict_mark(mirror["workspace_id"])
     return {**mirror, "name": info["name"] if info else "",
-            "conflicts_open": sync_engine.open_conflicts(mirror["workspace_id"]),
+            "conflicts_open": count, "conflicts_newest": newest,
             "pending_local": mirror["mode"] == "two-way" and sync_engine.has_local_changes(mirror["workspace_id"]),
             "interval_s": config.sync_interval_s(), "detached": mirror["mode"] == "off"}
 
@@ -178,8 +180,14 @@ def list_conflicts(ws: str, request: Request, resolved: int = 0, page: str = "")
 
 @router.post("/{ws}/conflicts/{conflict_id}")
 def resolve_conflict(ws: str, conflict_id: int, payload: Resolution, request: Request):
+    """``{choice: keep | mine | theirs}``: the text is written first (into
+    the block's page as it is now), then the conflict is marked resolved;
+    a write the block refuses (409) leaves the conflict open."""
     _mine(request, ws)
-    out = sync_engine.resolve_conflict(ws, conflict_id, payload.choice)
+    try:
+        out = sync_engine.resolve_conflict(ws, conflict_id, payload.choice)
+    except OpError as e:
+        raise HTTPException(status_code=409, detail=f"the text could not be written: {e}")
     if not out:
         raise HTTPException(status_code=404, detail="no such conflict")
     return out

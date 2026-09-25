@@ -252,6 +252,7 @@ export async function inkEditingScenarios({ server, browser, alice, bob, makePdf
     await until(async () => await page.locator(paths).count() === 2);
     await page.setViewportSize({ width: 740, height: 620 });
     await page.locator(".pdfViewer").evaluate((el) => { el.scrollTop = 0; });
+    { const t0 = Date.now(); for (const _ of Array(8)) { const b = await page.locator('[data-page="1"]').boundingBox(); console.log(`PROBE ${Date.now() - t0}ms`, JSON.stringify(b)); await page.waitForTimeout(60); } }
     await tapInk();
     await menu().getByRole("button", { name: "Width", exact: true }).tap();
     await until(async () => {

@@ -2,6 +2,7 @@ import React from "react";
 import { MenuSelect } from "../shared/ui/Menus";
 import { API, apiJson, setExpectedUser } from "../shared/lib/utils";
 import { AuthLoading, LoginPage, SessionConflictPage } from "./LoginPage";
+import { t } from "../shared/i18n/i18n.js";
 
 // A standalone sign-in gate: no workspace/session restoration runs while the
 // user is reviewing a request. Keep the request URL through account changes.
@@ -55,12 +56,12 @@ export function McpAuthorization({ requestId }) {
         body: JSON.stringify({ username, password }) });
       acceptSession(await apiJson(`${API}/session`));
       setPassword("");
-    } catch (err) { setError(err.message || "Login failed"); }
+    } catch (err) { setError(err.message || t("Login failed")); }
   };
   if (user === null) return <AuthLoading />;
   if (!user) return <LoginPage username={username} password={password} error={error}
     onUsernameChange={setUsername} onPasswordChange={setPassword} onSubmit={login}
-    subtitle="Sign in to connect your assistant" />;
+    subtitle={t("Sign in to connect your assistant")} />;
   if (conflict) return <SessionConflictPage tabUser={user} activeUser={conflict} onReload={() => window.location.reload()} />;
   return <McpConsent key={`${requestId}:${user}`} requestId={requestId} />;
 }
@@ -98,34 +99,33 @@ export default function McpConsent({ requestId }) {
     } catch (err) { setError(err.message); setBusy(false); }
   };
   return <div className="app mcpConsentPage"><div className="loginPage"><div className="loginCard mcpConsent">
-    <div className="loginTitle">Gamma</div>
-    <h1 className="loginSubtitle">Connect your workspace</h1>
+    <div className="loginTitle">{t("Gamma")}</div>
+    <h1 className="loginSubtitle">{t("Connect your workspace")}</h1>
     {details ? <>
-      <p><strong>{details.client_name}</strong> wants to connect to Gamma.</p>
-      <p className="loginConflictHint">Signed in as <strong>{details.username}</strong>.</p>
-      <label>Workspace</label>
-      <MenuSelect label="Workspace" block value={workspace} onChange={setWorkspace}
+      <p><strong>{details.client_name}</strong> {t("wants to connect to Gamma.")}</p>
+      <p className="loginConflictHint">{t("Signed in as")} <strong>{details.username}</strong>.</p>
+      <label>{t("Workspace")}</label>
+      <MenuSelect label={t("Workspace")} block value={workspace} onChange={setWorkspace}
         options={details.workspaces.map((item) => [item.id, item.name])} />
       <div className="mcpPermissions">
-        <strong>Read-only access</strong>
-        <ul><li>Read pages, notes, highlights, and PDF text.</li>
-          <li>Cannot edit or delete your library.</li></ul>
-        <p className="loginConflictHint">Content the assistant reads is shared with its provider.</p>
+        <strong>{t("Read-only access")}</strong>
+        <ul><li>{t("Read pages, notes, highlights, and PDF text.")}</li>
+          <li>{t("Cannot edit or delete your library.")}</li></ul>
+        <p className="loginConflictHint">{t("Content the assistant reads is shared with its provider.")}</p>
       </div>
-      <p className="loginConflictHint">Access lasts 90 days. Disconnect anytime in
-        Settings → AI → Integrations.</p>
-      <details className="mcpConnectionDetails"><summary>Connection details</summary>
-        <p className="loginConflictHint">The assistant provided its name. Only approve if you started this connection.</p>
-        <p className="loginConflictHint mcpCallback">Returns to: {details.redirect_uri}</p>
+      <p className="loginConflictHint">{t("Access lasts 90 days. Disconnect anytime in Settings → AI → Integrations.")}</p>
+      <details className="mcpConnectionDetails"><summary>{t("Connection details")}</summary>
+        <p className="loginConflictHint">{t("The assistant provided its name. Only approve if you started this connection.")}</p>
+        <p className="loginConflictHint mcpCallback">{t("Returns to: {redirect_uri}", { redirect_uri: details.redirect_uri })}</p>
       </details>
       <div className="mcpConsentActions">
       <button className="loginBtn" disabled={busy || !workspace} onClick={() => decide(true)}>
-        {busy ? "Connecting…" : "Allow read-only access"}
+        {busy ? t("Connecting…") : t("Allow read-only access")}
       </button>
-      <button className="loginGuestBtn" disabled={busy} onClick={() => decide(false)}>Cancel</button>
+      <button className="loginGuestBtn" disabled={busy} onClick={() => decide(false)}>{t("Cancel")}</button>
       </div>
-    </> : !error ? <p>Loading connection request…</p> : null}
+    </> : !error ? <p>{t("Loading connection request…")}</p> : null}
     {error ? <p className="loginError" role="alert">{error}</p> : null}
-    <button className="loginGuestBtn" disabled={busy} onClick={switchAccount}>Use another account</button>
+    <button className="loginGuestBtn" disabled={busy} onClick={switchAccount}>{t("Use another account")}</button>
   </div></div></div>;
 }

@@ -864,6 +864,16 @@ body {
 }
 .blockEditorCm .cmImgWidget:hover img { box-shadow: 0 0 0 2px var(--accent-bg-light); }
 .blockEditorCm .cm-line.cmImgLine { text-align: center; }
+.blockEditorCm .cmImgWidget[draggable="true"] { cursor: grab; }
+/* The editor's table widget: the rendered table's look, read-only (cells are
+   edited in the rendered view); a click puts the caret after it, right-click
+   shows the source, and it drags like the picture. */
+.blockEditorCm .cmTableWidget { display: inline-block; max-width: 100%; overflow-x: auto; margin: 4px 0; border-radius: 6px; cursor: grab; vertical-align: top; }
+.blockEditorCm .cmTableWidget table { border-collapse: collapse; font-size: 0.95em; }
+.blockEditorCm .cmTableWidget :is(th, td) { border: 1px solid var(--border); padding: 3px 8px; text-align: left; min-width: 36px; white-space: nowrap; }
+.blockEditorCm .cmTableWidget :is(th, td):empty::after { content: "\00a0"; }
+.blockEditorCm .cmTableWidget th { background: var(--bg-block); font-weight: 600; }
+.blockEditorCm .cmTableWidget:hover { box-shadow: 0 0 0 2px var(--accent-bg-light); }
 .blockEditorCm .cmHrLine {
   display: block;
   border-top: 1px solid var(--border);
@@ -898,6 +908,9 @@ body {
 .blockEditorCm .cmBk1 { color: var(--bracket-2); }
 .blockEditorCm .cmBk2 { color: var(--bracket-3); }
 .blockEditorCm .cmBkErr { color: var(--bracket-err); text-decoration: underline wavy var(--bracket-err); }
+/* What KaTeX rejects inside raw math (an undefined \command, a mismatched
+   \end): the squiggle only, the text keeps its color. */
+.blockEditorCm .cmLatexErr { text-decoration: underline wavy var(--bracket-err); text-decoration-skip-ink: none; }
 /* The \command the caret sits on, inside raw math. */
 .blockEditorCm .cmMathCmdActive {
   background: var(--bracket-active-bg);
@@ -1184,7 +1197,8 @@ body {
   opacity: 0;
   transition: opacity 0.12s;
 }
-.mdTableWrap:hover .mdTableAdd { opacity: 1; }
+/* Also while a tour points at the table ([data-guide-active], guide/). */
+.mdTableWrap:hover .mdTableAdd, .mdTableWrap[data-guide-active] .mdTableAdd, .mdTableAdd[data-guide-active] { opacity: 1; }
 .mdTableAdd:hover { background: var(--bg-subtle); color: var(--text-bright); border-style: solid; }
 .mdTableAddCol { top: 0; bottom: 0; right: -13px; width: 11px; }
 .mdTableAddRow { left: 0; right: 0; bottom: -13px; height: 11px; }
@@ -1216,6 +1230,29 @@ body {
 .mdTableColHandle { top: -7px; transform: translateX(-50%); width: 22px; height: 13px; }
 .mdTableRowHandle { left: -8px; transform: translateY(-50%); width: 13px; height: 22px; }
 .mdTableHandle:hover { color: var(--text-bright); background: var(--bg-subtle); }
+/* The whole-table handle in the top-left corner: shows with the + strips,
+   selects the table and opens its menu (the object menu; in an embed card,
+   copy / delete). */
+.mdTableCorner {
+  top: -8px; left: -9px; width: 15px; height: 15px;
+  display: flex; align-items: center; justify-content: center;
+  cursor: pointer; opacity: 0; transition: opacity 0.12s;
+}
+.mdTableWrap:hover .mdTableCorner, .mdObjectSelected .mdTableCorner, .mdTableCorner[data-guide-active] { opacity: 1; }
+
+/* The object frame (MdObject.jsx) around every rendered image, table and
+   diagram: a small halo that selects the object on a press instead of
+   opening the editor, a ring while selected, the drag source. It keeps the
+   construct's own placement — a centred picture, a left-aligned table, a
+   full-width diagram. */
+.mdObject { position: relative; display: block; box-sizing: border-box; max-width: 100%; padding: 3px; margin: -3px 0; border-radius: 6px; }
+.mdObject-image { width: fit-content; margin-left: auto; margin-right: auto; }
+.mdObject-table { width: fit-content; }
+.mdObject[draggable="true"] { cursor: grab; }
+.mdObjectSelected { box-shadow: 0 0 0 2px var(--accent); }
+.mdObject.mdObject-mermaid.mdObjectSelected .mermaidDiagram { border-color: transparent; }
+/* Dropping an object inside a block: the line in the gap it lands in. */
+.dropIndicatorInside { transform: translateY(-1px); border-radius: 1px; }
 /* The in-place cell editor: an input laid exactly over the clicked cell.
    Tab/Shift-Tab move between cells, Enter commits, Esc cancels. */
 .mdTableCellInput {
@@ -1248,6 +1285,7 @@ body {
   max-width: 100%;
 }
 .mdImgFrame .mdImg { display: block; cursor: zoom-in; }
+.mdObject[draggable="true"] .mdImg { cursor: grab; }
 .mdImgTools {
   position: absolute;
   top: 6px;
@@ -1503,6 +1541,32 @@ body {
   border-color: var(--border);
   box-shadow: 0 0 0 2px var(--border);
 }
+
+/* The selection translator under the color row (PdfViewer SelTranslation):
+   a fold-out header, then the selectable translated text. */
+.plainTip:has(.selTrans) { width: min(420px, calc(100vw - 16px)); }
+.selTrans { border-top: 1px solid var(--border-subtle); padding-top: 6px; }
+.selTransHead { display: flex; align-items: center; gap: 4px; }
+.selTransToggle {
+  flex: 1; min-width: 0;
+  display: inline-flex; align-items: center; gap: 6px;
+  padding: 3px 4px; border: none; border-radius: 6px; background: none;
+  font: inherit; font-size: 12px; font-weight: 600; color: var(--text-secondary);
+  cursor: pointer; text-align: left;
+}
+.selTransToggle:hover { background: var(--bg-hover); }
+.selTransChev { transition: transform 0.12s ease; flex-shrink: 0; }
+.selTransChev.open { transform: rotate(90deg); }
+.selTransLang { font-weight: 400; color: var(--text-tertiary); }
+.selTransCopy { flex-shrink: 0; }
+.selTransBody {
+  margin-top: 4px; padding: 2px 4px 0;
+  max-height: min(40vh, 320px); overflow-y: auto;
+  font-size: 13.5px; line-height: 1.55; color: var(--text-primary);
+  white-space: pre-wrap; overflow-wrap: anywhere;
+  user-select: text; cursor: text;
+}
+.selTransBody.error { color: var(--danger); cursor: default; }
 
 /* The AI agent at work on this page (App.handleAgentEvent → rowProps
    aiMarks/aiLive). A block it is reading pulses an accent ring; a block it
@@ -2533,10 +2597,11 @@ mark.merge-del { background: color-mix(in srgb, var(--danger) 16%, transparent);
 .shareLinkBtns { display: inline-flex; align-items: center; gap: 6px; }
 /* Gamma Cloud (PublishSection): the not-published row's sentence or refusal
    wraps; the state line's Sync-now button sits at its end. */
-.sharePopover .setRow[data-setting="Publish"] .settingDesc { white-space: normal; }
+.sharePopover .publishRow .settingDesc { white-space: normal; }
 .sharePopover .publishState { padding: 0 8px 6px 16px; }
 .publishState .mirrorStateLine { align-items: center; }
 .sharePopover .mirrorConfirm { padding: 4px 8px 6px 16px; }
+.sharePopover .publishAccount { padding: 2px 8px 6px; } /* the cap refusal's "Open account" */
 .sharePopover .mirrorConfirm > span:not(.mirrorConfirmBtns) { flex: 1 1 220px; min-width: 0; }
 .publishState .mirrorStateLine .iconBtn { margin-left: auto; }
 .uiBtn .mirrorSpin { display: inline-flex; }
@@ -3988,6 +4053,12 @@ html.appFocusFullscreen, html.appFocusFullscreen body { overflow: hidden; oversc
 .chatMsgUsagePart { display: inline-flex; align-items: center; gap: 2px; }
 .chatMsgUsagePart svg { opacity: 0.8; }
 .chatUsageTotal { display: flex; flex-direction: column; gap: 4px; padding: 2px 0 4px; }
+.chatUsageTotal .chatMsgUsage { gap: 5px; }
+.chatContextRing { display: block; flex: none; }
+.chatContextRing circle { fill: none; stroke: currentColor; stroke-width: 2.5; }
+.chatContextRingTrack { opacity: 0.22; }
+.chatContextRingFill { stroke-linecap: round; transition: stroke-dasharray 0.3s; }
+.chatContextRing.full .chatContextRingFill { stroke: var(--danger); }
 .chatUsageTotal .popoverHint { padding: 0; }
 .chatMsgActions {
   display: flex;
@@ -5209,7 +5280,12 @@ html.appFocusFullscreen, html.appFocusFullscreen body { overflow: hidden; oversc
   position: relative; display: inline-block; width: 0; height: 1.15em;
   vertical-align: text-bottom; border-left: 2px solid var(--peer); margin-left: -1px;
 }
-.cmRemoteCaret::after {
+/* over a rendered block (Presence.jsx RenderedCarets): the same caret, placed by text */
+.peerCaret {
+  position: absolute; width: 0; z-index: 2; pointer-events: none;
+  border-left: 2px solid var(--peer); margin-left: -1px;
+}
+.cmRemoteCaret::after, .peerCaret::after {
   content: attr(data-name); position: absolute; top: -1.35em; left: -2px;
   background: var(--peer); color: #fff; font-size: calc(9px * var(--ui-font-scale, 1)); line-height: 1.2;
   padding: 1px 4px; border-radius: 3px; white-space: nowrap; pointer-events: none;
@@ -5381,3 +5457,18 @@ html.appFocusFullscreen, html.appFocusFullscreen body { overflow: hidden; oversc
 .mcpConnectionDetails { margin: 16px 0; font-size: calc(13px * var(--ui-font-scale, 1)); }
 .mcpConnectionDetails summary { cursor: pointer; color: var(--text-secondary); }
 .mcpConsentActions { display: grid; gap: 8px; margin-bottom: 16px; }
+
+/* Key caps: a chord shown as its keys (settings kit KeyCaps) */
+.keyCaps { display: inline-flex; align-items: center; gap: 3px; }
+.keyCap {
+  display: inline-block;
+  min-width: 18px;
+  padding: 0 5px;
+  font: 500 calc(11px * var(--ui-font-scale, 1)) / 18px ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
+  text-align: center;
+  color: var(--text-secondary);
+  background: var(--bg-block);
+  border: 1px solid var(--border-hover);
+  border-bottom-width: 2px;
+  border-radius: 4px;
+}

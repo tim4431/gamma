@@ -42,6 +42,18 @@ Tap an active pen preset again to choose **Pen** (width follows stylus pressure)
 - **Back** (top bar, or **Alt+←**) unwinds jumps with their exact scroll positions, across documents too. Right-click it to clear the stack.
 - You can also **link a citation to a paper you already have**: right-click a highlight → link it to a page, or to an exact highlight in that page.
 
+### Translate a paper
+
+- **The 文A button** in the zoom column translates the page you are reading, in place. Each paragraph is redrawn in your language over the original; figures and layout stay put. Hold **Alt** to peek at the original.
+- On a translated page the button hides or shows the translation (all pages at once). On a page not yet translated, it translates that page.
+- **Right-click** the button (long-press on touch) for *Translate whole document*. The pages nearest you come first; a click on the button stops the job.
+- **Translate a selection**: select text and click 文A in the highlight popup. The translation opens under the colors, with a copy button. Turn on *Translate on select* to skip the click.
+- **What translates** is Settings → Reading & editing → Translation → *Translate with*: a chat model, or a translation service.
+  - **Microsoft (free)** works with no setup, and is the default when you have no AI connection. It is unofficial and could stop working; if it keeps failing, a dot on the account button leads to the row that says why.
+  - **Google Cloud Translation** and **Youdao** need your own key, added in the same section.
+  - A chat model keeps formulas and citation markers intact; a service is faster and costs less per page.
+- The target language, the selection options and the speed (parallel requests) are in the same section.
+
 ## Notes
 
 <img alt="A display equation is typed as LaTeX with a live preview and renders in place; a callout is typed as markdown and becomes a box; a pasted figure is resized with its grip" src="assets/branding/gamma-demo-notes-light.svg" width="100%">
@@ -54,6 +66,7 @@ Notes live in the **Notes panel** as a nested outline. Highlights and free notes
 - **Pictures**: paste a screenshot or drag an image into a note. Pictures sit centred; hover one for zoom, caption, download and delete, and **drag the grip on either side** to resize (stored Obsidian-style as `![alt|300](…)`).
 - **Tables** are edited in place: click a cell to edit, Tab hops cells, hover strips add rows and columns, handles move them by drag, and every edit auto-formats the markdown.
 - **Formatting keys** are Obsidian's: Ctrl+B / I / E / Shift+X / Shift+H toggle bold, italic, code, strike and highlight; Ctrl+K makes a link and fills it from a URL on the clipboard.
+- **Block commands**: Ctrl+Shift+K deletes the line (a one-line note as a whole, its children staying), ↑/↓ on a note's first or last line step into the neighbour, and **Ctrl+Shift+P** runs the rest by name — move or duplicate a note, new note above, indent, collapse, toggle a to-do, select its text. Give any of them keys in Settings → Keyboard, where every shortcut is listed and changeable. The full list: [Shortcut cheat sheet](#shortcut-cheat-sheet).
 - **`[[` links** between notes and pages, with autocomplete; inserted references are clickable chips, and a **Backlinks** section shows who links here. `![[block]]` **embeds** show the source block and let you edit it right there.
 - **"/" menu**: type `/` for headings, callouts, code, colored text, and everything else.
 - **Paste**: URLs offer *link / mention / embed*; multi-line text offers *Text / Blocks* (Blocks parses markdown into an outline); a table from Excel or Sheets pastes as a markdown table.
@@ -143,9 +156,9 @@ Your library lives on your server and opens from any browser — the office desk
 **Making one**
 
 - **Desktop app** (the easy way): open the remote server, open the workspace switcher, and click the **clone** chip on the workspace's row. The app creates a local server if needed, sets up the copy and opens it; from then on it syncs in the background whichever server the window shows, and the row's chip reads *open clone*.
-- **Any Gamma**: on the *server*, make a **read-and-write token** in Settings → AI → Integrations. On the Gamma that will hold the copy, Settings → Workspaces → **Clones → Clone a remote workspace**: the server's address, the token, a name, and the direction. You can also clone *into* an existing workspace (say, one restored from a backup); pages that exist on both sides adopt the server's version and differing blocks become conflicts to resolve.
+- **Any Gamma**: on the *server*, make a **read-and-write token** in Settings → AI → Integrations. On the Gamma that will hold the copy, Settings → Account & sync → **Clones → Clone a remote workspace**: the server's address, the token, a name, and the direction. You can also clone *into* an existing workspace (say, one restored from a backup); pages that exist on both sides adopt the server's version and differing blocks become conflicts to resolve.
 
-A copy can be **detached** (it stops syncing and behaves like an ordinary workspace, keeping everything) and **reattached** later — the next round merges what both sides did meanwhile. **Remove origin** drops the link and keeps the workspace. Settings → Workspaces → Clones lists every copy with its state, conflicts and these actions.
+A copy can be **detached** (it stops syncing and behaves like an ordinary workspace, keeping everything) and **reattached** later — the next round merges what both sides did meanwhile. **Remove origin** drops the link and keeps the workspace. Settings → Account & sync → Clones lists every copy with its state, conflicts and these actions.
 
 ## Gamma Connector
 
@@ -228,16 +241,16 @@ Settings (account menu → Settings) has one sidebar in three groups; the search
 
 | Group | Pane | What's there |
 |---|---|---|
-| Preferences | Appearance | Theme (system + seven), flip page colors, control size |
-| | Reading & editing | Imported annotations, handwriting (pen only / pen and finger, pressure), translation, the Enter key, how search opens |
-| | Library | Card thumbnails / folders / labels, open-access fallback, metadata auto-fetch, saving external PDFs |
-| | Account | Your account and storage meter |
+| Preferences | Appearance | Theme (system + seven), language, flip page colors, library cards (thumbnails / folders / labels), interface size, tour suggestions |
+| | Reading & editing | PDFs (imported annotations, open-access fallback, metadata auto-fetch, saving external PDFs), handwriting (pen only / pen and finger, pressure), translation (button, language, selection, model or service and its keys, speed), the Enter key, how search opens |
+| | Keyboard | Every shortcut, rebindable |
+| | Account & sync | Your account, storage meter and Gamma Cloud link; **Settings sync** (*Sync now*, *Fetch from cloud*, *Push to cloud*); published pages, **Clones** (offline copies) and the sync pill |
 | AI | Connections | Providers and keys, ChatGPT sign-in, default models, token usage |
-| | Chat | Which tools the agent may use, per chat kind |
-| | Advanced | Reasoning effort, tool limits, context budgets |
+| | Chat | Default reasoning effort, snapshot clearing, which tools the agent may use per chat kind |
+| | Advanced | Tool limits, context budgets |
 | | Prompts | The system prompts |
 | | Integrations | Codex / Claude Code / DeepSeek Harness / MCP connections and tokens |
-| Manage | Workspaces | Personal and shared workspaces, **Clones** (offline copies), export / import |
+| Manage | Workspaces | Personal and shared workspaces, export / import |
 | | Backups | Server-side snapshots |
 | | Library maintenance | Storage, search-index rebuild, metadata health table |
 | | Users, Server | Administrators: accounts, the dashboard, public URL, storage defaults, shared workspaces, server backups, the log |
@@ -247,17 +260,25 @@ Preferences apply immediately; browser-only ones (theme, layout) are marked *Thi
 
 ## Shortcut cheat sheet
 
+**Ctrl+Shift+P** runs any command by name — exporting, sharing, importing, moving or duplicating a note, and more — whether or not it has keys. **Settings → Keyboard** lists every command: click the keys to change them, press new ones, Backspace unbinds; a command without keys gets some the same way. On a Mac, Ctrl is ⌘ and Alt is ⌥.
+
 | Keys | Does |
 |---|---|
-| Ctrl+F | Search everything (find-in-chat when the chat is focused) |
+| Ctrl+F / Ctrl+Shift+F | Search everything (find-in-chat when the chat is focused; on the home page, the listing's box) / always the full panel |
 | Ctrl+P | Quick open: pick a page by title, folder or label (recent pages first) |
+| Ctrl+Shift+P | Command palette: every command by name, with its keys (also `>` typed into Ctrl+P) |
+| F2 | Rename the page |
+| Ctrl+Z / Ctrl+Y (or Ctrl+Shift+Z) | Undo / redo, one history per page |
+| Alt+← | Back through link jumps |
 | Enter / Shift+Enter | In search: next / previous match. In notes: line break / new note (swappable). In chat: send / newline |
 | Tab / Shift+Tab | Indent / outdent a note · accept a search filter chip · hop between `{}` arguments in math · hop table cells |
-| Ctrl+B / I / E / Shift+X / Shift+H | Bold / italic / code / strike / highlight |
+| ↑ / ↓ | On the first / last line of a note: move into the note above / below |
+| Ctrl+Shift+K | Delete the line (a one-line note goes as a whole; its children stay) |
+| ← / → | At the text's edge: collapse / expand the note's children |
+| Ctrl+B / Ctrl+I / Ctrl+E / Ctrl+Shift+X / Ctrl+Shift+H | Bold / italic / code / strike / highlight |
 | Ctrl+K | Link the selection (fills the URL from the clipboard) |
-| Ctrl+Z / Ctrl+Y (or Ctrl+Shift+Z) | Undo / redo, one history per page |
+| Backspace | On an empty note: delete it |
 | `/` · `[[` · `@` | Command menu in a note · page link · attach a paper in chat |
-| Alt+← | Back through link jumps |
 | Ctrl+wheel | Zoom the PDF at the cursor |
 | Ctrl+drag on the page | Capture a region → chat image + optional area highlight |
 | Ctrl+click a highlight | Add its quote to the chat selection |
@@ -265,4 +286,4 @@ Preferences apply immediately; browser-only ones (theme, layout) are marked *Thi
 | Double-click | Open a library card · collapse/expand a window (on its grip) |
 | Middle-click a tab | Close it (pinned tabs are protected) |
 | Ctrl+Shift+S | In the browser extension: save this page to Gamma |
-| Escape | Close popovers, clear selections, cancel modes |
+| Esc | Close popups, clear selections, cancel modes |

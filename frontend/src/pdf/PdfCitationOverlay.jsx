@@ -1,5 +1,7 @@
 import React, { useLayoutEffect, useRef, useState } from "react";
 import { citationRects } from "./pdfCitation.js";
+import { t } from "../shared/i18n/i18n.js";
+import { guideEvents } from "../guide/events.js";
 
 export function PdfCitationOverlay({ citation, wrapRef, ready }) {
   const [result, setResult] = useState(null);
@@ -14,6 +16,7 @@ export function PdfCitationOverlay({ citation, wrapRef, ready }) {
       setResult(found);
       if (found.rects.length && scrolled.current !== citation) {
         scrolled.current = citation;
+        guideEvents.emit("citation.shown");
         const viewer = wrapRef.current.closest(".pdfViewer");
         const box = wrapRef.current.getBoundingClientRect();
         if (viewer) {
@@ -32,12 +35,10 @@ export function PdfCitationOverlay({ citation, wrapRef, ready }) {
   }, [citation, ready, wrapRef]);
   if (!citation?.quote || !result) return null;
   return <>
-    {result.rects.map((r, i) => <div key={i} className="pdfCitationMark" aria-hidden="true"
+    {result.rects.map((r, i) => <div key={i} className="pdfCitationMark" aria-hidden="true" data-guide={i === 0 ? "pdf.citation" : undefined}
       style={{ left: `${r.left}%`, top: `${r.top}%`, width: `${r.width}%`, height: `${r.height}%` }} />)}
     {(result.status !== "matched" || result.approximate) && <div role="status" className="pdfCitationNotice">
-      {result.approximate ? "Highlighted an approximate text match."
-        : result.status === "ambiguous" ? "More than one passage on this page matches this quote."
-        : "Opened the cited page; the quote could not be located in its text layer."}
+      {result.approximate ? t("Highlighted an approximate text match.") : result.status === "ambiguous" ? t("More than one passage on this page matches this quote.") : t("Opened the cited page; the quote could not be located in its text layer.")}
     </div>}
   </>;
 }

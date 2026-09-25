@@ -11,40 +11,16 @@ import {
   Decoration, EditorView, WidgetType, keymap,
   placeholder as cmPlaceholder,
 } from "@codemirror/view";
-import { defaultKeymap } from "@codemirror/commands";
+import { standardKeymap } from "@codemirror/commands";
 import { findMathAtCursor, renderKatex } from "./LatexEditor";
 import { emptyLeftPair, escapedAt, leftDelimiterEdit, rightDelimiterAt } from "./latexInput";
+import { latexErrors, visibleLatexErrors } from "./latexLint";
 import { calloutType } from "./callouts";
 import { fenceInnerAt, highlightCode, makeCopyButton, scanFences } from "./codeHighlight";
-import { insertLink, isUrl, scanColorSpans, scanImageSyntax, scanMarks, toggleMark } from "./mdMarks";
+import { scanColorSpans, scanImageSyntax, scanMarks, toggleMark } from "./mdMarks";
+import { parseTable, scanImages, scanTables } from "./mdScan";
+import { scanMathSpans } from "./markCommands";
 import { assetUrl } from "../shared/lib/utils";
-
-// All CLOSED math spans in the text: [{from, to, display}] with from/to
-// including the delimiters. Same tokenizer as latexEditor's findMathAtCursor
-// (escaped \$ skipped), but only complete pairs — an unclosed opener stays
-// raw text while it's being typed. Inline spans must sit on one line and be
-// non-empty; "$5 and $3" across prose otherwise pairs into a bogus formula.
-function scanMathSpans(text) {
-  const re = /\$\$?/g;
-  const spans = [];
-  let m, open = null;
-  while ((m = re.exec(text))) {
-    if (escapedAt(text, m.index)) continue;
-    const tok = { i: m.index, len: m[0].length };
-    if (!open) {
-      open = tok;
-    } else if (tok.len === open.len) {
-      const inner = text.slice(open.i + open.len, tok.i);
-      const ok = inner.trim() && (open.len === 2 || !inner.includes("\n"));
-      if (ok) spans.push({ from: open.i, to: tok.i + tok.len, display: open.len === 2 });
-      open = null;
-    } else {
-      // Mismatched pair ($ ... $$): treat the later token as a fresh opener.
-      open = tok;
-    }
-  }
-  return spans;
-}
 
 // Clicking a rendered widget drops the caret just inside it, which un-renders
 // the span (the caret now touches it) so the source is editable in place.
@@ -181,19 +157,61 @@ class HrWidget extends WidgetType {
   }
 }
 
-// An `![alt](url)` the caret isn't touching shows the picture (sized like the
-// rendered view, alt as its caption). Clicking it drops the caret into the
-// alt text so the source expands. The upload URL gets the workspace / share
-// token like the rendered view's <img> — the browser fetches it without the
-// API header.
+// The drag data type an object drag carries (set by BlockRow's dragStart
+// action), so an editor can tell it from a text drag.
+export const OBJECT_DRAG_TYPE = "application/x-gamma-object";
+
+// The object behaviour the image and table widgets share (the editor's
+// counterpart of the rendered view's MdObject frame): a click puts the caret
+// after the object, a right-click drops it inside so the source expands
+// ("Edit markdown source"), and the widget is a drag source — ctx.objectDrag
+// (BlockRow's object action) publishes it for App's block drop handlers, so
+// a picture or table can be dragged to another block while its own block is
+// being edited. The mousedown is left to the browser: preventing it would
+// cancel the native drag.
+function objectWidget(view, el, { kind, idx, length, ctx }) {
+  el.dataset.kind = kind;
+  el.dataset.idx = idx;
+  el.draggable = idx >= 0;
+  el.addEventListener("click", (e) => {
+    if (e.button !== 0) return;
+    e.preventDefault();
+    const pos = view.posAtDOM(el);
+    view.dispatch({ selection: { anchor: pos + length } });
+    view.focus();
+  });
+  el.addEventListener("contextmenu", (e) => {
+    e.preventDefault();
+    placeCaretInside(view, el, 1);
+  });
+  el.addEventListener("dragstart", (e) => {
+    e.stopPropagation();
+    if (idx < 0 || !ctx.objectDrag) { e.preventDefault(); return; }
+    ctx.objectDrag(kind, idx, "start", e);
+  });
+  el.addEventListener("dragend", (e) => ctx.objectDrag?.(kind, idx, "end", e));
+  return el;
+}
+
+// An `![alt](url)` shows the picture (sized like the rendered view, alt as
+// its caption) unless a selection reaches inside the span; a right-click
+// drops the caret into the alt text so the source expands. The upload URL
+// gets the workspace / share token like the rendered view's <img> — the
+// browser fetches it without the API header.
 class ImageWidget extends WidgetType {
-  constructor(url, alt, width) {
+  constructor(url, alt, width, idx, length, ctx) {
     super();
     this.url = url;
     this.alt = alt;
     this.width = width;
+    this.idx = idx;
+    this.length = length;
+    this.ctx = ctx;
   }
-  eq(other) { return other.url === this.url && other.alt === this.alt && other.width === this.width; }
+  eq(other) {
+    return other.url === this.url && other.alt === this.alt && other.width === this.width
+      && other.idx === this.idx && other.length === this.length;
+  }
   toDOM(view) {
     const span = document.createElement("span");
     span.className = "cmImgWidget";
@@ -213,12 +231,49 @@ class ImageWidget extends WidgetType {
       cap.textContent = this.alt;
       span.appendChild(cap);
     }
-    span.addEventListener("mousedown", (e) => {
-      e.preventDefault();
-      placeCaretInside(view, span, 2);
-    });
-    return span;
+    return objectWidget(view, span, { kind: "image", idx: this.idx, length: this.length, ctx: this.ctx });
   }
+}
+
+// A GFM table as a plain read-only table (cells as their raw text), the same
+// object rules as the picture: it stays a table while the caret steps past
+// it, right-click shows the source, and it can be dragged to another block.
+// Cells are edited in the rendered view, never as raw text (mdTools).
+class TableWidget extends WidgetType {
+  constructor(source, idx, ctx) {
+    super();
+    this.source = source;
+    this.idx = idx;
+    this.ctx = ctx;
+  }
+  eq(other) { return other.source === this.source && other.idx === this.idx; }
+  toDOM(view) {
+    const box = document.createElement("div");
+    box.className = "cmTableWidget";
+    const model = parseTable(this.source);
+    const table = document.createElement("table");
+    const cell = (tag, text, c) => {
+      const td = document.createElement(tag);
+      td.textContent = (text || "").replace(/\\\|/g, "|");
+      if (model.aligns[c]) td.style.textAlign = model.aligns[c];
+      return td;
+    };
+    const thead = document.createElement("thead");
+    const hr = document.createElement("tr");
+    model.header.forEach((h, c) => hr.appendChild(cell("th", h, c)));
+    thead.appendChild(hr);
+    table.appendChild(thead);
+    const tbody = document.createElement("tbody");
+    for (const row of model.body) {
+      const tr = document.createElement("tr");
+      model.header.forEach((_, c) => tr.appendChild(cell("td", row[c], c)));
+      tbody.appendChild(tr);
+    }
+    table.appendChild(tbody);
+    box.appendChild(table);
+    return objectWidget(view, box, { kind: "table", idx: this.idx, length: this.source.length, ctx: this.ctx });
+  }
+  ignoreEvent() { return true; }
 }
 
 // Live inline rendering (Obsidian-style): math as KaTeX, [[id]] refs as
@@ -226,9 +281,11 @@ class ImageWidget extends WidgetType {
 // line styled, **bold** / *italic* / `code` / ~~strike~~ / [text](url) shown
 // formatted with their delimiters hidden. Any construct the selection
 // touches stays raw source (boundaries inclusive, so stepping the caret onto
-// it expands it). labelsRef is read lazily so freshly resolved ref labels
-// show up on the next rebuild.
-function buildInlineDecos(state, labelsRef) {
+// it expands it) — except the objects (pictures, tables), which only a
+// selection reaching inside expands. ctx is read lazily: `labels` so freshly
+// resolved ref labels show up on the next rebuild, `objectDrag` the row's
+// drag hook for the object widgets.
+function buildInlineDecos(state, ctx) {
   const text = state.doc.toString();
   const sel = state.selection.main;
   const ranges = [];
@@ -255,6 +312,20 @@ function buildInlineDecos(state, labelsRef) {
     }
   }
 
+  // GFM tables (outside fences / display math, which scanTables skips):
+  // a table widget unless the selection reaches inside it. Claimed so the
+  // pipes and dashes never read as marks. Quoted tables stay raw text.
+  if (text.includes("|")) {
+    scanTables(text).forEach((tb, idx) => {
+      if (!tb.editable || overlapsClaimed(tb.from, tb.to)) return;
+      claimed.push([tb.from, tb.to]);
+      if (sel.from < tb.to && sel.to > tb.from) return;
+      ranges.push(Decoration.replace({
+        widget: new TableWidget(text.slice(tb.from, tb.to), idx, ctx),
+      }).range(tb.from, tb.to));
+    });
+  }
+
   // Raw (caret-touched) math spans collect here for the bracket rainbow pass.
   const rawMath = [];
   const mathSpans = text.includes("$") ? scanMathSpans(text) : [];
@@ -263,7 +334,7 @@ function buildInlineDecos(state, labelsRef) {
     claimed.push([s.from, s.to]);
     const dlen = s.display ? 2 : 1;
     if (touched(s.from, s.to)) {
-      rawMath.push({ from: s.from + dlen, to: s.to - dlen });
+      rawMath.push({ from: s.from + dlen, to: s.to - dlen, display: s.display });
       ranges.push(Decoration.mark({ class: "cmMathRaw" }).range(s.from, s.to));
       continue;
     }
@@ -277,7 +348,7 @@ function buildInlineDecos(state, labelsRef) {
     if (um
       && !mathSpans.some((s) => um.start >= s.from && um.end <= s.to)
       && !fences.some((f) => um.start >= f.from && um.start < f.to)) {
-      rawMath.push({ from: um.start, to: um.end });
+      rawMath.push({ from: um.start, to: um.end, display: um.display });
       ranges.push(Decoration.mark({ class: "cmMathRaw" })
         .range(um.start - (um.display ? 2 : 1), um.end));
     }
@@ -314,6 +385,14 @@ function buildInlineDecos(state, labelsRef) {
       ranges.push(Decoration.mark({ class: cls }).range(pr.close, pr.close + 1));
     }
     for (const p of loose) ranges.push(Decoration.mark({ class: "cmBkErr" }).range(p, p + 1));
+    // KaTeX's own verdict, underlined where it points (latexLint.js), the
+    // message as the hover title. The range under the caret is being typed
+    // and waits until the caret moves on.
+    const caret = sel.empty && sel.head >= r.from && sel.head <= r.to ? sel.head - r.from : null;
+    for (const e of visibleLatexErrors(latexErrors(text.slice(r.from, r.to), r.display), caret)) {
+      ranges.push(Decoration.mark({ class: "cmLatexErr", attributes: { title: e.message } })
+        .range(r.from + e.from, r.from + e.to));
+    }
     // The \command the caret sits on lights up, like the active bracket pair.
     if (sel.empty) {
       for (const m of text.slice(r.from, r.to).matchAll(/\\[a-zA-Z]+/g)) {
@@ -331,7 +410,7 @@ function buildInlineDecos(state, labelsRef) {
     if (overlapsClaimed(from, to)) continue;
     claimed.push([from, to]);
     if (touched(from, to)) continue;
-    const label = labelsRef.current?.[m[1]]?.content || m[1];
+    const label = ctx.labels?.[m[1]]?.content || m[1];
     ranges.push(Decoration.replace({
       widget: new RefChipWidget(label, m[0].startsWith("!")),
     }).range(from, to));
@@ -342,13 +421,18 @@ function buildInlineDecos(state, labelsRef) {
   // `*` in the URL or alt never reads as emphasis, and skipped inside code
   // and math like every other construct.
   if (text.includes("![")) {
+    // The object index the rendered view would give this picture (its
+    // scan skips images in code and math like the claims here do).
+    const objects = scanImages(text);
     for (const im of scanImageSyntax(text)) {
       if (overlapsClaimed(im.from, im.to)) continue;
       claimed.push([im.from, im.to]);
-      if (touched(im.from, im.to)) continue;
-      ranges.push(Decoration.replace({
-        widget: new ImageWidget(im.url, im.alt, im.width),
-      }).range(im.from, im.to));
+      // Strictly inside: a caret at either end (stepping through the lines,
+      // End on its line) keeps the picture; the widget's right-click reveals.
+      if (sel.from < im.to && sel.to > im.from) continue;
+      const idx = objects.findIndex((o) => o.from === im.from);
+      const widget = new ImageWidget(im.url, im.alt, im.width, idx, im.to - im.from, ctx);
+      ranges.push(Decoration.replace({ widget }).range(im.from, im.to));
       // A picture alone on its line is centred, like the rendered view.
       const line = state.doc.lineAt(im.from);
       if (!text.slice(line.from, im.from).trim() && !text.slice(im.to, line.to).trim()) {
@@ -506,11 +590,11 @@ function buildInlineDecos(state, labelsRef) {
 // (multi-line $$math$$, ``` fences) are only allowed from state-level
 // decoration sources — a plugin throws "Decorations that replace line breaks
 // may not be specified via plugins".
-function inlineRenderField(labelsRef) {
+function inlineRenderField(ctx) {
   return StateField.define({
-    create: (state) => buildInlineDecos(state, labelsRef),
+    create: (state) => buildInlineDecos(state, ctx),
     update: (deco, tr) =>
-      tr.docChanged || tr.selection ? buildInlineDecos(tr.state, labelsRef) : deco,
+      tr.docChanged || tr.selection ? buildInlineDecos(tr.state, ctx) : deco,
     provide: (f) => EditorView.decorations.from(f),
   });
 }
@@ -744,64 +828,6 @@ const mathBracketBackspace = keymap.of([{
   },
 }]);
 
-// --- formatting hotkeys -------------------------------------------------------
-// Obsidian's bindings (Ctrl/Cmd+B bold, +I italic, +K link) plus the marks it
-// leaves unbound: Ctrl+E inline code (Notion's key), Ctrl+Shift+X strike,
-// Ctrl+Shift+H highlight. Toggle semantics live in mdMarks.toggleMark. Inside
-// math, a code fence or inline code the key is swallowed and does nothing —
-// letting it through would hand Ctrl+B to the browser (Firefox: bookmarks).
-const MARK_KEYS = [
-  ["Mod-b", "**"], ["Mod-i", "*"], ["Mod-e", "`"],
-  ["Mod-Shift-x", "~~"], ["Mod-Shift-h", "=="],
-];
-
-function markBlockedAt(doc, from, to, marker) {
-  if (fenceInnerAt(doc, from) || fenceInnerAt(doc, to)) return true;
-  if (scanMathSpans(doc).some((s) => s.from < to && from < s.to)) return true;
-  if (marker === "`") return false;
-  return scanMarks(doc).some((s) => s.marker === "`" && s.from < from && to < s.to);
-}
-
-function runToggleMark(view, marker) {
-  const doc = view.state.doc.toString();
-  const { from, to } = view.state.selection.main;
-  if (markBlockedAt(doc, from, to, marker)) return true;
-  const r = toggleMark(doc, from, to, marker);
-  if (r) view.dispatch({ changes: r.changes, selection: r.selection, userEvent: "input" });
-  return true;
-}
-
-function runInsertLink(view) {
-  const doc = view.state.doc.toString();
-  const { from, to } = view.state.selection.main;
-  if (markBlockedAt(doc, from, to, "")) return true;
-  const r = insertLink(doc, from, to);
-  view.dispatch({ changes: r.changes, selection: r.selection, userEvent: "input" });
-  // A URL on the clipboard fills the empty (…) slot — read asynchronously
-  // (and not at all on plain-HTTP origins, where navigator.clipboard is
-  // missing); only applied if the doc hasn't moved on meanwhile.
-  const slot = from + 1 + (to - from) + 2;
-  const expect = view.state.doc.toString();
-  navigator.clipboard?.readText?.().then((clip) => {
-    if (!isUrl(clip) || view.state.doc.toString() !== expect) return;
-    const url = clip.trim();
-    const label = to - from;
-    view.dispatch({
-      changes: { from: slot, insert: url },
-      selection: { anchor: label ? slot + url.length + 1 : from + 1 },
-      userEvent: "input",
-    });
-  }).catch(() => {});
-  return true;
-}
-
-const markHotkeys = keymap.of([
-  ...MARK_KEYS.map(([key, marker]) => ({
-    key, preventDefault: true, run: (view) => runToggleMark(view, marker),
-  })),
-  { key: "Mod-k", preventDefault: true, run: runInsertLink },
-]);
-
 // The raw source is usually taller than the rendered view it replaced, so
 // the clicked text moves when the editor opens: scroll the notes by however
 // far the caret's line landed from the pointer, keeping it where it was.
@@ -822,14 +848,17 @@ function keepUnderPointer(view, pos, y) {
 
 const BlockCmEditor = React.forwardRef(function BlockCmEditor({
   value, onChange, onSelect, onKeyDown, onBlur, onPaste,
-  placeholder, autoFocus, clickPos, dataBlockId, className, refLabels, remoteCursors,
+  placeholder, autoFocus, clickPos, dataBlockId, className, refLabels, remoteCursors, onObjectDrag,
+  onObjectDragOver, onObjectDrop,
 }, forwardedRef) {
   const hostRef = useRef(null);
   const viewRef = useRef(null);
   const cbRef = useRef({});
-  cbRef.current = { onChange, onSelect, onKeyDown, onBlur, onPaste };
-  const labelsRef = useRef(refLabels);
-  labelsRef.current = refLabels;
+  cbRef.current = { onChange, onSelect, onKeyDown, onBlur, onPaste, onObjectDragOver, onObjectDrop };
+  // What the decoration pass reads lazily (see buildInlineDecos).
+  const decoCtx = useRef({ labels: refLabels, objectDrag: onObjectDrag }).current;
+  decoCtx.labels = refLabels;
+  decoCtx.objectDrag = onObjectDrag;
   const chipCompartment = useRef(new Compartment()).current;
 
   const api = useMemo(() => ({
@@ -888,10 +917,14 @@ const BlockCmEditor = React.forwardRef(function BlockCmEditor({
         dollarBackspace,
         mathBracketPairing,
         mathBracketBackspace,
-        markHotkeys,
-        keymap.of(defaultKeymap),
+        // Only the basic editing keys (caret movement, Home/End, selection
+        // by word…): every shortcut above that — formatting, line and block
+        // operations — is a command of editor/blockCommands.js, dispatched by
+        // the row's keydown before this keymap sees the event, so the
+        // catalog is the one place a key is declared (docs/dev/hotkeys.md).
+        keymap.of(standardKeymap),
         cmPlaceholder(placeholder || ""),
-        chipCompartment.of(inlineRenderField(labelsRef)),
+        chipCompartment.of(inlineRenderField(decoCtx)),
         remoteCursorField,
         EditorView.updateListener.of((u) => {
           if (u.transactions.some((tr) => tr.annotation(externalSync))) {
@@ -942,7 +975,48 @@ const BlockCmEditor = React.forwardRef(function BlockCmEditor({
       window.addEventListener("mousemove", onMove);
       window.addEventListener("mouseup", stopDrag);
     }
-    return () => { stopDrag?.(); view.destroy(); viewRef.current = null; };
+    // An object (a picture / table dragged from any block's frame or editor
+    // widget) dropped INTO this editor lands as a paragraph of its own at
+    // the line boundary nearest the pointer — handled here, in the capture
+    // phase, so neither CodeMirror's own drop (which would paste the
+    // markdown at the caret as a copy) nor the row's between-blocks drop
+    // sees it. The drag is recognized by its data type, set at dragstart.
+    const host = hostRef.current;
+    const isObject = (e) => Array.from(e.dataTransfer?.types || []).includes(OBJECT_DRAG_TYPE);
+    const placeAt = (e) => {
+      const pos = view.posAtCoords({ x: e.clientX, y: e.clientY }, false);
+      const line = view.state.doc.lineAt(pos);
+      const blk = view.lineBlockAt(pos);
+      const top = blk.top + view.documentTop, bottom = blk.bottom + view.documentTop;
+      const before = e.clientY < (top + bottom) / 2;
+      const r = view.contentDOM.getBoundingClientRect();
+      return {
+        offset: before ? line.from : line.to >= view.state.doc.length ? null : line.to + 1,
+        rect: { top: before ? top : bottom, left: r.left, width: r.width },
+      };
+    };
+    const onObjOver = (e) => {
+      if (!isObject(e) || !cbRef.current.onObjectDragOver) return;
+      e.preventDefault();
+      e.stopPropagation();
+      e.dataTransfer.dropEffect = "move";
+      cbRef.current.onObjectDragOver(placeAt(e));
+    };
+    const onObjDrop = (e) => {
+      if (!isObject(e) || !cbRef.current.onObjectDrop) return;
+      e.preventDefault();
+      e.stopPropagation();
+      cbRef.current.onObjectDrop(placeAt(e));
+    };
+    host.addEventListener("dragover", onObjOver, true);
+    host.addEventListener("drop", onObjDrop, true);
+    return () => {
+      host.removeEventListener("dragover", onObjOver, true);
+      host.removeEventListener("drop", onObjDrop, true);
+      stopDrag?.();
+      view.destroy();
+      viewRef.current = null;
+    };
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
 
@@ -982,7 +1056,7 @@ const BlockCmEditor = React.forwardRef(function BlockCmEditor({
   useEffect(() => {
     const view = viewRef.current;
     if (!view) return;
-    view.dispatch({ effects: chipCompartment.reconfigure(inlineRenderField(labelsRef)) });
+    view.dispatch({ effects: chipCompartment.reconfigure(inlineRenderField(decoCtx)) });
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [labelsKey]);
 

@@ -7,7 +7,10 @@ import json
 import pytest
 
 from ai_fixtures import CONF, FakeResp, ai_provider, org, sse  # noqa: F401  (fixtures)
-from gamma.ai_client import add_usage, normalize_usage, openai_request, sse_events
+from gamma.ai_client import add_usage, normalize_usage, sse_events
+from gamma.ai_protocols import WIRES
+
+openai_request = WIRES["openai"].request
 
 
 @pytest.fixture(scope="module", autouse=True)

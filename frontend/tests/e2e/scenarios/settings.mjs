@@ -1,10 +1,10 @@
-import { Account } from "../harness.mjs";
+import { Account, wanted } from "../harness.mjs";
 import fs from "node:fs";
 import path from "node:path";
 
 export async function settingsScenarios(env) {
   const { server, browser, step, openPage, assert, assertEq, assertNoProblems, until, flags } = env;
-  if (flags.only && !"settings".includes(flags.only)) return;
+  if (!wanted("settings")) return;
   server.manage("create-user", "settings-user", "settings-pw");
   const user = await new Account(server, "settings-user", "settings-pw").login();
   // A dummy connection supplies model choices. These tests never send AI jobs.
@@ -12,9 +12,10 @@ export async function settingsScenarios(env) {
     protocol: "openai", name: "Test connection", api_key: "test-settings-only",
     base_url: server.base, models: "test-model-a, test-model-b",
   } });
-  async function setup(viewport) {
+  async function setup(viewport, prepare) {
     const ctx = await user.context(browser, viewport ? { viewport } : {});
     await ctx.addInitScript(() => localStorage.setItem("gamma-ai-login-check", "off"));
+    await prepare?.(ctx);
     const page = await openPage(ctx, server.base);
     await page.waitForSelector(".folderNewBtn");
     return { ctx, page };
@@ -31,6 +32,84 @@ export async function settingsScenarios(env) {
     await page.locator(".settingsSearchResult").filter({ has: page.getByText(label, { exact: true }) }).click();
     await row(page, label).waitFor({ state: "visible" });
   }
+
+  await step("settings: a translation service is set up under Reading and picked as the translator", async () => {
+    const { ctx, page } = await setup();
+    try {
+      await openSettings(page);
+      await nav(page, "Reading & editing").click();
+      // Microsoft's free service needs no setup: only a Test button.
+      const microsoft = row(page, "Microsoft (free)");
+      assert((await microsoft.innerText()).includes("No key needed"));
+      assertEq(await microsoft.getByRole("button").count(), 1);
+      await page.route("**/api/translate/engines/microsoft/test", (route) => route.fulfill({ json: { ok: true, text: "TEST-OK" } }));
+      await microsoft.getByRole("button", { name: "Test", exact: true }).click();
+      await until(() => microsoft.innerText().then((text) => text.includes("TEST-OK")));
+      const google = row(page, "Google Cloud Translation");
+      assert((await google.innerText()).includes("Not set up"));
+      await google.getByRole("button", { name: "Set up", exact: true }).click();
+      const dialog = page.getByRole("dialog", { name: "Google Cloud Translation", exact: true });
+      await dialog.locator('input[autocomplete="new-password"]').fill("AIza-e2e-key-4321");
+      await dialog.getByRole("button", { name: "Save", exact: true }).click();
+      await until(() => dialog.count().then((n) => n === 0));
+      await until(() => google.innerText().then((text) => text.includes("…4321")));
+      if (flags.keep) {
+        await row(page, "Translation services").scrollIntoViewIfNeeded();
+        await page.screenshot({ path: `${server.dir}/settings-translation.png`, animations: "disabled" });
+      }
+      // The saved service joins the picker next to the chat models.
+      await row(page, "Translate with").getByRole("button", { name: "Translate with", exact: true }).click();
+      await page.locator(".uiSelectMenu").getByRole("button", { name: "Google Cloud Translation" }).click();
+      await until(() => page.evaluate(() => localStorage.getItem("gamma-translate-model")).then((v) => v === "engine:google"));
+      // Reasoning effort means nothing to a translation service; the speed
+      // rows sit in the same Translation section.
+      await row(page, "Parallel requests").waitFor();
+      assertEq(await row(page, "Translation effort").count(), 0);
+      await google.getByRole("button", { name: "Remove key", exact: true }).click();
+      await until(() => google.innerText().then((text) => text.includes("Not set up")));
+      assertEq((await user.api("/api/ai/models")).translate_engines.map((e) => e.id).join(), "engine:microsoft");
+      assertNoProblems(page);
+    } finally {
+      await ctx.close();
+      await user.api("/api/translate/engines/google", { method: "DELETE" });
+    }
+  });
+
+  await step("settings: Keyboard lists the shortcuts, rebinds one, flags a clash and resets", async () => {
+    const { ctx, page } = await setup();
+    try {
+      await openSettings(page);
+      await nav(page, "Keyboard").click();
+      const caps = async (r) => (await r.locator(".keyCap").allTextContents()).join(" ");
+      const del = row(page, "Delete line");
+      await del.waitFor();
+      assertEq(await caps(del), "Ctrl Shift K", "the default chord");
+      await del.getByRole("button", { name: "Change the shortcut for Delete line" }).click();
+      await del.getByText("Press keys…").waitFor();
+      await page.keyboard.press("Control+Alt+d");
+      await until(async () => (await caps(del)) === "Ctrl Alt D", { what: "rebound" });
+      await del.getByRole("button", { name: "Reset Delete line to its default shortcut" }).waitFor();
+      await until(async () => (await user.api("/api/prefs/profile")).value?.keybindings?.["block.deleteLine"] === "Mod-Alt-d", { what: "the binding reaches the profile" });
+      // Two commands on one chord are flagged on both rows.
+      const ren = row(page, "Rename page");
+      await ren.getByRole("button", { name: "Change the shortcut for Rename page" }).click();
+      await page.keyboard.press("Control+Alt+d");
+      await ren.getByText("Also used by Delete line").waitFor();
+      await del.getByText("Also used by Rename page").waitFor();
+      // A bare letter is refused.
+      await ren.getByRole("button", { name: "Change the shortcut for Rename page" }).click();
+      await page.keyboard.press("x");
+      await ren.getByText("Add a modifier…").waitFor();
+      await page.keyboard.press("Escape");
+      await del.waitFor();
+      await page.getByRole("button", { name: "Reset all", exact: true }).click();
+      await until(async () => (await caps(del)) === "Ctrl Shift K", { what: "reset" });
+      assertEq(await caps(ren), "F2", "the clash is gone with the reset");
+      await page.getByRole("searchbox", { name: "Filter shortcuts" }).fill("duplicate");
+      await until(async () => (await page.locator(".keyboardPane .setRow").count()) === 2, { what: "filtered to the two duplicate rows" });
+      assertNoProblems(page);
+    } finally { await ctx.close(); }
+  });
 
   await step("settings: model discovery updates automatically and long lists scroll", async () => {
     const { ctx, page } = await setup({ width: 800, height: 650 });
@@ -369,7 +448,7 @@ export async function settingsScenarios(env) {
       await row(page, "Enter key").getByRole("button", { name: "New note", exact: true }).click();
       await until(() => sync("Notes").then((v) => v === "syncing"));
       assertEq(await sync("Search opens as"), "saved");
-      assertEq(await sync("PDF viewer"), "saved");
+      assertEq(await sync("PDFs"), "saved");
       await until(() => sync("Notes").then((v) => v === "saved"));
       assertEq((await user.api("/api/prefs/profile")).value?.enterNewNote, true);
       await nav(page, "Appearance").click();
@@ -423,7 +502,7 @@ export async function settingsScenarios(env) {
       if (flags.keep) await page.screenshot({ path: `${server.dir}/settings-appearance.png`, animations: "disabled" });
       await nav(page, "Diagnostics").click();
       assertEq(await nav(page, "Back to settings").count(), 0, "one sidebar: no second-level navigation");
-      await nav(page, "Library").click();
+      await nav(page, "Appearance").click();
       if (flags.keep) await page.screenshot({ path: `${server.dir}/settings-library.png`, animations: "disabled" });
       await page.getByRole("checkbox", { name: "Labels", exact: true }).uncheck();
       await page.getByRole("checkbox", { name: "Thumbnails", exact: true }).uncheck();
@@ -466,7 +545,7 @@ export async function settingsScenarios(env) {
       await page.getByRole("button", { name: "Account & settings", exact: true }).waitFor();
       await openSettings(page);
       assertEq(await page.getByRole("button", { name: "Solarized Light", exact: true }).getAttribute("aria-pressed"), "true");
-      await nav(page, "Library").click();
+      await nav(page, "Appearance").click();
       assertEq(await page.getByRole("checkbox", { name: "Folders", exact: true }).isChecked(), true);
       assertEq(await page.getByRole("checkbox", { name: "Labels", exact: true }).isChecked(), false);
       assertEq(await page.getByRole("checkbox", { name: "Thumbnails", exact: true }).isChecked(), false);
@@ -492,8 +571,8 @@ export async function settingsScenarios(env) {
       assert((await rowOf.innerText()).includes("Daily · 03:00"), "the row shows the daily schedule");
       await rowOf.getByRole("button", { name: "Actions for Nightly", exact: true }).click();
       await page.getByRole("button", { name: "Run now", exact: true }).click();
-      // the scheduler picks a queued run up within its 30 s round; the table polls every 5 s
-      await until(() => rowOf.innerText().then((t) => /finished|failed/i.test(t)), { timeout: 45000, what: "the queued run to finish" });
+      // Run now wakes the scheduler at once; the table polls every 5 s
+      await until(() => rowOf.innerText().then((t) => /finished|failed/i.test(t)), { timeout: 20000, what: "the queued run to finish" });
       assert(/finished/i.test(await rowOf.innerText()), "the run finished");
       await rowOf.getByRole("button", { name: "Actions for Nightly", exact: true }).click();
       await page.getByRole("button", { name: "Delete task", exact: true }).click();
@@ -602,6 +681,29 @@ export async function settingsScenarios(env) {
     } finally { await ctx.close(); }
   });
 
+  await step("settings: the chat header's context ring shows the last reply's size", async () => {
+    // An agent reply: usage sums its rounds, context_tokens is the last round alone.
+    await user.api("/api/chats/home", { method: "PUT", body: { messages: [
+      { role: "user", text: "hi" },
+      { role: "ai", text: "hello", actions: [{ kind: "read" }], context_tokens: 64000,
+        usage: { input: 90000, output: 500, cache_read: 0, cache_write: 0 } },
+    ] } });
+    // The window lookup (provider listing, then models.dev) is pinned by the
+    // backend tests; here the server's answer is stubbed to stay offline.
+    const { ctx, page } = await setup(undefined, (c) => c.route("**/api/ai/context-window?**", (route) => route.fulfill({
+      json: { model: "test-model-a", context_window: 128000, source: "provider" } })));
+    try {
+      const ring = page.getByRole("button", { name: "Context: 64k of 128k tokens (50%)", exact: true });
+      await ring.waitFor();
+      await ring.click();
+      assert((await page.locator(".chatSettingsPop").innerText()).includes("Context: 64k of 128k tokens (50%)"));
+      assertNoProblems(page);
+    } finally {
+      await ctx.close();
+      await user.api("/api/chats/home", { method: "PUT", body: { messages: [] } });
+    }
+  });
+
   await step("settings: mobile uses labeled navigation and fits a narrow viewport", async () => {
     const { ctx, page } = await setup({ width: 390, height: 844 });
     try {
@@ -623,7 +725,7 @@ export async function settingsScenarios(env) {
       await row(page, "Enter key").getByRole("button", { name: "New note", exact: true }).click();
       assert((await row(page, "Enter key").innerText()).includes("Shift+Enter inserts a new line"));
       await page.getByRole("button", { name: "Back", exact: true }).click();
-      await nav(page, "Library").click();
+      await nav(page, "Appearance").click();
       for (const [folders, labels, mode] of [[false, false, "off"], [false, true, "labels"], [true, false, "folders"], [true, true, "both"]]) {
         await page.getByRole("checkbox", { name: "Folders", exact: true }).setChecked(folders);
         await page.getByRole("checkbox", { name: "Labels", exact: true }).setChecked(labels);
@@ -635,8 +737,8 @@ export async function settingsScenarios(env) {
       assertEq(await page.locator(".libraryDisplayCard img").count(), 1);
       assert(!(await page.locator(".settingsPane").evaluate((el) => el.scrollWidth > el.clientWidth + 1)), "library display fits the phone");
       if (flags.keep) await page.screenshot({ path: `${server.dir}/settings-library-mobile.png`, animations: "disabled" });
-      await search(page, "translation model", "Translation model");
-      assert(await row(page, "Translation model").isVisible());
+      await search(page, "translation model", "Translate with");
+      assert(await row(page, "Translate with").isVisible());
       const overflow = await page.locator(".settingsPane").evaluate((el) => el.scrollWidth > el.clientWidth + 1);
       assert(!overflow, "settings content fits the phone without horizontal scrolling");
       if (flags.keep) await page.screenshot({ path: `${server.dir}/settings-mobile.png`, animations: "disabled" });
@@ -729,7 +831,7 @@ export async function settingsScenarios(env) {
     const { ctx, page } = await setup();
     try {
       await openSettings(page);
-      await nav(page, "Account").click();
+      await nav(page, "Account & sync").click();
       await page.locator(".settingsPane .aiProvRow").waitFor();
       assertEq(await page.locator(".settingsPane .aiProvRow").count(), 1);
       await nav(page, "Server").click();
