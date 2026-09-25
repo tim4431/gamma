@@ -56,12 +56,12 @@ export function McpAuthorization({ requestId }) {
         body: JSON.stringify({ username, password }) });
       acceptSession(await apiJson(`${API}/session`));
       setPassword("");
-    } catch (err) { setError(err.message || "Login failed"); }
+    } catch (err) { setError(err.message || t("Login failed")); }
   };
   if (user === null) return <AuthLoading />;
   if (!user) return <LoginPage username={username} password={password} error={error}
     onUsernameChange={setUsername} onPasswordChange={setPassword} onSubmit={login}
-    subtitle="Sign in to connect your assistant" />;
+    subtitle={t("Sign in to connect your assistant")} />;
   if (conflict) return <SessionConflictPage tabUser={user} activeUser={conflict} onReload={() => window.location.reload()} />;
   return <McpConsent key={`${requestId}:${user}`} requestId={requestId} />;
 }
@@ -113,15 +113,14 @@ export default function McpConsent({ requestId }) {
           <li>{t("Cannot edit or delete your library.")}</li></ul>
         <p className="loginConflictHint">{t("Content the assistant reads is shared with its provider.")}</p>
       </div>
-      <p className="loginConflictHint">Access lasts 90 days. Disconnect anytime in
-        Settings → AI → Integrations.</p>
+      <p className="loginConflictHint">{t("Access lasts 90 days. Disconnect anytime in Settings → AI → Integrations.")}</p>
       <details className="mcpConnectionDetails"><summary>{t("Connection details")}</summary>
         <p className="loginConflictHint">{t("The assistant provided its name. Only approve if you started this connection.")}</p>
         <p className="loginConflictHint mcpCallback">{t("Returns to: {redirect_uri}", { redirect_uri: details.redirect_uri })}</p>
       </details>
       <div className="mcpConsentActions">
       <button className="loginBtn" disabled={busy || !workspace} onClick={() => decide(true)}>
-        {busy ? "Connecting…" : "Allow read-only access"}
+        {busy ? t("Connecting…") : t("Allow read-only access")}
       </button>
       <button className="loginGuestBtn" disabled={busy} onClick={() => decide(false)}>{t("Cancel")}</button>
       </div>

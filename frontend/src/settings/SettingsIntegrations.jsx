@@ -5,8 +5,8 @@ import { LinkIcon, KeyIcon, CopyIcon, CheckIcon, RefreshIcon, UnlinkIcon } from 
 import { codexSetupCommand, claudeConnectCommand, claudePluginInstallCommands, dshInstallCommand, dshStartCommand } from "./assistantSetup";
 import { t } from "../shared/i18n/i18n.js";
 
-const COPIED = "Copied. You can paste it now.";
-const COPY_MANUALLY = "Select the text above and copy it manually.";
+const COPIED = t("Copied. You can paste it now.");
+const COPY_MANUALLY = t("Select the text above and copy it manually.");
 
 // A read-only code box with the copy button in its corner. A successful copy
 // swaps the icon for a check; the status text is visible only when the
@@ -47,9 +47,9 @@ function ConnectionRow({ item, busy, onRevoke }) {
   const name = oauth ? item.name.replace(/\s\(OAuth\)$/, "") : item.name;
   const daysLeft = Math.ceil((item.expires_at * 1000 - Date.now()) / 86400000);
   const expiry = daysLeft <= 0 ? `Expired ${dateOf(item.expires_at)}`
-    : `Expires ${dateOf(item.expires_at)} (${daysLeft === 1 ? "1 day" : `${daysLeft} days`} left)`;
+    : t("Expires {expires_at} ({days} left)", { expires_at: dateOf(item.expires_at), days: daysLeft === 1 ? "1 day" : `${daysLeft} days` });
   const connected = item.created_at ? `Connected ${new Date(item.created_at).toLocaleDateString(undefined, { year: "numeric", month: "short", day: "numeric" })}` : null;
-  const parts = [oauth ? "Browser sign-in" : "Token", item.scope === "write" ? "Read and write" : "Read-only", connected, expiry].filter(Boolean);
+  const parts = [oauth ? t("Browser sign-in") : t("Token"), item.scope === "write" ? t("Read and write") : t("Read-only"), connected, expiry].filter(Boolean);
   return <Row icon={oauth ? LinkIcon : KeyIcon} label={name}
     hint={<>{parts.join(" · ")}{daysLeft <= 0 ? <span className="uiTag warn">{t("Expired")}</span> : null}</>}>
     <button type="button" className="uiBtn sm iconSq danger" disabled={busy} aria-label={t("Disconnect")}
@@ -61,7 +61,7 @@ function ConnectionRow({ item, busy, onRevoke }) {
 
 export function IntegrationSettings({ workspaceId }) {
   const [data, setData] = React.useState(null);
-  const [name, setName] = React.useState("Codex");
+  const [name, setName] = React.useState(t("Codex"));
   const [scope, setScope] = React.useState("read");
   const [secret, setSecret] = React.useState(null);
   const [busy, setBusy] = React.useState(false);
@@ -115,11 +115,13 @@ export function IntegrationSettings({ workspaceId }) {
       if (secret?.id === id) setSecret(null);
       // DELETE succeeded even if reloading the remaining connections fails.
       setData((value) => value ? { ...value, tokens: value.tokens.filter((item) => item.id !== id) } : value);
-      await refresh(`Access revoked for the selected “${connectionName}” connection.`);
+      await refresh(t("Access revoked for the selected “{connectionName}” connection.", { connectionName }));
     } catch (err) { setMessage(err.message); }
     finally { setBusy(false); }
   };
-  const config = data ? `[mcp_servers.gamma]\nurl = ${JSON.stringify(data.mcp_url)}\nbearer_token_env_var = "GAMMA_TOKEN"` : "";
+  const config = data ? `[mcp_servers.gamma]
+url = ${JSON.stringify(data.mcp_url)}
+bearer_token_env_var = "GAMMA_TOKEN"` : "";
   const setup = data ? codexSetupCommand(data.mcp_url, platform) : "";
   const isClaude = method === "claude";
   const isDsh = method === "dsh";
@@ -146,7 +148,7 @@ export function IntegrationSettings({ workspaceId }) {
             <Step n={1} title={t("Create a token")}
               hint={t("DeepSeek Harness has no browser sign-in. It connects with a read-only token for this workspace, which expires after 90 days.")}>
               {secret?.origin === "dsh" ? tokenField
-                : <button className="uiBtn" disabled={busy || !!secret} onClick={() => create("DeepSeek Harness", "read", "dsh")}>{t("Create token")}</button>}
+                : <button className="uiBtn" disabled={busy || !!secret} onClick={() => create(t("DeepSeek Harness"), "read", "dsh")}>{t("Create token")}</button>}
             </Step>
             <Step n={2} title={t("Install the Gamma plugin")}
               hint={t("Run this in a terminal on the computer where you use DeepSeek Harness. It downloads the plugin from Gamma's latest release into your dsh home and adds it to the web profile; run it again to update.")}>
@@ -203,14 +205,12 @@ export function IntegrationSettings({ workspaceId }) {
               </Step>
               <details className="integrationAdvanced">
                 <summary>{t("Changed the server address?")}</summary>
-                <p>Open Gamma at its new address, then copy these commands to replace the connection. Your plugin stays installed.
-                  Restart Claude Code and sign in again through <code>/mcp</code>.</p>
+                <p>{t("Open Gamma at its new address, then copy these commands to replace the connection. Your plugin stays installed. Restart Claude Code and sign in again through {mcp}.", { mcp: <code>/mcp</code> })}</p>
                 <CopyField label={t("Claude Code change server commands")} value={claudeConnectCommand(data.mcp_url, platform, { replace: true })} action="Copy change server commands" rows={3} />
-                <p className="settingDesc">If Gamma runs on the same computer, localhost keeps working when your LAN IP changes.
-                  For a remote server, use a stable HTTPS hostname and confirm it in Gamma's Settings → Server.</p>
+                <p className="settingDesc">{t("If Gamma runs on the same computer, localhost keeps working when your LAN IP changes. For a remote server, use a stable HTTPS hostname and confirm it in Gamma's Settings → Server.")}</p>
               </details>
             </> : <Step n={3} title={t("Start a new chat")}
-              hint={method === "terminal" ? 'Copy the Gamma page URL from your browser and paste it with your question. A share link works too.' : 'Try asking: “Use Gamma to find my notes about…”'} />}
+              hint={method === "terminal" ? t("Copy the Gamma page URL from your browser and paste it with your question. A share link works too.") : t("Try asking: “Use Gamma to find my notes about…”")} />}
           </>}
         </> : <>
           <p>{t("Browser sign-in is not available for this Gamma address yet.")}</p>
@@ -228,7 +228,7 @@ export function IntegrationSettings({ workspaceId }) {
     </Section>
     {message ? <p role="status">{message}</p> : null}
     <details className="integrationAdvanced">
-      <summary>Manual setup (advanced)</summary>
+      <summary>{t("Manual setup (advanced)")}</summary>
       <div className="integrationDetails"><p>{t("Use a token if your assistant does not support browser sign-in.")}</p></div>
       <Section title={t("Create a token")}>
       <Row label={t("Connection name")} hint={t("Access to the current workspace. Expires after 90 days.")}>
@@ -239,8 +239,7 @@ export function IntegrationSettings({ workspaceId }) {
         </div>
       </Row>
       <Row label={t("Scope")} hint={scope === "write"
-        ? "Read and write: what an offline copy on another Gamma (Settings → Workspaces → Clones there) signs in with. Assistants only need read."
-        : "Read-only: assistants. Choose “Read and write” for an offline copy of this workspace on another Gamma."}>
+        ? t("Read and write: what an offline copy on another Gamma (Settings → Workspaces → Clones there) signs in with. Assistants only need read.") : t("Read-only: assistants. Choose “Read and write” for an offline copy of this workspace on another Gamma.")}>
         <Segmented value={scope} onChange={setScope} options={[["read", t("Read-only")], ["write", t("Read and write")]]} />
       </Row>
       {secret?.origin === "manual" ? tokenField : null}

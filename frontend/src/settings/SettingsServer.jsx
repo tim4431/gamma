@@ -55,11 +55,11 @@ function fmtUptime(seconds) {
 // What the update row says: newer / current / unknown, in that order of use.
 function updateHint(info) {
   const latest = info.latest?.version;
-  if (info.update_available) return `v${latest} is out — this server runs v${info.version}`;
-  if (info.update_available === false) return `up to date · latest release v${latest}`;
-  if (latest) return `latest release v${latest} · this build carries no version to compare`;
-  if (info.latest_error) return `could not check: ${info.latest_error}`;
-  return "checking…";
+  if (info.update_available) return t("v{latest} is out — this server runs v{version}", { latest, version: info.version });
+  if (info.update_available === false) return t("up to date · latest release v{latest}", { latest });
+  if (latest) return t("latest release v{latest} · this build carries no version to compare", { latest });
+  if (info.latest_error) return t("could not check: {latest_error}", { latest_error: info.latest_error });
+  return t("checking…");
 }
 
 // GET /api/admin/server-info: the build, uptime, log counts by level and the
@@ -111,13 +111,14 @@ function ServerDashboard() {
           <button className="uiBtn sm" onClick={() => window.open(info.latest.url, "_blank", "noopener")}>{t("Release notes")}</button>
         ) : null}
         <button className={`uiBtn sm ${updateTone ? "primary" : ""}`} disabled={checking} onClick={() => load(true)}>
-          {checking ? "Checking…" : "Check now"}
+          {checking ? t("Checking…") : t("Check now")}
         </button>
       </span>
     </Row>
     {info.update_available ? (
       <div className="settingsPaneHint">
-        A server in Docker does not update itself: pull <code>{info.image}:latest</code> (or <code>:{info.latest.version}</code>) and restart the container. The desktop app updates on its own.
+        {t("A server in Docker does not update itself: pull {latest} (or {version}) and restart the container. The desktop app updates on its own.", {
+          latest: <code>{info.image}:latest</code>, version: <code>:{info.latest.version}</code> })}
       </div>
     ) : null}
   </>;
@@ -163,7 +164,7 @@ function ServerLimitRows({ setStatus, refreshQuota }) {
   </>;
 }
 
-const LEVEL_FILTERS = [["all", "All"], ["warn", "Warnings"], ["error", "Errors"]];
+const LEVEL_FILTERS = [["all", t("All")], ["warn", t("Warnings")], ["error", t("Errors")]];
 const toneOf = (level) => (level === "ERROR" || level === "CRITICAL" ? "error" : level === "WARNING" ? "warn" : "");
 
 // The backend's in-memory log (GET /api/admin/logs). Polls with a seq
@@ -202,13 +203,12 @@ function ServerLogBox({ setStatus }) {
     <LogBox
       icon={ServerIcon}
       label={t("Server log")}
-      description="Backend events since startup · secrets masked"
+      description={t("Backend events since startup · secrets masked")}
       entries={shown}
-      emptyText={error ? `Server log unavailable: ${error}`
-        : !entries ? "Loading…"
-          : level === "all" ? "Nothing logged since the server started."
-            : `No ${level === "warn" ? "warnings" : "errors"} since the server started.`}
-      copyStatus="Server log copied."
+      emptyText={error ? t("Server log unavailable: {error}", { error })
+        : !entries ? t("Loading…") : level === "all" ? t("Nothing logged since the server started.")
+            : t("No {errors} since the server started.", { errors: level === "warn" ? t("warnings") : t("errors") })}
+      copyStatus={t("Server log copied.")}
       setStatus={setStatus}
       extra={<Segmented value={level} onChange={setLevel} options={LEVEL_FILTERS} />}
     />

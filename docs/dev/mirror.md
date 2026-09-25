@@ -368,7 +368,8 @@ mirror's own answer apart.
   - A viewer of the workspace sees the state and the link but no buttons.
 - **The header's sync pill** shows for a publication only on a published
   page (a clone syncs the whole workspace, so its pill is on every page; a
-  publication syncs the pages in its filter, so its pill is on those). Its
+  publication syncs the pages in its filter, so its pill is on those;
+  Settings → Appearance → Sync pill, *Synced pages* / *Every page*, can put it on every page instead). Its
   tooltip and name line say *Published to Gamma Cloud* with the count of
   pages and the host; its gear keeps *Automatic sync* and *Sync after an
   edit* and hides *Direction*, the forces, *Detach* and *Remove origin*,

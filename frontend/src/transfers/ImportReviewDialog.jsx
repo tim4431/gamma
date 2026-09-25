@@ -9,8 +9,8 @@ import "./importReview.css";
 import { t } from "../shared/i18n/i18n.js";
 
 const PHASE_STEP = { upload: 0, scanning: 0, review: 1, importing: 2, complete: 3 };
-const PHASE_LABEL = { upload: "Uploading for review", scanning: "Checking files and library destinations",
-  importing: "Importing selected items" };
+const PHASE_LABEL = { upload: t("Uploading for review"), scanning: t("Checking files and library destinations"),
+  importing: t("Importing selected items") };
 
 export default function ImportReviewDialog({ source, file, strip, folder = "", onClose, onComplete }) {
   const format = importFormat(source, file);
@@ -90,13 +90,13 @@ export default function ImportReviewDialog({ source, file, strip, folder = "", o
     <div className="importReviewHeader">
       <strong>{file.name}</strong><span className="importFileSize">{fmtBytes(file.size)}</span>
       {result ? <p ref={reportHeading} tabIndex={-1} role="status">{importSummary(result)}</p>
-        : <p>{busy ? PHASE_LABEL[phase] : "Choose what to import and review its destination."}</p>}
+        : <p>{busy ? PHASE_LABEL[phase] : t("Choose what to import and review its destination.")}</p>}
     </div>
     {error ? <p role="alert" className="importWarning">{error}</p> : null}
     {busy ? <div className="importUploadProgress" role="status">
       <div><strong>{PHASE_LABEL[phase]}{uploading && percent !== null ? `… ${percent}%` : "…"}</strong>
         {uploading ? <span>{fmtBytes(progress.loaded)}{progress.total ? ` / ${fmtBytes(progress.total)}` : ` / ${fmtBytes(file.size)}`}</span>
-          : <span>{phase === "scanning" ? "Upload complete. Reading the archive…" : `${chosenCount} selected items · Please keep this dialog open.`}</span>}
+          : <span>{phase === "scanning" ? t("Upload complete. Reading the archive…") : t("{chosenCount} selected items · Please keep this dialog open.", { chosenCount })}</span>}
       </div>
       <progress aria-label={uploading ? t("Upload progress") : t("Import processing")} max={100} value={uploading ? percent ?? undefined : undefined} />
     </div> : null}
@@ -107,23 +107,23 @@ export default function ImportReviewDialog({ source, file, strip, folder = "", o
           <button className="uiBtn sm" onClick={() => setSelected(new Set(allItemIds(pages)))}>{t("Select all")}</button>
           <button className="uiBtn sm" onClick={() => setSelected(new Set())}>{t("Deselect all")}</button>
         </div>
-        <p>{chosenCount} of {pages.length} items selected · {shown.length} shown{filter !== "all" ? " · Hidden selections are kept" : ""}</p>
+        <p>{t("{chosen} of {total} items selected · {shown} shown", { chosen: chosenCount, total: pages.length, shown: shown.length })}{filter !== "all" ? t(" · Hidden selections are kept") : ""}</p>
       </div> : null}
       <div className="importReviewColumns">
-        <section aria-label={t("ZIP contents")}><h3>{/\.zip$/i.test(file.name) ? "Inside the ZIP" : "Source file"}</h3>
+        <section aria-label={t("ZIP contents")}><h3>{/\.zip$/i.test(file.name) ? t("Inside the ZIP") : t("Source file")}</h3>
           <div className="importTreeScroll"><ImportTree node={sourceTree} /></div>
         </section>
-        <section aria-label={t("Library after import")}><h3>{result ? "Imported to library" : "Library after import"}</h3>
-          <p className="importDestination">Library{plan.folder ? ` / ${plan.folder}` : " / All pages"}</p>
+        <section aria-label={t("Library after import")}><h3>{result ? t("Imported to library") : t("Library after import")}</h3>
+          <p className="importDestination">{t("Library")}{plan.folder ? ` / ${plan.folder}` : " / All pages"}</p>
           <div className="importTreeScroll">
             {shown.length ? <ImportTree node={destination} library selected={selected} complete={Boolean(result)}
               onSelect={result ? undefined : (ids, checked) => setSelected(previous => selectItems(previous, ids, checked))} />
-              : <p className="importEmpty">{result ? "No new items were added." : "No items match this filter."}</p>}
+              : <p className="importEmpty">{result ? t("No new items were added.") : t("No items match this filter.")}</p>}
           </div>
         </section>
       </div>
       <details className="importWarnings" open={warnings.length > 0}>
-        <summary>{warnings.length ? `${warnings.length} warnings — review missing or omitted content` : "No import warnings"}</summary>
+        <summary>{warnings.length ? t("{n} warnings — review missing or omitted content", { n: warnings.length }) : t("No import warnings")}</summary>
         {warnings.length ? <ul>{warnings.map((warning, i) => <li key={i}><strong>{warning.title}</strong><span>{warning.reason}</span></li>)}</ul> : null}
       </details>
       {!result ? <p className="reportModalHint">{t(format.instructions)} {source === "zotero" && strip ? t("Embedded annotations will be imported and stripped from the stored PDFs.") : ""}</p> : null}
@@ -132,7 +132,7 @@ export default function ImportReviewDialog({ source, file, strip, folder = "", o
       {!result && !processingImport ? <button type="button" className="uiBtn" onClick={close}>{t("Cancel")}</button> : null}
       {error && !plan && !busy ? <button type="button" className="uiBtn" onClick={() => setAttempt(n => n + 1)}>{t("Retry preview")}</button> : null}
       <button type="button" className="uiBtn primary" disabled={!result && (!plan || busy || !chosenCount)} onClick={result ? close : submit}>
-        {result ? "Done" : phase === "importing" ? "Importing…" : "Import to library"}
+        {result ? t("Done") : phase === "importing" ? t("Importing…") : t("Import to library")}
       </button>
     </div>
   </SubDialog>;

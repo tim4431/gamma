@@ -1,3 +1,4 @@
+import { t } from "../shared/i18n/i18n.js";
 // How the account-scoped settings' sync reads in the Settings dialog: the
 // section tag (Section's `scope` + `prefs`) and the Account pane's Gamma
 // Cloud row. Pure, so node can test it (tests/syncState.test.mjs).
@@ -23,12 +24,12 @@ export function syncClock(at, now = new Date()) {
 }
 
 const tag = (state, icon, title, extra = {}) => ({
-  state, icon, title, label: state === "browser" ? "browser" : "account", tone: "", spin: false, ...extra,
+  state, icon, title, label: state === "browser" ? t("browser") : t("account"), tone: "", spin: false, ...extra,
 });
 
 // The tag of a section in scope "browser" — and of an account section for
 // the signed out, the guest account and share views.
-export const BROWSER_TAG = tag("browser", "monitor", "Kept in this browser only.");
+export const BROWSER_TAG = tag("browser", "monitor", t("Kept in this browser only."));
 
 // The tag of an account section holding the preferences `names`:
 // {state, icon, label, title, tone, spin}; `icon` names a glyph (monitor,
@@ -46,30 +47,30 @@ export function profileSyncState(local, cloud, names = [], clock = syncClock) {
   if (at === "signed-out") return BROWSER_TAG;
   const holds = (set) => !!set && names.some((name) => set.has(name));
   if (holds(local?.pending) || holds(local?.inflight)) {
-    return tag("syncing", "refresh", "Saving these settings to your account.", { spin: true });
+    return tag("syncing", "refresh", t("Saving these settings to your account."), { spin: true });
   }
   if (holds(local?.failed)) {
     return tag("error", "alert",
-      `Not saved on this server: ${sentence(local?.error || "the server did not answer")} Tried again with your next change.`,
+      t("Not saved on this server: {answer} Tried again with your next change.", { answer: sentence(local?.error || t("the server did not answer")) }),
       { tone: "error" });
   }
-  if (at === "loading" || !cloud) return tag("account", null, "Saved with your account on this server.");
+  if (at === "loading" || !cloud) return tag("account", null, t("Saved with your account on this server."));
   const profile = cloud.profile || {};
   const linked = Boolean(cloud.identity?.linked);
   if (!linked || profile.state === "off" || !profile.state) {
     return tag("saved", "check", linked
-      ? "Saved on this server. Sign in with Gamma Cloud again to carry these settings to other servers."
-      : "Saved on this server. Link a Gamma Cloud account to carry these settings to other servers.");
+      ? t("Saved on this server. Sign in with Gamma Cloud again to carry these settings to other servers.")
+      : t("Saved on this server. Link a Gamma Cloud account to carry these settings to other servers."));
   }
   if (holds(local?.awaitingCloud)) {
     if (profile.state === "error" || (profile.state === "pending" && profile.error)) {
       return tag("error", "alert",
-        `Saved on this server, not synced with Gamma Cloud: ${sentence(profile.error || "unknown error")} Tried again at the next check.`,
+        t("Saved on this server, not synced with Gamma Cloud: {error} Tried again at the next check.", { error: sentence(profile.error || t("unknown error")) }),
         { tone: "error" });
     }
   }
   const when = profile.state === "synced" ? clock(profile.at) : "";
-  return tag("synced", "cloudCheck", when ? `Synced with Gamma Cloud at ${when}` : "Synced with Gamma Cloud");
+  return tag("synced", "cloudCheck", when ? t("Synced with Gamma Cloud at {when}", { when }) : t("Synced with Gamma Cloud"));
 }
 
 // The Account pane's Gamma Cloud row hint when an identity is linked:
@@ -80,9 +81,9 @@ export function cloudSyncHint(cloud, clock = syncClock) {
   if (!cloud?.identity?.linked || !profile) return "";
   if (profile.state === "synced") return `Settings synced ${clock(profile.at)}`.trim();
   if (profile.state === "error" || (profile.state === "pending" && profile.error)) {
-    return `Settings not synced: ${profile.error || "unknown error"}`;
+    return t("Settings not synced: {error}", { error: profile.error || t("unknown error") });
   }
-  if (profile.state === "pending") return "Settings syncing…";
-  if (profile.state === "off") return "Settings not synced: sign in with Gamma Cloud again";
+  if (profile.state === "pending") return t("Settings syncing…");
+  if (profile.state === "off") return t("Settings not synced: sign in with Gamma Cloud again");
   return "";
 }

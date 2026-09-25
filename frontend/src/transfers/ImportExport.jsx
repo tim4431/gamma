@@ -44,7 +44,7 @@ function TransferDialog({ title, step, setStep, firstTitle, secondTitle, onCance
     </div>
     <div className="reportModalBtns transferFooter">
       <button type="button" className="uiBtn primary" disabled={busy}
-        onClick={step === 0 ? onContinue : action}>{step === 0 && needsReview ? "Next" : actionLabel}</button>
+        onClick={step === 0 ? onContinue : action}>{step === 0 && needsReview ? t("Next") : actionLabel}</button>
     </div>
   </SubDialog>;
 }
@@ -67,7 +67,7 @@ export function ExportDialog({ opts, setOpts, hasPdf, pdfStored, folder, onCance
 
   return <TransferDialog title={folder ? t("Export “{folder}”", { folder: folder }) : t("Export")} step={step} setStep={setStep}
     firstTitle={t("Choose a format")} secondTitle={t(definition.label)} needsReview={needsReview} onContinue={() => advance()}
-    onCancel={onCancel} actionLabel="Export" action={() => onExport(payload)}>
+    onCancel={onCancel} actionLabel={t("Export")} action={() => onExport(payload)}>
     {step === 0 ? <>
       <FormatChoices label={t("Export format")} value={format} onChange={(format) => set({ format })} onConfirm={advance} options={formats} />
       {!needsReview ? <p className="reportModalHint">{summary}</p> : null}
@@ -89,7 +89,7 @@ export function ExportDialog({ opts, setOpts, hasPdf, pdfStored, folder, onCance
         // trap (Zotero can't read one) is worth spelling out every time.
         <details className="transferHelp"><summary>{t("Open this export in Zotero")}</summary><div className="importSteps">
           <Step n={1} title={t("Download the .zip")}
-            hint={`Metadata, ${folder ? "subfolders" : "folders"} as collections, tags, notes${bundle ? `; the PDF${folder ? "s" : ""}${highlights ? " with highlights embedded" : ""} and note images` : ""}.`} />
+            hint={t("Metadata, {folders} as collections, tags, notes{images}.", { folders: folder ? "subfolders" : "folders", images: bundle ? t("; the PDF{_s}{embedded} and note images", { _s: folder ? "s" : "", embedded: highlights ? t(" with highlights embedded") : "" }) : "" })} />
           <Step n={2} title={t("Unzip it")}
             hint={t("Keep the .rdf and the files/ folder together.")} />
           <Step n={3} title={t("Import the .rdf in Zotero")}

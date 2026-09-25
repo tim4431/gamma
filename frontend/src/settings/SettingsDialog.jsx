@@ -126,7 +126,7 @@ function ViewerSettings({ value, onTranslationModels }) {
       </Section>
       <Section title={t("Translation")} scope="account" prefs={SECTION_PREFS.reading["Translation"]} action={
         <button className="uiBtn sm" onClick={onTranslationModels} title={t("Translation model, effort and parallel requests (AI › Advanced)")}>
-          <SlidersIcon size={13} /> Model & speed
+          <SlidersIcon size={13} /> {t("Model & speed")}
         </button>
       }>
         <Toggle
@@ -205,14 +205,14 @@ function TranslateModelSelect({ value }) {
     <MenuSelect
       label={t("Translation model")} value={current} onChange={value.setTranslateModel}
       options={[
-        ["", `Same as chat: ${value.chatModelName || "provider default"}`],
+        ["", t("Same as chat: {default}", { default: value.chatModelName || t("provider default") })],
         ...models.map((m) => [m.id, multiProvider ? `${m.model} · ${m.provider_name || m.provider}` : m.model]),
       ]}
     />
   );
 }
 
-const SEARCH_SHAPES = [["panel", "Full panel"], ["bar", "Find bar"]];
+const SEARCH_SHAPES = [["panel", t("Full panel")], ["bar", t("Find bar")]];
 
 function SearchSettings({ value }) {
   return (
@@ -256,10 +256,9 @@ async function requestReindex(setStatus, scheduledSuffix, wakeTasks) {
     const result = await apiJson(`${API}/search-reindex`, { method: "POST" });
     if (result.scheduled || result.busy) wakeTasks?.();
     setStatus(result.busy
-      ? "Indexing is already running—see the tasks popover."
-      : result.scheduled
-        ? `Re-indexing ${result.scheduled} paper${result.scheduled === 1 ? "" : "s"} ${scheduledSuffix}`
-        : "No papers with PDFs to index.");
+      ? t("Indexing is already running—see the tasks popover.") : result.scheduled
+        ? t("Re-indexing {scheduled} paper{_s} {scheduledSuffix}", { scheduled: result.scheduled, _s: result.scheduled === 1 ? "" : "s", scheduledSuffix })
+        : t("No papers with PDFs to index."));
   } catch (err) {
     setStatus(t("Reindex failed: {message}", { message: err.message }));
   }
@@ -282,7 +281,7 @@ function StorageCard() {
         </span>
         <span className="setCardVal">
           {fmtBytes(q.used_bytes)}
-          <em>{q.quota_mb ? ` / ${fmtBytes(q.quota_mb * 1024 * 1024)}` : " · no quota"}</em>
+          <em>{q.quota_mb ? ` / ${fmtBytes(q.quota_mb * 1024 * 1024)}` : t(" · no quota")}</em>
         </span>
       </div>
       <QuotaMeter usedBytes={q.used_bytes} quotaMb={q.quota_mb} barOnly />
@@ -349,8 +348,8 @@ function MaintenanceSettings({ value }) {
           hint={value.indexTask?.active ? t("Rebuilding — progress in the tasks popover") : t("Re-extract every paper if results look stale")}
           title={t("Full-text search reads a per-user index built from the extracted PDF text. Rebuild it when library-wide results look stale or incomplete.")}
         >
-          <button className="uiBtn sm" disabled={value.indexTask?.active} onClick={() => requestReindex(value.setStatus, "in the background.", value.wakeTasks)}>
-            {value.indexTask?.active ? "Indexing…" : "Rebuild"}
+          <button className="uiBtn sm" disabled={value.indexTask?.active} onClick={() => requestReindex(value.setStatus, t("in the background."), value.wakeTasks)}>
+            {value.indexTask?.active ? t("Indexing…") : t("Rebuild")}
           </button>
         </Row>
       </Section>
@@ -400,8 +399,8 @@ function MetaStatusSection({ value }) {
         body: JSON.stringify({ doc_ids: docIds }),
       });
       value.setStatus(r.busy
-        ? "Indexing is already running—try again when it finishes."
-        : `Indexing ${docIds.length === 1 ? "1 paper" : `${docIds.length} papers`} in the background.`);
+        ? t("Indexing is already running—try again when it finishes.")
+        : t("Indexing {papers} in the background.", { papers: docIds.length === 1 ? "1 paper" : `${docIds.length} papers` }));
       value.wakeTasks?.();
       pollRefresh();
     } catch (err) {
@@ -475,7 +474,7 @@ function MetaStatusSection({ value }) {
       }
     }
     setBusy(null);
-    value.setStatus(`Metadata: ${ok} fetched${failed ? `, ${failed} failed` : ""}${stopRef.current ? " (stopped)" : ""}.`);
+    value.setStatus(t("Metadata: {ok} fetched{failed}{stopped}.", { ok, failed: failed ? `, ${failed} failed` : "", stopped: stopRef.current ? " (stopped)" : "" }));
     refresh();
   }
 
@@ -503,28 +502,28 @@ function MetaStatusSection({ value }) {
   );
   const metaCell = (p) => {
     if (!p.has_meta) {
-      return p.meta_error ? cell("bad", "failed", p.meta_error) : cell("muted", "none", "No metadata yet");
+      return p.meta_error ? cell("bad", "failed", p.meta_error) : cell("muted", "none", t("No metadata yet"));
     }
     const src = metaSourceInfo({ source: p.meta_source, kind: p.meta_kind, unverified: p.meta_unverified });
-    if (!src) return cell("ok", "yes", "Metadata resolved");
+    if (!src) return cell("ok", "yes", t("Metadata resolved"));
     return cell(src.warn ? "bad" : p.meta_source === "ai" ? "muted" : "ok", src.short, src.hint);
   };
   // Text and index are separate columns: extraction state is only known once
   // the indexer has visited the doc, so an unindexed paper shows "unknown".
   const textCell = (p) => (
     p.text_chars === null
-      ? cell("muted", "unknown", "Unknown until the paper is indexed — Reindex to find out")
+      ? cell("muted", "unknown", t("Unknown until the paper is indexed — Reindex to find out"))
       : textOk(p)
         ? cell("ok", p.text_chars >= 1000 ? `${Math.round(p.text_chars / 1000)}k` : String(p.text_chars),
-          `${p.text_chars.toLocaleString()} characters extracted`)
-        : cell("bad", "no text", p.has_file ? "No text layer — scanned or image-only?" : "PDF file not on the server")
+          t("{text_chars} characters extracted", { text_chars: p.text_chars.toLocaleString() }))
+        : cell("bad", t("no text"), p.has_file ? t("No text layer — scanned or image-only?") : t("PDF file not on the server"))
   );
   const indexCell = (p) => (
     p.indexed
-      ? cell("ok", "indexed", "In the search index")
+      ? cell("ok", "indexed", t("In the search index"))
       : p.index_stale
-        ? cell("muted", "stale", "Indexed with an older extractor version — Reindex refreshes it")
-        : cell("muted", "—", "Not in the search index yet")
+        ? cell("muted", "stale", t("Indexed with an older extractor version — Reindex refreshes it"))
+        : cell("muted", "—", t("Not in the search index yet"))
   );
 
   return (
@@ -537,8 +536,8 @@ function MetaStatusSection({ value }) {
             options={[
               ["all", `All (${list.length})`],
               ["attention", t("Needs attention")],
-              ["unverified", `Unverified AI (${unverified.length})`],
-              ["missing", `Missing metadata (${missing.length})`],
+              ["unverified", t("Unverified AI ({n})", { n: unverified.length })],
+              ["missing", t("Missing metadata ({n})", { n: missing.length })],
               ["notext", t("No text layer")],
             ]}
           />
@@ -552,7 +551,7 @@ function MetaStatusSection({ value }) {
           />
           <button className="uiBtn sm iconSq" aria-label={t("Reindex")}
             title={t("Re-extract every paper into the search index (also fills in the text column)")}
-            onClick={() => { requestReindex(value.setStatus, "— text status fills in as it runs.", value.wakeTasks); pollRefresh(); }}>
+            onClick={() => { requestReindex(value.setStatus, t("— text status fills in as it runs."), value.wakeTasks); pollRefresh(); }}>
             <RefreshIcon size={13} />
           </button>
           <button className="uiBtn sm iconSq" onClick={refresh} disabled={!!busy} title={t("Reload this table")} aria-label={t("Reload")}>
@@ -638,25 +637,21 @@ function MetaStatusSection({ value }) {
                        unverified.length && `${unverified.length} unverified (AI)`,
                        toIndex.length && `${toIndex.length} to index`]
                         .filter(Boolean).join(" · ")
-                    : "Everything is verified and indexed"}
+                    : t("Everything is verified and indexed")}
               </span>
               <button className="uiBtn sm primary" disabled={!targets.length} onClick={() => retry(targets)}
-                title={selected.size ? "Fetch metadata for the selected papers"
-                  : "Fetch metadata for papers that are missing it or have an unverified AI record"}>
-                <SparklesIcon size={13} />{selected.size ? "Fetch selected" : "Fetch needed"}
+                title={selected.size ? t("Fetch metadata for the selected papers") : t("Fetch metadata for papers that are missing it or have an unverified AI record")}>
+                <SparklesIcon size={13} />{selected.size ? t("Fetch selected") : t("Fetch needed")}
               </button>
               <button className="uiBtn sm" disabled={!shown.length} onClick={() => retry(shown)}
                 title={filterMode === "all"
-                  ? "Re-fetch metadata for every paper, including ones that already have it"
-                  : "Re-fetch metadata for every paper the current filter shows"}>
-                {filterMode === "all" ? "Refetch all" : "Refetch shown"}
+                  ? t("Re-fetch metadata for every paper, including ones that already have it") : t("Re-fetch metadata for every paper the current filter shows")}>
+                {filterMode === "all" ? t("Refetch all") : t("Refetch shown")}
               </button>
               <button className="uiBtn sm" disabled={!indexTargets.length || indexing}
                 onClick={() => indexDocs(indexTargets.map((p) => p.doc_id))}
-                title={indexing ? "Indexing is already running — progress in the tasks popover"
-                  : selected.size ? "Extract the selected papers' text into the search index"
-                    : "Extract only the papers the search index is missing or holds at an older extractor version"}>
-                <RefreshIcon size={13} />{indexing ? "Indexing…" : selected.size ? "Reindex selected" : "Reindex needed"}
+                title={indexing ? t("Indexing is already running — progress in the tasks popover") : selected.size ? t("Extract the selected papers' text into the search index") : t("Extract only the papers the search index is missing or holds at an older extractor version")}>
+                <RefreshIcon size={13} />{indexing ? t("Indexing…") : selected.size ? t("Reindex selected") : t("Reindex needed")}
               </button>
             </div>
           )}
@@ -684,7 +679,7 @@ function PromptAccordion({ items }) {
             <button className="setAccHead" onClick={() => setOpen(isOpen ? null : key)}>
               <span className="setIcon"><Icon size={14} /></span>
               <span className="setAccName">{t(label)}</span>
-              {custom ? <span className="uiTag">custom</span> : null}
+              {custom ? <span className="uiTag">{t("custom")}</span> : null}
               <span className="setAccChevron">{isOpen ? "▾" : "▸"}</span>
             </button>
             {isOpen ? (
@@ -751,33 +746,33 @@ function PromptsSettings({ value }) {
 // offer it ("folder" = library/folder chat, "page" = page chat), short is
 // the chip name in the ToggleGroup.
 const AGENT_PERM_ROWS = [
-  ["list", ListIcon, "List pages",
-   "See the folder's page titles, labels and metadata", ["folder"], "List"],
-  ["read", BookIcon, "Read pages",
-   "Read a page's PDF text plus your highlights and notes", ["folder", "page"], "Read"],
-  ["block_read", OutlineIcon, "Read note blocks",
-   "Read a page's note outline with block ids", ["folder", "page"], "Blocks"],
-  ["view", EyeIcon, "View PDF pages",
-   "Show the model a picture of a PDF page (scans without a text layer, figures)", ["folder", "page"], "View"],
-  ["search", SearchIcon, "Search",
-   "Full-text search across the folder's notes and PDFs", ["folder", "page"], "Search"],
-  ["web_search", GlobeIcon, "Search papers online",
-   "Look papers up on Crossref and arXiv (e.g. a reference a paper cites)", ["folder", "page"], "Papers"],
-  ["web_read", CloudDownloadIcon, "Fetch documents",
-   "Read a paper or web page by DOI, arXiv id or URL without adding it to the library", ["folder", "page"], "Fetch"],
-  ["rename", PenIcon, "Rename pages", "Change page titles on request", ["folder"], "Rename"],
-  ["move", FolderIcon, "Move pages",
-   "File pages into folders (a new path creates the folder)", ["folder"], "Move"],
-  ["block_edit", PencilIcon, "Edit note blocks",
-   "Edit, create and move note blocks on request (never deletes)", ["folder", "page"], "Edit"],
+  ["list", ListIcon, t("List pages"),
+   t("See the folder's page titles, labels and metadata"), ["folder"], t("List")],
+  ["read", BookIcon, t("Read pages"),
+   t("Read a page's PDF text plus your highlights and notes"), ["folder", "page"], t("Read")],
+  ["block_read", OutlineIcon, t("Read note blocks"),
+   t("Read a page's note outline with block ids"), ["folder", "page"], t("Blocks")],
+  ["view", EyeIcon, t("View PDF pages"),
+   t("Show the model a picture of a PDF page (scans without a text layer, figures)"), ["folder", "page"], t("View")],
+  ["search", SearchIcon, t("Search"),
+   t("Full-text search across the folder's notes and PDFs"), ["folder", "page"], t("Search")],
+  ["web_search", GlobeIcon, t("Search papers online"),
+   t("Look papers up on Crossref and arXiv (e.g. a reference a paper cites)"), ["folder", "page"], t("Papers")],
+  ["web_read", CloudDownloadIcon, t("Fetch documents"),
+   t("Read a paper or web page by DOI, arXiv id or URL without adding it to the library"), ["folder", "page"], t("Fetch")],
+  ["rename", PenIcon, t("Rename pages"), t("Change page titles on request"), ["folder"], t("Rename")],
+  ["move", FolderIcon, t("Move pages"),
+   t("File pages into folders (a new path creates the folder)"), ["folder"], t("Move")],
+  ["block_edit", PencilIcon, t("Edit note blocks"),
+   t("Edit, create and move note blocks on request (never deletes)"), ["folder", "page"], t("Edit")],
 ];
 
 // The three chat kinds, each with its own permission map (prefs.js
 // CHAT_KINDS): [kind, icon, label, hint, agent scope].
 export const CHAT_KIND_ROWS = [
-  ["folder", FolderIcon, "Folder chat", "Home and folder views", "folder"],
-  ["pdf", FileTextIcon, "PDF chat", "Pages with a PDF", "page"],
-  ["notes", OutlineIcon, "Notes chat", "Note pages", "page"],
+  ["folder", FolderIcon, t("Folder chat"), t("Home and folder views"), "folder"],
+  ["pdf", FileTextIcon, t("PDF chat"), t("Pages with a PDF"), "page"],
+  ["notes", OutlineIcon, t("Notes chat"), t("Note pages"), "page"],
 ];
 
 // One chat kind's tool chips (a ToggleGroup) bound to the stored permission
@@ -817,16 +812,15 @@ function AssistantSettings({ value }) {
 
 function AdvancedAiSettings({ value, ai, papers }) {
   const budgets = [value.chatContextChars, value.metaContextChars, value.multiContextChars];
-  const contextPreset = budgets.every((n, i) => n === [60000, 6000, 120000][i]) ? "standard"
-    : budgets.every((n, i) => n === [120000, 12000, 240000][i]) ? "larger" : "custom";
-  const shared = "Extracted PDF text is measured in characters. Larger budgets can improve answers but cost more tokens.";
+  const contextPreset = budgets.every((n, i) => n === [60000, 6000, 120000][i]) ? "standard" : budgets.every((n, i) => n === [120000, 12000, 240000][i]) ? "larger" : "custom";
+  const shared = t("Extracted PDF text is measured in characters. Larger budgets can improve answers but cost more tokens.");
   const limits = [
-    [FileTextIcon, "Single paper", "Read from the open paper for one chat message",
+    [FileTextIcon, t("Single paper"), t("Read from the open paper for one chat message"),
       value.chatContextChars, value.setChatContextChars,
-      `${shared} When you ask about selected passages, this budget is spent around them (a grounding slice from the start plus text around each selection's page) instead of only the start of the paper.`],
-    [PaperIcon, "Metadata extraction", "Read while detecting identifiers and extracting fields",
+      t("{shared} When you ask about selected passages, this budget is spent around them (a grounding slice from the start plus text around each selection's page) instead of only the start of the paper.", { shared })],
+    [PaperIcon, t("Metadata extraction"), t("Read while detecting identifiers and extracting fields"),
       value.metaContextChars, value.setMetaContextChars, shared],
-    [BookIcon, "Multi-paper total", "Shared evenly by every selected paper",
+    [BookIcon, t("Multi-paper total"), t("Shared evenly by every selected paper"),
       value.multiContextChars, value.setMultiContextChars, shared],
   ];
 
@@ -912,11 +906,11 @@ function AdvancedSettings({ value }) {
         <LogBox
           icon={TerminalIcon}
           label={t("System log")}
-          description="Application events from this browser session"
+          description={t("Application events from this browser session")}
           entries={entries}
-          emptyText={level === "all" ? "Nothing logged yet this session."
-            : `No ${level === "warn" ? "warnings or errors" : "errors"} logged this session.`}
-          copyStatus="Log copied."
+          emptyText={level === "all" ? t("Nothing logged yet this session.")
+            : t("No {errors} logged this session.", { errors: level === "warn" ? t("warnings or errors") : t("errors") })}
+          copyStatus={t("Log copied.")}
           setStatus={value.setStatus}
           extra={<Segmented value={level} onChange={setLevel}
             options={[["all", t("All")], ["warn", t("Warnings"), null, t("Warnings and errors")], ["error", t("Errors")]]} />}
@@ -1000,8 +994,8 @@ export default function SettingsDialog({
   });
   React.useEffect(() => {
     if (!activePane) { setQuery(""); setPending(null); setMobileIndex(false); return; }
-    const legacyTarget = { notes: "Enter key", search: "On the home page", viewer: "Imported annotations",
-      context: "Single paper" }[activePane];
+    const legacyTarget = { notes: t("Enter key"), search: t("On the home page"), viewer: t("Imported annotations"),
+      context: t("Single paper") }[activePane];
     if (legacyTarget) setJump({ label: legacyTarget });
   }, [activePane]);
   // Looking at a pane resolves the notices pointing at it (app/useNotices.js).
@@ -1089,7 +1083,7 @@ export default function SettingsDialog({
                 {pane === "appearance" ? <AppearanceSettings value={papers} diagnostics={diagnostics} /> : null}
                 {pane === "reading" ? <>
                   <PaneHead icon={BookIcon} title={t("Reading & editing")} />
-                  <ViewerSettings value={papers} onTranslationModels={() => navigate("ai-advanced", "Translation effort")} />
+                  <ViewerSettings value={papers} onTranslationModels={() => navigate("ai-advanced", t("Translation effort"))} />
                   <NotesSettings value={notes} /><SearchSettings value={search} />
                 </> : null}
                 {pane === "library" ? <LibrarySettings value={{ ...papers, ...library }} /> : null}
@@ -1111,7 +1105,7 @@ export default function SettingsDialog({
                 {pane === "integrations" ? <IntegrationSettings key={getCurrentWorkspace()} workspaceId={getCurrentWorkspace()} /> : null}
                 {pane === "account" ? <UsersSettings value={users} selfOnly /> : null}
                 {pane === "users" ? <UsersSettings value={users} /> : null}
-                {pane === "workspaces" ? <WorkspacesSettings value={workspace} onServer={available("server") ? () => navigate("server", "Shared workspaces") : null} /> : null}
+                {pane === "workspaces" ? <WorkspacesSettings value={workspace} onServer={available("server") ? () => navigate("server", t("Shared workspaces")) : null} /> : null}
                 {pane === "backups" && backups ? <WorkspaceBackups value={backups} /> : null}
                 {pane === "server" ? <ServerSettings value={server} /> : null}
                 {pane === "diagnostics" ? <AdvancedSettings value={diagnostics} /> : null}

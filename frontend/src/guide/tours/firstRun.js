@@ -31,7 +31,7 @@ export default {
         { wait: 500 },
         { type: "add.urlInput", text: "{demoUrl}" },
         { wait: 500 },
-        { press: "Enter", on: "add.urlInput" },
+        { press: t("Enter"), on: "add.urlInput" },
         { waitFor: { event: "page.opened" } },
         { wait: 800 },
       ],
@@ -69,7 +69,7 @@ export default {
       anchor: "dock.notes",
       placement: "left",
       title: T("Add a note"),
-      do: [{ note: "Attention compares queries with keys, then uses those scores to combine the values. Scaling keeps the scores stable." }],
+      do: [{ note: t("Attention compares queries with keys, then uses those scores to combine the values. Scaling keeps the scores stable.") }],
     },
     {
       id: "label",
@@ -79,7 +79,7 @@ export default {
       do: [
         { click: "page.labels" },
         { type: "page.labelInput", text: "llm" },
-        { press: "Enter", on: "page.labelInput" },
+        { press: t("Enter"), on: "page.labelInput" },
         { wait: 900 },
       ],
     },

@@ -87,13 +87,13 @@ export function MermaidDiagram({ source, pending = false, width = null, idx, onR
           aria-pressed={showSource} onClick={() => setShowSource(!showSource)}><CodeIcon /></button>
         <button type="button" className="ctlBtn" aria-label={t("Copy source")}
           title={copyStatus || t("Copy source")} onClick={async () =>
-            setCopyStatus(await copyText(source) ? "Copied" : "Copy failed")}>
-          {copyStatus === "Copied" ? <CheckIcon /> : <CopyIcon />}
+            setCopyStatus(await copyText(source) ? t("Copied") : t("Copy failed"))}>
+          {copyStatus === t("Copied") ? <CheckIcon /> : <CopyIcon />}
         </button>
         <button type="button" className="ctlBtn" aria-label={t("Download SVG")} title={t("Download SVG")}
           disabled={!active?.svg} onClick={download}><DownloadIcon /></button>
       </div>
-      {!active && <div className="mermaidStatus" role="status">{pending ? "Waiting for the diagram to finish…" : "Rendering diagram…"}</div>}
+      {!active && <div className="mermaidStatus" role="status">{pending ? t("Waiting for the diagram to finish…") : t("Rendering diagram…")}</div>}
       {active?.error && <div className="mermaidError" role="status">{t("Could not render diagram.")}<pre>{active.error}</pre></div>}
       {active?.svg && !showSource && (
         <div className="mermaidPreview">

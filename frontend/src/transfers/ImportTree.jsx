@@ -25,12 +25,12 @@ export default function ImportTree({ node, library = false, selected, onSelect, 
         {onSelect ? <SelectionBox ids={itemIds(file)} selected={selected} onSelect={onSelect} label={t("Import {name}", { name: file.name })} /> : null}
         <FileIcon size={15} />
         <div className="importFileText"><span>{file.name}</span>
-          {library ? <small>{file.action === "skip" ? "Already in library" : file.action === "merge" ? (complete ? "Updated" : "Update existing page") : (complete ? "Imported" : "New page")}
-            {file.notes ? ` · ${file.notes} exported note${file.notes === 1 ? "" : "s"}` : ""}</small>
-            : <small>{fmtBytes(file.size)}{file.status === "not_imported" ? " · Not imported" : ""}</small>}
+          {library ? <small>{file.action === "skip" ? t("Already in library") : file.action === "merge" ? (complete ? t("Updated") : t("Update existing page")) : (complete ? t("Imported") : t("New page"))}
+            {file.notes ? t(" · {notes} exported note{_s}", { notes: file.notes, _s: file.notes === 1 ? "" : "s" }) : ""}</small>
+            : <small>{fmtBytes(file.size)}{file.status === "not_imported" ? t(" · Not imported") : ""}</small>}
           {library && file.warnings?.length ? <small className="importWarning">{file.warnings.map(w => w.reason).join(" ")}</small> : null}
         </div>
-        {library ? <span className="importKind">{file.kind === "pdf" ? "PDF" : file.kind === "chat" ? "Chat" : "Page"}</span> : null}
+        {library ? <span className="importKind">{file.kind === "pdf" ? "PDF" : file.kind === "chat" ? t("Chat") : t("Page")}</span> : null}
       </div>
     </li>)}
   </ul>;

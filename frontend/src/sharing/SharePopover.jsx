@@ -35,10 +35,10 @@ import {
   PenIcon, PlusIcon, RefreshIcon, ShieldIcon, Trash2Icon, UserIcon, UsersIcon,
 } from "../shared/ui/Icons";
 
-const SHARE_ROLE_OPTIONS = [["view", "Can view"], ["edit", "Can edit"]];
+const SHARE_ROLE_OPTIONS = [["view", t("Can view")], ["edit", t("Can edit")]];
 const ROLE_SEGMENTS = [
-  ["view", "View", EyeIcon, "Can read the page"],
-  ["edit", "Edit", PenIcon, "Can edit this page's notes and highlights — never other pages or the page's settings"],
+  ["view", t("View"), EyeIcon, t("Can read the page")],
+  ["edit", t("Edit"), PenIcon, t("Can edit this page's notes and highlights — never other pages or the page's settings")],
 ];
 
 const AUDIENCE_TILES = [
@@ -55,16 +55,14 @@ const CLOUD_AUDIENCE_TILES = [
 ];
 
 // The refusal publish.py answers for an account without a Gamma Cloud identity.
-export const PUBLISH_SIGN_IN = "Sign in with Gamma Cloud to publish.";
+export const PUBLISH_SIGN_IN = t("Sign in with Gamma Cloud to publish.");
 
 // The one sentence that says what the tiles + toggle add up to.
 function accessSummary(settings, invited) {
-  const who = settings.audience === "anyone" ? "Anyone with the link"
-    : settings.audience === "users" ? "Anyone signed in"
-      : null;
-  if (!who) return invited ? "Only the people below can open it." : "Nobody can open it until you invite someone.";
-  const verb = settings.role === "edit" ? "edit" : "read";
-  return `${who} can ${verb} this page${invited ? "; invited people keep their own access" : ""}.`;
+  const who = settings.audience === "anyone" ? t("Anyone with the link") : settings.audience === "users" ? t("Anyone signed in") : null;
+  if (!who) return invited ? t("Only the people below can open it.") : t("Nobody can open it until you invite someone.");
+  const verb = settings.role === "edit" ? t("edit") : t("read");
+  return t("{who} can {verb} this page{access}.", { who, verb, access: invited ? t("; invited people keep their own access") : "" });
 }
 
 // Invite, inline under the people list (a popover can't host a modal): an
@@ -96,7 +94,7 @@ function PersonRow({ name, self, sub, icon: Icon, active, children }) {
       <span className="aiProvMeta">
         <span className="aiProvName">
           {name}
-          {self ? <span className="uiTag">you</span> : null}
+          {self ? <span className="uiTag">{t("you")}</span> : null}
         </span>
         <span className="aiProvDesc">{sub}</span>
       </span>
@@ -143,7 +141,7 @@ function PublishSection({ state, busy, error, copied, onCopy, canEdit, onPublish
         <div className="publishAccount">
           <a className="uiBtn sm" href={accountUrl} target="_blank" rel="noopener"
             title={t("Your Gamma Cloud account: plan, devices, sign-in methods")}>
-            <ExternalLinkIcon size={13} />Open account
+            <ExternalLinkIcon size={13} />{t("Open account")}
           </a>
         </div>
       ) : null}
@@ -151,7 +149,7 @@ function PublishSection({ state, busy, error, copied, onCopy, canEdit, onPublish
   ) : null;
   // "3 of 5 pages published" where the plan caps them (the refusal's count is the freshest)
   const limit = (capped ? error.limit : null) || state?.limit;
-  const counted = limit && limit.max != null ? `${limit.used} of ${limit.max} pages published` : "";
+  const counted = limit && limit.max != null ? t("{used} of {max} pages published", { used: limit.used, max: limit.max }) : "";
   const link = state?.public_url || state?.url || "";
 
   if (!state) {
@@ -170,11 +168,11 @@ function PublishSection({ state, busy, error, copied, onCopy, canEdit, onPublish
             + "and shares it there; edits keep syncing both ways."}>
           {state.can_publish && canEdit ? (
             <button type="button" className="uiBtn sm primary" disabled={!!busy} onClick={() => onPublish()}>
-              {spinning("publish") || <CloudUploadIcon size={13} />}Publish
+              {spinning("publish") || <CloudUploadIcon size={13} />}{t("Publish")}
             </button>
           ) : !state.can_publish && state.reason === PUBLISH_SIGN_IN ? (
             <button type="button" className="uiBtn sm" onClick={onLink}>
-              <CloudIcon size={13} />Link Gamma Cloud account
+              <CloudIcon size={13} />{t("Link Gamma Cloud account")}
             </button>
           ) : null}
         </Row>
@@ -198,7 +196,7 @@ function PublishSection({ state, busy, error, copied, onCopy, canEdit, onPublish
           {link ? (
             <button type="button" className={`uiBtn sm ${copied ? "on" : ""}`} onClick={onCopy} title={link}>
               {copied ? <CheckIcon size={13} /> : <LinkIcon size={13} />}
-              {copied ? "Copied" : "Copy link"}
+              {copied ? t("Copied") : t("Copy link")}
             </button>
           ) : null}
           {canEdit ? (
@@ -213,7 +211,7 @@ function PublishSection({ state, busy, error, copied, onCopy, canEdit, onPublish
       {confirming ? (
         <div className="mirrorConfirm">
           <AlertCircleIcon size={14} />
-          <span>Unpublish? The cloud link stops working and the copy there is deleted; this page stays here.</span>
+          <span>{t("Unpublish? The cloud link stops working and the copy there is deleted; this page stays here.")}</span>
           <span className="mirrorConfirmBtns">
             <button type="button" className="uiBtn sm danger dangerBtn" disabled={!!busy}
               onClick={async () => { await onUnpublish(); setConfirming(false); }}>{t("Unpublish")}</button>
@@ -247,8 +245,8 @@ function PublishSection({ state, busy, error, copied, onCopy, canEdit, onPublish
           <div className={`settingsPaneHint shareSummary ${openEdit ? "shareWarn" : ""}`}>
             {openEdit ? <AlertCircleIcon size={13} /> : null}
             <span>
-              {busy === "update" ? "Saving…" : accessSummary(share, (share.users || []).length > 0)}
-              {openEdit && busy !== "update" ? " No sign-in needed; edits are recorded under a name they choose." : ""}
+              {busy === "update" ? t("Saving…") : accessSummary(share, (share.users || []).length > 0)}
+              {openEdit && busy !== "update" ? t(" No sign-in needed; edits are recorded under a name they choose.") : ""}
             </span>
           </div>
         </>
@@ -291,19 +289,19 @@ export function SharePopover({
             <Row icon={LinkIcon} label={t("Share link")} hint={t("not shared yet")}
               title={t("A link lets people open this page — read-only or editable, for anyone or only for accounts you name.")}>
               <button type="button" className="uiBtn sm primary" onClick={onCreate}>
-                <LinkIcon size={13} />Create link
+                <LinkIcon size={13} />{t("Create link")}
               </button>
             </Row>
           </Section>
         ) : null}
         {shared ? (
           <>
-            <Section title={t("Link")}>
+            <Section title={t("Link")} guide="share.link">
               <Row icon={LinkIcon} label={t("Share link")} hint={shareUrl} title={shareUrl}>
                 <span className="shareLinkBtns">
                   <button type="button" className={`uiBtn sm ${copied ? "on" : ""}`} onClick={onCopy} title={shareUrl}>
                     {copied ? <CheckIcon size={13} /> : <LinkIcon size={13} />}
-                    {copied ? "Copied" : "Copy link"}
+                    {copied ? t("Copied") : t("Copy link")}
                   </button>
                   <button type="button" className="uiBtn sm iconSq danger" onClick={onStop}
                     aria-label={t("Stop sharing")}
@@ -315,6 +313,7 @@ export function SharePopover({
             </Section>
             <Section
               title={t("Access")}
+              guide="share.access"
               action={settings.audience !== "list" ? (
                 <Segmented
                   value={settings.role} options={ROLE_SEGMENTS}
@@ -334,21 +333,22 @@ export function SharePopover({
                 {openEdit ? <AlertCircleIcon size={13} /> : null}
                 <span>
                   {accessSummary(settings, users.length > 0)}
-                  {openEdit ? " No sign-in needed; edits are recorded under a name they choose." : ""}
+                  {openEdit ? t(" No sign-in needed; edits are recorded under a name they choose.") : ""}
                 </span>
               </div>
             </Section>
             <Section
               title={t("People")}
+              guide="share.people"
               action={
                 <button type="button" className={`uiBtn sm ${inviting ? "on" : ""}`} onClick={() => setInviting((v) => !v)}>
-                  <PlusIcon size={13} /> Invite
+                  <PlusIcon size={13} /> {t("Invite")}
                 </button>
               }
             >
-              <PersonRow name={me} self sub="Owner" icon={meIsGuest ? UserIcon : ShieldIcon} active />
+              <PersonRow name={me} self sub={t("Owner")} icon={meIsGuest ? UserIcon : ShieldIcon} active />
               {users.map((u) => (
-                <PersonRow key={u.name} name={u.name} sub="Invited" icon={UserIcon}>
+                <PersonRow key={u.name} name={u.name} sub={t("Invited")} icon={UserIcon}>
                   <Segmented
                     value={u.role} options={ROLE_SEGMENTS}
                     onChange={(role) => { if (role !== u.role) onSetRole(u.name, role); }}

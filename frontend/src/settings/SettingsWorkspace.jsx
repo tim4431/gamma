@@ -26,18 +26,18 @@ import { T, t } from "../shared/i18n/i18n.js";
 
 // Workspace roles as the UI words them (docs/dev/workspaces.md); the account
 // menu's switcher in App.jsx reads the same table.
-export const ROLE_OPTIONS = [["owner", "Owner"], ["editor", "Can edit"], ["viewer", "View only"]];
-export const ROLE_LABEL = { owner: "owner", editor: "can edit", viewer: "view only" };
-const ROLE_TEXT = { owner: "own it", editor: "can edit", viewer: "can view" };
+export const ROLE_OPTIONS = [["owner", t("Owner")], ["editor", t("Can edit")], ["viewer", t("View only")]];
+export const ROLE_LABEL = { owner: t("owner"), editor: t("can edit"), viewer: t("view only") };
+const ROLE_TEXT = { owner: t("own it"), editor: t("can edit"), viewer: t("can view") };
 // One line under a switcher entry / workspace row: what kind it is and, for
 // a shared one, your role.
 export function workspaceMeta(w) {
-  if (w.mirror_of) return `clone of ${w.mirror_of}`;
-  if (w.personal) return w.default ? "personal · default" : "personal";
+  if (w.mirror_of) return t("clone of {mirror_of}", { mirror_of: w.mirror_of });
+  if (w.personal) return w.default ? t("personal · default") : "personal";
   return `${w.access === "public" ? "public · " : ""}${ROLE_LABEL[w.role] || w.role}`;
 }
-export const ACCESS_OPTIONS = [["private", "Private", UsersIcon], ["public", "Public", GlobeIcon]];
-export const PUBLIC_ROLE_OPTIONS = [["viewer", "Everyone can view"], ["editor", "Everyone can edit"]];
+export const ACCESS_OPTIONS = [["private", t("Private"), UsersIcon], ["public", t("Public"), GlobeIcon]];
+export const PUBLIC_ROLE_OPTIONS = [["viewer", t("Everyone can view")], ["editor", t("Everyone can edit")]];
 
 // The account directory (GET /api/accounts) for the pickers: null while
 // loading, [] when it cannot be read (the guest).
@@ -138,7 +138,7 @@ export function AccessRows({ info, canEdit, onUpdate }) {
             value={info.access} label={t("Access")} options={ACCESS_OPTIONS}
             onChange={(access) => { if (access !== info.access) onUpdate({ access, public_role: info.public_role }); }}
           />
-        ) : <span className="settingDesc">{isPublic ? "Public" : "Private"}</span>}
+        ) : <span className="settingDesc">{isPublic ? t("Public") : t("Private")}</span>}
       </Row>
       {isPublic ? (
         <Row icon={UserIcon} label={t("Public role")} hint={t("what everyone gets")}
@@ -174,8 +174,8 @@ export function AccessRows({ info, canEdit, onUpdate }) {
 export function StorageRow({ quota, me }) {
   if (!quota) return null;
   const who = quota.account
-    ? `${fmtBytes(quota.workspace_bytes)} here · counts against ${quota.account === me ? "your" : `${quota.account}'s`} storage`
-    : quota.quota_mb ? `this workspace's own quota · ${quota.quota_mb} MB` : "this workspace's own quota · unlimited";
+    ? t("{workspace_bytes} here · counts against {s} storage", { workspace_bytes: fmtBytes(quota.workspace_bytes), s: quota.account === me ? "your" : `${quota.account}'s` })
+    : quota.quota_mb ? t("this workspace's own quota · {quota_mb} MB", { quota_mb: quota.quota_mb }) : t("this workspace's own quota · unlimited");
   return (
     <Row icon={DatabaseIcon} label={t("Storage")} hint={who}
       title={t("Uploads into a personal workspace count against its account's quota, together with the account's other personal workspaces; a shared workspace has its own optional quota set by an admin.")}>
@@ -205,12 +205,12 @@ export function MembersList({ info, me, canManage, busy, onSetRole, onRemove, on
         <span className="aiProvMeta">
           <span className="aiProvName">
             {m.username}
-            {self ? <span className="uiTag">you</span> : null}
-            {m.pending ? <span className="uiTag" title={t("Invited by Gamma Cloud username; joins on their first sign-in to this server")}>pending</span> : null}
+            {self ? <span className="uiTag">{t("you")}</span> : null}
+            {m.pending ? <span className="uiTag" title={t("Invited by Gamma Cloud username; joins on their first sign-in to this server")}>{t("pending")}</span> : null}
           </span>
           <span className="aiProvDesc">
             {ROLE_OPTIONS.find(([r]) => r === m.role)?.[1] || m.role}
-            {m.added_by && m.added_by !== m.username ? ` · invited by ${m.added_by}` : ""}
+            {m.added_by && m.added_by !== m.username ? t(" · invited by {added_by}", { added_by: m.added_by }) : ""}
           </span>
         </span>
         <span className="aiProvActions">
@@ -249,7 +249,7 @@ export function MembersList({ info, me, canManage, busy, onSetRole, onRemove, on
 // their cloud username before they have an account here; that invitation
 // waits for their first sign-in and grants edit or view, never ownership.
 // onSubmit(username, role, via) — via is "local" or "cloud".
-const INVITE_VIA = [["local", "On this server"], ["cloud", "Gamma Cloud username"]];
+const INVITE_VIA = [["local", t("On this server")], ["cloud", t("Gamma Cloud username")]];
 const CLOUD_ROLE_OPTIONS = ROLE_OPTIONS.filter(([r]) => r !== "owner");
 
 export function InviteDialog({ name, accounts, exclude, cloud, busy, error, onSubmit, onClose }) {
@@ -355,32 +355,32 @@ export function ManageWorkspaceDialog({ wsId, me, admin, accounts, confirm, setS
 
   async function saveName(name) {
     const d = await ws.update({ name });
-    if (d) { setRenaming(false); done(`Renamed to ${d.name}.`); }
+    if (d) { setRenaming(false); done(t("Renamed to {name}.", { name: d.name })); }
   }
 
   async function invite(username, role, via) {
-    const verb = role === "viewer" ? "view" : role === "editor" ? "edit" : "manage";
+    const verb = role === "viewer" ? t("view") : role === "editor" ? t("edit") : t("manage");
     if (via === "cloud") {
       const d = await ws.inviteCloud(username, role);
       if (!d) return;
       setInviting(false);
       done(d.invited?.member
-        ? `${d.invited.member} can now ${verb} ${d.name}.`
-        : `Invited ${username}; they can ${verb} ${d.name} once they sign in with Gamma Cloud.`);
+        ? t("{member} can now {verb} {name}.", { member: d.invited.member, verb, name: d.name })
+        : t("Invited {username}; they can {verb} {name} once they sign in with Gamma Cloud.", { username, verb, name: d.name }));
       return;
     }
     const d = await ws.setRole(username, role);
-    if (d) { setInviting(false); done(`${username} can now ${verb} ${d.name}.`); }
+    if (d) { setInviting(false); done(t("{username} can now {verb} {name}.", { username, verb, name: d.name })); }
   }
 
   function cancelInvite(m) {
     confirm({
       title: T("Withdraw invitation"),
       message: t("Withdraw the invitation to {username} for \"{name}\"?", { username: m.username, name: info?.name }),
-      confirmLabel: "Withdraw", danger: true,
+      confirmLabel: t("Withdraw"), danger: true,
       onConfirm: async () => {
         const d = await ws.cancelInvite(m.subject);
-        if (d) done(`Withdrew the invitation to ${m.username}.`);
+        if (d) done(t("Withdrew the invitation to {username}.", { username: m.username }));
       },
     });
   }
@@ -388,11 +388,11 @@ export function ManageWorkspaceDialog({ wsId, me, admin, accounts, confirm, setS
   function remove(username) {
     const leaving = username === me;
     confirm({
-      title: leaving ? "Leave workspace" : "Remove member",
+      title: leaving ? t("Leave workspace") : t("Remove member"),
       message: leaving
-        ? `Leave "${info?.name}"? You will need a new invitation to come back.`
-        : `Remove ${username} from "${info?.name}"? They keep nothing from it.`,
-      confirmLabel: leaving ? "Leave" : "Remove", danger: true,
+        ? t("Leave \"{name}\"? You will need a new invitation to come back.", { name: info?.name })
+        : t("Remove {username} from \"{name}\"? They keep nothing from it.", { username, name: info?.name }),
+      confirmLabel: leaving ? t("Leave") : t("Remove"), danger: true,
       onConfirm: async () => {
         const d = await ws.removeMember(username);
         if (!d) return;
@@ -405,8 +405,8 @@ export function ManageWorkspaceDialog({ wsId, me, admin, accounts, confirm, setS
   function destroy() {
     confirm({
       title: T("Delete workspace"),
-      message: `Delete "${info?.name}" with ALL its pages, PDFs, chats and backups${isPersonal ? "" : ", for every member"}? This can't be undone.`,
-      confirmLabel: "Delete", danger: true,
+      message: t("Delete \"{name}\" with ALL its pages, PDFs, chats and backups{member}? This can't be undone.", { name: info?.name, member: isPersonal ? "" : t(", for every member") }),
+      confirmLabel: t("Delete"), danger: true,
       onConfirm: async () => {
         const d = await ws.destroy();
         if (d) { done(d.warning || `Deleted ${info?.name}.`); onClose(); onLeft?.(wsId); }
@@ -417,21 +417,21 @@ export function ManageWorkspaceDialog({ wsId, me, admin, accounts, confirm, setS
   function convert(kind) {
     const toShared = kind === "shared";
     confirm({
-      title: toShared ? "Convert to shared workspace" : "Convert to personal workspace",
+      title: toShared ? t("Convert to shared workspace") : t("Convert to personal workspace"),
       message: toShared
-        ? `Make "${info?.name}" a shared workspace? ${info?.personal_of} stays its owner and can invite people; it stops counting against their storage. If it is their default, another personal workspace becomes the default.`
-        : `Make "${info?.name}" ${members[0]?.username}'s personal workspace? It becomes private, its own quota is cleared, and it counts against their storage.`,
-      confirmLabel: "Convert",
+        ? t("Make \"{name}\" a shared workspace? {personal_of} stays its owner and can invite people; it stops counting against their storage. If it is their default, another personal workspace becomes the default.", { name: info?.name, personal_of: info?.personal_of })
+        : t("Make \"{name}\" {username}'s personal workspace? It becomes private, its own quota is cleared, and it counts against their storage.", { name: info?.name, username: members[0]?.username }),
+      confirmLabel: t("Convert"),
       onConfirm: async () => {
         const d = await ws.update({ kind });
-        if (d) done(`${d.name} is now a ${d.kind} workspace.`);
+        if (d) done(t("{name} is now a {kind} workspace.", { name: d.name, kind: d.kind === "shared" ? t("shared") : t("personal") }));
       },
     });
   }
 
-  const title = info?.name || "Workspace";
+  const title = info?.name || t("Workspace");
   const subtitle = !info ? "" : isPersonal
-    ? (mine ? `Your personal workspace${info.default ? " · your default" : ""}` : `${info.personal_of}'s personal workspace${info.default ? " · their default" : ""}`)
+    ? (mine ? t("Your personal workspace{default}", { default: info.default ? t(" · your default") : "" }) : t("{personal_of}'s personal workspace{default}", { personal_of: info.personal_of, default: info.default ? t(" · their default") : "" }))
     : `${info.access === "public" ? "Public" : "Shared"} workspace · ${info.role ? `you ${ROLE_TEXT[info.role]}` : "you manage it as an admin"}`;
   const canDelete = manages && (!isPersonal || personalCount == null || personalCount > 1);
 
@@ -453,8 +453,8 @@ export function ManageWorkspaceDialog({ wsId, me, admin, accounts, confirm, setS
               <Section title={t("Access")}>
                 <AccessRows info={info} canEdit={!!admin} onUpdate={async (patch) => {
                   const d = await ws.update(patch);
-                  if (d && patch.access) done(d.access === "public" ? `${d.name} is open to everyone on this server.` : `${d.name} is private.`);
-                  else if (d && "quota_mb" in patch) done(d.quota_mb ? `Workspace quota set to ${d.quota_mb} MB.` : "Workspace quota removed.");
+                  if (d && patch.access) done(d.access === "public" ? t("{name} is open to everyone on this server.", { name: d.name }) : t("{name} is private.", { name: d.name }));
+                  else if (d && "quota_mb" in patch) done(d.quota_mb ? t("Workspace quota set to {quota_mb} MB.", { quota_mb: d.quota_mb }) : t("Workspace quota removed."));
                 }} />
                 {!admin ? <div className="settingsPaneHint">{t("Access and the workspace's quota are set by a server admin.")}</div> : null}
               </Section>
@@ -464,7 +464,7 @@ export function ManageWorkspaceDialog({ wsId, me, admin, accounts, confirm, setS
                 title={t("Members")}
                 action={manages ? (
                   <button className="uiBtn sm" disabled={ws.busy} onClick={() => { ws.setError(""); setInviting(true); }}>
-                    <PlusIcon size={13} /> Invite
+                    <PlusIcon size={13} /> {t("Invite")}
                   </button>
                 ) : null}
               >
@@ -472,7 +472,7 @@ export function ManageWorkspaceDialog({ wsId, me, admin, accounts, confirm, setS
                 {info.access === "public" && !explicitMember ? (
                   <div className="settingsPaneHint">{t("You are in because the workspace is public — everyone on this server is.")}</div>
                 ) : manages ? (
-                  <div className="settingsPaneHint">Naming someone Owner hands the workspace on; the role menu is how ownership moves.</div>
+                  <div className="settingsPaneHint">{t("Naming someone Owner hands the workspace on; the role menu is how ownership moves.")}</div>
                 ) : null}
               </Section>
             ) : null}
@@ -480,7 +480,7 @@ export function ManageWorkspaceDialog({ wsId, me, admin, accounts, confirm, setS
               {mine && !info.default ? (
                 <Row icon={CheckIcon} label={t("Default workspace")} hint={t("where the extension and plain links land")}
                   title={t("Requests that name no workspace — the browser extension's clips, older clients, a link without a workspace — land in your default workspace.")}>
-                  <button className="uiBtn sm" disabled={ws.busy} onClick={async () => { const d = await ws.update({ default: true }); if (d) done(`${d.name} is now your default workspace.`); }}>
+                  <button className="uiBtn sm" disabled={ws.busy} onClick={async () => { const d = await ws.update({ default: true }); if (d) done(t("{name} is now your default workspace.", { name: d.name })); }}>
                     {t("Make default")}
                   </button>
                 </Row>
@@ -503,7 +503,7 @@ export function ManageWorkspaceDialog({ wsId, me, admin, accounts, confirm, setS
               ) : null}
               {admin && !isPersonal && !explicitMember ? (
                 <Row icon={ShieldIcon} label={t("Join as owner")} hint={info.access === "public" ? t("everyone can already open it; this adds you as an owner") : t("add yourself so you can open it")}>
-                  <button className="uiBtn sm" disabled={ws.busy} onClick={async () => { const d = await ws.setRole(me, "owner"); if (d) done(`You now own ${d.name}.`); }}>
+                  <button className="uiBtn sm" disabled={ws.busy} onClick={async () => { const d = await ws.setRole(me, "owner"); if (d) done(t("You now own {name}.", { name: d.name })); }}>
                     {t("Join")}
                   </button>
                 </Row>
@@ -528,7 +528,7 @@ export function ManageWorkspaceDialog({ wsId, me, admin, accounts, confirm, setS
         </div>
       </div>
       {renaming ? (
-        <NameDialog title={t("Rename workspace")} label={t("Name")} initial={info?.name} submitLabel="Save"
+        <NameDialog title={t("Rename workspace")} label={t("Name")} initial={info?.name} submitLabel={t("Save")}
           busy={ws.busy} error={ws.error} onSubmit={saveName} onClose={() => { setRenaming(false); ws.setError(""); }} />
       ) : null}
       {inviting ? (
@@ -626,12 +626,12 @@ export function WorkspacesSettings({ value, onServer }) {
         <span className="aiProvMeta">
           <span className="aiProvName">
             {w.name}
-            {w.default ? <span className="uiTag">default</span> : null}
-            {isPublic ? <span className="uiTag">public</span> : null}
-            {current ? <span className="uiTag">open</span> : null}
+            {w.default ? <span className="uiTag">{t("default")}</span> : null}
+            {isPublic ? <span className="uiTag">{t("public")}</span> : null}
+            {current ? <span className="uiTag">{t("open")}</span> : null}
           </span>
           <span className="aiProvDesc">
-            {w.personal ? "just you" : `${ROLE_LABEL[w.role] || w.role} · ${w.members} member${w.members === 1 ? "" : "s"}`}
+            {w.personal ? t("just you") : `${ROLE_LABEL[w.role] || w.role} · ${w.members} member${w.members === 1 ? "" : "s"}`}
             {` · ${fmtBytes(w.used_bytes)}`}
           </span>
         </span>
@@ -639,7 +639,7 @@ export function WorkspacesSettings({ value, onServer }) {
           {!current ? <button className="uiBtn sm" onClick={() => { closeSettings?.(); switchWorkspace(w.id); }}>{t("Open")}</button> : null}
           <WorkspaceDataMenus w={w} exportWorkspace={exportWorkspace} importWorkspace={importWorkspace} closeSettings={closeSettings} />
           <button className="uiBtn sm" onClick={() => setManage(w.id)} title={t("Manage {name}", { name: w.name })}>
-            <PenIcon size={13} /> Manage
+            <PenIcon size={13} /> {t("Manage")}
           </button>
         </span>
       </div>
@@ -664,7 +664,7 @@ export function WorkspacesSettings({ value, onServer }) {
       {data ? (
         <>
           <Section title={t("Storage")}>
-            <Row icon={DatabaseIcon} label={t("Your storage")} hint={`all personal workspaces${data.account.max_upload_mb ? ` · max ${data.account.max_upload_mb} MB per file` : ""}`}
+            <Row icon={DatabaseIcon} label={t("Your storage")} hint={data.account.max_upload_mb ? t("all personal workspaces · max {mb} MB per file", { mb: data.account.max_upload_mb }) : t("all personal workspaces")}
               title={t("Uploads into your personal workspaces count against your account's quota. Shared workspaces carry their own.")}>
               <QuotaMeter usedBytes={data.account.used_bytes} quotaMb={data.account.quota_mb} />
             </Row>
@@ -683,7 +683,7 @@ export function WorkspacesSettings({ value, onServer }) {
                   ]}
                 />
                 <button className="uiBtn sm" disabled={busy} onClick={() => { setCreateError(""); setCreating(true); }}>
-                  <PlusIcon size={13} /> New workspace
+                  <PlusIcon size={13} /> {t("New workspace")}
                 </button>
               </span>
             )}
@@ -709,7 +709,7 @@ export function WorkspacesSettings({ value, onServer }) {
       {creating ? (
         <NameDialog title={t("New personal workspace")} label={t("Name")}
           hint={t("a separate library of your own — work, life, play")}
-          submitLabel="Create and open" busy={busy} error={createError} onSubmit={submitCreate} onClose={() => setCreating(false)} />
+          submitLabel={t("Create and open")} busy={busy} error={createError} onSubmit={submitCreate} onClose={() => setCreating(false)} />
       ) : null}
     </>
   );

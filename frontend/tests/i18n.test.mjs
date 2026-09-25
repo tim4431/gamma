@@ -41,6 +41,10 @@ test("checkCatalog reports missing, empty, orphan and mismatched entries", () =>
     'orphan: "Gone"',
   ]);
   assert.deepEqual(checkCatalog({ "{n} page": "{n} 页" }, new Map([["{n} page", { plural: "{n} pages", files: [] }]])), []);
+  // An "_" placeholder (English plural s) may be dropped, but nothing may be added.
+  const plural = new Map([["Copied {n} page{_s}.", { files: [] }]]);
+  assert.deepEqual(checkCatalog({ "Copied {n} page{_s}.": "已复制 {n} 个页面。" }, plural), []);
+  assert.equal(checkCatalog({ "Copied {n} page{_s}.": "已复制 {count} 个页面。" }, plural).length, 1);
 });
 
 // The real catalogs: every string in src/ is translated, nothing stale is

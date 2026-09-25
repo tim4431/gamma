@@ -11,7 +11,7 @@ function initial(peer) {
 }
 
 function describe(peer) {
-  const what = peer.anchor >= 0 ? "editing" : peer.block ? "on a block" : "viewing";
+  const what = peer.anchor >= 0 ? "editing" : peer.block ? t("on a block") : "viewing";
   // No account behind the peer: a share-link visitor under a chosen name.
   return `${peer.name || "Anonymous"}${peer.user ? "" : " (via link)"} · ${what}`;
 }
@@ -32,7 +32,7 @@ export function PeerChips({ peers }) {
   if (!peers?.length) return null;
   const shown = peers.slice(0, 3);
   return (
-    <span className="peerChips" aria-hidden="true">
+    <span className="peerChips" aria-hidden="true" data-guide="notes.peers">
       {shown.map((p) => <PeerAvatar key={p.client} peer={p} />)}
       {peers.length > shown.length ? <span className="peerMore">+{peers.length - shown.length}</span> : null}
     </span>
@@ -43,7 +43,7 @@ export function PeerChips({ peers }) {
 export function PresenceBar({ peers, onJump }) {
   if (!peers?.length) return null;
   return (
-    <span className="presenceBar" aria-label={t("People on this page")}>
+    <span className="presenceBar" aria-label={t("People on this page")} data-guide="page.presence">
       {peers.map((p) => (
         <PeerAvatar
           key={p.client}

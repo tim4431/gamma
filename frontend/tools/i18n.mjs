@@ -70,10 +70,14 @@ export function checkCatalog(catalog, keys) {
     } else {
       const want = new Set(placeholders(key));
       if (entry.plural) { want.add("n"); for (const p of placeholders(entry.plural)) want.add(p); }
+      // "_" placeholders carry English-only grammar (a plural s): optional.
+      const needed = [...want].filter((p) => !p.startsWith("_")).sort().join();
       for (const form of forms) {
         const got = new Set(placeholders(form));
         if (entry.plural) got.add("n");
-        if ([...got].sort().join() !== [...want].sort().join()) problems.push(`placeholders differ: ${JSON.stringify(key)} → ${JSON.stringify(form)}`);
+        const extra = [...got].some((p) => !want.has(p));
+        if (extra || [...got].filter((p) => !p.startsWith("_")).sort().join() !== needed)
+          problems.push(`placeholders differ: ${JSON.stringify(key)} → ${JSON.stringify(form)}`);
       }
     }
   }

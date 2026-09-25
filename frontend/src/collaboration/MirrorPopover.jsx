@@ -36,16 +36,16 @@ import {
 
 // The server's sync_log actions, in git's words.
 export const ACTION_TEXT = {
-  "pulled": "pulled from remote",
-  "pushed": "pushed to remote",
-  "created here": "pulled from remote (new page)",
-  "created there": "pushed to remote (new page)",
-  "deleted here": "deleted on remote — removed here",
-  "deleted there": "deleted here — removed on remote",
-  "restored here": "restored from remote (edited there after it was deleted here)",
-  "restored there": "restored on remote (edited here after it was deleted there)",
-  "replaced here": "force-pulled: remote's version replaced this one",
-  "replaced there": "force-pushed: this version replaced remote's",
+  "pulled": t("pulled from remote"),
+  "pushed": t("pushed to remote"),
+  "created here": t("pulled from remote (new page)"),
+  "created there": t("pushed to remote (new page)"),
+  "deleted here": t("deleted on remote — removed here"),
+  "deleted there": t("deleted here — removed on remote"),
+  "restored here": t("restored from remote (edited there after it was deleted here)"),
+  "restored there": t("restored on remote (edited here after it was deleted there)"),
+  "replaced here": t("force-pulled: remote's version replaced this one"),
+  "replaced there": t("force-pushed: this version replaced remote's"),
 };
 
 const ACTION_ICON = {
@@ -63,8 +63,13 @@ export function clock(iso) {
   return sameDay ? d.toLocaleTimeString([], { hour: "2-digit", minute: "2-digit" }) : d.toLocaleString([], { month: "short", day: "numeric", hour: "2-digit", minute: "2-digit" });
 }
 
+// The nouns n() is called with, so the catalog carries them.
+export const COUNT_NOUNS = [T("page"), T("file"), T("conflict"), T("published page")];
+
+// A count with its noun: `word` is an English singular (translated here),
+// the plural s is English-only grammar ({_s}).
 export function n(count, word) {
-  return `${count || 0} ${word}${count === 1 ? "" : "s"}`;
+  return t("{count} {word}{_s}", { count: count || 0, word: t(word), _s: count === 1 ? "" : "s" });
 }
 
 // The git-style block counts of a log row or a round: "+3 −1 ~2" ("" when
@@ -98,14 +103,14 @@ export function roundBlocks(s) {
 // What the last round moved, as one sentence ("" when nothing moved).
 export function roundSummary(s) {
   const parts = [];
-  if (s.pages_pulled) parts.push(`${n(s.pages_pulled, "page")} pulled`);
-  if (s.pages_pushed) parts.push(`${n(s.pages_pushed, "page")} pushed`);
-  if (s.pages_deleted) parts.push(`${n(s.pages_deleted, "page")} removed`);
+  if (s.pages_pulled) parts.push(t("{pages} pulled", { pages: n(s.pages_pulled, "page") }));
+  if (s.pages_pushed) parts.push(t("{pages} pushed", { pages: n(s.pages_pushed, "page") }));
+  if (s.pages_deleted) parts.push(t("{pages} removed", { pages: n(s.pages_deleted, "page") }));
   const files = (s.files_pulled || 0) + (s.files_pushed || 0);
   if (files) parts.push(n(files, "file"));
   const blocks = diffStat(roundBlocks(s));
-  if (blocks) parts.push(`${blocks} blocks`);
-  return parts.join(", ");
+  if (blocks) parts.push(t("{blocks} blocks", { blocks }));
+  return parts.join(t(", "));
 }
 
 // A mirror with a page filter is a publication, not a clone.
@@ -150,8 +155,8 @@ export function mirrorState(info, { busy = false, pending = false } = {}) {
       title: `${s.last_error}${unreachable ? " — your edits stay here and are pushed once the remote is reachable again." : ""}` };
   }
   if (!s.last_sync) {
-    return { state: "new", tone: "", Icon: CloudDownloadIcon, text: s.interrupted ? "Interrupted · resuming" : "Not cloned yet",
-      title: s.interrupted ? "The clone was interrupted; it continues in a moment." : "The clone starts in a moment." };
+    return { state: "new", tone: "", Icon: CloudDownloadIcon, text: s.interrupted ? t("Interrupted · resuming") : t("Not cloned yet"),
+      title: s.interrupted ? t("The clone was interrupted; it continues in a moment.") : t("The clone starts in a moment.") };
   }
   if (info?.pending_local || pending) {
     // with sync-after-edit on, a round follows within a second: the icon
@@ -165,19 +170,19 @@ export function mirrorState(info, { busy = false, pending = false } = {}) {
   }
   const moved = roundSummary(s);
   return { state: "ok", tone: "ok", Icon: RefreshIcon, dot: true, text: t("Up to date · {last_sync}", { last_sync: clock(s.last_sync) }), stats: roundBlocks(s),
-    title: `Up to date since ${clock(s.last_sync)}. Last round: ${moved || "nothing had changed on either side"}.${info?.poll_s ? ` The remote is checked every ${info.poll_s} s.` : " The remote is checked only when you sync."}` };
+    title: t("Up to date since {last_sync}. Last round: {side}.{sync}", { last_sync: clock(s.last_sync), side: moved || "nothing had changed on either side", sync: info?.poll_s ? t(" The remote is checked every {poll_s} s.", { poll_s: info.poll_s }) : t(" The remote is checked only when you sync.") }) };
 }
 
 // The choices the sync settings offer, shared with Settings' clone dialog.
 export const CADENCE = [
-  [5, "Live", ActivityIcon, "Sync every 5 seconds"],
-  [30, "30 s", null, "Sync every 30 seconds"],
-  [300, "5 min", null, "Sync every five minutes"],
-  [0, "Manual", HandIcon, "Only when you press Sync"],
+  [5, t("Live"), ActivityIcon, t("Sync every 5 seconds")],
+  [30, "30 s", null, t("Sync every 30 seconds")],
+  [300, "5 min", null, t("Sync every five minutes")],
+  [0, t("Manual"), HandIcon, t("Only when you press Sync")],
 ];
 export const DIRECTION = [
-  ["two-way", "Two-way", ArrowUpDownIcon, "Your changes go to the remote and the remote's arrive here"],
-  ["pull", "Receive only", ArrowDownIcon, "The remote's changes arrive here; yours stay here until you switch back to two-way"],
+  ["two-way", t("Two-way"), ArrowUpDownIcon, t("Your changes go to the remote and the remote's arrive here")],
+  ["pull", t("Receive only"), ArrowDownIcon, t("The remote's changes arrive here; yours stay here until you switch back to two-way")],
 ];
 
 // The progress bars of a running round: the pages, then the file in flight.
@@ -230,9 +235,7 @@ function StateBlock({ info, busy, pending, onConflicts }) {
 // Force pull / force push / remove origin ask once, inline: a warning line
 // with Yes / No.
 function Confirm({ what, busy, onYes, onNo }) {
-  const text = what === "pull" ? "Force pull: make this clone identical to the remote? Where texts differ, local ones are kept as conflicts."
-    : what === "push" ? "Force push: make the remote identical to this clone? Where texts differ, remote ones are kept as conflicts."
-      : "Remove origin? The workspace stays; it never syncs again.";
+  const text = what === "pull" ? t("Force pull: make this clone identical to the remote? Where texts differ, local ones are kept as conflicts.") : what === "push" ? t("Force push: make the remote identical to this clone? Where texts differ, remote ones are kept as conflicts.") : t("Remove origin? The workspace stays; it never syncs again.");
   return (
     <div className="mirrorConfirm">
       <AlertCircleIcon size={14} />
@@ -285,7 +288,7 @@ function SettingsView({ info, wsId, publication, onBack, reload, onOpenSettings 
       {publication ? (detached ? (
         <div className="mirrorSetActions">
           <button className="uiBtn sm primary" disabled={busy} onClick={() => call("/relink", "POST", {})} title={t("Publish again; what both sides did meanwhile merges")}>
-            <LinkIcon size={13} /> Reattach
+            <LinkIcon size={13} /> {t("Reattach")}
           </button>
         </div>
       ) : null) : confirm ? (
@@ -295,26 +298,26 @@ function SettingsView({ info, wsId, publication, onBack, reload, onOpenSettings 
         <div className="mirrorSetActions">
           {!detached ? <>
             <button className="uiBtn sm" disabled={busy} onClick={() => setConfirm("pull")} title={t("Make this clone identical to the remote (only differing pages are written)")}>
-              <CloudDownloadIcon size={13} /> Force pull
+              <CloudDownloadIcon size={13} /> {t("Force pull")}
             </button>
             <button className="uiBtn sm" disabled={busy || pull} onClick={() => setConfirm("push")} title={pull ? t("A receive-only clone cannot force push") : t("Make the remote identical to this clone (only differing pages are written)")}>
-              <UploadIcon size={13} /> Force push
+              <UploadIcon size={13} /> {t("Force push")}
             </button>
             <button className="uiBtn sm" disabled={busy} onClick={() => call("/detach", "POST")} title={t("Stop pulling and pushing for now; reattach later and both sides merge")}>
-              <UnlinkIcon size={13} /> Detach
+              <UnlinkIcon size={13} /> {t("Detach")}
             </button>
           </> : (
             <button className="uiBtn sm primary" disabled={busy} onClick={() => call("/relink", "POST", {})} title={t("Follow the remote again; what both sides did meanwhile merges")}>
-              <LinkIcon size={13} /> Reattach
+              <LinkIcon size={13} /> {t("Reattach")}
             </button>
           )}
           <button className="uiBtn sm danger" disabled={busy} onClick={() => setConfirm("forget")} title={t("Forget the origin for good; the workspace stays as an ordinary one")}>
-            <TrashIcon size={13} /> Remove origin
+            <TrashIcon size={13} /> {t("Remove origin")}
           </button>
         </div>
       )}
       <button className="popoverItem mirrorMore" onClick={onOpenSettings}>
-        <SettingsIcon size={13} /> {publication ? "Publishing in Settings" : "All clones in Settings"}
+        <SettingsIcon size={13} /> {publication ? t("Publishing in Settings") : t("All clones in Settings")}
       </button>
     </>
   );
@@ -344,7 +347,7 @@ function ReviewView({ wsId, onBack, jumpTo }) {
 
 const CHANGE_GLYPH = { add: "+", del: "−", mod: "~", move: "↕", props: "·" };
 const CHANGE_TITLE = {
-  add: "block added", del: "block removed", mod: "text changed", move: "block moved", props: "properties changed",
+  add: t("block added"), del: t("block removed"), mod: t("text changed"), move: t("block moved"), props: t("properties changed"),
 };
 
 // A log row's changes, block by block, as a diff: added and removed blocks
@@ -356,7 +359,7 @@ export function ChangeList({ changes }) {
         <li key={i} className={`mirrorChange ${c.k}`} title={CHANGE_TITLE[c.k] || c.k}>
           <span className="mirrorChangeGlyph">{CHANGE_GLYPH[c.k] || "·"}</span>
           <span className="mirrorChangeText">
-            {c.k === "mod" ? <Marked parts={wordDiff(c.old, c.text)} /> : c.text || <i>(empty)</i>}
+            {c.k === "mod" ? <Marked parts={wordDiff(c.old, c.text)} /> : c.text || <i>{t("(empty)")}</i>}
           </span>
         </li>
       ))}
@@ -398,7 +401,7 @@ const PENDING_GRACE_MS = 6000; // how long a local edit counts as pending before
 
 // `publication` says what the workspace listing knows before the mirror's
 // own answer (its page filter) arrives.
-export function MirrorPopover({ wsId, mirrorOf, publication: listedAsPublication = false, pageId = "", open, onToggle, jumpTo, onOpenSettings }) {
+export function MirrorPopover({ wsId, mirrorOf, publication: listedAsPublication = false, pageId = "", everyPage = false, open, onToggle, jumpTo, onOpenSettings }) {
   const [info, setInfo] = React.useState(null);
   const [log, setLog] = React.useState(null);
   const [busy, setBusy] = React.useState(false);
@@ -467,11 +470,12 @@ export function MirrorPopover({ wsId, mirrorOf, publication: listedAsPublication
   const host = hostOf(info?.remote_url);
   const pull = isPullOnly(info);
   const publication = info ? isPublication(info) : listedAsPublication;
-  const name = publication ? "Published to Gamma Cloud" : mirrorOf;
+  const name = publication ? t("Published to Gamma Cloud") : mirrorOf;
   // A clone syncs the whole workspace, so its pill is on every page; a
   // publication syncs the pages in its filter, so its pill is on those
-  // pages only (and nowhere until the filter is known).
-  if (publication && !(pageId && info?.page_filter?.includes(pageId))) return null;
+  // pages only (and nowhere until the filter is known) — unless Settings →
+  // Appearance → Sync pill says every page.
+  if (publication && !everyPage && !(pageId && info?.page_filter?.includes(pageId))) return null;
 
   return (
     <span data-popover="mirror" className="popoverAnchor">
@@ -499,7 +503,7 @@ export function MirrorPopover({ wsId, mirrorOf, publication: listedAsPublication
                   <span className="mirrorPopTitle">
                     <span className="popoverTitle mirrorEllipsis">{name}</span>
                     <span className="popoverHint mirrorEllipsis" title={info?.remote_url}>
-                      {publication ? `${n(info?.page_filter?.length, "page")} · ${host}` : `remote · ${host}${s.remote_user ? ` · ${s.remote_user}` : ""}`}
+                      {publication ? `${n(info?.page_filter?.length, "page")} · ${host}` : t("remote · {host}", { host }) + (s.remote_user ? ` · ${s.remote_user}` : "")}
                     </span>
                   </span>
                   <span className="mirrorPopBtns">
@@ -514,7 +518,7 @@ export function MirrorPopover({ wsId, mirrorOf, publication: listedAsPublication
                 <div className="popoverLabel"><HistoryIcon size={12} /><span>{t("Log")}</span></div>
                 {log === null ? <div className="popoverHint">{t("Loading…")}</div>
                   : log.length ? <LogList log={log} jumpTo={jumpTo} />
-                  : <div className="popoverHint">{running ? "Pages show up here as they are pulled." : s.last_sync ? "Nothing pulled or pushed yet." : "Nothing cloned yet."}</div>}
+                  : <div className="popoverHint">{running ? t("Pages show up here as they are pulled.") : s.last_sync ? t("Nothing pulled or pushed yet.") : t("Nothing cloned yet.")}</div>}
               </>
             )}
         </div>

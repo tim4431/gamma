@@ -58,14 +58,24 @@ export function relativeGammaLink(href, origin = "http://localhost") {
   return `/${url.search}`;
 }
 
-// The page/block ids a markdown source links to — what a renderer must
-// resolve before it can label (and claim) those links. Markdown link targets
+// Every Gamma link a markdown source holds, parsed: markdown link targets
 // plus bare URLs (remark autolinks those, so they render as links too).
-export function gammaLinkIds(text) {
+export function gammaLinksIn(text) {
   const out = [];
   const targets = /]\(([^)\s]+)\)|(^|\s)(https?:\/\/\S+|\/?\?\S+)/g;
   for (const m of String(text || "").matchAll(targets)) {
-    const id = gammaLinkId(parseGammaLink(m[1] || m[3]));
+    const link = parseGammaLink(m[1] || m[3]);
+    if (link) out.push(link);
+  }
+  return out;
+}
+
+// The page/block ids a markdown source links to — what a renderer must
+// resolve before it can label (and claim) those links.
+export function gammaLinkIds(text) {
+  const out = [];
+  for (const link of gammaLinksIn(text)) {
+    const id = gammaLinkId(link);
     if (id && !out.includes(id)) out.push(id);
   }
   return out;

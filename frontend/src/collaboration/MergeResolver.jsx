@@ -13,6 +13,7 @@
 import React from "react";
 import { API, apiJson } from "../shared/lib/utils";
 import { T, t } from "../shared/i18n/i18n.js";
+import { guideEvents } from "../guide/events.js";
 import {
   AlertCircleIcon, ArrowDownIcon, ArrowUpIcon, CheckIcon, ChevronLeftIcon, ChevronRightIcon, ExternalLinkIcon,
   HardDriveIcon, MergeIcon, ServerIcon,
@@ -200,9 +201,10 @@ function Versions({ conflict, busy, onUse }) {
   const theirsParts = base ? sideParts(base, c.theirs, "theirs") : onlyIn(c.theirs, c.mine, "theirs");
   const pick = { group, selected, onSelect: setSelected, busy };
   const keeps = selected === currentSide;
+  React.useEffect(() => { guideEvents.emit("conflict.shown"); }, []);
   return (
     <>
-      <div className={`mergeVersions ${diverged ? "two" : "three"}`}>
+      <div className={`mergeVersions ${diverged ? "two" : "three"}`} data-guide="merge.versions">
         <Version side="mine" parts={mineParts} current={currentSide === "mine"} hint={base ? t("changed here") : undefined} {...pick} />
         <Version side="theirs" parts={theirsParts} current={currentSide === "theirs"} hint={base ? t("changed on origin") : undefined} {...pick} />
         {diverged ? null : (
@@ -214,9 +216,9 @@ function Versions({ conflict, busy, onUse }) {
         <span className="popoverHint mergeActionsHint">
           {keeps ? t("Keeps the text as it is and marks the conflict resolved") : t("Puts the {side} text into the block", { side: t(SIDE[selected].label).toLowerCase() })}
         </span>
-        <button type="button" className="uiBtn sm primary" disabled={busy} onClick={() => onUse(keeps ? "keep" : selected)}
+        <button type="button" className="uiBtn sm primary" data-guide="merge.apply" disabled={busy} onClick={() => onUse(keeps ? "keep" : selected)}
           title={keeps ? t("Mark resolved as it is") : t("Write the chosen text; the next round pushes it")}>
-          <CheckIcon size={13} /> Apply
+          <CheckIcon size={13} /> {t("Apply")}
         </button>
       </div>
     </>
@@ -300,7 +302,7 @@ export function ConflictCard({ conflict, busy, onResolve, nav, onOpen, showPage 
       {textual ? null : (
         <div className="mergeActions">
           <button type="button" className="uiBtn sm primary" disabled={busy} onClick={() => onResolve(conflict, "keep")} title={t("Mark it seen")}>
-            <CheckIcon size={13} /> OK
+            <CheckIcon size={13} /> {t("OK")}
           </button>
         </div>
       )}

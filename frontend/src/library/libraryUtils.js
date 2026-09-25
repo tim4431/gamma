@@ -1,6 +1,8 @@
 // Pure application-domain helpers. Keeping these outside App makes the rules
 // usable by dialogs, home views, and future tests without coupling them to React.
 
+import { t } from "../shared/i18n/i18n.js";
+
 export function parseFolderTags(raw) {
   return (raw || "").split(",").map((value) => value.trim()).filter(Boolean);
 }
@@ -10,7 +12,7 @@ export function parseFolderTags(raw) {
 // tiles, the per-view sort/kind pref keys). A real label can never contain a
 // comma — parseFolderTags splits on it — so it cannot collide with one.
 export const NO_LABEL = ",none";
-export const NO_LABEL_TITLE = "No label";
+export const NO_LABEL_TITLE = t("No label");
 export const labelTitle = (name) => (name === NO_LABEL ? NO_LABEL_TITLE : name);
 
 export function cleanFolderSegment(name) {
@@ -33,18 +35,18 @@ export function formatRelativeTime(iso, now = Date.now()) {
   if (!iso) return "";
   const then = new Date(/[Zz]|[+-]\d\d:?\d\d$/.test(iso) ? iso : `${iso}Z`).getTime();
   const secs = Math.max(1, Math.floor((now - then) / 1000));
-  if (secs < 60) return `${secs}s ago`;
+  if (secs < 60) return t("{n}s ago", { n: secs });
   const mins = Math.floor(secs / 60);
-  if (mins < 60) return `${mins}m ago`;
+  if (mins < 60) return t("{n}m ago", { n: mins });
   const hours = Math.floor(mins / 60);
-  if (hours < 24) return `${hours}h ago`;
+  if (hours < 24) return t("{n}h ago", { n: hours });
   const days = Math.floor(hours / 24);
-  if (days < 7) return `${days}d ago`;
+  if (days < 7) return t("{n}d ago", { n: days });
   const weeks = Math.floor(days / 7);
-  if (weeks < 5) return `${weeks}w ago`;
+  if (weeks < 5) return t("{n}w ago", { n: weeks });
   const months = Math.floor(days / 30);
-  if (months < 12) return `${months}mo ago`;
-  return `${Math.floor(days / 365)}y ago`;
+  if (months < 12) return t("{n}mo ago", { n: months });
+  return t("{n}y ago", { n: Math.floor(days / 365) });
 }
 
 // The page's attachment — today the single PDF slot (`properties.doc_id` +
@@ -67,7 +69,7 @@ export function attachmentSource(attachment) {
 
 // What a card/row says a page is: the attachment kind, else just a page.
 export function pageKindLabel(attachment) {
-  return attachment ? "PDF" : "Page";
+  return attachment ? "PDF" : t("Page");
 }
 
 // Title for a page whose title is empty: the attachment's file name or URL

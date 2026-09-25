@@ -82,7 +82,7 @@ export function WorkspaceBackups({ value }) {
       await loadList(w.id);
     }
     setBusy(null);
-    setStatus(`Backed up ${done} of ${targets.length} workspace${targets.length === 1 ? "" : "s"}.`);
+    setStatus(t("Backed up {done} of {n} workspace{_s}.", { done, n: targets.length, _s: targets.length === 1 ? "" : "s" }));
   }
 
   function download(w, b) {
@@ -98,14 +98,14 @@ export function WorkspaceBackups({ value }) {
   function restore(w, b, mode) {
     const merging = mode === "merge";
     confirm({
-      title: merging ? "Merge backup" : "Restore backup",
+      title: merging ? t("Merge backup") : t("Restore backup"),
       message: merging
-        ? `Merge the snapshot from ${when(b)} into "${w.name}"? Pages and chats it has that the workspace lacks are added; everything already there is kept.`
-        : `Restore "${w.name}" to the snapshot from ${when(b)}? ALL of its current pages and chats are REPLACED by the snapshot; uploaded PDFs are merged in. This cannot be undone.`,
-      confirmLabel: merging ? "Merge" : "Replace",
+        ? t("Merge the snapshot from {b} into \"{name}\"? Pages and chats it has that the workspace lacks are added; everything already there is kept.", { b: when(b), name: w.name })
+        : t("Restore \"{name}\" to the snapshot from {b}? ALL of its current pages and chats are REPLACED by the snapshot; uploaded PDFs are merged in. This cannot be undone.", { name: w.name, b: when(b) }),
+      confirmLabel: merging ? t("Merge") : t("Replace"),
       danger: !merging,
       onConfirm: async () => {
-        setStatus(merging ? `Merging into ${w.name}…` : `Restoring ${w.name}…`);
+        setStatus(merging ? t("Merging into {name}…", { name: w.name }) : `Restoring ${w.name}…`);
         try {
           const d = await apiJson(`${API}/workspaces/${encodeURIComponent(w.id)}/backups/${encodeURIComponent(b.name)}/restore?mode=${mode}`, { method: "POST" });
           if (w.id === workspace?.id) {
@@ -113,7 +113,7 @@ export function WorkspaceBackups({ value }) {
             reloadWorkspace(); // every piece of in-memory state is stale now
             return;
           }
-          setStatus(merging ? `Merged into ${w.name}: ${d.pages_added ?? 0} pages added.` : `Restored ${w.name}.`);
+          setStatus(merging ? t("Merged into {name}: {pages_added} pages added.", { name: w.name, pages_added: d.pages_added ?? 0 }) : `Restored ${w.name}.`);
         } catch (e) {
           setStatus(`${merging ? "Merge" : "Restore"} failed: ${e.message}`);
         }
@@ -125,7 +125,7 @@ export function WorkspaceBackups({ value }) {
     confirm({
       title: T("Delete backup"),
       message: t("Delete the snapshot of \"{name}\" from {b} ({size_bytes})? This can't be undone.", { name: w.name, b: when(b), size_bytes: fmtBytes(b.size_bytes) }),
-      confirmLabel: "Delete", danger: true,
+      confirmLabel: t("Delete"), danger: true,
       onConfirm: async () => {
         try {
           await apiJson(`${API}/workspaces/${encodeURIComponent(w.id)}/backups/${encodeURIComponent(b.name)}`, { method: "DELETE" });
@@ -149,8 +149,8 @@ export function WorkspaceBackups({ value }) {
         title={(
           <>
             {w.name}
-            {w.personal ? <span className="uiTag">personal</span> : <span className="uiTag">{w.access === "public" ? "public" : "shared"}</span>}
-            {w.id === workspace?.id ? <span className="uiTag">open</span> : null}
+            {w.personal ? <span className="uiTag">{t("personal")}</span> : <span className="uiTag">{w.access === "public" ? "public" : "shared"}</span>}
+            {w.id === workspace?.id ? <span className="uiTag">{t("open")}</span> : null}
           </>
         )}
         action={owner ? (
@@ -168,7 +168,7 @@ export function WorkspaceBackups({ value }) {
         {!list ? <Empty icon={DatabaseIcon}>{t("Loading…")}</Empty> : null}
         {list?.error ? <div className="settingsPaneHint aiKeysError">{list.error}</div> : null}
         {list && !list.error && !list.backups.length ? (
-          <div className="settingsPaneHint">{owner ? "No snapshots yet." : "No snapshots yet — only an owner takes them."}</div>
+          <div className="settingsPaneHint">{owner ? t("No snapshots yet.") : t("No snapshots yet — only an owner takes them.")}</div>
         ) : null}
         {(list?.backups || []).map((b) => (
           <div key={b.name} className="aiProvRow">
@@ -178,10 +178,10 @@ export function WorkspaceBackups({ value }) {
             <span className="aiProvMeta">
               <span className="aiProvName">
                 {when(b)}
-                <span className="uiTag">{b.scheduled ? "Automatic" : b.label || "backup"}</span>
+                <span className="uiTag">{b.scheduled ? t("Automatic") : b.label || "backup"}</span>
               </span>
               <span className="aiProvDesc">
-                {fmtBytes(b.size_bytes)}{b.uploads ? ` · ${b.upload_files} upload${b.upload_files === 1 ? "" : "s"}` : " · databases only"}{b.by ? ` · by ${b.by}` : ""}
+                {fmtBytes(b.size_bytes)}{b.uploads ? ` · ${b.upload_files} upload${b.upload_files === 1 ? "" : "s"}` : t(" · databases only")}{b.by ? ` · by ${b.by}` : ""}
               </span>
             </span>
             <span className="aiProvActions">
@@ -221,7 +221,7 @@ export function WorkspaceBackups({ value }) {
           <Section title={t("Saved snapshots")} />
           <div className="reportModalBtns settingsAlignStart">
             <ActionMenu
-              label={`Back up all ${owned.length} workspace${owned.length === 1 ? "" : "s"}`} icon={PlusIcon} disabled={busy != null || !owned.length}
+              label={t("Back up all {n} workspace{_s}", { n: owned.length, _s: owned.length === 1 ? "" : "s" })} icon={PlusIcon} disabled={busy != null || !owned.length}
               items={[
                 { icon: HardDriveIcon, label: T("Everything"), title: T("One complete snapshot per workspace you own"), onClick: () => backUpAll(true) },
                 { icon: DatabaseIcon, label: T("Databases only"), title: T("One small snapshot per workspace you own — no uploaded PDFs"), onClick: () => backUpAll(false) },
@@ -248,7 +248,7 @@ export function ServerBackups({ setStatus, confirm }) {
   async function create(uploads) {
     setBusy(true);
     setError("");
-    setStatus(uploads ? "Backing up databases and uploads…" : "Backing up databases…");
+    setStatus(uploads ? t("Backing up databases and uploads…") : t("Backing up databases…"));
     try {
       const b = await apiJson(`${API}/admin/backups`, {
         method: "POST", headers: { "Content-Type": "application/json" },
@@ -278,7 +278,7 @@ export function ServerBackups({ setStatus, confirm }) {
     confirm({
       title: T("Delete backup"),
       message: t("Delete the snapshot {name} ({size_bytes})? This can't be undone.", { name: b.name, size_bytes: fmtBytes(b.size_bytes) }),
-      confirmLabel: "Delete",
+      confirmLabel: t("Delete"),
       danger: true,
       onConfirm: async () => {
         try {
@@ -320,8 +320,8 @@ export function ServerBackups({ setStatus, confirm }) {
               <span className="uiTag">{b.label || "backup"}</span>
             </span>
             <span className="aiProvDesc">
-              {fmtBytes(b.size_bytes)} · {(b.files || []).length} database file{(b.files || []).length === 1 ? "" : "s"}
-              {b.uploads ? ` + ${b.upload_files || 0} uploads` : " · databases only"}
+              {fmtBytes(b.size_bytes)} · {(b.files || []).length} {t("database file")}{(b.files || []).length === 1 ? "" : "s"}
+              {b.uploads ? ` + ${b.upload_files || 0} uploads` : t(" · databases only")}
               {b.schema_version != null ? ` · schema v${b.schema_version}` : ""}
             </span>
           </span>
@@ -336,8 +336,8 @@ export function ServerBackups({ setStatus, confirm }) {
         </div>
       ))}
       <div className="settingsPaneHint">
-        Snapshots live in <code>backups/</code> inside the data directory. To roll back, stop the server and run
-        <code> manage.py backups --restore &lt;name&gt;</code>.
+        {t("Snapshots live in {dir} inside the data directory. To roll back, stop the server and run {command}.", {
+          dir: <code>backups/</code>, command: <code>{"manage.py backups --restore <name>"}</code> })}
       </div>
       {error ? <div className="settingsPaneHint aiKeysError">{error}</div> : null}
     </Section>

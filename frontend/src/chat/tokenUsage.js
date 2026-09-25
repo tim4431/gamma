@@ -1,3 +1,4 @@
+import { t } from "../shared/i18n/i18n.js";
 // Token usage as the providers report it — one normalized shape from the
 // server ({input, output, cache_read, cache_write}, see gamma/ai_client.py
 // normalize_usage): the per-reply line under an AI bubble, the running
@@ -57,9 +58,9 @@ export function conversationUsage(messages) {
 // The long form for a tooltip: every count spelled out.
 export function usageDetail(usage) {
   if (!usage) return "";
-  const parts = [`${(usage.input || 0).toLocaleString()} input tokens`,
-    `${(usage.output || 0).toLocaleString()} output tokens`];
-  if (usage.cache_read) parts.push(`${usage.cache_read.toLocaleString()} read from the prompt cache (${cachedPercent(usage)}% of the input)`);
-  if (usage.cache_write) parts.push(`${usage.cache_write.toLocaleString()} written to the prompt cache`);
+  const parts = [t("{input} input tokens", { input: (usage.input || 0).toLocaleString() }),
+    t("{output} output tokens", { output: (usage.output || 0).toLocaleString() })];
+  if (usage.cache_read) parts.push(t("{cache_read} read from the prompt cache ({usage}% of the input)", { cache_read: usage.cache_read.toLocaleString(), usage: cachedPercent(usage) }));
+  if (usage.cache_write) parts.push(t("{cache_write} written to the prompt cache", { cache_write: usage.cache_write.toLocaleString() }));
   return parts.join(" · ");
 }

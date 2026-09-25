@@ -264,12 +264,12 @@ export default function SearchPanel({
   useEffect(() => { if (open) setShowDetails(detailsDefault); }, [open]);
 
   const kindBadge = (r) => (
-    r.kind === "highlight" ? <span className="searchKindBadge">highlight</span>
-      : r.kind === "link" ? <span className="searchKindBadge">link</span> : null
+    r.kind === t("highlight") ? <span className="searchKindBadge">{t("highlight")}</span>
+      : r.kind === t("link") ? <span className="searchKindBadge">{t("link")}</span> : null
   );
   const noteRow = (r) => (
     <button key={r.id} className="searchResult" onClick={() => openNoteHit(r)}>
-      <span className="searchResultPage">{r.page_title || "Untitled"}{kindBadge(r)}</span>
+      <span className="searchResultPage">{r.page_title || t("Untitled")}{kindBadge(r)}</span>
       <span className="searchResultText">{r.content}</span>
     </button>
   );
@@ -279,7 +279,7 @@ export default function SearchPanel({
       className="searchResult"
       onClick={() => { onOpenChange(false); openBlock(b.id, { restoreScroll: true }); }}
     >
-      <span className="searchResultPage">{b.content || "Untitled"}</span>
+      <span className="searchResultPage">{b.content || t("Untitled")}</span>
       <span className="searchResultText">{subtitle || ""}</span>
     </button>
   );
@@ -302,8 +302,7 @@ export default function SearchPanel({
               className={`searchToggle ${showDetails ? "on" : ""}`}
               onClick={() => setShowDetails((v) => !v)}
               title={showDetails
-                ? "Collapse result details (compact find — the default is in Settings → Search)"
-                : "Expand result details: titles, notes, and other pages"}
+                ? t("Collapse result details (compact find — the default is in Settings → Search)") : t("Expand result details: titles, notes, and other pages")}
               aria-label={t("Toggle result details")}
             >
               {showDetails
@@ -317,7 +316,7 @@ export default function SearchPanel({
                   {l.name}
                   <button
                     className="uiClose uiCloseSm searchChipX"
-                    title={`Remove ${l.kind === "folder" ? "folder" : "label"} filter "${l.name}"`}
+                    title={t("Remove {label} filter \"{name}\"", { label: l.kind === "folder" ? t("folder") : t("label"), name: l.name })}
                     onClick={() => setLabels((prev) => prev.filter((x) => x !== l))}
                   >×</button>
                 </span>
@@ -386,9 +385,9 @@ export default function SearchPanel({
               <>
                 {labels.length ? (
                   <>
-                    <div className="searchSection">Filters: {labels.map((c) => c.name).join(" + ")}</div>
+                    <div className="searchSection">{t("Filters:")} {labels.map((c) => c.name).join(" + ")}</div>
                     {labelMatches.length === 0 ? (
-                      <div className="searchHint">No pages carry {labels.length === 1 ? "this label" : "all these labels"}.</div>
+                      <div className="searchHint">{t("No pages carry {which}.", { which: labels.length === 1 ? t("this label") : t("all these labels") })}</div>
                     ) : labelMatches.map((b) => titleRow(b, b.properties?.category || b.properties?.folder || ""))}
                   </>
                 ) : null}
@@ -408,15 +407,15 @@ export default function SearchPanel({
                     <span className="searchResultText">…{m.snippet}…</span>
                   </button>
                 ))}
-                {notesElsewhere.length ? <div className="searchSection">{focusedBlockId ? "Other notes" : "Notes"}</div> : null}
+                {notesElsewhere.length ? <div className="searchSection">{focusedBlockId ? t("Other notes") : t("Notes")}</div> : null}
                 {notesElsewhere.map(noteRow)}
                 {linkHits.length ? <div className="searchSection">{t("Reference links")}</div> : null}
                 {linkHits.map(noteRow)}
                 {libElsewhere.length || libIndexing ? (
-                  <div className="searchSection">{focusedBlockId ? "Other PDFs" : "Library PDFs"}</div>
+                  <div className="searchSection">{focusedBlockId ? t("Other PDFs") : t("Library PDFs")}</div>
                 ) : null}
                 {libIndexing ? (
-                  <div className="searchHint">Indexing {libIndexing} PDF{libIndexing === 1 ? "" : "s"} in the background — results will fill in shortly.</div>
+                  <div className="searchHint">{t("Indexing")} {libIndexing} {t("PDF")}{libIndexing === 1 ? "" : "s"} {t("in the background — results will fill in shortly.")}</div>
                 ) : null}
                 {libElsewhere.map((r, i) => (
                   <button

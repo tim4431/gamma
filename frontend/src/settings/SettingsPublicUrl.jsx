@@ -31,7 +31,7 @@ export function PublicUrlSettings({ setStatus }) {
         body: JSON.stringify({ public_url: draft.trim() }),
       });
       setSaved(value); setDraft(initial(value));
-      setStatus(value.public_url ? "Public server URL saved. Assistant connections now use this address." : "Public server URL cleared.");
+      setStatus(value.public_url ? t("Public server URL saved. Assistant connections now use this address.") : t("Public server URL cleared."));
     } catch (err) { setError(err.message); }
     finally { setBusy(false); }
   }
@@ -43,14 +43,14 @@ export function PublicUrlSettings({ setStatus }) {
       title={t("Assistant sign-in (MCP OAuth) needs to know the address this server is reached at. Confirm it once; no restart. Changing it later makes assistants connect again.")}>
       <span className="setRowControls">
         {saved && !managed ? (
-          <span className={`uiTag ${confirmed && !dirty ? "ok" : ""}`}>{confirmed && !dirty ? "confirmed" : "not confirmed"}</span>
+          <span className={`uiTag ${confirmed && !dirty ? "ok" : ""}`}>{confirmed && !dirty ? "confirmed" : t("not confirmed")}</span>
         ) : null}
         <input className="aiKeyInput" type="url" aria-label={t("Public server URL")} value={draft} spellCheck={false}
           disabled={!saved || managed || busy} placeholder="https://gamma.example.com"
           onChange={(event) => setDraft(event.target.value)}
           onKeyDown={(event) => { if (event.key === "Enter") { event.preventDefault(); save(); } }} />
         {needsAction ? (
-          <button className="uiBtn sm primary" disabled={busy} onClick={save}>{busy ? "Saving…" : "Confirm"}</button>
+          <button className="uiBtn sm primary" disabled={busy} onClick={save}>{busy ? t("Saving…") : t("Confirm")}</button>
         ) : null}
       </span>
     </Row>

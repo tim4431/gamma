@@ -4,27 +4,30 @@
 // up in the active catalog (locales/<locale>.json) and falls back to the
 // sentence itself, so an untranslated string is never a broken one. The
 // catalogs are plain JSON, one per language, kept complete by
-// `npm run i18n` (tools/i18n.mjs) and tests/i18n.test.mjs.
+// `npm run i18n` (tools/i18n.mjs) and tests/i18n.test.mjs;
+// `npm run i18n:audit` (tools/i18n-audit.mjs) lists text that never
+// reaches t().
 //
 // Rules for a call site:
 // - The first argument is one string literal, never a variable or a
 //   template, so the tool can find it. A finished sentence from elsewhere
 //   (a server error) may go through `t(message)` — it translates when the
 //   catalog knows it and is not extracted.
+// - t() works anywhere, module-level constants included: main.jsx loads
+//   the catalog before the app's modules evaluate, and a change of
+//   language reloads the page.
 // - Placeholders are `{name}`, filled from the second argument. An argument
-//   that is a React element is spliced in as an element.
+//   that is a React element is spliced in as an element. A placeholder
+//   whose name starts with "_" carries English-only grammar (`{_s}`, a
+//   plural s); a translation may leave it out.
 // - Counts use `tn("{n} page", "{n} pages", n)`: the singular is the key.
-// - A string in a module-level table (a menu catalog, a tour) is marked
-//   `T("…")` where it is declared and passed through `t()` where it is
-//   rendered, so it is extracted but translated at render time.
+// - `T("…")` marks a string that its table keeps in English (because code
+//   compares it) and whose renderer translates it with `t()`.
 //
-// The active locale is a tiny external store: main.jsx renders the app
-// under `key={locale}`, so changing the language remounts it with every
-// string re-read — no component needs to subscribe.
 // A default import: the module also loads under plain node (the tests import
 // modules that translate their tables), where React is CommonJS.
 import React from "react";
-import { TAGS, resolveLocale } from "./locales.js";
+import { TAGS } from "./locales.js";
 
 export { LANGUAGES, LOCALES, resolveLocale } from "./locales.js";
 
@@ -36,7 +39,6 @@ try { catalogs = import.meta.glob("./locales/*.json", { import: "default" }); } 
 
 let locale = "en";
 let catalog = {};
-const listeners = new Set();
 
 // Fetches a catalog (a lazy chunk; English needs none).
 export async function loadLocale(code) {
@@ -46,26 +48,15 @@ export async function loadLocale(code) {
 }
 
 // Makes `code` the active locale, with its catalog already loaded via
-// loadLocale. Notifies subscribers only on a change.
+// loadLocale (main.jsx, before the app's modules load).
 export function setLocale(code, loaded) {
-  if (code === locale) return;
   locale = code;
   catalog = loaded || {};
   if (typeof document !== "undefined") document.documentElement.lang = TAGS[code] || code;
-  for (const fn of listeners) fn();
-}
-
-// Load and apply in one step (App's effect on the preference).
-export async function applyLanguage(pref) {
-  const code = resolveLocale(pref);
-  if (code === locale) return;
-  setLocale(code, await loadLocale(code));
 }
 
 export const getLocale = () => locale;
 export const localeTag = () => TAGS[locale] || locale;
-const subscribe = (fn) => { listeners.add(fn); return () => listeners.delete(fn); };
-export const useLocale = () => React.useSyncExternalStore(subscribe, getLocale);
 
 // Fills `{name}` placeholders. With an element among the values the result
 // is an array of strings and elements (React renders it as children).
@@ -104,7 +95,7 @@ export function tn(one, other, n, args) {
   return fill(n === 1 ? one : other, values);
 }
 
-// Marks a string in a static table for extraction; translated by `t()`
+// Marks a string that stays English in its table; translated by `t()`
 // where it is rendered.
 export const T = (text) => text;
 

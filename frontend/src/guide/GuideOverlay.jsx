@@ -4,11 +4,14 @@
 // A demo step moves the spotlight to whatever it acts on and shows a pointer
 // gliding there. Anchors are found by data-guide id, retried briefly while
 // the UI mounts; a step whose anchor never appears is skipped with a warning,
-// never shown pointing at nothing. docs/dev/onboarding.md.
+// never shown pointing at nothing. An offer (a triggered tour's invitation,
+// or a hint) is the same card without the dimmed sheet. The card never takes
+// focus or counts as a click outside the popover it points into.
+// docs/dev/onboarding.md.
 import { useEffect, useLayoutEffect, useRef, useState } from "react";
 import { anchorElement } from "./anchors.js";
 import "./guide.css";
-import { t } from "../shared/i18n/i18n.js";
+import { t, tn } from "../shared/i18n/i18n.js";
 
 const PAD = 6;          // spotlight padding around the anchor
 const GAP = 12;         // card distance from the spotlight
@@ -66,7 +69,7 @@ export default function GuideOverlay({ guide }) {
   const { running, offer, index, count, done, live, back } = guide;
   const inviting = !running && !!offer;
   const visible = running || inviting;
-  const step = inviting ? offer.invitation : guide.step;
+  const step = inviting ? offer : guide.step;
   const next = inviting ? guide.acceptOffer : guide.next;
   const dismiss = inviting ? guide.dismissOffer : guide.dismiss;
   const [rect, setRect] = useState(null);   // spotlight rect (padded) or null
@@ -82,16 +85,24 @@ export default function GuideOverlay({ guide }) {
     if (!anchor) { setRect(null); setMissing(false); return undefined; }
     let raf = 0;
     let gone = false;
+    let marked = null; // the element carrying data-guide-active
     const started = performance.now();
     const measure = () => {
       raf = 0;
       const el = anchorElement(anchor);
+      // Controls that only show on hover also show while the guide points
+      // at them ([data-guide-active] in their CSS).
+      if (el !== marked) {
+        marked?.removeAttribute("data-guide-active");
+        el?.setAttribute("data-guide-active", "");
+        marked = el;
+      }
       const b = el?.getBoundingClientRect();
       if (!b?.width || !b?.height) {
         setRect(null);
         if (performance.now() - started > WAIT_MS && !gone && !step.do) {
           gone = true;
-          if (!inviting) console.warn(`guide: anchor "${anchor}" not found, skipping step "${step.id}"`);
+          if (!inviting && !step.optional) console.warn(`guide: anchor "${anchor}" not found, skipping step "${step.id}"`);
           setMissing(true);
         }
         return;
@@ -113,6 +124,7 @@ export default function GuideOverlay({ guide }) {
       window.removeEventListener("scroll", schedule, true);
       clearInterval(retry);
       if (raf) cancelAnimationFrame(raf);
+      marked?.removeAttribute("data-guide-active");
     };
   }, [visible, inviting, step, anchor]);
 
@@ -133,14 +145,17 @@ export default function GuideOverlay({ guide }) {
 
   if (!visible || !step) return null;
   const waiting = anchor && !rect;
-  const centered = !anchor;
+  const centered = !anchor && !inviting;
   const busy = !inviting && !!live?.busy;
   const vw = window.innerWidth, vh = window.innerHeight;
   const hole = rect
     ? `M${rect.left},${rect.top} h${rect.width} a8,8 0 0 1 8,8 v${rect.height - 16} a8,8 0 0 1 -8,8 h${-rect.width} a8,8 0 0 1 -8,-8 v${-(rect.height - 16)} a8,8 0 0 1 8,-8 z`
     : "";
-  const primaryLabel = step.next ? t(step.next)
+  const primaryLabel = inviting ? (offer.hint ? t("Got it") : t("Show me")) : step.next ? t(step.next)
     : index + 1 >= count ? t("Done") : live?.failed || (step.advanceOn && !done) ? t("Skip") : t("Next");
+  // Keep the caret where the user is typing, and keep a popover the card
+  // points into open (outside-click checks listen on the document).
+  const keepFocus = (e) => { e.preventDefault(); e.stopPropagation(); };
 
   return (
     <div className={`guideRoot ${inviting ? "guideInvitation" : ""} ${done ? "done" : ""} ${busy ? "busy" : ""}`} data-guide-overlay={inviting ? undefined : step.id} data-guide-offer={inviting ? offer.id : undefined} data-guide-busy={busy ? "1" : undefined}>
@@ -169,17 +184,19 @@ export default function GuideOverlay({ guide }) {
       {!waiting || busy ? (
         <div
           ref={cardRef}
-          className={`guideCard ${rect && rect.top > vh / 2 ? "guideCardAbove" : ""} ${centered && !busy ? "guideCardCentered" : ""} ${cardPos ? `side-${cardPos.side}` : ""} ${busy && !cardPos ? "guideCardCorner" : ""}`}
+          className={`guideCard ${rect && rect.top > vh / 2 ? "guideCardAbove" : ""} ${centered && !busy ? "guideCardCentered" : ""} ${cardPos ? `side-${cardPos.side}` : ""} ${(busy || inviting) && !cardPos ? "guideCardCorner" : ""}`}
           style={cardPos ? { top: cardPos.top, left: cardPos.left, width: CARD_W } : undefined}
+          onMouseDown={keepFocus}
+          onPointerDown={(e) => e.stopPropagation()}
           role="dialog"
           aria-live="polite"
           aria-label={t(step.title)}
         >
           <div className="guideHead">
             <span className="guideStep">
-              {inviting ? `Quick guide · ${offer.estimate}` : `${index + 1} / ${count}`}
+              {inviting ? (offer.hint ? t("Tip") : tn("Quick tour · {n} step", "Quick tour · {n} steps", offer.count)) : `${index + 1} / ${count}`}
               {!inviting && done ? <span className="guideDone">{t("✓ Done")}</span> : null}
-              {busy ? <span className="guideBusy">watch</span> : null}
+              {busy ? <span className="guideBusy">{t("watch")}</span> : null}
               {live?.failed ? <span className="guideFailed">{t("couldn't finish")}</span> : null}
             </span>
             <button className="uiClose uiCloseSm guideClose" onClick={dismiss} title={inviting ? t("Dismiss guide (Esc)") : t("Leave the tour (Esc)")} aria-label={inviting ? t("Dismiss guide") : t("Leave the tour")}>×</button>
@@ -189,10 +206,10 @@ export default function GuideOverlay({ guide }) {
           <div className="guideFoot">
             {!inviting ? <span className="guideDots" aria-hidden="true">
               {Array.from({ length: count }, (_, i) => <i key={i} className={i === index ? "on" : i < index ? "done" : ""} />)}
-            </span> : <button className="uiBtn sm" onClick={dismiss}>{t("Not now")}</button>}
+            </span> : offer.hint ? <span /> : <button className="uiBtn sm" onClick={dismiss}>{t("Not now")}</button>}
             <span className="guideBtns">
               {!inviting && index > 0 && !busy && !done ? <button className="uiBtn" onClick={back}>{t("Back")}</button> : null}
-              {!busy && (!done || inviting) ? <button className="uiBtn primary" onClick={next}>{inviting ? "Show me" : primaryLabel}</button> : null}
+              {!busy && (!done || inviting) ? <button className="uiBtn primary" onClick={next}>{primaryLabel}</button> : null}
             </span>
           </div>
         </div>

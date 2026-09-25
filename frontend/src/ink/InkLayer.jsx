@@ -34,7 +34,7 @@ function useInkVersion() {
 
 // Eraser radius on screen (css px) per S/M/L index.
 export const ERASER_SIZES = [5, 9, 16];
-const SIZE_LABELS = ["Small", "Medium", "Large"];
+const SIZE_LABELS = [t("Small"), t("Medium"), t("Large")];
 
 function Strokes({ ink, onClick, hide }) {
   return ink.strokes.map((s) => {
@@ -672,7 +672,7 @@ export function InkCard({ block, onJump }) {
   const pad = 6;
   const w = b[2] - b[0] + 2 * pad, h = b[3] - b[1] + 2 * pad;
   return (
-    <svg className="blockInkCard" viewBox={`${b[0] - pad} ${b[1] - pad} ${w} ${h}`} width={w} height={h}
+    <svg className="blockInkCard" data-guide="notes.ink" viewBox={`${b[0] - pad} ${b[1] - pad} ${w} ${h}`} width={w} height={h}
       role="img" aria-label={t("Handwriting")}
       onClick={onJump ? (e) => { e.stopPropagation(); onJump(block.id); } : undefined}>
       <Strokes ink={ink} />
@@ -714,18 +714,18 @@ export function InkToolbar({ tools, active, options, eraserMode, eraserSize, las
   );
   const palette = preset ? (preset.kind === "highlighter" ? HIGHLIGHTER_COLORS : PEN_COLORS) : null;
   return (
-    <InkTooltips className="pdfInkBar" role="toolbar" aria-label={t("Handwriting tools")}>
+    <InkTooltips className="pdfInkBar" role="toolbar" aria-label={t("Handwriting tools")} data-guide="ink.toolbar">
       <div className="pdfInkRow">
-        {tools.map((t, i) => {
-          const hl = t.kind === "highlighter";
-          const sizes = sizesFor(t.kind), k = Math.max(0, sizes.indexOf(t.size));
-          const label = `${hl ? "Highlighter" : t.brush === "monoline" ? "Monoline" : "Pen"} ${t.color}, ${t.size} pt (${i + 1})` + (active === t.id ? " — tap again for options" : "");
-          return btn(t.id, label, hl ? <HighlightIcon size={15} /> : <PenIcon size={15} />,
-            <span className="inkToolInk" style={{ background: t.color, height: hl ? 3 + Math.round(k / 2) : 2 + Math.round(k / 3),
+        {tools.map((tt, i) => {
+          const hl = tt.kind === "highlighter";
+          const sizes = sizesFor(tt.kind), k = Math.max(0, sizes.indexOf(tt.size));
+          const label = `${hl ? "Highlighter" : tt.brush === "monoline" ? "Monoline" : "Pen"} ${tt.color}, ${tt.size} pt (${i + 1})` + (active === tt.id ? t(" — tap again for options") : "");
+          return btn(tt.id, label, hl ? <HighlightIcon size={15} /> : <PenIcon size={15} />,
+            <span className="inkToolInk" style={{ background: tt.color, height: hl ? 3 + Math.round(k / 2) : 2 + Math.round(k / 3),
               opacity: hl ? 0.85 : 1 }} />);
         })}
-        {btn("eraser", "Eraser (E) — the pen's eraser end and barrel button erase too", <EraserIcon size={15} />)}
-        {btn("select", "Lasso (L): circle strokes to select them, then drag the box to move or press Delete", <LassoIcon size={15} />)}
+        {btn("eraser", t("Eraser (E) — the pen's eraser end and barrel button erase too"), <EraserIcon size={15} />)}
+        {btn("select", t("Lasso (L): circle strokes to select them, then drag the box to move or press Delete"), <LassoIcon size={15} />)}
         <span className="pdfInkSep" />
         <button type="button" className={"ctlBtn inkToolBtn" + (active === null ? " modeActive" : "")}
           onClick={() => onPick(null)} title={t("Hand (V): scroll and select text; a stylus still writes")} aria-label={t("Hand")}
@@ -740,8 +740,8 @@ export function InkToolbar({ tools, active, options, eraserMode, eraserSize, las
       {options && preset ? (
         <div className="pdfInkSub" data-ink-options="tool">
           {preset.kind === "pen" ? <>
-            {seg(preset.brush !== "monoline", "Pen", <PenIcon size={14} />, () => edit({ brush: "pen" }), "Pen: width follows stylus pressure")}
-            {seg(preset.brush === "monoline", "Monoline", <LineWidthIcon size={14} />, () => edit({ brush: "monoline" }), "Monoline: an even line at every pressure")}
+            {seg(preset.brush !== "monoline", t("Pen"), <PenIcon size={14} />, () => edit({ brush: "pen" }), t("Pen: width follows stylus pressure"))}
+            {seg(preset.brush === "monoline", t("Monoline"), <LineWidthIcon size={14} />, () => edit({ brush: "monoline" }), t("Monoline: an even line at every pressure"))}
             <span className="pdfInkSep" />
           </> : null}
           {palette.map((c) => (
@@ -770,10 +770,10 @@ export function InkToolbar({ tools, active, options, eraserMode, eraserSize, las
       ) : null}
       {options && active === "eraser" ? (
         <div className="pdfInkSub" data-ink-options="eraser">
-          {seg(eraserMode !== "partial", "Whole strokes", <EraseStrokeIcon size={14} />, () => onEraser({ mode: "stroke" }),
-            "Whole strokes: anything the eraser touches goes entirely")}
-          {seg(eraserMode === "partial", "Partial", <ErasePartialIcon size={14} />, () => onEraser({ mode: "partial" }),
-            "Partial: erase just what the eraser passes over (strokes are cut)")}
+          {seg(eraserMode !== "partial", t("Whole strokes"), <EraseStrokeIcon size={14} />, () => onEraser({ mode: "stroke" }),
+            t("Whole strokes: anything the eraser touches goes entirely"))}
+          {seg(eraserMode === "partial", t("Partial"), <ErasePartialIcon size={14} />, () => onEraser({ mode: "partial" }),
+            t("Partial: erase just what the eraser passes over (strokes are cut)"))}
           <span className="pdfInkSep" />
           {ERASER_SIZES.map((px, i) => (
             <button key={px} type="button" className={"ctlBtn inkSizeBtn" + (eraserSize === i ? " modeActive" : "")}
@@ -785,8 +785,8 @@ export function InkToolbar({ tools, active, options, eraserMode, eraserSize, las
       ) : null}
       {options && active === "select" ? (
         <div className="pdfInkSub" data-ink-options="select">
-          {seg(lassoMode !== "box", "Freeform", <LassoIcon size={14} />, () => onLasso("free"), "Freeform: draw a loop around the strokes")}
-          {seg(lassoMode === "box", "Box", <RectSelectIcon size={14} />, () => onLasso("box"), "Box: drag a rectangle over the strokes")}
+          {seg(lassoMode !== "box", t("Freeform"), <LassoIcon size={14} />, () => onLasso("free"), t("Freeform: draw a loop around the strokes"))}
+          {seg(lassoMode === "box", t("Box"), <RectSelectIcon size={14} />, () => onLasso("box"), t("Box: drag a rectangle over the strokes"))}
         </div>
       ) : null}
     </InkTooltips>

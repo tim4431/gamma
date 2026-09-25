@@ -9,12 +9,12 @@ import { T, t } from "../shared/i18n/i18n.js";
 
 const endpoint = `${API}/backup-tasks`;
 const json = (method, body) => ({ method, headers: { "Content-Type": "application/json" }, body: JSON.stringify(body) });
-const date = (value) => fmtWhen(value, "Not yet");
+const date = (value) => fmtWhen(value, t("Not yet"));
 const pad = (n) => String(n).padStart(2, "0");
-const days = [[1, "Mon"], [2, "Tue"], [3, "Wed"], [4, "Thu"], [5, "Fri"], [6, "Sat"], [0, "Sun"]];
-const SCOPES = [["all_owned", "All I own"], ["selected", "Selected"]];
-const FREQUENCIES = [["hourly", "Hourly"], ["daily", "Daily"], ["weekly", "Weekly"], ["monthly", "Monthly"], ["custom", "Custom schedule (cron)"]];
-const UNITS = [["days", "Days"], ["weeks", "Weeks"], ["months", "Months (30 days)"], ["count", "Snapshots per workspace"]];
+const days = [[1, t("Mon")], [2, t("Tue")], [3, t("Wed")], [4, t("Thu")], [5, t("Fri")], [6, t("Sat")], [0, t("Sun")]];
+const SCOPES = [["all_owned", t("All I own")], ["selected", t("Selected")]];
+const FREQUENCIES = [["hourly", t("Hourly")], ["daily", t("Daily")], ["weekly", t("Weekly")], ["monthly", t("Monthly")], ["custom", t("Custom schedule (cron)")]];
+const UNITS = [["days", t("Days")], ["weeks", t("Weeks")], ["months", t("Months (30 days)")], ["count", t("Snapshots per workspace")]];
 
 // The one cron reader: a five-field expression the editor's presets can
 // express → {preset, minute, hour, weekdays, monthday}, or null for any
@@ -36,7 +36,7 @@ function frequency(cron) {
   const parsed = parseCron(cron);
   if (!parsed) return cron;
   const time = `${pad(parsed.hour)}:${pad(parsed.minute)}`;
-  if (parsed.preset === "hourly") return `Hourly at :${pad(parsed.minute)}`;
+  if (parsed.preset === "hourly") return t("Hourly at :{minute}", { minute: pad(parsed.minute) });
   if (parsed.preset === "daily") return `Daily · ${time}`;
   if (parsed.preset === "weekly") return `${parsed.weekdays.map((d) => days.find(([n]) => n === d)[1]).join(", ")} · ${time}`;
   return `Day ${parsed.monthday} · ${time}`;
@@ -109,8 +109,8 @@ function TaskEditor({ initial, workspaces, onClose, onSaved }) {
             <ToggleGroup selected={draft.workspaces}
               onToggle={(id, on) => patch({ workspaces: on ? [...draft.workspaces, id] : draft.workspaces.filter((w) => w !== id) })}
               options={[
-                ...owned.map((w) => [w.id, w.name, null, w.personal ? "Personal workspace" : "Shared workspace"]),
-                ...draft.workspaces.filter((id) => !owned.some((w) => w.id === id)).map((id) => [id, "Unavailable workspace", null, t("Remove to save")]),
+                ...owned.map((w) => [w.id, w.name, null, w.personal ? t("Personal workspace") : t("Shared workspace")]),
+                ...draft.workspaces.filter((id) => !owned.some((w) => w.id === id)).map((id) => [id, t("Unavailable workspace"), null, t("Remove to save")]),
               ]} />
           </Field>}
         <Toggle icon={HardDriveIcon} label={t("Include uploaded files")} checked={draft.uploads} onChange={(uploads) => patch({ uploads })}
@@ -134,8 +134,8 @@ function TaskEditor({ initial, workspaces, onClose, onSaved }) {
         {preset === "custom" ? <Field label={t("Cron expression")} hint={t("Minute · hour · day of month · month · weekday")}>
           <input className="aiKeyInput backupCron" required value={draft.cron} onChange={(e) => patch({ cron: e.target.value })} placeholder="0 3 * * *" />
         </Field> : null}
-        <p className="settingsPaneHint">Schedules use UTC. Preview times below use your local timezone.
-          {preset === "custom" ? " Supports * (any), commas, ranges, and steps. Example: 0 9,17 * * 1-5 runs weekdays at 09:00 and 17:00 UTC." : null}</p>
+        <p className="settingsPaneHint">{t("Schedules use UTC. Preview times below use your local timezone.")}
+          {preset === "custom" ? t(" Supports * (any), commas, ranges, and steps. Example: 0 9,17 * * 1-5 runs weekdays at 09:00 and 17:00 UTC.") : null}</p>
         <div className="backupTaskPreview" aria-live="polite">
           <span className="settingLabel"><ClockIcon size={14} /> {t("Next three runs")}</span>
           {previewError ? <span className="aiKeysError">{previewError}</span> : preview ?
@@ -153,7 +153,7 @@ function TaskEditor({ initial, workspaces, onClose, onSaved }) {
         <div className="reportModalBtns">
           <button type="button" className="uiBtn" onClick={onClose}>{t("Cancel")}</button>
           <button type="submit" className="uiBtn primary" disabled={!preview || !draft.name.trim() || (draft.scope === "selected" && !draft.workspaces.length)}>
-            {busy ? "Saving…" : initial?.id ? "Save changes" : "Create task"}
+            {busy ? t("Saving…") : initial?.id ? t("Save changes") : t("Create task")}
           </button>
         </div>
       </fieldset>
@@ -199,28 +199,28 @@ export function BackupTasks({ workspaces, confirm, onRefresh }) {
     {!!tasks?.length && <div className="backupTaskTableWrap" role="region" aria-label={t("Periodic backup tasks")} tabIndex={0}>
       <table className="backupTaskTable"><thead><tr><th>{t("Task / Workspaces")}</th><th>{t("Keep for")}</th><th>{t("Frequency")}</th><th>{t("Next run")}</th><th>{t("Last run")}</th><th>{t("Enabled")}</th><th>{t("State")}</th><th><span className="srOnly">{t("Actions")}</span></th></tr></thead>
         <tbody>{tasks.map((task) => {
-          const names = task.scope === "all_owned" ? "All workspaces I own" : task.workspaces.map((id) => workspaces.find((w) => w.id === id)?.name || "Unavailable workspace").join(", ");
+          const names = task.scope === "all_owned" ? t("All workspaces I own") : task.workspaces.map((id) => workspaces.find((w) => w.id === id)?.name || t("Unavailable workspace")).join(", ");
           const running = task.state === "running" || task.state === "queued";
           return <tr key={task.id}>
-            <td><strong>{task.name}</strong><span className="settingDesc" title={names}>{names}</span><span className="settingDesc">{task.uploads ? "Includes uploaded files" : "Databases only"}</span></td>
+            <td><strong>{task.name}</strong><span className="settingDesc" title={names}>{names}</span><span className="settingDesc">{task.uploads ? t("Includes uploaded files") : t("Databases only")}</span></td>
             <td>{task.retention_value}<span className="settingDesc">{task.retention_mode === "count" ? "snapshots" : "days"}</span></td>
             <td><span>{frequency(task.cron)}</span><span className="settingDesc">UTC</span></td>
-            <td>{task.requested ? "Queued" : task.enabled ? date(task.next_run) : "Paused"}</td>
+            <td>{task.requested ? t("Queued") : task.enabled ? date(task.next_run) : t("Paused")}</td>
             <td>{date(task.last_run)}</td>
             <td><label className="switch"><input type="checkbox" aria-label={t("Enable {name}", { name: task.name })} checked={task.enabled}
               disabled={running || busy === task.id} onChange={() => action(task, "toggle")} /><span className="switchTrack" /></label></td>
-            <td><span className={`uiTag ${task.state}`} title={task.last_error || (task.last_success ? `Last successful: ${date(task.last_success)}` : "No runs yet")}>
-              {task.state === "pending" ? "Not run" : task.state}</span></td>
+            <td><span className={`uiTag ${task.state}`} title={task.last_error || (task.last_success ? t("Last successful: {last_success}", { last_success: date(task.last_success) }) : t("No runs yet"))}>
+              {task.state === "pending" ? t("Not run") : task.state}</span></td>
             <td><ActionMenu label={t("Actions for {name}", { name: task.name })} icon={MoreIcon} iconOnly disabled={running || busy === task.id} items={[
               { label: T("Run now"), icon: ClockIcon, onClick: () => action(task, "run") },
               { label: T("Edit task"), icon: DatabaseIcon, onClick: () => setEditor(task) },
               { label: T("Duplicate task"), icon: PlusIcon, onClick: () => setEditor({ ...task, id: undefined, name: `${task.name} copy` }) },
-              { label: T("Delete task"), icon: Trash2Icon, onClick: () => confirm({ title: T("Delete backup task"), message: t("Delete “{name}”? Existing snapshots are kept.", { name: task.name }), confirmLabel: "Delete task", danger: true, onConfirm: () => action(task, "delete") }) },
+              { label: T("Delete task"), icon: Trash2Icon, onClick: () => confirm({ title: T("Delete backup task"), message: t("Delete “{name}”? Existing snapshots are kept.", { name: task.name }), confirmLabel: t("Delete task"), danger: true, onConfirm: () => action(task, "delete") }) },
             ]} /></td>
           </tr>;
         })}</tbody></table>
     </div>}
-    {tasks?.filter((t) => t.last_error).map((t) => <p key={t.id} className="settingsPaneHint aiKeysError" role="status"><strong>{t.name}:</strong> {t.last_error}{t.enabled ? ` Next attempt: ${date(t.next_run)}.` : ""}</p>)}
+    {tasks?.filter((t) => t.last_error).map((it) => <p key={it.id} className="settingsPaneHint aiKeysError" role="status"><strong>{it.name}:</strong> {it.last_error}{it.enabled ? t(" Next attempt: {next_run}.", { next_run: date(it.next_run) }) : ""}</p>)}
     {editor !== null ? <TaskEditor initial={editor.name !== undefined ? editor : null} workspaces={workspaces} onClose={() => setEditor(null)} onSaved={() => { setEditor(null); load(); }} /> : null}
   </>;
 }

@@ -1184,7 +1184,8 @@ body {
   opacity: 0;
   transition: opacity 0.12s;
 }
-.mdTableWrap:hover .mdTableAdd { opacity: 1; }
+/* Also while a tour points at the table ([data-guide-active], guide/). */
+.mdTableWrap:hover .mdTableAdd, .mdTableWrap[data-guide-active] .mdTableAdd, .mdTableAdd[data-guide-active] { opacity: 1; }
 .mdTableAdd:hover { background: var(--bg-subtle); color: var(--text-bright); border-style: solid; }
 .mdTableAddCol { top: 0; bottom: 0; right: -13px; width: 11px; }
 .mdTableAddRow { left: 0; right: 0; bottom: -13px; height: 11px; }

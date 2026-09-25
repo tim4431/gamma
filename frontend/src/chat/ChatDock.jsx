@@ -14,10 +14,11 @@ import { createTitleScorer } from "../library/librarySearch";
 import { pageAttachment } from "../library/libraryUtils";
 import { MenuSelect } from "../shared/ui/Menus";
 import { guideEvents } from "../guide/events.js";
+import { gammaLinksIn } from "../shared/model/gammaLinks.js";
 import { CharSlider, approxPages } from "../settings/SettingsKit";
 import { AgentToolPicker, CHAT_KIND_ROWS } from "../settings/SettingsDialog";
 import { AlertCircleIcon, ArrowDownIcon, ArrowUpIcon, BookIcon, CheckIcon, ChevronDownIcon, ChevronUpIcon, CloudDownloadIcon, CopyIcon, EyeIcon, FileIcon, FolderIcon, GlobeIcon, HighlightIcon, HistoryIcon, InfoIcon, ListIcon, MicIcon, OutlineIcon, PaperclipIcon, PencilIcon, PlusIcon, QuoteIcon, SearchIcon, SettingsIcon, SlidersIcon, StopIcon, TextCursorIcon, TrashIcon, XIcon } from "../shared/ui/Icons";
-import { T, t } from "../shared/i18n/i18n.js";
+import { T, getLocale, t } from "../shared/i18n/i18n.js";
 
 const JSON_HEADERS = { "Content-Type": "application/json" };
 
@@ -69,18 +70,18 @@ function ContextCoverage({ items }) {
     const out = [];
     const refused = c.native_requested && !c.native;
     const place = selectionPlace(c.selection);
-    const what = c.title ? `“${c.title.slice(0, 48)}${c.title.length > 48 ? "…" : ""}”` : "the PDF";
+    const what = c.title ? `“${c.title.slice(0, 48)}${c.title.length > 48 ? "…" : ""}”` : t("the PDF");
     if (refused || c.partial) {
       const around = c.selection && !c.pages_shown;
       const span = c.pages_shown && c.pages
-        ? `pages 1–${Math.min(c.pages_shown, c.pages)} of ${c.pages}`
-        : around ? (place ? `text around ${place}` : "selected passages + head") : `${(c.chars || 0).toLocaleString()} characters`;
+        ? t("pages 1–{pages} of {pages2}", { pages: Math.min(c.pages_shown, c.pages), pages2: c.pages })
+        : around ? (place ? t("text around {place}", { place }) : t("selected passages + head")) : `${(c.chars || 0).toLocaleString()} characters`;
       const short = refused && !c.partial
-        ? `PDF file not accepted — sent as text`
+        ? t("PDF file not accepted — sent as text", {  })
         : refused
-          ? `PDF file not accepted — text only, ${span}`
-          : `Model saw ${span}`;
-      const long = (refused ? "This provider does not accept PDF files, so the document went as extracted text. " : "")
+          ? t("PDF file not accepted — text only, {span}", { span })
+          : t("Model saw {span}", { span });
+      const long = (refused ? t("This provider does not accept PDF files, so the document went as extracted text. ") : "")
         + (!c.partial ? `${what} was sent as extracted text.`
           : around ? `The model got the text around your selection${place ? ` (${place})` : ""} and the start of ${what}, not the whole document. Turn on Tools so it can read and search the rest.`
           : `Only ${span} of ${what} fit the context budget — the rest was not visible to the model. Raise the budget in Settings / AI / Advanced AI settings / Context size, or turn on Tools so it can read and search the whole paper.`);
@@ -89,7 +90,7 @@ function ContextCoverage({ items }) {
     if ((c.selection?.passages || []).some((p) => p.crop)) {
       out.push({
         short: T("Picture of the selection sent"),
-        long: "The selected text looked like a formula or table (or wasn't in the extracted text), so the model also got a picture of that region of the page.",
+        long: t("The selected text looked like a formula or table (or wasn't in the extracted text), so the model also got a picture of that region of the page."),
         refused: false,
       });
     }
@@ -123,7 +124,7 @@ function UsageLine({ usage, className = "chatMsgUsage" }) {
     <span className={className} title={live ? t("Counting while the reply streams — the provider's own count replaces the estimate when it finishes") : usageDetail(usage)}>
       {usage.input ? <span className="chatMsgUsagePart"><ArrowUpIcon size={9} />{fmtTokens(usage.input)}</span> : null}
       <span className="chatMsgUsagePart"><ArrowDownIcon size={9} />{live ? "~" : ""}{fmtTokens(usage.output)}</span>
-      {cached && !live ? <span className="chatMsgUsagePart">{cached}% cached</span> : null}
+      {cached && !live ? <span className="chatMsgUsagePart">{cached}{t("% cached")}</span> : null}
     </span>
   );
 }
@@ -209,7 +210,7 @@ export default function ChatDock({
   // map in Settings → Assistant (prefs.js CHAT_KINDS): the folder chat, a
   // page with a PDF, a page of notes.
   const chatKind = folderChat ? "folder" : pageAttach ? "pdf" : "notes";
-  const chatKindLabel = CHAT_KIND_ROWS.find((r) => r[0] === chatKind)?.[2] || "Chat";
+  const chatKindLabel = CHAT_KIND_ROWS.find((r) => r[0] === chatKind)?.[2] || t("Chat");
   // The chat settings shortcut edits the same global preferences as Settings.
   const chatToolPerms = agentPerms?.[chatKind] || {};
   const toolsEnabled = !!agentEnabled;
@@ -240,14 +241,14 @@ export default function ChatDock({
   useEffect(() => { setCursorOff(null); }, [focusedNote?.id]);
   const cursorChip = focusedNote && focusedNote.id !== cursorOff ? focusedNote : null;
   // Empty-state intro and input placeholder for an agent-enabled home chat.
-  const agentScopeName = organizeFolder ? "this folder" : "your library";
+  const agentScopeName = organizeFolder ? t("this folder") : t("your library");
   const agentIntro = organizeFolder == null || !toolsEnabled ? null
     : agentWrites
-      ? `Ask AI anything — it can ${agentReads ? "read, search and " : ""}organize ${agentScopeName} (rename pages, file them into folders${perm("block_edit") ? ", edit notes" : ""})…`
+      ? t("Ask AI anything — it can {and}organize {agentScopeName} (rename pages, file them into folders{notes})…", { and: agentReads ? t("read, search and ") : "", agentScopeName, notes: perm("block_edit") ? t(", edit notes") : "" })
       : agentReads
-        ? `Ask AI across ${organizeFolder ? "this folder's pages" : "your library"} — it can read, search and summarize them…`
+        ? t("Ask AI across {scope} — it can read, search and summarize them…", { scope: organizeFolder ? t("this folder's pages") : t("your library") })
         : null;
-  const agentAsk = agentIntro ? (agentWrites ? `Ask, or organize ${agentScopeName}…` : `Ask across ${agentScopeName}…`) : null;
+  const agentAsk = agentIntro ? (agentWrites ? t("Ask, or organize {scope}…", { scope: agentScopeName }) : t("Ask across {scope}…", { scope: agentScopeName })) : null;
   const chatKeyRef = useRef(chatKey);
   chatKeyRef.current = chatKey;
   // chatImages (pasted/area-selection figures pending send) lives in App —
@@ -274,7 +275,7 @@ export default function ChatDock({
   const activeModel = (aiInfo?.models || []).find((m) => m.id === chatModel) || null;
   const nativePdf = activeModel ? activeModel.native_pdf !== false : true;
   const nativePdfNote = nativePdf ? "" :
-    `${activeModel?.provider_name || "This provider"} does not accept PDF files — the PDF is sent as extracted text instead (first ${(chatContextChars || 0).toLocaleString()} characters; Settings / AI / Advanced AI settings / Context size).`;
+    t("{provider} does not accept PDF files — the PDF is sent as extracted text instead (first {chatContextChars} characters; Settings / AI / Advanced AI settings / Context size).", { provider: activeModel?.provider_name || t("This provider"), chatContextChars: (chatContextChars || 0).toLocaleString() });
   const attachPdfManualRef = useRef(false); // the user toggled the PDF button themselves
   useEffect(() => {
     // A provider without native PDF input: drop the automatic "send the file
@@ -378,7 +379,7 @@ export default function ChatDock({
       .catch((err) => { if (!cancelled) { setHistory([]); setStatus(t("Chat history: {message}", { message: err.message })); } });
     return () => { cancelled = true; };
   }, [historyOpen, history, chatKey, readOnly]);
-  const activeTitle = chatTitle || deriveTitle(chatMessages) || "Untitled";
+  const activeTitle = chatTitle || deriveTitle(chatMessages) || t("Untitled");
   // Reserve the reply's bubble before the first stream event. This placeholder
   // is display-only; tool activity and answer text replace it in the same row.
   const visibleMessages = busyHere && (!chatMessages.length || chatMessages.at(-1).role === "user")
@@ -461,7 +462,7 @@ export default function ChatDock({
     askConfirm({
       title: T("Delete conversation"),
       message: t("Delete “{title}” from this chat's history? This can't be undone.", { title: entry.title || t("Untitled") }),
-      confirmLabel: "Delete", danger: true, onConfirm: run,
+      confirmLabel: t("Delete"), danger: true, onConfirm: run,
     });
   }
 
@@ -598,14 +599,14 @@ export default function ChatDock({
     const pdfPages = contextIds.flatMap((id) => {
       const page = homeBlocks.find((b) => b.id === id);
       const attachment = id === focusedBlockId ? pageAttach : pageAttachment(page);
-      return attachment ? [{ id: attachment.id, title: page?.content || (id === focusedBlockId ? pageTitle : "") || "Untitled" }] : [];
+      return attachment ? [{ id: attachment.id, title: page?.content || (id === focusedBlockId ? pageTitle : "") || t("Untitled") }] : [];
     });
     const sendingPdf = attachPdf && pdfPages.length > 0;
     const pdfNames = [
       ...files.map((f) => f.name),
       ...(sendingPdf ? pdfPages.map((p) => p.title) : []),
     ];
-    const contextPages = selectedDocs.map((id) => ({ id, title: homeBlocks.find((b) => b.id === id)?.content || "Untitled" }));
+    const contextPages = selectedDocs.map((id) => ({ id, title: homeBlocks.find((b) => b.id === id)?.content || t("Untitled") }));
     const userMsg = {
       contextPages,
       includeNotes,
@@ -703,14 +704,15 @@ export default function ChatDock({
         }
         if (acc || actions.length || usage) showReply(aiMsg({ partial: true, live: liveChars }));
       });
-      showReply(aiMsg({ text: acc || (actions.length ? "" : "(no response)") }), true);
+      showReply(aiMsg({ text: acc || (actions.length ? "" : t("(no response)")) }), true);
+      if (gammaLinksIn(acc).some((link) => link.kind === "citation")) guideEvents.emit("chat.cited");
     } catch (err) {
       const stopped = err?.name === "AbortError";
       // fetch's own TypeError ("Failed to fetch", or the body reader's
       // "network error") means the connection to the server was lost, not
       // that the provider failed — the server says that in-band.
       const reason = err?.name === "TypeError"
-        ? `lost the connection to the server (${err.message})` : err.message;
+        ? t("lost the connection to the server ({message})", { message: err.message }) : err.message;
       // A reply that never started is an error bubble (`error: true`): shown
       // and saved so the failure is visible after a reload, but rendered
       // apart from answers and never replayed to the model as one. A reply
@@ -810,7 +812,8 @@ export default function ChatDock({
       const form = new FormData();
       form.append("file", blob, blob.type.includes("mp4") ? "dictation.m4a" : "dictation.webm");
       if (dictationModel) form.append("model", dictationModel);
-      if (dictationLang) form.append("language", dictationLang);
+      const language = dictationLang === "auto" ? "" : dictationLang || getLocale();
+      if (language) form.append("language", language);
       if (chatModel) form.append("model_hint", chatModel);
       const data = await apiJson(`${API}/ai/transcribe`, { method: "POST", body: form });
       const text = (data.text || "").trim();
@@ -933,12 +936,12 @@ export default function ChatDock({
           const currentId = models.some((m) => m.id === chatModel) ? chatModel : models[0].id;
           const currentModel = models.find((m) => m.id === currentId);
           const totalUsage = conversationUsage(chatMessages);
-          const usageTitle = totalUsage ? `; this conversation: ${fmtTokens(totalUsage.input)} tokens in, ${fmtTokens(totalUsage.output)} out` : "";
+          const usageTitle = totalUsage ? t("; this conversation: {input} tokens in, {output} out", { input: fmtTokens(totalUsage.input), output: fmtTokens(totalUsage.output) }) : "";
           return (
             <span data-popover="chatsettings" className="popoverAnchor">
               <button type="button" data-guide="chat.settings" className={`ctlBtn ${settingsOpen ? "modeActive" : ""}`}
                 onClick={() => setOpenPopover((p) => (p === "chatsettings" ? null : "chatsettings"))}
-                title={`Chat settings — ${currentModel?.model || "model"}${chatEffort ? `, effort: ${chatEffort}` : ""}, context ${chatContextChars.toLocaleString()} chars${usageTitle}`}
+                title={t("Chat settings — {model}{chatEffort}, context {chatContextChars} chars{usageTitle}", { model: currentModel?.model || "model", chatEffort: chatEffort ? `, effort: ${chatEffort}` : "", chatContextChars: chatContextChars.toLocaleString(), usageTitle })}
                 aria-label={t("Chat settings")} aria-expanded={settingsOpen}>
                 <SettingsIcon size={15} />
               </button>
@@ -982,13 +985,13 @@ export default function ChatDock({
                     <AgentToolPicker kind={chatKind} perms={agentPerms} setPerms={setAgentPerms} disabled={!toolsEnabled} />
                   </div>
                   <div className="popoverHint">
-                    Applies to all {chatKindLabel.toLowerCase()} conversations in this browser.
+                    {t("Applies to all {kind} conversations in this browser.", { kind: chatKindLabel.toLowerCase() })}
                   </div>
                   <div className="popoverSection">{t("Tokens · this conversation")}</div>
                   {totalUsage ? (
                     <div className="chatUsageTotal" title={usageDetail(totalUsage)}>
                       <UsageLine usage={totalUsage} className="chatMsgUsage inline" />
-                      <span className="popoverHint">{chatMessages.filter((m) => m.role === "ai" && m.usage).length} replies counted, as the provider reported them. Totals per day and model: Settings / AI / Token usage.</span>
+                      <span className="popoverHint">{t("{n} replies counted, as the provider reported them. Totals per day and model: Settings / AI / Token usage.", { n: chatMessages.filter((m) => m.role === "ai" && m.usage).length })}</span>
                     </div>
                   ) : (
                     <div className="popoverHint">{t("No token counts yet — they appear under each reply once the provider reports them.")}</div>
@@ -1005,7 +1008,7 @@ export default function ChatDock({
           aria-pressed={toolsEnabled}
           aria-label={`Tools ${toolsEnabled ? "on" : "off"}`}
           onClick={() => { setOpenPopover(null); toggleTools(); }}
-          title={`Tools ${toolsEnabled ? "on" : "off"} for all chats - click to change the global setting`}
+          title={t("Tools {off} for all chats - click to change the global setting", { off: toolsEnabled ? t("on") : t("off") })}
         >
           <SlidersIcon size={15} />
         </button>
@@ -1013,7 +1016,7 @@ export default function ChatDock({
         <span data-popover="chathistory" className="popoverAnchor">
           <button type="button" className={`ctlBtn ${historyOpen ? "modeActive" : ""}`}
             onClick={() => setOpenPopover((p) => (p === "chathistory" ? null : "chathistory"))}
-            title={`Chat history — earlier conversations of ${folderChat ? "this folder" : "this page"}`}
+            title={t("Chat history — earlier conversations of {scope}", { scope: folderChat ? t("this folder") : t("this page") })}
             aria-label={t("Chat history")} aria-expanded={historyOpen}>
             <HistoryIcon size={15} />
           </button>
@@ -1049,7 +1052,7 @@ export default function ChatDock({
                     title={s.active ? t("The conversation shown now") : `${s.preview || s.title}${s.count ? ` · ${s.count} messages` : ""}`}
                     onClick={() => { if (!s.active) openHistory(s.id); }}
                     onKeyDown={(e) => { if (e.key === "Enter" && !s.active) openHistory(s.id); }}>
-                    <span className="chatHistTitle">{s.title || "Untitled"}</span>
+                    <span className="chatHistTitle">{s.title || t("Untitled")}</span>
                     <span className="chatHistAge">{s.active ? "now" : relAge(s.updated_at)}</span>
                     <span className="ctlBtnRow chatHistActs" onClick={(e) => e.stopPropagation()}>
                       <button type="button" className="ctlBtn" title={t("Rename")} aria-label={t("Rename conversation")}
@@ -1095,8 +1098,8 @@ export default function ChatDock({
           <span className="chatHealthText">
             {aiHealth.provider_name ? `${aiHealth.provider_name}: ` : ""}
             {aiHealth.auth
-              ? "authentication is broken — sign in again or update the key."
-              : `connection failed — ${aiHealth.error || "provider unreachable"}`}
+              ? t("authentication is broken — sign in again or update the key.")
+              : t("connection failed — {unreachable}", { unreachable: aiHealth.error || t("provider unreachable") })}
           </span>
           {openAiKeysEditor ? (
             <button className="uiBtn sm" onClick={openAiKeysEditor}>{t("Fix…")}</button>
@@ -1151,12 +1154,11 @@ export default function ChatDock({
         {chatTextScale.badge}
         {visibleMessages.length === 0 ? (
           <div className="chatEmpty">
-            {loadError || (readOnly ? "No saved conversation for this page." : aiInfo && !aiInfo.enabled ? (
+            {loadError || (readOnly ? t("No saved conversation for this page.") : aiInfo && !aiInfo.enabled ? (
               openAiKeysEditor ? (
-                <>Connect an AI provider to start — <button className="chatEmptyLink" onClick={openAiKeysEditor}>{t("Set up AI")}</button>.</>
-              ) : "AI is not configured."
-            ) : focusedBlockId ? "Ask AI about this page…"
-              : agentIntro || "Ask AI anything, or generate a report from your pages…")}
+                <>{t("Connect an AI provider to start — {setup}.", { setup: <button className="chatEmptyLink" onClick={openAiKeysEditor}>{t("Set up AI")}</button> })}</>
+              ) : t("AI is not configured.")
+            ) : focusedBlockId ? t("Ask AI about this page…") : agentIntro || t("Ask AI anything, or generate a report from your pages…"))}
           </div>
         ) : (
           visibleMessages.map((m, i) => {
@@ -1261,7 +1263,7 @@ export default function ChatDock({
                       : m.text ? <ChatMarkdown text={m.text} copyBlocks /> : null}
                     {isResponding ? (
                       <div className="chatThinking" role="status" aria-label={m.text ? t("AI is responding") : t("AI is thinking")}>
-                        <span aria-hidden="true">{m.text ? "Responding" : "Thinking"}</span>
+                        <span aria-hidden="true">{m.text ? t("Responding") : t("Thinking")}</span>
                         <span className="chatTyping" aria-hidden="true"><span /><span /><span /></span>
                         <UsageLine usage={liveUsage(m.usage, m.live)} className="chatMsgUsage live" />
                       </div>
@@ -1299,28 +1301,28 @@ export default function ChatDock({
                 title={t("The text you selected in this note — the assistant changes only this part.\
 {text}", { text: cursorChip.sel.text })}
                 onRemove={() => setCursorOff(cursorChip.id)}
-                removeTitle="Don't send the selection with this message" />
+                removeTitle={t("Don't send the selection with this message")} />
             ) : (
               <SelChip kind="isCursor" icon="cursor" label={t("Cursor")} text={cursorChip.text}
                 title={t("Your cursor is on this block — it rides with the message, so \"this block\" means it.\
 {text}", { text: cursorChip.text })}
                 onRemove={() => setCursorOff(cursorChip.id)}
-                removeTitle="Don't send the cursor block with this message" />
+                removeTitle={t("Don't send the cursor block with this message")} />
             )
           ) : null}
           {pdfSelections.map((s, i) => (
             <SelChip key={`p${i}`} text={s.text} icon="passage"
               label={pdfSelections.length > 1 ? t("Passage {i}", { i: i + 1 }) : t("Selection")} n={pdfSelections.length > 1 ? i + 1 : null}
-              labelTitle={`${s.page ? `From PDF page ${s.page}. ` : ""}Hold Ctrl while selecting in the PDF to add more passages`}
+              labelTitle={t("{page}Hold Ctrl while selecting in the PDF to add more passages", { page: s.page ? t("From PDF page {page}. ", { page: s.page }) : "" })}
               onRemove={() => setPdfSelections((prev) => prev.filter((_, j) => j !== i))}
-              removeTitle="Remove this passage" />
+              removeTitle={t("Remove this passage")} />
           ))}
           {(chatNotes || []).map((n, i) => (
             <SelChip key={`n${i}`} kind={n.kind === "block" ? "isBlock" : "isNote"} text={n.text}
               icon={n.kind === "block" ? "block" : "selection"} label={n.kind === "block" ? t("Block") : t("Note selection")}
-              labelTitle={n.kind === "block" ? "A note block attached with Ctrl+click or the ⋮⋮ menu — the assistant gets its text and id" : "Note text selected with Ctrl held — the assistant changes only this part"}
+              labelTitle={n.kind === "block" ? t("A note block attached with Ctrl+click or the ⋮⋮ menu — the assistant gets its text and id") : t("Note text selected with Ctrl held — the assistant changes only this part")}
               onRemove={() => setChatNotes?.((prev) => prev.filter((_, j) => j !== i))}
-              removeTitle={n.kind === "block" ? "Detach this block" : "Remove this passage"} />
+              removeTitle={n.kind === "block" ? t("Detach this block") : t("Remove this passage")} />
           ))}
         </div>
       ) : null}
@@ -1328,8 +1330,8 @@ export default function ChatDock({
         <div className="chatReferenceStrip" aria-label={t("Attached library pages")}>
           <span className="chatReferenceLabel" title={t("Paper details and text stay in context for follow-up questions. Notes are optional in the library picker.")}>{t("Context")}</span>
           {chatDocs.map((id) => <span className="chatReferenceChip" key={id}>
-            <button type="button" className="crumbBtn" title={homeBlocks.find((b) => b.id === id)?.content || t("Unavailable page")} onClick={() => onOpenPage?.(id)}><BookIcon size={12} /><span className="linkChipText">{homeBlocks.find((b) => b.id === id)?.content || "Unavailable page"}</span></button>
-            <button type="button" className="uiClose uiCloseSm" aria-label={`Remove ${homeBlocks.find((b) => b.id === id)?.content || "page"} from context`} onClick={() => setChatDocs((prev) => prev.filter((p) => p !== id))}><XIcon size={11} /></button>
+            <button type="button" className="crumbBtn" title={homeBlocks.find((b) => b.id === id)?.content || t("Unavailable page")} onClick={() => onOpenPage?.(id)}><BookIcon size={12} /><span className="linkChipText">{homeBlocks.find((b) => b.id === id)?.content || t("Unavailable page")}</span></button>
+            <button type="button" className="uiClose uiCloseSm" aria-label={t("Remove {page} from context", { page: homeBlocks.find((b) => b.id === id)?.content || t("page") })} onClick={() => setChatDocs((prev) => prev.filter((p) => p !== id))}><XIcon size={11} /></button>
           </span>)}
         </div>
       ) : null}
@@ -1398,7 +1400,7 @@ export default function ChatDock({
                 <span className="chatPlusMenuIcon">
                   <PaperclipIcon size={15} />
                 </span>
-                <span className="chatPlusMenuLabel">Add photos &amp; files</span>
+                <span className="chatPlusMenuLabel">{t("Add photos & files")}</span>
                 <span className="chatPlusMenuHint">{t("Images or PDFs from your computer")}</span>
               </button>
               <button type="button" className="chatPlusMenuItem"
@@ -1407,7 +1409,7 @@ export default function ChatDock({
                   <BookIcon size={15} />
                 </span>
                 <span className="chatPlusMenuLabel">{t("Add pages from library")}</span>
-                <span className="chatPlusMenuHint">{chatDocs.length ? `${chatDocs.length} selected` : "Search your pages"}</span>
+                <span className="chatPlusMenuHint">{chatDocs.length ? `${chatDocs.length} selected` : t("Search your pages")}</span>
               </button>
             </div>
           ) : null}
@@ -1428,8 +1430,7 @@ export default function ChatDock({
           title={!nativePdf
             ? `${attachPdf ? "On, but: " : ""}${nativePdfNote}`
             : attachPdf
-              ? "Full PDF file is sent with each message (model sees figures & tables). Click to switch to extracted text only."
-              : "Send the full PDF file with your messages so the model sees figures & tables (uses more tokens). Click to enable."}
+              ? t("Full PDF file is sent with each message (model sees figures & tables). Click to switch to extracted text only.") : t("Send the full PDF file with your messages so the model sees figures & tables (uses more tokens). Click to enable.")}
         >
           <FileIcon size={12} />
           PDF
@@ -1455,16 +1456,12 @@ export default function ChatDock({
           placeholder={(
             // Names what the message will be about, most specific attachment first.
             chatFiles.length ? `Ask about the attached file${chatFiles.length > 1 ? "s" : ""}…`
-            : chatImages.length ? "Ask about the pasted figure…"
-            : pdfSelections.length > 1 ? `Ask about the ${pdfSelections.length} selected passages…`
-            : pdfSelections.length ? "Ask about the selection…"
-            : chatNotes?.length > 1 ? `Ask about the ${chatNotes.length} attached notes…`
-            : chatNotes?.length ? (chatNotes[0].kind === "block" ? "Ask about the attached block…" : "Ask about the selected note…")
-            : cursorChip?.sel ? "Ask about the selection…"
-            : cursorChip ? "Ask about this block…"
-            : chatDocs.length ? `Ask about ${chatDocs.length} attached page${chatDocs.length > 1 ? "s" : ""}…`
-            : agentAsk || "Ask…"
-          ) + " (@ paper)"}
+            : chatImages.length ? t("Ask about the pasted figure…") : pdfSelections.length > 1 ? `Ask about the ${pdfSelections.length} selected passages…`
+            : pdfSelections.length ? t("Ask about the selection…") : chatNotes?.length > 1 ? t("Ask about the {n} attached notes…", { n: chatNotes.length })
+            : chatNotes?.length ? (chatNotes[0].kind === "block" ? t("Ask about the attached block…") : t("Ask about the selected note…"))
+            : cursorChip?.sel ? t("Ask about the selection…") : cursorChip ? t("Ask about this block…") : chatDocs.length ? `Ask about ${chatDocs.length} attached page${chatDocs.length > 1 ? "s" : ""}…`
+            : agentAsk || t("Ask…")
+          ) + t(" (@ paper)")}
         />
         {busyHere ? (
           <button className="uiBtn chatCircleBtn chatStopBtn" type="button" onClick={stopChat} title={t("Stop generating")} aria-label={t("Stop generating")}>
@@ -1493,8 +1490,7 @@ export default function ChatDock({
           <div className="reportModal docPickerModal" onClick={(e) => e.stopPropagation()}>
             <div className="reportModalTitle">{t("Add pages to the chat")}</div>
             <div className="reportModalHint">
-              Selected pages (their PDF text, and optionally your notes) are sent with every question —
-              pick a few and just ask for a report.
+              {t("Selected pages (their PDF text, and optionally your notes) are sent with every question — pick a few and just ask for a report.")}
             </div>
             <input
               autoFocus
@@ -1510,7 +1506,7 @@ export default function ChatDock({
                 // paper; the server adds PDF text for pages that carry one.
                 const pages = homeBlocks;
                 if (!pages.length) return <div className="popoverHint">{t("No pages yet — create one first.")}</div>;
-                const title = (b) => b.content || "Untitled";
+                const title = (b) => b.content || t("Untitled");
                 const byRecency = (x, y) => (y.updated_at || "").localeCompare(x.updated_at || "");
                 const row = (b, badge) => (
                   <label key={b.id} className="docPickerItem" title={title(b)}>
@@ -1545,7 +1541,7 @@ export default function ChatDock({
                   <>
                     {inTabs.length ? <div className="popoverSection">{t("Open tabs")}</div> : null}
                     {inTabs.map((b) => row(b, b.id === focusedBlockId
-                      ? <span className="docPickerBadge">current</span> : null))}
+                      ? <span className="docPickerBadge">{t("current")}</span> : null))}
                     {rest.length ? <div className="popoverSection">{t("Library")}</div> : null}
                     {rest.map((b) => row(b))}
                   </>
@@ -1554,7 +1550,7 @@ export default function ChatDock({
             </div>
             <label className="docPickerItem docPickerNotes">
               <input type="checkbox" checked={chatIncludeNotes} onChange={(e) => setChatIncludeNotes(e.target.checked)} />
-              <span className="attachName">Include my notes &amp; highlights</span>
+              <span className="attachName">{t("Include my notes & highlights")}</span>
             </label>
             {!chatDocs.length && docId ? (
               <div className="popoverHint">{t("Nothing selected — the open page is used.")}</div>

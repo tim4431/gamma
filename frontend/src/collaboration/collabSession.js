@@ -27,6 +27,7 @@
 // of view: every commit diffs against it and advances it; remote ops advance
 // it too. Positions live in one Map shared with blockOps.
 import { applyOps, diffTrees, pushOp, seedPositions } from "../shared/model/blockOps.js";
+import { t } from "../shared/i18n/i18n.js";
 
 export const TYPING_DEBOUNCE_MS = 350;
 export const STRUCTURAL_DEBOUNCE_MS = 80;
@@ -195,19 +196,19 @@ export function createCollabSession({ clientId, api, openSocket, keepalivePost, 
         if (status >= 400 && status < 500 && status !== 408 && status !== 429) {
           // The server refused the batch (stale ids, a permission change):
           // resync rather than loop on it.
-          o().onStatus?.(`Save rejected: ${err.message}`);
+          o().onStatus?.(t("Save rejected: {message}", { message: err.message }));
           s.queue = [];
           s.inflight.clear();
           s.deferred.clear();
           if (s === st.session) o().onReload?.(page);
         } else if (s.retries < MAX_RETRIES) {
           s.retries += 1;
-          o().onStatus?.(`Save failed: ${err.message} — retrying…`);
+          o().onStatus?.(t("Save failed: {message} — retrying…", { message: err.message }));
           // Put the ops back in front of anything queued since.
           s.queue = [...ops, ...s.queue];
           s.timer = later(() => { s.timer = null; send(s); }, RETRY_MS);
         } else {
-          o().onStatus?.(`Save failed: ${err.message}`);
+          o().onStatus?.(t("Save failed: {message}", { message: err.message }));
           s.queue = [...ops, ...s.queue]; // preserve for an explicit flush / pagehide
           return false;
         }

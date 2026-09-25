@@ -1,8 +1,8 @@
 import React from "react";
-import { PaneHead, Section, Row, Toggle, Stepper, PictureChoices } from "./SettingsKit";
+import { PaneHead, Section, Row, Toggle, Stepper, PictureChoices, Segmented } from "./SettingsKit";
 import { SECTION_PREFS } from "./sectionPrefs.js";
 import { MenuSelect } from "../shared/ui/Menus";
-import { ContrastIcon, GlobeIcon, LayoutIcon, MaximizeIcon, MoonIcon } from "../shared/ui/Icons";
+import { CloudIcon, ContrastIcon, GlobeIcon, HelpCircleIcon, LayoutIcon, MaximizeIcon, MoonIcon } from "../shared/ui/Icons";
 import { ThemePreview, PdfPreview } from "../shared/illustrations";
 import { UI_SCALE } from "../app/prefs";
 import { LANGUAGES, T, t } from "../shared/i18n/i18n.js";
@@ -11,10 +11,10 @@ const THEMES = [
   ["system", T("System"), T("Match your device"), "#eef0f3", "#ffffff", "#353b45", "#6089bb"],
   ["light", T("Light"), T("Bright & crisp"), "#f5f5f5", "#ffffff", "#1a1a1a", "#3a7bd5"],
   ["dark", T("Dark"), T("A quieter backdrop"), "#181818", "#292929", "#eeeeee", "#5b9bd5"],
-  ["gamma-light", "Gamma Light", T("Warm gray & amber"), "#e7e5de", "#efeee9", "#292822", "#92620e"],
-  ["gamma-dark", "Gamma Dark", T("Charcoal & soft gold"), "#1b1b1a", "#272725", "#f0ede6", "#e8b451"],
+  ["gamma-light", t("Gamma Light"), T("Warm gray & amber"), "#e7e5de", "#efeee9", "#292822", "#92620e"],
+  ["gamma-dark", t("Gamma Dark"), T("Charcoal & soft gold"), "#1b1b1a", "#272725", "#f0ede6", "#e8b451"],
   ["sepia", T("Sepia"), T("Warm paper, deep ink"), "#e9e1cb", "#fdf6e3", "#073642", "#1b6fa3"],
-  ["solarized", "Solarized Light", T("Warm paper, softer ink"), "#eee8d5", "#fdf6e3", "#657b83", "#268bd2"],
+  ["solarized", t("Solarized Light"), T("Warm paper, softer ink"), "#eee8d5", "#fdf6e3", "#657b83", "#268bd2"],
   ["gray", T("Gray"), T("Soft & neutral"), "#e3e3e3", "#f4f4f4", "#2d2d2d", "#3a7bd5"],
 ];
 const DARK = THEMES.find((theme) => theme[0] === "dark");
@@ -47,6 +47,20 @@ export function AppearanceSettings({ value, diagnostics }) {
               checked={value.pdfDarkPage} onChange={value.setPdfDarkPage} />
           </div>
         </div>
+      </Section>
+
+      <Section title={t("Sync status")} scope="account" prefs={SECTION_PREFS.appearance["Sync status"]}>
+        <Row icon={CloudIcon} label={t("Sync pill")} hint={t("Where the header shows a page's sync with Gamma Cloud.")}
+          title={t("Synced pages: the pill appears only on pages that sync with Gamma Cloud. Every page: it stays in the header on every page of a workspace that syncs some. A clone of another server shows it on every page either way.")}>
+          <Segmented value={value.syncPillScope} onChange={value.setSyncPillScope}
+            options={[["synced", t("Synced pages")], ["all", t("Every page")]]} />
+        </Row>
+      </Section>
+
+      <Section title={t("Tours")} scope="account" prefs={SECTION_PREFS.appearance["Tours"]}>
+        <Toggle icon={HelpCircleIcon} label={t("Suggest tours")} hint={t("A short tour the first time a feature comes up.")}
+          title={t("Off, nothing is offered by itself; every tour stays under Account › Tours.")}
+          checked={value.suggestTours} onChange={value.setSuggestTours} />
       </Section>
 
       <Section title={t("Interface")} scope="browser">

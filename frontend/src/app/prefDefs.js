@@ -94,6 +94,10 @@ export const PREFS = {
   language: pref("gamma-language", ACCOUNT, "system", oneOf(LANGUAGES.map(([code]) => code))),
   // Flip page colors: display-only inverted (night) rendering of the PDF canvas.
   pdfDarkPage: flag("gamma-pdf-dark", ACCOUNT, false),
+  // Where the header's sync pill shows for a publication (pages published
+  // to Gamma Cloud): on the published pages only, or on every page of the
+  // workspace. A clone's pill is on every page regardless (it syncs them all).
+  syncPillScope: pref("gamma-sync-pill", ACCOUNT, "synced", oneOf(["synced", "all"])),
   // Interface size: index.html applies the stored value before first paint,
   // App.jsx keeps `--ui-scale` on the root in sync afterwards. Screens
   // differ, so it stays with the device.
@@ -106,6 +110,9 @@ export const PREFS = {
   // The always-on status bar under the tabs — off by default, the floating
   // pill carries user-facing messages; the bar is a debugging aid.
   statusBarVisible: flag("gamma-status-bar", BROWSER, false),
+  // Tours offered by themselves the first time a feature comes up
+  // (guide/triggers.js); off leaves only Account › Tours.
+  suggestTours: flag("gamma-suggest-tours", ACCOUNT, true),
 
   // --- Library display (Settings → Library) ---
   // Recently-viewed cards on the home page (only — library cards always use
@@ -163,7 +170,8 @@ export const PREFS = {
   metaModel: pref("gamma-meta-model", BROWSER, ""),
   translateModel: pref("gamma-translate-model", BROWSER, ""),
   // Voice dictation (mic button): transcription model + spoken language
-  // ("" = auto-detect); the same Models section.
+  // ("" = the display language, "auto" = let the model detect it); the same
+  // Models section.
   dictationModel: pref("gamma-dictation-model", BROWSER, "gpt-4o-transcribe"),
   dictationLang: pref("gamma-dictation-lang", BROWSER, ""),
 

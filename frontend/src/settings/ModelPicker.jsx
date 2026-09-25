@@ -44,7 +44,7 @@ export function ModelPicker({ models, value, onChange, onAdd, loading }) {
       aria-expanded={!!menu} aria-controls={menu ? id : undefined}
       aria-activedescendant={menu && active >= 0 ? `${id}-${active}` : undefined}
       autoComplete="off"
-      placeholder={loading ? t("Loading models…") : `Add a model — type or pick${models.length ? ` (${models.length} available)` : ""}`}
+      placeholder={loading ? t("Loading models…") : t("Add a model — type or pick{available}", { available: models.length ? ` (${models.length} available)` : "" })}
       value={value} onFocus={open} onClick={open}
       onBlur={() => setMenu(null)}
       onChange={(event) => { onChange(event.target.value); setActive(-1); open(); }}
@@ -68,7 +68,7 @@ export function ModelPicker({ models, value, onChange, onAdd, loading }) {
           id={`${id}-${index}`} aria-selected={index === active} key={model}
           className="ctxMenuItem" onMouseDown={(event) => event.preventDefault()}
           onClick={() => add(model)}>{model}</button>)}
-        {!matches.length ? <div className="ctxMenuLabel">{loading ? "Loading models…" : value.trim() ? "Press Enter to add this model" : "No models available"}</div> : null}
+        {!matches.length ? <div className="ctxMenuLabel">{loading ? t("Loading models…") : value.trim() ? t("Press Enter to add this model") : t("No models available")}</div> : null}
       </div>
     </ContextMenu> : null}
   </>;

@@ -14,9 +14,9 @@ import { CloudIcon, ExternalLinkIcon, GlobeIcon, KeyIcon, UserIcon } from "../sh
 import { T, t } from "../shared/i18n/i18n.js";
 
 const POLICIES = [
-  ["refuse", "Refuse", null, "Only accounts already linked to a cloud account can sign in"],
-  ["claim", "Claim", null, "A cloud account whose username equals an unlinked username here signs in as it"],
-  ["provision", "Provision", null, "Any verified cloud account gets an account here, named after its username"],
+  ["refuse", t("Refuse"), null, t("Only accounts already linked to a cloud account can sign in")],
+  ["claim", t("Claim"), null, t("A cloud account whose username equals an unlinked username here signs in as it")],
+  ["provision", t("Provision"), null, t("Any verified cloud account gets an account here, named after its username")],
 ];
 
 // `action` receives the Save button (present while the draft is dirty) so
@@ -50,14 +50,14 @@ export function CloudSignInSettings({ setStatus, action }) {
         method: "PUT", headers: { "Content-Type": "application/json" }, body: JSON.stringify(body),
       });
       setSaved(value.cloud); setDraft(fromSaved(value.cloud));
-      setStatus(value.cloud.enabled ? "Cloud sign-in saved. The login page now offers it." : "Cloud sign-in turned off.");
+      setStatus(value.cloud.enabled ? t("Cloud sign-in saved. The login page now offers it.") : t("Cloud sign-in turned off."));
     } catch (err) { setError(err.message); }
     finally { setBusy(false); }
   }
   const set = (key) => (value) => setDraft((d) => ({ ...d, [key]: value }));
   const disabled = !saved || managed || busy;
   React.useEffect(() => {
-    action?.(dirty ? <button className="uiBtn sm primary" disabled={busy} onClick={save}>{busy ? "Saving…" : "Save sign-in"}</button> : null);
+    action?.(dirty ? <button className="uiBtn sm primary" disabled={busy} onClick={save}>{busy ? t("Saving…") : t("Save sign-in")}</button> : null);
     return () => action?.(null);
   }, [dirty, busy, draft]); // eslint-disable-line react-hooks/exhaustive-deps
   return <>
@@ -114,27 +114,27 @@ export function CloudIdentityRow({ setStatus, confirm }) {
   async function doUnlink() {
     try {
       await apiJson(`${API}/auth/cloud/unlink`, { method: "POST" });
-      setStatus?.("Gamma Cloud account unlinked.");
+      setStatus?.(t("Gamma Cloud account unlinked."));
       load();
     } catch (err) { setError(err.message); }
   }
   function unlink() {
     if (!confirm) { doUnlink(); return; }
     confirm({ title: T("Unlink Gamma Cloud"), message: t("This account will no longer sign in as \"{username}\". You can link it again any time.", { username: id.username }),
-      confirmLabel: "Unlink", onConfirm: doUnlink });
+      confirmLabel: t("Unlink"), onConfirm: doUnlink });
   }
   return <>
     <Row icon={CloudIcon} label={t("Gamma Cloud")}
       hint={id ? `${id.username}${id.email ? ` · ${id.email}` : ""}${id.plan ? ` · ${id.plan} plan` : ""}${syncHint ? ` · ${syncHint}` : ""}`
-        : "Sign in here with your Gamma Cloud account"}
-      title={id ? `Linked ${id.linked_at ? id.linked_at.slice(0, 10) : ""}. Signing in with this cloud account opens this account.`
-        : "Link your Gamma Cloud account: you are sent to the account server and back, then either login opens this account."}>
+        : t("Sign in here with your Gamma Cloud account")}
+      title={id ? t("Linked {linked_at}. Signing in with this cloud account opens this account.", { linked_at: id.linked_at ? id.linked_at.slice(0, 10) : "" })
+        : t("Link your Gamma Cloud account: you are sent to the account server and back, then either login opens this account.")}>
       <span className="setRowControls">
-        {id ? <span className="uiTag ok">linked</span> : null}
+        {id ? <span className="uiTag ok">{t("linked")}</span> : null}
         {id && state.issuer ? (
           <a className="uiBtn sm" href={`${state.issuer}/`} target="_blank" rel="noopener"
             title={t("Your Gamma Cloud account: plan, devices, sign-in methods")}>
-            <ExternalLinkIcon size={14} /> Open account
+            <ExternalLinkIcon size={14} /> {t("Open account")}
           </a>) : null}
         {id ? <button className="uiBtn sm" onClick={unlink}>{t("Unlink")}</button>
             : <button className="uiBtn sm primary" onClick={link}>{t("Link Gamma Cloud account")}</button>}

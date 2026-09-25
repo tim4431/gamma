@@ -164,10 +164,17 @@ export async function launchBrowser() {
 
 // The suite selects by English text, and the interface follows the
 // browser's language by default (docs/dev/i18n.md), so every context is
-// English unless a scenario asks for another locale.
+// English unless a scenario asks for another locale. Tours offered by
+// themselves (docs/dev/onboarding.md) would cover what other scenarios
+// click, so every context turns "Suggest tours" off unless it passes
+// `suggestTours: true`.
 function english(browser) {
   const newContext = browser.newContext.bind(browser);
-  browser.newContext = (options = {}) => newContext({ locale: "en-US", ...options });
+  browser.newContext = async ({ suggestTours = false, ...options } = {}) => {
+    const ctx = await newContext({ locale: "en-US", ...options });
+    await ctx.addInitScript((on) => { try { localStorage.setItem("gamma-suggest-tours", on ? "1" : "0"); } catch {} }, suggestTours);
+    return ctx;
+  };
   return browser;
 }
 

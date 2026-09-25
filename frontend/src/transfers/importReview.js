@@ -1,5 +1,6 @@
+import { t } from "../shared/i18n/i18n.js";
 export const IMPORT_FILTERS = [
-  ["all", "All"], ["missing", "Missing"], ["warnings", "Warnings"], ["selected", "Selected"],
+  ["all", t("All")], ["missing", t("Missing")], ["warnings", t("Warnings")], ["selected", t("Selected")],
 ];
 
 export const itemIds = page => page.selection_ids || [];

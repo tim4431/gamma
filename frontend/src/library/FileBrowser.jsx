@@ -21,7 +21,7 @@ function CardLabels({ folders, labels, mode = "both", onLabelMenu, className = "
   return (
     <span className={className}>
       {showFolders ? folders.map((f) => (
-        <span key={`f:${f}`} className="folderTagBadge" title={`In folder ${f}`}>
+        <span key={`f:${f}`} className="folderTagBadge" title={t("In folder {f}", { f })}>
           <FolderIcon size={10} />
           {f}
         </span>
@@ -62,7 +62,7 @@ function PageCard({
           : glyph}
       </div>
       <div className="pageCardBody">
-        {renameNode || <div className="pageCardTitle">{title || "Untitled"}</div>}
+        {renameNode || <div className="pageCardTitle">{title || t("Untitled")}</div>}
         <CardLabels folders={folders} labels={labels} mode={labelMode} onLabelMenu={onLabelMenu} />
         {kind || count != null || time ? (
           <div className="pageCardMeta">
@@ -106,10 +106,10 @@ function ViewToggle({ view, onChange }) {
 // in App.jsx).
 function KindToggle({ value, onChange, scopeLabel }) {
   const kinds = [
-    ["all", "Folders & files", FolderFilesIcon],
-    ["folders", "Folders only", FolderIcon],
-    ["files", "Files only", FileIcon],
-    ["labels", "Labels", LabelIcon],
+    ["all", t("Folders & files"), FolderFilesIcon],
+    ["folders", t("Folders only"), FolderIcon],
+    ["files", t("Files only"), FileIcon],
+    ["labels", t("Labels"), LabelIcon],
   ];
   return (
     <div className="homeViewToggle" role="group" aria-label={scopeLabel || t("Shown items")} title={scopeLabel || undefined}>
@@ -131,7 +131,8 @@ function KindToggle({ value, onChange, scopeLabel }) {
 // Listing search box: matching items float to the top of the current sort,
 // the rest stay put but dimmed. Live as you type — the caller debounces
 // nothing, the listing is already memoized.
-function ListFindBox({ value, onChange, placeholder = "Search…" }) {
+function ListFindBox({ value, onChange, placeholder }) {
+  placeholder = placeholder ?? t("Search…");
   return (
     <div className={`homeFindBox ${value ? "active" : ""}`}>
       <SearchIcon size={13} />

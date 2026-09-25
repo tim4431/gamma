@@ -65,7 +65,7 @@ function ScopeTag({ scope, prefs }) {
   const spinning = useMinimumSpin(read.spin);
   const tag = spinning && !read.spin ? { ...read, state: "syncing", icon: "refresh", spin: true } : read;
   const Icon = SYNC_ICONS[tag.icon];
-  const where = tag.label === "browser" ? "Browser setting" : "Account setting";
+  const where = tag.state === "browser" ? t("Browser setting") : t("Account setting");
   return (
     <span className={`setScope ${tag.tone} ${tag.spin ? "mirrorSpin" : ""}`} data-scope={scope} data-sync={tag.state}
       role="img" aria-label={t("{where}. {title}", { where: where, title: tag.title })} title={tag.title}>
@@ -74,8 +74,10 @@ function ScopeTag({ scope, prefs }) {
   );
 }
 
-export function Section({ title, scope, prefs, action, children }) {
-  return (
+// `guide`: a data-guide anchor id (guide/anchors.js) for the whole section,
+// header and rows, which then sit in one box a tour can point at.
+export function Section({ title, scope, prefs, action, guide, children }) {
+  const body = (
     <>
       <div className="setSection" data-setting={title}>
         <span className="setSectionLabel">{title}</span>
@@ -86,6 +88,7 @@ export function Section({ title, scope, prefs, action, children }) {
       {children}
     </>
   );
+  return guide ? <div className="setSectionGroup" data-guide={guide}>{body}</div> : body;
 }
 
 // Keep the row compact: icon, label, short hint, and a shared control.
@@ -216,7 +219,7 @@ export function SubDialog({ title, onClose, children, draft, className = "", clo
       <div className={`reportModal ${className}`} role="dialog" aria-modal="true" aria-label={title}
         ref={ref} tabIndex={-1} onClick={(event) => event.stopPropagation()}
         onClickCapture={(event) => {
-          if (dirty && event.target.closest("button")?.textContent.trim() === "Cancel") {
+          if (dirty && event.target.closest("button")?.textContent.trim() === t("Cancel")) {
             event.preventDefault(); event.stopPropagation(); close();
           }
         }}
@@ -438,7 +441,7 @@ export function LogBox({ icon, label, description, entries, emptyText, copyStatu
     const text = entries
       .map((entry) => `${new Date(entry.timeMs).toLocaleTimeString([], { hour12: false })} ${prefix(entry)}${entry.text}`)
       .join("\n");
-    copyText(text).then((ok) => setStatus(ok ? copyStatus : "Copy failed—copy manually."));
+    copyText(text).then((ok) => setStatus(ok ? copyStatus : t("Copy failed—copy manually.")));
   }
   return (
     <>
@@ -538,7 +541,7 @@ export function AccountPicker({ accounts, exclude = [], value, onChange, placeho
         <span className="setPickList" role="listbox">
           {accounts == null ? <span className="setPickEmpty">{t("Loading accounts…")}</span> : null}
           {accounts != null && !shown.length ? (
-            <span className="setPickEmpty">{q ? `No account matches "${query.trim()}"` : hidden ? "Type an exact username" : "No other accounts"}</span>
+            <span className="setPickEmpty">{q ? t("No account matches \"{query}\"", { query: query.trim() }) : hidden ? t("Type an exact username") : t("No other accounts")}</span>
           ) : null}
           {shown.map((a, i) => (
             <button
@@ -550,12 +553,12 @@ export function AccountPicker({ accounts, exclude = [], value, onChange, placeho
             >
               <span className="setPickAvatar">{a.is_admin ? <ShieldIcon size={13} /> : <UserIcon size={13} />}</span>
               <span className="setPickName">{a.username}</span>
-              {a.is_admin ? <span className="uiTag admin">admin</span> : null}
+              {a.is_admin ? <span className="uiTag admin">{t("admin")}</span> : null}
               {a.username === value ? <CheckIcon size={13} className="setPickCheck" /> : null}
             </button>
           ))}
           {matches.length > shown.length ? (
-            <span className="setPickEmpty">{matches.length - shown.length} more — keep typing</span>
+            <span className="setPickEmpty">{t("{n} more — keep typing", { n: matches.length - shown.length })}</span>
           ) : null}
         </span>
       ) : null}
@@ -582,8 +585,8 @@ export function QuotaMeter({ usedBytes, quotaMb, barOnly }) {
       {barOnly ? null : (
         <span className="settingDesc">
           {quotaBytes
-            ? `${fmtBytes(usedBytes)} of ${fmtBytes(quotaBytes)} used (${Math.round(pct)}%)`
-            : `${fmtBytes(usedBytes)} used — no quota`}
+            ? t("{used} of {quota} used ({pct}%)", { used: fmtBytes(usedBytes), quota: fmtBytes(quotaBytes), pct: Math.round(pct) })
+            : t("{used} used — no quota", { used: fmtBytes(usedBytes) })}
         </span>
       )}
     </span>

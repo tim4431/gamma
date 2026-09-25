@@ -32,7 +32,7 @@ export default function PaperMentionInput({ value, onChange, pages, openTabs, se
   const choose = (page) => {
     if (!mention || !page || (!selected.includes(page.id) && selected.length >= MAX_CHAT_REFERENCES)) return;
     onAttach(page.id);
-    const next = insertMention(value, mention, page.content || "Untitled");
+    const next = insertMention(value, mention, page.content || t("Untitled"));
     onChange(next.text);
     setMention(null);
     requestAnimationFrame(() => { input.current?.focus(); input.current?.setSelectionRange(next.caret, next.caret); });
@@ -50,13 +50,13 @@ export default function PaperMentionInput({ value, onChange, pages, openTabs, se
             title={[page.content || t("Untitled"), detail].filter(Boolean).join("\n")}
             aria-selected={i === active} aria-disabled={disabled} className={`slashMenuItem chatMentionOption${i === active ? " selected" : ""}`}
             onPointerDown={(e) => e.preventDefault()} onMouseEnter={() => setActive(i)} onClick={() => choose(page)}>
-            <BookIcon size={15} /><span><strong>{page.content || "Untitled"}</strong>{detail && <small>{detail}</small>}</span>
+            <BookIcon size={15} /><span><strong>{page.content || t("Untitled")}</strong>{detail && <small>{detail}</small>}</span>
             {selected.includes(page.id) && <CheckIcon size={13} />}
           </button>;
         })}
         {!results.length && <div className="popoverHint">{t("No matching pages. Try another title.")}</div>}
       </div>
-      <div className="chatMentionHint">{selected.length >= MAX_CHAT_REFERENCES ? `Up to ${MAX_CHAT_REFERENCES} attached pages. Remove one to add another.` : "Adds paper details and text to chat context. Tools can read more."}</div>
+      <div className="chatMentionHint">{selected.length >= MAX_CHAT_REFERENCES ? t("Up to {MAX_CHAT_REFERENCES} attached pages. Remove one to add another.", { MAX_CHAT_REFERENCES }) : t("Adds paper details and text to chat context. Tools can read more.")}</div>
     </div>}
     <AutoGrowTextarea {...props} ref={input} value={value} role="combobox" aria-label={t("Message AI")}
       aria-autocomplete="list" aria-expanded={!!mention} aria-controls={mention ? listId : undefined}

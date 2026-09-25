@@ -168,7 +168,7 @@ export function UsersSettings({ value, selfOnly = false }) {
     confirm({
       title: T("Delete user"),
       message: t("Delete \"{username}\" and ALL their data (notes, PDFs, settings)? This can't be undone.", { username: u.username }),
-      confirmLabel: "Delete",
+      confirmLabel: t("Delete"),
       danger: true,
       onConfirm: async () => {
         const d = await usersCall(`/${encodeURIComponent(u.username)}`, "DELETE");
@@ -215,13 +215,13 @@ export function UsersSettings({ value, selfOnly = false }) {
               type="checkbox" checked={edit.is_admin} disabled={lastAdmin(u)}
               onChange={(e) => setEdit((f) => ({ ...f, is_admin: e.target.checked }))}
             />
-            <ShieldIcon size={13} /> Admin privilege
+            <ShieldIcon size={13} /> {t("Admin privilege")}
           </label>
           {error ? <div className="settingsPaneHint aiKeysError">{error}</div> : null}
           <div className="reportModalBtns">
             {u.username !== myName ? (
               <button className="uiBtn danger" disabled={busy} onClick={() => deleteAccount(u)}>
-                <Trash2Icon size={13} /> Delete…
+                <Trash2Icon size={13} /> {t("Delete…")}
               </button>
             ) : null}
             <button className="uiBtn" onClick={closeEdit}>{t("Cancel")}</button>
@@ -236,10 +236,10 @@ export function UsersSettings({ value, selfOnly = false }) {
     const u = edit.original;
     // effective quota = this account's override, else the server default
     const effQuota = u.quota_mb ?? defaults?.quota_mb;
-    const defUpload = defaults ? `server default (${defaults.max_upload_mb})` : "server default";
+    const defUpload = defaults ? t("server default ({max_upload_mb})", { max_upload_mb: defaults.max_upload_mb }) : t("server default");
     const defQuota = defaults
-      ? `server default (${defaults.quota_mb || "unlimited"})`
-      : "server default";
+      ? t("server default ({unlimited})", { unlimited: defaults.quota_mb || t("unlimited") })
+      : t("server default");
     return (
       <SubDialog title={t("Storage limits — {username}", { username: u.username })} onClose={closeEdit} draft={edit}>
         <div className="settingsForm">
@@ -278,13 +278,13 @@ export function UsersSettings({ value, selfOnly = false }) {
         <span className="aiProvMeta">
           <span className="aiProvName">
             {u.username}
-            {u.username === myName ? <span className="uiTag">you</span> : null}
-            {u.is_admin ? <span className="uiTag admin">admin</span> : null}
-            {u.is_guest ? <span className="uiTag">guest</span> : null}
+            {u.username === myName ? <span className="uiTag">{t("you")}</span> : null}
+            {u.is_admin ? <span className="uiTag admin">{t("admin")}</span> : null}
+            {u.is_guest ? <span className="uiTag">{t("guest")}</span> : null}
           </span>
           {u.is_guest || u.max_upload_mb != null ? (
             <span className="aiProvDesc">
-              {[u.is_guest ? "shared demo workspace, resets daily" : "",
+              {[u.is_guest ? t("shared demo workspace, resets daily") : "",
                 u.max_upload_mb != null ? `max file ${u.max_upload_mb} MB` : ""].filter(Boolean).join(" · ")}
             </span>
           ) : null}
@@ -294,11 +294,11 @@ export function UsersSettings({ value, selfOnly = false }) {
           {isAdmin ? (
             <>
               <button className="uiBtn sm" disabled={busy} title={t("Storage limits for {username}", { username: u.username })} onClick={() => openStorage(u)}>
-                <HardDriveIcon size={13} /> Storage
+                <HardDriveIcon size={13} /> {t("Storage")}
               </button>
               {!u.is_guest ? (
                 <button className="uiBtn sm" disabled={busy} title={t("Rename {username}, set a password, or grant admin", { username: u.username })} onClick={() => openAccount(u)}>
-                  <PenIcon size={13} /> Edit
+                  <PenIcon size={13} /> {t("Edit")}
                 </button>
               ) : null}
             </>
@@ -312,16 +312,16 @@ export function UsersSettings({ value, selfOnly = false }) {
                 <span className="aiProvSubMeta">
                   <span className="aiProvSubName">
                     {w.name}
-                    {w.default ? <span className="uiTag">default</span> : null}
+                    {w.default ? <span className="uiTag">{t("default")}</span> : null}
                   </span>
-                  <span className="aiProvDesc">personal workspace · {fmtBytes(w.used_bytes)}</span>
+                  <span className="aiProvDesc">{t("personal workspace · {size}", { size: fmtBytes(w.used_bytes) })}</span>
                 </span>
                 <span className="aiProvActions">
                   {openable.has(w.id) ? (
                     <button className="uiBtn sm" onClick={() => { closeSettings?.(); switchWorkspace?.(w.id); }}>{t("Open")}</button>
                   ) : null}
                   <button className="uiBtn sm" onClick={() => setManage(w.id)} title={t("Manage {name}", { name: w.name })}>
-                    <PenIcon size={13} /> Manage
+                    <PenIcon size={13} /> {t("Manage")}
                   </button>
                 </span>
               </div>
@@ -371,13 +371,13 @@ export function UsersSettings({ value, selfOnly = false }) {
               type="checkbox" checked={!!addForm.is_admin}
               onChange={(e) => setAddForm((f) => ({ ...f, is_admin: e.target.checked }))}
             />
-            <ShieldIcon size={13} /> Grant the admin privilege
+            <ShieldIcon size={13} /> {t("Grant the admin privilege")}
           </label>
           {error ? <div className="settingsPaneHint aiKeysError">{error}</div> : null}
           <div className="reportModalBtns">
             <button className="uiBtn" onClick={() => { setAddForm(null); setError(""); }}>{t("Cancel")}</button>
             <button className="uiBtn primary" disabled={busy} onClick={submitAdd}>
-              {busy ? "Creating…" : "Create user"}
+              {busy ? t("Creating…") : t("Create user")}
             </button>
           </div>
           </div>

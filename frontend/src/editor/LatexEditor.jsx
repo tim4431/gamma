@@ -9,6 +9,7 @@ import { createPortal } from "react-dom";
 import katex from "katex";
 import { escapedAt } from "./latexInput";
 import { t } from "../shared/i18n/i18n.js";
+import { guideEvents } from "../guide/events.js";
 
 export {
   latexCompletions, envCompletions, fuzzyScore, insertionFor,
@@ -136,11 +137,14 @@ export function MathLivePreview({ tex, display, anchor, caret }) {
     if (!html || html.includes("katex-error")) html = renderKatex(src, display);
   }
   const [ref, style] = useCaretAnchored(anchor, true, [tex, display, html]);
+  const shown = !!html;
+  useEffect(() => { if (shown) guideEvents.emit("math.previewed"); }, [shown]);
   if (!html) return null;
   return createPortal(
     <div
       ref={ref}
       className="mathPreviewTip"
+      data-guide="editor.mathPreview"
       role="region"
       aria-label={t("Equation preview")}
       onMouseDown={(e) => { e.preventDefault(); e.stopPropagation(); }}

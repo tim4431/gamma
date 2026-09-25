@@ -1,8 +1,10 @@
-import { t, T } from "../../shared/i18n/i18n.js";
+import { T } from "../../shared/i18n/i18n.js";
+// Started from the Tours menu; `show` brings the chat up first.
 export default {
   id: "ai-chat",
   version: 2,
   title: T("AI chat"),
+  show: "chat",
   steps: [
     { id: "chat-question", anchor: "chat.input", placement: "top", title: T("Ask about your paper"),
       do: [{ type: "chat.input", text: T("summarize the paper for me"), preserveDraft: true }, { wait: 1000 }] },

@@ -161,7 +161,7 @@ function ChatCopyBlock({ as: Tag, children }) {
           aria-label={isCode ? t("Copy code") : t("Copy quoted text")}
           title={failed ? t("Copy failed — select the text and press Ctrl+C") : t("Copy only this block's content")}>
           {copied ? <CheckIcon size={12} /> : <CopyIcon size={12} />}
-          <span aria-live="polite">{failed ? "Try again" : copied ? "Copied" : "Copy"}</span>
+          <span aria-live="polite">{failed ? t("Try again") : copied ? t("Copied") : t("Copy")}</span>
         </button>
       </div>
       <Tag ref={contentRef}>{children}</Tag>
@@ -193,7 +193,7 @@ const GammaNavContext = createContext(null);
 // (a link written against another host, e.g. copied before the server moved,
 // or pointing at somebody else's Gamma) is handed to the card by a caller
 // that could resolve it, and falls back to a plain external link otherwise.
-function GammaLinkCard({ link, label, children }) {
+function GammaLinkCard({ link, label, guide, children }) {
   const nav = useContext(GammaNavContext);
   const cited = link.kind === "citation";
   // A bare link (autolinked, or link text that is the URL itself) is not a
@@ -201,10 +201,10 @@ function GammaLinkCard({ link, label, children }) {
   const raw = textOf(children).trim();
   const text = /^(https?:\/\/|\/?\?)/i.test(raw) ? "" : raw;
   const title = cited
-    ? (link.quote ? `Show this passage in the PDF: “${link.quote}”` : `Open this paper at page ${link.page}`)
-    : "Open this page";
+    ? (link.quote ? t("Show this passage in the PDF: “{quote}”", { quote: link.quote }) : t("Open this paper at page {page}", { page: link.page }))
+    : t("Open this page");
   return (
-    <a href={link.href || "#"} className={`gammaLinkCard gammaLink-${link.kind}`}
+    <a href={link.href || "#"} className={`gammaLinkCard gammaLink-${link.kind}`} data-guide={guide}
       title={label && label !== text ? t("{label} — {title}", { label: label, title: title }) : title}
       onMouseDown={(e) => e.stopPropagation()}
       onClick={(e) => {
@@ -238,7 +238,8 @@ function ChatMarkdownLink({ href, children, title }) {
   // The chat writes its own citations, so a link it produced is this
   // library's by construction; a foreign host in chat text is an ordinary
   // external link.
-  if (link && !link.foreign) return <GammaLinkCard link={{ ...link, href }}>{children}</GammaLinkCard>;
+  const cited = link?.kind === "citation";
+  if (link && !link.foreign) return <GammaLinkCard link={{ ...link, href }} guide={cited ? "chat.citation" : undefined}>{children}</GammaLinkCard>;
   return <a href={href} className="gammaLinkCard" target="_blank" rel="noreferrer" title={title || href}>
     <ExternalLinkIcon size={14} aria-hidden="true" /><span className="gammaLinkLabel">{children}</span>
   </a>;

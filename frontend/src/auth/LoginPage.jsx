@@ -42,12 +42,11 @@ export function SessionConflictPage({ tabUser, activeUser, onReload }) {
     <AuthShell>
       <p className="loginSubtitle">{t("Signed in elsewhere")}</p>
       <p className="loginConflictText">
-        This tab was open as <b>{tabUser}</b>, but this browser is now signed in
-        as <b>{activeUser}</b> (from another tab). This tab has been paused so the
-        two accounts&apos; data can&apos;t mix.
+        {t("This tab was open as {tabUser}, but this browser is now signed in as {activeUser} (from another tab). This tab has been paused so the two accounts' data can't mix.", {
+          tabUser: <b>{tabUser}</b>, activeUser: <b>{activeUser}</b> })}
       </p>
       <button type="button" className="loginBtn" onClick={onReload}>
-        Continue as {activeUser}
+        {t("Continue as {name}", { name: activeUser })}
       </button>
       <p className="loginConflictHint">
         {t("To use both accounts at the same time, open one of them in a private window or a separate browser profile.")}
@@ -84,7 +83,7 @@ export function LoginPage({
   const next = window.location.pathname + window.location.search;
   return (
     <AuthShell>
-      <p className="loginSubtitle">{subtitle || "Annotate PDFs, Share Your Thinking"}</p>
+      <p className="loginSubtitle">{subtitle || t("Annotate PDFs, Share Your Thinking")}</p>
       {cloudLogin?.enabled ? (
         <a className="loginBtn loginCloudBtn" href={`/api/auth/cloud/start?next=${encodeURIComponent(next)}`}
           title={t("Sign in through {issuer}", { issuer: cloudLogin.issuer })}>
@@ -128,11 +127,11 @@ export function ShareBlockedPage({ reason, viewer, onSwitchAccount }) {
   const missing = reason !== "forbidden";
   return (
     <AuthShell>
-      <p className="loginSubtitle">{missing ? "This link doesn't work" : "Not shared with you"}</p>
+      <p className="loginSubtitle">{missing ? t("This link doesn't work") : t("Not shared with you")}</p>
       <p className="loginConflictText">
         {missing
-          ? "The share link doesn't exist or its owner turned sharing off."
-          : `This page is shared with specific people only${viewer ? `, and ${viewer} isn't one of them` : ""}. Ask the owner to add your username.`}
+          ? t("The share link doesn't exist or its owner turned sharing off.")
+          : t("This page is shared with specific people only{them}. Ask the owner to add your username.", { them: viewer ? t(", and {viewer} isn't one of them", { viewer }) : "" })}
       </p>
       {!missing && onSwitchAccount ? (
         <button type="button" className="loginBtn" onClick={onSwitchAccount}>{t("Sign in as someone else")}</button>

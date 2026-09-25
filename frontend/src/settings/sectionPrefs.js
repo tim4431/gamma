@@ -26,6 +26,8 @@ export const SECTION_PREFS = Object.freeze({
     Theme: ["theme"],
     Language: ["language"],
     "PDF pages": ["pdfDarkPage"],
+    "Sync status": ["syncPillScope"],
+    Tours: ["suggestTours"],
   }),
   reading: sections({
     "PDF viewer": ["embAnnots"],

@@ -336,7 +336,7 @@ async function fetchPdfData(url, onLoadState, isCancelled) {
     if (!isCancelled()) {
       onLoadState?.(url, {
         phase: "error",
-        detail: stalled ? `no data for ${Math.round(STALL_MS / 1000)}s — server not responding` : (e.message || "network error"),
+        detail: stalled ? t("no data for {STALL_MS}s — server not responding", { STALL_MS: Math.round(STALL_MS / 1000) }) : (e.message || t("network error")),
       });
     }
     return null;
@@ -879,7 +879,7 @@ function PdfViewer({ url, citation = null, highlights, pdfScaleValue, scrollRef,
         }
         heightsExactRef.current = true; // layout is final — the zoom settle loop can stand down
       } catch (e) {
-        if (!cancelled) onLoadState?.(url, { phase: "error", detail: e?.message || "failed to open the PDF" });
+        if (!cancelled) onLoadState?.(url, { phase: "error", detail: e?.message || t("failed to open the PDF") });
       }
     })();
     return () => {
@@ -1778,7 +1778,7 @@ function NoteBadge({ hlId, text, style, onClick, onContextMenu }) {
       </span>
       {tip ? createPortal(
         <div ref={tipRef} className="pdfNoteTip" style={tip} onMouseEnter={hold} onMouseLeave={hide}>
-          {text ? <ChatMarkdown text={text} /> : "This highlight has a note"}
+          {text ? <ChatMarkdown text={text} /> : t("This highlight has a note")}
         </div>,
         document.body
       ) : null}

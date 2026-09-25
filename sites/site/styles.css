@@ -207,6 +207,10 @@ li + li { margin-top: 8px; }
 .dl__card { min-width: 0; background: var(--surface); border: 1px solid var(--line); border-radius: var(--radius); padding: 22px; display: flex; flex-direction: column; gap: 14px; align-items: flex-start; }
 .dl__card--wide { grid-column: span 3; }
 .dl__card--mine { border-color: var(--accent); box-shadow: 0 0 0 3px var(--accent-soft); }
+.dl__title { display: flex; align-items: center; gap: 12px; }
+.dl__icon { flex: none; display: grid; place-items: center; width: 38px; height: 38px; border-radius: 10px; background: var(--bg-2); border: 1px solid var(--line); color: var(--text); }
+.dl__icon svg { width: 20px; height: 20px; }
+.dl__card--mine .dl__icon { background: var(--accent-soft); border-color: transparent; color: var(--accent-ink); }
 .dl__card p { color: var(--text-2); font-size: 14.5px; overflow-wrap: anywhere; }
 .dl__card .code { width: 100%; }
 .store img { height: 60px; width: auto; }

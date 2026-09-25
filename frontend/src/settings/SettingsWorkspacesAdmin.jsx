@@ -40,12 +40,12 @@ export function WorkspacesAdmin({ value }) {
         <span className="aiProvMeta">
           <span className="aiProvName">
             {w.name}
-            {isPublic ? <span className="uiTag">public · everyone {w.public_role === "editor" ? "edits" : "views"}</span> : null}
+            {isPublic ? <span className="uiTag">{w.public_role === "editor" ? t("public · everyone edits") : t("public · everyone views")}</span> : null}
           </span>
           <span className="aiProvDesc">
             {`${owners.length ? `owner ${owners.join(", ")}` : "no owner"} · ${w.members.length} member${w.members.length === 1 ? "" : "s"}`}
             {` · ${fmtBytes(w.used_bytes)}`}
-            {w.quota_mb ? ` of ${w.quota_mb} MB` : ""}
+            {w.quota_mb ? t(" of {quota_mb} MB", { quota_mb: w.quota_mb }) : ""}
           </span>
         </span>
         <span className="aiProvActions">
@@ -53,7 +53,7 @@ export function WorkspacesAdmin({ value }) {
             <button className="uiBtn sm" onClick={() => { closeSettings?.(); switchWorkspace(w.id); }}>{t("Open")}</button>
           ) : null}
           <button className="uiBtn sm" onClick={() => setManage(w.id)} title={t("Manage {name}", { name: w.name })}>
-            <PenIcon size={13} /> Manage
+            <PenIcon size={13} /> {t("Manage")}
           </button>
         </span>
       </div>
@@ -70,7 +70,7 @@ export function WorkspacesAdmin({ value }) {
             title={t("Shared workspaces")}
             action={(
               <button className="uiBtn sm" onClick={() => setCreating(true)}>
-                <PlusIcon size={13} /> New workspace
+                <PlusIcon size={13} /> {t("New workspace")}
               </button>
             )}
           >
@@ -78,7 +78,7 @@ export function WorkspacesAdmin({ value }) {
           </Section>
           {listing.orphans?.length ? (
             <div className="settingsPaneHint">
-              Directories under workspaces/ that no workspace names (inspect or delete by hand): {listing.orphans.join(", ")}
+              {t("Directories under workspaces/ that no workspace names (inspect or delete by hand):")} {listing.orphans.join(", ")}
             </div>
           ) : null}
         </>
@@ -124,7 +124,7 @@ function NewWorkspaceDialog({ me, accounts, setStatus, onCreated, onClose }) {
         method: "POST", headers: { "Content-Type": "application/json" },
         body: JSON.stringify({ name, kind: "shared", owner: form.owner, access: form.access, public_role: form.public_role, quota_mb: quota }),
       });
-      setStatus(`Created ${d.name} for ${form.owner}${d.access === "public" ? ", open to everyone" : ""}.`);
+      setStatus(t("Created {name} for {owner}{everyone}.", { name: d.name, owner: form.owner, everyone: d.access === "public" ? t(", open to everyone") : "" }));
       onCreated(d);
     } catch (err) {
       setError(err.message);
@@ -161,7 +161,7 @@ function NewWorkspaceDialog({ me, accounts, setStatus, onCreated, onClose }) {
         <div className="reportModalBtns">
           <button className="uiBtn" onClick={onClose}>{t("Cancel")}</button>
           <button className="uiBtn primary" disabled={busy || !form.name.trim() || !form.owner} onClick={submit}>
-            {busy ? "Creating…" : "Create"}
+            {busy ? t("Creating…") : t("Create")}
           </button>
         </div>
       </div>

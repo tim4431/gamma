@@ -33,6 +33,7 @@ import { ContextMenu, MenuItem } from "../shared/ui/Menus";
 import { API, apiJson, assetUrl, copyText, withWorkspace } from "../shared/lib/utils";
 import { CopyIcon, ExportIcon, MessageSquareIcon, PlusIcon, Trash2Icon } from "../shared/ui/Icons";
 import { T, t } from "../shared/i18n/i18n.js";
+import { guideEvents } from "../guide/events.js";
 import {
   applyImageEdit, applyTableEdit, formatTables, htmlTableToMarkdown,
   MdImage, MdTableWrap, parseTable, scanTables, tsvToMarkdown,
@@ -109,7 +110,7 @@ function githubLabel(href) {
     const u = new URL(href);
     if (!/(^|\.)github\.com$/i.test(u.hostname)) return null;
     const p = u.pathname.split("/").filter(Boolean);
-    if (p.length === 0) return "GitHub";
+    if (p.length === 0) return t("GitHub");
     if (p.length === 1) return p[0];
     const repo = `${p[0]}/${p[1]}`;
     if (["issues", "pull", "discussions"].includes(p[2]) && p[3]) return `${repo} #${p[3]}`;
@@ -376,7 +377,7 @@ function BlockEmbedCard({ refId, refBlock, refLabels, onBlockRefClick, onEmbedEd
       className={`blockEmbedCard${draft != null ? " editing" : ""}`}
       role={editable ? undefined : "link"}
       title={draft != null ? undefined
-        : refBlock?.page_title ? `From: ${refBlock.page_title}` : "Embedded note"}
+        : refBlock?.page_title ? `From: ${refBlock.page_title}` : t("Embedded note")}
       onMouseDown={(e) => e.stopPropagation()}
       onClick={(e) => {
         e.preventDefault();
@@ -842,6 +843,8 @@ function BlockRow({
     }, 120);
     return () => clearTimeout(timer);
   }, [refPopup?.query, block.id]);
+  const refSearchShown = !!refPopup && searchResults.length > 0;
+  useEffect(() => { if (refSearchShown) guideEvents.emit("ref.search"); }, [refSearchShown]);
 
   // Resolve cross-note refs and Gamma link targets found in content
   useEffect(() => {
@@ -1306,10 +1309,8 @@ function BlockRow({
               onClick={(e) => { e.stopPropagation(); onJump(block.highlightId, e.ctrlKey || e.metaKey); }}
               title={
                 block.position
-                  ? "Jump to highlight"
-                  : block.properties?.linked_highlight_id
-                    ? "Jump to linked highlight"
-                    : "Jump to page (no exact position)"
+                  ? t("Jump to highlight") : block.properties?.linked_highlight_id
+                    ? t("Jump to linked highlight") : t("Jump to page (no exact position)")
               }
             >
               <span className="highlightDot" style={{
@@ -1535,7 +1536,7 @@ function BlockRow({
                   onTableEdit={readOnly ? undefined : stableTableEdit}
                   onMermaidEdit={readOnly ? undefined : stableMermaidEdit} />
               ) : (
-                <div className="blockPlaceholder">(empty)</div>
+                <div className="blockPlaceholder">{t("(empty)")}</div>
               )}
               {gapLine ? <div className="mdGapLine" data-markdown-copy-ignore="" style={{ top: gapLine.top - gapLine.half, height: 2 * gapLine.half }} /> : null}
             </div>
@@ -1559,7 +1560,7 @@ function BlockRow({
             >
               <LinkIcon size={11} strokeWidth={2.4} />
               {block.properties.link_page_id
-                ? "linked page"
+                ? t("linked page")
                 : (block.properties.link_url || "").replace(/^https?:\/\//i, "").slice(0, 48)}
             </button>
           ) : null}
@@ -1589,6 +1590,7 @@ function BlockRow({
       {refPopup && searchResults.length > 0 && (
         <div
           className="refPopup"
+          data-guide="editor.refSearch"
           style={{ top: refPopup.rect.bottom + 4, left: refPopup.rect.left }}
         >
           {searchResults.map((b, i) => (
@@ -1703,44 +1705,44 @@ function SortableBlockRow({ block, ...rowProps }) {
             title={t("Paste it in a note to choose mention / synced block, or open it anywhere")}
             onClick={() => copy(
               withWorkspace(`${window.location.origin}/?block=${encodeURIComponent(block.id)}`),
-              "Block link copied — paste into a note for mention / synced block",
+              t("Block link copied — paste into a note for mention / synced block"),
             )}
-          >Copy link to block</MenuItem>
+          >{t("Copy link to block")}</MenuItem>
           <MenuItem
             icon={CopyIcon}
             title={t("Copy this block's markdown source (sub-blocks become an indented list)")}
             onClick={() => copy(
               block.children?.length ? subtreeMarkdown(block, 0) : block.content || "",
-              "Copied block as markdown",
+              t("Copied block as markdown"),
             )}
-          >Copy as markdown</MenuItem>
+          >{t("Copy as markdown")}</MenuItem>
           {block.id !== "root" && rowProps.onAddToChat ? (
             <MenuItem
               icon={MessageSquareIcon}
               title={t("Attach this block (with its sub-blocks) to your next chat message — Ctrl+click a block does the same")}
               onClick={() => { setHandleMenu(null); rowProps.onAddToChat(block); }}
-            >Add to chat</MenuItem>
+            >{t("Add to chat")}</MenuItem>
           ) : null}
           {block.id !== "root" ? (
             <MenuItem
               icon={CopyIcon}
               title={t("Insert a copy below (sub-blocks included; highlight anchors are not copied)")}
               onClick={() => { setHandleMenu(null); rowProps.onDuplicate?.(block.id); }}
-            >Duplicate</MenuItem>
+            >{t("Duplicate")}</MenuItem>
           ) : null}
           {block.id !== "root" ? (
             <MenuItem
               icon={ExportIcon}
               title={t("Move this block and its sub-blocks to the end of another page")}
               onClick={() => { setHandleMenu(null); rowProps.onMoveToPage?.(block.id); }}
-            >Move to page…</MenuItem>
+            >{t("Move to page…")}</MenuItem>
           ) : null}
           {block.id !== "root" ? (
             <MenuItem
               icon={Trash2Icon}
               danger
               onClick={() => { setHandleMenu(null); rowProps.onDelete?.(block.id); }}
-            >Delete</MenuItem>
+            >{t("Delete")}</MenuItem>
           ) : null}
         </ContextMenu>
       ) : null}
@@ -1804,7 +1806,7 @@ function AiGhostRow({ content, depth }) {
           <span className="collapseSpacer" />
           <span className="dotSlot dotSlotEmpty"><span className="noteBulletDot" /></span>
           <div className="blockBody">
-            <div className="blockMeta">note</div>
+            <div className="blockMeta">{t("note")}</div>
             <div className="blockRendered aiStreaming">
               {content.trim() ? <BlockMarkdown content={content} blockId="ai-ghost" refLabels={{}} /> : null}
             </div>

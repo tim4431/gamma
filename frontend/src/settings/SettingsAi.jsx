@@ -14,12 +14,14 @@ import { ModelPicker } from "./ModelPicker";
 import { Section, SubDialog, Step, Field, Empty, PercentMeter, Row, PasswordInput, StatText, Toggle } from "./SettingsKit";
 import { SECTION_PREFS } from "./sectionPrefs.js";
 import { ActivityIcon, GlobeIcon, KeyIcon, MicIcon, PaperIcon, RefreshIcon, SparklesIcon, Trash2Icon, UserIcon } from "../shared/ui/Icons";
-import { T, t } from "../shared/i18n/i18n.js";
+import { T, getLocale, t } from "../shared/i18n/i18n.js";
 
+// Spoken languages for dictation, by native name. The pick "" follows the
+// display language, "auto" leaves the language to the model.
 const DICTATION_LANGS = [
-  ["", "Auto-detect"], ["en", "English"], ["zh", "中文"], ["ja", "日本語"], ["ko", "한국어"],
-  ["de", "Deutsch"], ["fr", "Français"], ["es", "Español"], ["pt", "Português"],
-  ["it", "Italiano"], ["ru", "Русский"], ["hi", "हिन्दी"], ["ar", "العربية"],
+  ["en", t("English")], ["zh", "中文"], ["ja", "日本語"], ["ko", "한국어"],
+  ["de", t("Deutsch")], ["fr", t("Français")], ["es", t("Español")], ["pt", t("Português")],
+  ["it", t("Italiano")], ["ru", "Русский"], ["hi", "हिन्दी"], ["ar", "العربية"],
 ];
 
 function formatPercent(value) {
@@ -31,7 +33,7 @@ function formatPercent(value) {
 function ProviderUsage({ usage }) {
   if (usage.busy) return <span className="aiProvDesc">{t("Checking usage…")}</span>;
   if (!usage.available) {
-    return <span className="aiProvDesc aiKeysError">{usage.reason || "Usage percentage unavailable"}</span>;
+    return <span className="aiProvDesc aiKeysError">{usage.reason || t("Usage percentage unavailable")}</span>;
   }
   return (
     <span className="aiUsage">
@@ -45,7 +47,7 @@ function ProviderUsage({ usage }) {
           : "";
         const label = [usage.plan_type ? `${usage.plan_type}` : "", window.name]
           .filter(Boolean).join(" · ");
-        const detail = `${formatPercent(used)}% used · ${formatPercent(left)}% left${reset ? ` · ${reset}` : ""}`;
+        const detail = t("{used}% used · {left}% left{reset}", { used: formatPercent(used), left: formatPercent(left), reset: reset ? ` · ${reset}` : "" });
         return (
           <span className="aiUsageWindow" key={`${window.name}-${index}`}>
             <span className="aiUsageHead">
@@ -85,7 +87,7 @@ function ProviderRow({ provider, protocol, oauth, active = false, radio = null, 
         </span>
         <span className="aiProvDesc">
           {oauth
-            ? `${provider.oauth_connected ? `signed in${provider.account ? ` as ${provider.account}` : ""}` : "not connected"} · ChatGPT subscription`
+            ? t("{connected} · ChatGPT subscription", { connected: provider.oauth_connected ? t("signed in{account}", { account: provider.account ? ` as ${provider.account}` : "" }) : t("not connected") })
             : `${provider.key_hint ? `key ${provider.key_hint} · ` : provider.shared ? "" : "key set · "}${protocol?.label || provider.protocol}`}
           {provider.base_url ? ` · ${provider.base_url}` : ""}
         </span>
@@ -93,7 +95,7 @@ function ProviderRow({ provider, protocol, oauth, active = false, radio = null, 
           <span className="aiProvModelsLabel">{t("Models")}</span>
           {models.length
             ? models.map((model) => <span className="categoryTag" key={model}>{model}</span>)
-            : <span className="aiKeysError">{onFix ? "none picked — edit to choose" : "none picked"}</span>}
+            : <span className="aiKeysError">{onFix ? t("none picked — edit to choose") : t("none picked")}</span>}
         </span>
         {test ? (
           <span
@@ -101,16 +103,15 @@ function ProviderRow({ provider, protocol, oauth, active = false, radio = null, 
             title={!test.busy && !test.ok ? test.error : undefined}
           >
             {test.busy
-              ? "Testing…"
-              : test.ok
+              ? t("Testing…") : test.ok
                 ? `✓ working · ${test.model} · ${(test.latency_ms / 1000).toFixed(1)}s`
                 : test.auth && onFix ? (
                   // Broken credential: one clear line + the fix,
                   // never the upstream body (hover shows the detail).
                   <>
-                    ✗ {oauth ? "ChatGPT sign-in expired" : "API key rejected"} —{" "}
+                    ✗ {oauth ? t("ChatGPT sign-in expired") : t("API key rejected")} —{" "}
                     <button className="chatEmptyLink" onClick={(event) => { event.preventDefault(); onFix(); }}>
-                      {oauth ? "reconnect" : "update the key"}
+                      {oauth ? "reconnect" : t("update the key")}
                     </button>
                   </>
                 ) : `✗ ${test.error}`}
@@ -233,7 +234,7 @@ export function SharedAiProviderSettings({ setStatus, confirm }) {
     apiJson(base).then((v) => { if (active) setInfo(v); }).catch((err) => { if (active) setLoadError(err.message); });
     return () => { active = false; };
   }, [base]);
-  const editor = useProviderEditor({ info, setInfo, base, onSaved: () => setStatus?.("Shared AI provider saved.") });
+  const editor = useProviderEditor({ info, setInfo, base, onSaved: () => setStatus?.(t("Shared AI provider saved.")) });
   async function test(p) {
     setTests((t) => ({ ...t, [p.id]: { busy: true } }));
     let result;
@@ -251,7 +252,7 @@ export function SharedAiProviderSettings({ setStatus, confirm }) {
     confirm({
       title: T("Remove shared AI key"),
       message: t("Remove the \"{protocol}\" connection? Every account using it loses its models. This cannot be undone.", { protocol: p.label || p.protocol }),
-      confirmLabel: "Remove",
+      confirmLabel: t("Remove"),
       danger: true,
       onConfirm: () => run(() => apiJson(`${base}/${encodeURIComponent(p.id)}`, { method: "DELETE" })),
     });
@@ -349,7 +350,7 @@ function ProviderForm({ value, onCancel }) {
             else if (oauth) setAiKeysForm((form) => ({ ...form, protocol: "openai", base_url: "", models: "", test_model: "" }));
           }} options={[
             ...aiKeysInfo.protocols.filter((item) => offered(item.id))
-              .map((item) => [item.id, ({ openai: "OpenAI API", anthropic: "Anthropic", chatgpt: "ChatGPT subscription" })[item.id] || item.label]),
+              .map((item) => [item.id, ({ openai: t("OpenAI API"), anthropic: t("Anthropic"), chatgpt: t("ChatGPT subscription") })[item.id] || item.label]),
             ...services.filter((item) => offered(item.protocol)).map((item) => [item.id, item.label]),
             ...(offered("openai") ? [["custom", t("Custom endpoint")]] : []),
           ]} />
@@ -364,8 +365,7 @@ function ProviderForm({ value, onCancel }) {
         n={2}
         title={oauth ? t("Sign in with ChatGPT") : t("Credentials")}
         hint={oauth
-          ? "No API key — usage is billed to your ChatGPT subscription."
-          : "Stored on the server, never shown to the browser again."}
+          ? t("No API key — usage is billed to your ChatGPT subscription.") : t("Stored on the server, never shown to the browser again.")}
       >
         {oauth ? (
           <>
@@ -377,7 +377,7 @@ function ProviderForm({ value, onCancel }) {
             </ol>
             <div className="reportModalBtns settingsAlignStart">
               <button className="uiBtn" disabled={aiKeysBusy} onClick={startChatGPTAuth}>
-                {aiKeysForm.oauthState ? "Re-open ChatGPT sign-in" : "Open ChatGPT sign-in"}
+                {aiKeysForm.oauthState ? t("Re-open ChatGPT sign-in") : t("Open ChatGPT sign-in")}
               </button>
             </div>
             <Field label={t("Callback URL")} hint={t("the full address the sign-in ended on")}>
@@ -399,7 +399,7 @@ function ProviderForm({ value, onCancel }) {
                 onChange={(event) => setAiKeysForm((form) => ({ ...form, api_key: event.target.value }))}
               />
             </Field>
-            {service === "custom" ? <Field label={t("Base URL")} hint={`optional — default ${protocol?.default_base_url || ""}`}>
+            {service === "custom" ? <Field label={t("Base URL")} hint={t("optional — default {default_base_url}", { default_base_url: protocol?.default_base_url || "" })}>
               <input
                 className="aiKeyInput" type="text" spellCheck={false}
                 placeholder={protocol?.default_base_url || ""}
@@ -422,8 +422,7 @@ function ProviderForm({ value, onCancel }) {
         n={3}
         title={t("Models")}
         hint={formModels.length
-          ? "Offered in the chat model menu."
-          : "None picked yet — pick at least one to use this connection."}
+          ? t("Offered in the chat model menu.") : t("None picked yet — pick at least one to use this connection.")}
       >
         {formModels.length ? (
           <div className="aiModelChips">
@@ -445,10 +444,10 @@ function ProviderForm({ value, onCancel }) {
             onClick={loadModelCatalog}
           >
             {aiModelCatalog?.loading
-              ? <><span className="transferSpin inline" /> fetching…</>
+              ? <><span className="transferSpin inline" /> {t("fetching…")}</>
               : aiModelCatalog?.models
-                ? <><RefreshIcon size={12} /> {aiModelCatalog.models.length} usable</>
-                : <><RefreshIcon size={12} /> Fetch</>}
+                ? <><RefreshIcon size={12} /> {aiModelCatalog.models.length} {t("usable")}</>
+                : <><RefreshIcon size={12} /> {t("Fetch")}</>}
           </button>
         </div>
         {aiModelCatalog?.error ? (
@@ -475,17 +474,16 @@ function ProviderForm({ value, onCancel }) {
         <button className="uiBtn" onClick={onCancel}>{t("Cancel")}</button>
         <button className="uiBtn primary" disabled={aiKeysBusy} onClick={submitAiProvider}>
           {aiKeysBusy
-            ? "Saving…"
-            : oauth
-              ? ((aiKeysForm.oauthCallback || "").trim() || !aiKeysForm.id ? "Connect" : "Save changes")
-              : aiKeysForm.id ? "Save changes" : "Add key"}
+            ? t("Saving…") : oauth
+              ? ((aiKeysForm.oauthCallback || "").trim() || !aiKeysForm.id ? t("Connect") : t("Save changes"))
+              : aiKeysForm.id ? t("Save changes") : t("Add key")}
         </button>
       </div>
     </div>
   );
 }
 
-const USAGE_KIND_LABELS = { chat: "Chat", translate: "Translation", metadata: "Metadata", cite: "Citations", test: "Connection tests" };
+const USAGE_KIND_LABELS = { chat: t("Chat"), translate: t("Translation"), metadata: t("Metadata"), cite: t("Citations"), test: t("Connection tests") };
 
 // Settings → AI → Token usage: what the account's AI calls cost in tokens,
 // as the providers reported it (GET /api/ai/usage — one row per call in
@@ -513,14 +511,14 @@ function AiUsageSection({ confirm, setStatus }) {
     const run = async () => {
       try {
         await apiJson(`${API}/ai/usage`, { method: "DELETE" });
-        setStatus?.("Token usage reset");
+        setStatus?.(t("Token usage reset"));
         load();
       } catch (err) {
-        setStatus?.(`Couldn't reset token usage: ${err.message}`);
+        setStatus?.(t("Couldn't reset token usage: {message}", { message: err.message }));
       }
     };
     if (confirm) {
-      confirm({ title: T("Reset token usage"), message: T("Forget every recorded token count of this account? The providers' own dashboards are not affected."), confirmLabel: "Reset", danger: true, onConfirm: run });
+      confirm({ title: T("Reset token usage"), message: T("Forget every recorded token count of this account? The providers' own dashboards are not affected."), confirmLabel: t("Reset"), danger: true, onConfirm: run });
     } else run();
   }
 
@@ -539,27 +537,27 @@ function AiUsageSection({ confirm, setStatus }) {
     <>
       <Section title={t("Token usage")} action={
         <button className="uiBtn sm" disabled={busy} title={t("Fetch the latest counts")} onClick={load}>
-          <RefreshIcon size={12} /> Refresh
+          <RefreshIcon size={12} /> {t("Refresh")}
         </button>} />
       {error ? <p className="settingsPaneHint aiKeysError" role="alert">{t("Usage unavailable: {error}", { error: error })}</p> : null}
       {!data && !error ? <p className="setNotice">{t("Loading…")}</p> : null}
       {data ? <>
         <div className="setStats">
           {tile("today", w.today)}
-          {tile("last 7 days", w.week)}
-          {tile("last 30 days", w.month)}
+          {tile(t("last 7 days"), w.week)}
+          {tile(t("last 30 days"), w.month)}
         </div>
         <Row icon={ActivityIcon} label={t("All time")}
           hint={all?.calls
-            ? `↑ ${fmtTokens(all.input)} in · ↓ ${fmtTokens(all.output)} out · ${all.calls} calls${since ? ` since ${since}` : ""}`
-            : "No AI calls recorded yet — counts appear once a provider reports them."}
+            ? t("↑ {input} in · ↓ {output} out · {calls} calls{since}", { input: fmtTokens(all.input), output: fmtTokens(all.output), calls: all.calls, since: since ? ` since ${since}` : "" })
+            : t("No AI calls recorded yet — counts appear once a provider reports them.")}
           title={t("Prompt tokens in, reply tokens out, as each provider reported them. Rows older than {keep_days} days are dropped. {all}", { keep_days: data.keep_days, all: usageDetail(all) })}>
           <button className="uiBtn sm danger" disabled={!all?.calls} onClick={reset}>{t("Reset")}</button>
         </Row>
         {models.length ? (
           <div className="aiUsageTable" role="table" aria-label={t("Token usage by model, last 30 days")}>
             <div className="aiUsageRow aiUsageHeader" role="row">
-              <span>{t("Model · last 30 days")}</span><span>calls</span><span>in</span><span>out</span><span>cached</span>
+              <span>{t("Model · last 30 days")}</span><span>{t("calls")}</span><span>{t("in")}</span><span>{t("out")}</span><span>{t("cached")}</span>
             </div>
             {models.map((m) => (
               <div className="aiUsageRow" role="row" key={`${m.provider_id}:${m.model}`} title={usageDetail(m)}>
@@ -605,7 +603,7 @@ export function AiSettings({ value, taskModels, confirm, setStatus }) {
               {canEdit ? <>
                 <span>{t("No AI connection yet.")}</span>
                 <button className="uiBtn primary" onClick={value.startAddAiProvider}>{t("+ Add provider")}</button>
-              </> : "Guest accounts cannot store API keys. Ask the admin for an account."}
+              </> : t("Guest accounts cannot store API keys. Ask the admin for an account.")}
             </Empty>
           ) : null}
           {providers.map((provider) => {
@@ -689,7 +687,7 @@ export function AiSettings({ value, taskModels, confirm, setStatus }) {
           hint={t("Also used by citations and generated titles")}>
           <MenuSelect label={t("Default chat model")} value={value.chatModel} onChange={value.setChatModel}
             options={(value.aiModels || []).map((model) => [model.id, model.model])} />
-        </Row> : <p className="setNotice">Pick models on the connection (Manage) to choose one here.</p>}
+        </Row> : <p className="setNotice">{t("Pick models on the connection (Manage) to choose one here.")}</p>}
         <Row icon={PaperIcon} label={t("Metadata model")}
           hint={t("Used only when identifiers cannot resolve the paper")}
           title={t("Metadata first tries arXiv and DOI records. This model is used only when metadata has to be AI-extracted from PDF text; a fast, cheap model is usually enough.")}>
@@ -699,7 +697,7 @@ export function AiSettings({ value, taskModels, confirm, setStatus }) {
               ? value.metaModel : ""}
             onChange={value.setMetaModel}
             options={[
-              ["", `Same as chat: ${(value.aiModels || []).find((m) => m.id === value.chatModel)?.model || "provider default"}`],
+              ["", t("Same as chat: {default}", { default: (value.aiModels || []).find((m) => m.id === value.chatModel)?.model || t("provider default") })],
               ...(value.aiModels || []).map((model) => [model.id, model.model]),
             ]}
           />
@@ -721,7 +719,11 @@ export function AiSettings({ value, taskModels, confirm, setStatus }) {
           title={t("Telling the model the spoken language improves accuracy; auto-detect handles mixed or unlisted languages.")}>
           <MenuSelect
             label={t("Dictation language")} value={value.dictationLang} onChange={value.setDictationLang}
-            options={DICTATION_LANGS}
+            options={[
+              ["", `${t("Display language")} (${DICTATION_LANGS.find(([code]) => code === getLocale())?.[1] || getLocale()})`],
+              ["auto", t("Auto-detect")],
+              ...DICTATION_LANGS,
+            ]}
           />
         </Row>
       {taskModels}

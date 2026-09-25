@@ -5,38 +5,38 @@ import { t, T } from "../shared/i18n/i18n.js";
 // under the label, the long explanation on hover. Only editable options need text.
 const EXPORT_SWITCH_TEXT = {
   highlights: {
-    pdf: ["Standard PDF annotations",
-      "Burned in as standard PDF annotations — they survive in Acrobat, SumatraPDF, browsers."],
-    notespdf: ["Quoted passages with page numbers",
-      "Each highlighted passage as a quote with its page number, in the colour you highlighted it."],
-    markdown: ["Blockquotes with page numbers",
-      "Each highlighted passage as a blockquote with its page number."],
-    obsidian: ["Quote callouts linking the PDF page",
-      "Each highlighted passage as a [!quote] callout whose title opens the bundled PDF at that page."],
-    zotero: ["Embedded into the exported PDF copies",
-      "Written into the exported PDF copies as standard annotations — Zotero's own “Include Annotations” convention, its reader picks them up on import."],
+    pdf: [t("Standard PDF annotations"),
+      t("Burned in as standard PDF annotations — they survive in Acrobat, SumatraPDF, browsers.")],
+    notespdf: [t("Quoted passages with page numbers"),
+      t("Each highlighted passage as a quote with its page number, in the colour you highlighted it.")],
+    markdown: [t("Blockquotes with page numbers"),
+      t("Each highlighted passage as a blockquote with its page number.")],
+    obsidian: [t("Quote callouts linking the PDF page"),
+      t("Each highlighted passage as a [!quote] callout whose title opens the bundled PDF at that page.")],
+    zotero: [t("Embedded into the exported PDF copies"),
+      t("Written into the exported PDF copies as standard annotations — Zotero's own “Include Annotations” convention, its reader picks them up on import.")],
   },
   notes: {
-    pdf: ["Printed onto the page in free space",
-      "Printed onto the page in nearby free space, with a line back to the highlight. Off: they stay in the annotation popups."],
-    notespdf: ["Typeset under their highlights",
-      "Your own writing, typeset under the highlight it belongs to — headings, lists, code, math and pasted images included."],
-    markdown: ["Nested under their highlights",
-      "Your own writing, nested under the highlight it belongs to."],
-    obsidian: ["Headings, paragraphs and lists",
-      "Your own writing as a document: top-level headings and paragraphs, deeper blocks as nested lists, mentions and synced blocks as wikilinks."],
-    zotero: ["Zotero notes on each item",
-      "Top-level notes become Zotero notes attached to the item; writing under a highlight travels in its annotation popup."],
+    pdf: [t("Printed onto the page in free space"),
+      t("Printed onto the page in nearby free space, with a line back to the highlight. Off: they stay in the annotation popups.")],
+    notespdf: [t("Typeset under their highlights"),
+      t("Your own writing, typeset under the highlight it belongs to — headings, lists, code, math and pasted images included.")],
+    markdown: [t("Nested under their highlights"),
+      t("Your own writing, nested under the highlight it belongs to.")],
+    obsidian: [t("Headings, paragraphs and lists"),
+      t("Your own writing as a document: top-level headings and paragraphs, deeper blocks as nested lists, mentions and synced blocks as wikilinks.")],
+    zotero: [t("Zotero notes on each item"),
+      t("Top-level notes become Zotero notes attached to the item; writing under a highlight travels in its annotation popup.")],
   },
   bundle: {
-    markdown: ["Pack the PDF and images into the .zip",
-      "Pack the PDF and any pasted images into the .zip. Off: they stay as links back to this server."],
-    obsidian: ["PDF and images into attachments/",
-      "Put the PDF (named after its page) and any pasted images into the vault's attachments/ folder. Off: they stay as links back to this server."],
-    logseq: ["Pack the PDF and images into the .zip",
-      "Pack the PDF and any pasted images into the .zip. Off: they stay as links back to this server."],
-    zotero: ["Include the PDF files (Zotero's “Export Files”)",
-      "Pack each paper's PDF into the .zip so Zotero imports the files too. Off: metadata, collections and notes only."],
+    markdown: [t("Pack the PDF and images into the .zip"),
+      t("Pack the PDF and any pasted images into the .zip. Off: they stay as links back to this server.")],
+    obsidian: [t("PDF and images into attachments/"),
+      t("Put the PDF (named after its page) and any pasted images into the vault's attachments/ folder. Off: they stay as links back to this server.")],
+    logseq: [t("Pack the PDF and images into the .zip"),
+      t("Pack the PDF and any pasted images into the .zip. Off: they stay as links back to this server.")],
+    zotero: [t("Include the PDF files (Zotero's “Export Files”)"),
+      t("Pack each paper's PDF into the .zip so Zotero imports the files too. Off: metadata, collections and notes only.")],
   },
 };
 
@@ -83,22 +83,22 @@ export function exportSummary({ payload, noPdfCopy }, folder) {
   const { format, highlights, notes } = payload;
   switch (format) {
     case "gamma":
-      return `A complete copy${folder ? " of the folder" : ""}: pages, highlights, notes, metadata, AI chats and files. Ready to import into another Gamma library.`;
+      return t("A complete copy{folder}: pages, highlights, notes, metadata, AI chats and files. Ready to import into another Gamma library.", { folder: folder ? t(" of the folder") : "" });
     case "logseq":
-      return "Highlights and notes are always included in a Logseq graph. Choose whether to include the PDF and images too.";
+      return t("Highlights and notes are always included in a Logseq graph. Choose whether to include the PDF and images too.");
     case "obsidian":
-      return `An Obsidian vault: one note per page${folder ? ", subfolders as folders" : ""}, links as [[wikilinks]], labels as tags${highlights ? ", highlights as quote callouts" : ""}${notes ? ", your notes as headings, paragraphs and lists" : ""}. Unzip it into a vault, or open it as one.`;
+      return t("An Obsidian vault: one note per page{folders}, links as [[wikilinks]], labels as tags{callouts}{lists}. Unzip it into a vault, or open it as one.", { folders: folder ? t(", subfolders as folders") : "", callouts: highlights ? t(", highlights as quote callouts") : "", lists: notes ? t(", your notes as headings, paragraphs and lists") : "" });
     case "pdf":
-      if (noPdfCopy) return "This PDF isn't stored on the server, so only the file itself can be exported.";
-      if (!highlights && !notes) return "The PDF file exactly as stored, with nothing added.";
-      return `The PDF with ${highlights ? "highlight annotations" : "no annotations"}${notes ? " and every note printed onto the page" : ""}.`;
+      if (noPdfCopy) return t("This PDF isn't stored on the server, so only the file itself can be exported.");
+      if (!highlights && !notes) return t("The PDF file exactly as stored, with nothing added.");
+      return t("The PDF with {annotations}{page}.", { annotations: highlights ? t("highlight annotations") : t("no annotations"), page: notes ? t(" and every note printed onto the page") : "" });
     case "notespdf":
-      if (!highlights && !notes) return "A new PDF with the title and metadata only — both switches are off.";
-      return `A new PDF of ${folder ? "every page in the folder" : "this page"} — title, ${highlights ? "quoted highlights" : "no quotes"}${notes ? " and your notes, typeset" : ""}.`;
+      if (!highlights && !notes) return t("A new PDF with the title and metadata only — both switches are off.");
+      return t("A new PDF of {page} — title, {quotes}{typeset}.", { page: folder ? t("every page in the folder") : t("this page"), quotes: highlights ? t("quoted highlights") : t("no quotes"), typeset: notes ? t(" and your notes, typeset") : "" });
     case "markdown":
       return highlights || notes
-        ? `Markdown with ${highlights ? "quoted highlights" : "no quotes"}${notes ? " and your notes" : ""}.`
-        : "Markdown with the title and metadata only — both switches are off.";
+        ? t("Markdown with {quotes}{notes}.", { quotes: highlights ? t("quoted highlights") : t("no quotes"), notes: notes ? t(" and your notes") : "" })
+        : t("Markdown with the title and metadata only — both switches are off.");
     default:
       return "";
   }

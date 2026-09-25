@@ -154,7 +154,7 @@ export default function ReportProblem({ facts, onClose, setStatus }) {
 
   async function copy() {
     const ok = await copyText(report());
-    setStatus(ok ? "Report copied." : "Copy failed — select the preview and copy it by hand.");
+    setStatus(ok ? t("Report copied.") : t("Copy failed — select the preview and copy it by hand."));
   }
 
   async function openIssue() {
@@ -169,10 +169,10 @@ export default function ReportProblem({ facts, onClose, setStatus }) {
       return;
     }
     const notes = [];
-    if (recording) notes.push(`drop ${recording.name} from your downloads into the form`);
-    if (trimmed && copied) notes.push("the diagnostics were trimmed to fit — paste the copied report if anything is missing");
-    else if (copied) notes.push("the report is on your clipboard too");
-    setStatus(`GitHub form opened${notes.length ? ` — ${notes.join("; ")}` : ""}.`);
+    if (recording) notes.push(t("drop {name} from your downloads into the form", { name: recording.name }));
+    if (trimmed && copied) notes.push(t("the diagnostics were trimmed to fit — paste the copied report if anything is missing"));
+    else if (copied) notes.push(t("the report is on your clipboard too"));
+    setStatus(t("GitHub form opened{notes}.", { notes: notes.length ? ` — ${notes.join("; ")}` : "" }));
     onClose();
   }
 
@@ -201,7 +201,7 @@ export default function ReportProblem({ facts, onClose, setStatus }) {
         <Row icon={MonitorIcon} label={t("Screen recording")}
           hint={recording
             ? `${recording.name} · ${fmtClock(recording.seconds)} · ${fmtBytes(recording.blob.size)}${recording.saved ? " · saved" : ""}`
-            : "Show the problem as it happens; the saved file goes into the GitHub form"}
+            : t("Show the problem as it happens; the saved file goes into the GitHub form")}
           title={t("Records your screen (or one window or tab — the browser asks which) for up to {MAX_RECORDING_SECONDS} minutes, without sound. The file stays on your computer: save it and drop it into the GitHub form, where it is uploaded as part of the issue.", { MAX_RECORDING_SECONDS: MAX_RECORDING_SECONDS / 60 })}>
           <span className="setRowControls">
             {recording ? (

@@ -55,7 +55,7 @@ export default function QuickOpen({ open, onClose, pages, recentViews, openTabs,
       .slice(0, MAX_ROWS)
       .map((r) => ({
         page: r.page,
-        tag: r.page.id === currentPageId ? "Current" : recentRank.has(r.page.id) ? "Recent" : tabs.has(r.page.id) ? "Open" : "",
+        tag: r.page.id === currentPageId ? t("Current") : recentRank.has(r.page.id) ? t("Recent") : tabs.has(r.page.id) ? t("Open") : "",
       }));
   }, [open, pages, recentViews, openTabs, query, currentPageId]);
 
@@ -96,7 +96,7 @@ export default function QuickOpen({ open, onClose, pages, recentViews, openTabs,
             const detail = [authors, meta.year].filter(Boolean).join(" · ");
             const folders = parseFolderTags(page.properties?.folder);
             const labels = parseFolderTags(page.properties?.category);
-            const title = page.content || "Untitled";
+            const title = page.content || t("Untitled");
             return (
               <button
                 type="button" role="option" key={page.id} tabIndex={-1}
@@ -114,7 +114,7 @@ export default function QuickOpen({ open, onClose, pages, recentViews, openTabs,
               </button>
             );
           })}
-          {!results.length && <div className="popoverHint">{pages.length ? "No matching pages." : "No pages yet."}</div>}
+          {!results.length && <div className="popoverHint">{pages.length ? t("No matching pages.") : t("No pages yet.")}</div>}
         </div>
         <div className="chatMentionHint">{t("↑↓ choose · Enter open · Esc close")}</div>
       </div>

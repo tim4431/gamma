@@ -284,6 +284,7 @@
 /* Editor-form body inside a SubDialog (add/edit key, account editor, add
    user): the dialog owns the chrome, this just stacks Steps / Fields. */
 .settingsForm { display: flex; flex-direction: column; }
+.setSectionGroup { display: flex; flex-direction: column; }
 .settingsForm > .quotaMeter { margin-bottom: 8px; }
 .settingsForm .reportModalBtns { margin-top: 10px; }
 /* Numbered stage of a dialog flow (the add/edit-key wizard). */

@@ -14,6 +14,7 @@ import { ContextMenu, MenuItem } from "../shared/ui/Menus";
 import { ResizeGrips, useDragResize } from "../shared/ui/ResizeGrip";
 import { Segmented } from "../settings/SettingsKit";
 import { t } from "../shared/i18n/i18n.js";
+import { guideEvents } from "../guide/events.js";
 import {
   AlignCenterIcon, AlignLeftIcon, AlignRightIcon, CaptionIcon, DownloadIcon,
   PlusIcon, Trash2Icon, ZoomInIcon,
@@ -130,9 +131,7 @@ export function scanTables(content) {
 export function parseTable(text) {
   const rows = text.split("\n").map(splitCells);
   const aligns = rows[1].map((c) =>
-    c.startsWith(":") && c.endsWith(":") ? "center"
-      : c.endsWith(":") ? "right"
-        : c.startsWith(":") ? "left" : null);
+    c.startsWith(":") && c.endsWith(":") ? "center" : c.endsWith(":") ? "right" : c.startsWith(":") ? "left" : null);
   return { header: rows[0], aligns, body: rows.slice(2) };
 }
 
@@ -400,6 +399,8 @@ export function MdTableWrap({ idx, onEdit, model, editKey, children }) {
   const [menu, setMenu] = useState(null); // {x,y,kind,at}
   const [cellEdit, setCellEdit] = useState(null); // {row,col,text,rect}
   const [drag, setDrag] = useState(null); // drop-line: {kind, x|y, top/left, size}
+  const editable = !!onEdit;
+  useEffect(() => { if (editable) guideEvents.emit("table.shown"); }, [editable]);
   const dragRef = useRef(null); // {kind, at, from, startX, startY, moved, to}
 
   const stop = (e) => e.stopPropagation();
@@ -581,6 +582,7 @@ export function MdTableWrap({ idx, onEdit, model, editKey, children }) {
   return (
     <div
       className={`mdTableWrap${onEdit ? " mdTableEditable" : ""}`}
+      data-guide={onEdit ? "notes.table" : undefined}
       ref={wrapRef}
       onMouseOver={onOver}
       onMouseLeave={() => setHover(null)}
@@ -618,7 +620,7 @@ export function MdTableWrap({ idx, onEdit, model, editKey, children }) {
           <button type="button" className="mdTableAdd mdTableAddCol" title={t("Add column")}
             onMouseDown={stop}
             onClick={(e) => { stop(e); onEdit(idx, { type: "addCol", at: counts().nCols }); }}>+</button>
-          <button type="button" className="mdTableAdd mdTableAddRow" title={t("Add row")}
+          <button type="button" className="mdTableAdd mdTableAddRow" title={t("Add row")} data-guide="notes.tableAdd"
             onMouseDown={stop}
             onClick={(e) => { stop(e); onEdit(idx, { type: "addRow", at: counts().nBody }); }}>+</button>
           {hover ? (
