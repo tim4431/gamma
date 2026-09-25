@@ -16,10 +16,8 @@ import {
   ArrowDownIcon, ArrowUpIcon, CodeIcon, CopyIcon, FileTextIcon, MoveVerticalIcon, Trash2Icon,
 } from "../shared/ui/Icons";
 import { t } from "../shared/i18n/i18n.js";
-import { scanImages, scanTables } from "./MdTools";
+import { blockSpans, scanImages, scanTables } from "./mdScan";
 import { scanMermaidFences } from "../shared/lib/mermaidMarkdown.js";
-import { scanMathSpans } from "./markCommands";
-import { scanFences } from "./codeHighlight";
 import { blockStartInSource, gapInSource, renderedGaps } from "./clickToSource";
 
 // ------------------------------------------------------------ source scan
@@ -62,8 +60,7 @@ export function dropGapAtPoint(rendered, content, clientY) {
   if (!best.below) return { offset: null, y: best.y };
   const start = constructStartInSource(rendered, content, best.below);
   if (start == null) return null;
-  const spans = [...scanMathSpans(content), ...scanFences(content)];
-  return { offset: gapInSource(content, start, spans).offset, y: best.y };
+  return { offset: gapInSource(content, start, blockSpans(content)).offset, y: best.y };
 }
 
 // Where a top-level construct of the rendered view begins in the source: an
@@ -85,12 +82,6 @@ function constructStartInSource(rendered, content, el) {
 // object menu instead of a menu of its own.
 const MdObjectCtx = createContext(null);
 export const useObjectMenu = () => useContext(MdObjectCtx);
-
-const KIND_LABELS = {
-  image: { delete: () => t("Delete image") },
-  table: { delete: () => t("Delete table") },
-  mermaid: { delete: () => t("Delete diagram") },
-};
 
 // `onAction(kind, idx, action, event)`: editRaw · copy · delete ·
 // moveNewAbove · moveNewBelow · moveToPage · dragStart · dragEnd. Without it
@@ -185,7 +176,7 @@ export function MdObject({ as: Tag = "div", kind, idx, editable = true, onAction
           ) : null}
           <MenuItem icon={CopyIcon} onClick={(e) => act("copy", e)}>{t("Copy as markdown")}</MenuItem>
           {editable ? (
-            <MenuItem danger icon={Trash2Icon} onClick={(e) => act("delete", e)}>{KIND_LABELS[kind].delete()}</MenuItem>
+            <MenuItem danger icon={Trash2Icon} onClick={(e) => act("delete", e)}>{kind === "image" ? t("Delete image") : kind === "table" ? t("Delete table") : t("Delete diagram")}</MenuItem>
           ) : null}
         </ContextMenu>
       ) : null}

@@ -42,6 +42,18 @@ Tap an active pen preset again to choose **Pen** (width follows stylus pressure)
 - **Back** (top bar, or **Alt+←**) unwinds jumps with their exact scroll positions, across documents too. Right-click it to clear the stack.
 - You can also **link a citation to a paper you already have**: right-click a highlight → link it to a page, or to an exact highlight in that page.
 
+### Translate a paper
+
+- **The 文A button** in the zoom column translates the page you are reading, in place. Each paragraph is redrawn in your language over the original; figures and layout stay put. Hold **Alt** to peek at the original.
+- On a translated page the button hides or shows the translation (all pages at once). On a page not yet translated, it translates that page.
+- **Right-click** the button (long-press on touch) for *Translate whole document*. The pages nearest you come first; a click on the button stops the job.
+- **Translate a selection**: select text and click 文A in the highlight popup. The translation opens under the colors, with a copy button. Turn on *Translate on select* to skip the click.
+- **What translates** is Settings → Reading & editing → Translation → *Translate with*: a chat model, or a translation service.
+  - **Microsoft (free)** works with no setup, and is the default when you have no AI connection. It is unofficial and could stop working; if it keeps failing, a dot on the account button leads to the row that says why.
+  - **Google Cloud Translation** and **Youdao** need your own key, added in the same section.
+  - A chat model keeps formulas and citation markers intact; a service is faster and costs less per page.
+- The target language, the selection options and the speed (parallel requests) are in the same section.
+
 ## Notes
 
 <img alt="A display equation is typed as LaTeX with a live preview and renders in place; a callout is typed as markdown and becomes a box; a pasted figure is resized with its grip" src="assets/branding/gamma-demo-notes-light.svg" width="100%">
@@ -232,7 +244,7 @@ Settings (account menu → Settings) has one sidebar in three groups; the search
 | Preferences | Appearance | Theme (system + seven), language, flip page colors, library cards (thumbnails / folders / labels), interface size, tour suggestions |
 | | Reading & editing | PDFs (imported annotations, open-access fallback, metadata auto-fetch, saving external PDFs), handwriting (pen only / pen and finger, pressure), translation (button, language, selection, model or service and its keys, speed), the Enter key, how search opens |
 | | Keyboard | Every shortcut, rebindable |
-| | Account & sync | Your account, storage meter and Gamma Cloud link; published pages, **Clones** (offline copies) and the sync pill |
+| | Account & sync | Your account, storage meter and Gamma Cloud link; **Settings sync** (*Sync now*, *Fetch from cloud*, *Push to cloud*); published pages, **Clones** (offline copies) and the sync pill |
 | AI | Connections | Providers and keys, ChatGPT sign-in, default models, token usage |
 | | Chat | Default reasoning effort, snapshot clearing, which tools the agent may use per chat kind |
 | | Advanced | Tool limits, context budgets |

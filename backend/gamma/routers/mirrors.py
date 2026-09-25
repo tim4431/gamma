@@ -7,6 +7,7 @@ from pydantic import BaseModel, Field
 
 from .. import config, sync_engine, workspaces
 from ..auth import require_personal_user
+from ..ops import OpError
 
 router = APIRouter(prefix="/api/mirrors", tags=["mirrors"])
 
@@ -179,8 +180,14 @@ def list_conflicts(ws: str, request: Request, resolved: int = 0, page: str = "")
 
 @router.post("/{ws}/conflicts/{conflict_id}")
 def resolve_conflict(ws: str, conflict_id: int, payload: Resolution, request: Request):
+    """``{choice: keep | mine | theirs}``: the text is written first (into
+    the block's page as it is now), then the conflict is marked resolved;
+    a write the block refuses (409) leaves the conflict open."""
     _mine(request, ws)
-    out = sync_engine.resolve_conflict(ws, conflict_id, payload.choice)
+    try:
+        out = sync_engine.resolve_conflict(ws, conflict_id, payload.choice)
+    except OpError as e:
+        raise HTTPException(status_code=409, detail=f"the text could not be written: {e}")
     if not out:
         raise HTTPException(status_code=404, detail="no such conflict")
     return out

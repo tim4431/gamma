@@ -15,6 +15,7 @@ masked GET /api/translate/engines.
 
 import hashlib
 import json
+import threading
 import time
 import uuid
 from urllib.error import HTTPError, URLError
@@ -24,6 +25,7 @@ from urllib.request import Request, urlopen
 from fastapi import HTTPException
 
 from .db import get_pref, page_now, set_pref
+from .logbuf import log
 
 ENGINES_PREF_KEY = "translate-engines"
 MODEL_PREFIX = "engine:"
@@ -82,6 +84,47 @@ class EngineError(Exception):
     """The engine refused or failed the request; the message is shown."""
 
 
+# --- the free service's health ------------------------------------------------
+# Microsoft's endpoint is unofficial, so it can stop answering any day. Its
+# consecutive failures are counted in memory (a restart starts fresh). From
+# FREE_ALERT_AFTER on, the server log gets one warning per streak, and each
+# account that met the failures gets a notice (notices.free_translate_failing)
+# pointing at Settings → Reading, whose Microsoft row names the error. One
+# success ends the streak.
+FREE_ENGINE = "microsoft"
+FREE_ALERT_AFTER = 3
+_health_lock = threading.Lock()
+_health = {"failures": 0, "since": "", "error": "", "users": set(), "warned": False}
+
+
+def _note_outcome(engine: str, user: str, error: str | None) -> None:
+    if engine != FREE_ENGINE:
+        return
+    with _health_lock:
+        if error is None:
+            _health.update(failures=0, since="", error="", users=set(), warned=False)
+            return
+        if not _health["failures"]:
+            _health["since"] = page_now()
+        _health["failures"] += 1
+        _health["error"] = error
+        _health["users"].add(user)
+        warn = _health["failures"] >= FREE_ALERT_AFTER and not _health["warned"]
+        _health["warned"] = _health["warned"] or warn
+    if warn:
+        log.warning(f"[translate] {ENGINES[engine]['label']} failed {FREE_ALERT_AFTER} times in a row "
+                    f"({error}); its endpoint may have changed. Google or Youdao keys are the fallback.")
+
+
+def free_failing(user: str) -> dict | None:
+    """The free service's current failure streak ({since, error}) once it has
+    reached FREE_ALERT_AFTER, for an account that met it; else None."""
+    with _health_lock:
+        if _health["failures"] < FREE_ALERT_AFTER or user not in _health["users"]:
+            return None
+        return {"since": _health["since"], "error": _health["error"]}
+
+
 # --- stored credentials -------------------------------------------------------
 
 def load(user: str) -> dict:
@@ -100,7 +143,7 @@ def _complete(engine: str, conf: dict | None) -> bool:
 def configured(user: str) -> list:
     """[{id: "engine:<id>", label}] for every engine with all its fields set —
     what the translation picker offers."""
-    saved = load(user) if user else {}
+    saved = load(user)
     return [{"id": MODEL_PREFIX + eid, "label": e["label"]}
             for eid, e in ENGINES.items() if _complete(eid, saved.get(eid))]
 
@@ -118,7 +161,8 @@ def masked(user: str, can_edit: bool) -> dict:
             fields[f["id"]] = ("…" + value[-4:] if len(value) > 8 else "set") if f["secret"] and value else value
         rows.append({"id": eid, "label": e["label"], "configured": _complete(eid, conf),
                      "needs_key": bool(e["fields"]), "fields": fields,
-                     "updated_at": conf.get("updated_at", "")})
+                     "updated_at": conf.get("updated_at", ""),
+                     "failing": free_failing(user) if eid == FREE_ENGINE else None})
     return {"engines": rows, "can_edit": can_edit}
 
 
@@ -174,17 +218,23 @@ def credentials(user: str, engine: str) -> dict:
 
 # --- translation --------------------------------------------------------------
 
-def translate(engine: str, conf: dict, texts: list, lang: str) -> list:
+def translate(engine: str, conf: dict, texts: list, lang: str, user: str) -> list:
     """``texts`` translated into ``lang`` (a TRANSLATE_LANGS code), same length
-    and order. Split into the engine's batch limits; raises EngineError."""
+    and order, for ``user`` (the free service's health counts per account).
+    Split into the engine's batch limits; raises EngineError."""
     e = ENGINES[engine]
     target = e["langs"].get(lang)
     if not target:
         raise EngineError(f"{e['label']} does not translate into {lang}")
     call = {"microsoft": _microsoft, "google": _google, "youdao": _youdao}[engine]
     out = []
-    for batch in _batches(texts, *e["batch"]):
-        out.extend(call(conf, batch, target))
+    try:
+        for batch in _batches(texts, *e["batch"]):
+            out.extend(call(conf, batch, target))
+    except EngineError as err:
+        _note_outcome(engine, user, str(err))
+        raise
+    _note_outcome(engine, user, None)
     return out
 
 

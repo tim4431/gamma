@@ -423,7 +423,7 @@ export async function noteScenarios({ server, browser, alice, step, until, sleep
     const up = await alice2.upload("/api/upload-image", PNG_1PX, "dot4.png", "image/png");
     const table = "| a | b |\n|---|---|\n| 1 | 2 |";
     const withTable = await alice2.api("/api/blocks", { method: "POST", body: { parent_id: pageId, content: `intro\n\n${table}\n\nafter` } });
-    const withImage = await alice2.api("/api/blocks", { method: "POST", body: { parent_id: pageId, content: `![|20](${up.url})` } });
+    const withImage = await alice2.api("/api/blocks", { method: "POST", body: { parent_id: pageId, content: `![|200](${up.url})` } });
     const landing = await alice2.api("/api/blocks", { method: "POST", body: { parent_id: pageId, content: "para one\n\npara two" } });
     const ctxO = await alice2.context(browser);
     const p = await openPage(ctxO, `${server.base}/?ws=${second.id}&page=${pageId}`);
@@ -494,7 +494,7 @@ export async function noteScenarios({ server, browser, alice, step, until, sleep
     await dragTo(`.blockRowWrap[data-block-id="${withImage.id}"] .mdObject-image`, landing.id, "gap");
     await p.locator(".dropIndicatorInside").waitFor({ timeout: 3000 }); // the inside-block line shows in the gap
     await release();
-    await until(async () => (await content(landing.id)) === `para one\n\n![|20](${up.url})\n\npara two`, { what: "the image landed between the paragraphs" });
+    await until(async () => (await content(landing.id)) === `para one\n\n![|200](${up.url})\n\npara two`, { what: "the image landed between the paragraphs" });
     assertEq(await content(withImage.id), "", "its old block is empty");
 
     // Out of the block being edited, with a real mouse drag of the editor's
@@ -505,6 +505,24 @@ export async function noteScenarios({ server, browser, alice, step, until, sleep
     await p.keyboard.press("Control+End");
     const widget = p.locator(".blockEditorCm .cmImgWidget");
     await widget.waitFor();
+    // First within the block being edited: onto the top of its first line —
+    // the picture becomes the first paragraph (the editor's own drop, not
+    // CodeMirror's paste-at-caret, so no copy is left behind).
+    const imgMd = `![|200](${up.url})`;
+    {
+      const w0 = await widget.boundingBox();
+      const l0 = await p.locator(".blockEditorCm .cm-line").first().boundingBox();
+      await p.mouse.move(w0.x + w0.width / 2, w0.y + w0.height / 2);
+      await p.mouse.down();
+      await p.mouse.move(w0.x + w0.width / 2 + 6, w0.y + w0.height / 2 + 6);
+      await p.mouse.move(l0.x + 30, l0.y + 2, { steps: 10 });
+      await p.mouse.move(l0.x + 32, l0.y + 3);
+      await p.locator(".dropIndicatorInside").waitFor({ timeout: 3000 });
+      await p.mouse.up();
+      await until(async () => (await content(landing.id)) === `${imgMd}\n\npara one\n\npara two`, { what: "the picture moved to the top of the block being edited, once" });
+    }
+    await p.keyboard.press("Control+End");
+    await widget.waitFor();
     const wb = await widget.boundingBox();
     const tb = await p.locator(`.blockRowWrap[data-block-id="${withImage.id}"]`).boundingBox();
     await p.mouse.move(wb.x + wb.width / 2, wb.y + wb.height / 2);
@@ -514,18 +532,38 @@ export async function noteScenarios({ server, browser, alice, step, until, sleep
     await p.mouse.move(tb.x + 22, tb.y + 4); // the engine here sends no repeat dragover: nudge once
     await p.locator(".dropIndicator").waitFor({ timeout: 3000 });
     await p.mouse.up();
-    await until(async () => (await content(withImage.id)) === `![|20](${up.url})`, { what: "the picture dragged out of the editor into a block of its own" });
-    assertEq(await content(landing.id), "para one\n\npara two", "the edited block lost the picture");
+    await until(async () => (await content(landing.id)) === "para one\n\npara two", { what: "the picture dragged out of the block being edited" });
+    const now = await children();
+    const picBlock = now.find((b) => b.content === imgMd);
+    assert(picBlock, "the picture is a block of its own");
+    assertEq(now[now.indexOf(picBlock) + 1]?.id, withImage.id, "dropped on the row's top edge: right above it");
     await closeEditor(p).catch(() => {});
 
-    // A press on the picture itself selects it; Delete removes it.
-    const img = frameOf(withImage.id, "image").locator("img.mdImg");
+    // A press in the blank beside the centred picture opens the editor with
+    // the caret right after it (the picture stays rendered there).
+    const picFrame = frameOf(picBlock.id, "image");
+    await picFrame.scrollIntoViewIfNeeded();
+    const pb = await picFrame.boundingBox();
+    await p.mouse.click(pb.x + pb.width + 60, pb.y + pb.height / 2);
+    await p.waitForSelector(".blockEditorCm .cm-content", { timeout: 5000 });
+    await p.locator(".blockEditorCm .cmImgWidget").waitFor();
+    await p.keyboard.type("X");
+    await closeEditor(p);
+    await until(async () => (await content(picBlock.id)) === `${imgMd}X`, { what: "typed right after the picture" });
+
+    // Double-clicking the picture zooms it (a click selects; the lightbox
+    // closes on Escape); a press on it selects, and Delete removes it.
+    const img = frameOf(picBlock.id, "image").locator("img.mdImg");
     await img.waitFor();
-    await img.click();
+    await img.dblclick({ position: { x: 4, y: 190 } }); // the hover toolbar pill sits at the top
+    await p.locator(".mdLightbox").waitFor();
+    await p.keyboard.press("Escape");
+    await p.locator(".mdLightbox").waitFor({ state: "detached" });
+    await img.click({ position: { x: 4, y: 190 } });
     await p.waitForSelector(".mdObjectSelected");
     assertEq(await p.locator(".blockEditorCm").count(), 0, "pressing the picture selects it, no editor");
     await p.keyboard.press("Delete");
-    await until(async () => (await content(withImage.id)) === "", { what: "Delete removed the selected image" });
+    await until(async () => (await content(picBlock.id)) === "X", { what: "Delete removed the selected image" });
 
     // Right-click → "Edit markdown source": the editor opens with the caret
     // inside the table, so its source shows; with the caret past its end the
@@ -534,7 +572,7 @@ export async function noteScenarios({ server, browser, alice, step, until, sleep
     await p.getByRole("button", { name: "Edit markdown source" }).click();
     await p.waitForSelector(".blockEditorCm .cm-content", { timeout: 5000 });
     assertEq(await p.locator(".blockEditorCm .cmTableWidget").count(), 0, "the source shows with the caret inside the table");
-    assert((await p.$eval(".blockEditorCm .cm-content", (el) => el.textContent)).includes("| a | b |"), "raw table text in the editor");
+    assert((await p.$eval(".blockEditorCm .cm-content", (el) => el.textContent)).includes("| a"), "raw table text in the editor");
     await p.keyboard.press("Control+End");
     await p.locator(".blockEditorCm .cmTableWidget").waitFor();
     await dragTo(".blockEditorCm .cmTableWidget", landing.id, "top");

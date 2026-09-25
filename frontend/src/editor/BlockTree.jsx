@@ -18,13 +18,14 @@ import { MermaidDiagram, mermaidCodeProps } from "../shared/ui/MermaidDiagram";
 import { mapOutsideCodeFences, remarkMermaid, scanMermaidFences, setMermaidWidth } from "../shared/lib/mermaidMarkdown.js";
 import { MdObject, findObject } from "./MdObject";
 import { cutObject } from "./mdObjects";
+import { blockSpans } from "./mdScan";
 import { LinkIcon, PenIcon } from "../shared/ui/Icons";
 import { FileChip, parseUploadUrl, postFile, uploadFilesAsLines } from "../transfers/FileChip";
 import {
   envCompletions, findMathAtCursor, latexCompletionEdit, latexCompletions,
   LatexAcPopup, MathLivePreview, mathTabJump,
 } from "./LatexEditor";
-import { BlockCmEditor } from "./BlockCmEditor";
+import { BlockCmEditor, OBJECT_DRAG_TYPE } from "./BlockCmEditor";
 import { scanMathSpans } from "./markCommands";
 import { expandBlankLines } from "./mdMarks";
 import { BLOCK_COMMANDS } from "./blockCommands.js";
@@ -855,6 +856,7 @@ function BlockRow({
     } else if (action === "dragStart") {
       const md = cutObject(content, obj).md;
       e.dataTransfer.setData("text/plain", md);
+      e.dataTransfer.setData(OBJECT_DRAG_TYPE, kind);
       e.dataTransfer.effectAllowed = "move";
       _dragState.fragment = { blockId: block.id, kind, idx };
     } else if (action === "dragEnd") {
@@ -867,6 +869,30 @@ function BlockRow({
   // The editor's picture / table widgets drag through the same action.
   const stableObjectDrag = useRef((k, i, phase, e) =>
     objectActionRef.current?.(k, i, phase === "start" ? "dragStart" : "dragEnd", e)).current;
+  // An object dragged over / dropped into THIS block's open editor (the
+  // editor's capture handlers): the drop line at the line boundary it would
+  // land on, then App's one-transition move into this block there. A
+  // boundary inside a fence or display math goes to the construct's start.
+  const objectDropRef = useRef(null);
+  objectDropRef.current = {
+    over: ({ offset, rect }) => {
+      const dt = { targetId: block.id, inside: true, offset, rect };
+      _dragState.dropTarget = dt;
+      window._gammaSetDropTarget?.(dt);
+    },
+    drop: ({ offset }) => {
+      const frag = _dragState.fragment;
+      _dragState.fragment = null;
+      _dragState.dropTarget = null;
+      window._gammaSetDropTarget?.(null);
+      if (!frag) return;
+      const content = block.content || "";
+      const at = offset == null ? null : gapInSource(content, offset, blockSpans(content)).offset;
+      onMoveObject?.({ sourceId: frag.blockId, kind: frag.kind, idx: frag.idx, target: { type: "inside", id: block.id, offset: at } });
+    },
+  };
+  const stableObjectDragOver = useRef((p) => objectDropRef.current?.over(p)).current;
+  const stableObjectDrop = useRef((p) => objectDropRef.current?.drop(p)).current;
   // Resolve [[ref]] chip labels here (cheap per render) so BlockMarkdown's
   // memo can compare them as strings instead of depending on allBlocks,
   // whose identity changes on every edit.
@@ -1336,13 +1362,21 @@ function BlockRow({
             // table): the caret goes to the object's near end — the editor
             // keeps it rendered there, and the caret is right where the
             // press was. (Its body never gets here: the frame selects.)
-            const frame = e.target.closest(".mdObject");
-            const obj = frame && rendered?.contains(frame)
-              ? findObject(content, frame.dataset.kind, Number(frame.dataset.idx)) : null;
-            if (obj) {
-              const fr = frame.getBoundingClientRect();
-              const offset = e.clientY < fr.top + fr.height / 2 ? obj.from : obj.to;
-              clickPosRef.current = { x: e.clientX, y: e.clientY, offset };
+            // (Frames inside an embed card belong to another block.)
+            const ownFrame = (f) => f && rendered?.contains(f) && !f.closest(".blockEmbedCard") ? f : null;
+            const objectOffset = (f) => {
+              const o = findObject(content, f.dataset.kind, Number(f.dataset.idx));
+              if (!o) return null;
+              const fr = f.getBoundingClientRect();
+              // Beside it (same line): left / right decide; else above / below.
+              const beside = e.clientY >= fr.top && e.clientY <= fr.bottom;
+              const after = beside ? e.clientX > fr.left + fr.width / 2 : e.clientY >= fr.top + fr.height / 2;
+              return after ? o.to : o.from;
+            };
+            const frame = ownFrame(e.target.closest(".mdObject"));
+            const frameOffset = frame ? objectOffset(frame) : null;
+            if (frameOffset != null) {
+              clickPosRef.current = { x: e.clientX, y: e.clientY, offset: frameOffset };
               setGapLine(null);
               e.preventDefault();
               onStartEdit(block.id, true);
@@ -1351,11 +1385,20 @@ function BlockRow({
             const below = e.target.closest(".mdGapLine") && gapLine?.below;
             const start = below ? blockStartInSource(rendered, content, below) : null;
             if (start != null) {
-              const spans = [...scanMathSpans(content), ...scanFences(content)];
-              const gap = gapInSource(content, start, spans);
+              const gap = gapInSource(content, start, blockSpans(content));
               clickPosRef.current = { x: e.clientX, y: e.clientY, offset: gap.offset, insertLine: gap.insert };
             } else {
-              const offset = sourceOffsetAtPoint(rendered, content, e.clientX, e.clientY);
+              let offset = sourceOffsetAtPoint(rendered, content, e.clientX, e.clientY);
+              if (offset == null && rendered) {
+                // No text under the press — the blank beside a centred
+                // picture, say: the object on that line, before or after it.
+                const near = [...rendered.querySelectorAll(".mdObject")].map(ownFrame).find((f) => {
+                  if (!f) return false;
+                  const r = f.getBoundingClientRect();
+                  return e.clientY >= r.top && e.clientY <= r.bottom;
+                });
+                if (near) offset = objectOffset(near);
+              }
               clickPosRef.current = { x: e.clientX, y: e.clientY, offset };
             }
             setGapLine(null);
@@ -1448,6 +1491,8 @@ function BlockRow({
               refLabels={refLabels}
               remoteCursors={remoteCursors}
               onObjectDrag={stableObjectDrag}
+              onObjectDragOver={stableObjectDragOver}
+              onObjectDrop={stableObjectDrop}
               value={block.content || ""}
               onChange={(e) => {
                 onChangeText(block.id, e.target.value, e.selectionBefore);

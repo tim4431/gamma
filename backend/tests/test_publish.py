@@ -6,6 +6,7 @@ through a cookie-less TestClient, the account server is the fake of
 test_cloud_auth.py grown a /userinfo and a share host address."""
 
 import io
+import threading
 import json
 from pathlib import Path
 
@@ -573,3 +574,46 @@ def test_publish_answers_carry_the_public_address(publishing, monkeypatch):
     # without page hosts the public address is the token link
     monkeypatch.delenv("GAMMA_PAGE_HOST")
     assert local.get(f"/api/pages/{page['id']}/publish").json()["public_url"] == out["url"]
+
+
+def test_a_round_queued_behind_an_unpublish_sees_the_page_gone(publishing, monkeypatch):
+    """A round waiting for the round lock while a page is unpublished reads
+    the mirror once it holds the lock: the page is out of the filter, so it
+    is not pushed back to the share host as an unshared copy."""
+    local, local_ws = linked(publishing, "pb_queue")
+    host = bound(login("pb_queue", "pw"), workspaces.default_workspace("pb_queue"))
+    page = local.post("/api/pages", json={"title": "Queued"}).json()
+    assert local.post(f"/api/pages/{page['id']}/publish").status_code == 200
+    assert page["id"] in page_ids(host)
+    # the queued round: it takes the lock right after the unpublish did its work
+    lock = threading.RLock()
+    monkeypatch.setitem(sync_engine._locks, local_ws, lock)
+    first = [True]
+
+    class Queued:
+        def __enter__(self):
+            lock.acquire()
+            if first[0]:
+                first[0] = False
+                publish.unpublish("pb_queue", local_ws, page["id"])  # in this thread: the lock is re-entrant here
+
+        def __exit__(self, *exc):
+            lock.release()
+
+    real = sync_engine._lock
+    monkeypatch.setattr(sync_engine, "_lock", lambda ws: Queued() if ws == local_ws else real(ws))
+    st = sync_engine.sync_workspace(local_ws)
+    assert not st.get("last_error"), st
+    assert page["id"] not in page_ids(host), "the copy there was not re-created by the queued round"
+    assert sync_engine.get_mirror(local_ws)["page_filter"] == []
+    assert local.get(f"/api/pages/{page['id']}/publish").json()["published"] is False
+
+
+def test_the_publish_state_names_a_detached_publication(publishing):
+    local, local_ws = linked(publishing, "pb_detach")
+    page = local.post("/api/pages", json={"title": "Detached pub"}).json()
+    assert local.post(f"/api/pages/{page['id']}/publish").status_code == 200
+    assert local.post(f"/api/mirrors/{local_ws}/detach").status_code == 200
+    state = local.get(f"/api/pages/{page['id']}/publish").json()
+    assert state["published"] is True and state["mirror"]["detached"] is True and state["mirror"]["mode"] == "off"
+    assert state["can_publish"] is False and "detached" in state["reason"]

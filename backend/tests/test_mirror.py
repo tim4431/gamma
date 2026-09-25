@@ -580,3 +580,118 @@ def test_switching_back_to_two_way_pushes_what_receive_only_kept():
     _sync(local)  # two-way again: the page is looked at once more and the edit goes out
     assert remote.texts(page["id"])["kh1"] == "text (local)"
     assert local.client.get(f"/api/mirrors/{local.ws}").json()["pending_local"] is False
+
+
+def _mid_round(monkeypatch, action):
+    """Run ``action`` once, from inside the next round (just before its
+    first page is reconciled), as a person would from the UI meanwhile."""
+    real = sync_engine._sync_page
+    done = [False]
+
+    def hooked(*args, **kwargs):
+        if not done[0]:
+            done[0] = True
+            action()
+        return real(*args, **kwargs)
+
+    monkeypatch.setattr(sync_engine, "_sync_page", hooked)
+
+
+def test_a_detach_during_a_round_is_kept_with_its_direction(monkeypatch):
+    remote, local, _ = _pair()
+    page = remote.page("Busy detach")
+    remote.insert(page["id"], "bd1", "one")
+    _sync(local)
+    local.client.patch(f"/api/mirrors/{local.ws}", json={"mode": "pull"}).raise_for_status()
+    remote.insert(page["id"], "bd2", "two")
+    other = remote.page("Second page")
+    _mid_round(monkeypatch, lambda: local.client.post(f"/api/mirrors/{local.ws}/detach").raise_for_status())
+    st = local.client.post(f"/api/mirrors/{local.ws}/sync?wait=1").json()["status"]
+    info = local.client.get(f"/api/mirrors/{local.ws}").json()
+    assert info["mode"] == "off" and info["status"]["detached_mode"] == "pull" and not st.get("running")
+    assert set(st.get("retry") or {}) & {page["id"], other["id"]}, "the pages left over wait for the reattach"
+    # reattached: the direction it had, and the rest of that round's work
+    assert local.client.post(f"/api/mirrors/{local.ws}/relink", json={}).json()["mode"] == "pull"
+    _sync(local)
+    assert local.texts(page["id"]) == {"bd1": "one", "bd2": "two"} and other["id"] in local.pages()
+
+
+def test_a_force_asked_for_during_a_round_runs_as_asked(monkeypatch):
+    """A force push pressed while a round runs is not turned into a pull by
+    that round's bookkeeping: it waits for the next round and replaces the
+    original with the copy."""
+    remote, local, _ = _pair()
+    page = remote.page("Busy force")
+    remote.insert(page["id"], "bf1", "original")
+    _sync(local)
+    local.ops(page["id"], [{"op": "set", "id": "bf1", "content": "the copy's text"}])
+    remote.insert(page["id"], "bf2", "added there")
+    _mid_round(monkeypatch, lambda: local.client.post(f"/api/mirrors/{local.ws}/force", json={"direction": "push"}).raise_for_status())
+    st = local.client.post(f"/api/mirrors/{local.ws}/sync?wait=1").json()["status"]
+    assert st.get("force") == "push", "the force waits for a round of its own"
+    _sync(local)
+    assert remote.texts(page["id"])["bf1"] == "the copy's text" == local.texts(page["id"])["bf1"]
+    st = local.client.get(f"/api/mirrors/{local.ws}").json()["status"]
+    assert "force" not in st and "adopt" not in st and "prune" not in st
+
+
+def test_edits_made_while_the_remote_was_read_only_are_pushed_later(monkeypatch):
+    """The remote demotes the account for a while (a viewer): rounds pull
+    only, and the edits made here meanwhile go out once writing is allowed
+    again — the pill says they are pending until then."""
+    remote, local, _ = _pair()
+    page = remote.page("Demoted")
+    remote.insert(page["id"], "dm1", "text")
+    quiet = remote.page("Untouched afterwards")
+    remote.insert(quiet["id"], "dm2", "text")
+    _sync(local)
+    real = sync_engine.whoami
+    monkeypatch.setattr(sync_engine, "whoami", lambda r: {**real(r), "role": "viewer"})
+    sync_engine._whoami_seen.clear()  # a round trusts the last answer for a while; the demotion is seen now
+    local.ops(quiet["id"], [{"op": "set", "id": "dm2", "content": "text (edited while a viewer)"}])
+    st = local.client.post(f"/api/mirrors/{local.ws}/sync?wait=1").json()["status"]
+    assert "read-only" in st["last_error"] and st["mode"] == "pull"
+    assert remote.texts(quiet["id"])["dm2"] == "text"
+    assert local.client.get(f"/api/mirrors/{local.ws}").json()["pending_local"] is True
+    monkeypatch.setattr(sync_engine, "whoami", real)
+    st = _sync(local)
+    assert st["mode"] == "two-way" and remote.texts(quiet["id"])["dm2"] == "text (edited while a viewer)"
+    assert local.client.get(f"/api/mirrors/{local.ws}").json()["pending_local"] is False
+
+
+def test_force_pull_on_a_receive_only_clone_removes_its_own_pages(monkeypatch):
+    remote, local, _ = _pair(mode="pull")
+    page = remote.page("Origin's")
+    _sync(local)
+    extra = local.page("Only in the clone")
+    monkeypatch.setattr(sync_engine, "sync_in_background", lambda ws: sync_engine.sync_workspace(ws))
+    assert local.client.post(f"/api/mirrors/{local.ws}/force", json={"direction": "pull"}).status_code == 200
+    assert set(local.pages()) == {page["id"]} and extra["id"] not in remote.pages()
+
+
+def test_the_direction_of_a_detached_clone_cannot_be_changed():
+    remote, local, _ = _pair()
+    local.client.post(f"/api/mirrors/{local.ws}/detach").raise_for_status()
+    r = local.client.patch(f"/api/mirrors/{local.ws}", json={"mode": "pull"})
+    assert r.status_code == 400 and "detached" in r.json()["detail"]
+    assert local.client.get(f"/api/mirrors/{local.ws}").json()["mode"] == "off"
+    assert local.client.patch(f"/api/mirrors/{local.ws}", json={"poll_s": 5}).status_code == 200
+
+
+def test_resolving_a_conflict_writes_into_the_page_the_block_is_in_now():
+    remote, local, _ = _pair()
+    page = remote.page("Conflict page")
+    other = remote.page("Other page")
+    remote.insert(page["id"], "rc1", "alpha beta")
+    _sync(local)
+    local.ops(page["id"], [{"op": "set", "id": "rc1", "content": "ALPHA beta"}])
+    remote.ops(page["id"], [{"op": "set", "id": "rc1", "content": "alpha BETA"}])
+    _sync(local)
+    c = local.client.get(f"/api/mirrors/{local.ws}/conflicts").json()["conflicts"]
+    assert [x["kind"] for x in c] == ["merged"]
+    # the block moves to another page here before the conflict is looked at
+    assert local.client.post("/api/blocks/rc1/reorder", json={"parent_id": other["id"]}).status_code == 200
+    r = local.client.post(f"/api/mirrors/{local.ws}/conflicts/{c[0]['id']}", json={"choice": "mine"})
+    assert r.status_code == 200, r.text
+    assert local.texts(other["id"])["rc1"] == "ALPHA beta"
+    assert local.client.get(f"/api/mirrors/{local.ws}").json()["conflicts_open"] == 0

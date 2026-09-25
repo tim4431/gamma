@@ -70,9 +70,26 @@ def test_profile_is_one_account_wide_object(alice):
     # set_profile goes through set_pref (last write wins, a newer updated_at)
     later = db.set_profile("prefs_alice", {"theme": "gray"})
     assert later > body["updated_at"]
-    assert alice.get("/api/prefs/profile").json() == {"key": "profile", "value": {"theme": "gray"}, "updated_at": later}
+    assert alice.get("/api/prefs/profile").json() == {"key": "profile", "cloud_choice": False, "value": {"theme": "gray"},
+                                                      "updated_at": later}
     with pytest.raises(ValueError):
         db.set_profile("prefs_alice", ["not", "an", "object"])
+
+
+def test_profile_patch_sets_only_the_named_entries(alice):
+    # the web app's save: the entries it changed, every other one kept as stored
+    from gamma import db
+    db.set_profile("prefs_alice", {"theme": "dark", "language": "en"})
+    before = db.get_profile("prefs_alice")[1]
+    r = alice.patch("/api/prefs/profile", json={"set": {"language": "zh", "enterNewNote": True}})
+    assert r.status_code == 200
+    assert r.json()["value"] == {"theme": "dark", "language": "zh", "enterNewNote": True}
+    assert r.json()["updated_at"] > before
+    assert db.get_profile("prefs_alice") == (r.json()["value"], r.json()["updated_at"])
+    assert alice.patch("/api/prefs/profile", json={"set": {"chatSystem": "x" * (70 * 1024)}}).status_code == 413
+    assert alice.patch("/api/prefs/profile", json={"set": ["theme"]}).status_code == 422
+    # the cloud sync's merge base is not a pref the generic endpoints serve
+    assert alice.get("/api/prefs/profile-base").status_code == 400
 
 
 def test_profile_must_be_an_object_within_the_size_cap(alice):

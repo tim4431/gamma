@@ -177,7 +177,8 @@ page) and the **app** shell (a sidebar and a content column):
   - Deletion in a danger zone, its form revealed by a first click.
 - **Admin** (`/admin`, `is_admin` only, 404 otherwise): four tabs.
   - Accounts: search by username, e-mail or id, paged; plan select,
-    verify, resend, admin on/off, rename, delete.
+    verify, resend, admin on/off, rename, delete. A deleted account (the
+    `deleted` pill) offers only Restore and Purge now.
   - Invites: create with uses, plan and note; delete.
   - Clients: the OIDC clients of hosted servers — create (the secret is
     shown once as the two env lines a container needs) and delete.
@@ -217,7 +218,13 @@ page) and the **app** shell (a sidebar and a content column):
 - **Delete** (`/api/me/delete`, password required) is soft: it sets
   `deleted_at`, clears the password, revokes everything and drops the
   preference profile and the server list. `manage.py purge-deleted --days
-  30` removes the rows later. Tearing down a paid container is the
+  30` removes the rows later (nothing schedules it). Within the grace
+  period an admin can **restore** it (`POST /api/admin/accounts/{id}/restore`,
+  `manage.py restore-account`): the row comes back with its id, name and
+  e-mail, but not what the delete dropped, so the person signs back in
+  through a password reset or Google/GitHub on the same e-mail. **Purge
+  now** (`POST /api/admin/accounts/{id}/purge`, `manage.py purge-account`)
+  takes only a deleted account and frees its name and e-mail at once. Tearing down a paid container is the
   provisioner's job (v1).
 - `PATCH /api/admin/accounts/{id}` takes `plan`, `is_admin`, `verified`
   and `username`; the rest of the admin API is listed under "Admin".
@@ -442,7 +449,7 @@ stays in the JWKS for a week so tokens it signed still verify.
 
 `manage.py`: `setup`, `migrate`, `backup`, `list-accounts`,
 `create-account`, `set-password`, `set-admin`, `set-plan`, `verify`,
-`delete-account`, `purge-deleted`, `invite`, `invites`, `create-client`,
+`delete-account`, `restore-account`, `purge-account`, `purge-deleted`, `invite`, `invites`, `create-client`,
 `clients`, `delete-client`, `rotate-key`. Every command but `setup` and
 `migrate` refuses an outdated `cloud.db`. `/api/admin/*`
 (`routers/admin.py`, admins through a portal session only): search and
@@ -609,33 +616,59 @@ such as an invitation's lookup, signs out the same way. The check then
 syncs the profile and refreshes the server list entry.
 
 **The preference profile.** The account-wide `profile` pref
-([settings.md](settings.md)) is kept equal to the account server's
-`profile` key, last writer wins by `updated_at` compared to the
-millisecond (the account server's precision):
+([settings.md](settings.md)) is kept in step with the account server's
+`profile` key the way VS Code's settings sync works: merged preference by
+preference, with explicit fetch and push when you want one side to win
+(`cloud_sync.sync_profile`):
 
-- **When.** The callback pulls it before it redirects (5 s timeout), so
-  the browser's first load already sees the synced profile and never seeds
-  an empty one from its localStorage. Every grant check pulls or pushes it
-  again.
-- **Pull.** A pulled copy is stored with the account server's time
-  (`set_pref(..., updated_at=)`, which never replaces a newer local row and
-  never pushes back).
-- **Push.** When the local side is newer, or the account server has none,
-  it is pushed with its local `updated_at`. A change made here (`set_pref`
-  storing `profile`) is pushed once changes have settled for 5 seconds, on
-  a timer thread that never blocks the request. A 409 means the account
-  server holds a newer profile, which is taken; a failed push waits for the
-  next check.
+- **Merge.** `profile-base` (a `users.db` pref never served by
+  `/api/prefs`) holds the copy both sides last agreed on, with the cloud
+  subject it was agreed with (a base agreed with another cloud account is
+  no base). Each sync merges the two copies against it: a preference changed
+  on one side only takes that side's value; one changed on both takes the
+  newer profile's (`updated_at` compared to the millisecond, the account
+  server's precision). The result is written here and pushed there as
+  needed, then becomes the new base.
+- **First sync.** Without a base, one side missing takes the other, and
+  equal copies just record the base. Two different copies wait for the
+  person (state `choose`): nothing is replaced, the notice
+  `cloud-sync-choice` lights the dot, the profile's `GET` answers
+  `cloud_choice: true` and the app opens Settings → Account once per page
+  load. There the Settings sync row offers **Merge** (the web app's
+  defaults as the base, `defaultProfile()` in `prefDefs.js`, so each side
+  keeps what it changed from them), **Use cloud's** and **Use this
+  server's**. An account linked before this merge existed gets the same
+  question once if its two copies differ.
+- **By hand.** The same row, once synced, offers **Sync now** (the merge),
+  **Fetch from cloud** (the cloud's copy replaces this one) and **Push to
+  cloud** (the other way round), both confirmed, through `POST
+  /api/auth/cloud/sync`.
+- **When.** The callback syncs before it redirects (5 s timeout), so the
+  browser's first load already sees the synced profile. A browser reading
+  the profile (a load, a refocused tab) syncs first when the last attempt
+  is over a minute old (`sync_if_stale`), so a change made on another
+  server shows up as soon as you switch to this one. A change made here
+  syncs once changes have settled for 5 seconds, on a timer thread that
+  never blocks the request. Every grant check syncs again.
+- **Browsers.** The web app saves with `PATCH /api/prefs/profile`, only the
+  entries it changed (`db.patch_profile`): a tab loaded before a cloud
+  change arrived still holds the old value of every other entry, and a
+  whole-object save would read to the merge as a local change back to it.
+- **Races.** One sync per account at a time. A push the account server
+  refuses as older (409, another server pushed meanwhile) and a local write
+  that finds the profile changed since it was read
+  (`db.replace_profile_if`) both read the two sides again and merge anew,
+  against the base that is still the old one.
 - **Clocks.** A local edit is stamped at least a millisecond after the
-  stored time, so an edit right after a pull from a faster clock still
-  counts as newer. When the account server stores a pushed value under
+  stored time. A push is stamped now or a millisecond past the cloud's
+  copy, whichever is later; when the account server stores it under
   another time (clamped from the future, or cut to the millisecond), the
-  local row takes that time, so the next check agrees.
+  local row takes that time.
 - **Never.** `ai-settings` and `ai-provider` never sync. Nothing syncs
   without cloud sign-in or without a linked identity holding a token, so a
   server without cloud sign-in makes no call at all (a test asserts it).
 
-The last outcome per account (`synced` / `pending` / `error`, `off`
+The last outcome per account (`synced` / `pending` / `error` / `choose`, `off`
 worked out on each read) is kept in memory by `cloud_sync` and read, with
 no network, from `GET /api/auth/cloud/sync-status`, which the Settings
 dialog's account tags show ([settings.md](settings.md)).

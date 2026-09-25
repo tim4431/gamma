@@ -119,7 +119,12 @@ diff to nothing on the next round.
 Inside a page the same rule holds at block level, **an edit beats a
 delete** (a move counts as an edit): a subtree the remote deleted stays when something in it was
 edited here (the push re-inserts it there), and a subtree deleted here
-comes back whole when the remote edited inside it. Same-block text edits
+comes back whole when the remote edited inside it. A block the remote
+moved *out* of a subtree deleted here is no part of that deletion any
+more: it comes back whole (with its own children) where the remote put
+it, while the subtree it left stays deleted unless something still inside
+it was touched there — without this the push would delete the moved block
+on the remote too (`_reconcile_remote_ops`, `escaped`). Same-block text edits
 merge by span through `gamma/textmerge.py` on whichever server applies the
 op; two edits to the same characters resolve by the remote's order.
 
@@ -156,16 +161,23 @@ show what each side changed. Sync never blocks on one: the person looks at
 the list and, for a merge, can put back "mine" or "theirs" — an ordinary
 edit that the next round pushes, written from the text the conflict
 recorded as its `base`, so words typed into the block since the merge are
-kept over the chosen version rather than lost.
+kept over the chosen version rather than lost. The text is written into
+the page the block is in *now* (it may have moved since) and only then is
+the conflict marked resolved; a write the block refuses answers 409 and
+leaves the conflict open.
 
 Pull-only mirrors (a read token, or a viewer's, or the *Receive only*
 direction) apply the remote's changes and never push; local edits stay
 local and survive later remote changes to other spans of the same block,
-since the saved base is always the remote's tree. Such a round still moves
-the local cursor past the edits it left here, so switching the direction
-back to two-way resets the local cursor (`set_cadence`): the next round
-looks at every page changed here since the beginning — one tree compare
-each — and pushes what differs.
+since the saved base is always the remote's tree. Such a round does not
+walk the local feed and leaves the local cursor where it is, so the first
+round that may push — the direction switched back to two-way, or a
+write token or role restored on the remote after a spell as a viewer
+(such a round drops to pull only for its own duration and reports it as
+its error) — finds every edit made here meanwhile; `pending_local` stays
+true until then. (Switching back to two-way also resets the cursor, for
+copies from before this rule.) The direction of a detached copy cannot be
+changed (400): reattaching restores the one it had.
 
 ## Rounds and cadence
 
@@ -187,7 +199,16 @@ shorter than the poll interval). The first pass runs
 `FIRST_PASS_S` (5 s) after startup, so a copy whose first fill was cut short
 by a restart continues at once; "Sync now" (`POST /api/mirrors/{ws}/sync`,
 `?wait=1` for the answer) runs one on demand. Rounds of one mirror never
-overlap. A round that cannot reach the remote records the error on the
+overlap: a second caller waits for the round lock and reads the mirror's
+row only once it holds it, so a page unpublished or a detach done while
+it waited is what it runs with. What the person does *while* a round
+runs is kept too: the round only ever patches its keys of the status JSON
+(`_patch_status`, one read-modify-write under a lock, the same path every
+other writer of the status takes), it saves the feeds' cursors only when
+nothing reset them meanwhile, a detach makes it stop at its next page
+(the pages left over go on the retry list for the reattach), and a force
+is noted as `status.force` and applied by the next round under the lock
+(`_start_force`), never by the running one. A round that cannot reach the remote records the error on the
 mirror and moves no cursor. A page that fails inside a round — whatever the
 exception — is reported, kept on the mirror's `retry` list with the flags
 it had, and worked again next round (the feeds' cursors have moved past
@@ -323,6 +344,8 @@ Settings jump to the block (`gamma:jump`).
   conflicts*), *clone of X · origin host* and one short status line
   (progress and the file in flight while a round runs; *up to date 14:37 ·
   2 pages pulled* after; *local edits not pushed yet* while `pending_local`).
+  The list is read again every 2 s while any row's round runs
+  (`useMirrors`), so the progress moves.
 - Actions: Open, *Sync* (*Reattach* when detached), *Conflicts* (the same
   cards, each resolved there or opened on its block) and a "more"
   `ActionMenu`: *Force pull*, *Force push* (off on a receive-only clone),
@@ -361,13 +384,19 @@ mirror's own answer apart.
   - Not published, refused: the `reason` as the row's hint. When the reason
     is the sign-in one, *Link Gamma Cloud account* opens Settings → Account & sync,
     where the existing link flow runs.
+  - Published but without a share there (publishing failed after the page
+    reached the share host): the row says so and offers *Publish again*,
+    the same `POST`, which finishes the job.
   - Published: the cloud link as the row hint with *Copy link* — the
     answer's `public_url`, the page's pretty address when the share host
     has page hosts, with the token link in the row's hover title as the
     fallback that also works — a danger
     icon button that asks inline before it unpublishes, the state line
     (`mirrorState` of the answer's `mirror`, the pill's icon and words) with
-    a *Sync now* icon button (`POST /api/mirrors/{ws}/sync?wait=1`), and
+    a *Sync now* icon button (`POST /api/mirrors/{ws}/sync?wait=1`; off,
+    and the state line says so, while the publication is detached — the
+    answer's `mirror` carries `mode` and `detached` for that, and the
+    refusal's `reason` shows under the row), and
     the cloud share's access as the local share draws it: the three
     audience tiles (their hints in the share host's terms) and the View /
     Edit segmented as the section's action. A change is
@@ -448,11 +477,15 @@ has are created on the other, as always.
 
 **Force.** *Force pull* / *Force push* (`POST /api/mirrors/{ws}/force`
 `{direction: pull | push}`) makes one side identical to the other whatever
-happened: the bases and cursors are cleared, every page goes through the
+happened: the next round starts by clearing the bases and cursors
+(`_start_force`, under the round lock — a round already running finishes
+as it was), every page goes through the
 adopt policy (`theirs` for pull, `mine` for push), and pages the losing side
 alone has — including pages the winner deleted after a sync, whose
 tombstones say nothing during a force — are deleted there (`prune`); what
-the loser had is kept in `diverged` conflicts. Cheap when little differs:
+the loser had is kept in `diverged` conflicts. A force pull reads the local
+feed whatever the direction, so a receive-only clone's own pages go too.
+Cheap when little differs:
 a page whose trees are equal costs one read and no write, and only the
 differing blocks of a page are pushed, files only when the other side lacks
 the hash. Confirmed inline in the popover; a pull-only clone cannot force
@@ -601,7 +634,9 @@ created and deleted on either side, files by hash, pull-only, stopping.
 `test_sync_tree.py` pins the diff; `test_token_api.py` the bearer rules;
 `test_sync_feed.py` the feed. `test_mirror_edges.py` is the odd cases:
 typing while a round is in flight, two clones of one remote editing the
-same blocks, a move against a delete, a child added inside a subtree
+same blocks, a move against a delete (both ways: a block moved here out of
+a subtree deleted there, and a block moved there out of a subtree deleted
+here), a child added inside a subtree
 deleted here, a subtree deleted on both sides, the same position taken on
 both sides, the title renamed on both sides, props against text, the same
 edit on both sides, a round cut short after its push, resolving a conflict
@@ -609,7 +644,10 @@ after more typing, a block moved to another page while edited here, edits
 made while the remote is unreachable — each ending with both sides equal. The progress reports, the interrupted-flag
 reset, the retry of a page that failed, detach + re-link, linking an
 existing workspace, the force in both directions, the cadence and the
-sync-on-change trigger are in `test_mirror.py` too. `test_publish.py`
+sync-on-change trigger, a detach and a force asked for while a round runs,
+edits made while the remote had demoted the account, a force pull on a
+receive-only clone, and a conflict resolved after its block moved to
+another page are in `test_mirror.py` too. `test_publish.py`
 covers the page filter (pages and deletions outside it stay put both ways,
 a page added later goes over, a published page removed there leaves the
 filter), the share host's exchange against a fake account server, and

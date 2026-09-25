@@ -10,6 +10,8 @@
   python manage.py set-plan <username> <free|plus|pro>
   python manage.py verify <username>               mark the e-mail confirmed
   python manage.py delete-account <username>
+  python manage.py restore-account <username>      undo a delete within the grace period
+  python manage.py purge-account <username>        remove a deleted account now
   python manage.py purge-deleted [--days 30]
   python manage.py invite [--uses 1] [--plan free] [--note ...]
   python manage.py invites
@@ -128,6 +130,27 @@ def cmd_delete(args):
     print(f"{args.username}: deleted (purged after the grace period by purge-deleted)")
 
 
+def _deleted_account(conn, username: str):
+    row = conn.execute("SELECT * FROM accounts WHERE username = ? AND deleted_at IS NOT NULL", (username,)).fetchone()
+    if not row:
+        sys.exit(f"no deleted account with username {username!r}")
+    return row
+
+
+def cmd_restore(args):
+    with closing(db.connect()) as conn:
+        accounts.restore(conn, _deleted_account(conn, args.username)["id"], "cli")
+        conn.commit()
+    print(f"{args.username}: restored (signs back in with a password reset or Google/GitHub)")
+
+
+def cmd_purge_account(args):
+    with closing(db.connect()) as conn:
+        accounts.purge(conn, _deleted_account(conn, args.username)["id"], "cli")
+        conn.commit()
+    print(f"{args.username}: purged")
+
+
 def cmd_purge(args):
     with closing(db.connect()) as conn:
         n = accounts.purge_deleted(conn, args.days)
@@ -195,6 +218,8 @@ def main(argv=None):
     pl = sub.add_parser("set-plan"); pl.add_argument("username"); pl.add_argument("plan", choices=config.PLANS); pl.set_defaults(fn=cmd_set_plan)
     v = sub.add_parser("verify"); v.add_argument("username"); v.set_defaults(fn=cmd_verify)
     d = sub.add_parser("delete-account"); d.add_argument("username"); d.set_defaults(fn=cmd_delete)
+    r = sub.add_parser("restore-account"); r.add_argument("username"); r.set_defaults(fn=cmd_restore)
+    pa = sub.add_parser("purge-account"); pa.add_argument("username"); pa.set_defaults(fn=cmd_purge_account)
     pu = sub.add_parser("purge-deleted"); pu.add_argument("--days", type=int, default=30); pu.set_defaults(fn=cmd_purge)
     i = sub.add_parser("invite"); i.add_argument("--uses", type=int, default=1); i.add_argument("--plan", default="free", choices=config.PLANS)
     i.add_argument("--note"); i.set_defaults(fn=cmd_invite)

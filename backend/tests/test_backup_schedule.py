@@ -1,3 +1,5 @@
+import pathlib
+import time
 from datetime import datetime, timedelta, timezone
 from types import SimpleNamespace
 
@@ -11,6 +13,8 @@ from gamma.routers.backup_tasks import TaskInput
 @pytest.fixture
 def workspace(tmp_path, monkeypatch, client):
     monkeypatch.setattr(tasks.config, 'BACKUPS_DIR', tmp_path / 'backups')
+    # These tests call run_due themselves; "Run now" must not also wake the app's live loop.
+    monkeypatch.setattr(tasks, '_wake', lambda: None)
     return make_user('scheduled_owner', 'schedulepass1')
 
 
@@ -93,6 +97,34 @@ def test_task_retention_catchup_and_manual_isolation(workspace, monkeypatch):
     before = ws_backup.list_backups(workspace)
     tasks.mutate('scheduled_owner', count['id'], 'delete')
     assert ws_backup.list_backups(workspace) == before
+
+
+def test_run_now_wakes_the_running_scheduler(tmp_path, monkeypatch, client):
+    # The app's own loop (started by `client`), not a run_due call: Run now
+    # must not wait for the next 30 s round.
+    monkeypatch.setattr(tasks.config, 'BACKUPS_DIR', tmp_path / 'backups')
+    task = create(make_user('scheduled_owner', 'schedulepass1'), enabled=False)
+    tasks.mutate('scheduled_owner', task['id'], 'run')
+    deadline = time.monotonic() + 10
+    while tasks.read(task['id'])['state'] != 'finished' and time.monotonic() < deadline:
+        time.sleep(0.05)
+    assert tasks.read(task['id'])['state'] == 'finished'
+
+
+def test_write_waits_out_a_reader_holding_the_file(workspace, monkeypatch):
+    # Windows: replacing a task file fails while list_tasks is reading it.
+    task = create(workspace, enabled=False)
+    real, refusals = pathlib.Path.replace, []
+
+    def replace(self, target):
+        if len(refusals) < 2:
+            refusals.append(target)
+            raise PermissionError(5, 'Access is denied')
+        return real(self, target)
+
+    monkeypatch.setattr(pathlib.Path, 'replace', replace)
+    tasks.mutate('scheduled_owner', task['id'], 'run')
+    assert len(refusals) == 2 and tasks.read(task['id'])['state'] == 'queued'
 
 
 def test_run_now_paused_and_regular_schedule_preserved(workspace, monkeypatch):

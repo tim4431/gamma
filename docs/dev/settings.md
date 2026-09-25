@@ -26,18 +26,24 @@ The profile syncs through `useProfileSync` in prefs.js. On sign-in the
 server copy wins; an account without one is seeded from this browser.
 Entries are validated with the same codecs as localStorage, so unknown names
 and bad values are dropped and a partial profile applies what it has.
-Changes push one second after they settle (a slider sends one PUT), last
-write wins, a pending push is flushed when the page is hidden, and focus
-pulls at most every 15 seconds. Nothing is pushed before the first load
-succeeds. Signed-out visitors, the shared guest account and share views keep
-working from localStorage alone. The profile carries no secrets, and an
-account linked to Gamma Cloud carries it to every Gamma server it signs in
-to: the server pulls the account server's copy on a cloud sign-in and every
-hour, and pushes a change a few seconds after it lands, newest wins
+Changes push one second after they settle (a slider sends one request) as
+a `PATCH /api/prefs/profile` carrying only the entries that changed since
+the copy this tab last saw, so a tab's stale value of another entry never
+undoes a change synced in meanwhile; a pending push is flushed when the
+page is hidden, and focus pulls at most every 15 seconds. Nothing is pushed
+before the first load succeeds. Signed-out visitors, the shared guest
+account and share views keep working from localStorage alone. The profile
+carries no secrets, and an account linked to Gamma Cloud carries it to
+every Gamma server it signs in to, VS Code style: merged preference by
+preference against the copy both sides last agreed on, synced on a cloud
+sign-in, when a browser reads the profile (at most once a minute), a few
+seconds after a change and every hour; a first sync of two different
+copies asks Merge / Use cloud's / Use this server's, and Settings → Account
+& sync → Settings sync has Sync now / Fetch from cloud / Push to cloud
 (`gamma/cloud_sync.py`, [cloud_accounts.md](cloud_accounts.md)). The
-provider entries and the active key never join it. `PUT /api/prefs/profile` requires
-an object and shares the prefs cap of 64 KB, enough for four long custom
-prompts. Step 17 of the migrations turned the old `appearance` key into the
+provider entries and the active key never join it. `PUT /api/prefs/profile`
+(whole-object replace, kept for scripts and tests) requires an object;
+both share the prefs cap of 64 KB, enough for four long custom prompts. Step 17 of the migrations turned the old `appearance` key into the
 profile's first two entries.
 
 Each account section's tag shows where its own settings stand. A section
@@ -63,7 +69,7 @@ while the dialog is open (every 15 seconds, 6 seconds while the server's
 push to Gamma Cloud is due, and again once a local change is saved), and
 passes both through `SettingsSyncContext`. Every answer also goes to the
 hook's `noteCloud`, which clears `awaitingCloud` once the cloud reports
-synced at a time after the last push (the PUT's `updated_at`).
+synced at a time after the last push (the PATCH's `updated_at`).
 `profileSyncState(local, cloud, names)` in
 [settings/syncState.js](../../frontend/src/settings/syncState.js) reads
 them for one section, first rule that applies:
@@ -75,18 +81,22 @@ them for one section, first rule that applies:
 | one of them failed to save on this server | warning + account, in red | the error |
 | first load, or the server has not answered yet | account | saved with your account on this server |
 | no Gamma Cloud identity (or its grant is gone) | check + account | "Saved on this server. Link a Gamma Cloud account to carry these settings to other servers." |
+| a first sync waits for the person's choice | warning + account | "Saved on this server. Not synced with Gamma Cloud until you choose which settings to keep, in Account & sync." |
 | one of them awaiting the cloud, and the cloud failed | warning + account, in red | the cloud's error |
 | otherwise, linked | cloud-check + account | "Synced with Gamma Cloud at <time>" |
 
 So changing the Enter key spins only the Notes section, for the second the
-change settles plus its PUT (and at least 700 ms, so a quick save is seen
+change settles plus its PATCH (and at least 700 ms, so a quick save is seen
 rather than flickered). The server's acceptance is the commit: its own
 push to Gamma Cloud is coalesced (5 s) and retried by the hourly check, and
 the tag never waits on it — the cloud's pending state is not shown, only a
 failure of that hop. A cloud error from before any change this
-session shows on no section; the Account pane's Gamma Cloud row still says
-it (`cloudSyncHint` in the same module: "Settings synced 14:37" /
-"Settings not synced: <error>"). Browser sections always show the monitor
+session shows on no section; the Account pane's Settings sync row (under
+the Gamma Cloud row, `CloudSyncRow` in `settings/SettingsCloudSignIn.jsx`)
+still says it (`cloudSyncHint` in the same module: "Synced with Gamma
+Cloud at 14:37" / "Not synced: <error>"), next to its Sync now / Fetch
+from cloud / Push to cloud buttons — or, while a first sync waits, Merge /
+Use cloud's / Use this server's. Browser sections always show the monitor
 and "browser".
 
 The tag is an icon and one muted word ("account" or "browser") in the
@@ -140,9 +150,11 @@ and integration tokens get an empty list. The sources:
 | `update` | admins | Server | warn | a newer GitHub release than this build (`version.latest_release`, six-hour cache; the endpoint is sync on purpose) | the release version |
 | `log-errors` | admins | Server | error | an error was logged since the last look (`logbuf.last_seq("error")`) | server start time + the newest error's seq |
 | `backup-failed` | everyone | Backups | error | a backup task of the account is in state `failed` (`backup_schedule.list_tasks`) | each failed task's id + its last run |
-| `mirror-conflicts` | everyone | Account | warn | a clone the account owns has open sync conflicts (`sync_engine.open_conflict_mark`) | per clone, the count + the newest conflict id — resolving old ones never brings it back |
+| `mirror-conflicts` | everyone | Account | warn | a clone the account owns has open sync conflicts (`sync_engine.open_conflict_mark`) | a digest of, per clone, the count + the newest conflict id — resolving old ones never brings it back; a digest, so any number of clones fits the fingerprint's 200 characters |
 | `publish-conflicts` | everyone | Account | warn | a workspace publishing pages to Gamma Cloud has open sync conflicts | per publication, as `mirror-conflicts` |
 | `cloud-sync` | everyone | Account | warn | the account's Gamma Cloud sync is in its `error` state (`cloud_sync.profile_status`) | the failure's timestamp |
+| `cloud-sync-choice` | everyone | Account | warn | the first settings sync with Gamma Cloud found two different copies and waits for Merge / Use cloud's / Use this server's (state `choose`) | constant: seen once |
+| `free-translate` | everyone who met the failures | Reading & editing | warn | Microsoft's free translation service failed `FREE_ALERT_AFTER` (3) times in a row, in memory (`translate_engines.free_failing`); one success ends it, and the Microsoft row names the error | the streak's start time |
 | `storage` | everyone | Account | warn / error | personal storage past 90 % of the quota / full; only computed for an account under a quota, and the upload walk is remembered ten minutes (`notices.forget_usage`) | `90` / `full` |
 
 Warnings in the log are deliberately not a notice (too noisy for a dot).

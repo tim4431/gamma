@@ -15,12 +15,16 @@
   this server off the person's server list and revokes the grant.
 - ``GET /api/auth/cloud/sync-status``: the signed-in account's own
   preference profile sync state (Settings' section tags), from memory.
+- ``POST /api/auth/cloud/sync``: Settings → Account's Sync now / Fetch
+  from cloud / Push to cloud, and the answer to a first sync's choice.
 """
 
+from typing import Literal
 from urllib.parse import urlencode
 
 from fastapi import APIRouter, HTTPException, Request
 from fastapi.responses import RedirectResponse
+from pydantic import BaseModel
 
 from .. import cloud_auth, cloud_sync, config, ratelimit
 from ..auth import require_personal_user, require_user, set_session_cookie
@@ -99,6 +103,30 @@ def cloud_sync_status(request: Request):
     identity = cloud_auth.status_of(user)
     linked = {"linked": True, "username": identity.get("username", "")} if identity else {"linked": False}
     return {"profile": cloud_sync.profile_status(user), "identity": linked}
+
+
+class SyncRequest(BaseModel):
+    action: Literal["sync", "merge", "fetch", "push"] = "sync"
+    defaults: dict = {}  # "merge": the web app's default profile, the base of a first merge
+
+
+@router.post("/api/auth/cloud/sync")
+def cloud_sync_now(payload: SyncRequest, request: Request):
+    """Sync the caller's profile with Gamma Cloud now: "sync" merges as the
+    automatic sync does, "merge" / "fetch" / "push" also settle a first
+    sync's choice. Answers the outcome and the new sync state."""
+    user = require_personal_user(request, "The guest account keeps its settings in the browser.")
+    if not cloud_sync.syncs(user):
+        raise HTTPException(400, "Link a Gamma Cloud account first.")
+    resolve = "" if payload.action == "sync" else payload.action
+    try:
+        outcome = cloud_sync.sync_profile(user, resolve=resolve, defaults=payload.defaults)
+    except cloud_sync.NothingToFetch:
+        raise HTTPException(409, "Gamma Cloud holds no settings yet.")
+    status = cloud_sync.profile_status(user)
+    if not outcome:
+        raise HTTPException(502, status.get("error") or cloud_sync.UNREACHABLE)
+    return {"outcome": outcome, "profile": status}
 
 
 @router.post("/api/auth/cloud/unlink")

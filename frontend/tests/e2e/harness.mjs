@@ -28,7 +28,16 @@ export const flags = {
   headed: process.argv.includes("--headed"),
   continueOnFail: process.argv.includes("--continue"),
   only: (() => { const i = process.argv.indexOf("--only"); return i > 0 ? process.argv[i + 1] : ""; })(),
+  group: process.argv.includes("--group"),
 };
+
+// Whether a scenario file with this step prefix should do its setup: an
+// `--only` that is part of the prefix ("mir") or starts with it ("mirror:
+// clone…"), or any `--only` inside an explicit `--group` (the group already
+// chose the file; step() still filters its steps).
+export function wanted(prefix) {
+  return !flags.only || flags.group || prefix.includes(flags.only) || flags.only.startsWith(prefix);
+}
 
 // ---------------------------------------------------------------------------
 // Server

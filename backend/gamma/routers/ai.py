@@ -762,7 +762,7 @@ def _cache_put(key: str, text: str):
 class AITranslateRequest(BaseModel):
     texts: list = Field(default_factory=list)  # source paragraphs, viewer order
     lang: str = "zh-CN"   # target language code (TRANSLATE_LANGS key)
-    model: str = ""       # model registry id; "" = the user's default
+    model: str = ""       # model registry id, or "engine:<id>" (a translation service); "" = the user's default
     effort: str = ""      # reasoning effort; "" = provider default (param omitted)
     # NDJSON stream: {"i": [indices], "text": partial} lines as the model
     # writes each paragraph (the viewer types them into the page), then the
@@ -824,13 +824,15 @@ def ai_translate(payload: AITranslateRequest, request: Request):
     # verbatim.
     hits = _cache_get(keys)
 
-    # Whitespace-only paragraphs never reach the model; every other cache miss
-    # goes upstream in ONE call (duplicates collapsed), as a JSON array both ways.
+    # Whitespace-only paragraphs never go upstream; every other cache miss
+    # does, once (duplicates collapsed): one model call, or a service's
+    # batches.
     miss, queued = [], set()
     for i, t in enumerate(texts):
         if keys[i] not in hits and keys[i] not in queued and t.strip():
             queued.add(keys[i])
             miss.append(i)
+
     def reply_with(final):
         # The whole answer at once; a streaming client reads it as the
         # final NDJSON line.
@@ -857,7 +859,7 @@ def ai_translate(payload: AITranslateRequest, request: Request):
         # One engine call per batch limit, no streaming: the reply is aligned
         # by the API, so there is nothing to salvage either.
         try:
-            translated = translate_engines.translate(engine, engine_conf, miss_texts, lang)
+            translated = translate_engines.translate(engine, engine_conf, miss_texts, lang, user)
         except translate_engines.EngineError as e:
             log.warning(f"[ai_translate] {e}")
             raise HTTPException(status_code=502, detail=f"translation failed: {e}")
@@ -1007,7 +1009,7 @@ def translate_engine_test(engine: str, payload: TranslateEngineTestRequest, requ
     sample = ("Le vif renard brun saute par-dessus le chien paresseux." if lang == "en"
               else "The quick brown fox jumps over the lazy dog.")
     try:
-        text = translate_engines.translate(engine, conf, [sample], lang)[0]
+        text = translate_engines.translate(engine, conf, [sample], lang, user)[0]
     except translate_engines.EngineError as e:
         return {"ok": False, "error": str(e)}
     return {"ok": True, "text": text}

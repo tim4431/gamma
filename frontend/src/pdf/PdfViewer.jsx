@@ -2333,6 +2333,7 @@ function PlainTip({ onConfirm, onLink, translate }) {
     return () => ctlRef.current?.abort();
   }, []);
   const keep = (e) => { e.preventDefault(); e.stopPropagation(); }; // keep the PDF selection
+  const fold = () => setTrans((prev) => ({ ...prev, open: !prev.open }));
   return (
     <div className="plainTip">
       <div className="colorRow">
@@ -2363,7 +2364,7 @@ function PlainTip({ onConfirm, onLink, translate }) {
             onMouseDown={(e) => {
               keep(e);
               if (!trans || trans.status === "error") start();
-              else setTrans((prev) => ({ ...prev, open: !prev.open }));
+              else fold();
             }}
             type="button"
             aria-label={t("Translate selection")}
@@ -2375,7 +2376,7 @@ function PlainTip({ onConfirm, onLink, translate }) {
         ) : null}
       </div>
       {translate && trans ? <SelTranslation trans={trans} langLabel={translate.langLabel} tooLong={tooLong}
-        onToggle={() => setTrans((prev) => ({ ...prev, open: !prev.open }))} keep={keep} /> : null}
+        onToggle={fold} keep={keep} /> : null}
     </div>
   );
 }

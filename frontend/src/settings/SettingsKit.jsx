@@ -37,7 +37,7 @@ export function PaneHead({ icon: Icon, title, children }) {
 // the signed-in account, app/prefDefs.js) or "browser" (this device only).
 // An account section also names the preferences it holds (`prefs`, from
 // settings/sectionPrefs.js), and its tag reads their live sync state from
-// SettingsSyncContext ({local, cloud}, provided by the dialog;
+// SettingsSyncContext ({local, cloud, refresh}, provided by the dialog;
 // settings/syncState.js). The tag is an icon and one muted word; the
 // sentence is its hover title and accessible name.
 export const SettingsSyncContext = React.createContext(null);

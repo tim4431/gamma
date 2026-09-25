@@ -134,7 +134,8 @@ function PublishSection({ state, busy, error, copied, onCopy, canEdit, onPublish
   const spinning = (what) => (busy === what ? <span className="mirrorSpin"><RefreshIcon size={13} /></span> : null);
   const openEdit = share && share.audience === "anyone" && share.role === "edit";
   const capped = !!error?.limit;
-  const problem = (capped ? error.message : error) || state?.error || "";
+  // a published page whose publication cannot run (detached, the identity gone) says why
+  const problem = (capped ? error.message : error) || state?.error || (published && !state?.can_publish ? state.reason : "") || "";
   const errorLine = problem ? (
     <>
       <div className="settingsPaneHint aiKeysError" role="alert">{problem}</div>
@@ -191,13 +192,19 @@ function PublishSection({ state, busy, error, copied, onCopy, canEdit, onPublish
         />
       ) : null}
     >
-      <Row icon={CloudIcon} label={t("Cloud link")} hint={link || t("no link on the share host")}
+      <Row icon={CloudIcon} label={t("Cloud link")} hint={link || t("no link yet: the share on the share host was not made")}
         title={link && link !== state.url ? t("{link}\nAlso works: {url}", { link: link, url: state.url }) : link}>
         <span className="shareLinkBtns">
           {link ? (
             <button type="button" className={`uiBtn sm ${copied ? "on" : ""}`} onClick={onCopy} title={link}>
               {copied ? <CheckIcon size={13} /> : <LinkIcon size={13} />}
               {copied ? t("Copied") : t("Copy link")}
+            </button>
+          ) : canEdit && state.can_publish ? (
+            // publishing failed after the page reached the share host: the same call finishes the job
+            <button type="button" className="uiBtn sm primary" disabled={!!busy} onClick={() => onPublish()}
+              title={t("The page is on the share host but its share was not made; publishing again makes the link.")}>
+              {spinning("publish") || <CloudUploadIcon size={13} />}{t("Publish again")}
             </button>
           ) : null}
           {canEdit ? (
@@ -226,8 +233,9 @@ function PublishSection({ state, busy, error, copied, onCopy, canEdit, onPublish
           <div className="mirrorStateBody">
             <div className="mirrorStateLine">
               <span>{st.text}</span>
-              <button type="button" className={`iconBtn sm ${running ? "mirrorSpin" : ""}`} disabled={running || !!busy}
-                onClick={onSync} aria-label={t("Sync now")} title={running ? t("A round is running") : t("Sync now")}>
+              <button type="button" className={`iconBtn sm ${running ? "mirrorSpin" : ""}`} disabled={running || !!busy || !!mirror?.detached}
+                onClick={onSync} aria-label={t("Sync now")}
+                title={running ? t("A round is running") : mirror?.detached ? t("Detached — reattach in the sync settings") : t("Sync now")}>
                 <RefreshIcon size={14} />
               </button>
             </div>

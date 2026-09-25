@@ -310,15 +310,34 @@ def delete(conn, account_id: str, actor: str = "") -> None:
     audit(conn, "account.delete", account_id, actor or account_id)
 
 
+def by_id_deleted(conn, account_id: str):
+    """A soft-deleted account still in its grace period, or None."""
+    return conn.execute("SELECT * FROM accounts WHERE id = ? AND deleted_at IS NOT NULL", (account_id,)).fetchone()
+
+
+def restore(conn, account_id: str, actor: str) -> None:
+    """Undo a soft delete within the grace period. The username and e-mail
+    were reserved, so nothing can have taken them. What the delete dropped
+    stays dropped: the person signs back in through a password reset, or
+    through Google/GitHub on the same e-mail, which links again."""
+    conn.execute("UPDATE accounts SET deleted_at = NULL WHERE id = ?", (account_id,))
+    audit(conn, "account.restore", account_id, actor)
+
+
+def purge(conn, account_id: str, actor: str = "system") -> None:
+    """Remove an account and every row that references it (the audit log
+    keeps its history); its username and e-mail are free again."""
+    for table in ("identities", "portal_sessions", "email_tokens", "grants", "access_tokens", "prefs",
+                  "servers_linked"):
+        conn.execute(f"DELETE FROM {table} WHERE account_id = ?", (account_id,))
+    conn.execute("DELETE FROM accounts WHERE id = ?", (account_id,))
+    audit(conn, "account.purge", account_id, actor)
+
+
 def purge_deleted(conn, older_than_days: int) -> int:
-    """Remove accounts deleted more than N days ago and every row that
-    references them. Returns the count."""
+    """Purge accounts deleted more than N days ago. Returns the count."""
     cutoff = after(-older_than_days * 86400)
     rows = conn.execute("SELECT id FROM accounts WHERE deleted_at IS NOT NULL AND deleted_at <= ?", (cutoff,)).fetchall()
     for row in rows:
-        for table in ("identities", "portal_sessions", "email_tokens", "grants", "access_tokens", "prefs",
-                      "servers_linked"):
-            conn.execute(f"DELETE FROM {table} WHERE account_id = ?", (row["id"],))
-        conn.execute("DELETE FROM accounts WHERE id = ?", (row["id"],))
-        audit(conn, "account.purge", row["id"], "system")
+        purge(conn, row["id"])
     return len(rows)

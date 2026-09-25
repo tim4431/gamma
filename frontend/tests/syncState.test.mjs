@@ -90,13 +90,23 @@ test("the cloud's error applies only to names still on their way to it; its pend
   assert.equal(profileSyncState(local("loaded"), cloud({ state: "synced", at: "x" }), NOTES, clock).state, "synced");
 });
 
-test("the Account pane's cloud row hint", () => {
+test("a first sync waiting for the person's choice: saved here, not synced, on every section", () => {
+  const tag = profileSyncState(local("loaded"), cloud({ state: "choose" }), THEME, clock);
+  assert.deepEqual([...read(tag), tag.tone], ["choose", "account", "alert", ""]);
+  assert.match(tag.title, /until you choose which settings to keep/);
+  // a change still settling here spins first
+  assert.equal(profileSyncState(local("pending", { pending: THEME }), cloud({ state: "choose" }), THEME, clock).state, "syncing");
+});
+
+test("the Account pane's Settings sync row hint", () => {
   assert.equal(cloudSyncHint(null, clock), "");
   assert.equal(cloudSyncHint(cloud({ state: "off" }, false), clock), "");
-  assert.equal(cloudSyncHint(cloud({ state: "synced", at: "x" }), clock), "Settings synced T(x)");
-  assert.equal(cloudSyncHint(cloud({ state: "error", error: "boom" }), clock), "Settings not synced: boom");
-  assert.equal(cloudSyncHint(cloud({ state: "pending", error: "boom" }), clock), "Settings not synced: boom");
-  assert.equal(cloudSyncHint(cloud({ state: "pending" }), clock), "Settings syncing…");
+  assert.equal(cloudSyncHint(cloud({ state: "synced", at: "x" }), clock), "Synced with Gamma Cloud at T(x)");
+  assert.equal(cloudSyncHint(cloud({ state: "synced" }), clock), "Synced with Gamma Cloud");
+  assert.equal(cloudSyncHint(cloud({ state: "error", error: "boom" }), clock), "Not synced: boom");
+  assert.equal(cloudSyncHint(cloud({ state: "pending", error: "boom" }), clock), "Not synced: boom");
+  assert.equal(cloudSyncHint(cloud({ state: "pending" }), clock), "Syncing…");
+  assert.equal(cloudSyncHint(cloud({ state: "choose" }), clock), "");
 });
 
 test("the clock: the time today, the date as well on another day, nothing for no time", () => {

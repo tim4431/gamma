@@ -446,6 +446,7 @@ def _synced(ws: str, page_id: str) -> bool:
 def _mirror_view(mirror: dict) -> dict:
     ws = mirror["workspace_id"]
     return {"ws": ws, "status": mirror["status"], "page_filter": mirror["page_filter"],
+            "mode": mirror["mode"], "detached": mirror["mode"] == "off",
             "conflicts_open": sync_engine.open_conflicts(ws),
             "pending_local": mirror["mode"] == "two-way" and sync_engine.has_local_changes(ws)}
 

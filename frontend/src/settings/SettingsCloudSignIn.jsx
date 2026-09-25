@@ -5,12 +5,14 @@
 //   under provision whether it accepts published pages (the share host).
 // - CloudIdentityRow — Settings → Account: the signed-in account's own link
 //   to its cloud account (link = a round trip through the account server,
-//   unlink = one call; refused for an account that has no password).
+//   unlink = one call; refused for an account that has no password), and
+//   under it, once linked, CloudSyncRow: the settings sync by hand.
 import React from "react";
 import { API, apiJson } from "../shared/lib/utils";
 import { Row, Segmented, PasswordInput, SettingsSyncContext, Toggle, useSettingsDraft } from "./SettingsKit";
 import { cloudSyncHint } from "./syncState.js";
-import { CloudIcon, ExternalLinkIcon, GlobeIcon, KeyIcon, UserIcon } from "../shared/ui/Icons";
+import { defaultProfile } from "../app/prefDefs.js";
+import { CloudDownloadIcon, CloudIcon, CloudUploadIcon, ExternalLinkIcon, GlobeIcon, KeyIcon, RefreshIcon, UserIcon } from "../shared/ui/Icons";
 import { T, t } from "../shared/i18n/i18n.js";
 
 const POLICIES = [
@@ -101,8 +103,6 @@ export function CloudSignInSettings({ setStatus, action }) {
 export function CloudIdentityRow({ setStatus, confirm }) {
   const [state, setState] = React.useState(null); // {identity, enabled}
   const [error, setError] = React.useState("");
-  const sync = React.useContext(SettingsSyncContext);
-  const syncHint = cloudSyncHint(sync?.cloud);
   const load = React.useCallback(() => {
     apiJson(`${API}/auth/cloud/status`).then(setState).catch((err) => setError(err.message));
   }, []);
@@ -125,7 +125,7 @@ export function CloudIdentityRow({ setStatus, confirm }) {
   }
   return <>
     <Row icon={CloudIcon} label={t("Gamma Cloud")}
-      hint={id ? `${id.username}${id.email ? ` · ${id.email}` : ""}${id.plan ? ` · ${id.plan} plan` : ""}${syncHint ? ` · ${syncHint}` : ""}`
+      hint={id ? `${id.username}${id.email ? ` · ${id.email}` : ""}${id.plan ? ` · ${id.plan} plan` : ""}`
         : t("Sign in here with your Gamma Cloud account")}
       title={id ? t("Linked {linked_at}. Signing in with this cloud account opens this account.", { linked_at: id.linked_at ? id.linked_at.slice(0, 10) : "" })
         : t("Link your Gamma Cloud account: you are sent to the account server and back, then either login opens this account.")}>
@@ -139,6 +139,87 @@ export function CloudIdentityRow({ setStatus, confirm }) {
         {id ? <button className="uiBtn sm" onClick={unlink}>{t("Unlink")}</button>
             : <button className="uiBtn sm primary" onClick={link}>{t("Link Gamma Cloud account")}</button>}
       </span>
+    </Row>
+    {error ? <p className="settingsPaneHint aiKeysError" role="alert">{error}</p> : null}
+    {id ? <CloudSyncRow setStatus={setStatus} confirm={confirm} /> : null}
+  </>;
+}
+
+const SYNC_OUTCOMES = {
+  pulled: T("Settings updated from Gamma Cloud."),
+  pushed: T("Settings sent to Gamma Cloud."),
+  merged: T("Settings merged with Gamma Cloud."),
+  same: T("Settings already in sync with Gamma Cloud."),
+  choose: T("This server and Gamma Cloud hold different settings: choose which to keep."),
+};
+
+// The account's settings against Gamma Cloud by hand, VS Code style
+// (backend gamma/cloud_sync.py, POST /api/auth/cloud/sync): Sync now merges
+// both ways; Fetch from cloud makes the cloud's copy this server's, Push to
+// cloud the other way round (both confirmed). A first sync that found two
+// different copies waits here for Merge / Use cloud's / Use this server's.
+function CloudSyncRow({ setStatus, confirm }) {
+  const sync = React.useContext(SettingsSyncContext);
+  const [busy, setBusy] = React.useState("");
+  const [error, setError] = React.useState("");
+  const profile = sync?.cloud?.profile;
+  const choosing = profile ? profile.state === "choose" : !!sync?.local?.cloudChoice;
+  async function run(action) {
+    setBusy(action); setError("");
+    try {
+      await sync?.local?.flush?.();
+      const d = await apiJson(`${API}/auth/cloud/sync`, {
+        method: "POST", headers: { "Content-Type": "application/json" },
+        body: JSON.stringify(action === "merge" ? { action, defaults: defaultProfile() } : { action }),
+      });
+      await sync?.local?.reload?.();
+      if (SYNC_OUTCOMES[d.outcome]) setStatus?.(t(SYNC_OUTCOMES[d.outcome]));
+    } catch (err) { setError(err.message); }
+    finally { setBusy(""); sync?.refresh?.(); }
+  }
+  const fetchCloud = () => (confirm ? confirm({
+    title: T("Fetch from cloud"),
+    message: t("Gamma Cloud's settings replace this server's. Changes made here that have not synced yet are lost."),
+    confirmLabel: t("Fetch"), onConfirm: () => run("fetch"),
+  }) : run("fetch"));
+  const pushCloud = () => (confirm ? confirm({
+    title: T("Push to cloud"),
+    message: t("This server's settings replace Gamma Cloud's. Your other servers take them at their next sync."),
+    confirmLabel: t("Push"), onConfirm: () => run("push"),
+  }) : run("push"));
+  const off = profile?.state === "off";
+  const label = (action, idle, working) => (busy === action ? working : idle);
+  return <>
+    <Row icon={RefreshIcon} label={t("Settings sync")}
+      hint={choosing ? t("This server and Gamma Cloud hold different settings. Choose which to keep.") : cloudSyncHint(sync?.cloud)}
+      title={t("Your account's settings (appearance, reading, editing, chat, shortcuts) follow you to every server you sign in to with Gamma Cloud. AI keys stay on each server.")}>
+      {off ? null : (
+        <span className="setRowControls">
+          {choosing ? <>
+            <button className="uiBtn sm primary" disabled={!!busy} onClick={() => run("merge")}
+              title={t("Keep what each side changed; where both changed a setting, the newer change wins")}>
+              {label("merge", t("Merge"), t("Merging…"))}
+            </button>
+            <button className="uiBtn sm" disabled={!!busy} onClick={fetchCloud} title={t("Gamma Cloud's settings replace this server's")}>
+              <CloudDownloadIcon size={14} /> {label("fetch", t("Use cloud's"), t("Fetching…"))}
+            </button>
+            <button className="uiBtn sm" disabled={!!busy} onClick={pushCloud} title={t("This server's settings replace Gamma Cloud's")}>
+              <CloudUploadIcon size={14} /> {label("push", t("Use this server's"), t("Pushing…"))}
+            </button>
+          </> : <>
+            <button className="uiBtn sm" disabled={!!busy} onClick={() => run("sync")}
+              title={t("Merge with Gamma Cloud now: each side keeps what the other did not change")}>
+              {label("sync", t("Sync now"), t("Syncing…"))}
+            </button>
+            <button className="uiBtn sm" disabled={!!busy} onClick={fetchCloud} title={t("Gamma Cloud's settings replace this server's")}>
+              <CloudDownloadIcon size={14} /> {label("fetch", t("Fetch from cloud"), t("Fetching…"))}
+            </button>
+            <button className="uiBtn sm" disabled={!!busy} onClick={pushCloud} title={t("This server's settings replace Gamma Cloud's")}>
+              <CloudUploadIcon size={14} /> {label("push", t("Push to cloud"), t("Pushing…"))}
+            </button>
+          </>}
+        </span>
+      )}
     </Row>
     {error ? <p className="settingsPaneHint aiKeysError" role="alert">{error}</p> : null}
   </>;

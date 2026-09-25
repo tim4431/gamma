@@ -4,13 +4,13 @@
 // one per page load, never with "Suggest tours" off, and the card never
 // takes the caret or closes the popover it points into. A fresh account, so
 // no earlier scenario has seen these offers.
-import { Account } from "../harness.mjs";
+import { Account, wanted } from "../harness.mjs";
 import { editRow } from "./notes.mjs";
 import { waitForPdf } from "./pdf.mjs";
 
 export async function triggeredGuideScenarios(env) {
   const { server, browser, step, until, assert, assertEq, assertNoProblems, openPage, makePdf, flags } = env;
-  if (flags.only && !"triggered guide".includes(flags.only)) return;
+  if (!wanted("triggered guide")) return;
   server.manage("create-user", "tourist", "tourist-pw");
   const user = await new Account(server, "tourist", "tourist-pw").login();
   const open = async (query, { setup, ...opts } = {}) => {

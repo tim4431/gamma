@@ -35,6 +35,13 @@ export function useMirrors(enabled = true) {
     apiJson(`${API}/mirrors`).then((d) => setMirrors(d.mirrors || [])).catch(() => setMirrors([]));
   }, [enabled]);
   React.useEffect(() => { refresh(); }, [refresh]);
+  // while a round runs its row moves ("21 of 79 pages", the file in flight): read again every 2 s
+  const running = !!mirrors?.some((m) => m.status?.running);
+  React.useEffect(() => {
+    if (!running) return undefined;
+    const id = setInterval(refresh, 2000);
+    return () => clearInterval(id);
+  }, [running, refresh]);
   return [mirrors, refresh];
 }
 
@@ -46,10 +53,13 @@ export function mirrorStatusLine(m) {
   const st = mirrorState(m);
   if (m.detached || m.mode === "off") return t("detached{detached_at} · reattach to merge what both sides did meanwhile", { detached_at: s.detached_at ? ` ${clock(s.detached_at)}` : "" });
   if (st.tone === "busy") {
-    const file = p?.file ? ` · ${p.file.dir === "up" ? "pushing" : "pulling"} ${p.file.name} ${fmtBytes(p.file.done)}${p.file.total ? ` / ${fmtBytes(p.file.total)}` : ""}` : "";
-    return `${p?.total ? `${p.first ? "cloning" : "syncing"} ${p.done} of ${p.total} pages…` : "syncing…"}${file}`;
+    const file = p?.file ? ` · ${p.file.dir === "up" ? t("pushing") : t("pulling")} ${p.file.name} ${fmtBytes(p.file.done)}${p.file.total ? ` / ${fmtBytes(p.file.total)}` : ""}` : "";
+    const pages = p?.total
+      ? (p.first ? t("cloning {done} of {total} pages…", { done: p.done, total: p.total }) : t("syncing {done} of {total} pages…", { done: p.done, total: p.total }))
+      : t("syncing…");
+    return `${pages}${file}`;
   }
-  if (s.last_error) return `problem: ${s.last_error}`;
+  if (s.last_error) return t("problem: {error}", { error: s.last_error });
   if (!s.last_sync) return s.interrupted ? t("interrupted · continues at the next round") : t("not cloned yet");
   if (m.pending_local) return t("local edits not pushed yet · up to date {last_sync}", { last_sync: clock(s.last_sync) });
   return t("up to date {last_sync} · {changed}", { last_sync: clock(s.last_sync), changed: roundSummary(s) || t("nothing had changed") });

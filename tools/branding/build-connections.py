@@ -11,13 +11,13 @@ def icon_path(name):
     return ET.parse(BRANDS / f'{name}.svg').getroot().find('{http://www.w3.org/2000/svg}path').attrib['d']
 
 
-openai, claude, obsidian, notion = map(icon_path, ('openai', 'claude', 'obsidian', 'notion'))
+openai, claude, deepseek, obsidian, notion = map(icon_path, ('openai', 'claude', 'deepseek', 'obsidian', 'notion'))
 zotero = base64.b64encode((BRANDS / 'zotero.png').read_bytes()).decode('ascii')
 
 heading = scene_heading([(235, 'Your research. Connected.')], [(288, 'Ask an assistant about your papers, save from the journal page,'), (326, 'and move notes to and from the tools you already use.')])
 svg = f'''<svg xmlns="http://www.w3.org/2000/svg" width="1920" height="1080" viewBox="0 0 1920 1080" role="img" aria-labelledby="title desc">
   <title id="title">Gamma PDF: your research, connected</title>
-  <desc id="desc">Gamma in the middle of three connections. Left: an assistant prompt in Codex or Claude Code that mentions @Gamma and a paper card and asks how the blockade radius is measured; Gamma answers with papers and notes. Right: Obsidian, Notion and Zotero, with an Export arrow above and an Import arrow below. Bottom: the Gamma Connector browser extension saving a paper from a journal page, with the publisher sign-in saved per journal so the server can fetch its PDFs later.</desc>
+  <desc id="desc">Gamma in the middle of three connections. Left: an assistant prompt in Codex, Claude Code or DeepSeek Harness that mentions @Gamma and a paper card and asks how the blockade radius is measured; Gamma answers with papers and notes. Right: Obsidian, Notion and Zotero, with an Export arrow above and an Import arrow below. Bottom: the Gamma Connector browser extension saving a paper from a journal page, with the publisher sign-in saved per journal so the server can fetch its PDFs later.</desc>
   <defs>
 {MARK}
     {SCENE_SHADOW}
@@ -42,9 +42,9 @@ svg = f'''<svg xmlns="http://www.w3.org/2000/svg" width="1920" height="1080" vie
     <text x="715" y="527" text-anchor="middle" font-size="21" fill="#6b6a65">Papers + notes</text>
 
     <!-- Assistants: a Codex-style prompt that mentions Gamma and a paper card. -->
-    <rect x="140" y="360" width="480" height="380" rx="22" fill="#ffffff" stroke="#e3e0d8" stroke-width="1.5" filter="url(#shadow)"/>
+    <rect x="140" y="360" width="480" height="404" rx="22" fill="#ffffff" stroke="#e3e0d8" stroke-width="1.5" filter="url(#shadow)"/>
     <text x="184" y="412" font-size="24" font-weight="600" fill="#6b6a65">ASSISTANTS</text>
-    <rect x="184" y="440" width="392" height="176" rx="16" fill="#f2f0ea" stroke="#e3e0d8" stroke-width="1.5"/>
+    <rect x="184" y="440" width="392" height="156" rx="16" fill="#f2f0ea" stroke="#e3e0d8" stroke-width="1.5"/>
     <rect x="202" y="460" width="112" height="36" rx="10" fill="#ecdfc4"/>
     <text x="258" y="486" text-anchor="middle" font-size="22" font-weight="600" fill="#5a4a24">@Gamma</text>
     <text x="326" y="486" font-size="24" fill="#1a1a18">in</text>
@@ -54,12 +54,13 @@ svg = f'''<svg xmlns="http://www.w3.org/2000/svg" width="1920" height="1080" vie
     <text x="202" y="530" font-size="24" fill="#1a1a18">how is the blockade radius</text>
     <text x="202" y="562" font-size="24" fill="#1a1a18">measured?</text>
     <rect x="330" y="540" width="2.5" height="28" fill="#e8a020"><animate attributeName="opacity" values="1;1;0;0" dur="1.1s" repeatCount="indefinite"/></rect>
-    <path d="M202 598 H558" stroke="#e3e0d8"/>
-    <path d="{openai}" transform="translate(184 646) scale(1.75)" fill="#10a37f"/>
-    <text x="238" y="678" font-size="26" font-weight="600" fill="#1a1a18">Codex</text>
-    <path d="{claude}" transform="translate(340 646) scale(1.75)" fill="#c15f3c"/>
-    <text x="394" y="678" font-size="26" font-weight="600" fill="#1a1a18">Claude Code</text>
-    <text x="184" y="716" font-size="19" fill="#6b6a65">Any MCP client · one workspace you approve</text>
+    <path d="{openai}" transform="translate(184 620) scale(1.5)" fill="#10a37f"/>
+    <text x="232" y="648" font-size="24" font-weight="600" fill="#1a1a18">Codex</text>
+    <path d="{claude}" transform="translate(340 620) scale(1.5)" fill="#c15f3c"/>
+    <text x="388" y="648" font-size="24" font-weight="600" fill="#1a1a18">Claude Code</text>
+    <path d="{deepseek}" transform="translate(184 668) scale(1.5)" fill="#4d6bfe"/>
+    <text x="232" y="696" font-size="24" font-weight="600" fill="#1a1a18">DeepSeek Harness</text>
+    <text x="184" y="740" font-size="19" fill="#6b6a65">Any MCP client · one workspace you approve</text>
 
     <rect x="800" y="450" width="320" height="220" rx="22" fill="#ffffff" stroke="#e3e0d8" stroke-width="1.5" filter="url(#shadow)"/>
     <use href="#gammaMark" transform="translate(936 480)"/>

@@ -20,12 +20,13 @@ storage usage, runs only for an account under a quota and is remembered
 for a while.
 """
 
+import hashlib
 import re
 import threading
 import time
 from dataclasses import asdict, dataclass
 
-from . import backup_schedule, cloud_sync, logbuf, server_settings, sync_engine, version
+from . import backup_schedule, cloud_sync, logbuf, server_settings, sync_engine, translate_engines, version
 from .db import NOTICES_SEEN_PREF_KEY, get_pref, set_pref
 
 TONES = ("info", "warn", "error")
@@ -99,7 +100,9 @@ def backup_failed(username):
 
 def _conflict_marks(username, publications):
     """Per clone (or per publication), the open conflict count and newest
-    conflict id; a mirror with a page filter is a publication."""
+    conflict id, folded into one short digest (a fingerprint is capped at
+    200 characters, which a dozen clones with conflicts would pass); a
+    mirror with a page filter is a publication."""
     marks, total = [], 0
     for mirror in sync_engine.list_mirrors(username):
         if (mirror.get("page_filter") is not None) != publications:
@@ -108,7 +111,7 @@ def _conflict_marks(username, publications):
         if count:
             marks.append(f"{mirror['workspace_id']}:{count}:{newest}")
             total += count
-    return marks, total
+    return hashlib.sha1(",".join(marks).encode("utf-8")).hexdigest()[:16], total
 
 
 @source()
@@ -117,10 +120,10 @@ def mirror_conflicts(username):
     Clones). Fingerprint: per clone, the count and the newest
     conflict — a new one brings the notice back, resolving old ones does
     not."""
-    marks, total = _conflict_marks(username, publications=False)
+    mark, total = _conflict_marks(username, publications=False)
     if not total:
         return None
-    return Notice("mirror-conflicts", ",".join(marks), "warn", "account",
+    return Notice("mirror-conflicts", mark, "warn", "account",
                   f"{_plural(total, 'sync conflict')} to look at in your clones")
 
 
@@ -128,10 +131,10 @@ def mirror_conflicts(username):
 def publish_conflicts(username):
     """Open conflicts in the pages the account publishes to Gamma Cloud
     (Settings → Account & sync → Publishing), fingerprinted like the clones'."""
-    marks, total = _conflict_marks(username, publications=True)
+    mark, total = _conflict_marks(username, publications=True)
     if not total:
         return None
-    return Notice("publish-conflicts", ",".join(marks), "warn", "account",
+    return Notice("publish-conflicts", mark, "warn", "account",
                   f"{_plural(total, 'sync conflict')} to look at in your published pages")
 
 
@@ -145,6 +148,27 @@ def cloud_sync_failed(username):
     error = (status.get("error") or "").strip().rstrip(".")
     return Notice("cloud-sync", status.get("at") or "", "warn", "account",
                   f"Gamma Cloud sync failed: {error}" if error else "Gamma Cloud sync failed")
+
+
+@source()
+def cloud_sync_choice(username):
+    """The first settings sync with Gamma Cloud found two different copies
+    and waits for the person to merge them or keep one (the Account pane)."""
+    if cloud_sync.profile_status(username).get("state") != "choose":
+        return None
+    return Notice("cloud-sync-choice", "choose", "warn", "account",
+                  "Your settings here and on Gamma Cloud differ: choose which to keep")
+
+
+@source()
+def free_translate_failing(username):
+    """Microsoft's free translation endpoint keeps failing for this account
+    (translate_engines' in-memory streak); gone after one success."""
+    failing = translate_engines.free_failing(username)
+    if not failing:
+        return None
+    return Notice("free-translate", failing["since"], "warn", "reading",
+                  "Microsoft's free translation keeps failing — set up Google or Youdao")
 
 
 # The storage walk is the one source that is not a free read: usage is

@@ -1,10 +1,10 @@
-import { Account } from "../harness.mjs";
+import { Account, wanted } from "../harness.mjs";
 import fs from "node:fs";
 import path from "node:path";
 
 export async function settingsScenarios(env) {
   const { server, browser, step, openPage, assert, assertEq, assertNoProblems, until, flags } = env;
-  if (flags.only && !"settings".includes(flags.only)) return;
+  if (!wanted("settings")) return;
   server.manage("create-user", "settings-user", "settings-pw");
   const user = await new Account(server, "settings-user", "settings-pw").login();
   // A dummy connection supplies model choices. These tests never send AI jobs.
@@ -571,8 +571,8 @@ export async function settingsScenarios(env) {
       assert((await rowOf.innerText()).includes("Daily · 03:00"), "the row shows the daily schedule");
       await rowOf.getByRole("button", { name: "Actions for Nightly", exact: true }).click();
       await page.getByRole("button", { name: "Run now", exact: true }).click();
-      // the scheduler picks a queued run up within its 30 s round; the table polls every 5 s
-      await until(() => rowOf.innerText().then((t) => /finished|failed/i.test(t)), { timeout: 45000, what: "the queued run to finish" });
+      // Run now wakes the scheduler at once; the table polls every 5 s
+      await until(() => rowOf.innerText().then((t) => /finished|failed/i.test(t)), { timeout: 20000, what: "the queued run to finish" });
       assert(/finished/i.test(await rowOf.innerText()), "the run finished");
       await rowOf.getByRole("button", { name: "Actions for Nightly", exact: true }).click();
       await page.getByRole("button", { name: "Delete task", exact: true }).click();

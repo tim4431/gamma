@@ -1,8 +1,8 @@
-import { Account } from "../harness.mjs";
+import { Account, wanted } from "../harness.mjs";
 
 export async function mentionScenarios(env) {
   const { server, browser, step, openPage, assert, assertEq, assertNoProblems, until, flags, makePdf } = env;
-  if (flags.only && !"mentions".includes(flags.only)) return;
+  if (!wanted("mentions")) return;
   server.manage("create-user", "mentions-user", "mentions-pw");
   const user = await new Account(server, "mentions-user", "mentions-pw").login();
   const papers = [];

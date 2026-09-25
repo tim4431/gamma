@@ -233,8 +233,10 @@ export function MdImage({ src, alt, width, idx, onEdit }) {
           width={w || undefined}
           draggable={false}
           // Editable: the press selected the object (its frame) and a drag
-          // moves it; zoom is the toolbar's. Read-only: click zooms.
+          // moves it, so zoom is a double-click (or the toolbar). Read-only:
+          // a click zooms.
           onClick={onEdit ? undefined : (e) => { e.stopPropagation(); setLightbox(true); }}
+          onDoubleClick={onEdit ? (e) => { e.stopPropagation(); setLightbox(true); } : undefined}
         />
         {onEdit ? (
           <span className="mdImgTools" onMouseDown={stop} onClick={stop}>

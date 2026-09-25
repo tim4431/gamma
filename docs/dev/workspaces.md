@@ -253,8 +253,8 @@ The app lifespan runs `run_due` every 30 s; each task is processed under an
 OS file lock (`<id>.lock`, `msvcrt`/`fcntl`), so several workers never run
 one task twice. A task whose `next_run` passed while the server was down
 runs once on the next round, then reschedules from the cron.
-A failed run is retried after an hour; "run now" sets `requested` and
-keeps the scheduled `next_run`. Snapshots are pruned per task and workspace
+A failed run is retried after an hour; "run now" sets `requested`, keeps
+the scheduled `next_run` and wakes the loop for a round at once (`_wake`). Snapshots are pruned per task and workspace
 after every run.
 
 ## Clones (mirrors)

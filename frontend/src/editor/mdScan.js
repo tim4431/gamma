@@ -27,6 +27,12 @@ export function scanImages(content) {
   return scanImageSyntax(content).filter((im) => !inSpan(spans, im.from));
 }
 
+// The multi-line constructs (``` fences, $$ display math) a line boundary
+// must not fall inside — what clickToSource's gapInSource takes as `spans`.
+export function blockSpans(content) {
+  return [...scanMathSpans(content), ...scanFences(content)];
+}
+
 // GFM row → trimmed cells (outer pipes dropped, unescaped | splits — per the
 // spec a | inside `code` still delimits cells unless written \|).
 function splitCells(line) {

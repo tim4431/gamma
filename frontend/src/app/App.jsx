@@ -82,7 +82,7 @@ import { loadSession, saveSession, clearSession, setSessionScope } from "./sessi
 import { ROLE_LABEL, workspaceMeta } from "../settings/SettingsWorkspace";
 import { AuthLoading, LoginPage, SessionConflictPage, ShareBlockedPage, WorkspaceUnavailablePage } from "../auth/LoginPage";
 import { McpAuthorization } from "../auth/McpConsent";
-import { FREE_TRANSLATE_ENGINE, TRANSLATE_LANGS, useAppPrefs, useProfileSync } from "./prefs";
+import { TRANSLATE_LANGS, translateModelFor, useAppPrefs, useProfileSync } from "./prefs";
 import { useNotices } from "./useNotices";
 import { dotTone } from "./notices";
 import { useBlockHistory } from "../editor/blockHistory.js";
@@ -2503,6 +2503,14 @@ function LibraryApp({ publicPage = null, initialServerConfig = null }) {
     } catch {}
     return null;
   });
+  // The first settings sync with Gamma Cloud found two different copies:
+  // Settings → Account asks which to keep, opened once per page load.
+  const askedCloudChoice = useRef(false);
+  useEffect(() => {
+    if (!profileSync.cloudChoice || askedCloudChoice.current) return;
+    askedCloudChoice.current = true;
+    setSettingsOpen((cur) => cur || "account");
+  }, [profileSync.cloudChoice]);
   // What wants a look (a newer release, errors in the log — app/notices.js):
   // the dot on the account button and on the Settings panes that resolve it;
   // "Settings…" lands on the strongest one.
@@ -3082,23 +3090,16 @@ function LibraryApp({ publicPage = null, initialServerConfig = null }) {
   };
 
   // --- PDF translation (the 文A button in the viewer's zoom column) ---
-  // The button prompts "this page or whole document"; the queue itself lives
-  // in PdfViewer (translateCtl), which calls back into translateParagraphs
-  // below for each page. Language and model/engine live in Settings →
-  // Reading › Translation, effort and parallelism included.
-  // A machine-translation engine ("engine:<id>", set up under Settings →
-  // Reading) or a model; a stale pick falls back to the chat model — or,
-  // with no AI connection at all, to the free Microsoft service, so the
-  // translate button works out of the box.
+  // The queue lives in PdfViewer (translateCtl), which calls translateChunk
+  // below for each chunk; the selection popup uses the same request. The
+  // settings live in Settings → Reading › Translation. What is sent: a
+  // machine-translation service ("engine:<id>") or a model, per
+  // translateModelFor, else the chat model.
   const translateEngines = aiInfo?.translate_engines || [];
-  const translateSendModel = translateModel && [...translateEngines, ...scopedAiModels].some((m) => m.id === translateModel)
-    ? translateModel
-    : !scopedAiModels.length && translateEngines.some((e) => e.id === FREE_TRANSLATE_ENGINE)
-      ? FREE_TRANSLATE_ENGINE
-      : chatSendModel;
+  const translateSendModel = translateModelFor(translateModel, translateEngines, scopedAiModels) || chatSendModel;
   const translateLangLabel = (TRANSLATE_LANGS.find(([code]) => code === translateLang) || ["", ""])[1];
   const pdfTranslateCtl = useRef(null); // imperative surface set by PdfViewer
-  const [pdfTransState, setPdfTransState] = useState({ running: false, progress: 0, shown: true, pages: 0 });
+  const [pdfTransState, setPdfTransState] = useState({ running: false, progress: 0, shown: true, pages: 0, current: false });
   const [transMenu, setTransMenu] = useState(null); // {x, y} while the button's option menu is open
   const transTaskRef = useRef(null); // background-tasks row for the running job
   const transLongRef = useRef(0); // long-press timer (touch): opens the menu like right-click does
@@ -3513,7 +3514,7 @@ function LibraryApp({ publicPage = null, initialServerConfig = null }) {
   const dragLeaveTimer = useRef(null);
 
   useEffect(() => {
-    window._gammaSetDropTarget = setDropTarget;
+    window._gammaSetDropTarget = (dt) => { clearTimeout(dragLeaveTimer.current); setDropTarget(dt); };
     // The indicator is fixed to the viewport, so a drag end the rows miss (a
     // row re-rendered under the pointer, the dragend of a handle the move
     // detached) would leave a line hanging over the notes (#88). Every drag
@@ -6316,13 +6317,27 @@ function LibraryApp({ publicPage = null, initialServerConfig = null }) {
   // An image / table / diagram to the end of another page: a new block there
   // holding its markdown, the object cut from its block here. The local cut
   // stays undoable (an undo leaves the copy on the other page).
+  // The nth image / table / diagram of a block on this page, as a source
+  // range — null once either is gone.
+  function objectAt(sourceId, kind, idx) {
+    const src = findBlock(blocks, sourceId);
+    const obj = src ? findObject(src.content || "", kind, idx) : null;
+    return obj ? { src, obj } : null;
+  }
+  // The "move to page" picker, for a block (`blockId`) or an object (`fragment`).
+  async function pickMovePage(what) {
+    try {
+      const d = await apiJson(`${API}/blocks/root/children`);
+      const pages = (d.children || []).filter((p) => p.id !== focusedBlockId);
+      setMoveBlockDialog({ ...what, query: "", pages });
+    } catch (err) { setStatus(t("Could not list pages: {message}", { message: err.message })); }
+  }
   async function doMoveFragment(frag, page) {
     setMoveBlockDialog(null);
     const title = (page.content || t("Untitled")).slice(0, 60);
-    const src = findBlock(blocks, frag.sourceId);
-    const obj = src ? findObject(src.content || "", frag.kind, frag.idx) : null;
-    if (!obj) return;
-    const cut = cutObject(src.content || "", obj);
+    const found = objectAt(frag.sourceId, frag.kind, frag.idx);
+    if (!found) return;
+    const cut = cutObject(found.src.content || "", found.obj);
     try {
       await apiJson(`${API}/blocks`, {
         method: "POST",
@@ -8069,30 +8084,15 @@ function LibraryApp({ publicPage = null, initialServerConfig = null }) {
                     setFocusedId(copy.id);
                     setStatus(t("Block duplicated."));
                   },
-                  onMoveToPage: async (id) => {
-                    if (readOnly) return;
-                    try {
-                      const d = await apiJson(`${API}/blocks/root/children`);
-                      const pages = (d.children || []).filter((p) => p.id !== focusedBlockId);
-                      setMoveBlockDialog({ blockId: id, query: "", pages });
-                    } catch (err) { setStatus(t("Could not list pages: {message}", { message: err.message })); }
-                  },
+                  onMoveToPage: (id) => { if (!readOnly) pickMovePage({ blockId: id }); },
                   // An image / table / diagram (the object frame's menu):
                   // to a new block above / below its own, or to another
                   // page through the same picker as a block move.
-                  onMoveObject: async ({ sourceId, kind, idx, target }) => {
+                  onMoveObject: ({ sourceId, kind, idx, target }) => {
                     if (readOnly) return;
-                    if (target.type === "page") {
-                      try {
-                        const d = await apiJson(`${API}/blocks/root/children`);
-                        const pages = (d.children || []).filter((p) => p.id !== focusedBlockId);
-                        setMoveBlockDialog({ fragment: { sourceId, kind, idx }, query: "", pages });
-                      } catch (err) { setStatus(t("Could not list pages: {message}", { message: err.message })); }
-                      return;
-                    }
-                    const src = findBlock(blocks, sourceId);
-                    const obj = src ? findObject(src.content || "", kind, idx) : null;
-                    const next = obj ? moveObjectInTree(blocks, { sourceId, obj, target }) : null;
+                    if (target.type === "page") { pickMovePage({ fragment: { sourceId, kind, idx } }); return; }
+                    const found = objectAt(sourceId, kind, idx);
+                    const next = found ? moveObjectInTree(blocks, { sourceId, obj: found.obj, target }) : null;
                     if (next) setBlocks(next);
                   },
                   onPasteBlocks: (id, nodes) => {
@@ -8185,10 +8185,9 @@ function LibraryApp({ publicPage = null, initialServerConfig = null }) {
                       return null;
                     };
                     if (frag) {
-                      const src = findBlock(blocks, frag.blockId);
-                      const obj = src ? findObject(src.content || "", frag.kind, frag.idx) : null;
+                      const found = objectAt(frag.blockId, frag.kind, frag.idx);
                       const target = dt.inside ? { type: "inside", id: dt.targetId, offset: dt.offset } : placement(blocks);
-                      const next = obj && target ? moveObjectInTree(blocks, { sourceId: frag.blockId, obj, target }) : null;
+                      const next = found && target ? moveObjectInTree(blocks, { sourceId: frag.blockId, obj: found.obj, target }) : null;
                       if (next) setBlocks(next);
                       return;
                     }

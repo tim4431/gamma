@@ -6,7 +6,8 @@
 // - "account": follows the signed-in account. All of them travel together as
 //   one JSON object, keyed by preference name, under the account-wide
 //   /api/prefs/profile key (useProfileSync in prefs.js): the server copy
-//   wins on load, localStorage stays the instant-paint cache.
+//   wins on load, a change saves only the entries it touched, localStorage
+//   stays the instant-paint cache.
 // - "browser": describes this device and stays in this browser.
 // The AI provider entries and the active AI key are not preferences here:
 // they keep their own account-wide keys (ai-settings, ai-provider).
@@ -43,15 +44,24 @@ export const FILE_LABEL_MODES = ["off", "labels", "folders", "both"];
 
 // Target languages for the PDF translated view. Codes mirror the backend's
 // allowlist (TRANSLATE_LANGS in gamma/translate_engines.py) — keep the two in sync.
-// The translation service that needs no setup (Microsoft's free endpoint):
-// what "Translate with" defaults to when there is no chat model to follow.
-export const FREE_TRANSLATE_ENGINE = "engine:microsoft";
-
 export const TRANSLATE_LANGS = [
   ["zh-CN", "中文（简体）"], ["zh-TW", "中文（繁體）"], ["en", "English"],
   ["ja", "日本語"], ["ko", "한국어"], ["de", "Deutsch"], ["fr", "Français"],
   ["es", "Español"], ["pt", "Português"], ["it", "Italiano"], ["ru", "Русский"],
 ];
+
+// The translation service that needs no setup (Microsoft's free endpoint).
+export const FREE_TRANSLATE_ENGINE = "engine:microsoft";
+
+// What translation sends for the "Translate with" pick, given the set-up
+// services and the chat models on offer: the pick while it is still
+// offered; with no chat model at all, the free service; else "" (follow
+// the chat model). A service id starts with "engine:".
+export function translateModelFor(pick, engines, models) {
+  if (pick && [...engines, ...models].some((m) => m.id === pick)) return pick;
+  if (!models.length && engines.some((e) => e.id === FREE_TRANSLATE_ENGINE)) return FREE_TRANSLATE_ENGINE;
+  return "";
+}
 
 // Agent per-tool permissions (Settings → Assistant → Tool configuration),
 // one map per chat KIND: "folder" (the home/folder chat), "pdf" (a page with
@@ -260,6 +270,12 @@ export const ACCOUNT_PREFS = Object.keys(PREFS).filter((name) => PREFS[name].sco
 // The profile object for a set of preference values ({name: value, …}).
 export function profileOf(values) {
   return Object.fromEntries(ACCOUNT_PREFS.map((name) => [name, values[name]]));
+}
+
+// The profile of a fresh account: what a first Gamma Cloud merge takes as
+// the copy both sides started from (backend gamma/cloud_sync.py).
+export function defaultProfile() {
+  return Object.fromEntries(ACCOUNT_PREFS.map((name) => [name, PREFS[name].default]));
 }
 
 // One stored profile value checked the way a localStorage value is: it must

@@ -157,15 +157,10 @@ class HrWidget extends WidgetType {
   }
 }
 
-// An `![alt](url)` the caret isn't touching shows the picture (sized like the
-// rendered view, alt as its caption). A picture is an object, not text: the
-// caret stepping onto its line or resting at either end keeps the picture
-// (only a selection reaching INSIDE the span shows the source), a click puts
-// the caret after it, and a right-click drops the caret into the alt text so
-// the source expands — the editor's counterpart of the rendered view's
-// "Edit markdown source". The upload URL gets the workspace / share token
-// like the rendered view's <img> — the browser fetches it without the API
-// header.
+// The drag data type an object drag carries (set by BlockRow's dragStart
+// action), so an editor can tell it from a text drag.
+export const OBJECT_DRAG_TYPE = "application/x-gamma-object";
+
 // The object behaviour the image and table widgets share (the editor's
 // counterpart of the rendered view's MdObject frame): a click puts the caret
 // after the object, a right-click drops it inside so the source expands
@@ -198,6 +193,11 @@ function objectWidget(view, el, { kind, idx, length, ctx }) {
   return el;
 }
 
+// An `![alt](url)` shows the picture (sized like the rendered view, alt as
+// its caption) unless a selection reaches inside the span; a right-click
+// drops the caret into the alt text so the source expands. The upload URL
+// gets the workspace / share token like the rendered view's <img> — the
+// browser fetches it without the API header.
 class ImageWidget extends WidgetType {
   constructor(url, alt, width, idx, length, ctx) {
     super();
@@ -849,15 +849,16 @@ function keepUnderPointer(view, pos, y) {
 const BlockCmEditor = React.forwardRef(function BlockCmEditor({
   value, onChange, onSelect, onKeyDown, onBlur, onPaste,
   placeholder, autoFocus, clickPos, dataBlockId, className, refLabels, remoteCursors, onObjectDrag,
+  onObjectDragOver, onObjectDrop,
 }, forwardedRef) {
   const hostRef = useRef(null);
   const viewRef = useRef(null);
   const cbRef = useRef({});
-  cbRef.current = { onChange, onSelect, onKeyDown, onBlur, onPaste };
+  cbRef.current = { onChange, onSelect, onKeyDown, onBlur, onPaste, onObjectDragOver, onObjectDrop };
   // What the decoration pass reads lazily (see buildInlineDecos).
-  const labelsRef = useRef({ labels: refLabels, objectDrag: onObjectDrag }).current;
-  labelsRef.labels = refLabels;
-  labelsRef.objectDrag = onObjectDrag;
+  const decoCtx = useRef({ labels: refLabels, objectDrag: onObjectDrag }).current;
+  decoCtx.labels = refLabels;
+  decoCtx.objectDrag = onObjectDrag;
   const chipCompartment = useRef(new Compartment()).current;
 
   const api = useMemo(() => ({
@@ -923,7 +924,7 @@ const BlockCmEditor = React.forwardRef(function BlockCmEditor({
         // catalog is the one place a key is declared (docs/dev/hotkeys.md).
         keymap.of(standardKeymap),
         cmPlaceholder(placeholder || ""),
-        chipCompartment.of(inlineRenderField(labelsRef)),
+        chipCompartment.of(inlineRenderField(decoCtx)),
         remoteCursorField,
         EditorView.updateListener.of((u) => {
           if (u.transactions.some((tr) => tr.annotation(externalSync))) {
@@ -974,7 +975,48 @@ const BlockCmEditor = React.forwardRef(function BlockCmEditor({
       window.addEventListener("mousemove", onMove);
       window.addEventListener("mouseup", stopDrag);
     }
-    return () => { stopDrag?.(); view.destroy(); viewRef.current = null; };
+    // An object (a picture / table dragged from any block's frame or editor
+    // widget) dropped INTO this editor lands as a paragraph of its own at
+    // the line boundary nearest the pointer — handled here, in the capture
+    // phase, so neither CodeMirror's own drop (which would paste the
+    // markdown at the caret as a copy) nor the row's between-blocks drop
+    // sees it. The drag is recognized by its data type, set at dragstart.
+    const host = hostRef.current;
+    const isObject = (e) => Array.from(e.dataTransfer?.types || []).includes(OBJECT_DRAG_TYPE);
+    const placeAt = (e) => {
+      const pos = view.posAtCoords({ x: e.clientX, y: e.clientY }, false);
+      const line = view.state.doc.lineAt(pos);
+      const blk = view.lineBlockAt(pos);
+      const top = blk.top + view.documentTop, bottom = blk.bottom + view.documentTop;
+      const before = e.clientY < (top + bottom) / 2;
+      const r = view.contentDOM.getBoundingClientRect();
+      return {
+        offset: before ? line.from : line.to >= view.state.doc.length ? null : line.to + 1,
+        rect: { top: before ? top : bottom, left: r.left, width: r.width },
+      };
+    };
+    const onObjOver = (e) => {
+      if (!isObject(e) || !cbRef.current.onObjectDragOver) return;
+      e.preventDefault();
+      e.stopPropagation();
+      e.dataTransfer.dropEffect = "move";
+      cbRef.current.onObjectDragOver(placeAt(e));
+    };
+    const onObjDrop = (e) => {
+      if (!isObject(e) || !cbRef.current.onObjectDrop) return;
+      e.preventDefault();
+      e.stopPropagation();
+      cbRef.current.onObjectDrop(placeAt(e));
+    };
+    host.addEventListener("dragover", onObjOver, true);
+    host.addEventListener("drop", onObjDrop, true);
+    return () => {
+      host.removeEventListener("dragover", onObjOver, true);
+      host.removeEventListener("drop", onObjDrop, true);
+      stopDrag?.();
+      view.destroy();
+      viewRef.current = null;
+    };
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
 
@@ -1014,7 +1056,7 @@ const BlockCmEditor = React.forwardRef(function BlockCmEditor({
   useEffect(() => {
     const view = viewRef.current;
     if (!view) return;
-    view.dispatch({ effects: chipCompartment.reconfigure(inlineRenderField(labelsRef)) });
+    view.dispatch({ effects: chipCompartment.reconfigure(inlineRenderField(decoCtx)) });
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [labelsKey]);
 

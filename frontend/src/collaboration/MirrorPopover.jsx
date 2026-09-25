@@ -137,12 +137,12 @@ export function mirrorState(info, { busy = false, pending = false } = {}) {
   const s = info?.status || {};
   const p = s.progress;
   if (info?.detached || info?.mode === "off") {
-    return { state: "detached", tone: "", Icon: UnlinkIcon, text: `Detached${s.detached_at ? ` · ${clock(s.detached_at)}` : ""}`,
+    return { state: "detached", tone: "", Icon: UnlinkIcon, text: `${t("Detached")}${s.detached_at ? ` · ${clock(s.detached_at)}` : ""}`,
       title: T("Detached: nothing is pulled or pushed until you reattach. Nothing is lost.") };
   }
   if (s.running || busy) {
     return { state: "busy", tone: "busy", Icon: RefreshIcon,
-      text: `${p?.first ? "Cloning" : "Syncing"}${p?.total ? ` ${p.done} / ${p.total}` : "…"}`,
+      text: `${p?.first ? t("Cloning") : t("Syncing")}${p?.total ? ` ${p.done} / ${p.total}` : "…"}`,
       detail: p?.page || "", title: T("A round is running") };
   }
   if (info?.conflicts_open) {
@@ -152,8 +152,8 @@ export function mirrorState(info, { busy = false, pending = false } = {}) {
   if (s.last_error) {
     const unreachable = /cannot reach|timed out|refused|unreachable/i.test(s.last_error);
     return { state: "error", tone: "error", Icon: AlertCircleIcon, dot: true,
-      text: `${unreachable ? "Remote unreachable" : "Sync problem"}${s.last_attempt || s.last_sync ? ` · ${clock(s.last_attempt || s.last_sync)}` : ""}`,
-      title: `${s.last_error}${unreachable ? " — your edits stay here and are pushed once the remote is reachable again." : ""}` };
+      text: `${unreachable ? t("Remote unreachable") : t("Sync problem")}${s.last_attempt || s.last_sync ? ` · ${clock(s.last_attempt || s.last_sync)}` : ""}`,
+      title: `${s.last_error}${unreachable ? t(" — your edits stay here and are pushed once the remote is reachable again.") : ""}` };
   }
   if (!s.last_sync) {
     return { state: "new", tone: "", Icon: CloudDownloadIcon, text: s.interrupted ? t("Interrupted · resuming") : t("Not cloned yet"),
@@ -279,7 +279,7 @@ function SettingsView({ info, wsId, publication, onBack, reload, onOpenSettings 
       </Row>
       <Toggle icon={PenIcon} checked={Boolean(info?.on_change)} disabled={busy} onChange={(v) => call("", "PATCH", { on_change: v })}
         label={t("Sync after an edit")} hint={t("a round about a second after you change something")} />
-      {!publication ? (
+      {!publication && !detached ? (
         <Row icon={ArrowUpDownIcon} label={t("Direction")}
           title={t("Two-way: your changes go to the remote. Receive only: the remote's changes arrive, yours stay here until you switch back.")}>
           <Segmented value={pull ? "pull" : "two-way"} onChange={(v) => call("", "PATCH", { mode: v })} options={DIRECTION} />

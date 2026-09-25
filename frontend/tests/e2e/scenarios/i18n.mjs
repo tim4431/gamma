@@ -1,4 +1,4 @@
-import { Account } from "../harness.mjs";
+import { Account, wanted } from "../harness.mjs";
 
 // Settings → Appearance → Language (shared/i18n, docs/dev/i18n.md): the
 // interface follows the pick at once, the pane comes back after the
@@ -6,7 +6,7 @@ import { Account } from "../harness.mjs";
 // reload, and English is back on "System" in an English browser.
 export async function i18nScenarios(env) {
   const { server, browser, step, openPage, assertEq, assertNoProblems, until, sleep, flags } = env;
-  if (flags.only && !"i18n language".includes(flags.only)) return;
+  if (!wanted("i18n")) return;
   server.manage("create-user", "i18n-user", "i18n-pw");
   const user = await new Account(server, "i18n-user", "i18n-pw").login();
   // An account with a saved profile: the server's copy wins on every load,

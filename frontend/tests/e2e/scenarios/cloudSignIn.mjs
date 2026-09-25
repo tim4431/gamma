@@ -3,11 +3,11 @@
 // an account sees its link row. The round trip through a real account server
 // is covered by backend/tests/test_cloud_auth.py; here the browser is never
 // sent there (the button's target is asserted, not followed).
-import { Account } from "../harness.mjs";
+import { Account, wanted } from "../harness.mjs";
 
 export async function cloudSignInScenarios(env) {
   const { server, browser, step, openPage, assert, assertEq, assertNoProblems, until, flags } = env;
-  if (flags.only && !"cloud".includes(flags.only)) return;
+  if (!wanted("cloud sign-in")) return;
   server.manage("create-user", "cloud-admin", "cloud-admin-pw");
   server.manage("set-admin", "cloud-admin", "on");
   const admin = await new Account(server, "cloud-admin", "cloud-admin-pw").login();
@@ -34,7 +34,7 @@ export async function cloudSignInScenarios(env) {
       await until(() => admin.api("/api/admin/settings").then((v) => v.cloud.enabled && v.cloud.policy === "claim"));
       await chip("on").waitFor();
       // the account pane offers the link
-      await settingsNav(page, "Account").click();
+      await settingsNav(page, "Account & sync").click();
       await page.getByRole("button", { name: "Link Gamma Cloud account", exact: true }).waitFor();
       await assertNoProblems(page);
       // a signed-out visitor sees the button, aimed at this server's start endpoint
@@ -59,7 +59,11 @@ export async function cloudSignInScenarios(env) {
         await login.getByPlaceholder("Username").waitFor();
         assertEq(await login.getByRole("link", { name: "Sign in with Gamma Cloud", exact: true }).count(), 0, "no button when off");
       } finally { await anon2.close(); }
-    } finally { await ctx.close(); }
+    } finally {
+      // off again even when a check above failed: the next step starts from off
+      await admin.api("/api/admin/settings", { method: "PUT", body: { cloud_issuer: "" } });
+      await ctx.close();
+    }
   });
 
   // Invitations by cloud username (docs/dev/workspaces.md): the invite editor

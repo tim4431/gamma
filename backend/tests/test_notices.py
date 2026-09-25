@@ -184,3 +184,13 @@ def test_storage_thresholds_and_the_remembered_walk(nuser, monkeypatch):
     used[0] = 100 * notices.MB
     notice = _only(nuser, "storage")
     assert notice["tone"] == "error" and notice["fingerprint"] == "full"
+
+
+def test_many_clones_with_conflicts_still_fit_one_fingerprint(nuser, monkeypatch):
+    mirrors = [{"workspace_id": f"ws-clone-{i:02d}"} for i in range(15)]
+    monkeypatch.setattr(notices.sync_engine, "list_mirrors", lambda owner: mirrors if owner == "nuser" else [])
+    monkeypatch.setattr(notices.sync_engine, "open_conflict_mark", lambda ws: (12, 345))
+    notice = _only(nuser, "mirror-conflicts")
+    assert notice["title"].startswith("180 sync conflicts") and len(notice["fingerprint"]) <= 32
+    assert nuser.post("/api/notices/mirror-conflicts/seen", json={"fingerprint": notice["fingerprint"]}).status_code == 200
+    assert _only(nuser, "mirror-conflicts") is None

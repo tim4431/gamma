@@ -40,6 +40,8 @@ export const BROWSER_TAG = tag("browser", "monitor", t("Kept in this browser onl
 // check, cloudCheck, refresh, alert) or is null, `label` is one word.
 // - one of `names` settling or on its way to this server → syncing;
 // - one of them failed to save here → not synced;
+// - the server's first sync with Gamma Cloud waits for the person's choice
+//   (two different copies) → saved here, not synced;
 // - one of them pushed since Gamma Cloud last said synced and the cloud
 //   reports an error → not synced;
 // - else synced with Gamma Cloud when the account is linked, saved here
@@ -66,6 +68,10 @@ export function profileSyncState(local, cloud, names = [], clock = syncClock) {
       ? t("Saved on this server. Sign in with Gamma Cloud again to carry these settings to other servers.")
       : t("Saved on this server. Link a Gamma Cloud account to carry these settings to other servers."));
   }
+  if (profile.state === "choose") {
+    return tag("choose", "alert",
+      t("Saved on this server. Not synced with Gamma Cloud until you choose which settings to keep, in Account & sync."));
+  }
   if (holds(local?.awaitingCloud) && cloudFailed(profile)) {
     return tag("error", "alert",
       t("Saved on this server, not synced with Gamma Cloud: {error} Tried again at the next check.", { error: sentence(profile.error || t("unknown error")) }),
@@ -75,17 +81,18 @@ export function profileSyncState(local, cloud, names = [], clock = syncClock) {
   return tag("synced", "cloudCheck", when ? t("Synced with Gamma Cloud at {when}", { when }) : t("Synced with Gamma Cloud"));
 }
 
-// The Account pane's Gamma Cloud row hint when an identity is linked:
-// "Settings synced 14:37", "Settings not synced: <error>", "Settings
-// syncing…", or "" when there is nothing to say.
+// The Account pane's Settings sync row hint when an identity is linked:
+// "Synced with Gamma Cloud at 14:37", "Not synced: <error>", "Syncing…",
+// or "" when there is nothing to say (the row says "choose" itself).
 export function cloudSyncHint(cloud, clock = syncClock) {
   const profile = cloud?.profile;
   if (!cloud?.identity?.linked || !profile) return "";
-  if (profile.state === "synced") return `Settings synced ${clock(profile.at)}`.trim();
-  if (cloudFailed(profile)) {
-    return t("Settings not synced: {error}", { error: profile.error || t("unknown error") });
+  if (profile.state === "synced") {
+    const when = clock(profile.at);
+    return when ? t("Synced with Gamma Cloud at {when}", { when }) : t("Synced with Gamma Cloud");
   }
-  if (profile.state === "pending") return t("Settings syncing…");
-  if (profile.state === "off") return t("Settings not synced: sign in with Gamma Cloud again");
+  if (cloudFailed(profile)) return t("Not synced: {error}", { error: profile.error || t("unknown error") });
+  if (profile.state === "pending") return t("Syncing…");
+  if (profile.state === "off") return t("Not synced: sign in with Gamma Cloud again");
   return "";
 }

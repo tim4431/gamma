@@ -556,8 +556,7 @@ in the PDF zoom column does everything by state:
   page / Translate whole document / Show original·translation (Stop
   translating while running).
 
-A whole-document job
-queues pages nearest the current page first (forward before backward at
+A whole-document job queues pages nearest the current page first (forward before backward at
 equal distance), so the page being read paints immediately. The queue lives
 in `pdf/PdfViewer.jsx` (`translateCtl`), producer/consumer style: the producer
 segments queued pages in order and feeds one flat list of ~6-paragraph /
@@ -604,11 +603,14 @@ while shown, the invisible original text layer stands down.
 Targets are the allowlisted `TRANSLATE_LANGS` codes
 (`gamma/translate_engines.py`, shared by both translation paths; mirrored in
 `frontend/src/app/prefDefs.js`). What translates is Settings → Reading ›
-"Translate with" (`translateModel`, a browser pref; "" follows the chat
-model). Reasoning `effort` and parallel requests sit in the same
-Translation section; effort is omitted unless picked, and Low/Minimal is
-the speed lever for reasoning models. The Translation
-section's button switch turns the whole feature off.
+"Translate with" (`translateModel`, a browser pref; "" is the default).
+`translateModelFor` (`app/prefDefs.js`) turns the pick into what is sent:
+the pick while it is still offered, the free Microsoft service when there
+is no chat model at all, else the chat model. Reasoning `effort` and
+parallel requests sit in the same Translation section. Effort is omitted
+unless picked; Low/Minimal is the speed lever for reasoning models. The
+"Translation button" switch hides the viewer's button; the selection
+translator has its own switch.
 
 The server keeps an **in-memory only** LRU (~5k entries, lock-guarded
 because requests run in the threadpool) per (user, language, bare model
@@ -638,38 +640,44 @@ account pref, default on).
 - `TipFrame` flips the popup above the selection when it would run past the
   window's bottom. Like the popup itself, it needs edit rights on the page.
 
-**Machine-translation services.** "Translate with" also offers
-**Microsoft (free)** with no setup at all, plus Google Cloud Translation (v2
-basic, API key sent as `X-Goog-Api-Key`, `format: "text"`) and Youdao
-(`openapi.youdao.com/v2/api` batch, v3 SHA-256 signature over the
-concatenated queries) once their credentials are set up in the same
-section. Microsoft is the endpoint Edge's own page translation calls,
-`POST edge.microsoft.com/translate/translatetext?to=<code>&isEnterpriseClient=false`
-with a JSON array of strings, no key or token, answering Translator v3's
-shape (`[{detectedLanguage, translations: [{text, to}]}]`, source
-auto-detected). It replaced the `/translate/auth` token flow Microsoft
-retired in July 2026; it is unofficial and undocumented, so it can change
-or throttle without notice — keep Google or Youdao as the fallback. It
-refuses requests past about 50k characters (measured), so batches stay at
-100 texts / 20k characters. With no AI connection, a stale or default
-"Translate with" sends `engine:microsoft` (`FREE_TRANSLATE_ENGINE` in
-`app/prefDefs.js`) instead of a chat model, so the translate button works
-out of the box. The viewer then sends `model: "engine:<id>"`, and
-`/api/ai/translate` hands the misses to `gamma/translate_engines.py`
-instead of a chat model. That path needs no AI provider and has no effort,
-no streamed partials (the stream is just the final line) and no token
-usage. There is nothing to salvage either: the APIs answer aligned lists,
-and a Youdao query in `errorIndex` comes back verbatim, uncached. Each
-engine maps the target codes to its own (Youdao `zh-CHS`/`zh-CHT`) and
-splits a request by its batch limits. Cache, validation and dedup are the
-LLM path's, keyed on `engine:<id>`.
+**Machine-translation services.** "Translate with" also offers the services
+in `gamma/translate_engines.py`. The viewer then sends `model:
+"engine:<id>"`, and `/api/ai/translate` hands the misses to
+`translate_engines.translate` instead of a chat model.
+
+- **Microsoft (free)** needs no setup. It is the endpoint Edge's own page
+  translation calls: `POST
+  edge.microsoft.com/translate/translatetext?to=<code>&isEnterpriseClient=false`
+  with a JSON array of strings and no key or token. The reply has
+  Translator v3's shape (`[{detectedLanguage, translations: [{text, to}]}]`);
+  the source language is detected per text.
+- The endpoint is unofficial and undocumented, so it can change or throttle
+  without notice; Google and Youdao are the fallback. The older
+  `/translate/auth` token flow answers 404 since July 2026.
+- Microsoft refuses requests past about 50k characters (measured), so
+  batches stay at 100 texts / 20k characters.
+- Its consecutive failures are counted in memory. From `FREE_ALERT_AFTER`
+  (3) on, the server log gets one warning per streak and each account that
+  met them gets the `free-translate` notice ([settings.md](settings.md)
+  "Notices"); the Settings row shows the error. One success ends the streak.
+- **Google Cloud Translation**: v2 basic, the API key sent as
+  `X-Goog-Api-Key`, `format: "text"`.
+- **Youdao**: the `openapi.youdao.com/v2/api` batch, with a v3 SHA-256
+  signature over the concatenated queries. A query listed in `errorIndex`
+  comes back verbatim and uncached.
+- Each service maps the target codes to its own (Microsoft `zh-Hans`,
+  Youdao `zh-CHS`) and splits a request by its batch limits.
+- The service path needs no AI provider. It has no effort, no streamed
+  partials (the stream is just the final line), no token usage and nothing
+  to salvage, since the APIs answer aligned lists.
+- Cache, validation and dedup are the LLM path's, keyed on `engine:<id>`.
 
 Credentials are per account under the reserved `translate-engines` pref.
 Like `ai-settings`, `/api/prefs` refuses it and the only read path is the
-masked `GET /api/translate/engines`; guests can't store any. Unlike a chat
-model, these engines don't know to leave math, `[12]` citation markers or
-URLs alone. PDF text carries no LaTeX and math-heavy paragraphs are skipped
-client-side, so in practice the damage is small.
+masked `GET /api/translate/engines`; guests can't store any. Unlike the LLM
+prompt, nothing tells these services to leave math, `[12]` citation markers
+or URLs alone. PDF text carries no LaTeX and math-heavy paragraphs are
+skipped client-side, so the risk is small.
 
 ## Token usage
 

@@ -446,6 +446,44 @@ def test_translate_with_microsoft(dave, monkeypatch):
                         "error": "Microsoft: HTTP 400 \u2014 Request exceeds the maximum allowed translation size."}
 
 
+def test_free_service_failures_warn_and_notify_until_it_answers(dave, carol, monkeypatch):
+    from urllib.error import URLError
+    from gamma import logbuf, translate_engines
+
+    monkeypatch.setattr(translate_engines, "_health",
+                        {"failures": 0, "since": "", "error": "", "users": set(), "warned": False})
+    notices = lambda c: [n for n in c.get("/api/notices").json()["notices"] if n["id"] == "free-translate"]
+
+    def down(req, timeout=None):
+        raise URLError("connection refused")
+
+    monkeypatch.setattr("gamma.translate_engines.urlopen", down)
+    start = logbuf.last_seq("warning")
+    streak_warnings = lambda: sum("times in a row" in e["msg"] for e in logbuf.tail(start))
+    for i in range(translate_engines.FREE_ALERT_AFTER):
+        assert notices(dave) == []  # not before the streak is long enough
+        r = dave.post("/api/ai/translate", json={"texts": [f"down {i}"], "lang": "de", "model": "engine:microsoft"})
+        assert r.status_code == 502
+    (notice,) = notices(dave)
+    assert notice["pane"] == "reading" and notice["tone"] == "warn"
+    assert notices(carol) == []  # an account that never met the failures isn't told
+    row = next(e for e in dave.get("/api/translate/engines").json()["engines"] if e["id"] == "microsoft")
+    assert row["failing"] == {"since": notice["fingerprint"], "error": "Microsoft: connection refused"}
+    # One streak warning in the log, however long the streak gets.
+    assert streak_warnings() == 1
+    dave.post("/api/ai/translate", json={"texts": ["down again"], "lang": "de", "model": "engine:microsoft"})
+    assert streak_warnings() == 1
+
+    # One answer ends the streak: the notice and the row's error are gone.
+    monkeypatch.setattr("gamma.translate_engines.urlopen", _fake_urlopen(
+        lambda req: [{"translations": [{"text": "wieder da"}]} for _ in json.loads(req.data)])[0])
+    assert dave.post("/api/ai/translate", json={"texts": ["back up"], "lang": "de",
+                                                "model": "engine:microsoft"}).status_code == 200
+    assert notices(dave) == []
+    row = next(e for e in dave.get("/api/translate/engines").json()["engines"] if e["id"] == "microsoft")
+    assert row["failing"] is None
+
+
 def test_youdao_sign_shortens_long_input():
     import hashlib
     from gamma.translate_engines import youdao_sign

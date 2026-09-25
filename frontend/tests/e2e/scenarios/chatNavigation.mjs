@@ -1,6 +1,7 @@
+import { wanted } from "../harness.mjs";
 export async function chatNavigationScenarios(env) {
   const { server, browser, alice, makePdf, step, until, assert, assertEq, assertNoProblems, openPage, flags } = env;
-  if (flags.only && !"chat navigation".includes(flags.only)) return;
+  if (!wanted("chat navigation")) return;
   const target = await alice.api("/api/pages", { method: "POST", body: { title: "Linked paper" } });
   const upload = await alice.upload("/api/uploads", makePdf([["Chat navigation paper"]]), "chat-navigation.pdf", "application/pdf");
   const pdf = await alice.api(`/api/blocks/by-doc/${upload.doc_id}`, { method: "POST", body: {

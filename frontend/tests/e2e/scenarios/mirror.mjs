@@ -4,11 +4,11 @@
 // the (empty) conflicts list, opening the clone, the sync pill with
 // its settings (cadence, detach, reattach), a merge conflict resolved on its
 // block, removing the origin.
-import { Account } from "../harness.mjs";
+import { Account, wanted } from "../harness.mjs";
 
 export async function mirrorScenarios(env) {
   const { server, browser, step, openPage, assert, assertEq, assertNoProblems, until, flags } = env;
-  if (flags.only && !"mirror".includes(flags.only)) return;
+  if (!wanted("mirror")) return;
   server.manage("create-user", "mirror-user", "mirror-pw");
   const user = await new Account(server, "mirror-user", "mirror-pw").login();
   const paper = await user.api("/api/pages", { method: "POST", body: { title: "Mirrored paper" } });
@@ -98,7 +98,9 @@ export async function mirrorScenarios(env) {
         body: JSON.stringify({ client: "e2e", ops: [{ op: "set", id: "mirrorblk1", content: "(copy) a note to copy" }] }) });
       assertEq(r2.status, 200, "the clone's edit");
       await user.api(`/api/mirrors/${copy.workspace_id}/sync?wait=1`, { method: "POST" });
-      // the round ran outside the page (as the loop's would): the chip shows up on the pill's next glance
+      // the round ran outside the page (as the loop's would): the chip shows up on the pill's next glance,
+      // which a return to the tab brings forward (its idle poll is 20 s)
+      await page.evaluate(() => document.dispatchEvent(new Event("visibilitychange")));
       await until(() => page.locator(".mergeChip").count().then((n) => n === 1), { timeout: 40000, what: "the merged block carries a chip" });
       await page.locator(".mergeChip").click();
       const merge = page.getByRole("dialog", { name: "Merge", exact: true });

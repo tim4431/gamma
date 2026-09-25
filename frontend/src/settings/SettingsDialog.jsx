@@ -836,8 +836,11 @@ const SYNC_SOON_MS = 6000; // the server pushes to Gamma Cloud 5 s after a chang
 // account-wide), polled every 15 s, again as soon as a local change has been
 // saved, and sooner while a push waits. Every answer also goes to the local
 // hook's noteCloud, which then knows when its last push reached the cloud.
+// `refresh()` polls again at once (after Settings → Account synced by hand).
 function useCloudSyncStatus(open, local) {
   const [cloud, setCloud] = React.useState(null);
+  const [tick, setTick] = React.useState(0);
+  const refresh = React.useCallback(() => setTick((n) => n + 1), []);
   const signedIn = !!local && local.state !== "signed-out";
   const saved = local?.state === "loaded";
   const noteCloud = local?.noteCloud;
@@ -855,8 +858,8 @@ function useCloudSyncStatus(open, local) {
     };
     poll();
     return () => { stopped = true; clearTimeout(timer); };
-  }, [open, signedIn, saved, noteCloud]);
-  return React.useMemo(() => ({ local, cloud }), [local, cloud]);
+  }, [open, signedIn, saved, noteCloud, tick]);
+  return React.useMemo(() => ({ local, cloud, refresh }), [local, cloud, refresh]);
 }
 
 export default function SettingsDialog({

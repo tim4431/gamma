@@ -1,15 +1,16 @@
 // Settings → Reading › Translation, everything translation in one section:
-// the viewer's translate button, target language, what translates (a chat
-// model or a machine-translation engine), the engines' credentials (Google
-// Cloud Translation, Youdao) and the speed (effort, parallel requests). The
-// keys are write-only like the AI keys: /api/translate/engines masks them.
+// the viewer's translate button, target language, the selection translator,
+// what translates (a chat model or a machine-translation service), the
+// services' rows (Microsoft needs no key; Google and Youdao keys are
+// write-only like the AI keys: /api/translate/engines masks them) and the
+// speed (effort, parallel requests).
 import React from "react";
 import { API, apiJson } from "../shared/lib/utils";
 import { friendlyApiError } from "../library/libraryUtils";
 import { MenuSelect } from "../shared/ui/Menus";
 import { Section, Row, Toggle, SubDialog, Field, PasswordInput, UnitInput } from "./SettingsKit";
 import { SECTION_PREFS } from "./sectionPrefs.js";
-import { FREE_TRANSLATE_ENGINE, TRANSLATE_LANGS } from "../app/prefs";
+import { FREE_TRANSLATE_ENGINE, TRANSLATE_LANGS, translateModelFor } from "../app/prefs";
 import { ActivityIcon, GlobeIcon, HighlightIcon, KeyIcon, LanguagesIcon, RefreshIcon, SparklesIcon, TextCursorIcon, Trash2Icon } from "../shared/ui/Icons";
 import { T, t } from "../shared/i18n/i18n.js";
 
@@ -78,7 +79,7 @@ export function TranslationSettings({ value }) {
         label={t("Translate with")}
         scope="browser"
         hint={t("A chat model, or a translation service below")}
-        title={t("What translates page text. A chat model keeps formulas and citations intact and follows the paper's register; a translation service (Google, Youdao) is faster and cheaper per page and needs no AI connection. Translation is a bulk job — a fast, cheap model usually reads fine.")}
+        title={t("What translates page text. A chat model keeps formulas and citations intact and follows the paper's register; a translation service (Microsoft for free, or Google and Youdao with a key) is faster and cheaper per page and needs no AI connection. Translation is a bulk job — a fast, cheap model usually reads fine.")}
       >
         <TranslateModelSelect value={value} />
       </Row>
@@ -88,12 +89,13 @@ export function TranslationSettings({ value }) {
   );
 }
 
-// Effort means nothing to a translation service ("engine:<id>"), so its row
-// hides while one is picked.
+// Effort means nothing to a translation service, so its row hides while one
+// is what translation sends (picked, or the free default with no AI), and
+// until the list of services has loaded (it always holds the free one).
 function TranslationPerformance({ value }) {
-  // Also hidden with no AI connection: then only services translate.
-  const engine = (value.translateEngines || []).some((e) => e.id === value.translateModel)
-    || !(value.aiModels || []).length;
+  const engines = value.translateEngines || [];
+  const engine = !engines.length
+    || translateModelFor(value.translateModel, engines, value.aiModels || []).startsWith("engine:");
   return <>
     {!engine ? <Row
       icon={ActivityIcon}
@@ -123,16 +125,16 @@ function TranslationPerformance({ value }) {
   </>;
 }
 
-// "" = follow the chat model; a set-up engine ("engine:<id>") or a model id.
-// A stale pick (engine removed, model gone) shows as the default, which is
-// also what App sends.
+// "" = the default; a set-up service ("engine:<id>") or a model id. A stale
+// pick (service removed, model gone) shows as the default, which is what
+// App sends then: the chat model, or the free service with no AI at all.
 function TranslateModelSelect({ value }) {
   const models = value.aiModels || [];
   const engines = value.translateEngines || [];
   const multiProvider = new Set(models.map((m) => m.provider)).size > 1;
-  const known = [...engines, ...models].some((m) => m.id === value.translateModel);
-  // No chat model to follow: the default is the free service (App sends it).
-  const free = !models.length && engines.find((e) => e.id === FREE_TRANSLATE_ENGINE);
+  const known = translateModelFor(value.translateModel, engines, models) === value.translateModel;
+  const free = translateModelFor("", engines, models) === FREE_TRANSLATE_ENGINE
+    && engines.find((e) => e.id === FREE_TRANSLATE_ENGINE);
   return (
     <MenuSelect
       label={t("Translate with")} value={known ? value.translateModel : ""} onChange={value.setTranslateModel}
@@ -208,6 +210,7 @@ function TranslationServices({ value }) {
         const secret = ENGINE_FORMS[engine.id]?.fields.find((f) => f.secret);
         const hint = result?.busy ? t("Testing…")
           : result ? (result.ok ? `✓ ${result.text}` : result.error)
+          : engine.failing ? t("Not responding: {error}", { error: engine.failing.error })
           : !engine.needs_key ? t("No key needed")
           : engine.configured ? t("Key {hint}", { hint: engine.fields?.[secret?.id] || "" })
           : t("Not set up");

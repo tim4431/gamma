@@ -2,11 +2,11 @@ import { createHash, randomBytes } from "node:crypto";
 import path from "node:path";
 import fs from "node:fs";
 import { newPageViaUi } from "./notes.mjs";
-import { Account } from "../harness.mjs";
+import { Account, wanted } from "../harness.mjs";
 
 export async function mcpScenarios(env) {
   const { server, browser, alice, step, openPage, assert, assertEq, assertNoProblems, flags, sleep, until } = env;
-  if (flags.only && !"mcp".includes(flags.only)) return;
+  if (!wanted("mcp")) return;
   await step("mcp: administrator confirms the suggested server URL and it persists", async () => {
     server.manage("create-user", "mcp-admin", "mcp-admin-pw");
     server.manage("set-admin", "mcp-admin", "on");

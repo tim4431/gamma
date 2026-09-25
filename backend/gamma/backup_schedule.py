@@ -4,6 +4,7 @@ import hashlib
 import json
 import os
 import re
+import time
 import uuid
 from contextlib import asynccontextmanager, contextmanager
 from datetime import datetime, timedelta, timezone
@@ -102,7 +103,16 @@ def _write(task):
     path.parent.mkdir(parents=True, exist_ok=True)
     temp = path.with_suffix('.tmp')
     temp.write_text(json.dumps(task), encoding='utf-8')
-    temp.replace(path)
+    # Windows refuses to replace a file another thread is reading (the
+    # Settings table's list_tasks); a reader holds it for one read_text.
+    for attempt in range(50):
+        try:
+            temp.replace(path)
+            return
+        except PermissionError:
+            if attempt == 49:
+                raise
+            time.sleep(0.02)
 
 
 @contextmanager
@@ -219,7 +229,9 @@ def mutate(owner, task_id, action):
             targets(task)
             task.update(requested=True, state='queued')
             _write(task)
-        return task
+    if action != 'delete':
+        _wake()  # "Run now" starts now, not at the next round
+    return task
 
 
 def _prune(task, ws, at):
@@ -272,24 +284,34 @@ def run_due(at=None):
             log.exception('[backups] Could not process task %s', path.stem)
 
 
+def _wake():
+    """Start the scheduler's next round now; replaced while the loop runs."""
+
+
 @asynccontextmanager
 async def lifespan():
-    stop = asyncio.Event()
+    global _wake
+    stop, wake = asyncio.Event(), asyncio.Event()
+    running = asyncio.get_running_loop()
 
     async def loop():
         while not stop.is_set():
+            wake.clear()
             try:
                 await asyncio.to_thread(run_due)
             except Exception:
                 log.exception('[backups] Scheduler round failed')
-            try:
-                await asyncio.wait_for(stop.wait(), timeout=30)
-            except asyncio.TimeoutError:
-                pass
+            waiters = [asyncio.ensure_future(stop.wait()), asyncio.ensure_future(wake.wait())]
+            await asyncio.wait(waiters, timeout=30, return_when=asyncio.FIRST_COMPLETED)
+            for w in waiters:
+                w.cancel()
 
+    # mutate() runs in the threadpool, off the event loop.
+    _wake = lambda: running.call_soon_threadsafe(wake.set)
     task = asyncio.create_task(loop())
     try:
         yield
     finally:
+        _wake = lambda: None
         stop.set()
         await task

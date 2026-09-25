@@ -1,9 +1,9 @@
-import { Account } from "../harness.mjs";
+import { Account, wanted } from "../harness.mjs";
 
 // Ctrl+P: the quick-open page palette (library/QuickOpen.jsx).
 export async function quickOpenScenarios(env) {
   const { server, browser, step, openPage, assert, assertEq, assertNoProblems, until, flags } = env;
-  if (flags.only && !"quickopen".includes(flags.only)) return;
+  if (!wanted("quickopen")) return;
   server.manage("create-user", "quickopen-user", "quickopen-pw");
   const user = await new Account(server, "quickopen-user", "quickopen-pw").login();
   const titles = ["Cavity readout", "Cavity sensors", "Quantum correction", "Atomic clocks"];

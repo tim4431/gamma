@@ -48,10 +48,13 @@ them only after further relevant changes or when a failure needs investigation.
   files, omit `-n auto` to avoid starting a worker per CPU.
 - Frontend pure-module changes: invoke `node --test` with the relevant test
   files directly. `npm test` always includes the full module suite.
-- UI behavior changes: run the relevant browser flow with `--only`, building
-  once after the final frontend edit so the suite sees current code. Select
-  a complete flow by its step-name prefix, rather than an isolated dependent
-  step. Check that the intended steps actually ran. A pure-module change
+- UI behavior changes: build once after the final frontend edit so the suite
+  sees current code, then `npm run e2e -- --changed`, which runs the groups
+  the working tree's changes select (see [the browser suite](#browser-end-to-end-suite);
+  `--changed main --list` shows a branch's selection without running it).
+  Narrow further with `--group` or `--only` when the selection is broader
+  than the change, e.g. a one-line edit in a shared module selects every
+  group. Check that the intended steps actually ran. A pure-module change
   does not automatically require a build or browser run.
 - Shared contracts and helpers: include tests for affected consumers. For
   example, changes to shared normalization cases need both Python and Node
@@ -69,15 +72,17 @@ python -m pytest tests/test_mcp_oauth.py tests/test_mcp.py -q
 # From frontend/: settings module behavior
 node --test tests/settings.test.mjs
 
-# From frontend/: settings UI behavior (build once before the browser run)
+# From frontend/: UI behavior (build once before the browser run)
 npm run build
-npm run e2e -- --only settings
+npm run e2e -- --changed          # the groups these changes select
+npm run e2e -- --group settings   # or name them
 ```
 
 Report which checks ran and any relevant coverage gaps. Full suites remain
 the PR CI safety net in `.github/workflows/check.yml`; run them locally for
 broad changes, an explicit request, or unresolved regression concerns.
-Selection is manual: there is no automatic changed-file dependency analysis.
+Only the browser suite selects from the changed files (`--changed`); backend
+and pure-module tests are still chosen by hand.
 
 ### Full backend suite
 
@@ -146,8 +151,12 @@ editor with esbuild over an in-memory fixture ([latex_editing.md](latex_editing.
 ```bash
 cd frontend
 npm run build                   # the suite drives frontend/dist
-npm run e2e                     # ~30 s; exit 1 on any failure
-npm run e2e -- --only collab    # steps whose name contains "collab"
+npm run e2e                     # parallel workers, ~2 min on 6; exit 1 on any failure
+npm run e2e -- --jobs 1         # one worker, groups in order, live output (~8 min)
+npm run e2e -- --changed        # only the groups the working tree's changes select
+npm run e2e -- --changed main --list  # a branch's selection and why, without running
+npm run e2e -- --group ink,collab     # these groups (ids: `--list`)
+npm run e2e -- --only collab    # steps whose name contains "collab" (one worker)
 npm run e2e -- --continue       # keep going after a failure
 npm run e2e -- --headed         # watch the browser
 npm run e2e -- --keep           # keep the temp data dir + server.log
@@ -172,6 +181,38 @@ pages' recorded problems and the server log's tail under the temp dir's
 `e2e-failures` artifact. `harness.mjs` holds the server lifecycle, `Account` (session
 cookie + `X-Gamma-Workspace` for API seeding, browser contexts logged in as
 that account), `makePdf` (a small real PDF with a text layer), and `step()`.
+
+The run is split into groups (`GROUPS` in `tests/e2e/select.mjs`, one per
+scenario file except `notes-pdf-share`, whose scenarios hand data along;
+`run.mjs` maps each id to its scenario functions). `--jobs N` (default:
+half the CPUs, at most 6; one with `--only`) forks N workers, each with its
+own backend, data dir and browser; a worker takes the next group off the
+queue, longest first, and the group's lines print as one block when it
+ends. A group must not rely on another group's data: put scenarios that do
+in the same group. Without `--continue` a failure stops handing out groups
+and the ones running finish. The wall time is bounded by the longest group
+(settings and the first-run guide, about a minute each), so split one of
+those before adding workers.
+
+`--changed [ref]` picks the groups from what changed: the working tree
+(staged, unstaged, untracked) against `HEAD`, or everything since the branch
+left `ref`. `RULES` in `select.mjs` maps each source path (first matching
+glob wins) to the groups that exercise it: `frontend/src/guide/**` to the
+three tour groups, `backend/gamma/ink.py` to the ink groups, docs, desktop,
+extension and backend tests to none, and what every scenario goes through
+(`src/app/`, `src/shared/`, the home library, the page's live session, the
+backend core: auth, db, blocks, ops, uploads) to all of them. A changed
+scenario file also selects every scenario that imports its helpers, and a
+changed line naming a `data-guide` / `data-tour` anchor selects the tours
+whatever file it is in. The run prints each selected group with the files
+behind it. `tests/e2eSelect.test.mjs` fails when a file under
+`frontend/src`, `frontend/public` or `backend/gamma` reaches only the
+catch-all (a new folder or module needs its rule), when a group's scenario
+files drift from `scenarios/`, or when a rule names an unknown group. When a
+change's reach is broader than its rule says (a new prop threaded through
+App.jsx into one pane), the selection errs wide: that is what `--group`
+is for. CI still runs everything.
+
 The scenarios live in `tests/e2e/scenarios/`:
 
 - `mermaid.mjs`: note/chat diagrams, streaming fences, editing, source copying,
