@@ -6,7 +6,7 @@ Everything you can do in Gamma, one section per part of the app. The [README](..
 
 ## Getting started
 
-1. **Sign in.** Your administrator gives you an account, or click **Log in as guest** to try things out (guest data resets daily).
+1. **Sign in.** Your administrator gives you an account, or click **Continue as guest** (**Try the demo** on a demo server) to try things out: you get a workspace of your own that is deleted with everything in it after a while (a day unless the admin changed it; the account menu says when).
 2. **Add a paper.** Click **+** in the top bar and paste any link — an arXiv page, a DOI, or a publisher page; Gamma finds the PDF (and falls back to a legal open-access copy via Unpaywall when the DOI is paywalled). Or upload PDFs, or **drag files or whole folders into the window** — subfolders become library folders.
 3. **Read it.** The paper opens with a Notes panel beside it. Select text to highlight, type under the highlight to comment. That's a note; everything else builds on that.
 
@@ -237,14 +237,14 @@ Something broke? Open the account menu and choose **Report a problem…** (it is
 
 ## Settings at a glance
 
-Settings (account menu → Settings) has one sidebar in three groups; the search box at the top finds any setting by name.
+Settings (account menu → Settings) has one sidebar in three groups; the search box at the top (Ctrl+F) finds any setting by name — Enter opens the first match, ↑/↓ walk the list.
 
 | Group | Pane | What's there |
 |---|---|---|
 | Preferences | Appearance | Theme (system + seven), language, flip page colors, library cards (thumbnails / folders / labels), interface size, tour suggestions |
 | | Reading & editing | PDFs (imported annotations, open-access fallback, metadata auto-fetch, saving external PDFs), handwriting (pen only / pen and finger, pressure), translation (button, language, selection, model or service and its keys, speed), the Enter key, how search opens |
 | | Keyboard | Every shortcut, rebindable |
-| | Account & sync | Your account, storage meter and Gamma Cloud link; **Settings sync** (*Sync now*, *Fetch from cloud*, *Push to cloud*); published pages, **Clones** (offline copies) and the sync pill |
+| | Account & sync | Your account, storage meter and Gamma Cloud link; **Settings sync** (*Sync now*; when this server and the cloud hold different settings, a dialog asks *Fetch from cloud* or *Push to cloud*); published pages, **Clones** (offline copies) and the sync pill |
 | AI | Connections | Providers and keys, ChatGPT sign-in, default models, token usage |
 | | Chat | Default reasoning effort, snapshot clearing, which tools the agent may use per chat kind |
 | | Advanced | Tool limits, context budgets |
@@ -264,7 +264,7 @@ Preferences apply immediately; browser-only ones (theme, layout) are marked *Thi
 
 | Keys | Does |
 |---|---|
-| Ctrl+F / Ctrl+Shift+F | Search everything (find-in-chat when the chat is focused; on the home page, the listing's box) / always the full panel |
+| Ctrl+F / Ctrl+Shift+F | Search everything (find-in-chat when the chat is focused; on the home page, the listing's box; in Settings or a dialog, its own search box) / always the full panel |
 | Ctrl+P | Quick open: pick a page by title, folder or label (recent pages first) |
 | Ctrl+Shift+P | Command palette: every command by name, with its keys (also `>` typed into Ctrl+P) |
 | F2 | Rename the page |

@@ -1,6 +1,7 @@
 import React from "react";
 import { PasswordInput } from "../settings/SettingsKit";
-import { t } from "../shared/i18n/i18n.js";
+import { ChevronRightIcon } from "../shared/ui/Icons";
+import { t, tn } from "../shared/i18n/i18n.js";
 
 function AuthShell({ children }) {
   return (
@@ -68,6 +69,10 @@ function takeCloudError() {
   } catch { return ""; }
 }
 
+// `demo` (a demo server, GET /api/server-config): the page leads with Try
+// the demo — the guest login — and a line saying how long the workspace
+// lasts; the password form (and the cloud sign-in) fold behind an Admin
+// sign-in link, collapsed until asked for. docs/dev/guests.md "Demo mode".
 export function LoginPage({
   username,
   password,
@@ -78,45 +83,76 @@ export function LoginPage({
   onGuestLogin,
   cloudLogin,
   subtitle,
+  demo = false,
+  guestTtlHours,
 }) {
   const [cloudError] = React.useState(takeCloudError);
+  const leadsWithDemo = demo && !!onGuestLogin;
+  const [signInOpen, setSignInOpen] = React.useState(false);
   const next = window.location.pathname + window.location.search;
+  const signIn = <>
+    {cloudLogin?.enabled ? (
+      <a className="loginBtn loginCloudBtn" href={`/api/auth/cloud/start?next=${encodeURIComponent(next)}`}
+        title={t("Sign in through {issuer}", { issuer: cloudLogin.issuer })}>
+        {t("Sign in with Gamma Cloud")}
+      </a>
+    ) : null}
+    {cloudError ? <div className="loginError" role="alert">{cloudError}</div> : null}
+    <form onSubmit={onSubmit}>
+      <input
+        type="text"
+        value={username}
+        onChange={(event) => onUsernameChange(event.target.value)}
+        placeholder={t("Username")}
+        className="loginInput"
+        autoFocus
+      />
+      <PasswordInput
+        value={password}
+        onChange={(event) => onPasswordChange(event.target.value)}
+        placeholder={t("Password")}
+        className="loginInput"
+        autoComplete="current-password"
+      />
+      {error ? <div className="loginError">{error}</div> : null}
+      <button type="submit" className="loginBtn" disabled={!username.trim() || !password.trim()}>
+        {t("Log in")}
+      </button>
+      {onGuestLogin && !leadsWithDemo ? (
+        <button type="button" className="loginGuestBtn" onClick={onGuestLogin}>
+          {t("Continue as guest")}
+        </button>
+      ) : null}
+    </form>
+  </>;
+  if (!leadsWithDemo) {
+    return (
+      <AuthShell>
+        <p className="loginSubtitle">{subtitle || t("Annotate PDFs, Share Your Thinking")}</p>
+        {signIn}
+      </AuthShell>
+    );
+  }
+  const hours = Number(guestTtlHours) || 0;
   return (
     <AuthShell>
       <p className="loginSubtitle">{subtitle || t("Annotate PDFs, Share Your Thinking")}</p>
-      {cloudLogin?.enabled ? (
-        <a className="loginBtn loginCloudBtn" href={`/api/auth/cloud/start?next=${encodeURIComponent(next)}`}
-          title={t("Sign in through {issuer}", { issuer: cloudLogin.issuer })}>
-          {t("Sign in with Gamma Cloud")}
-        </a>
-      ) : null}
-      {cloudError ? <div className="loginError" role="alert">{cloudError}</div> : null}
-      <form onSubmit={onSubmit}>
-        <input
-          type="text"
-          value={username}
-          onChange={(event) => onUsernameChange(event.target.value)}
-          placeholder={t("Username")}
-          className="loginInput"
-          autoFocus
-        />
-        <PasswordInput
-          value={password}
-          onChange={(event) => onPasswordChange(event.target.value)}
-          placeholder={t("Password")}
-          className="loginInput"
-          autoComplete="current-password"
-        />
-        {error ? <div className="loginError">{error}</div> : null}
-        <button type="submit" className="loginBtn" disabled={!username.trim() || !password.trim()}>
-          {t("Log in")}
-        </button>
-        {onGuestLogin ? (
-          <button type="button" className="loginGuestBtn" onClick={onGuestLogin}>
-            {t("Continue as guest")}
-          </button>
-        ) : null}
-      </form>
+      <button type="button" className="loginBtn loginDemoBtn" onClick={onGuestLogin}>
+        {t("Try the demo")}
+      </button>
+      <p className="loginDemoNote">
+        {hours
+          ? tn("Your own workspace for {n} hour. Nothing is kept.", "Your own workspace for {n} hours. Nothing is kept.", hours)
+          : t("Your own workspace for a while. Nothing is kept.")}
+      </p>
+      {error && !signInOpen ? <div className="loginError" role="alert">{error}</div> : null}
+      {cloudError && !signInOpen ? <div className="loginError" role="alert">{cloudError}</div> : null}
+      <button type="button" className="loginDisclosure" aria-expanded={signInOpen}
+        onClick={() => setSignInOpen((open) => !open)}>
+        <ChevronRightIcon size={13} className={`loginDisclosureChev ${signInOpen ? "open" : ""}`} />
+        {t("Admin sign-in")}
+      </button>
+      {signInOpen ? <div className="loginDisclosureBody">{signIn}</div> : null}
     </AuthShell>
   );
 }

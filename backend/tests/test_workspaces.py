@@ -6,7 +6,7 @@ under a role (owner / editor / viewer). A request picks its workspace with
 import pytest
 from fastapi.testclient import TestClient
 
-from conftest import login, make_page, make_user, workspace_of
+from conftest import guest_name, login, make_page, make_user, workspace_of
 
 
 @pytest.fixture(scope="module")
@@ -108,7 +108,8 @@ def test_owner_only_management_and_rails(ann, ben, cid, lab):
     # bad roles, unknown accounts, the guest, the last owner
     assert ann.put(f"/api/workspaces/{lab}/members/ws_cid", json={"role": "king"}).status_code == 400
     assert ann.put(f"/api/workspaces/{lab}/members/nobody-here", json={"role": "viewer"}).status_code == 400
-    assert ann.put(f"/api/workspaces/{lab}/members/guest", json={"role": "viewer"}).status_code == 400
+    from gamma import guests
+    assert ann.put(f"/api/workspaces/{lab}/members/{guests.new_guest()}", json={"role": "viewer"}).status_code == 400
     assert ann.put(f"/api/workspaces/{lab}/members/ws_ann", json={"role": "editor"}).status_code == 400
     assert ann.delete(f"/api/workspaces/{lab}/members/ws_ann").status_code == 400
     # a second owner can be named, then the first may step down
@@ -351,7 +352,7 @@ def test_only_personal_workspaces_count_as_usage(boss, ann, ben, lab):
 def test_accounts_directory(ann, guest):
     """The invite / owner pickers list every non-guest account."""
     names = [a["username"] for a in ann.get("/api/accounts").json()["accounts"]]
-    assert "ws_ann" in names and "ws_ben" in names and "guest" not in names
+    assert "ws_ann" in names and "ws_ben" in names and guest_name() not in names
     assert guest.get("/api/accounts").status_code == 403
 
 
@@ -379,7 +380,9 @@ def test_admin_creates_a_workspace_for_someone_and_hands_out_ownership(boss, ann
     assert ann.post("/api/workspaces", json={"name": "x", "owner": "ws_ben"}).status_code == 403
     assert ann.post("/api/workspaces", json={"name": "x", "access": "public"}).status_code == 403
     assert boss.post("/api/workspaces", json={"name": "x", "kind": "shared", "owner": "nobody"}).status_code == 400
-    assert boss.post("/api/workspaces", json={"name": "x", "kind": "shared", "owner": "guest"}).status_code == 400
+    from gamma import guests
+    assert boss.post("/api/workspaces", json={"name": "x", "kind": "shared",
+                                              "owner": guests.new_guest()}).status_code == 400
     r = boss.post("/api/workspaces", json={"name": "Ann's course", "kind": "shared", "owner": "ws_ann"})
     assert r.status_code == 200, r.text
     ws = r.json()

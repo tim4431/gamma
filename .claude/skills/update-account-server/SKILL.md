@@ -56,7 +56,12 @@ ssh root@69.63.206.178 "cat /root/Container/gamma-account/Caddyfile"   | diff - 
 Show the user any difference and copy a file over (`git show <headSha>:cloud/deploy/<file> | ssh root@69.63.206.178 "cat > /root/Container/gamma-account/<file>"`)
 only once they agree. `.env` is never copied — new variables from
 `.env.example` (`git diff <old>..<headSha> -- cloud/deploy/.env.example`) are
-named to the user to add by hand.
+named to the user to add by hand. The same `compose.yml` also pins the
+`demo` service's image tag (demo.gammapdf.com, the `update-demo-server`
+skill): a diff on that one line is the demo's own pin, not drift — keep the
+host's tag when copying the file over (never let this skill move the demo
+to an older image), and `up -d` restarts only the services whose image or
+config changed.
 
 ## Update
 

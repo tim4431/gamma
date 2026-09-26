@@ -107,6 +107,18 @@ def personal_owner(ws: str) -> str:
         return _personal_owner(conn, ws)
 
 
+def is_guest_workspace(ws: str) -> bool:
+    """A personal workspace whose owner is a guest account
+    (docs/dev/guests.md): no backup imports, no snapshots, no scheduled
+    backups."""
+    if not ws:
+        return False
+    with connect_users_db() as conn:
+        owner = _personal_owner(conn, ws)
+        row = conn.execute("SELECT is_guest FROM users WHERE username = ?", (owner,)).fetchone() if owner else None
+    return bool(row and row[0])
+
+
 def _personal_ids(conn, username: str) -> list[str]:
     return [r[0] for r in conn.execute(
         "SELECT w.id FROM workspaces w JOIN workspace_members m ON m.workspace_id = w.id "
@@ -680,6 +692,36 @@ def delete_account_workspaces(username: str) -> list[str]:
         conn.commit()
     for ws in deleted:
         remove_files(ws)
+    return deleted
+
+
+def delete_account(username: str, *, release_now: bool = False) -> list[str]:
+    """Delete an account and everything that is only its: sessions, the
+    Gamma Cloud identity (its grant released — off the person's server
+    list, refresh token revoked; in the background unless ``release_now``,
+    which a CLI process that exits right after wants), integration tokens,
+    publisher sessions, prefs, the workspaces ``delete_account_workspaces``
+    removes, its AI usage rows and the users row. The one account deletion:
+    the admin API, ``manage.py delete-user`` and the guest expiry
+    (gamma/guests.py) all come here. Returns the deleted workspace ids; []
+    for an unknown account. The callers check who may be deleted."""
+    from . import cloud_auth, cloud_sync  # local: cloud_auth imports this module
+
+    with connect_users_db() as conn:
+        if not conn.execute("SELECT 1 FROM users WHERE username = ?", (username,)).fetchone():
+            return []
+    subject, held = cloud_auth.grant_of(username)
+    with connect_users_db() as conn:
+        conn.execute("DELETE FROM sessions WHERE username = ?", (username,))
+        conn.execute("DELETE FROM identities WHERE username = ?", (username,))
+        conn.commit()
+    if subject:
+        (cloud_sync.release if release_now else cloud_sync.release_later)(subject, held)
+    deleted = delete_account_workspaces(username)
+    with connect_users_db() as conn:
+        conn.execute("DELETE FROM ai_usage WHERE username = ?", (username,))
+        conn.execute("DELETE FROM users WHERE username = ?", (username,))
+        conn.commit()
     return deleted
 
 

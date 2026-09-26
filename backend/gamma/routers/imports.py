@@ -303,7 +303,7 @@ def _review_gamma(request, file, selected=None, preview=False):
     from .. import ws_backup
     ws = require_ws(request, write=True)
     if is_guest_workspace(ws):
-        raise HTTPException(status_code=403, detail="the guest workspace cannot import backups")
+        raise HTTPException(status_code=403, detail="a guest workspace cannot import backups")
     with tempfile.TemporaryDirectory(prefix="gamma-import-review-") as td:
         path = Path(td) / "import.zip"
         with path.open("wb") as dest:

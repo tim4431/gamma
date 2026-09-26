@@ -132,17 +132,17 @@ not each need a key. A shared entry has an account entry's shape (`id, name,
 protocol, api_key, base_url, models, test_model, created_at`), API-key
 protocols only (no ChatGPT sign-in: its tokens belong to one person). The
 list lives in the users.db `settings` KV under `ai_providers` as
-`{providers: [...], guests: bool}`, at most `MAX_PROVIDERS` (20) entries,
-each `api_key` Fernet-encrypted with the data directory's key the way the
-cloud client secret is (`publisher_sessions.cipher`); a key that no longer
+`{providers: [...], guests: bool, allowance: {accounts, guests}}`, at most
+`MAX_PROVIDERS` (20) entries, each `api_key` Fernet-encrypted with the data
+directory's key the way the cloud client secret is (`publisher_sessions.cipher`); a key that no longer
 decrypts reads as no key and logs a warning. The same helpers validate both
 lists (`new_key_entry`, `update_entry`, `apply_provider_fields`,
 `mask_entry` in `ai_settings.py`).
 
 Ids are namespaced, `server:<id>`, so a shared entry's models
 (`server:<id>:<model>`) never collide with an account's; the registry marks
-them `shared: true`. `ai_runtime` (via `server_entries_for`) offers them to
-every account after its own entries. The guest account gets them only while
+them `shared: true`. `ai_runtime` (via `shared_access`) offers them to
+every account after its own entries. Guest accounts get them only while
 the admin switch `guests` is on (default off); a name that is not an account
 (a link visitor) never does. `GET /api/ai/settings` lists them after the
 account's own as read-only rows (`shared: true`), with the last-4 key hint
@@ -153,6 +153,30 @@ login check (`/api/ai/health`) accepts any entry the account can use. Token
 usage stays per account: a member's calls through a shared entry are
 recorded on that member (provider id `server:<id>`), and there is no
 server-wide meter.
+
+**Shared entries and the allowance.** The admin may cap what each account
+spends through the shared entries: `allowance: {accounts, guests}` in the
+same config (tokens, input + output, per account per rolling 24 hours; 0 =
+unlimited, the default; `GET/PUT /api/admin/ai-providers`, either key alone).
+`ai_usage.shared_used` sums the account's `server:` rows in the window;
+`ai_runtime` reports `allowance: {limit, used, exhausted}` (null when no
+shared entry is in the runtime or its limit is 0 — guests take the guests'
+limit, everyone else the accounts') and puts `allowance: {user, limit}` on
+each shared provider conf. The one choke point is `ai_client.open_ai`
+(`call_ai` goes through it): `check_allowance` re-reads the count on every
+call and raises `AllowanceExhausted`, an `HTTPException` 429 whose detail
+names the used and limit tokens and points at Settings → AI. Chat (both
+modes; the stream opens eagerly, so a refused first call is a real 429, and
+a later agent round ends the stream with the detail as its `error` line),
+translation (the stream variant checks before it starts), metadata
+extraction and `/metadata/cite` let it through as a 429; the Test probe and
+the login test report it in-body. Dictation reports no tokens, so it is not
+metered, only refused once the allowance is used up. Model listings and the
+context-window lookup spend nothing and are never refused; the shared models
+stay listed. Own entries are never marked, so never metered. A Usage reset
+keeps the rows the allowance still counts. `GET /api/ai/models` and
+`GET /api/ai/usage` carry the same `allowance` object. The contract (guests,
+demo mode): [guests.md](guests.md).
 
 ### The chatgpt protocol (OAuth)
 
@@ -744,8 +768,9 @@ show what a week cost. Code: `gamma/ai_usage.py`, `ai_client.normalize_usage`,
 - **Shown.** `GET /api/ai/usage` → `{windows: {today, week, month, all} →
   {calls, input, output, cache_read, cache_write}, kinds: {kind → the same}
   and models: [{provider_id, provider_name, model, …}] over the last 30
-  days, first_at, keep_days}`; `DELETE /api/ai/usage` forgets the account's
-  rows. Settings → AI › Connections → **Token usage** renders three
+  days, first_at, keep_days, allowance}` (`allowance`: the shared entries'
+  24-hour allowance, above, or null); `DELETE /api/ai/usage` forgets the
+  account's rows except those the allowance still counts. Settings → AI › Connections → **Token usage** renders three
   tiles (today / 7 days / 30 days), the all-time line with Reset, and a
   by-model table (plus a by-kind block when more than one kind ran).
   Guests never see it (the pane shows it only to an account that can

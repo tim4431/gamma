@@ -16,10 +16,14 @@ Admins may add SHARED entries (Settings → Server → Shared AI provider,
 /api/admin/ai-providers*): the same shape, API-key protocols only, ids
 namespaced ``server:<id>`` so they never collide with an account's. They
 live in the users.db `settings` KV under `ai_providers` as
-{"providers": [...], "guests": bool}, each api_key Fernet-encrypted with the
-data directory's key (the cloud client secret's scheme). ai_runtime()
-offers them to every account after its own; the guest account only while
-`guests` is on.
+{"providers": [...], "guests": bool, "allowance": {"accounts": N, "guests": N}},
+each api_key Fernet-encrypted with the data directory's key (the cloud client
+secret's scheme). ai_runtime() offers them to every account after its own;
+guest accounts only while `guests` is on. The allowance meters them per
+account over a rolling 24 hours (tokens, 0 = unlimited; guests and other
+accounts each have their own limit): ai_runtime() reports it and marks the
+shared provider confs so ai_client.open_ai refuses a call once it is used up
+(docs/dev/guests.md).
 """
 
 import json
@@ -32,7 +36,7 @@ import time
 from cryptography.fernet import InvalidToken
 from fastapi import HTTPException
 
-from . import ai_protocols
+from . import ai_protocols, ai_usage
 from .db import connect_users_db, get_pref, page_now, set_pref
 from .logbuf import log
 from .publisher_sessions import cipher
@@ -169,7 +173,10 @@ def protocol_choices(key_only: bool = False) -> dict:
 # --- the server's shared entries ----------------------------------------------
 
 SERVER_AI_KEY = "ai_providers"  # the users.db `settings` KV key
-SERVER_ID_PREFIX = "server:"
+SERVER_ID_PREFIX = ai_usage.SHARED_PREFIX  # "server:"
+# The shared allowance's ceiling (tokens per account per 24 h): far beyond
+# any real day, low enough to stay a sane integer everywhere.
+ALLOWANCE_MAX = 1_000_000_000
 _server_lock = threading.Lock()
 
 
@@ -181,10 +188,20 @@ def new_server_provider_id() -> str:
     return SERVER_ID_PREFIX + new_provider_id()
 
 
+def _allowance_limit(value) -> int:
+    """A stored allowance number as a clean limit (anything odd reads as 0 =
+    unlimited — never as a lock-out)."""
+    if isinstance(value, bool) or not isinstance(value, int):
+        return 0
+    return min(max(value, 0), ALLOWANCE_MAX)
+
+
 def load_server_ai() -> dict:
-    """The shared entries with their keys decrypted, and the guest switch:
-    {"providers": [...], "guests": bool}. A key that no longer decrypts (the
-    data directory's key changed) reads as no key, with a warning."""
+    """The shared entries with their keys decrypted, the guest switch and the
+    allowance: {"providers": [...], "guests": bool, "allowance": {"accounts":
+    int, "guests": int}} (tokens per account per 24 h, 0 = unlimited). A key
+    that no longer decrypts (the data directory's key changed) reads as no
+    key, with a warning."""
     try:
         value = json.loads(_get_raw(SERVER_AI_KEY) or "{}")
     except ValueError:
@@ -204,14 +221,32 @@ def load_server_ai() -> dict:
             log.warning(f"shared AI provider {e.get('id')}: the stored key cannot be decrypted (key changed?)")
             e["api_key"] = ""
         out.append(e)
-    return {"providers": out, "guests": value.get("guests") is True}
+    allowance = value.get("allowance") if isinstance(value.get("allowance"), dict) else {}
+    return {"providers": out, "guests": value.get("guests") is True,
+            "allowance": {k: _allowance_limit(allowance.get(k)) for k in ("accounts", "guests")}}
 
 
 def save_server_ai(config: dict) -> None:
     providers = [{**e, "api_key": cipher().encrypt(e["api_key"].encode("utf-8")).decode("ascii")
                   if e.get("api_key") else ""}
                  for e in config.get("providers") or []]
-    _set_raw(SERVER_AI_KEY, json.dumps({"providers": providers, "guests": bool(config.get("guests"))}))
+    allowance = config.get("allowance") if isinstance(config.get("allowance"), dict) else {}
+    _set_raw(SERVER_AI_KEY, json.dumps({
+        "providers": providers, "guests": bool(config.get("guests")),
+        "allowance": {k: _allowance_limit(allowance.get(k)) for k in ("accounts", "guests")}}))
+
+
+def validated_allowance(value) -> dict:
+    """The allowance part of an admin request — {"accounts"?: N, "guests"?:
+    N}, either key or both — checked: whole token counts from 0 (unlimited)
+    to ALLOWANCE_MAX. 400 on anything else."""
+    if not isinstance(value, dict) or set(value) - {"accounts", "guests"}:
+        raise HTTPException(status_code=400, detail='allowance takes "accounts" and "guests"')
+    for v in value.values():
+        if isinstance(v, bool) or not isinstance(v, int) or not 0 <= v <= ALLOWANCE_MAX:
+            raise HTTPException(status_code=400,
+                                detail=f"allowance must be a whole number of tokens from 0 to {ALLOWANCE_MAX}")
+    return dict(value)
 
 
 def edit_server_ai(change) -> dict:
@@ -224,23 +259,48 @@ def edit_server_ai(change) -> dict:
         return config
 
 
-def server_entries_for(user: str) -> list:
-    """The shared entries ``user`` may use: every account may, the guest
-    account only while the admin switch is on, a name that is not an
-    account never."""
+def shared_access(user: str) -> tuple[list, int]:
+    """The shared entries ``user`` may use — every account may, a guest
+    account only while the admin switch is on, a name that is not an account
+    never — and the allowance limit that applies to it (the guests' or the
+    accounts', by the users row's ``is_guest``; 0 = unlimited)."""
     if not user:
-        return []
+        return [], 0
     config = load_server_ai()
     if not config["providers"]:
-        return []
+        return [], 0
     try:
         with connect_users_db() as conn:
             row = conn.execute("SELECT is_guest FROM users WHERE username = ?", (user,)).fetchone()
     except sqlite3.Error:
         row = None
     if not row or (row[0] and not config["guests"]):
-        return []
-    return config["providers"]
+        return [], 0
+    return config["providers"], config["allowance"]["guests" if row[0] else "accounts"]
+
+
+def server_entries_for(user: str) -> list:
+    """The shared entries ``user`` may use (``shared_access``)."""
+    return shared_access(user)[0]
+
+
+def allowance_status(user: str, limit: int) -> dict:
+    """What the pickers and the Usage pane show of the shared allowance:
+    {"limit", "used" (tokens through shared entries in the last 24 h),
+    "exhausted"}."""
+    used = ai_usage.shared_used(user)
+    return {"limit": limit, "used": used, "exhausted": used >= limit}
+
+
+def shared_allowance(user: str) -> dict | None:
+    """``allowance_status`` when a metered shared entry applies to ``user``
+    (one it can use: an API-key protocol with a key, under a non-zero
+    limit), else None — the object ai_runtime() reports, without building
+    the runtime."""
+    entries, limit = shared_access(user)
+    usable = any(ai_protocols.PROTOCOLS.get(e.get("protocol")) and not is_oauth_protocol(e.get("protocol"))
+                 and (e.get("api_key") or "").strip() for e in entries)
+    return allowance_status(user, limit) if usable and limit else None
 
 
 def provider_label(entry: dict) -> str:
@@ -315,9 +375,16 @@ def ai_runtime(user: str) -> dict:
     "models": [{"id": "<pid>:<model>", "provider": pid, "provider_name",
     "model", "native_pdf", "shared"}], "default": the first model — the
     account's own when it has one, else the server's — or None,
-    "enabled": bool}."""
+    "enabled": bool, "allowance": {"limit", "used", "exhausted"} or None}.
+
+    ``allowance`` is None unless a shared entry made it into the runtime and
+    its limit is non-zero; then every shared provider conf carries
+    ``"allowance": {"user", "limit"}``, which ai_client.open_ai checks
+    before each call. The shared models stay listed once it is used up (the
+    pickers show them, and why they refuse)."""
     own = [e for e in (load_provider_entries(user) if user else []) if not is_server_id(e.get("id"))]
-    shared = [e for e in server_entries_for(user) if not is_oauth_protocol(e.get("protocol"))]
+    shared_entries, limit = shared_access(user)
+    shared = [e for e in shared_entries if not is_oauth_protocol(e.get("protocol"))]
     providers, models = {}, []
     for e in own + shared:
         protocol = e.get("protocol")
@@ -357,12 +424,19 @@ def ai_runtime(user: str) -> dict:
                                # extracted text.
                                "native_pdf": proto.native_pdf,
                                "shared": is_server_id(pid)})
+    allowance = None
+    shared_ids = [pid for pid in providers if is_server_id(pid)]
+    if limit and shared_ids:
+        allowance = allowance_status(user, limit)
+        for pid in shared_ids:
+            providers[pid]["allowance"] = {"user": user, "limit": limit}
     return {
         "user": user,  # whose config this is — the usage recorder's key
         "providers": providers,
         "models": models,
         "default": models[0] if models else None,
         "enabled": bool(models),
+        "allowance": allowance,
     }
 
 

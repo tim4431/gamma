@@ -575,7 +575,8 @@ def test_rename_user_moves_rows_and_directory(client):
 
 def test_rename_user_refuses_guest_and_collisions(client, capsys):
     import manage
-    manage.rename_user("guest", "prefs_someone")
+    from gamma import guests
+    manage.rename_user(guests.new_guest(), "prefs_someone")
     assert "cannot be renamed" in capsys.readouterr().out
     manage.create_user("prefs_carol", "pw3")
     manage.rename_user("prefs_carol", "prefs_bobby")  # prefs_bobby exists from the test above

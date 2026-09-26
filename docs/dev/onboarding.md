@@ -13,7 +13,10 @@ note demonstration, an `llm` label demonstration, and a final spotlight on
 the Home button. Returning to the library emits `home.opened`, shows Done,
 and completes the tour automatically; Finish can also close it. Progress is
 a localStorage key per account (`gamma-guide:<account>:<tourId>`; the first
-tour keeps its older `gamma-guide:first-run`), not yet the synced pref. The
+tour keeps its older `gamma-guide:first-run`), not yet the synced pref; on a
+demo server (`facts.demo`, from `GET /api/server-config`'s `demo`) the same
+keys live in sessionStorage instead (`guideStorage(demo)` in `triggers.js`),
+so every visit starts fresh ([guests.md](guests.md) "Demo mode"). The
 seeded welcome page in `gamma/seed.py` is unchanged (guest workspaces only,
 hard-coded block tuples).
 
@@ -67,14 +70,17 @@ the whole thing, with **Got it**.
 | hint: Ctrl+P | the 4th return to the library in one load (`home.opened`, `count: 4`), unless the palette was used (`doneOn: palette.opened`) | Home |
 | hint: folders | the library has 10+ pages and no folder or label (state) | the listing bar |
 | hint: install | iPhone/iPad Safari, not yet the home-screen app (state) | no anchor: a corner card |
+| Your first paper | on a demo server only, on the library once the guest lands (state, `trigger.requires: {demo: true, view: "home"}`) | no anchor: a corner card; Show me starts the tour |
 
 Rules the engine keeps (`useGuide.js`, `triggers.js`):
 
-- **Trigger shape.** `trigger: { event, match?, count?, doneOn? }`. Without
-  `event` it is a state trigger: offered once the tour's `requires` hold,
-  checked when the facts change, never in the first 3 s after load. The
-  tour-level `requires` also gates manual starts; step-level `requires`
-  still filters steps.
+- **Trigger shape.** `trigger: { event, match?, count?, doneOn?, requires? }`.
+  Without `event` it is a state trigger: offered once the tour's `requires`
+  (and the trigger's) hold, checked when the facts change, never in the
+  first 3 s after load. The tour-level `requires` also gates manual starts;
+  the trigger's `requires` gates only the offer, which is how the first-run
+  tour is offered on a demo server's library while staying startable from
+  the Tours menu everywhere. Step-level `requires` still filters steps.
 - **After the render.** An event is judged after the render it came with,
   so the facts include what the same action changed (`share.created` sees
   the new link). Only events some trigger listens for are queued.
@@ -443,6 +449,7 @@ backend/gamma/seed.py                 imports it; renders the PDF; commit_ops
 frontend/tests/guide.test.mjs         schema, anchor references, event names, unique ids
 frontend/tests/e2e/scenarios/guide.mjs            the first-run tour end to end, home anchors present
 frontend/tests/e2e/scenarios/contextualGuide.mjs  the AI chat tour on desktop and phone
+frontend/tests/e2e/scenarios/auth.mjs             demo mode: the guest lands and gets the first-run offer (sessionStorage)
 frontend/tests/e2e/scenarios/triggeredGuide.mjs   offers and hints: tables, sharing (offered, and from
                                                   the menu with and without a link), citations, math,
                                                   Ctrl+P, workspaces, presence, handwriting from the
@@ -454,7 +461,8 @@ frontend/tests/e2e/scenarios/triggeredGuide.mjs   offers and hints: tables, shar
 - `npm test`: every tour parses against the step schema; every `anchor` is in
   the registry; every `advanceOn`, trigger and `doneOn` event is in the
   catalog; a hint is one step; ids are unique; `version` is an integer; the
-  trigger rules (event, `count`, `doneOn`, state, version) behave.
+  trigger rules (event, `count`, `doneOn`, state, the trigger's `requires`,
+  version) behave; a demo server keeps progress in sessionStorage.
 - `npm run e2e -- --only "triggered guide"`: each offer appears after its
   event without dimming the app; Show me runs the tour (inside the Share
   popover and the account menu without closing them); a hover-only control

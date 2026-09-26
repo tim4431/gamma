@@ -9,7 +9,7 @@ import zipfile
 
 import pytest
 
-from conftest import login, make_page, make_user, workspace_of
+from conftest import login, make_page, make_user, workspace_of, guest_name
 
 
 @pytest.fixture(scope="module")
@@ -99,7 +99,7 @@ def test_cap_and_guest(owner, guest, monkeypatch):
         assert owner.post(f"/api/workspaces/{ws}/backups", json={"label": f"n{i}", "uploads": False}).status_code == 200
     r = owner.post(f"/api/workspaces/{ws}/backups", json={"label": "one-too-many"})
     assert r.status_code == 400 and "delete one first" in r.json()["detail"]
-    gws = workspace_of("guest")
+    gws = workspace_of(guest_name())
     assert guest.post(f"/api/workspaces/{gws}/backups", json={}).status_code == 403
     assert guest.get(f"/api/workspaces/{gws}/backups").json()["backups"] == []
 

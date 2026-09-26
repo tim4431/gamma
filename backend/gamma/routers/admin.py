@@ -4,9 +4,10 @@ Admin is a privilege flag (users.is_admin), not a special account name. Grant
 the first one via `python manage.py set-admin <user> on` or the Docker
 GAMMA_ADMIN_USER bootstrap; after that admins manage everyone from Settings.
 
-Safety rails: the guest account can only be inspected (it is reset daily and
-has no password), you cannot delete your own account, and the last remaining
-admin cannot be demoted or deleted — so the instance can never lock itself out.
+Safety rails: a guest account (gamma/guests.py) takes storage limits and
+deletion but no password, privilege or new name; you cannot delete your own
+account, and the last remaining admin cannot be demoted or deleted — so the
+instance can never lock itself out.
 
 Accounts and workspaces are separate (gamma/workspaces.py): creating an
 account creates its personal workspace, deleting one removes the workspaces
@@ -25,7 +26,7 @@ from fastapi.responses import FileResponse
 from pydantic import BaseModel
 from starlette.background import BackgroundTask
 
-from .. import ai_settings, backups, cloud_auth, cloud_sync, workspaces
+from .. import ai_settings, backups, cloud_auth, workspaces
 from ..auth import require_admin
 from .ai import AIProviderRequest
 from ..db import connect_users_db
@@ -37,8 +38,14 @@ from ..server_settings import (
     QUOTA_MB_MIN,
     UPLOAD_MB_MAX,
     UPLOAD_MB_MIN,
+    GUEST_TTL_MAX,
+    GUEST_TTL_MIN,
     get_defaults,
+    guest_settings,
     public_url_settings,
+    set_demo_mode,
+    set_guest_ttl_hours,
+    validate_guest_ttl_hours,
     set_public_url,
     validate_public_url,
     set_default_max_upload_mb,
@@ -109,11 +116,14 @@ async def get_logs(request: Request, after: int = 0):
 @router.get("/settings")
 async def get_settings(request: Request):
     """Server-wide default storage limits (per-user overrides live on the
-    users list) for the admin rows in the Settings dialog."""
+    users list), the public URL, the cloud sign-in and the guest settings
+    (lifetime, demo mode — each with its source) for the admin rows in the
+    Settings dialog."""
     require_admin(request)
-    return {**get_defaults(), **public_url_settings(), "cloud": cloud_auth.settings(),
+    return {**get_defaults(), **public_url_settings(), **guest_settings(), "cloud": cloud_auth.settings(),
             "max_upload_mb_range": [UPLOAD_MB_MIN, UPLOAD_MB_MAX],
-            "quota_mb_range": [QUOTA_MB_MIN, QUOTA_MB_MAX]}
+            "quota_mb_range": [QUOTA_MB_MIN, QUOTA_MB_MAX],
+            "guest_ttl_hours_range": [GUEST_TTL_MIN, GUEST_TTL_MAX]}
 
 
 class SettingsUpdateRequest(BaseModel):
@@ -126,6 +136,9 @@ class SettingsUpdateRequest(BaseModel):
     cloud_client_secret: str | None = None
     cloud_policy: str | None = None
     cloud_share_host: bool | None = None   # accept published pages (gamma/publish.py)
+    # Guests (docs/dev/guests.md): refused (400) while the environment decides.
+    guest_ttl_hours: int | None = None     # 1-720
+    demo_mode: bool | None = None
 
 
 @router.put("/settings")
@@ -143,12 +156,18 @@ async def update_settings(payload: SettingsUpdateRequest, request: Request):
             validate_upload_mb(payload.max_upload_mb)
         if payload.quota_mb is not None:
             validate_quota_mb(payload.quota_mb)
+        if payload.guest_ttl_hours is not None:
+            validate_guest_ttl_hours(payload.guest_ttl_hours)
         if payload.public_url is not None:
             set_public_url(payload.public_url)
         if payload.max_upload_mb is not None:
             set_default_max_upload_mb(payload.max_upload_mb)
         if payload.quota_mb is not None:
             set_default_quota_mb(payload.quota_mb)
+        if payload.guest_ttl_hours is not None:
+            set_guest_ttl_hours(payload.guest_ttl_hours)
+        if payload.demo_mode is not None:
+            set_demo_mode(payload.demo_mode)
         if any(v is not None for v in (payload.cloud_issuer, payload.cloud_client_id, payload.cloud_client_secret,
                                        payload.cloud_policy, payload.cloud_share_host)):
             cloud_auth.save_settings(issuer=payload.cloud_issuer, client_id=payload.cloud_client_id,
@@ -156,7 +175,7 @@ async def update_settings(payload: SettingsUpdateRequest, request: Request):
                                      share_host=payload.cloud_share_host)
     except ValueError as e:
         raise HTTPException(status_code=400, detail=str(e))
-    return {**get_defaults(), **public_url_settings(), "cloud": cloud_auth.settings()}
+    return {**get_defaults(), **public_url_settings(), **guest_settings(), "cloud": cloud_auth.settings()}
 
 
 # --- the server's shared AI connections (gamma/ai_settings.py) ---------------
@@ -168,7 +187,8 @@ async def update_settings(payload: SettingsUpdateRequest, request: Request):
 def _shared_ai_view() -> dict:
     config = ai_settings.load_server_ai()
     return {"providers": [{**ai_settings.mask_entry(e), "shared": True} for e in config["providers"]],
-            "guests": config["guests"], **ai_settings.protocol_choices(key_only=True), "can_edit": True}
+            "guests": config["guests"], "allowance": config["allowance"],
+            **ai_settings.protocol_choices(key_only=True), "can_edit": True}
 
 
 def _shared_entry(config: dict, provider_id: str) -> dict:
@@ -179,7 +199,10 @@ def _shared_entry(config: dict, provider_id: str) -> dict:
 
 
 class SharedAiRequest(BaseModel):
-    guests: bool | None = None  # may the guest account use the shared entries
+    guests: bool | None = None  # may guest accounts use the shared entries
+    # Tokens per account per 24 h through the shared entries, 0 = unlimited:
+    # {"accounts"?: N, "guests"?: N} — a key left out stays as it is.
+    allowance: dict | None = None
 
 
 @router.get("/ai-providers")
@@ -191,8 +214,14 @@ def list_ai_providers(request: Request):
 @router.put("/ai-providers")
 def update_ai_providers(payload: SharedAiRequest, request: Request):
     require_admin(request)
-    if payload.guests is not None:
-        ai_settings.edit_server_ai(lambda config: config.update(guests=payload.guests))
+    allowance = ai_settings.validated_allowance(payload.allowance) if payload.allowance is not None else {}
+
+    def change(config):
+        if payload.guests is not None:
+            config["guests"] = payload.guests
+        config["allowance"].update(allowance)
+    if payload.guests is not None or allowance:
+        ai_settings.edit_server_ai(change)
     return _shared_ai_view()
 
 
@@ -329,9 +358,9 @@ async def update_user(username: str, payload: UserUpdateRequest, request: Reques
         if not row:
             raise HTTPException(status_code=404, detail="user not found")
         if row[1] and (payload.password is not None or payload.is_admin is not None):
-            # storage limits ARE settable on the guest (a public account is
+            # storage limits ARE settable on a guest (a public account is
             # exactly where a quota matters); credentials/privileges are not
-            raise HTTPException(status_code=400, detail="the guest account has no password or privileges")
+            raise HTTPException(status_code=400, detail="a guest account has no password or privileges")
         if payload.password is not None:
             password = _check_password(payload.password)
             pwhash = bcrypt.hashpw(password.encode(), bcrypt.gensalt()).decode()
@@ -398,7 +427,7 @@ async def rename_user(username: str, payload: UserRenameRequest, request: Reques
         if not row:
             raise HTTPException(status_code=404, detail="user not found")
         if row[1]:
-            raise HTTPException(status_code=400, detail="the guest account cannot be renamed")
+            raise HTTPException(status_code=400, detail="a guest account cannot be renamed")
         if new == username:
             return {"users": _user_list(conn)}
         if _get_user(conn, new):
@@ -410,9 +439,10 @@ async def rename_user(username: str, payload: UserRenameRequest, request: Reques
 
 @router.delete("/users/{username}")
 async def delete_user(username: str, request: Request):
-    """Delete an account. Its memberships go; the workspaces it alone owned
-    (its personal one included) are deleted with their files — the response
-    names them."""
+    """Delete an account (a guest account too) through
+    ``workspaces.delete_account``. Its memberships go; the workspaces it
+    alone owned (its personal one included) are deleted with their files —
+    the response names them."""
     me = require_admin(request)
     if username == me:
         raise HTTPException(status_code=400, detail="cannot delete your own account")
@@ -420,18 +450,9 @@ async def delete_user(username: str, request: Request):
         row = _get_user(conn, username)
         if not row:
             raise HTTPException(status_code=404, detail="user not found")
-        if row[1]:
-            raise HTTPException(status_code=400, detail="the guest account resets itself daily; it cannot be deleted")
         if row[2] and _admin_count(conn) <= 1:
             raise HTTPException(status_code=400, detail="cannot delete the last admin")
-        subject, held = cloud_auth.grant_of(username)
-        conn.execute("DELETE FROM sessions WHERE username = ?", (username,))
-        conn.execute("DELETE FROM identities WHERE username = ?", (username,))
-        conn.commit()
-    cloud_sync.release_later(subject, held)  # off the person's server list, grant revoked
-    deleted = workspaces.delete_account_workspaces(username)
+    deleted = workspaces.delete_account(username)
     with connect_users_db() as conn:
-        conn.execute("DELETE FROM users WHERE username = ?", (username,))
-        conn.commit()
         users = _user_list(conn)
     return {"users": users, "deleted_workspaces": deleted, "warning": ""}

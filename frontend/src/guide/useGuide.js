@@ -10,7 +10,7 @@ import { TOURS } from "./tours/index.js";
 import { previewHighlight } from "./previewHighlight.js";
 import { previewArea } from "./previewArea.js";
 import { typeDemoNote } from "./typeDemoNote.js";
-import { canOffer, createGuideProgress, factsMatch, retiresOffer, triggerMatches } from "./triggers.js";
+import { canOffer, createGuideProgress, factsMatch, guideStorage, retiresOffer, triggerMatches } from "./triggers.js";
 import { t } from "../shared/i18n/i18n.js";
 
 const VARS_KEY = "gamma-guide-vars"; // {name: value} overriding a tour's vars (tests, demos)
@@ -131,8 +131,8 @@ const CREATES_GRACE_MS = 1500; // what turns up this soon was there already
 
 // enabled: the guide may run at all (signed in, not a share view). suggest:
 // the account's "Suggest tours" preference — off, nothing is offered by
-// itself; the Tours menu still works. facts: what App knows (view, hasPdf…),
-// matched against `requires`. services: App's hands — show(surface) brings
+// itself; the Tours menu still works. facts: what App knows (view, hasPdf,
+// demo…), matched against `requires`. services: App's hands — show(surface) brings
 // up a tour's `show` surface, plus the demo helpers. tidy: closes App's
 // transient popovers when a step needs none of them.
 export function useGuide({ enabled = true, suggest = true, scope = "", facts = {}, services = {}, tidy } = {}) {
@@ -141,8 +141,15 @@ export function useGuide({ enabled = true, suggest = true, scope = "", facts = {
   // done: acknowledge the user's action before automatically advancing.
   const [run, setRun] = useState(null); // { tour, scope, steps, index, done } | null
   const [offer, setOffer] = useState(null); // { tour, scope } | null
+  // Progress lives in localStorage, or in sessionStorage on a demo server
+  // (facts.demo): every visit there starts fresh.
+  const demo = !!facts.demo;
   const progress = useRef(null);
-  if (!progress.current) progress.current = createGuideProgress();
+  const progressDemo = useRef(demo);
+  if (!progress.current || progressDemo.current !== demo) {
+    progress.current = createGuideProgress(guideStorage(demo));
+    progressDemo.current = demo;
+  }
   // Synchronously reserves the one guide surface: "running" | "offered" | null.
   const activity = useRef(null);
   // One automatic offer per page load, whatever becomes of it.

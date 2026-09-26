@@ -16,6 +16,7 @@ on:
       - "cloud/**"
       - ".github/workflows/cloud.yml"
       - ".claude/skills/update-account-server/**"
+      - ".claude/skills/update-demo-server/**"
       - "docs/dev/cloud_accounts.md"
       - "sites/**"
       - ".github/workflows/site.yml"
@@ -104,7 +105,8 @@ jobs:
           TMPDIR: ${{ runner.temp }}/e2e
         run: |
           mkdir -p "$TMPDIR"
-          npm run e2e -- --continue
+          # 3 workers on the runner's 4 cores: ~2.5-3 min, measured no flakier than 2
+          npm run e2e -- --continue --jobs 3
       - if: failure()
         uses: actions/upload-artifact@v7
         with:

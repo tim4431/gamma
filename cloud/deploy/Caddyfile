@@ -16,17 +16,31 @@
 }
 
 # The share host and every account's page host (share.gammapdf.com and
-# <username>-pages.gammapdf.com) — one wildcard site. Named records such as
-# account.gammapdf.com win over the wildcard, and the internal certificate
-# covers *.gammapdf.com, so no DNS challenge is needed (Cloudflare "Full").
-# Anything else under the wildcard is a 404.
+# <username>-pages.gammapdf.com), and the public demo (demo.gammapdf.com) —
+# one wildcard site. Named records such as account.gammapdf.com win over the
+# wildcard, and the internal certificate covers *.gammapdf.com, so no DNS
+# challenge is needed (Cloudflare "Full"). Anything else under the wildcard
+# is a 404.
+#
+# The demo's guest logins are rate limited per client address, which Gamma
+# reads from the first X-Forwarded-For hop. Caddy does not trust the
+# X-Forwarded-For Cloudflare sends and would put Cloudflare's edge address
+# there, so every visitor behind one edge would share one limit: the demo's
+# proxy passes Cloudflare's CF-Connecting-IP instead (see the README's origin
+# lock-down note on who can set that header).
 *.gammapdf.com {
 	tls internal
 	encode gzip
 	@pages header_regexp Host ^[a-z0-9-]+-pages\.gammapdf\.com$
 	@share host share.gammapdf.com
+	@demo host demo.gammapdf.com
 	handle @share {
 		reverse_proxy share:9001
+	}
+	handle @demo {
+		reverse_proxy demo:9001 {
+			header_up X-Forwarded-For {http.request.header.CF-Connecting-IP}
+		}
 	}
 	handle @pages {
 		reverse_proxy share:9001

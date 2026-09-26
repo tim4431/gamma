@@ -11,7 +11,7 @@ import { friendlyApiError, parseFolderTags } from "../library/libraryUtils";
 import { MenuSelect } from "../shared/ui/Menus";
 import { cachedPercent, fmtTokens, usageDetail } from "../chat/tokenUsage";
 import { ModelPicker } from "./ModelPicker";
-import { Section, SubDialog, Step, Field, Empty, PercentMeter, Row, PasswordInput, StatText, Toggle } from "./SettingsKit";
+import { Section, SubDialog, Step, Field, Empty, PercentMeter, Row, PasswordInput, StatText, Toggle, UnitInput } from "./SettingsKit";
 import { SECTION_PREFS } from "./sectionPrefs.js";
 import { ActivityIcon, GlobeIcon, KeyIcon, MicIcon, PaperIcon, RefreshIcon, SparklesIcon, Trash2Icon, UserIcon } from "../shared/ui/Icons";
 import { T, getLocale, t } from "../shared/i18n/i18n.js";
@@ -222,8 +222,9 @@ function useProviderEditor({ info, setInfo, base, onSaved }) {
 
 // Settings → Server → Shared AI provider (admins): connections every
 // account on the server may use next to its own (backend
-// gamma/ai_settings.py). API keys only, write-only like an account's; the
-// guest account gets them only while the switch is on.
+// gamma/ai_settings.py). API keys only, write-only like an account's;
+// guests get them only while the switch is on. The allowance rows meter
+// them per account per day.
 export function SharedAiProviderSettings({ setStatus, confirm }) {
   const base = `${API}/admin/ai-providers`;
   const [info, setInfo] = React.useState(null);
@@ -260,6 +261,19 @@ export function SharedAiProviderSettings({ setStatus, confirm }) {
   const setGuests = (guests) => run(() => apiJson(base, {
     method: "PUT", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ guests }),
   }));
+  // The shared allowance: tokens per account (or guest) per rolling 24 h on
+  // the shared entries, 0 = unlimited (docs/dev/guests.md). Only the changed
+  // field is sent; an invalid entry snaps back to the stored value.
+  async function commitAllowance(key, raw) {
+    const n = Number.parseInt(String(raw).trim(), 10);
+    if (!Number.isFinite(n) || n < 0 || n === (info?.allowance?.[key] ?? 0)) return;
+    try {
+      setInfo(await apiJson(base, {
+        method: "PUT", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ allowance: { [key]: n } }),
+      }));
+      setStatus?.(t("Shared AI allowance saved."));
+    } catch (err) { setLoadError(err.message); }
+  }
   const providers = info?.providers || [];
   return <>
     <Section title={t("Shared AI provider")} action={info ? (
@@ -286,9 +300,21 @@ export function SharedAiProviderSettings({ setStatus, confirm }) {
       })}
       {info ? (
         <Toggle icon={UserIcon} label={t("Guests may use it")} checked={!!info.guests} onChange={setGuests}
-          hint={t("Off keeps the guest account without AI")}
-          title={t("The guest account is open to anyone who can reach this server; with this on, its visitors spend the shared keys too.")} />
+          hint={t("Off keeps guests without AI")}
+          title={t("Guest accounts are open to anyone who can reach this server; with this on, they spend the shared keys too.")} />
       ) : null}
+      {info && providers.length ? <>
+        <Row icon={ActivityIcon} label={t("Allowance per account")} hint={t("Tokens a day on the shared keys; 0 = unlimited")}
+          title={t("Input and output tokens each account may spend through the shared connections in any 24 hours, as the providers report them. An account's own keys are never counted.")}>
+          <UnitInput unit={t("tokens")} min={0} label={t("Allowance per account")} value={String(info.allowance?.accounts ?? 0)}
+            onCommit={(raw) => commitAllowance("accounts", raw)} />
+        </Row>
+        <Row icon={UserIcon} label={t("Allowance per guest")} hint={t("Tokens a day for each guest; 0 = unlimited")}
+          title={t("The same allowance for guest accounts, which only use the shared keys while Guests may use it is on.")}>
+          <UnitInput unit={t("tokens")} min={0} label={t("Allowance per guest")} value={String(info.allowance?.guests ?? 0)}
+            onCommit={(raw) => commitAllowance("guests", raw)} />
+        </Row>
+      </> : null}
       {loadError ? <p className="settingsPaneHint aiKeysError" role="alert">{loadError}</p> : null}
     </Section>
     {editor.aiKeysForm ? (
@@ -490,7 +516,23 @@ const USAGE_KIND_LABELS = { chat: t("Chat"), translate: t("Translation"), metada
 // users.db, see gamma/ai_usage.py). Three tiles for today / 7 days /
 // 30 days, the all-time line with Reset, then the last 30 days by model
 // and by kind. No prices: they differ per provider and change.
-function AiUsageSection({ confirm, setStatus }) {
+// The shared allowance (GET /api/ai/usage's `allowance`, present while a
+// shared entry with a limit applies): what is left of the account's tokens
+// on the server's keys in the rolling 24 hours.
+function AllowanceRow({ allowance }) {
+  const { used = 0, limit = 0, exhausted = false } = allowance;
+  return (
+    <Row icon={KeyIcon} label={t("Shared allowance")}
+      hint={exhausted
+        ? t("Used up: {used} of {limit} tokens in the last 24 h", { used: fmtTokens(used), limit: fmtTokens(limit) })
+        : t("{used} of {limit} tokens in the last 24 h", { used: fmtTokens(used), limit: fmtTokens(limit) })}
+      title={t("The server's shared AI keys allow each account this many tokens in any 24 hours. Your own keys are not counted; add one under Connections to keep going.")}>
+      {exhausted ? <span className="uiTag failed">{t("used up")}</span> : null}
+    </Row>
+  );
+}
+
+function AiUsageSection({ confirm, setStatus, canReset = true }) {
   const [data, setData] = React.useState(null);
   const [error, setError] = React.useState("");
   const [busy, setBusy] = React.useState(false);
@@ -547,12 +589,13 @@ function AiUsageSection({ confirm, setStatus }) {
           {tile(t("last 7 days"), w.week)}
           {tile(t("last 30 days"), w.month)}
         </div>
+        {data.allowance ? <AllowanceRow allowance={data.allowance} /> : null}
         <Row icon={ActivityIcon} label={t("All time")}
           hint={all?.calls
             ? t("↑ {input} in · ↓ {output} out · {calls} calls{since}", { input: fmtTokens(all.input), output: fmtTokens(all.output), calls: all.calls, since: since ? ` since ${since}` : "" })
             : t("No AI calls recorded yet — counts appear once a provider reports them.")}
           title={t("Prompt tokens in, reply tokens out, as each provider reported them. Rows older than {keep_days} days are dropped. {all}", { keep_days: data.keep_days, all: usageDetail(all) })}>
-          <button className="uiBtn sm danger" disabled={!all?.calls} onClick={reset}>{t("Reset")}</button>
+          {canReset ? <button className="uiBtn sm danger" disabled={!all?.calls} onClick={reset}>{t("Reset")}</button> : null}
         </Row>
         {models.length ? (
           <div className="aiUsageTable" role="table" aria-label={t("Token usage by model, last 30 days")}>
@@ -727,7 +770,8 @@ export function AiSettings({ value, confirm, setStatus }) {
           />
         </Row>
       </Section>
-      {value.aiKeysInfo?.can_edit ? <AiUsageSection confirm={confirm} setStatus={setStatus} /> : null}
+      {/* Guests see their usage too (the shared allowance), without Reset. */}
+      <AiUsageSection confirm={confirm} setStatus={setStatus} canReset={!!value.aiKeysInfo?.can_edit} />
       </> : null}
       {!value.aiKeysForm && value.aiKeysError ? <div className="settingsPaneHint aiKeysError">{value.aiKeysError}</div> : null}
     </>

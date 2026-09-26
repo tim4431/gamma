@@ -17,8 +17,9 @@ server without cloud sign-in makes no call from here.
   side's value, one changed on both takes the newer profile's. The first
   sync of an account whose two copies differ has no base, and waits for
   the person's choice (state "choose"): merge (the defaults as the base),
-  keep the cloud's, or keep this server's — the same three as Settings'
-  Sync now / Fetch from cloud / Push to cloud. Synced on a cloud sign-in,
+  keep the cloud's, or keep this server's — Settings asks Fetch from
+  cloud / Push to cloud in a dialog; merge stays an API-only action, and
+  Sync now is the plain merge. Synced on a cloud sign-in,
   before the browser loads; when a browser reads the profile, at most once
   a minute (``sync_if_stale``); on every check; and a few seconds after a
   change made here (``profile_changed``). A push the account server

@@ -3,7 +3,7 @@ annotation importer, note flattening, and the HTTP endpoint end to end."""
 
 import io
 
-from conftest import make_page, require_math_renderer, workspace_of
+from conftest import make_page, require_math_renderer, workspace_of, guest_name
 
 from gamma.pdf_export import annotate_pdf, parse_css_color
 
@@ -247,7 +247,7 @@ def test_export_pdf_endpoint(guest):
                if a.get_object()["/Subtype"] == "/Highlight")
     assert str(obj["/Subtype"]) == "/Highlight"
     assert str(obj["/Contents"]) == "top comment\n- nested note"
-    assert str(obj["/T"]) == "guest"
+    assert str(obj["/T"]) == guest_name()
 
 
 def test_import_annotations_strip_rewrites_pdf(guest):
@@ -454,7 +454,7 @@ def test_render_notes_draws_math_and_images(guest):
     out, drawn = render_notes(_blank_pdf(), [{
         "position": _position(x1=120, y1=300, x2=420, y2=320),
         "note": f"weight $\\phi_j$ over $$\\frac{{\\sum_i x^2}}{{n}}$$\n![shot]({src})",
-    }], uploads_dir=ws_uploads_dir(workspace_of("guest")))
+    }], uploads_dir=ws_uploads_dir(workspace_of(guest_name())))
     assert drawn == 1
 
     doc = pdfium.PdfDocument(out)

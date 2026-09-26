@@ -312,7 +312,7 @@ export function PasswordInput({ className = "aiKeyInput", ...props }) {
 // buffers itself) or deferred (onCommit fires the raw text on blur/Enter —
 // for handlers that clamp into range, so the clamp doesn't fight half-typed
 // values: typing "25" into a 1–32 field must not snap at "2").
-export function UnitInput({ value, onChange, onCommit, unit, placeholder, min, onEnter }) {
+export function UnitInput({ value, onChange, onCommit, unit, placeholder, min, onEnter, disabled, label }) {
   const [draft, setDraft] = React.useState(null); // non-null only while editing deferred
   // The draft stays on screen until the commit settles (an async save), then
   // the stored value shows — the parent never needs a `key` remount to reset
@@ -324,7 +324,7 @@ export function UnitInput({ value, onChange, onCommit, unit, placeholder, min, o
   return (
     <span className="unitInput">
       <input
-        className="aiKeyInput" type="number" min={min}
+        className="aiKeyInput" type="number" min={min} disabled={disabled} aria-label={label}
         placeholder={placeholder} value={onCommit ? (draft ?? String(value ?? "")) : value}
         onChange={(event) => (onCommit ? setDraft(event.target.value) : onChange(event.target.value))}
         onBlur={onCommit ? commit : undefined}

@@ -3992,6 +3992,30 @@ html.appFocusFullscreen, html.appFocusFullscreen body { overflow: hidden; oversc
   font-family: inherit;
 }
 .loginGuestBtn:hover { background: var(--bg-hover); }
+/* a demo server's login: Try the demo first, the password form folded */
+.loginDemoNote {
+  color: var(--text-muted);
+  text-align: center;
+  font-size: calc(12px * var(--ui-font-scale, 1));
+  line-height: 1.5;
+  margin: 4px 0 18px;
+}
+.loginDisclosure {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  padding: 2px 0;
+  border: none;
+  background: none;
+  color: var(--text-muted);
+  font-size: calc(13px * var(--ui-font-scale, 1));
+  font-family: inherit;
+  cursor: pointer;
+}
+.loginDisclosure:hover { color: var(--text-primary); }
+.loginDisclosureChev { transition: transform 0.15s; }
+.loginDisclosureChev.open { transform: rotate(90deg); }
+.loginDisclosureBody { margin-top: 12px; }
 .loginConflictText {
   font-size: calc(14px * var(--ui-font-scale, 1));
   line-height: 1.5;

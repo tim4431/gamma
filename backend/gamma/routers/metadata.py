@@ -27,7 +27,7 @@ from fastapi import APIRouter, HTTPException, Request
 from pydantic import BaseModel, Field
 
 from .. import ai_usage
-from ..ai_client import call_ai as _call_ai
+from ..ai_client import AllowanceExhausted, call_ai as _call_ai
 from ..ai_context import ensure_indexed as _ensure_indexed
 from ..ai_context import pdf_excerpt as _pdf_excerpt
 from ..ai_context import pdf_path as _pdf_path
@@ -567,6 +567,10 @@ def _ai_extract_meta(text: str, prompt: str, model: str, rt: dict) -> dict | Non
         if not m:
             return None
         data = json.loads(m.group(0))
+    except AllowanceExhausted:
+        # Not "nothing found": the lookup answers 429 and leaves no negative
+        # cache, so it runs again once the allowance allows.
+        raise
     except Exception as e:
         log.warning(f"[metadata] AI extraction failed: {e}")
         return None
@@ -997,6 +1001,8 @@ def metadata_cite(payload: CiteRequest, request: Request):
         raise HTTPException(status_code=409, detail="no metadata yet — fetch metadata first")
     try:
         citation = _make_ppt_cite(rt, meta, bibtex, payload.prompt, payload.model)
+    except AllowanceExhausted:
+        raise
     except Exception as e:
         raise HTTPException(status_code=502, detail=f"AI call failed: {e}")
     # cache alongside the rest of the metadata

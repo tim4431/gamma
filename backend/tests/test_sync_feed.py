@@ -4,7 +4,7 @@ consume idempotently."""
 
 from fractional_indexing import generate_key_between
 
-from conftest import login, make_page, make_user, workspace_of
+from conftest import login, make_page, make_user, workspace_of, guest_name
 from gamma.db import connect_pages_db
 from gamma.routers import sync as sync_mod
 
@@ -29,7 +29,7 @@ def _stamp(user, page_id, at):
 
 def test_feed_lists_changed_and_deleted_pages_with_their_seq(guest):
     old = make_page(guest, "Old")
-    _stamp("guest", old["id"], "2020-01-01T00:00:00.000000Z")
+    _stamp(guest_name(), old["id"], "2020-01-01T00:00:00.000000Z")
     cursor = "2021-01-01T00:00:00.000000Z"
 
     page = make_page(guest, "Fresh")
@@ -49,7 +49,7 @@ def test_feed_lists_changed_and_deleted_pages_with_their_seq(guest):
     guest.delete(f"/api/blocks/{page['id']}").raise_for_status()
     gone = _feed(guest, cursor)
     assert page["id"] not in _ids(gone)
-    assert [(d["id"], d["actor"]) for d in gone["deleted"] if d["id"] == page["id"]] == [(page["id"], "guest")]
+    assert [(d["id"], d["actor"]) for d in gone["deleted"] if d["id"] == page["id"]] == [(page["id"], guest_name())]
     assert gone["more"] is False and gone["since"] == cursor
 
 
@@ -58,7 +58,7 @@ def test_feed_paginates_with_a_strict_cursor_and_no_repeats(guest):
     pages = [make_page(guest, f"P{i}") for i in range(5)]
     # three pages share one timestamp (what an import does), two follow
     for i, p in enumerate(pages):
-        _stamp("guest", p["id"], f"{base}{0 if i < 3 else i}Z")
+        _stamp(guest_name(), p["id"], f"{base}{0 if i < 3 else i}Z")
     since = "2019-01-01T00:00:00.000000Z"
     seen, cursor, rounds = [], since, 0
     while True:
@@ -102,7 +102,7 @@ def test_wholesale_rewrites_reach_the_feed(guest):
     page, so the feed lists it."""
     page = make_page(guest, "Rewritten")
     child = guest.post("/api/blocks", json={"parent_id": page["id"], "content": "c"}).json()
-    _stamp("guest", page["id"], "2018-01-01T00:00:00.000000Z")
+    _stamp(guest_name(), page["id"], "2018-01-01T00:00:00.000000Z")
     cursor = "2018-06-01T00:00:00.000000Z"
     assert page["id"] not in _ids(_feed(guest, cursor))
     r = guest.put(f"/api/blocks/{child['id']}/children", json={"blocks": [{"content": "grandchild"}]})

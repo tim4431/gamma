@@ -7,7 +7,12 @@
 # dispatches this workflow on its new `v<version>` tag with the version as
 # input, which adds the `<version>` and `<major.minor>` image tags —
 # a `push: tags` trigger would not do it, since tags created with GITHUB_TOKEN
-# never trigger workflows. Overview: docs/dev/github_actions.md.
+# never trigger workflows. Dispatched on any other branch without a version
+# (`gh workflow run docker.yml --ref dev`, the update-demo-server skill) it
+# pushes only `sha-<short>`: `latest` is enabled on the default branch alone
+# and the semver tags only with a version, so a branch build for the demo
+# (demo.gammapdf.com, pinned by that tag) never moves what the NAS pulls.
+# Overview: docs/dev/github_actions.md.
 name: Build and publish Docker image
 
 on:
@@ -17,6 +22,7 @@ on:
       - "cloud/**"
       - ".github/workflows/cloud.yml"
       - ".claude/skills/update-account-server/**"
+      - ".claude/skills/update-demo-server/**"
       - "docs/dev/cloud_accounts.md"
       - "sites/**"
       - ".github/workflows/site.yml"

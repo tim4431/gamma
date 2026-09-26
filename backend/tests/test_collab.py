@@ -6,7 +6,7 @@ import pytest
 from fractional_indexing import generate_key_between
 from starlette.websockets import WebSocketDisconnect
 
-from conftest import login, make_page, make_user, workspace_of
+from conftest import login, make_page, make_user, workspace_of, guest_name
 
 PNG = (b"\x89PNG\r\n\x1a\n\x00\x00\x00\rIHDR\x00\x00\x00\x01\x00\x00\x00\x01\x08\x06\x00\x00\x00"
        b"\x1f\x15\xc4\x89\x00\x00\x00\nIDATx\x9cc\x00\x01\x00\x00\x05\x00\x01\r\n-\xb4\x00\x00\x00\x00IEND\xaeB`\x82")
@@ -63,7 +63,7 @@ def test_ops_batch_insert_set_move_delete(guest):
     # the log holds every batch, per page, and catch-up reads after a seq
     log = guest.get(f"/api/pages/{page['id']}/ops", params={"since": 0}).json()
     assert log["seq"] == 4 and [b["seq"] for b in log["batches"]] == [1, 2, 3, 4]
-    assert log["batches"][0]["client"] == "t" and log["batches"][0]["actor"] == "guest"
+    assert log["batches"][0]["client"] == "t" and log["batches"][0]["actor"] == guest_name()
     assert log["batches"][3]["ops"] == [{"op": "delete", "id": "opA"}]
     tail = guest.get(f"/api/pages/{page['id']}/ops", params={"since": 3}).json()
     assert [b["seq"] for b in tail["batches"]] == [4]
@@ -262,7 +262,7 @@ def test_socket_hello_and_fanout(guest):
     with guest.websocket_connect(f"/api/ws/page/{page['id']}?client=aa") as a:
         hello = _hello(a)
         assert hello["client"] == "aa"
-        assert [p["client"] for p in hello["peers"]] == ["aa"] and hello["peers"][0]["name"] == "guest"
+        assert [p["client"] for p in hello["peers"]] == ["aa"] and hello["peers"][0]["name"] == guest_name()
         with guest.websocket_connect(f"/api/ws/page/{page['id']}?client=bb") as b:
             hb = _hello(b)
             assert hb["color"] != hello["color"] and {p["client"] for p in hb["peers"]} == {"aa", "bb"}
@@ -272,7 +272,7 @@ def test_socket_hello_and_fanout(guest):
             assert r.status_code == 200
             for ws in (a, b):
                 m = _recv(ws, "ops")
-                assert m["seq"] == hello["seq"] + 1 and m["client"] == "aa" and m["actor"] == "guest"
+                assert m["seq"] == hello["seq"] + 1 and m["client"] == "aa" and m["actor"] == guest_name()
                 assert m["ops"][0]["id"] == "wsA" and m["ops"][0]["position"]
         assert _recv(a, "leave")["client"] == "bb"
 
@@ -378,7 +378,7 @@ def test_socket_cross_page_move_and_ai_edit(guest):
         assert _recv(d, "reload")
         # an AI tool edit runs in a worker thread; its op still lands in the room
         from gamma.ai_tools import run_agent_tool
-        text, action = run_agent_tool(workspace_of("guest"), {"type": "page", "page_id": dst["id"]}, "edit_block",
+        text, action = run_agent_tool(workspace_of(guest_name()), {"type": "page", "page_id": dst["id"]}, "edit_block",
                                       {"block_id": blk["id"], "content": "travelled, edited by ai"})
         assert action["kind"] == "edit", text
         m = _recv(d, "ops")

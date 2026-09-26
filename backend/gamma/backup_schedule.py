@@ -161,7 +161,7 @@ def targets(task):
     if not ids:
         raise TaskError("Select at least one workspace you own.")
     for ws in ids:
-        if not workspaces.get(ws) or ws == workspaces.default_workspace('guest'):
+        if not workspaces.get(ws) or workspaces.is_guest_workspace(ws):
             raise TaskError("A selected workspace is unavailable. Edit the task's selection.")
         if not admin and workspaces.role_of(ws, task['owner']) != 'owner':
             raise TaskError("The task owner no longer owns every selected workspace.")

@@ -38,7 +38,7 @@ from contextlib import closing
 from pathlib import Path
 
 from . import backups, config
-from .db import PAGES_SCHEMA, SCHEMA_VERSION, USERS_SCHEMA, page_now, users_db_version
+from .db import PAGES_SCHEMA, SCHEMA_VERSION, USERS_SCHEMA, page_now, safe_ws_id, users_db_version
 from .logbuf import log
 from .normalize import normalize_data_db, normalize_pages_db
 
@@ -551,6 +551,45 @@ def _v19_mirror_page_filter(conn: sqlite3.Connection) -> None:
     conn.commit()
 
 
+def _v20_guest_accounts(conn: sqlite3.Connection) -> None:
+    """Guests became throwaway accounts minted per visitor (gamma/guests.py,
+    docs/dev/guests.md): the legacy shared ``guest`` account goes with its
+    sessions, memberships, prefs and personal workspace (rows, directory and
+    stored snapshots). Any other ``is_guest`` row — ``create-user`` without a
+    password used to make one — becomes a normal password-less account, so
+    the new guest expiry never deletes it."""
+    legacy = conn.execute("SELECT default_workspace FROM users WHERE username = 'guest' AND is_guest = 1").fetchone()
+    if legacy:
+        ws_ids = {r[0] for r in conn.execute(
+            "SELECT w.id FROM workspaces w JOIN workspace_members m ON m.workspace_id = w.id "
+            "WHERE m.username = 'guest' AND w.kind = 'personal'")}
+        if legacy[0]:
+            ws_ids.add(legacy[0])
+        for ws in sorted(ws_ids):
+            try:
+                safe_ws_id(ws)
+            except ValueError:
+                continue
+            for path in (config.WORKSPACES_DIR / ws, config.BACKUPS_DIR / "workspaces" / ws):
+                if path.is_dir():
+                    try:
+                        shutil.rmtree(str(path))
+                    except OSError as e:  # a leftover directory is listed to admins as an orphan
+                        log.warning(f"[migrate] could not remove the guest workspace directory {path}: {e}")
+            for table, column in (("integration_tokens", "workspace_id"), ("workspace_members", "workspace_id"),
+                                  ("pending_memberships", "workspace_id"), ("shares", "workspace_id"),
+                                  ("user_prefs", "workspace_id"), ("mirrors", "workspace_id"),
+                                  ("workspaces", "id")):
+                conn.execute(f"DELETE FROM {table} WHERE {column} = ?", (ws,))
+        for table in ("sessions", "identities", "integration_tokens", "publisher_sessions", "user_prefs",
+                      "workspace_members", "ai_usage"):
+            conn.execute(f"DELETE FROM {table} WHERE username = 'guest'")
+        conn.execute("DELETE FROM users WHERE username = 'guest' AND is_guest = 1")
+        log.info("[migrate] removed the legacy shared guest account and its workspace")
+    conn.execute("UPDATE users SET is_guest = 0 WHERE is_guest = 1")
+    conn.commit()
+
+
 STEPS = [
     (1, "baseline", _v1_baseline),
     (2, "workspaces", _v2_workspaces),
@@ -571,4 +610,5 @@ STEPS = [
     (17, "profile", _v17_profile),
     (18, "cloud_grant", _v18_cloud_grant),
     (19, "mirror_page_filter", _v19_mirror_page_filter),
+    (20, "guest_accounts", _v20_guest_accounts),
 ]

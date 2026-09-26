@@ -9,7 +9,7 @@ import json
 import sqlite3
 
 import pytest
-from conftest import make_page, workspace_of
+from conftest import make_page, workspace_of, guest_name
 
 
 def _label(user, block_id, value):
@@ -35,7 +35,7 @@ def label_during_lookup(monkeypatch):
 
     def arm(block_id, result):
         def fake_fetch_arxiv(arxiv_id):
-            _label("guest", block_id, "quantum")
+            _label(guest_name(), block_id, "quantum")
             return result
         monkeypatch.setattr(metadata, "_fetch_arxiv", fake_fetch_arxiv)
     return arm
@@ -101,7 +101,7 @@ def test_label_set_during_cite_survives(guest, monkeypatch):
     monkeypatch.setattr(metadata, "_resolve_model", lambda rt, model: "m")
 
     def fake_call_ai(messages, system, model, rt, **kw):
-        _label("guest", page["id"], "cited")
+        _label(guest_name(), page["id"], "cited")
         return "Lovelace et al., 2026"
     monkeypatch.setattr(metadata, "_call_ai", fake_call_ai)
 
@@ -117,7 +117,7 @@ def test_save_props_missing_page_404s(guest):
     from fastapi import HTTPException
 
     with pytest.raises(HTTPException) as e:
-        _save_props(workspace_of("guest"), "no-such-block", {"meta": {}})
+        _save_props(workspace_of(guest_name()), "no-such-block", {"meta": {}})
     assert e.value.status_code == 404
 
 
@@ -165,7 +165,7 @@ def test_rename_during_metadata_fetch_wins(guest, monkeypatch):
     def fetch_after_rename(_arxiv_id):
         # Same transaction effect as an explicit PUT /blocks/{id}: write the
         # user's title and clear the automatic-title compare-and-swap marker.
-        with sqlite3.connect(ws_db_path(workspace_of("guest"), "pages.db")) as conn:
+        with sqlite3.connect(ws_db_path(workspace_of(guest_name()), "pages.db")) as conn:
             row = conn.execute(
                 "SELECT properties FROM unified_blocks WHERE id=?", (created["id"],)
             ).fetchone()
@@ -203,7 +203,7 @@ def test_fetch_reports_title_renamed_by_concurrent_lookup(guest, monkeypatch):
     def other_lookup_wins(_arxiv_id):
         # What the winning lookup's _save_props leaves behind: the paper's
         # title, marker cleared.
-        with sqlite3.connect(ws_db_path(workspace_of("guest"), "pages.db")) as conn:
+        with sqlite3.connect(ws_db_path(workspace_of(guest_name()), "pages.db")) as conn:
             row = conn.execute(
                 "SELECT properties FROM unified_blocks WHERE id=?", (created["id"],)
             ).fetchone()

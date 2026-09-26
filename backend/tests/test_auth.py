@@ -1,3 +1,6 @@
+from conftest import guest_name
+
+
 def test_session_requires_login(anon):
     r = anon.get("/api/blocks/root/children")
     assert r.status_code == 401
@@ -12,15 +15,16 @@ def test_guest_login_and_session(guest):
     r = guest.get("/api/session")
     assert r.status_code == 200
     data = r.json()
-    assert data["user"]
+    assert data["user"] == guest_name() and data["user"].startswith("guest-") and len(data["user"]) == 14
     assert data["is_guest"] is True
+    assert data["guest_expires_at"].endswith("Z")  # when the account and its workspace go
     # The build a problem report names the server by (gamma/version.py).
     assert set(data["build"]) == {"version", "commit", "label", "frozen"}
     assert data["build"]["label"]
 
 
 def test_user_guard_matching_header_passes(guest):
-    r = guest.get("/api/blocks/root/children", headers={"X-Gamma-User": "guest"})
+    r = guest.get("/api/blocks/root/children", headers={"X-Gamma-User": guest_name()})
     assert r.status_code == 200
 
 
@@ -29,7 +33,7 @@ def test_user_guard_mismatch_rejected(guest):
     session's data (the browser-wide cookie was switched under it)."""
     r = guest.get("/api/blocks/root/children", headers={"X-Gamma-User": "someone-else"})
     assert r.status_code == 409
-    assert r.headers["X-Gamma-Session-User"] == "guest"
+    assert r.headers["X-Gamma-Session-User"] == guest_name()
     assert len(r.headers["X-Gamma-Request-ID"]) == 8
 
     r = guest.post("/api/blocks", json={"parent_id": "root", "content": "x"},

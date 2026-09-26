@@ -1,7 +1,7 @@
 """Workspace file creation and seeding: the empty pages.db / data.db /
 uploads/ of a new workspace, the guest welcome page, the first admin.
 
-Shared by the app (daily guest reset, first run) and manage.py (user CRUD)
+Shared by the app (guest logins, first run) and manage.py (user CRUD)
 so the welcome page and schemas never drift between the two. Account and
 membership rows are gamma/workspaces.py's job; this module only writes
 files.
@@ -9,7 +9,6 @@ files.
 
 import os
 import secrets
-import shutil
 import sqlite3
 from contextlib import closing
 
@@ -23,6 +22,14 @@ from .logbuf import log
 
 # GitHub raw base for screenshots embedded in the guest welcome page.
 _SCREENSHOTS = "https://raw.githubusercontent.com/tim4431/Gamma/main/docs/assets/screenshots"
+
+
+def _guest_lifetime() -> str:
+    """"24 hours" — how long a guest account lives (server setting)."""
+    from .server_settings import guest_ttl_hours  # local: server_settings is not needed otherwise
+
+    hours = guest_ttl_hours()
+    return f"{hours} hour" if hours == 1 else f"{hours} hours"
 
 
 def _welcome_blocks():
@@ -49,7 +56,7 @@ def _welcome_blocks():
         (secrets.token_urlsafe(9), figures_id, generate_key_between("a0", None), f"![]({_SCREENSHOTS}/01-annotated-pdf.png)", '{}'),
         (secrets.token_urlsafe(9), figures_id, generate_key_between("a0V", None), f"![]({_SCREENSHOTS}/02-home.png)", '{}'),
         (guest_id, wid, generate_key_between("a1", None), "## Guest account", '{}'),
-        (secrets.token_urlsafe(9), guest_id, "a0", "You are logged in as a **guest**. Your data resets each day at midnight UTC. To keep your work permanently, ask the admin to create an account for you.", '{}'),
+        (secrets.token_urlsafe(9), guest_id, "a0", f"You are signed in as a **guest**. This workspace is yours alone, and it is deleted with everything in it {_guest_lifetime()} after you started. To keep your work, ask the admin for an account.", '{}'),
         (md_id, wid, generate_key_between("a1V", None), "## Markdown formatting", '{}'),
         (secrets.token_urlsafe(9), md_id, "a0", "Blocks support **bold**, *italic*, `code`, [links](https://example.com), and inline $\\KaTeX$ math like $E = mc^2$.", '{}'),
     ]
@@ -93,34 +100,6 @@ def create_workspace_files(ws_id: str, welcome: bool = False):
         data_db.commit()
 
     (target / "uploads").mkdir(parents=True, exist_ok=True)
-
-
-def ensure_guest_user() -> str:
-    """The guest account row and its workspace; returns the workspace id."""
-    from . import workspaces  # local: workspaces imports this module
-
-    with connect_users_db() as conn:
-        if not conn.execute("SELECT 1 FROM users WHERE username = 'guest'").fetchone():
-            conn.execute(
-                "INSERT INTO users (username, password_hash, is_guest, created_at) VALUES ('guest', '', 1, ?)",
-                (page_now(),),
-            )
-            conn.commit()
-    return workspaces.ensure_personal("guest", welcome=True)
-
-
-def reset_guest_data():
-    """Wipe the guest workspace and recreate it with the welcome page."""
-    from . import workspaces
-
-    ws_id = workspaces.default_workspace("guest")
-    if ws_id:
-        guest_dir = WORKSPACES_DIR / safe_ws_id(ws_id)
-        if guest_dir.exists():
-            shutil.rmtree(str(guest_dir))
-        create_workspace_files(ws_id, welcome=True)
-    else:
-        ensure_guest_user()
 
 
 def ensure_admin_seed():
@@ -182,16 +161,18 @@ def create_cloud_account(username: str, is_admin: bool = False) -> str:
 
 
 def create_account(username: str, password: str | None, is_admin: bool = False) -> str:
-    """Insert an account row (a missing password makes a guest-style
-    account) and its personal workspace. Returns the workspace id. Shared by
-    manage.py and the admin API."""
+    """Insert an account row and its personal workspace. Returns the
+    workspace id. Shared by manage.py and the admin API. Without a password
+    the account has an empty hash: the password login refuses it until
+    ``manage.py set-password`` gives it one (never a guest — guest accounts
+    are gamma/guests.py's and expire)."""
     from . import workspaces
 
     pwhash = bcrypt.hashpw(password.encode(), bcrypt.gensalt()).decode() if password else ""
     with connect_users_db() as conn:
         conn.execute(
-            "INSERT INTO users (username, password_hash, is_guest, is_admin, created_at) VALUES (?, ?, ?, ?, ?)",
-            (username, pwhash, 0 if password else 1, 1 if is_admin else 0, page_now()),
+            "INSERT INTO users (username, password_hash, is_guest, is_admin, created_at) VALUES (?, ?, 0, ?, ?)",
+            (username, pwhash, 1 if is_admin else 0, page_now()),
         )
         conn.commit()
     return workspaces.ensure_personal(username)

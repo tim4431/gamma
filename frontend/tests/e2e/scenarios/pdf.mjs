@@ -475,6 +475,18 @@ export async function pdfScenarios({ server, browser, alice, makePdf, step, unti
       await sleep(150);
       assertEq(await page.locator(".plainTip").count(), 1, "the popup stays while reading the translation");
 
+      // A refusal says why (a used-up shared AI allowance is a 429 whose
+      // detail tells what to do): the popup shows the server's reason.
+      await page.unroute("**/api/ai/translate");
+      const refusal = "Shared AI allowance used up: add your own key under Settings → AI, or come back later.";
+      await page.route("**/api/ai/translate", (route) => route.fulfill({ status: 429, json: { detail: refusal } }));
+      await selectPdfText(page, 2, "Page two");
+      await page.getByRole("button", { name: "Translate selection", exact: true }).click();
+      await until(async () => (await body.textContent()) === `Translation failed: ${refusal}`, { what: "the refusal's reason in the popup" });
+      assertNoProblems(page, [/429/]);
+      await page.unroute("**/api/ai/translate");
+      await mockTranslate(requests);
+
       // Translate on select: the result opens without a click.
       await account.api("/api/prefs/profile", { method: "PUT", body: { value: { ...(profile || {}), selTranslateAuto: true } } });
       await page.reload();

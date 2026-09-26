@@ -8,7 +8,7 @@ Backend (FastAPI, Python 3.11+):
 cd backend
 python -m venv venv && source venv/bin/activate   # Windows: venv\Scripts\activate
 pip install -r requirements.txt
-python manage.py setup          # idempotent: guest account + missing workspace files
+python manage.py setup          # idempotent: missing personal workspaces + workspace files
 uvicorn app:app --host 127.0.0.1 --port 9001 --reload
 ```
 
@@ -25,7 +25,7 @@ First run: the app seeds an `admin` account with a random password printed
 once to the console (only while zero non-guest accounts exist). User CRUD
 also via `python manage.py` (create-user, set-password, set-admin,
 rename-user, delete-user, list-users, list-workspaces, set-member,
-reset-guest, migrate, backups).
+sweep-guests, migrate, backups).
 
 Docker:
 
@@ -108,7 +108,8 @@ fresh client), never `client`. One data directory serves every file on a
 worker, so an account name belongs to the module that creates it: prefix
 names with the module's area (`bk_admin`, `ca_alice`), create them through
 `conftest.make_user`, and pick folder names no other module uses in the
-guest workspace. `make_user` fails the run when a second module asks for a
+`guest` fixture's workspace (its account is `conftest.guest_name()`, a
+fresh `guest-…` name per run — never write `"guest"`). `make_user` fails the run when a second module asks for a
 name another module already created. Run them with the project venv's
 interpreter (`venv/Scripts/python.exe` on Windows): the two vector-math
 tests need `ziamath` from `requirements.txt`, and a system/conda `python`
@@ -212,6 +213,29 @@ files drift from `scenarios/`, or when a rule names an unknown group. When a
 change's reach is broader than its rule says (a new prop threaded through
 App.jsx into one pane), the selection errs wide: that is what `--group`
 is for. CI still runs everything.
+
+**Flaky steps.** A step that passes here and fails on CI is almost always a
+timing assumption that a slow machine breaks, and the CI runner has 4 cores.
+To reproduce that, pin a run to 4 cores. On Windows, start
+`node tests/e2e/run.mjs --continue --jobs 3` with `Start-Process -PassThru`
+and set `.ProcessorAffinity = 0xF` at once (the workers, backends and
+browsers inherit it). On Linux, use `taskset -c 0-3`. The patterns behind
+past flakes, and their fixes:
+
+- Checking once right after an action (`assert(await x.count() === 1)`):
+  poll with `until()` or wait for the locator instead.
+- Acting while something is still moving (a touch fling's momentum, a
+  resize): wait for two equal readings first.
+- Racing a background job (an indexer still running, the backup scheduler):
+  wait for its state, never for a fixed time.
+- A slow round the app runs by itself (a 20 s poll, a 30 s scheduler round):
+  trigger it the way a user would (the tab regaining visibility), or make
+  the app start it at once when that is the right behaviour anyway.
+
+Open: `ink edit: pen resumes writing…` once missed a tap on the stroke on a
+loaded 4-core run. Stale layout, a long-press cancel and the undo's
+pending delete were each ruled out, so `tapInk` now reports what was under
+the tap when no menu opens.
 
 The scenarios live in `tests/e2e/scenarios/`:
 
@@ -383,8 +407,10 @@ save path, workspaces, auth or rendering of URLs should add a step here; the
 
 ## Gotchas worth knowing
 
-- The guest account's data is wiped and re-seeded daily (lazily, in the auth
-  middleware) — don't park test data there.
+- Every guest login makes a new throwaway account, deleted with its
+  workspace `guest_ttl_hours` (default 24) later or on logout
+  ([guests.md](guests.md)) — don't park test data there. In backend tests
+  the `guest` fixture's account name is `conftest.guest_name()`.
 - Slow endpoints (downloads, AI calls, PyPDF2) are deliberately **sync
   `def`** so FastAPI's threadpool runs them; don't convert them to
   `async def` while they hold blocking calls.

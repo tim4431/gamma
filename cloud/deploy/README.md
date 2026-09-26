@@ -8,12 +8,14 @@ NAS). The service itself is described in
 
 ```
 deploy/
-  compose.yml          account + caddy (a VPS with a public address)
-  Caddyfile            TLS for CADDY_HOST, proxied to account:9002
+  compose.yml          account, share, demo + caddy (a VPS with a public address)
+  Caddyfile            TLS for CADDY_HOST → account:9002; *.gammapdf.com → share / demo
   compose.tunnel.yml   layered on compose.yml: cloudflared instead of caddy
   compose.build.yml    layered on compose.yml: build from ./src instead of pulling
   Dockerfile.local     the image built from a copy of cloud/ (compose.build.yml)
   .env.example         → .env: public URL, registration mode, SMTP, Turnstile, Google/GitHub, hostname
+  share.env.example    → share.env: the share host's cloud client and page hosts
+  demo.env.example     → demo.env: the public demo (demo mode, guest expiry and cap, first admin)
 ```
 
 The whole state of the service is the `data/` folder next to the compose
@@ -25,7 +27,8 @@ signing keys and every token hash. Moving to another host is copying
 
 `root@69.63.206.178`, folder `/root/Container/gamma-account/`, running
 `compose.yml` with the GHCR image. Updates go through the
-`update-account-server` skill (`.claude/skills/`).
+`update-account-server` skill (`.claude/skills/`); the demo next to it
+through `update-demo-server`.
 
 ## First deployment on a VPS
 
@@ -205,6 +208,73 @@ hosts `<username>-pages.gammapdf.com` ([docs/dev/cloud_accounts.md](../../docs/d
 The default storage quota per account on the share host is its Settings →
 Server storage default; set it small. `share-data/` is the share host's
 state (published pages and files) — back it up like `data/`.
+
+## The demo server
+
+The compose file also runs `demo`: a Gamma (`ghcr.io/tim4431/gamma`) in
+demo mode at `https://demo.gammapdf.com`, where anyone can try Gamma
+without an account. **Try the demo** on its login page makes a throwaway
+guest account that is deleted with its workspace after
+`GAMMA_GUEST_TTL_HOURS`; the admin's shared AI key is metered per guest.
+What demo mode changes and how guests work:
+[docs/dev/guests.md](../../docs/dev/guests.md). The image is pinned to the
+`sha-<short>` tag of a branch build (`docker.yml` dispatched on the branch,
+which never moves `:latest`), and the `update-demo-server` skill
+(`.claude/skills/`) builds, pins and restarts it. That skill rewrites the
+`demo` image line in the host's `compose.yml`, so the host's line is the
+one that counts.
+
+Setting it up once:
+
+1. **DNS.** At Cloudflare, `A demo → <the VPS address>`, proxied. The `*`
+   record of the share host already routes the name here; the named record
+   keeps the demo up if the wildcard ever changes. The Caddyfile's
+   `*.gammapdf.com` site answers it with the internal certificate (SSL mode
+   "Full") and proxies it to `demo:9001`.
+2. **`demo.env` first.** Every `docker compose` command in the folder
+   refuses to run while a file named by `env_file` is missing, the account
+   server's updates included, so create it before the new `compose.yml`
+   arrives:
+
+   ```bash
+   cd ~/Container/gamma-account
+   curl -o demo.env https://raw.githubusercontent.com/tim4431/Gamma/main/cloud/deploy/demo.env.example
+   chmod 600 demo.env
+   # optional: GAMMA_ADMIN_PASSWORD, GAMMA_GUEST_MAX, GAMMA_GUEST_SEED
+   ```
+
+3. **The files.** Copy the new `compose.yml` and `Caddyfile` over the
+   host's (from the branch that has them, as the `update-demo-server` skill
+   does), then start the demo and load the new site:
+
+   ```bash
+   docker compose up -d demo
+   docker compose exec caddy caddy reload --config /etc/caddy/Caddyfile
+   ```
+
+   Write the Caddyfile in place (`cat > Caddyfile`), never with `sed -i` or
+   an editor that replaces the file: it is bind-mounted as a single file,
+   and a new inode stays invisible to the running container.
+4. **Check.** `curl -s https://demo.gammapdf.com/api/server-config` contains
+   `"demo":true`, and the page opens on **Try the demo**.
+5. **The admin, once.** With `GAMMA_ADMIN_PASSWORD` empty the container
+   prints a random password for `admin` once:
+   `docker compose logs demo | grep -A2 "created the admin account"`. Sign
+   in through **Admin sign-in** on the login page, change the password
+   (Settings → Users), then under Settings → Server → Shared AI provider
+   add the shared key, turn **Guests may use it** on and set the per-guest
+   allowance. AI keys are never environment variables.
+6. **Optional sample library.** Prepare a workspace (the admin's own here
+   will do), export it (Settings → Workspaces → Export, or download a
+   snapshot from Settings → Backups), copy the zip to
+   `demo-data/guest-seed.zip`, uncomment `GAMMA_GUEST_SEED` in `demo.env`
+   and `docker compose up -d demo`. Every new guest starts from a copy.
+
+`demo-data/` is the demo's whole state and it is disposable: no backup.
+Wiping it (`docker compose stop demo && rm -rf demo-data && docker compose
+up -d demo`) resets the demo to a fresh instance: a new admin password in
+the log, the shared key and allowance to enter again, and the seed zip to
+copy back if one was used.
 
 ## Updating
 

@@ -8,7 +8,9 @@ import re
 import urllib.error
 import urllib.request
 
-from . import ai_protocols
+from fastapi import HTTPException
+
+from . import ai_protocols, ai_usage
 from .logbuf import log
 
 
@@ -30,6 +32,37 @@ class UpstreamError(RuntimeError):
     def __init__(self, status: int, message: str):
         super().__init__(message)
         self.status = status
+
+
+class AllowanceExhausted(HTTPException):
+    """A call on one of the server's shared entries after the account used
+    up its shared AI allowance (docs/dev/guests.md). An HTTPException (429)
+    so a route that lets it through answers with it as is; ``str()`` is the
+    detail, for the in-body and stream error paths."""
+
+    def __init__(self, used: int, limit: int):
+        super().__init__(status_code=429, detail=(
+            f"This server's shared AI allowance for your account is used up ({used} of {limit} "
+            "tokens in the last 24 hours). Add your own key in Settings → AI, or try again later."))
+        self.used, self.limit = used, limit
+
+    def __str__(self):
+        return self.detail
+
+
+def check_allowance(conf: dict) -> None:
+    """Refuse a call through ``conf`` (a runtime provider conf) when it is a
+    shared entry whose account has used up its allowance. ai_runtime marks
+    only shared confs under a non-zero limit (``conf["allowance"]``), so an
+    account's own entries never get here. The count is read fresh on every
+    call: an agent loop or a translation run stops at the limit, not one
+    request after it."""
+    allowance = conf.get("allowance")
+    if not allowance:
+        return
+    used = ai_usage.shared_used(allowance["user"])
+    if used >= allowance["limit"]:
+        raise AllowanceExhausted(used, allowance["limit"])
 
 
 def _summarize_error_body(body: str) -> str:
@@ -66,8 +99,11 @@ def open_ai(
     messages, system, entry, runtime, pdf_b64s=None, effort="",
     max_tokens=8192, timeout=60, images=None, stream=False, tools=None,
 ):
-    """Open a provider call without consuming response bytes."""
+    """Open a provider call without consuming response bytes. The one door
+    every token-spending call goes through (call_ai too): a shared entry's
+    allowance is checked here (AllowanceExhausted, a 429)."""
     conf = runtime["providers"][entry["provider"]]
+    check_allowance(conf)
     wire = ai_protocols.of(conf).wire(conf, tools)
     request = wire.request(conf, messages, system, entry["model"], pdf_b64s,
                            effort, max_tokens, images, stream, tools)

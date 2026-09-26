@@ -13,7 +13,7 @@ Where every setting lives, and how the Settings dialog is built.
 | Per account, seen notices | the account-wide `notices-seen` prefs key (`db.NOTICES_SEEN_PREF_KEY`), `{notice id: fingerprint}`, written only by `POST /api/notices/{id}/seen` (below, "Notices") | which release and which log error the account has already looked at |
 | Per account, server-only | AI provider entries (keys/OAuth tokens) under the reserved `ai-settings` prefs key (account-wide), managed via `/api/ai/providers*`; the browser only ever sees a masked hint. The server's shared entries (next row) are listed after them read-only. Machine-translation keys live the same way under the reserved `translate-engines` key (`/api/translate/engines*`, [ai.md](ai.md) "PDF translation") | API keys, ChatGPT OAuth, Google / Youdao translation keys |
 | Per workspace | `workspaces` / `workspace_members` in `users.db`, via `/api/workspaces*` ([workspaces.md](workspaces.md)) | name, kind (personal / shared), members and roles, access (private / public + the public role) and a shared workspace's own quota (admins), the account's default workspace, which workspace this tab works in (`?ws=` in the URL, `gamma-last-ws:<user>` remembers the last one) |
-| Server-wide (admin) | `settings` KV in `users.db` via `GET/PUT /api/admin/settings`, plus nullable per-user override columns; the shared AI entries under the `ai_providers` key via `/api/admin/ai-providers*` (keys encrypted with the data directory's key, like the cloud client secret) | default max upload size, default storage quota, public URL, cloud sign-in (and whether this server is the share host), shared AI provider entries and whether guests may use them |
+| Server-wide (admin) | `settings` KV in `users.db` via `GET/PUT /api/admin/settings`, plus nullable per-user override columns; the shared AI entries under the `ai_providers` key via `/api/admin/ai-providers*` (keys encrypted with the data directory's key, like the cloud client secret) | default max upload size, default storage quota, public URL, cloud sign-in (and whether this server is the share host), how long guest workspaces last (`guest_ttl_hours`) and demo mode (`demo_mode`, [guests.md](guests.md)), shared AI provider entries, whether guests may use them and the shared AI allowance per account / per guest |
 
 Adding a preference = one entry in `PREFS` (key, scope, default, and a codec
 if the value needs validation) plus a control in the matching settings pane;
@@ -31,15 +31,15 @@ a `PATCH /api/prefs/profile` carrying only the entries that changed since
 the copy this tab last saw, so a tab's stale value of another entry never
 undoes a change synced in meanwhile; a pending push is flushed when the
 page is hidden, and focus pulls at most every 15 seconds. Nothing is pushed
-before the first load succeeds. Signed-out visitors, the shared guest
-account and share views keep working from localStorage alone. The profile
+before the first load succeeds. Signed-out visitors, guests and share
+views keep working from localStorage alone. The profile
 carries no secrets, and an account linked to Gamma Cloud carries it to
 every Gamma server it signs in to, VS Code style: merged preference by
 preference against the copy both sides last agreed on, synced on a cloud
 sign-in, when a browser reads the profile (at most once a minute), a few
 seconds after a change and every hour; a first sync of two different
-copies asks Merge / Use cloud's / Use this server's, and Settings → Account
-& sync → Settings sync has Sync now / Fetch from cloud / Push to cloud
+copies opens a dialog asking Fetch from cloud / Push to cloud, and Settings
+→ Account & sync → Settings sync has one Sync now button
 (`gamma/cloud_sync.py`, [cloud_accounts.md](cloud_accounts.md)). The
 provider entries and the active key never join it. `PUT /api/prefs/profile`
 (whole-object replace, kept for scripts and tests) requires an object;
@@ -94,9 +94,9 @@ failure of that hop. A cloud error from before any change this
 session shows on no section; the Account pane's Settings sync row (under
 the Gamma Cloud row, `CloudSyncRow` in `settings/SettingsCloudSignIn.jsx`)
 still says it (`cloudSyncHint` in the same module: "Synced with Gamma
-Cloud at 14:37" / "Not synced: <error>"), next to its Sync now / Fetch
-from cloud / Push to cloud buttons — or, while a first sync waits, Merge /
-Use cloud's / Use this server's. Browser sections always show the monitor
+Cloud at 14:37" / "Not synced: <error>"), next to its one Sync now button,
+which, while a first sync waits, opens the Fetch from cloud / Push to cloud
+dialog. Browser sections always show the monitor
 and "browser".
 
 The tag is an icon and one muted word ("account" or "browser") in the
@@ -153,7 +153,7 @@ and integration tokens get an empty list. The sources:
 | `mirror-conflicts` | everyone | Account | warn | a clone the account owns has open sync conflicts (`sync_engine.open_conflict_mark`) | a digest of, per clone, the count + the newest conflict id — resolving old ones never brings it back; a digest, so any number of clones fits the fingerprint's 200 characters |
 | `publish-conflicts` | everyone | Account | warn | a workspace publishing pages to Gamma Cloud has open sync conflicts | per publication, as `mirror-conflicts` |
 | `cloud-sync` | everyone | Account | warn | the account's Gamma Cloud sync is in its `error` state (`cloud_sync.profile_status`) | the failure's timestamp |
-| `cloud-sync-choice` | everyone | Account | warn | the first settings sync with Gamma Cloud found two different copies and waits for Merge / Use cloud's / Use this server's (state `choose`) | constant: seen once |
+| `cloud-sync-choice` | everyone | Account | warn | the first settings sync with Gamma Cloud found two different copies and waits for Fetch from cloud / Push to cloud (state `choose`) | constant: seen once |
 | `free-translate` | everyone who met the failures | Reading & editing | warn | Microsoft's free translation service failed `FREE_ALERT_AFTER` (3) times in a row, in memory (`translate_engines.free_failing`); one success ends it, and the Microsoft row names the error | the streak's start time |
 | `storage` | everyone | Account | warn / error | personal storage past 90 % of the quota / full; only computed for an account under a quota, and the upload walk is remembered ten minutes (`notices.forget_usage`) | `90` / `full` |
 
@@ -251,8 +251,11 @@ AI:
   rows tagged "Shared by this server", selectable as the active key but
   without Test / Manage / delete), the login connection check, the models (default chat, metadata,
   dictation) and the account's token usage
-  ([ai.md](ai.md) "Token usage"). The check, models and usage sections
-  appear only once a provider exists.
+  ([ai.md](ai.md) "Token usage"), which opens with a **Shared allowance**
+  row ("12k of 50k tokens in the last 24 h", a red "used up" tag once
+  spent) while a shared entry with an allowance applies
+  ([guests.md](guests.md)). The check, models and usage sections appear only
+  once a provider exists; a guest sees the usage too, without Reset.
 - **Chat**: **Chat** (the default reasoning effort and the
   snapshot-clearing switch), then **Tools**: the master switch and, per chat
   kind (folder / PDF / notes), the tool chips (`AgentToolPicker`, the same
@@ -292,8 +295,8 @@ Manage:
   labelled Storage / Edit buttons.
 - **Server** (admins): the dashboard (build, uptime, warnings, the update
   check), the public server URL, storage defaults (each box saves on Enter
-  or blur), the shared AI provider, shared workspaces, server backups and
-  the log with its level filter ([user_db.md](user_db.md)).
+  or blur), **Guests**, the shared AI provider, shared workspaces, server
+  backups and the log with its level filter ([user_db.md](user_db.md)).
 
 **Shared AI provider** (Server, `SettingsAi.jsx` `SharedAiProviderSettings`)
 lists the server's shared connections with the same rows and the same
@@ -301,8 +304,22 @@ add/edit form as Connections (`ProviderRow`, `ProviderForm`; the form's
 state comes from `useProviderEditor` over `/api/admin/ai-providers`
 instead of App's aiKeys group). API-key services only. Each row has Test,
 Manage and delete; "+ Add provider" is the section's action. A "Guests may
-use it" switch (default off) decides whether the guest account gets them
-([ai.md](ai.md) "Shared provider entries").
+use it" switch (default off) decides whether guests get them
+([ai.md](ai.md) "Shared provider entries"). While at least one shared entry
+exists, two `UnitInput` rows set the shared allowance, **Allowance per
+account** and **Allowance per guest**: tokens per rolling 24 hours on the
+shared entries, 0 = unlimited, each saved on Enter or blur as
+`PUT /api/admin/ai-providers {allowance: {accounts | guests}}`
+([guests.md](guests.md) "The shared AI allowance").
+
+**Guests** (Server, [SettingsGuests.jsx](../../frontend/src/settings/SettingsGuests.jsx))
+has two rows over `/api/admin/settings`: **Guest workspaces last** (a
+`UnitInput` in hours, `guest_ttl_hours`, saved on Enter or blur) and the
+**Demo mode** switch (`demo_mode`: the login page leads with Try the demo
+and folds the password form behind Admin sign-in; the guide offers the
+first-paper tour on arrival). Each reports its source like the public URL;
+when it is `environment` (`GAMMA_GUEST_TTL_HOURS`, `GAMMA_DEMO`) the control
+is disabled and the hint names the variable ([guests.md](guests.md)).
 - **Diagnostics**: browser tracing, the browser session log and, under
   Help, the Report a problem button (the same dialog as the account menu's
   entry; [debugging.md](debugging.md) "Report a problem").

@@ -1,6 +1,7 @@
 // Settings → Server (admins only): everything that is about the server
 // rather than one account — the dashboard (build, uptime, warnings, the
-// update check), the storage defaults every account inherits, the shared
+// update check), the storage defaults every account inherits, guests and
+// demo mode (SettingsGuests.jsx), the shared
 // AI provider every account may use (SettingsAi.jsx), the shared
 // workspaces (settingsWorkspacesAdmin.jsx), whole-data-directory snapshots
 // (settingsBackups.jsx ServerBackups) and the scrubbed server log with a
@@ -13,6 +14,7 @@ import { WorkspacesAdmin } from "./SettingsWorkspacesAdmin";
 import { ServerBackups } from "./SettingsBackups";
 import { PublicUrlSettings } from "./SettingsPublicUrl";
 import { CloudSignInSettings } from "./SettingsCloudSignIn";
+import { GuestSettings } from "./SettingsGuests";
 import { SharedAiProviderSettings } from "./SettingsAi";
 import { ActivityIcon, AlertCircleIcon, CloudDownloadIcon, ImportIcon, ServerIcon } from "../shared/ui/Icons";
 import { t } from "../shared/i18n/i18n.js";
@@ -33,6 +35,9 @@ export function ServerSettings({ value }) {
       </Section>
       <Section title={t("Storage defaults")}>
         <ServerLimitRows setStatus={value.setStatus} refreshQuota={value.refreshQuota} />
+      </Section>
+      <Section title={t("Guests")}>
+        <GuestSettings setStatus={value.setStatus} />
       </Section>
       <SharedAiProviderSettings setStatus={value.setStatus} confirm={value.confirm} />
       <WorkspacesAdmin value={value} />
