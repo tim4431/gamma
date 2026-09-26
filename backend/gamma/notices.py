@@ -28,11 +28,11 @@ from dataclasses import asdict, dataclass
 
 from . import backup_schedule, cloud_sync, logbuf, server_settings, sync_engine, translate_engines, version
 from .db import NOTICES_SEEN_PREF_KEY, get_pref, set_pref
+from .server_settings import MB
 
 TONES = ("info", "warn", "error")
 _ID_RE = re.compile(r"^[a-z][a-z0-9-]{0,31}$")
 _MAX_SEEN = 64
-MB = 1024 * 1024
 
 
 @dataclass(frozen=True)
@@ -191,7 +191,7 @@ def _usage_bytes(username: str) -> int:
 
 
 def forget_usage(username: str | None = None) -> None:
-    """Drop the remembered usage (tests; a caller that just changed it)."""
+    """Drop the remembered usage (the tests)."""
     with _usage_lock:
         if username is None:
             _usage.clear()

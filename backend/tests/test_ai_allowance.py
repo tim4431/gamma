@@ -46,11 +46,18 @@ def shared(admin):
         ai_settings.save_server_ai({"providers": [], "guests": False})
 
 
+def forget_usage(user):
+    """Every usage row of ``user``, metered ones included (ai_usage.clear
+    keeps those)."""
+    from gamma.db import connect_users_db
+    with connect_users_db() as conn:
+        conn.execute("DELETE FROM ai_usage WHERE username = ?", (user,))
+
+
 @pytest.fixture(autouse=True)
 def _fresh_usage():
-    from gamma import ai_usage
     for user in ("allow_member", "allow_admin"):
-        ai_usage.clear(user, keep_metered=False)
+        forget_usage(user)
 
 
 def spend(user, provider_id, tokens, hours_ago=0):
@@ -135,8 +142,7 @@ def test_runtime_reports_the_allowance(admin, member, shared):
     spend("allow_member", shared, 40)
     assert ai_runtime("allow_member")["allowance"] == {"limit": 0, "used": 40, "exhausted": False}
     assert "allowance" not in ai_runtime("allow_member")["providers"][shared]
-    from gamma import ai_usage
-    ai_usage.clear("allow_member", keep_metered=False)
+    forget_usage("allow_member")
 
     set_allowance(admin, accounts=LIMIT)
     spend("allow_member", shared, 300)
@@ -250,14 +256,13 @@ def test_own_entries_are_never_metered(admin, member, shared, upstream):
 
 
 def test_guests_have_their_own_limit(admin, member, shared, upstream):
-    from gamma import ai_usage
     from gamma.app import app
     guest = TestClient(app)
     assert guest.post("/api/login-guest").status_code == 200
     session = guest.get("/api/session").json()
     name = session["user"]
     assert session["is_guest"] is True
-    ai_usage.clear(name, keep_metered=False)
+    forget_usage(name)
     try:
         # Accounts unlimited, guests metered; the switch decides access at all.
         r = admin.put("/api/admin/ai-providers", json={"guests": True, "allowance": {"guests": 300}})
@@ -276,4 +281,4 @@ def test_guests_have_their_own_limit(admin, member, shared, upstream):
         assert guest.get("/api/ai/models").json()["allowance"] is None
         assert guest.get("/api/ai/usage").json()["allowance"] is None
     finally:
-        ai_usage.clear(name, keep_metered=False)
+        forget_usage(name)

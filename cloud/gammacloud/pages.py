@@ -754,6 +754,29 @@ SCOPE_WORDS = (({"openid", "email", "profile"}, "user", "Your username and e-mai
                ({"offline_access"}, "key", "Stay signed in on this device"))
 
 
+def _consent(*, title: str, heading: str, where: str, account, gets_label: str, gets, go: str, cancel: str,
+             foot: str, go_js: str, cancel_js: str = "") -> str:
+    """The confirm card of the authorize and connect pages: ``heading`` over
+    ``where``, the account, the ``gets`` ((icon, words) pairs) under
+    ``gets_label``, the ``go`` button with *Use another account* and
+    ``cancel`` under it, and ``foot``; ``go_js`` / ``cancel_js`` wire the
+    buttons. Everything but ``title`` and ``account`` is HTML."""
+    user = account["username"]
+    items = "".join(f"<li><i>{ICONS[icon]}</i>{words}</li>" for icon, words in gets)
+    card = (f"<div class=cbrand>{LOGO}<span>Gamma<em>Cloud</em></span></div><div class=cbody>"
+            f"<h1>{heading}</h1><p class=where>{where}</p>"
+            f"<div class=who><div class=avatar>{esc(user[:1])}</div><div><b>{esc(user)}</b><span>{esc(account['email'])}</span></div></div>"
+            f"<p class=gets>{gets_label}</p><ul class=scopes>{items}</ul>"
+            f"<div class=go><button class='btn btn--primary' id=go>{go}</button></div>"
+            "<p class=alt><button class=linkbtn id=other>Use another account</button><span class=sep aria-hidden=true>·</span>"
+            f"{cancel}</p><div class=msg id=err></div></div>"
+            f"<p class=cfoot>{foot}</p>")
+    script = ("const err = document.getElementById('err');" + go_js
+              + "document.getElementById('other').onclick = (e) => act(e.target, async () => { await api('/api/logout', {}); location.reload(); }, err);"
+              + cancel_js)
+    return _auth_shell(title, card, script, cls="consent", top=False)
+
+
 def _consent_page(req: dict, account) -> str:
     """A signed-in, verified person confirms the client that asks: who asks
     (a hosted server by the origin of its redirect URI, the desktop app as
@@ -766,24 +789,17 @@ def _consent_page(req: dict, account) -> str:
         url = urlsplit(req["redirect_uri"])
         where = f"{ICONS['globe']}<span>{esc(f'{url.scheme}://{url.netloc}')}</span>"
     scopes = set(req["scope"].split())
-    gets = "".join(f"<li><i>{ICONS[icon]}</i>{words}</li>" for wanted, icon, words in SCOPE_WORDS if scopes & wanted)
-    user = account["username"]
-    card = (f"<div class=cbrand>{LOGO}<span>Gamma<em>Cloud</em></span></div><div class=cbody>"
-            f"<h1>Sign in to {esc(name)}</h1><p class=where>{where}</p>"
-            f"<div class=who><div class=avatar>{esc(user[:1])}</div><div><b>{esc(user)}</b><span>{esc(account['email'])}</span></div></div>"
-            f"<p class=gets>What {esc(name)} gets</p><ul class=scopes>{gets}</ul>"
-            "<div class=go><button class='btn btn--primary' id=go>Continue</button></div>"
-            "<p class=alt><button class=linkbtn id=other>Use another account</button><span class=sep aria-hidden=true>·</span>"
-            "<button class=linkbtn id=cancel>Cancel</button></p><div class=msg id=err></div></div>"
-            "<p class=cfoot>You can sign this device out any time from <a href=/devices>Devices</a>.</p>")
     rid = json.dumps(req["id"])
-    script = ("const err = document.getElementById('err');"
-              f"document.getElementById('go').onclick = async () => {{ try {{ const d = await api('/authorize/continue', {{request_id: {rid}}}); "
-              "location.href = d.redirect; } catch (e) { err.textContent = e.message; } };"
-              "document.getElementById('other').onclick = (e) => act(e.target, async () => { await api('/api/logout', {}); location.reload(); }, err);"
-              f"document.getElementById('cancel').onclick = (e) => act(e.target, async () => {{ const d = await api('/authorize/cancel', {{request_id: {rid}}}); "
-              "if (d.redirect) location.href = d.redirect; }, err);")
-    return _auth_shell(f"Sign in to {name}", card, script, cls="consent", top=False)
+    return _consent(
+        title=f"Sign in to {name}", heading=f"Sign in to {esc(name)}", where=where, account=account,
+        gets_label=f"What {esc(name)} gets",
+        gets=[(icon, words) for wanted, icon, words in SCOPE_WORDS if scopes & wanted],
+        go="Continue", cancel="<button class=linkbtn id=cancel>Cancel</button>",
+        foot="You can sign this device out any time from <a href=/devices>Devices</a>.",
+        go_js=(f"document.getElementById('go').onclick = async () => {{ try {{ const d = await api('/authorize/continue', {{request_id: {rid}}}); "
+               "location.href = d.redirect; } catch (e) { err.textContent = e.message; } };"),
+        cancel_js=(f"document.getElementById('cancel').onclick = (e) => act(e.target, async () => {{ const d = await api('/authorize/cancel', {{request_id: {rid}}}); "
+                   "if (d.redirect) location.href = d.redirect; }, err);"))
 
 
 def connect_page(origin: str, state: str, challenge: str, account, verify_needed: bool = False) -> str:
@@ -800,24 +816,16 @@ def connect_page(origin: str, state: str, challenge: str, account, verify_needed
                  "<button class='btn btn--block' data-resend>Resend the mail</button>"
                  f"<p class=links><a href='{esc(back)}'>Back to {esc(host)}</a></p>")
         return auth("Confirm your e-mail first", "", inner, RESEND_JS)
-    user = account["username"]
-    gets = "".join(f"<li><i>{ICONS[icon]}</i>{words}</li>" for icon, words in (
-        ("user", "People sign in to it with their Gamma Cloud account"),
-        ("key", "You own the connection and can disconnect it from Devices")))
-    card = (f"<div class=cbrand>{LOGO}<span>Gamma<em>Cloud</em></span></div><div class=cbody>"
-            f"<h1>Connect {esc(host)}</h1><p class=where>{ICONS['globe']}<span>{esc(origin)}</span></p>"
-            f"<div class=who><div class=avatar>{esc(user[:1])}</div><div><b>{esc(user)}</b><span>{esc(account['email'])}</span></div></div>"
-            f"<p class=gets>What connecting does</p><ul class=scopes>{gets}</ul>"
-            "<div class=go><button class='btn btn--primary' id=go>Connect</button></div>"
-            "<p class=alt><button class=linkbtn id=other>Use another account</button><span class=sep aria-hidden=true>·</span>"
-            f"<a class=linkbtn href='{esc(back)}'>Cancel</a></p><div class=msg id=err></div></div>"
-            "<p class=cfoot>Connect only a server you run or trust.</p>")
     body = _js({"server": origin, "state": state, "code_challenge": challenge})
-    script = ("const err = document.getElementById('err');"
-              f"document.getElementById('go').onclick = (e) => act(e.target, async () => {{ const d = await api('/connect-server/continue', {body}); "
-              "location.href = d.redirect; }, err);"
-              "document.getElementById('other').onclick = (e) => act(e.target, async () => { await api('/api/logout', {}); location.reload(); }, err);")
-    return _auth_shell(f"Connect {host}", card, script, cls="consent", top=False)
+    return _consent(
+        title=f"Connect {host}", heading=f"Connect {esc(host)}", where=f"{ICONS['globe']}<span>{esc(origin)}</span>",
+        account=account, gets_label="What connecting does",
+        gets=[("user", "People sign in to it with their Gamma Cloud account"),
+              ("key", "You own the connection and can disconnect it from Devices")],
+        go="Connect", cancel=f"<a class=linkbtn href='{esc(back)}'>Cancel</a>",
+        foot="Connect only a server you run or trust.",
+        go_js=(f"document.getElementById('go').onclick = (e) => act(e.target, async () => {{ const d = await api('/connect-server/continue', {body}); "
+               "location.href = d.redirect; }, err);"))
 
 
 def authorize_page(req: dict, account, verify_needed: bool = False, social: dict | None = None) -> str:

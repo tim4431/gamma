@@ -7,30 +7,37 @@ Code: [FileBrowser.jsx](../../frontend/src/library/FileBrowser.jsx),
 
 ## What a viewer may do
 
-[libraryAccess.js](../../frontend/src/library/libraryAccess.js) derives ONE
-object from how the library was reached — `lib` in App.jsx — and every
-affordance of the home library asks it, never a role or a share token: `root`
-(the folder the view is confined to: a folder share's folder, "" otherwise;
-`openFolder` clamps into it, the back row and the breadcrumb stop at it),
-`browse` (there is a library to list — a page share has none), `organize`
-(New page / New folder, drags and drops, rename, move, duplicate, delete,
-labels, sharing a folder, file drops onto the library), `pin` (the pin
-buttons and the pinned strip) and `history` (the recents strip). A workspace
-viewer browses everything and organizes nothing; a folder share's visitor
-browses the shared folder only — the share view IS the home library at that
-folder, listed through `GET /blocks/root/children` with the token
-([api.md](api.md) "Shares"), its pages opening in the same view (`page=`
-beside the token, each a history entry) and the topbar's home button — or
-the folder path that leads the page's title, every crumb a folder — returning
-to the folder.
+[libraryAccess.js](../../frontend/src/library/libraryAccess.js) derives one
+object, `lib` in App.jsx, from how the library was reached. Every affordance
+of the home library asks it, never a role or a share token:
+
+- `root`: the folder the view is confined to, a folder share's folder or ""
+  otherwise. `openFolder` clamps into it; the back row and the breadcrumb
+  stop at it.
+- `browse`: there is a library to list (a page share has none).
+- `organize`: New page / New folder, drags and drops, rename, move,
+  duplicate, delete, labels, sharing a folder, file drops onto the library.
+- `pin`: the pin buttons and the pinned strip.
+- `history`: the recents strip.
+
+A workspace viewer browses everything and organizes nothing. A folder
+share's visitor browses the shared folder only: the share view is the home
+library at that folder, listed through `GET /blocks/root/children` with the
+token ([api.md](api.md) "Shares"). Its pages open in the same view (`page=`
+beside the token, each a history entry). The topbar's home button, and each
+crumb of the folder path that leads the page's title, return to a folder
+listing.
 
 Quick open ([QuickOpen.jsx](../../frontend/src/library/QuickOpen.jsx)) is the
-keyboard way into the library from anywhere: Ctrl+P (App.jsx's global key
-listener; not in a share view) opens a palette over the pages. With no
-query the order is the recents queue, then open tabs, then the rest by last
-edit; a query ranks through `createLibraryMatcher` — the listing search box's
-matcher, below — with recency as the tie-break. Each row shows the page's folder and label
-chips (`CardLabels`, as on a file row), so a label-only match reads as one. Enter opens through `openPage`, the same path as a card double-click.
+keyboard way into the library from anywhere: Ctrl+P (the `app.quickOpen`
+command, [hotkeys.md](hotkeys.md); not in a share view) opens a palette over
+the pages. With no query the order is the recents queue, then open tabs,
+then the rest by last edit; a query ranks through `createLibraryMatcher` (the
+listing search box's matcher, below) with recency as the tie-break. Each row
+shows the page's folder and label chips (`CardLabels`, as on a file row), so
+a label-only match reads as one. Enter opens through `openPage`, the same
+path as a card double-click. A query starting with `>` is the command
+palette ([hotkeys.md](hotkeys.md)).
 
 ## Folders and labels
 
@@ -68,7 +75,7 @@ surface: the KindToggle's Labels mode lists the labels carried by the pages in
 scope (`labelMeta`, the label twin of `folderMeta` — count + latest
 modified/added/viewed, so labels sort by the same clock), as the same rows and
 cards folders use with a tag glyph. Click selects, double-click opens (on
-touch a tap opens — `isTap` in App.jsx, true for pages and folders too), a paper
+touch a tap opens, as for pages and folders: `isTap` in App.jsx), a paper
 dropped on one gets that label, right-click is the existing label
 rename/delete menu. Opening a label KEEPS the folder scope (`?folder=…` and
 `?category=…` can both be in the URL — `homeUrlFor`), so a label opened inside
@@ -133,8 +140,8 @@ same card; only the grid stretches it to fill the row, and the recents strip
 (`.recentsCarousel`) overrides `--card-w` to render slightly larger cards.
 
 The chips (`CardLabels`, also reused by the list rows) are display-only and
-gated by Settings → General → "File labels" (`gamma-home-file-labels`:
-off/labels/folders/both).
+gated by the Folders and Labels switches of Settings → Appearance → Library
+(`gamma-home-file-labels`: off/labels/folders/both).
 
 ## Pinned
 
@@ -167,9 +174,9 @@ per-page newest-`at` wins, server prunes past `PAGE_SNAPS_CAP`; too big for the
 64KB prefs KV) so covers follow the strip to every device — batched pushes, a
 full pull + local-heal on login, `?after=` delta pulls on window focus;
 localStorage `gamma-page-snaps:<user>` is only the instant-paint cache, pruned
-to the pages still in the 24-entry recents queue; Settings → General →
-"Recents thumbnails" (`gamma-recent-thumbs`) swaps covers to the plain glyph
-and stops capturing.
+to the pages still in the 24-entry recents queue; the Thumbnails switch of
+Settings → Appearance → Library (`gamma-recent-thumbs`) swaps covers to the
+plain glyph and stops capturing.
 
 Each recents card's hover × removes the entry (and its snapshot) account-wide;
 the strip has no arrow chrome — a vertical mouse wheel pans it sideways (native
@@ -185,10 +192,11 @@ per-tag "remove from" rows; adding still uses the soft-link `addPagesToFolder`
 (same as dropping a card on a folder). Every page card surface opens the SAME
 menu — the Recently-viewed strip and the pinned strip included.
 
-A folder's menu also has **Share…**: it opens the folder and the share
-popover (`sharing/SharePopover.jsx` with a folder `target`, otherwise the
-page header's popover word for word) under the topbar's link button — the
-same button a page shows, offered while a folder is open — one link for
-every page filed in the folder, now and later ([api.md](api.md) "Shares"). Renaming, moving or
+A folder's menu also has **Share…**. It opens the folder, then the share
+popover under the topbar's link button, which an open folder shows as a
+page does. The popover is `sharing/SharePopover.jsx` with a folder `target`:
+the page's popover with folder wording, without the Gamma Cloud and
+Citation sections. Its one link reaches every page filed in the folder or
+below it, now and later ([api.md](api.md) "Shares"). Renaming, moving or
 deleting a folder carries its chat buckets and its shares along through
-`POST /folders/rename`, the one call after the tag rewrite.
+`POST /folders/rename`, one call made before the tag rewrite.

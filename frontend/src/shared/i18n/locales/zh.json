@@ -801,7 +801,7 @@
   "Fit to width": "适应宽度",
   "Fix…": "修复…",
   "Folder chat": "文件夹聊天",
-  "Folder in the server's data directory": "",
+  "Folder in the server's data directory": "服务器数据目录中的文件夹",
   "Folder name…": "文件夹名称…",
   "Folder renamed to “{newPath}”.": "文件夹已重命名为“{newPath}”。",
   "Folder “{path}” and its {papers} deleted.": "已删除文件夹“{path}”及其 {papers}。",

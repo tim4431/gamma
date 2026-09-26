@@ -21,7 +21,7 @@ const CODE_KEYS = {
   ArrowUp: "ArrowUp", ArrowDown: "ArrowDown", ArrowLeft: "ArrowLeft", ArrowRight: "ArrowRight",
 };
 
-export const IS_MAC = typeof navigator !== "undefined"
+const IS_MAC = typeof navigator !== "undefined"
   && /Mac|iPhone|iPad|iPod/.test(navigator.platform || navigator.userAgentData?.platform || "");
 
 // The key part of a chord in its canonical spelling: letters lowercase,
@@ -77,11 +77,6 @@ export function chordFromEvent(e, mac = IS_MAC) {
   else key = canonicalKey(e.key);
   if (!key || ["Control", "Meta", "Alt", "Shift", "AltGraph", "CapsLock", "Dead", "Unidentified"].includes(key)) return "";
   return [...mods, key].join("-");
-}
-
-export function matchesChord(e, chord, mac = IS_MAC) {
-  const c = normalizeChord(chord);
-  return !!c && chordFromEvent(e, mac) === c;
 }
 
 const KEY_LABELS = {
@@ -150,6 +145,12 @@ export function dispatch(commands, e, ctx, bindings, mac = IS_MAC) {
     return cmd;
   }
   return null;
+}
+
+// Whether `el` (the focused element) takes typed text: a key some command
+// or widget would claim stays with the field.
+export function isTextField(el) {
+  return !!el && (el.tagName === "INPUT" || el.tagName === "TEXTAREA" || el.isContentEditable);
 }
 
 // chord → the commands bound to it, for every chord more than one command

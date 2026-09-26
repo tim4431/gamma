@@ -164,15 +164,12 @@ def mask_entry(entry: dict, hint: bool = True) -> dict:
     }
 
 
-def protocol_choices(key_only: bool = False) -> dict:
+def protocol_choices() -> dict:
     """What the settings form offers: the protocols (auth "oauth" = sign-in
-    entries, no API key field) and the named services. ``key_only`` drops
-    the sign-in protocols."""
+    entries, no API key field) and the named services."""
     protocols = [{"id": pid, "label": proto.label, "default_base_url": proto.base_url, "auth": proto.auth}
-                 for pid, proto in ai_protocols.PROTOCOLS.items()
-                 if not (key_only and proto.auth == "oauth")]
-    ids = {p["id"] for p in protocols}
-    return {"protocols": protocols, "services": [s for s in ai_protocols.SERVICES if s["protocol"] in ids]}
+                 for pid, proto in ai_protocols.PROTOCOLS.items()]
+    return {"protocols": protocols, "services": ai_protocols.SERVICES}
 
 
 # --- the server's shared entries ----------------------------------------------
@@ -187,6 +184,11 @@ _server_lock = threading.Lock()
 
 def is_server_id(provider_id) -> bool:
     return str(provider_id or "").startswith(SERVER_ID_PREFIX)
+
+
+def own_entries(user: str) -> list:
+    """The account's own entries (a ``server:`` id is never one of them)."""
+    return [e for e in load_provider_entries(user) if not is_server_id(e.get("id"))] if user else []
 
 
 def new_server_provider_id() -> str:
@@ -431,22 +433,21 @@ def _refreshed_server_oauth(provider_id: str, flow) -> dict | None:
 
 def ai_runtime(user: str) -> dict:
     """The effective AI config for a request, built from the user's provider
-    entries followed by the server's shared ones (``server_entries_for``):
+    entries followed by the server's shared ones (``shared_access``):
     {"providers": {id: {api_key, base_url, protocol, name}},
     "models": [{"id": "<pid>:<model>", "provider": pid, "provider_name",
     "model", "native_pdf", "shared"}], "default": the first model — the
     account's own when it has one, else the server's — or None,
     "enabled": bool, "allowance": {"limit", "used", "exhausted"} or None}.
 
-    ``allowance`` is None unless a shared entry made it into the runtime and
-    its limit is non-zero; then every shared provider conf carries
+    ``allowance`` is None unless a shared entry made it into the runtime
+    (limit 0 = unlimited). Under a limit every shared provider conf carries
     ``"allowance": {"user", "limit"}``, which ai_client.open_ai checks
-    before each call. The shared models stay listed once it is used up (the
-    pickers show them, and why they refuse)."""
-    own = [e for e in (load_provider_entries(user) if user else []) if not is_server_id(e.get("id"))]
+    before each call. The shared models stay listed once it is used up; a
+    refused call says why."""
     shared, limit = shared_access(user)
     providers, models = {}, []
-    for e in own + shared:
+    for e in own_entries(user) + shared:
         protocol = e.get("protocol")
         proto = ai_protocols.PROTOCOLS.get(protocol)
         pid = str(e.get("id") or "")
@@ -524,7 +525,8 @@ def clear_refresh_backoff(user: str, provider_id: str) -> None:
         entries = load_provider_entries(user)
         for e in entries:
             oauth = e.get("oauth")
-            if e.get("id") == provider_id and isinstance(oauth, dict)                     and oauth.pop("refresh_failed_at", None) is not None:
+            if e.get("id") == provider_id and isinstance(oauth, dict) \
+                    and oauth.pop("refresh_failed_at", None) is not None:
                 save_provider_entries(user, entries)
                 return
 

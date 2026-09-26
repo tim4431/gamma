@@ -37,9 +37,10 @@ All state is SQLite + files on disk under a data directory (env
     username, keyed by workspace and cloud `subject`, waiting for that
     person's first sign-in ([workspaces.md](workspaces.md) "Pending
     invitations");
-  - `shares` — page share links, one per `(workspace_id, page_id)`, with
-    `created_by`, `audience` anyone/users/list, `role` view/edit and the
-    comma-separated `allowed_users`;
+  - `shares` — share links, one per `(workspace_id, page_id)` or per
+    `(workspace_id, folder)` (the other column `''`), with `created_by`,
+    `audience` anyone/users/list, `role` view/edit and the comma-separated
+    `allowed_users` ([api.md](api.md) "Shares");
   - `user_prefs` — small JSON values per `(username, workspace_id, key)`:
     workspace `''` for the account-wide keys (`db.USER_PREF_KEYS`: the
     preference `profile`, the active AI provider, the AI provider entries
@@ -121,22 +122,24 @@ write a step: [migrations.md](migrations.md).
 
 `session` cookie → middleware resolves `request.state.user` (+ `is_guest`,
 `is_admin`, `default_ws`). A guest account past its lifetime is deleted by
-the middleware on its next request (which then runs signed out) or by the
-sweeper `gamma/guests.py` runs in the app lifespan every 10 minutes — both
-through `workspaces.delete_account`, the one account deletion the admin API
-and `manage.py delete-user` use too ([guests.md](guests.md)). Which workspace a request reads or
-writes is a second decision (`require_ws` / `resolve_ws` /
-`require_ws_writer` — [workspaces.md](workspaces.md)): `?ws=` or the
-`X-Gamma-Workspace` header, else the account's default workspace, gated by
-membership and role. Share tokens grant access to ONE page (any page — paper
-or plain notes) of one workspace for the audience the sharer chose:
-endpoints that support shared views resolve the workspace from the share
-token (`resolve_ws` — the token wins over the visitor's own session for
-choosing whose data is read) and confine reads to the page's subtree
-(`share_scope_page` + `assert_block_in_page`); write endpoints require a
-member with the editor or owner role (`require_ws(write=True)`), except the
-block writers, which accept an `edit` share through `require_ws_writer` under
-the same page scope. Keep that distinction when touching endpoints. Full
+the middleware on its next request (which then runs signed out), or by the
+sweeper `gamma/guests.py` runs in the app lifespan every 10 minutes. Both go
+through `workspaces.delete_account`, the one account deletion, which the
+admin API and `manage.py delete-user` use too ([guests.md](guests.md)).
+
+Which workspace a request reads or writes is a second decision
+(`require_ws` / `resolve_ws` / `require_ws_writer` —
+[workspaces.md](workspaces.md)): `?ws=` or the `X-Gamma-Workspace` header,
+else the account's default workspace, gated by membership and role. Share
+tokens grant access to ONE page (any page — paper or plain notes), or to the
+pages filed in ONE folder, of one workspace for the audience the sharer
+chose: endpoints that support shared views resolve the workspace from the
+share token (`resolve_ws` — the token wins over the visitor's own session
+for choosing whose data is read) and confine reads to the pages in reach
+(`share_scope` + `assert_block_in_scope`); write endpoints require a member
+with the editor or owner role (`require_ws(write=True)`), except the block
+writers, which accept an `edit` share through `require_ws_writer` under the
+same scope. Keep that distinction when touching endpoints. Full
 endpoint/auth table: [api.md](api.md).
 
 **Sign in with Gamma Cloud** (`gamma/cloud_auth.py`,
@@ -167,8 +170,8 @@ admin login to an upgraded multi-user instance would be a backdoor — those
 get a startup hint to run `manage.py set-admin`. `seed.create_workspace_files`
 writes a workspace's empty files (and the guest welcome page, which names
 the guest lifetime); `workspaces.ensure_personal` gives an account its
-personal workspace. There is no seeded guest account: each guest login makes
-its own.
+personal workspace. No guest account is seeded: each guest login makes its
+own.
 
 ## manage.py CLI
 

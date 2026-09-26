@@ -16,7 +16,7 @@ from pydantic import BaseModel
 from starlette.background import BackgroundTask
 
 from .. import cloud_auth, guests, ratelimit, version, workspaces, ws_backup
-from ..auth import is_guest_workspace, require_user, requested_ws, set_session_cookie
+from ..auth import require_user, requested_ws, set_session_cookie
 from ..ratelimit import client_ip
 from ..db import connect_users_db, page_now, ws_dir
 
@@ -138,7 +138,7 @@ def import_data(request: Request, file: UploadFile = File(...), mode: str = "rep
     if mode not in ("replace", "merge"):
         raise HTTPException(status_code=400, detail="mode must be 'replace' or 'merge'")
     target = _target_ws(request, ws, user, "owner" if mode == "replace" else "editor")
-    if is_guest_workspace(target):
+    if workspaces.is_guest_workspace(target):
         raise HTTPException(status_code=403, detail="a guest workspace cannot import backups")
     with tempfile.TemporaryDirectory(prefix="gamma-import-") as td:
         zpath = Path(td) / "backup.zip"

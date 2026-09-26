@@ -29,7 +29,7 @@ from starlette.background import BackgroundTask
 from .. import ai_settings, backups, cloud_auth, workspaces
 from ..auth import require_admin
 from .ai import (AIProviderRequest, ChatGPTAuthComplete, begin_chatgpt_signin, new_chatgpt_entry,
-                 redeem_chatgpt_signin, seeded_chatgpt_models)
+                 reconnect_chatgpt_entry, redeem_chatgpt_signin, seeded_chatgpt_models)
 from ..db import connect_users_db
 from ..logbuf import tail as _log_tail
 from .. import version
@@ -208,6 +208,14 @@ def _shared_entry(config: dict, provider_id: str) -> dict:
     return entry
 
 
+def _add_shared(entry: dict) -> None:
+    def add(config):
+        if len(config["providers"]) >= ai_settings.MAX_PROVIDERS:
+            raise HTTPException(status_code=400, detail="too many providers")
+        config["providers"].append(entry)
+    ai_settings.edit_server_ai(add)
+
+
 class SharedAiRequest(BaseModel):
     guests: bool | None = None  # may guest accounts use the shared entries
     # Tokens per account per 24 h through the shared entries, 0 = unlimited:
@@ -238,12 +246,7 @@ def update_ai_providers(payload: SharedAiRequest, request: Request):
 @router.post("/ai-providers")
 def add_ai_provider(payload: AIProviderRequest, request: Request):
     require_admin(request)
-
-    def add(config):
-        if len(config["providers"]) >= ai_settings.MAX_PROVIDERS:
-            raise HTTPException(status_code=400, detail="too many providers")
-        config["providers"].append(ai_settings.new_key_entry(payload, ai_settings.new_server_provider_id()))
-    ai_settings.edit_server_ai(add)
+    _add_shared(ai_settings.new_key_entry(payload, ai_settings.new_server_provider_id()))
     return _shared_ai_view()
 
 
@@ -264,20 +267,11 @@ def shared_chatgpt_complete(payload: ChatGPTAuthComplete, request: Request):
             entry = _shared_entry(config, payload.provider_id)
             if entry.get("protocol") != "chatgpt":
                 raise HTTPException(status_code=404, detail="provider not found")
-            entry["oauth"] = oauth
-            if payload.name.strip():
-                entry["name"] = payload.name.strip()[:ai_settings.MAX_NAME_LEN]
-            if payload.models.strip():
-                entry["models"] = payload.models.strip()[:ai_settings.MAX_MODELS_LEN]
+            reconnect_chatgpt_entry(entry, oauth, payload.name, payload.models)
         ai_settings.edit_server_ai(reconnect)
         return _shared_ai_view()
     entry = new_chatgpt_entry(ai_settings.new_server_provider_id(), oauth, payload.name, payload.models)
-
-    def add(config):
-        if len(config["providers"]) >= ai_settings.MAX_PROVIDERS:
-            raise HTTPException(status_code=400, detail="too many providers")
-        config["providers"].append(entry)
-    ai_settings.edit_server_ai(add)
+    _add_shared(entry)
     if not entry["models"]:
         # Listed live through the admin's runtime, which offers the shared
         # entries after the admin's own.

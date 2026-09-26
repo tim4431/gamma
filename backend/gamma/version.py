@@ -153,7 +153,7 @@ def server_info(refresh: bool = False) -> dict:
     """Everything the admin dashboard shows: the build, uptime, log counts
     and the update check (``check``)."""
     return {
-        "version": VERSION, "commit": COMMIT, "branch": BRANCH, "label": label(),
+        **build_info(), "branch": BRANCH,
         "started_at": STARTED_AT.isoformat().replace("+00:00", "Z"),
         "uptime_seconds": int((datetime.now(timezone.utc) - STARTED_AT).total_seconds()),
         "python": platform.python_version(), "platform": f"{platform.system()} {platform.machine()}".strip(),
@@ -161,5 +161,4 @@ def server_info(refresh: bool = False) -> dict:
         "log_counts": log_counts(),
         **check(refresh=refresh),
         "image": IMAGE, "releases_url": RELEASES_PAGE,
-        "frozen": build_info()["frozen"],
     }

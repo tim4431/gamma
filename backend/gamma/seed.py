@@ -19,6 +19,7 @@ from fractional_indexing import generate_key_between
 from .config import WORKSPACES_DIR
 from .db import DATA_SCHEMA, PAGES_SCHEMA, connect_users_db, page_now, safe_ws_id
 from .logbuf import log
+from .server_settings import guest_ttl_hours
 
 # GitHub raw base for screenshots embedded in the guest welcome page.
 _SCREENSHOTS = "https://raw.githubusercontent.com/tim4431/Gamma/main/docs/assets/screenshots"
@@ -26,8 +27,6 @@ _SCREENSHOTS = "https://raw.githubusercontent.com/tim4431/Gamma/main/docs/assets
 
 def _guest_lifetime() -> str:
     """"24 hours" — how long a guest account lives (server setting)."""
-    from .server_settings import guest_ttl_hours  # local: server_settings is not needed otherwise
-
     hours = guest_ttl_hours()
     return f"{hours} hour" if hours == 1 else f"{hours} hours"
 

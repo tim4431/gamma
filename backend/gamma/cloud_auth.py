@@ -83,7 +83,7 @@ from .chatgpt_oauth import _b64url
 from .db import connect_users_db, page_now
 from .logbuf import log
 from .publisher_sessions import cipher
-from .server_settings import _get_raw, _set_raw, public_url_settings, validate_public_url
+from .server_settings import LOOPBACK_HOSTS, _get_raw, _set_raw, public_url_settings, validate_public_url
 
 PROVIDER = "gamma-cloud"
 POLICIES = ("refuse", "claim", "provision")
@@ -93,7 +93,6 @@ DEFAULT_CLIENT_ID = "gamma-desktop"
 # first only together with the second.
 SCOPE = "openid email profile offline_access prefs"
 CALLBACK_PATH = "/api/auth/cloud/callback"
-CONNECT_CALLBACK_PATH = "/api/auth/cloud/connect/callback"
 NOT_CONNECTED = ("This server is not connected to Gamma Cloud yet. An admin connects it in "
                  "Settings → Server → Sign-in.")
 PENDING_TTL = 600
@@ -226,6 +225,22 @@ def _http(url: str, data: bytes | None = None, headers: dict | None = None, *, m
         raise CloudAuthError(f"cannot reach the account server: {e}") from e
 
 
+def _post_form(url: str, form: dict, headers: dict | None = None) -> dict:
+    """``_http`` with ``form`` as an ``application/x-www-form-urlencoded`` body."""
+    return _http(url, data=urllib.parse.urlencode(form).encode(),
+                 headers={"Content-Type": "application/x-www-form-urlencoded", **(headers or {})})
+
+
+def _client_form(cfg: dict, **fields) -> dict:
+    """A token-endpoint form: ``fields``, this server's client id and, for a
+    confidential client, its secret."""
+    form = {**fields, "client_id": cfg["client_id"]}
+    secret = client_secret()
+    if secret:
+        form["client_secret"] = secret
+    return form
+
+
 def discovery(issuer: str) -> dict:
     cached = _discovery_cache.get(issuer)
     if cached and cached[0] > time.monotonic():
@@ -324,7 +339,7 @@ def needs_connect() -> bool:
     cfg = settings()
     public = public_url_settings()["public_url"]
     return (cfg["enabled"] and cfg["client_id"] == DEFAULT_CLIENT_ID and bool(public)
-            and urlsplit(public).hostname not in _LOOPBACK)
+            and urlsplit(public).hostname not in LOOPBACK_HOSTS)
 
 
 def begin(request, *, link_user: str | None, next_path: str) -> str:
@@ -368,7 +383,7 @@ def connect_begin(*, next_path: str) -> str:
     base = public_url_settings()["public_url"]
     if not base:
         raise CloudAuthError("Confirm this server's public URL first.")
-    if urlsplit(base).hostname in _LOOPBACK:
+    if urlsplit(base).hostname in LOOPBACK_HOSTS:
         raise CloudAuthError("A server on this computer needs no connection: it signs in as the desktop app.")
     endpoint = _connect_endpoint(cfg["issuer"], "gamma_server_connect_endpoint")
     state = secrets.token_urlsafe(24)
@@ -392,9 +407,7 @@ def connect_finish(*, code: str, state: str, error: str = "") -> tuple[str, str]
     cfg = settings()
     try:
         endpoint = _connect_endpoint(cfg["issuer"], "gamma_server_connect_token_endpoint")
-        out = _http(endpoint, data=urllib.parse.urlencode({"code": code, "code_verifier": pending["verifier"],
-                                                           "server": base}).encode(),
-                    headers={"Content-Type": "application/x-www-form-urlencoded"})
+        out = _post_form(endpoint, {"code": code, "code_verifier": pending["verifier"], "server": base})
         client_id, secret = out.get("client_id"), out.get("client_secret")
         if not (isinstance(client_id, str) and client_id and isinstance(secret, str) and secret):
             raise CloudAuthError("the account server's answer names no client")
@@ -438,15 +451,11 @@ def exchange(request, *, code: str, state: str) -> tuple[dict, dict, str]:
     if not pending:
         raise CloudAuthError("This sign-in expired or was already used. Start again.")
     doc = discovery(cfg["issuer"])
-    form = {"grant_type": "authorization_code", "code": code, "redirect_uri": pending["redirect_uri"],
-            "client_id": cfg["client_id"], "code_verifier": pending["verifier"]}
-    secret = client_secret()
-    if secret:
-        form["client_secret"] = secret
+    form = _client_form(cfg, grant_type="authorization_code", code=code, redirect_uri=pending["redirect_uri"],
+                        code_verifier=pending["verifier"])
     if cfg["client_id"] == DEFAULT_CLIENT_ID:
         form["device_id"], form["device_name"] = device()
-    tokens = _http(doc["token_endpoint"], data=urllib.parse.urlencode(form).encode(),
-                   headers={"Content-Type": "application/x-www-form-urlencoded", "User-Agent": _user_agent(base)})
+    tokens = _post_form(doc["token_endpoint"], form, {"User-Agent": _user_agent(base)})
     try:
         if not tokens.get("id_token"):
             raise CloudAuthError("the account server returned no identity token")
@@ -569,13 +578,8 @@ def refresh_grant(refresh_token: str) -> dict:
     ``error`` is ``invalid_grant`` when the grant is gone. The caller saves
     the rotated token."""
     cfg = settings()
-    doc = discovery(cfg["issuer"])
-    form = {"grant_type": "refresh_token", "refresh_token": refresh_token, "client_id": cfg["client_id"]}
-    secret = client_secret()
-    if secret:
-        form["client_secret"] = secret
-    return _http(doc["token_endpoint"], data=urllib.parse.urlencode(form).encode(),
-                 headers={"Content-Type": "application/x-www-form-urlencoded"})
+    return _post_form(discovery(cfg["issuer"])["token_endpoint"],
+                      _client_form(cfg, grant_type="refresh_token", refresh_token=refresh_token))
 
 
 def access_token_for(username: str, *, fresh: bool = False) -> str | None:
@@ -651,9 +655,6 @@ def _grant_refused(subject: str, used: str) -> None:
 
 # --- this server's address -------------------------------------------------------
 
-_LOOPBACK = frozenset({"localhost", "127.0.0.1", "::1"})
-
-
 def server_url(request=None) -> str:
     """This server's address for the account server's server list: the
     admin-confirmed public URL, else, for a local sidecar, the loopback
@@ -664,7 +665,7 @@ def server_url(request=None) -> str:
         return configured
     if request is not None:
         origin = str(request.base_url).rstrip("/")
-        if urlsplit(origin).hostname in _LOOPBACK:
+        if urlsplit(origin).hostname in LOOPBACK_HOSTS:
             if _get_raw("cloud_server_url") != origin:
                 _set_raw("cloud_server_url", origin)
             return origin
@@ -675,7 +676,7 @@ def server_name(url: str) -> str:
     """The name the server list shows: the machine's name for a sidecar,
     else the public host."""
     host = urlsplit(url).hostname or ""
-    return socket.gethostname()[:80] if host in _LOOPBACK else host
+    return socket.gethostname()[:80] if host in LOOPBACK_HOSTS else host
 
 
 def revoke_refresh(token: str) -> None:
@@ -689,12 +690,7 @@ def revoke_refresh(token: str) -> None:
         endpoint = str(discovery(cfg["issuer"]).get("revocation_endpoint", ""))
         if not endpoint.startswith(cfg["issuer"] + "/"):
             return
-        form = {"token": token, "token_type_hint": "refresh_token", "client_id": cfg["client_id"]}
-        secret = client_secret()
-        if secret:
-            form["client_secret"] = secret
-        _http(endpoint, data=urllib.parse.urlencode(form).encode(),
-              headers={"Content-Type": "application/x-www-form-urlencoded"})
+        _post_form(endpoint, _client_form(cfg, token=token, token_type_hint="refresh_token"))
     except CloudAuthError as e:
         log.warning(f"cloud sign-in: could not revoke a refresh token at the account server: {e}")
 

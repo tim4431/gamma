@@ -65,10 +65,15 @@ const CLOUD_AUDIENCE_TILES = [
 
 // The refusal publish.py answers for an account without a Gamma Cloud identity,
 // compared against the server's text, so it stays untranslated.
-export const PUBLISH_SIGN_IN = T("Sign in with Gamma Cloud to publish.");
+const PUBLISH_SIGN_IN = T("Sign in with Gamma Cloud to publish.");
+
+// A tile pick as a settings patch: opening a link up to everyone never
+// silently makes it editable.
+const audiencePatch = (audience) => (audience === "anyone" ? { audience, role: "view" } : { audience });
 
 // The one sentence that says what the tiles + toggle add up to.
-function accessSummary(settings, invited, kind = "page") {
+function accessSummary(settings, kind) {
+  const invited = (settings.users || []).length > 0;
   const who = settings.audience === "anyone" ? t("Anyone with the link") : settings.audience === "users" ? t("Anyone signed in") : null;
   if (!who) return invited ? t("Only the people below can open it.") : t("Nobody can open it until you invite someone.");
   const verb = settings.role === "edit" ? t("edit") : t("read");
@@ -76,6 +81,30 @@ function accessSummary(settings, invited, kind = "page") {
   return kind === "folder"
     ? t("{who} can {verb} every page in this folder{access}.", { who, verb, access })
     : t("{who} can {verb} this page{access}.", { who, verb, access });
+}
+
+// That sentence under the tiles, amber when the link is editable without
+// sign-in; `saving` stands in while a change is on its way.
+function AccessSummary({ settings, kind, saving = false }) {
+  const openEdit = settings.audience === "anyone" && settings.role === "edit";
+  return (
+    <div className={`settingsPaneHint shareSummary ${openEdit ? "shareWarn" : ""}`}>
+      {openEdit ? <AlertCircleIcon size={13} /> : null}
+      <span>
+        {saving ? t("Saving…") : accessSummary(settings, kind)}
+        {openEdit && !saving ? t(" No sign-in needed; edits are recorded under a name they choose.") : ""}
+      </span>
+    </div>
+  );
+}
+
+function CopyLinkButton({ url, copied, onCopy }) {
+  return (
+    <button type="button" className={`uiBtn sm ${copied ? "on" : ""}`} onClick={onCopy} title={url}>
+      {copied ? <CheckIcon size={13} /> : <LinkIcon size={13} />}
+      {copied ? t("Copied") : t("Copy link")}
+    </button>
+  );
 }
 
 // Invite, inline under the people list (a popover can't host a modal): an
@@ -144,7 +173,6 @@ function PublishSection({ state, busy, error, copied, onCopy, canEdit, onPublish
   const st = mirror ? mirrorState(mirror, { busy: busy === "sync" }) : null;
   const running = busy === "sync" || !!mirror?.status?.running;
   const spinning = (what) => (busy === what ? <span className="mirrorSpin"><RefreshIcon size={13} /></span> : null);
-  const openEdit = share && share.audience === "anyone" && share.role === "edit";
   const capped = !!error?.limit;
   // a published page whose publication cannot run (detached, the identity gone) says why
   const problem = (capped ? error.message : error) || state?.error || (published && !state?.can_publish ? state.reason : "") || "";
@@ -208,10 +236,7 @@ function PublishSection({ state, busy, error, copied, onCopy, canEdit, onPublish
         title={link && link !== state.url ? t("{link}\nAlso works: {url}", { link: link, url: state.url }) : link}>
         <span className="shareLinkBtns">
           {link ? (
-            <button type="button" className={`uiBtn sm ${copied ? "on" : ""}`} onClick={onCopy} title={link}>
-              {copied ? <CheckIcon size={13} /> : <LinkIcon size={13} />}
-              {copied ? t("Copied") : t("Copy link")}
-            </button>
+            <CopyLinkButton url={link} copied={copied} onCopy={onCopy} />
           ) : canEdit && state.can_publish ? (
             // publishing failed after the page reached the share host: the same call finishes the job
             <button type="button" className="uiBtn sm primary" disabled={!!busy} onClick={() => onPublish()}
@@ -260,16 +285,10 @@ function PublishSection({ state, busy, error, copied, onCopy, canEdit, onPublish
             label={t("Who can open the cloud link")} value={share.audience} options={CLOUD_AUDIENCE_TILES}
             onChange={(audience) => {
               if (!canEdit || busy || audience === share.audience) return;
-              onPublish(audience === "anyone" ? { audience, role: "view" } : { audience });
+              onPublish(audiencePatch(audience));
             }}
           />
-          <div className={`settingsPaneHint shareSummary ${openEdit ? "shareWarn" : ""}`}>
-            {openEdit ? <AlertCircleIcon size={13} /> : null}
-            <span>
-              {busy === "update" ? t("Saving…") : accessSummary(share, (share.users || []).length > 0)}
-              {openEdit && busy !== "update" ? t(" No sign-in needed; edits are recorded under a name they choose.") : ""}
-            </span>
-          </div>
+          <AccessSummary settings={share} kind="page" saving={busy === "update"} />
         </>
       ) : null}
       {errorLine}
@@ -292,7 +311,6 @@ export function SharePopover({
   const [inviting, setInviting] = React.useState(false);
   const users = settings?.users || [];
   const shared = !!settings?.token;
-  const openEdit = shared && settings.audience === "anyone" && settings.role === "edit";
   const kind = target?.kind === "folder" ? "folder" : "page";
   const title = kind === "folder" ? t("Share this folder") : t("Share this page");
 
@@ -329,10 +347,7 @@ export function SharePopover({
             <Section title={t("Link")} guide="share.link">
               <Row icon={LinkIcon} label={t("Share link")} hint={shareUrl} title={shareUrl}>
                 <span className="shareLinkBtns">
-                  <button type="button" className={`uiBtn sm ${copied ? "on" : ""}`} onClick={onCopy} title={shareUrl}>
-                    {copied ? <CheckIcon size={13} /> : <LinkIcon size={13} />}
-                    {copied ? t("Copied") : t("Copy link")}
-                  </button>
+                  <CopyLinkButton url={shareUrl} copied={copied} onCopy={onCopy} />
                   <button type="button" className="uiBtn sm iconSq danger" onClick={onStop}
                     aria-label={t("Stop sharing")}
                     title={t("Stop sharing — the link stops working; sharing again later makes a new link with default settings.")}>
@@ -353,19 +368,9 @@ export function SharePopover({
             >
               <IconChoices
                 label={t("Who can open the link")} value={settings.audience} options={AUDIENCE_TILES}
-                onChange={(audience) => {
-                  if (audience === settings.audience) return;
-                  // Opening a link up to everyone never silently makes it editable.
-                  onUpdate(audience === "anyone" ? { audience, role: "view" } : { audience });
-                }}
+                onChange={(audience) => { if (audience !== settings.audience) onUpdate(audiencePatch(audience)); }}
               />
-              <div className={`settingsPaneHint shareSummary ${openEdit ? "shareWarn" : ""}`}>
-                {openEdit ? <AlertCircleIcon size={13} /> : null}
-                <span>
-                  {accessSummary(settings, users.length > 0, kind)}
-                  {openEdit ? t(" No sign-in needed; edits are recorded under a name they choose.") : ""}
-                </span>
-              </div>
+              <AccessSummary settings={settings} kind={kind} />
             </Section>
             <Section
               title={t("People")}
@@ -380,7 +385,7 @@ export function SharePopover({
               {users.map((u) => (
                 <PersonRow key={u.name} name={u.name} sub={t("Invited")} icon={UserIcon}>
                   <Segmented
-                    value={u.role} options={ROLE_SEGMENTS}
+                    value={u.role} options={ROLE_SEGMENTS[kind]}
                     onChange={(role) => { if (role !== u.role) onSetRole(u.name, role); }}
                   />
                   <button

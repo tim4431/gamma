@@ -189,16 +189,15 @@ def test_lookups_are_rate_limited_per_account(owner, boss, cloud_on, monkeypatch
 def test_lookup_transport(monkeypatch):
     seen = []
 
-    def fake_get(url, headers):
+    def fake_http(url, data=None, headers=None, method=None, timeout=None):
         seen.append((url, headers))
         name = url.rsplit("u=", 1)[1]
         if name == "known":
-            return 200, {"sub": "acct-1", "username": "Known"}
-        if name == "gone":
-            return 404, {"error": "not_found"}
-        return 401, {"error": "invalid_token"}
+            return {"sub": "acct-1", "username": "Known"}
+        status, error = (404, "not_found") if name == "gone" else (401, "invalid_token")
+        raise cloud_auth.CloudAuthError(error, status=status, error=error, body={"error": error})
 
-    monkeypatch.setattr(workspaces, "_get_json", fake_get)
+    monkeypatch.setattr(cloud_auth, "_http", fake_http)
     assert workspaces.lookup_with_token(ISSUER, "tok", "known") == {"sub": "acct-1", "username": "known"}
     assert seen[0] == (ISSUER + "/api/lookup/username?u=known", {"Authorization": "Bearer tok"})
     assert workspaces.lookup_with_token(ISSUER, "tok", "gone") is None
@@ -213,7 +212,8 @@ def test_lookup_transport(monkeypatch):
     with pytest.raises(workspaces.CloudLookupError, match="Link your own Gamma Cloud account"):
         workspaces.cloud_lookup_username("known", by="pm_owner")
     monkeypatch.setattr(workspaces, "_cloud_access_token", lambda by: "tok-" + by)
-    assert workspaces.lookup_cloud_username(" Known", by="pm_owner") == {"sub": "acct-1", "username": "known"}
+    known = workspaces.clean_cloud_username(" Known")
+    assert workspaces.cloud_lookup_username(known, by="pm_owner") == {"sub": "acct-1", "username": "known"}
     assert seen[-1][1] == {"Authorization": "Bearer tok-pm_owner"}
 
 
@@ -230,7 +230,6 @@ def test_invite_through_the_account_server(owner, boss, cloud, monkeypatch):  # 
     # server turns that grant into an access token (a refresh, rotated and
     # saved), asks the account server for the username, and the invitation
     # waits for the subject.
-    monkeypatch.setattr(workspaces, "_get_json", cloud.get_json)
     ws = _shared(boss, "PM wire lab")
     c = login("pm_owner", "pm-owner-pw1")
     cloud.person.update({"sub": "sub-pm-owner", "preferred_username": "pm-owner", "email": "pm-owner@example.org"})

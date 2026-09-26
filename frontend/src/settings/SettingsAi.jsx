@@ -1,4 +1,4 @@
-// Settings → Providers: the user's AI credential list (OpenAI-platform style)
+// Settings → AI › Connections: the user's AI credential list (OpenAI-platform style)
 // and the add/edit-key wizard. All state and handlers of the account's own
 // list live in App.jsx (the aiKeys* group) — these components only render
 // it; the server's shared entries appear there as read-only rows.
@@ -571,14 +571,9 @@ function ProviderForm({ value, onCancel }) {
 
 const USAGE_KIND_LABELS = { chat: t("Chat"), translate: t("Translation"), metadata: t("Metadata"), cite: t("Citations"), test: t("Connection tests") };
 
-// Settings → AI → Token usage: what the account's AI calls cost in tokens,
-// as the providers reported it (GET /api/ai/usage — one row per call in
-// users.db, see gamma/ai_usage.py). Three tiles for today / 7 days /
-// 30 days, the all-time line with Reset, then the last 30 days by model
-// and by kind. No prices: they differ per provider and change.
 // The shared allowance (GET /api/ai/usage's `allowance`, present while a
-// shared entry with a limit applies): what is left of the account's tokens
-// on the server's keys in the rolling 24 hours.
+// shared entry applies): what the account spent on the server's keys in the
+// rolling 24 hours, against the admin's limit when there is one.
 function AllowanceRow({ allowance }) {
   const { used = 0, limit = 0, exhausted = false } = allowance;
   return (
@@ -594,6 +589,11 @@ function AllowanceRow({ allowance }) {
   );
 }
 
+// Settings → AI → Token usage: what the account's AI calls cost in tokens,
+// as the providers reported it (GET /api/ai/usage — one row per call in
+// users.db, see gamma/ai_usage.py). Three tiles for today / 7 days /
+// 30 days, the all-time line with Reset, then the last 30 days by model
+// and by kind. No prices: they differ per provider and change.
 function AiUsageSection({ confirm, setStatus, canReset = true }) {
   const [data, setData] = React.useState(null);
   const [error, setError] = React.useState("");

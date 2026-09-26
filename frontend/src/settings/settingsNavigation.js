@@ -3,7 +3,7 @@ import { t } from "../shared/i18n/i18n.js";
 // page (a language change, a round trip through the account server).
 export const REOPEN_SETTINGS_KEY = "gamma-reopen-settings";
 // Old entry points stay valid while everyday preferences use five destinations.
-export const PANE_ALIASES = {
+const PANE_ALIASES = {
   general: "appearance", papers: "appearance", viewer: "reading", notes: "reading", search: "reading",
   context: "ai-advanced", library: "appearance", workspace: "workspaces", advanced: "diagnostics", sync: "account",
 };
@@ -78,7 +78,7 @@ const entries = [
   ["ai", t("Shared allowance"), "shared AI tokens daily limit quota used up"],
   ["diagnostics", t("Debug logging"), "diagnostics tracing browser system log"],
 ];
-export const SETTINGS_SEARCH = entries.map(([pane, label, keywords]) => ({ pane, label, keywords }));
+const SETTINGS_SEARCH = entries.map(([pane, label, keywords]) => ({ pane, label, keywords }));
 export function searchSettings(query, allowedPanes) {
   const words = query.trim().toLocaleLowerCase().split(/\s+/).filter(Boolean);
   if (!words.length) return [];

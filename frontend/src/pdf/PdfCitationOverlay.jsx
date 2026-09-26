@@ -38,7 +38,9 @@ export function PdfCitationOverlay({ citation, wrapRef, ready }) {
     {result.rects.map((r, i) => <div key={i} className="pdfCitationMark" aria-hidden="true" data-guide={i === 0 ? "pdf.citation" : undefined}
       style={{ left: `${r.left}%`, top: `${r.top}%`, width: `${r.width}%`, height: `${r.height}%` }} />)}
     {(result.status !== "matched" || result.approximate) && <div role="status" className="pdfCitationNotice">
-      {result.approximate ? t("Highlighted an approximate text match.") : result.status === "ambiguous" ? t("More than one passage on this page matches this quote.") : t("Opened the cited page; the quote could not be located in its text layer.")}
+      {result.approximate ? t("Highlighted an approximate text match.")
+        : result.status === "ambiguous" ? t("More than one passage on this page matches this quote.")
+        : t("Opened the cited page; the quote could not be located in its text layer.")}
     </div>}
   </>;
 }

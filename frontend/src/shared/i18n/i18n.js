@@ -29,7 +29,7 @@
 import React from "react";
 import { TAGS } from "./locales.js";
 
-export { LANGUAGES, LOCALES, resolveLocale } from "./locales.js";
+export { LANGUAGES, resolveLocale } from "./locales.js";
 
 // Vite turns the glob call into lazy imports (the property itself never
 // exists at runtime, so it cannot be tested for); under plain node the call
@@ -56,7 +56,7 @@ export function setLocale(code, loaded) {
 }
 
 export const getLocale = () => locale;
-export const localeTag = () => TAGS[locale] || locale;
+const localeTag = () => TAGS[locale] || locale;
 
 // Fills `{name}` placeholders. With an element among the values the result
 // is an array of strings and elements (React renders it as children).
@@ -99,6 +99,5 @@ export function tn(one, other, n, args) {
 // where it is rendered.
 export const T = (text) => text;
 
-// Dates and numbers in the interface language, not the browser's.
+// Dates in the interface language, not the browser's.
 export const fmtDate = (value, options) => new Intl.DateTimeFormat(localeTag(), options).format(value instanceof Date ? value : new Date(value));
-export const fmtNumber = (value, options) => new Intl.NumberFormat(localeTag(), options).format(value);

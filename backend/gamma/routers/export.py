@@ -785,7 +785,7 @@ _folder_export_progress: dict[str, dict] = {}
 @router.get("/folders/export-progress")
 def folder_export_progress(request: Request):
     scope = share_scope(request)
-    if scope is not None and not scope.folder:
+    if scope is not None and not scope.lists_library:
         raise HTTPException(status_code=403, detail="not accessible via this share link")
     ws = resolve_ws(request)
     return _folder_export_progress.get(ws) or {"active": False, "total": 0, "done": 0}

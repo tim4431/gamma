@@ -14,7 +14,7 @@ A **command** is declared once, as an object in one of two catalogs:
 
 - `id` — stable, `scope.name`; the account's overrides are keyed by it.
 - `label` / `group` — what the palette and the pane show (`t()` at module level, like any option list).
-- `keys` — the default chord, or an array of them (`["Mod-y", "Mod-Shift-z"]`), or `null`: no keys until the account binds some, a palette entry meanwhile. Defaults are deliberately few — the keys Gamma always had (search, Ctrl+P, back, undo/redo, the formatting marks), Ctrl+Shift+P, F2, Ctrl+Shift+K and Ctrl+, (settings, the convention everywhere), plus the ↑/↓ hop; everything else (move, duplicate, new above, indent, fold, to-do, the view toggles, export, share…) starts unbound.
+- `keys` — the default chord, an array of them (`["Mod-y", "Mod-Shift-z"]`), or `null`: no keys until the account binds some, a palette entry meanwhile. Defaults are deliberately few: the keys Gamma always had (search, Ctrl+P, back, undo/redo, the formatting marks), plus Ctrl+Shift+P, F2, Ctrl+Shift+K, Ctrl+, (settings, the convention everywhere) and the ↑/↓ hop. Everything else (move, duplicate, new above, indent, fold, to-do, the view toggles, export, share…) starts unbound.
 - `scope` is the catalog the command sits in:
   - [frontend/src/app/appCommands.js](../../frontend/src/app/appCommands.js) — the app commands, alive wherever focus is: search, the palettes, back, undo / redo, rename, share, metadata, attach, the exports (the Export dialog preset to a format), download, import, new page, show or hide chat / PDF / notes, settings, report a problem.
   - [frontend/src/editor/blockCommands.js](../../frontend/src/editor/blockCommands.js) — the block commands, for a note whose editor is open: VSCode's line shortcuts with the block as the line (move, duplicate, delete line, new above, indent, fold, to-do, select), the hop to the neighbouring block on ↑ / ↓, and Obsidian's formatting keys.
@@ -27,10 +27,10 @@ A **command** is declared once, as an object in one of two catalogs:
 - `run(ctx, event)` — returning `false` declines the key: the dispatcher tries the next command, and an unhandled key keeps its default (undo in a plain input stays the browser's).
 
 [frontend/src/app/commands.js](../../frontend/src/app/commands.js) joins the
-two lists (`ALL_COMMANDS`, `GROUPS`) and lists the keys the outliner owns
-outright (`fixedKeys`: Enter, Tab, Backspace on an empty note, ←/→ folding
-at the text's edge, `/`, Esc) for
-the surfaces that show the whole picture.
+two lists (`ALL_COMMANDS`, `GROUPS`) and, for the surfaces that show the
+whole picture, lists the keys the outliner owns outright (`fixedKeys`:
+Enter, Tab, Backspace on an empty note, ←/→ folding at the text's edge, `/`,
+Esc).
 
 The three surfaces read that catalog and nothing else:
 
@@ -55,10 +55,16 @@ is the pure core (no DOM, `tests/hotkeys.test.mjs`):
 - `dispatch(commands, e, ctx, bindings)` runs the first command whose effective chord matches and whose `when` holds; a handled event has its default prevented and its propagation stopped. `effectiveKeys(cmd, bindings)` is the account's override when the preference names the command (`null` = unbound), else the defaults.
 - `chordLabel` / `chordParts` render a chord for the platform: `Ctrl+Shift+K` or `⇧⌘K` (Mac order ⌃⌥⇧⌘, like the system menus). `bindable` refuses a chord that would replace typing (a bare letter, digit or punctuation); function keys and anything with a modifier pass.
 - `conflicts(commands, bindings)` maps each chord more than one command answers to onto those commands.
+- `isTextField(el)` tells whether the focused element takes typed text; a command or widget key leaves such a field its key (F2, Delete on a selected object).
 
 **Order.** A block row's `onKeyDown` ([editor/BlockTree.jsx](../../frontend/src/editor/BlockTree.jsx)) first serves its popups (the paste chooser, the `[[` search, the slash menu, the math autocomplete), then dispatches the block catalog, then the outliner's own keys (Tab in math and fences, Enter, Tab, ←/→ folding at the text's edge, Backspace on an empty note). A handled key never reaches the window, so a block chord shadows an app chord while an editor is open. App's window listener dispatches the app catalog and then handles Escape, which is not a command: it always closes popovers and clears selections.
 
-**Dialogs.** Every modal sits in a `.reportOverlay` (Settings and its sub-dialogs, Import, Export, the palette, the confirm box…). While one is open, App's listener dispatches only the app commands whose `inDialog(dialog)` holds (`liveAppCommands` in appCommands.js, `topDialog` the last overlay in the DOM): the rest would act on the page behind it out of sight — Ctrl+Z undoing a note from inside Settings, F2 renaming the page, Alt+← navigating away. Ctrl+F goes to the dialog's own search box, the input marked `data-find` (Settings' search and the Keyboard pane's filter, the move-to-page filter, the chat's page picker), and falls back to the browser's find when there is none; with several the innermost comes first and pressing again moves to the one before it; Ctrl+P / Ctrl+Shift+P work only inside the palette itself, switching it between pages and commands or closing it. A dialog with a search box marks it `data-find`, and walks its results with `stepList` ([shared/ui/listKeys.js](../../frontend/src/shared/ui/listKeys.js)): ↓ from the box to the first result, ↑/↓ between them, ↑ from the first back to the box; Enter in the box takes the best match (opens the setting, moves the block, ticks the page — with an empty query the page picker's Enter is Done).
+**Dialogs.** Every modal sits in a `.reportOverlay` (Settings and its sub-dialogs, Import, Export, the palette, the confirm box…). While one is open, App's listener dispatches only the app commands whose `inDialog(dialog)` holds (`liveAppCommands` in appCommands.js; the dialog is the last overlay in the DOM). The rest would act on the page behind it out of sight: Ctrl+Z undoing a note from inside Settings, F2 renaming the page, Alt+← navigating away. What stays:
+
+- Ctrl+F goes to the dialog's own search box, the input marked `data-find` (Settings' search and the Keyboard pane's filter, the move-to-page filter, the chat's page picker), else to the browser's find. With several, the innermost comes first and pressing again moves to the one before it.
+- Ctrl+P / Ctrl+Shift+P work only inside the palette itself, switching it between pages and commands or closing it.
+
+A dialog's search box walks its results with `stepList` ([shared/ui/listKeys.js](../../frontend/src/shared/ui/listKeys.js)): ↓ from the box to the first result, ↑/↓ between them, ↑ from the first back to the box. Enter in the box takes the best match (opens the setting, moves the block, ticks the page); with an empty query the page picker's Enter is Done.
 
 **CodeMirror.** The block editor installs only `standardKeymap` (caret movement, Home/End, selection by word). Everything above that — the formatting marks, line and block operations — is a command, so nothing arrives from a library keymap by accident. `defaultKeymap` is not used: its Ctrl+M tab-focus mode stops Tab from indenting ([research note](../research/keyboard-shortcuts.md)).
 
@@ -80,15 +86,16 @@ From the palette a block command runs on the **focused row** with `editor: null`
 
 The account preference `keybindings` (`PREFS` in [app/prefDefs.js](../../frontend/src/app/prefDefs.js), scope `account`, so it travels in the profile — [settings.md](settings.md)) is `{ command id → chord | null }`: a chord rebinds, `null` unbinds, an absent id keeps the default. The codec keeps only well-formed entries and does not check ids against the catalog, so an entry for a command that no longer exists is ignored rather than dropped.
 
-Settings → Keyboard lists every command by group with its effective chord as key caps (`KeyBinding` / `KeyCaps` in the settings kit). Click a chord and press the new one: the recorder uses `chordFromEvent`, the very reader the dispatcher matches with, so what it shows is what fires. Backspace or Delete alone unbinds, Escape cancels, a bare letter is refused with "Add a modifier…". A row whose chord differs from its default shows a reset button; the section's action is "Reset all". A chord two commands answer to is flagged on both rows ("Also used by …") and the caps turn red. The pane does not forbid it: a block chord shadowing an app chord can be intended. The filter box narrows by label, group or chord. A "Built in" section shows the fixed keys read-only, the Enter rows following the Enter preference. Each row carries its command's icon — one map keyed by command id (and by the fixed rows' ids) in [app/commandIcons.jsx](../../frontend/src/app/commandIcons.jsx), which the palette reads too; a command missing there shows the generic command glyph, so give a new command its icon in the same change.
+Settings → Keyboard lists every command by group with its effective chord as key caps (`KeyBinding` / `KeyCaps` in the settings kit). Click a chord and press the new one: the recorder uses `chordFromEvent`, the very reader the dispatcher matches with, so what it shows is what fires. Backspace or Delete alone unbinds, Escape cancels, a bare letter is refused with "Add a modifier…". A row whose chord differs from its default shows a reset button; the section's action is "Reset all". A chord two commands answer to is flagged on both rows ("Also used by …") and the caps turn red. The pane does not forbid it: a block chord shadowing an app chord can be intended. The filter box narrows by label, group or chord. A "Built in" section shows the fixed keys read-only, the Enter rows following the Enter preference. Each row carries its command's icon from [app/commandIcons.jsx](../../frontend/src/app/commandIcons.jsx), one map keyed by command id (and by the fixed rows' ids) that the palette reads too. A command missing there shows the generic command glyph.
 
 Browsers keep a few chords for themselves whatever the page does: Chrome's Ctrl+T / W / N, Ctrl+Tab and Ctrl+PageUp / PageDown cannot be bound. The desktop app is not a browser and could take them in its shell; Gamma itself does not.
 
 ## Adding a command
 
 1. Add the object to the catalog of its scope, with a default chord that no command of that scope uses (`tests/commands.test.mjs` checks) and, for a block command, whether it needs an editor.
-2. If it needs a new handler, add it to the tree's `rowProps` in App.jsx (block scope) or to the `appCmdRef` context (app scope); keep the mutation a pure `blockModel.js` helper.
-3. Add the chord's label to the cheat sheet in [docs/user_guide.md](../user_guide.md).
-4. Cover the flow in the browser suite (`e2e/scenarios/notes.mjs` for note keys, `quickOpen.mjs` for the palette, `settings.mjs` for the pane).
+2. If it needs a new handler, add it to the `appCmdRef` context (app scope), or to the tree's `rowProps` in App.jsx and the `row` BlockRow hands the dispatcher in BlockTree.jsx (block scope); keep the mutation a pure `blockModel.js` helper.
+3. Give it an icon in [app/commandIcons.jsx](../../frontend/src/app/commandIcons.jsx).
+4. Add the chord's label to the cheat sheet in [docs/user_guide.md](../user_guide.md).
+5. Cover the flow in the browser suite (`e2e/scenarios/notes.mjs` for note keys, `quickOpen.mjs` for the palette, `settings.mjs` for the pane).
 
 Never add a loose `if (e.ctrlKey && e.key === …)` for a shortcut: it would not appear in the palette or the pane, could not be rebound, and would not be checked against the guide.

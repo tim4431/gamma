@@ -54,7 +54,7 @@ from fractional_indexing import generate_key_between
 from .blocks_store import create_page, fetch_subtree, page_root_id
 from .db import connect_pages_db, connect_users_db, page_now, ws_uploads_dir
 from .logbuf import log
-from .ops import MAX_OPS, OpError, commit_ops, delete_page
+from .ops import MAX_OPS, commit_ops, delete_page
 from .publisher_sessions import cipher
 from .routers.sync import changes as local_changes
 from .sync_tree import (ancestors, diff, snapshot_from_rows, snapshot_from_tree, subtree_ids, tree_order,
@@ -1473,6 +1473,12 @@ def has_local_changes(ws: str) -> bool:
     it (the pill's "edits waiting" state). In memory: a restart runs a round
     anyway."""
     return ws in _dirty
+
+
+def pending_local(mirror: dict) -> bool:
+    """The API's ``pending_local``: a local write no round has pushed yet,
+    on a two-way copy (a receive-only one never pushes)."""
+    return mirror["mode"] == "two-way" and has_local_changes(mirror["workspace_id"])
 
 
 def _filter_of(ws: str) -> frozenset | None:

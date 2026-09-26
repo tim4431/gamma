@@ -666,7 +666,7 @@ const AGENT_PERM_ROWS = [
    t("Edit, create and move note blocks on request (never deletes)"), ["folder", "page"], t("Edit")],
 ];
 
-// The three chat kinds, each with its own permission map (prefs.js
+// The three chat kinds, each with its own permission map (app/prefDefs.js
 // CHAT_KINDS): [kind, icon, label, hint, agent scope].
 export const CHAT_KIND_ROWS = [
   ["folder", FolderIcon, t("Folder chat"), t("Home and folder views"), "folder"],
@@ -728,7 +728,8 @@ function AssistantSettings({ value, ai }) {
 
 function AdvancedAiSettings({ value }) {
   const budgets = [value.chatContextChars, value.metaContextChars, value.multiContextChars];
-  const contextPreset = budgets.every((n, i) => n === [60000, 6000, 120000][i]) ? "standard" : budgets.every((n, i) => n === [120000, 12000, 240000][i]) ? "larger" : "custom";
+  const contextPreset = budgets.every((n, i) => n === [60000, 6000, 120000][i]) ? "standard"
+    : budgets.every((n, i) => n === [120000, 12000, 240000][i]) ? "larger" : "custom";
   const shared = t("Extracted PDF text is measured in characters. Larger budgets can improve answers but cost more tokens.");
   const limits = [
     [FileTextIcon, t("Single paper"), t("Read from the open paper for one chat message"),
@@ -741,7 +742,7 @@ function AdvancedAiSettings({ value }) {
   ];
 
   return <>
-        <Section title={t("Tool limits")} scope="account" prefs={SECTION_PREFS.advanced["Tool limits"]}>
+      <Section title={t("Tool limits")} scope="account" prefs={SECTION_PREFS.advanced["Tool limits"]}>
         <Row icon={RefreshIcon} label={t("Tool rounds")}
           hint={t("AI ↔ tool round-trips per message")}
           title={t("Each round-trip lets the model issue more tool calls. This is a runaway guard — actual work is separately capped at 200 changes per message.")}>
@@ -756,7 +757,7 @@ function AdvancedAiSettings({ value }) {
           title={t("The most extracted PDF text one read_page tool call may return. The agent reads a long paper in windows of this size, continuing where the last call stopped — a larger window means fewer calls but more tokens per message.")}>
           <CharSlider value={value.agentReadChars} onChange={value.setAgentReadChars} />
         </Row>
-        </Section>
+      </Section>
       <Section
         title={t("Context size")}
         scope="account" prefs={SECTION_PREFS.advanced["Context size"]}
@@ -991,7 +992,7 @@ export default function SettingsDialog({
               {query.trim() ? <>
                 <PaneHead icon={SearchIcon} title={t("Search settings")}>{tn("{n} matching setting", "{n} matching settings", results.length)}</PaneHead>
                 {results.length ? results.map(({ pane: id, label }) => <button key={`${id}:${label}`} className="uiBtn settingsSearchResult"
-                  onClick={() => navigate(id, label)}><span>{t(label)}</span><small>{t(allNav.find(([key]) => key === id)?.[1] || "")}</small></button>)
+                  onClick={() => navigate(id, label)}><span>{label}</span><small>{t(allNav.find(([key]) => key === id)?.[1] || "")}</small></button>)
                   : <Empty icon={SearchIcon}>{t('No settings found. Try "model", "PDF", or "storage".')}</Empty>}
               </> : <>
                 {pane === "appearance" ? <AppearanceSettings value={papers} diagnostics={diagnostics} /> : null}

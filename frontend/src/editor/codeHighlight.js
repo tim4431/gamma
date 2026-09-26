@@ -1,12 +1,9 @@
-// Fenced ``` code blocks: the fence scanner shared by the editor's live
-// decorations, blockTree's markdown preprocessing and key handling, plus a
-// highlight.js wrapper (lib/common — the ~37 mainstream languages) that
-// falls back to escaped plain text for unknown or missing languages, and the
-// code card's copy button (shared by the editor widget and the rendered view).
+// Fenced ``` code as shown: a highlight.js wrapper (lib/common — the ~37
+// mainstream languages) that falls back to escaped plain text for unknown or
+// missing languages, and the code card's copy button (shared by the editor
+// widget and the rendered view). The fence scanner is fences.js.
 import hljs from "highlight.js/lib/common";
 import { copyText } from "../shared/lib/utils";
-
-export { scanFences, fenceInnerAt } from "./fences.js";
 
 const escapeHtml = (s) => s
   .replace(/&/g, "&amp;").replace(/</g, "&lt;").replace(/>/g, "&gt;");

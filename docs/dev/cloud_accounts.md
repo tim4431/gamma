@@ -11,8 +11,8 @@ verified locally with the published keys. Code: `cloud/` (package
 it shares with Gamma are copies, so the account server can move to its own
 repository without a change: the fixed-window rate limiter, the PKCE rules
 and the public-URL rules (`servers.norm_url`, from
-`server_settings.validate_public_url`). The rate limiter has drifted from `backend/`'s: it drops
-`on_first_exceed` and prunes stale keys.
+`server_settings.validate_public_url`). The rate limiter has drifted from
+`backend/`'s: it drops `on_first_exceed` and prunes stale keys.
 
 Status: **v0**, plus the preference profile, the linked-server list and
 the username lookup (the account server's half of steps 7 and 8 of the
@@ -147,19 +147,20 @@ page) and the **app** shell (a sidebar and a content column):
 - **Devices** (`/devices`): up to three lists.
   - *Gamma servers*: one row per server, the server list and the sign-ins
     merged (`servers.merge`). A listed server carries the live grant it
-    registered with (`servers_linked.grant_id`); a live grant no listed
+    registered with (`servers_linked.grant_id`). A live grant no listed
     server names (a server without a public address) is a row of its own,
     titled by the machine's name when it sent one (`device_name`), else the
     client's name. A public address's name links to it; the desktop app's
     loopback address is not a link, and its row is named after the machine
-    ("Gamma desktop app" under it). Then the system and version from the
-    agent (a Gamma server sends `Gamma/<version> (<system>; <its address>)`),
-    the linked or sign-in date and the last address. At the row's end the
-    last activity — the later of the server's last check-in and the grant's
-    last refresh or access-token use, the latter written at most every 10
-    minutes (`config.LAST_ACTIVE_TOUCH`) — and *Sign out*, which revokes the
-    grant and takes the server off the list. A listed server without a
-    live grant shows *Signed out* and *Remove* (`POST /api/servers/remove`).
+    ("Gamma desktop app" under it). Then come the system and version from
+    the agent (a Gamma server sends `Gamma/<version> (<system>; <its
+    address>)`), the linked or sign-in date and the last address. The row
+    ends with the last activity and *Sign out*, which revokes the grant and
+    takes the server off the list. The last activity is the later of the
+    server's last check-in and the grant's last refresh or access-token
+    use; the latter is written at most every 10 minutes
+    (`config.LAST_ACTIVE_TOUCH`). A listed server without a live grant
+    shows *Signed out* and *Remove* (`POST /api/servers/remove`).
   - *Servers you connected* (only when there are any): the `server`
     clients this account owns ("Connecting a server" below), each with
     *Disconnect* (`POST /api/connected/{client_id}/disconnect`, behind a
@@ -170,13 +171,13 @@ page) and the **app** shell (a sidebar and a content column):
 
   A row signed out leaves in place. *Sign out everywhere else* is
   `accounts.revoke_everything` behind a confirm; it also drops every
-  listed server that registered with a grant. The page says what
-  signing a server out does: its key stops working, and the server
-  ends the sessions it opened with that key at its next hourly grant check
-  ("The Gamma side" below). Dates are UTC on the server and shown in the
+  listed server that registered with a grant. The page says what signing
+  a server out does: its key stops working, and the server ends the
+  sessions it opened with that key at its next hourly grant check ("The
+  Gamma side" below). Dates are UTC on the server and shown in the
   viewer's time zone by the page's script (`<time datetime>`, `data-at`).
-  On a phone the rows stack: the details take the width, the time and the button go
-  under them.
+  On a phone the rows stack: the details take the width, the time and the
+  button go under them.
 - **Settings** (`/settings`): labelled rows.
   - Display name.
   - **Username**: the password field and the button appear once the name
@@ -233,12 +234,12 @@ page) and the **app** shell (a sidebar and a content column):
   preference profile and the server list. `manage.py purge-deleted --days
   30` removes the rows later (nothing schedules it). Within the grace
   period an admin can **restore** it (`POST /api/admin/accounts/{id}/restore`,
-  `manage.py restore-account`): the row comes back with its id, name and
-  e-mail, but not what the delete dropped, so the person signs back in
+  `manage.py restore-account`). The row comes back with its id, name and
+  e-mail, but not what the delete dropped: the person signs back in
   through a password reset or Google/GitHub on the same e-mail. **Purge
   now** (`POST /api/admin/accounts/{id}/purge`, `manage.py purge-account`)
-  takes only a deleted account and frees its name and e-mail at once. Tearing down a paid container is the
-  provisioner's job (v1).
+  takes only a deleted account and frees its name and e-mail at once.
+  Tearing down a paid container is the provisioner's job (v1).
 - `PATCH /api/admin/accounts/{id}` takes `plan`, `is_admin`, `verified`
   and `username`; the rest of the admin API is listed under "Admin".
 - `GET /api/me`: the account, the signed-in devices (portal session only),
@@ -276,25 +277,25 @@ any ISO 8601 time; no time means now. It is stored in the database's
 fixed-width UTC form, and a time in the future is clamped to now so a fast
 clock cannot pin a value. A write older than the stored time is refused
 with a 409 carrying the stored value, and the writer takes that side. The
-same time wins, so a retry is harmless. The answer's `updated_at` is what was stored, the one the
-writer keeps. Deletion is not versioned: the key is gone, and a server
-still holding an older copy can write it back. Writes (PUT and DELETE) are
-limited to 120 per 10 minutes per account (429 with `Retry-After`) and are
-not audited, since a preference is not an account change. A token without
-the scope answers 403 with
+same time wins, so a retry is harmless. The answer's `updated_at` is what
+was stored, the one the writer keeps. Deletion is not versioned: the key
+is gone, and a server still holding an older copy can write it back.
+Writes (PUT and DELETE) are limited to 120 per 10 minutes per account (429
+with `Retry-After`) and are not audited, since a preference is not an
+account change. A token without the scope answers 403 with
 `WWW-Authenticate: Bearer error="insufficient_scope", scope="prefs"`.
 Deleting an account drops its profile at once.
 
 **The server list.** A Gamma server registers itself when a person links
-their identity there and removes itself on unlink. Each registration
-records the grant of the token it came with (`grant_id`), which is how the
-Devices page shows a server and its sign-in as one row; signing that grant
-out on the portal deletes the row, and so does *Sign out everywhere else*
-for every row that has a grant. It sends its confirmed
+their identity there and removes itself on unlink. It sends its confirmed
 public URL and its display name (at most 80 printable characters; empty
 means the host). Posting again refreshes the name and `last_seen_at`, so a
-server may check in periodically. The URL follows Gamma's own public-URL
-rules (`servers.norm_url`): `https://host[:port]` with no path, query or
+server may check in periodically. Each registration records the grant of
+the token it came with (`grant_id`), which is how the Devices page shows a
+server and its sign-in as one row. Signing that grant out on the portal
+deletes the row, and *Sign out everywhere else* deletes every row that
+has a grant. The URL follows Gamma's own public-URL rules
+(`servers.norm_url`): `https://host[:port]` with no path, query or
 fragment, or plain HTTP for a loopback host. A trailing slash is dropped,
 the host lowercased and a default port removed; anything else is a 400.
 Both calls take any access token (every token carries `openid`) and never
@@ -615,17 +616,22 @@ the share host (below).
 
 A server whose confirmed public URL is not a loopback one cannot sign in
 as the desktop client (`cloud_auth.needs_connect`). Until it has a client
-of its own the login page shows no cloud button, `start` sends the browser
-back with "not connected yet" as `?cloud_error=`, the Account pane's Link
-row says an admin connects the server first, and the Server pane's *Server
-client* row offers *Connect* — the round trip under "Connecting a server"
-above, through `GET /api/auth/cloud/connect/start?next=` and
-`…/connect/callback` (admins only). The callback trades the code and saves
-the client id and secret as if typed into the row, then returns to `next`
-with `?cloud_connect=ok` or `?cloud_connect_error=`, which the pane shows
-once; the Settings dialog reopens on the Server pane
-(`REOPEN_SETTINGS_KEY`). Switching a server that already had people
-signed in to a new client id ends their grants: they link again.
+of its own:
+
+- the login page shows no cloud button, and `start` sends the browser back
+  with "not connected yet" as `?cloud_error=`;
+- the Account pane's Link row says an admin connects the server first;
+- the Server pane's *Server client* row offers *Connect*: the round trip
+  under "Connecting a server" above, through
+  `GET /api/auth/cloud/connect/start?next=` and `…/connect/callback`
+  (admins only).
+
+The callback trades the code and saves the client id and secret as if
+typed into the row. It returns to `next` with `?cloud_connect=ok` or
+`?cloud_connect_error=`, which the pane shows once; the Settings dialog
+reopens on the Server pane (`REOPEN_SETTINGS_KEY`). Switching a server
+that already had people signed in to a new client id ends their grants:
+they link again.
 
 **The flow.** `GET /api/auth/cloud/start?next=` stores the pending sign-in
 (state, PKCE verifier, nonce, the callback URL — this server's confirmed
@@ -675,9 +681,10 @@ endpoint (client secret included for a confidential client). The rotated
 refresh token is saved before the access token is used, and a lock per
 account keeps it to one refresh at a time, as the reuse detection
 requires. A refresh that loses a race with a new sign-in or an unlink
-leaves their token in place and revokes the one it got. The access token stays in memory until
-two minutes before its `expires_in`; the sign-in's own access token
-starts the cache. A 401 from the account server drops the cached token.
+leaves their token in place and revokes the one it got. The access token
+stays in memory until two minutes before its `expires_in`; the sign-in's
+own access token starts the cache. A 401 from the account server drops the
+cached token.
 
 **The grant check** (`cloud_sync.check_all`, run by `cloud_sync.lifespan`
 at startup and then every hour) refreshes every identity holding a refresh
@@ -711,15 +718,13 @@ preference, with explicit fetch and push when you want one side to win
   equal copies just record the base. Two different copies wait for the
   person (state `choose`): nothing is replaced, the notice
   `cloud-sync-choice` lights the dot, the profile's `GET` answers
-  `cloud_choice: true` and the app opens Settings → Account once per page
-  load. There the Settings sync row opens a dialog once, "Settings differ
-  from Gamma Cloud", with **Fetch from cloud** (the cloud's copy replaces
-  this server's) and **Push to cloud** (the other way round); cancelled,
-  the row's **Sync now** asks again while the state lasts. The `merge`
-  action (the web app's defaults as the base, so each side keeps what it
-  changed from them) stays on the API but has no button. An account linked
-  before this merge existed gets the same question once if its two copies
-  differ.
+  `cloud_choice: true`, and the app opens Settings → Account & sync once
+  per page load. There the Settings sync row opens a dialog, "Settings
+  differ from Gamma Cloud": **Fetch from cloud** (the cloud's copy replaces
+  this server's) or **Push to cloud** (the other way round). Cancelled, the
+  row's **Sync now** asks again while the state lasts. The API also takes
+  `merge` (the web app's defaults as the base, so each side keeps what it
+  changed from them); no button sends it.
 - **By hand.** The same row, once synced, offers only **Sync now** (the
   merge, through `POST /api/auth/cloud/sync`); an answer of `choose` opens
   the same dialog. Fetch and push exist only inside a conflict.
@@ -772,13 +777,13 @@ inviter's own grant (`workspaces._cloud_access_token` →
 "Link your own Gamma Cloud account" (503).
 
 **The share host.** One Gamma in cloud mode holds every free account's
-published pages (the plan's step 5): cloud sign-in on, policy `provision`,
-and the `cloud_share_host` switch on (Settings → Server → Sign-in, *Accept
-published pages*; `GAMMA_CLOUD_SHARE_HOST=1` on a provisioned one; only in
-effect while cloud sign-in is on). The account server hands its address to
-every Gamma server (`GAMMA_CLOUD_SHARE_HOST_URL`, surfaced as
-`gamma_share_host` in discovery and `share_host` in `/api/me`). The switch
-does three things:
+published pages (the plan's step 5). It runs cloud sign-in under the
+`provision` policy with the `cloud_share_host` switch on: Settings → Server
+→ Sign-in, *Accept published pages*, or `GAMMA_CLOUD_SHARE_HOST=1` on a
+provisioned one; the switch counts only while cloud sign-in is on. The
+account server hands its address to every Gamma server
+(`GAMMA_CLOUD_SHARE_HOST_URL`, surfaced as `gamma_share_host` in discovery
+and `share_host` in `/api/me`). The switch does three things:
 
 - **The exchange.** `POST /api/auth/cloud/exchange` trades a person's
   Gamma Cloud access token for a write token on their workspace here
@@ -820,8 +825,7 @@ Two more settings shape what a share host serves, both environment only
 | `plus`, `pro`, anything else | unlimited |
 
 The plan is the `plan` claim the share host stored for the identity at its
-last exchange or sign-in. A publish that finds the workspace full
-exchanges once more, so an upgrade counts at once.
+last exchange or sign-in.
 
 **Page hosts.** `GAMMA_PAGE_HOST` is the hostname pattern of the
 per-account page hosts, with one `{username}` placeholder:
@@ -834,31 +838,21 @@ characters), and the `-pages` suffix keeps every page host apart from a
 service hostname, so `accounts.RESERVED_USERNAMES` need not change; name no
 service with the suffix.
 
-Deploying page hosts takes a wildcard DNS record, `*.gammapdf.com` pointing
-at the share host (named records such as `account` keep precedence over
-the wildcard), and a wildcard site in front of the container. Behind
+Deploying page hosts takes a wildcard DNS record, `*.gammapdf.com`
+pointing at the share host (named records such as `account` keep
+precedence over the wildcard), and a wildcard site in front of the
+container. `cloud/deploy/Caddyfile` sends `share.gammapdf.com` and every
+`<name>-pages.gammapdf.com` to the `share` service of
+`cloud/deploy/compose.yml` (its settings in `share.env.example`). Behind
 Cloudflare in "Full" mode Caddy's internal certificate covers the
-wildcard, so no DNS challenge is needed (`cloud/deploy/Caddyfile`, the
-`share` service of `cloud/deploy/compose.yml`, its settings in
-`share.env.example`):
-
-```
-*.gammapdf.com {
-	tls internal
-	@pages header_regexp Host ^[a-z0-9-]+-pages\.gammapdf\.com$
-	@share host share.gammapdf.com
-	handle @share { reverse_proxy share:9001 }
-	handle @pages { reverse_proxy share:9001 }
-	handle { respond 404 }
-}
-```
-
-The proxy passes the `Host` header through (Caddy does by default); the
-app reads the username out of it.
+wildcard, so no DNS challenge is needed. The proxy passes the `Host`
+header through (Caddy does by default); the app reads the username out of
+it. Setup steps: [cloud/deploy/README.md](../../cloud/deploy/README.md)
+"The free share host".
 
 The rest of the plan's cloud mode is configuration, not code: registration
-is already off on every Gamma (accounts come from the admin or the cloud),
-the default quota is the storage setting, and per-IP limits belong to the
+is off on every Gamma (accounts come from the admin or the cloud), the
+default quota is the storage setting, and per-IP limits belong to the
 edge.
 
 **Not built yet** (step 6 of the plan): the desktop shell's first-run

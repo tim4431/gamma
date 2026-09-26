@@ -84,10 +84,12 @@ Administrators also choose shared workspace access:
 
 Public does not mean anonymous. Page share links provide access for people
 without accounts — including editing, when the sharer sets "Anyone with the
-link" to "Can edit" ([api.md](api.md) "Link visitors"). Each guest login is a throwaway account of its own
-with one personal workspace, deleted with it `guest_ttl_hours` (default 24) after the login
-([guests.md](guests.md)); a guest cannot create workspaces, join shared ones or use public access, and its
-workspace takes no backup import and keeps no snapshots (`workspaces.is_guest_workspace`).
+link" to "Can edit" ([api.md](api.md) "Link visitors"). Each guest login is
+a throwaway account with one personal workspace, deleted with it
+`guest_ttl_hours` (default 24) after the login ([guests.md](guests.md)). A
+guest cannot create workspaces, join shared ones or use public access, and
+its workspace takes no backup import and keeps no snapshots
+(`workspaces.is_guest_workspace`).
 
 Administrators may manage a workspace without joining it. This does not grant
 access to its private pages: an administrator must join a private shared
@@ -256,9 +258,9 @@ The app lifespan runs `run_due` every 30 s; each task is processed under an
 OS file lock (`<id>.lock`, `msvcrt`/`fcntl`), so several workers never run
 one task twice. A task whose `next_run` passed while the server was down
 runs once on the next round, then reschedules from the cron.
-A failed run is retried after an hour; "run now" sets `requested`, keeps
-the scheduled `next_run` and wakes the loop for a round at once (`_wake`). Snapshots are pruned per task and workspace
-after every run.
+A failed run is retried after an hour. "Run now" sets `requested`, keeps
+the scheduled `next_run` and wakes the loop for a round at once (`_wake`).
+Snapshots are pruned per task and workspace after every run.
 
 ## Clones (mirrors)
 

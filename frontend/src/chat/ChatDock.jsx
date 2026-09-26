@@ -234,7 +234,7 @@ export default function ChatDock({
   // library root, "home:<path>" inside a folder) — switching folders switches
   // conversations, so the organizer never drags one folder's context into
   // another. App migrates the buckets on folder rename/move/delete
-  // (POST /api/chats/folder-rename).
+  // (POST /api/folders/rename).
   const chatKey = focusedBlockId || (organizeFolder ? `home:${organizeFolder}` : "home");
   const sessionState = useSyncExternalStore(session.subscribe, session.getSnapshot);
   const chatMessages = sessionState.replies.get(chatKey)?.messages || loadedMessages;
@@ -243,7 +243,7 @@ export default function ChatDock({
   const busyHere = session.isActive(chatKey);
   const folderChat = organizeFolder != null;
   // Which of the three chat kinds this is — each has its own tool permission
-  // map in Settings → Assistant (prefs.js CHAT_KINDS): the folder chat, a
+  // map in Settings → AI → Chat (app/prefDefs.js CHAT_KINDS): the folder chat, a
   // page with a PDF, a page of notes.
   const chatKind = folderChat ? "folder" : pageAttach ? "pdf" : "notes";
   const chatKindLabel = CHAT_KIND_ROWS.find((r) => r[0] === chatKind)?.[2] || t("Chat");
@@ -309,8 +309,8 @@ export default function ChatDock({
   // falls back to extracted text — so there the PDF button must not
   // default on, and turning it on by hand gets a warning, not silence.
   const activeModel = (aiInfo?.models || []).find((m) => m.id === chatModel) || null;
-  // The header's model list is scoped to the active key (Settings → AI & API
-  // keys); all models only when no key is selected or the selected one is gone.
+  // The header's model list is scoped to the active key (Settings → AI ›
+  // Connections); all models only when no key is selected or the selected one is gone.
   const headerModels = aiInfo?.models?.length
     ? (aiProvider && aiInfo.models.some((m) => m.provider === aiProvider)
       ? aiInfo.models.filter((m) => m.provider === aiProvider) : aiInfo.models)

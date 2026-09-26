@@ -1,15 +1,15 @@
 // The object layer of the rendered notes: every image, table and Mermaid
-// diagram sits in an MdObject frame. Pressing anywhere in the frame (the
-// picture's margins, a table's gutter) selects the object instead of opening
-// the block's raw editor; a right-click (or the table's corner handle) opens
-// one menu for all three kinds — edit the markdown source, move it to a new
-// block or another page, copy it, delete it — and Delete removes a selected
-// object; a press on the frame's margin is left to the row (click-to-source
-// opens the editor there). The frame is also the drag source: dragging it carries the
-// object's source range (`_dragState.fragment`, read by App's block drop
-// handlers), which lands between two blocks as a new block or inside a block
-// at the gap the pointer is nearest to. Nothing here touches the stored
-// text: every outcome is a source transform in mdObjects.js.
+// diagram sits in an MdObject frame. A press on the object itself selects it
+// instead of opening the block's raw editor; a press on the frame's margin
+// is left to the row (click-to-source opens the editor there). A right-click
+// (or the table's corner handle) opens one menu for all three kinds — edit
+// the markdown source, move it to a new block or another page, copy it,
+// delete it — and Delete removes a selected object. The frame is also the
+// drag source: dragging it carries the object's source range
+// (`_dragState.fragment`, read by App's block drop handlers), which lands
+// between two blocks as a new block or inside a block at the gap the pointer
+// is nearest to. Nothing here touches the stored text: every outcome is a
+// source transform in mdObjects.js.
 import React, { createContext, useContext, useEffect, useRef, useState } from "react";
 import { ContextMenu, MenuItem, SubMenuItem } from "../shared/ui/Menus";
 import {
@@ -18,7 +18,8 @@ import {
 import { t } from "../shared/i18n/i18n.js";
 import { blockSpans, scanImages, scanTables } from "./mdScan";
 import { scanMermaidFences } from "../shared/lib/mermaidMarkdown.js";
-import { blockStartInSource, gapInSource, renderedGaps } from "./clickToSource";
+import { blockStartInSource, gapInSource, renderedBlocks, renderedGaps } from "./clickToSource";
+import { isTextField } from "../shared/lib/hotkeys.js";
 
 // ------------------------------------------------------------ source scan
 
@@ -27,7 +28,7 @@ import { blockStartInSource, gapInSource, renderedGaps } from "./clickToSource";
 // scanned one — the idiom the hover tools already rely on). Not editable:
 // a table inside a blockquote, a diagram inside a list or quote, an
 // unfinished fence — they still render in a frame (menu: source + copy).
-export function scanObjects(content) {
+function scanObjects(content) {
   const out = [];
   scanImages(content).forEach((im, idx) =>
     out.push({ kind: "image", idx, from: im.from, to: im.to, editable: true }));
@@ -49,11 +50,10 @@ export function findObject(content, kind, idx) {
 // plus one above the first and one below the last. Null when the gap's
 // place in the source can't be found.
 export function dropGapAtPoint(rendered, content, clientY) {
-  const kids = [...rendered.children].filter((k) =>
-    !k.hasAttribute("data-markdown-copy-ignore") && !k.classList.contains("mdGapLine") && k.getClientRects().length);
+  const kids = renderedBlocks(rendered);
   if (!kids.length) return { offset: null, y: rendered.getBoundingClientRect().bottom };
   const gaps = [{ y: kids[0].getBoundingClientRect().top, below: kids[0] }];
-  for (const g of renderedGaps(rendered, null)) gaps.push({ y: g.y, below: g.below });
+  for (const g of renderedGaps(rendered)) gaps.push({ y: g.y, below: g.below });
   gaps.push({ y: kids[kids.length - 1].getBoundingClientRect().bottom, below: null });
   let best = gaps[0];
   for (const g of gaps) if (Math.abs(clientY - g.y) < Math.abs(clientY - best.y)) best = g;
@@ -104,9 +104,7 @@ export function MdObject({ as: Tag = "div", kind, idx, editable = true, onAction
     const onKey = (e) => {
       if (e.key === "Escape") { setSelected(false); setMenu(null); return; }
       if (e.key !== "Delete" && e.key !== "Backspace") return;
-      const a = document.activeElement;
-      if (a && (a.tagName === "INPUT" || a.tagName === "TEXTAREA" || a.isContentEditable)) return;
-      if (!editable) return;
+      if (isTextField(document.activeElement) || !editable) return;
       e.preventDefault();
       e.stopPropagation();
       setSelected(false);

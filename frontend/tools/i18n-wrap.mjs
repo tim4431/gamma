@@ -1,7 +1,7 @@
 // One-off migration helper (docs/dev/i18n.md): wraps the suspects that
 // tools/i18n-audit.mjs reports in t(), rewriting the exact syntax nodes.
 //
-//   node tools/i18n-wrap.mjs [--dry] [files…]
+//   node tools/i18n-wrap.mjs [files…]   # paths relative to src/; none = every file
 //
 // - JSX text            Save         -> {t("Save")}
 // - JSX attribute       title="Save" -> title={t("Save")}
@@ -72,14 +72,6 @@ function wrapTemplate(node, src) {
     text += `{${name}}`;
   });
   return `t(${lit(text)}, { ${args.join(", ")} })`;
-}
-
-function* files(dir) {
-  for (const e of fs.readdirSync(dir, { withFileTypes: true })) {
-    const full = path.join(dir, e.name);
-    if (e.isDirectory()) { if (e.name !== "i18n") yield* files(full); }
-    else if (/\.(jsx|js)$/.test(e.name)) yield full;
-  }
 }
 
 function importPath(rel) {

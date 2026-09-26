@@ -2,10 +2,10 @@
 // (drag-resize writing the Obsidian `![alt|300]` size, caption = the alt
 // text, lightbox, delete) and the table hover controls (add/delete row &
 // column, alignment). Selecting, moving and deleting a whole image / table /
-// diagram is the object frame around them, MdObject.jsx. Every
-// operation is a text transform on the block's markdown source — scanImages/
-// scanTables locate the nth rendered construct so the components can address
-// "their" source range without a position map from the renderer.
+// diagram is the object frame around them, MdObject.jsx. Every operation is
+// a text transform on the block's markdown source — scanImages / scanTables
+// (mdScan.js) locate the nth rendered construct so the components can
+// address "their" source range without a position map from the renderer.
 import React, { useEffect, useRef, useState } from "react";
 import { createPortal } from "react-dom";
 import { parseTable, scanImages, scanTables, serializeTable } from "./mdScan";
@@ -21,11 +21,7 @@ import {
   GridIcon, PlusIcon, Trash2Icon, ZoomInIcon,
 } from "../shared/ui/Icons";
 
-// ---------------------------------------------------------------- source scan
-
-// scanImages / scanTables / parseTable / serializeTable are mdScan.js (pure,
-// shared with the block editor's widgets); re-exported for the callers here.
-export { scanImages, scanTables, parseTable, serializeTable } from "./mdScan";
+// --------------------------------------------------------- source transforms
 
 // actions: "width" (payload px, 0 clears), "alt" (payload caption), "delete".
 // Returns the new content, or null when the nth image can't be located (the

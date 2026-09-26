@@ -130,26 +130,27 @@ An admin can add provider entries for the whole server (Settings → Server →
 Shared AI provider, `/api/admin/ai-providers*`), so the members of a lab do
 not each need a key. A shared entry has an account entry's shape (`id, name,
 protocol, api_key, base_url, models, test_model, created_at`, plus `oauth`
-for a sign-in): an API key, or a ChatGPT subscription the admin signs in to
-from the same form (`POST /api/admin/ai-providers/chatgpt/start` +
-`complete`, the account flow's `begin_chatgpt_signin` /
+for a sign-in). It holds an API key, or a ChatGPT subscription the admin
+signs in to from the same form: `POST /api/admin/ai-providers/chatgpt/start`
+and `complete`, the account flow's `begin_chatgpt_signin` /
 `redeem_chatgpt_signin` with the state bound to `("server", <admin>)`, so
-neither side's state redeems on the other; `provider_id` on `complete`
-reconnects an entry). The list lives in the users.db `settings` KV under
-`ai_providers` as `{providers: [...], guests: bool, allowance: {accounts,
-guests}}`, at most `MAX_PROVIDERS` (20) entries, each `api_key` and each
-sign-in's `oauth` tokens Fernet-encrypted with the data directory's key the
-way the cloud client secret is (`publisher_sessions.cipher`); a key or a
-sign-in that no longer decrypts reads as none and logs a warning. A shared
-sign-in's token refresh runs under the entry's own lock
-(`_refreshed_server_oauth`: every account's requests refresh the same
-tokens, and OpenAI rotates the refresh token) and writes only the tokens
-back. Its refresh backoff is reset only by an admin's Test, usage query or
-login check, so a dead shared grant is not retried on every account's
-login. The signed-in e-mail (`account`) is masked like the key hint: admins
-only. The same helpers validate both
-lists (`new_key_entry`, `update_entry`, `apply_provider_fields`,
-`mask_entry` in `ai_settings.py`).
+neither flow's state redeems on the other. `provider_id` on `complete`
+reconnects an entry. The same helpers validate both lists (`new_key_entry`,
+`update_entry`, `apply_provider_fields`, `mask_entry` in `ai_settings.py`).
+
+- **Stored** in the users.db `settings` KV under `ai_providers`:
+  `{providers: [...], guests: bool, allowance: {accounts, guests}}`, at most
+  `MAX_PROVIDERS` (20) entries. Each `api_key` and each sign-in's `oauth`
+  tokens are Fernet-encrypted with the data directory's key, like the cloud
+  client secret (`publisher_sessions.cipher`). One that no longer decrypts
+  reads as none and logs a warning.
+- **Refreshed** under the entry's own lock (`_refreshed_server_oauth`):
+  every account's requests refresh the same tokens, and OpenAI rotates the
+  refresh token. Only the tokens are written back. The refresh backoff is
+  reset only by an admin's Test, usage query or login check, so a dead
+  shared grant is not retried on every account's login.
+- **Masked**: the last-4 key hint and the signed-in e-mail (`account`) are
+  for admins only.
 
 Ids are namespaced, `server:<id>`, so a shared entry's models
 (`server:<id>:<model>`) never collide with an account's; the registry marks
@@ -157,40 +158,33 @@ them `shared: true`. `ai_runtime` (via `shared_access`) offers them to
 every account after its own entries. Guest accounts get them only while
 the admin switch `guests` is on (default off); a name that is not an account
 (a link visitor) never does. `GET /api/ai/settings` lists them after the
-account's own as read-only rows (`shared: true`), with the last-4 key hint
-for admins only; `/api/ai/providers/{id}` never edits or deletes them (404).
-An admin may name a shared id on the Test probe, the model catalog and a
-sign-in's subscription usage (`/api/ai/providers/{id}/usage`), which is how
-the Server section's form lists models and tests a saved entry; the
-login check (`/api/ai/health`) accepts any entry the account can use. Token
-usage stays per account: a member's calls through a shared entry are
-recorded on that member (provider id `server:<id>`), and there is no
-server-wide meter.
+account's own as read-only rows (`shared: true`); `/api/ai/providers/{id}`
+never edits or deletes them (404). An admin may name a shared id on the Test
+probe, the model catalog and a sign-in's subscription usage
+(`/api/ai/providers/{id}/usage`); that is how the Server section's form lists
+models and tests a saved entry. The login check (`/api/ai/health`) accepts
+any entry the account can use. Token usage stays per account: a member's
+calls through a shared entry are recorded on that member (provider id
+`server:<id>`), and there is no server-wide meter.
 
-**Shared entries and the allowance.** The admin may cap what each account
-spends through the shared entries: `allowance: {accounts, guests}` in the
-same config (tokens, input + output, per account per rolling 24 hours; 0 =
-unlimited, the default; `GET/PUT /api/admin/ai-providers`, either key alone).
-`ai_usage.shared_used` sums the account's `server:` rows in the window;
-`ai_runtime` reports `allowance: {limit, used, exhausted}` whenever a
-shared entry is in the runtime (limit 0 = unlimited, never exhausted; null
-when none is — guests take the guests' limit, everyone else the accounts')
-and, under a limit, puts `allowance: {user, limit}` on each shared provider
-conf. The one choke point is `ai_client.open_ai`
-(`call_ai` goes through it): `check_allowance` re-reads the count on every
-call and raises `AllowanceExhausted`, an `HTTPException` 429 whose detail
-names the used and limit tokens and points at Settings → AI. Chat (both
-modes; the stream opens eagerly, so a refused first call is a real 429, and
-a later agent round ends the stream with the detail as its `error` line),
-translation (the stream variant checks before it starts), metadata
-extraction and `/metadata/cite` let it through as a 429; the Test probe and
-the login test report it in-body. Dictation reports no tokens, so it is not
-metered, only refused once the allowance is used up. Model listings and the
-context-window lookup spend nothing and are never refused; the shared models
-stay listed. Own entries are never marked, so never metered. A Usage reset
-keeps the rows the allowance still counts. `GET /api/ai/models` and
-`GET /api/ai/usage` carry the same `allowance` object. The contract (guests,
-demo mode): [guests.md](guests.md).
+**The allowance.** The admin may cap the tokens each account spends through
+the shared entries in a rolling 24 hours. Its limits, storage and Reset rule
+are in [guests.md](guests.md) "The shared AI allowance". The one choke point
+is `ai_client.open_ai` (`call_ai` goes through it): `check_allowance`
+re-reads `ai_usage.shared_used` on every call and raises
+`AllowanceExhausted`, an `HTTPException` 429 whose detail points at
+Settings → AI. How each caller surfaces it:
+
+- Chat, both modes: the stream opens eagerly, so a refused first call is a
+  real 429; a later agent round ends the stream with the detail as its
+  `error` line.
+- Translation: the stream variant checks before it starts.
+- Metadata extraction and `/metadata/cite` let the 429 through.
+- The Test probe and the login test report it in-body.
+- Dictation reports no tokens, so it is not metered, only refused once the
+  allowance is used up.
+- Model listings and the context-window lookup spend nothing and are never
+  refused.
 
 ### The chatgpt protocol (OAuth)
 
@@ -712,7 +706,10 @@ in `gamma/translate_engines.py`. The viewer then sends `model:
 
 Credentials are per account under the reserved `translate-engines` pref.
 Like `ai-settings`, `/api/prefs` refuses it and the only read path is the
-masked `GET /api/translate/engines`; guests can't store any. Unlike the LLM
+masked `GET /api/translate/engines`; guests can't store any.
+`PUT` / `DELETE /api/translate/engines/{id}` set or drop a service's
+credentials, and `POST /api/translate/engines/{id}/test` translates one
+sentence for the row's Test button (in-body result). Unlike the LLM
 prompt, nothing tells these services to leave math, `[12]` citation markers
 or URLs alone. PDF text carries no LaTeX and math-heavy paragraphs are
 skipped client-side, so the risk is small.
@@ -753,24 +750,24 @@ show what a week cost. Code: `gamma/ai_usage.py`, `ai_client.normalize_usage`,
 - **Context ring.** Left of the chat header's ⚙, Claude Code style: how full
   the model's window is. The figure is the latest reply's LAST round alone
   (its input + output, which the next message carries as history), saved on
-  the reply as `context_tokens` — the summed `usage` would overcount an
+  the reply as `context_tokens`; the summed `usage` would overcount an
   agent reply. A reply saved before that field counts only when it had no
-  tool rounds. The window is looked up live, never tabled in the code
-  (`ai_catalog.context_window`, for every protocol alike):
-  `GET /api/ai/context-window?model=<pid>:<model>` reads the entry's own
-  model listing first (`Protocol.models` — Anthropic's `max_input_tokens`,
-  the Codex backend's `context_window`, the `context_length` /
-  `max_model_len` of OpenRouter, vLLM, Groq, …), then the public models.dev
-  catalog for listings that carry no size (OpenAI's, DeepSeek's) — there the
-  provider this entry talks to wins (`Protocol.catalog_hints`: the
-  endpoint's host labels, OpenAI for the ChatGPT backend), else the value
-  most providers agree on. Both are cached like the
-  Codex version (6 h; a failed lookup retried after 10 min, the last good
-  answer kept). A model neither knows gets `null`: no ring, and the popover
-  shows the token count alone. The client asks once per model per page load
-  (`useContextWindow` in `ChatDock.jsx`). The ring turns red past 80%;
-  clicking it opens the chat-settings popover, whose Tokens section spells
-  the figure out (`contextUsed`).
+  tool rounds. The window is looked up live, never tabled in the code:
+  `GET /api/ai/context-window?model=<pid>:<model>`
+  (`ai_catalog.context_window`, the same for every protocol). It reads the
+  entry's own model listing first (`Protocol.models`: Anthropic's
+  `max_input_tokens`, the Codex backend's `context_window`, the
+  `context_length` / `max_model_len` of OpenRouter, vLLM, Groq, …). A
+  listing without sizes (OpenAI's, DeepSeek's) falls back to the public
+  models.dev catalog. There the provider this entry talks to wins
+  (`Protocol.catalog_hints`: the endpoint's host labels, OpenAI for the
+  ChatGPT backend), else the value most providers agree on. Both lookups
+  are cached like the Codex version (6 h; a failed lookup retried after
+  10 min, the last good answer kept). A model neither knows gets `null`: no
+  ring, and the popover shows the token count alone. The client asks once
+  per model per page load (`useContextWindow` in `ChatDock.jsx`). The ring
+  turns red past 80%; clicking it opens the chat-settings popover, whose
+  Tokens section spells the figure out (`contextUsed`).
 - **Stored.** `ai_usage.record` writes one row per call to `ai_usage` in
   `users.db` (account, time, kind, provider id + name, model, the four
   counts); `ai_usage.recorder(kind, entry, rt)` is the `on_usage` callback the
@@ -782,14 +779,15 @@ show what a week cost. Code: `gamma/ai_usage.py`, `ai_client.normalize_usage`,
 - **Shown.** `GET /api/ai/usage` → `{windows: {today, week, month, all} →
   {calls, input, output, cache_read, cache_write}, kinds: {kind → the same}
   and models: [{provider_id, provider_name, model, …}] over the last 30
-  days, first_at, keep_days, allowance}` (`allowance`: the shared entries'
-  24-hour allowance, above, or null when no shared entry applies); `DELETE /api/ai/usage` forgets the
-  account's rows except those the allowance still counts. Settings → AI › Connections → **Token usage** renders three
-  tiles (today / 7 days / 30 days), the all-time line with Reset, and a
-  by-model table (plus a by-kind block when more than one kind ran).
-  Guests never see it (the pane shows it only to an account that can
-  store keys). No prices anywhere: they differ per
-  provider and change; the tokens are what every provider agrees on.
+  days, first_at, keep_days, allowance}`. `allowance` is the shared
+  entries' 24-hour allowance (above), null when no shared entry applies.
+  `DELETE /api/ai/usage` forgets the account's rows except those the
+  allowance still counts. Settings → AI › Connections → **Token usage**
+  renders three tiles (today / 7 days / 30 days), the allowance row, the
+  all-time line with Reset, and a by-model table (plus a by-kind block when
+  more than one kind ran). A guest sees it without Reset while a shared
+  entry applies. No prices anywhere: they differ per provider and change;
+  the tokens are what every provider agrees on.
 
 ## Chat history buckets
 
@@ -797,8 +795,8 @@ Focused page id in the paper view, `home` at the library root,
 `home:<folder path>` per folder — each folder keeps its own conversation, and
 switching folders re-scopes the next message. The
 `/api/chats/{block_id:path}` routes take the `:path` converter for the nested
-keys, and folder rename/move/delete calls `POST /api/chats/folder-rename`
-({src, dst}; dst "" deletes) BEFORE rewriting the tags so the destination
+keys, and folder rename/move/delete calls `POST /api/folders/rename`
+(`chats.move_folder_buckets`; {src, dst}, dst "" deletes) BEFORE rewriting the tags so the destination
 bucket exists when ChatDock reloads (a destination holding a real conversation
 wins; empty save-echo rows are overwritten) — folder conversations follow
 renames and moves, and are deleted with their folder.
@@ -842,7 +840,7 @@ updated_at`). Routes: `gamma/routers/chats.py`, prefix `/api/chat-history`.
     roll a rename back.
   - Delete: confirm dialog, then `DELETE /chat-history/{id}`. The active
     conversation has no delete; start a new chat instead.
-- History follows its bucket: `POST /chats/folder-rename` rewrites entry
+- History follows its bucket: `POST /folders/rename` rewrites entry
   buckets along with the active rows, and `purge_page_data` drops a deleted
   page's entries. The gamma export/import and the account-merge path copy
   only the active `chats` rows, not history.

@@ -137,7 +137,7 @@ export function LoginPage({
   return (
     <AuthShell>
       <p className="loginSubtitle">{subtitle || t("Annotate PDFs, Share Your Thinking")}</p>
-      <button type="button" className="loginBtn loginDemoBtn" onClick={onGuestLogin}>
+      <button type="button" className="loginBtn" onClick={onGuestLogin}>
         {t("Try the demo")}
       </button>
       <p className="loginDemoNote">

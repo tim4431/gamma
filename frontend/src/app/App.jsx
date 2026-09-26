@@ -4,7 +4,6 @@ import PdfViewer, { clampZoom } from "../pdf/PdfViewer";
 import { highlightSpot, rangeSpot } from "../pdf/pdfSelectionSpot";
 import { COLORS } from "../shared/model/highlightColors.js";
 import { fmtDate, getLocale, resolveLocale, t, T } from "../shared/i18n/i18n.js";
-
 import { REOPEN_SETTINGS_KEY } from "../settings/settingsNavigation.js";
 import { ExportDialog, ImportDialog } from "../transfers/ImportExport";
 import ImportReviewDialog from "../transfers/ImportReviewDialog";
@@ -24,7 +23,7 @@ import {
 import { BlockTree, _dragState } from "../editor/BlockTree";
 import { dropGapAtPoint, findObject } from "../editor/MdObject";
 import { cutObject, moveObjectInTree } from "../editor/mdObjects";
-import { scanMathSpans } from "../editor/BlockCmEditor";
+import { scanMathSpans } from "../editor/mdScan";
 import { sourceRangeOfSelection } from "../editor/clickToSource";
 import { FileChipContext, forgetDocPages, rememberDocPage, setUploadReporter, uploadFilesAsLines, xhrUpload } from "../transfers/FileChip";
 import { CardLabels, KindToggle, ListFindBox, PageCard, ViewToggle } from "../library/FileBrowser";
@@ -34,18 +33,16 @@ import SearchPanel from "../search/SearchPanel";
 import QuickOpen from "../library/QuickOpen";
 import { ContextMenu, MenuItem, MenuLabel, MenuSelect, SubMenuItem } from "../shared/ui/Menus";
 import {
-  ActivityIcon, AlertCircleIcon, ArrowLeftIcon, ArrowUpDownIcon, BookIcon, BugIcon, CheckIcon, CopyIcon, DatabaseIcon, DownloadIcon, ExportIcon,
+  ActivityIcon, AlertCircleIcon, ArrowLeftIcon, ArrowUpDownIcon, BookIcon, BugIcon, CheckIcon, CopyIcon, DownloadIcon, ExportIcon,
   ExternalLinkIcon, EyeIcon, EyeOffIcon, FileGlyph, FileIcon, FileTextIcon, FitWidthIcon, FolderGlyph,
-  FilePlusIcon, PaperclipIcon, FolderIcon, FolderOpenIcon, FolderPlusIcon, GlobeIcon, HelpCircleIcon, HomeIcon, ImportIcon, InfoIcon, LabelGlyph, LabelIcon,
+  FilePlusIcon, PaperclipIcon, FolderIcon, FolderOpenIcon, FolderPlusIcon, HelpCircleIcon, HomeIcon, ImportIcon, InfoIcon, LabelGlyph, LabelIcon,
   LanguagesIcon, LanguagesOffIcon, LinkIcon, LogOutIcon, MaximizeIcon, MenuIcon, MinimizeIcon, PenIcon, PinIcon, PlusIcon,
-  RectSelectIcon, RefreshIcon, SearchIcon, SettingsIcon, ShieldIcon, SparklesIcon, TextCursorIcon, TrashIcon, TypeIcon, UploadIcon,
+  RectSelectIcon, RefreshIcon, SearchIcon, SettingsIcon, SparklesIcon, TextCursorIcon, TrashIcon, TypeIcon, UploadIcon,
   ScissorsIcon, UserIcon, UsersIcon, XIcon, ZoomInIcon, ZoomOutIcon,
-  ServerIcon,
 } from "../shared/ui/Icons";
 
 
 import {
-  blocksToPageMarkdown,
   setBlockText,
   setBlockEditMode,
   addSiblingBlock,
@@ -58,7 +55,6 @@ import {
   updateBlockTree,
   removeBlockTree,
   flattenBlocks,
-  withLegacyAccessors,
   blockQuote,
   isDescendant,
   findBlockContext,
@@ -68,13 +64,12 @@ import {
   addHighlightAsBlock,
   blocksToHighlights,
   normalizeBlocks,
-  cloneBlocks,
   findBlock,
   moveSibling,
   removeBlockKeepChildren,
   visibleNeighbor,
 } from "../shared/model/blockModel";
-import { chordLabel, dispatch as dispatchHotkey, effectiveKeys } from "../shared/lib/hotkeys.js";
+import { chordLabel, dispatch as dispatchHotkey, effectiveKeys, isTextField } from "../shared/lib/hotkeys.js";
 import { APP_COMMANDS, liveAppCommands } from "./appCommands.js";
 import { stepList } from "../shared/ui/listKeys.js";
 import { BLOCK_COMMANDS } from "../editor/blockCommands.js";
@@ -430,6 +425,11 @@ function LibraryApp({ publicPage = null, initialServerConfig = null }) {
     () => libraryAccess({ shareMode, shareFolder: sharedFolder?.name || "", role: workspace?.role || "" }),
     [shareMode, sharedFolder, workspace],
   );
+  // A folder path's breadcrumb from the library's root down: each segment,
+  // the folder it names, and whether a "/" precedes it.
+  const folderCrumbs = (path) => (path ? path.split("/") : [])
+    .map((seg, i, segs) => ({ seg, prefix: segs.slice(0, i + 1).join("/"), sep: i > 0 && lib.contains(segs.slice(0, i).join("/")) }))
+    .filter((crumb) => lib.contains(crumb.prefix));
   const [workspaceUnavailable, setWorkspaceUnavailable] = useState(false);
   const wsId = workspace?.id || "";
 
@@ -2491,7 +2491,7 @@ function LibraryApp({ publicPage = null, initialServerConfig = null }) {
   // Every localStorage-backed user preference (the Settings dialog's state)
   // lives in useAppPrefs (prefs.js) — one hook, one storage key per entry;
   // the account-scoped ones follow the account through its profile
-  // (useProfileSync). Guests share one account, so theirs stay local.
+  // (useProfileSync). A guest's account is thrown away, so theirs stay local.
   const appPrefs = useAppPrefs();
   const profileSync = useProfileSync(appPrefs, authUser?.user && !authUser.is_guest && !shareMode ? authUser.user : "");
   const {
@@ -2510,7 +2510,7 @@ function LibraryApp({ publicPage = null, initialServerConfig = null }) {
     searchDetailsHome, setSearchDetailsHome, searchDetailsPaper, setSearchDetailsPaper,
     enterNewNote, setEnterNewNote,
     keybindings, setKeybindings,
-    statusBarVisible, setStatusBarVisible, suggestTours, setSuggestTours,
+    statusBarVisible, setStatusBarVisible, suggestTours, setSuggestTours, syncPillScope, setSyncPillScope,
     chatEffort, setChatEffort, aiLoginCheck, setAiLoginCheck, metaModel, setMetaModel,
     dictationModel, setDictationModel, dictationLang, setDictationLang,
     chatSystem, setChatSystem, agentSystem, setAgentSystem,
@@ -3187,11 +3187,11 @@ function LibraryApp({ publicPage = null, initialServerConfig = null }) {
   // One chunk of paragraphs → translations, a single provider call. All the
   // chunking, queueing and parallelism live in the viewer's engine; this is
   // just the HTTP wrapper carrying the language/model/effort settings.
-  // Throws on failure (already surfaced on the status pill, the server's
-  // reason included — a 429 of the shared AI allowance says what to do) —
-  // the engine retries a chunk once before failing the job, the selection
-  // popup shows the reason. `signal` is the
-  // job's AbortController: halting cancels the requests still in flight.
+  // Throws on failure, already surfaced on the status pill with the server's
+  // reason (a 429 of the shared AI allowance says what to do): the engine
+  // retries a chunk once before failing the job, the selection popup shows
+  // the reason. `signal` is the job's AbortController: halting cancels the
+  // requests still in flight.
   // The server streams NDJSON: `{i: [indices], text}` as the model writes
   // each paragraph (→ onPartial, the viewer types it onto the page), then
   // the final `{translations}` object.
@@ -3392,7 +3392,8 @@ function LibraryApp({ publicPage = null, initialServerConfig = null }) {
       }
       if (res.imported === 0 && !silent) {
         setStatus(res.found > 0
-          ? t("All embedded annotations were already imported.") : t("No annotations embedded in this PDF."));
+          ? t("All embedded annotations were already imported.")
+          : t("No annotations embedded in this PDF."));
       }
       return res;
     } catch (err) {
@@ -3753,9 +3754,12 @@ function LibraryApp({ publicPage = null, initialServerConfig = null }) {
         ref.current.setSelectionRange(pos, pos);
       }
       pendingFocusRef.current = null;
-    } else if (typeof req === "object" && req.reopen > 0 && findBlock(blocks, id) && !findBlock(blocks, id).editMode) {
-      req.reopen -= 1;
-      setBlocks((prev) => setBlockEditMode(prev, id, true));
+    } else if (typeof req === "object" && req.reopen > 0) {
+      const block = findBlock(blocks, id);
+      if (block && !block.editMode) {
+        req.reopen -= 1;
+        setBlocks((prev) => setBlockEditMode(prev, id, true));
+      }
     }
   }, [blocks, readOnly]);
 
@@ -4137,10 +4141,8 @@ function LibraryApp({ publicPage = null, initialServerConfig = null }) {
     let live = true;
     profileSync.flush().then(() => {
       if (!live) return;
-      try {
-        localStorage.setItem("gamma-language", language);
-        if (settingsOpen) sessionStorage.setItem(REOPEN_SETTINGS_KEY, settingsOpen);
-      } catch {}
+      // (the pref itself is already in localStorage, where main.jsx reads it)
+      try { if (settingsOpen) sessionStorage.setItem(REOPEN_SETTINGS_KEY, settingsOpen); } catch {}
       window.location.reload();
     });
     return () => { live = false; };
@@ -4194,7 +4196,11 @@ function LibraryApp({ publicPage = null, initialServerConfig = null }) {
     recordScrollPageRef.current = (n) => {
       const reason = shareMode ? "readonly"
         : !focusedBlockId ? "no-focused-block"
-        : !pdfUrl ? "no-pdf-url" : pdfRenderedUrlRef.current !== pdfUrl ? "doc-not-rendered" : restoringForRef.current === focusedBlockId ? "exact-restore-inflight" : coarseRestorePendingRef.current ? "coarse-restore-pending" : "";
+        : !pdfUrl ? "no-pdf-url"
+        : pdfRenderedUrlRef.current !== pdfUrl ? "doc-not-rendered"
+        : restoringForRef.current === focusedBlockId ? "exact-restore-inflight"
+        : coarseRestorePendingRef.current ? "coarse-restore-pending"
+        : "";
       if (reason !== trackPauseReasonRef.current) {
         trackPauseReasonRef.current = reason;
         dbg(reason ? `tracker paused (${reason}) at page ${n}` : `tracker recording from page ${n}`);
@@ -4831,8 +4837,7 @@ function LibraryApp({ publicPage = null, initialServerConfig = null }) {
         // of its pages; goSharedPage keeps the two in the history.
         setSharedFolder({ name: data.folder });
         setReadOnly(!data.can_edit);
-        const within = (path) => path === data.folder || path.startsWith(data.folder + "/");
-        setFolderFilter(initialFolder && within(initialFolder) ? initialFolder : data.folder);
+        setFolderFilter(libraryAccess({ shareMode, shareFolder: data.folder }).clamp(initialFolder));
         const pages = await fetchHomeBlocks();
         if (initialBlockId && pages.some((b) => b.id === initialBlockId)) {
           await openSharedPage(token, initialBlockId, data);
@@ -5384,7 +5389,7 @@ function LibraryApp({ publicPage = null, initialServerConfig = null }) {
     ? `${API}/${base}/folder?name=${encodeURIComponent(target.name)}`
     : `${API}/${base}/${encodeURIComponent(target.id)}`);
   async function loadShareSettings(target) {
-    if (shareMode || !target || (target.kind === "page" && !target.id)) return;
+    if (shareMode || (target.kind === "page" && !target.id)) return;
     setShareTarget(target);
     setShareSettings(null);
     try {
@@ -5457,7 +5462,7 @@ function LibraryApp({ publicPage = null, initialServerConfig = null }) {
   const publishUrl = (pageId) => `${API}/pages/${encodeURIComponent(pageId)}/publish`;
   async function loadPublishState({ quiet = false } = {}) {
     const pageId = focusedBlockId;
-    if (!publishOffered || !pageId || homeMode) return;
+    if (!publishOffered || !pageId) return;
     if (!quiet) { setPublishState(null); setPublishError(""); resetPublishCopied(); }
     try {
       const data = await apiJson(publishUrl(pageId));
@@ -5680,7 +5685,8 @@ function LibraryApp({ publicPage = null, initialServerConfig = null }) {
       }
       if (r.status === 401 || r.status === 403) {
         throw new Error(local
-          ? t("that link is shared with specific people only") : t("that link isn't open to anyone — only public share links can be imported from another Gamma"));
+          ? t("that link is shared with specific people only")
+          : t("that link isn't open to anyone — only public share links can be imported from another Gamma"));
       }
       if (!r.ok) throw new Error("share link not found");
       const info = await r.json();
@@ -6096,7 +6102,7 @@ function LibraryApp({ publicPage = null, initialServerConfig = null }) {
     if (!inkUi.open) return;
     const onKey = (e) => {
       const t = e.target;
-      if (t && (t.tagName === "INPUT" || t.tagName === "TEXTAREA" || t.isContentEditable)) return;
+      if (isTextField(t)) return;
       const K = inkKeysRef.current;
       if ((e.ctrlKey || e.metaKey) && !e.altKey && ["z", "y"].includes(e.key.toLowerCase())) {
         e.preventDefault();
@@ -6307,7 +6313,7 @@ function LibraryApp({ publicPage = null, initialServerConfig = null }) {
   const homeMode = !focusedBlockId && lib.browse;
   bindingsRef.current = keybindings;
   appCmdRef.current = {
-    shareMode, homeMode, readOnly, hasPage: !!focusedBlockId && !homeMode, hasPdf: !!pdfUrl && !homeMode,
+    shareMode, homeMode, readOnly, hasPage: !!focusedBlockId, hasPdf: !!pdfUrl && !homeMode,
     search: (all) => {
       if (!all) {
         const homeFind = document.querySelector(".homeFindInput");
@@ -6324,7 +6330,7 @@ function LibraryApp({ publicPage = null, initialServerConfig = null }) {
     undo: (redo) => {
       const active = document.activeElement;
       const inEditor = !!active?.closest?.(".cm-editor");
-      if (!inEditor && active && (active.tagName === "INPUT" || active.tagName === "TEXTAREA" || active.isContentEditable)) return false;
+      if (!inEditor && isTextField(active)) return false;
       const applied = blockHistory.undo(redo, inEditor);
       if (applied || inEditor || !active || active === document.body) {
         setStatus(applied ? `${redo ? "Redone" : "Undone"}: ${applied}.` : (redo ? t("Nothing to redo in notes.") : t("Nothing to undo in notes.")));
@@ -6412,7 +6418,7 @@ function LibraryApp({ publicPage = null, initialServerConfig = null }) {
       pdfChatVisible: !!pageAttach && !pdfHidden && !collapsedWins.pdf && !isPhone,
       guideAvailable: !settingsOpen,
       sharedWorkspace: workspaces.some((w) => !w.personal),
-      onPage: !homeMode && !!focusedBlockId,
+      onPage: !!focusedBlockId,
       editable: !readOnly,
       unfiledLibrary,
       installable: HOME_SCREEN_INSTALLABLE,
@@ -6450,13 +6456,6 @@ function LibraryApp({ publicPage = null, initialServerConfig = null }) {
   // Off on the home library — there the gesture stays the browser's zoom.
   const notesTextScale = useTextScale({ enabled: () => !homeModeRef.current });
 
-  // Move a block subtree to the end of another page: sync any queued edits
-  // first, re-parent server-side (reorder carries parent_id), then drop it
-  // locally — this page's next autosave PUT no longer contains the block, and
-  // since it already lives under the target page that PUT can't delete it.
-  // An image / table / diagram to the end of another page: a new block there
-  // holding its markdown, the object cut from its block here. The local cut
-  // stays undoable (an undo leaves the copy on the other page).
   // The nth image / table / diagram of a block on this page, as a source
   // range — null once either is gone.
   function objectAt(sourceId, kind, idx) {
@@ -6472,6 +6471,9 @@ function LibraryApp({ publicPage = null, initialServerConfig = null }) {
       setMoveBlockDialog({ ...what, query: "", pages });
     } catch (err) { setStatus(t("Could not list pages: {message}", { message: err.message })); }
   }
+  // An image / table / diagram to the end of another page: a new block there
+  // holding its markdown, the object cut from its block here. The local cut
+  // stays undoable (an undo leaves the copy on the other page).
   async function doMoveFragment(frag, page) {
     setMoveBlockDialog(null);
     const title = (page.content || t("Untitled")).slice(0, 60);
@@ -6490,6 +6492,10 @@ function LibraryApp({ publicPage = null, initialServerConfig = null }) {
       setStatus(t("Move failed: {message}", { message: err.message }));
     }
   }
+  // Move a block subtree to the end of another page: sync any queued edits
+  // first, re-parent server-side (reorder carries parent_id), then drop it
+  // locally — this page's next autosave PUT no longer contains the block, and
+  // since it already lives under the target page that PUT can't delete it.
   async function doMoveBlock(blockId, page) {
     if (moveBlockDialog?.fragment) return doMoveFragment(moveBlockDialog.fragment, page);
     setMoveBlockDialog(null);
@@ -6695,7 +6701,8 @@ function LibraryApp({ publicPage = null, initialServerConfig = null }) {
   const newPageAllowed = lib.organize && !categoryFilter && homeKinds !== "folders" && homeKinds !== "labels";
   // What an empty listing says — the view it is empty for, not the library.
   const homeEmptyText = categoryFilter === NO_LABEL
-    ? t("Every page here carries a label.") : categoryFilter
+    ? t("Every page here carries a label.")
+    : categoryFilter
     ? t("Nothing is labelled “{categoryFilter}” here — drop a page on a label to add it.", { categoryFilter })
     : homeKinds === "labels"
       ? (folderFilter ? t("No labels on the pages in this folder yet.") : t("No labels yet — add one from a page’s label field."))
@@ -7397,7 +7404,8 @@ function LibraryApp({ publicPage = null, initialServerConfig = null }) {
                       ref={metaBtnRef}
                       className="pageActionBtn"
                       title={metaBusy
-                        ? t("Fetching paper metadata…") : metaSrc?.warn
+                        ? t("Fetching paper metadata…")
+                        : metaSrc?.warn
                           ? t(metaSrc.hint)
                           : t("Edit metadata (authors, venue, DOI, source file…)")}
                       aria-label={t("Paper metadata")}
@@ -7515,13 +7523,17 @@ function LibraryApp({ publicPage = null, initialServerConfig = null }) {
                             <span className="metaKey">{t("Status")}</span>
                             <span className="metaVal metaStatus">
                               <span className={`metaCell ${!pdfTextInfo || pdfTextInfo.checking || pdfTextInfo.error ? "muted" : pdfTextInfo.ok ? "ok" : "bad"}`}
-                                title={!pdfTextInfo || pdfTextInfo.checking ? t("Checking whether the PDF has a text layer") : pdfTextInfo.error ? t("Text check failed — {error}", { error: pdfTextInfo.error })
-                                  : !pdfTextInfo.found ? t("The PDF file is not on the server") : pdfTextInfo.ok ? t("The PDF has a text layer — the AI and search can read it") : t("No text layer — scanned or image-only? The AI can't read it")}>
+                                title={!pdfTextInfo || pdfTextInfo.checking ? t("Checking whether the PDF has a text layer")
+                                  : pdfTextInfo.error ? t("Text check failed — {error}", { error: pdfTextInfo.error })
+                                  : !pdfTextInfo.found ? t("The PDF file is not on the server")
+                                  : pdfTextInfo.ok ? t("The PDF has a text layer — the AI and search can read it")
+                                  : t("No text layer — scanned or image-only? The AI can't read it")}>
                                 <i className="setDot" />{!pdfTextInfo || pdfTextInfo.checking ? "checking" : pdfTextInfo.error ? t("text ?") : !pdfTextInfo.found ? t("no file") : pdfTextInfo.ok ? "text" : t("no text")}
                               </span>
                               <span className={`metaCell ${!pdfTextInfo || pdfTextInfo.checking || pdfTextInfo.error || pdfTextInfo.indexed === undefined ? "muted" : pdfTextInfo.indexed ? "ok" : "muted"}`}
                                 title={t("Whether library-wide search can find text in this paper. Papers index automatically in the background; Settings → Library maintenance → Rebuild forces a full re-index.")}>
-                                <i className="setDot" />{!pdfTextInfo || pdfTextInfo.checking ? "…" : pdfTextInfo.error || pdfTextInfo.indexed === undefined ? t("index ?") : pdfTextInfo.indexed ? "indexed" : pdfTextInfo.index_stale ? t("stale index") : t("not indexed")}
+                                <i className="setDot" />{!pdfTextInfo || pdfTextInfo.checking ? "…" : pdfTextInfo.error || pdfTextInfo.indexed === undefined ? t("index ?")
+                                  : pdfTextInfo.indexed ? "indexed" : pdfTextInfo.index_stale ? t("stale index") : t("not indexed")}
                               </span>
                               {pdfTextInfo?.ok ? (
                                 <button className="searchToggle metaRowBtn" style={{ marginLeft: "auto" }}
@@ -7555,8 +7567,10 @@ function LibraryApp({ publicPage = null, initialServerConfig = null }) {
                         </div>
                         {!pageMeta ? (
                           <div className="popoverHint">{metaBusy
-                            ? t("Fetching metadata…") : focusedBlock?.properties?.meta_error
-                              ? t("A previous lookup found nothing — it won't retry automatically. Fill the fields in by hand, or hit ↻ to retry.") : t("No metadata found — fill the fields in by hand, or hit ↻ to retry.")}</div>
+                            ? t("Fetching metadata…")
+                            : focusedBlock?.properties?.meta_error
+                              ? t("A previous lookup found nothing — it won't retry automatically. Fill the fields in by hand, or hit ↻ to retry.")
+                              : t("No metadata found — fill the fields in by hand, or hit ↻ to retry.")}</div>
                         ) : null}
                         {metaDirty ? (
                           <div className="reportModalBtns">
@@ -7806,16 +7820,12 @@ function LibraryApp({ publicPage = null, initialServerConfig = null }) {
                       {categoryFilter ? <LabelIcon size={15} strokeDasharray={categoryFilter === NO_LABEL ? "2 1.5" : undefined} /> : <FolderOpenIcon size={15} />}
                       {/* Breadcrumb: every path segment navigates to its level —
                           from the library's root on (a folder share starts at its folder) */}
-                      {(folderFilter ? folderFilter.split("/") : []).map((seg, i, segs) => {
-                        const prefix = segs.slice(0, i + 1).join("/");
-                        if (!lib.contains(prefix)) return null;
-                        return (
-                          <span key={prefix}>
-                            {i > 0 && lib.contains(segs.slice(0, i).join("/")) ? <span className="crumbSep">/</span> : null}
-                            <button className="crumbBtn" onClick={() => openFolder(prefix)}>{seg}</button>
-                          </span>
-                        );
-                      })}
+                      {folderCrumbs(folderFilter).map(({ seg, prefix, sep }) => (
+                        <span key={prefix}>
+                          {sep ? <span className="crumbSep">/</span> : null}
+                          <button className="crumbBtn" onClick={() => openFolder(prefix)}>{seg}</button>
+                        </span>
+                      ))}
                       {categoryFilter ? (
                         <span>
                           {folderFilter ? <span className="crumbSep">/</span> : null}
@@ -7917,7 +7927,8 @@ function LibraryApp({ publicPage = null, initialServerConfig = null }) {
                         glyph={<LabelGlyph dashed={l === NO_LABEL} />}
                         title={labelTitle(l)}
                         tip={l === NO_LABEL
-                          ? t("Pages without any label · double-click to open · drop a page to clear its labels") : t("Click to select · double-click to open · drop a page to label it")}
+                          ? t("Pages without any label · double-click to open · drop a page to clear its labels")
+                          : t("Click to select · double-click to open · drop a page to label it")}
                         kind="Label"
                         count={labelMeta[l]?.count || 0}
                         time={cardTime(item)}
@@ -8280,7 +8291,7 @@ function LibraryApp({ publicPage = null, initialServerConfig = null }) {
                     setFocusedId(target.id);
                     return true;
                   },
-                  // Alt+↑ / ↓: one step among the siblings, the editor
+                  // Move block up / down: one step among the siblings, the editor
                   // staying open with its caret (the transition's move op).
                   onMoveBlock: (id, dir) => {
                     if (readOnly) return false;
@@ -8297,8 +8308,8 @@ function LibraryApp({ publicPage = null, initialServerConfig = null }) {
                   keybindings,
                   // Attach a block to the next chat message (chip with its id).
                   onAddToChat: shareMode ? null : addBlockToChat,
-                  // `above` puts the copy before the original (the
-                  // keyboard's Shift+Alt+↑).
+                  // `above` puts the copy before the original (Duplicate
+                  // block above).
                   onDuplicate: (id, { above = false } = {}) => {
                     if (readOnly) return;
                     const src = findBlock(blocks, id);
@@ -8828,7 +8839,7 @@ function LibraryApp({ publicPage = null, initialServerConfig = null }) {
           mirrorOf={workspace.mirror_of}
           publication={!workspace.mirror_of && !!workspace.publishing}
           pageId={focusedBlockId}
-          everyPage={appPrefs.syncPillScope === "all"}
+          everyPage={syncPillScope === "all"}
           open={openPopover === "mirror"}
           onToggle={() => setOpenPopover(openPopover === "mirror" ? null : "mirror")}
           jumpTo={(pageId, blockId) => jumpToRef.current?.(pageId, blockId)}
@@ -9066,20 +9077,15 @@ function LibraryApp({ publicPage = null, initialServerConfig = null }) {
             // A folder share: the folder path from the shared folder down,
             // each crumb returning to that folder's listing, then the page.
             <span className="readOnlyTitle shareCrumbs">
-              {folderFilter.split("/").map((seg, i, segs) => {
-                const prefix = segs.slice(0, i + 1).join("/");
-                if (!lib.contains(prefix)) return null;
-                const here = !focusedBlockId && prefix === folderFilter;
-                return (
-                  <span key={prefix}>
-                    {i > 0 && lib.contains(segs.slice(0, i).join("/")) ? <span className="crumbSep">/</span> : null}
-                    {here ? <span>{seg}</span> : (
-                      <button className="crumbBtn" title={t("Back to {folder}", { folder: prefix })}
-                        onClick={() => goSharedPage("", { folder: prefix })}>{seg}</button>
-                    )}
-                  </span>
-                );
-              })}
+              {folderCrumbs(folderFilter).map(({ seg, prefix, sep }) => (
+                <span key={prefix}>
+                  {sep ? <span className="crumbSep">/</span> : null}
+                  {!focusedBlockId && prefix === folderFilter ? <span>{seg}</span> : (
+                    <button className="crumbBtn" title={t("Back to {folder}", { folder: prefix })}
+                      onClick={() => goSharedPage("", { folder: prefix })}>{seg}</button>
+                  )}
+                </span>
+              ))}
               {focusedBlockId ? <><span className="crumbSep">/</span><span>{pageTitle}</span></> : null}
             </span>
           ) : (
@@ -9245,9 +9251,11 @@ function LibraryApp({ publicPage = null, initialServerConfig = null }) {
                     ? t("Translating… {progress}% — click to stop (right-click for options)", { progress: Math.round(pdfTransState.progress * 100) })
                     : pdfTransState.current
                       ? (pdfTransState.shown
-                          ? t("Hide the translation (all pages; Alt peeks) — right-click for options") : t("Show the translation — right-click for options"))
+                          ? t("Hide the translation (all pages; Alt peeks) — right-click for options")
+                          : t("Show the translation — right-click for options"))
                       : t("Translate this page into {translateLangLabel} — right-click: whole document & options", { translateLangLabel })}
-                  aria-label={pdfTransState.running ? t("Stop translating") : pdfTransState.current ? (pdfTransState.shown ? t("Hide translation") : t("Show translation"))
+                  aria-label={pdfTransState.running ? t("Stop translating")
+                    : pdfTransState.current ? (pdfTransState.shown ? t("Hide translation") : t("Show translation"))
                     : t("Translate")}
                 >
                   {pdfTransState.running
@@ -9754,8 +9762,8 @@ function LibraryApp({ publicPage = null, initialServerConfig = null }) {
           setRecentThumbs,
           fileLabels,
           setFileLabels,
-          syncPillScope: appPrefs.syncPillScope,
-          setSyncPillScope: appPrefs.setSyncPillScope,
+          syncPillScope,
+          setSyncPillScope,
           isAdmin: !!authUser?.is_admin,
           setStatus,
           refreshQuota, // keep the client-side pre-upload size check in sync without a re-login
@@ -9977,40 +9985,38 @@ function LibraryApp({ publicPage = null, initialServerConfig = null }) {
                     </MenuItem>
                   ) : null}
                   {lib.organize ? (
-                  <MenuItem icon={CopyIcon} onClick={() => { setHomeMenu(null); duplicatePages(ids); }}>{many ? t("Duplicate {n} pages", { n: ids.length }) : t("Duplicate")}</MenuItem>
-                  ) : null}
-                  {lib.organize ? (
-                  <SubMenuItem
-                    id="folders"
-                    icon={FolderIcon}
-                    label={t("Move to folder")}
-                    title={t("A page can sit in several folders — this adds it to the one you pick (same as dragging it onto the folder).")}
-                  >
-                    {folderMenuPaths.length ? folderMenuPaths.map((f) => (
-                      <MenuItem
-                        key={f}
+                    <>
+                      <MenuItem icon={CopyIcon} onClick={() => { setHomeMenu(null); duplicatePages(ids); }}>{many ? t("Duplicate {n} pages", { n: ids.length }) : t("Duplicate")}</MenuItem>
+                      <SubMenuItem
+                        id="folders"
                         icon={FolderIcon}
-                        title={ownTags.includes(f) ? t("Already in {f}", { f: f }) : f}
-                        trailing={ownTags.includes(f) ? <CheckIcon size={14} className="ctxMenuCheck" /> : null}
-                        onClick={() => { setHomeMenu(null); addPagesToFolder(ids, f); }}
-                      >{f}</MenuItem>
-                    )) : (
-                      <MenuItem disabled>{t("No folders yet")}</MenuItem>
-                    )}
-                    {folderFilter || ownTags.length ? <MenuLabel>{t("Remove from")}</MenuLabel> : null}
-                    {folderFilter ? (
-                      <MenuItem icon={FolderOpenIcon} onClick={() => { setHomeMenu(null); removePagesFromFolder(ids, folderFilter); }}>{`“${folderFilter}”`}</MenuItem>
-                    ) : null}
-                    {ownTags.filter((f) => f !== folderFilter).map((f) => (
-                      <MenuItem key={`rm:${f}`} icon={FolderOpenIcon} title={f} onClick={() => { setHomeMenu(null); removePagesFromFolder(ids, f); }}>{`“${f}”`}</MenuItem>
-                    ))}
-                    {folderFilter || ownTags.length ? (
-                      <MenuItem icon={XIcon} onClick={() => { setHomeMenu(null); removePagesFromFolder(ids, ""); }}>{t("All folders")}</MenuItem>
-                    ) : null}
-                  </SubMenuItem>
-                  ) : null}
-                  {lib.organize ? (
-                  <MenuItem icon={TrashIcon} danger onClick={() => { setHomeMenu(null); deletePages(ids); }}>{many ? t("Delete {n} pages", { n: ids.length }) : t("Delete")}</MenuItem>
+                        label={t("Move to folder")}
+                        title={t("A page can sit in several folders — this adds it to the one you pick (same as dragging it onto the folder).")}
+                      >
+                        {folderMenuPaths.length ? folderMenuPaths.map((f) => (
+                          <MenuItem
+                            key={f}
+                            icon={FolderIcon}
+                            title={ownTags.includes(f) ? t("Already in {f}", { f: f }) : f}
+                            trailing={ownTags.includes(f) ? <CheckIcon size={14} className="ctxMenuCheck" /> : null}
+                            onClick={() => { setHomeMenu(null); addPagesToFolder(ids, f); }}
+                          >{f}</MenuItem>
+                        )) : (
+                          <MenuItem disabled>{t("No folders yet")}</MenuItem>
+                        )}
+                        {folderFilter || ownTags.length ? <MenuLabel>{t("Remove from")}</MenuLabel> : null}
+                        {folderFilter ? (
+                          <MenuItem icon={FolderOpenIcon} onClick={() => { setHomeMenu(null); removePagesFromFolder(ids, folderFilter); }}>{`“${folderFilter}”`}</MenuItem>
+                        ) : null}
+                        {ownTags.filter((f) => f !== folderFilter).map((f) => (
+                          <MenuItem key={`rm:${f}`} icon={FolderOpenIcon} title={f} onClick={() => { setHomeMenu(null); removePagesFromFolder(ids, f); }}>{`“${f}”`}</MenuItem>
+                        ))}
+                        {folderFilter || ownTags.length ? (
+                          <MenuItem icon={XIcon} onClick={() => { setHomeMenu(null); removePagesFromFolder(ids, ""); }}>{t("All folders")}</MenuItem>
+                        ) : null}
+                      </SubMenuItem>
+                      <MenuItem icon={TrashIcon} danger onClick={() => { setHomeMenu(null); deletePages(ids); }}>{many ? t("Delete {n} pages", { n: ids.length }) : t("Delete")}</MenuItem>
+                    </>
                   ) : null}
                 </>
               );

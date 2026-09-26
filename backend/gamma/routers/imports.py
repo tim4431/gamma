@@ -16,7 +16,7 @@ from fastapi import APIRouter, File, Form, HTTPException, Request, UploadFile
 from pydantic import BaseModel
 from fractional_indexing import generate_key_between, generate_n_keys_between
 
-from ..auth import is_guest_workspace, require_user, require_ws
+from ..auth import require_user, require_ws
 from ..db import connect_pages_db, page_now, pdf_upload_path, ws_uploads_dir
 from ..blocks_store import last_child_position
 from ..foldertags import clean_path, parse_tags
@@ -36,6 +36,7 @@ from ..logseq_import import (
 )
 from ..zotero_import import plan_zotero_archive
 from ..import_review import parse_selection, selected_warnings, validate_selection
+from ..workspaces import is_guest_workspace
 
 router = APIRouter(prefix="/api", tags=["import"])
 

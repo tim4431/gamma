@@ -7,7 +7,7 @@ Where every setting lives, and how the Settings dialog is built.
 | Layer | Storage | Examples |
 |---|---|---|
 | Per browser | `localStorage`, one `gamma-*` key per preference, all declared in `PREFS` ([frontend/src/app/prefDefs.js](../../frontend/src/app/prefDefs.js)) with scope `browser` — except `gamma-link-name`, the share view's display name for a visitor without an account, owned by `src/collaboration/linkName.js` because the fetch wrapper reads it outside React | what describes this device: the interface size (`gamma-ui-scale`, applied pre-paint by `index.html`), the status bar, the handwriting input rules and the tool strip's presets, eraser and lasso choices (`gamma-ink-*`), the metadata and translation model picks and dictation (they name this server's provider entries, like the chat model `gamma-chat-model`); outside `PREFS`, diagnostics tracing (`gamma-debug-log`) |
-| Per account, profile | the account-wide `profile` prefs key (`/api/prefs/profile`, one JSON object keyed by preference name), every `PREFS` entry with scope `account`; each also keeps its `gamma-*` localStorage key as the instant-paint cache | appearance (theme — the pre-paint script still reads `gamma-theme` — flip page colors, and whether tours are suggested, `suggestTours`, [onboarding.md](onboarding.md)), the interface language (`gamma-language`, read by `main.jsx` before the first render, [i18n.md](i18n.md)), reading and editing (imported annotations, translation button and language, Enter key, how search opens), library display and PDF fetching, chat behaviour (tools switch, per-kind tool permissions, reasoning effort, the login connection check, tool limits, snapshot clearing), translation effort and parallel requests, context budgets, prompts, keyboard shortcuts (`keybindings`: command id → chord or null, [hotkeys.md](hotkeys.md)) |
+| Per account, profile | the account-wide `profile` prefs key (`/api/prefs/profile`, one JSON object keyed by preference name), every `PREFS` entry with scope `account`; each also keeps its `gamma-*` localStorage key as the instant-paint cache | appearance (theme — the pre-paint script reads `gamma-theme` — flip page colors, and whether tours are suggested, `suggestTours`, [onboarding.md](onboarding.md)), the interface language (`gamma-language`, read by `main.jsx` before the first render, [i18n.md](i18n.md)), reading and editing (imported annotations, translation button and language, selection translation, Enter key, how search opens), library display and PDF fetching, the sync pill's scope (`syncPillScope`), chat behaviour (tools switch, per-kind tool permissions, reasoning effort, the login connection check, tool limits, snapshot clearing), translation effort and parallel requests, context budgets, prompts, keyboard shortcuts (`keybindings`: command id → chord or null, [hotkeys.md](hotkeys.md)) |
 | Session only | React state, nothing stored | the Ctrl+scroll text size of the notes list and the chat transcript (`useTextScale` in [Widgets.jsx](../../frontend/src/shared/ui/Widgets.jsx)) — resets on reload |
 | Per account, synced | `/api/prefs/{key}` (small JSON KV, `user_prefs` in `users.db`) | per account AND workspace: open tabs (`open-tabs`), the recently-viewed queue (`recent-views`), pinned folders (`pinned-folders`; pinned pages are a page property), reading positions (`read-pos`) — they name one workspace's pages; account-wide: active AI key (`ai-provider`) and the preference profile (`profile`, previous row). Server wins on load, localStorage (keyed `user@workspace`) is the instant-paint cache. The recents-card cover thumbnails are workspace data, through their own `/api/page-snaps` store (`page_snaps` in the workspace's `data.db` — over the prefs size cap) |
 | Per account, seen notices | the account-wide `notices-seen` prefs key (`db.NOTICES_SEEN_PREF_KEY`), `{notice id: fingerprint}`, written only by `POST /api/notices/{id}/seen` (below, "Notices") | which release and which log error the account has already looked at |
@@ -26,25 +26,27 @@ The profile syncs through `useProfileSync` in prefs.js. On sign-in the
 server copy wins; an account without one is seeded from this browser.
 Entries are validated with the same codecs as localStorage, so unknown names
 and bad values are dropped and a partial profile applies what it has.
-Changes push one second after they settle (a slider sends one request) as
-a `PATCH /api/prefs/profile` carrying only the entries that changed since
-the copy this tab last saw, so a tab's stale value of another entry never
-undoes a change synced in meanwhile; a pending push is flushed when the
-page is hidden, and focus pulls at most every 15 seconds. Nothing is pushed
-before the first load succeeds. Signed-out visitors, guests and share
-views keep working from localStorage alone. The profile
-carries no secrets, and an account linked to Gamma Cloud carries it to
-every Gamma server it signs in to, VS Code style: merged preference by
-preference against the copy both sides last agreed on, synced on a cloud
+A change is pushed one second after it settles (a slider sends one request)
+as a `PATCH /api/prefs/profile` carrying only the entries that changed since
+the copy this tab last saw. A tab's stale value of another entry therefore
+never undoes a change synced in meanwhile. A pending push is flushed when
+the page is hidden, focus pulls at most every 15 seconds, and nothing is
+pushed before the first load succeeds. Signed-out visitors, guests and share
+views work from localStorage alone.
+
+The profile carries no secrets; the provider entries and the active key
+never join it. An account linked to Gamma Cloud carries it to every Gamma
+server it signs in to, VS Code style: merged preference by preference
+against the copy both sides last agreed on. The merge runs on a cloud
 sign-in, when a browser reads the profile (at most once a minute), a few
-seconds after a change and every hour; a first sync of two different
-copies opens a dialog asking Fetch from cloud / Push to cloud, and Settings
-→ Account & sync → Settings sync has one Sync now button
-(`gamma/cloud_sync.py`, [cloud_accounts.md](cloud_accounts.md)). The
-provider entries and the active key never join it. `PUT /api/prefs/profile`
-(whole-object replace, kept for scripts and tests) requires an object;
-both share the prefs cap of 64 KB, enough for four long custom prompts. Step 17 of the migrations turned the old `appearance` key into the
-profile's first two entries.
+seconds after a change and every hour. A first sync of two different copies
+opens a dialog asking Fetch from cloud / Push to cloud; Settings → Account &
+sync → Settings sync has one Sync now button (`gamma/cloud_sync.py`,
+[cloud_accounts.md](cloud_accounts.md)). `PUT /api/prefs/profile`
+(whole-object replace, kept for scripts and tests) requires an object. Both
+share the prefs cap of 64 KB, enough for four long custom prompts. Step 17
+of the migrations turned the old `appearance` key into the profile's first
+two entries.
 
 Each account section's tag shows where its own settings stand. A section
 names the preferences it holds: `Section`'s `prefs`, taken pane by pane
@@ -52,16 +54,15 @@ from `SECTION_PREFS` in
 [settings/sectionPrefs.js](../../frontend/src/settings/sectionPrefs.js).
 `accountPrefs` there throws on a name that is not an account-scoped entry
 of `PREFS`. `tests/sectionPrefs.test.mjs` checks the table against `PREFS`
-and against every `scope="account"` in the panes' sources. It also checks
-that every account preference is held by a section or listed in
-`UNTAGGED_PREFS`, which is empty today. A browser preference inside an
+and against every `scope="account"` in the panes' sources, and that every
+account preference is held by a section. A browser preference inside an
 account section carries its own tag on its row (`Row`'s `scope="browser"`):
 "Translate with" in Reading › Translation is the one case.
 
 `useProfileSync` returns its overall state (signed-out / loading
 / loaded / pending / pushing / failed) and, as sets of preference names:
 `pending` (the value differs from the copy the server last confirmed),
-`inflight` (sent in the PUT now on its way), `failed` (a push of exactly
+`inflight` (sent in the PATCH now on its way), `failed` (a push of exactly
 this value failed; changing it again makes it pending) and `awaitingCloud`
 (pushed since Gamma Cloud last reported the profile synced). The dialog
 adds `GET /api/auth/cloud/sync-status`, which is account-wide and polled
@@ -88,16 +89,15 @@ them for one section, first rule that applies:
 So changing the Enter key spins only the Notes section, for the second the
 change settles plus its PATCH (and at least 700 ms, so a quick save is seen
 rather than flickered). The server's acceptance is the commit: its own
-push to Gamma Cloud is coalesced (5 s) and retried by the hourly check, and
-the tag never waits on it — the cloud's pending state is not shown, only a
-failure of that hop. A cloud error from before any change this
-session shows on no section; the Account pane's Settings sync row (under
-the Gamma Cloud row, `CloudSyncRow` in `settings/SettingsCloudSignIn.jsx`)
-still says it (`cloudSyncHint` in the same module: "Synced with Gamma
-Cloud at 14:37" / "Not synced: <error>"), next to its one Sync now button,
-which, while a first sync waits, opens the Fetch from cloud / Push to cloud
-dialog. Browser sections always show the monitor
-and "browser".
+push to Gamma Cloud is coalesced (5 s) and retried by the hourly check. The
+tag never waits on it; it shows only a failure of that hop, never the
+cloud's pending state. A cloud error from before any change this session
+shows on no section. The Account pane's Settings sync row says it instead
+(`CloudSyncRow` in `settings/SettingsCloudSignIn.jsx`, under the Gamma
+Cloud row; its hint is `cloudSyncHint` in `settings/syncState.js`: "Synced
+with Gamma Cloud at 14:37" / "Not synced: <error>"). The row's one Sync now
+button opens the Fetch from cloud / Push to cloud dialog while a first sync
+waits. Browser sections always show the monitor and "browser".
 
 The tag is an icon and one muted word ("account" or "browser") in the
 small caption size; the sentence is its hover `title` and its
@@ -199,7 +199,7 @@ Preferences:
   subject. **PDFs**: imported annotations (a Keep / Remove segmented choice),
   open-access fallback, metadata auto-fetch and saving external PDFs.
   **Handwriting**: two `IconChoices` tiles ("Draws with": pen only / pen and
-  finger — the stored preference is still `inkPenOnly`) plus the
+  finger — the stored preference is `inkPenOnly`) plus the
   stylus-draws-right-away and pressure switches. **Translation**, everything
   translation in one section
   ([SettingsTranslation.jsx](../../frontend/src/settings/SettingsTranslation.jsx)):
@@ -249,14 +249,15 @@ AI:
 - **Connections**: the provider list (empty state: one sentence and the Add
   button; the server's shared entries follow the account's own as read-only
   rows tagged "Shared by this server", selectable as the active key but
-  without Test / Manage / delete), the login connection check, the models (default chat, metadata,
-  dictation) and the account's token usage
-  ([ai.md](ai.md) "Token usage"), which opens with a **Shared allowance**
-  row ("12k of 50k tokens in the last 24 h", a red "used up" tag once
-  spent; "12k tokens in the last 24 h · no limit" without one) while a
-  shared entry applies ([guests.md](guests.md)). The account menu's card
-  shows the same numbers under the storage meter. The check, models and usage sections appear only
-  once a provider exists; a guest sees the usage too, without Reset.
+  without Test / Manage / delete), the login connection check, the models
+  (default chat, metadata, dictation) and the account's token usage
+  ([ai.md](ai.md) "Token usage"). While a shared entry applies, the usage
+  opens with a **Shared allowance** row ("12k of 50k tokens in the last
+  24 h", a red "used up" tag once spent; "12k tokens in the last 24 h · no
+  limit" without one, [guests.md](guests.md)). The account menu's card shows
+  the same numbers under the storage meter. The check, models and usage
+  sections appear only once a provider exists; a guest sees the usage too,
+  without Reset.
 - **Chat**: **Chat** (the default reasoning effort and the
   snapshot-clearing switch), then **Tools**: the master switch and, per chat
   kind (folder / PDF / notes), the tool chips (`AgentToolPicker`, the same
@@ -298,21 +299,24 @@ Manage:
   check), the public server URL, storage defaults (each box saves on Enter
   or blur), **Guests**, the shared AI provider, shared workspaces, server
   backups and the log with its level filter ([user_db.md](user_db.md)).
+- **Diagnostics**: browser tracing, the browser session log and, under
+  Help, the Report a problem button (the same dialog as the account menu's
+  entry; [debugging.md](debugging.md) "Report a problem").
 
 **Shared AI provider** (Server, `SettingsAi.jsx` `SharedAiProviderSettings`)
 lists the server's shared connections with the same rows and the same
 add/edit form as Connections (`ProviderRow`, `ProviderForm`; the form's
 state comes from `useProviderEditor` over `/api/admin/ai-providers`
-instead of App's aiKeys group). An API-key service, or a ChatGPT
+instead of App's aiKeys group). An entry is an API-key service or a ChatGPT
 subscription signed in with the account form's paste-the-callback steps
 (`/api/admin/ai-providers/chatgpt/*`). Each row has Test, Manage and delete,
 plus Usage (the subscription's windows) on a sign-in; "+ Add provider" is
-the section's action. A "Guests may
-use it" switch (default off) decides whether guests get them
-([ai.md](ai.md) "Shared provider entries"). While at least one shared entry
-exists, two `UnitInput` rows set the shared allowance, **Allowance per
-account** and **Allowance per guest**: tokens per rolling 24 hours on the
-shared entries, 0 = unlimited, each saved on Enter or blur as
+the section's action. A "Guests may use it" switch (default off) decides
+whether guests get them ([ai.md](ai.md) "Shared provider entries").
+While at least one shared entry exists, two `UnitInput` rows set the shared
+allowance, **Allowance per account** and **Allowance per guest**: tokens per
+rolling 24 hours on the shared entries, 0 = unlimited, each saved on Enter
+or blur as
 `PUT /api/admin/ai-providers {allowance: {accounts | guests}}`
 ([guests.md](guests.md) "The shared AI allowance").
 
@@ -324,9 +328,6 @@ and folds the password form behind Admin sign-in; the guide offers the
 first-paper tour on arrival). Each reports its source like the public URL;
 when it is `environment` (`GAMMA_GUEST_TTL_HOURS`, `GAMMA_DEMO`) the control
 is disabled and the hint names the variable ([guests.md](guests.md)).
-- **Diagnostics**: browser tracing, the browser session log and, under
-  Help, the Report a problem button (the same dialog as the account menu's
-  entry; [debugging.md](debugging.md) "Report a problem").
 
 Administrators confirm the **Public server URL** under Server: the row shows
 a "confirmed" / "not confirmed" tag and, while the address is unconfirmed or

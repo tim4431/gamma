@@ -16,10 +16,10 @@ import { findMathAtCursor, renderKatex } from "./LatexEditor";
 import { emptyLeftPair, escapedAt, leftDelimiterEdit, rightDelimiterAt } from "./latexInput";
 import { latexErrors, visibleLatexErrors } from "./latexLint";
 import { calloutType } from "./callouts";
-import { fenceInnerAt, highlightCode, makeCopyButton, scanFences } from "./codeHighlight";
-import { scanColorSpans, scanImageSyntax, scanMarks, toggleMark } from "./mdMarks";
-import { parseTable, scanImages, scanTables } from "./mdScan";
-import { scanMathSpans } from "./markCommands";
+import { highlightCode, makeCopyButton } from "./codeHighlight";
+import { fenceInnerAt, scanFences } from "./fences.js";
+import { scanColorSpans, scanImageSyntax, scanMarks } from "./mdMarks";
+import { parseTable, scanImages, scanMathSpans, scanTables } from "./mdScan";
 import { assetUrl } from "../shared/lib/utils";
 
 // Clicking a rendered widget drops the caret just inside it, which un-renders
@@ -294,6 +294,9 @@ function buildInlineDecos(state, ctx) {
   const claimed = [];
   const overlapsClaimed = (from, to) => claimed.some(([a, b]) => from < b && to > a);
   const touched = (from, to) => sel.from <= to && sel.to >= from;
+  // Objects (pictures, tables) and list markers expand only for a selection
+  // reaching strictly inside; a caret at their edge keeps them rendered.
+  const inside = (from, to) => sel.from < to && sel.to > from;
 
   // ``` fences claim their range FIRST — a "$" or "**" inside code is code.
   // A closed, untouched fence renders as a highlighted card; a touched or
@@ -319,7 +322,7 @@ function buildInlineDecos(state, ctx) {
     scanTables(text).forEach((tb, idx) => {
       if (!tb.editable || overlapsClaimed(tb.from, tb.to)) return;
       claimed.push([tb.from, tb.to]);
-      if (sel.from < tb.to && sel.to > tb.from) return;
+      if (inside(tb.from, tb.to)) return;
       ranges.push(Decoration.replace({
         widget: new TableWidget(text.slice(tb.from, tb.to), idx, ctx),
       }).range(tb.from, tb.to));
@@ -429,7 +432,7 @@ function buildInlineDecos(state, ctx) {
       claimed.push([im.from, im.to]);
       // Strictly inside: a caret at either end (stepping through the lines,
       // End on its line) keeps the picture; the widget's right-click reveals.
-      if (sel.from < im.to && sel.to > im.from) continue;
+      if (inside(im.from, im.to)) continue;
       const idx = objects.findIndex((o) => o.from === im.from);
       const widget = new ImageWidget(im.url, im.alt, im.width, idx, im.to - im.from, ctx);
       ranges.push(Decoration.replace({ widget }).range(im.from, im.to));
@@ -492,7 +495,6 @@ function buildInlineDecos(state, ctx) {
   // horizontal rules. Heading/quote prefixes un-hide while the caret is
   // anywhere on their line; task/bullet markers only when the caret is
   // strictly INSIDE the marker (so editing a todo's text keeps its checkbox).
-  const inside = (from, to) => sel.from < to && sel.to > from;
   const doc = state.doc;
   // Contiguous "> " lines form one quote run; a run opening with "[!type]"
   // renders as a callout: tinted lines, colored bold title, marker hidden.
@@ -1052,7 +1054,7 @@ const BlockCmEditor = React.forwardRef(function BlockCmEditor({
   // Ref labels resolve asynchronously (onFetchRefs); refresh the chip
   // decorations when their text actually changes, not on every render.
   const labelsKey = Object.entries(refLabels || {})
-    .map(([id, r]) => `${id}:${r?.content}`).join(" ");
+    .map(([id, r]) => `${id}:${r?.content}`).join("\u0000");
   useEffect(() => {
     const view = viewRef.current;
     if (!view) return;
@@ -1070,4 +1072,4 @@ const BlockCmEditor = React.forwardRef(function BlockCmEditor({
   );
 });
 
-export { BlockCmEditor, scanMathSpans };
+export { BlockCmEditor };

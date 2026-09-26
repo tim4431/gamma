@@ -108,9 +108,10 @@ fresh client), never `client`. One data directory serves every file on a
 worker, so an account name belongs to the module that creates it: prefix
 names with the module's area (`bk_admin`, `ca_alice`), create them through
 `conftest.make_user`, and pick folder names no other module uses in the
-`guest` fixture's workspace (its account is `conftest.guest_name()`, a
-fresh `guest-…` name per run — never write `"guest"`). `make_user` fails the run when a second module asks for a
-name another module already created. Run them with the project venv's
+`guest` fixture's workspace. That fixture's account is
+`conftest.guest_name()`, a fresh `guest-…` name per run; never write
+`"guest"`. `make_user` fails the run when a second module asks for a name
+another module already created. Run them with the project venv's
 interpreter (`venv/Scripts/python.exe` on Windows): the two vector-math
 tests need `ziamath` from `requirements.txt`, and a system/conda `python`
 without it fails them with "ziamath is not importable" rather than a
@@ -126,11 +127,13 @@ per test module (the module's name is in the username), so the files never
 see each other's pages or provider entries.
 
 Rules the frontend mirrors — search normalization (`gamma/textnorm.py` ↔
-`frontend/src/shared/lib/textnorm.js`) and folder-label paths (`gamma/foldertags.py` ↔
-`frontend/src/library/libraryUtils.js`) — are pinned by ONE set of cases both sides
-read: `tests/shared/*.json` at the repository root, run by
-`backend/tests/test_shared_fixtures.py` and the matching node tests. Add a
-case there when a rule changes; whichever side drifts fails.
+`frontend/src/shared/lib/textnorm.js`), folder-label paths (`gamma/foldertags.py` ↔
+`frontend/src/library/libraryUtils.js`) and published pages' slugs
+(`gamma/publish.py` ↔ `frontend/src/shared/lib/slug.js`) — are pinned by ONE
+set of cases both sides read: `tests/shared/*.json` at the repository root,
+run by `backend/tests/test_shared_fixtures.py` (the slugs by
+`test_publish.py`) and the matching node tests. Add a case there when a rule
+changes; whichever side drifts fails.
 
 The frontend has **no linter** and no component tests. Its pure modules have
 `node --test` tests (`npm test` from `frontend/`, the files in
@@ -210,9 +213,9 @@ behind it. `tests/e2eSelect.test.mjs` fails when a file under
 `frontend/src`, `frontend/public` or `backend/gamma` reaches only the
 catch-all (a new folder or module needs its rule), when a group's scenario
 files drift from `scenarios/`, or when a rule names an unknown group. When a
-change's reach is broader than its rule says (a new prop threaded through
-App.jsx into one pane), the selection errs wide: that is what `--group`
-is for. CI still runs everything.
+change reaches less than its rule says (a new prop threaded through
+App.jsx into one pane), the selection errs wide: narrow it with `--group`.
+CI runs everything.
 
 **Flaky steps.** A step that passes here and fails on CI is almost always a
 timing assumption that a slow machine breaks, and the CI runner has 4 cores.
@@ -234,8 +237,8 @@ past flakes, and their fixes:
 
 Open: `ink edit: pen resumes writing…` once missed a tap on the stroke on a
 loaded 4-core run. Stale layout, a long-press cancel and the undo's
-pending delete were each ruled out, so `tapInk` now reports what was under
-the tap when no menu opens.
+pending delete were each ruled out. When a tap opens no menu, `tapInk`
+fails with what was under the tap.
 
 The scenarios live in `tests/e2e/scenarios/`:
 
@@ -274,7 +277,9 @@ The scenarios live in `tests/e2e/scenarios/`:
 - `pdf.mjs`: upload + page by attachment, the viewer's text layer, a
   highlight from a text selection (overlay, quote row, persisted position),
   the find bar hitting page 2, an AI citation link
-  highlighting its quote on the cited page ([pdf_citations.md](pdf_citations.md)).
+  highlighting its quote on the cited page ([pdf_citations.md](pdf_citations.md)),
+  the translate button and the selection popup's translator (against a
+  mocked `/api/ai/translate`).
 - `transfers.mjs`: the Import and Export dialogs — format/source cards,
   the review step and its switches, direct export for fixed formats.
 - `ink.mjs`: handwriting. The tool strip and its presets, mouse strokes
@@ -293,12 +298,13 @@ The scenarios live in `tests/e2e/scenarios/`:
   placement on a small screen, view/edit shares. Native Chromium touch/pen,
   asserting on the persisted stroke files. `--only "ink edit:"`; `--only
   ink` runs both files.
-- `guide.mjs`: the first-run guide ([onboarding.md](onboarding.md)) — `?guide=`
-  starts a tour and is consumed from the URL, every registered home-view anchor
+- `guide.mjs`: the first-run guide ([onboarding.md](onboarding.md)),
+  started from the account menu's Tours — every registered home-view anchor
   is present once, the demo step adds a paper by itself (pointed at an
   uploaded PDF through `gamma-guide-vars`, so no network), the user's
-  highlight checks the next step off, Esc leaves and records the dismissal,
-  the account menu's "Take the tour" restarts it.
+  highlight checks the next step off, finishing records "done", the menu
+  restarts it, and Esc leaves a replay. `contextualGuide.mjs` (the AI chat
+  tour) and `triggeredGuide.mjs` (offers and hints): onboarding.md "Files".
 - `ipad.mjs`: the installed web app ([ipad.md](ipad.md)) — the manifest
   and its icons, `theme-color` following the theme, the standalone-mode
   block in the bundled stylesheet (`display-mode` cannot be emulated in
@@ -326,8 +332,11 @@ The scenarios live in `tests/e2e/scenarios/`:
   to different blocks, same-block last-writer-wins, undo after a remote edit,
   rename propagation, edits made offline replaying, remote delete, a
   highlight made by the other person.
-- `run.mjs`: login, guest access, and refusing an inaccessible explicit
-  workspace without opening a different library.
+- `auth.mjs`: refusing an inaccessible explicit workspace without opening a
+  different library, the login page, guest login (a new throwaway account
+  each time) and demo mode ([guests.md](guests.md)).
+- `i18n.mjs`: Settings → Appearance → Language switches the interface to
+  Chinese and back through the reload ([i18n.md](i18n.md)). `--only i18n`.
 - `share.mjs`: the share dialog, the anonymous share view (PDF, highlight,
   image through the share token, no editor), an edit share.
 
@@ -376,28 +385,27 @@ save path, workspaces, auth or rendering of URLs should add a step here; the
   persistent bar under the tabs.
 - **Report a problem** — account menu → "Report a problem…", or the Help
   section of Settings → Diagnostics. `src/support/ReportProblem.jsx` asks
-  what happened and how to reproduce it, then `src/support/problemReport.js`
-  (pure, unit-tested in `tests/problemReport.test.mjs`) builds the report:
-  the build (`build` on `GET /api/session`, `version.build_info()`), the
-  browser and screen, the kind of view open and the workspace's kind and
-  role (never its name), the session log's warnings and errors plus its
-  newest lines, and — for an admin — the Server dashboard line and the
-  server log's last warnings. Every line goes through a JS mirror of
-  `logbuf.scrub`. "Open GitHub issue" copies the whole report to the
-  clipboard and opens `.github/ISSUE_TEMPLATE/bug_report.yml` prefilled
-  through its field ids (`description`, `steps`, `diagnostics`; trimmed to
-  GitHub's URL budget, in which case the status line says to paste). Nothing
-  leaves the browser until the reporter submits the form; "Copy report" is
-  the path for people without GitHub. Keep the field ids and the query
-  parameters in step. **Screen recording** (the dialog's Record… row, shown
-  where `getDisplayMedia` + `MediaRecorder` exist): the dialog folds into a
-  pill while the reporter reproduces the problem, Stop (the pill, the
-  browser's own stop-sharing bar, or the 3-minute cap) brings it back with
-  the file (webm, or mp4 where that is what the browser records; 1.5 Mbit/s,
-  no sound), Save downloads it, and opening the form saves it too. A URL
-  cannot carry a file, so the steps name the file and the reporter drops it
-  into the form (GitHub uploads it with the issue). The e2e step stubs the
-  picker with a canvas stream so the recorder itself runs for real.
+  what happened and how to reproduce it; `src/support/problemReport.js`
+  (pure, tested by `tests/problemReport.test.mjs`) builds the report. It
+  carries the build (`build` on `GET /api/session`,
+  `version.build_info()`), the browser and screen, the kind of view and the
+  workspace's kind and role (never its name), and the session log's
+  warnings, errors and newest lines. An admin's report adds the Server
+  dashboard line and the server log's last warnings. Every line goes
+  through a JS mirror of `logbuf.scrub`. "Open GitHub issue" copies the
+  report to the clipboard and opens `.github/ISSUE_TEMPLATE/bug_report.yml`
+  prefilled through its field ids (`description`, `steps`, `diagnostics`),
+  trimmed to GitHub's URL budget; keep the ids and the query parameters in
+  step. Nothing leaves the browser until the reporter submits the form;
+  "Copy report" serves people without GitHub.
+  - **Screen recording**: the dialog's Record… row, where
+    `getDisplayMedia` + `MediaRecorder` exist. The dialog folds into a pill
+    until Stop (the pill, the browser's stop-sharing bar, or the 3-minute
+    cap), then returns with the file: webm, or mp4 where the browser
+    records that, 1.5 Mbit/s, no sound. A URL cannot carry a file, so Save
+    (or opening the form) downloads it, the steps name it, and the reporter
+    drops it into the form. The e2e step stubs the picker with a canvas
+    stream, so the recorder itself runs.
 - **Library health** — Settings → Library maintenance lists, per paper:
   metadata state, extracted-text chars, and search-index coverage, with
   per-row retry/reindex buttons plus batch actions: Fetch needed / Refetch

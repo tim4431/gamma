@@ -2,15 +2,15 @@ import { Account, wanted } from "../harness.mjs";
 
 // Settings → Appearance → Language (shared/i18n, docs/dev/i18n.md): the
 // interface follows the pick at once, the pane comes back after the
-// remount, the pick outlives the profile pull of the fresh app and a
-// reload, and English is back on "System" in an English browser.
+// reload, the pick outlives the profile pull of the reloaded app and a
+// second reload, and English is back on "System" in an English browser.
 export async function i18nScenarios(env) {
-  const { server, browser, step, openPage, assertEq, assertNoProblems, until, sleep, flags } = env;
+  const { server, browser, step, openPage, assertEq, assertNoProblems, until } = env;
   if (!wanted("i18n")) return;
   server.manage("create-user", "i18n-user", "i18n-pw");
   const user = await new Account(server, "i18n-user", "i18n-pw").login();
   // An account with a saved profile: the server's copy wins on every load,
-  // so a switch that is not pushed before the remount would revert.
+  // so a switch that is not pushed before the reload would revert.
   await user.api("/api/prefs/profile", { method: "PUT", body: { value: { language: "system", theme: "light" } } });
 
   const settings = (page) => page.getByRole("dialog", { name: /^(Settings|设置)$/ });
@@ -33,14 +33,14 @@ export async function i18nScenarios(env) {
       await openSettings(page, "Account & settings", "Settings…");
       assertEq(await page.evaluate(() => document.documentElement.lang), "en", "an English browser starts in English");
 
-      // The remounted app pulls the profile once (useProfileSync); that pull
+      // The reloaded app pulls the profile once (useProfileSync); that pull
       // must not bring the old language back. Wait for it, not for a time.
       const nextPull = () => page.waitForResponse((r) => r.url().includes("/api/prefs/profile") && r.request().method() === "GET");
       const applied = () => page.evaluate(() => new Promise((r) => requestAnimationFrame(() => requestAnimationFrame(() => setTimeout(r, 50)))));
       let pulled = nextPull();
       await pick(page, "Language", "中文");
       await until(() => page.evaluate(() => document.documentElement.lang === "zh-CN"), { what: "the document language follows" });
-      // The app remounted under the new locale, on the same pane.
+      // The app reloaded under the new locale, on the same pane.
       await page.getByRole("dialog", { name: "设置", exact: true }).waitFor();
       await page.getByRole("navigation", { name: "设置分类" }).getByRole("button", { name: "外观", exact: true }).waitFor();
       assertEq(await page.locator('.settingsPane [data-setting="语言"] .settingLabel').textContent(), "语言", "the row itself is translated");

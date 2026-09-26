@@ -11,7 +11,6 @@ network; publisher bot challenges may still require a browser.
 import hashlib
 import json
 import re
-import sqlite3
 import urllib.parse
 from urllib.error import HTTPError, URLError
 from urllib.request import Request as URLRequest

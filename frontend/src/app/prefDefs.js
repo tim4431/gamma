@@ -38,8 +38,8 @@ const json = (normalize) => ({
 // AI context-size preferences (chars of extracted PDF text).
 const CONTEXT_CHARS = intIn(100, 1000000);
 
-// Chip-display modes for home cards/rows; the codec and the Settings
-// MenuSelect both derive from this list.
+// Chip-display modes for home cards/rows: the Folders and Labels switches
+// of Settings → Appearance › Library, together.
 export const FILE_LABEL_MODES = ["off", "labels", "folders", "both"];
 
 // Target languages for the PDF translated view. Codes mirror the backend's
@@ -63,7 +63,7 @@ export function translateModelFor(pick, engines, models) {
   return "";
 }
 
-// Agent per-tool permissions (Settings → Assistant → Tool configuration),
+// Agent per-tool permissions (Settings → AI → Chat › Tools),
 // one map per chat KIND: "folder" (the home/folder chat), "pdf" (a page with
 // a PDF attached) and "notes" (a page without one). The chat picks its
 // kind's map (chat/ChatDock.jsx) and sends it as the request's `permissions`.
@@ -110,8 +110,9 @@ export const PREFS = {
   // Flip page colors: display-only inverted (night) rendering of the PDF canvas.
   pdfDarkPage: flag("gamma-pdf-dark", ACCOUNT, false),
   // Where the header's sync pill shows for a publication (pages published
-  // to Gamma Cloud): on the published pages only, or on every page of the
-  // workspace. A clone's pill is on every page regardless (it syncs them all).
+  // to Gamma Cloud; Settings → Account & sync › Sync status): on the
+  // published pages only, or on every page of the workspace. A clone's pill
+  // is on every page regardless (it syncs them all).
   syncPillScope: pref("gamma-sync-pill", ACCOUNT, "synced", oneOf(["synced", "all"])),
   // Interface size: index.html applies the stored value before first paint,
   // App.jsx keeps `--ui-scale` on the root in sync afterwards. Screens
@@ -149,7 +150,7 @@ export const PREFS = {
   // at import time.
   embAnnots: pref("gamma-embedded-annots", ACCOUNT, "hide", oneOf(["hide", "strip"])),
 
-  // --- Translation (Settings → Reading, AI → Advanced) ---
+  // --- Translation (Settings → Reading › Translation) ---
   // Master switch: off removes the translate button from the viewer.
   translateEnabled: flag("gamma-translate-enabled", ACCOUNT, true),
   // Selection translation: a translate button in the text-selection popup
@@ -196,7 +197,8 @@ export const PREFS = {
     return out;
   })),
 
-  // --- Models (Settings → AI → Connections) ---
+  // --- Models (Settings → AI → Connections; the translation pick is
+  // Reading › Translation's "Translate with") ---
   // Model picks name entries of this server's provider list ("<entry>:<model>"),
   // which never leave the server, so they stay with the browser like the chat
   // model itself (App.jsx `gamma-chat-model`). "" = follow the chat model; a
@@ -270,12 +272,6 @@ export const ACCOUNT_PREFS = Object.keys(PREFS).filter((name) => PREFS[name].sco
 // The profile object for a set of preference values ({name: value, …}).
 export function profileOf(values) {
   return Object.fromEntries(ACCOUNT_PREFS.map((name) => [name, values[name]]));
-}
-
-// The profile of a fresh account: what a first Gamma Cloud merge takes as
-// the copy both sides started from (backend gamma/cloud_sync.py).
-export function defaultProfile() {
-  return Object.fromEntries(ACCOUNT_PREFS.map((name) => [name, PREFS[name].default]));
 }
 
 // One stored profile value checked the way a localStorage value is: it must

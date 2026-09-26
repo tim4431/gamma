@@ -36,14 +36,11 @@ keyed by that subject until their first cloud sign-in creates or links the
 local account (``claim_pending_memberships``, called by gamma/cloud_auth.py).
 """
 
-import json
 import re
 import secrets
 import shutil
 import sqlite3
-import urllib.error
 import urllib.parse
-import urllib.request
 
 from .config import WORKSPACES_DIR
 from .db import connect_users_db, page_now, safe_ws_id, ws_dir, ws_uploads_dir
@@ -422,34 +419,24 @@ def clean_cloud_username(name) -> str:
     return name
 
 
-def _get_json(url: str, headers: dict) -> tuple[int, dict]:
-    """(HTTP status, JSON body) of a GET; CloudLookupError when unreachable."""
-    from . import cloud_auth  # local: cloud_auth imports this module
-
-    req = urllib.request.Request(url, headers={"Accept": "application/json", "User-Agent": cloud_auth.user_agent(),
-                                               **headers})
-    try:
-        with urllib.request.urlopen(req, timeout=LOOKUP_TIMEOUT) as resp:
-            return resp.status, json.load(resp)
-    except urllib.error.HTTPError as e:
-        try:
-            body = json.load(e)
-        except ValueError:
-            body = {}
-        return e.code, body if isinstance(body, dict) else {}
-    except (urllib.error.URLError, OSError, ValueError) as e:
-        raise CloudLookupError(f"cannot reach the account server: {e}") from e
-
-
 def lookup_with_token(issuer: str, access_token: str, name: str) -> dict | None:
     """The account server's exact username lookup, ``GET
-    <issuer>/api/lookup/username?u=<name>`` with a bearer access token:
+    <issuer>/api/lookup/username?u=<name>`` with a bearer access token
+    (through ``cloud_auth._http``, like every call to the account server):
     ``{sub, username}``, None when no account has that username (404),
     CloudLookupError for anything else."""
+    from . import cloud_auth  # local: cloud_auth imports this module
+
     url = f"{issuer}/api/lookup/username?" + urllib.parse.urlencode({"u": name})
-    status, body = _get_json(url, {"Authorization": f"Bearer {access_token}"})
-    if status == 404:
-        return None
+    status = 200
+    try:
+        body = cloud_auth._http(url, headers={"Authorization": f"Bearer {access_token}"}, timeout=LOOKUP_TIMEOUT)
+    except cloud_auth.CloudAuthError as e:
+        if e.status is None:  # unreachable
+            raise CloudLookupError(str(e)) from e
+        if e.status == 404:
+            return None
+        status, body = e.status, e.body
     if status != 200 or not isinstance(body, dict) or not body.get("sub") or not body.get("username"):
         body = body if isinstance(body, dict) else {}
         detail = body.get("error_description") or body.get("error") or f"answered {status}"
@@ -475,21 +462,16 @@ def _cloud_access_token(by: str) -> str:
 
 
 def cloud_lookup_username(name: str, by: str = "") -> dict | None:
-    """The transport of ``lookup_cloud_username``: ``{sub, username}`` for an
-    existing cloud account, None for no such username, CloudLookupError when
-    the account server cannot be asked (tests replace this function)."""
+    """A clean cloud username (``clean_cloud_username``) → ``{sub, username}``
+    of that Gamma Cloud account (exact match only), None for no such
+    username, CloudLookupError when the account server cannot be asked
+    (tests replace this function)."""
     from . import cloud_auth  # local: cloud_auth imports this module
 
     cfg = cloud_auth.settings()
     if not cfg["enabled"]:
         raise CloudLookupError("Gamma Cloud sign-in is not set up on this server.")
     return lookup_with_token(cfg["issuer"], _cloud_access_token(by), name)
-
-
-def lookup_cloud_username(name, by: str = "") -> dict | None:
-    """A cloud username as typed → ``{sub, username}``, or None when no
-    Gamma Cloud account has it (exact match only)."""
-    return cloud_lookup_username(clean_cloud_username(name), by=by)
 
 
 def _check_shared(conn, ws: str) -> None:
@@ -516,7 +498,7 @@ def invite_cloud(ws: str, name, role: str, by: str) -> dict:
     name = clean_cloud_username(name)
     with connect_users_db() as conn:
         _check_shared(conn, ws)
-    found = lookup_cloud_username(name, by=by)
+    found = cloud_lookup_username(name, by=by)
     if not found:
         raise ValueError(f"no Gamma Cloud account is named {name}")
     subject, username = found["sub"], found["username"]

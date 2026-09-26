@@ -1,11 +1,10 @@
 // Settings → Server (admins only): everything that is about the server
 // rather than one account — the dashboard (build, uptime, warnings, the
 // update check), the storage defaults every account inherits, guests and
-// demo mode (SettingsGuests.jsx), the shared
-// AI provider every account may use (SettingsAi.jsx), the shared
-// workspaces (settingsWorkspacesAdmin.jsx), whole-data-directory snapshots
-// (settingsBackups.jsx ServerBackups) and the scrubbed server log with a
-// level filter. Per-account things — including each account's personal
+// demo mode (SettingsGuests.jsx), the shared AI provider every account may
+// use (SettingsAi.jsx), the shared workspaces (SettingsWorkspacesAdmin.jsx),
+// whole-data-directory snapshots (SettingsBackups.jsx ServerBackups) and the
+// scrubbed server log with a level filter. Per-account things — including each account's personal
 // workspaces — stay in Users; per-workspace backups in Backups.
 import React from "react";
 import { API, apiJson } from "../shared/lib/utils";

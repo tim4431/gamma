@@ -131,8 +131,7 @@ function KindToggle({ value, onChange, scopeLabel }) {
 // Listing search box: matching items float to the top of the current sort,
 // the rest stay put but dimmed. Live as you type — the caller debounces
 // nothing, the listing is already memoized.
-function ListFindBox({ value, onChange, placeholder }) {
-  placeholder = placeholder ?? t("Search…");
+function ListFindBox({ value, onChange, placeholder = t("Search…") }) {
   return (
     <div className={`homeFindBox ${value ? "active" : ""}`}>
       <SearchIcon size={13} />

@@ -41,6 +41,7 @@ from .sync_engine import Remote, RemoteError
 TOKEN_DAYS = 365
 MIRROR_NAME = "Gamma Cloud"
 SIGN_IN = "Sign in with Gamma Cloud to publish."
+IS_SHARE_HOST = "This server is a share host: share its pages directly."
 EXCHANGE_PATH = "/api/auth/cloud/exchange"
 
 
@@ -217,9 +218,8 @@ def exchange(access_token: str, caller: str, base_url: str) -> dict:
     (``TOKEN_DAYS``) on their default personal workspace here, replacing the
     live one of the same name (one per calling server), and this server's
     address. The account is resolved under the server's sign-in policy, and
-    the invitations waiting for the subject are claimed, as on a sign-in."""
-    if not this_is_share_host():
-        raise PublishError(403, "This server does not accept published pages.")
+    the invitations waiting for the subject are claimed, as on a sign-in.
+    Only on a share host: the router refuses the call elsewhere."""
     try:
         claims = cloud_auth.userinfo(access_token)
     except CloudAuthError as e:
@@ -448,7 +448,7 @@ def _mirror_view(mirror: dict) -> dict:
     return {"ws": ws, "status": mirror["status"], "page_filter": mirror["page_filter"],
             "mode": mirror["mode"], "detached": mirror["mode"] == "off",
             "conflicts_open": sync_engine.open_conflicts(ws),
-            "pending_local": mirror["mode"] == "two-way" and sync_engine.has_local_changes(ws)}
+            "pending_local": sync_engine.pending_local(mirror)}
 
 
 def publish(user: str, ws: str, page_id: str, *, audience: str | None = None, role: str | None = None,
@@ -463,7 +463,7 @@ def publish(user: str, ws: str, page_id: str, *, audience: str | None = None, ro
     if role is not None and role not in SHARE_ROLES:
         raise PublishError(400, "role must be view or edit")
     if publishing_blocked():
-        raise PublishError(409, "This server is a share host: share its pages directly.")
+        raise PublishError(409, IS_SHARE_HOST)
     _require_page(ws, page_id)
     if not cloud_auth.settings()["enabled"] or not cloud_auth.grant_of(user)[1]:
         raise PublishError(409, SIGN_IN)
@@ -530,7 +530,7 @@ def state(user: str, ws: str, page_id: str) -> dict:
     reason, host = "", ""
     mirror = sync_engine.get_mirror(ws, with_token=True)
     if publishing_blocked():
-        reason = "This server is a share host: share its pages directly."
+        reason = IS_SHARE_HOST
     elif not cloud_auth.settings()["enabled"] or not cloud_auth.grant_of(user)[1]:
         reason = SIGN_IN
     else:

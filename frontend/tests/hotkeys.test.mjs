@@ -1,7 +1,7 @@
 import test from "node:test";
 import assert from "node:assert/strict";
 import {
-  bindable, chordFromEvent, chordLabel, chordParts, conflicts, dispatch, effectiveKeys, matchesChord, normalizeChord,
+  bindable, chordFromEvent, chordLabel, chordParts, conflicts, dispatch, effectiveKeys, normalizeChord,
 } from "../src/shared/lib/hotkeys.js";
 
 const key = (code, keyName, mods = {}) => ({ code, key: keyName, ...mods });
@@ -31,11 +31,6 @@ test("chordFromEvent reads the physical key, so Shift does not change it", () =>
   assert.equal(chordFromEvent(key("KeyP", "p", { ctrlKey: true }), true), "Ctrl-p");
   // Without a code (synthetic events) the key name serves.
   assert.equal(chordFromEvent({ key: "Enter", ctrlKey: true }, false), "Mod-Enter");
-});
-
-test("matchesChord compares an event with a chord", () => {
-  assert.ok(matchesChord(key("KeyZ", "z", { ctrlKey: true }), "Mod-z", false));
-  assert.ok(!matchesChord(key("KeyZ", "z", { ctrlKey: true, shiftKey: true }), "Mod-z", false));
 });
 
 test("labels follow the platform", () => {

@@ -27,6 +27,12 @@ export function syncClock(at, now = new Date()) {
     : `${d.toLocaleDateString([], { month: "short", day: "numeric" })}, ${time}`;
 }
 
+// "Synced with Gamma Cloud at 14:37", or without the time when `at` is unknown.
+const syncedLine = (at, clock) => {
+  const when = clock(at);
+  return when ? t("Synced with Gamma Cloud at {when}", { when }) : t("Synced with Gamma Cloud");
+};
+
 const tag = (state, icon, title, extra = {}) => ({
   state, icon, title, label: state === "browser" ? t("browser") : t("account"), tone: "", spin: false, ...extra,
 });
@@ -77,8 +83,7 @@ export function profileSyncState(local, cloud, names = [], clock = syncClock) {
       t("Saved on this server, not synced with Gamma Cloud: {error} Tried again at the next check.", { error: sentence(profile.error || t("unknown error")) }),
       { tone: "error" });
   }
-  const when = profile.state === "synced" ? clock(profile.at) : "";
-  return tag("synced", "cloudCheck", when ? t("Synced with Gamma Cloud at {when}", { when }) : t("Synced with Gamma Cloud"));
+  return tag("synced", "cloudCheck", syncedLine(profile.state === "synced" ? profile.at : "", clock));
 }
 
 // The Account pane's Settings sync row hint when an identity is linked:
@@ -87,10 +92,7 @@ export function profileSyncState(local, cloud, names = [], clock = syncClock) {
 export function cloudSyncHint(cloud, clock = syncClock) {
   const profile = cloud?.profile;
   if (!cloud?.identity?.linked || !profile) return "";
-  if (profile.state === "synced") {
-    const when = clock(profile.at);
-    return when ? t("Synced with Gamma Cloud at {when}", { when }) : t("Synced with Gamma Cloud");
-  }
+  if (profile.state === "synced") return syncedLine(profile.at, clock);
   if (cloudFailed(profile)) return t("Not synced: {error}", { error: profile.error || t("unknown error") });
   if (profile.state === "pending") return t("Syncing…");
   if (profile.state === "off") return t("Not synced: sign in with Gamma Cloud again");

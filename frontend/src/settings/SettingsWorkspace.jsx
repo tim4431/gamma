@@ -7,12 +7,12 @@
 // /api/workspaces* (docs/dev/workspaces.md).
 //
 // The dialog (ManageWorkspaceDialog) is shared with the admin's Server pane
-// (settingsWorkspacesAdmin.jsx), which adds access, quota, ownership, kind
+// (SettingsWorkspacesAdmin.jsx), which adds access, quota, ownership, kind
 // conversion and join-as-owner in `admin` mode. Also exported from here:
 // useAccounts, useCloudSignIn, useWorkspace (one workspace's state + every
-// call on it, incl. invitations by Gamma Cloud username),
-// AccessRows, StorageRow, MembersList, InviteDialog, NameDialog, the role
-// tables and workspaceMeta (the switcher's one-line description).
+// call on it, incl. invitations by Gamma Cloud username), AccessRows,
+// StorageRow, MembersList, InviteDialog, NameDialog, the role tables and
+// workspaceMeta (the switcher's one-line description).
 import React from "react";
 import { API, apiJson, fmtBytes } from "../shared/lib/utils";
 import { ActionMenu, MenuSelect } from "../shared/ui/Menus";
@@ -213,26 +213,20 @@ export function MembersList({ info, me, canManage, busy, onSetRole, onRemove, on
           </span>
         </span>
         <span className="aiProvActions">
-          {m.pending && canManage ? (
-            <button
-              className="uiBtn sm iconSq" disabled={busy}
-              title={t("Withdraw the invitation to {username}", { username: m.username })} aria-label={t("Remove")}
-              onClick={() => onCancel(m)}
-            >
-              <Trash2Icon size={13} />
-            </button>
-          ) : null}
           {canManage && !m.pending ? (
             <MenuSelect
               value={m.role} label={t("Role")} options={ROLE_OPTIONS}
               onChange={(r) => { if (r !== m.role) onSetRole(m.username, r); }}
             />
           ) : null}
-          {canManage && !m.pending && !self && !stuck ? (
+          {canManage && (m.pending || (!self && !stuck)) ? (
             <button
               className="uiBtn sm iconSq" disabled={busy}
-              title={t("Remove {username}", { username: m.username })} aria-label={t("Remove")}
-              onClick={() => onRemove(m.username)}
+              title={m.pending
+                ? t("Withdraw the invitation to {username}", { username: m.username })
+                : t("Remove {username}", { username: m.username })}
+              aria-label={t("Remove")}
+              onClick={() => (m.pending ? onCancel(m) : onRemove(m.username))}
             >
               <Trash2Icon size={13} />
             </button>

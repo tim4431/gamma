@@ -168,13 +168,6 @@ class FakeAccountServer:
             return {"sub": self.directory[name], "username": name}
         raise AssertionError(f"unexpected call {method} {path}")
 
-    def get_json(self, url, headers):
-        """``workspaces._get_json``'s shape: (status, body)."""
-        try:
-            return 200, self.http(url, headers=headers)
-        except cloud_auth.CloudAuthError as e:
-            return e.status, e.body
-
 
 @pytest.fixture
 def cloud(monkeypatch):

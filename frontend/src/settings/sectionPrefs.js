@@ -56,7 +56,3 @@ export const SECTION_PREFS = Object.freeze({
     Prompts: ["chatSystem", "metaPrompt", "citePrompt", "agentSystem"],
   }),
 });
-
-// Account preferences set from Settings outside any tagged section (none
-// today; the list stays so a future exception is declared, not missed).
-export const UNTAGGED_PREFS = accountPrefs([]);

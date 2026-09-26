@@ -237,10 +237,10 @@ def test_seed_library_is_restored_into_every_new_guest(tmp_path, monkeypatch):
 
 
 def test_guest_workspace_rails():
-    from gamma import auth, workspaces
+    from gamma import workspaces
     c, name = _guest_client()
     ws = workspaces.default_workspace(name)
-    assert auth.is_guest_workspace(ws) and not auth.is_guest_workspace("no-such-ws")
+    assert workspaces.is_guest_workspace(ws) and not workspaces.is_guest_workspace("no-such-ws")
     assert c.post(f"/api/workspaces/{ws}/backups", json={}).status_code == 403
     assert c.get("/api/export-all").status_code == 403
     assert c.post("/api/workspaces", json={"name": "more"}).status_code == 403

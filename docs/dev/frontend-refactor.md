@@ -118,7 +118,7 @@ per page. Do not force all of them through one generic merge algorithm.
 Capture account identity when scheduling a write, and reject stale responses
 after an account change. Move side effects out of React state-updater functions
 so updater replay cannot issue duplicate writes. Put browser preference
-declarations in `app/prefs.js`, including the home sort/kind/layout declarations
+declarations in `PREFS` (`app/prefDefs.js`), including the home sort/kind/layout declarations
 currently scattered through App, retaining legacy key migration.
 
 ### 5. Library, providers, and shared UI

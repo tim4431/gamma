@@ -2,27 +2,28 @@
 // App.jsx's one window keydown listener dispatches this catalog
 // (shared/lib/hotkeys.js) with a ctx of handles it refreshes every render;
 // the command palette (Ctrl+Shift+P) lists the same entries, and Settings →
-// Keyboard rebinds them. Only the long-standing keys, F2 and Ctrl+, have defaults;
-// the rest are palette entries until the account gives them a chord.
+// Keyboard rebinds them. Only the long-standing keys, Ctrl+Shift+P, F2 and
+// Ctrl+, have defaults; the rest are palette entries until the account gives
+// them a chord.
 // ctx: { shareMode, homeMode, hasPage, hasPdf, readOnly, search(all),
 // palette(prefix), back(), undo(redo), renameTitle(), toggleChat(),
 // togglePdf(), toggleNotes(), openSettings(pane), exportAs(format),
 // downloadPdf(), importDialog(), newPage(), share(), metadata(), attach(),
 // reportProblem() }.
 import { t } from "../shared/i18n/i18n.js";
+import { isTextField } from "../shared/lib/hotkeys.js";
 
 export const GROUP_NAVIGATION = t("Navigation");
 export const GROUP_PAGE = t("Page");
 export const GROUP_VIEW = t("View");
 export const GROUP_LIBRARY = t("Library");
 
-const inField = (el) => !!el && (el.tagName === "INPUT" || el.tagName === "TEXTAREA" || el.isContentEditable);
 const cmd = (id, label, group, keys, run, extra = {}) => ({ id, label, group, keys, run, ...extra });
 
 // The open dialog on top, if any: every modal (Settings and its sub-dialogs,
 // Import, Export, the palette, the confirm box…) sits in a `.reportOverlay`,
 // a nested one later in the DOM than its parent.
-export function topDialog() {
+function topDialog() {
   const all = document.querySelectorAll(".reportOverlay");
   return all.length ? all[all.length - 1] : null;
 }
@@ -80,7 +81,7 @@ export const APP_COMMANDS = [
   cmd("app.undo", t("Undo"), GROUP_PAGE, "Mod-z", (c) => c.undo(false)),
   cmd("app.redo", t("Redo"), GROUP_PAGE, ["Mod-y", "Mod-Shift-z"], (c) => c.undo(true)),
   cmd("app.renameTitle", t("Rename page"), GROUP_PAGE, "F2", (c) => {
-    if (inField(document.activeElement) && !document.activeElement.closest(".cm-editor")) return false;
+    if (isTextField(document.activeElement) && !document.activeElement.closest(".cm-editor")) return false;
     c.renameTitle();
   }, { when: (c) => c.hasPage && !c.readOnly }),
   cmd("app.share", t("Share this page…"), GROUP_PAGE, null, (c) => { c.share(); }, { when: (c) => c.hasPage && !c.shareMode }),

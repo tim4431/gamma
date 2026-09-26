@@ -59,19 +59,27 @@ def recorder(kind: str, entry: dict, runtime: dict):
     return on_usage
 
 
-def shared_used(username: str, hours: int = ALLOWANCE_HOURS) -> int:
+# The rows the shared allowance counts: shared entries, the last 24 hours
+# (bound to ``_metered_args()``).
+_METERED = "at >= ? AND substr(provider_id, 1, ?) = ?"
+
+
+def _metered_args() -> tuple:
+    cutoff = (datetime.now(timezone.utc) - timedelta(hours=ALLOWANCE_HOURS)).strftime("%Y-%m-%dT%H:%M:%S")
+    return cutoff, len(SHARED_PREFIX), SHARED_PREFIX
+
+
+def shared_used(username: str) -> int:
     """Tokens (input + output) the account spent through the server's shared
-    entries in the last ``hours`` — what the shared AI allowance counts
+    entries in the last 24 hours — what the shared AI allowance counts
     (docs/dev/guests.md). Own entries never count."""
     if not username:
         return 0
-    cutoff = (datetime.now(timezone.utc) - timedelta(hours=hours)).strftime("%Y-%m-%dT%H:%M:%S")
     try:
         with connect_users_db() as conn:
             row = conn.execute(
-                "SELECT COALESCE(SUM(input + output), 0) FROM ai_usage "
-                "WHERE username = ? AND at >= ? AND substr(provider_id, 1, ?) = ?",
-                (username, cutoff, len(SHARED_PREFIX), SHARED_PREFIX)).fetchone()
+                f"SELECT COALESCE(SUM(input + output), 0) FROM ai_usage WHERE username = ? AND {_METERED}",
+                (username, *_metered_args())).fetchone()
     except sqlite3.Error as e:
         log.warning(f"[ai_usage] could not read shared usage: {e}")
         return 0
@@ -128,16 +136,11 @@ def summary(username: str) -> dict:
     }
 
 
-def clear(username: str, keep_metered: bool = True) -> int:
+def clear(username: str) -> int:
     """Drop the account's usage rows; returns how many went. The rows the
-    shared allowance still counts (shared entries, last 24 hours) stay
-    unless ``keep_metered`` is off — a reset must not refill the allowance."""
-    cutoff = (datetime.now(timezone.utc) - timedelta(hours=ALLOWANCE_HOURS)).strftime("%Y-%m-%dT%H:%M:%S")
+    shared allowance still counts (shared entries, last 24 hours) stay — a
+    reset must not refill the allowance."""
     with connect_users_db() as conn:
-        if keep_metered:
-            cur = conn.execute(
-                "DELETE FROM ai_usage WHERE username = ? AND NOT (at >= ? AND substr(provider_id, 1, ?) = ?)",
-                (username, cutoff, len(SHARED_PREFIX), SHARED_PREFIX))
-        else:
-            cur = conn.execute("DELETE FROM ai_usage WHERE username = ?", (username,))
+        cur = conn.execute(f"DELETE FROM ai_usage WHERE username = ? AND NOT ({_METERED})",
+                           (username, *_metered_args()))
         return cur.rowcount
