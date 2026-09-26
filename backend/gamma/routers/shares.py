@@ -37,11 +37,11 @@ import sqlite3
 from fastapi import APIRouter, HTTPException, Request
 from pydantic import BaseModel
 
-from ..auth import (SHARE_AUDIENCES, SHARE_ROLES, ShareScope, note_share_miss, require_ws,
-                    serialize_share_users, share_access, share_lookup)
+from ..auth import (SHARE_AUDIENCES, SHARE_ROLES, note_share_miss, require_ws, serialize_share_users,
+                    share_access, share_lookup)
 from ..blocks_store import page_attachment, root_pages
 from ..db import connect_pages_db, connect_users_db, page_now
-from ..foldertags import clean_path, parse_tags, path_within
+from ..foldertags import clean_path, path_within
 
 router = APIRouter(prefix="/api", tags=["shares"])
 
@@ -119,31 +119,6 @@ def _page_doc_id(ws: str, page_id: str) -> str:
     except ValueError:
         return ""
     return attachment["id"] if attachment else ""
-
-
-def _folder_pages(ws: str, folder: str) -> list[dict]:
-    """The share view's listing of a folder share: every page the scope
-    reaches, newest edit first — ``{id, title, doc_id, folders, labels,
-    created_at, updated_at}``."""
-    scope = ShareScope(folder=folder)
-    pages = []
-    with connect_pages_db(ws) as conn:
-        for page_id, content, props_raw, created_at, updated_at in conn.execute(
-                "SELECT id, content, properties, created_at, updated_at FROM unified_blocks "
-                "WHERE parent_id = 'root' ORDER BY updated_at DESC"):
-            try:
-                props = json.loads(props_raw or "{}")
-            except ValueError:
-                props = {}
-            if not any(path_within(tag, scope.folder) for tag in parse_tags(props.get("folder"))):
-                continue
-            attachment = page_attachment(props)
-            pages.append({"id": page_id, "title": content or "Untitled",
-                          "doc_id": attachment["id"] if attachment else "",
-                          "folders": parse_tags(props.get("folder")),
-                          "labels": parse_tags(props.get("category")),
-                          "created_at": created_at, "updated_at": updated_at})
-    return pages
 
 
 def _validated(editor: str, current: dict, payload: ShareSettings) -> dict:
@@ -318,9 +293,10 @@ async def get_share(token: str, request: Request):
     grant access, 403 when this signed-in account isn't allowed. Otherwise
     what the link shares plus what this viewer may do (``can_edit``): a page
     share carries ``page_id`` and ``doc_id`` (the page's PDF attachment id,
-    "" without one); a folder share carries ``folder`` and ``pages``, the
-    listing the share view shows (``_folder_pages``). ``username`` is who
-    shared it; ``workspace_id`` the workspace. ``viewer`` / ``viewer_is_guest``
+    "" without one); a folder share carries ``folder`` — the share view then
+    lists it through ``GET /blocks/root/children`` like the home library.
+    ``username`` is who shared it; ``workspace_id`` the workspace.
+    ``viewer`` / ``viewer_is_guest``
     tell the share view whether to offer "Open in my library" (a member) or
     "Add to my library" (an account that can import)."""
     share = share_lookup(token)
@@ -336,8 +312,6 @@ async def get_share(token: str, request: Request):
            "username": share["created_by"], "workspace_id": share["workspace_id"],
            "audience": share["audience"], "role": share["role"], "can_edit": level == "edit",
            "viewer": request.state.user or "", "viewer_is_guest": bool(request.state.is_guest)}
-    if share["folder"]:
-        out["pages"] = _folder_pages(share["workspace_id"], share["folder"])
-    else:
+    if share["page_id"]:
         out["doc_id"] = _page_doc_id(share["workspace_id"], share["page_id"])
     return out

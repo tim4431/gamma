@@ -11,7 +11,7 @@ import { ExportDialog, ImportDialog } from "../transfers/ImportExport";
 import ImportReviewDialog from "../transfers/ImportReviewDialog";
 import { parseGammaLink } from "../shared/model/gammaLinks.js";
 import { pageHostUser, publicPath } from "../shared/lib/slug.js";
-import { API, apiJson, setShareView, withShare, withWorkspace, setCurrentWorkspace, getCurrentWorkspace, setLinkName, makeId, fmtBytes, getDocIdForUrl, isPdfFile, isMarkdownFile, metaSourceInfo, resolvePdfUrl, pdfProxyUrl, probePdfUrl, setExpectedUser, getExpectedUser, usePersistedState, usePersistedFlag, copyText, copyRich, readNdjson } from "../shared/lib/utils";
+import { API, apiJson, getShareToken, setShareView, withShare, withWorkspace, setCurrentWorkspace, getCurrentWorkspace, setLinkName, makeId, fmtBytes, getDocIdForUrl, isPdfFile, isMarkdownFile, metaSourceInfo, resolvePdfUrl, pdfProxyUrl, probePdfUrl, setExpectedUser, getExpectedUser, usePersistedState, usePersistedFlag, copyText, copyRich, readNdjson } from "../shared/lib/utils";
 import {
   BlockDropIndicator,
   ChatMarkdown,
@@ -102,7 +102,7 @@ import GuideOverlay from "../guide/GuideOverlay";
 import { guideEvents } from "../guide/events";
 import { Empty, QuotaMeter, Section } from "../settings/SettingsKit";
 import { CopyBox, SharePopover } from "../sharing/SharePopover";
-import { SharedFolder } from "../sharing/SharedFolder";
+import { libraryAccess } from "../library/libraryAccess";
 import { MirrorPopover } from "../collaboration/MirrorPopover";
 import {
   addFolderTag,
@@ -179,9 +179,12 @@ try { const old = localStorage.getItem("gamma-home-kinds"); if (old && old !== "
 // be active at once (a label view opened inside a folder).
 function homeUrlFor(folder, label) {
   const q = [];
+  const share = getShareToken(); // a folder share's library: the token names the workspace
+  if (share) q.push(`share=${encodeURIComponent(share)}`);
   if (folder) q.push(`folder=${encodeURIComponent(folder)}`);
   if (label) q.push(label === NO_LABEL ? "unlabelled=1" : `category=${encodeURIComponent(label)}`);
-  return withWorkspace(q.length ? `/?${q.join("&")}` : "/");
+  const url = q.length ? `/?${q.join("&")}` : "/";
+  return share ? url : withWorkspace(url);
 }
 
 // Folder uploads tag each PDF with its directory path as a folder label:
@@ -406,8 +409,8 @@ function LibraryApp({ publicPage = null, initialServerConfig = null }) {
   const shareMode = Boolean(initialShare) || Boolean(publicPage);
   const [readOnly, setReadOnly] = useState(shareMode);
   const [shareInfo, setShareInfo] = useState(null); // resolved share: {owner, role, canEdit, audience, viewer}
-  // A folder share's listing ({name, pages}): the share view shows it until
-  // a card opens one of its pages, and the topbar's home button returns to it.
+  // A folder share ({name}): the share view is then the home library confined
+  // to that folder until a page opens; the topbar's home button returns to it.
   const [sharedFolder, setSharedFolder] = useState(null);
   // "login" | "forbidden" | "missing" while the share can't open
   const [shareGate, setShareGate] = useState(publicPage?.missing ? "missing" : null);
@@ -422,6 +425,12 @@ function LibraryApp({ publicPage = null, initialServerConfig = null }) {
   const [workspace, setWorkspace] = useState(null);   // {id, name, role, personal, members}
   const [workspaces, setWorkspaces] = useState([]);
   const [wsReady, setWsReady] = useState(shareMode);
+  // What this viewer may do with the library itself (library/libraryAccess.js):
+  // every affordance of the home listing asks this, never a role or a share.
+  const lib = useMemo(
+    () => libraryAccess({ shareMode, shareFolder: sharedFolder?.name || "", role: workspace?.role || "" }),
+    [shareMode, sharedFolder, workspace],
+  );
   const [workspaceUnavailable, setWorkspaceUnavailable] = useState(false);
   const wsId = workspace?.id || "";
 
@@ -1082,6 +1091,7 @@ function LibraryApp({ publicPage = null, initialServerConfig = null }) {
   const handleFolderClick = (path, e) => handleContainerClick("folder", path, e);
   const handleLabelClick = (name, e) => handleContainerClick("label", name, e);
   function openFolder(path) {
+    path = lib.clamp(path);
     clearSelection();
     setFolderFilter(path);
     setCategoryFilter("");
@@ -1388,6 +1398,7 @@ function LibraryApp({ publicPage = null, initialServerConfig = null }) {
   // a page-card drag moves the dragged (or whole selected) pages. The back-row
   // overrides onPages to remove from the open folder instead.
   function dropOnFolder(e, target, onPages = (ids) => addPagesToFolder(ids, target)) {
+    if (!lib.organize) return;
     e.preventDefault();
     setFolderDragOver(null);
     const folders = droppedFolderPaths(e);
@@ -1402,6 +1413,7 @@ function LibraryApp({ publicPage = null, initialServerConfig = null }) {
   // Drop dispatch for label rows/tiles: pages get the label, folder drags are
   // ignored (a folder can't be "labelled" — its papers each carry their own).
   function dropOnLabel(e, name, onPages = (ids) => (name === NO_LABEL ? clearPagesLabels(ids) : addPagesToLabel(ids, name))) {
+    if (!lib.organize) return;
     e.preventDefault();
     setFolderDragOver(null);
     if (droppedFolderPaths(e)) { setStatus(t("Folders can’t carry labels — drop pages instead.")); return; }
@@ -3516,8 +3528,12 @@ function LibraryApp({ publicPage = null, initialServerConfig = null }) {
 
   function fetchHomeBlocks() {
     return apiJson(`${API}/blocks/root/children`)
-      .then((data) => setHomeBlocks(Array.isArray(data.children) ? data.children : []))
-      .catch(() => setHomeBlocks([]));
+      .then((data) => {
+        const children = Array.isArray(data.children) ? data.children : [];
+        setHomeBlocks(children);
+        return children;
+      })
+      .catch(() => { setHomeBlocks([]); return []; });
   }
 
   useEffect(() => {
@@ -4783,15 +4799,17 @@ function LibraryApp({ publicPage = null, initialServerConfig = null }) {
       }
 
       if (data.folder) {
-        // A folder share: its listing, or — with `page=` in the URL — one of
-        // its pages (goSharedPage keeps the two in the history).
-        const pages = data.pages || [];
-        setSharedFolder({ name: data.folder, pages });
+        // A folder share: the home library confined to that folder (the
+        // listing the token may read), or — with `page=` in the URL — one
+        // of its pages; goSharedPage keeps the two in the history.
+        setSharedFolder({ name: data.folder });
         setReadOnly(!data.can_edit);
-        if (initialBlockId && pages.some((p) => p.id === initialBlockId)) {
+        const within = (path) => path === data.folder || path.startsWith(data.folder + "/");
+        setFolderFilter(initialFolder && within(initialFolder) ? initialFolder : data.folder);
+        const pages = await fetchHomeBlocks();
+        if (initialBlockId && pages.some((b) => b.id === initialBlockId)) {
           await openSharedPage(token, initialBlockId, data);
         } else {
-          setPageTitle(data.folder);
           setStatus(t("Loaded shared folder."));
         }
         return;
@@ -4849,42 +4867,40 @@ function LibraryApp({ publicPage = null, initialServerConfig = null }) {
     setStatus(share.can_edit ? t("Shared by {username} — your edits save to their page.", { username: share.username }) : t("Loaded shared page."));
   }
 
-  // A folder share's navigation between its listing ("") and a page, each a
-  // history entry (`page=` beside the token); popstate replays it without
-  // pushing. The ref keeps the once-registered listener on the latest closure.
-  function goSharedPage(pageId, { push = true } = {}) {
+  // A folder share's navigation between its library ("" — at `folder`, else
+  // where it was) and a page, each a history entry beside the token (`page=`
+  // / `folder=`); popstate replays an entry without pushing. The ref keeps
+  // the once-registered listener on the latest closure.
+  function goSharedPage(pageId, { push = true, folder } = {}) {
     if (!sharedFolder) return;
-    if (push) {
-      const url = `${window.location.pathname}?share=${encodeURIComponent(initialShare)}${pageId ? `&page=${encodeURIComponent(pageId)}` : ""}`;
-      window.history.pushState(null, "", url);
-    }
     if (pageId) {
+      if (push) window.history.pushState(null, "", `${window.location.pathname}?share=${encodeURIComponent(initialShare)}&page=${encodeURIComponent(pageId)}`);
       setLoading(true);
       openSharedPage(initialShare, pageId, { can_edit: !!shareInfo?.canEdit, username: shareInfo?.owner || "" })
         .catch((err) => setStatus(t("Share open failed: {message}", { message: err.message })))
         .finally(() => setLoading(false));
       return;
     }
-    leaveCurrentPage();
-    setFocusedBlockId("");
-    setFocusedBlock(null);
-    setBlocks([]);
-    setDocId("");
-    setInputUrl("");
-    setPdfUrl("");
-    setPageTitle(sharedFolder.name);
+    const target = lib.clamp(folder ?? folderFilter);
+    if (push) window.history.pushState(null, "", homeUrlFor(target, ""));
+    goHome(true, true);   // the library, refreshed — the same path as the home button
+    openFolder(target);
   }
   const goSharedPageRef = useRef(goSharedPage);
   goSharedPageRef.current = goSharedPage;
   useEffect(() => {
     if (!shareMode) return undefined;
-    const onPop = () => goSharedPageRef.current(new URLSearchParams(window.location.search).get("page") || "", { push: false });
+    const onPop = () => {
+      const params = new URLSearchParams(window.location.search);
+      goSharedPageRef.current(params.get("page") || "", { push: false, folder: params.get("folder") || "" });
+    };
     window.addEventListener("popstate", onPop);
     return () => window.removeEventListener("popstate", onPop);
   }, [shareMode]);
 
   async function openBlock(blockId, opts) {
-    if (!blockId || shareMode) return;
+    if (!blockId) return;
+    if (shareMode) { goSharedPage(blockId); return; }
     // Back records LINK jumps only — callers opt in via {pushNav: true}.
     // Plain navigation (library, search, tabs, home) never pushes.
     if (opts?.pushNav && blockId !== focusedBlockId) pushNav();
@@ -6261,7 +6277,7 @@ function LibraryApp({ publicPage = null, initialServerConfig = null }) {
   // What the open page carries — THE switch for layout and page-level
   // affordances (docs/dev/block_centric.md). pdfUrl is only the viewer's input.
   const pageAttach = useMemo(() => pageAttachment(focusedBlock), [focusedBlock]);
-  const homeMode = !focusedBlockId && !shareMode;
+  const homeMode = !focusedBlockId && lib.browse;
   bindingsRef.current = keybindings;
   appCmdRef.current = {
     shareMode, homeMode, readOnly, hasPage: !!focusedBlockId && !homeMode, hasPdf: !!pdfUrl && !homeMode,
@@ -6645,18 +6661,19 @@ function LibraryApp({ publicPage = null, initialServerConfig = null }) {
   const homeVisibleItems = useMemo(() => homeItems.slice(0, homeShowCount), [homeItems, homeShowCount]);
   // "New folder" leads the listing wherever folders are listed — not inside a
   // label view or with the listing filtered to files or labels.
-  const newFolderAllowed = !categoryFilter && homeKinds !== "files" && homeKinds !== "labels";
+  const newFolderAllowed = lib.organize && !categoryFilter && homeKinds !== "files" && homeKinds !== "labels";
   // "New page" is the first item of the listing itself (like "New folder") —
   // Notion-style: creating a page needs no file. Not inside a label view
   // (pages are created plain, then labelled) nor when only folders show.
-  const newPageAllowed = !categoryFilter && homeKinds !== "folders" && homeKinds !== "labels";
+  const newPageAllowed = lib.organize && !categoryFilter && homeKinds !== "folders" && homeKinds !== "labels";
   // What an empty listing says — the view it is empty for, not the library.
   const homeEmptyText = categoryFilter === NO_LABEL
     ? t("Every page here carries a label.") : categoryFilter
     ? t("Nothing is labelled “{categoryFilter}” here — drop a page on a label to add it.", { categoryFilter })
     : homeKinds === "labels"
       ? (folderFilter ? t("No labels on the pages in this folder yet.") : t("No labels yet — add one from a page’s label field."))
-      : folderFilter ? t("This folder is empty — start a page here or drag pages onto it from the library.") : t("No pages yet — start with “New page”, or open a PDF from the + button above.");
+      : folderFilter ? (lib.organize ? t("This folder is empty — start a page here or drag pages onto it from the library.") : t("This folder is empty."))
+      : t("No pages yet — start with “New page”, or open a PDF from the + button above.");
   // Timestamp shown on a library card follows the active sort: sorted by view
   // time → viewed (falling back to modified, same as the sort), by added →
   // created; modified otherwise (incl. Title A–Z).
@@ -7648,7 +7665,7 @@ function LibraryApp({ publicPage = null, initialServerConfig = null }) {
             {/* Recently-viewed shortcut strip. Labels are browsed like folders
                 (the kind toggle's Labels mode) and shown as chips on each row,
                 so this is the only carousel left. */}
-            {homeMode && recentViewedPages.length > 0 ? (
+            {homeMode && lib.history && recentViewedPages.length > 0 ? (
               <CardCarousel label={t("Recently viewed")} className="recentsCarousel">
                 {recentViewedPages.map((b) => (
                   <PageCard key={b._pageId} title={b.content} glyph={<FileGlyph isPdf={!!b._attachment} />} preview={b._preview}
@@ -7668,7 +7685,7 @@ function LibraryApp({ publicPage = null, initialServerConfig = null }) {
                 ))}
               </CardCarousel>
             ) : null}
-            {homeMode && !categoryFilter && !folderFilter && pinnedItems.length > 0 ? (
+            {homeMode && lib.pin && !categoryFilter && !folderFilter && pinnedItems.length > 0 ? (
               <div className="pinnedSection">
                 <div className="pinnedLabel"><PinIcon filled size={12} /> {t("Pinned")}</div>
                 <div className="pinnedStrip" ref={pinnedStripRef}>
@@ -7717,7 +7734,7 @@ function LibraryApp({ publicPage = null, initialServerConfig = null }) {
             ) : null}
             {homeMode && (folderFilter || categoryFilter) ? (
               <div className="folderBrowser">
-                    {folderFilter && !categoryFilter ? (
+                    {folderFilter && !categoryFilter && folderFilter !== lib.root ? (
                     <div
                       className={`folderRow folderBackRow ${folderDragOver === "__up__" ? "dragOver" : ""}`}
                       onClick={() => {
@@ -7730,11 +7747,11 @@ function LibraryApp({ publicPage = null, initialServerConfig = null }) {
                         const parent = folderFilter.includes("/") ? folderFilter.slice(0, folderFilter.lastIndexOf("/")) : "";
                         dropOnFolder(e, parent, (ids) => removePagesFromFolder(ids, folderFilter));
                       }}
-                      title={t("Back — or drop a page or folder here to move it out of this folder")}
+                      title={lib.organize ? t("Back — or drop a page or folder here to move it out of this folder") : t("Back")}
                     >
                       <ArrowLeftIcon size={14} />
                       <span className="folderName">{folderFilter.includes("/") ? folderFilter.slice(0, folderFilter.lastIndexOf("/")) : t("All files")}</span>
-                      <span className="folderHint">{t("drop here to move out of this folder")}</span>
+                      {lib.organize ? <span className="folderHint">{t("drop here to move out of this folder")}</span> : null}
                     </div>
                     ) : null}
                     {/* The label view gets the same back row: it drops the
@@ -7746,7 +7763,7 @@ function LibraryApp({ publicPage = null, initialServerConfig = null }) {
                       onClick={closeLabel}
                       // Inside "No label" there is no label to take off — the
                       // back row is plain navigation there.
-                      {...(categoryFilter === NO_LABEL ? { title: T("Back") } : {
+                      {...(categoryFilter === NO_LABEL || !lib.organize ? { title: T("Back") } : {
                         onDragOver: (e) => { e.preventDefault(); setFolderDragOver("__label_up__"); },
                         onDragLeave: () => setFolderDragOver(null),
                         onDrop: (e) => dropOnLabel(e, categoryFilter, (ids) => removePagesFromLabel(ids, categoryFilter)),
@@ -7755,17 +7772,19 @@ function LibraryApp({ publicPage = null, initialServerConfig = null }) {
                     >
                       <ArrowLeftIcon size={14} />
                       <span className="folderName">{folderFilter || t("All files")}</span>
-                      {categoryFilter === NO_LABEL ? null : <span className="folderHint">{t("drop here to remove this label")}</span>}
+                      {categoryFilter === NO_LABEL || !lib.organize ? null : <span className="folderHint">{t("drop here to remove this label")}</span>}
                     </div>
                     ) : null}
                     <div className="folderCurrent">
                       {categoryFilter ? <LabelIcon size={15} strokeDasharray={categoryFilter === NO_LABEL ? "2 1.5" : undefined} /> : <FolderOpenIcon size={15} />}
-                      {/* Breadcrumb: every path segment navigates to its level */}
+                      {/* Breadcrumb: every path segment navigates to its level —
+                          from the library's root on (a folder share starts at its folder) */}
                       {(folderFilter ? folderFilter.split("/") : []).map((seg, i, segs) => {
                         const prefix = segs.slice(0, i + 1).join("/");
+                        if (!lib.contains(prefix)) return null;
                         return (
                           <span key={prefix}>
-                            {i > 0 ? <span className="crumbSep">/</span> : null}
+                            {i > 0 && lib.contains(segs.slice(0, i).join("/")) ? <span className="crumbSep">/</span> : null}
                             <button className="crumbBtn" onClick={() => openFolder(prefix)}>{seg}</button>
                           </span>
                         );
@@ -7778,7 +7797,7 @@ function LibraryApp({ publicPage = null, initialServerConfig = null }) {
                           ) : (
                           <button
                             className="crumbBtn"
-                            title={t("Right-click to rename or delete this label")}
+                            title={lib.organize ? t("Right-click to rename or delete this label") : undefined}
                             onContextMenu={openTagMenu("label", categoryFilter)}
                           >{categoryFilter}</button>
                           )}
@@ -7889,7 +7908,7 @@ function LibraryApp({ publicPage = null, initialServerConfig = null }) {
                         key={item.key}
                         {...folderCardProps(f)}
                         className={`${dim} ${folderDragOver === f ? "dragOver" : ""} ${selectedFolders.has(f) ? "selected" : ""}`}
-                        tip={t("Click to select · double-click to open · drop a page or folder to move it in")}
+                        tip={lib.organize ? t("Click to select · double-click to open · drop a page or folder to move it in") : t("Click to select · double-click to open")}
                         time={cardTime(item)}
                         renameNode={folderRenaming?.name === f ? (
                           <input
@@ -7904,7 +7923,7 @@ function LibraryApp({ publicPage = null, initialServerConfig = null }) {
                             onBlur={(e) => renameFolder(f, e.currentTarget.value)}
                           />
                         ) : null}
-                        draggable={folderRenaming?.name !== f}
+                        draggable={lib.organize && folderRenaming?.name !== f}
                         onDoubleClick={() => { if (folderRenaming?.name !== f) openFolder(f); }}
                       />
                       ); }
@@ -7936,17 +7955,19 @@ function LibraryApp({ publicPage = null, initialServerConfig = null }) {
                               onBlur={(e) => commitPageRename(id, e.currentTarget.value)}
                             />
                           ) : null}
-                          draggable={!isEditing}
+                          draggable={lib.organize && !isEditing}
                           onDragStart={(e) => { e.dataTransfer.setData("text/plain", id); e.dataTransfer.effectAllowed = "move"; }}
                           onClick={(e) => handlePageClick(b, e)}
                           onDoubleClick={() => { if (!isEditing) openPage(id); }}
                           onContextMenu={openPageMenu(id, b.content)}
                         >
-                          <button
-                            className={`pinBtn tilePinBtn ${isPinned ? "pinned" : ""}`}
-                            title={isPinned ? t("Unpin") : t("Pin to top")}
-                            onClick={(e) => { e.stopPropagation(); setPagesPinned([id], !isPinned); }}
-                          ><PinIcon filled={isPinned} size={12} /></button>
+                          {lib.pin ? (
+                            <button
+                              className={`pinBtn tilePinBtn ${isPinned ? "pinned" : ""}`}
+                              title={isPinned ? t("Unpin") : t("Pin to top")}
+                              onClick={(e) => { e.stopPropagation(); setPagesPinned([id], !isPinned); }}
+                            ><PinIcon filled={isPinned} size={12} /></button>
+                          ) : null}
                         </PageCard>
                       );
                     })}
@@ -8004,7 +8025,8 @@ function LibraryApp({ publicPage = null, initialServerConfig = null }) {
                         onDragLeave={() => setFolderDragOver(null)}
                         onDrop={(e) => dropOnLabel(e, l)}
                         title={l === NO_LABEL
-                          ? t("Pages without any label · double-click to open · drop a page to clear its labels") : t("Click to select · double-click to open · right-click to rename or delete · drop a page to label it")}
+                          ? t("Pages without any label · double-click to open · drop a page to clear its labels")
+                          : lib.organize ? t("Click to select · double-click to open · right-click to rename or delete · drop a page to label it") : t("Click to select · double-click to open")}
                       >
                         <LabelIcon size={15} strokeDasharray={l === NO_LABEL ? "2 1.5" : undefined} />
                         <span className="folderName">{labelTitle(l)}</span>
@@ -8015,7 +8037,7 @@ function LibraryApp({ publicPage = null, initialServerConfig = null }) {
                       <div
                         key={item.key}
                         className={`folderRow ${dim} ${folderDragOver === f ? "dragOver" : ""} ${selectedFolders.has(f) ? "selected" : ""}`}
-                        draggable={folderRenaming?.name !== f}
+                        draggable={lib.organize && folderRenaming?.name !== f}
                         onDragStart={(e) => { e.dataTransfer.setData("text/plain", FOLDER_DRAG + f); e.dataTransfer.effectAllowed = "move"; }}
                         onClick={(e) => handleFolderClick(f, e)}
                         onDoubleClick={() => { if (folderRenaming?.name !== f) openFolder(f); }}
@@ -8023,7 +8045,7 @@ function LibraryApp({ publicPage = null, initialServerConfig = null }) {
                         onDragOver={(e) => { e.preventDefault(); setFolderDragOver(f); }}
                         onDragLeave={() => setFolderDragOver(null)}
                         onDrop={(e) => dropOnFolder(e, f)}
-                        title={t("Click to select · double-click to open · right-click to rename or delete · drop a page or folder to move it in")}
+                        title={lib.organize ? t("Click to select · double-click to open · right-click to rename or delete · drop a page or folder to move it in") : t("Click to select · double-click to open")}
                       >
                         <FolderIcon size={15} />
                         {folderRenaming?.name === f ? (
@@ -8053,7 +8075,7 @@ function LibraryApp({ publicPage = null, initialServerConfig = null }) {
                         <div
                           key={id}
                           className={`fileRow ${dim} ${selectedPages.has(id) ? "selected" : ""}`}
-                          draggable={!isEditing}
+                          draggable={lib.organize && !isEditing}
                           onDragStart={(e) => { e.dataTransfer.setData("text/plain", id); e.dataTransfer.effectAllowed = "move"; }}
                           onClick={(e) => handlePageClick(b, e)}
                           onDoubleClick={() => { if (!isEditing) openPage(id); }}
@@ -8079,11 +8101,13 @@ function LibraryApp({ publicPage = null, initialServerConfig = null }) {
                           <CardLabels className="fileRowLabels" folders={b._folders} labels={b._labels}
                             mode={fileLabels} onLabelMenu={(l) => openTagMenu("label", l)} />
                           <span className="fileRowKind">{pageKindLabel(b._attachment)}</span>
-                          <button
-                            className={`pinBtn fileRowPin ${isPinned ? "pinned" : ""}`}
-                            title={isPinned ? t("Unpin") : t("Pin to top")}
-                            onClick={(e) => { e.stopPropagation(); setPagesPinned([id], !isPinned); }}
-                          ><PinIcon filled={isPinned} size={12} /></button>
+                          {lib.pin ? (
+                            <button
+                              className={`pinBtn fileRowPin ${isPinned ? "pinned" : ""}`}
+                              title={isPinned ? t("Unpin") : t("Pin to top")}
+                              onClick={(e) => { e.stopPropagation(); setPagesPinned([id], !isPinned); }}
+                            ><PinIcon filled={isPinned} size={12} /></button>
+                          ) : null}
                         </div>
                       );
                     })}
@@ -8094,8 +8118,6 @@ function LibraryApp({ publicPage = null, initialServerConfig = null }) {
                     </button>
                   ) : null}
                 </>
-            ) : shareMode && sharedFolder && !focusedBlockId ? (
-              <SharedFolder folder={sharedFolder.name} pages={sharedFolder.pages} labelMode={fileLabels} onOpen={(id) => goSharedPage(id)} />
             ) : (
             visibleBlocks.length === 0 ? (
               notesTail || <div className="empty">{t("No blocks yet.")}</div>
@@ -8758,7 +8780,7 @@ function LibraryApp({ publicPage = null, initialServerConfig = null }) {
           </button>
           {openPopover === "share" && shareTarget?.kind === "page" ? sharePopover : null}
         </span>
-      ) : homeMode && folderFilter && !categoryFilter ? (
+      ) : homeMode && lib.organize && folderFilter && !categoryFilter ? (
         // The same button for the open folder: one link for every page filed in it.
         <span data-popover="share" className="popoverAnchor">
           <button
@@ -8906,14 +8928,14 @@ function LibraryApp({ publicPage = null, initialServerConfig = null }) {
     <div
       ref={appRef}
       className={`app layout-horizontal ${pseudoFullscreen ? "pseudoFullscreen" : ""} ${isPhone ? "phoneUI" : ""}`}
-      data-drop={homeMode ? "upload" : focusedBlockId && !readOnly ? "files" : undefined}
+      data-drop={homeMode && lib.organize ? "upload" : focusedBlockId && !readOnly ? "files" : undefined}
       onDragOver={shareMode ? undefined : (e) => {
         if (!e.dataTransfer || !Array.from(e.dataTransfer.types || []).includes("Files")) return;
         e.preventDefault();
         // The overlay only where a drop does something: the library imports
         // files, an editable page takes files as blocks; block rows take
         // files themselves.
-        const dropHere = (homeMode || (focusedBlockId && !readOnly)) && !e.target.closest(".blockRowWrap");
+        const dropHere = ((homeMode && lib.organize) || (focusedBlockId && !readOnly)) && !e.target.closest(".blockRowWrap");
         appRef.current?.classList.toggle("dragOver", dropHere);
       }}
       onDragLeave={shareMode ? undefined : (e) => {
@@ -9007,7 +9029,7 @@ function LibraryApp({ publicPage = null, initialServerConfig = null }) {
           >
             <HomeIcon size={17} />
           </button>
-          <span className="readOnlyTitle">{pageTitle}</span>
+          <span className="readOnlyTitle">{pageTitle || sharedFolder?.name || ""}</span>
           {shareInfo ? (
             <span className="uiTag"
               title={shareInfo.canEdit ? t("Your edits save to the owner's page") : t("Read-only share link")}>
@@ -9891,13 +9913,18 @@ function LibraryApp({ publicPage = null, initialServerConfig = null }) {
                   {!many ? (
                     <MenuItem icon={ExternalLinkIcon} onClick={() => { setHomeMenu(null); clearSelection(); openBlock(homeMenu.id, { restoreScroll: true }); }}>{t("Open")}</MenuItem>
                   ) : null}
-                  {!many ? (
+                  {!many && lib.organize ? (
                     <MenuItem icon={PenIcon} onClick={() => { setHomeMenu(null); clearSelection(); setHomeEditingId(homeMenu.id); }}>{t("Rename")}</MenuItem>
                   ) : null}
-                  <MenuItem icon={PinIcon} onClick={() => { setHomeMenu(null); setPagesPinned(ids, !allPinned); }}>
-                    {allPinned ? t("Unpin") : many ? t("Pin {n} pages", { n: ids.length }) : t("Pin")}
-                  </MenuItem>
+                  {lib.pin ? (
+                    <MenuItem icon={PinIcon} onClick={() => { setHomeMenu(null); setPagesPinned(ids, !allPinned); }}>
+                      {allPinned ? t("Unpin") : many ? t("Pin {n} pages", { n: ids.length }) : t("Pin")}
+                    </MenuItem>
+                  ) : null}
+                  {lib.organize ? (
                   <MenuItem icon={CopyIcon} onClick={() => { setHomeMenu(null); duplicatePages(ids); }}>{many ? t("Duplicate {n} pages", { n: ids.length }) : t("Duplicate")}</MenuItem>
+                  ) : null}
+                  {lib.organize ? (
                   <SubMenuItem
                     id="folders"
                     icon={FolderIcon}
@@ -9926,22 +9953,33 @@ function LibraryApp({ publicPage = null, initialServerConfig = null }) {
                       <MenuItem icon={XIcon} onClick={() => { setHomeMenu(null); removePagesFromFolder(ids, ""); }}>{t("All folders")}</MenuItem>
                     ) : null}
                   </SubMenuItem>
+                  ) : null}
+                  {lib.organize ? (
                   <MenuItem icon={TrashIcon} danger onClick={() => { setHomeMenu(null); deletePages(ids); }}>{many ? t("Delete {n} pages", { n: ids.length }) : t("Delete")}</MenuItem>
+                  ) : null}
                 </>
               );
             })() : homeMenu.kind === "label" ? (
               <>
                 <MenuItem icon={LabelIcon} onClick={() => { const name = homeMenu.name; setHomeMenu(null); if (!homeMode) goHome(); openLabel(name, homeMode ? folderFilter : ""); }}>{t("Open")}</MenuItem>
-                <MenuItem icon={PenIcon} onClick={() => { setHomeMenu(null); setLabelRenaming({ name: homeMenu.name, draft: homeMenu.name }); }}>{t("Rename")}</MenuItem>
-                <MenuItem icon={TrashIcon} danger onClick={() => { setHomeMenu(null); deleteLabelByName(homeMenu.name); }}>{t("Delete")}</MenuItem>
+                {lib.organize ? (
+                  <>
+                    <MenuItem icon={PenIcon} onClick={() => { setHomeMenu(null); setLabelRenaming({ name: homeMenu.name, draft: homeMenu.name }); }}>{t("Rename")}</MenuItem>
+                    <MenuItem icon={TrashIcon} danger onClick={() => { setHomeMenu(null); deleteLabelByName(homeMenu.name); }}>{t("Delete")}</MenuItem>
+                  </>
+                ) : null}
               </>
             ) : (
               <>
                 <MenuItem icon={FolderOpenIcon} onClick={() => { const name = homeMenu.name; setHomeMenu(null); if (!homeMode) goHome(); openFolder(name); }}>{t("Open")}</MenuItem>
-                <MenuItem icon={PenIcon} onClick={() => { setHomeMenu(null); setFolderRenaming({ name: homeMenu.name, draft: homeMenu.name }); }}>{t("Rename")}</MenuItem>
-                <MenuItem icon={LinkIcon} title={t("A link that opens every page filed in this folder, now and later")}
-                  onClick={() => { const name = homeMenu.name; setHomeMenu(null); openFolderShare(name); }}>{t("Share…")}</MenuItem>
-                {(() => {
+                {lib.organize ? (
+                  <>
+                    <MenuItem icon={PenIcon} onClick={() => { setHomeMenu(null); setFolderRenaming({ name: homeMenu.name, draft: homeMenu.name }); }}>{t("Rename")}</MenuItem>
+                    <MenuItem icon={LinkIcon} title={t("A link that opens every page filed in this folder, now and later")}
+                      onClick={() => { const name = homeMenu.name; setHomeMenu(null); openFolderShare(name); }}>{t("Share…")}</MenuItem>
+                  </>
+                ) : null}
+                {lib.pin ? (() => {
                   // Like pages: acting on a selected folder acts on the whole selection
                   const paths = selectedFolders.size > 1 && selectedFolders.has(homeMenu.name) ? [...selectedFolders] : [homeMenu.name];
                   const allPinned = paths.every((p) => pinnedFolders.some((q) => q.path === p));
@@ -9951,13 +9989,15 @@ function LibraryApp({ publicPage = null, initialServerConfig = null }) {
                       {allPinned ? t("Unpin") : paths.length > 1 ? t("Pin {n} folders", { n: paths.length }) : t("Pin")}
                     </MenuItem>
                   );
-                })()}
+                })() : null}
                 <MenuItem
                   icon={ExportIcon}
                   title={t("Download every page in this folder — Markdown, a Logseq graph, a Zotero library, or a Gamma export")}
                   onClick={() => { const name = homeMenu.name; setHomeMenu(null); setExportFolder(name); setExportOpen(true); }}
                 >{t("Export…")}</MenuItem>
+                {lib.organize ? (
                 <MenuItem icon={TrashIcon} danger onClick={() => { setHomeMenu(null); deleteFolderByName(homeMenu.name); }}>{t("Delete")}</MenuItem>
+                ) : null}
               </>
             )}
         </ContextMenu>

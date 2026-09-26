@@ -331,6 +331,11 @@ function setShareView(token) {
   SHARE_TOKEN = token || "";
   SHARE_VIEW = true;
 }
+// The share view's token (""), for in-app URLs that must stay in the share —
+// a folder share's library navigation (App's homeUrlFor).
+function getShareToken() {
+  return SHARE_TOKEN;
+}
 function withShare(url) {
   if (!SHARE_TOKEN || typeof url !== "string" || !url.startsWith(`${API}/`)) return url;
   if (/[?&]share=/.test(url)) return url;
@@ -398,4 +403,4 @@ async function readNdjson(res, onBatch) {
   }
 }
 
-export { API, makeId, fmtBytes, sha256, getDocIdForUrl, isPdfFile, isMarkdownFile, isUnverifiedPaperMeta, metaSourceInfo, apiJson, setShareView, withShare, withWorkspace, assetUrl, setCurrentWorkspace, getCurrentWorkspace, setLinkName, getLinkName, resolvePdfUrl, pdfProxyUrl, probePdfUrl, setExpectedUser, getExpectedUser, usePersistedState, usePersistedFlag, copyText, copyRich, readNdjson };
+export { API, makeId, fmtBytes, sha256, getDocIdForUrl, isPdfFile, isMarkdownFile, isUnverifiedPaperMeta, metaSourceInfo, apiJson, setShareView, getShareToken, withShare, withWorkspace, assetUrl, setCurrentWorkspace, getCurrentWorkspace, setLinkName, getLinkName, resolvePdfUrl, pdfProxyUrl, probePdfUrl, setExpectedUser, getExpectedUser, usePersistedState, usePersistedFlag, copyText, copyRich, readNdjson };

@@ -522,16 +522,18 @@ def test_folder_share_reaches_the_pages_filed_in_it(bob, anon):
     assert resolved.status_code == 200, resolved.text
     data = resolved.json()
     assert data["folder"] == "lab/readout" and data["page_id"] == "" and "doc_id" not in data
-    assert {p["id"] for p in data["pages"]} == {inside["id"], deeper["id"]}
-    listed = next(p for p in data["pages"] if p["id"] == deeper["id"])
-    assert listed["title"] == "In a subfolder" and listed["folders"] == ["lab/readout/sub", "elsewhere"]
 
     q = {"share": token}
+    # the library listing through the link is the folder's pages, with previews
+    listing = anon.get("/api/blocks/root/children", params=q)
+    assert listing.status_code == 200, listing.text
+    children = listing.json()["children"]
+    assert {c["id"] for c in children} == {inside["id"], deeper["id"]}
+    assert next(c for c in children if c["id"] == inside["id"])["preview"] == "a note in the folder"
     assert anon.get(f"/api/blocks/{inside['id']}", params=q).status_code == 200
     assert anon.get(f"/api/blocks/{note['id']}", params=q).status_code == 200
     assert anon.get(f"/api/blocks/{deeper['id']}/subtree", params=q).status_code == 200
     assert anon.get(f"/api/blocks/{outside['id']}", params=q).status_code == 403
-    assert anon.get("/api/blocks/root/children", params=q).status_code == 403
     assert anon.get(f"/api/pages/{inside['id']}/ops", params=q).status_code == 200
     assert anon.get(f"/api/pages/{outside['id']}/ops", params=q).status_code == 403
     assert anon.get(f"/api/chats/{inside['id']}", params=q).status_code == 200
@@ -545,7 +547,8 @@ def test_folder_share_reaches_the_pages_filed_in_it(bob, anon):
     # membership is live: a page filed later joins, one moved out leaves
     later = make_page(bob, "Filed later", {"folder": "lab/readout"})
     assert anon.get(f"/api/blocks/{later['id']}", params=q).status_code == 200
-    assert {p["id"] for p in anon.get(f"/api/share/{token}").json()["pages"]} == {inside["id"], deeper["id"], later["id"]}
+    assert {c["id"] for c in anon.get("/api/blocks/root/children", params=q).json()["children"]} == {
+        inside["id"], deeper["id"], later["id"]}
     bob.put(f"/api/blocks/{inside['id']}", json={"properties": {"folder": "lab/other"}})
     assert anon.get(f"/api/blocks/{inside['id']}", params=q).status_code == 403
 
@@ -621,7 +624,8 @@ def test_folder_share_follows_renames_and_dies_with_the_folder(bob, anon):
     assert bob.get("/api/share-settings/folder", params={"name": "new/x"}).json()["token"] == taken
     assert anon.get(f"/api/share/{old_x}").status_code == 404
     assert anon.get(f"/api/share/{page_token}").json()["page_id"] == page["id"]
-    assert {p["id"] for p in anon.get(f"/api/share/{taken}").json()["pages"]} == {page["id"], keep["id"]}
+    assert {c["id"] for c in anon.get("/api/blocks/root/children", params={"share": taken}).json()["children"]} == {
+        page["id"], keep["id"]}
 
     # deleting the folder drops its shares
     r = bob.post("/api/folders/rename", json={"src": "new", "dst": ""})

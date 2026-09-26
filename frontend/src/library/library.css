@@ -529,9 +529,3 @@
 .quickOpenTag { flex-shrink: 0; font-style: normal; font-size: calc(10px * var(--ui-font-scale, 1)); color: var(--text-dim); }
 .quickOpen .chatMentionHint { padding: 6px 6px 0; }
 .quickOpenKey { font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace; }
-
-/* The share view of a folder share (sharing/SharedFolder.jsx): the folder's
-   name row over the home library's card grid. */
-.sharedFolder { padding: 4px 8px 16px; }
-.sharedFolder .folderHint { font-weight: 400; }
-.sharedFolder .pageCard { cursor: pointer; }
