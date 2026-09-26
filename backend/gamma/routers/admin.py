@@ -28,7 +28,8 @@ from starlette.background import BackgroundTask
 
 from .. import ai_settings, backups, cloud_auth, workspaces
 from ..auth import require_admin
-from .ai import AIProviderRequest
+from .ai import (AIProviderRequest, ChatGPTAuthComplete, begin_chatgpt_signin, new_chatgpt_entry,
+                 redeem_chatgpt_signin, seeded_chatgpt_models)
 from ..db import connect_users_db
 from ..logbuf import tail as _log_tail
 from .. import version
@@ -181,14 +182,17 @@ async def update_settings(payload: SettingsUpdateRequest, request: Request):
 # --- the server's shared AI connections (gamma/ai_settings.py) ---------------
 # Mirrors /api/ai/providers*: the key is write-only, reads are masked. The
 # ids are the namespaced ``server:<id>`` every account's runtime uses; the
-# Test button and the model list go through /api/ai/providers/{id}/test and
-# /api/ai/model-catalog, which take that id from an admin.
+# Test button, the model list and a sign-in's subscription usage go through
+# /api/ai/providers/{id}/test|usage and /api/ai/model-catalog, which take
+# that id from an admin. A ChatGPT sign-in is made (or reconnected) through
+# /ai-providers/chatgpt/start + complete, the account flow's helpers with
+# the state bound to ("server", admin).
 
 def _shared_ai_view() -> dict:
     config = ai_settings.load_server_ai()
     return {"providers": [{**ai_settings.mask_entry(e), "shared": True} for e in config["providers"]],
             "guests": config["guests"], "allowance": config["allowance"],
-            **ai_settings.protocol_choices(key_only=True), "can_edit": True}
+            **ai_settings.protocol_choices(), "can_edit": True}
 
 
 def _shared_entry(config: dict, provider_id: str) -> dict:
@@ -234,6 +238,50 @@ def add_ai_provider(payload: AIProviderRequest, request: Request):
             raise HTTPException(status_code=400, detail="too many providers")
         config["providers"].append(ai_settings.new_key_entry(payload, ai_settings.new_server_provider_id()))
     ai_settings.edit_server_ai(add)
+    return _shared_ai_view()
+
+
+@router.post("/ai-providers/chatgpt/start")
+def shared_chatgpt_start(request: Request):
+    return begin_chatgpt_signin(("server", require_admin(request)))
+
+
+# Sync def: the code exchange and the model listing are network round trips.
+@router.post("/ai-providers/chatgpt/complete")
+def shared_chatgpt_complete(payload: ChatGPTAuthComplete, request: Request):
+    """Redeem a shared sign-in: a new shared ChatGPT entry, or, with
+    ``provider_id``, new tokens on an existing one (reconnect)."""
+    me = require_admin(request)
+    oauth = redeem_chatgpt_signin(("server", me), payload.state, payload.callback)
+    if payload.provider_id:
+        def reconnect(config):
+            entry = _shared_entry(config, payload.provider_id)
+            if entry.get("protocol") != "chatgpt":
+                raise HTTPException(status_code=404, detail="provider not found")
+            entry["oauth"] = oauth
+            if payload.name.strip():
+                entry["name"] = payload.name.strip()[:ai_settings.MAX_NAME_LEN]
+            if payload.models.strip():
+                entry["models"] = payload.models.strip()[:ai_settings.MAX_MODELS_LEN]
+        ai_settings.edit_server_ai(reconnect)
+        return _shared_ai_view()
+    entry = new_chatgpt_entry(ai_settings.new_server_provider_id(), oauth, payload.name, payload.models)
+
+    def add(config):
+        if len(config["providers"]) >= ai_settings.MAX_PROVIDERS:
+            raise HTTPException(status_code=400, detail="too many providers")
+        config["providers"].append(entry)
+    ai_settings.edit_server_ai(add)
+    if not entry["models"]:
+        # Listed live through the admin's runtime, which offers the shared
+        # entries after the admin's own.
+        models = seeded_chatgpt_models(me, entry["id"])
+        if models:
+            def seed(config):
+                for e in config["providers"]:
+                    if e.get("id") == entry["id"] and not e.get("models"):
+                        e["models"] = models
+            ai_settings.edit_server_ai(seed)
     return _shared_ai_view()
 
 

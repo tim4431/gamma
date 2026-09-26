@@ -102,6 +102,7 @@ import GuideOverlay from "../guide/GuideOverlay";
 import { guideEvents } from "../guide/events";
 import { Empty, QuotaMeter, Section } from "../settings/SettingsKit";
 import { CopyBox, SharePopover } from "../sharing/SharePopover";
+import { SharedFolder } from "../sharing/SharedFolder";
 import { MirrorPopover } from "../collaboration/MirrorPopover";
 import {
   addFolderTag,
@@ -405,6 +406,9 @@ function LibraryApp({ publicPage = null, initialServerConfig = null }) {
   const shareMode = Boolean(initialShare) || Boolean(publicPage);
   const [readOnly, setReadOnly] = useState(shareMode);
   const [shareInfo, setShareInfo] = useState(null); // resolved share: {owner, role, canEdit, audience, viewer}
+  // A folder share's listing ({name, pages}): the share view shows it until
+  // a card opens one of its pages, and the topbar's home button returns to it.
+  const [sharedFolder, setSharedFolder] = useState(null);
   // "login" | "forbidden" | "missing" while the share can't open
   const [shareGate, setShareGate] = useState(publicPage?.missing ? "missing" : null);
   const [linkName, setLinkNameState] = useState(""); // the share view's display name when the viewer has no account
@@ -1314,15 +1318,16 @@ function LibraryApp({ publicPage = null, initialServerConfig = null }) {
   const prefixMapTag = (oldPath, newPath) => (t) =>
     t === oldPath ? newPath : t.startsWith(oldPath + "/") ? newPath + t.slice(oldPath.length) : t;
 
-  // Per-folder home-chat buckets ("home:<path>") follow the same prefix
-  // rewrites as the folder tags; dst "" drops the conversations (folder
-  // deleted). Runs BEFORE the tag rewrite flips folderFilter, so ChatDock
-  // reloads the destination bucket only after it exists. Best-effort — a
-  // failed move orphans a conversation, never page data.
+  // Per-folder home-chat buckets ("home:<path>") and folder shares follow
+  // the same prefix rewrites as the folder tags (POST /folders/rename); dst
+  // "" drops them (folder deleted). Runs BEFORE the tag rewrite flips
+  // folderFilter, so ChatDock reloads the destination bucket only after it
+  // exists. Best-effort — a failed move orphans a conversation or a share,
+  // never page data.
   async function moveFolderChats(moves) {
     for (const [src, dst] of moves) {
       try {
-        await apiJson(`${API}/chats/folder-rename`, {
+        await apiJson(`${API}/folders/rename`, {
           method: "POST",
           headers: { "Content-Type": "application/json" },
           body: JSON.stringify({ src, dst }),
@@ -2334,6 +2339,9 @@ function LibraryApp({ publicPage = null, initialServerConfig = null }) {
   // not shared, else {token, audience, role, users}. The link is derived.
   const [shareSettings, setShareSettings] = useState(null);
   const [shareError, setShareError] = useState("");
+  // What the popover is about: {kind: "page", id} (the open page) or
+  // {kind: "folder", name} (a folder of the home library).
+  const [shareTarget, setShareTarget] = useState(null);
   const shareUrl = shareSettings?.token
     ? `${window.location.origin}${window.location.pathname}?share=${shareSettings.token}`
     : "";
@@ -4774,50 +4782,106 @@ function LibraryApp({ publicPage = null, initialServerConfig = null }) {
         setLinkNameState(name);
       }
 
-      // The share names a page block directly (PDF pages and note pages
-      // alike). Read access rides on the token, which apiJson appends to every
-      // API call in a share view (utils.withShare) — never a bare ?user=.
-      let block = null;
-      try { block = await apiJson(`${API}/blocks/${encodeURIComponent(data.page_id)}`); } catch {}
-      if (publicPage && block) {
-        // the address bar keeps the page host's pretty address, its slug following the title
-        window.history.replaceState(window.history.state, "", publicPath(block.content, data.page_id) + window.location.hash);
+      if (data.folder) {
+        // A folder share: its listing, or — with `page=` in the URL — one of
+        // its pages (goSharedPage keeps the two in the history).
+        const pages = data.pages || [];
+        setSharedFolder({ name: data.folder, pages });
+        setReadOnly(!data.can_edit);
+        if (initialBlockId && pages.some((p) => p.id === initialBlockId)) {
+          await openSharedPage(token, initialBlockId, data);
+        } else {
+          setPageTitle(data.folder);
+          setStatus(t("Loaded shared folder."));
+        }
+        return;
       }
-
-      let childBlocks = [];
-      if (block) {
-        try {
-          const subtreeData = await apiJson(`${API}/blocks/${block.id}/subtree`);
-          childBlocks = normalizeBlocks(subtreeData.block?.children || []);
-          loadedSeqRef.current = subtreeData.seq ?? null;
-        } catch {}
-      }
-
-      const props = block?.properties || {};
-      const src = attachmentSource(pageAttachment(block));
-      const isLocal = src.startsWith("/api/");
-      const proxiedUrl = isLocal
-        ? `${src}${src.includes("?") ? "&" : "?"}share=${encodeURIComponent(token)}`
-        : src ? pdfProxyUrl(src, { share: token }) : "";
-
-      suppressAutosaveRef.current = true;
-      setFocusedBlockId(block?.id || "");
-      setFocusedBlock(block || null);
-      setPageTitle(block?.content || defaultPageTitle(pageAttachment(block)));
-      setBlocks(childBlocks);
-      setDocId(props.doc_id || data.doc_id || "");
-      setInputUrl(src);
-      setPdfUrl(proxiedUrl);
-      // Edit rights arrive with the share; the autosave effect's suppress flag
-      // (set above) swallows the first blocks change either way.
-      setReadOnly(!data.can_edit);
-      setStatus(data.can_edit ? t("Shared by {username} — your edits save to their page.", { username: data.username }) : t("Loaded shared page."));
+      await openSharedPage(token, data.page_id, data);
     } catch (err) {
       setStatus(t("Share open failed: {message}", { message: err.message }));
     } finally {
       setLoading(false);
     }
   }
+
+  // Load one shared page into the share view — a page share's page, or a
+  // page of a folder share; `share` is the resolved link ({can_edit,
+  // username, doc_id?}). The share names a page block directly (PDF pages
+  // and note pages alike). Read access rides on the token, which apiJson
+  // appends to every API call in a share view (utils.withShare) — never a
+  // bare ?user=.
+  async function openSharedPage(token, pageId, share) {
+    if (focusedBlockId) leaveCurrentPage();
+    let block = null;
+    try { block = await apiJson(`${API}/blocks/${encodeURIComponent(pageId)}`); } catch {}
+    if (publicPage && block) {
+      // the address bar keeps the page host's pretty address, its slug following the title
+      window.history.replaceState(window.history.state, "", publicPath(block.content, pageId) + window.location.hash);
+    }
+
+    let childBlocks = [];
+    if (block) {
+      try {
+        const subtreeData = await apiJson(`${API}/blocks/${block.id}/subtree`);
+        childBlocks = normalizeBlocks(subtreeData.block?.children || []);
+        loadedSeqRef.current = subtreeData.seq ?? null;
+      } catch {}
+    }
+
+    const props = block?.properties || {};
+    const src = attachmentSource(pageAttachment(block));
+    const isLocal = src.startsWith("/api/");
+    const proxiedUrl = isLocal
+      ? `${src}${src.includes("?") ? "&" : "?"}share=${encodeURIComponent(token)}`
+      : src ? pdfProxyUrl(src, { share: token }) : "";
+
+    suppressAutosaveRef.current = true;
+    setFocusedBlockId(block?.id || "");
+    setFocusedBlock(block || null);
+    setPageTitle(block?.content || defaultPageTitle(pageAttachment(block)));
+    setBlocks(childBlocks);
+    setDocId(props.doc_id || share.doc_id || "");
+    setInputUrl(src);
+    setPdfUrl(proxiedUrl);
+    // Edit rights arrive with the share; the autosave effect's suppress flag
+    // (set above) swallows the first blocks change either way.
+    setReadOnly(!share.can_edit);
+    setStatus(share.can_edit ? t("Shared by {username} — your edits save to their page.", { username: share.username }) : t("Loaded shared page."));
+  }
+
+  // A folder share's navigation between its listing ("") and a page, each a
+  // history entry (`page=` beside the token); popstate replays it without
+  // pushing. The ref keeps the once-registered listener on the latest closure.
+  function goSharedPage(pageId, { push = true } = {}) {
+    if (!sharedFolder) return;
+    if (push) {
+      const url = `${window.location.pathname}?share=${encodeURIComponent(initialShare)}${pageId ? `&page=${encodeURIComponent(pageId)}` : ""}`;
+      window.history.pushState(null, "", url);
+    }
+    if (pageId) {
+      setLoading(true);
+      openSharedPage(initialShare, pageId, { can_edit: !!shareInfo?.canEdit, username: shareInfo?.owner || "" })
+        .catch((err) => setStatus(t("Share open failed: {message}", { message: err.message })))
+        .finally(() => setLoading(false));
+      return;
+    }
+    leaveCurrentPage();
+    setFocusedBlockId("");
+    setFocusedBlock(null);
+    setBlocks([]);
+    setDocId("");
+    setInputUrl("");
+    setPdfUrl("");
+    setPageTitle(sharedFolder.name);
+  }
+  const goSharedPageRef = useRef(goSharedPage);
+  goSharedPageRef.current = goSharedPage;
+  useEffect(() => {
+    if (!shareMode) return undefined;
+    const onPop = () => goSharedPageRef.current(new URLSearchParams(window.location.search).get("page") || "", { push: false });
+    window.addEventListener("popstate", onPop);
+    return () => window.removeEventListener("popstate", onPop);
+  }, [shareMode]);
 
   async function openBlock(blockId, opts) {
     if (!blockId || shareMode) return;
@@ -5271,20 +5335,26 @@ function LibraryApp({ publicPage = null, initialServerConfig = null }) {
     setShareSettings(data);
     setShareError("");
   }
-  async function loadShareSettings() {
-    if (!focusedBlockId || shareMode || homeMode) return;
+  // The endpoints for one target differ only in how they name it
+  // (docs/dev/api.md "Shares"): /share/<page id> or /share/folder?name=.
+  const shareApi = (target, base) => (target.kind === "folder"
+    ? `${API}/${base}/folder?name=${encodeURIComponent(target.name)}`
+    : `${API}/${base}/${encodeURIComponent(target.id)}`);
+  async function loadShareSettings(target) {
+    if (shareMode || !target || (target.kind === "page" && !target.id)) return;
+    setShareTarget(target);
     setShareSettings(null);
     try {
-      applyShareSettings(await apiJson(`${API}/share-settings/${encodeURIComponent(focusedBlockId)}`));
+      applyShareSettings(await apiJson(shareApi(target, "share-settings")));
       resetShareCopied();
     } catch (err) {
       setStatus(t("Share failed: {message}", { message: err.message }));
     }
   }
   async function createShareLink() {
-    if (!focusedBlockId || shareMode) return;
+    if (!shareTarget || shareMode) return;
     try {
-      applyShareSettings(await apiJson(`${API}/share/${encodeURIComponent(focusedBlockId)}`, { method: "POST" }));
+      applyShareSettings(await apiJson(shareApi(shareTarget, "share"), { method: "POST" }));
       resetShareCopied();
       guideEvents.emit("share.created");
     } catch (err) {
@@ -5292,9 +5362,9 @@ function LibraryApp({ publicPage = null, initialServerConfig = null }) {
     }
   }
   async function updateShareSettings(patch) {
-    if (!focusedBlockId || !shareSettings?.token) return false;
+    if (!shareTarget || !shareSettings?.token) return false;
     try {
-      applyShareSettings(await apiJson(`${API}/share-settings/${encodeURIComponent(focusedBlockId)}`, {
+      applyShareSettings(await apiJson(shareApi(shareTarget, "share-settings"), {
         method: "PUT",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify(patch),
@@ -5319,14 +5389,23 @@ function LibraryApp({ publicPage = null, initialServerConfig = null }) {
     updateShareSettings({ users: (shareSettings?.users || []).filter((u) => u.name !== name) });
   }
   async function stopSharing() {
-    if (!focusedBlockId || !shareSettings?.token) return;
+    if (!shareTarget || !shareSettings?.token) return;
     try {
-      await apiJson(`${API}/share-settings/${encodeURIComponent(focusedBlockId)}`, { method: "DELETE" });
-      applyShareSettings({ token: null, page_id: focusedBlockId });
+      await apiJson(shareApi(shareTarget, "share-settings"), { method: "DELETE" });
+      applyShareSettings({ token: null, page_id: shareTarget.id || "", folder: shareTarget.name || "" });
       setStatus(t("Sharing stopped — the old link no longer opens."));
     } catch (err) {
       setStatus(t("Stop sharing failed: {message}", { message: err.message }));
     }
+  }
+  // Share a folder: the same popover under the topbar's link button, which
+  // the folder view shows — so from the context menu the folder is opened first.
+  function openFolderShare(name) {
+    if (!homeMode) goHome();
+    if (folderFilter !== name || categoryFilter) openFolder(name);
+    loadShareSettings({ kind: "folder", name });
+    setShareError("");
+    setOpenPopover("share");
   }
   // Publishing to Gamma Cloud (sharing/SharePopover.jsx PublishSection). POST
   // both publishes and changes an existing cloud share's audience / role; it
@@ -5538,11 +5617,12 @@ function LibraryApp({ publicPage = null, initialServerConfig = null }) {
   // path as Import → Gamma export. Block ids survive, so the imported page
   // opens by the id the link named.
   async function importSharedPage(shareUrl) {
-    let origin = "", token = "";
+    let origin = "", token = "", linkedPage = "";
     try {
       const u = new URL(shareUrl, window.location.href);
       origin = u.origin;
       token = u.searchParams.get("share") || "";
+      linkedPage = u.searchParams.get("page") || ""; // a page opened through a folder share
     } catch {}
     if (!token) { setStatus(t("That isn't a Gamma share link (no ?share= in it).")); return; }
     const local = origin === window.location.origin;
@@ -5561,12 +5641,14 @@ function LibraryApp({ publicPage = null, initialServerConfig = null }) {
       }
       if (!r.ok) throw new Error("share link not found");
       const info = await r.json();
+      const pageId = info.page_id || linkedPage;
+      if (!pageId) throw new Error(t("that link shares a folder — open one of its pages to add it"));
       updateTransfer(tid, { info: t("downloading…") });
-      r = await fetch(`${origin}${API}/pages/${encodeURIComponent(info.page_id)}/export?mode=gamma&share=${encodeURIComponent(token)}`, opts);
+      r = await fetch(`${origin}${API}/pages/${encodeURIComponent(pageId)}/export?mode=gamma&share=${encodeURIComponent(token)}`, opts);
       if (!r.ok) throw new Error(r.status === 404 ? "that Gamma is too old to export pages for another Gamma" : `export failed (${r.status})`);
       const blob = await r.blob();
       updateTransfer(tid, { status: "done", info: fmtBytes(blob.size) });
-      runBackupImport(new File([blob], "shared-page.zip", { type: "application/zip" }), "merge", null, { openPage: info.page_id });
+      runBackupImport(new File([blob], "shared-page.zip", { type: "application/zip" }), "merge", null, { openPage: pageId });
     } catch (err) {
       updateTransfer(tid, { status: "error", info: String(err.message) });
       setStatus(t("Import failed: {message}", { message: err.message }));
@@ -6909,6 +6991,90 @@ function LibraryApp({ publicPage = null, initialServerConfig = null }) {
     );
   }
 
+  // The share popover (sharing/SharePopover.jsx), anchored under the topbar's
+  // link button — the open page's, or the open folder's; the citation
+  // section is App's (metadata + copy state).
+  const sharePopover = (
+    <SharePopover
+      target={shareTarget}
+      settings={shareSettings}
+      error={shareError}
+      me={authUser?.user || ""}
+      meIsGuest={!!authUser?.is_guest}
+      shareUrl={shareUrl}
+      copied={!!shareCopied}
+      onCopy={copyShareLink}
+      onCreate={createShareLink}
+      onUpdate={updateShareSettings}
+      onInvite={inviteShareUser}
+      onSetRole={setShareUserRole}
+      onRemove={removeShareUser}
+      onStop={stopSharing}
+      onClose={() => { setOpenPopover(null); setShareError(""); }}
+      publish={publishOffered && shareTarget?.kind !== "folder" ? {
+        state: publishState?.page === focusedBlockId ? publishState : null,
+        busy: publishBusy,
+        error: publishError,
+        copied: !!publishCopied,
+        onCopy: copyPublishLink,
+        canEdit: !readOnly,
+        onPublish: publishPage,
+        onUnpublish: unpublishPage,
+        onSync: syncPublication,
+        onLink: () => { setOpenPopover(null); setSettingsOpen("account"); },
+        accountUrl: serverConfig?.cloud?.issuer ? `${serverConfig.cloud.issuer}/` : "",
+      } : null}
+      citation={shareTarget?.kind !== "folder" && (pageMeta || pageBibtex) ? (
+        <Section
+          title={t("Citation")}
+          action={
+            <button
+              type="button" className="uiBtn sm iconSq"
+              title={t("Regenerate the citation")} aria-label={t("Regenerate the citation")}
+              disabled={pptCiteBusy}
+              onClick={() => makePptCitation(true)}
+            >{pptCiteBusy ? "…" : <RefreshIcon size={13} />}</button>
+          }
+        >
+          <div className="citeHead">
+            <span className="citeLabel">{t("Slide citation")}</span>
+            {/* Provenance right where the citation gets copied: a
+                registry name, or a red "!" when nothing tied the
+                record to this document. */}
+            {metaSrc ? (
+              <span className={`citeSourceTag${metaSrc.warn ? " warn" : ""}`} title={t(metaSrc.hint)}>
+                {metaSrc.warn ? <span className="metaWarnDot inline" aria-hidden="true">!</span> : null}
+                {t(metaSrc.label)}
+              </span>
+            ) : null}
+          </div>
+          {metaSrc?.warn ? <div className="settingsPaneHint citeWarnHint">{t(metaSrc.hint)}.</div> : null}
+          {pptCite ? (
+            <CopyBox
+              copied={copiedKey === "ppt"} onCopy={() => copyFlash("ppt", pptCite)}
+              title={t("Copy — pastes with real italics/bold into PowerPoint")} label={t("Copy slide citation")}
+            >
+              <div className="pptCitePreview"><ChatMarkdown text={pptCite} /></div>
+            </CopyBox>
+          ) : (
+            <div className="settingsPaneHint">{pptCiteBusy ? t("Generating…") : t("Citation will generate when metadata is ready.")}</div>
+          )}
+          {pageBibtex ? (
+            <>
+              <div className="citeHead"><span className="citeLabel">{t("BibTeX")}</span></div>
+              <CopyBox
+                copied={copiedKey === "bibtex"} onCopy={() => copyFlash("bibtex", pageBibtex)}
+                title={t("Copy the BibTeX entry")} label={t("Copy BibTeX")}
+              >
+                <pre className="bibtexPre">{pageBibtex}</pre>
+              </CopyBox>
+            </>
+          ) : null}
+        </Section>
+      ) : null}
+    />
+  );
+
   // Notion-style tail under the block tree: clicking the empty space below
   // the last block starts writing there — in the last block if it is still
   // empty, else in a fresh top-level one. On an empty page the zone carries
@@ -7928,6 +8094,8 @@ function LibraryApp({ publicPage = null, initialServerConfig = null }) {
                     </button>
                   ) : null}
                 </>
+            ) : shareMode && sharedFolder && !focusedBlockId ? (
+              <SharedFolder folder={sharedFolder.name} pages={sharedFolder.pages} labelMode={fileLabels} onOpen={(id) => goSharedPage(id)} />
             ) : (
             visibleBlocks.length === 0 ? (
               notesTail || <div className="empty">{t("No blocks yet.")}</div>
@@ -8417,87 +8585,6 @@ function LibraryApp({ publicPage = null, initialServerConfig = null }) {
 
   // The topbar action buttons. On a phone these move to the bottom bar:
   // the tab row is too narrow to hold both, and thumbs reach the bottom.
-  // The share popover (sharing/SharePopover.jsx), anchored under the topbar's
-  // link button; the citation section is App's (metadata + copy state).
-  const sharePopover = (
-    <SharePopover
-      settings={shareSettings}
-      error={shareError}
-      me={authUser?.user || ""}
-      meIsGuest={!!authUser?.is_guest}
-      shareUrl={shareUrl}
-      copied={!!shareCopied}
-      onCopy={copyShareLink}
-      onCreate={createShareLink}
-      onUpdate={updateShareSettings}
-      onInvite={inviteShareUser}
-      onSetRole={setShareUserRole}
-      onRemove={removeShareUser}
-      onStop={stopSharing}
-      onClose={() => { setOpenPopover(null); setShareError(""); }}
-      publish={publishOffered ? {
-        state: publishState?.page === focusedBlockId ? publishState : null,
-        busy: publishBusy,
-        error: publishError,
-        copied: !!publishCopied,
-        onCopy: copyPublishLink,
-        canEdit: !readOnly,
-        onPublish: publishPage,
-        onUnpublish: unpublishPage,
-        onSync: syncPublication,
-        onLink: () => { setOpenPopover(null); setSettingsOpen("account"); },
-        accountUrl: serverConfig?.cloud?.issuer ? `${serverConfig.cloud.issuer}/` : "",
-      } : null}
-      citation={(pageMeta || pageBibtex) ? (
-        <Section
-          title={t("Citation")}
-          action={
-            <button
-              type="button" className="uiBtn sm iconSq"
-              title={t("Regenerate the citation")} aria-label={t("Regenerate the citation")}
-              disabled={pptCiteBusy}
-              onClick={() => makePptCitation(true)}
-            >{pptCiteBusy ? "…" : <RefreshIcon size={13} />}</button>
-          }
-        >
-          <div className="citeHead">
-            <span className="citeLabel">{t("Slide citation")}</span>
-            {/* Provenance right where the citation gets copied: a
-                registry name, or a red "!" when nothing tied the
-                record to this document. */}
-            {metaSrc ? (
-              <span className={`citeSourceTag${metaSrc.warn ? " warn" : ""}`} title={t(metaSrc.hint)}>
-                {metaSrc.warn ? <span className="metaWarnDot inline" aria-hidden="true">!</span> : null}
-                {t(metaSrc.label)}
-              </span>
-            ) : null}
-          </div>
-          {metaSrc?.warn ? <div className="settingsPaneHint citeWarnHint">{t(metaSrc.hint)}.</div> : null}
-          {pptCite ? (
-            <CopyBox
-              copied={copiedKey === "ppt"} onCopy={() => copyFlash("ppt", pptCite)}
-              title={t("Copy — pastes with real italics/bold into PowerPoint")} label={t("Copy slide citation")}
-            >
-              <div className="pptCitePreview"><ChatMarkdown text={pptCite} /></div>
-            </CopyBox>
-          ) : (
-            <div className="settingsPaneHint">{pptCiteBusy ? t("Generating…") : t("Citation will generate when metadata is ready.")}</div>
-          )}
-          {pageBibtex ? (
-            <>
-              <div className="citeHead"><span className="citeLabel">{t("BibTeX")}</span></div>
-              <CopyBox
-                copied={copiedKey === "bibtex"} onCopy={() => copyFlash("bibtex", pageBibtex)}
-                title={t("Copy the BibTeX entry")} label={t("Copy BibTeX")}
-              >
-                <pre className="bibtexPre">{pageBibtex}</pre>
-              </CopyBox>
-            </>
-          ) : null}
-        </Section>
-      ) : null}
-    />
-  );
   const topbarActions = (
     <>
       <span data-popover="add" className="popoverAnchor">
@@ -8659,7 +8746,7 @@ function LibraryApp({ publicPage = null, initialServerConfig = null }) {
             className={`iconBtn ${openPopover === "share" ? "activeIcon" : ""}`}
             onClick={() => {
               const opening = openPopover !== "share";
-              if (opening) { loadShareSettings(); setShareError(""); loadPublishState(); }
+              if (opening) { loadShareSettings({ kind: "page", id: focusedBlockId }); setShareError(""); loadPublishState(); }
               setOpenPopover(opening ? "share" : null);
             }}
             disabled={loading}
@@ -8669,7 +8756,20 @@ function LibraryApp({ publicPage = null, initialServerConfig = null }) {
           >
             <LinkIcon size={16} />
           </button>
-          {openPopover === "share" ? sharePopover : null}
+          {openPopover === "share" && shareTarget?.kind === "page" ? sharePopover : null}
+        </span>
+      ) : homeMode && folderFilter && !categoryFilter ? (
+        // The same button for the open folder: one link for every page filed in it.
+        <span data-popover="share" className="popoverAnchor">
+          <button
+            className={`iconBtn ${openPopover === "share" ? "activeIcon" : ""}`}
+            onClick={() => { if (openPopover === "share") setOpenPopover(null); else openFolderShare(folderFilter); }}
+            title={t("Share this folder")}
+            aria-label={t("Share this folder")}
+          >
+            <LinkIcon size={16} />
+          </button>
+          {openPopover === "share" && shareTarget?.kind === "folder" ? sharePopover : null}
         </span>
       ) : null}
       {authUser?.user && (workspace?.mirror_of || workspace?.publishing) ? (
@@ -8899,7 +8999,12 @@ function LibraryApp({ publicPage = null, initialServerConfig = null }) {
         </>
       ) : (
         <div className="topbar">
-          <button className="iconBtn homeBtn" disabled title={t("Home")} aria-label={t("Home")}>
+          <button
+            className="iconBtn homeBtn" disabled={!sharedFolder || !focusedBlockId}
+            title={sharedFolder ? t("Back to the shared folder") : t("Home")}
+            aria-label={sharedFolder ? t("Back to the shared folder") : t("Home")}
+            onClick={() => goSharedPage("")}
+          >
             <HomeIcon size={17} />
           </button>
           <span className="readOnlyTitle">{pageTitle}</span>
@@ -8931,11 +9036,17 @@ function LibraryApp({ publicPage = null, initialServerConfig = null }) {
             >{t("as {name}", { name: linkName })}</button>
           )) : null}
           {shareInfo?.owner && shareInfo.viewer === shareInfo.owner ? (
-            // The owner landed on their own link: the page is theirs already.
+            // The owner landed on their own link: the page (or folder) is theirs already.
             <button
               className="uiBtn sm"
-              title={t("This is your page — open it in your library instead of the shared view")}
-              onClick={() => { window.location.href = `${window.location.pathname}?page=${encodeURIComponent(focusedBlockId)}`; }}
+              title={focusedBlockId
+                ? t("This is your page — open it in your library instead of the shared view")
+                : t("This is your folder — open it in your library instead of the shared view")}
+              onClick={() => {
+                window.location.href = focusedBlockId
+                  ? `${window.location.pathname}?page=${encodeURIComponent(focusedBlockId)}`
+                  : homeUrlFor(sharedFolder?.name || "", "");
+              }}
             >{t("Open in my library")}</button>
           ) : shareInfo?.viewer && !shareInfo.viewerIsGuest && focusedBlockId ? (
             <button
@@ -9828,6 +9939,8 @@ function LibraryApp({ publicPage = null, initialServerConfig = null }) {
               <>
                 <MenuItem icon={FolderOpenIcon} onClick={() => { const name = homeMenu.name; setHomeMenu(null); if (!homeMode) goHome(); openFolder(name); }}>{t("Open")}</MenuItem>
                 <MenuItem icon={PenIcon} onClick={() => { setHomeMenu(null); setFolderRenaming({ name: homeMenu.name, draft: homeMenu.name }); }}>{t("Rename")}</MenuItem>
+                <MenuItem icon={LinkIcon} title={t("A link that opens every page filed in this folder, now and later")}
+                  onClick={() => { const name = homeMenu.name; setHomeMenu(null); openFolderShare(name); }}>{t("Share…")}</MenuItem>
                 {(() => {
                   // Like pages: acting on a selected folder acts on the whole selection
                   const paths = selectedFolders.size > 1 && selectedFolders.has(homeMenu.name) ? [...selectedFolders] : [homeMenu.name];

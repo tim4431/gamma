@@ -88,13 +88,13 @@ def test_folder_rename_carries_history(guest):
     guest.post("/api/chat-history/archive", json={"bucket": "home:hr", "messages": _msgs("root")})
     guest.post("/api/chat-history/archive", json={"bucket": "home:hr/sub", "messages": _msgs("sub")})
     guest.post("/api/chat-history/archive", json={"bucket": "home:hrx", "messages": _msgs("other")})
-    r = guest.post("/api/chats/folder-rename", json={"src": "hr", "dst": "hr2"})
+    r = guest.post("/api/folders/rename", json={"src": "hr", "dst": "hr2"})
     assert r.status_code == 200 and r.json()["history_moved"] == 2
     assert _sessions(guest, "home:hr") == [] and _sessions(guest, "home:hr/sub") == []
     assert [s["title"] for s in _sessions(guest, "home:hr2")] == ["root"]
     assert [s["title"] for s in _sessions(guest, "home:hr2/sub")] == ["sub"]
     assert [s["title"] for s in _sessions(guest, "home:hrx")] == ["other"]
-    guest.post("/api/chats/folder-rename", json={"src": "hr2", "dst": ""})
+    guest.post("/api/folders/rename", json={"src": "hr2", "dst": ""})
     assert _sessions(guest, "home:hr2") == [] and _sessions(guest, "home:hr2/sub") == []
 
 

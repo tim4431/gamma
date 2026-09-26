@@ -127,8 +127,10 @@ function ProviderRow({ provider, protocol, oauth, active = false, radio = null, 
 // The add/edit-key form's state for a provider list App does not hold —
 // Settings → Server's shared entries: ProviderForm's `value` contract over
 // the REST collection `base` (POST adds, PUT/DELETE `${base}/<id>`, each
-// answering with the list). The model picker lists live through
-// /api/ai/model-catalog, which takes a saved shared entry's id from an admin.
+// answering with the list; a ChatGPT sign-in goes through
+// `${base}/chatgpt/start` + `complete`, the account form's paste-the-callback
+// flow). The model picker lists live through /api/ai/model-catalog, which
+// takes a saved shared entry's id from an admin.
 function useProviderEditor({ info, setInfo, base, onSaved }) {
   const [form, setForm] = React.useState(null);
   const [busy, setBusy] = React.useState(false);
@@ -160,21 +162,59 @@ function useProviderEditor({ info, setInfo, base, onSaved }) {
       if (request === catalogRequest.current && at === targetRef.current) setCatalog({ error: friendlyApiError(err) });
     }
   }
+  // A sign-in that isn't connected yet can't list models: its list comes
+  // from the signed-in account, so the fetch waits for Connect.
+  const oauthPending = !!form && isOauth(form.protocol) && !stored?.oauth_connected;
   // Debounced like the account's own form; a stale answer is dropped.
   React.useEffect(() => {
     setCatalog(null);
-    if (!form || !(form.api_key?.trim() || stored?.key_hint)) return;
+    const ready = form && (isOauth(form.protocol) ? stored?.oauth_connected : form.api_key?.trim() || stored?.key_hint);
+    if (!ready) return;
     const timer = setTimeout(loadModelCatalog, 500);
     return () => { clearTimeout(timer); catalogRequest.current++; };
-  }, [target]); // eslint-disable-line react-hooks/exhaustive-deps
+  }, [target, stored?.oauth_connected]); // eslint-disable-line react-hooks/exhaustive-deps
   React.useEffect(() => { setCustomModel(""); }, [form?.id, form?.protocol]);
+
+  // "Open ChatGPT sign-in": the OAuth page in a new tab. Its redirect
+  // (localhost:1455) fails to load — the admin pastes that URL back into the
+  // form, and Connect completes the exchange server-side.
+  async function startChatGPTAuth() {
+    setError("");
+    try {
+      const d = await apiJson(`${base}/chatgpt/start`, { method: "POST" });
+      setForm((f) => (f ? { ...f, oauthState: d.state } : f));
+      window.open(d.auth_url, "_blank", "noopener");
+    } catch (err) {
+      setError(err.message);
+    }
+  }
 
   async function submit() {
     if (!form) return;
-    if (!form.id && !form.api_key.trim()) { setError(t("An API key is required.")); return; }
+    const oauth = isOauth(form.protocol);
+    const callback = oauth ? (form.oauthCallback || "").trim() : "";
+    if (oauth && !callback && !form.id) { setError(t("Sign in with ChatGPT and paste the callback URL to connect.")); return; }
+    if (callback && !form.oauthState) { setError(t("Hit “Open ChatGPT sign-in” first, then paste the URL it ends on.")); return; }
+    if (!oauth && !form.id && !form.api_key.trim()) { setError(t("An API key is required.")); return; }
     setBusy(true);
     setError("");
     try {
+      if (callback) {
+        // Connect (or reconnect): the form stays open on the entry so its
+        // models can be picked from the account's live list.
+        const next = await apiJson(`${base}/chatgpt/complete`, {
+          method: "POST", headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({ state: form.oauthState, callback, provider_id: form.id || "",
+            name: form.name.trim(), models: form.models.trim() }),
+        });
+        setInfo(next);
+        const connected = next.providers.find((p) => form.id ? p.id === form.id
+          : !(info?.providers || []).some((old) => old.id === p.id));
+        setForm((current) => current?.oauthState === form.oauthState && connected
+          ? { ...current, id: connected.id, models: connected.models || "", oauthState: "", oauthCallback: "" } : current);
+        onSaved?.();
+        return;
+      }
       setInfo(await apiJson(`${base}${form.id ? `/${encodeURIComponent(form.id)}` : ""}`, {
         method: form.id ? "PUT" : "POST", headers: { "Content-Type": "application/json" },
         body: JSON.stringify({ protocol: form.protocol, name: form.name.trim(), base_url: form.base_url.trim(),
@@ -198,14 +238,14 @@ function useProviderEditor({ info, setInfo, base, onSaved }) {
     aiKeysError: error,
     setAiKeysError: setError,
     aiModelCatalog: catalog,
-    formOauthPending: false,
+    formOauthPending: oauthPending,
     formModels,
     availModels: (catalog?.models || []).filter((m) => !formModels.includes(m)),
     customModel,
     setCustomModel,
     aiProtocolOf: protocolOf,
     isOauthProto: isOauth,
-    startChatGPTAuth: () => {},
+    startChatGPTAuth,
     loadModelCatalog,
     addCatalogModel: (m) => m && setForm((f) => {
       if (!f) return f;
@@ -222,7 +262,8 @@ function useProviderEditor({ info, setInfo, base, onSaved }) {
 
 // Settings → Server → Shared AI provider (admins): connections every
 // account on the server may use next to its own (backend
-// gamma/ai_settings.py). API keys only, write-only like an account's;
+// gamma/ai_settings.py). An API key, write-only like an account's, or a
+// ChatGPT subscription signed in here (its e-mail shown to admins only);
 // guests get them only while the switch is on. The allowance rows meter
 // them per account per day.
 export function SharedAiProviderSettings({ setStatus, confirm }) {
@@ -230,6 +271,7 @@ export function SharedAiProviderSettings({ setStatus, confirm }) {
   const [info, setInfo] = React.useState(null);
   const [loadError, setLoadError] = React.useState("");
   const [tests, setTests] = React.useState({});
+  const [usage, setUsage] = React.useState({});
   React.useEffect(() => {
     let active = true;
     apiJson(base).then((v) => { if (active) setInfo(v); }).catch((err) => { if (active) setLoadError(err.message); });
@@ -245,6 +287,17 @@ export function SharedAiProviderSettings({ setStatus, confirm }) {
       result = { ok: false, error: err.message };
     }
     setTests((prev) => ({ ...prev, [p.id]: result }));
+  }
+  // A shared sign-in's subscription windows (the account list's Usage).
+  async function queryUsage(p) {
+    setUsage((prev) => ({ ...prev, [p.id]: { busy: true } }));
+    let result;
+    try {
+      result = await apiJson(`${API}/ai/providers/${encodeURIComponent(p.id)}/usage`, { method: "POST" });
+    } catch (err) {
+      result = { available: false, reason: err.message };
+    }
+    setUsage((prev) => ({ ...prev, [p.id]: result }));
   }
   const run = async (call) => {
     try { setInfo(await call()); } catch (err) { setLoadError(err.message); }
@@ -283,12 +336,19 @@ export function SharedAiProviderSettings({ setStatus, confirm }) {
       {info && !providers.length ? <Empty icon={KeyIcon}>{t("No shared connection. Each account uses its own keys.")}</Empty> : null}
       {providers.map((provider) => {
         const el = tests[provider.id];
+        const oauth = editor.isOauthProto(provider.protocol);
         return (
-          <ProviderRow key={provider.id} provider={{ ...provider, shared: false }}
-            protocol={editor.aiProtocolOf(provider.protocol)} test={el} onFix={() => editor.startEdit(provider)}>
+          <ProviderRow key={provider.id} provider={{ ...provider, shared: false }} oauth={oauth}
+            protocol={editor.aiProtocolOf(provider.protocol)} test={el} usage={usage[provider.id]}
+            onFix={() => editor.startEdit(provider)}>
             <button className="uiBtn sm" disabled={el?.busy}
-              title={t("Send a tiny AI request through this key to check it still works; the tokens count on your account")}
+              title={t("Send a tiny AI request through this connection to check it still works; the tokens count on your account")}
               onClick={() => test(provider)}>{t("Test")}</button>
+            {oauth ? (
+              <button className="uiBtn sm" disabled={usage[provider.id]?.busy}
+                title={t("What is left of the ChatGPT subscription's usage windows")}
+                onClick={() => queryUsage(provider)}>{t("Usage")}</button>
+            ) : null}
             <button className="uiBtn sm" title={t("Edit connection and available models")}
               onClick={() => editor.startEdit(provider)}>{t("Manage")}</button>
             <button className="uiBtn sm iconSq danger" title={t("Remove this shared key")} aria-label={t("Remove shared key")}
@@ -301,7 +361,7 @@ export function SharedAiProviderSettings({ setStatus, confirm }) {
       {info ? (
         <Toggle icon={UserIcon} label={t("Guests may use it")} checked={!!info.guests} onChange={setGuests}
           hint={t("Off keeps guests without AI")}
-          title={t("Guest accounts are open to anyone who can reach this server; with this on, they spend the shared keys too.")} />
+          title={t("Guest accounts are open to anyone who can reach this server; with this on, they spend the shared connections too, a shared ChatGPT subscription included.")} />
       ) : null}
       {info && providers.length ? <>
         <Row icon={ActivityIcon} label={t("Allowance per account")} hint={t("Tokens a day on the shared keys; 0 = unlimited")}

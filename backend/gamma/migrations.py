@@ -209,8 +209,8 @@ def _v2_workspaces(conn: sqlite3.Connection) -> None:
     personal prefs move from data.db to users.db; shares are keyed by
     workspace."""
     for stmt in USERS_SCHEMA:
-        if "CREATE TABLE IF NOT EXISTS shares" in stmt or "idx_shares_page" in stmt:
-            continue  # rebuilt below from the old rows
+        if "CREATE TABLE IF NOT EXISTS shares" in stmt or "ON shares(" in stmt:
+            continue  # rebuilt below from the old rows (the indexes: step 21's shape)
         conn.execute(stmt)
     if "default_workspace" not in _columns(conn, "users"):
         conn.execute("ALTER TABLE users ADD COLUMN default_workspace TEXT NOT NULL DEFAULT ''")
@@ -590,6 +590,19 @@ def _v20_guest_accounts(conn: sqlite3.Connection) -> None:
     conn.commit()
 
 
+def _v21_folder_shares(conn: sqlite3.Connection) -> None:
+    """``shares`` gains ``folder``: a share names a page (``page_id``) or a
+    folder-label path (``folder``, the pages filed there or below it), the
+    other column ''. The page unique index becomes partial and a folder
+    twin joins it (docs/dev/workspaces.md "Shares")."""
+    if "folder" not in _columns(conn, "shares"):
+        conn.execute("ALTER TABLE shares ADD COLUMN folder TEXT NOT NULL DEFAULT ''")
+    conn.execute("DROP INDEX IF EXISTS idx_shares_page")
+    conn.execute("CREATE UNIQUE INDEX IF NOT EXISTS idx_shares_page ON shares(workspace_id, page_id) WHERE page_id != ''")
+    conn.execute("CREATE UNIQUE INDEX IF NOT EXISTS idx_shares_folder ON shares(workspace_id, folder) WHERE folder != ''")
+    conn.commit()
+
+
 STEPS = [
     (1, "baseline", _v1_baseline),
     (2, "workspaces", _v2_workspaces),
@@ -611,4 +624,5 @@ STEPS = [
     (18, "cloud_grant", _v18_cloud_grant),
     (19, "mirror_page_filter", _v19_mirror_page_filter),
     (20, "guest_accounts", _v20_guest_accounts),
+    (21, "folder_shares", _v21_folder_shares),
 ]

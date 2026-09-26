@@ -426,8 +426,9 @@ def test_shared_provider_is_masked_and_encrypted_at_rest(admin, shared):
     assert shared["key_hint"] == "…4242" and shared["label"] == "Lab key"
     listed = admin.get("/api/admin/ai-providers").json()
     assert SHARED_KEY not in str(listed) and listed["guests"] is False
-    # API-key protocols only: the form never offers the ChatGPT sign-in.
-    assert "chatgpt" not in [p["id"] for p in listed["protocols"]]
+    # A ChatGPT sign-in may be shared too (test_shared_chatgpt.py), through
+    # its own sign-in flow rather than this key form.
+    assert "chatgpt" in [p["id"] for p in listed["protocols"]]
     raw = _get_raw("ai_providers")
     assert raw and SHARED_KEY not in raw and "lab-model" in raw
     # Edits keep the stored key unless a new one is sent; validation is the

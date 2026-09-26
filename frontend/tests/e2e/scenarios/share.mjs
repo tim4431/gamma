@@ -1,6 +1,7 @@
 // Share links: creating one from the dialog, the anonymous share view (title,
 // PDF, highlight overlay, an image served through the share token, no
-// editing), and an edit share letting another account type into the page.
+// editing), an edit share letting another account type into the page, and a
+// folder share (the folder view's link button; the listing a visitor browses).
 import { tree, same, editRow, closeEditor, PNG_1PX } from "./notes.mjs";
 import { waitForPdf } from "./pdf.mjs";
 
@@ -44,6 +45,59 @@ export async function shareScenarios({ server, browser, alice, bob, step, until,
     assertNoProblems(page);
     await ctx.close();
     assertEq(JSON.stringify((await alice.api(`/api/chats/${shared.id}`)).messages), JSON.stringify(saved.messages), "owner's conversation is unchanged");
+  });
+
+  await step("folder share: the folder view's link button shares every page filed there; visitors browse the listing", async () => {
+    const paperA = await alice.api("/api/blocks", { method: "POST", body: { parent_id: "root", content: "Folder share paper A" } });
+    await alice.api(`/api/blocks/${paperA.id}`, { method: "PUT", body: { properties: { folder: "sharedlab/sub" } } });
+    const paperB = await alice.api("/api/blocks", { method: "POST", body: { parent_id: "root", content: "Folder share paper B" } });
+    await alice.api(`/api/blocks/${paperB.id}`, { method: "PUT", body: { properties: { folder: "sharedlab" } } });
+    await alice.api("/api/blocks", { method: "POST", body: { parent_id: paperA.id, content: "a note inside the shared folder" } });
+    const outside = await alice.api("/api/blocks", { method: "POST", body: { parent_id: "root", content: "Not in the shared folder" } });
+
+    // the owner: open the folder, share it from the browse bar's link button
+    const ctx = await alice.context(browser);
+    const page = await openPage(ctx, `${server.base}/?folder=sharedlab&ws=${alice.ws}`);
+    await page.click("button[aria-label='Share this folder']");
+    await page.waitForSelector(".sharePopover");
+    assert((await page.textContent(".sharePopover")).includes("Share this folder"), "the popover is about the folder");
+    await page.locator(".sharePopover button", { hasText: "Create link" }).click();
+    const copyBtn = page.locator(".sharePopover button", { hasText: /Copy link|Copied/ }).first();
+    await copyBtn.waitFor({ timeout: 10000 });
+    const folderToken = new URL(await copyBtn.getAttribute("title")).searchParams.get("share");
+    assert(folderToken, "folder share token");
+    await until(async () => (await page.textContent(".sharePopover")).includes("every page in this folder"), { what: "folder wording" });
+    await page.keyboard.press("Escape");
+    await page.locator(".sharePopover").waitFor({ state: "detached" });
+    assertNoProblems(page);
+    await ctx.close();
+    assertEq((await alice.api("/api/share-settings/folder?name=sharedlab")).token, folderToken, "the folder's share");
+
+    // an anonymous visitor: the listing, a page, and back — each a history entry
+    const vctx = await browser.newContext({ viewport: { width: 1280, height: 860 } });
+    const v = await openPage(vctx, `${server.base}/?share=${folderToken}`);
+    await v.waitForSelector(".sharedFolder .pageCard", { timeout: 15000 });
+    assertEq(await v.locator(".sharedFolder .pageCard").count(), 2, "both pages listed");
+    assert((await v.textContent(".readOnlyTitle")).includes("sharedlab"), "the folder name in the topbar");
+    await v.locator(".sharedFolder .pageCard", { hasText: "Folder share paper A" }).click();
+    await v.locator(".blockRow", { hasText: "a note inside the shared folder" }).waitFor({ timeout: 15000 });
+    assert(v.url().includes(`page=${paperA.id}`), "the open page rides in the URL");
+    await v.click("button[aria-label='Back to the shared folder']");
+    await v.waitForSelector(".sharedFolder .pageCard");
+    await v.goBack();
+    await v.locator(".blockRow", { hasText: "a note inside the shared folder" }).waitFor({ timeout: 15000 });
+    assertNoProblems(v);
+    await vctx.close();
+
+    // a deep link into the folder opens the page; the token never reaches other pages
+    const dctx = await browser.newContext({ viewport: { width: 1280, height: 860 } });
+    const d = await openPage(dctx, `${server.base}/?share=${folderToken}&page=${paperB.id}`);
+    await until(async () => (await d.textContent(".readOnlyTitle")).includes("Folder share paper B"), { what: "deep-linked page" });
+    assertNoProblems(d);
+    await dctx.close();
+    const refused = await fetch(`${server.base}/api/blocks/${outside.id}?share=${folderToken}`);
+    assertEq(refused.status, 403, "a page outside the folder is refused");
+    await alice.api("/api/share-settings/folder?name=sharedlab", { method: "DELETE" });
   });
 
   const account = alice2;

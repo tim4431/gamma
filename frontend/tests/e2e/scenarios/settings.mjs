@@ -944,9 +944,9 @@ export async function settingsScenarios(env) {
       await nav(page, "Server").click();
       await row(page, "Shared AI provider").getByRole("button", { name: "+ Add provider", exact: true }).click();
       const dialog = page.getByRole("dialog", { name: "Add shared key", exact: true });
-      // API keys only: the ChatGPT sign-in is not offered for a shared entry.
+      // A key or a ChatGPT sign-in (the next step connects one).
       await dialog.getByRole("button", { name: "AI service", exact: true }).click();
-      assertEq(await page.getByText("ChatGPT subscription", { exact: true }).count(), 0);
+      await page.locator(".uiSelectMenu").getByRole("button", { name: "ChatGPT subscription", exact: true }).waitFor();
       await page.locator(".uiSelectMenu").getByRole("button", { name: "OpenAI API", exact: true }).click();
       await dialog.locator('input[autocomplete="new-password"]').fill("sk-shared-e2e-key-7777");
       await dialog.getByRole("button", { name: "2 usable" }).waitFor();
@@ -993,6 +993,48 @@ export async function settingsScenarios(env) {
       }
       await user.api("/api/admin/ai-providers", { method: "PUT", body: { allowance: { accounts: 0, guests: 0 } } });
     }
+  });
+
+  await step("settings: a ChatGPT subscription can be the server's shared connection", async () => {
+    // The admin signs in from Settings → Server; the code exchange with
+    // OpenAI is the one thing faked (the backend's side is
+    // tests/test_shared_chatgpt.py).
+    const { ctx, page } = await setup();
+    try {
+      await page.evaluate(() => {
+        window.open = (url) => { window.testSignInUrl = url; return null; };
+      });
+      let completed = null;
+      await page.route("**/api/admin/ai-providers/chatgpt/complete", async (route) => {
+        completed = route.request().postDataJSON();
+        const info = await user.api("/api/admin/ai-providers");
+        info.providers.push({ id: "server:oauth-e2e", protocol: "chatgpt", name: "Lab ChatGPT", label: "Lab ChatGPT",
+          models: "gpt-lab", oauth_connected: true, account: "lab@example.com", shared: true });
+        await route.fulfill({ json: info });
+      });
+      await page.route("**/api/ai/model-catalog", (route) => route.fulfill({ json: { models: ["gpt-lab", "gpt-lab-mini"] } }));
+      await openSettings(page);
+      await nav(page, "Server").click();
+      await row(page, "Shared AI provider").getByRole("button", { name: "+ Add provider", exact: true }).click();
+      const dialog = page.getByRole("dialog", { name: "Add shared key", exact: true });
+      await dialog.getByRole("button", { name: "AI service", exact: true }).click();
+      await page.locator(".uiSelectMenu").getByRole("button", { name: "ChatGPT subscription", exact: true }).click();
+      await dialog.getByRole("button", { name: "Open ChatGPT sign-in", exact: true }).click();
+      await until(() => page.evaluate(() => !!window.testSignInUrl), { what: "the sign-in page opened" });
+      const state = await page.evaluate(() => new URL(window.testSignInUrl).searchParams.get("state"));
+      await dialog.getByRole("textbox", { name: /Callback URL/ }).fill(`http://localhost:1455/auth/callback?code=test&state=${state}`);
+      await dialog.getByRole("button", { name: "Connect", exact: true }).click();
+      // Connected: the form stays open on the entry with the account's live list.
+      const edit = page.getByRole("dialog", { name: "Edit shared key", exact: true });
+      await edit.getByRole("button", { name: "2 usable" }).waitFor();
+      assertEq(completed?.state, state, "the shared flow's own state is redeemed");
+      assertEq(completed?.provider_id, "", "a new entry, not a reconnect");
+      await edit.getByRole("button", { name: "Cancel", exact: true }).click();
+      const shared = page.locator(".settingsPane .aiProvRow").filter({ hasText: "signed in as lab@example.com" });
+      await shared.waitFor();
+      await shared.getByRole("button", { name: "Usage", exact: true }).waitFor();
+      assertNoProblems(page);
+    } finally { await ctx.close(); }
   });
 
   // The red dot (app/notices.js): the feed is faked so no real error or

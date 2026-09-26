@@ -155,13 +155,14 @@ Keep identity and data location separate in endpoint code:
 | `require_ws(request, write=True)` | Workspace ID with editor or owner access |
 | `resolve_ws(request)` | Read through a share token, otherwise normal workspace access |
 | `require_ws_writer(request)` | Write through an edit share, otherwise workspace editor access |
-| `share_scope_page(request)` | Page boundary that a share-enabled endpoint must enforce |
+| `share_scope(request)` | The `ShareScope` (one page, or the pages filed in one folder) a share-enabled endpoint must enforce |
 
 Without a share token, selection is `?ws=` first, then `X-Gamma-Workspace`,
 then the account's default. An inaccessible explicit workspace is refused;
 the server does not fall back to another library. A share token chooses its
-own workspace and confines access to one page. Workspace roles and page
-invites determine whether that person can view or edit it.
+own workspace and confines access to one page, or to the pages filed in one
+folder ([api.md](api.md) "Shares"). Workspace roles and the share's invites
+determine whether that person can view or edit them.
 
 Pass the workspace ID to data helpers such as `connect_pages_db` and
 `commit_ops`. Use `request.state.user` as the actor in the operation log.

@@ -129,13 +129,25 @@ stream shapes.
 An admin can add provider entries for the whole server (Settings → Server →
 Shared AI provider, `/api/admin/ai-providers*`), so the members of a lab do
 not each need a key. A shared entry has an account entry's shape (`id, name,
-protocol, api_key, base_url, models, test_model, created_at`), API-key
-protocols only (no ChatGPT sign-in: its tokens belong to one person). The
-list lives in the users.db `settings` KV under `ai_providers` as
-`{providers: [...], guests: bool, allowance: {accounts, guests}}`, at most
-`MAX_PROVIDERS` (20) entries, each `api_key` Fernet-encrypted with the data
-directory's key the way the cloud client secret is (`publisher_sessions.cipher`); a key that no longer
-decrypts reads as no key and logs a warning. The same helpers validate both
+protocol, api_key, base_url, models, test_model, created_at`, plus `oauth`
+for a sign-in): an API key, or a ChatGPT subscription the admin signs in to
+from the same form (`POST /api/admin/ai-providers/chatgpt/start` +
+`complete`, the account flow's `begin_chatgpt_signin` /
+`redeem_chatgpt_signin` with the state bound to `("server", <admin>)`, so
+neither side's state redeems on the other; `provider_id` on `complete`
+reconnects an entry). The list lives in the users.db `settings` KV under
+`ai_providers` as `{providers: [...], guests: bool, allowance: {accounts,
+guests}}`, at most `MAX_PROVIDERS` (20) entries, each `api_key` and each
+sign-in's `oauth` tokens Fernet-encrypted with the data directory's key the
+way the cloud client secret is (`publisher_sessions.cipher`); a key or a
+sign-in that no longer decrypts reads as none and logs a warning. A shared
+sign-in's token refresh runs under the entry's own lock
+(`_refreshed_server_oauth`: every account's requests refresh the same
+tokens, and OpenAI rotates the refresh token) and writes only the tokens
+back. Its refresh backoff is reset only by an admin's Test, usage query or
+login check, so a dead shared grant is not retried on every account's
+login. The signed-in e-mail (`account`) is masked like the key hint: admins
+only. The same helpers validate both
 lists (`new_key_entry`, `update_entry`, `apply_provider_fields`,
 `mask_entry` in `ai_settings.py`).
 
@@ -147,8 +159,9 @@ the admin switch `guests` is on (default off); a name that is not an account
 (a link visitor) never does. `GET /api/ai/settings` lists them after the
 account's own as read-only rows (`shared: true`), with the last-4 key hint
 for admins only; `/api/ai/providers/{id}` never edits or deletes them (404).
-An admin may name a shared id on the Test probe and the model catalog, which
-is how the Server section's form lists models and tests a saved entry; the
+An admin may name a shared id on the Test probe, the model catalog and a
+sign-in's subscription usage (`/api/ai/providers/{id}/usage`), which is how
+the Server section's form lists models and tests a saved entry; the
 login check (`/api/ai/health`) accepts any entry the account can use. Token
 usage stays per account: a member's calls through a shared entry are
 recorded on that member (provider id `server:<id>`), and there is no

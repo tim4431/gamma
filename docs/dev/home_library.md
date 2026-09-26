@@ -164,3 +164,11 @@ rollup), checks the ones the selection already carries, and ends with the
 per-tag "remove from" rows; adding still uses the soft-link `addPagesToFolder`
 (same as dropping a card on a folder). Every page card surface opens the SAME
 menu — the Recently-viewed strip and the pinned strip included.
+
+A folder's menu also has **Share…**: it opens the folder and the share
+popover (`sharing/SharePopover.jsx` with a folder `target`, otherwise the
+page header's popover word for word) under the topbar's link button — the
+same button a page shows, offered while a folder is open — one link for
+every page filed in the folder, now and later ([api.md](api.md) "Shares"). Renaming, moving or
+deleting a folder carries its chat buckets and its shares along through
+`POST /folders/rename`, the one call after the tag rewrite.

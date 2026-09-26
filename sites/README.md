@@ -41,7 +41,10 @@ line with the app's privacy policy.
 The header's **Log in** link and the `/login`, `/account` and `/signup`
 short links go to the Gamma Cloud account server at `account.gammapdf.com`
 ([docs/dev/cloud_accounts.md](../docs/dev/cloud_accounts.md)); the site
-itself has no accounts.
+itself has no accounts. The hero's **Try the demo** button, the header's
+**Demo** link and the `/demo` short link go to the public demo at
+`demo.gammapdf.com`, a Gamma in demo mode where every visitor gets a
+throwaway guest workspace ([docs/dev/guests.md](../docs/dev/guests.md)).
 
 `_redirects` gives the short links (`/download`, `/download/windows`,
 `/docs`, `/github`, …); its sources must be relative paths, so the `www.` to

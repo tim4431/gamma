@@ -82,8 +82,9 @@ environment variable decides (`gamma/server_settings.py guest_settings`).
 ## The shared AI allowance
 
 The admin's shared provider entries (`gamma/ai_settings.py`, Settings →
-Server → Shared AI) are what "per-server AI access" means: every account
-gets them after its own entries, the guest switch adds guests, and every
+Server → Shared AI; an API key or a ChatGPT subscription the admin signs in
+to) are what "per-server AI access" means: every account gets them after
+its own entries, the guest switch adds guests, and every
 account that is not a guest may add its own keys on top. The allowance
 meters the shared entries only, per account, over a rolling 24 hours:
 

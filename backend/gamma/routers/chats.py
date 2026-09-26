@@ -19,8 +19,8 @@ import uuid
 from fastapi import APIRouter, HTTPException, Request
 from pydantic import BaseModel
 
-from ..auth import require_ws, resolve_ws, share_scope_page
-from ..db import connect_data_db, page_now
+from ..auth import require_ws, resolve_ws, share_scope
+from ..db import connect_data_db, connect_pages_db, page_now
 
 
 router = APIRouter(prefix="/api/chats", tags=["chats"])
@@ -39,11 +39,6 @@ def _require_chat_writer(request: Request) -> str:
 class ChatSaveRequest(BaseModel):
     messages: list
     title: str | None = None   # None = keep the stored title
-
-
-class ChatFolderRenameRequest(BaseModel):
-    src: str        # folder path whose chat buckets move ("a/b" — never "")
-    dst: str = ""   # new path; "" = the folder was deleted, drop its buckets
 
 
 class ChatArchiveRequest(BaseModel):
@@ -100,20 +95,15 @@ def _archive(database, bucket: str, messages: list, title: str) -> str | None:
     return entry_id
 
 
-@router.post("/folder-rename")
-async def rename_folder_chats(payload: ChatFolderRenameRequest, request: Request):
-    """Follow a folder rename/move/delete: per-folder buckets embed the path
-    in their key, so path rewrites must carry the conversations along. The
-    frontend calls this with the same src → dst prefix mapping it applies to
-    the pages' folder tags (subfolders ride along). When the destination
-    already holds a real conversation it wins and the source is dropped; an
-    empty destination row (a save-effect echo) is overwritten. History
-    entries simply follow their bucket (ids never collide)."""
-    ws = _require_chat_writer(request)
-    src = (payload.src or "").strip().strip("/")
-    dst = (payload.dst or "").strip().strip("/")
-    if not src:
-        raise HTTPException(status_code=400, detail="src folder path required")
+def move_folder_buckets(ws: str, src: str, dst: str) -> dict:
+    """Follow a folder rename/move/delete (POST /folders/rename,
+    gamma/routers/folders.py): per-folder buckets embed the path in their
+    key, so path rewrites must carry the conversations along — the same
+    src → dst prefix mapping the frontend applies to the pages' folder tags
+    (subfolders ride along). When the destination already holds a real
+    conversation it wins and the source is dropped; an empty destination
+    row (a save-effect echo) is overwritten. History entries simply follow
+    their bucket (ids never collide). ``dst`` "" drops the conversations."""
     src_key = f"home:{src}"
     prefix_match = "(bucket = ? OR substr(bucket, 1, ?) = ?)"
     with connect_data_db(ws) as database:
@@ -146,15 +136,17 @@ async def rename_folder_chats(payload: ChatFolderRenameRequest, request: Request
                 database.execute("UPDATE chat_history SET bucket = ? WHERE id = ?",
                                  (f"home:{dst}" + bucket[len(src_key):], entry_id))
         database.commit()
-    return {"ok": True, "moved": len(rows), "history_moved": len(hist)}
+    return {"moved": len(rows), "history_moved": len(hist)}
 
 
 @router.get("/{block_id:path}")
 async def get_chat(block_id: str, request: Request):
     ws = resolve_ws(request)
-    shared_page = share_scope_page(request)
-    if shared_page and block_id != shared_page:
-        raise HTTPException(status_code=403, detail="chat is outside the shared page")
+    scope = share_scope(request)
+    if scope is not None:
+        with connect_pages_db(ws) as conn:
+            if not scope.allows_page(conn, block_id):
+                raise HTTPException(status_code=403, detail="chat is outside the shared page")
     with connect_data_db(ws) as database:
         row = database.execute(
             "SELECT messages, title FROM chats WHERE block_id = ?", (block_id,)

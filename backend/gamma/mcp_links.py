@@ -1,17 +1,21 @@
 """Resolve Gamma links locally within the authenticated MCP workspace.
 
 A pasted URL is an identifier, never a fetch target or an additional grant.
+A page, block or page-share link resolves to a page (``page_id``); a
+folder-share link resolves to the folder (``folder``) — the same pages the
+share view lists — unless it also names a page in that folder.
 """
 
 from urllib.parse import parse_qs, urlencode, urlsplit
 
+from .auth import ShareScope
 from .blocks_store import page_root_id
 from .db import connect_pages_db, connect_users_db
 
 LINK_SCHEMA = {
     "type": "object", "additionalProperties": False,
     "properties": {"url": {"type": "string", "minLength": 1, "maxLength": 8192,
-                           "description": "A Gamma page, block, or share URL, optionally with pdf_page and quote."}},
+                           "description": "A Gamma page, block, share or folder-share URL, optionally with pdf_page and quote."}},
     "required": ["url"],
 }
 
@@ -47,18 +51,27 @@ def resolve_link(ws: str, base: str, url: str) -> dict:
         raise ValueError("This link belongs to a different Gamma server. Use its MCP connection or copy a link from this server.")
     if values.get("ws", ws) != ws:
         raise ValueError("This link is outside the connected workspace. Connect the page's workspace first.")
-    page_id, block_id = values.get("page"), values.get("block")
+    page_id, block_id, folder = values.get("page"), values.get("block"), ""
     if values.get("share"):
         # Resolve only in the granted workspace, including restricted shares.
         # The integration already has workspace access; share audience adds none.
         with connect_users_db() as conn:
-            row = conn.execute("SELECT page_id FROM shares WHERE token = ? AND workspace_id = ?",
+            row = conn.execute("SELECT page_id, folder FROM shares WHERE token = ? AND workspace_id = ?",
                                (values["share"], ws)).fetchone()
         if not row:
             raise ValueError("This share link is unavailable in the connected workspace.")
-        if page_id and page_id != row[0]:
-            raise ValueError("The page and share link refer to different pages.")
-        page_id = row[0]
+        if row[0]:
+            if page_id and page_id != row[0]:
+                raise ValueError("The page and share link refer to different pages.")
+            page_id = row[0]
+        else:
+            folder = row[1]
+    if folder and not page_id and not block_id:
+        reference = {"workspace_id": ws, "folder": folder,
+                     "url": base + "/?" + urlencode({"ws": ws, "folder": folder})}
+        if values.get("quote"):
+            reference["selected_quote"] = values["quote"]
+        return reference
     pdf_page = None
     if "pdf_page" in values:
         raw = values["pdf_page"]
@@ -73,6 +86,8 @@ def resolve_link(ws: str, base: str, url: str) -> dict:
             page_id = root
         row = conn.execute("SELECT content FROM unified_blocks WHERE id = ? AND parent_id = 'root'",
                            (page_id,)).fetchone() if page_id else None
+        if row and folder and not ShareScope(folder=folder).allows_page(conn, page_id):
+            raise ValueError("The linked page is not in the shared folder.")
     if not row:
         raise ValueError("The linked page is unavailable in the connected workspace.")
     canonical = {"ws": ws, "page": page_id}

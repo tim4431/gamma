@@ -28,7 +28,7 @@ from .config import USERS_DB, WORKSPACES_DIR
 # The data-directory schema version this code expects (users.db
 # ``PRAGMA user_version``). Bump it together with a new step in
 # gamma/migrations.py — never without one, never without bumping.
-SCHEMA_VERSION = 20
+SCHEMA_VERSION = 21
 
 
 class SchemaOutdated(RuntimeError):
@@ -211,22 +211,27 @@ USERS_SCHEMA = [
         PRIMARY KEY (workspace_id, subject)
     )""",
     "CREATE INDEX IF NOT EXISTS idx_pending_subject ON pending_memberships(subject)",
-    # Share links, one per (workspace, page). page_id is the shared page's
-    # root block. audience: who may open the link — "anyone" (no login),
-    # "users" (any signed-in non-guest account), "list" (the usernames in
-    # allowed_users, "carol:edit,dave:view"). role: "view" or "edit" (edit
-    # never applies to anonymous viewers — see gamma/auth.py share_access).
+    # Share links, one per (workspace, page) or per (workspace, folder): a row
+    # names a page (page_id, the shared page's root block) OR a folder
+    # (folder, a folder-label path — the pages filed there or below it,
+    # read live); the other column is ''. audience: who may open the link —
+    # "anyone" (no login), "users" (any signed-in non-guest account), "list"
+    # (the usernames in allowed_users, "carol:edit,dave:view"). role: "view"
+    # or "edit" (edit never applies to anonymous viewers — see gamma/auth.py
+    # share_access).
     """CREATE TABLE IF NOT EXISTS shares (
         token TEXT PRIMARY KEY,
         workspace_id TEXT NOT NULL,
-        page_id TEXT NOT NULL,
+        page_id TEXT NOT NULL DEFAULT '',
+        folder TEXT NOT NULL DEFAULT '',
         created_by TEXT NOT NULL DEFAULT '',
         audience TEXT NOT NULL DEFAULT 'anyone',
         role TEXT NOT NULL DEFAULT 'view',
         allowed_users TEXT NOT NULL DEFAULT '',
         created_at TEXT NOT NULL
     )""",
-    "CREATE UNIQUE INDEX IF NOT EXISTS idx_shares_page ON shares(workspace_id, page_id)",
+    "CREATE UNIQUE INDEX IF NOT EXISTS idx_shares_page ON shares(workspace_id, page_id) WHERE page_id != ''",
+    "CREATE UNIQUE INDEX IF NOT EXISTS idx_shares_folder ON shares(workspace_id, folder) WHERE folder != ''",
     # Small JSON values that follow the ACCOUNT (docs/dev/settings.md):
     # workspace_id '' = personal (appearance, the AI provider entries),
     # otherwise per account AND workspace (open tabs, recents — they name

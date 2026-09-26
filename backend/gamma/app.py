@@ -26,6 +26,7 @@ from .routers import (
     clip,
     collab,
     export,
+    folders,
     imports,
     integrations,
     ink,
@@ -158,6 +159,7 @@ def create_app() -> FastAPI:
     app.include_router(export.router)
     app.include_router(links.router)
     app.include_router(clip.router)
+    app.include_router(folders.router)
     app.include_router(collab.router)
     app.include_router(sync.router)
     app.include_router(mirrors.router)
