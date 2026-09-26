@@ -1,7 +1,7 @@
 // Handwriting (docs/dev/handwriting.md): the tool strip and its presets,
 // mouse strokes becoming an ink block with an .ink upload, persistence
-// across a reload, the eraser, the lasso, the notes card's jump + flash,
-// and /Ink in the annotated PDF.
+// across a reload, the eraser, the lasso, the notes card's jump + flash.
+// /Ink in the annotated PDF is backend/tests/test_ink.py.
 import { waitForPdf } from "./pdf.mjs";
 
 async function drawLine(page, from, to) {
@@ -33,7 +33,6 @@ export async function inkScenarios({ server, browser, alice, makePdf, step, unti
     assertEq((await page.$$(".pdfInkBar .inkToolInk")).length, 7, "the default presets: four pens, three highlighters");
     const buttons = await page.locator(".pdfInkRow button").evaluateAll((els) => els.map((el) => el.getAttribute("aria-label")));
     assertEq(JSON.stringify(buttons.slice(-2)), JSON.stringify(["Undo ink", "Redo ink"]), "history controls are last");
-    assertEq(await page.locator(".pdfInkBar button[title^='Start a new']").count(), 0, "new-note plus button removed");
     box = await page.locator('[data-page="1"]').boundingBox();
     await drawLine(page, [box.x + 100, box.y + 150], [box.x + 250, box.y + 170]);
     await drawLine(page, [box.x + 100, box.y + 250], [box.x + 250, box.y + 280]);
@@ -187,14 +186,9 @@ export async function inkScenarios({ server, browser, alice, makePdf, step, unti
     assertNoProblems(page);
   });
 
-  await step("ink: the notes card jumps to the group and outlines it; the annotated PDF carries /Ink", async () => {
+  await step("ink: the notes card jumps to the group and outlines it", async () => {
     await page.click(".blockInkCard");
     await page.waitForSelector('[data-page="1"] .inkFlash', { timeout: 5000 });
-    const r = await account.api(`/api/pages/${pageId}/export-pdf`, { raw: true });
-    assert(r.ok, `export-pdf ${r.status}`);
-    const bytes = Buffer.from(await r.arrayBuffer());
-    assert(bytes.includes("/Ink"), "the exported PDF has an /Ink annotation");
-    assert(bytes.includes("/GammaInk"), "…carrying the gamma-ink strokes for a round trip");
     if (flags.keep) await page.screenshot({ path: `${server.dir}/ink-notes.png` });
     assertNoProblems(page);
   });

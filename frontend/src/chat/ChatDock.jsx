@@ -5,6 +5,7 @@
 // prompt preferences it also needs elsewhere.
 import React, { useCallback, useEffect, useMemo, useRef, useState, useSyncExternalStore } from "react";
 import { API, apiJson, copyText, isPdfFile, readNdjson } from "../shared/lib/utils";
+import { stepList } from "../shared/ui/listKeys.js";
 import { DockWindow, ChatMarkdown, AutoGrowTextarea, useCopied, useTextScale } from "../shared/ui/Widgets";
 import PaperMentionInput from "./PaperMentionInput";
 import { MAX_CHAT_REFERENCES } from "./paperMentions";
@@ -1544,7 +1545,14 @@ export default function ChatDock({
       </> : null}
       {docPicker ? (
         <div className="reportOverlay" onClick={() => setDocPicker(false)}>
-          <div className="reportModal docPickerModal" onClick={(e) => e.stopPropagation()}>
+          <div className="reportModal docPickerModal" onClick={(e) => e.stopPropagation()}
+            onKeyDown={(e) => {
+              // ↑/↓ walk the search box and the pages' checkboxes; Enter on a
+              // page ticks it like Space does.
+              const list = [...e.currentTarget.querySelectorAll(".docPickerList input[type=checkbox]")];
+              if (stepList(e, e.currentTarget.querySelector("[data-find]"), list)) return;
+              if (e.key === "Enter" && list.includes(e.target)) { e.preventDefault(); e.target.click(); }
+            }}>
             <div className="reportModalTitle">{t("Add pages to the chat")}</div>
             <div className="reportModalHint">
               {t("Selected pages (their PDF text, and optionally your notes) are sent with every question — pick a few and just ask for a report.")}
@@ -1555,7 +1563,18 @@ export default function ChatDock({
               placeholder={t("Search your pages…")}
               value={docPickerQuery}
               onChange={(e) => setDocPickerQuery(e.target.value)}
-              onKeyDown={(e) => { if (e.key === "Escape") { e.preventDefault(); setDocPicker(false); } }}
+              onKeyDown={(e) => {
+                if (e.key === "Escape") { e.preventDefault(); setDocPicker(false); }
+                // Enter ticks the best match (with a query) and selects the
+                // query, so the next name typed replaces it; on an empty box
+                // it is Done.
+                if (e.key === "Enter" && !e.nativeEvent.isComposing) {
+                  e.preventDefault();
+                  if (!docPickerQuery.trim()) { setDocPicker(false); return; }
+                  const first = e.currentTarget.closest(".docPickerModal").querySelector(".docPickerList input[type=checkbox]");
+                  if (first && !first.disabled) { first.click(); e.currentTarget.select(); }
+                }
+              }}
             />
             <div className="reportPageList docPickerList">
               {(() => {

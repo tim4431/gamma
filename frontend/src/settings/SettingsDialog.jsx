@@ -1,4 +1,5 @@
 import React from "react";
+import { stepList } from "../shared/ui/listKeys.js";
 import { API, apiJson, fmtBytes, isUnverifiedPaperMeta, metaSourceInfo, getCurrentWorkspace } from "../shared/lib/utils";
 import { MenuSelect } from "../shared/ui/Menus";
 import { T, t, tn } from "../shared/i18n/i18n.js";
@@ -836,7 +837,7 @@ const SYNC_SOON_MS = 6000; // the server pushes to Gamma Cloud 5 s after a chang
 // account-wide), polled every 15 s, again as soon as a local change has been
 // saved, and sooner while a push waits. Every answer also goes to the local
 // hook's noteCloud, which then knows when its last push reached the cloud.
-// `refresh()` polls again at once (after Settings → Account synced by hand).
+// `refresh()` polls again at once (after Settings → Account & sync synced by hand).
 function useCloudSyncStatus(open, local) {
   const [cloud, setCloud] = React.useState(null);
   const [tick, setTick] = React.useState(0);
@@ -873,6 +874,7 @@ export default function SettingsDialog({
   const [pending, setPending] = React.useState(null);
   const paneRef = React.useRef(null);
   const modalRef = React.useRef(null);
+  const searchRef = React.useRef(null);
   const drafts = React.useRef(new Map());
   const available = (id) => {
     if (id === "integrations") return !!users && !users.isGuest;
@@ -923,14 +925,7 @@ export default function SettingsDialog({
   }, [!!activePane]);
   if (!activePane) return null;
   const results = searchSettings(query, allowed.map(([id]) => id));
-  // ↑/↓ walk the search results; ↑ from the first goes back to the box.
-  const stepResults = (event) => {
-    if (event.key !== "ArrowDown" && event.key !== "ArrowUp") return;
-    event.preventDefault();
-    const list = [...paneRef.current.querySelectorAll(".settingsSearchResult")];
-    const next = list[list.indexOf(event.currentTarget) + (event.key === "ArrowDown" ? 1 : -1)];
-    (next || (event.key === "ArrowUp" ? modalRef.current.querySelector("[data-find]") : null))?.focus();
-  };
+
   const aiValue = { ...ai, aiInfo: prompts.aiInfo };
   const paperValue = { ...papers, chatModelName: (ai.aiModels || []).find((m) => m.id === ai.chatModel)?.model };
   const navButton = ([id, label, Icon]) => <button key={id} type="button"
@@ -947,6 +942,8 @@ export default function SettingsDialog({
           role="dialog" aria-modal="true" aria-label={t("Settings")}
           tabIndex={-1} ref={modalRef} onClick={(event) => event.stopPropagation()}
           onKeyDown={(event) => {
+            if (query.trim() && stepList(event, searchRef.current,
+              [...(paneRef.current?.querySelectorAll(".settingsSearchResult") || [])])) return;
             if (event.key === "Escape") {
               event.stopPropagation(); event.preventDefault();
               if (pending) setPending(null);
@@ -967,16 +964,16 @@ export default function SettingsDialog({
             <div className="settingsSearch">
               <SearchIcon size={16} />
               <input className="aiKeyInput" type="search" aria-label={t("Search settings")} placeholder={t("Search settings...")} value={query}
-                data-find
+                ref={searchRef} data-find
                 onChange={(event) => {
                   const next = event.target.value;
                   guard(() => { setQuery(next); setMobileIndex(false); });
                 }}
                 onKeyDown={(event) => {
-                  // Enter opens the first match; ↓ steps into the list.
-                  if (!query.trim() || event.nativeEvent.isComposing) return;
-                  if (event.key === "Enter" && results.length) { event.preventDefault(); navigate(results[0].pane, results[0].label); }
-                  if (event.key === "ArrowDown") { event.preventDefault(); paneRef.current?.querySelector(".settingsSearchResult")?.focus(); }
+                  // Enter opens the first match; the arrows walk the list (the modal's onKeyDown).
+                  if (event.key === "Enter" && query.trim() && results.length && !event.nativeEvent.isComposing) {
+                    event.preventDefault(); navigate(results[0].pane, results[0].label);
+                  }
                 }} />
               {query ? <button className="uiClose uiCloseSm" aria-label={t("Clear search")} onClick={() => setQuery("")}>×</button> : null}
             </div>
@@ -994,7 +991,7 @@ export default function SettingsDialog({
               {query.trim() ? <>
                 <PaneHead icon={SearchIcon} title={t("Search settings")}>{tn("{n} matching setting", "{n} matching settings", results.length)}</PaneHead>
                 {results.length ? results.map(({ pane: id, label }) => <button key={`${id}:${label}`} className="uiBtn settingsSearchResult"
-                  onClick={() => navigate(id, label)} onKeyDown={stepResults}><span>{t(label)}</span><small>{t(allNav.find(([key]) => key === id)?.[1] || "")}</small></button>)
+                  onClick={() => navigate(id, label)}><span>{t(label)}</span><small>{t(allNav.find(([key]) => key === id)?.[1] || "")}</small></button>)
                   : <Empty icon={SearchIcon}>{t('No settings found. Try "model", "PDF", or "storage".')}</Empty>}
               </> : <>
                 {pane === "appearance" ? <AppearanceSettings value={papers} diagnostics={diagnostics} /> : null}

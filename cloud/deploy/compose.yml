@@ -49,7 +49,7 @@ services:
   demo:
     # sha-<short> of the build to run. update-demo-server rewrites this line
     # on the host; the value here is only the first deployment's.
-    image: ghcr.io/tim4431/gamma:sha-a0d31c6
+    image: ghcr.io/tim4431/gamma:sha-30586ef
     restart: unless-stopped
     env_file: demo.env
     volumes:

@@ -164,4 +164,39 @@ export async function chatNavigationScenarios(env) {
       assertNoProblems(page);
     } finally { await ctx.close(); }
   });
+
+  await step("chat navigation: the page picker's keys — Enter ticks the best match, arrows walk, Ctrl+F stays in the picker", async () => {
+    const ctx = await alice.context(browser);
+    await ctx.addInitScript(() => localStorage.setItem("gamma-ai-login-check", "off"));
+    const page = await openPage(ctx, `${server.base}/?ws=${alice.ws}`);
+    try {
+      await page.getByRole("button", { name: "Add attachments or chat context" }).click();
+      await page.locator(".chatPlusMenuItem", { hasText: "Add pages from library" }).click();
+      const picker = page.locator(".docPickerModal");
+      const box = picker.getByPlaceholder("Search your pages…");
+      await box.waitFor();
+      const linked = picker.locator(".docPickerItem", { hasText: "Linked paper" }).locator("input");
+      await box.fill("Linked paper");
+      await box.press("Enter");
+      await until(() => linked.isChecked());
+      assertEq(await box.evaluate((el) => el.selectionStart === 0 && el.selectionEnd === el.value.length), true, "the query is selected for the next name");
+      // ↓ reaches the page's checkbox, Enter unticks it, ↑ goes back to the box.
+      await page.keyboard.press("ArrowDown");
+      assertEq(await linked.evaluate((el) => el === document.activeElement), true);
+      await page.keyboard.press("Enter");
+      await until(async () => !(await linked.isChecked()));
+      await page.keyboard.press("ArrowUp");
+      await until(() => box.evaluate((el) => el === document.activeElement));
+      // Ctrl+F from a checkbox comes back to the picker's box, not find-in-chat.
+      await page.keyboard.press("ArrowDown");
+      await page.keyboard.press("Control+f");
+      await until(() => box.evaluate((el) => el === document.activeElement));
+      assertEq(await page.locator(".chatFindRow").count(), 0);
+      // Enter on an empty box is Done.
+      await box.fill("");
+      await box.press("Enter");
+      await until(async () => !(await picker.count()));
+      assertNoProblems(page);
+    } finally { await ctx.close(); }
+  });
 }

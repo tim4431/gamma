@@ -77,6 +77,7 @@ import {
 } from "../shared/model/blockModel";
 import { chordLabel, dispatch as dispatchHotkey, effectiveKeys } from "../shared/lib/hotkeys.js";
 import { APP_COMMANDS, liveAppCommands } from "./appCommands.js";
+import { stepList } from "../shared/ui/listKeys.js";
 import { BLOCK_COMMANDS } from "../editor/blockCommands.js";
 import { loadSession, saveSession, clearSession, setSessionScope } from "./sessionState";
 import { ROLE_LABEL, workspaceMeta } from "../settings/SettingsWorkspace";
@@ -2514,7 +2515,7 @@ function LibraryApp({ publicPage = null, initialServerConfig = null }) {
     return null;
   });
   // The first settings sync with Gamma Cloud found two different copies:
-  // Settings → Account asks which to keep, opened once per page load.
+  // Settings → Account & sync asks which to keep, opened once per page load.
   const askedCloudChoice = useRef(false);
   useEffect(() => {
     if (!profileSync.cloudChoice || askedCloudChoice.current) return;
@@ -9362,7 +9363,8 @@ function LibraryApp({ publicPage = null, initialServerConfig = null }) {
       ) : null}
       {moveBlockDialog ? (
         <div className="reportOverlay" onClick={() => setMoveBlockDialog(null)}>
-          <div className="reportModal confirmModal" onClick={(e) => e.stopPropagation()}>
+          <div className="reportModal confirmModal" onClick={(e) => e.stopPropagation()}
+            onKeyDown={(e) => stepList(e, e.currentTarget.querySelector("[data-find]"), [...e.currentTarget.querySelectorAll(".moveBlockList .ctxMenuItem")])}>
             <div className="reportModalTitle">{moveBlockDialog.fragment ? t("Move to page") : t("Move block to page")}</div>
             <div className="reportModalHint confirmMessage">{moveBlockDialog.fragment
               ? t("It becomes a block of its own at the end of the chosen page.")
@@ -9375,7 +9377,7 @@ function LibraryApp({ publicPage = null, initialServerConfig = null }) {
                 onChange={(e) => setMoveBlockDialog((s) => ({ ...s, query: e.target.value }))}
                 onKeyDown={(e) => {
                   if (e.key === "Escape") setMoveBlockDialog(null);
-                  else if (e.key === "Enter" && movePageMatches.length) {
+                  else if (e.key === "Enter" && movePageMatches.length && !e.nativeEvent.isComposing) {
                     doMoveBlock(moveBlockDialog.blockId, movePageMatches[0]);
                   }
                 }}
@@ -9383,7 +9385,8 @@ function LibraryApp({ publicPage = null, initialServerConfig = null }) {
             </div>
             <div className="moveBlockList">
               {movePageMatches.map((p) => (
-                <MenuItem key={p.id} icon={FileTextIcon} onClick={() => doMoveBlock(moveBlockDialog.blockId, p)}>
+                <MenuItem key={p.id} icon={FileTextIcon} onClick={() => doMoveBlock(moveBlockDialog.blockId, p)}
+                  onKeyDown={(e) => { if (e.key === "Escape") setMoveBlockDialog(null); }}>
                   {p.content || t("Untitled")}
                 </MenuItem>
               ))}

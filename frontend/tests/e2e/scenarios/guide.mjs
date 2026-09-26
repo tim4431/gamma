@@ -2,14 +2,15 @@
 // registered anchor for the home view is in the DOM, the demo step adds a
 // paper by itself (click Add, type the link, Enter — against an uploaded PDF
 // so no network is needed), the user's highlight checks the next step off,
-// Esc leaves and records the dismissal, and the account menu restarts it.
+// finishing records "done", the account menu restarts it, and Esc leaves a
+// replay with its temporary selection cleared.
 import { ANCHORS, anchorsForView } from "../../../src/guide/anchors.js";
 import { selectPdfText, waitForPdf } from "./pdf.mjs";
 import { ABSTRACT_PASSAGE } from "../../../src/guide/previewHighlight.js";
 import { readFileSync } from "node:fs";
 
 export async function guideScenarios(env) {
-  const { server, browser, alice, step, until, assert, assertEq, assertNoProblems, openPage, makePdf } = env;
+  const { server, browser, alice, step, until, assert, assertEq, assertNoProblems, openPage, makePdf, flags } = env;
   await step("guide: first-run tour — demo adds a paper, the user highlights, menu restarts", async () => {
     const pdf = process.env.GAMMA_GUIDE_PDF ? readFileSync(process.env.GAMMA_GUIDE_PDF) : makePdf([[
       "Attention is all you need, said the transformer.",
@@ -21,7 +22,7 @@ export async function guideScenarios(env) {
     const up = await alice.upload("/api/uploads", pdf, "attention.pdf", "application/pdf");
     const ctx = await alice.context(browser);
     await ctx.addInitScript((url) => localStorage.setItem("gamma-guide-vars", JSON.stringify({ demoUrl: url })), `/api/uploads/${up.doc_id}.pdf`);
-    const page = await openPage(ctx, `${server.base}/?ws=${alice.ws}&guide=first-run`);
+    const page = await openPage(ctx, `${server.base}/?ws=${alice.ws}`);
     try {
       await page.click('[data-guide="header.account"]');
       await page.click('[data-guide="account.tour"]');
@@ -43,7 +44,7 @@ export async function guideScenarios(env) {
       await until(async () => (await page.locator(".guideCursor").getAttribute("style")) !== firstPointer, { what: "the example pointer moves across the text" });
       await page.waitForSelector('[data-guide="pdf.highlightColor"]');
       assertEq((await page.evaluate(() => window.getSelection().toString())).replace(/\s/g, ""), ABSTRACT_PASSAGE.replace(/\s/g, ""), "demo selects the requested abstract across lines");
-      await page.screenshot({ path: `${server.dir}/highlight-demo.png` });
+      if (flags.keep) await page.screenshot({ path: `${server.dir}/highlight-demo.png` });
       await page.waitForSelector('[data-guide-overlay="highlight"] .guideCard', { timeout: 30000 });
       assertEq(await page.evaluate(() => window.getSelection().toString()), "", "example selection clears before handing over");
       assertEq(await page.locator("[data-hl-id]").count(), 0, "the example creates no saved highlight");
@@ -73,7 +74,7 @@ export async function guideScenarios(env) {
         return Date.now() - stableSince > 150;
       }, { what: "the formula rectangle finishes growing" });
       assertEq(await page.locator('.guideModifier').textContent(), "Ctrl", "box demonstration shows the modifier");
-      await page.screenshot({ path: `${server.dir}/area-demo.png` });
+      if (flags.keep) await page.screenshot({ path: `${server.dir}/area-demo.png` });
       await page.waitForSelector('[data-guide-overlay="area"] .guideCard');
       assertEq(await page.locator('.pdfAreaMarquee').count(), 0, "example rectangle is cleaned up");
       const pdfBox = await page.locator('[data-guide="pdf.page"]').first().boundingBox();

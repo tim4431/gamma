@@ -20,8 +20,6 @@ export async function pdfTouchScenarios({ server, browser, alice, makePdf, step,
     pageId = created.id;
     ctx = await alice.context(browser, { hasTouch: true, isMobile: true, deviceScaleFactor: 2, viewport: { width: 1024, height: 768 } });
     await ctx.addInitScript(() => {
-      // Snap is always on, including for browsers with an old disabled value.
-      localStorage.setItem("gamma-snap-vertical", "0");
       localStorage.setItem("gamma-ink-pen-only", "1");
       // Reproduce allocation refusal on constrained WebKit devices. Without
       // the cap, 400% Letter at DPR 2 requests over 30 million pixels.
@@ -162,8 +160,8 @@ export async function pdfTouchScenarios({ server, browser, alice, makePdf, step,
         return Array.from(ctx.getImageData(0, 0, 1, 1).data).slice(0, 3);
       }, png.toString("base64"));
     };
-    for (const [theme, flip, expected] of [["sepia", false, [253, 246, 227]], ["solarized", false, [253, 246, 227]],
-      ["gray", false, [244, 244, 244]], ["dark", true, [15, 15, 15]]]) {
+    // One light theme and the flipped dark page: the two ways paper is composited.
+    for (const [theme, flip, expected] of [["sepia", false, [253, 246, 227]], ["dark", true, [15, 15, 15]]]) {
       await page.evaluate(([theme, flip]) => {
         document.documentElement.setAttribute("data-theme", theme);
         document.querySelector(".pdfViewer").classList.toggle("pdfDark", flip);

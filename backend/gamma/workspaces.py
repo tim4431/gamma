@@ -465,7 +465,7 @@ def _cloud_access_token(by: str) -> str:
     from . import cloud_auth  # local: cloud_auth imports this module
 
     if not cloud_auth.grant_of(by)[0]:
-        raise CloudLookupError("Link your own Gamma Cloud account (Settings → Account) to invite by "
+        raise CloudLookupError("Link your own Gamma Cloud account (Settings → Account & sync) to invite by "
                                "Gamma Cloud username.")
     token = cloud_auth.access_token_for(by)
     if not token:

@@ -35,7 +35,7 @@ export function KeyboardSettings({ value }) {
     <div className="keyboardPane">
       <PaneHead icon={KeyboardIcon} title={t("Keyboard shortcuts")}>
         <input
-          className="aiKeyInput keyFilter" type="search"
+          className="aiKeyInput keyFilter" type="search" data-find
           placeholder={t("Filter shortcuts")} aria-label={t("Filter shortcuts")}
           value={filter} onChange={(e) => setFilter(e.target.value)}
         />

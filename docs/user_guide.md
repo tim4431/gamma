@@ -264,7 +264,8 @@ Preferences apply immediately; browser-only ones (theme, layout) are marked *Thi
 
 | Keys | Does |
 |---|---|
-| Ctrl+F / Ctrl+Shift+F | Search everything (find-in-chat when the chat is focused; on the home page, the listing's box; in Settings or a dialog, its own search box) / always the full panel |
+| Ctrl+F / Ctrl+Shift+F | Search everything (find-in-chat when the chat is focused; on the home page, the listing's box; in Settings or a dialog, its own search box — press again for the next one) / always the full panel |
+| Ctrl+, | Open settings |
 | Ctrl+P | Quick open: pick a page by title, folder or label (recent pages first) |
 | Ctrl+Shift+P | Command palette: every command by name, with its keys (also `>` typed into Ctrl+P) |
 | F2 | Rename the page |

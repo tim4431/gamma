@@ -2,7 +2,7 @@
 // App.jsx's one window keydown listener dispatches this catalog
 // (shared/lib/hotkeys.js) with a ctx of handles it refreshes every render;
 // the command palette (Ctrl+Shift+P) lists the same entries, and Settings →
-// Keyboard rebinds them. Only the long-standing keys and F2 have defaults;
+// Keyboard rebinds them. Only the long-standing keys, F2 and Ctrl+, have defaults;
 // the rest are palette entries until the account gives them a chord.
 // ctx: { shareMode, homeMode, hasPage, hasPdf, readOnly, search(all),
 // palette(prefix), back(), undo(redo), renameTitle(), toggleChat(),
@@ -34,10 +34,14 @@ export function liveAppCommands() {
   return dialog ? APP_COMMANDS.filter((cmd) => cmd.inDialog?.(dialog)) : APP_COMMANDS;
 }
 // Ctrl+F inside a dialog: the dialog's own search box (marked `data-find`),
-// else the browser's find.
+// else the browser's find. With several (Settings' search above the Keyboard
+// pane's filter) the innermost — the last — comes first, and pressing again
+// from one goes to the one before it.
 function findInDialog(dialog) {
-  const box = [...dialog.querySelectorAll("[data-find]")].find((el) => el.getClientRects().length && !el.closest("[inert]"));
-  if (!box) return false;
+  const boxes = [...dialog.querySelectorAll("[data-find]")].filter((el) => el.getClientRects().length && !el.closest("[inert]"));
+  if (!boxes.length) return false;
+  const at = boxes.indexOf(document.activeElement);
+  const box = boxes[(at < 0 ? boxes.length : at) - 1] || boxes[boxes.length - 1];
   box.focus();
   box.select?.();
   return true;
@@ -66,7 +70,7 @@ export const APP_COMMANDS = [
   cmd("app.quickOpen", t("Go to page"), GROUP_NAVIGATION, "Mod-p", (c) => { c.palette(""); }, { when: (c) => !c.shareMode, inDialog: inPalette }),
   cmd("app.commandPalette", t("Command palette"), GROUP_NAVIGATION, "Mod-Shift-p", (c) => { c.palette(">"); }, { palette: false, inDialog: inPalette }),
   cmd("app.back", t("Back to where you were"), GROUP_NAVIGATION, "Alt-ArrowLeft", (c) => { c.back(); }),
-  cmd("app.settings", t("Open settings"), GROUP_NAVIGATION, null, (c) => { c.openSettings(); }, { when: (c) => !c.shareMode }),
+  cmd("app.settings", t("Open settings"), GROUP_NAVIGATION, "Mod-,", (c) => { c.openSettings(); }, { when: (c) => !c.shareMode }),
   cmd("app.keyboardSettings", t("Keyboard shortcuts…"), GROUP_NAVIGATION, null, (c) => { c.openSettings("keyboard"); }, { when: (c) => !c.shareMode }),
   cmd("app.workspaces", t("Workspaces…"), GROUP_NAVIGATION, null, (c) => { c.openSettings("workspaces"); }, { when: (c) => !c.shareMode }),
 

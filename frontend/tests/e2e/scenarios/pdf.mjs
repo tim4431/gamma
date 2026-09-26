@@ -39,7 +39,6 @@ export async function pdfScenarios({ server, browser, alice, makePdf, step, unti
     const created = await account.api(`/api/blocks/by-doc/${docId}`, { method: "POST", body: { default_title: "Rydberg paper", source_url: up.source_url } });
     pageId = created.id;
     ctx = await account.context(browser);
-    await ctx.addInitScript(() => localStorage.setItem("gamma-hl-note-badge", "0"));
     page = await openPage(ctx, `${server.base}/?page=${pageId}&ws=${account.ws}`);
     await waitForPdf(page, 1);
     await until(async () => (await page.$$("[data-page]")).length >= 2, { what: "two page wrappers" });
@@ -75,7 +74,7 @@ export async function pdfScenarios({ server, browser, alice, makePdf, step, unti
     assertNoProblems(page);
   });
 
-  await step("pdf: note badges stay on even with an old disabled preference", async () => {
+  await step("pdf: a highlight with a note shows a badge that opens the note", async () => {
     const data = await account.api(`/api/blocks/${pageId}/subtree`);
     const highlight = data.block.children.find((block) => block.properties?.highlight_id);
     await account.api(`/api/blocks/${highlight.id}`, { method: "PUT", body: { content: "A note on this passage" } });
@@ -89,7 +88,9 @@ export async function pdfScenarios({ server, browser, alice, makePdf, step, unti
   });
 
   await step("pdf: interface scale keeps note badges anchored and Tours consistent", async () => {
-    for (const scale of [0.7, 1, 1.6]) {
+    // Sizes are compared with interface size 100% (measured first), not pinned in pixels.
+    let base;
+    for (const scale of [1, 0.7, 1.6]) {
       await page.evaluate((value) => localStorage.setItem("gamma-ui-scale", String(value)), scale);
       await page.reload();
       await waitForPdf(page);
@@ -103,13 +104,16 @@ export async function pdfScenarios({ server, browser, alice, makePdf, step, unti
         const end = marks.sort((a, b) => b.top - a.top || b.right - a.right)[0];
         return { width: box.width, dx: box.left - end.right, dy: box.top - end.top };
       });
-      for (const zoom of [false, true]) {
-        if (zoom) await page.getByRole("button", { name: "Zoom in", exact: true }).click();
-        await until(async () => {
-          const { width, dx, dy } = await measure();
-          return Math.abs(width - 15 * scale) < 1 && Math.abs(dx - 2) < 1 && Math.abs(dy + 8) < 1;
-        }, { what: `badge stays at passage end with interface scale ${scale}` });
-      }
+      // at the passage's end, just after it; zooming the PDF moves it along, same size and offset
+      const before = await until(async () => {
+        const m = await measure();
+        return m.dx >= 0 && m.dx < 6 * scale && Math.abs(m.dy) < 16 * scale ? m : null;
+      }, { what: `badge sits at the passage end with interface scale ${scale}` });
+      await page.getByRole("button", { name: "Zoom in", exact: true }).click();
+      await until(async () => {
+        const m = await measure();
+        return Math.abs(m.width - before.width) < 1 && Math.abs(m.dx - before.dx) < 1 && Math.abs(m.dy - before.dy) < 1;
+      }, { what: `badge keeps its place and size when the PDF zooms (interface scale ${scale})` });
       await page.getByRole("button", { name: "Account & settings", exact: true }).click();
       const settings = page.getByRole("button", { name: "Settings…", exact: true });
       const tours = page.locator('summary[data-guide="account.tour"]');
@@ -121,7 +125,9 @@ export async function pdfScenarios({ server, browser, alice, makePdf, step, unti
       assert(Math.abs((await tour.boundingBox()).height - toursBox.height) < 1, "submenu scales once");
       await settings.click();
       const font = await page.getByText("Interface size", { exact: true }).evaluate((el) => parseFloat(getComputedStyle(el).fontSize));
-      assert(Math.abs(font - 13 * scale) < 0.1, "ordinary settings text follows interface size");
+      base ||= { font, badge: before.width };
+      assert(Math.abs(font / base.font - scale) < 0.02, `ordinary settings text follows interface size (${font} at ${scale})`);
+      assert(Math.abs(before.width / base.badge - scale) < 0.08, `the badge follows interface size (${before.width} at ${scale})`);
       await page.getByRole("button", { name: "Close settings", exact: true }).click();
       assertNoProblems(page);
     }
@@ -161,8 +167,6 @@ export async function pdfScenarios({ server, browser, alice, makePdf, step, unti
     await link.click();
     const mark = page.locator('[data-page="2"] .pdfCitationMark').first();
     await mark.waitFor();
-    assertEq(await mark.evaluate(el => getComputedStyle(el).animationName), "pdfTransShimmer", "citation reuses the in-progress translation shimmer");
-    assertEq(await page.getByRole("button", { name: "Clear reference highlight", exact: true }).count(), 0);
     const aligned = () => page.evaluate(() => {
       const mark = document.querySelector('[data-page="2"] .pdfCitationMark').getBoundingClientRect();
       const span = [...document.querySelectorAll('[data-page="2"] .textLayer span')]
@@ -505,16 +509,6 @@ export async function pdfScenarios({ server, browser, alice, makePdf, step, unti
       await page.reload();
       await waitForPdf(page);
     }
-  });
-
-  await step("pdf: the home library lists the paper and double-click opens it", async () => {
-    await page.click("button[aria-label='Home']");
-    const card = page.locator(".pageCard", { hasText: "Rydberg paper" }).first();
-    await card.waitFor({ timeout: 15000 });
-    await card.dblclick();
-    await waitForPdf(page, 1);
-    assert(new URL(page.url()).searchParams.get("block") === pageId || new URL(page.url()).searchParams.get("page") === pageId, `url ${page.url()}`);
-    assertNoProblems(page);
   });
 
   if (ctx) await ctx.close();

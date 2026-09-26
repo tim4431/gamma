@@ -273,14 +273,14 @@ The scenarios live in `tests/e2e/scenarios/`:
   switcher. Runs in a NON-default workspace on purpose.
 - `pdf.mjs`: upload + page by attachment, the viewer's text layer, a
   highlight from a text selection (overlay, quote row, persisted position),
-  the find bar hitting page 2, the library card, an AI citation link
+  the find bar hitting page 2, an AI citation link
   highlighting its quote on the cited page ([pdf_citations.md](pdf_citations.md)).
 - `transfers.mjs`: the Import and Export dialogs — format/source cards,
   the review step and its switches, direct export for fixed formats.
 - `ink.mjs`: handwriting. The tool strip and its presets, mouse strokes
   becoming an ink block with an `.ink` upload, persistence across a reload,
   the eraser, stroke undo/redo, the partial eraser, a lasso move + delete,
-  the notes card's jump + outline, `/Ink` in the exported PDF. Pen input:
+  the notes card's jump + outline (`/Ink` in the exported PDF is `test_ink.py`). Pen input:
   coalesced sample timing, pressure and lift endpoints in the uploaded
   file, prediction, palm suppression and palm-first pen takeover, cleanup
   after `pointercancel` / lost capture. Chromium's native touch and pen,
