@@ -141,9 +141,11 @@ allowance work the same on every server.
   gone in 5 hours", from `guest_expires_at`, `auth/guestExpiry.js`); that
   line is every guest's, demo server or not.
 
-demo.gammapdf.com is the `demo` service next to the account server on the
-VPS (`GAMMA_DEMO=1` in its `demo.env`), pinned to the `sha-<short>` tag of a
-branch build (`docker.yml` dispatched on the branch, which never moves
-`:latest`): setup in [cloud/deploy/README.md](../../cloud/deploy/README.md)
-"The demo server", updates through the `update-demo-server` skill
+demo.gammapdf.com is its own compose project on the VPS, in a folder next
+to the account server's (`GAMMA_DEMO=1` in its `demo.env`), reached through
+the account project's Caddy over the shared Docker network `gamma-edge`. It
+runs the `sha-<short>` tag of a branch build (`docker.yml` dispatched on the
+branch, which never moves `:latest`), named by `GAMMA_TAG` in the folder's
+`.env`: setup in [cloud/deploy/demo/README.md](../../cloud/deploy/demo/README.md),
+updates through the `update-demo-server` skill
 (`.claude/skills/update-demo-server/SKILL.md`).

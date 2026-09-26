@@ -22,6 +22,10 @@
 # challenge is needed (Cloudflare "Full"). Anything else under the wildcard
 # is a 404.
 #
+# The demo is its own compose project (cloud/deploy/demo/): Caddy reaches
+# it as `gamma-demo` on the shared network `gamma-edge`, resolved per
+# request, so a stopped demo is a 502 for its name and nothing else.
+#
 # The demo's guest logins are rate limited per client address, which Gamma
 # reads from the first X-Forwarded-For hop. Caddy does not trust the
 # X-Forwarded-For Cloudflare sends and would put Cloudflare's edge address
@@ -38,7 +42,7 @@
 		reverse_proxy share:9001
 	}
 	handle @demo {
-		reverse_proxy demo:9001 {
+		reverse_proxy gamma-demo:9001 {
 			header_up X-Forwarded-For {http.request.header.CF-Connecting-IP}
 		}
 	}

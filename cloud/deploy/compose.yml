@@ -10,18 +10,15 @@
 #            ./share-data and its settings in share.env (share.env.example).
 #            Reached only through caddy (no host port). Pinned to an image
 #            tag: bump it with the desktop release.
-#   demo     demo.gammapdf.com: a Gamma in demo mode (docs/dev/guests.md),
-#            every visitor a throwaway guest account; its data on
-#            ./demo-data (disposable) and its settings in demo.env
-#            (demo.env.example). Reached only through caddy (no host port).
-#            Pinned to the `sha-<short>` tag of a branch build (docker.yml
-#            dispatched on the branch): the update-demo-server skill rewrites
-#            the image line in the HOST's copy of this file, so there that
-#            line is the truth and may differ from the one below.
 #   caddy    TLS on the host's own 80/443 with its internal certificate
 #            (`tls internal`; Cloudflare holds the public one), for a host
 #            with a public address (a VPS). The DNS record for the hostname
-#            in .env (CADDY_HOST) must point at the host.
+#            in .env (CADDY_HOST) must point at the host. Caddy also joins
+#            the external network `gamma-edge`, where the public demo — its
+#            own compose project, cloud/deploy/demo/ — answers as
+#            `gamma-demo`. Create that network once per host before the
+#            first `up` (`docker network create gamma-edge`): this file
+#            refuses to start without it.
 #
 # Variants layered with -f: compose.tunnel.yml replaces caddy with a
 # Cloudflare Tunnel (no open port; a NAS); compose.build.yml builds the
@@ -46,15 +43,6 @@ services:
     depends_on:
       - account
 
-  demo:
-    # sha-<short> of the build to run. update-demo-server rewrites this line
-    # on the host; the value here is only the first deployment's.
-    image: ghcr.io/tim4431/gamma:sha-30586ef
-    restart: unless-stopped
-    env_file: demo.env
-    volumes:
-      - ./demo-data:/data
-
   caddy:
     image: caddy:2-alpine
     restart: unless-stopped
@@ -67,11 +55,18 @@ services:
       - ./Caddyfile:/etc/caddy/Caddyfile:ro
       - caddy-data:/data
       - caddy-config:/config
+    networks:
+      - default
+      - edge
     depends_on:
       - account
       - share
-      - demo
 
 volumes:
   caddy-data:
   caddy-config:
+
+networks:
+  edge:
+    name: gamma-edge
+    external: true
