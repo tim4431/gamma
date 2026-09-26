@@ -56,7 +56,7 @@ def _welcome_blocks():
         (secrets.token_urlsafe(9), figures_id, generate_key_between("a0", None), f"![]({_SCREENSHOTS}/01-annotated-pdf.png)", '{}'),
         (secrets.token_urlsafe(9), figures_id, generate_key_between("a0V", None), f"![]({_SCREENSHOTS}/02-home.png)", '{}'),
         (guest_id, wid, generate_key_between("a1", None), "## Guest account", '{}'),
-        (secrets.token_urlsafe(9), guest_id, "a0", f"You are signed in as a **guest**. This workspace is yours alone, and it is deleted with everything in it {_guest_lifetime()} after you started. To keep your work, ask the admin for an account.", '{}'),
+        (secrets.token_urlsafe(9), guest_id, "a0", f"You are signed in as a **guest**. This workspace is yours alone. It stays for {_guest_lifetime()} after you started, or until you log out, and is then deleted with everything in it. To keep your work, ask the admin for an account.", '{}'),
         (md_id, wid, generate_key_between("a1V", None), "## Markdown formatting", '{}'),
         (secrets.token_urlsafe(9), md_id, "a0", "Blocks support **bold**, *italic*, `code`, [links](https://example.com), and inline $\\KaTeX$ math like $E = mc^2$.", '{}'),
     ]

@@ -17,7 +17,7 @@ through barrel files. `main.jsx` remains the Vite entry point.
 | `pdf/` | `PdfViewer.jsx`, document loading, citations, translation, and scroll alignment |
 | `search/` | Workspace search (`SearchPanel.jsx`) |
 | `settings/` | `SettingsDialog.jsx`, individual settings panes, shared pane controls (`SettingsKit.jsx`), the profile sync reading (`syncState.js`), navigation, integration setup, and `settings.css` |
-| `sharing/` | The Share popover (`SharePopover.jsx`, a page or a folder as its target): link, access, invited people, stop sharing; the share view's folder listing (`SharedFolder.jsx`) |
+| `sharing/` | The Share popover (`SharePopover.jsx`, a page or a folder as its target): link, access, invited people, stop sharing |
 | `support/` | Report a problem: the dialog (`ReportProblem.jsx`) and the pure report builder it and the tests share (`problemReport.js`) |
 | `transfers/` | Import/export dialogs (`ImportExport.jsx`), the import review (`ImportReviewDialog.jsx`, `ImportTree.jsx`, `importApi.js`, `importReview.js`), format rules, and upload/file chips (`FileChip.jsx`) |
 | `shared/model/` | Block tree helpers (`blockModel.js`), block operations (`blockOps.js`), and highlight colors |

@@ -165,19 +165,21 @@ async def ub_get_or_create_by_doc(doc_id: str, payload: UBByDocCreate, request: 
 @router.get("/blocks/{block_id}/children")
 async def ub_get_children(block_id: str, request: Request):
     scope = share_scope(request)
-    if scope is not None and block_id == "root":
-        # A share link may not enumerate the owner's library root (a folder
-        # share lists its pages through GET /share/{token}).
+    if scope is not None and block_id == "root" and not scope.folder:
+        # A page share may not enumerate the owner's library; a folder share
+        # lists the pages it reaches — the share view's home library.
         raise HTTPException(status_code=403, detail="not accessible via this share link")
     with connect_pages_db(resolve_ws(request)) as conn:
         if block_id != "root":
             if not conn.execute("SELECT 1 FROM unified_blocks WHERE id = ?", (block_id,)).fetchone():
                 raise HTTPException(status_code=404, detail="block not found")
-        assert_block_in_scope(conn, block_id, scope)
+            assert_block_in_scope(conn, block_id, scope)
         rows = conn.execute(
             f"SELECT {BLOCK_COLUMNS} FROM unified_blocks WHERE parent_id = ? ORDER BY position ASC",
             (block_id,),
         ).fetchall()
+        if scope is not None and block_id == "root":
+            rows = [r for r in rows if scope.allows_page(conn, r[0])]
         previews = _page_previews(conn) if block_id == "root" else None
     children = [block_to_dict(r) for r in rows]
     if previews is not None:

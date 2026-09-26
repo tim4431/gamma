@@ -130,7 +130,7 @@ The **link button** in the top bar shares the open page, Notion-style:
 - Viewers see the PDF, highlights and notes, no login needed; editors edit alongside you, with live cursors. A visitor editing through an anyone-with-the-link share is asked for a display name.
 - **Stop sharing** ends the link; share again for a new one. Copied links carry the workspace, so a teammate opening one lands in the right library.
 
-**Sharing a folder** works the same way: right-click a folder and choose **Share…**, or open the folder and press the top bar's link button. The link opens every page filed in the folder — including pages you file there later — as a small library; visitors click a page to read it and return with the home button. The same audience and View / Edit choices apply; an edit link lets people edit those pages' notes but never move pages in or out of the folder.
+**Sharing a folder** works the same way: right-click a folder and choose **Share…**, or open the folder and press the top bar's link button. The link opens every page filed in the folder — including pages you file there later — as a read-only library view of that folder; visitors open a page like you would and return with the home button. The same audience and View / Edit choices apply; an edit link lets people edit those pages' notes but never move pages in or out of the folder.
 
 ## Workspaces
 

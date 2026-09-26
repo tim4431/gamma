@@ -49,9 +49,11 @@ export async function shareScenarios({ server, browser, alice, bob, step, until,
 
   await step("folder share: the folder view's link button shares every page filed there; visitors browse the listing", async () => {
     const paperA = await alice.api("/api/blocks", { method: "POST", body: { parent_id: "root", content: "Folder share paper A" } });
-    await alice.api(`/api/blocks/${paperA.id}`, { method: "PUT", body: { properties: { folder: "sharedlab/sub" } } });
+    await alice.api(`/api/blocks/${paperA.id}`, { method: "PUT", body: { properties: { folder: "sharedlab" } } });
     const paperB = await alice.api("/api/blocks", { method: "POST", body: { parent_id: "root", content: "Folder share paper B" } });
     await alice.api(`/api/blocks/${paperB.id}`, { method: "PUT", body: { properties: { folder: "sharedlab" } } });
+    const deeper = await alice.api("/api/blocks", { method: "POST", body: { parent_id: "root", content: "Folder share paper in a subfolder" } });
+    await alice.api(`/api/blocks/${deeper.id}`, { method: "PUT", body: { properties: { folder: "sharedlab/sub" } } });
     await alice.api("/api/blocks", { method: "POST", body: { parent_id: paperA.id, content: "a note inside the shared folder" } });
     const outside = await alice.api("/api/blocks", { method: "POST", body: { parent_id: "root", content: "Not in the shared folder" } });
 
@@ -73,17 +75,35 @@ export async function shareScenarios({ server, browser, alice, bob, step, until,
     await ctx.close();
     assertEq((await alice.api("/api/share-settings/folder?name=sharedlab")).token, folderToken, "the folder's share");
 
-    // an anonymous visitor: the listing, a page, and back — each a history entry
+    // an anonymous visitor: the folder view itself — the library's own rows,
+    // confined to the folder and stripped of everything that would change it
     const vctx = await browser.newContext({ viewport: { width: 1280, height: 860 } });
     const v = await openPage(vctx, `${server.base}/?share=${folderToken}`);
-    await v.waitForSelector(".sharedFolder .pageCard", { timeout: 15000 });
-    assertEq(await v.locator(".sharedFolder .pageCard").count(), 2, "both pages listed");
+    await v.locator(".fileRow", { hasText: "Folder share paper A" }).waitFor({ timeout: 15000 });
+    assertEq(await v.locator(".fileList .fileRow").count(), 2, "the folder's own pages");
+    assertEq(await v.locator(".fileList .folderRow").count(), 1, "its subfolder");
+    assertEq(await v.locator(".folderNewBtn").count(), 0, "no New page / New folder for a visitor");
+    assertEq(await v.locator(".fileRowPin").count(), 0, "no pins for a visitor");
+    assertEq(await v.locator(".folderBackRow").count(), 0, "nothing above the shared folder");
+    assert((await v.textContent(".folderCurrent")).includes("sharedlab"), "the folder crumb");
     assert((await v.textContent(".readOnlyTitle")).includes("sharedlab"), "the folder name in the topbar");
-    await v.locator(".sharedFolder .pageCard", { hasText: "Folder share paper A" }).click();
+    // into the subfolder and back up — never above the root
+    await v.locator(".fileList .folderRow", { hasText: "sub" }).dblclick();
+    await v.locator(".fileRow", { hasText: "in a subfolder" }).waitFor();
+    await v.locator(".folderBackRow").click();
+    await v.locator(".fileRow", { hasText: "Folder share paper B" }).waitFor();
+    assertEq(await v.locator(".folderBackRow").count(), 0, "back at the root, no way further up");
+    // a page opens in the same share view; the home button returns; history replays both
+    await v.locator(".fileRow", { hasText: "Folder share paper A" }).dblclick();
     await v.locator(".blockRow", { hasText: "a note inside the shared folder" }).waitFor({ timeout: 15000 });
     assert(v.url().includes(`page=${paperA.id}`), "the open page rides in the URL");
+    assert((await v.textContent(".shareCrumbs")).includes("sharedlab"), "the folder path leads the title");
+    await v.locator(".shareCrumbs .crumbBtn", { hasText: "sharedlab" }).click();
+    await v.locator(".fileRow", { hasText: "Folder share paper B" }).waitFor();
+    await v.goBack();
+    await v.locator(".blockRow", { hasText: "a note inside the shared folder" }).waitFor({ timeout: 15000 });
     await v.click("button[aria-label='Back to the shared folder']");
-    await v.waitForSelector(".sharedFolder .pageCard");
+    await v.locator(".fileRow", { hasText: "Folder share paper B" }).waitFor();
     await v.goBack();
     await v.locator(".blockRow", { hasText: "a note inside the shared folder" }).waitFor({ timeout: 15000 });
     assertNoProblems(v);

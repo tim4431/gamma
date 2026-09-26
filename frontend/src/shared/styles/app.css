@@ -2386,6 +2386,9 @@ button.pdfOutlineChevron:hover { background: rgba(128, 128, 128, 0.28); color: v
 
 /* --- modern topbar bits --- */
 .addPopover { min-width: 300px; }
+.shareCrumbs { display: flex; align-items: center; gap: 2px; white-space: nowrap; }
+.shareCrumbs .crumbBtn { font: inherit; font-weight: 500; color: var(--text-secondary); }
+.shareCrumbs .crumbSep { padding: 0 3px; }
 .readOnlyTitle {
   flex: 1;
   min-width: 0;
@@ -5497,4 +5500,5 @@ html.appFocusFullscreen, html.appFocusFullscreen body { overflow: hidden; oversc
   border-bottom-width: 2px;
   border-radius: 4px;
 }
-.sharePopover .sharePopoverTarget { display: inline-flex; align-items: center; gap: 4px; margin-left: 8px; max-width: 45%; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.sharePopover .popoverTitle { display: inline-flex; align-items: center; gap: 8px; min-width: 0; }
+.sharePopover .sharePopoverTarget { display: inline-flex; align-items: center; gap: 4px; max-width: 220px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; font-weight: 500; }

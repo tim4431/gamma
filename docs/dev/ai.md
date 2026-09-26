@@ -172,10 +172,11 @@ spends through the shared entries: `allowance: {accounts, guests}` in the
 same config (tokens, input + output, per account per rolling 24 hours; 0 =
 unlimited, the default; `GET/PUT /api/admin/ai-providers`, either key alone).
 `ai_usage.shared_used` sums the account's `server:` rows in the window;
-`ai_runtime` reports `allowance: {limit, used, exhausted}` (null when no
-shared entry is in the runtime or its limit is 0 — guests take the guests'
-limit, everyone else the accounts') and puts `allowance: {user, limit}` on
-each shared provider conf. The one choke point is `ai_client.open_ai`
+`ai_runtime` reports `allowance: {limit, used, exhausted}` whenever a
+shared entry is in the runtime (limit 0 = unlimited, never exhausted; null
+when none is — guests take the guests' limit, everyone else the accounts')
+and, under a limit, puts `allowance: {user, limit}` on each shared provider
+conf. The one choke point is `ai_client.open_ai`
 (`call_ai` goes through it): `check_allowance` re-reads the count on every
 call and raises `AllowanceExhausted`, an `HTTPException` 429 whose detail
 names the used and limit tokens and points at Settings → AI. Chat (both
@@ -782,7 +783,7 @@ show what a week cost. Code: `gamma/ai_usage.py`, `ai_client.normalize_usage`,
   {calls, input, output, cache_read, cache_write}, kinds: {kind → the same}
   and models: [{provider_id, provider_name, model, …}] over the last 30
   days, first_at, keep_days, allowance}` (`allowance`: the shared entries'
-  24-hour allowance, above, or null); `DELETE /api/ai/usage` forgets the
+  24-hour allowance, above, or null when no shared entry applies); `DELETE /api/ai/usage` forgets the
   account's rows except those the allowance still counts. Settings → AI › Connections → **Token usage** renders three
   tiles (today / 7 days / 30 days), the all-time line with Reset, and a
   by-model table (plus a by-kind block when more than one kind ran).

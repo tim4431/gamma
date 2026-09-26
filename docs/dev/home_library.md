@@ -5,6 +5,25 @@ Code: [FileBrowser.jsx](../../frontend/src/library/FileBrowser.jsx),
 [libraryUtils.js](../../frontend/src/library/libraryUtils.js),
 [Menus.jsx](../../frontend/src/shared/ui/Menus.jsx), glue in App.jsx.
 
+## What a viewer may do
+
+[libraryAccess.js](../../frontend/src/library/libraryAccess.js) derives ONE
+object from how the library was reached — `lib` in App.jsx — and every
+affordance of the home library asks it, never a role or a share token: `root`
+(the folder the view is confined to: a folder share's folder, "" otherwise;
+`openFolder` clamps into it, the back row and the breadcrumb stop at it),
+`browse` (there is a library to list — a page share has none), `organize`
+(New page / New folder, drags and drops, rename, move, duplicate, delete,
+labels, sharing a folder, file drops onto the library), `pin` (the pin
+buttons and the pinned strip) and `history` (the recents strip). A workspace
+viewer browses everything and organizes nothing; a folder share's visitor
+browses the shared folder only — the share view IS the home library at that
+folder, listed through `GET /blocks/root/children` with the token
+([api.md](api.md) "Shares"), its pages opening in the same view (`page=`
+beside the token, each a history entry) and the topbar's home button — or
+the folder path that leads the page's title, every crumb a folder — returning
+to the folder.
+
 Quick open ([QuickOpen.jsx](../../frontend/src/library/QuickOpen.jsx)) is the
 keyboard way into the library from anywhere: Ctrl+P (App.jsx's global key
 listener; not in a share view) opens a palette over the pages. With no

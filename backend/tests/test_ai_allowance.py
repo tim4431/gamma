@@ -131,9 +131,12 @@ def test_admin_round_trip_and_validation(admin, member, shared):
 def test_runtime_reports_the_allowance(admin, member, shared):
     from gamma.ai_settings import ai_runtime
     from gamma.ai_usage import shared_used
-    # No limit: nothing metered, nothing reported.
-    assert ai_runtime("allow_member")["allowance"] is None
+    # No limit: the usage is reported, nothing is metered.
+    spend("allow_member", shared, 40)
+    assert ai_runtime("allow_member")["allowance"] == {"limit": 0, "used": 40, "exhausted": False}
     assert "allowance" not in ai_runtime("allow_member")["providers"][shared]
+    from gamma import ai_usage
+    ai_usage.clear("allow_member", keep_metered=False)
 
     set_allowance(admin, accounts=LIMIT)
     spend("allow_member", shared, 300)
@@ -157,7 +160,8 @@ def test_runtime_reports_the_allowance(admin, member, shared):
 
 def test_usage_carries_the_allowance(admin, member, shared):
     body = member.get("/api/ai/usage").json()
-    assert body["allowance"] is None and "windows" in body and "models" in body
+    assert body["allowance"] == {"limit": 0, "used": 0, "exhausted": False}
+    assert "windows" in body and "models" in body
     set_allowance(admin, accounts=LIMIT)
     spend("allow_member", shared, 250)
     body = member.get("/api/ai/usage").json()
@@ -258,7 +262,7 @@ def test_guests_have_their_own_limit(admin, member, shared, upstream):
         # Accounts unlimited, guests metered; the switch decides access at all.
         r = admin.put("/api/admin/ai-providers", json={"guests": True, "allowance": {"guests": 300}})
         assert r.status_code == 200
-        assert member.get("/api/ai/models").json()["allowance"] is None
+        assert member.get("/api/ai/models").json()["allowance"]["limit"] == 0  # unlimited, still reported
         assert guest.get("/api/ai/models").json()["allowance"] == {"limit": 300, "used": 0, "exhausted": False}
         spend(name, shared, 100)
         r = guest.post("/api/ai/chat", json={"prompt": "hi", "stream": True})

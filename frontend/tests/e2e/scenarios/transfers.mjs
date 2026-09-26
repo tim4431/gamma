@@ -116,7 +116,11 @@ with zipfile.ZipFile(sys.argv[1], 'w') as z:
       await (await chooser).setFiles({ name: "reviewed.md", mimeType: "text/markdown", buffer: Buffer.from("---\ntitle: Reviewed Markdown\nfolder: Imported notes\n---\nA selected note.") });
       const review = page.getByRole("dialog", { name: "Review Markdown import", exact: true });
       await review.getByRole("progressbar").waitFor();
-      assert((await review.innerText()).includes("Uploading for review"));
+      // The upload phase ends as soon as the bytes are sent; the gate above
+      // holds only the answer, so a slow runner may already be scanning.
+      const busyText = await review.innerText();
+      assert(["Uploading for review", "Checking files and library destinations"].some((label) => busyText.includes(label)),
+        "the review shows its busy phase while the upload is answered");
       release();
       await review.getByRole("checkbox", { name: "Import Reviewed Markdown", exact: true }).waitFor();
       await choice(review, "Deselect all").click();

@@ -304,8 +304,10 @@ export function SharePopover({
   return (
     <div className="popover sharePopover" role="dialog" aria-label={title}>
       <div className="sharePopoverHead">
-        <span className="popoverTitle">{title}</span>
-        {kind === "folder" ? <span className="uiTag sharePopoverTarget" title={target.name}><FolderIcon size={11} />{target.name}</span> : null}
+        <span className="popoverTitle">
+          {title}
+          {kind === "folder" ? <span className="uiTag sharePopoverTarget" title={target.name}><FolderIcon size={11} />{target.name}</span> : null}
+        </span>
         <button type="button" className="uiClose" onClick={onClose} aria-label={t("Close")} title={t("Close")}>×</button>
       </div>
       <div className="settingsForm">

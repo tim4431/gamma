@@ -46,11 +46,19 @@ export async function authScenarios({ server, browser, alice, step, until, asser
       const role = page.locator(".userCardRole");
       await role.waitFor();
       const line = await role.textContent();
-      assert(/^Temporary workspace · gone in \d+ (hours?|minutes?)$/.test(line), `the card names the expiry (${line})`);
+      assert(/^Temporary workspace · deleted in \d+ (hours?|minutes?)$/.test(line), `the card names the expiry (${line})`);
       // A second guest login is another account, with its own workspace.
       const other = await (await fetch(`${server.base}/api/login-guest`, { method: "POST" })).json();
       assert(/^guest-/.test(other.username) && other.username !== session.user, "every guest login mints a fresh account");
-      assertNoProblems(page);
+      // Logging out deletes a guest: the menu says so first.
+      await page.getByRole("button", { name: "Log out", exact: true }).click();
+      const confirm = page.locator(".confirmModal", { hasText: "Log out and delete this workspace?" });
+      await confirm.waitFor();
+      await confirm.getByRole("button", { name: "Log out and delete", exact: true }).click();
+      await page.waitForSelector(".loginGuestBtn");
+      const after = await page.evaluate(() => fetch("/api/session").then((r) => r.json()));
+      assertEq(after.user, null, "signed out");
+      assertNoProblems(page, [/401/]);
     } finally { await ctx.close(); }
   });
 
@@ -65,7 +73,7 @@ export async function authScenarios({ server, browser, alice, step, until, asser
       const page = await openPage(ctx, `${server.base}/`);
       const demo = page.getByRole("button", { name: "Try the demo", exact: true });
       await demo.waitFor();
-      await page.getByText(`Your own workspace for ${hours} hours. Nothing is kept.`, { exact: true }).waitFor();
+      await page.getByText(`Your own workspace for ${hours} hours, then it is deleted.`, { exact: true }).waitFor();
       assertEq(await page.locator(".loginInput").count(), 0, "the password form is folded");
       assertEq(await page.locator(".loginGuestBtn").count(), 0, "one guest button, the demo one");
       const disclosure = page.getByRole("button", { name: "Admin sign-in", exact: true });
