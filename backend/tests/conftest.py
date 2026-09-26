@@ -101,12 +101,25 @@ def anon():
     return TestClient(app)
 
 
+_GUEST: dict = {}
+
+
 @pytest.fixture(scope="session")
 def guest(client):
-    """A TestClient logged in as the guest user (cookie persists on the client)."""
+    """A TestClient logged in as a guest account of its own (cookie persists
+    on the client). Every guest login mints a fresh account
+    (gamma/guests.py); ``guest_name()`` is the one this fixture got."""
     r = client.post("/api/login-guest")
     assert r.status_code == 200, r.text
+    _GUEST["name"] = r.json()["username"]
     return client
+
+
+def guest_name():
+    """The username of the session's ``guest`` fixture account (request the
+    fixture first)."""
+    assert _GUEST.get("name"), "request the guest fixture before guest_name()"
+    return _GUEST["name"]
 
 
 _USER_OWNERS: dict = {}

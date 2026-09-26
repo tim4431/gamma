@@ -19,23 +19,52 @@ export const GROUP_LIBRARY = t("Library");
 const inField = (el) => !!el && (el.tagName === "INPUT" || el.tagName === "TEXTAREA" || el.isContentEditable);
 const cmd = (id, label, group, keys, run, extra = {}) => ({ id, label, group, keys, run, ...extra });
 
+// The open dialog on top, if any: every modal (Settings and its sub-dialogs,
+// Import, Export, the palette, the confirm box…) sits in a `.reportOverlay`,
+// a nested one later in the DOM than its parent.
+export function topDialog() {
+  const all = document.querySelectorAll(".reportOverlay");
+  return all.length ? all[all.length - 1] : null;
+}
+// While a dialog is open it owns the keys: only the commands whose
+// `inDialog(dialog)` holds dispatch. The rest act on the page behind it,
+// out of sight: Ctrl+Z would undo a note from inside Settings.
+export function liveAppCommands() {
+  const dialog = topDialog();
+  return dialog ? APP_COMMANDS.filter((cmd) => cmd.inDialog?.(dialog)) : APP_COMMANDS;
+}
+// Ctrl+F inside a dialog: the dialog's own search box (marked `data-find`),
+// else the browser's find.
+function findInDialog(dialog) {
+  const box = [...dialog.querySelectorAll("[data-find]")].find((el) => el.getClientRects().length && !el.closest("[inert]"));
+  if (!box) return false;
+  box.focus();
+  box.select?.();
+  return true;
+}
+const inPalette = (dialog) => dialog.classList.contains("quickOpenOverlay");
+
 export const APP_COMMANDS = [
   // The built-in search over notes, highlights and PDF text — not the
-  // browser's find. Focus in the chat window leaves the key to ChatDock's
-  // find-in-chat; on the home library the plain key goes to the listing's
-  // search box (only rendered there — DOM presence stands in for homeMode)
-  // and Ctrl+Shift+F still opens the full panel.
+  // browser's find. In a dialog it goes to the dialog's search box; focus in
+  // the chat window leaves the key to ChatDock's find-in-chat; on the home
+  // library the plain key goes to the listing's search box (only rendered
+  // there — DOM presence stands in for homeMode) and Ctrl+Shift+F still
+  // opens the full panel.
   cmd("app.search", t("Search"), GROUP_NAVIGATION, "Mod-f", (c) => {
+    const dialog = topDialog();
+    if (dialog) return findInDialog(dialog);
     if (document.activeElement?.closest?.(".chatPanel")) return false;
     return c.search(false);
-  }),
+  }, { inDialog: () => true }),
   cmd("app.searchAll", t("Search everything"), GROUP_NAVIGATION, "Mod-Shift-f", (c) => {
     if (document.activeElement?.closest?.(".chatPanel")) return false;
     return c.search(true);
   }),
-  // A share view has no library to pick from.
-  cmd("app.quickOpen", t("Go to page"), GROUP_NAVIGATION, "Mod-p", (c) => { c.palette(""); }, { when: (c) => !c.shareMode }),
-  cmd("app.commandPalette", t("Command palette"), GROUP_NAVIGATION, "Mod-Shift-p", (c) => { c.palette(">"); }, { palette: false }),
+  // A share view has no library to pick from. In the open palette the two
+  // keys switch between pages and commands, or close it.
+  cmd("app.quickOpen", t("Go to page"), GROUP_NAVIGATION, "Mod-p", (c) => { c.palette(""); }, { when: (c) => !c.shareMode, inDialog: inPalette }),
+  cmd("app.commandPalette", t("Command palette"), GROUP_NAVIGATION, "Mod-Shift-p", (c) => { c.palette(">"); }, { palette: false, inDialog: inPalette }),
   cmd("app.back", t("Back to where you were"), GROUP_NAVIGATION, "Alt-ArrowLeft", (c) => { c.back(); }),
   cmd("app.settings", t("Open settings"), GROUP_NAVIGATION, null, (c) => { c.openSettings(); }, { when: (c) => !c.shareMode }),
   cmd("app.keyboardSettings", t("Keyboard shortcuts…"), GROUP_NAVIGATION, null, (c) => { c.openSettings("keyboard"); }, { when: (c) => !c.shareMode }),

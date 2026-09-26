@@ -12,6 +12,7 @@ Two questions every endpoint answers through this module:
   takes (``connect_pages_db``, ``ws_uploads_dir``, ...). docs/dev/workspaces.md.
 """
 
+import asyncio
 import re
 import secrets
 from urllib.parse import unquote
@@ -22,11 +23,9 @@ from datetime import datetime, timezone
 from fastapi import HTTPException, Request
 from fastapi.responses import JSONResponse
 
-from . import publisher_sessions
+from . import guests, publisher_sessions
 from .config import USERS_DB
-from .db import page_now
 from .logbuf import log
-from .seed import reset_guest_data
 
 SESSION_COOKIE = "session"
 SESSION_MAX_AGE = 365 * 24 * 3600
@@ -130,20 +129,23 @@ def set_session_cookie(response, token: str, request: Request | None = None):
                         max_age=SESSION_MAX_AGE, secure=secure)
 
 
-_SESSION_SQL = ("SELECT u.username, u.is_guest, u.is_admin, u.default_workspace, s.guest_date, s.created_at "
+# s.created_at: the session's age (SESSION_MAX_AGE); u.created_at: a guest
+# account's age (its lifetime, gamma/guests.py).
+_SESSION_SQL = ("SELECT u.username, u.is_guest, u.is_admin, u.default_workspace, s.created_at, u.created_at "
                 "FROM sessions s JOIN users u ON s.username = u.username WHERE s.token = ?")
 
 
 def session_lookup(token: str | None):
     """``(username, is_guest, is_admin, default_workspace)`` for a live
-    session token, else None. Read-only (no guest-day rollover) — what a
-    websocket handshake uses, since ``session_middleware`` only runs for
-    HTTP requests."""
+    session token, else None (an expired guest account included). Read-only
+    — what a websocket handshake uses, since ``session_middleware`` only
+    runs for HTTP requests; the middleware or the sweeper deletes the
+    expired guest."""
     if not token:
         return None
     with sqlite3.connect(str(USERS_DB)) as conn:
         row = conn.execute(_SESSION_SQL, (token,)).fetchone()
-    if not row or _session_expired(row[5]):
+    if not row or _session_expired(row[4]) or (row[1] and guests.is_expired(row[5])):
         return None
     return row[0], bool(row[1]), bool(row[2]) and not row[1], row[3] or ""
 
@@ -152,8 +154,8 @@ async def session_middleware(request: Request, call_next):
     """Resolve the session cookie to request.state.user / is_guest / is_admin
     / default_ws.
 
-    Guest sessions are date-stamped: on the first request of a new UTC day the
-    guest workspace is wiped, re-seeded, and a fresh session is issued.
+    A guest account past its lifetime (gamma/guests.py) is deleted on the
+    spot and the request goes on signed out, its cookie cleared.
     """
     started = time.perf_counter()
     request.state.request_id = secrets.token_hex(4)
@@ -165,7 +167,7 @@ async def session_middleware(request: Request, call_next):
     request.state.auth = "session"
     request.state.token_ws = ""
     request.state.token_scope = ""
-    new_session_token = None
+    expired_guest = ""
     bearer = _api_bearer(request) if not token else None
     if bearer:
         # An integration token on the HTTP API (a mirror syncing, a script):
@@ -182,31 +184,31 @@ async def session_middleware(request: Request, call_next):
     if token:
         with sqlite3.connect(str(USERS_DB)) as conn:
             row = conn.execute(_SESSION_SQL, (token,)).fetchone()
-            if row and _session_expired(row[5]):
+            if row and _session_expired(row[4]):
                 # Server-side expiry: a stolen token can't outlive its window
                 # even though the browser cookie's Max-Age is long.
                 conn.execute("DELETE FROM sessions WHERE token = ?", (token,))
                 conn.commit()
                 row = None
+            if row and row[1] and guests.is_expired(row[5]):
+                expired_guest, row = row[0], None
             if row:
-                username, is_guest, is_admin, default_ws, guest_date, _created = row
-                if is_guest:
-                    today = datetime.now(timezone.utc).strftime("%Y-%m-%d")
-                    if guest_date != today:
-                        # New day — wipe and recreate the guest workspace
-                        conn.execute("DELETE FROM sessions WHERE username = 'guest'")
-                        conn.commit()
-                        reset_guest_data()
-                        new_session_token = secrets.token_urlsafe(32)
-                        conn.execute(
-                            "INSERT INTO sessions (token, username, guest_date, created_at) VALUES (?, 'guest', ?, ?)",
-                            (new_session_token, today, page_now()),
-                        )
-                        conn.commit()
+                username, is_guest, is_admin, default_ws, _created, _account_created = row
                 request.state.user = username
                 request.state.is_guest = bool(is_guest)
                 request.state.is_admin = bool(is_admin) and not is_guest
                 request.state.default_ws = default_ws or ""
+    if expired_guest:
+        # The guest's lifetime is over: the account and its workspace go now
+        # (off the event loop — it removes a directory), the request goes on
+        # signed out.
+        from . import workspaces  # local, like the helpers below
+
+        log.info(f"[guests] {expired_guest} expired; deleting the account")
+        try:
+            await asyncio.to_thread(workspaces.delete_account, expired_guest)
+        except Exception:
+            log.exception(f"[guests] could not delete the expired account {expired_guest}")
     # The session cookie is browser-wide, so logging in from a second tab
     # silently switches every other tab's identity. Tabs declare who they
     # think is signed in (X-Gamma-User); on mismatch refuse the request
@@ -222,6 +224,8 @@ async def session_middleware(request: Request, call_next):
             status_code=409,
         )
         resp.headers["X-Gamma-Session-User"] = request.state.user or ""
+        if expired_guest:
+            resp.delete_cookie(SESSION_COOKIE)
         return _finish_request_log(request, resp, started, expected, "session-mismatch")
     # Only interactive PDF operations may use the caller's publisher sessions.
     # Public/share reads and guest accounts must never borrow credentials.
@@ -234,8 +238,8 @@ async def session_middleware(request: Request, call_next):
         response = await call_next(request)
     finally:
         publisher_sessions.current_user.reset(publisher_token)
-    if new_session_token:
-        set_session_cookie(response, new_session_token, request)
+    if expired_guest:
+        response.delete_cookie(SESSION_COOKIE)
     return _finish_request_log(request, response, started, expected)
 
 
@@ -302,9 +306,10 @@ def requested_ws(carrier) -> str:
 
 
 def is_guest_workspace(ws: str) -> bool:
+    """A personal workspace whose owner is a guest account."""
     from . import workspaces  # local: workspaces imports seed, which imports db
 
-    return ws == workspaces.default_workspace("guest")
+    return workspaces.is_guest_workspace(ws)
 
 
 def workspace_access(username: str, requested: str, default_ws: str) -> tuple[str, str | None]:

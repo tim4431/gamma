@@ -23,6 +23,7 @@ A **command** is declared once, as an object in one of two catalogs:
 - `needsEditor: true` (block scope) — cannot run from the palette, where no editor is open.
 - `palette: false` — keyboard only (the arrow hops, the formatting marks, the palette command itself).
 - `fixed: true` — shown in the pane but not rebindable (the arrow hops).
+- `inDialog(dialog)` (app scope) — still dispatches while a dialog is open (see *Dialogs* below).
 - `run(ctx, event)` — returning `false` declines the key: the dispatcher tries the next command, and an unhandled key keeps its default (undo in a plain input stays the browser's).
 
 [frontend/src/app/commands.js](../../frontend/src/app/commands.js) joins the
@@ -56,6 +57,8 @@ is the pure core (no DOM, `tests/hotkeys.test.mjs`):
 - `conflicts(commands, bindings)` maps each chord more than one command answers to onto those commands.
 
 **Order.** A block row's `onKeyDown` ([editor/BlockTree.jsx](../../frontend/src/editor/BlockTree.jsx)) first serves its popups (the paste chooser, the `[[` search, the slash menu, the math autocomplete), then dispatches the block catalog, then the outliner's own keys (Tab in math and fences, Enter, Tab, ←/→ folding at the text's edge, Backspace on an empty note). A handled key never reaches the window, so a block chord shadows an app chord while an editor is open. App's window listener dispatches the app catalog and then handles Escape, which is not a command: it always closes popovers and clears selections.
+
+**Dialogs.** Every modal sits in a `.reportOverlay` (Settings and its sub-dialogs, Import, Export, the palette, the confirm box…). While one is open, App's listener dispatches only the app commands whose `inDialog(dialog)` holds (`liveAppCommands` in appCommands.js, `topDialog` the last overlay in the DOM): the rest would act on the page behind it out of sight — Ctrl+Z undoing a note from inside Settings, F2 renaming the page, Alt+← navigating away. Ctrl+F goes to the dialog's own search box, the input marked `data-find` (Settings' search, the move-to-page filter, the chat's page picker), and falls back to the browser's find when there is none; Ctrl+P / Ctrl+Shift+P work only inside the palette itself, switching it between pages and commands or closing it. A dialog with a search box marks it `data-find`.
 
 **CodeMirror.** The block editor installs only `standardKeymap` (caret movement, Home/End, selection by word). Everything above that — the formatting marks, line and block operations — is a command, so nothing arrives from a library keymap by accident. `defaultKeymap` is not used: its Ctrl+M tab-focus mode stops Tab from indenting ([research note](../research/keyboard-shortcuts.md)).
 

@@ -25,7 +25,7 @@ def test_v7_adds_mcp_oauth_and_preserves_tokens(data_dir):
         conn.execute("DROP TABLE mcp_oauth")
         conn.execute("PRAGMA user_version = 6")
         conn.execute("INSERT INTO integration_tokens VALUES ('id', 'hash', 'user', 'ws', 'Codex', 'now', 9999999999, 'read')")
-    assert migrations.ensure_current()["applied"] == ["mcp_oauth", "ai_usage", "upload_path_titles", "mirrors", "mirror_cadence", "sync_log_stats", "sync_conflict_base", "identities", "ai_explicit_models", "pending_memberships", "profile", "cloud_grant", "mirror_page_filter"]
+    assert migrations.ensure_current()["applied"] == ["mcp_oauth", "ai_usage", "upload_path_titles", "mirrors", "mirror_cadence", "sync_log_stats", "sync_conflict_base", "identities", "ai_explicit_models", "pending_memberships", "profile", "cloud_grant", "mirror_page_filter", "guest_accounts"]
     with connect_users_db() as conn:
         assert conn.execute("SELECT id FROM integration_tokens").fetchone()[0] == 'id'
         assert conn.execute("SELECT * FROM mcp_oauth").fetchall() == []
@@ -38,7 +38,7 @@ def test_v6_adds_integration_tokens_and_is_repeatable(data_dir):
         conn.execute("DROP TABLE integration_tokens")
         conn.execute("PRAGMA user_version = 5")
         conn.commit()
-    assert migrations.ensure_current()["applied"] == ["integration_tokens", "mcp_oauth", "ai_usage", "upload_path_titles", "mirrors", "mirror_cadence", "sync_log_stats", "sync_conflict_base", "identities", "ai_explicit_models", "pending_memberships", "profile", "cloud_grant", "mirror_page_filter"]
+    assert migrations.ensure_current()["applied"] == ["integration_tokens", "mcp_oauth", "ai_usage", "upload_path_titles", "mirrors", "mirror_cadence", "sync_log_stats", "sync_conflict_base", "identities", "ai_explicit_models", "pending_memberships", "profile", "cloud_grant", "mirror_page_filter", "guest_accounts"]
     with connect_users_db() as conn:
         assert conn.execute("SELECT * FROM integration_tokens").fetchall() == []
     assert migrations.ensure_current()["applied"] == []
@@ -51,7 +51,7 @@ def test_v5_adds_publisher_sessions_and_is_repeatable(data_dir):
         conn.execute("PRAGMA user_version = 4")
         conn.commit()
     result = migrations.ensure_current()
-    assert result["applied"] == ["publisher_sessions", "integration_tokens", "mcp_oauth", "ai_usage", "upload_path_titles", "mirrors", "mirror_cadence", "sync_log_stats", "sync_conflict_base", "identities", "ai_explicit_models", "pending_memberships", "profile", "cloud_grant", "mirror_page_filter"]
+    assert result["applied"] == ["publisher_sessions", "integration_tokens", "mcp_oauth", "ai_usage", "upload_path_titles", "mirrors", "mirror_cadence", "sync_log_stats", "sync_conflict_base", "identities", "ai_explicit_models", "pending_memberships", "profile", "cloud_grant", "mirror_page_filter", "guest_accounts"]
     with connect_users_db() as conn:
         assert conn.execute("SELECT * FROM publisher_sessions").fetchall() == []
     assert migrations.ensure_current()["applied"] == []
@@ -63,7 +63,7 @@ def test_v16_adds_pending_memberships_and_is_repeatable(data_dir):
         conn.execute("DROP TABLE pending_memberships")
         conn.execute("PRAGMA user_version = 15")
         conn.commit()
-    assert migrations.ensure_current()["applied"] == ["pending_memberships", "profile", "cloud_grant", "mirror_page_filter"]
+    assert migrations.ensure_current()["applied"] == ["pending_memberships", "profile", "cloud_grant", "mirror_page_filter", "guest_accounts"]
     with connect_users_db() as conn:
         assert conn.execute("SELECT * FROM pending_memberships").fetchall() == []
         assert conn.execute("SELECT 1 FROM sqlite_master WHERE name = 'idx_pending_subject'").fetchone()
@@ -85,7 +85,7 @@ def test_v17_folds_appearance_into_the_profile(data_dir):
             conn.execute("INSERT INTO user_prefs VALUES (?, ?, ?, ?, ?)", (user, ws, key, json.dumps(value), OLD))
         conn.execute("PRAGMA user_version = 16")
         conn.commit()
-    assert migrations.ensure_current()["applied"] == ["profile", "cloud_grant", "mirror_page_filter"]
+    assert migrations.ensure_current()["applied"] == ["profile", "cloud_grant", "mirror_page_filter", "guest_accounts"]
     with connect_users_db() as conn:
         stored = {(r[0], r[1]): (json.loads(r[2]), r[3]) for r in conn.execute(
             "SELECT username, key, value, updated_at FROM user_prefs")}
@@ -115,7 +115,7 @@ def test_v18_marks_session_origin_and_grant_refusal(data_dir):
                      "VALUES ('gamma-cloud', 'sub-18', 'mig18', ?, ?)", (OLD, OLD))
         conn.execute("PRAGMA user_version = 17")
         conn.commit()
-    assert migrations.ensure_current()["applied"] == ["cloud_grant", "mirror_page_filter"]
+    assert migrations.ensure_current()["applied"] == ["cloud_grant", "mirror_page_filter", "guest_accounts"]
     with connect_users_db() as conn:
         assert conn.execute("SELECT via FROM sessions WHERE token = 'tok-18'").fetchone() == ("",)
         assert conn.execute("SELECT revoked_at FROM identities WHERE subject = 'sub-18'").fetchone() == ("",)
@@ -135,9 +135,41 @@ def test_v19_gives_mirrors_a_page_filter(data_dir):
                      "VALUES ('ws19', 'https://nas', 'r', 't', 'u', ?)", (OLD,))
         conn.execute("PRAGMA user_version = 18")
         conn.commit()
-    assert migrations.ensure_current()["applied"] == ["mirror_page_filter"]
+    assert migrations.ensure_current()["applied"] == ["mirror_page_filter", "guest_accounts"]
     with connect_users_db() as conn:
         assert conn.execute("SELECT page_filter FROM mirrors WHERE workspace_id = 'ws19'").fetchone() == (None,)
+    assert migrations.ensure_current()["applied"] == []
+
+
+def test_v20_removes_the_legacy_guest_account(data_dir):
+    # the shared guest account goes with its rows and its workspace directory;
+    # a password-less is_guest row made by create-user becomes a normal account
+    connect_users_db().close()
+    ws = "legacyGuestWs"
+    (data_dir / "workspaces" / ws / "uploads").mkdir(parents=True)
+    (data_dir / "workspaces" / ws / "pages.db").write_bytes(b"")
+    (data_dir / "backups" / "workspaces" / ws).mkdir(parents=True)
+    with closing(sqlite3.connect(str(data_dir / "users.db"))) as conn:
+        conn.executemany("INSERT INTO users (username, password_hash, is_guest, default_workspace, created_at) "
+                         "VALUES (?, '', 1, ?, ?)", [("guest", ws, OLD), ("mig20_nopw", "", OLD)])
+        conn.execute("INSERT INTO workspaces (id, name, created_by, created_at) VALUES (?, 'guest', 'guest', ?)", (ws, OLD))
+        conn.execute("INSERT INTO workspace_members (workspace_id, username, role, added_at) VALUES (?, 'guest', 'owner', ?)",
+                     (ws, OLD))
+        conn.execute("INSERT INTO sessions (token, username, guest_date, created_at) VALUES ('tok-g', 'guest', '2020-01-01', ?)",
+                     (OLD,))
+        conn.execute("INSERT INTO user_prefs VALUES ('guest', ?, 'open-tabs', '[]', ?)", (ws, OLD))
+        conn.execute("INSERT INTO shares (token, workspace_id, page_id, created_at) VALUES ('sh-g', ?, 'p', ?)", (ws, OLD))
+        conn.execute("PRAGMA user_version = 19")
+        conn.commit()
+    assert migrations.ensure_current()["applied"] == ["guest_accounts"]
+    with connect_users_db() as conn:
+        assert conn.execute("SELECT username, is_guest FROM users").fetchall() == [("mig20_nopw", 0)]
+        for table in ("sessions", "workspaces", "workspace_members", "user_prefs", "shares"):
+            assert conn.execute(f"SELECT COUNT(*) FROM {table}").fetchone()[0] == 0, table
+    assert not (data_dir / "workspaces" / ws).exists() and not (data_dir / "backups" / "workspaces" / ws).exists()
+    # re-runnable
+    with closing(sqlite3.connect(str(data_dir / "users.db"))) as conn:
+        migrations._v20_guest_accounts(conn)
     assert migrations.ensure_current()["applied"] == []
 
 
@@ -155,7 +187,7 @@ def test_v15_writes_the_old_default_into_modelless_ai_entries(data_dir):
                      (json.dumps({"providers": providers}), OLD))
         conn.execute("PRAGMA user_version = 14")
         conn.commit()
-    assert migrations.ensure_current()["applied"] == ["ai_explicit_models", "pending_memberships", "profile", "cloud_grant", "mirror_page_filter"]
+    assert migrations.ensure_current()["applied"] == ["ai_explicit_models", "pending_memberships", "profile", "cloud_grant", "mirror_page_filter", "guest_accounts"]
     with connect_users_db() as conn:
         stored = json.loads(conn.execute(
             "SELECT value FROM user_prefs WHERE key = 'ai-settings'").fetchone()[0])["providers"]
@@ -247,7 +279,7 @@ def test_status_and_refusal_on_a_v0_directory(data_dir):
     build_v0(data_dir)
     st = migrations.status()
     assert st["version"] == 0 and st["target"] == SCHEMA_VERSION and not st["fresh"]
-    assert [p["name"] for p in st["pending"]] == ["baseline", "workspaces", "workspace_access", "workspace_kinds", "publisher_sessions", "integration_tokens", "mcp_oauth", "ai_usage", "upload_path_titles", "mirrors", "mirror_cadence", "sync_log_stats", "sync_conflict_base", "identities", "ai_explicit_models", "pending_memberships", "profile", "cloud_grant", "mirror_page_filter"]
+    assert [p["name"] for p in st["pending"]] == ["baseline", "workspaces", "workspace_access", "workspace_kinds", "publisher_sessions", "integration_tokens", "mcp_oauth", "ai_usage", "upload_path_titles", "mirrors", "mirror_cadence", "sync_log_stats", "sync_conflict_base", "identities", "ai_explicit_models", "pending_memberships", "profile", "cloud_grant", "mirror_page_filter", "guest_accounts"]
     # Nothing but the runner may open an old users.db.
     with pytest.raises(SchemaOutdated):
         connect_users_db()
@@ -259,7 +291,7 @@ def test_upgrade_v0_to_current(data_dir):
     build_v0(data_dir)
     result = migrations.ensure_current()
     assert result["from"] == 0 and result["to"] == SCHEMA_VERSION
-    assert result["applied"] == ["baseline", "workspaces", "workspace_access", "workspace_kinds", "publisher_sessions", "integration_tokens", "mcp_oauth", "ai_usage", "upload_path_titles", "mirrors", "mirror_cadence", "sync_log_stats", "sync_conflict_base", "identities", "ai_explicit_models", "pending_memberships", "profile", "cloud_grant", "mirror_page_filter"]
+    assert result["applied"] == ["baseline", "workspaces", "workspace_access", "workspace_kinds", "publisher_sessions", "integration_tokens", "mcp_oauth", "ai_usage", "upload_path_titles", "mirrors", "mirror_cadence", "sync_log_stats", "sync_conflict_base", "identities", "ai_explicit_models", "pending_memberships", "profile", "cloud_grant", "mirror_page_filter", "guest_accounts"]
     assert migrations.data_version() == SCHEMA_VERSION
 
     # A snapshot of every database was taken first, with a manifest.
@@ -273,14 +305,16 @@ def test_upgrade_v0_to_current(data_dir):
 
     with connect_users_db() as conn:
         users = {r[0]: r[1] for r in conn.execute("SELECT username, default_workspace FROM users")}
-        assert set(users) == {"alice", "bob", "guest"} and all(users.values())
-        ws_alice, ws_bob, ws_guest = users["alice"], users["bob"], users["guest"]
+        # step 20 removed the legacy shared guest account and its workspace
+        assert set(users) == {"alice", "bob"} and all(users.values())
+        ws_alice, ws_bob = users["alice"], users["bob"]
         # one personal workspace per account, the account its owner
         rows = conn.execute("SELECT id, name, created_by FROM workspaces ORDER BY created_at").fetchall()
-        assert {r[0] for r in rows} == {ws_alice, ws_bob, ws_guest}
+        assert {r[0] for r in rows} == {ws_alice, ws_bob}
+        assert {d.name for d in (data_dir / "workspaces").iterdir()} == {ws_alice, ws_bob}
         assert dict((r[0], r[1]) for r in rows)[ws_alice] == "alice"
         members = conn.execute("SELECT workspace_id, username, role FROM workspace_members").fetchall()
-        assert (ws_alice, "alice", "owner") in members and len(members) == 3
+        assert (ws_alice, "alice", "owner") in members and len(members) == 2
         # the columns that used to be added lazily exist
         cols = {r[1] for r in conn.execute("PRAGMA table_info(users)")}
         assert {"is_admin", "max_upload_mb", "quota_mb", "default_workspace"} <= cols
@@ -351,10 +385,10 @@ def test_interrupted_upgrade_resumes(data_dir):
         m._move_prefs = original
     assert migrations.data_version() == 1  # the failed step did not stamp
     result = migrations.ensure_current()   # resumes: the moved account is skipped, the rest done
-    assert result["applied"] == ["workspaces", "workspace_access", "workspace_kinds", "publisher_sessions", "integration_tokens", "mcp_oauth", "ai_usage", "upload_path_titles", "mirrors", "mirror_cadence", "sync_log_stats", "sync_conflict_base", "identities", "ai_explicit_models", "pending_memberships", "profile", "cloud_grant", "mirror_page_filter"] and migrations.data_version() == SCHEMA_VERSION
+    assert result["applied"] == ["workspaces", "workspace_access", "workspace_kinds", "publisher_sessions", "integration_tokens", "mcp_oauth", "ai_usage", "upload_path_titles", "mirrors", "mirror_cadence", "sync_log_stats", "sync_conflict_base", "identities", "ai_explicit_models", "pending_memberships", "profile", "cloud_grant", "mirror_page_filter", "guest_accounts"] and migrations.data_version() == SCHEMA_VERSION
     with connect_users_db() as conn:
         assert conn.execute("SELECT COUNT(*) FROM users WHERE default_workspace = ''").fetchone()[0] == 0
-        assert conn.execute("SELECT COUNT(*) FROM workspaces").fetchone()[0] == 3
+        assert conn.execute("SELECT COUNT(*) FROM workspaces").fetchone()[0] == 2  # the guest's went in step 20
     assert not (data_dir / "users").exists()
 
 
@@ -397,7 +431,7 @@ def test_backup_with_uploads_zip_and_restore(data_dir):
     ws = connect_users_db().execute("SELECT default_workspace FROM users WHERE username = 'alice'").fetchone()[0]
     pdf = data_dir / "workspaces" / ws / "uploads" / "docA.pdf"
     b = backups.create("full", uploads=True)
-    assert b["uploads"] is True and b["upload_files"] == 3 and b["size_bytes"] > 0
+    assert b["uploads"] is True and b["upload_files"] == 2 and b["size_bytes"] > 0  # alice's, bob's (the guest's went in step 20)
     assert (Path(b["path"]) / "workspaces" / ws / "uploads" / "docA.pdf").read_bytes() == pdf.read_bytes()
     assert backups.backup_path("../../etc") is None and backups.info("nope") is None
     # the zip holds every file at its relative path
@@ -434,7 +468,7 @@ def test_v9_repairs_leaked_upload_paths_once(data_dir):
         ("md", "root", "notes/c", {"original_filename": "notes/c.md", "markdown_import": True}),
         ("clean", "root", "d.pdf", {"original_filename": "d.pdf", "auto_title": "d.pdf"}),
     ])
-    assert migrations.ensure_current()["applied"] == ["upload_path_titles", "mirrors", "mirror_cadence", "sync_log_stats", "sync_conflict_base", "identities", "ai_explicit_models", "pending_memberships", "profile", "cloud_grant", "mirror_page_filter"]
+    assert migrations.ensure_current()["applied"] == ["upload_path_titles", "mirrors", "mirror_cadence", "sync_log_stats", "sync_conflict_base", "identities", "ai_explicit_models", "pending_memberships", "profile", "cloud_grant", "mirror_page_filter", "guest_accounts"]
     with closing(sqlite3.connect(str(ws_root / "pages.db"))) as conn:
         rows = {r[0]: (r[1], json.loads(r[2]), r[3]) for r in conn.execute(
             "SELECT id, content, properties, updated_at FROM unified_blocks WHERE parent_id = 'root'")}

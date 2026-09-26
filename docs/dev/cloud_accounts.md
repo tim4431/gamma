@@ -634,15 +634,17 @@ preference, with explicit fetch and push when you want one side to win
   person (state `choose`): nothing is replaced, the notice
   `cloud-sync-choice` lights the dot, the profile's `GET` answers
   `cloud_choice: true` and the app opens Settings → Account once per page
-  load. There the Settings sync row offers **Merge** (the web app's
-  defaults as the base, `defaultProfile()` in `prefDefs.js`, so each side
-  keeps what it changed from them), **Use cloud's** and **Use this
-  server's**. An account linked before this merge existed gets the same
-  question once if its two copies differ.
-- **By hand.** The same row, once synced, offers **Sync now** (the merge),
-  **Fetch from cloud** (the cloud's copy replaces this one) and **Push to
-  cloud** (the other way round), both confirmed, through `POST
-  /api/auth/cloud/sync`.
+  load. There the Settings sync row opens a dialog once, "Settings differ
+  from Gamma Cloud", with **Fetch from cloud** (the cloud's copy replaces
+  this server's) and **Push to cloud** (the other way round); cancelled,
+  the row's **Sync now** asks again while the state lasts. The `merge`
+  action (the web app's defaults as the base, so each side keeps what it
+  changed from them) stays on the API but has no button. An account linked
+  before this merge existed gets the same question once if its two copies
+  differ.
+- **By hand.** The same row, once synced, offers only **Sync now** (the
+  merge, through `POST /api/auth/cloud/sync`); an answer of `choose` opens
+  the same dialog. Fetch and push exist only inside a conflict.
 - **When.** The callback syncs before it redirects (5 s timeout), so the
   browser's first load already sees the synced profile. A browser reading
   the profile (a load, a refocused tab) syncs first when the last attempt

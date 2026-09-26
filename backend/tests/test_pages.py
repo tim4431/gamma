@@ -6,7 +6,7 @@ import io
 import pytest
 from fastapi.testclient import TestClient
 
-from conftest import login, make_page, make_user, workspace_of
+from conftest import login, make_page, make_user, workspace_of, guest_name
 from gamma.db import ws_uploads_dir
 
 PDF_BYTES = b"%PDF-1.4 pages test\n" + b"z" * 2000
@@ -121,13 +121,13 @@ def test_detach_clears_attachment_and_sweeps_the_file(guest):
     hl = guest.post("/api/blocks", json={
         "parent_id": page["id"], "content": "quoted",
         "properties": {"highlight_id": "h1", "pdf_position": {"page": 1}}}).json()
-    assert (ws_uploads_dir(workspace_of("guest")) / f"{doc_id}.pdf").is_file()
+    assert (ws_uploads_dir(workspace_of(guest_name())) / f"{doc_id}.pdf").is_file()
 
     r = guest.delete(f"/api/pages/{page['id']}/attachment")
     assert r.status_code == 200, r.text
     body = r.json()
     assert body["ok"] and f"{doc_id}.pdf" in body["removed_uploads"]
-    assert not (ws_uploads_dir(workspace_of("guest")) / f"{doc_id}.pdf").exists()
+    assert not (ws_uploads_dir(workspace_of(guest_name())) / f"{doc_id}.pdf").exists()
     props = body["block"]["properties"]
     assert not any(k in props for k in ("doc_id", "source_url", "original_filename"))
     assert guest.get(f"/api/blocks/{hl['id']}").json()["properties"]["pdf_position"] == {"page": 1}
@@ -145,7 +145,7 @@ def test_detach_keeps_a_file_another_page_still_uses(guest):
     guest.post("/api/blocks", json={"parent_id": other["id"], "content": f"[paper](/api/uploads/{doc_id}.pdf)"})
     r = guest.delete(f"/api/pages/{keeper['id']}/attachment")
     assert r.status_code == 200 and r.json()["removed_uploads"] == []
-    assert (ws_uploads_dir(workspace_of("guest")) / f"{doc_id}.pdf").is_file()
+    assert (ws_uploads_dir(workspace_of(guest_name())) / f"{doc_id}.pdf").is_file()
 
 
 @pytest.fixture
@@ -243,7 +243,7 @@ def test_pdf_file_block_promotes_to_a_document_page(guest):
     ref = guest.post("/api/blocks", json={"parent_id": page["id"], "content": f"[Supplement.pdf]({up['url']})"}).json()
     removed = guest.delete(f"/api/blocks/{ref['id']}").json()["removed_uploads"]
     assert f"{doc_id}.pdf" not in removed and f"{other}.pdf" in removed  # the never-attached one was the orphan
-    assert (ws_uploads_dir(workspace_of("guest")) / f"{doc_id}.pdf").exists()
+    assert (ws_uploads_dir(workspace_of(guest_name())) / f"{doc_id}.pdf").exists()
 
 
 def test_uploaded_files_are_served_with_the_right_headers(guest):
@@ -362,7 +362,7 @@ def test_orphan_cleanup_spares_fresh_uploads(guest, monkeypatch):
     from gamma.db import ws_uploads_dir
     monkeypatch.setattr(storage, "UPLOAD_GRACE_S", 15 * 60)
     up = guest.post("/api/uploads", files={"file": ("fresh.pdf", io.BytesIO(PDF_BYTES + b"fresh"), "application/pdf")}).json()
-    path = ws_uploads_dir(workspace_of("guest")) / f"{up['doc_id']}.pdf"
+    path = ws_uploads_dir(workspace_of(guest_name())) / f"{up['doc_id']}.pdf"
     assert path.is_file()
     stray = guest.post("/api/blocks", json={"parent_id": "root", "content": "stray"}).json()
     assert guest.delete(f"/api/blocks/{stray['id']}").json()["removed_uploads"] == []
@@ -374,9 +374,9 @@ def test_orphan_cleanup_spares_fresh_uploads(guest, monkeypatch):
 
 # --- the page log's hygiene ---------------------------------------------------------
 
-def _pages_conn(user="guest"):
+def _pages_conn(user=None):
     from gamma.db import connect_pages_db
-    return connect_pages_db(workspace_of(user))
+    return connect_pages_db(workspace_of(user or guest_name()))
 
 
 def test_root_listing_is_a_pure_read(guest):
@@ -410,7 +410,7 @@ def test_deleting_a_page_leaves_a_tombstone_and_drops_its_op_log(guest):
     with _pages_conn() as conn:
         assert conn.execute("SELECT count(*) FROM page_ops WHERE page_id = ?", (page["id"],)).fetchone()[0] == 0
         row = conn.execute("SELECT actor FROM deleted_pages WHERE page_id = ?", (page["id"],)).fetchone()
-        assert row == ("guest",)
+        assert row == (guest_name(),)
         # a page brought back under the same id is no longer "deleted"
         create_page(conn, "Back", block_id=page["id"])
         assert conn.execute("SELECT 1 FROM deleted_pages WHERE page_id = ?", (page["id"],)).fetchone() is None
@@ -430,4 +430,4 @@ def test_by_doc_backfill_on_an_existing_page_is_an_op(guest):
     assert len(log["batches"]) == 1
     (op,) = log["batches"][0]["ops"]
     assert op["op"] == "set" and op["id"] == page["id"] and op["props"] == {"original_filename": "paper.pdf"}
-    assert log["batches"][0]["actor"] == "guest"
+    assert log["batches"][0]["actor"] == guest_name()

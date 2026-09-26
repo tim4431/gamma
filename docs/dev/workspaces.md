@@ -84,8 +84,10 @@ Administrators also choose shared workspace access:
 
 Public does not mean anonymous. Page share links provide access for people
 without accounts — including editing, when the sharer sets "Anyone with the
-link" to "Can edit" ([api.md](api.md) "Link visitors"). The guest account has its own daily-reset personal
-workspace; it cannot create workspaces, join shared ones or use public access.
+link" to "Can edit" ([api.md](api.md) "Link visitors"). Each guest login is a throwaway account of its own
+with one personal workspace, deleted with it `guest_ttl_hours` (default 24) after the login
+([guests.md](guests.md)); a guest cannot create workspaces, join shared ones or use public access, and its
+workspace takes no backup import and keeps no snapshots (`workspaces.is_guest_workspace`).
 
 Administrators may manage a workspace without joining it. This does not grant
 access to its private pages: an administrator must join a private shared

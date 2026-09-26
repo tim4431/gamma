@@ -8,7 +8,7 @@ import json
 import zipfile
 
 import pytest
-from conftest import make_page
+from conftest import make_page, guest_name
 
 from gamma import ink as inkmod
 
@@ -172,7 +172,7 @@ def test_orphan_sweep_keeps_referenced_ink(guest):
         {"op": "delete", "id": "inkblk2"},
     ]})
     assert r.status_code == 200, r.text
-    uploads = ws_uploads_dir(default_workspace("guest"))
+    uploads = ws_uploads_dir(default_workspace(guest_name()))
     assert (uploads / url.rsplit("/", 1)[1]).is_file()
     # dropping the block frees the file
     r = guest.post(f"/api/pages/{page['id']}/ops", json={"client": "t", "ops": [{"op": "delete", "id": "inkblk1"}]})

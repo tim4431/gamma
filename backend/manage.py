@@ -4,20 +4,20 @@ from the backend/ directory, with the server STOPPED for anything that moves
 files (migrate on Windows, delete-user).
 
 Usage:
-  python manage.py create-user <username> [password]
+  python manage.py create-user <username> [password]   # no password: set one later with set-password
   python manage.py set-password <username> <password>
   python manage.py set-admin <username> <on|off>   # admin = privilege flag, manages users in the GUI
   python manage.py list-identities | link-identity <user> <sub> <username> [email] | unlink-identity <user>
                                                    # Sign in with Gamma Cloud (docs/dev/cloud_accounts.md)
   python manage.py rename-user <old> <new>
-  python manage.py delete-user <username>          # + the workspaces only they owned
+  python manage.py delete-user <username>          # + the workspaces only they owned (guests too)
   python manage.py list-users
   python manage.py list-workspaces                 # every workspace, access, members, size
   python manage.py create-workspace <name> <owner> [shared [public [viewer|editor]]]
   python manage.py set-member <workspace-id> <username> <owner|editor|viewer|none>
   python manage.py set-access <workspace-id> <private|public> [viewer|editor]
-  python manage.py reset-guest                     # wipe guest data (auto-runs daily)
-  python manage.py setup                           # idempotent: guest account + missing workspace files
+  python manage.py sweep-guests [--all]            # delete expired guest accounts now (--all: every guest)
+  python manage.py setup                           # idempotent: missing personal workspaces + workspace files
   python manage.py migrate [--status] [--dry-run]  # upgrade the data directory (also runs at server start)
   python manage.py backups                         # list the snapshots under backups/
   python manage.py backups --create [--uploads] [--label x]   # take one now (databases; + uploads)
@@ -34,9 +34,9 @@ import bcrypt
 
 import json
 
-from gamma import backups as backups_mod, cloud_auth, cloud_sync, migrations, workspaces
+from gamma import backups as backups_mod, cloud_auth, cloud_sync, guests, migrations, workspaces
 from gamma.db import SchemaOutdated, connect_users_db, page_now, ws_dir
-from gamma.seed import create_account, ensure_guest_user, reset_guest_data
+from gamma.seed import create_account
 
 
 def _guard_schema():
@@ -58,7 +58,7 @@ def create_user(username, password=None):
             print(f"User '{username}' already exists.")
             return
     ws = create_account(username, password)
-    tag = " (no password)" if not password else ""
+    tag = " (no password yet: set one with set-password)" if not password else ""
     print(f"Created user '{username}'{tag} with personal workspace {ws}")
 
 
@@ -127,12 +127,19 @@ def set_access(ws, access, public_role=None):
           + (f" (everyone {info['public_role']})." if info["access"] == "public" else "."))
 
 
+def _is_guest(username) -> bool | None:
+    """True / False for an account, None when there is no such account."""
+    with connect_users_db() as conn:
+        row = conn.execute("SELECT is_guest FROM users WHERE username = ?", (username,)).fetchone()
+    return bool(row[0]) if row else None
+
+
 def set_admin(username, value):
     if value not in ("on", "off"):
         print("Usage: python manage.py set-admin <username> <on|off>")
         return
-    if username == "guest":
-        print("The guest account cannot be an admin.")
+    if _is_guest(username):
+        print("A guest account cannot be an admin.")
         return
     with connect_users_db() as conn:
         if not conn.execute("SELECT 1 FROM users WHERE username = ?", (username,)).fetchone():
@@ -145,33 +152,18 @@ def set_admin(username, value):
 
 
 def delete_user(username):
-    if username == "guest":
-        print("Use 'reset-guest' to reset the guest account.")
+    if _is_guest(username) is None:
+        print(f"User '{username}' not found.")
         return
-    with connect_users_db() as conn:
-        if not conn.execute("SELECT 1 FROM users WHERE username = ?", (username,)).fetchone():
-            print(f"User '{username}' not found.")
-            return
-        subject, held = cloud_auth.grant_of(username)
-        conn.execute("DELETE FROM sessions WHERE username = ?", (username,))
-        conn.execute("DELETE FROM identities WHERE username = ?", (username,))
-        conn.commit()
-    cloud_sync.release(subject, held)
-    deleted = workspaces.delete_account_workspaces(username)
-    with connect_users_db() as conn:
-        conn.execute("DELETE FROM users WHERE username = ?", (username,))
-        conn.commit()
+    deleted = workspaces.delete_account(username, release_now=True)
     print(f"Deleted user '{username}'" + (f" and workspace(s) {', '.join(deleted)}" if deleted else ""))
 
 
-def reset_guest():
-    """Wipe guest databases and sessions, then recreate fresh."""
-    with connect_users_db() as conn:
-        conn.execute("DELETE FROM sessions WHERE username = 'guest'")
-        conn.commit()
-    ensure_guest_user()
-    reset_guest_data()
-    print("Guest account reset.")
+def sweep_guests(everyone=False):
+    """Delete the guest accounts past their lifetime now (the server's
+    sweeper does it every 10 minutes); ``--all`` deletes every guest."""
+    gone = guests.delete_expired(everyone=everyone)
+    print(f"Deleted {len(gone)} guest account(s)" + (f": {', '.join(gone)}" if gone else "."))
 
 
 def rename_user(old, new):
@@ -179,8 +171,8 @@ def rename_user(old, new):
     keep working; no files move (workspace directories are named by id)."""
     from gamma.routers.admin import rename_account_rows
 
-    if old == "guest":
-        print("The guest account cannot be renamed.")
+    if _is_guest(old):
+        print("A guest account cannot be renamed.")
         return
     if not re.fullmatch(r"[A-Za-z0-9_.-]{1,64}", new):
         print("New username must be 1-64 chars of letters, digits, '_', '.', '-'.")
@@ -235,7 +227,7 @@ def link_identity(username, subject, cloud_username, email=""):
             print(f"User '{username}' not found.")
             return
         if row[0]:
-            print("The guest account cannot be linked.")
+            print("A guest account cannot be linked.")
             return
         cloud_auth.link(conn, username, {"sub": subject, "preferred_username": cloud_username, "email": email,
                                          "email_verified": True})
@@ -257,17 +249,15 @@ def unlink_identity(username):
 
 
 def setup():
-    """Idempotent setup: the guest account, a personal workspace for every
-    account, missing workspace files recreated."""
+    """Idempotent setup: a personal workspace for every account, missing
+    workspace files recreated. Guest accounts are made per visitor by the
+    server (gamma/guests.py), never here."""
     with connect_users_db() as conn:
-        rows = conn.execute("SELECT username FROM users").fetchall()
-    for (user,) in rows:
-        ws = workspaces.ensure_personal(user, welcome=user == "guest")
+        rows = conn.execute("SELECT username, is_guest FROM users").fetchall()
+    for user, is_guest in rows:
+        ws = workspaces.ensure_personal(user, welcome=bool(is_guest))
         if not (ws_dir(ws) / "pages.db").exists():
             print(f"  repaired: created missing files for '{user}' ({ws})")
-    if not any(r[0] == "guest" for r in rows):
-        ensure_guest_user()
-        print("  created guest account")
     print("Setup complete.")
 
 
@@ -414,8 +404,8 @@ def main():
             print("Usage: python manage.py set-member <workspace-id> <username> <owner|editor|viewer|none>")
             sys.exit(1)
         set_member(args[0], args[1], args[2])
-    elif cmd == "reset-guest":
-        reset_guest()
+    elif cmd == "sweep-guests":
+        sweep_guests(everyone="--all" in args)
     elif cmd == "setup":
         setup()
     else:

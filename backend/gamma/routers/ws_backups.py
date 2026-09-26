@@ -3,8 +3,8 @@ Settings → Backups manages — take one, list, download, restore in place,
 delete. The zip and the restore live in gamma/ws_backup.py; this is the
 HTTP skin plus who-may-do-what: any member (or admin) lists and downloads,
 an owner takes, restores and deletes (a merge restore needs an editor, like
-/api/import-data). The guest workspace keeps no snapshots and takes no
-restore — it is shared with the whole internet.
+/api/import-data). A guest's workspace keeps no snapshots and takes no
+restore — it goes away with the guest (docs/dev/guests.md).
 """
 
 from fastapi import APIRouter, HTTPException, Request
@@ -23,8 +23,8 @@ class BackupCreate(BaseModel):
 
 
 def _not_guest(ws: str) -> None:
-    if ws == workspaces.default_workspace("guest"):
-        raise HTTPException(status_code=403, detail="the guest workspace keeps no backups")
+    if workspaces.is_guest_workspace(ws):
+        raise HTTPException(status_code=403, detail="a guest workspace keeps no backups")
 
 
 def _named(ws: str, name: str) -> dict:

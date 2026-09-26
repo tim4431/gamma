@@ -64,6 +64,7 @@ workspace's files), `db.SCHEMA_VERSION`, `manage.py migrate` / `backups`.
 | 17 | `profile` | The account-wide `appearance` pref (`{theme, pdfDark}`) becomes the new `profile` pref (`{theme, pdfDarkPage}`, keyed by the web app's preference names, same `updated_at`); an existing profile is kept; `appearance` rows are dropped ([settings.md](settings.md)) |
 | 18 | `cloud_grant` | `sessions` gains `via` (`''` a password or the guest, `cloud` a Gamma Cloud sign-in; existing rows count as password sessions) and `identities` gains `revoked_at`: the grant check ends only the sessions a cloud sign-in minted when the account server refuses that account's grant ([cloud_accounts.md](cloud_accounts.md)) |
 | 19 | `mirror_page_filter` | `mirrors` gains `page_filter`: NULL (every page travels, what every existing mirror keeps) or a JSON list of the only page ids that do, the shape a published page's mirror has ([mirror.md](mirror.md) "The page filter") |
+| 20 | `guest_accounts` | Guests became throwaway accounts minted per login ([guests.md](guests.md)): the legacy shared `guest` account (`is_guest = 1`) is deleted with its sessions, memberships, prefs, shares, tokens and usage rows, and its personal workspace's rows, directory and stored snapshots (a directory that will not go is logged and left as an orphan). Any other `is_guest` row — what `manage.py create-user` without a password used to make — becomes a normal password-less account, so the guest expiry never deletes it |
 
 ## Backups (`gamma/backups.py`)
 

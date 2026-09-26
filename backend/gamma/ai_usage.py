@@ -12,6 +12,10 @@ from .db import connect_users_db, page_now
 from .logbuf import log
 
 KINDS = ("chat", "translate", "metadata", "cite", "test")
+# The provider ids of the server's shared entries (ai_settings.SERVER_ID_PREFIX
+# is this constant): their rows are what the shared allowance meters.
+SHARED_PREFIX = "server:"
+ALLOWANCE_HOURS = 24  # the allowance's rolling window
 _FIELDS = ("input", "output", "cache_read", "cache_write")
 # Rows older than this are dropped on the next write (the summary's longest
 # window is 30 days; a year keeps the all-time total honest for a while).
@@ -53,6 +57,25 @@ def recorder(kind: str, entry: dict, runtime: dict):
         record(username, kind, entry.get("provider", ""), conf.get("name", ""),
                entry.get("model", ""), usage)
     return on_usage
+
+
+def shared_used(username: str, hours: int = ALLOWANCE_HOURS) -> int:
+    """Tokens (input + output) the account spent through the server's shared
+    entries in the last ``hours`` — what the shared AI allowance counts
+    (docs/dev/guests.md). Own entries never count."""
+    if not username:
+        return 0
+    cutoff = (datetime.now(timezone.utc) - timedelta(hours=hours)).strftime("%Y-%m-%dT%H:%M:%S")
+    try:
+        with connect_users_db() as conn:
+            row = conn.execute(
+                "SELECT COALESCE(SUM(input + output), 0) FROM ai_usage "
+                "WHERE username = ? AND at >= ? AND substr(provider_id, 1, ?) = ?",
+                (username, cutoff, len(SHARED_PREFIX), SHARED_PREFIX)).fetchone()
+    except sqlite3.Error as e:
+        log.warning(f"[ai_usage] could not read shared usage: {e}")
+        return 0
+    return int(row[0] or 0)
 
 
 def _empty() -> dict:
@@ -105,8 +128,16 @@ def summary(username: str) -> dict:
     }
 
 
-def clear(username: str) -> int:
-    """Drop the account's usage rows; returns how many went."""
+def clear(username: str, keep_metered: bool = True) -> int:
+    """Drop the account's usage rows; returns how many went. The rows the
+    shared allowance still counts (shared entries, last 24 hours) stay
+    unless ``keep_metered`` is off — a reset must not refill the allowance."""
+    cutoff = (datetime.now(timezone.utc) - timedelta(hours=ALLOWANCE_HOURS)).strftime("%Y-%m-%dT%H:%M:%S")
     with connect_users_db() as conn:
-        cur = conn.execute("DELETE FROM ai_usage WHERE username = ?", (username,))
+        if keep_metered:
+            cur = conn.execute(
+                "DELETE FROM ai_usage WHERE username = ? AND NOT (at >= ? AND substr(provider_id, 1, ?) = ?)",
+                (username, cutoff, len(SHARED_PREFIX), SHARED_PREFIX))
+        else:
+            cur = conn.execute("DELETE FROM ai_usage WHERE username = ?", (username,))
         return cur.rowcount

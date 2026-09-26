@@ -923,6 +923,14 @@ export default function SettingsDialog({
   }, [!!activePane]);
   if (!activePane) return null;
   const results = searchSettings(query, allowed.map(([id]) => id));
+  // ↑/↓ walk the search results; ↑ from the first goes back to the box.
+  const stepResults = (event) => {
+    if (event.key !== "ArrowDown" && event.key !== "ArrowUp") return;
+    event.preventDefault();
+    const list = [...paneRef.current.querySelectorAll(".settingsSearchResult")];
+    const next = list[list.indexOf(event.currentTarget) + (event.key === "ArrowDown" ? 1 : -1)];
+    (next || (event.key === "ArrowUp" ? modalRef.current.querySelector("[data-find]") : null))?.focus();
+  };
   const aiValue = { ...ai, aiInfo: prompts.aiInfo };
   const paperValue = { ...papers, chatModelName: (ai.aiModels || []).find((m) => m.id === ai.chatModel)?.model };
   const navButton = ([id, label, Icon]) => <button key={id} type="button"
@@ -959,9 +967,16 @@ export default function SettingsDialog({
             <div className="settingsSearch">
               <SearchIcon size={16} />
               <input className="aiKeyInput" type="search" aria-label={t("Search settings")} placeholder={t("Search settings...")} value={query}
+                data-find
                 onChange={(event) => {
                   const next = event.target.value;
                   guard(() => { setQuery(next); setMobileIndex(false); });
+                }}
+                onKeyDown={(event) => {
+                  // Enter opens the first match; ↓ steps into the list.
+                  if (!query.trim() || event.nativeEvent.isComposing) return;
+                  if (event.key === "Enter" && results.length) { event.preventDefault(); navigate(results[0].pane, results[0].label); }
+                  if (event.key === "ArrowDown") { event.preventDefault(); paneRef.current?.querySelector(".settingsSearchResult")?.focus(); }
                 }} />
               {query ? <button className="uiClose uiCloseSm" aria-label={t("Clear search")} onClick={() => setQuery("")}>×</button> : null}
             </div>
@@ -979,7 +994,7 @@ export default function SettingsDialog({
               {query.trim() ? <>
                 <PaneHead icon={SearchIcon} title={t("Search settings")}>{tn("{n} matching setting", "{n} matching settings", results.length)}</PaneHead>
                 {results.length ? results.map(({ pane: id, label }) => <button key={`${id}:${label}`} className="uiBtn settingsSearchResult"
-                  onClick={() => navigate(id, label)}><span>{t(label)}</span><small>{t(allNav.find(([key]) => key === id)?.[1] || "")}</small></button>)
+                  onClick={() => navigate(id, label)} onKeyDown={stepResults}><span>{t(label)}</span><small>{t(allNav.find(([key]) => key === id)?.[1] || "")}</small></button>)
                   : <Empty icon={SearchIcon}>{t('No settings found. Try "model", "PDF", or "storage".')}</Empty>}
               </> : <>
                 {pane === "appearance" ? <AppearanceSettings value={papers} diagnostics={diagnostics} /> : null}

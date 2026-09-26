@@ -6,6 +6,7 @@ import io
 import zipfile
 
 import pytest
+from conftest import guest_name
 
 
 def _annotated_pdf(text=b"Attention is all you need, says the paper."):
@@ -212,7 +213,7 @@ def test_preview_is_read_only_and_predicts_upgrade(guest):
 
     rdf = RDF.replace("s41586-000-00000-0", "preview-upgrade").replace("Attention is all you need", "Preview upgrade")
     missing = _custom_zip(rdf, {"files/3/": b""})
-    ws = workspace_of("guest")
+    ws = workspace_of(guest_name())
     with connect_pages_db(ws) as conn:
         before = conn.execute("SELECT * FROM unified_blocks ORDER BY id").fetchall()
     uploads_before = set(ws_uploads_dir(ws).glob("*"))

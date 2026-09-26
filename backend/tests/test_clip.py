@@ -4,7 +4,7 @@ paper" ingest), /api/library/lookup + /preview + /folders (popup helpers), and
 and the metadata thread is stubbed out."""
 
 import hashlib
-from conftest import workspace_of
+from conftest import workspace_of, guest_name
 import io
 import json
 import sqlite3
@@ -67,7 +67,7 @@ def meta_calls(monkeypatch):
 
 
 def _props(block_id):
-    with sqlite3.connect(ws_db_path(workspace_of("guest"), "pages.db")) as conn:
+    with sqlite3.connect(ws_db_path(workspace_of(guest_name()), "pages.db")) as conn:
         row = conn.execute("SELECT content, properties FROM unified_blocks WHERE id = ?", (block_id,)).fetchone()
     return row[0], json.loads(row[1])
 
@@ -85,13 +85,13 @@ def test_clip_url_creates_filed_page_and_stores_pdf(guest, upstream, meta_calls)
     assert body["doc_id"] == doc_id and body["existed"] is False
     assert body["title"] == "Clip One"
     assert body["open_url"] == f"/?block={body['block_id']}"
-    assert (ws_uploads_dir(workspace_of("guest")) / f"{doc_id}.pdf").read_bytes() == PDF_BYTES
+    assert (ws_uploads_dir(workspace_of(guest_name())) / f"{doc_id}.pdf").read_bytes() == PDF_BYTES
     title, props = _props(body["block_id"])
     assert title == "Clip One" and props["auto_title"] == "Clip One"
     assert props["source_url"] == url
     assert props["web_url"] == "https://example.org/papers/clip-one"
     assert props["folder"] == "reading/2026" and props["category"] == "to-read"
-    assert meta_calls == [("guest", body["block_id"], "", "")]
+    assert meta_calls == [(guest_name(), body["block_id"], "", "")]
 
 
 def test_clip_forwards_detected_identifiers_to_metadata(guest, upstream, meta_calls):
@@ -109,7 +109,7 @@ def test_clip_dedups_by_doi_and_adds_folder(guest, upstream, meta_calls):
     r = guest.post("/api/clip", json={"pdf_url": url, "title": "Dedup", "folder": "a"})
     block_id = r.json()["block_id"]
     # Pretend metadata landed with a DOI, as the lookup thread would.
-    with sqlite3.connect(ws_db_path(workspace_of("guest"), "pages.db")) as conn:
+    with sqlite3.connect(ws_db_path(workspace_of(guest_name()), "pages.db")) as conn:
         _, props = _props(block_id)
         props["meta"] = {"doi": "10.1000/DeDup.1", "title": "Dedup"}
         conn.execute("UPDATE unified_blocks SET properties = ? WHERE id = ?", (json.dumps(props), block_id))
@@ -162,7 +162,7 @@ def test_clip_without_pdf_creates_web_page(guest, upstream, meta_calls):
     r3 = guest.post("/api/clip", json={"source_url": "https://pub.example/articles/deep-dive",
                                        "doi": "10.5555/paywalled.1"})
     assert r3.status_code == 200 and r3.json()["title"] == "deep-dive"
-    assert meta_calls == [("guest", r3.json()["block_id"], "10.5555/paywalled.1", "")]
+    assert meta_calls == [(guest_name(), r3.json()["block_id"], "10.5555/paywalled.1", "")]
     # Nothing at all to save is still a 400.
     assert guest.post("/api/clip", json={}).status_code == 400
 
@@ -185,7 +185,7 @@ def test_clip_no_copy_probes_only(guest, upstream, meta_calls):
     r = guest.post("/api/clip", json={"pdf_url": url, "title": "No copy", "save_copy": False})
     assert r.status_code == 200, r.text
     doc_id = r.json()["doc_id"]
-    assert not (ws_uploads_dir(workspace_of("guest")) / f"{doc_id}.pdf").exists()
+    assert not (ws_uploads_dir(workspace_of(guest_name())) / f"{doc_id}.pdf").exists()
     _, props = _props(r.json()["block_id"])
     assert props["source_url"] == url  # the app proxies it on open
 
@@ -307,7 +307,7 @@ def test_folders_sort_by_recent_views_then_modified(guest, meta_calls):
         })
         assert r.status_code == 200, r.text
         page_ids.append(r.json()["block_id"])
-    with sqlite3.connect(ws_db_path(workspace_of("guest"), "pages.db")) as conn:
+    with sqlite3.connect(ws_db_path(workspace_of(guest_name()), "pages.db")) as conn:
         for i, page_id in enumerate(page_ids):
             conn.execute("UPDATE unified_blocks SET updated_at = ? WHERE id = ?",
                          (f"2026-09-{12 if i in (3, 4) else 10:02d}T00:00:00.000Z", page_id))

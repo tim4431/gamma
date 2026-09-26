@@ -82,6 +82,38 @@ def page_host_pattern() -> str:
     return os.environ.get("GAMMA_PAGE_HOST", "").strip().lower()
 
 
+def guest_seed_path() -> str:
+    """``GAMMA_GUEST_SEED``: a workspace backup zip (gamma/ws_backup.py)
+    restored into every new guest's workspace, "" = the welcome page only
+    (gamma/guests.py)."""
+    return os.environ.get("GAMMA_GUEST_SEED", "").strip()
+
+
+DEFAULT_GUEST_MAX = 500
+
+
+def guest_max() -> int:
+    """``GAMMA_GUEST_MAX``: how many guest accounts may live at once (a
+    guest login past it is refused with 503); 0 turns guest logins off.
+    Unset or unparseable = 500."""
+    try:
+        value = int(os.environ.get("GAMMA_GUEST_MAX", "").strip() or DEFAULT_GUEST_MAX)
+    except ValueError:
+        return DEFAULT_GUEST_MAX
+    return value if value >= 0 else DEFAULT_GUEST_MAX
+
+
+def guest_ttl_override() -> str:
+    """``GAMMA_GUEST_TTL_HOURS``: the guest lifetime in hours, overriding the
+    saved server setting (gamma/server_settings.py guest_ttl_settings)."""
+    return os.environ.get("GAMMA_GUEST_TTL_HOURS", "").strip()
+
+
+def demo_override() -> bool:
+    """``GAMMA_DEMO`` truthy: demo mode on, whatever the saved setting says."""
+    return os.environ.get("GAMMA_DEMO", "").strip().lower() in ("1", "true", "yes", "on")
+
+
 def sync_interval_s() -> int:
     """Seconds between mirror sync rounds (gamma/sync_engine.py); 0 turns
     the background loop off (the API's "sync now" still works)."""

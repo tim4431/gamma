@@ -116,9 +116,16 @@ def test_lockout_rails(boss):
             assert boss.put(f"/api/admin/users/{u['username']}", json={"is_admin": False}).status_code == 200
     assert boss.put("/api/admin/users/boss", json={"is_admin": False}).status_code == 400
     assert boss.delete("/api/admin/users/boss").status_code == 400  # also self-delete
-    # guest is untouchable
-    assert boss.put("/api/admin/users/guest", json={"password": "x"}).status_code == 400
-    assert boss.delete("/api/admin/users/guest").status_code == 400
+    # a guest account takes no password, but an admin may delete it (its
+    # workspace goes with it)
+    from gamma import guests, workspaces
+    from gamma.db import ws_dir
+    name = guests.new_guest()
+    ws = workspaces.default_workspace(name)
+    assert boss.put(f"/api/admin/users/{name}", json={"password": "x"}).status_code == 400
+    r = boss.delete(f"/api/admin/users/{name}")
+    assert r.status_code == 200 and r.json()["deleted_workspaces"] == [ws]
+    assert name not in [u["username"] for u in r.json()["users"]] and not ws_dir(ws).exists()
     assert boss.delete("/api/admin/users/ghost-user").status_code == 404
 
 
@@ -140,7 +147,10 @@ def test_rename_user_via_gui(boss):
     _login("renata", "rpw")
     # collisions / guest / bad names / ghosts rejected
     assert boss.post("/api/admin/users/renata/rename", json={"new_username": "boss"}).status_code == 409
-    assert boss.post("/api/admin/users/guest/rename", json={"new_username": "g2"}).status_code == 400
+    from gamma import guests
+    name = guests.new_guest()
+    assert boss.post(f"/api/admin/users/{name}/rename", json={"new_username": "g2"}).status_code == 400
+    assert boss.delete(f"/api/admin/users/{name}").status_code == 200
     assert boss.post("/api/admin/users/renata/rename", json={"new_username": "bad name"}).status_code == 400
     assert boss.post("/api/admin/users/ghost/rename", json={"new_username": "x"}).status_code == 404
 

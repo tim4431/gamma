@@ -5,12 +5,15 @@ import { t, T } from "../../shared/i18n/i18n.js";
 // waitFor / wait), then moves on — or, with `advanceOn`, hands over to the
 // user. `{demoUrl}` in typed text comes from `vars` (overridable through the
 // localStorage key gamma-guide-vars). Start it from the
-// account menu's Tours > Your first paper.
+// account menu's Tours > Your first paper. On a demo server it is also
+// offered on the library once the guest lands: the trigger's own `requires`
+// gates only that offer, so the tour stays startable everywhere.
 
 export default {
   id: "first-run",
   version: 2,
   title: T("Your first paper"),
+  trigger: { requires: { demo: true, view: "home" } },
   vars: {
     demoUrl: "https://arxiv.org/abs/1706.03762", // Attention Is All You Need
   },

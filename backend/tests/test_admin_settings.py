@@ -163,19 +163,25 @@ def test_validation(sizeadmin):
 
 
 def test_guest_quota_settable_but_not_credentials(sizeadmin, guest_account):
-    r = sizeadmin.put("/api/admin/users/guest", json={"quota_mb": 1})
+    from gamma.server_settings import GUEST_DEFAULT_QUOTA_MB, user_limits
+
+    assert user_limits(guest_account)["quota_mb"] == GUEST_DEFAULT_QUOTA_MB  # bounded by is_guest, not by name
+    r = sizeadmin.put(f"/api/admin/users/{guest_account}", json={"quota_mb": 1})
     assert r.status_code == 200, r.text
-    g = next(u for u in r.json()["users"] if u["username"] == "guest")
-    assert g["quota_mb"] == 1
-    assert sizeadmin.put("/api/admin/users/guest", json={"password": "x"}).status_code == 400
-    assert sizeadmin.put("/api/admin/users/guest", json={"is_admin": True}).status_code == 400
-    sizeadmin.put("/api/admin/users/guest", json={"quota_mb": None})
+    g = next(u for u in r.json()["users"] if u["username"] == guest_account)
+    assert g["quota_mb"] == 1 and g["is_guest"] is True
+    assert sizeadmin.put(f"/api/admin/users/{guest_account}", json={"password": "x"}).status_code == 400
+    assert sizeadmin.put(f"/api/admin/users/{guest_account}", json={"is_admin": True}).status_code == 400
+    sizeadmin.put(f"/api/admin/users/{guest_account}", json={"quota_mb": None})
 
 
 @pytest.fixture()
 def guest_account():
-    from gamma.seed import ensure_guest_user
-    ensure_guest_user()
+    """A guest account of this test's own (gamma/guests.py), deleted after."""
+    from gamma import guests, workspaces
+    name = guests.new_guest()
+    yield name
+    workspaces.delete_account(name)
 
 
 def test_corrupt_values_fall_back_to_defaults():

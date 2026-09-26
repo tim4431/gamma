@@ -1,9 +1,11 @@
 """Sign in with Gamma Cloud — the wire around ``gamma/cloud_auth.py``:
 
 - ``GET /api/server-config`` (public): what the login page needs — whether
-  cloud sign-in is on and the account server's address — and ``page_host``,
-  the per-account page hostname pattern (``GAMMA_PAGE_HOST``, "" = none),
-  by which the app knows it was opened on a page host (gamma/publish.py);
+  cloud sign-in is on and the account server's address, whether guests may
+  sign in, for how long (``guest_ttl_hours``) and ``demo`` mode
+  (docs/dev/guests.md) — and ``page_host``, the per-account page hostname
+  pattern (``GAMMA_PAGE_HOST``, "" = none), by which the app knows it was
+  opened on a page host (gamma/publish.py);
 - ``GET /api/auth/cloud/start?next=&link=1`` → redirect to the account
   server (``link=1`` with a session attaches the identity to that account);
 - ``GET /api/auth/cloud/callback?code=&state=`` → session cookie + redirect
@@ -15,8 +17,9 @@
   this server off the person's server list and revokes the grant.
 - ``GET /api/auth/cloud/sync-status``: the signed-in account's own
   preference profile sync state (Settings' section tags), from memory.
-- ``POST /api/auth/cloud/sync``: Settings → Account's Sync now / Fetch
-  from cloud / Push to cloud, and the answer to a first sync's choice.
+- ``POST /api/auth/cloud/sync``: Settings → Account's Sync now, and the
+  answer to a first sync's choice (its Fetch from cloud / Push to cloud
+  dialog; ``merge`` is API-only).
 """
 
 from typing import Literal
@@ -26,7 +29,7 @@ from fastapi import APIRouter, HTTPException, Request
 from fastapi.responses import RedirectResponse
 from pydantic import BaseModel
 
-from .. import cloud_auth, cloud_sync, config, ratelimit
+from .. import cloud_auth, cloud_sync, config, ratelimit, server_settings
 from ..auth import require_personal_user, require_user, set_session_cookie
 from ..cloud_auth import CloudAuthError
 from ..db import connect_users_db
@@ -41,6 +44,7 @@ async def server_config():
     cfg = cloud_auth.settings()
     return {"cloud": {"enabled": cfg["enabled"], "issuer": cfg["issuer"] if cfg["enabled"] else ""},
             "password_login": True, "registration": False, "guest": not cfg["share_host"],
+            "guest_ttl_hours": server_settings.guest_ttl_hours(), "demo": server_settings.demo_mode(),
             "page_host": config.page_host_pattern()}
 
 

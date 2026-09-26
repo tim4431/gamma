@@ -3,7 +3,7 @@ and the ``notes-pdf`` export mode end to end."""
 
 import io
 
-from conftest import make_page, require_math_renderer, workspace_of
+from conftest import make_page, require_math_renderer, workspace_of, guest_name
 
 from gamma.note_markup import MATH, TEXT
 from gamma.pdf_document import PAGE_H, chunks, inline, render_document
@@ -289,7 +289,7 @@ def test_pasted_images_are_embedded(guest):
     assert up.status_code == 200, up.text
     src = up.json()["url"]
     pdf = render_document([_page("With a picture", None, [_block("b1", f"look:\n![shot]({src})")])],
-                          uploads_dir=ws_uploads_dir(workspace_of("guest")))
+                          uploads_dir=ws_uploads_dir(workspace_of(guest_name())))
     assert 3 in _object_kinds(pdf), "the pasted image should be drawn as a page image"
     assert src not in _text(pdf)
 

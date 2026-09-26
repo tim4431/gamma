@@ -16,9 +16,13 @@ All state is SQLite + files on disk under a data directory (env
 - `users.db` — global. Its `PRAGMA user_version` is the data directory's
   schema version (`db.SCHEMA_VERSION`). Tables:
   - `users` — accounts (bcrypt), the guest/admin flags, nullable per-user
-    storage-limit overrides, `default_workspace` (the personal workspace);
+    storage-limit overrides, `default_workspace` (the personal workspace).
+    `is_guest = 1` rows are throwaway guest accounts (`guest-<8 chars>`,
+    empty hash) that `gamma/guests.py` mints per guest login and deletes
+    `guest_ttl_hours` after their `created_at` ([guests.md](guests.md));
   - `sessions` — session tokens, with `via` (`cloud` for one a Gamma Cloud
-    sign-in minted, else empty);
+    sign-in minted, else empty); `guest_date` is written with a guest
+    session's creation date and read by nothing;
   - `identities` — the Gamma Cloud identity linked to an account
     (`provider`, the account server's `subject`, `username`, `email`, the
     last verified `claims` — username, plan — the Fernet-encrypted
@@ -116,8 +120,11 @@ write a step: [migrations.md](migrations.md).
 ## Auth model
 
 `session` cookie → middleware resolves `request.state.user` (+ `is_guest`,
-`is_admin`, `default_ws`). Guest account data is wiped and re-seeded daily
-(checked lazily in the middleware). Which workspace a request reads or
+`is_admin`, `default_ws`). A guest account past its lifetime is deleted by
+the middleware on its next request (which then runs signed out) or by the
+sweeper `gamma/guests.py` runs in the app lifespan every 10 minutes — both
+through `workspaces.delete_account`, the one account deletion the admin API
+and `manage.py delete-user` use too ([guests.md](guests.md)). Which workspace a request reads or
 writes is a second decision (`require_ws` / `resolve_ws` /
 `require_ws_writer` — [workspaces.md](workspaces.md)): `?ws=` or the
 `X-Gamma-Workspace` header, else the account's default workspace, gated by
@@ -158,17 +165,22 @@ and a RANDOM password printed once to the console (env-overridable via
 accounts exist. Deliberately not keyed on "no admin exists": auto-adding an
 admin login to an upgraded multi-user instance would be a backdoor — those
 get a startup hint to run `manage.py set-admin`. `seed.create_workspace_files`
-writes a workspace's empty files (and the guest welcome page);
-`workspaces.ensure_personal` gives an account its personal workspace.
+writes a workspace's empty files (and the guest welcome page, which names
+the guest lifetime); `workspaces.ensure_personal` gives an account its
+personal workspace. There is no seeded guest account: each guest login makes
+its own.
 
 ## manage.py CLI
 
-User CRUD: `create-user`, `set-password`, `set-admin`, `rename-user`,
-`delete-user` (also the workspaces only that account owned), `list-users`,
+User CRUD: `create-user` (without a password: an account the password
+login refuses until `set-password`), `set-password`, `set-admin`,
+`rename-user`, `delete-user` (`workspaces.delete_account`: also the
+workspaces only that account owned; guest accounts too), `list-users`,
 `list-identities` / `link-identity` / `unlink-identity` (the Gamma Cloud
 identity of an account, [cloud_accounts.md](cloud_accounts.md)),
-`reset-guest`, `setup` (idempotent: guest account + a personal workspace for
-every account + missing files). Workspaces: `list-workspaces`,
+`sweep-guests [--all]` (delete the expired guest accounts now; `--all`
+every guest), `setup` (idempotent: a personal workspace for every account +
+missing files; creates no guest). Workspaces: `list-workspaces`,
 `create-workspace <name> <owner> [shared [public [viewer|editor]]]`, `set-member
 <ws> <user> <owner|editor|viewer|none>`, `set-access <ws> <private|public>
 [viewer|editor]`. Data directory: `migrate`
@@ -197,9 +209,11 @@ without membership — [workspaces.md](workspaces.md)). Backups are not here: ev
 export/import lives on its row in Settings → Workspaces and its snapshots
 in Settings → Backups ([workspaces.md](workspaces.md)); admins reach any
 workspace from Settings → Server (`/api/export?user=` still serves an
-account's default workspace to scripts). The guest workspace can be
-exported but never restored into. Rails: guest untouchable, no self-delete, the last
-admin can't be demoted or deleted. Deleting an account deletes its
+account's default workspace to scripts). A guest's workspace can be
+exported but never restored into. Rails: a guest account takes storage
+limits and deletion but no password, admin flag or new name; no
+self-delete; the last admin can't be demoted or deleted. Deleting an
+account (`workspaces.delete_account`) deletes its
 personal workspaces and the shared ones it alone owned (the response lists
 them); shared workspaces with another owner survive.
 

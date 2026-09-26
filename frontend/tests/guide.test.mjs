@@ -8,7 +8,7 @@ import { join } from "node:path";
 import { ANCHORS } from "../src/guide/anchors.js";
 import { EVENTS, eventMatches } from "../src/guide/events.js";
 import { TOURS } from "../src/guide/tours/index.js";
-import { canOffer, createGuideProgress, guideProgressKey, retiresOffer } from "../src/guide/triggers.js";
+import { canOffer, createGuideProgress, guideProgressKey, guideStorage, retiresOffer } from "../src/guide/triggers.js";
 
 function walk(dir, out = []) {
   for (const name of readdirSync(dir)) {
@@ -32,7 +32,8 @@ test("tours reference registered anchors and catalogued events", () => {
     if (tour.trigger) {
       assert.ok(!tour.trigger.event || EVENTS.includes(tour.trigger.event), `${tour.id}: trigger event`);
       assert.ok(!tour.trigger.doneOn || EVENTS.includes(tour.trigger.doneOn.event), `${tour.id}: doneOn event`);
-      assert.ok(tour.trigger.event || Object.keys(tour.requires || {}).length, `${tour.id}: trigger needs an event or prerequisites`);
+      assert.ok(tour.trigger.event || Object.keys({ ...tour.requires, ...tour.trigger.requires }).length,
+        `${tour.id}: trigger needs an event or prerequisites`);
       const anchor = tour.offerAnchor || tour.steps[0].anchor;
       if (anchor) assert.ok(ANCHORS[anchor], `${tour.id}: offer anchor ${anchor}`);
     }
@@ -51,7 +52,8 @@ test("tours reference registered anchors and catalogued events", () => {
 
 const aiTour = TOURS["ai-chat"];
 test("the first tours are manual and AI chat uses compact, conditional steps", () => {
-  assert.equal(TOURS["first-run"].trigger, undefined);
+  assert.deepEqual(TOURS["first-run"].requires || {}, {}, "the first-run tour starts from the Tours menu everywhere");
+  assert.equal(TOURS["first-run"].trigger.event, undefined, "offered by state, on a demo server only");
   assert.equal(aiTour.trigger, undefined);
   assert.equal(aiTour.show, "chat");
   assert.deepEqual(aiTour.steps.map((s) => s.id), ["chat-question", "chat-voice", "chat-box", "chat-box-context"]);
@@ -122,6 +124,37 @@ test("count, doneOn and state triggers", () => {
   assert.equal(canOffer(ws, { facts: { ...facts, sharedWorkspace: false }, progress: null }), false);
   assert.equal(canOffer(ws, { facts: { ...facts, sharedWorkspace: true }, progress: null, event: at("page.opened") }), false,
     "a state trigger is not an event trigger");
+});
+
+test("the first-run tour is offered on a demo server's library only, and stays manual elsewhere", () => {
+  const firstRun = TOURS["first-run"];
+  const home = { ...facts, view: "home", onPage: false };
+  assert.equal(canOffer(firstRun, { facts: { ...home, demo: true }, progress: null }), true);
+  assert.equal(canOffer(firstRun, { facts: { ...home, demo: false }, progress: null }), false, "never offered off a demo server");
+  assert.equal(canOffer(firstRun, { facts: { ...facts, demo: true }, progress: null }), false, "offered on the library, not on a page");
+  assert.equal(canOffer(firstRun, { facts: { ...home, demo: true }, progress: null, event: at("home.opened") }), false,
+    "a state trigger is not an event trigger");
+  assert.equal(canOffer(firstRun, { facts: { ...home, demo: true }, progress: { state: "dismissed", version: firstRun.version } }), false,
+    "once per version");
+});
+
+test("a demo server keeps guide progress in sessionStorage, anyone else in localStorage", () => {
+  const saved = { local: globalThis.localStorage, session: globalThis.sessionStorage };
+  const store = () => { const values = new Map(); return { values, getItem: (k) => values.get(k) ?? null, setItem: (k, v) => values.set(k, v) }; };
+  const local = store(), session = store();
+  globalThis.localStorage = local;
+  globalThis.sessionStorage = session;
+  try {
+    createGuideProgress(guideStorage(true)).write(aiTour, "guest-a", { state: "done" });
+    assert.equal(session.values.size, 1);
+    assert.equal(local.values.size, 0, "a demo visit leaves nothing behind");
+    createGuideProgress(guideStorage(false)).write(aiTour, "alice", { state: "done" });
+    assert.equal(local.values.size, 1);
+    assert.equal(createGuideProgress(guideStorage(false)).read(aiTour, "guest-a"), null);
+  } finally {
+    globalThis.localStorage = saved.local;
+    globalThis.sessionStorage = saved.session;
+  }
 });
 
 test("hints are single cards kept out of the Tours menu", () => {

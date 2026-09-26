@@ -75,6 +75,34 @@ export async function settingsScenarios(env) {
     }
   });
 
+  await step("settings: Ctrl+F goes to the settings search, Enter and the arrows pick a match", async () => {
+    const { ctx, page } = await setup();
+    try {
+      await openSettings(page);
+      // Over the home library, whose own find box used to take the key.
+      await page.keyboard.press("Control+f");
+      const box = page.getByRole("searchbox", { name: "Search settings" });
+      await until(() => box.evaluate((el) => el === document.activeElement));
+      assertEq(await page.locator(".homeFindInput").evaluate((el) => el === document.activeElement), false);
+      await page.keyboard.type("translation concurrency");
+      await page.keyboard.press("Enter");
+      await row(page, "Parallel requests").waitFor({ state: "visible" });
+      // ↓ from the box walks the result buttons, ↑ from the first returns.
+      await page.keyboard.press("Control+f");
+      await page.keyboard.type("status bar");
+      await page.keyboard.press("ArrowDown");
+      assertEq(await page.evaluate(() => document.activeElement?.classList.contains("settingsSearchResult")), true);
+      await page.keyboard.press("ArrowUp");
+      await until(() => box.evaluate((el) => el === document.activeElement));
+      await page.keyboard.press("ArrowDown");
+      await page.keyboard.press("Enter");
+      await row(page, "Status bar").waitFor({ state: "visible" });
+      assertNoProblems(page);
+    } finally {
+      await ctx.close();
+    }
+  });
+
   await step("settings: Keyboard lists the shortcuts, rebinds one, flags a clash and resets", async () => {
     const { ctx, page } = await setup();
     try {
@@ -871,6 +899,40 @@ export async function settingsScenarios(env) {
     } finally { await ctx.close(); }
   });
 
+  await step("settings: Server → Guests saves how long guest workspaces last and demo mode", async () => {
+    server.manage("set-admin", "settings-user", "on");
+    const before = await user.api("/api/admin/settings");
+    const { ctx, page } = await setup();
+    try {
+      await openSettings(page);
+      await nav(page, "Server").click();
+      const ttl = row(page, "Guest workspaces last").locator("input");
+      await ttl.waitFor();
+      assertEq(await ttl.inputValue(), String(before.guest_ttl_hours));
+      assert(!await ttl.isDisabled(), "a saved (not environment) value is editable");
+      await ttl.fill("36");
+      await ttl.press("Enter");
+      await until(() => user.api("/api/admin/settings").then((v) => v.guest_ttl_hours === 36 && v.guest_ttl_source === "saved"),
+        { what: "guest lifetime saved on Enter" });
+      const demo = row(page, "Demo mode").locator("input");
+      assertEq(await demo.isChecked(), false, "demo mode is off by default");
+      await page.getByRole("checkbox", { name: "Demo mode", exact: true }).check();
+      await until(() => user.api("/api/admin/settings").then((v) => v.demo_mode === true), { what: "demo mode saved" });
+      assertEq((await (await fetch(`${server.base}/api/server-config`)).json()).demo, true, "the login page learns of it");
+      // Another pane and back: the pane reads the stored values again.
+      await nav(page, "Users").click();
+      await nav(page, "Server").click();
+      await until(async () => (await row(page, "Guest workspaces last").locator("input").inputValue()) === "36");
+      assert(await row(page, "Demo mode").locator("input").isChecked(), "demo mode reads back on");
+      await page.getByRole("checkbox", { name: "Demo mode", exact: true }).uncheck();
+      await until(() => user.api("/api/admin/settings").then((v) => v.demo_mode === false), { what: "demo mode off again" });
+      assertNoProblems(page);
+    } finally {
+      await ctx.close();
+      await user.api("/api/admin/settings", { method: "PUT", body: { guest_ttl_hours: before.guest_ttl_hours, demo_mode: false } });
+    }
+  });
+
   await step("settings: a shared AI provider from Server is a read-only connection for every account", async () => {
     // settings-user is an admin since the step above.
     server.manage("create-user", "settings-member", "settings-member-pw");
@@ -895,6 +957,17 @@ export async function settingsScenarios(env) {
       await until(() => dialog.count().then((n) => n === 0));
       await page.locator(".settingsPane .aiProvRow").filter({ hasText: "…7777" }).waitFor();
       assert(!await row(page, "Guests may use it").locator("input").isChecked(), "guests are off by default");
+      // The shared allowance: tokens per account / guest per day, 0 = unlimited.
+      const perAccount = row(page, "Allowance per account").locator("input");
+      assertEq(await perAccount.inputValue(), "0", "unlimited by default");
+      await perAccount.fill("50000");
+      await perAccount.press("Enter");
+      await row(page, "Allowance per guest").locator("input").fill("2000");
+      await row(page, "Allowance per guest").locator("input").press("Enter");
+      await until(() => user.api("/api/admin/ai-providers").then((v) => v.allowance?.accounts === 50000 && v.allowance?.guests === 2000),
+        { what: "the allowance saved" });
+      const metered = (await member.api("/api/ai/usage")).allowance;
+      assertEq(JSON.stringify(metered), JSON.stringify({ limit: 50000, used: 0, exhausted: false }), "the member's allowance");
 
       // Connections: a read-only row with the tag, and its model in the pickers.
       await nav(page, "Connections").click();
@@ -904,6 +977,8 @@ export async function settingsScenarios(env) {
       await shared.getByRole("radio").check();
       await row(page, "Default chat model").getByRole("button").click();
       await page.locator(".uiSelectMenu").getByRole("button", { name: "lab-model", exact: true }).click();
+      // Token usage says what is left of the allowance.
+      await row(page, "Shared allowance").getByText("0 of 50k tokens in the last 24 h", { exact: true }).waitFor();
 
       // Another account gets the models, never the key hint.
       const models = await member.api("/api/ai/models");
@@ -916,6 +991,7 @@ export async function settingsScenarios(env) {
       for (const p of (await user.api("/api/admin/ai-providers")).providers) {
         await user.api(`/api/admin/ai-providers/${encodeURIComponent(p.id)}`, { method: "DELETE" });
       }
+      await user.api("/api/admin/ai-providers", { method: "PUT", body: { allowance: { accounts: 0, guests: 0 } } });
     }
   });
 

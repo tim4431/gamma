@@ -9,7 +9,7 @@ import time
 from gamma import pdf_meta, pdf_text
 from gamma.db import ws_db_path
 
-from conftest import workspace_of
+from conftest import workspace_of, guest_name
 
 
 def _pdf(pages=1, rotate_last=0, width=612, height=792):
@@ -48,7 +48,7 @@ def test_manifest_has_every_page_size_with_rotation_applied(guest):
 
 def test_manifest_is_computed_in_the_background_on_upload(guest):
     doc_id = _upload(guest, _pdf(pages=2, width=500, height=700))
-    ws = workspace_of("guest")
+    ws = workspace_of(guest_name())
     for _ in range(50):
         if pdf_meta.get(ws, doc_id):
             break
@@ -82,7 +82,7 @@ def test_unknown_and_malformed_ids(guest):
 
 def test_purge_drops_manifests_of_documents_no_page_carries(guest):
     doc_id = _upload(guest, _pdf(pages=1))
-    ws = workspace_of("guest")
+    ws = workspace_of(guest_name())
     assert pdf_meta.ensure(ws, doc_id)
     with sqlite3.connect(ws_db_path(ws, "data.db")) as conn:
         pdf_meta.purge(conn, live_docs={doc_id})
@@ -96,7 +96,7 @@ def test_purge_drops_manifests_of_documents_no_page_carries(guest):
 
 def test_concurrent_callers_share_one_walk(guest, monkeypatch):
     doc_id = _upload(guest, _pdf(pages=1))
-    ws = workspace_of("guest")
+    ws = workspace_of(guest_name())
     for _ in range(50):  # let the upload's own background walk finish first
         if pdf_meta.get(ws, doc_id):
             break

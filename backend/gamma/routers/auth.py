@@ -15,11 +15,10 @@ from fastapi.responses import FileResponse, JSONResponse
 from pydantic import BaseModel
 from starlette.background import BackgroundTask
 
-from .. import cloud_auth, ratelimit, version, workspaces, ws_backup
+from .. import cloud_auth, guests, ratelimit, version, workspaces, ws_backup
 from ..auth import is_guest_workspace, require_user, requested_ws, set_session_cookie
 from ..ratelimit import client_ip
 from ..db import connect_users_db, page_now, ws_dir
-from ..seed import ensure_guest_user
 
 router = APIRouter(prefix="/api", tags=["auth"])
 
@@ -105,7 +104,7 @@ def export_all(request: Request, uploads: int = 1):
     which restores on its own through /api/import-data."""
     me = require_user(request)
     if request.state.is_guest:
-        raise HTTPException(status_code=403, detail="the guest account has nothing to export as a whole")
+        raise HTTPException(status_code=403, detail="a guest account has nothing to export as a whole")
     mine = workspaces.personal_workspaces(me)
     tmp = tempfile.NamedTemporaryFile(suffix=".zip", delete=False)
     tmp.close()
@@ -134,14 +133,13 @@ def import_data(request: Request, file: UploadFile = File(...), mode: str = "rep
     """Restore an /api/export zip into a workspace (the request's, ``?ws=``,
     or — admins only — the personal workspace of ``?user=``): mode=replace
     (default, owners) swaps the databases, mode=merge (editors) adds what is
-    missing — gamma/ws_backup.restore_zip. Nothing can be imported into the
-    guest workspace: it is shared, and one visitor could wipe it for
-    everyone."""
+    missing — gamma/ws_backup.restore_zip. Nothing can be imported into a
+    guest's workspace: it goes away with the guest (docs/dev/guests.md)."""
     if mode not in ("replace", "merge"):
         raise HTTPException(status_code=400, detail="mode must be 'replace' or 'merge'")
     target = _target_ws(request, ws, user, "owner" if mode == "replace" else "editor")
     if is_guest_workspace(target):
-        raise HTTPException(status_code=403, detail="the guest workspace cannot import backups")
+        raise HTTPException(status_code=403, detail="a guest workspace cannot import backups")
     with tempfile.TemporaryDirectory(prefix="gamma-import-") as td:
         zpath = Path(td) / "backup.zip"
         with open(zpath, "wb") as out:
@@ -196,13 +194,19 @@ async def login(payload: LoginRequest, request: Request):
     return resp
 
 
+# Sync def: a guest's logout deletes its workspace directory.
 @router.post("/logout")
-async def logout(request: Request):
+def logout(request: Request):
+    """End the session. A guest account can never be signed into again (no
+    password), so a guest's logout deletes the account on the spot instead
+    of leaving it to the sweeper."""
     token = request.cookies.get("session")
     if token:
         with connect_users_db() as conn:
             conn.execute("DELETE FROM sessions WHERE token = ?", (token,))
             conn.commit()
+    if request.state.is_guest and request.state.user:
+        workspaces.delete_account(request.state.user)
     resp = JSONResponse({"ok": True})
     resp.delete_cookie("session")
     return resp
@@ -219,9 +223,12 @@ async def get_session(request: Request):
     build = version.build_info()
     if not user:
         return {"user": None, "build": build}
-    return {"user": user, "is_guest": request.state.is_guest, "is_admin": request.state.is_admin,
-            "default_workspace": request.state.default_ws or workspaces.ensure_personal(user),
-            "workspaces": workspaces.list_for_user(user), "build": build}
+    out = {"user": user, "is_guest": request.state.is_guest, "is_admin": request.state.is_admin,
+           "default_workspace": request.state.default_ws or workspaces.ensure_personal(user),
+           "workspaces": workspaces.list_for_user(user), "build": build}
+    if request.state.is_guest:
+        out["guest_expires_at"] = guests.account_expires_at(user)  # when the account and its workspace go
+    return out
 
 
 @router.get("/accounts")
@@ -234,33 +241,35 @@ async def list_accounts(request: Request, q: str = ""):
     the list; everyone else gets the account named exactly ``q``, if any."""
     require_user(request)
     if request.state.is_guest:
-        raise HTTPException(status_code=403, detail="the guest account cannot list accounts")
+        raise HTTPException(status_code=403, detail="a guest account cannot list accounts")
     accounts = workspaces.accounts()
     if cloud_auth.settings()["share_host"] and not request.state.is_admin:
         accounts = [a for a in accounts if q and a["username"] == q.strip()]
     return {"accounts": accounts}
 
 
+# Sync def: a guest login creates a workspace (and may restore the seed zip).
 @router.post("/login-guest")
-async def login_guest(request: Request):
-    from datetime import datetime, timezone
-
+def login_guest(request: Request):
+    """A fresh throwaway account for this visitor (gamma/guests.py): its own
+    workspace, gone ``guest_ttl_hours`` after now."""
     if cloud_auth.settings()["share_host"]:
-        # a public share host holds strangers' published pages: no shared guest account there
+        # a public share host holds strangers' published pages: no guests there
         raise HTTPException(status_code=403, detail="This server has no guest access.")
 
-    # Each call mints a permanent session row; cap the rate so a public instance
-    # can't be flooded into unbounded session-table growth.
-    ratelimit.check(f"guest:ip:{client_ip(request)}", max_hits=20, window_seconds=300)
-    ensure_guest_user()  # the account row and its workspace (files repaired if missing)
-    today = datetime.now(timezone.utc).strftime("%Y-%m-%d")
+    # Each call creates an account and a workspace directory: a tight rate per
+    # IP, and GAMMA_GUEST_MAX live guests at most (new_guest's 503).
+    ratelimit.check(f"guest:ip:{client_ip(request)}", max_hits=10, window_seconds=3600)
+    username = guests.new_guest()
+    now = page_now()
     token = secrets.token_urlsafe(32)
     with connect_users_db() as conn:
+        # guest_date: the creation date — kept in the schema, read by nothing
         conn.execute(
-            "INSERT INTO sessions (token, username, guest_date, created_at) VALUES (?, 'guest', ?, ?)",
-            (token, today, page_now()),
+            "INSERT INTO sessions (token, username, guest_date, created_at) VALUES (?, ?, ?, ?)",
+            (token, username, now[:10], now),
         )
         conn.commit()
-    resp = JSONResponse({"ok": True, "username": "guest"})
+    resp = JSONResponse({"ok": True, "username": username})
     set_session_cookie(resp, token, request)
     return resp

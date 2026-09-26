@@ -37,7 +37,7 @@ committed beyond `origin/main`, stop and say so.
 
 4. **Wait for the check**: `gh pr checks <n> --watch --fail-fast`
    (`check`: backend pytest, frontend unit tests + build, the browser suite,
-   extension zip, ~4 min — skipped for a PR that only touches the account
+   extension zip, ~5 min, the browser suite on 3 parallel workers — skipped for a PR that only touches the account
    server; `cloud`: the account server's tests, when `cloud/` changed). Red → report
    the failing job (`gh run view <id> --log-failed`) and stop; fixing is
    normal work on the branch, then re-run this skill. Do not merge over a

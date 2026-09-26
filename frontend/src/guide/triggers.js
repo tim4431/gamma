@@ -2,11 +2,14 @@
 // Pure, so node tests it (tests/guide.test.mjs).
 //
 // A tour with a `trigger` is offered at most once per version:
-//   trigger: { event, match?, count?, doneOn? }
+//   trigger: { event, match?, count?, doneOn?, requires? }
 // - event (+ match): the moment to offer — right after the thing happened,
 //   never on mere contact with a control. Without an event, the tour is
 //   offered once the tour's `requires` hold (something that happened to the
 //   user, e.g. being added to a shared workspace).
+// - requires: facts that gate the OFFER only, never a manual start (the
+//   first-run tour is offered on the library of a demo server, and stays
+//   startable from the Tours menu everywhere).
 // - count: offer on the count-th matching event of this page load.
 // - doneOn: an event ({event, match?}) showing the user already knows the
 //   feature; it retires the tour's offer without showing anything.
@@ -28,7 +31,7 @@ export function triggerMatches(tour, event) {
 export function canOffer(tour, { facts, progress, event = null, seen = 0 }) {
   const trigger = tour.trigger;
   if (!trigger || progress?.version >= tour.version) return false;
-  if (!factsMatch(tour.requires, facts)) return false;
+  if (!factsMatch(tour.requires, facts) || !factsMatch(trigger.requires, facts)) return false;
   if (!trigger.event) return !event;
   return triggerMatches(tour, event) && seen >= (trigger.count || 1);
 }
@@ -44,6 +47,10 @@ export function guideProgressKey(tour, scope) {
     ? `gamma-guide:${encodeURIComponent(scope)}:${tour.id}`
     : `gamma-guide:${tour.id}`;
 }
+
+// Where progress is kept: localStorage, or sessionStorage on a demo server
+// (facts.demo), so every visit starts fresh.
+export const guideStorage = (demo) => (demo ? () => globalThis.sessionStorage : () => globalThis.localStorage);
 
 // Memory also remembers offers if browser storage is unavailable. A fresh
 // read observes dismissals from other tabs; progress never stores chat text.

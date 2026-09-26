@@ -2321,11 +2321,12 @@ function PlainTip({ onConfirm, onLink, translate }) {
     const ctl = new AbortController();
     ctlRef.current = ctl;
     setTrans({ status: "loading", text: "", open: true });
+    let reason = ""; // the server's detail (a used-up AI allowance says what to do)
     Promise.resolve(translate.run([source], ctl.signal, (_, partial) => {
       if (!ctl.signal.aborted) setTrans((prev) => prev && { ...prev, text: partial });
-    })).catch(() => null).then((res) => {
+    })).catch((err) => { reason = err?.message || ""; return null; }).then((res) => {
       if (ctl.signal.aborted) return;
-      setTrans((prev) => ({ open: prev?.open ?? true, ...(res?.[0] ? { status: "done", text: res[0] } : { status: "error", text: "" }) }));
+      setTrans((prev) => ({ open: prev?.open ?? true, ...(res?.[0] ? { status: "done", text: res[0] } : { status: "error", text: "", reason }) }));
     });
   }
   useEffect(() => {
@@ -2409,7 +2410,8 @@ function SelTranslation({ trans, langLabel, tooLong, onToggle, keep }) {
         <div className={`selTransBody ${trans.status === "error" ? "error" : ""}`} aria-live="polite">
           {trans.status === "error"
             ? (tooLong ? t("Select less text to translate (up to {n} characters).", { n: SEL_TRANSLATE_MAX })
-              : t("Translation failed — click the button to retry."))
+              : trans.reason ? t("Translation failed: {message}", { message: trans.reason })
+                : t("Translation failed — click the button to retry."))
             : trans.text || (loading ? t("Translating…") : "")}
         </div>
       ) : null}

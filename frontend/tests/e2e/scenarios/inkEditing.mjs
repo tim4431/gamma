@@ -14,10 +14,22 @@ export async function inkEditingScenarios({ server, browser, alice, bob, makePdf
     const rect = el.getBoundingClientRect(), k = rect.width / 612;
     return { x: Math.round(rect.left + x * k), y: Math.round(rect.top + y * k) };
   }, [x, y]);
+  // A tap that selects nothing has failed only on a loaded 4-core machine,
+  // with the tap on the stroke; the error says what was under it.
   const tapInk = async (x = 130, y = 220) => {
     const p = await point(x, y);
     await page.touchscreen.tap(p.x, p.y);
-    await menu().waitFor();
+    try {
+      await menu().waitFor({ timeout: 10000 });
+    } catch (e) {
+      const seen = await page.evaluate(([x, y, paths]) => {
+        const el = document.elementFromPoint(x, y);
+        return { at: [x, y], under: el ? `${el.tagName.toLowerCase()}.${[...el.classList].join(".")}` : null,
+          strokes: [...document.querySelectorAll(paths)].map((s) => { const r = s.getBoundingClientRect(); return [r.x, r.y, r.width, r.height].map(Math.round); }),
+          selection: !!document.querySelector(".inkSelectionHit"), menus: document.querySelectorAll(".inkEditMenu").length };
+      }, [p.x, p.y, paths]);
+      throw new Error(`the tap selected no ink: ${JSON.stringify(seen)}`);
+    }
   };
   const assertHandlesFollowSelection = async () => {
     await until(async () => page.locator('[data-page="1"]').evaluate((el) => {
@@ -252,7 +264,6 @@ export async function inkEditingScenarios({ server, browser, alice, bob, makePdf
     await until(async () => await page.locator(paths).count() === 2);
     await page.setViewportSize({ width: 740, height: 620 });
     await page.locator(".pdfViewer").evaluate((el) => { el.scrollTop = 0; });
-    { const t0 = Date.now(); for (const _ of Array(8)) { const b = await page.locator('[data-page="1"]').boundingBox(); console.log(`PROBE ${Date.now() - t0}ms`, JSON.stringify(b)); await page.waitForTimeout(60); } }
     await tapInk();
     await menu().getByRole("button", { name: "Width", exact: true }).tap();
     await until(async () => {

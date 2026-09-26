@@ -568,11 +568,13 @@ export default function ChatDock({
   }
 
   // Ctrl+F while focus is inside the chat opens find-in-chat (App's global
-  // handler defers to us in that case).
+  // handler defers to us in that case) — not from the page picker, whose
+  // own search box takes it.
   useEffect(() => {
     function onKey(e) {
       if ((e.ctrlKey || e.metaKey) && !e.altKey && e.key.toLowerCase() === "f"
-          && document.activeElement?.closest?.(".chatPanel")) {
+          && document.activeElement?.closest?.(".chatPanel")
+          && !document.activeElement.closest(".reportOverlay")) {
         e.preventDefault();
         setChatFindOpen(true);
       }
@@ -1548,7 +1550,7 @@ export default function ChatDock({
               {t("Selected pages (their PDF text, and optionally your notes) are sent with every question — pick a few and just ask for a report.")}
             </div>
             <input
-              autoFocus
+              autoFocus data-find
               className="searchInput"
               placeholder={t("Search your pages…")}
               value={docPickerQuery}

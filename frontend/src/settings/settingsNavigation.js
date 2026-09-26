@@ -68,6 +68,11 @@ const entries = [
   ["server", t("Server"), "administration storage defaults shared workspaces backups log"],
   ["server", t("Shared workspaces"), "administration new shared workspace members"],
   ["server", t("Shared AI provider"), "administration API key everyone lab members guests connection models"],
+  ["server", t("Guest workspaces last"), "administration guests temporary expiry hours delete throwaway"],
+  ["server", t("Demo mode"), "administration guests try the demo public login page first-run tour"],
+  ["server", t("Allowance per account"), "administration shared AI tokens daily limit quota budget"],
+  ["server", t("Allowance per guest"), "administration shared AI tokens daily limit quota budget guests"],
+  ["ai", t("Shared allowance"), "shared AI tokens daily limit quota used up"],
   ["diagnostics", t("Debug logging"), "diagnostics tracing browser system log"],
 ];
 export const SETTINGS_SEARCH = entries.map(([pane, label, keywords]) => ({ pane, label, keywords }));

@@ -26,7 +26,7 @@ fi
 # startup migration would never be reached.
 $AS_USER python manage.py migrate
 
-# Idempotent: creates the guest account and repairs missing per-user DBs.
+# Idempotent: gives every account a personal workspace and repairs missing workspace files.
 # First-run accounts are the app's own job: an empty instance seeds an
 # "admin" account with a random password printed once to the container log
 # (override via GAMMA_ADMIN_USER/GAMMA_ADMIN_PASSWORD) at startup and

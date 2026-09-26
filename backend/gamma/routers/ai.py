@@ -18,9 +18,11 @@ from pydantic import BaseModel, Field, field_validator
 
 from .. import ai_catalog, ai_protocols, ai_usage, chatgpt_oauth, translate_engines
 from ..ai_client import (
+    AllowanceExhausted,
     UpstreamError,
     add_usage as _add_usage,
     call_ai as _call_ai,
+    check_allowance as _check_allowance,
     open_ai as _open_ai,
     partial_json_object as _partial_json_object,
     partial_json_strings as _partial_json_strings,
@@ -71,6 +73,7 @@ from ..ai_settings import (
     require_ai_runtime,
     save_provider_entries,
     server_entries_for,
+    shared_allowance,
     update_entry,
 )
 from ..auth import require_user, require_ws, ws_role
@@ -171,6 +174,12 @@ def _resolve_model(rt: dict, requested: str) -> dict:
 def _resolve_effort(requested: str) -> str:
     requested = (requested or "").strip().lower()
     return requested if requested in EFFORT_LEVELS else ""
+
+
+def _failure(error: Exception, what: str = "AI call failed") -> str:
+    """The error line a stream ends with: a used-up shared allowance says so
+    in its own words (the 429's detail), anything else is "<what>: <error>"."""
+    return error.detail if isinstance(error, AllowanceExhausted) else f"{what}: {error}"
 
 
 def _search_index_status(ws: str, doc_id: str) -> dict:
@@ -298,6 +307,9 @@ def ai_models(request: Request):
         "metadata_prompt": METADATA_PROMPT,  # AI metadata-extraction fallback
         "cite_prompt": CITE_PROMPT,          # PPT-style citation generator
         "agent_prompt": AGENT_PROMPT,        # library-agent base role prompt
+        # The shared entries' allowance ({limit, used, exhausted}; None when
+        # none is metered): the pickers mark the shared models once it's used up.
+        "allowance": rt["allowance"],
     }
 
 
@@ -337,8 +349,8 @@ def _saved_entry(request: Request, user: str, provider_id: str) -> dict | None:
 def _require_editor(request: Request) -> str:
     user = require_user(request)
     if request.state.is_guest:
-        # The guest workspace is shared by everyone — a stored key would be
-        # spendable (though never readable) by any visitor.
+        # A guest account is a throwaway anyone can mint (docs/dev/guests.md):
+        # it keeps nothing, keys included, and uses the shared entries only.
         raise HTTPException(status_code=403, detail="guest accounts cannot store API keys")
     return user
 
@@ -357,14 +369,17 @@ def ai_usage_summary(request: Request):
     """Token usage of the signed-in account's AI calls, as the providers
     reported it: totals for today / 7 days / 30 days / all kept rows, the
     30-day split by kind (chat, translate, metadata, cite, test) and by
-    model. Calls through the server's shared entries count here too."""
+    model. Calls through the server's shared entries count here too, and
+    ``allowance`` is their 24-hour allowance ({limit, used, exhausted}; None
+    when none is metered — ai_settings.shared_allowance)."""
     user = require_user(request)
-    return ai_usage.summary(user)
+    return {**ai_usage.summary(user), "allowance": shared_allowance(user)}
 
 
 @router.delete("/ai/usage")
 def ai_usage_reset(request: Request):
-    """Forget the account's usage rows (Settings → AI → Usage → Reset)."""
+    """Forget the account's usage rows (Settings → AI → Usage → Reset) —
+    except the last 24 hours on shared entries, which the allowance counts."""
     user = require_user(request)
     return {"ok": True, "deleted": ai_usage.clear(user)}
 
@@ -926,13 +941,18 @@ def ai_translate(payload: AITranslateRequest, request: Request):
     if not payload.stream:
         try:
             reply = call(miss_texts)
+        except AllowanceExhausted:
+            raise
         except Exception as e:
             log.warning(f"[ai_translate] {e}")
             raise HTTPException(status_code=502, detail=f"translation failed: {e}")
         return finish(reply)
 
-    # Streamed: element j of the batch reply belongs to every request index
-    # sharing its key (duplicates were collapsed into one upstream element).
+    # Streamed: the call opens inside the stream, so a used-up shared
+    # allowance is refused here, while it can still be an HTTP 429.
+    _check_allowance(rt["providers"][entry["provider"]])
+    # Element j of the batch reply belongs to every request index sharing
+    # its key (duplicates were collapsed into one upstream element).
     slots = {}
     for i, k in enumerate(keys):
         if k in queued:
@@ -960,7 +980,7 @@ def ai_translate(payload: AITranslateRequest, request: Request):
             yield json.dumps(finish(reply), ensure_ascii=False) + "\n"
         except Exception as e:
             log.warning(f"[ai_translate] {e}")
-            yield json.dumps({"error": f"translation failed: {e}"}) + "\n"
+            yield json.dumps({"error": _failure(e, "translation failed")}) + "\n"
 
     return StreamingResponse(keepalive_lines(ndjson(), "ai_translate"),
                              media_type="application/x-ndjson")
@@ -968,7 +988,7 @@ def ai_translate(payload: AITranslateRequest, request: Request):
 
 # --- Machine-translation engine credentials (Settings → Reading) --------------
 # Write-only like the AI keys: GET masks the secrets. Guests can't store keys
-# (the guest account is shared by every visitor).
+# (a guest account is a throwaway, docs/dev/guests.md).
 
 class TranslateEngineRequest(BaseModel):
     fields: dict = Field(default_factory=dict)  # {field id: value}; empty secret = keep
@@ -1052,6 +1072,9 @@ def ai_transcribe(request: Request, file: UploadFile = File(...),
         raise HTTPException(status_code=503,
                             detail="Voice input needs an OpenAI API key (Settings → AI → Connections) — "
                                    "Anthropic and ChatGPT sign-in connections don't offer transcription.")
+    # Transcription is billed on the entry's key but reports no tokens: it is
+    # not metered, only refused once a shared entry's allowance is used up.
+    _check_allowance(conf)
     audio = file.file.read(_TRANSCRIBE_MAX_BYTES + 1)
     if not audio:
         raise HTTPException(status_code=400, detail="empty recording")
@@ -1383,7 +1406,7 @@ def ai_chat(payload: AIChatRequest, request: Request):
                             yield json.dumps({kind: data}) + "\n"
                     except Exception as e:
                         log.warning(f"[ai_chat] agent stream error: {e}")
-                        yield json.dumps({"error": f"AI call failed: {e}"}) + "\n"
+                        yield json.dumps({"error": _failure(e)}) + "\n"
 
                 return StreamingResponse(keepalive_lines(agent_ndjson(), "ai_chat"),
                                          media_type="application/x-ndjson")
@@ -1401,7 +1424,7 @@ def ai_chat(payload: AIChatRequest, request: Request):
                         yield json.dumps({"usage": u}) + "\n"
                 except Exception as e:
                     log.warning(f"[ai_chat] stream error: {e}")
-                    yield json.dumps({"error": f"AI call failed: {e}"}) + "\n"
+                    yield json.dumps({"error": _failure(e)}) + "\n"
                 finally:
                     resp.close()
 

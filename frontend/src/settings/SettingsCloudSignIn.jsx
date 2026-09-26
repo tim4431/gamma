@@ -11,8 +11,7 @@ import React from "react";
 import { API, apiJson } from "../shared/lib/utils";
 import { Row, Segmented, PasswordInput, SettingsSyncContext, Toggle, useSettingsDraft } from "./SettingsKit";
 import { cloudSyncHint } from "./syncState.js";
-import { defaultProfile } from "../app/prefDefs.js";
-import { CloudDownloadIcon, CloudIcon, CloudUploadIcon, ExternalLinkIcon, GlobeIcon, KeyIcon, RefreshIcon, UserIcon } from "../shared/ui/Icons";
+import { CloudIcon, ExternalLinkIcon, GlobeIcon, KeyIcon, RefreshIcon, UserIcon } from "../shared/ui/Icons";
 import { T, t } from "../shared/i18n/i18n.js";
 
 const POLICIES = [
@@ -150,14 +149,15 @@ const SYNC_OUTCOMES = {
   pushed: T("Settings sent to Gamma Cloud."),
   merged: T("Settings merged with Gamma Cloud."),
   same: T("Settings already in sync with Gamma Cloud."),
-  choose: T("This server and Gamma Cloud hold different settings: choose which to keep."),
 };
 
-// The account's settings against Gamma Cloud by hand, VS Code style
-// (backend gamma/cloud_sync.py, POST /api/auth/cloud/sync): Sync now merges
-// both ways; Fetch from cloud makes the cloud's copy this server's, Push to
-// cloud the other way round (both confirmed). A first sync that found two
-// different copies waits here for Merge / Use cloud's / Use this server's.
+// The account's settings against Gamma Cloud by hand (backend
+// gamma/cloud_sync.py, POST /api/auth/cloud/sync): one Sync now button, the
+// merge both ways. Only a conflict — a first sync that found two different
+// copies, state "choose" — asks more: a dialog offering Fetch from cloud
+// (the cloud's copy replaces this server's) or Push to cloud (the other way
+// round), opened once when the row finds that state, and again by Sync now
+// while it lasts.
 function CloudSyncRow({ setStatus, confirm }) {
   const sync = React.useContext(SettingsSyncContext);
   const [busy, setBusy] = React.useState("");
@@ -169,55 +169,39 @@ function CloudSyncRow({ setStatus, confirm }) {
     try {
       await sync?.local?.flush?.();
       const d = await apiJson(`${API}/auth/cloud/sync`, {
-        method: "POST", headers: { "Content-Type": "application/json" },
-        body: JSON.stringify(action === "merge" ? { action, defaults: defaultProfile() } : { action }),
+        method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ action }),
       });
       await sync?.local?.reload?.();
-      if (SYNC_OUTCOMES[d.outcome]) setStatus?.(t(SYNC_OUTCOMES[d.outcome]));
+      if (d.outcome === "choose") ask();
+      else if (SYNC_OUTCOMES[d.outcome]) setStatus?.(t(SYNC_OUTCOMES[d.outcome]));
     } catch (err) { setError(err.message); }
     finally { setBusy(""); sync?.refresh?.(); }
   }
-  const fetchCloud = () => (confirm ? confirm({
-    title: T("Fetch from cloud"),
-    message: t("Gamma Cloud's settings replace this server's. Changes made here that have not synced yet are lost."),
-    confirmLabel: t("Fetch"), onConfirm: () => run("fetch"),
-  }) : run("fetch"));
-  const pushCloud = () => (confirm ? confirm({
-    title: T("Push to cloud"),
-    message: t("This server's settings replace Gamma Cloud's. Your other servers take them at their next sync."),
-    confirmLabel: t("Push"), onConfirm: () => run("push"),
-  }) : run("push"));
+  const ask = () => confirm?.({
+    title: T("Settings differ from Gamma Cloud"),
+    message: T("This server and Gamma Cloud hold different settings. Fetch the cloud's copy to replace this server's, or push this server's to replace the cloud's? Your other servers take a push at their next sync."),
+    confirmLabel: T("Fetch from cloud"), onConfirm: () => run("fetch"),
+    altLabel: t("Push to cloud"), onAlt: () => run("push"),
+  });
+  const asked = React.useRef(false);
+  React.useEffect(() => {
+    if (!choosing) { asked.current = false; return; }
+    if (asked.current) return;
+    asked.current = true;
+    ask();
+  }, [choosing]);
   const off = profile?.state === "off";
-  const label = (action, idle, working) => (busy === action ? working : idle);
   return <>
     <Row icon={RefreshIcon} label={t("Settings sync")}
       hint={choosing ? t("This server and Gamma Cloud hold different settings. Choose which to keep.") : cloudSyncHint(sync?.cloud)}
       title={t("Your account's settings (appearance, reading, editing, chat, shortcuts) follow you to every server you sign in to with Gamma Cloud. AI keys stay on each server.")}>
       {off ? null : (
         <span className="setRowControls">
-          {choosing ? <>
-            <button className="uiBtn sm primary" disabled={!!busy} onClick={() => run("merge")}
-              title={t("Keep what each side changed; where both changed a setting, the newer change wins")}>
-              {label("merge", t("Merge"), t("Merging…"))}
-            </button>
-            <button className="uiBtn sm" disabled={!!busy} onClick={fetchCloud} title={t("Gamma Cloud's settings replace this server's")}>
-              <CloudDownloadIcon size={14} /> {label("fetch", t("Use cloud's"), t("Fetching…"))}
-            </button>
-            <button className="uiBtn sm" disabled={!!busy} onClick={pushCloud} title={t("This server's settings replace Gamma Cloud's")}>
-              <CloudUploadIcon size={14} /> {label("push", t("Use this server's"), t("Pushing…"))}
-            </button>
-          </> : <>
-            <button className="uiBtn sm" disabled={!!busy} onClick={() => run("sync")}
-              title={t("Merge with Gamma Cloud now: each side keeps what the other did not change")}>
-              {label("sync", t("Sync now"), t("Syncing…"))}
-            </button>
-            <button className="uiBtn sm" disabled={!!busy} onClick={fetchCloud} title={t("Gamma Cloud's settings replace this server's")}>
-              <CloudDownloadIcon size={14} /> {label("fetch", t("Fetch from cloud"), t("Fetching…"))}
-            </button>
-            <button className="uiBtn sm" disabled={!!busy} onClick={pushCloud} title={t("This server's settings replace Gamma Cloud's")}>
-              <CloudUploadIcon size={14} /> {label("push", t("Push to cloud"), t("Pushing…"))}
-            </button>
-          </>}
+          <button className={`uiBtn sm ${choosing ? "primary" : ""}`} disabled={!!busy} onClick={() => (choosing ? ask() : run("sync"))}
+            title={choosing ? t("Choose whether the cloud's settings or this server's are kept")
+              : t("Merge with Gamma Cloud now: each side keeps what the other did not change")}>
+            {busy ? { sync: t("Syncing…"), fetch: t("Fetching…"), push: t("Pushing…") }[busy] : t("Sync now")}
+          </button>
         </span>
       )}
     </Row>

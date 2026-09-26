@@ -4,7 +4,7 @@ import zipfile
 
 import pytest
 
-from conftest import login, make_page, make_user, workspace_of
+from conftest import login, make_page, make_user, workspace_of, guest_name
 from test_zotero_import import RDF, _annotated_pdf
 
 
@@ -39,7 +39,7 @@ def uploads(ws):
 
 
 def test_zotero_selection_upload_once_and_commit_retry(guest):
-    ws = workspace_of("guest")
+    ws = workspace_of(guest_name())
     before, before_files = rows(ws), uploads(ws)
     rdf = RDF.replace("s41586-000-00000-0", "selected-zotero")
     plan = review(guest, archive({"library.rdf": rdf, "files/3/unique.pdf": _annotated_pdf(b"Selected Zotero paper")}), "zotero")
@@ -56,7 +56,7 @@ def test_zotero_selection_upload_once_and_commit_retry(guest):
 
 
 def test_empty_selection_and_bad_ids_do_not_import(guest):
-    ws = workspace_of("guest")
+    ws = workspace_of(guest_name())
     before, before_files = rows(ws), uploads(ws)
     plan = review(guest, archive({"one.md": "# Empty selection\nhello"}), "markdown-zip")
     assert commit(guest, plan, ["not-a-page"]).status_code == 400
@@ -66,7 +66,7 @@ def test_empty_selection_and_bad_ids_do_not_import(guest):
 
 
 def test_markdown_selection_preserves_links_and_only_stores_selected_assets(guest):
-    ws = workspace_of("guest")
+    ws = workspace_of(guest_name())
     before, before_files = rows(ws), uploads(ws)
     data = archive({"vault/.obsidian/app.json": "{}", "vault/One.md": "# One\n[[Two]]\n![image](one.png)\n![missing](gone.png)",
                     "vault/Two.md": "# Two\n![image](two.png)", "vault/one.png": b"one-picture", "vault/two.png": b"two-picture"})

@@ -3,7 +3,7 @@ import { Panel, PanelGroup, PanelResizeHandle } from "react-resizable-panels";
 import PdfViewer, { clampZoom } from "../pdf/PdfViewer";
 import { highlightSpot, rangeSpot } from "../pdf/pdfSelectionSpot";
 import { COLORS } from "../shared/model/highlightColors.js";
-import { getLocale, resolveLocale, t, T } from "../shared/i18n/i18n.js";
+import { fmtDate, getLocale, resolveLocale, t, T } from "../shared/i18n/i18n.js";
 
 // sessionStorage: the Settings pane to reopen after the language-change reload.
 const REOPEN_SETTINGS_KEY = "gamma-reopen-settings";
@@ -76,11 +76,12 @@ import {
   visibleNeighbor,
 } from "../shared/model/blockModel";
 import { chordLabel, dispatch as dispatchHotkey, effectiveKeys } from "../shared/lib/hotkeys.js";
-import { APP_COMMANDS } from "./appCommands.js";
+import { APP_COMMANDS, liveAppCommands } from "./appCommands.js";
 import { BLOCK_COMMANDS } from "../editor/blockCommands.js";
 import { loadSession, saveSession, clearSession, setSessionScope } from "./sessionState";
 import { ROLE_LABEL, workspaceMeta } from "../settings/SettingsWorkspace";
 import { AuthLoading, LoginPage, SessionConflictPage, ShareBlockedPage, WorkspaceUnavailablePage } from "../auth/LoginPage";
+import { guestExpiryLabel } from "../auth/guestExpiry";
 import { McpAuthorization } from "../auth/McpConsent";
 import { TRANSLATE_LANGS, translateModelFor, useAppPrefs, useProfileSync } from "./prefs";
 import { useNotices } from "./useNotices";
@@ -541,7 +542,8 @@ function LibraryApp({ publicPage = null, initialServerConfig = null }) {
         }
         setWorkspaceUnavailable(false);
         applyWorkspace(data.user, chosen, list);
-        setAuthUser({ user: data.user, is_guest: data.is_guest, is_admin: data.is_admin, build: data.build });
+        setAuthUser({ user: data.user, is_guest: data.is_guest, is_admin: data.is_admin, build: data.build,
+          guest_expires_at: data.guest_expires_at || "" });
       } else {
         setAuthUser(false);
       }
@@ -596,9 +598,16 @@ function LibraryApp({ publicPage = null, initialServerConfig = null }) {
         method: "POST",
         credentials: "include",
       });
-      if (!res.ok) { setLoginError(t("Guest login failed")); return; }
-      const data = await res.json();
-      setAuthUser({ user: data.username, is_guest: true });
+      if (!res.ok) {
+        // A refusal says why (the guest cap, the rate limit): show that.
+        let detail = "";
+        try { detail = (await res.json()).detail || ""; } catch {}
+        setLoginError(typeof detail === "string" && detail ? detail : t("Guest login failed"));
+        return;
+      }
+      // Each guest login mints a fresh account with its own workspace: read
+      // the session like any sign-in (workspace, expiry).
+      await checkSession();
     } catch { setLoginError(t("Guest login failed")); }
   }
 
@@ -2416,8 +2425,9 @@ function LibraryApp({ publicPage = null, initialServerConfig = null }) {
     function onKey(e) {
       // The app commands (app/appCommands.js, docs/dev/hotkeys.md): search,
       // the palettes, back, undo/redo, rename, the panes… under the
-      // account's keybindings. Escape is not a command: it always clears.
-      if (appCmdRef.current && dispatchHotkey(APP_COMMANDS, e, appCmdRef.current, bindingsRef.current)) return;
+      // account's keybindings; an open dialog keeps only the ones meant for
+      // it. Escape is not a command: it always clears.
+      if (appCmdRef.current && dispatchHotkey(liveAppCommands(), e, appCmdRef.current, bindingsRef.current)) return;
       if (e.key === "Escape") {
         setOpenPopover(null);
         setQuickOpen(null);
@@ -3129,8 +3139,10 @@ function LibraryApp({ publicPage = null, initialServerConfig = null }) {
   // One chunk of paragraphs → translations, a single provider call. All the
   // chunking, queueing and parallelism live in the viewer's engine; this is
   // just the HTTP wrapper carrying the language/model/effort settings.
-  // Returns null on failure (already surfaced on the status pill) — the
-  // engine retries a chunk once before failing the job. `signal` is the
+  // Throws on failure (already surfaced on the status pill, the server's
+  // reason included — a 429 of the shared AI allowance says what to do) —
+  // the engine retries a chunk once before failing the job, the selection
+  // popup shows the reason. `signal` is the
   // job's AbortController: halting cancels the requests still in flight.
   // The server streams NDJSON: `{i: [indices], text}` as the model writes
   // each paragraph (→ onPartial, the viewer types it onto the page), then
@@ -3164,7 +3176,7 @@ function LibraryApp({ publicPage = null, initialServerConfig = null }) {
       return final?.translations || null;
     } catch (err) {
       if (err.name !== "AbortError") setStatus(t("Translation failed: {message}", { message: err.message }));
-      return null;
+      throw err;
     }
   }
 
@@ -6278,6 +6290,8 @@ function LibraryApp({ publicPage = null, initialServerConfig = null }) {
       editable: !readOnly,
       unfiledLibrary,
       installable: HOME_SCREEN_INSTALLABLE,
+      // a demo server: progress per visit, the first-run tour offered on arrival
+      demo: !!serverConfig?.demo,
     },
     tidy: () => setOpenPopover(null),
   });
@@ -6877,6 +6891,8 @@ function LibraryApp({ publicPage = null, initialServerConfig = null }) {
         onSubmit={doLogin}
         onGuestLogin={serverConfig?.guest === false ? undefined : doGuestLogin}
         cloudLogin={serverConfig?.cloud}
+        demo={!!serverConfig?.demo && serverConfig?.guest !== false}
+        guestTtlHours={serverConfig?.guest_ttl_hours}
       />
     );
   }
@@ -8695,8 +8711,9 @@ function LibraryApp({ publicPage = null, initialServerConfig = null }) {
                 </span>
                 <span className="userCardMeta">
                   <span className="userCardName">{authUser.is_guest ? t("Guest") : authUser.user}</span>
-                  <span className="userCardRole">
-                    {authUser.is_guest ? t("Temporary workspace") : workspace ? `${workspace.name} · ${workspaceMeta(workspace)}`
+                  <span className="userCardRole" title={authUser.is_guest && authUser.guest_expires_at
+                    ? t("Deleted at {time}", { time: fmtDate(authUser.guest_expires_at, { dateStyle: "medium", timeStyle: "short" }) }) : undefined}>
+                    {authUser.is_guest ? guestExpiryLabel(authUser.guest_expires_at) : workspace ? `${workspace.name} · ${workspaceMeta(workspace)}`
                       : t("Signed in")}
                   </span>
                 </span>
@@ -8708,7 +8725,7 @@ function LibraryApp({ publicPage = null, initialServerConfig = null }) {
                 ) : null}
               </div>
               {authUser.is_guest ? (
-                <div className="popoverHint">{t("Guest data resets daily. Ask the admin for an account to keep your work.")}</div>
+                <div className="popoverHint">{t("Nothing here is kept once the workspace goes. Ask the admin for an account to keep your work.")}</div>
               ) : null}
               {quotaInfo?.quota_mb ? (
                 <div className="popoverQuota">
@@ -9352,7 +9369,7 @@ function LibraryApp({ publicPage = null, initialServerConfig = null }) {
               : t("The block and its sub-blocks move to the end of the chosen page.")}</div>
             <div className="shareRow">
               <input
-                autoFocus
+                autoFocus data-find
                 placeholder={t("Filter pages…")}
                 value={moveBlockDialog.query}
                 onChange={(e) => setMoveBlockDialog((s) => ({ ...s, query: e.target.value }))}

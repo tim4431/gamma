@@ -226,9 +226,16 @@ export async function publishScenarios(env) {
 
     // Settings sync with Gamma Cloud (docs/dev/cloud_accounts.md "The preference profile"):
     // an account whose settings here and on the cloud differ links, the app opens
-    // Settings → Account on the choice, Merge keeps what each side changed from the
-    // defaults; then Push to cloud and Fetch from cloud, each confirmed.
-    await step("publish: a first settings sync asks which to keep; Merge, Push to cloud, Fetch from cloud", async () => {
+    // Settings → Account on the choice and a dialog asks Fetch from cloud or Push
+    // to cloud; cancelled, Sync now asks again. Once synced, Sync now merges. A
+    // second account takes Push from the dialog the row opens on its own.
+    const linkFromSettings = async (p) => {
+      await p.getByRole("button", { name: "Account & settings", exact: true }).click();
+      await p.getByRole("button", { name: "Settings…", exact: true }).click();
+      await p.getByRole("navigation", { name: "Settings categories" }).getByRole("button", { name: "Account & sync", exact: true }).click();
+      await p.getByRole("button", { name: "Link Gamma Cloud account", exact: true }).click();
+    };
+    await step("publish: a first settings sync asks Fetch from cloud or Push to cloud; Sync now merges", async () => {
       server.manage("create-user", "syncer", "syncer-pw");
       const syncer = await new Account(server, "syncer", "syncer-pw").login();
       await syncer.api("/api/prefs/profile", { method: "PUT", body: { value: { theme: "sepia", enterNewNote: false } } });
@@ -238,40 +245,56 @@ export async function publishScenarios(env) {
       const sctx = await syncer.context(browser);
       try {
         const sp = await openPage(sctx, `${server.base}/?ws=${syncer.ws}`);
-        await sp.getByRole("button", { name: "Account & settings", exact: true }).click();
-        await sp.getByRole("button", { name: "Settings…", exact: true }).click();
-        await sp.getByRole("navigation", { name: "Settings categories" }).getByRole("button", { name: "Account & sync", exact: true }).click();
-        await sp.getByRole("button", { name: "Link Gamma Cloud account", exact: true }).click();
-        // back from the account server: nothing was replaced, and Settings opens on the choice
+        await linkFromSettings(sp);
+        // back from the account server: nothing was replaced, Settings opens on the choice and the dialog asks
         const row = sp.locator('.setRow[data-setting="Settings sync"]');
-        await row.getByText("This server and Gamma Cloud hold different settings. Choose which to keep.", { exact: true })
-          .waitFor({ timeout: 15000 });
+        const dialog = sp.locator(".confirmModal");
+        await dialog.getByText("Settings differ from Gamma Cloud", { exact: true }).waitFor({ timeout: 15000 });
+        await row.getByText("This server and Gamma Cloud hold different settings. Choose which to keep.", { exact: true }).waitFor();
         assertEq(cloud.prefs.get(cloudCopy).value.theme, "system", "the cloud's copy waits for the choice");
-        await row.getByRole("button", { name: "Merge", exact: true }).click();
-        await sp.getByText("Settings merged with Gamma Cloud.", { exact: true }).waitFor({ timeout: 15000 });
-        await until(() => row.locator(".settingDesc").textContent().then((t) => t.startsWith("Synced with Gamma Cloud")),
-          { timeout: 15000, what: "the row reads synced after the merge" });
-        const merged = (await syncer.api("/api/prefs/profile")).value;
-        assertEq(merged.theme, "sepia", "the theme changed here is kept");
-        assertEq(merged.enterNewNote, true, "the setting changed on the cloud is kept");
-        assertEq(cloud.prefs.get(cloudCopy).value.theme, "sepia", "the cloud holds the merge");
-        assertEq(cloud.prefs.get(cloudCopy).value.enterNewNote, true, "the cloud holds the merge");
-        const confirmIn = (label) => sp.locator(".confirmModal").getByRole("button", { name: label, exact: true }).click();
-        // push: this server's copy replaces the cloud's
-        await syncer.api("/api/prefs/profile", { method: "PATCH", body: { set: { enterNewNote: false } } });
-        await row.getByRole("button", { name: "Push to cloud", exact: true }).click();
-        await confirmIn("Push");
-        await until(() => cloud.prefs.get(cloudCopy).value.enterNewNote === false, { what: "the push reaches the cloud" });
-        // fetch: the cloud's copy replaces this one, and the open tab shows it
-        cloud.prefs.set(cloudCopy, { value: { ...cloud.prefs.get(cloudCopy).value, theme: "gray" }, updated_at: new Date().toISOString() });
-        await row.getByRole("button", { name: "Fetch from cloud", exact: true }).click();
-        await confirmIn("Fetch");
+        assertEq(await row.getByRole("button").count(), 1, "the row holds only Sync now");
+        // cancelled: nothing changes, and Sync now asks again
+        await dialog.getByRole("button", { name: "Cancel", exact: true }).click();
+        await dialog.waitFor({ state: "hidden" });
+        await row.getByRole("button", { name: "Sync now", exact: true }).click();
+        // fetch: the cloud's copy replaces this one
+        await dialog.getByRole("button", { name: "Fetch from cloud", exact: true }).click();
         await sp.getByText("Settings updated from Gamma Cloud.", { exact: true }).waitFor({ timeout: 15000 });
-        assertEq((await syncer.api("/api/prefs/profile")).value.theme, "gray", "the cloud's theme is here");
+        await until(() => row.locator(".settingDesc").textContent().then((t) => t.startsWith("Synced with Gamma Cloud")),
+          { timeout: 15000, what: "the row reads synced after the fetch" });
+        const fetched = (await syncer.api("/api/prefs/profile")).value;
+        assertEq(fetched.theme, "system", "the cloud's theme replaced this server's");
+        assertEq(fetched.enterNewNote, true, "the cloud's setting replaced this server's");
+        assertEq(cloud.prefs.get(cloudCopy).value.theme, "system", "the cloud's copy is untouched");
+        // synced: Sync now merges — a change made on the cloud arrives, and the open tab shows it
+        cloud.prefs.set(cloudCopy, { value: { ...cloud.prefs.get(cloudCopy).value, theme: "gray" }, updated_at: new Date().toISOString() });
+        await row.getByRole("button", { name: "Sync now", exact: true }).click();
+        await until(() => syncer.api("/api/prefs/profile").then((d) => d.value.theme === "gray"),
+          { timeout: 15000, what: "the cloud's theme is here" });
         await until(() => sp.evaluate(() => localStorage.getItem("gamma-theme")).then((v) => v === "gray"),
-          { what: "the open tab takes the fetched theme" });
+          { what: "the open tab takes the merged theme" });
+        assertEq(await dialog.count(), 0, "no dialog outside a conflict");
         await assertNoProblems(sp);
       } finally { await sctx.close(); }
+    });
+    await step("publish: Push to cloud from the conflict dialog makes this server's settings the cloud's", async () => {
+      server.manage("create-user", "pusher", "pusher-pw");
+      const pusher = await new Account(server, "pusher", "pusher-pw").login();
+      await pusher.api("/api/prefs/profile", { method: "PUT", body: { value: { theme: "sepia" } } });
+      const cloudCopy = "sub-pusher /api/me/prefs/profile";
+      cloud.prefs.set(cloudCopy, { value: { theme: "system" }, updated_at: new Date().toISOString() });
+      cloud.person("sub-pusher", "pusher");
+      const pctx = await pusher.context(browser);
+      try {
+        const pp = await openPage(pctx, `${server.base}/?ws=${pusher.ws}`);
+        await linkFromSettings(pp);
+        const dialog = pp.locator(".confirmModal");
+        await dialog.getByRole("button", { name: "Push to cloud", exact: true }).click({ timeout: 15000 });
+        await pp.getByText("Settings sent to Gamma Cloud.", { exact: true }).waitFor({ timeout: 15000 });
+        assertEq(cloud.prefs.get(cloudCopy).value.theme, "sepia", "the cloud holds this server's copy");
+        assertEq((await pusher.api("/api/prefs/profile")).value.theme, "sepia", "this server's copy is untouched");
+        await assertNoProblems(pp);
+      } finally { await pctx.close(); }
     });
   } finally {
     if (admin) await admin.api("/api/admin/settings", { method: "PUT", body: { cloud_issuer: "" } }).catch(() => {});

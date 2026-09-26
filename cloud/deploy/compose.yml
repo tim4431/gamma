@@ -10,6 +10,14 @@
 #            ./share-data and its settings in share.env (share.env.example).
 #            Reached only through caddy (no host port). Pinned to an image
 #            tag: bump it with the desktop release.
+#   demo     demo.gammapdf.com: a Gamma in demo mode (docs/dev/guests.md),
+#            every visitor a throwaway guest account; its data on
+#            ./demo-data (disposable) and its settings in demo.env
+#            (demo.env.example). Reached only through caddy (no host port).
+#            Pinned to the `sha-<short>` tag of a branch build (docker.yml
+#            dispatched on the branch): the update-demo-server skill rewrites
+#            the image line in the HOST's copy of this file, so there that
+#            line is the truth and may differ from the one below.
 #   caddy    TLS on the host's own 80/443 with its internal certificate
 #            (`tls internal`; Cloudflare holds the public one), for a host
 #            with a public address (a VPS). The DNS record for the hostname
@@ -38,6 +46,15 @@ services:
     depends_on:
       - account
 
+  demo:
+    # sha-<short> of the build to run. update-demo-server rewrites this line
+    # on the host; the value here is only the first deployment's.
+    image: ghcr.io/tim4431/gamma:sha-a0d31c6
+    restart: unless-stopped
+    env_file: demo.env
+    volumes:
+      - ./demo-data:/data
+
   caddy:
     image: caddy:2-alpine
     restart: unless-stopped
@@ -53,6 +70,7 @@ services:
     depends_on:
       - account
       - share
+      - demo
 
 volumes:
   caddy-data:
