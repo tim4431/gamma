@@ -315,21 +315,21 @@ def server_entries_for(user: str) -> list:
 
 
 def allowance_status(user: str, limit: int) -> dict:
-    """What the pickers and the Usage pane show of the shared allowance:
-    {"limit", "used" (tokens through shared entries in the last 24 h),
-    "exhausted"}."""
+    """What the account card, the pickers and the Usage pane show of the
+    shared allowance: {"limit" (0 = unlimited), "used" (tokens through
+    shared entries in the last 24 h), "exhausted"}."""
     used = ai_usage.shared_used(user)
-    return {"limit": limit, "used": used, "exhausted": used >= limit}
+    return {"limit": limit, "used": used, "exhausted": bool(limit) and used >= limit}
 
 
 def shared_allowance(user: str) -> dict | None:
-    """``allowance_status`` when a metered shared entry applies to ``user``
-    (one it can use: a key, or a connected sign-in, under a non-zero
-    limit), else None — the object ai_runtime() reports, without building
+    """``allowance_status`` when a shared entry applies to ``user`` (one it
+    can use: a key, or a connected sign-in; limit 0 when the admin set
+    none), else None — the object ai_runtime() reports, without building
     the runtime."""
     entries, limit = shared_access(user)
     usable = any(ai_protocols.PROTOCOLS.get(e.get("protocol")) and _has_credential(e) for e in entries)
-    return allowance_status(user, limit) if usable and limit else None
+    return allowance_status(user, limit) if usable else None
 
 
 def provider_label(entry: dict) -> str:
@@ -488,10 +488,13 @@ def ai_runtime(user: str) -> dict:
                                "shared": is_server_id(pid)})
     allowance = None
     shared_ids = [pid for pid in providers if is_server_id(pid)]
-    if limit and shared_ids:
+    if shared_ids:
+        # Reported whenever a shared entry applies (limit 0 = unlimited);
+        # the transport only meters under a limit.
         allowance = allowance_status(user, limit)
-        for pid in shared_ids:
-            providers[pid]["allowance"] = {"user": user, "limit": limit}
+        if limit:
+            for pid in shared_ids:
+                providers[pid]["allowance"] = {"user": user, "limit": limit}
     return {
         "user": user,  # whose config this is — the usage recorder's key
         "providers": providers,

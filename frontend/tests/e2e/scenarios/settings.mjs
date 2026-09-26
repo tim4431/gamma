@@ -985,6 +985,14 @@ export async function settingsScenarios(env) {
       assert(models.models.some((m) => m.model === "lab-model" && m.shared), "member sees the shared model");
       const mine = (await member.api("/api/ai/settings")).providers.find((p) => p.shared);
       assertEq(mine.key_hint, "");
+      // The account card shows what the shared connections allow.
+      await page.getByRole("button", { name: "Close settings", exact: true }).click();
+      await page.getByRole("button", { name: "Account & settings", exact: true }).click();
+      const card = page.locator(".userPopover");
+      await card.waitFor();
+      await until(() => page.getByTestId("account-ai-usage").innerText({ timeout: 500 }).then((text) => text.includes("Server AI: 0 of 50k tokens in the last 24 h"), () => false),
+        { what: "the account card's shared AI line" })
+        .catch(async (e) => { throw new Error(`${e.message}; the card says: ${await card.innerText()}`); });
       assertNoProblems(page);
     } finally {
       await ctx.close();

@@ -583,9 +583,11 @@ function AllowanceRow({ allowance }) {
   const { used = 0, limit = 0, exhausted = false } = allowance;
   return (
     <Row icon={KeyIcon} label={t("Shared allowance")}
-      hint={exhausted
-        ? t("Used up: {used} of {limit} tokens in the last 24 h", { used: fmtTokens(used), limit: fmtTokens(limit) })
-        : t("{used} of {limit} tokens in the last 24 h", { used: fmtTokens(used), limit: fmtTokens(limit) })}
+      hint={!limit
+        ? t("{used} tokens in the last 24 h · no limit", { used: fmtTokens(used) })
+        : exhausted
+          ? t("Used up: {used} of {limit} tokens in the last 24 h", { used: fmtTokens(used), limit: fmtTokens(limit) })
+          : t("{used} of {limit} tokens in the last 24 h", { used: fmtTokens(used), limit: fmtTokens(limit) })}
       title={t("The server's shared AI keys allow each account this many tokens in any 24 hours. Your own keys are not counted; add one under Connections to keep going.")}>
       {exhausted ? <span className="uiTag failed">{t("used up")}</span> : null}
     </Row>

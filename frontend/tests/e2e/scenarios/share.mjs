@@ -97,6 +97,11 @@ export async function shareScenarios({ server, browser, alice, bob, step, until,
     await v.locator(".fileRow", { hasText: "Folder share paper A" }).dblclick();
     await v.locator(".blockRow", { hasText: "a note inside the shared folder" }).waitFor({ timeout: 15000 });
     assert(v.url().includes(`page=${paperA.id}`), "the open page rides in the URL");
+    assert((await v.textContent(".shareCrumbs")).includes("sharedlab"), "the folder path leads the title");
+    await v.locator(".shareCrumbs .crumbBtn", { hasText: "sharedlab" }).click();
+    await v.locator(".fileRow", { hasText: "Folder share paper B" }).waitFor();
+    await v.goBack();
+    await v.locator(".blockRow", { hasText: "a note inside the shared folder" }).waitFor({ timeout: 15000 });
     await v.click("button[aria-label='Back to the shared folder']");
     await v.locator(".fileRow", { hasText: "Folder share paper B" }).waitFor();
     await v.goBack();

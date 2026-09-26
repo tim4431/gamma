@@ -9,6 +9,7 @@ import { AlertCircleIcon, CheckIcon, CloudCheckIcon, EyeIcon, EyeOffIcon, Monito
 import { bindable, chordFromEvent, chordParts } from "../shared/lib/hotkeys.js";
 import { BROWSER_TAG, profileSyncState } from "./syncState.js";
 import { t } from "../shared/i18n/i18n.js";
+import { fmtTokens } from "../chat/tokenUsage";
 
 export const SettingsDraftContext = React.createContext(null);
 
@@ -611,6 +612,27 @@ export function PercentMeter({ percent, barOnly, caption = "" }) {
       {barOnly ? null : <span className="settingDesc">{caption || `${Math.round(pct)}% used`}</span>}
     </span>
   );
+}
+
+// What the account has spent through the server's shared AI connections in
+// the last 24 hours (the `allowance` of GET /api/ai/models, docs/dev/guests.md):
+// the storage meter's bar under the admin's limit, the plain count without
+// one. Null when no shared connection applies.
+export function AllowanceMeter({ allowance }) {
+  if (!allowance) return null;
+  const used = Number(allowance.used) || 0;
+  const limit = Number(allowance.limit) || 0;
+  if (!limit) {
+    return (
+      <span className="quotaMeter">
+        <span className="settingDesc">{t("Server AI: {used} tokens in the last 24 h", { used: fmtTokens(used) })}</span>
+      </span>
+    );
+  }
+  return <PercentMeter percent={(used / limit) * 100}
+    caption={allowance.exhausted
+      ? t("Server AI used up: {used} of {limit} tokens in the last 24 h", { used: fmtTokens(used), limit: fmtTokens(limit) })
+      : t("Server AI: {used} of {limit} tokens in the last 24 h", { used: fmtTokens(used), limit: fmtTokens(limit) })} />;
 }
 
 // The keys of a chord as <kbd> caps: "Ctrl" "Shift" "K", or ⇧⌘K on a Mac.

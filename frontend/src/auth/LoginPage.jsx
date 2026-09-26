@@ -142,8 +142,8 @@ export function LoginPage({
       </button>
       <p className="loginDemoNote">
         {hours
-          ? tn("Your own workspace for {n} hour. Nothing is kept.", "Your own workspace for {n} hours. Nothing is kept.", hours)
-          : t("Your own workspace for a while. Nothing is kept.")}
+          ? tn("Your own workspace for {n} hour, then it is deleted.", "Your own workspace for {n} hours, then it is deleted.", hours)
+          : t("Your own workspace for a while, then it is deleted.")}
       </p>
       {error && !signInOpen ? <div className="loginError" role="alert">{error}</div> : null}
       {cloudError && !signInOpen ? <div className="loginError" role="alert">{cloudError}</div> : null}

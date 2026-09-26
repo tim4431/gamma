@@ -20,8 +20,9 @@ viewer browses everything and organizes nothing; a folder share's visitor
 browses the shared folder only — the share view IS the home library at that
 folder, listed through `GET /blocks/root/children` with the token
 ([api.md](api.md) "Shares"), its pages opening in the same view (`page=`
-beside the token, each a history entry) and the topbar's home button
-returning to the folder.
+beside the token, each a history entry) and the topbar's home button — or
+the folder path that leads the page's title, every crumb a folder — returning
+to the folder.
 
 Quick open ([QuickOpen.jsx](../../frontend/src/library/QuickOpen.jsx)) is the
 keyboard way into the library from anywhere: Ctrl+P (App.jsx's global key

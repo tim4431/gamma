@@ -100,7 +100,7 @@ import ReportProblem from "../support/ReportProblem";
 import { useGuide } from "../guide/useGuide";
 import GuideOverlay from "../guide/GuideOverlay";
 import { guideEvents } from "../guide/events";
-import { Empty, QuotaMeter, Section } from "../settings/SettingsKit";
+import { AllowanceMeter, Empty, QuotaMeter, Section } from "../settings/SettingsKit";
 import { CopyBox, SharePopover } from "../sharing/SharePopover";
 import { libraryAccess } from "../library/libraryAccess";
 import { MirrorPopover } from "../collaboration/MirrorPopover";
@@ -800,6 +800,19 @@ function LibraryApp({ publicPage = null, initialServerConfig = null }) {
       const msg = err?.message || "failed";
       updateTransfer(tid, { status: "error", info: String(msg) });
       setStatus(t("Import failed: {msg}", { msg: msg }));
+    });
+  }
+
+  // A guest account has no password, so logging out deletes it and its
+  // workspace on the spot (docs/dev/guests.md): say so before it happens.
+  function confirmGuestLogout() {
+    setOpenPopover(null);
+    setConfirmBox({
+      title: T("Log out and delete this workspace?"),
+      message: t("A guest can't sign back in: logging out deletes this workspace and everything in it now."),
+      confirmLabel: t("Log out and delete"),
+      danger: true,
+      onConfirm: doLogout,
     });
   }
 
@@ -8814,7 +8827,7 @@ function LibraryApp({ publicPage = null, initialServerConfig = null }) {
             className={`iconBtn ${openPopover === "user" ? "activeIcon" : ""}`}
             onClick={() => {
               const opening = openPopover !== "user";
-              if (opening) refreshQuota(); // fresh storage meter on open
+              if (opening) { refreshQuota(); refreshAiModels(); } // fresh storage and AI meters on open
               setOpenPopover(opening ? "user" : null);
             }}
             data-guide="header.account"
@@ -8848,11 +8861,17 @@ function LibraryApp({ publicPage = null, initialServerConfig = null }) {
                 ) : null}
               </div>
               {authUser.is_guest ? (
-                <div className="popoverHint">{t("Nothing here is kept once the workspace goes. Ask the admin for an account to keep your work.")}</div>
+                <div className="popoverHint">{t("Your work stays until then, or until you log out; then the workspace is deleted with everything in it. Ask the admin for an account to keep your work.")}</div>
               ) : null}
               {quotaInfo?.quota_mb ? (
                 <div className="popoverQuota">
                   <QuotaMeter usedBytes={quotaInfo.used_bytes} quotaMb={quotaInfo.quota_mb} barOnly />
+                </div>
+              ) : null}
+              {aiInfo?.allowance ? (
+                <div className="popoverQuota" data-testid="account-ai-usage"
+                  title={t("Tokens your AI requests spent through this server's shared connections in the last 24 hours. Your own keys are not counted.")}>
+                  <AllowanceMeter allowance={aiInfo.allowance} />
                 </div>
               ) : null}
               <div className="popoverDivider" />
@@ -8911,7 +8930,7 @@ function LibraryApp({ publicPage = null, initialServerConfig = null }) {
                 {t("Report a problem…")}
               </button>
               <div className="popoverDivider" />
-              <button className="popoverItem popoverItemDanger" onClick={doLogout}>
+              <button className="popoverItem popoverItemDanger" onClick={authUser.is_guest ? confirmGuestLogout : doLogout}>
                 <LogOutIcon className="popoverItemIcon" size={15} />
                 {t("Log out")}
               </button>
@@ -9029,7 +9048,29 @@ function LibraryApp({ publicPage = null, initialServerConfig = null }) {
           >
             <HomeIcon size={17} />
           </button>
-          <span className="readOnlyTitle">{pageTitle || sharedFolder?.name || ""}</span>
+          {sharedFolder ? (
+            // A folder share: the folder path from the shared folder down,
+            // each crumb returning to that folder's listing, then the page.
+            <span className="readOnlyTitle shareCrumbs">
+              {folderFilter.split("/").map((seg, i, segs) => {
+                const prefix = segs.slice(0, i + 1).join("/");
+                if (!lib.contains(prefix)) return null;
+                const here = !focusedBlockId && prefix === folderFilter;
+                return (
+                  <span key={prefix}>
+                    {i > 0 && lib.contains(segs.slice(0, i).join("/")) ? <span className="crumbSep">/</span> : null}
+                    {here ? <span>{seg}</span> : (
+                      <button className="crumbBtn" title={t("Back to {folder}", { folder: prefix })}
+                        onClick={() => goSharedPage("", { folder: prefix })}>{seg}</button>
+                    )}
+                  </span>
+                );
+              })}
+              {focusedBlockId ? <><span className="crumbSep">/</span><span>{pageTitle}</span></> : null}
+            </span>
+          ) : (
+            <span className="readOnlyTitle">{pageTitle}</span>
+          )}
           {shareInfo ? (
             <span className="uiTag"
               title={shareInfo.canEdit ? t("Your edits save to the owner's page") : t("Read-only share link")}>

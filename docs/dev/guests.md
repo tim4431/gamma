@@ -59,7 +59,8 @@ name.
   use too. An admin may delete a guest account like any other.
 
 A guest's `POST /api/logout` deletes the account right away: nothing can
-sign into it again. A shorter lifetime applies to existing guests at once
+sign into it again. The account menu's Log out says so first for a guest
+(a confirmation, "Log out and delete"). A shorter lifetime applies to existing guests at once
 (expiry is computed from `created_at` on every check, not stored).
 
 The old midnight rollover is gone: `sessions.guest_date` stays in the
@@ -98,7 +99,8 @@ meters the shared entries only, per account, over a rolling 24 hours:
   (`PUT {"allowance": {"accounts": N}}` — either key alone; anything but a
   whole number in range is a 400);
 - `ai_runtime(user)` reports `"allowance": {"limit", "used", "exhausted"}`
-  (`null` while no shared entry applies or the limit is 0), `used` being
+  whenever a shared entry applies (`limit` 0 = unlimited, never exhausted;
+  `null` while none applies), `used` being
   `ai_usage.shared_used(user)`: the account's rows on `server:` provider
   ids in the last 24 h; it also puts `{"user", "limit"}` on every shared
   provider conf, and the shared models stay listed once it is used up;
@@ -138,8 +140,14 @@ allowance work the same on every server.
   stays manually startable everywhere. Like every offer it waits for
   Suggest tours ([onboarding.md](onboarding.md)).
 - The account card names when the workspace goes ("Temporary workspace ·
-  gone in 5 hours", from `guest_expires_at`, `auth/guestExpiry.js`); that
-  line is every guest's, demo server or not.
+  deleted in 5 hours", from `guest_expires_at`, `auth/guestExpiry.js`),
+  with the hint that it stays until then or until log-out; that line is
+  every guest's, demo server or not.
+- The account card of any account a shared entry applies to shows what it
+  spent through the shared entries (`AllowanceMeter` in
+  `settings/SettingsKit.jsx`: "Server AI: 1.2k of 50k tokens in the last
+  24 h" over the storage meter's bar, or the plain count with no limit),
+  refreshed with `/api/ai/models` each time the menu opens.
 
 demo.gammapdf.com is its own compose project on the VPS, in a folder next
 to the account server's (`GAMMA_DEMO=1` in its `demo.env`), reached through

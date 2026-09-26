@@ -172,6 +172,25 @@ def test_pdf_proxy_only_serves_the_pages_own_source(bob, anon):
     assert anon.get("/api/pdf", params={"source_url": "https://example.com/paper.pdf",
                                          "share": t_notes}).status_code == 403
 
+    # a copy the proxy cached earlier answers with a redirect to the upload —
+    # which must keep the token, or the browser's follow-up lands in the
+    # visitor's own (missing) library
+    import hashlib
+    from conftest import workspace_of
+    from gamma.db import ws_uploads_dir
+    from gamma.storage import DIGEST_CHARS
+    cached = hashlib.sha256(b"https://example.com/paper.pdf").hexdigest()[:DIGEST_CHARS]
+    uploads = ws_uploads_dir(workspace_of("bob_share"))
+    uploads.mkdir(parents=True, exist_ok=True)
+    (uploads / f"{cached}.pdf").write_bytes(b"%PDF-1.4 cached copy")
+    bob.put(f"/api/blocks/{paper['id']}", json={"properties": {"doc_id": cached}})
+    r = anon.get("/api/pdf", params={"source_url": "https://example.com/paper.pdf", "share": t_paper},
+                 follow_redirects=False)
+    assert r.status_code == 302, r.text
+    assert r.headers["location"] == f"/api/uploads/{cached}.pdf?share={t_paper}"
+    assert anon.get(r.headers["location"]).status_code == 200
+    assert anon.get(f"/api/uploads/{cached}.pdf").status_code == 401
+
 
 # --- permissions: who may open, what they may do -----------------------------
 

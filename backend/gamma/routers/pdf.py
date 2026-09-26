@@ -296,9 +296,14 @@ def proxy_pdf(source_url: str, request: Request):
     local_path = uploads / f"{pdf_doc_id}.pdf"
     want_save = request.query_params.get("save") == "1"
 
-    # If a local copy exists, redirect to the uploads route (supports Range requests)
+    # If a local copy exists, redirect to the uploads route (supports Range
+    # requests). The browser follows a redirect with no help from the app, so
+    # the query that named the workspace — a share token, or ?ws= — rides
+    # along, or the copy would be looked for in the session's own library.
     if local_path.exists():
-        return RedirectResponse(f"/api/uploads/{pdf_doc_id}.pdf", status_code=302)
+        carried = {k: v for k, v in request.query_params.items() if k in ("share", "ws")}
+        target = f"/api/uploads/{pdf_doc_id}.pdf" + (f"?{urllib.parse.urlencode(carried)}" if carried else "")
+        return RedirectResponse(target, status_code=302)
 
     # Download from source. Streamed through to the client as upstream bytes
     # arrive — buffering the whole file first meant the browser saw zero bytes

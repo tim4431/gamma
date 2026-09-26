@@ -253,8 +253,9 @@ AI:
   dictation) and the account's token usage
   ([ai.md](ai.md) "Token usage"), which opens with a **Shared allowance**
   row ("12k of 50k tokens in the last 24 h", a red "used up" tag once
-  spent) while a shared entry with an allowance applies
-  ([guests.md](guests.md)). The check, models and usage sections appear only
+  spent; "12k tokens in the last 24 h · no limit" without one) while a
+  shared entry applies ([guests.md](guests.md)). The account menu's card
+  shows the same numbers under the storage meter. The check, models and usage sections appear only
   once a provider exists; a guest sees the usage too, without Reset.
 - **Chat**: **Chat** (the default reasoning effort and the
   snapshot-clearing switch), then **Tools**: the master switch and, per chat

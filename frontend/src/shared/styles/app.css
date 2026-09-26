@@ -2386,6 +2386,9 @@ button.pdfOutlineChevron:hover { background: rgba(128, 128, 128, 0.28); color: v
 
 /* --- modern topbar bits --- */
 .addPopover { min-width: 300px; }
+.shareCrumbs { display: flex; align-items: center; gap: 2px; white-space: nowrap; }
+.shareCrumbs .crumbBtn { font: inherit; font-weight: 500; color: var(--text-secondary); }
+.shareCrumbs .crumbSep { padding: 0 3px; }
 .readOnlyTitle {
   flex: 1;
   min-width: 0;
