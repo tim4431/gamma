@@ -1,10 +1,13 @@
-// Share this page — the popover under the page header's link button, like
-// the account menu: it hangs off its button (App wraps it in a
-// `data-popover="share"` anchor, so the topbar's outside-click / Escape
-// rules close it) and is built from the settings kit like the workspace
-// Manage dialog: Link (Copy link, Stop sharing), Access, People, Citation.
-// State is the server's share settings (docs/dev/api.md "Shares"): every
-// change saves at once; the link itself only changes on Stop.
+// Share this page — or this folder — the popover under the page header's
+// link button (the folder view's, for a folder), like the account menu: it
+// hangs off its button (App wraps it in a `data-popover="share"` anchor, so
+// the topbar's outside-click / Escape rules close it) and is built from the
+// settings kit like the workspace Manage dialog: Link (Copy link, Stop
+// sharing), Access, People, Citation. State is the server's share settings
+// (docs/dev/api.md "Shares"): every change saves at once; the link itself
+// only changes on Stop. `target` says what is shared — {kind: "page"} or
+// {kind: "folder", name} — and only the words differ: a folder share reaches
+// every page filed in the folder, now and later, so its edit wording says so.
 //
 // Access is pictured, not described: three tiles say who may open the link
 // (Anyone / Signed in / Invited only, the same glyphs the read-only view's
@@ -31,15 +34,21 @@ import { useAccounts } from "../settings/SettingsWorkspace";
 import { mirrorState } from "../collaboration/MirrorPopover";
 import { T, t } from "../shared/i18n/i18n.js";
 import {
-  AlertCircleIcon, CheckIcon, CloudIcon, CloudOffIcon, CloudUploadIcon, CopyIcon, ExternalLinkIcon, EyeIcon, GlobeIcon, LinkIcon,
-  PenIcon, PlusIcon, RefreshIcon, ShieldIcon, Trash2Icon, UserIcon, UsersIcon,
+  AlertCircleIcon, CheckIcon, CloudIcon, CloudOffIcon, CloudUploadIcon, CopyIcon, ExternalLinkIcon, EyeIcon, FolderIcon, GlobeIcon,
+  LinkIcon, PenIcon, PlusIcon, RefreshIcon, ShieldIcon, Trash2Icon, UserIcon, UsersIcon,
 } from "../shared/ui/Icons";
 
 const SHARE_ROLE_OPTIONS = [["view", t("Can view")], ["edit", t("Can edit")]];
-const ROLE_SEGMENTS = [
-  ["view", t("View"), EyeIcon, t("Can read the page")],
-  ["edit", t("Edit"), PenIcon, t("Can edit this page's notes and highlights — never other pages or the page's settings")],
-];
+const ROLE_SEGMENTS = {
+  page: [
+    ["view", t("View"), EyeIcon, t("Can read the page")],
+    ["edit", t("Edit"), PenIcon, t("Can edit this page's notes and highlights — never other pages or the page's settings")],
+  ],
+  folder: [
+    ["view", t("View"), EyeIcon, t("Can read every page in the folder")],
+    ["edit", t("Edit"), PenIcon, t("Can edit the notes and highlights of every page in this folder, now and later — never other pages or any page's settings")],
+  ],
+};
 
 const AUDIENCE_TILES = [
   { value: "anyone", label: T("Anyone"), hint: T("with the link"), Icon: GlobeIcon },
@@ -59,11 +68,14 @@ const CLOUD_AUDIENCE_TILES = [
 export const PUBLISH_SIGN_IN = T("Sign in with Gamma Cloud to publish.");
 
 // The one sentence that says what the tiles + toggle add up to.
-function accessSummary(settings, invited) {
+function accessSummary(settings, invited, kind = "page") {
   const who = settings.audience === "anyone" ? t("Anyone with the link") : settings.audience === "users" ? t("Anyone signed in") : null;
   if (!who) return invited ? t("Only the people below can open it.") : t("Nobody can open it until you invite someone.");
   const verb = settings.role === "edit" ? t("edit") : t("read");
-  return t("{who} can {verb} this page{access}.", { who, verb, access: invited ? t("; invited people keep their own access") : "" });
+  const access = invited ? t("; invited people keep their own access") : "";
+  return kind === "folder"
+    ? t("{who} can {verb} every page in this folder{access}.", { who, verb, access })
+    : t("{who} can {verb} this page{access}.", { who, verb, access });
 }
 
 // Invite, inline under the people list (a popover can't host a modal): an
@@ -187,7 +199,7 @@ function PublishSection({ state, busy, error, copied, onCopy, canEdit, onPublish
       title={t("Gamma Cloud")}
       action={share && share.audience !== "list" && canEdit ? (
         <Segmented
-          value={share.role} options={ROLE_SEGMENTS} disabled={!!busy}
+          value={share.role} options={ROLE_SEGMENTS.page} disabled={!!busy}
           onChange={(role) => { if (role !== share.role) onPublish({ role }); }}
         />
       ) : null}
@@ -265,20 +277,24 @@ function PublishSection({ state, busy, error, copied, onCopy, canEdit, onPublish
   );
 }
 
-// Props: settings (null while loading; {token: null} when unshared), error
-// (the last failed save, e.g. an unknown username), me / meIsGuest (the
-// owner's account), shareUrl, copied / onCopy, and one callback per action.
-// `citation` is the page's citation section (App owns it), shown when the
-// page has metadata. `publish` is the Gamma Cloud section's props
-// (PublishSection), or null where the server offers no publishing.
+// Props: target ({kind: "page"} or {kind: "folder", name}; a page when
+// omitted), settings (null while loading; {token: null} when unshared),
+// error (the last failed save, e.g. an unknown username), me / meIsGuest
+// (the owner's account), shareUrl, copied / onCopy, and one callback per
+// action. `citation` is the page's citation section (App owns it), shown
+// when the page has metadata. `publish` is the Gamma Cloud section's props
+// (PublishSection), or null where the server offers no publishing — App
+// passes neither for a folder.
 export function SharePopover({
-  settings, error, me, meIsGuest, shareUrl, copied, onCopy,
+  target, settings, error, me, meIsGuest, shareUrl, copied, onCopy,
   onCreate, onUpdate, onInvite, onSetRole, onRemove, onStop, onClose, citation, publish,
 }) {
   const [inviting, setInviting] = React.useState(false);
   const users = settings?.users || [];
   const shared = !!settings?.token;
   const openEdit = shared && settings.audience === "anyone" && settings.role === "edit";
+  const kind = target?.kind === "folder" ? "folder" : "page";
+  const title = kind === "folder" ? t("Share this folder") : t("Share this page");
 
   async function invite(name, role) {
     const ok = await onInvite(name, role);
@@ -286,9 +302,10 @@ export function SharePopover({
   }
 
   return (
-    <div className="popover sharePopover" role="dialog" aria-label={t("Share this page")}>
+    <div className="popover sharePopover" role="dialog" aria-label={title}>
       <div className="sharePopoverHead">
-        <span className="popoverTitle">{t("Share this page")}</span>
+        <span className="popoverTitle">{title}</span>
+        {kind === "folder" ? <span className="uiTag sharePopoverTarget" title={target.name}><FolderIcon size={11} />{target.name}</span> : null}
         <button type="button" className="uiClose" onClick={onClose} aria-label={t("Close")} title={t("Close")}>×</button>
       </div>
       <div className="settingsForm">
@@ -296,7 +313,9 @@ export function SharePopover({
         {settings && !shared ? (
           <Section title={t("Link")} guide="share.link">
             <Row icon={LinkIcon} label={t("Share link")} hint={t("not shared yet")}
-              title={t("A link lets people open this page — read-only or editable, for anyone or only for accounts you name.")}>
+              title={kind === "folder"
+                ? t("A link lets people open every page filed in this folder, including pages you file here later — read-only or editable, for anyone or only for accounts you name.")
+                : t("A link lets people open this page — read-only or editable, for anyone or only for accounts you name.")}>
               <button type="button" className="uiBtn sm primary" onClick={onCreate}>
                 <LinkIcon size={13} />{t("Create link")}
               </button>
@@ -325,7 +344,7 @@ export function SharePopover({
               guide="share.access"
               action={settings.audience !== "list" ? (
                 <Segmented
-                  value={settings.role} options={ROLE_SEGMENTS}
+                  value={settings.role} options={ROLE_SEGMENTS[kind]}
                   onChange={(role) => { if (role !== settings.role) onUpdate({ role }); }}
                 />
               ) : null}
@@ -341,7 +360,7 @@ export function SharePopover({
               <div className={`settingsPaneHint shareSummary ${openEdit ? "shareWarn" : ""}`}>
                 {openEdit ? <AlertCircleIcon size={13} /> : null}
                 <span>
-                  {accessSummary(settings, users.length > 0)}
+                  {accessSummary(settings, users.length > 0, kind)}
                   {openEdit ? t(" No sign-in needed; edits are recorded under a name they choose.") : ""}
                 </span>
               </div>

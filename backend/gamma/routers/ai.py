@@ -444,7 +444,7 @@ def _probe_model(entry: dict, fallback: str = "") -> str:
             or next(iter(entry_models(entry)), ""))
 
 
-def _probe_entry(user: str, entry: dict, fallback_model: str = "") -> dict:
+def _probe_entry(user: str, entry: dict, fallback_model: str = "", retry: bool = True) -> dict:
     """One tiny live completion through a saved entry — answers "does this
     credential still work" without waiting for a real chat to 502. The result
     is in-body ({ok, model, latency_ms} / {ok: False, error, auth}); `auth`
@@ -453,8 +453,9 @@ def _probe_entry(user: str, entry: dict, fallback_model: str = "") -> dict:
     provider_id = entry.get("id")
     # An explicit probe is an explicit retry: drop the refresh backoff so a
     # ChatGPT entry re-attempts its token refresh now instead of reusing a
-    # stale token.
-    clear_refresh_backoff(user, provider_id)
+    # stale token (``retry`` False: not this caller's to reset).
+    if retry:
+        clear_refresh_backoff(user, provider_id)
     rt = ai_runtime(user)
     if provider_id not in rt["providers"]:
         return _no_credential(entry)
@@ -503,7 +504,8 @@ def ai_provider_usage(provider_id: str, request: Request):
     APIs. Report that honestly instead of presenting token counts as quota.
     """
     user = _require_editor(request)
-    entry = next((e for e in load_provider_entries(user) if e.get("id") == provider_id), None)
+    # A shared sign-in (``server:<id>``) is an admin's to ask about.
+    entry = _saved_entry(request, user, provider_id)
     if not entry:
         raise HTTPException(status_code=404, detail="provider not found")
     proto = ai_protocols.PROTOCOLS.get(entry.get("protocol"))
@@ -632,9 +634,14 @@ def ai_health(payload: AIHealthRequest, request: Request):
         return {"configured": False, "ok": True}
     result = {"configured": True, "provider_id": entry.get("id"), "mode": payload.mode,
               "provider_name": provider_label(entry)}
+    # A shared sign-in's refresh backoff is the admin's to reset: every
+    # account's login runs this check, and a dead shared grant must not be
+    # retried once per login.
+    retry = request.state.is_admin or not is_server_id(entry.get("id"))
     if payload.mode == "test":
-        return {**result, **_probe_entry(user, entry, payload.model)}
-    clear_refresh_backoff(user, entry.get("id"))
+        return {**result, **_probe_entry(user, entry, payload.model, retry=retry)}
+    if retry:
+        clear_refresh_backoff(user, entry.get("id"))
     conf = ai_runtime(user)["providers"].get(entry.get("id"))
     if not conf:
         return {**result, **_no_credential(entry)}
@@ -1120,18 +1127,61 @@ def ai_transcribe(request: Request, file: UploadFile = File(...),
 # which redeems the code with the stashed PKCE verifier and stores the tokens
 # on a provider entry. See gamma/chatgpt_oauth.py.
 
-_OAUTH_STATES: dict = {}  # state -> {"verifier", "user", "at"} — in-memory, 15 min TTL
+_OAUTH_STATES: dict = {}  # state -> {"verifier", "owner", "at"} — in-memory, 15 min TTL
 _OAUTH_STATE_TTL = 900
 
-@router.post("/ai/oauth/chatgpt/start")
-async def chatgpt_auth_start(request: Request):
-    user = _require_editor(request)
+
+def begin_chatgpt_signin(owner) -> dict:
+    """Start a sign-in for ``owner``: an account name (its own entry), or
+    ``("server", <admin>)`` for a shared entry (routers/admin.py). Returns
+    {auth_url, state}."""
     now = time.time()
     for k in [k for k, v in _OAUTH_STATES.items() if now - v["at"] > _OAUTH_STATE_TTL]:
         del _OAUTH_STATES[k]
     state, verifier, url = chatgpt_oauth.start_auth()
-    _OAUTH_STATES[state] = {"verifier": verifier, "user": user, "at": now}
+    _OAUTH_STATES[state] = {"verifier": verifier, "owner": owner, "at": now}
     return {"auth_url": url, "state": state}
+
+
+def redeem_chatgpt_signin(owner, state: str, callback: str) -> dict:
+    """The tokens of a sign-in ``owner`` started (400 otherwise): the pasted
+    redirect URL's code redeemed with the stashed PKCE verifier. The state
+    belongs to whoever started it — another account, or the same admin's
+    own-entry form, can't redeem it (and so can't attach that login's
+    tokens elsewhere)."""
+    st = _OAUTH_STATES.pop(state, None)
+    if not st or st.get("owner") != owner or time.time() - st["at"] > _OAUTH_STATE_TTL:
+        raise HTTPException(status_code=400,
+                            detail="sign-in session expired — hit 'Open ChatGPT sign-in' again")
+    try:
+        code = chatgpt_oauth.parse_callback(callback, state)
+        return chatgpt_oauth.exchange_code(code, st["verifier"])
+    except ValueError as e:
+        raise HTTPException(status_code=400, detail=str(e))
+    except Exception as e:
+        raise HTTPException(status_code=400, detail=f"token exchange failed: {e}")
+
+
+def new_chatgpt_entry(entry_id: str, oauth: dict, name: str, models: str) -> dict:
+    return {"id": entry_id, "protocol": "chatgpt",
+            "name": name.strip()[:MAX_NAME_LEN] or "ChatGPT", "api_key": "", "base_url": "",
+            "models": models.strip()[:MAX_MODELS_LEN], "created_at": page_now(), "oauth": oauth}
+
+
+def seeded_chatgpt_models(user: str, entry_id: str) -> str:
+    """A new sign-in's first models, asked live from the account through
+    ``user``'s runtime (the tokens must be stored first); "" when the
+    listing fails — they are then picked in the entry's form."""
+    try:
+        live = [m["id"] for m in ai_catalog.list_models(ai_runtime(user)["providers"][entry_id])]
+    except Exception:
+        live = []
+    return ", ".join(live[:2])[:MAX_MODELS_LEN]
+
+
+@router.post("/ai/oauth/chatgpt/start")
+async def chatgpt_auth_start(request: Request):
+    return begin_chatgpt_signin(_require_editor(request))
 
 
 class ChatGPTAuthComplete(BaseModel):
@@ -1146,20 +1196,7 @@ class ChatGPTAuthComplete(BaseModel):
 @router.post("/ai/oauth/chatgpt/complete")
 def chatgpt_auth_complete(payload: ChatGPTAuthComplete, request: Request):
     user = _require_editor(request)
-    st = _OAUTH_STATES.pop(payload.state, None)
-    # The state belongs to the account that started the sign-in: another
-    # account can't redeem it (and so can't attach that login's tokens).
-    if not st or st.get("user") != user or time.time() - st["at"] > _OAUTH_STATE_TTL:
-        raise HTTPException(status_code=400,
-                            detail="sign-in session expired — hit 'Open ChatGPT sign-in' again")
-    try:
-        code = chatgpt_oauth.parse_callback(payload.callback, payload.state)
-        oauth = chatgpt_oauth.exchange_code(code, st["verifier"])
-    except ValueError as e:
-        raise HTTPException(status_code=400, detail=str(e))
-    except Exception as e:
-        raise HTTPException(status_code=400, detail=f"token exchange failed: {e}")
-
+    oauth = redeem_chatgpt_signin(user, payload.state, payload.callback)
     entries = load_provider_entries(user)
     if payload.provider_id:
         entry = next((e for e in entries if e.get("id") == payload.provider_id), None)
@@ -1173,28 +1210,13 @@ def chatgpt_auth_complete(payload: ChatGPTAuthComplete, request: Request):
     else:
         if len(entries) >= MAX_PROVIDERS:
             raise HTTPException(status_code=400, detail="too many providers")
-        entry = {
-            "id": new_provider_id(),
-            "protocol": "chatgpt",
-            "name": payload.name.strip()[:MAX_NAME_LEN] or "ChatGPT",
-            "api_key": "",
-            "base_url": "",
-            "models": payload.models.strip()[:MAX_MODELS_LEN],
-            "created_at": page_now(),
-            "oauth": oauth,
-        }
+        entry = new_chatgpt_entry(new_provider_id(), oauth, payload.name, payload.models)
         entries.append(entry)
         if not entry["models"]:
-            # Seed the model list live from the account; if that fails the
-            # entry starts empty and the models are picked in its settings
-            # form. Tokens must be stored first — the listing call reads them
-            # back through ai_runtime.
+            # Seed the model list live from the account (the tokens stored
+            # first: the listing reads them back through ai_runtime).
             save_provider_entries(user, entries)
-            try:
-                live = [m["id"] for m in ai_catalog.list_models(ai_runtime(user)["providers"][entry["id"]])]
-            except Exception:
-                live = []
-            entry["models"] = ", ".join(live[:2])[:MAX_MODELS_LEN]
+            entry["models"] = seeded_chatgpt_models(user, entry["id"])
     save_provider_entries(user, entries)
     return _masked_settings(request)
 

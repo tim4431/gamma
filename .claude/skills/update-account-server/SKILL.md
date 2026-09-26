@@ -56,12 +56,15 @@ ssh root@69.63.206.178 "cat /root/Container/gamma-account/Caddyfile"   | diff - 
 Show the user any difference and copy a file over (`git show <headSha>:cloud/deploy/<file> | ssh root@69.63.206.178 "cat > /root/Container/gamma-account/<file>"`)
 only once they agree. `.env` is never copied — new variables from
 `.env.example` (`git diff <old>..<headSha> -- cloud/deploy/.env.example`) are
-named to the user to add by hand. The same `compose.yml` also pins the
-`demo` service's image tag (demo.gammapdf.com, the `update-demo-server`
-skill): a diff on that one line is the demo's own pin, not drift — keep the
-host's tag when copying the file over (never let this skill move the demo
-to an older image), and `up -d` restarts only the services whose image or
-config changed.
+named to the user to add by hand.
+
+The public demo (demo.gammapdf.com) is NOT in this project: it is its own
+compose project in `/root/Container/gamma-demo/` (the `update-demo-server`
+skill; never touch it from here). This project holds only its way in: the
+Caddyfile's `@demo` handle and Caddy on the external network `gamma-edge`,
+where the demo answers as `gamma-demo`. `compose.yml` refuses to start while
+that network is missing; on a new host create it first
+(`docker network inspect gamma-edge >/dev/null 2>&1 || docker network create gamma-edge`).
 
 ## Update
 

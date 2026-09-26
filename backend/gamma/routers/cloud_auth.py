@@ -13,11 +13,11 @@
   preference profile is pulled before the redirect and this server put on
   the person's server list (gamma/cloud_sync.py);
 - ``GET /api/auth/cloud/status`` / ``POST /api/auth/cloud/unlink`` for the
-  signed-in account's own identity (Settings → Account); an unlink takes
+  signed-in account's own identity (Settings → Account & sync); an unlink takes
   this server off the person's server list and revokes the grant.
 - ``GET /api/auth/cloud/sync-status``: the signed-in account's own
   preference profile sync state (Settings' section tags), from memory.
-- ``POST /api/auth/cloud/sync``: Settings → Account's Sync now, and the
+- ``POST /api/auth/cloud/sync``: Settings → Account & sync's Sync now, and the
   answer to a first sync's choice (its Fetch from cloud / Push to cloud
   dialog; ``merge`` is API-only).
 """
@@ -95,7 +95,7 @@ def cloud_callback(request: Request, code: str = "", state: str = "", error: str
 async def cloud_status(request: Request):
     user = require_user(request)
     cfg = cloud_auth.settings()
-    # the issuer is the portal's address too: Settings → Account opens it from here
+    # the issuer is the portal's address too: Settings → Account & sync opens it from here
     return {"identity": cloud_auth.status_of(user), "enabled": cfg["enabled"], "issuer": cfg["issuer"]}
 
 

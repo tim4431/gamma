@@ -3,8 +3,7 @@
 from fastapi import APIRouter, File, HTTPException, Request, UploadFile
 from fastapi.responses import FileResponse, JSONResponse
 
-from ..auth import link_ratelimit, require_ws, require_ws_writer, resolve_ws, share_scope_page
-from ..blocks_store import fetch_subtree
+from ..auth import link_ratelimit, require_ws, require_ws_writer, resolve_ws, share_scope
 from .. import pdf_meta
 from ..db import connect_pages_db, ws_uploads_dir
 from ..server_settings import check_upload_allowed, workspace_quota
@@ -108,22 +107,22 @@ async def upload_file(request: Request, file: UploadFile = File(...)):
             "already_existed": already_existed}
 
 
-def _share_can_read_upload(ws: str, scope_page_id: str, filename: str) -> bool:
-    """A share link may read only its own page's PDF (``<doc_id>.pdf``) or a
-    file the page's subtree references (embedded images, file chips — any
+def _share_can_read_upload(ws: str, scope, filename: str) -> bool:
+    """A share link may read only its own pages' PDFs (``<doc_id>.pdf``) or a
+    file one of their subtrees references (embedded images, file chips — any
     extension, matched textually)."""
-    with connect_pages_db(ws) as conn:
-        doc = conn.execute(
-            "SELECT json_extract(properties, '$.doc_id') FROM unified_blocks WHERE id = ?",
-            (scope_page_id,),
-        ).fetchone()
-        if not doc:
-            return False
-        if doc[0] and filename == f"{doc[0]}.pdf":
-            return True
-        rows = fetch_subtree(conn, scope_page_id)
     needle = f"/api/uploads/{filename}"
-    return any(needle in (r[3] or "") or needle in (r[4] or "") for r in rows)
+    with connect_pages_db(ws) as conn:
+        if filename.endswith(".pdf"):
+            docs = conn.execute(
+                "SELECT id FROM unified_blocks WHERE parent_id = 'root' "
+                "AND json_extract(properties, '$.doc_id') = ?", (filename[:-4],)).fetchall()
+            if any(scope.allows_page(conn, r[0]) for r in docs):
+                return True
+        refs = conn.execute(
+            "SELECT id FROM unified_blocks WHERE instr(content, ?) > 0 OR instr(properties, ?) > 0",
+            (needle, needle)).fetchall()
+        return any(scope.allows_block(conn, r[0]) for r in refs)
 
 
 @router.get("/pdf-info/{doc_id}")
@@ -137,8 +136,8 @@ def pdf_info(doc_id: str, request: Request):
     if not doc_id or not all(c in "0123456789abcdef" for c in doc_id):
         raise HTTPException(status_code=400, detail="invalid document id")
     ws = resolve_ws(request)
-    scope_page_id = share_scope_page(request)
-    if scope_page_id is not None and not _share_can_read_upload(ws, scope_page_id, f"{doc_id}.pdf"):
+    scope = share_scope(request)
+    if scope is not None and not _share_can_read_upload(ws, scope, f"{doc_id}.pdf"):
         raise HTTPException(status_code=403, detail="not accessible via this share link")
     info = pdf_meta.ensure(ws, doc_id)
     if info is None:
@@ -165,11 +164,11 @@ async def serve_upload(filename: str, request: Request):
         raise HTTPException(status_code=400, detail="invalid filename")
 
     # Who may read this: a member of the workspace, or — with a ?share=
-    # token — anyone the share admits, confined to the shared page's own assets.
+    # token — anyone the share admits, confined to the shared pages' own assets.
     # Same resolution and refusal statuses as every other read endpoint.
     ws = resolve_ws(request)
-    scope_page_id = share_scope_page(request)
-    if scope_page_id is not None and not _share_can_read_upload(ws, scope_page_id, filename):
+    scope = share_scope(request)
+    if scope is not None and not _share_can_read_upload(ws, scope, filename):
         raise HTTPException(status_code=403, detail="not accessible via this share link")
 
     path = find_upload_file(filename, ws)

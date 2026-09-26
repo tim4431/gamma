@@ -36,7 +36,7 @@ build-site ──▶ site.yml --ref <branch>: check → gammapdf.com        ← 
 update-account-server ──▶ cloud.yml --ref <branch>: test → ghcr gamma-cloud :latest :sha-<short>
                           then pull + restart on the VPS          ← no merge needed
 update-demo-server ──▶ docker.yml --ref <branch>: ghcr gamma :sha-<short> (never :latest)
-                       then pin that tag for `demo` on the VPS    ← no merge needed
+                       then pin that tag in the demo's project    ← no merge needed
 release skill ─┬──▶ desktop.yml  meta: version = max(package.json, newest v* tag + patch)
  (gh workflow  │        build Win/mac/Linux with that version pinned, smoke on all three
   run)         │        publish: Release v<version> (notes = commits since previous tag)
@@ -178,9 +178,10 @@ Dispatched on a branch without a version
 `sha-<short>`: `latest` is enabled on the default branch alone
 (`{{is_default_branch}}`) and the semver tags only with a version. That is
 how the public demo gets a build of `dev` without a merge; the
-`update-demo-server` skill dispatches it and pins the tag in the VPS's
-compose file ([cloud/deploy/README.md](../../cloud/deploy/README.md) "The
-demo server", [guests.md](guests.md)). Never pass `-f version` for a demo
+`update-demo-server` skill dispatches it and pins the tag in the demo's
+own compose project on the VPS, as `GAMMA_TAG` in its `.env`
+([cloud/deploy/demo/README.md](../../cloud/deploy/demo/README.md),
+[guests.md](guests.md)). Never pass `-f version` for a demo
 build: that adds the release tags, and the semver rule adds `latest` with
 them. Setup notes: [docs/dev/debugging.md](debugging.md) and the memory
 note on GHCR.

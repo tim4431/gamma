@@ -151,6 +151,56 @@ export async function noteScenarios({ server, browser, alice, step, until, sleep
     assertNoProblems(page);
   });
 
+  await step("notes: the move-to-page dialog walks its pages by keys; page shortcuts wait behind it", async () => {
+    // A page of its own in a second tab, so the tree the other steps check stays put.
+    const src = await alice2.api("/api/pages", { method: "POST", body: { title: "Move source" } });
+    await alice2.api(`/api/pages/${src.id}/ops`, { method: "POST", body: { client: "e2e", ops: [
+      { op: "insert", id: "moveblk1", parent: src.id, position: "a0", content: "to be moved" }] } });
+    const destA = await alice2.api("/api/pages", { method: "POST", body: { title: "Archive alpha" } });
+    const destB = await alice2.api("/api/pages", { method: "POST", body: { title: "Archive beta" } });
+    const p2 = await openPage(ctx, `${server.base}/?ws=${second.id}&page=${src.id}`);
+    try {
+      await editRow(p2, "to be moved");
+      await p2.keyboard.type(" now");
+      await until(async () => (await tree(alice2, src.id))[0]?.content === "to be moved now", { what: "the edit saved" });
+      await closeEditor(p2);
+      const wrap = p2.locator(".sortableBlockWrap", { hasText: "to be moved" }).first();
+      await wrap.hover();
+      await wrap.locator(".dragHandle").click();
+      await p2.locator(".ctxMenuItem", { hasText: "Move to page…" }).click();
+      const box = p2.getByPlaceholder("Filter pages…");
+      await box.waitFor();
+      // Ctrl+Z and F2 belong to the page behind the dialog: neither acts.
+      await p2.keyboard.press("Control+z");
+      await p2.keyboard.press("F2");
+      await sleep(500); // an undo would have saved by now
+      assertEq(await p2.locator(".titleEdit").count(), 0, "F2 does not rename behind the dialog");
+      assertEq((await tree(alice2, src.id))[0]?.content, "to be moved now", "Ctrl+Z does not undo behind the dialog");
+      await box.fill("archive");
+      const items = p2.locator(".moveBlockList .ctxMenuItem");
+      await until(async () => (await items.count()) === 2);
+      const focused = (i) => items.nth(i).evaluate((el) => el === document.activeElement);
+      await p2.keyboard.press("ArrowDown");
+      assertEq(await focused(0), true);
+      await p2.keyboard.press("ArrowDown");
+      assertEq(await focused(1), true);
+      await p2.keyboard.press("ArrowDown");
+      assertEq(await focused(1), true, "the last page holds the focus");
+      await p2.keyboard.press("ArrowUp");
+      await p2.keyboard.press("ArrowUp");
+      await until(() => box.evaluate((el) => el === document.activeElement));
+      await p2.keyboard.press("ArrowDown");
+      await p2.keyboard.press("ArrowDown");
+      const pick = (await items.nth(1).innerText()).includes("beta") ? destB : destA;
+      await p2.keyboard.press("Enter");
+      await until(async () => (await tree(alice2, pick.id)).some((b) => b.content === "to be moved now"), { what: "moved to the second match" });
+      assertEq((await tree(alice2, src.id)).length, 0);
+      assertNoProblems(p2);
+    } finally {
+      await p2.close();
+    }
+  });
+
   await step("notes: block commands from the palette (new above, move down) and the keys Ctrl+Shift+K, F2", async () => {
     // Unbound block commands run from Ctrl+Shift+P on the focused row.
     await editRow(page, "third");

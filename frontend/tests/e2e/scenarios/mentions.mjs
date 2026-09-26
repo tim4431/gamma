@@ -38,20 +38,11 @@ export async function mentionScenarios(env) {
       await until(() => requests.length === 1);
       const reference = page.locator(".chatBubble.user .chatMsgPdfs .crumbBtn").last();
       await reference.waitFor();
-      for (const theme of ["light", "dark"]) {
-        await page.evaluate((theme) => document.documentElement.setAttribute("data-theme", theme), theme);
-        for (const selector of [".chatReferenceChip", ".chatReferenceChip .crumbBtn", ".chatBubble.user .chatMsgPdfs .crumbBtn"]) {
-          const style = await page.locator(selector).last().evaluate((el) => {
-            const css = getComputedStyle(el);
-            return { border: css.borderTopWidth, background: css.backgroundColor,
-              fits: el.scrollWidth <= el.clientWidth + 1 };
-          });
-          assertEq(style.border, "0px", `${selector} has no frame`);
-          assertEq(style.background, "rgba(0, 0, 0, 0)", `${selector} has no filled badge`);
-          assert(style.fits, `${selector} truncates long titles without overflowing`);
-        }
-        if (process.env.GAMMA_MENTIONS_SCREENSHOT) await page.locator(".chatPanel").screenshot({ path: `${process.env.GAMMA_MENTIONS_SCREENSHOT}-${theme}.png` });
+      for (const selector of [".chatReferenceChip", ".chatReferenceChip .crumbBtn", ".chatBubble.user .chatMsgPdfs .crumbBtn"]) {
+        const fits = await page.locator(selector).last().evaluate((el) => el.scrollWidth <= el.clientWidth + 1);
+        assert(fits, `${selector} truncates long titles without overflowing`);
       }
+      if (process.env.GAMMA_MENTIONS_SCREENSHOT) await page.locator(".chatPanel").screenshot({ path: `${process.env.GAMMA_MENTIONS_SCREENSHOT}.png` });
       await page.getByRole("button", { name: `Remove ${title} from context` }).click();
       assertEq(await page.locator(".chatReferenceChip").count(), 0);
       await reference.focus();

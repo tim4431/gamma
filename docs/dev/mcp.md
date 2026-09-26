@@ -162,7 +162,7 @@ Ask Codex to find a page, search a topic, or summarize notes. Tools available:
 | `search_library` | Full-text note and PDF matches, with source locations |
 | `read_page` | Notes, highlights, properties, and windowed PDF text |
 | `read_block` | One block/subtree or a page's nested note outline |
-| `read_gamma_link` | Resolve and read a page, block, or share URL, including PDF page context |
+| `read_gamma_link` | Resolve and read a page, block, or share URL, including PDF page context; a folder-share URL lists the folder's pages |
 
 ### Send a page to either assistant
 
@@ -176,6 +176,12 @@ The response includes stable IDs and a canonical URL for subsequent reads.
 Copy the page URL directly from the browser's address bar, or use an existing
 block or share link. The assistant keeps that reference as context until another
 is supplied; it does not track the user's active tab or PDF scroll position.
+
+A folder-share link (a `?share=` token naming a folder, [api.md](api.md)
+"Shares") resolves to the folder and answers with `list_pages` over it — the
+pages the share view lists, with the page URL template for citing them. With
+`&page=` beside the token it reads that page instead, refused unless the page
+is filed in the folder.
 
 Links never grant extra MCP access. Share tokens resolve only inside the already
 authorized workspace, including restricted shares whose workspace the user can

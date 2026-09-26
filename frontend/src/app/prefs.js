@@ -61,7 +61,7 @@ const PULL_MIN_MS = 15000;
 // - `noteCloud(profile)`: the dialog hands it every sync-status answer; a
 //   "synced" at a time after the last push clears `awaitingCloud`;
 // - `cloudChoice`: the server's first sync with Gamma Cloud found two
-//   different copies and waits for the person's choice (Settings → Account);
+//   different copies and waits for the person's choice (Settings → Account & sync);
 // - `reload()`: sends a pending change, then pulls — after a sync from
 //   Settings replaced entries on the server.
 const NONE = new Set();

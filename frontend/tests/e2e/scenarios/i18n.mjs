@@ -33,6 +33,11 @@ export async function i18nScenarios(env) {
       await openSettings(page, "Account & settings", "Settings…");
       assertEq(await page.evaluate(() => document.documentElement.lang), "en", "an English browser starts in English");
 
+      // The remounted app pulls the profile once (useProfileSync); that pull
+      // must not bring the old language back. Wait for it, not for a time.
+      const nextPull = () => page.waitForResponse((r) => r.url().includes("/api/prefs/profile") && r.request().method() === "GET");
+      const applied = () => page.evaluate(() => new Promise((r) => requestAnimationFrame(() => requestAnimationFrame(() => setTimeout(r, 50)))));
+      let pulled = nextPull();
       await pick(page, "Language", "中文");
       await until(() => page.evaluate(() => document.documentElement.lang === "zh-CN"), { what: "the document language follows" });
       // The app remounted under the new locale, on the same pane.
@@ -40,8 +45,8 @@ export async function i18nScenarios(env) {
       await page.getByRole("navigation", { name: "设置分类" }).getByRole("button", { name: "外观", exact: true }).waitFor();
       assertEq(await page.locator('.settingsPane [data-setting="语言"] .settingLabel').textContent(), "语言", "the row itself is translated");
       assertEq(await page.evaluate(() => localStorage.getItem("gamma-language")), "zh", "the pick is stored");
-      // The fresh app's profile pull must not bring the old value back.
-      await sleep(2500);
+      await pulled;
+      await applied();
       assertEq(await page.evaluate(() => document.documentElement.lang), "zh-CN", "the pick survives the profile pull");
       assertEq((await user.api("/api/prefs/profile")).value.language, "zh", "the profile holds the pick");
       assertNoProblems(page);
@@ -50,10 +55,12 @@ export async function i18nScenarios(env) {
       await page.waitForSelector(".folderNewBtn");
       assertEq(await page.evaluate(() => document.documentElement.lang), "zh-CN", "a reload paints Chinese from the stored pick");
       await openSettings(page, "账户与设置", "设置…");
+      pulled = nextPull();
       await pick(page, "语言", "系统");
       await until(() => page.evaluate(() => document.documentElement.lang === "en"), { what: "System follows the English browser" });
       await settings(page).waitFor();
-      await sleep(2500);
+      await pulled;
+      await applied();
       assertEq(await page.evaluate(() => document.documentElement.lang), "en", "System survives the profile pull");
       assertNoProblems(page);
     } finally { await ctx.close(); }

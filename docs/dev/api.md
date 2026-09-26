@@ -15,16 +15,21 @@ else; in dev, Vite proxies `/api` → `127.0.0.1:9001`.
   a caller without effective access gets 403. The returned workspace id is what the data helpers
   take; `request.state.user` stays the actor.
 - Share tokens (`?share=<token>`) are the ONLY unauthenticated **read** path.
-  `resolve_ws` returns the session's workspace, or the workspace of the page
+  `resolve_ws` returns the session's workspace, or the workspace of the share
   named by a valid `?share=` token — there is no `?user=` fallback (it used
   to trust any username and leaked whole accounts). A share is keyed by
   (workspace, PAGE) — the page's root block, so note pages without a PDF
   share exactly like papers; the PDF is just the page's `doc_id`/`source_url`
-  — and scoped to it: read endpoints that can serve a share view also call
-  `share_scope_page()` and `blocks_store.assert_block_in_page()`, so a token
-  can only reach its own page's subtree and assets (its PDF, uploads its
-  blocks reference, its own `source_url` through the proxy) — root listing,
-  backlinks, other pages, and folder export are refused (403).
+  — or by (workspace, FOLDER): a folder-label path, reaching the pages filed
+  there or below it, read live (pages filed later join, pages moved out
+  leave). Either way the token is scoped: `auth.share_scope()` hands every
+  share-enabled endpoint a `ShareScope` (`allows_page` / `allows_block` /
+  `allows_folder`; `blocks_store.assert_block_in_scope()` for block reads),
+  so a token can only reach its own pages' subtrees and assets (their PDFs,
+  uploads their blocks reference, their own `source_url` through the proxy)
+  — root listing, backlinks and other pages are refused (403); folder export
+  is refused for a page share and allowed for the shared folder and its
+  subfolders. Nothing outside `ShareScope` branches on the share's kind.
 - Share reads are readable **cross-origin**: a GET carrying `?share=` or
   resolving `/share/{token}` answers `Access-Control-Allow-Origin: *`
   (`auth._apply_share_cors`), so another Gamma's frontend can pull a shared
@@ -42,16 +47,17 @@ else; in dev, Vite proxies `/api` → `127.0.0.1:9001`.
   `audience` `anyone` (no session needed, with the share's `role`), `users`
   (any signed-in non-guest account, with the share's `role`), `list` (nobody
   beyond the invited). When a request carries `?share=`, the token decides
-  WHICH WORKSPACE is read (the page's — a signed-in visitor sees the shared
-  page, not their own library) while the session decides whether the
+  WHICH WORKSPACE is read (the share's — a signed-in visitor sees the shared
+  page or folder, not their own library) while the session decides whether the
   audience gate admits them; a refused token is 401 when signing in could
   help, else 403. `edit` shares let `require_ws_writer` resolve the
   workspace for the block writers — `POST /blocks`, `PUT /blocks/{id}`,
   `DELETE /blocks/{id}`, `PUT /blocks/{id}/children`, `POST /blocks/{id}/reorder`,
   `POST /pages/{id}/ops` (and the page websocket, view or edit),
   `POST /upload-image`, `POST /upload-file` — each of which confines the touched blocks to the
-  shared page (no new pages, no deleting/moving the page itself, no changes to
-  the page root's properties). Everything else stays session-only.
+  shared pages (no new pages, no deleting/moving a page itself, no changes to
+  a page root's properties — so a folder edit share can never re-file pages
+  into or out of its folder). Everything else stays session-only.
 - **Link visitors.** An `anyone` + `edit` share makes the link itself the
   key: whoever opens it edits the page, without an account. Such a writer
   (no session, or a guest account — `auth.is_link_visitor`) is recorded
@@ -217,9 +223,11 @@ guarded fetch path.
 | GET | `/pdf-info/{doc_id}` | the document manifest the viewer lays a PDF out from before pdf.js has parsed it (`gamma/pdf_meta.py`, [pdf_loading.md](pdf_loading.md)): `{doc_id, bytes, pages, dims: [[w, h], …]}` in PDF points, rotation applied; same access rule as the file; computed in pdfium on first request when the upload-time background walk has not run (`pages: 0` for an unreadable file, not cached); 400 malformed id, 404 no such file |
 | GET, HEAD | `/uploads/{filename}` | serve stored files (HEAD: the headers alone, which is how the viewer learns a file's size before choosing its transport); with their media type (`storage.FILE_MEDIA_TYPES`, else `application/octet-stream`); pdf / images / txt / md render inline, everything else is `Content-Disposition: attachment` (html additionally sandboxed like svg); blocked or malformed extensions 400 |
 | GET | `/quota` | the limits that apply to uploads into the request's workspace — the account's for a personal one (`used_bytes` = all its personal workspaces), the workspace's own for a shared one — with `workspace_bytes` and `account` (the person, or "") |
+| POST | `/share/folder?name=` | create the FOLDER's share link (`name` a folder-label path; same defaults and optional body as a page's) or return the existing one unchanged; 400 for an empty path, 404 when no page is filed in the folder; workspace editors and owners |
+| GET/PUT/DELETE | `/share-settings/folder?name=` | the folder share's settings (`{token: null}` when unshared; any member) / changes / stop — exactly like a page's; the share follows folder renames through `/folders/rename` |
 | POST | `/share/{page_id}` | create the page's share link (defaults `anyone`/`view`; optional body `{audience, role, users}` applies to a NEW link) or return the existing one unchanged — root blocks only (400 otherwise); workspace editors and owners |
 | GET/PUT/DELETE | `/share-settings/{page_id}` | read settings (`{token: null}` when unshared; any member) / change `audience`, `role`, `users` (`["carol"]` or `[{name, role}]`; validated: unknown usernames or roles → 400; the token stays; `edit`+`anyone` is allowed — see "Link visitors" above) / stop sharing (the token dies) — editors and owners |
-| GET | `/share/{token}` | resolve a link for this viewer → `{page_id, doc_id, username (who shared it), workspace_id, audience, role, can_edit, viewer, viewer_is_guest}` (`doc_id` = the page's PDF attachment id via `page_attachment`, `""` without one; `viewer`/`viewer_is_guest` let the share view offer "Open in my library" or "Add to my library"); 404 unknown, 401 sign in first, 403 signed in but not allowed |
+| GET | `/share/{token}` | resolve a link for this viewer → `{page_id, folder, username (who shared it), workspace_id, audience, role, can_edit, viewer, viewer_is_guest}` plus, for a page share, `doc_id` (the page's PDF attachment id via `page_attachment`, `""` without one) or, for a folder share, `pages` (the share view's listing, `[{id, title, doc_id, folders, labels, created_at, updated_at}]`, newest edit first); `viewer`/`viewer_is_guest` let the share view offer "Open in my library" or "Add to my library"; 404 unknown, 401 sign in first, 403 signed in but not allowed |
 
 ### Search (`search.py`, `gamma/block_index.py`, `gamma/pdf_index.py`)
 | Method | Path | Purpose |
@@ -299,7 +307,6 @@ archived conversation browsing remains session-only.
 | Method | Path | Purpose |
 |---|---|---|
 | GET/PUT/DELETE | `/chats/{key:path}` | the ACTIVE conversation per bucket: page id, `home`, or `home:<folder>` (hence `:path`); GET → `{messages, title}`, PUT `{messages, title?}` (title omitted = keep) |
-| POST | `/chats/folder-rename` | migrate folder buckets (active + history) on rename/move/delete (`{src, dst}`, dst `""` deletes) |
 | GET | `/chat-history?bucket=` | the bucket's archived conversations, newest first (`{sessions: [{id, title, preview, count, created_at, updated_at}]}`) |
 | POST | `/chat-history/archive` | "New chat": file `{bucket, messages, title}` into history and clear the active row (→ `{id}`, null when empty) |
 | POST | `/chat-history/{id}/open` | make an entry the active conversation; the body's `{bucket, messages, title}` (the current one) is archived first (→ `{messages, title}`) |
@@ -322,6 +329,7 @@ archived conversation browsing remains session-only.
 | POST | `/import/zotero` | Zotero library import: zip of a "Zotero RDF" export (multipart `file`; `strip`, optional `folder` prefix). Items and standalone/additional PDFs→pages+metadata, collections→folders, tags→labels, notes→blocks; embedded annotations via the same importer. Idempotent by file hash / `zotero_key`; returns page destinations and warnings |
 | GET | `/pages/{id}/export` | page export (`?mode=readable|obsidian|notes-pdf|logseq-graph|zotero-rdf|gamma` + `highlights=&notes=&pdf=`); `obsidian` = a vault zip (`<folder>/<Title>.md`, wikilinks, `attachments/`, `.obsidian/app.json`); `notes-pdf` = the notes typeset as their own PDF (works without a paper); `gamma` = scoped backup for `/import-data?mode=merge` |
 | GET | `/pages/{id}/export-pdf` | the page's own PDF with annotations written back (`?highlights=&notes=`) |
+| POST | `/folders/rename` | follow a folder rename/move/delete for what names a folder by its path — the per-folder chat buckets (active + history, `chats.move_folder_buckets`) and folder shares (`shares.move_folder_shares`; one already at the destination wins): `{src, dst}`, dst `""` deletes → `{ok, moved, history_moved, shares_moved}`; workspace editors, never through a share link (`gamma/routers/folders.py`) |
 | GET | `/folders/export` | whole-folder export, same modes/flags (`?name=` + `mode=`); subfolders become Zotero collections or vault directories, `notes-pdf` one PDF for the whole folder |
 | GET | `/folders/export-progress` | per-page progress of a running folder export (`{active, total, done, title}`) |
 
@@ -403,7 +411,8 @@ Session only, the mirror's owner, never a guest.
 | GET/PUT | `/admin/settings` | server-wide storage defaults, plus `public_url` / `public_url_source` (the admin-confirmed public server URL, [mcp.md](mcp.md)), `guest_ttl_hours` / `guest_ttl_source` (1–720 hours, `guest_ttl_hours_range`; `environment` when `GAMMA_GUEST_TTL_HOURS` decides) and `demo_mode` / `demo_mode_source` (`environment` when `GAMMA_DEMO` is on) — a PUT of either is 400 while the environment decides ([guests.md](guests.md)) — and `cloud` (the cloud sign-in settings, written as `cloud_issuer`, `cloud_client_id`, `cloud_client_secret`, `cloud_policy`, `cloud_share_host` — [cloud_accounts.md](cloud_accounts.md)) |
 | GET | `/admin/logs?after=<seq>` | scrubbed in-memory server log |
 | GET/PUT | `/admin/ai-providers` | the server's shared AI entries, masked like `/ai/settings` (key hint, never the key; API-key `protocols` and `services` only), `guests` and `allowance` (`{accounts, guests}`: tokens per account per rolling 24 h, 0 = unlimited); PUT `{guests?, allowance?: {accounts?, guests?}}` (whole numbers 0..10^9, else 400). Chat, translate, metadata fetch/cite and transcribe answer 429 with a human `detail` once an account's allowance is used up; streams end with `{error: detail}` |
-| POST/PUT/DELETE | `/admin/ai-providers[/{id}]` | add / edit / remove a shared entry (the `/ai/providers` fields and validation, API-key protocols only, at most 20; ids are `server:<id>`; the key is write-only and stored encrypted). Admin session only: an integration token is refused. Test and model listing go through `/ai/providers/{id}/test` and `/ai/model-catalog` |
+| POST/PUT/DELETE | `/admin/ai-providers[/{id}]` | add / edit / remove a shared entry (the `/ai/providers` fields and validation, at most 20; a POST takes API-key protocols only; ids are `server:<id>`; the key is write-only and stored encrypted). Admin session only: an integration token is refused. Test, model listing and a sign-in's usage go through `/ai/providers/{id}/test`, `/ai/model-catalog` and `/ai/providers/{id}/usage` |
+| POST | `/admin/ai-providers/chatgpt/start` · `/admin/ai-providers/chatgpt/complete` | a shared ChatGPT subscription: the `/ai/oauth/chatgpt/*` flow (same bodies) for the server's list — `complete` adds a shared sign-in entry, or with `provider_id` reconnects one, and returns the shared view; the tokens are stored encrypted; a state from one flow never redeems on the other. Admin session only |
 | GET | `/admin/server-info?refresh=` | the Server dashboard (`gamma/version.py`): `version` / `commit` / `label` (from `GAMMA_VERSION` / `GAMMA_COMMIT` — the Docker build and the desktop shell set them; a checkout is a "development build"), `started_at`, `uptime_seconds`, `python`, `platform`, `schema_version`, `frozen`, `log_counts` `{info, warning, error}` since startup, `latest` (`{version, url, published_at}` from the GitHub Releases API, cached six hours, ten minutes after a failure, `refresh=1` refetches; `GAMMA_UPDATE_CHECK=off` disables) or `latest_error`, `update_available` (True/False, None without a version to compare), `image`, `releases_url`. Sync: it may hit the network |
 
 Rails: a guest account takes storage limits and deletion but no password,

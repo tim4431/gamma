@@ -12,7 +12,7 @@
   <img src="https://get.microsoft.com/images/en-us%20dark.svg" alt="Download Gamma from the Microsoft Store" width="240">
 </a>
 
-**[Install](#install)** · **[User guide](./docs/user_guide.md)** · [Website](https://gammapdf.com) · [Releases](https://github.com/tim4431/Gamma/releases)
+**[Install](#install)** · **[User guide](./docs/user_guide.md)** · [Try the demo](https://demo.gammapdf.com) · [Website](https://gammapdf.com) · [Releases](https://github.com/tim4431/Gamma/releases)
 
 Every picture below is clickable and opens the matching part of the [user guide](./docs/user_guide.md).
 
@@ -82,7 +82,7 @@ Highlights and free notes are the same kind of block, so a paper's notes and a p
 <a href="./docs/user_guide.md#workspaces"><img alt="Personal workspaces next to a shared research library where an owner and an editor type into two blocks of the same page at the same time and a viewer reads along" src="./docs/assets/branding/gamma-workspaces-light.svg" width="100%"></a>
 
 - **Workspaces** — keep separate personal libraries, or collaborate in a shared library created by a server administrator: owners manage members, editors change pages, viewers read.
-- **Share a page** — send a link to an annotated paper; invite people with view or edit rights, or open it to anyone with the link.
+- **Share a page or a folder** — send a link to an annotated paper, or to a whole folder of them; invite people with view or edit rights, or open it to anyone with the link.
 - **Edit together** — changes and cursors appear live; edits to different blocks coexist, same-block edits merge.
 
 → Guide: [Sharing a page](./docs/user_guide.md#sharing-a-page) · [Workspaces](./docs/user_guide.md#workspaces)

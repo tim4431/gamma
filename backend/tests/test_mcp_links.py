@@ -108,3 +108,27 @@ def test_link_canonical_origin_and_revoked_connection(client, connection, monkey
     c.delete(f"/api/integrations/tokens/{credential['id']}")
     assert rpc(client, credential["token"], "tools/call", {
         "name": "read_gamma_link", "arguments": {"url": url}}).status_code == 401
+
+
+def test_folder_share_links_list_the_folder(client, connection):
+    c, ws, credential = connection
+    paper = make_page(c, "Paper in the group folder", {"folder": "group/sub"})
+    other = make_page(c, "Elsewhere in the library")
+    share = c.post("/api/share/folder", params={"name": "group"}).json()
+    result = read(client, credential["token"], url=f"http://localhost/?share={share['token']}")
+    assert not result["isError"], result
+    ref = result["structuredContent"]
+    assert ref == {"workspace_id": ws, "folder": "group", "url": f"http://localhost/?ws={ws}&folder=group"}
+    text = result["content"][0]["text"]
+    assert "Paper in the group folder" in text and paper["id"] in text
+    assert "Elsewhere in the library" not in text and share["token"] not in text
+    assert "page=<page_id>" in text  # the URL template for citing the listed pages
+    # the link may also name a page in the folder — then it reads that page
+    result = read(client, credential["token"], url=f"http://localhost/?share={share['token']}&page={paper['id']}")
+    assert not result["isError"], result
+    assert result["structuredContent"]["page_id"] == paper["id"]
+    assert result["structuredContent"]["title"] == "Paper in the group folder"
+    # but never one outside it
+    assert read(client, credential["token"], url=f"http://localhost/?share={share['token']}&page={other['id']}")["isError"]
+    c.delete("/api/share-settings/folder", params={"name": "group"})
+    assert read(client, credential["token"], url=f"http://localhost/?share={share['token']}")["isError"]

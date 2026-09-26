@@ -10,8 +10,8 @@ from fastapi import APIRouter, HTTPException, Request, WebSocket, WebSocketDisco
 
 from .. import collab
 from ..auth import (ANONYMOUS_NAME, SESSION_COOKIE, actor_of, is_link_visitor, link_name, link_ratelimit,
-                    note_share_miss, require_ws_writer, requested_ws, resolve_ws, session_lookup, share_access,
-                    share_lookup, share_scope_page, workspace_access)
+                    ShareScope, note_share_miss, require_ws_writer, requested_ws, resolve_ws, session_lookup,
+                    share_access, share_lookup, share_scope, workspace_access)
 from ..db import connect_pages_db
 from ..ops import OpError, OpsRequest, commit_ops, latest_seq, ops_since
 
@@ -23,10 +23,13 @@ router = APIRouter(prefix="/api", tags=["collab"])
 LINK_OPS_PER_MINUTE = 600
 
 
-def _scope_page(request: Request, page_id: str):
-    scope = share_scope_page(request)
-    if scope is not None and scope != page_id:
-        raise HTTPException(status_code=403, detail="not accessible via this share link")
+def _scope_page(request: Request, ws: str, page_id: str):
+    """The request's ShareScope (None for a member), 403 unless it reaches ``page_id``."""
+    scope = share_scope(request)
+    if scope is not None:
+        with connect_pages_db(ws) as conn:
+            if not scope.allows_page(conn, page_id):
+                raise HTTPException(status_code=403, detail="not accessible via this share link")
     return scope
 
 
@@ -40,7 +43,7 @@ async def post_ops(page_id: str, payload: OpsRequest, request: Request):
     edit share."""
     ws = require_ws_writer(request)
     link_ratelimit(request, "ops", LINK_OPS_PER_MINUTE, 60)
-    scope = _scope_page(request, page_id)
+    scope = _scope_page(request, ws, page_id)
     ops = [op.model_dump(exclude_unset=True) for op in payload.ops]
     cursor = None
     if payload.cursor is not None:
@@ -62,7 +65,7 @@ async def get_ops(page_id: str, request: Request, since: int = 0):
     ``{seq, batches: [{seq, actor, client, at, ops}]}``; 410 when the log was
     pruned past ``since`` — reload the tree instead."""
     ws = resolve_ws(request)
-    _scope_page(request, page_id)
+    _scope_page(request, ws, page_id)
     with connect_pages_db(ws) as conn:
         row = conn.execute(
             "SELECT parent_id FROM unified_blocks WHERE id = ?", (page_id,)).fetchone()
@@ -88,6 +91,7 @@ def _socket_access(sock: WebSocket, page_id: str):
     sock.state.is_guest = bool(sess and sess[1])
     sock.state.is_admin = bool(sess and sess[2])
     token = sock.query_params.get("share") or ""
+    scope = None
     if token:
         share = share_lookup(token)
         if not share:
@@ -96,12 +100,10 @@ def _socket_access(sock: WebSocket, page_id: str):
             except HTTPException:
                 pass  # the socket is closed either way
             return None
-        if share["page_id"] != page_id:
-            return None
         level, _reason = share_access(share, sock)
         if not level:
             return None
-        ws, can_edit = share["workspace_id"], level == "edit"
+        ws, can_edit, scope = share["workspace_id"], level == "edit", ShareScope.of(share)
     elif sock.state.user:
         ws, role = workspace_access(sock.state.user, requested_ws(sock), sess[3])
         if not role:
@@ -113,6 +115,8 @@ def _socket_access(sock: WebSocket, page_id: str):
         row = conn.execute(
             "SELECT parent_id FROM unified_blocks WHERE id = ?", (page_id,)).fetchone()
         if not row or row[0] != "root":
+            return None
+        if scope is not None and not scope.allows_page(conn, page_id):
             return None
         seq = latest_seq(conn, page_id)
     if is_link_visitor(sock):

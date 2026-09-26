@@ -1,0 +1,31 @@
+# The public demo, demo.gammapdf.com (cloud/deploy/demo/README.md): a Gamma
+# (ghcr.io/tim4431/gamma) in demo mode, where every visitor gets a throwaway
+# guest account (docs/dev/guests.md). Its own compose project in its own
+# folder on the VPS (/root/Container/gamma-demo/), next to the account
+# server's but independent of it:
+#
+#   - the image is the `sha-<short>` tag of a branch build (docker.yml
+#     dispatched on the branch), named by GAMMA_TAG in the folder's .env
+#     (.env.example); the update-demo-server skill writes that one line;
+#   - its settings are demo.env (demo.env.example), its whole state ./data
+#     (disposable);
+#   - no host port: the account project's Caddy, which owns 80/443, reaches
+#     it as `gamma-demo:9001` over the shared external network `gamma-edge`
+#     (`docker network create gamma-edge`, once per host).
+
+services:
+  demo:
+    image: ghcr.io/tim4431/gamma:${GAMMA_TAG:?set GAMMA_TAG=sha-<short> in .env}
+    restart: unless-stopped
+    env_file: demo.env
+    volumes:
+      - ./data:/data
+    networks:
+      edge:
+        aliases:
+          - gamma-demo
+
+networks:
+  edge:
+    name: gamma-edge
+    external: true

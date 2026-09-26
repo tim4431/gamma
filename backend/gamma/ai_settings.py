@@ -13,12 +13,15 @@ only read path is the masked GET /api/ai/settings (last 4 characters, never
 the key itself). There is no env key.
 
 Admins may add SHARED entries (Settings → Server → Shared AI provider,
-/api/admin/ai-providers*): the same shape, API-key protocols only, ids
-namespaced ``server:<id>`` so they never collide with an account's. They
-live in the users.db `settings` KV under `ai_providers` as
+/api/admin/ai-providers*): the same shape — an API key, or a ChatGPT
+sign-in made through /api/admin/ai-providers/chatgpt/* — ids namespaced
+``server:<id>`` so they never collide with an account's. They live in the
+users.db `settings` KV under `ai_providers` as
 {"providers": [...], "guests": bool, "allowance": {"accounts": N, "guests": N}},
-each api_key Fernet-encrypted with the data directory's key (the cloud client
-secret's scheme). ai_runtime() offers them to every account after its own;
+each api_key and each sign-in's tokens Fernet-encrypted with the data
+directory's key (the cloud client secret's scheme); a shared sign-in's
+tokens are refreshed under that entry's own lock and written back to the
+KV. ai_runtime() offers them to every account after its own;
 guest accounts only while `guests` is on. The allowance meters them per
 account over a rolling 24 hours (tokens, 0 = unlimited; guests and other
 accounts each have their own limit): ai_runtime() reports it and marks the
@@ -155,7 +158,9 @@ def mask_entry(entry: dict, hint: bool = True) -> dict:
         # ChatGPT sign-in entries: connection status + account label only,
         # never the tokens themselves.
         "oauth_connected": bool(oauth.get("access_token")),
-        "account": oauth.get("email") or "",
+        # The signed-in account's e-mail: like the key hint, not for someone
+        # who sees a shared sign-in without being an admin.
+        "account": (oauth.get("email") or "") if hint else "",
     }
 
 
@@ -200,8 +205,8 @@ def load_server_ai() -> dict:
     """The shared entries with their keys decrypted, the guest switch and the
     allowance: {"providers": [...], "guests": bool, "allowance": {"accounts":
     int, "guests": int}} (tokens per account per 24 h, 0 = unlimited). A key
-    that no longer decrypts (the data directory's key changed) reads as no
-    key, with a warning."""
+    or a sign-in that no longer decrypts (the data directory's key changed)
+    reads as none, with a warning."""
     try:
         value = json.loads(_get_raw(SERVER_AI_KEY) or "{}")
     except ValueError:
@@ -220,16 +225,34 @@ def load_server_ai() -> dict:
         except (InvalidToken, ValueError):
             log.warning(f"shared AI provider {e.get('id')}: the stored key cannot be decrypted (key changed?)")
             e["api_key"] = ""
+        sealed = e.pop("oauth", None)
+        if isinstance(sealed, str) and sealed:
+            try:
+                oauth = json.loads(cipher().decrypt(sealed.encode("ascii")).decode("utf-8"))
+                if isinstance(oauth, dict):
+                    e["oauth"] = oauth
+            except (InvalidToken, ValueError):
+                log.warning(f"shared AI provider {e.get('id')}: the stored sign-in cannot be decrypted (key changed?)")
         out.append(e)
     allowance = value.get("allowance") if isinstance(value.get("allowance"), dict) else {}
     return {"providers": out, "guests": value.get("guests") is True,
             "allowance": {k: _allowance_limit(allowance.get(k)) for k in ("accounts", "guests")}}
 
 
+def _sealed(entry: dict) -> dict:
+    """A shared entry as stored: the key and the sign-in's tokens encrypted."""
+    out = {**entry, "api_key": cipher().encrypt(entry["api_key"].encode("utf-8")).decode("ascii")
+           if entry.get("api_key") else ""}
+    oauth = entry.get("oauth")
+    if isinstance(oauth, dict) and oauth:
+        out["oauth"] = cipher().encrypt(json.dumps(oauth).encode("utf-8")).decode("ascii")
+    else:
+        out.pop("oauth", None)
+    return out
+
+
 def save_server_ai(config: dict) -> None:
-    providers = [{**e, "api_key": cipher().encrypt(e["api_key"].encode("utf-8")).decode("ascii")
-                  if e.get("api_key") else ""}
-                 for e in config.get("providers") or []]
+    providers = [_sealed(e) for e in config.get("providers") or []]
     allowance = config.get("allowance") if isinstance(config.get("allowance"), dict) else {}
     _set_raw(SERVER_AI_KEY, json.dumps({
         "providers": providers, "guests": bool(config.get("guests")),
@@ -279,6 +302,13 @@ def shared_access(user: str) -> tuple[list, int]:
     return config["providers"], config["allowance"]["guests" if row[0] else "accounts"]
 
 
+def _has_credential(entry: dict) -> bool:
+    if is_oauth_protocol(entry.get("protocol")):
+        oauth = entry.get("oauth")
+        return isinstance(oauth, dict) and bool(oauth.get("access_token"))
+    return bool((entry.get("api_key") or "").strip())
+
+
 def server_entries_for(user: str) -> list:
     """The shared entries ``user`` may use (``shared_access``)."""
     return shared_access(user)[0]
@@ -294,12 +324,11 @@ def allowance_status(user: str, limit: int) -> dict:
 
 def shared_allowance(user: str) -> dict | None:
     """``allowance_status`` when a metered shared entry applies to ``user``
-    (one it can use: an API-key protocol with a key, under a non-zero
+    (one it can use: a key, or a connected sign-in, under a non-zero
     limit), else None — the object ai_runtime() reports, without building
     the runtime."""
     entries, limit = shared_access(user)
-    usable = any(ai_protocols.PROTOCOLS.get(e.get("protocol")) and not is_oauth_protocol(e.get("protocol"))
-                 and (e.get("api_key") or "").strip() for e in entries)
+    usable = any(ai_protocols.PROTOCOLS.get(e.get("protocol")) and _has_credential(e) for e in entries)
     return allowance_status(user, limit) if usable and limit else None
 
 
@@ -331,27 +360,29 @@ def entry_models(entry: dict) -> list:
 # round trip to the identity provider to chat/metadata/model calls.
 REFRESH_BACKOFF_S = 300
 
-# One refresh at a time per account. OpenAI rotates refresh tokens, so of two
-# concurrent refreshes (the translator fires dozens of requests at once) the
-# second fails — and its save must not overwrite the first one's fresh tokens.
+# One refresh at a time per sign-in: per account for its own entries, per
+# entry for a shared one (every account's requests refresh the same tokens).
+# OpenAI rotates refresh tokens, so of two concurrent refreshes (the
+# translator fires dozens of requests at once) the second fails — and its
+# save must not overwrite the first one's fresh tokens.
 _refresh_locks: dict = {}
 _refresh_locks_guard = threading.Lock()
 
 
-def _refresh_lock(user: str) -> threading.Lock:
+def _refresh_lock(key) -> threading.Lock:
+    """``key``: an account name, or ``("server", <provider id>)`` for a
+    shared sign-in (a tuple never equals a username)."""
     with _refresh_locks_guard:
-        return _refresh_locks.setdefault(user, threading.Lock())
+        return _refresh_locks.setdefault(key, threading.Lock())
 
 
-def _refreshed_oauth(user: str, provider_id: str, flow) -> dict | None:
-    """Refresh one sign-in entry's tokens through its protocol's OAuth
-    ``flow`` under the account's lock, reading the entries fresh so a
-    refresh another request just did is reused, not repeated. Returns the
-    entry's current oauth dict."""
-    with _refresh_lock(user):
-        entries = load_provider_entries(user)
-        e = next((x for x in entries if x.get("id") == provider_id), None)
-        oauth = e.get("oauth") if e and isinstance(e.get("oauth"), dict) else None
+def _refresh_tokens(lock_key, read, write, flow) -> dict | None:
+    """Refresh one sign-in's tokens through its protocol's OAuth ``flow``
+    under ``lock_key``'s lock. ``read()`` gives the stored oauth dict fresh
+    (so a refresh another request just did is reused, not repeated),
+    ``write(oauth)`` stores the result. Returns the current oauth dict."""
+    with _refresh_lock(lock_key):
+        oauth = read()
         if not oauth or not oauth.get("access_token"):
             return None
         failed_at = oauth.get("refresh_failed_at") or 0
@@ -359,13 +390,43 @@ def _refreshed_oauth(user: str, provider_id: str, flow) -> dict | None:
             return oauth
         refreshed = flow.refresh(oauth)
         if refreshed:
-            e["oauth"] = oauth = refreshed
+            oauth = refreshed
         else:
             # Keep the stale token: the call will fail with a clear upstream
-            # 401 → the user reconnects in Settings.
+            # 401 → someone reconnects in Settings.
             oauth["refresh_failed_at"] = int(time.time())
-        save_provider_entries(user, entries)
+        write(oauth)
         return oauth
+
+
+def _entry_oauth(entries: list, provider_id: str) -> dict | None:
+    e = next((x for x in entries if x.get("id") == provider_id), None)
+    return e.get("oauth") if e and isinstance(e.get("oauth"), dict) else None
+
+
+def _refreshed_oauth(user: str, provider_id: str, flow) -> dict | None:
+    """An account's own sign-in entry, refreshed under the account's lock."""
+    def write(oauth):
+        entries = load_provider_entries(user)
+        for e in entries:
+            if e.get("id") == provider_id:
+                e["oauth"] = oauth
+        save_provider_entries(user, entries)
+    return _refresh_tokens(user, lambda: _entry_oauth(load_provider_entries(user), provider_id), write, flow)
+
+
+def _refreshed_server_oauth(provider_id: str, flow) -> dict | None:
+    """A shared sign-in entry, refreshed under the entry's own lock and
+    written back to the server's config (only its tokens: an admin's edit
+    of the other fields meanwhile stays)."""
+    def write(oauth):
+        def change(config):
+            for e in config["providers"]:
+                if e.get("id") == provider_id:
+                    e["oauth"] = oauth
+        edit_server_ai(change)
+    return _refresh_tokens(("server", provider_id),
+                           lambda: _entry_oauth(load_server_ai()["providers"], provider_id), write, flow)
 
 
 def ai_runtime(user: str) -> dict:
@@ -383,8 +444,7 @@ def ai_runtime(user: str) -> dict:
     before each call. The shared models stay listed once it is used up (the
     pickers show them, and why they refuse)."""
     own = [e for e in (load_provider_entries(user) if user else []) if not is_server_id(e.get("id"))]
-    shared_entries, limit = shared_access(user)
-    shared = [e for e in shared_entries if not is_oauth_protocol(e.get("protocol"))]
+    shared, limit = shared_access(user)
     providers, models = {}, []
     for e in own + shared:
         protocol = e.get("protocol")
@@ -406,7 +466,9 @@ def ai_runtime(user: str) -> dict:
                 continue
             failed_at = oauth.get("refresh_failed_at") or 0
             if proto.oauth.needs_refresh(oauth) and time.time() - failed_at > REFRESH_BACKOFF_S:
-                oauth = _refreshed_oauth(user, pid, proto.oauth) or oauth
+                refreshed = (_refreshed_server_oauth(pid, proto.oauth) if is_server_id(pid)
+                             else _refreshed_oauth(user, pid, proto.oauth))
+                oauth = refreshed or oauth
             conf["api_key"] = oauth["access_token"]
             conf["account_id"] = oauth.get("account_id") or ""
         else:
@@ -441,15 +503,25 @@ def ai_runtime(user: str) -> dict:
 
 
 def clear_refresh_backoff(user: str, provider_id: str) -> None:
-    """Forget a ChatGPT entry's failed-refresh timestamp so the next
+    """Forget a sign-in entry's failed-refresh timestamp so the next
     ai_runtime() re-attempts the token refresh immediately (an explicit
-    retry, e.g. the settings Test button)."""
+    retry, e.g. the settings Test button). A ``server:<id>`` names a shared
+    entry; the caller has checked the account may touch it."""
+    if is_server_id(provider_id):
+        with _refresh_lock(("server", provider_id)):
+            oauth = _entry_oauth(load_server_ai()["providers"], provider_id)
+            if oauth and "refresh_failed_at" in oauth:
+                def change(config):
+                    for e in config["providers"]:
+                        if e.get("id") == provider_id and isinstance(e.get("oauth"), dict):
+                            e["oauth"].pop("refresh_failed_at", None)
+                edit_server_ai(change)
+        return
     with _refresh_lock(user):
         entries = load_provider_entries(user)
         for e in entries:
             oauth = e.get("oauth")
-            if e.get("id") == provider_id and isinstance(oauth, dict) \
-                    and oauth.pop("refresh_failed_at", None) is not None:
+            if e.get("id") == provider_id and isinstance(oauth, dict)                     and oauth.pop("refresh_failed_at", None) is not None:
                 save_provider_entries(user, entries)
                 return
 

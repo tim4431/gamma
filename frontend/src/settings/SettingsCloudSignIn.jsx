@@ -3,7 +3,7 @@
 //   server's address, the client this server is, and what happens to a cloud
 //   identity this server has not seen (refuse / claim / provision), and
 //   under provision whether it accepts published pages (the share host).
-// - CloudIdentityRow — Settings → Account: the signed-in account's own link
+// - CloudIdentityRow — Settings → Account & sync: the signed-in account's own link
 //   to its cloud account (link = a round trip through the account server,
 //   unlink = one call; refused for an account that has no password), and
 //   under it, once linked, CloudSyncRow: the settings sync by hand.

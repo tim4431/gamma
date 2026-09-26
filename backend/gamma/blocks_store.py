@@ -122,15 +122,15 @@ def page_root_id(conn, block_id: str) -> str | None:
     return None
 
 
-def assert_block_in_page(conn, block_id: str, scope_page_id) -> None:
-    """For a share-scoped request (scope_page_id set), raise 403 unless block_id
-    is the shared page or lives inside it. No-op for full-access session users
-    (scope_page_id is None)."""
-    if scope_page_id is None:
+def assert_block_in_scope(conn, block_id: str, scope) -> None:
+    """For a share-scoped request (``scope`` an auth.ShareScope), raise 403
+    unless block_id is a page the share reaches or lives inside one. No-op
+    for full-access session users (scope is None)."""
+    if scope is None:
         return
     from fastapi import HTTPException
 
-    if page_root_id(conn, block_id) != scope_page_id:
+    if not scope.allows_block(conn, block_id):
         raise HTTPException(status_code=403, detail="not accessible via this share link")
 
 

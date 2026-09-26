@@ -7,11 +7,11 @@ from fastapi import APIRouter, HTTPException, Request
 from fractional_indexing import generate_key_between
 from pydantic import BaseModel
 
-from ..auth import actor_of, require_ws, require_ws_writer, resolve_ws, share_scope_page
+from ..auth import actor_of, require_ws, require_ws_writer, resolve_ws, share_scope
 from ..blocks_store import (
     BLOCK_COLUMNS,
     ancestor_chains,
-    assert_block_in_page,
+    assert_block_in_scope,
     block_to_dict,
     create_page,
     delete_children,
@@ -138,13 +138,13 @@ async def block_search(request: Request, q: str = "", ids: str = "", limit: int 
 
 @router.get("/blocks/by-doc/{doc_id}")
 async def ub_get_by_doc(doc_id: str, request: Request):
-    scope = share_scope_page(request)
+    scope = share_scope(request)
     with connect_pages_db(resolve_ws(request)) as conn:
         row = page_for_doc(conn, doc_id, BLOCK_COLUMNS)
-    # A share may only learn about its own page — refuse before revealing
-    # whether any other doc id exists.
-    if scope is not None and (not row or row[0] != scope):
-        raise HTTPException(status_code=403, detail="not accessible via this share link")
+        # A share may only learn about its own pages — refuse before revealing
+        # whether any other doc id exists.
+        if scope is not None and (not row or not scope.allows_page(conn, row[0])):
+            raise HTTPException(status_code=403, detail="not accessible via this share link")
     if not row:
         raise HTTPException(status_code=404, detail="block not found for doc_id")
     return block_to_dict(row)
@@ -164,15 +164,16 @@ async def ub_get_or_create_by_doc(doc_id: str, payload: UBByDocCreate, request: 
 
 @router.get("/blocks/{block_id}/children")
 async def ub_get_children(block_id: str, request: Request):
-    scope = share_scope_page(request)
+    scope = share_scope(request)
     if scope is not None and block_id == "root":
-        # A share link may not enumerate the owner's library root.
+        # A share link may not enumerate the owner's library root (a folder
+        # share lists its pages through GET /share/{token}).
         raise HTTPException(status_code=403, detail="not accessible via this share link")
     with connect_pages_db(resolve_ws(request)) as conn:
         if block_id != "root":
             if not conn.execute("SELECT 1 FROM unified_blocks WHERE id = ?", (block_id,)).fetchone():
                 raise HTTPException(status_code=404, detail="block not found")
-        assert_block_in_page(conn, block_id, scope)
+        assert_block_in_scope(conn, block_id, scope)
         rows = conn.execute(
             f"SELECT {BLOCK_COLUMNS} FROM unified_blocks WHERE parent_id = ? ORDER BY position ASC",
             (block_id,),
@@ -221,9 +222,9 @@ def _page_previews(conn) -> dict:
 async def ub_get_subtree(block_id: str, request: Request):
     """The block with its whole subtree. For a page, ``seq`` is the op log's
     position this tree reflects — the live session catches up from it."""
-    scope = share_scope_page(request)
+    scope = share_scope(request)
     with connect_pages_db(resolve_ws(request)) as conn:
-        assert_block_in_page(conn, block_id, scope)
+        assert_block_in_scope(conn, block_id, scope)
         rows = fetch_subtree(conn, block_id)
         seq = latest_seq(conn, block_id) if rows and rows[0][1] == "root" else None
     if not rows:
@@ -237,9 +238,9 @@ async def ub_get_subtree(block_id: str, request: Request):
 @router.get("/blocks/{block_id}/backlinks")
 async def ub_get_backlinks(block_id: str, request: Request):
     """Return all blocks that reference `block_id` via [[block_id]] syntax."""
-    # Backlinks span the whole library by nature, so a per-document share link
-    # can't use them without leaking other pages.
-    if share_scope_page(request) is not None:
+    # Backlinks span the whole library by nature, so a share link can't use
+    # them without leaking other pages.
+    if share_scope(request) is not None:
         raise HTTPException(status_code=403, detail="not accessible via this share link")
     with connect_pages_db(resolve_ws(request)) as conn:
         rows = conn.execute(
@@ -267,9 +268,9 @@ async def ub_get_backlinks(block_id: str, request: Request):
 
 @router.get("/blocks/{block_id}")
 async def ub_get_block(block_id: str, request: Request):
-    scope = share_scope_page(request)
+    scope = share_scope(request)
     with connect_pages_db(resolve_ws(request)) as conn:
-        assert_block_in_page(conn, block_id, scope)
+        assert_block_in_scope(conn, block_id, scope)
         row = conn.execute(
             f"SELECT {BLOCK_COLUMNS} FROM unified_blocks WHERE id = ?",
             (block_id,),
@@ -281,9 +282,11 @@ async def ub_get_block(block_id: str, request: Request):
 
 def _ops(ws: str, page_id: str, ops: list[dict], request: Request, scope) -> dict:
     """Apply ops to a page on behalf of the request: a share editor is
-    confined to the shared page, every op error is its HTTP status."""
-    if scope is not None and scope != page_id:
-        raise HTTPException(status_code=403, detail="not accessible via this share link")
+    confined to the shared pages, every op error is its HTTP status."""
+    if scope is not None:
+        with connect_pages_db(ws) as conn:
+            if not scope.allows_page(conn, page_id):
+                raise HTTPException(status_code=403, detail="not accessible via this share link")
     try:
         return commit_ops(ws, page_id, ops, actor=actor_of(request),
                           share_scoped=scope is not None)
@@ -295,7 +298,7 @@ def _ops(ws: str, page_id: str, ops: list[dict], request: Request, scope) -> dic
 async def ub_create_block(payload: UBCreateRequest, request: Request):
     block_id = secrets.token_urlsafe(9)
     ws = require_ws_writer(request)
-    scope = share_scope_page(request)
+    scope = share_scope(request)
     if payload.parent_id == "root":
         # A new page: not an op on any page. Share editors never get here.
         if scope is not None:
@@ -328,7 +331,7 @@ async def ub_create_block(payload: UBCreateRequest, request: Request):
 async def ub_update_block(block_id: str, payload: UBUpdateRequest, request: Request):
     """Content and/or a properties PATCH (a null value deletes the key)."""
     ws = require_ws_writer(request)
-    scope = share_scope_page(request)
+    scope = share_scope(request)
     with connect_pages_db(ws) as conn:
         page_id = page_root_id(conn, block_id)
     if not page_id:
@@ -347,7 +350,7 @@ async def ub_delete_block(block_id: str, request: Request):
     if block_id == "root":
         raise HTTPException(status_code=400, detail="cannot delete root block")
     ws = require_ws_writer(request)
-    scope = share_scope_page(request)
+    scope = share_scope(request)
     with connect_pages_db(ws) as conn:
         page_id = page_root_id(conn, block_id)
         if not page_id:
@@ -372,11 +375,11 @@ async def ub_put_children(block_id: str, payload: UBPutChildrenRequest, request:
     rows: list = []
     flatten_tree(payload.blocks, block_id, rows, now)
     ws = require_ws_writer(request)
-    scope = share_scope_page(request)
+    scope = share_scope(request)
     with connect_pages_db(ws) as conn:
         if not conn.execute("SELECT 1 FROM unified_blocks WHERE id = ?", (block_id,)).fetchone():
             raise HTTPException(status_code=404, detail="block not found")
-        assert_block_in_page(conn, block_id, scope)
+        assert_block_in_scope(conn, block_id, scope)
         delete_children(conn, block_id)
         for r in rows:
             conn.execute(
@@ -404,8 +407,8 @@ async def ub_reorder_block(block_id: str, payload: UBReorderRequest, request: Re
     if block_id == "root":
         raise HTTPException(status_code=400, detail="cannot reorder root block")
     ws = require_ws_writer(request)
-    scope = share_scope_page(request)
-    if scope is not None and (block_id == scope or payload.parent_id == "root"):
+    scope = share_scope(request)
+    if scope is not None and payload.parent_id == "root":
         raise HTTPException(status_code=403, detail="not accessible via this share link")
     try:
         new_pos = generate_key_between(payload.before, payload.after)
@@ -415,6 +418,8 @@ async def ub_reorder_block(block_id: str, payload: UBReorderRequest, request: Re
         src_page = page_root_id(conn, block_id)
         if not src_page:
             raise HTTPException(status_code=404, detail="block not found")
+        if scope is not None and (src_page == block_id or not scope.allows_page(conn, src_page)):
+            raise HTTPException(status_code=403, detail="not accessible via this share link")
         if src_page == block_id:
             raise HTTPException(status_code=400, detail="pages are reordered through the library, not here")
         row = conn.execute("SELECT parent_id FROM unified_blocks WHERE id = ?", (block_id,)).fetchone()

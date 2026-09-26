@@ -681,7 +681,7 @@ def _resolve(claims: dict, stale: list[str]) -> str:
         if exists:
             if not (cfg["policy"] == "claim" or is_admin_seed):
                 raise CloudAuthError(f"\"{local}\" exists on this server but is not linked to your Gamma Cloud "
-                                     "account. Sign in with its password and link it from Settings → Account.")
+                                     "account. Sign in with its password and link it from Settings → Account & sync.")
             stale.append(link(conn, local, claims, claims.get("_refresh_token", "")))
             if is_admin_seed:
                 conn.execute("UPDATE users SET is_admin = 1 WHERE username = ?", (local,))

@@ -13,6 +13,7 @@ Two questions every endpoint answers through this module:
 """
 
 import asyncio
+import json
 import re
 import secrets
 from urllib.parse import unquote
@@ -24,7 +25,9 @@ from fastapi import HTTPException, Request
 from fastapi.responses import JSONResponse
 
 from . import guests, publisher_sessions
+from .blocks_store import page_root_id, root_pages
 from .config import USERS_DB
+from .foldertags import clean_path, parse_tags, path_within
 from .logbuf import log
 
 SESSION_COOKIE = "session"
@@ -375,23 +378,84 @@ def serialize_share_users(users: list[dict]) -> str:
     return ",".join(f"{u['name']}:{u['role']}" for u in users)
 
 
+class ShareScope:
+    """What a share token reaches inside its workspace: one page (``page``,
+    the root block id) or one folder (``folder``, a folder-label path — the
+    pages filed there or below it, gamma/foldertags.py rules, membership
+    read live so pages filed later join and pages moved out leave). Every
+    share-enabled endpoint asks it whether a page or block is in reach;
+    nothing else branches on the kind.
+    """
+
+    __slots__ = ("page", "folder")
+
+    def __init__(self, page: str = "", folder: str = ""):
+        self.page, self.folder = page, folder
+
+    @classmethod
+    def of(cls, share: dict) -> "ShareScope":
+        return cls(page=share.get("page_id") or "", folder=share.get("folder") or "")
+
+    @property
+    def kind(self) -> str:
+        return "folder" if self.folder else "page"
+
+    def allows_page(self, conn, page_id: str) -> bool:
+        """Whether ``page_id`` is a root page inside the scope."""
+        if self.page:
+            return page_id == self.page
+        row = conn.execute(
+            "SELECT properties FROM unified_blocks WHERE id = ? AND parent_id = 'root'", (page_id,)).fetchone()
+        if not row:
+            return False
+        try:
+            props = json.loads(row[0] or "{}")
+        except ValueError:
+            return False
+        return any(path_within(tag, self.folder) for tag in parse_tags(props.get("folder")))
+
+    def allows_block(self, conn, block_id: str) -> bool:
+        """Whether ``block_id`` is a page in the scope or lives inside one."""
+        root = page_root_id(conn, block_id)
+        return bool(root) and self.allows_page(conn, root)
+
+    def allows_folder(self, name: str) -> bool:
+        """Whether a folder-wide read (export) of ``name`` stays inside the
+        scope: a folder share covers itself and its subfolders."""
+        return bool(self.folder) and path_within(clean_path(name), self.folder)
+
+    def page_ids(self, conn) -> list[str]:
+        """The root pages the scope reaches right now."""
+        if self.page:
+            return [self.page]
+        return list(root_pages(conn, self.folder))
+
+    def __eq__(self, other):
+        return isinstance(other, ShareScope) and (self.page, self.folder) == (other.page, other.folder)
+
+    def __repr__(self):
+        return f"ShareScope(page={self.page!r}, folder={self.folder!r})"
+
+
 def share_lookup(token: str) -> dict | None:
     """The share row for a token as a dict ({token, workspace_id, page_id,
-    created_by, audience, role, users}), or None."""
+    folder, created_by, audience, role, users}), or None. A row names a page
+    OR a folder (exactly one of ``page_id`` / ``folder`` is set)."""
     if not token:
         return None
     with sqlite3.connect(str(USERS_DB)) as conn:
         row = conn.execute(
-            "SELECT workspace_id, page_id, created_by, audience, role, allowed_users "
+            "SELECT workspace_id, page_id, folder, created_by, audience, role, allowed_users "
             "FROM shares WHERE token = ?", (token,)
         ).fetchone()
     if not row:
         return None
-    workspace_id, page_id, created_by, audience, role, allowed = row
-    if not page_id or not workspace_id:
+    workspace_id, page_id, folder, created_by, audience, role, allowed = row
+    if not workspace_id or bool(page_id) == bool(folder):
         return None
     return {
-        "token": token, "workspace_id": workspace_id, "page_id": page_id, "created_by": created_by,
+        "token": token, "workspace_id": workspace_id, "page_id": page_id or "", "folder": folder or "",
+        "created_by": created_by,
         "audience": audience if audience in SHARE_AUDIENCES else "anyone",
         "role": role if role in SHARE_ROLES else "view",
         "users": parse_share_users(allowed),
@@ -439,14 +503,15 @@ def share_access(share: dict, carrier):
 
 
 def share_grant(request: Request):
-    """(workspace_id, page_id, level) for a valid, permitted ?share=<token>
+    """(workspace_id, ShareScope, level) for a valid, permitted ?share=<token>
     on this request, else None. Cached on request.state.
 
-    A share token is minted per page and names its workspace, so access is
-    scoped to that one page's subtree. When a token is present it takes
-    precedence over the session for choosing WHOSE data is read (a signed-in
-    visitor sees the shared page, not their own library), while the session
-    still decides whether the audience gate lets them in.
+    A share token is minted per page or per folder and names its workspace,
+    so access is scoped to that page's subtree, or to the pages filed in that
+    folder. When a token is present it takes precedence over the session for
+    choosing WHOSE data is read (a signed-in visitor sees the shared page,
+    not their own library), while the session still decides whether the
+    audience gate lets them in.
     """
     cached = getattr(request.state, "_share_grant", "unset")
     if cached != "unset":
@@ -460,7 +525,7 @@ def share_grant(request: Request):
         else:
             level, _reason = share_access(share, request)
             if level:
-                grant = (share["workspace_id"], share["page_id"], level)
+                grant = (share["workspace_id"], ShareScope.of(share), level)
     request.state._share_grant = grant
     return grant
 
@@ -546,13 +611,14 @@ def _share_denied(request: Request) -> HTTPException:
     return HTTPException(status_code=401)
 
 
-def share_scope_page(request: Request):
-    """The page id a request is confined to, or None for a full-access
+def share_scope(request: Request) -> ShareScope | None:
+    """The ShareScope a request is confined to, or None for a full-access
     workspace member. Any request carrying ?share= is scoped — even a
     signed-in one.
 
-    Read endpoints pass this to blocks_store.assert_block_in_page so a share
-    token can only reach its own page's subtree and assets.
+    Read endpoints pass this to blocks_store.assert_block_in_scope (or ask
+    ``allows_page`` themselves) so a share token can only reach the pages it
+    names and their assets.
     """
     if not request.query_params.get("share"):
         return None
@@ -566,7 +632,7 @@ def resolve_ws(request: Request) -> str:
     """The workspace whose data to READ: the one named by a ?share=<token>
     when one is present (and permits this viewer), else the session's
     workspace (any member role). Read-only endpoints only; callers that can
-    serve a share view must also enforce share_scope_page()."""
+    serve a share view must also enforce share_scope()."""
     if request.query_params.get("share"):
         grant = share_grant(request)
         if grant:
@@ -579,7 +645,7 @@ def require_ws_writer(request: Request) -> str:
     """The workspace whose data to WRITE: the shared page's workspace when
     the request's ?share= token grants edit, else the session's workspace
     with an editor or owner role. Endpoints that accept share editors must
-    additionally confine every touched block to share_scope_page() — the
+    additionally confine every touched block to share_scope() — the
     token never reaches the rest of the workspace."""
     if request.query_params.get("share"):
         grant = share_grant(request)

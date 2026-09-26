@@ -3163,7 +3163,7 @@ html.appFocusFullscreen, html.appFocusFullscreen body { overflow: hidden; oversc
   font-size: calc(12px * var(--ui-font-scale, 1));
   color: var(--text-primary);
 }
-.docPickerItem:hover { background: var(--bg-hover); }
+.docPickerItem:hover, .docPickerItem:has(input:focus-visible) { background: var(--bg-hover); }
 .docPickerItem input { flex-shrink: 0; margin: 0; }
 .docPickerItem .attachName { flex: 1; min-width: 0; }
 .docPickerNotes { padding-left: 0; }
@@ -4898,6 +4898,7 @@ html.appFocusFullscreen, html.appFocusFullscreen body { overflow: hidden; oversc
   color: var(--text-primary);
 }
 .ctxMenuItem:hover { background: var(--bg-hover); }
+.moveBlockList .ctxMenuItem:focus-visible { background: var(--bg-hover); outline: none; }
 /* Menu rows with a leading glyph (e.g. the tab menu's pin/close). */
 .ctxMenuItemIconed {
   display: flex;
@@ -5496,3 +5497,4 @@ html.appFocusFullscreen, html.appFocusFullscreen body { overflow: hidden; oversc
   border-bottom-width: 2px;
   border-radius: 4px;
 }
+.sharePopover .sharePopoverTarget { display: inline-flex; align-items: center; gap: 4px; margin-left: 8px; max-width: 45%; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }

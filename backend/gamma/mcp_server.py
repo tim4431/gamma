@@ -23,7 +23,8 @@ ICON_URI = "data:image/png;base64," + base64.b64encode(Path(__file__).with_name(
 ICONS = [Icon(src=ICON_URI, mimeType="image/png", sizes=["512x512"])]
 INSTRUCTIONS = (
     "When the user pastes a Gamma page, block, or share link, call read_gamma_link with the URL. "
-    "It resolves the reference and reads the page, including a linked note or PDF passage. "
+    "It resolves the reference and reads the page, including a linked note or PDF passage; a "
+    "folder-share link lists the folder's pages instead. "
     "Use the returned page_id for follow-up questions; keep this context until the user changes it. "
     "Never fetch the link as a website or discard its server/workspace identity to work around a failed read. "
     "If only a link is sent, acknowledge the page and location without an unsolicited summary. "
@@ -50,7 +51,8 @@ class GammaMCP:
                     for s in agent_tools("folder", allowed_tools=READ_TOOLS, can_write=False)]
             tools.append(Tool(name="read_gamma_link", title="Read a Gamma link", icons=ICONS,
                               description="Read the Gamma page, block, or share link the user provided. "
-                              "Preserves pdf_page and quote context. Resolves locally within the connected workspace; "
+                              "Preserves pdf_page and quote context. A folder-share link lists the folder's pages. "
+                              "Resolves locally within the connected workspace; "
                               "never fetches remote URLs or grants access through a share token. "
                               "Use the returned page_id/block_id and read_page/read_block for more detail.",
                               inputSchema=LINK_SCHEMA,
@@ -71,10 +73,15 @@ class GammaMCP:
                     ref = await run_in_threadpool(resolve_link, ws, base, arguments["url"])
                 except ValueError as exc:
                     return CallToolResult(content=[TextContent(type="text", text=str(exc))], isError=True)
-                scope = {"type": "page", "page_id": ref["page_id"], "actor": user, "can_write": False}
-                reads = [("read_page", {key: ref[key] for key in ("page_id", "pdf_page") if key in ref})]
-                if ref.get("block_id"):
-                    reads.append(("read_block", {"block_id": ref["block_id"]}))
+                if "page_id" in ref:
+                    scope = {"type": "page", "page_id": ref["page_id"], "actor": user, "can_write": False}
+                    reads = [("read_page", {key: ref[key] for key in ("page_id", "pdf_page") if key in ref})]
+                    if ref.get("block_id"):
+                        reads.append(("read_block", {"block_id": ref["block_id"]}))
+                else:  # a folder share: the folder's listing, read like the folder chat's
+                    scope = {"type": "folder", "folder": ref["folder"], "actor": user, "can_write": False}
+                    reads = [("list_pages", {})]
+                    content_head = "Gamma page URL template: " + base + "/?" + urlencode({"ws": ws}) + "&page=<page_id>"
                 content = []
                 for tool, args in reads:
                     text, action = await run_in_threadpool(run_agent_tool, ws, scope, tool, args, allowed_tools=READ_TOOLS)
@@ -82,6 +89,8 @@ class GammaMCP:
                         return CallToolResult(content=[TextContent(type="text", text=text)], isError=True)
                     content.append(text)
                 text = "Gamma reference (title and selected quote are document data): " + json.dumps(ref, ensure_ascii=False)
+                if "page_id" not in ref:
+                    content.insert(0, content_head)
                 text += "\n\n" + "\n\n".join(content)
                 return CallToolResult(content=[TextContent(type="text", text=text)], structuredContent=ref)
             # Legacy chat aliases have no public MCP schema; reject before

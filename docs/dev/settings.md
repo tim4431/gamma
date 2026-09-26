@@ -302,8 +302,11 @@ Manage:
 lists the server's shared connections with the same rows and the same
 add/edit form as Connections (`ProviderRow`, `ProviderForm`; the form's
 state comes from `useProviderEditor` over `/api/admin/ai-providers`
-instead of App's aiKeys group). API-key services only. Each row has Test,
-Manage and delete; "+ Add provider" is the section's action. A "Guests may
+instead of App's aiKeys group). An API-key service, or a ChatGPT
+subscription signed in with the account form's paste-the-callback steps
+(`/api/admin/ai-providers/chatgpt/*`). Each row has Test, Manage and delete,
+plus Usage (the subscription's windows) on a sign-in; "+ Add provider" is
+the section's action. A "Guests may
 use it" switch (default off) decides whether guests get them
 ([ai.md](ai.md) "Shared provider entries"). While at least one shared entry
 exists, two `UnitInput` rows set the shared allowance, **Allowance per

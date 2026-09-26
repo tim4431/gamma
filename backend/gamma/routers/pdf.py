@@ -20,7 +20,7 @@ from fastapi import APIRouter, HTTPException, Request
 from fastapi.responses import RedirectResponse, StreamingResponse
 from pydantic import BaseModel
 
-from ..auth import require_user, resolve_ws, share_scope_page
+from ..auth import require_user, resolve_ws, share_scope
 from ..db import connect_pages_db, ws_uploads_dir
 from .. import pdf_meta
 from ..logbuf import log
@@ -273,21 +273,20 @@ def download_pdf(source_url: str, want_bytes: bool = True) -> tuple[str, bytes]:
         resp.close()
 
 
-def _share_allows_source(ws: str, scope_page_id: str, source_url: str) -> bool:
-    """A share link may only proxy the exact source URL recorded on its own
-    page block."""
+def _share_allows_source(ws: str, scope, source_url: str) -> bool:
+    """A share link may only proxy the exact source URL recorded on one of
+    its own page blocks."""
     with connect_pages_db(ws) as conn:
-        row = conn.execute(
-            "SELECT json_extract(properties, '$.source_url') FROM unified_blocks WHERE id = ?",
-            (scope_page_id,),
-        ).fetchone()
-    return bool(row and row[0]) and source_url == row[0]
+        rows = conn.execute(
+            "SELECT id FROM unified_blocks WHERE parent_id = 'root' "
+            "AND json_extract(properties, '$.source_url') = ?", (source_url,)).fetchall()
+        return any(scope.allows_page(conn, r[0]) for r in rows)
 
 
 @router.get("/pdf")
 def proxy_pdf(source_url: str, request: Request):
     ws = resolve_ws(request)
-    scope = share_scope_page(request)
+    scope = share_scope(request)
     if scope is not None and not _share_allows_source(ws, scope, source_url):
         raise HTTPException(status_code=403, detail="not accessible via this share link")
     uploads = ws_uploads_dir(ws)

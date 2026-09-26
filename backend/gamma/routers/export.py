@@ -18,8 +18,8 @@ from fastapi.responses import FileResponse, Response
 from starlette.background import BackgroundTask
 
 from .. import ink as inkmod
-from ..auth import resolve_ws, share_scope_page
-from ..blocks_store import BLOCK_COLUMNS, assert_block_in_page, block_to_dict, fetch_subtree
+from ..auth import resolve_ws, share_scope
+from ..blocks_store import BLOCK_COLUMNS, assert_block_in_scope, block_to_dict, fetch_subtree
 from ..db import connect_pages_db
 from ..db import (
     PAGES_SCHEMA,
@@ -698,11 +698,11 @@ def export_page(block_id: str, request: Request, mode: str = "readable", pdf: in
     library), or ``gamma`` (a scoped account backup any Gamma imports via
     /api/import-data?mode=merge)."""
     ws = resolve_ws(request)
-    scope = share_scope_page(request)
+    scope = share_scope(request)
     opts = {"pdf": bool(pdf), "highlights": bool(highlights), "notes": bool(notes),
             "folder_scope": None}
     with connect_pages_db(ws) as conn:
-        assert_block_in_page(conn, block_id, scope)
+        assert_block_in_scope(conn, block_id, scope)
         if not conn.execute("SELECT 1 FROM unified_blocks WHERE id = ?", (block_id,)).fetchone():
             raise HTTPException(status_code=404, detail="page not found")
         row = conn.execute("SELECT content FROM unified_blocks WHERE id = ?", (block_id,)).fetchone()
@@ -726,9 +726,9 @@ def export_page_pdf(block_id: str, request: Request, notes: int = 0, highlights:
     ``highlights=0`` skips the annotation layer, so ``highlights=0&notes=1``
     gives a clean PDF carrying only the written notes."""
     ws = resolve_ws(request)
-    scope = share_scope_page(request)
+    scope = share_scope(request)
     with connect_pages_db(ws) as conn:
-        assert_block_in_page(conn, block_id, scope)
+        assert_block_in_scope(conn, block_id, scope)
         rows = fetch_subtree(conn, block_id)
     if not rows:
         raise HTTPException(status_code=404, detail="page not found")
@@ -784,7 +784,8 @@ _folder_export_progress: dict[str, dict] = {}
 
 @router.get("/folders/export-progress")
 def folder_export_progress(request: Request):
-    if share_scope_page(request) is not None:
+    scope = share_scope(request)
+    if scope is not None and not scope.folder:
         raise HTTPException(status_code=403, detail="not accessible via this share link")
     ws = resolve_ws(request)
     return _folder_export_progress.get(ws) or {"active": False, "total": 0, "done": 0}
@@ -813,8 +814,10 @@ def export_folder(request: Request, name: str, mode: str = "readable", pdf: int 
     name = (name or "").strip().strip("/")
     if not name:
         raise HTTPException(status_code=400, detail="folder name required")
-    # A share link is scoped to one page, never a whole folder.
-    if share_scope_page(request) is not None:
+    # A page share never reaches a whole folder; a folder share exports its
+    # own folder or a subfolder of it.
+    scope = share_scope(request)
+    if scope is not None and not scope.allows_folder(name):
         raise HTTPException(status_code=403, detail="not accessible via this share link")
     ws = resolve_ws(request)
     folder_slug = slugify(name.replace("/", "-"), "")

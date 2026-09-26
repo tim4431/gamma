@@ -130,6 +130,8 @@ The **link button** in the top bar shares the open page, Notion-style:
 - Viewers see the PDF, highlights and notes, no login needed; editors edit alongside you, with live cursors. A visitor editing through an anyone-with-the-link share is asked for a display name.
 - **Stop sharing** ends the link; share again for a new one. Copied links carry the workspace, so a teammate opening one lands in the right library.
 
+**Sharing a folder** works the same way: right-click a folder and choose **Share…**, or open the folder and press the top bar's link button. The link opens every page filed in the folder — including pages you file there later — as a small library; visitors click a page to read it and return with the home button. The same audience and View / Edit choices apply; an edit link lets people edit those pages' notes but never move pages in or out of the folder.
+
 ## Workspaces
 
 <img alt="Personal workspaces next to a shared research library where an owner and an editor type into two blocks of the same page at the same time and a viewer reads along" src="assets/branding/gamma-workspaces-light.svg" width="100%">
@@ -264,7 +266,8 @@ Preferences apply immediately; browser-only ones (theme, layout) are marked *Thi
 
 | Keys | Does |
 |---|---|
-| Ctrl+F / Ctrl+Shift+F | Search everything (find-in-chat when the chat is focused; on the home page, the listing's box; in Settings or a dialog, its own search box) / always the full panel |
+| Ctrl+F / Ctrl+Shift+F | Search everything (find-in-chat when the chat is focused; on the home page, the listing's box; in Settings or a dialog, its own search box — press again for the next one) / always the full panel |
+| Ctrl+, | Open settings |
 | Ctrl+P | Quick open: pick a page by title, folder or label (recent pages first) |
 | Ctrl+Shift+P | Command palette: every command by name, with its keys (also `>` typed into Ctrl+P) |
 | F2 | Rename the page |

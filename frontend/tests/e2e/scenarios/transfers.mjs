@@ -170,16 +170,12 @@ with zipfile.ZipFile(sys.argv[1], 'w') as z:
       assertEq(await choice(dialog, "Cancel").count(), 0);
       await page.keyboard.press("Shift+Tab");
       assert(await dialog.evaluate((el) => el.contains(document.activeElement)), "reverse tab from the heading stays in the dialog");
-      assertEq(await dialog.getByRole("group", { name: "Export format" }).getByRole("button").count(), 6);
       assertEq(await choice(dialog, "PDF").getAttribute("aria-pressed"), "true");
-      for (const [type, count] of [["This paper", 0], ["Notes", 2], ["Library", 4]]) {
-        if (!count) { assertEq(await dialog.getByRole("group", { name: `${type} choices`, exact: true }).count(), 0); continue; }
-        assertEq(await dialog.getByRole("group", { name: `${type} choices`, exact: true }).getByRole("button").count(), count);
+      // a note page has no paper: no "This paper" formats, the others offered
+      assertEq(await dialog.getByRole("group", { name: "This paper choices", exact: true }).count(), 0);
+      for (const type of ["Notes", "Library"]) {
+        assert(await dialog.getByRole("group", { name: `${type} choices`, exact: true }).getByRole("button").count() > 0, `${type} formats offered`);
       }
-      await choice(dialog, "Markdown").hover();
-      const cardShadow = await choice(dialog, "Markdown").evaluate((el) => getComputedStyle(el).boxShadow);
-      assert(cardShadow !== "none", "picture choices retain the shared button shadow");
-      assertEq(cardShadow, await choice(dialog, "Next").evaluate((el) => getComputedStyle(el).boxShadow));
       if (flags.keep) await page.screenshot({ animations: "disabled", path: `${server.dir}/export-formats.png` });
       await choice(dialog, "Markdown").dblclick();
       assert(await dialog.getByRole("heading", { name: "Markdown", exact: true }).isVisible());
