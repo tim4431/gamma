@@ -471,6 +471,16 @@ export function Empty({ icon: Icon, children }) {
   return <div className="setEmpty"><Icon size={26} />{children}</div>;
 }
 
+// A workspace's folder in the server's data directory (workspaces/<id>/),
+// shown in its row's detail line so the files can be found on disk.
+export function WorkspaceFolder({ id }) {
+  return (
+    <span className="wsFolder" title={t("Folder in the server's data directory")}>
+      {`workspaces/${id}`}
+    </span>
+  );
+}
+
 // Notion-style people picker: a search box over the account directory with
 // the matches listed beneath as selectable rows (avatar · name · admin tag).
 // `accounts` is the directory (null while loading), `exclude` the usernames

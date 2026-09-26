@@ -58,9 +58,15 @@ function fmtUptime(seconds) {
 }
 
 // What the update row says: newer / current / unknown, in that order of use.
+// A -dev build (Docker, built from a branch) also counts its branch's newer
+// commits as an update.
 function updateHint(info) {
   const latest = info.latest?.version;
-  if (info.update_available) return t("v{latest} is out — this server runs v{version}", { latest, version: info.version });
+  if (info.update_available) return t("v{latest} is out — this server runs v{version}", { latest: info.update.version, version: info.version });
+  if (info.update_available === false && info.latest_build) {
+    return latest ? t("up to date with {branch} · latest release v{latest}", { branch: info.latest_build.branch, latest })
+      : t("up to date with {branch}", { branch: info.latest_build.branch });
+  }
   if (info.update_available === false) return t("up to date · latest release v{latest}", { latest });
   if (latest) return t("latest release v{latest} · this build carries no version to compare", { latest });
   if (info.latest_error) return t("could not check: {latest_error}", { latest_error: info.latest_error });
@@ -110,9 +116,13 @@ function ServerDashboard() {
         title={t("Lines logged since the server started, by level. The log below shows the most recent ones.")} />
     </div>
     <Row icon={CloudDownloadIcon} label={t("Updates")} hint={updateHint(info)}
-      title={t("Compared against the newest GitHub release. Checked at most every six hours; Check now asks again.")}>
+      title={info.branch && info.version.includes("-dev.")
+        ? t("Compared against the newest GitHub release and the newest commit on {branch}. Checked at most every six hours; Check now asks again.", { branch: info.branch })
+        : t("Compared against the newest GitHub release. Checked at most every six hours; Check now asks again.")}>
       <span className="setRowControls">
-        {info.latest?.url ? (
+        {info.update?.kind === "build" && info.update.url ? (
+          <button className="uiBtn sm" onClick={() => window.open(info.update.url, "_blank", "noopener")}>{t("What's new")}</button>
+        ) : info.latest?.url ? (
           <button className="uiBtn sm" onClick={() => window.open(info.latest.url, "_blank", "noopener")}>{t("Release notes")}</button>
         ) : null}
         <button className={`uiBtn sm ${updateTone ? "primary" : ""}`} disabled={checking} onClick={() => load(true)}>
@@ -120,10 +130,16 @@ function ServerDashboard() {
         </button>
       </span>
     </Row>
-    {info.update_available ? (
+    {info.update?.kind === "release" ? (
       <div className="settingsPaneHint">
         {t("A server in Docker does not update itself: pull {latest} (or {version}) and restart the container. The desktop app updates on its own.", {
-          latest: <code>{info.image}:latest</code>, version: <code>:{info.latest.version}</code> })}
+          latest: <code>{info.image}:latest</code>, version: <code>:{info.update.version}</code> })}
+      </div>
+    ) : info.update?.kind === "build" ? (
+      <div className="settingsPaneHint">
+        {info.branch === "main"
+          ? t("A server in Docker does not update itself: pull {latest} and restart the container.", { latest: <code>{info.image}:latest</code> })
+          : t("Newer commits are on {branch}: build that branch's image and restart the container.", { branch: <code>{info.branch}</code> })}
       </div>
     ) : null}
   </>;

@@ -97,10 +97,10 @@ def _check_password(password: str) -> str:
 @router.get("/server-info")
 def server_info(request: Request, refresh: bool = False):
     """The Settings → Server dashboard: build, uptime, log counts by level,
-    the latest GitHub release and whether it is newer (``update_available``:
+    the latest GitHub release, for a ``-dev`` build its branch's newest
+    build, and whether either is newer (``update``, ``update_available``:
     True/False, or None for an unversioned build). ``refresh=1`` bypasses
-    the release cache. Sync on purpose: the release check is a network
-    call."""
+    the cache. Sync on purpose: the update check is a network call."""
     require_admin(request)
     return version.server_info(refresh=refresh)
 
@@ -121,7 +121,7 @@ async def get_settings(request: Request):
     (lifetime, demo mode — each with its source) for the admin rows in the
     Settings dialog."""
     require_admin(request)
-    return {**get_defaults(), **public_url_settings(), **guest_settings(), "cloud": cloud_auth.settings(),
+    return {**get_defaults(), **public_url_settings(), **guest_settings(), "cloud": _cloud(),
             "max_upload_mb_range": [UPLOAD_MB_MIN, UPLOAD_MB_MAX],
             "quota_mb_range": [QUOTA_MB_MIN, QUOTA_MB_MAX],
             "guest_ttl_hours_range": [GUEST_TTL_MIN, GUEST_TTL_MAX]}
@@ -176,7 +176,13 @@ async def update_settings(payload: SettingsUpdateRequest, request: Request):
                                      share_host=payload.cloud_share_host)
     except ValueError as e:
         raise HTTPException(status_code=400, detail=str(e))
-    return {**get_defaults(), **public_url_settings(), **guest_settings(), "cloud": cloud_auth.settings()}
+    return {**get_defaults(), **public_url_settings(), **guest_settings(), "cloud": _cloud()}
+
+
+def _cloud() -> dict:
+    """The cloud sign-in settings, with whether this server still has to be
+    connected (Settings → Server → Sign-in's Connect button)."""
+    return {**cloud_auth.settings(), "needs_connect": cloud_auth.needs_connect()}
 
 
 # --- the server's shared AI connections (gamma/ai_settings.py) ---------------

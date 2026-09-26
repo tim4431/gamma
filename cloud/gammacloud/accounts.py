@@ -287,13 +287,15 @@ def set_display_name(conn, account_id: str, name: str) -> None:
 
 
 def revoke_everything(conn, account_id: str) -> None:
-    """Every browser, every grant with its access tokens, and every code
-    minted but not yet exchanged (it would become a new grant)."""
+    """Every browser, every grant with its access tokens (and the servers
+    that registered with one), and every code minted but not yet exchanged
+    (it would become a new grant)."""
     conn.execute("DELETE FROM portal_sessions WHERE account_id = ?", (account_id,))
     conn.execute("DELETE FROM oauth_codes WHERE account_id = ?", (account_id,))
     conn.execute("UPDATE grants SET revoked_at = ?, refresh_hash = NULL WHERE account_id = ? AND revoked_at IS NULL",
                  (now(), account_id))
     conn.execute("DELETE FROM access_tokens WHERE account_id = ?", (account_id,))
+    conn.execute("DELETE FROM servers_linked WHERE account_id = ? AND grant_id != ''", (account_id,))
 
 
 def delete(conn, account_id: str, actor: str = "") -> None:

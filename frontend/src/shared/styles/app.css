@@ -3623,6 +3623,7 @@ html.appFocusFullscreen, html.appFocusFullscreen body { overflow: hidden; oversc
 .aiProvRow:hover { background: var(--bg-hover); }
 .aiProvName { font-size: calc(12.5px * var(--ui-font-scale, 1)); font-weight: 600; color: var(--text-primary); }
 .aiProvDesc { font-size: calc(11px * var(--ui-font-scale, 1)); color: var(--text-muted); overflow-wrap: anywhere; }
+.wsFolder { font-family: monospace; user-select: all; }
 .aiProvActions { display: flex; gap: 6px; flex-shrink: 0; margin-left: auto; }
 
 /* Storage meter (QuotaMeter): thin cloud-drive-style usage bar. */

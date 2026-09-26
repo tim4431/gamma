@@ -190,7 +190,8 @@ class ClientBody(BaseModel):
 def list_clients(request: Request):
     with closing(db.connect()) as conn:
         require_admin(conn, request)
-        rows = conn.execute("SELECT client_id, kind, name, redirect_uris, server_id, created_at FROM oauth_clients "
+        rows = conn.execute("SELECT client_id, kind, name, redirect_uris, server_id, created_at, owner_account_id "
+                            "FROM oauth_clients "
                             "ORDER BY created_at DESC").fetchall()
         return {"clients": [dict(r) for r in rows]}
 

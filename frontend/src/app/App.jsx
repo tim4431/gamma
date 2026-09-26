@@ -5,8 +5,7 @@ import { highlightSpot, rangeSpot } from "../pdf/pdfSelectionSpot";
 import { COLORS } from "../shared/model/highlightColors.js";
 import { fmtDate, getLocale, resolveLocale, t, T } from "../shared/i18n/i18n.js";
 
-// sessionStorage: the Settings pane to reopen after the language-change reload.
-const REOPEN_SETTINGS_KEY = "gamma-reopen-settings";
+import { REOPEN_SETTINGS_KEY } from "../settings/settingsNavigation.js";
 import { ExportDialog, ImportDialog } from "../transfers/ImportExport";
 import ImportReviewDialog from "../transfers/ImportReviewDialog";
 import { parseGammaLink } from "../shared/model/gammaLinks.js";
@@ -1028,11 +1027,25 @@ function LibraryApp({ publicPage = null, initialServerConfig = null }) {
 
   function clearSelection() { setSelectedPages(new Set()); setSelectedFolders(new Set()); setSelectedLabels(new Set()); }
 
-  // Modern file-manager semantics: plain click SELECTS, double-click opens.
-  // Ctrl/Cmd toggles a single item; Shift extends a range from the last click.
+  // Touch has no dependable double-click (mobile browsers eat the second tap
+  // for zoom), so there a tap OPENS, as in a phone's file manager. The last
+  // pointerdown's type tells
+  // a tap from a mouse click — `click` itself does not say so everywhere.
+  const lastPointerTypeRef = useRef("mouse");
+  useEffect(() => {
+    const note = (e) => { lastPointerTypeRef.current = e.pointerType; };
+    window.addEventListener("pointerdown", note, true);
+    return () => window.removeEventListener("pointerdown", note, true);
+  }, []);
+  const isTap = (e) => !!e && !e.ctrlKey && !e.metaKey && !e.shiftKey && lastPointerTypeRef.current !== "mouse";
+
+  // Modern file-manager semantics: plain click SELECTS, double-click opens
+  // (a tap opens, see isTap). Ctrl/Cmd toggles a single item; Shift extends a
+  // range from the last click.
   function handlePageClick(pageBlock, e) {
     const id = pageBlock._pageId;
     if (!id) return;
+    if (isTap(e)) { if (homeEditingId !== id) openPage(id); return; }
     setSelectedFolders(new Set());
     setSelectedLabels(new Set());
     if (e && (e.ctrlKey || e.metaKey)) {
@@ -1088,6 +1101,7 @@ function LibraryApp({ publicPage = null, initialServerConfig = null }) {
   // same cards and rows, no nesting.
   function handleContainerClick(kind, name, e) {
     if (kind === "folder" && folderRenaming?.name === name) return;
+    if (isTap(e)) { if (kind === "folder") openFolder(name); else openLabel(name); return; }
     const setOwn = kind === "folder" ? setSelectedFolders : setSelectedLabels;
     setSelectedPages(new Set());
     (kind === "folder" ? setSelectedLabels : setSelectedFolders)(new Set());

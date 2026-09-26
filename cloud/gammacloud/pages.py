@@ -422,36 +422,58 @@ def _last(iso: str, label: str) -> str:
 
 
 def _row(icon: str, title: str, meta: list[str], end: str) -> str:
-    """A Devices row; ``meta`` holds HTML pieces, joined by middots."""
-    return (f"<div class=dev><div class=ico>{ICONS[icon]}</div><div class=txt><b>{esc(title)}</b>"
+    """A Devices row; ``title`` and ``meta`` are HTML, the pieces of
+    ``meta`` joined by middots."""
+    return (f"<div class=dev><div class=ico>{ICONS[icon]}</div><div class=txt><b>{title}</b>"
             f"<span>{' · '.join(x for x in meta if x) or '&nbsp;'}</span></div>{end}</div>")
 
 
-def _app_row(d: dict, manage: bool) -> str:
-    """One signed-in Gamma app, named after its machine when it said;
-    ``manage`` adds the details and the sign-out button."""
-    title = d.get("device_name") or d["client"]
-    meta = [esc(d["client"]) if d.get("device_name") else "", esc(_platform(d.get("user_agent")))]
-    end = _last(d["last_used_at"], "Last active")
-    if manage:
-        meta += [f"signed in {_date(d['created_at'])}", f"last seen at {esc(d['ip'])}" if d.get("ip") else ""]
-        end += f"<button class='btn btn--sm' data-revoke='{esc(d['id'])}' aria-label='Sign out {esc(title)}'>Sign out</button>"
-    return _row("desktop", title, meta, end)
-
-
-def _server_row(srv: dict) -> str:
-    """One Gamma server the account is linked on: its name links to it; the
-    desktop sidecar's loopback address is *this computer*, not a link."""
-    host = srv["url"].split("://", 1)[-1]
-    if srv["local"]:
-        title = "This computer"
-        meta = [esc(srv["name"]) if srv["name"] != host else "", esc(host)]
+def _server_row(e: dict, manage: bool) -> str:
+    """One Gamma server (``servers.merge``): a listed address with the
+    sign-in it registered with, or a sign-in no listed address names. A
+    public address's name links to it; the desktop app's loopback address
+    is not a link, and the row is named after its machine. ``manage`` adds
+    the details and the button: Sign out while the server holds a sign-in,
+    Remove once it does not."""
+    srv, grant = e["server"], e["grant"]
+    meta = []
+    if srv:
+        host = srv["url"].split("://", 1)[-1]
+        named = srv["name"] != host
+        if srv["local"]:
+            label = (grant or {}).get("device_name") or (srv["name"] if named else "This computer")
+            title = esc(label)
+            meta += ["Gamma desktop app", esc(host)]
+        else:
+            label = srv["name"]
+            title = f"<a href='{esc(srv['url'])}' target=_blank rel='noopener noreferrer'>{esc(label)}</a>"
+            meta.append(esc(host) if named else "")
     else:
-        title = f"<a href='{esc(srv['url'])}' target=_blank rel='noopener noreferrer'>{esc(srv['name'])}</a>"
-        meta = [esc(host) if srv["name"] != host else ""]
-    meta.append(f"linked {_date(srv['linked_at'])}")
-    return (f"<div class=dev><div class=ico>{ICONS['server']}</div><div class=txt><b>{title}</b>"
-            f"<span>{' · '.join(x for x in meta if x)}</span></div>{_last(srv['last_seen_at'], 'Last seen')}</div>")
+        label = grant.get("device_name") or grant["client"]
+        title = esc(label)
+        meta.append(esc(grant["client"]) if grant.get("device_name") else "")
+    if grant:
+        meta.append(esc(_platform(grant.get("user_agent"))))
+    meta.append(f"linked {_date(srv['linked_at'])}" if srv else f"signed in {_date(grant['created_at'])}")
+    if manage and grant and grant.get("ip"):
+        meta.append(f"last seen at {esc(grant['ip'])}")
+    active = max((srv or {}).get("last_seen_at", ""), (grant or {}).get("last_used_at", ""))
+    end = _last(active, "Last active")
+    if not grant:
+        end = "<span class=pill>Signed out</span>" + end
+    if manage:
+        end += (f"<button class='btn btn--sm' data-revoke='{esc(grant['id'])}' aria-label='Sign out {esc(label)}'>Sign out</button>"
+                if grant else
+                f"<button class='btn btn--sm' data-remove='{esc(srv['url'])}' aria-label='Remove {esc(label)}'>Remove</button>")
+    return _row("desktop" if srv is None or srv["local"] else "server", title, meta, end)
+
+
+def _connected_row(c: dict) -> str:
+    """A server this account connected (``connect.of_account``)."""
+    title = f"<a href='{esc(c['url'])}' target=_blank rel='noopener noreferrer'>{esc(c['name'])}</a>"
+    end = (f"<button class='btn btn--sm' data-disconnect='{esc(c['client_id'])}' data-name='{esc(c['name'])}' "
+           f"aria-label='Disconnect {esc(c['name'])}'>Disconnect</button>")
+    return _row("server", title, [f"connected {_date(c['created_at'])}"], end)
 
 
 def _browser_row(b: dict) -> str:
@@ -482,8 +504,9 @@ RESEND_JS = ("document.querySelectorAll('[data-resend]').forEach(r => r.onclick 
              "catch (e) { r.textContent = e.message; r.disabled = false; } });")
 
 
-def overview_page(account: dict, devices: list[dict], servers: list[dict] | None = None,
-                  mail_failed: bool = False) -> str:
+def overview_page(account: dict, devices: list[dict], entries: list[dict], mail_failed: bool = False) -> str:
+    """``devices``: the live grants; ``entries``: ``servers.merge`` of them
+    and the linked servers."""
     verified = account["email_verified"]
     name = account["display_name"] or account["username"]
     tags = (f"<span>@{esc(account['username'])}</span><span class=pill>{esc(account['plan'].capitalize())} plan</span>"
@@ -508,16 +531,11 @@ def overview_page(account: dict, devices: list[dict], servers: list[dict] | None
                f"<a class='btn btn--primary btn--sm' href='{SITE}/download'>Download</a>")
         + "</ul></section>")
 
-    recent = "".join(_app_row(d, False) for d in devices[:4]) or (
-        f"<div class=blank>{ICONS['devices']}{'No Gamma app is signed in right now.' if signed_in else 'Nothing has signed in with this account yet.'}"
+    recent = "".join(_server_row(e, False) for e in entries[:5]) or (
+        f"<div class=blank>{ICONS['server']}{'No Gamma server is signed in right now.' if signed_in else 'Nothing has signed in with this account yet.'}"
         f"<div class=actions><a class='btn btn--sm' href='{SITE}/download'>Get the desktop app</a></div></div>")
-    more = f"<a href='/devices'>Manage{f' all {len(devices)}' if len(devices) > 4 else ''}</a>"
-    signins = f"<section class=section><h2>Gamma apps <span>{more}</span></h2><div class=list>{recent}</div></section>"
-    servers = servers or []
-    listed = "".join(_server_row(srv) for srv in servers) or (
-        f"<div class=blank>{ICONS['server']}No Gamma server lists this account yet. "
-        "A server you sign in to with Gamma Cloud shows up here.</div>")
-    signins += f"<section class=section><h2>Gamma servers</h2><div class=list>{listed}</div></section>"
+    more = f"<a href='/devices'>Manage{f' all {len(entries)}' if len(entries) > 5 else ''}</a>"
+    signins = f"<section class=section><h2>Gamma servers <span>{more}</span></h2><div class=list>{recent}</div></section>"
     plan = (f"<section class=section><h2>Plan</h2><div class=body><div class=planname>{esc(account['plan'])}</div>"
             "<p class=plantext>The desktop app is your library. A hosted Gamma server of your own comes with the Plus and Pro plans.</p>"
             f"<div class=actions><a class='btn btn--sm' href='{SITE}/#selfhost'>Self-host instead</a></div></div></section>")
@@ -534,35 +552,43 @@ def overview_page(account: dict, devices: list[dict], servers: list[dict] | None
     return app("Overview", "", account, "home", inner, script, head)
 
 
-def devices_page(account: dict, devices: list[dict], browsers: list[dict]) -> str:
-    empty = (f"<div class=blank>{ICONS['devices']}No Gamma app is signed in with this account.<br>"
-             "Choose <b>Sign in with Gamma Cloud</b> in the desktop app and it shows up here.</div>")
-    apps = "".join(_app_row(d, True) for d in devices) or empty
-    rows = "".join(_browser_row(b) for b in sorted(browsers, key=lambda b: not b["current"]))
-    others = devices or any(not b["current"] for b in browsers)
+def devices_page(account: dict, entries: list[dict], browsers: list[dict], connected: list[dict]) -> str:
+    empty = (f"<div class=blank>{ICONS['server']}No Gamma server is signed in with this account.<br>"
+             "Choose <b>Sign in with Gamma Cloud</b> in the desktop app or on a Gamma server and it shows up here.</div>")
+    rows = "".join(_server_row(e, True) for e in entries) or empty
+    brows = "".join(_browser_row(b) for b in sorted(browsers, key=lambda b: not b["current"]))
+    others = any(e["grant"] for e in entries) or any(not b["current"] for b in browsers)
     everywhere = "<button class='btn btn--sm btn--danger' id=revokeall>Sign out everywhere else</button>" if others else ""
-    inner = (f"<section class=section><h2>Gamma apps <span data-count>{len(devices)} signed in</span></h2>"
-             f"<div class=list data-empty='{esc(empty)}'>{apps}</div></section>"
-             f"<section class=section><h2>Browsers <span data-count>{len(browsers)} signed in</span></h2>"
-             f"<div class=list>{rows}</div></section>"
-             f"<div class=formfoot>{everywhere}<span class=empty>Signing an app out revokes its key to this account, so it "
-             "cannot renew its sign-in. Its Gamma server checks the key every hour and then ends the sessions it "
+    mine = (f"<section class=section><h2>Servers you connected <span>people sign in to them with Gamma Cloud</span></h2>"
+            f"<div class=list>{''.join(_connected_row(c) for c in connected)}</div></section>") if connected else ""
+    inner = (f"<section class=section><h2>Gamma servers <span data-count data-unit=listed>{len(entries)} listed</span></h2>"
+             f"<div class=list data-empty='{esc(empty)}'>{rows}</div></section>{mine}"
+             f"<section class=section><h2>Browsers <span data-count data-unit='signed in'>{len(browsers)} signed in</span></h2>"
+             f"<div class=list>{brows}</div></section>"
+             f"<div class=formfoot>{everywhere}<span class=empty>Signing a server out revokes its key to this account, so it "
+             "cannot renew its sign-in. The server checks the key every hour and then ends the sessions it "
              "opened with this account.</span></div><div class=msg id=devmsg></div>")
     script = """
 const msg = document.getElementById('devmsg');
 function gone(row){
-  const list = row.parentElement; row.remove();
+  const list = row.parentElement, count = list.closest('.section').querySelector('[data-count]'); row.remove();
   const n = list.querySelectorAll('.dev').length;
-  list.closest('.section').querySelector('[data-count]').textContent = n + ' signed in';
+  if (count) count.textContent = n + ' ' + count.dataset.unit;
   if (!n && list.dataset.empty) list.innerHTML = list.dataset.empty;
 }
 document.querySelectorAll('[data-revoke]').forEach(b => b.onclick = () => act(b, async () => {
   await api('/api/devices/' + b.dataset.revoke + '/revoke', {}); gone(b.closest('.dev')); }, msg));
+document.querySelectorAll('[data-remove]').forEach(b => b.onclick = () => act(b, async () => {
+  await api('/api/servers/remove', {url: b.dataset.remove}); gone(b.closest('.dev')); }, msg));
 document.querySelectorAll('[data-endsession]').forEach(b => b.onclick = () => act(b, async () => {
   await api('/api/sessions/' + b.dataset.endsession + '/revoke', {}); gone(b.closest('.dev')); }, msg));
+document.querySelectorAll('[data-disconnect]').forEach(b => b.onclick = () => {
+  if (!confirm('Disconnect ' + b.dataset.name + '? Nobody can sign in to it with Gamma Cloud until it is connected again.')) return;
+  act(b, async () => { await api('/api/connected/' + b.dataset.disconnect + '/disconnect', {}); location.reload(); }, msg);
+});
 const all = document.getElementById('revokeall');
 if (all) all.onclick = () => {
-  if (!confirm("Sign out every Gamma app and every other browser? Each app's Gamma server ends the sessions it opened within the hour.")) return;
+  if (!confirm("Sign out every Gamma server and every other browser? Each server ends the sessions it opened within the hour.")) return;
   act(all, async () => { await api('/api/devices/revoke-all', {}); location.reload(); }, msg);
 };
 """
@@ -706,7 +732,7 @@ function wire(){
 }
 async function load(tab){
   if (tab === 'invites') { const d = await api('/api/admin/invites', undefined, 'GET'); document.getElementById('invites').innerHTML = d.invites.map(i => '<tr><td class=mono>' + esc(i.code) + '</td><td>' + i.uses_left + '</td><td>' + esc(i.plan) + '</td><td>' + esc(i.note) + '</td><td>' + esc(i.created_at.slice(0,10)) + '</td><td><button class="btn btn--sm" data-delinv="' + esc(i.code) + '">Delete</button></td></tr>').join('') || '<tr><td colspan=6 class=empty>No invites.</td></tr>'; }
-  if (tab === 'clients') { const d = await api('/api/admin/clients', undefined, 'GET'); document.getElementById('clients').innerHTML = d.clients.map(c => '<tr><td class=mono>' + esc(c.client_id) + '</td><td>' + esc(c.name) + '</td><td>' + esc(c.kind) + '</td><td class=mono>' + esc(JSON.parse(c.redirect_uris).join(' ')) + '</td><td><button class="btn btn--sm" data-delcli="' + esc(c.client_id) + '">Delete</button></td></tr>').join('') || '<tr><td colspan=5 class=empty>No clients. Local Gammas need none.</td></tr>'; }
+  if (tab === 'clients') { const d = await api('/api/admin/clients', undefined, 'GET'); document.getElementById('clients').innerHTML = d.clients.map(c => '<tr><td class=mono>' + esc(c.client_id) + '</td><td>' + esc(c.name) + '</td><td>' + esc(c.kind) + (c.owner_account_id ? '<br><span class=mono>' + esc(c.owner_account_id) + '</span>' : '') + '</td><td class=mono>' + esc(JSON.parse(c.redirect_uris).join(' ')) + '</td><td><button class="btn btn--sm" data-delcli="' + esc(c.client_id) + '">Delete</button></td></tr>').join('') || '<tr><td colspan=5 class=empty>No clients. Local Gammas need none.</td></tr>'; }
   if (tab === 'audit') { const d = await api('/api/admin/audit?limit=300', undefined, 'GET'); document.getElementById('audit').innerHTML = d.audit.map(a => '<tr><td class=mono>' + esc(a.at.slice(0,19).replace('T',' ')) + '</td><td>' + esc(a.event) + '</td><td class=mono>' + esc(a.account_id) + '</td><td class=mono>' + esc(a.actor) + '</td><td>' + esc(a.detail) + '</td></tr>').join(''); }
   wire();
 }
@@ -758,6 +784,40 @@ def _consent_page(req: dict, account) -> str:
               f"document.getElementById('cancel').onclick = (e) => act(e.target, async () => {{ const d = await api('/authorize/cancel', {{request_id: {rid}}}); "
               "if (d.redirect) location.href = d.redirect; }, err);")
     return _auth_shell(f"Sign in to {name}", card, script, cls="consent", top=False)
+
+
+def connect_page(origin: str, state: str, challenge: str, account, verify_needed: bool = False) -> str:
+    """A signed-in person connects a self-hosted Gamma server
+    (``connect.py``): the address that asks, the account the connection
+    will belong to, what it does, then Connect. Cancel goes back to the
+    server with ``error=access_denied``."""
+    from .connect import return_url
+    host = origin.split("://", 1)[-1]
+    back = return_url(origin, {"error": "access_denied", "state": state})
+    if verify_needed:
+        inner = (f"<p class=lead><b>{esc(host)}</b> wants to connect to Gamma Cloud, but your e-mail address is not "
+                 "confirmed yet. Open the link we mailed you, then reload this page.</p>"
+                 "<button class='btn btn--block' data-resend>Resend the mail</button>"
+                 f"<p class=links><a href='{esc(back)}'>Back to {esc(host)}</a></p>")
+        return auth("Confirm your e-mail first", "", inner, RESEND_JS)
+    user = account["username"]
+    gets = "".join(f"<li><i>{ICONS[icon]}</i>{words}</li>" for icon, words in (
+        ("user", "People sign in to it with their Gamma Cloud account"),
+        ("key", "You own the connection and can disconnect it from Devices")))
+    card = (f"<div class=cbrand>{LOGO}<span>Gamma<em>Cloud</em></span></div><div class=cbody>"
+            f"<h1>Connect {esc(host)}</h1><p class=where>{ICONS['globe']}<span>{esc(origin)}</span></p>"
+            f"<div class=who><div class=avatar>{esc(user[:1])}</div><div><b>{esc(user)}</b><span>{esc(account['email'])}</span></div></div>"
+            f"<p class=gets>What connecting does</p><ul class=scopes>{gets}</ul>"
+            "<div class=go><button class='btn btn--primary' id=go>Connect</button></div>"
+            "<p class=alt><button class=linkbtn id=other>Use another account</button><span class=sep aria-hidden=true>·</span>"
+            f"<a class=linkbtn href='{esc(back)}'>Cancel</a></p><div class=msg id=err></div></div>"
+            "<p class=cfoot>Connect only a server you run or trust.</p>")
+    body = _js({"server": origin, "state": state, "code_challenge": challenge})
+    script = ("const err = document.getElementById('err');"
+              f"document.getElementById('go').onclick = (e) => act(e.target, async () => {{ const d = await api('/connect-server/continue', {body}); "
+              "location.href = d.redirect; }, err);"
+              "document.getElementById('other').onclick = (e) => act(e.target, async () => { await api('/api/logout', {}); location.reload(); }, err);")
+    return _auth_shell(f"Connect {host}", card, script, cls="consent", top=False)
 
 
 def authorize_page(req: dict, account, verify_needed: bool = False, social: dict | None = None) -> str:

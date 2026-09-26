@@ -1,4 +1,7 @@
 import { t } from "../shared/i18n/i18n.js";
+// sessionStorage: the Settings pane to reopen after a reload that leaves the
+// page (a language change, a round trip through the account server).
+export const REOPEN_SETTINGS_KEY = "gamma-reopen-settings";
 // Old entry points stay valid while everyday preferences use five destinations.
 export const PANE_ALIASES = {
   general: "appearance", papers: "appearance", viewer: "reading", notes: "reading", search: "reading",

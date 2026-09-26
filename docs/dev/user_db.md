@@ -247,7 +247,12 @@ from `GAMMA_VERSION`, stamped by the Docker build and the desktop shell;
 "dev build" for a checkout), uptime, and warnings · errors logged since
 startup (`logbuf.counts()`) — plus an Updates row comparing the build with
 the newest GitHub release (cached; "Check now" refetches; `GAMMA_UPDATE_CHECK=off`
-for air-gapped servers). A Docker server cannot update itself, so an
+for air-gapped servers). A Docker image built from a push or a branch
+rather than a release is `v<tag>-dev.<n>` (`n` commits after the newest
+`v*` tag) and also compares against its branch (`GAMMA_BRANCH`): commits
+there that this build lacks are an update to `v<tag>-dev.<m>`, the version
+that branch's next image carries, with a "What's new" link to GitHub's
+comparison. A Docker server cannot update itself, so an
 available update only says which image to pull; the desktop app updates
 on its own. Things worth an admin's eye are logged at WARNING — a
 share-link visitor over the write throttle, an address probing unknown

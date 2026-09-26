@@ -66,6 +66,40 @@ export async function cloudSignInScenarios(env) {
     }
   });
 
+  // A server at a public address cannot sign in as the desktop client: until
+  // it is connected there is no cloud button, the Link row waits, and the
+  // Server pane offers Connect. The round trip itself leaves for the account
+  // server (backend/tests/test_cloud_auth.py fakes it); here the account
+  // server cannot be reached, so the browser comes straight back to the
+  // Server pane with the error — the return path the success takes too.
+  await step("cloud sign-in: a server at a public address is connected, not given the desktop client", async () => {
+    await admin.api("/api/admin/settings", { method: "PUT", body: { cloud_issuer: "https://account.example", public_url: "https://gamma.example.org" } });
+    const ctx = await admin.context(browser);
+    try {
+      assertEq((await admin.api("/api/admin/settings")).cloud.needs_connect, true, "the desktop client cannot serve a public address");
+      const anon = await browser.newContext();
+      try {
+        const login = await openPage(anon, server.base);
+        await login.getByPlaceholder("Username").waitFor();
+        assertEq(await login.getByRole("link", { name: "Sign in with Gamma Cloud", exact: true }).count(), 0, "no button before it is connected");
+      } finally { await anon.close(); }
+      const page = await openPage(ctx, server.base);
+      await openSettings(page, "Account & sync");
+      await page.getByText("An admin connects this server to Gamma Cloud first", { exact: false }).waitFor();
+      assertEq(await page.getByRole("button", { name: "Link Gamma Cloud account", exact: true }).count(), 0, "no Link button yet");
+      await settingsNav(page, "Server").click();
+      await page.getByRole("button", { name: "Connect", exact: true }).click();
+      await page.waitForURL((url) => !url.pathname.startsWith("/api/"));
+      await page.getByRole("alert").filter({ hasText: "account server" }).waitFor();
+      assert(!page.url().includes("cloud_connect"), "the outcome is dropped from the address bar");
+      await page.getByRole("button", { name: "Connect", exact: true }).waitFor();   // back on the Server pane
+      await assertNoProblems(page);
+    } finally {
+      await admin.api("/api/admin/settings", { method: "PUT", body: { cloud_issuer: "", public_url: "" } });
+      await ctx.close();
+    }
+  });
+
   // Invitations by cloud username (docs/dev/workspaces.md): the invite editor
   // offers the second way only while cloud sign-in is on. The lookup runs on
   // the inviter's own linked Gamma Cloud grant, and this admin has none, so

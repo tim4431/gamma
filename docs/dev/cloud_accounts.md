@@ -27,7 +27,7 @@ server, is under "The Gamma side" below.
 | accounts | e-mail, username, password (bcrypt; none for an account made through Google/GitHub), display name, plan, admin flag, soft deletion; the random account id is the identity, e-mail and username both change |
 | outside sign-in | Google (OIDC + the one-tap prompt) and GitHub (OAuth), linked to accounts |
 | portal | sign in / register / verify / reset, then Overview, Devices, Settings and (admins) Admin — server-rendered HTML over the JSON API |
-| identity for Gamma servers | an OIDC provider: authorize (PKCE), token, userinfo, JWKS, revoke, discovery |
+| identity for Gamma servers | an OIDC provider: authorize (PKCE), token, userinfo, JWKS, revoke, discovery; a self-hosted server connects itself for a client of its own |
 | preference profile | a person's settings as a few JSON values the Gamma servers they sign in to pull and push |
 | server list | the Gamma servers a person linked their identity on |
 | admin | accounts, invites, OIDC clients, the audit log — API and `manage.py` |
@@ -84,7 +84,8 @@ the signing keys and every token hash.
 | `portal_sessions` | the portal cookie's hash; sliding 30 days, newest 20 per account |
 | `email_tokens` | verify / reset / change-email links: hash, kind, expiry, `used_at`; one live link per (account, kind) |
 | `invites` | codes with uses left and the plan they grant |
-| `oauth_clients` | confidential OIDC clients (share-host, container) with exact redirect URIs; the desktop client is built in, not a row |
+| `oauth_clients` | confidential OIDC clients with exact redirect URIs: share-host and container ones an admin made, and `server` ones a person connected (`owner_account_id`, step 5); the desktop client is built in, not a row |
+| `server_connects` | a server connection a person approved, waiting for the server to fetch its client: the code's hash, the account, the server's address, the PKCE challenge (2 min, single use; step 5) |
 | `oauth_requests` | a sign-in in progress on the authorize page (10 min) |
 | `oauth_codes` | authorization codes (2 min, single use) and what the exchange issued (`grant_id`, `access_hash`), so a replay revokes exactly that |
 | `grants` | one per device: the rotating refresh token's hash, 90 days from the last rotation, `revoked_at`, the client's `device_id` and `device_name` (a new sign-in with the same `device_id` replaces the grant) |
@@ -93,7 +94,7 @@ the signing keys and every token hash.
 | `signing_keys` | Ed25519 private keys; the newest unretired one signs, a retired one stays published a week |
 | `audit` | every account-changing event |
 | `prefs` | the preference profile: (`account_id`, `key`) → `value` (JSON text) and `updated_at`, the version (step 4) |
-| `servers_linked` | a Gamma server an account linked its identity on: (`account_id`, `url`) → `name`, `linked_at`, `last_seen_at` (step 4) |
+| `servers_linked` | a Gamma server an account linked its identity on: (`account_id`, `url`) → `name`, `linked_at`, `last_seen_at` (step 4), `grant_id` — the grant of the token it last registered with (step 5) |
 
 Every secret at rest is a SHA-256 of a long random token
 (`db.token_hash`); nothing in the file can be replayed. Timestamps are
@@ -135,31 +136,42 @@ page) and the **app** shell (a sidebar and a content column):
 - **Overview** (`/`): a greeting with username, plan and admin tags.
   A *Get started* checklist (account created, e-mail confirmed, signed in
   from a Gamma app — `app_signed_in_at`, so signing everything out does not
-  undo it) with a progress bar, hidden once all three are done. Then the
-  signed-in Gamma apps, and under them the Gamma servers the account is
-  linked on (`servers.of_account`). Each server's name links to its
-  address, with the last time it checked in; a loopback address (the
-  desktop sidecar) is *This computer*, not a link. Beside them sit a plan
+  undo it) with a progress bar, hidden once all three are done. Then
+  *Gamma servers*, the first five of the Devices page's list (below)
+  without its buttons. Beside them sit a plan
   card (a placeholder pointing at self-hosting until hosted servers exist)
   and an account summary: username, e-mail state, member since, and the
   account id with a copy button. The id is what Gamma servers key on; it
   never changes. `?mail=failed` (registration could not send the mail)
   changes the verify notice.
-- **Devices** (`/devices`): two lists.
-  - *Gamma apps*: every live grant, titled by the machine's name when the
-    app sent one (`device_name`), else the client's name; then the client,
-    the system and version from the agent (a Gamma server sends
-    `Gamma/<version> (<system>; <its address>)`), the sign-in date and the
-    last address. At the row's end the last activity — the last refresh or
-    the last use of the grant's access token, written at most every 10
-    minutes (`config.LAST_ACTIVE_TOUCH`) — and *Sign out*.
+- **Devices** (`/devices`): up to three lists.
+  - *Gamma servers*: one row per server, the server list and the sign-ins
+    merged (`servers.merge`). A listed server carries the live grant it
+    registered with (`servers_linked.grant_id`); a live grant no listed
+    server names (a server without a public address) is a row of its own,
+    titled by the machine's name when it sent one (`device_name`), else the
+    client's name. A public address's name links to it; the desktop app's
+    loopback address is not a link, and its row is named after the machine
+    ("Gamma desktop app" under it). Then the system and version from the
+    agent (a Gamma server sends `Gamma/<version> (<system>; <its address>)`),
+    the linked or sign-in date and the last address. At the row's end the
+    last activity — the later of the server's last check-in and the grant's
+    last refresh or access-token use, the latter written at most every 10
+    minutes (`config.LAST_ACTIVE_TOUCH`) — and *Sign out*, which revokes the
+    grant and takes the server off the list. A listed server without a
+    live grant shows *Signed out* and *Remove* (`POST /api/servers/remove`).
+  - *Servers you connected* (only when there are any): the `server`
+    clients this account owns ("Connecting a server" below), each with
+    *Disconnect* (`POST /api/connected/{client_id}/disconnect`, behind a
+    confirm), which deletes the client and with it every grant it holds.
   - *Browsers*: the portal sessions (`sessions.of_account`), this one
     marked, the others with *Sign out* (`POST /api/sessions/{id}/revoke`,
     the id being the head of the token's hash).
 
   A row signed out leaves in place. *Sign out everywhere else* is
-  `accounts.revoke_everything` behind a confirm. The page says what
-  signing an app out does: its key stops working, and its Gamma server
+  `accounts.revoke_everything` behind a confirm; it also drops every
+  listed server that registered with a grant. The page says what
+  signing a server out does: its key stops working, and the server
   ends the sessions it opened with that key at its next hourly grant check
   ("The Gamma side" below). Dates are UTC on the server and shown in the
   viewer's time zone by the page's script (`<time datetime>`, `data-at`).
@@ -181,7 +193,8 @@ page) and the **app** shell (a sidebar and a content column):
     `deleted` pill) offers only Restore and Purge now.
   - Invites: create with uses, plan and note; delete.
   - Clients: the OIDC clients of hosted servers — create (the secret is
-    shown once as the two env lines a container needs) and delete.
+    shown once as the two env lines a container needs) and delete. A
+    `server` client shows the account id that owns it.
   - The audit log.
 
   All of it is the `/api/admin/*` API below; `manage.py` does the same
@@ -273,7 +286,11 @@ the scope answers 403 with
 Deleting an account drops its profile at once.
 
 **The server list.** A Gamma server registers itself when a person links
-their identity there and removes itself on unlink. It sends its confirmed
+their identity there and removes itself on unlink. Each registration
+records the grant of the token it came with (`grant_id`), which is how the
+Devices page shows a server and its sign-in as one row; signing that grant
+out on the portal deletes the row, and so does *Sign out everywhere else*
+for every row that has a grant. It sends its confirmed
 public URL and its display name (at most 80 printable characters; empty
 means the host). Posting again refreshes the name and `last_seen_at`, so a
 server may check in periodically. The URL follows Gamma's own public-URL
@@ -375,10 +392,13 @@ default `gamma-desktop`) is public and built in: every local Gamma sidecar
 is this client, nothing is registered per install, and its redirect URI
 must be `http://127.0.0.1:<any port>/api/auth/cloud/callback` (or
 `localhost`, `[::1]`), a loopback the sidecar itself serves; it may always
-ask for `offline_access`. *share-host* and *container* clients are
-confidential rows (`manage.py create-client` or `POST /api/admin/clients`,
-the secret shown once) with exact `https` redirect URIs, authenticated
-with `client_secret_post` or `client_secret_basic`. They may ask for
+ask for `offline_access`. A Gamma server at a public address cannot be
+this client: it needs a confidential one. *share-host* and *container*
+clients are confidential rows an admin makes (`manage.py create-client` or
+`POST /api/admin/clients`, the secret shown once); a *server* client is
+one a person made by connecting their own server (below). All three have
+exact `https` redirect URIs and authenticate with `client_secret_post` or
+`client_secret_basic`. They may ask for
 `offline_access` only together with `prefs`, since a server syncing
 someone's preference profile between sign-ins needs a refresh token;
 without it the request is an `invalid_scope` error.
@@ -445,6 +465,46 @@ stays in the JWKS for a week so tokens it signed still verify.
 
 **What a Gamma server does with it** is the client side below.
 
+### Connecting a server
+
+`connect.py` + `routers/connect.py`. A self-hosted Gamma server at a
+public address gets its confidential client without anyone copying an id
+and secret by hand:
+
+1. The server's admin presses *Connect* in Gamma's Settings → Server →
+   Sign-in. The browser comes to
+   `/connect-server?server=<origin>&state=…&code_challenge=…` (both
+   addresses are in the discovery document as
+   `gamma_server_connect_endpoint` and
+   `gamma_server_connect_token_endpoint`).
+2. Signed out goes to `/login?next=` and comes back; an unconfirmed e-mail
+   sees the verify notice. A signed-in, verified person sees a card in the
+   authorize page's style: "Connect *host*", the address, the account the
+   connection will belong to, what connecting does, then *Connect*
+   (`POST /connect-server/continue`, 20 an hour per account) or *Cancel*
+   (back to the server with `error=access_denied`).
+3. *Connect* stores a one-time code (`server_connects`, 2 min) and sends
+   the browser to `<origin>/api/auth/cloud/connect/callback?code=&state=`.
+4. The server posts the code, its PKCE verifier and its own address to
+   `POST /api/servers/connect/token` (a form, from anywhere, no cookie; 30
+   per 10 minutes per IP) and gets `{client_id, client_secret}`. The code
+   is spent by its first try, right or wrong; an expired code, another
+   address or a verifier that does not match is a 400.
+
+The code only ever travels to the address being connected, so finishing
+the flow proves control of that address, which is what an admin checked
+when making a client by hand. Any verified account may connect a server.
+The client is kind `server`, named after the host, registered for
+`<origin>/api/auth/cloud/callback` and owned by the approving account
+(`owner_account_id`), whose Devices page lists it with *Disconnect*.
+Connecting the same address again from the same account keeps the client
+id and rotates the secret (`oidc.rotate_secret`), so people signed in there
+stay signed in; the old secret stops working at once. An account owns at
+most `connect.MAX_CLIENTS` (10) server clients. The origin must be `https`
+and not a loopback one: a server on this computer is the desktop client.
+A client outlives its owner's deletion; admins see the owner in the
+Clients tab and can delete it there.
+
 ## Admin
 
 `manage.py`: `setup`, `migrate`, `backup`, `list-accounts`,
@@ -482,6 +542,10 @@ invites; OIDC clients; the audit log. The portal's Admin page, the API and
   reuse detection, one grant per `device_id`, last activity, the page,
   signing one browser out, the 503, the same-origin check, the client
   address, the audit, the checklist, `/login?next=`, the step-3 upgrade.
+- `test_connect.py`: connecting a server — the approval page and its
+  refusals, the code's single use and PKCE, the client it makes, reconnect
+  rotating the secret while grants live on, the per-account limit,
+  disconnect, and the Devices page's one list of servers.
 - `test_profile.py`: the preference profile (the scope or the portal
   session, last-writer-wins and its 409, time normalization and clamping,
   the caps, the write limit), a confidential client's refresh token with
@@ -548,6 +612,20 @@ container gets the same through the environment — `GAMMA_CLOUD_ISSUER`,
 (`cloud_share_host`, env `GAMMA_CLOUD_SHARE_HOST=1`), which makes the server
 the share host (below).
 `GET /api/server-config` tells the login page whether to show the button.
+
+A server whose confirmed public URL is not a loopback one cannot sign in
+as the desktop client (`cloud_auth.needs_connect`). Until it has a client
+of its own the login page shows no cloud button, `start` sends the browser
+back with "not connected yet" as `?cloud_error=`, the Account pane's Link
+row says an admin connects the server first, and the Server pane's *Server
+client* row offers *Connect* — the round trip under "Connecting a server"
+above, through `GET /api/auth/cloud/connect/start?next=` and
+`…/connect/callback` (admins only). The callback trades the code and saves
+the client id and secret as if typed into the row, then returns to `next`
+with `?cloud_connect=ok` or `?cloud_connect_error=`, which the pane shows
+once; the Settings dialog reopens on the Server pane
+(`REOPEN_SETTINGS_KEY`). Switching a server that already had people
+signed in to a new client id ends their grants: they link again.
 
 **The flow.** `GET /api/auth/cloud/start?next=` stores the pending sign-in
 (state, PKCE verifier, nonce, the callback URL — this server's confirmed

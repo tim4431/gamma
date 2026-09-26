@@ -16,7 +16,7 @@
 import React from "react";
 import { API, apiJson, fmtBytes } from "../shared/lib/utils";
 import { ActionMenu, MenuSelect } from "../shared/ui/Menus";
-import { PaneHead, Section, Row, SubDialog, Field, Empty, QuotaMeter, UnitInput, AccountPicker, Segmented } from "./SettingsKit";
+import { PaneHead, Section, Row, SubDialog, Field, Empty, QuotaMeter, UnitInput, AccountPicker, Segmented, WorkspaceFolder } from "./SettingsKit";
 import {
   CheckIcon, DatabaseIcon, ExportIcon, GlobeIcon, HardDriveIcon, ImportIcon, LogOutIcon, PenIcon,
   PlusIcon, ShieldIcon, Trash2Icon, UserIcon, UsersIcon,
@@ -629,7 +629,8 @@ export function WorkspacesSettings({ value, onServer }) {
           </span>
           <span className="aiProvDesc">
             {w.personal ? t("just you") : `${ROLE_LABEL[w.role] || w.role} · ${w.members} member${w.members === 1 ? "" : "s"}`}
-            {` · ${fmtBytes(w.used_bytes)}`}
+            {` · ${fmtBytes(w.used_bytes)} · `}
+            <WorkspaceFolder id={w.id} />
           </span>
         </span>
         <span className="aiProvActions">

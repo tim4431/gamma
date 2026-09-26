@@ -125,9 +125,11 @@ then runs `gh workflow run docker.yml --ref v<version> -f version=…` so the
 server image gets the same version tag (a tag made with `GITHUB_TOKEN`
 would not trigger `docker.yml` by itself). `docker.yml` also bakes the
 build stamp into the image as build args (`GAMMA_VERSION` = the dispatched
-version, empty for a plain push to main; `GAMMA_COMMIT` = the sha), which
-the admin dashboard shows and compares against the latest release
-(`gamma/version.py`, [user_db.md](user_db.md)).
+version, or `<newest v* tag>-dev.<commits since it>` for any other build,
+with `GAMMA_BRANCH` = the branch it was built from; `GAMMA_COMMIT` = the
+sha), which the admin dashboard shows and compares against the latest
+release and, for a `-dev` build, its branch's head (`gamma/version.py`,
+[user_db.md](user_db.md)). The checkout is full-depth for the tags.
 
 No push trigger: the app bundles the backend and the frontend, so a path
 filter would release it on nearly every merge. It runs only when dispatched

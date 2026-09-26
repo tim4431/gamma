@@ -2,15 +2,21 @@
 // - CloudSignInSettings — Settings → Server → Sign-in (admins): the account
 //   server's address, the client this server is, and what happens to a cloud
 //   identity this server has not seen (refuse / claim / provision), and
-//   under provision whether it accepts published pages (the share host).
+//   under provision whether it accepts published pages (the share host). A
+//   server with a public URL still on the desktop client (`needs_connect`)
+//   gets a Connect button: a round trip through the account server that
+//   brings back its own client id and secret (`?cloud_connect=ok` /
+//   `?cloud_connect_error=` on return, shown once).
 // - CloudIdentityRow — Settings → Account & sync: the signed-in account's own link
 //   to its cloud account (link = a round trip through the account server,
-//   unlink = one call; refused for an account that has no password), and
-//   under it, once linked, CloudSyncRow: the settings sync by hand.
+//   unlink = one call; refused for an account that has no password; no Link
+//   button until an admin connected the server), and under it, once linked,
+//   CloudSyncRow: the settings sync by hand.
 import React from "react";
 import { API, apiJson } from "../shared/lib/utils";
 import { Row, Segmented, PasswordInput, SettingsSyncContext, Toggle, useSettingsDraft } from "./SettingsKit";
 import { cloudSyncHint } from "./syncState.js";
+import { REOPEN_SETTINGS_KEY } from "./settingsNavigation.js";
 import { CloudIcon, ExternalLinkIcon, GlobeIcon, KeyIcon, RefreshIcon, UserIcon } from "../shared/ui/Icons";
 import { T, t } from "../shared/i18n/i18n.js";
 
@@ -19,6 +25,20 @@ const POLICIES = [
   ["claim", t("Claim"), null, t("A cloud account whose username equals an unlinked username here signs in as it")],
   ["provision", t("Provision"), null, t("Any verified cloud account gets an account here, named after its username")],
 ];
+
+// The connect round trip's outcome, read once from the address bar and dropped.
+function takeConnectResult() {
+  try {
+    const url = new URL(window.location.href);
+    const ok = url.searchParams.get("cloud_connect") === "ok";
+    const error = url.searchParams.get("cloud_connect_error") || "";
+    if (!ok && !error) return null;
+    url.searchParams.delete("cloud_connect");
+    url.searchParams.delete("cloud_connect_error");
+    window.history.replaceState(null, "", url.pathname + url.search + url.hash);
+    return { ok, error };
+  } catch { return null; }
+}
 
 // `action` receives the Save button (present while the draft is dirty) so
 // the Server pane can put it on its Sign-in section rule.
@@ -34,9 +54,17 @@ export function CloudSignInSettings({ setStatus, action }) {
     apiJson(`${API}/admin/settings`).then((v) => {
       if (active) { setSaved(v.cloud); setDraft(fromSaved(v.cloud)); }
     }).catch((err) => { if (active) setError(err.message); });
+    const result = takeConnectResult();
+    if (result?.ok) setStatus(t("This server is connected to Gamma Cloud. People can sign in with it now."));
+    else if (result) setError(result.error);
     return () => { active = false; };
   }, []);
   const managed = saved?.source === "environment";
+  const connect = () => {
+    try { sessionStorage.setItem(REOPEN_SETTINGS_KEY, "server"); } catch {}
+    const here = window.location.pathname + window.location.search;
+    window.location.assign(`${API}/auth/cloud/connect/start?next=${encodeURIComponent(here)}`);
+  };
   const dirty = !!saved && !managed && JSON.stringify(draft) !== JSON.stringify(fromSaved(saved));
   const discard = () => { setDraft(fromSaved(saved)); setError(""); };
   useSettingsDraft("cloud-sign-in", dirty, discard);
@@ -72,9 +100,17 @@ export function CloudSignInSettings({ setStatus, action }) {
       </span>
     </Row>
     <Row icon={KeyIcon} label={t("Server client")}
-      hint={t("How this server identifies itself to the account server. Leave empty on your own machine; a hosted server enters the client id and secret it was given")}
-      title={t("Not a person: the OpenID Connect client this Gamma is. Empty = the account server's built-in public desktop client (loopback callback, PKCE only). A server the account server provisioned was handed a confidential client id and secret at creation.")}>
+      hint={saved?.needs_connect && !dirty
+        ? t("This server has a public address, so it needs a client of its own: connect it once through Gamma Cloud")
+        : t("How this server identifies itself to the account server. Leave empty on your own machine; a hosted server enters the client id and secret it was given")}
+      title={t("Not a person: the OpenID Connect client this Gamma is. Empty = the account server's built-in public desktop client (loopback callback, PKCE only). Connect asks Gamma Cloud for a client of this server's own; you approve it there with your account.")}>
       <span className="setRowControls">
+        {saved?.needs_connect && !dirty ? (
+          <button className="uiBtn sm primary" onClick={connect}
+            title={t("Go to Gamma Cloud, approve this server, and come back with its client id and secret")}>
+            <CloudIcon size={14} /> {t("Connect")}
+          </button>
+        ) : null}
         <input className="aiKeyInput" type="text" aria-label={t("Client id")} value={draft.client_id} spellCheck={false}
           autoComplete="off" name="gamma-cloud-client-id" disabled={disabled} placeholder={t("empty = desktop client")}
           onChange={(e) => set("client_id")(e.target.value)} />
@@ -108,6 +144,7 @@ export function CloudIdentityRow({ setStatus, confirm }) {
   React.useEffect(() => { load(); }, [load]);
   if (!state || !state.enabled) return null;
   const id = state.identity;
+  const waiting = !id && state.connected === false;
   const here = window.location.pathname + window.location.search;
   const link = () => { window.location.assign(`${API}/auth/cloud/start?link=1&next=${encodeURIComponent(here)}`); };
   async function doUnlink() {
@@ -125,6 +162,7 @@ export function CloudIdentityRow({ setStatus, confirm }) {
   return <>
     <Row icon={CloudIcon} label={t("Gamma Cloud")}
       hint={id ? `${id.username}${id.email ? ` · ${id.email}` : ""}${id.plan ? ` · ${id.plan} plan` : ""}`
+        : waiting ? t("An admin connects this server to Gamma Cloud first, in Settings → Server → Sign-in")
         : t("Sign in here with your Gamma Cloud account")}
       title={id ? t("Linked {linked_at}. Signing in with this cloud account opens this account.", { linked_at: id.linked_at ? id.linked_at.slice(0, 10) : "" })
         : t("Link your Gamma Cloud account: you are sent to the account server and back, then either login opens this account.")}>
@@ -136,7 +174,7 @@ export function CloudIdentityRow({ setStatus, confirm }) {
             <ExternalLinkIcon size={14} /> {t("Open account")}
           </a>) : null}
         {id ? <button className="uiBtn sm" onClick={unlink}>{t("Unlink")}</button>
-            : <button className="uiBtn sm primary" onClick={link}>{t("Link Gamma Cloud account")}</button>}
+            : waiting ? null : <button className="uiBtn sm primary" onClick={link}>{t("Link Gamma Cloud account")}</button>}
       </span>
     </Row>
     {error ? <p className="settingsPaneHint aiKeysError" role="alert">{error}</p> : null}

@@ -59,6 +59,7 @@ class FakeAccountServer:
         self.prefs = {}       # subject -> {key: {value, updated_at}}
         self.servers = {}     # subject -> {url: name}
         self.directory = {}   # cloud username -> subject
+        self.connects = []    # the forms of the connect token calls
 
     def _mint_access(self, subject):
         self.minted += 1
@@ -89,11 +90,19 @@ class FakeAccountServer:
         self.calls.append((method, url.removeprefix(ISSUER)))
         if self.offline:
             raise cloud_auth.CloudAuthError("cannot reach the account server: offline")
+        if url == ISSUER + "/api/servers/connect/token":
+            form = {k: v[0] for k, v in parse_qs(data.decode()).items()}
+            self.connects.append(form)
+            if form["code"] != "good-code":
+                raise cloud_auth.CloudAuthError("unknown or used code", status=400)
+            return {"client_id": "gc_lab", "client_secret": "lab-secret"}
         if url.startswith(ISSUER + "/api/"):
             return self.api(method, url.removeprefix(ISSUER), json.loads(data) if data else None, headers)
         if url == ISSUER + "/.well-known/openid-configuration":
             return {"issuer": ISSUER, "authorization_endpoint": ISSUER + "/authorize", "token_endpoint": ISSUER + "/token",
-                    "jwks_uri": ISSUER + "/jwks", "revocation_endpoint": ISSUER + "/revoke"}
+                    "jwks_uri": ISSUER + "/jwks", "revocation_endpoint": ISSUER + "/revoke",
+                    "gamma_server_connect_endpoint": ISSUER + "/connect-server",
+                    "gamma_server_connect_token_endpoint": ISSUER + "/api/servers/connect/token"}
         if url == ISSUER + "/revoke":
             if self.revoke_fails:
                 raise cloud_auth.CloudAuthError("cannot reach the account server")
@@ -381,7 +390,7 @@ def test_admin_settings_roundtrip(monkeypatch):
     assert r.status_code == 200, r.text
     cfg = r.json()["cloud"]
     assert cfg == {"issuer": "https://account.example", "client_id": "gc_abc", "policy": "claim", "has_secret": True,
-                   "enabled": True, "share_host": False, "source": "saved"}
+                   "enabled": True, "share_host": False, "source": "saved", "needs_connect": False}
     assert cloud_auth.client_secret() == "shh"
     # the share host switch (gamma/publish.py), off again for the rest of the suite
     assert c.put("/api/admin/settings", json={"cloud_share_host": True}).json()["cloud"]["share_host"] is True
@@ -394,6 +403,69 @@ def test_admin_settings_roundtrip(monkeypatch):
     monkeypatch.setenv("GAMMA_CLOUD_ISSUER", ISSUER)
     assert c.get("/api/admin/settings").json()["cloud"]["source"] == "environment"
     assert c.put("/api/admin/settings", json={"cloud_policy": "claim"}).status_code == 400
+
+
+def test_connecting_a_server_at_a_public_address(cloud, monkeypatch):
+    # saved settings, not the environment's: connecting writes the client
+    monkeypatch.delenv("GAMMA_CLOUD_ISSUER", raising=False)
+    cloud_auth.save_settings(issuer=ISSUER, client_id="", client_secret="")
+    _set_raw("public_url", "https://gamma.example.org")
+    make_user("ca_conn", "pw-ca_conn-123", is_admin=1)
+    make_user("ca_connee", "pw-ca_connee-123")
+    try:
+        admin = login("ca_conn", "pw-ca_conn-123")
+        # the desktop client cannot sign in at a public address: no cloud button, no link, a readable refusal
+        assert cloud_auth.needs_connect()
+        assert admin.get("/api/server-config").json()["cloud"] == {"enabled": False, "issuer": ""}
+        assert admin.get("/api/admin/settings").json()["cloud"]["needs_connect"] is True
+        assert admin.get("/api/auth/cloud/status").json()["connected"] is False
+        r = browser().get("/api/auth/cloud/start", follow_redirects=False)
+        assert error_of(r) == cloud_auth.NOT_CONNECTED
+        # only an admin connects
+        assert login("ca_connee", "pw-ca_connee-123").get("/api/auth/cloud/connect/start",
+                                                           follow_redirects=False).status_code == 403
+
+        def begin():
+            r = admin.get("/api/auth/cloud/connect/start", params={"next": "/?ws=w1"}, follow_redirects=False)
+            assert r.status_code == 302, r.text
+            url = urlsplit(r.headers["location"])
+            assert f"{url.scheme}://{url.netloc}{url.path}" == ISSUER + "/connect-server"
+            q = {k: v[0] for k, v in parse_qs(url.query).items()}
+            assert q["server"] == "https://gamma.example.org" and len(q["code_challenge"]) == 43
+            return q
+
+        def back(params):
+            r = admin.get("/api/auth/cloud/connect/callback", params=params, follow_redirects=False)
+            assert r.status_code == 302
+            return r.headers["location"]
+
+        q = begin()
+        assert back({"state": q["state"], "error": "access_denied"}) == "/?ws=w1&cloud_connect_error=Connection+cancelled."
+        q = begin()
+        assert back({"state": q["state"], "code": "bad-code"}) == "/?ws=w1&cloud_connect_error=unknown+or+used+code"
+        assert "expired" in back({"state": q["state"], "code": "good-code"})       # the state was spent
+        q = begin()
+        assert back({"state": q["state"], "code": "good-code"}) == "/?ws=w1&cloud_connect=ok"
+        sent = cloud.connects[-1]
+        assert sent["server"] == "https://gamma.example.org"
+        assert _b64(hashlib.sha256(sent["code_verifier"].encode()).digest()) == q["code_challenge"]
+        cfg = admin.get("/api/admin/settings").json()["cloud"]
+        assert cfg["client_id"] == "gc_lab" and cfg["has_secret"] and cfg["needs_connect"] is False
+        assert cloud_auth.client_secret() == "lab-secret"
+        assert admin.get("/api/server-config").json()["cloud"]["enabled"] is True
+        auth = start(browser())
+        assert auth["client_id"] == "gc_lab" and auth["redirect_uri"] == "https://gamma.example.org/api/auth/cloud/callback"
+        # the confirmed public URL is required
+        _set_raw("public_url", "")
+        r = admin.get("/api/auth/cloud/connect/start", follow_redirects=False)
+        assert "public URL" in parse_qs(urlsplit(r.headers["location"]).query)["cloud_connect_error"][0]
+    finally:
+        _set_raw("public_url", "")
+        cloud_auth.save_settings(issuer="", client_id="", client_secret="")
+
+
+def _b64(raw):
+    return base64.urlsafe_b64encode(raw).rstrip(b"=").decode()
 
 
 def test_rename_and_delete_follow_identities(cloud, monkeypatch):
@@ -756,12 +828,16 @@ def test_server_registration(cloud, monkeypatch):
     assert c.post("/api/auth/cloud/unlink").json()["ok"] is True
     assert cloud.servers["sub-ca_ola"] == {}
     assert cloud.revoked == ["rt-1++"] and cloud.live == {}
-    # a server with a confirmed public URL registers that, named by its host
+    # a server with a confirmed public URL (and so a client of its own) registers that, named by its host
     monkeypatch.setenv("GAMMA_PUBLIC_URL", "https://gamma.example.org")
+    monkeypatch.setenv("GAMMA_CLOUD_CLIENT_ID", "gc_lab")
+    monkeypatch.setenv("GAMMA_CLOUD_CLIENT_SECRET", "lab-secret")
     link_account(cloud, "ca_pat")
     assert cloud.servers["sub-ca_pat"] == {"https://gamma.example.org": "gamma.example.org"}
     # a LAN address that is neither: not listed
     monkeypatch.delenv("GAMMA_PUBLIC_URL")
+    monkeypatch.delenv("GAMMA_CLOUD_CLIENT_ID")
+    monkeypatch.delenv("GAMMA_CLOUD_CLIENT_SECRET")
     _set_raw("cloud_server_url", "")
     link_account(cloud, "ca_quin", base_url="http://192.168.1.20:9001")
     assert cloud.servers.get("sub-ca_quin", {}) == {}

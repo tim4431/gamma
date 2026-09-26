@@ -263,7 +263,7 @@ def test_a_server_client_registers_only_its_own_address(client):
 
 def test_the_overview_with_no_servers(client):
     alice(client)
-    assert "No Gamma server lists this account yet" in client.get("/").text
+    assert "Nothing has signed in with this account yet" in client.get("/").text
 
 
 # --- username lookup ----------------------------------------------------------
@@ -322,10 +322,10 @@ def test_upgrade_to_profile(client):
         conn.execute("DROP TABLE servers_linked")
         conn.execute("PRAGMA user_version = 3")
         conn.commit()
-    assert db.ensure_current() == ["profile"]
+    assert db.ensure_current() == ["profile", "connect"]
     assert db.ensure_current() == []
     with closing(sqlite3.connect(str(config.DB_PATH))) as conn:
-        assert conn.execute("PRAGMA user_version").fetchone()[0] == db.SCHEMA_VERSION == 4
+        assert conn.execute("PRAGMA user_version").fetchone()[0] == db.SCHEMA_VERSION == 5
     h = bearer(desktop_tokens(client))
     assert client.put("/api/me/prefs/k", headers=h, json={"value": 1}).status_code == 200
 

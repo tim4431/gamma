@@ -67,7 +67,8 @@ from its nearest ancestor folder (a label view inherits the root).
 surface: the KindToggle's Labels mode lists the labels carried by the pages in
 scope (`labelMeta`, the label twin of `folderMeta` — count + latest
 modified/added/viewed, so labels sort by the same clock), as the same rows and
-cards folders use with a tag glyph. Click selects, double-click opens, a paper
+cards folders use with a tag glyph. Click selects, double-click opens (on
+touch a tap opens — `isTap` in App.jsx, true for pages and folders too), a paper
 dropped on one gets that label, right-click is the existing label
 rename/delete menu. Opening a label KEEPS the folder scope (`?folder=…` and
 `?category=…` can both be in the URL — `homeUrlFor`), so a label opened inside

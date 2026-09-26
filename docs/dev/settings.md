@@ -147,7 +147,7 @@ and integration tokens get an empty list. The sources:
 
 | id | who | pane | tone | fires when | fingerprint |
 |---|---|---|---|---|---|
-| `update` | admins | Server | warn | a newer GitHub release than this build (`version.latest_release`, six-hour cache; the endpoint is sync on purpose) | the release version |
+| `update` | admins | Server | warn | a newer GitHub release than this build, or for a `-dev` Docker build a newer build of its branch (`version.check`, six-hour cache; the endpoint is sync on purpose) | the newer version |
 | `log-errors` | admins | Server | error | an error was logged since the last look (`logbuf.last_seq("error")`) | server start time + the newest error's seq |
 | `backup-failed` | everyone | Backups | error | a backup task of the account is in state `failed` (`backup_schedule.list_tasks`) | each failed task's id + its last run |
 | `mirror-conflicts` | everyone | Account | warn | a clone the account owns has open sync conflicts (`sync_engine.open_conflict_mark`) | a digest of, per clone, the count + the newest conflict id — resolving old ones never brings it back; a digest, so any number of clones fits the fingerprint's 200 characters |

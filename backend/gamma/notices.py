@@ -14,8 +14,8 @@ Sources are plain functions ``fn(username) -> Notice | None`` registered
 with ``@source``; each must be cheap — a cached, in-memory or small
 database read — because ``for_user`` runs them on every poll of
 ``GET /api/notices``. Admin-only sources are skipped for everyone else.
-The one network call, the release check, sits behind
-``version.latest_release``'s six-hour cache; the one directory walk, the
+The one network call, the update check, sits behind
+``version.check``'s six-hour cache; the one directory walk, the
 storage usage, runs only for an account under a quota and is remembered
 for a while.
 """
@@ -61,15 +61,14 @@ def _plural(n: int, word: str) -> str:
 
 @source(admin_only=True)
 def update_available(_username):
-    """A newer GitHub release than this build (nothing for a checkout, an
-    air-gapped server or an unreachable GitHub)."""
-    release, _error = version.latest_release()
-    mine = version.parse_version(version.VERSION)
-    theirs = version.parse_version(release["version"]) if release else None
-    if not (mine and theirs and theirs > mine):
+    """A newer GitHub release than this build, or for a ``-dev`` build a
+    newer build of its branch (nothing for a checkout, an air-gapped server
+    or an unreachable GitHub)."""
+    update = version.check()["update"]
+    if not update:
         return None
-    return Notice("update", release["version"], "warn", "server",
-                  f"Gamma v{release['version']} is available — this server runs v{version.VERSION}")
+    return Notice("update", update["version"], "warn", "server",
+                  f"Gamma v{update['version']} is available — this server runs v{version.VERSION}")
 
 
 @source(admin_only=True)

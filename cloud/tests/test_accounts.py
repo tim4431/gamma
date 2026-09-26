@@ -175,7 +175,7 @@ def test_pages_render(client):
     assert r.status_code == 200 and "alice" in r.text and "not confirmed" in r.text
     assert client.get("/login", follow_redirects=False).status_code == 302
     assert "Change username" in client.get("/settings").text
-    assert "No Gamma app is signed in" in client.get("/devices").text  # nothing to sign out yet
+    assert "No Gamma server is signed in" in client.get("/devices").text  # nothing to sign out yet
     assert client.get("/admin").status_code == 404
     make_admin("alice")
     r = client.get("/admin")
