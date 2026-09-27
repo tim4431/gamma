@@ -61,7 +61,8 @@ control (focusing the chat composer offers nothing). The offer is a card
 beside the anchor with the tour's name, its number of steps and **Show
 me** / **Not now**; it does not dim the app or move focus. A **hint**
 (`hint: true`) is a one-step triggered guide: its card is the whole thing,
-with **Got it**.
+an amber **Tip** chip over one plain sentence that says why it helps, with
+**Got it**.
 
 | Guide | Offered when | Points at |
 |---|---|---|
@@ -144,6 +145,16 @@ Engine abilities available to every step:
   (`services.show("chat")`).
 - **`Section guide="…"`** in the settings kit groups a section's header and
   rows under one anchor (the Share popover's Access and People).
+- **Keys in copy** (`guide/keys.js`). Titles and bodies render `**bold**`,
+  `*italic*`, `` `code` `` and key tokens: `{key:app.quickOpen}` names a
+  command of the catalog ([hotkeys.md](hotkeys.md)) and shows the chord it
+  answers to for this account — rebound in Settings → Keyboard, ⌘ only on a
+  Mac — as the settings kit's key caps (`shared/ui/KeyCaps.jsx`); an unbound
+  command shows its palette name in quotes. `{key:Tab}` names a fixed key.
+  Never type a chord into copy. App passes the `keybindings` preference to
+  the overlay; the token stays literal in the i18n key
+  ([i18n.md](i18n.md)), and a test checks every token names a command or a
+  key.
 
 ## Demo steps
 

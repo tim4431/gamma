@@ -114,20 +114,22 @@
   .guideCursor, .guideCursor.dragging, .guideDimFill { transition: none; }
   .guideRing, .guideCard { animation: none; }
 }
+/* One type scale for every card: tour and offer titles 15/600, a hint's
+   sentence 14/500, bodies 13/1.5, meta 11. */
 .guideTitle {
-  font-size: calc(14px * var(--ui-font-scale, 1));
+  font-size: calc(15px * var(--ui-font-scale, 1));
   font-weight: 600;
-  line-height: 1.3;
+  line-height: 1.35;
 }
 .guideCardCentered .guideTitle { font-size: calc(17px * var(--ui-font-scale, 1)); }
 .guideBody {
-  font-size: calc(12.5px * var(--ui-font-scale, 1));
+  font-size: calc(13px * var(--ui-font-scale, 1));
   line-height: 1.5;
   color: var(--text-secondary);
 }
 .guideBody p { margin: 0; }
 .guideBody p + p { margin-top: 6px; }
-.guideBody code {
+.guideTitle code, .guideBody code {
   font-size: calc(11.5px * var(--ui-font-scale, 1));
   padding: 1px 5px;
   border-radius: 4px;
@@ -152,7 +154,34 @@
 .guideBtns { display: inline-flex; gap: 6px; }
 .guideInvitation .guideCard { border-top: 2px solid var(--accent); gap: 8px; }
 .guideInvitation .guideStep { color: var(--accent); }
-.guideInvitation .guideTitle { font-size: calc(16px * var(--ui-font-scale, 1)); }
+/* A hint is a sentence with a Tip chip, not a heading under an accent rule. */
+.guideHint .guideCard { border-top-width: 1px; border-top-color: var(--border); }
+.guideHint .guideTitle { font-size: calc(14px * var(--ui-font-scale, 1)); font-weight: 500; line-height: 1.5; }
+.guideChip {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  padding: 1px 9px 1px 8px;
+  border-radius: 999px;
+  font-size: calc(11px * var(--ui-font-scale, 1));
+  font-weight: 600;
+  letter-spacing: 0.01em;
+  white-space: nowrap;
+}
+.guideChip.tip {
+  background: color-mix(in srgb, var(--callout-warning) 16%, transparent);
+  color: color-mix(in srgb, var(--callout-warning) 80%, var(--text-primary));
+}
+/* Keys in the copy: the settings kit's key caps, a size up. */
+.guideCard .keyCaps { vertical-align: 1px; margin: 0 1px; }
+.guideCard .keyCap {
+  font-size: calc(12px * var(--ui-font-scale, 1));
+  line-height: 18px;
+  font-weight: 600;
+  color: var(--text-primary);
+  background: var(--bg-raised);
+  border-color: var(--border-light);
+}
 
 /* Narrow screens: the card becomes a bottom sheet; the spotlight stays. */
 @media (max-width: 640px) {

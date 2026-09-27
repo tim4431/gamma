@@ -9728,7 +9728,7 @@ function LibraryApp({ publicPage = null, initialServerConfig = null }) {
         currentPageId={focusedBlockId}
         onOpen={openPage}
       />
-      <GuideOverlay guide={guide} />
+      <GuideOverlay guide={guide} keybindings={keybindings} />
       <SettingsDialog
         activePane={settingsOpen}
         profileSync={profileSync}

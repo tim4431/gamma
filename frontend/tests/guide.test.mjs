@@ -9,6 +9,7 @@ import { ANCHORS } from "../src/guide/anchors.js";
 import { EVENTS, eventMatches } from "../src/guide/events.js";
 import { TOURS } from "../src/guide/tours/index.js";
 import { canOffer, createGuideProgress, guideProgressKey, guideStorage, retiresOffer } from "../src/guide/triggers.js";
+import { keyNames, keyText, resolveKey } from "../src/guide/keys.js";
 
 function walk(dir, out = []) {
   for (const name of readdirSync(dir)) {
@@ -160,4 +161,23 @@ test("a demo server keeps guide progress in sessionStorage, anyone else in local
 test("hints are single cards kept out of the Tours menu", () => {
   const hints = Object.values(TOURS).filter((t) => t.hint).map((t) => t.id);
   assert.deepEqual(hints, ["math-keys", "block-refs", "quick-open", "folders", "install"]);
+});
+
+// Keys in guide copy: `{key:<command id>}` shows the account's chord for a
+// catalog command, `{key:<chord>}` a fixed key (guide/keys.js).
+test("every {key:…} in guide copy names a catalog command or a key", () => {
+  for (const tour of Object.values(TOURS)) {
+    for (const name of keyNames(JSON.stringify(tour))) {
+      assert.ok(resolveKey(name, {}), `${tour.id}: {key:${name}} is neither a catalog command nor a key`);
+    }
+  }
+});
+
+test("a {key:…} follows the account's keybindings", () => {
+  assert.deepEqual(resolveKey("app.quickOpen", {}), { chord: "Mod-p" });
+  assert.deepEqual(resolveKey("app.quickOpen", { "app.quickOpen": "Mod-Shift-o" }), { chord: "Mod-Shift-o" }, "a rebound command shows its new chord");
+  assert.match(resolveKey("app.quickOpen", { "app.quickOpen": null }).text, /^“.+”$/, "an unbound command falls back to its palette name");
+  assert.deepEqual(resolveKey("Tab", {}), { chord: "Tab" });
+  assert.equal(resolveKey("app.noSuchCommand", {}), null);
+  assert.equal(keyText("Press {key:app.quickOpen} or {key:Tab}", { "app.quickOpen": "Mod-Shift-o" }), "Press Ctrl+Shift+O or Tab");
 });

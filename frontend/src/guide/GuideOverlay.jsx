@@ -10,6 +10,8 @@
 // docs/dev/onboarding.md.
 import { useEffect, useLayoutEffect, useRef, useState } from "react";
 import { anchorElement } from "./anchors.js";
+import { keyText, resolveKey } from "./keys.js";
+import { KeyCaps } from "../shared/ui/KeyCaps.jsx";
 import "./guide.css";
 import { t, tn } from "../shared/i18n/i18n.js";
 
@@ -19,20 +21,26 @@ const MARGIN = 12;      // card distance from the viewport edge
 const CARD_W = 300;
 const WAIT_MS = 3000;   // how long a missing anchor may take to mount
 
-// **bold**, *italic*, `code`, blank-line paragraphs — enough for tour copy
-// without pulling in the block markdown renderer.
-function renderBody(text) {
-  return String(text || "").split(/\n\s*\n/).map((para, i) => (
-    <p key={i}>
-      {para.split(/(\*\*[^*]+\*\*|\*[^*]+\*|`[^`]+`)/g).map((part, j) => {
-        if (/^\*\*[^*]+\*\*$/.test(part)) return <strong key={j}>{part.slice(2, -2)}</strong>;
-        if (/^\*[^*]+\*$/.test(part)) return <em key={j}>{part.slice(1, -1)}</em>;
-        if (/^`[^`]+`$/.test(part)) return <code key={j}>{part.slice(1, -1)}</code>;
-        return part;
-      })}
-    </p>
-  ));
+// **bold**, *italic*, `code`, `{key:…}` key caps (guide/keys.js) and
+// blank-line paragraphs — enough for tour copy without pulling in the block
+// markdown renderer. Titles use the inline part, bodies the paragraphs.
+const INLINE = /(\*\*[^*]+\*\*|\*[^*]+\*|`[^`]+`|\{key:[^{}\s]+\})/g;
+function renderInline(text, bindings) {
+  return String(text || "").split(INLINE).map((part, j) => {
+    if (/^\*\*[^*]+\*\*$/.test(part)) return <strong key={j}>{part.slice(2, -2)}</strong>;
+    if (/^\*[^*]+\*$/.test(part)) return <em key={j}>{part.slice(1, -1)}</em>;
+    if (/^`[^`]+`$/.test(part)) return <code key={j}>{part.slice(1, -1)}</code>;
+    const name = /^\{key:([^{}\s]+)\}$/.exec(part)?.[1];
+    const key = name ? resolveKey(name, bindings) : null;
+    if (key) return key.chord ? <KeyCaps key={j} chord={key.chord} /> : key.text;
+    return part;
+  });
 }
+function renderBody(text, bindings) {
+  return String(text || "").split(/\n\s*\n/).map((para, i) => <p key={i}>{renderInline(para, bindings)}</p>);
+}
+// The copy as one plain line, for an aria-label.
+const plainText = (text, bindings) => keyText(text, bindings).replace(/\*\*|\*|`/g, "");
 
 // Where the card goes relative to the spotlight: the step's preferred side
 // when it fits, else below, above, right, left; clamped to the viewport.
@@ -65,7 +73,9 @@ function placeCard(rect, cardH, vw, vh, prefer) {
   return { top, left, side };
 }
 
-export default function GuideOverlay({ guide }) {
+// keybindings: the account's Settings → Keyboard overrides, so a `{key:…}`
+// in the copy shows the chord that actually fires.
+export default function GuideOverlay({ guide, keybindings }) {
   const { running, offer, index, count, done, live, back } = guide;
   const inviting = !running && !!offer;
   const visible = running || inviting;
@@ -158,7 +168,7 @@ export default function GuideOverlay({ guide }) {
   const keepFocus = (e) => { e.preventDefault(); e.stopPropagation(); };
 
   return (
-    <div className={`guideRoot ${inviting ? "guideInvitation" : ""} ${done ? "done" : ""} ${busy ? "busy" : ""}`} data-guide-overlay={inviting ? undefined : step.id} data-guide-offer={inviting ? offer.id : undefined} data-guide-busy={busy ? "1" : undefined}>
+    <div className={`guideRoot ${inviting ? "guideInvitation" : ""} ${inviting && offer.hint ? "guideHint" : ""} ${done ? "done" : ""} ${busy ? "busy" : ""}`} data-guide-overlay={inviting ? undefined : step.id} data-guide-offer={inviting ? offer.id : undefined} data-guide-busy={busy ? "1" : undefined}>
       {!inviting ? <svg className="guideDim" width={vw} height={vh} viewBox={`0 0 ${vw} ${vh}`} aria-hidden="true">
         <path
           d={`M0,0 H${vw} V${vh} H0 Z ${hole}`}
@@ -190,19 +200,19 @@ export default function GuideOverlay({ guide }) {
           onPointerDown={(e) => e.stopPropagation()}
           role="dialog"
           aria-live="polite"
-          aria-label={t(step.title)}
+          aria-label={plainText(t(step.title), keybindings)}
         >
           <div className="guideHead">
             <span className="guideStep">
-              {inviting ? (offer.hint ? t("Tip") : tn("Quick tour · {n} step", "Quick tour · {n} steps", offer.count)) : `${index + 1} / ${count}`}
+              {inviting ? (offer.hint ? <span className="guideChip tip">{t("Tip")}</span> : tn("Quick tour · {n} step", "Quick tour · {n} steps", offer.count)) : `${index + 1} / ${count}`}
               {!inviting && done ? <span className="guideDone">{t("✓ Done")}</span> : null}
               {busy ? <span className="guideBusy">{t("watch")}</span> : null}
               {live?.failed ? <span className="guideFailed">{t("couldn't finish")}</span> : null}
             </span>
             <button className="uiClose uiCloseSm guideClose" onClick={dismiss} title={inviting ? t("Dismiss guide (Esc)") : t("Leave the tour (Esc)")} aria-label={inviting ? t("Dismiss guide") : t("Leave the tour")}>×</button>
           </div>
-          <div className="guideTitle">{t(step.title)}</div>
-          {t(step.body) ? <div className="guideBody">{renderBody(t(step.body))}</div> : null}
+          <div className="guideTitle">{renderInline(t(step.title), keybindings)}</div>
+          {t(step.body) ? <div className="guideBody">{renderBody(t(step.body), keybindings)}</div> : null}
           <div className="guideFoot">
             {!inviting ? <span className="guideDots" aria-hidden="true">
               {Array.from({ length: count }, (_, i) => <i key={i} className={i === index ? "on" : i < index ? "done" : ""} />)}

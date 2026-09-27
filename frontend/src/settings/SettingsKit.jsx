@@ -8,7 +8,8 @@
 import React from "react";
 import { API, apiJson, copyText, fmtBytes } from "../shared/lib/utils";
 import { AlertCircleIcon, CheckIcon, CloudCheckIcon, EyeIcon, EyeOffIcon, MonitorIcon, RefreshIcon, ShieldIcon, UndoIcon, UserIcon } from "../shared/ui/Icons";
-import { bindable, chordFromEvent, chordParts } from "../shared/lib/hotkeys.js";
+import { bindable, chordFromEvent } from "../shared/lib/hotkeys.js";
+import { KeyCaps } from "../shared/ui/KeyCaps.jsx";
 import { BROWSER_TAG, profileSyncState } from "./syncState.js";
 import { t } from "../shared/i18n/i18n.js";
 import { fmtTokens } from "../chat/tokenUsage";
@@ -647,10 +648,9 @@ export function AllowanceMeter({ allowance }) {
       : t("Server AI: {used} of {limit} tokens in the last 24 h", { used: fmtTokens(used), limit: fmtTokens(limit) })} />;
 }
 
-// The keys of a chord as <kbd> caps: "Ctrl" "Shift" "K", or ⇧⌘K on a Mac.
-export function KeyCaps({ chord }) {
-  return <span className="keyCaps">{chordParts(chord).map((part, i) => <kbd key={i} className="keyCap">{part}</kbd>)}</span>;
-}
+// The keys of a chord as <kbd> caps (shared/ui/KeyCaps.jsx, which the
+// guide's copy draws too).
+export { KeyCaps };
 
 // One shortcut, VSCode-style: the chord as key caps; click, then press the
 // new chord (recorded with the same reader the dispatcher matches with).
