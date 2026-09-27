@@ -5,7 +5,7 @@ import assert from "node:assert/strict";
 import { readFile } from "node:fs/promises";
 import { test } from "node:test";
 import {
-  addFolderTag, cleanFolderPath, cleanFolderSegment, defaultPageTitle, findPageForUrl,
+  addFolderTag, cleanFolderPath, cleanFolderSegment, defaultPageTitle, findPageForUrl, isFreshLibrary,
   formatFullDate, formatRelativeTime, formatShortDate, normalizeLinkInput, pageAttachment, parseFolderTags,
 } from "../src/library/libraryUtils.js";
 
@@ -60,6 +60,13 @@ test("findPageForUrl resolves a DOI or arXiv id against the library", () => {
   assert.equal(findPageForUrl("arXiv:2202.02222", pages), "p3");
   assert.equal(findPageForUrl("https://example.com/paper.pdf", pages), null);
   assert.equal(findPageForUrl("", pages), null);
+});
+
+test("isFreshLibrary: no pages, or only seeded ones", () => {
+  assert.equal(isFreshLibrary([]), true);
+  assert.equal(isFreshLibrary([{ id: "w", properties: { seeded: "welcome" } }]), true, "the Welcome page alone");
+  assert.equal(isFreshLibrary([{ id: "w", properties: { seeded: "welcome" } }, { id: "p", properties: {} }]), false);
+  assert.equal(isFreshLibrary([{ id: "p" }]), false, "a page without properties is the user's");
 });
 
 test("normalizeLinkInput turns identifiers into URLs", () => {

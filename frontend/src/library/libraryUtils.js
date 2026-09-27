@@ -133,6 +133,14 @@ export function friendlyApiError(error) {
     : message.slice(0, 120);
 }
 
+// A library with nothing of the user's in it yet: no pages, or only the ones
+// seeding put there (properties.seeded — the Welcome page every new account
+// starts with, gamma/seed.py). What "Start your library" and the first
+// tour's offer mean by a new library.
+export function isFreshLibrary(pages) {
+  return (pages || []).every((page) => page?.properties?.seeded);
+}
+
 export function findPageForUrl(url, pages) {
   const doiMatch = (url || "").match(/10\.\d{4,9}\/[^\s?#]+/);
   const doi = doiMatch ? decodeURIComponent(doiMatch[0]).replace(/[.,;)\]]+$/, "").toLowerCase() : "";

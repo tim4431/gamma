@@ -648,3 +648,102 @@
   .phoneUI .fileRow .fileRowKind { width: 52px; }
   .phoneUI .fileRow :is(.fileRowPin, .fileRowPinSlot) { grid-column: 4; }
 }
+
+/* "Start your library" (library/LibraryEmpty.jsx): a fresh library's panel
+   above its listing — a dashed drop-zone card, the mark and a headline, four
+   action cards (two by two, one column where the listing is narrow) and a
+   footer with the tour and the drop tip. */
+.libEmpty {
+  container-type: inline-size;
+  margin: 4px 4px 10px;
+  padding: 20px 22px 16px;
+  border: 1px dashed var(--border-light);
+  border-radius: var(--radius-surface);
+  background: var(--bg-surface);
+}
+.libEmptyHead {
+  display: flex;
+  align-items: center;
+  gap: 14px;
+  margin-bottom: 16px;
+}
+.libEmptyMark {
+  flex: 0 0 auto;
+  width: 40px;
+  height: 40px;
+  border-radius: 9px;
+}
+.libEmptyTitle {
+  margin: 0;
+  font-size: calc(17px * var(--ui-font-scale, 1));
+  font-weight: 600;
+  color: var(--text-primary);
+}
+.libEmptyLead {
+  margin: 2px 0 0;
+  font-size: calc(13px * var(--ui-font-scale, 1));
+  color: var(--text-muted);
+}
+.libEmptyCards {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 10px;
+}
+@container (max-width: 560px) {
+  .libEmptyCards { grid-template-columns: minmax(0, 1fr); }
+}
+.libEmptyCard {
+  display: flex;
+  align-items: flex-start;
+  gap: 12px;
+  padding: 14px;
+  border: 1px solid var(--border-subtle);
+  border-radius: var(--radius-surface);
+  background: var(--bg-card);
+  color: var(--text-primary);
+  font: inherit;
+  text-align: left;
+  cursor: pointer;
+  transition: background 120ms ease, border-color 120ms ease;
+}
+.libEmptyCard:hover { background: var(--bg-block); border-color: var(--border-hover); }
+.libEmptyCard.primary { border-color: var(--accent-dark); }
+.libEmptyCard:focus-visible { outline: 2px solid var(--accent); outline-offset: 1px; }
+.libEmptyCardIcon {
+  flex: 0 0 auto;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  width: 34px;
+  height: 34px;
+  border-radius: 8px;
+  background: var(--accent-bg-light);
+  color: var(--accent);
+}
+.libEmptyCardBody { display: flex; flex-direction: column; gap: 3px; min-width: 0; }
+.libEmptyCardTitle { font-size: calc(14px * var(--ui-font-scale, 1)); font-weight: 600; }
+.libEmptyCardText {
+  font-size: calc(12.5px * var(--ui-font-scale, 1));
+  line-height: 1.45;
+  color: var(--text-muted);
+}
+.libEmptyFoot {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  flex-wrap: wrap;
+  gap: 6px 16px;
+  margin-top: 14px;
+  font-size: calc(12.5px * var(--ui-font-scale, 1));
+}
+.libEmptyTour {
+  padding: 0;
+  border: 0;
+  background: none;
+  color: var(--text-secondary);
+  font: inherit;
+  cursor: pointer;
+}
+.libEmptyTour strong { color: var(--accent); font-weight: 600; }
+.libEmptyTour:hover strong { text-decoration: underline; }
+.libEmptyTip { color: var(--text-muted); }

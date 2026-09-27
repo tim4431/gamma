@@ -1,5 +1,6 @@
 // Signing in: an unavailable explicit workspace, the login page, guest login
-// (a fresh throwaway account each time, docs/dev/guests.md) and demo mode.
+// (a fresh throwaway account each time, docs/dev/guests.md), demo mode, and
+// what a new account's library offers ("Start your library").
 import { Account } from "../harness.mjs";
 
 export async function authScenarios({ server, browser, alice, step, until, assert, assertEq, assertNoProblems, openPage }) {
@@ -122,5 +123,42 @@ export async function authScenarios({ server, browser, alice, step, until, asser
       await ctx.close();
       await admin.api("/api/admin/settings", { method: "PUT", body: { demo_mode: false } });
     }
+  });
+
+  await step("library: a new account's library offers Start your library above the Welcome page, gone with the first page", async () => {
+    server.manage("create-user", "fresh-user", "fresh-user-pw");
+    const fresh = await new Account(server, "fresh-user", "fresh-user-pw").login();
+    const ctx = await fresh.context(browser);
+    try {
+      const page = await openPage(ctx, `${server.base}/?ws=${fresh.ws}`);
+      const panel = page.locator('[data-guide="home.empty"]');
+      await panel.waitFor({ timeout: 15000 });
+      await page.locator(".fileRow", { hasText: "Welcome" }).waitFor(); // the seeded page stays listed below
+      assertEq(await page.locator(".folderNewBtn").count(), 2, "New page and New folder stay");
+      assertEq(await page.locator(".homeListBar ~ .empty").count(), 0, "the panel replaces the empty line");
+      // A paper from a link: the Add popover with its URL field focused.
+      await panel.getByRole("button", { name: /Open a paper from a link/ }).click();
+      await page.waitForSelector('[data-guide="add.urlInput"]:focus');
+      await page.locator('[data-guide="header.add"]').click();
+      await until(() => page.locator('[data-guide="add.urlInput"]').count().then((n) => n === 0));
+      // The Import dialog.
+      await panel.getByRole("button", { name: /Import a library/ }).click();
+      const dialog = page.getByRole("dialog", { name: "Import" });
+      await dialog.waitFor();
+      await page.keyboard.press("Escape");
+      await dialog.waitFor({ state: "detached" });
+      // The first tour.
+      await panel.getByRole("button", { name: /Take the 2-minute tour/ }).click();
+      await page.locator('[data-guide-overlay="welcome"] .guideCard').waitFor();
+      await page.keyboard.press("Escape");
+      await page.locator("[data-guide-overlay]").waitFor({ state: "detached" });
+      // A note page of the user's own: the library is no longer new.
+      await panel.getByRole("button", { name: /Write a note page/ }).click();
+      await until(() => /[?&](block|page)=/.test(page.url()), { what: "the new page opens" });
+      await page.locator('[data-guide="header.home"]').click();
+      await page.locator(".fileRow", { hasText: "Welcome" }).waitFor();
+      assertEq(await panel.count(), 0, "gone once the library holds a page of the user's own");
+      assertNoProblems(page);
+    } finally { await ctx.close(); }
   });
 }

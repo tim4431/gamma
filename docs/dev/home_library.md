@@ -154,6 +154,21 @@ second line under it (the Phone block at the end of `library.css`).
 Search chips (Tab autosuggest) cover both kinds: label chips match exactly,
 folder chips match by prefix.
 
+**Start your library.** A library with nothing of the user's in it yet —
+no root pages, or only seeded ones (`properties.seeded`, the Welcome page
+every new account starts with; `isFreshLibrary` in `library/libraryUtils.js`,
+the same test the first tour's offer uses) — shows `library/LibraryEmpty.jsx`
+at the root instead of the empty line, in both views, above the New page /
+New folder items and the Welcome page: a dashed card with the mark, four
+action cards (a paper from a link — the Add popover with its URL field
+focused; uploads — the Add popover's file types; a blank note page —
+`createPage`; the Import dialog), the first tour when it can start, and the
+drop tip. Only once the listing has loaded, only where the library can be
+organized (`lib.organize`: not for a workspace viewer or a share visitor),
+never in a folder or label view (they keep their own messages). It goes with
+the first page of the user's own. Anchor `home.empty` (view `fresh`, so the
+browser suite's presence check skips it).
+
 ## The card
 
 One shared card (`PageCard` in `library/FileBrowser.jsx`) renders every home card

@@ -32,6 +32,7 @@ import ChatDock from "../chat/ChatDock";
 import { createChatSession } from "../chat/chatSession";
 import SearchPanel from "../search/SearchPanel";
 import QuickOpen from "../library/QuickOpen";
+import LibraryEmpty from "../library/LibraryEmpty";
 import { ContextMenu, MenuDivider, MenuItem, MenuLabel, MenuScope, MenuSelect, SubMenuItem, menuGroups } from "../shared/ui/Menus";
 import { useWheelPan } from "../shared/ui/wheelPan";
 import {
@@ -110,6 +111,7 @@ import {
   formatFullDate,
   formatRelativeTime,
   formatShortDate,
+  isFreshLibrary,
   friendlyApiError,
   pageAttachment,
   attachmentSource,
@@ -6630,7 +6632,7 @@ function LibraryApp({ publicPage = null, initialServerConfig = null }) {
       unfiledLibrary,
       // nothing in the library yet but the seeded Welcome page: the first
       // tour is offered on it
-      emptyLibrary: homeLoaded && homeBlocks.every((b) => b.properties?.seeded),
+      emptyLibrary: homeLoaded && isFreshLibrary(homeBlocks),
       installable: HOME_SCREEN_INSTALLABLE,
       // a demo server: progress per visit, the first-run tour offered on arrival
       demo: !!serverConfig?.demo,
@@ -6935,6 +6937,19 @@ function LibraryApp({ publicPage = null, initialServerConfig = null }) {
   // Notion-style: creating a page needs no file. Not inside a label view
   // (pages are created plain, then labelled) nor when only folders show.
   const newPageAllowed = lib.organize && !categoryFilter && homeKinds !== "folders" && homeKinds !== "labels";
+  // A library with nothing of the user's in it yet (only the seeded Welcome
+  // page, or nothing) shows "Start your library" at its root instead of the
+  // empty line; a folder or label view keeps its own message.
+  const libraryStart = homeLoaded && lib.organize && !folderFilter && !categoryFilter
+    && isFreshLibrary(homeBlocks) ? (
+    <LibraryEmpty
+      onOpenLink={() => setOpenPopover("add")}
+      onUpload={uploadFiles}
+      onNewPage={() => createPage()}
+      onImport={() => { setOpenPopover(null); setImportOpen(true); }}
+      onTour={guide.startable().some((tour) => tour.id === "first-run") ? () => guide.start("first-run") : null}
+    />
+  ) : null;
   // What an empty listing says — the view it is empty for, not the library.
   const homeEmptyText = categoryFilter === NO_LABEL
     ? t("Every page here carries a label.")
@@ -8111,9 +8126,9 @@ function LibraryApp({ publicPage = null, initialServerConfig = null }) {
             {homeMode && homeMatchCount === 0 ? searchElsewhere(true) : null}
             {homeMode && homeView === "grid" ? (
                 <>
-                  {homeItems.length === 0 && !newFolderOpen ? (
+                  {libraryStart || (homeItems.length === 0 && !newFolderOpen ? (
                     <div className="empty">{homeEmptyText}</div>
-                  ) : null}
+                  ) : null)}
                   <div className="fileGrid" onClick={(e) => { if (e.target.classList.contains("fileGrid")) clearSelection(); }}>
                     {newPageAllowed ? (
                       <PageCard
@@ -8256,9 +8271,9 @@ function LibraryApp({ publicPage = null, initialServerConfig = null }) {
                 </>
             ) : homeMode ? (
                 <>
-                  {homeItems.length === 0 && !newFolderOpen ? (
+                  {libraryStart || (homeItems.length === 0 && !newFolderOpen ? (
                     <div className="empty">{homeEmptyText}</div>
-                  ) : null}
+                  ) : null)}
                   <div className="fileList" onClick={(e) => { if (e.target.classList.contains("fileList")) clearSelection(); }}>
                     {newPageAllowed ? (
                       <button className="folderRow folderNewBtn" onClick={() => createPage()} title={t("Start a blank page here")}>

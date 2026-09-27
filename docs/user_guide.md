@@ -101,7 +101,7 @@ Every tool call shows as a chip you can expand to see exactly what it did, with 
 
 ## Library and organization
 
-The home page is a recents feed of all your pages, with a **Recently viewed** strip on top (its cards show a snapshot of where you left off — click × to remove one).
+The home page is a recents feed of all your pages, with a **Recently viewed** strip on top (its cards show a snapshot of where you left off — click × to remove one). Until the library holds a page of your own, **Start your library** sits on top instead: open a paper from a link, upload PDFs, write a note page, import a library (Zotero, Obsidian, Logseq, Notion, Markdown), or take the first tour.
 
 - **Folders** are paths: drop a paper into `qc/neutral-atom` and the hierarchy builds itself — a **qc** folder with a **neutral-atom** subfolder; add `qc/superconducting` and the sibling appears. A paper can live in several folders at once (dragging onto a folder *adds* it there). Drop a paper on the **back row** inside a folder to take it out; drag a folder onto another folder to move its whole subtree.
 - **Labels** are flat tags for cross-cutting facets (an author, a keyword); a paper can carry several, and each is one click to filter by. Edit both from the label row under a paper's title: type `name/` for a folder, anything else for a label.

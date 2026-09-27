@@ -55,6 +55,7 @@ export const ANCHORS = {
   "page.labelInput": { view: "page", open: ["page.labels"], description: "Add a label to this paper" },
   "page.presence": { view: "presence", description: "Who else is on this page" },
   "home.listing": { view: "home", description: "The library listing's bar: sort, kinds and view" },
+  "home.empty": { view: "fresh", description: "Start your library: a library with no pages of the user's own yet" },
   "chat.composer": { view: "chat", description: "The message composer and Send button" },
   "chat.input": { view: "chat", description: "Chat message text box" },
   "chat.setup": { view: "chat", description: "The setup card the chat shows while no AI is connected" },

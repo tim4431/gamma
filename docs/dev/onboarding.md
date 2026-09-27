@@ -539,7 +539,10 @@ scope: you learn the app once, not once per workspace.
   Triggered tours and hints). The chat with no AI provider gets no hint: its
   empty state is the setup card with a tile per service. Empty states in
   the library and the notes column stay where they are; hints point at
-  controls, empty states explain areas.
+  controls, empty states explain areas. A library with no pages of the
+  user's own shows "Start your library" (`home.empty`,
+  [home_library.md](home_library.md)), whose tour link starts the first
+  tour.
 
 ## Files
 
