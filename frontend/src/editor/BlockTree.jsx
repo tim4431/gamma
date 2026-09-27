@@ -1114,24 +1114,24 @@ function BlockRow({
       return [
         { name: "mention", glyph: "@", label: T("Mention"), hint: T("inline chip"), make: () => `[[${blockId}]]` },
         { name: "synced", glyph: "⧉", label: T("Synced block"), hint: T("live embed"), make: () => `![[${blockId}]]` },
-        { name: "url", glyph: "🔗", label: "URL", hint: T("keep the link") },
+        { name: "url", glyph: "↗", label: "URL", hint: T("keep the link") },
       ];
     }
     if (link?.kind === "citation") {
       return [
         { name: "gamma", glyph: "❝", label: T("Citation"), hint: t("passage on p. {page}", { page: link.page }) },
-        { name: "url", glyph: "🔗", label: "URL", hint: T("keep the link") },
+        { name: "url", glyph: "↗", label: "URL", hint: T("keep the link") },
       ];
     }
     if (link?.kind === "page") {
       return [
-        { name: "gamma", glyph: "📄", label: T("Page link"), hint: T("card with the title") },
-        { name: "url", glyph: "🔗", label: "URL", hint: T("keep the link") },
+        { name: "gamma", glyph: "▤", label: T("Page link"), hint: T("card with the title") },
+        { name: "url", glyph: "↗", label: "URL", hint: T("keep the link") },
       ];
     }
     return [
-      { name: "url", glyph: "🔗", label: "URL", hint: T("link chip") },
-      { name: "titled", glyph: "🔖", label: T("Titled link"), hint: T("fetch the page title") },
+      { name: "url", glyph: "↗", label: "URL", hint: T("link chip") },
+      { name: "titled", glyph: "Aa", label: T("Titled link"), hint: T("fetch the page title") },
     ];
   }
 
@@ -1724,7 +1724,8 @@ function BlockRow({
         </>
       ) : null}
       {!readOnly && block.editMode && slashMenu ? (
-        <SlashMenuPopup items={slashMenu.items} selected={slashIdx} anchor={slashMenu.anchor} onPick={runSlashCommand} />
+        <SlashMenuPopup items={slashMenu.items} selected={slashIdx} anchor={slashMenu.anchor} onPick={runSlashCommand}
+          grouped={!slashMenu.query} footer />
       ) : null}
       {!readOnly && block.editMode && pasteMenu ? (
         <SlashMenuPopup title={t("Paste as")} items={pasteMenu.items} selected={pasteIdx} anchor={pasteMenu.anchor} onPick={applyPasteAs} />

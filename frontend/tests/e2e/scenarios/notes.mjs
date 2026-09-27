@@ -334,7 +334,16 @@ export async function noteScenarios({ server, browser, alice, step, until, sleep
     await editRow(page, "after gap");
     await page.keyboard.press("Control+End");
     await page.keyboard.press("Enter");
-    await page.keyboard.type("/red");
+    // The bare "/" list comes in groups, the footer hints at the colours;
+    // a typed query is one ranked list.
+    await page.keyboard.type("/");
+    const groups = page.locator(".slashMenu .slashMenuTitle");
+    await groups.first().waitFor();
+    assertEq(JSON.stringify(await groups.allTextContents()), JSON.stringify(["Text", "Math", "Insert", "Link", "Style"]), "the / menu's groups");
+    assertEq(await page.locator(".slashMenu .slashMenuItem.selected .slashMenuLabel").innerText(), "Heading 1", "Text comes first");
+    assert((await page.locator(".slashMenuFooter").innerText()).includes("red"), "the footer names the colours");
+    await page.keyboard.type("red");
+    assertEq(await groups.count(), 0, "a typed query shows no groups");
     await page.getByRole("button", { name: /Red text/ }).click();
     // The command lands through a React round trip that sets the content
     // first and the caret a beat later; type once the caret sits inside the

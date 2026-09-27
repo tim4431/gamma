@@ -130,9 +130,21 @@ export const SLASH_COMMANDS = [
   }))),
 ];
 
+// The bare "/" list comes in these groups, in this order; a typed query is
+// one ranked list instead (below). The colours belong to Style but stay
+// hidden until typed.
+export const SLASH_GROUPS = [
+  { label: T("Text"), names: ["h1", "h2", "h3", "todo", "bullet", "number", "quote", "callout", "divider"] },
+  { label: T("Math"), names: ["math", "equation"] },
+  { label: T("Insert"), names: ["table", "code", "mermaid", "image", "date"] },
+  { label: T("Link"), names: ["link", "embed"] },
+  { label: T("Style"), names: ["highlight"] },
+];
+const GROUP_OF = new Map(SLASH_GROUPS.flatMap((g) => g.names.map((n) => [n, g])));
+
 export function filterSlashCommands(query) {
   const q = (query || "").toLowerCase();
-  if (!q) return SLASH_COMMANDS.filter((c) => !c.hidden);
+  if (!q) return SLASH_GROUPS.flatMap((g) => g.names.map((n) => SLASH_COMMANDS.find((c) => c.name === n)));
   const scored = [];
   for (const c of SLASH_COMMANDS) {
     const names = [c.name, ...(c.keywords || []), ...c.label.toLowerCase().split(/\s+/), ...t(c.label).toLowerCase().split(/\s+/)];
@@ -146,8 +158,10 @@ export function filterSlashCommands(query) {
 
 // Caret-anchored command popup. Also serves the Notion-style "Paste as"
 // chooser after a URL paste (same look, plus a quiet `title` line) —
-// blockTree owns both triggers and passes the item lists.
-export function SlashMenuPopup({ items, selected, anchor, onPick, title }) {
+// blockTree owns both triggers and passes the item lists. `grouped` puts
+// the SLASH_GROUPS titles over the bare "/" list; `footer` is the "/"
+// menu's key hint line.
+export function SlashMenuPopup({ items, selected, anchor, onPick, title, grouped, footer }) {
   const [listRef, style] = useCaretAnchored(anchor, false, [items]);
   useEffect(() => {
     listRef.current?.querySelector(".slashMenuItem.selected")
@@ -156,19 +170,27 @@ export function SlashMenuPopup({ items, selected, anchor, onPick, title }) {
   return (
     <div ref={listRef} className="slashMenu" style={style}>
       {title ? <div className="slashMenuTitle">{title}</div> : null}
-      {items.map((c, i) => (
-        <button
-          key={c.name}
-          type="button"
-          className={`slashMenuItem${i === selected ? " selected" : ""}`}
-          onMouseDown={(e) => e.preventDefault()}
-          onClick={() => onPick(c)}
-        >
-          <span className="slashMenuGlyph" style={c.glyphStyle}>{c.glyph}</span>
-          <span className="slashMenuLabel">{t(c.label)}</span>
-          {c.hint ? <span className="slashMenuHint">{t(c.hint)}</span> : null}
-        </button>
-      ))}
+      {items.map((c, i) => {
+        const group = grouped ? GROUP_OF.get(c.name) : null;
+        return (
+          <React.Fragment key={c.name}>
+            {group && group !== GROUP_OF.get(items[i - 1]?.name) ? <div className="slashMenuTitle">{t(group.label)}</div> : null}
+            <button
+              type="button"
+              className={`slashMenuItem${i === selected ? " selected" : ""}`}
+              onMouseDown={(e) => e.preventDefault()}
+              onClick={() => onPick(c)}
+            >
+              <span className="slashMenuGlyph" style={c.glyphStyle}>{c.glyph}</span>
+              <span className="slashMenuLabel">{t(c.label)}</span>
+              {c.hint ? <span className="slashMenuHint">{t(c.hint)}</span> : null}
+            </button>
+          </React.Fragment>
+        );
+      })}
+      {footer ? (
+        <div className="slashMenuFooter">{t("↑↓ choose · Enter insert · type “red” for colors")}</div>
+      ) : null}
     </div>
   );
 }
