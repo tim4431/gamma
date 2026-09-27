@@ -44,7 +44,7 @@ export default {
     title: T("That's your first paper"),
     lead: T("Everything the tour made is real and yours to keep:"),
     made: [
-      { icon: "page", event: "page.opened", text: T("{title} is in your library") },
+      { icon: "page", event: "page.opened", text: T("the paper “{title}”, in your library") },
       { icon: "highlight", event: "highlight.created", text: T("{n} highlight on it"), plural: T("{n} highlights on it") },
       { icon: "note", step: "notes", text: T("a note under your highlights") },
       { icon: "label", step: "label", text: T("the {label} label, to find it again"), args: { label: "llm" } },
