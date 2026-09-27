@@ -127,7 +127,7 @@ function MenuItem({ icon: Icon, children, trailing, keys, danger = false, classN
   );
 }
 
-// Uppercase section heading inside a menu.
+// A section heading inside a menu (the shared sentence-case label).
 function MenuLabel({ children }) {
   return <div className="ctxMenuLabel">{children}</div>;
 }

@@ -1,19 +1,9 @@
 // The chat's context chips preview a note's source as plain words with the
 // math apart (chat/chipText.js): what the chip shows instead of raw markdown.
+// The words themselves are plainSnippet's (tests/searchSnippets.test.mjs).
 import assert from "node:assert/strict";
 import { test } from "node:test";
-import { chipSegments, stripMarkdown } from "../src/chat/chipText.js";
-
-test("markdown marks go, the words stay", () => {
-  assert.equal(stripMarkdown("**bold** and *italic*, ==marked== ~~gone~~ `code`"), "bold and italic, marked gone code");
-  assert.equal(stripMarkdown("## Heading"), "Heading");
-  assert.equal(stripMarkdown("> [!note] A callout"), "A callout");
-  assert.equal(stripMarkdown("- [x] done item"), "done item");
-  assert.equal(stripMarkdown("see [the paper](https://example.org) and [[Other page]]"), "see the paper and Other page");
-  assert.equal(stripMarkdown("![a figure|300](/api/uploads/x.png) caption"), "a figure caption");
-  assert.equal(stripMarkdown('<span style="color:red">red words</span>'), "red words");
-  assert.equal(stripMarkdown("snake_case_name stays"), "snake_case_name stays");
-});
+import { chipSegments } from "../src/chat/chipText.js";
 
 test("math becomes its own segment, display math included", () => {
   assert.deepEqual(chipSegments("Scaling by $\\sqrt{d_k}$ keeps the **variance** near 1"), [

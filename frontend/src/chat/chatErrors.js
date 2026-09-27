@@ -1,9 +1,11 @@
 // What a failed chat request says, per failure kind. The server names the
 // kind (ai_client.failure_kind: not_configured, allowance, auth, rate,
 // overloaded, unreachable, bad_endpoint, too_long, other) on the HTTP error
-// and on the stream's error line; "network" is the browser losing Gamma
-// itself. The chat's error card and the login check's warning strip both
-// read their headline here, so the two never word one failure differently.
+// and on the stream's error line; a connection probe adds "no_model" (an
+// entry with no model picked); "network" is the browser losing Gamma
+// itself. The chat's error card, the login check's warning strip and the
+// Test result on a Settings connection row all read their headline here,
+// so no two of them word one failure differently.
 //
 // `fix` names the card's main action (ChatDock turns it into a button):
 // connect / own_key open Settings → Connections, key / signin / connection
@@ -12,7 +14,7 @@
 import { t } from "../shared/i18n/i18n.js";
 
 export const FAILURE_KINDS = ["not_configured", "allowance", "auth", "rate", "overloaded",
-  "unreachable", "bad_endpoint", "too_long", "network", "other"];
+  "unreachable", "bad_endpoint", "too_long", "no_model", "network", "other"];
 
 export function failureCopy(kind, { provider = "", auth = "key" } = {}) {
   const name = provider || t("The AI service");
@@ -62,6 +64,12 @@ export function failureCopy(kind, { provider = "", auth = "key" } = {}) {
         text: t("Start a new chat, lower the context size in the chat settings, or switch to a model with a larger context window."),
         fix: "new_chat", switchModel: true,
       };
+    case "no_model":
+      return {
+        headline: t("No model picked for {provider}", { provider: name }),
+        text: t("The connection offers no model yet. Edit it and pick at least one."),
+        fix: "connection", switchModel: true,
+      };
     case "network":
       return { headline: t("Lost the connection to Gamma"), text: t("The browser lost its connection to the Gamma server. Check your network, then retry.") };
     default:
@@ -86,7 +94,6 @@ export function fixLabel(fix) {
 export function chatFailure(detail, info = {}) {
   const err = new Error(typeof detail === "string" ? detail : JSON.stringify(detail));
   err.kind = FAILURE_KINDS.includes(info.kind) ? info.kind : "other";
-  err.status = info.status || 0;
   err.provider = info.provider_name || "";
   err.providerId = info.provider_id || "";
   err.auth = info.provider_auth || "key";
@@ -95,12 +102,13 @@ export function chatFailure(detail, info = {}) {
 
 // The fields a failed reply saves (ChatDock's message), so a reload shows
 // the same card. Messages saved before these fields keep their old bubble.
+// The upstream status is not one of them: the detail already opens with it
+// ("upstream 529: …").
 export function failureFields(err) {
   if (err?.name === "TypeError") return { errorKind: "network", errorDetail: err.message };
   return {
     errorKind: err?.kind || "other",
     errorDetail: err?.message || "",
-    ...(err?.status ? { errorStatus: err.status } : {}),
     ...(err?.provider ? { errorProvider: err.provider } : {}),
     ...(err?.providerId ? { errorProviderId: err.providerId } : {}),
     ...(err?.auth === "oauth" ? { errorAuth: "oauth" } : {}),

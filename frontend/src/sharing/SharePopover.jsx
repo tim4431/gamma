@@ -320,7 +320,7 @@ function PublishSection({ state, busy, error, copied, onCopy, canEdit, onPublish
           <AlertCircleIcon size={14} />
           <span>{t("Unpublish? The cloud link stops working and the copy there is deleted; this page stays here.")}</span>
           <span className="mirrorConfirmBtns">
-            <button type="button" className="uiBtn sm danger" disabled={!!busy}
+            <button type="button" className="uiBtn sm primary danger" disabled={!!busy}
               onClick={async () => { await onUnpublish(); setConfirming(false); }}>{t("Unpublish")}</button>
             <button type="button" className="uiBtn sm" disabled={!!busy} onClick={() => setConfirming(false)}>{t("Cancel")}</button>
           </span>

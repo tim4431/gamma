@@ -92,9 +92,12 @@ export async function pdfScenarios({ server, browser, alice, makePdf, step, unti
     assertNoProblems(page);
   });
 
-  await step("pdf: clicking the overlay focuses its note row", async () => {
+  await step("pdf: clicking the overlay focuses its note row; the row's dot jumps back and the highlight pulses once", async () => {
     await page.click('[data-page="1"] [data-hl-id]');
     await until(async () => (await page.$(".blockRow.focused .blockQuote")) != null, { what: "focused highlight row" });
+    await page.click(".blockRow.focused .highlightDotBtn");
+    await page.waitForSelector('[data-page="1"] [data-hl-id].pdfHlFlash', { timeout: 3000 });
+    await page.waitForSelector('[data-page="1"] [data-hl-id].pdfHlFlash', { state: "detached", timeout: 5000 });
     assertNoProblems(page);
   });
 

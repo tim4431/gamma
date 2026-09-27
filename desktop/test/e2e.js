@@ -177,7 +177,7 @@ async function main() {
   const ids = {};
   const urls = {};
   const pids = {};
-  let pageId, sourceUrl;
+  let pageId, sourceUrl, alphaUploads;
   let backupZip;
 
   try {
@@ -248,9 +248,11 @@ async function main() {
       sourceUrl = r.sourceUrl;
       const dir = await hook(app, (s, id) => s.registry.get(id).dataDir, ids.alpha);
       const wsDir = fs.readdirSync(path.join(dir, 'workspaces'))[0];
-      const uploads = fs.readdirSync(path.join(dir, 'workspaces', wsDir, 'uploads'));
-      assert.equal(uploads.length, 1, 'one upload on disk');
-      return `${sourceUrl} → ${uploads[0]}`;
+      // A new account also starts with the seeded Welcome PDF (gamma/seed.py).
+      alphaUploads = fs.readdirSync(path.join(dir, 'workspaces', wsDir, 'uploads'));
+      const mine = alphaUploads.find((f) => sourceUrl.endsWith('/' + f));
+      assert(mine, 'the upload is on disk: ' + alphaUploads.join(', '));
+      return `${sourceUrl} → ${mine}`;
     });
 
     await step('page exports in every mode (frozen bundle: PyPDF2, ziamath fonts)', async () => {
@@ -345,7 +347,7 @@ async function main() {
       assert(titles.includes('E2E paper'), 'Alpha page now in Beta: ' + titles.join(' | '));
       const pdf = await content.evaluate((u) => fetch(u, { credentials: 'same-origin' }).then((r) => r.arrayBuffer()).then((b) => String.fromCharCode(...new Uint8Array(b).slice(0, 4))), sourceUrl);
       assert.equal(pdf, '%PDF', 'upload restored');
-      assert.equal(d.uploads_in_backup, 1, 'backup carried the upload: ' + r.body);
+      assert.equal(d.uploads_in_backup, alphaUploads.length, 'backup carried every upload: ' + r.body);
       return `restored ${d.restored.join(', ')}, uploads ${d.uploads_added}/${d.uploads_in_backup}`;
     });
 

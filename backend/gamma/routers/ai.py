@@ -189,14 +189,12 @@ def _failure(error: Exception, what: str = "AI call failed") -> str:
 
 
 def _failure_info(error: Exception, rt: dict | None = None, entry: dict | None = None) -> dict:
-    """What the chat shows a failure as, beside the raw ``detail`` string:
-    its ``kind`` (ai_client.failure_kind), the upstream ``status`` when there
-    was one, and the connection it went through (``provider_id``,
-    ``provider_name``, ``provider_auth`` = "key" | "oauth") so the error card
-    can name it and open its settings."""
+    """What the chat shows a failure as, beside the raw ``detail`` string
+    (which already names an upstream status, "upstream 529: …"): its
+    ``kind`` (ai_client.failure_kind) and the connection it went through
+    (``provider_id``, ``provider_name``, ``provider_auth`` = "key" |
+    "oauth") so the error card can name it and open its settings."""
     info = {"kind": failure_kind(error)}
-    if isinstance(error, UpstreamError):
-        info["status"] = error.status
     conf = (rt or {}).get("providers", {}).get((entry or {}).get("provider"))
     if conf:
         info.update(provider_id=entry["provider"], provider_name=conf.get("name") or "",
@@ -204,10 +202,12 @@ def _failure_info(error: Exception, rt: dict | None = None, entry: dict | None =
     return info
 
 
-# The arguments a {"step"} line repeats: the short ones a "now running"
-# label needs (never a note's content).
-_STEP_ARGS = ("page_id", "block_id", "query", "title", "folder", "label", "title_contains",
-              "source", "pdf_page", "mode")
+# The arguments a {"step"} line repeats: the short ones the chat's "now
+# running" label reads (chat/agentSteps.js runningLabel), never a note's
+# content — the page a call reads, views, renames or moves; read_block's
+# block (a page id names the page); the query or source; the PDF page; the
+# new title or folder; list_pages' label filter; edit_block's mode.
+_STEP_ARGS = ("page_id", "block_id", "query", "title", "folder", "label", "source", "pdf_page", "mode")
 
 
 def _step_event(name: str, call: dict) -> dict:
@@ -495,9 +495,9 @@ def _probe_entry(user: str, entry: dict, fallback_model: str = "", retry: bool =
     """One tiny live completion through a saved entry — answers "does this
     credential still work" without waiting for a real chat to 502. The result
     is in-body ({ok, model, latency_ms} / {ok: False, error, auth, kind});
-    `auth` marks a broken credential (expired sign-in / rejected key) so the
-    UI can say "reconnect" instead of dumping the upstream body, and `kind`
-    is ai_client.failure_kind (absent when no model is picked)."""
+    `auth` marks a broken credential (expired sign-in / rejected key), and
+    `kind` is ai_client.failure_kind, or ``no_model`` for an entry with no
+    model picked — the UI words the failure by its kind."""
     provider_id = entry.get("id")
     # An explicit probe is an explicit retry: drop the refresh backoff so a
     # ChatGPT entry re-attempts its token refresh now instead of reusing a
@@ -509,7 +509,7 @@ def _probe_entry(user: str, entry: dict, fallback_model: str = "", retry: bool =
         return _no_credential(entry)
     model = _probe_model(entry, fallback_model)
     if not model:
-        return {"ok": False, "model": "", "auth": False,
+        return {"ok": False, "model": "", "auth": False, "kind": "no_model",
                 "error": "no model picked — edit the connection and choose one"}
     started = time.time()
     try:

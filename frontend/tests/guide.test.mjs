@@ -5,12 +5,13 @@ import test from "node:test";
 import assert from "node:assert/strict";
 import { readFileSync, readdirSync, statSync } from "node:fs";
 import { join } from "node:path";
-import { ANCHORS } from "../src/guide/anchors.js";
+import { ANCHORS, anchorElement } from "../src/guide/anchors.js";
 import { EVENTS, eventMatches } from "../src/guide/events.js";
 import { TOURS } from "../src/guide/tours/index.js";
 import { canOffer, createGuideProgress, factsMatch, guideProgressKey, guideStorage, retiresOffer } from "../src/guide/triggers.js";
 import { keyNames, keyText, resolveKey } from "../src/guide/keys.js";
 import { createRunLog, madeItems, recordEvent } from "../src/guide/finish.js";
+import { CARD_W, placeCard } from "../src/guide/place.js";
 
 function walk(dir, out = []) {
   for (const name of readdirSync(dir)) {
@@ -44,7 +45,7 @@ test("tours reference registered anchors and catalogued events", () => {
       ids.add(step.id);
       if (step.anchor) assert.ok(ANCHORS[step.anchor], `${tour.id}/${step.id}: unregistered anchor ${step.anchor}`);
       if (step.advanceOn) assert.ok(EVENTS.includes(step.advanceOn.event), `${tour.id}/${step.id}: unknown event ${step.advanceOn.event}`);
-      for (const key of ["creates", "reveal"]) {
+      for (const key of ["creates", "reveal", "avoid"]) {
         if (step[key]) assert.ok(ANCHORS[step[key]], `${tour.id}/${step.id}: unregistered ${key} anchor ${step[key]}`);
       }
       if (step.creates) assert.ok(step.advanceOn, `${tour.id}/${step.id}: a step that has the user make something completes when they do`);
@@ -72,8 +73,13 @@ test("the first tours are manual; AI chat has steps per place, each ending on th
   for (const s of aiTour.steps.filter((x) => x.id.startsWith("chat-send-"))) {
     assert.deepEqual(s.advanceOn, { event: "chat.sent" }, `${s.id} waits for the user's own send`);
   }
-  assert.ok(!aiTour.steps.some((s) => s.anchor === "chat.voice"), "no voice step");
-  assert.ok(aiTour.steps.filter((s) => s.do).every((s) => s.do.every((a) => !a.press && !a.click)), "the tour never sends");
+  // Its demos only type: nothing presses Send or the mic (which carries no anchor to point at).
+  assert.ok(aiTour.steps.filter((s) => s.do).every((s) => s.do.every((a) => !a.press && !a.click)), "the tour never sends or records");
+});
+
+test("a tour's end state is `restore`, never to be confused with its `finishCard`", () => {
+  assert.equal(TOURS.handwriting.restore, "pen", "the handwriting tour re-arms the pen when it runs to its end");
+  for (const tour of Object.values(TOURS)) assert.ok(!("finish" in tour), `${tour.id}: \`finish\` is now \`restore\``);
 });
 
 test("progress survives reload, separates accounts, and tolerates broken browser storage", () => {
@@ -274,4 +280,52 @@ test("the finish card lists only what the run made", () => {
   assert.equal(made[2].args.label, "llm");
   for (const item of finish.made) assert.ok(!item.event || EVENTS.includes(item.event), `finish event ${item.event}`);
   for (const item of finish.made) assert.ok(!item.step || TOURS["first-run"].steps.some((s) => s.id === item.step), `finish step ${item.step}`);
+});
+
+// A repeated anchor: the newest one ("last"), or the one inside the element
+// the app marks data-guide-recent ("recent") — the table the user just made,
+// not the page's first — else the first.
+test("a repeated anchor picks the newest, the marked, or the first element", () => {
+  for (const id of ["notes.table", "notes.tableAdd", "notes.tableCorner"]) assert.equal(ANCHORS[id].pick, "recent", id);
+  const el = (marked = false) => ({ closest: (sel) => (marked && sel === "[data-guide-recent]" ? {} : null) });
+  const saved = globalThis.document;
+  const dom = (...els) => { globalThis.document = { querySelectorAll: () => els }; };
+  try {
+    const old = el(), made = el(true), other = el();
+    dom(old, made);
+    assert.equal(anchorElement("notes.tableAdd"), made, "the table the user just made");
+    dom(old, other);
+    assert.equal(anchorElement("notes.tableAdd"), old, "nothing marked: the first");
+    dom(old, other);
+    assert.equal(anchorElement("chat.citation"), other, "the latest reply's citation");
+    assert.equal(anchorElement("header.home"), old);
+    dom();
+    assert.equal(anchorElement("notes.table"), null);
+  } finally { globalThis.document = saved; }
+});
+
+// A card keeps clear of its step's `avoid` box too: the table above its add
+// strip. Near the bottom of the window it goes above the table when there
+// is room there, else beside it — never flipped onto the table.
+test("a card that must keep clear of a box goes above it, else beside it", () => {
+  const cardH = 120, vh = 800;
+  const table = { top: 100, bottom: 780, left: 400, right: 900 };
+  const strip = { top: 780, bottom: 796, left: 400, right: 900, width: 500, height: 16 };
+  const covers = (p, box) => p.left < box.right && p.left + CARD_W > box.left && p.top < box.bottom && p.top + cardH > box.top;
+  const plain = placeCard(strip, cardH, 1400, vh, "bottom");
+  assert.equal(plain.side, "top");
+  assert.ok(covers(plain, table), "without the box the flipped card lands on the table");
+  const right = placeCard(strip, cardH, 1400, vh, "bottom", table);
+  assert.equal(right.side, "right");
+  assert.ok(!covers(right, table));
+  assert.ok(right.beak, "the beak still points at the strip");
+  const left = placeCard(strip, cardH, 1100, vh, "bottom", table);
+  assert.equal(left.side, "left", "no room on the right");
+  assert.ok(!covers(left, table));
+  const short = { ...table, top: 400 };
+  const above = placeCard(strip, cardH, 1400, vh, "bottom", short);
+  assert.equal(above.side, "top");
+  assert.ok(!covers(above, short), "above the whole table, not just above the strip");
+  const roomy = placeCard({ ...strip, top: 380, bottom: 396 }, cardH, 1400, vh, "bottom", { ...table, bottom: 380 });
+  assert.equal(roomy.side, "bottom", "the preferred side when it fits");
 });

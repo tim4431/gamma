@@ -318,7 +318,7 @@ function ChatSetupCard({ info, isAdmin, onConnect, openSettings }) {
   const tiles = info && !info.failed ? aiServiceTiles(info, { long: true }) : [];
   return (
     <div className="chatSetup" data-guide="chat.setup">
-      <span className="chatSetupIcon" aria-hidden="true"><SparklesIcon size={16} /></span>
+      <span className="chatSetupIcon" aria-hidden="true"><SparklesIcon size={20} /></span>
       <div className="chatSetupTitle">{t("Chat with your papers")}</div>
       <p className="chatSetupText">
         {t("Ask about the paper you are reading and get answers that cite the page they come from. The assistant can also search, summarize and organize your library.")}
@@ -1394,14 +1394,10 @@ export default function ChatDock({
       {!readOnly && aiHealth && !aiHealth.ok ? (
         // The login connection check found the active provider broken — say so
         // here, where the failure would otherwise surface mid-conversation,
-        // in the error card's words. Only a probe with no model picked comes
-        // without a kind.
+        // in the error card's words.
         <div className="chatHealthStrip" title={aiHealth.error || ""}>
           <span className="chatHealthText">
-            {aiHealth.kind ? failureCopy(aiHealth.kind, { provider: aiHealth.provider_name, auth: aiHealth.provider_auth }).headline : <>
-              {aiHealth.provider_name ? `${aiHealth.provider_name}: ` : ""}
-              {t("connection failed — {unreachable}", { unreachable: aiHealth.error || t("provider unreachable") })}
-            </>}
+            {failureCopy(aiHealth.kind, { provider: aiHealth.provider_name, auth: aiHealth.provider_auth }).headline}
           </span>
           <button className="uiBtn sm" onClick={() => openAiKeysEditor({ entry: aiHealth.provider_id })}>{t("Fix…")}</button>
           <button className="uiClose" onClick={dismissAiHealth} title={t("Dismiss")} aria-label={t("Dismiss")}><XIcon size={14} /></button>
@@ -1810,7 +1806,7 @@ export default function ChatDock({
             </button>
           ) : (
             <>
-              {canDictate ? <button className="uiBtn chatCircleBtn chatMicBtn" data-guide="chat.voice" type="button" onClick={startDictation} title={t("Dictate — transcribed with your OpenAI key")} aria-label={t("Start dictation")}>
+              {canDictate ? <button className="uiBtn chatCircleBtn chatMicBtn" type="button" onClick={startDictation} title={t("Dictate — transcribed with your OpenAI key")} aria-label={t("Start dictation")}>
                 <MicIcon size={14} />
               </button> : null}
               <button className="uiBtn primary chatCircleBtn" type="submit" disabled={aiOff || !chatInput.trim()} title={t("Send")} aria-label={t("Send")}>

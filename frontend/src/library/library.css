@@ -205,7 +205,7 @@
 /* --- home file-manager: context menu --- */
 :is(.pageCard, .folderRow).dragOver {
   background: var(--accent-bg);
-  border-color: var(--accent-dark);
+  border-color: var(--accent-fill);
 }
 .pageCard.dragOver { border-style: dashed; }
 .folderName {
@@ -372,7 +372,7 @@
    scroll-container edge */
 .folderRow.selected {
   background: var(--accent-bg-light);
-  border: 1px solid var(--accent-dark);
+  border: 1px solid var(--accent-fill);
 }
 
 /* Home library file rows — their OWN display, separate from the outliner
@@ -400,7 +400,7 @@
 .fileRow:hover { background: var(--bg-block); }
 :is(.pageCard, .fileRow).selected {
   background: var(--accent-bg-light);
-  border-color: var(--accent-dark);
+  border-color: var(--accent-fill);
 }
 .fileRowIcon {
   flex: 0 0 auto;
@@ -428,7 +428,7 @@
 .fileRowRename {
   flex: 1;
   min-width: 0;
-  border-color: var(--accent-dark);
+  border-color: var(--accent-fill);
   font-size: var(--fs-md);
   padding: 2px 6px;
 }
@@ -537,7 +537,7 @@
 .fileGlyph.pdf { color: var(--kind-pdf); }
 .tileRenameInput {
   width: 100%;
-  border-color: var(--accent-dark);
+  border-color: var(--accent-fill);
   font-size: var(--fs-xs);
   padding: 2px 6px;
 }
@@ -696,7 +696,7 @@
   transition: background var(--dur-fast) ease, border-color var(--dur-fast) ease;
 }
 .libEmptyCard:hover { background: var(--bg-block); border-color: var(--border-hover); }
-.libEmptyCard.primary { border-color: var(--accent-dark); }
+.libEmptyCard.primary { border-color: var(--accent-fill); }
 .libEmptyCardIcon {
   flex: 0 0 auto;
   display: flex;

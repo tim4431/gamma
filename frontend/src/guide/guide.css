@@ -118,19 +118,6 @@
 .guideSegments i { flex: 1; height: 3px; border-radius: 2px; background: var(--border); }
 .guideSegments i.done { background: color-mix(in srgb, var(--accent) 45%, transparent); }
 .guideSegments i.on { background: var(--accent); }
-.guideLink {
-  border: 0;
-  background: none;
-  padding: 4px 0;
-  font: inherit;
-  font-size: var(--fs-xs);
-  color: var(--text-muted);
-  cursor: pointer;
-  text-decoration: underline;
-  text-underline-offset: 3px;
-  text-decoration-color: var(--border-light);
-}
-.guideLink:hover { color: var(--text-primary); }
 /* While a demo acts, the whole sheet swallows clicks (the hole included) so
    a stray click can't derail it; the card stays usable for Skip / leave. */
 .guideShield { position: absolute; inset: 0; pointer-events: auto; }

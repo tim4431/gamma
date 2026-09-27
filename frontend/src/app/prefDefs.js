@@ -109,7 +109,8 @@ export const themeScheme = (theme) => (DARK_THEMES.includes(theme) ? "dark" : "l
 // Interface size (Settings → Appearance): text and control boxes share
 // --ui-scale in app.css. Ctrl+scroll further resizes notes/chat text in place
 // per panel and never persists. PDF zoom remains independent. The
-// index.html pre-paint script repeats the bounds — keep them in step.
+// index.html pre-paint script repeats the bounds (tests/themes.test.mjs
+// checks them).
 export const UI_SCALE = { min: 0.7, max: 1.6, step: 0.1, default: 1 };
 
 // Fingers never draw by default where the primary pointer is coarse (tablets).
@@ -123,7 +124,8 @@ export const PREFS = {
   // --- Appearance (Settings → Appearance) ---
   // System follows the OS; the other themes pin the appearance. Sepia,
   // Solarized Light and Gray also tint PDF pages (app.css). index.html
-  // applies a pinned theme from localStorage before first paint.
+  // resolves and applies the theme (and its theme-color) from localStorage
+  // before first paint.
   theme: pref("gamma-theme", ACCOUNT, "system", oneOf(THEMES)),
   // Interface language (docs/dev/i18n.md): "system" follows the browser.
   // main.jsx reads the stored value before the first render.

@@ -39,8 +39,10 @@ so an expired ChatGPT grant is re-tried immediately. The probe's model:
 the entry's optional `test_model` (editable in the form's Models step), else
 the `model` sent with the request (the client passes its effective metadata
 model — the cheap utility model), else the entry's first model. A failed probe
-carries an `auth` flag on 401/403 so the row renders
-"sign-in expired — reconnect" instead of the upstream body. Upstream error
+carries the failure's `kind` (see "Chat endpoint"; `no_model` when the entry
+has none picked) and an `auth` flag on 401/403, so the row renders the chat
+error card's headline and fix ("OpenAI rejected the API key — Update key"),
+the upstream body only on hover. Upstream error
 details are summarized before display everywhere (`upstream_detail` in
 `ai_client.py`): JSON bodies reduce to their message field, HTML error pages
 (a proxy's 502 page) to their `<title>`.
@@ -266,16 +268,19 @@ stream, the provider's wording:
 
 `_failure_info` in `routers/ai.py` puts that `kind` beside the plain-string
 `detail` of the HTTP error (a `JSONResponse`) and on the stream's closing
-`{"error"}` line. It adds the upstream `status` and the connection
-(`provider_id`, `provider_name`, `provider_auth`). The login check
-(`/api/ai/health`) and the Test probe carry the same `kind`.
+`{"error"}` line. It adds the connection (`provider_id`, `provider_name`,
+`provider_auth`); an upstream status needs no field of its own, since the
+detail already opens with it ("upstream 529: …"). The login check
+(`/api/ai/health`) and the Test probe carry the same `kind`, and the probe
+one more: `no_model`, an entry with no model picked.
 
 The client saves the classification on the reply (`errorKind`,
-`errorDetail`, `errorStatus`, `errorProvider`, `errorProviderId`,
-`errorAuth`) and renders a card instead of the raw text. `chat/chatErrors.js`
+`errorDetail`, `errorProvider`, `errorProviderId`, `errorAuth`) and
+renders a card instead of the raw text. `chat/chatErrors.js`
 holds the copy per kind: a headline ("OpenAI rejected the API key", "Lost
 the connection to Gamma" for the browser's own `TypeError`), one sentence,
-and the fix. The login check's warning strip shows the same headlines.
+and the fix. The login check's warning strip and the Test result on a
+Settings connection row show the same headlines.
 Update key / Sign in again / Edit connection open Settings → Connections on
 that entry's form (`openAiKeysEditor({entry})` in App). Connect AI and Add
 your own key open the pane; New chat starts over. On the latest reply,
@@ -490,7 +495,8 @@ saying what it is in words, with its icon: "Block at your cursor · added
 automatically, × to leave out", "Selection in this note", "PDF passage ·
 p. 7", "Attached block", "Selected note text". The second previews the text
 with the markdown dropped and inline math typeset (`chat/chipText.js`,
-KaTeX). A dashed border marks what rode along by itself (the cursor block
+KaTeX; the words between formulas go through search's `plainSnippet`, the
+same rule as the search rows and the `[[` picker). A dashed border marks what rode along by itself (the cursor block
 and the editor's selection in it); what the user attached keeps a solid
 one. They clear on send and on a page switch, since the ids belong to the
 page. Ctrl+click on a highlight card sends the quote as a PDF passage, not
@@ -583,9 +589,9 @@ answers. Each adapter's `request` maps the tool defs and the
 `parallel_tool_calls` when tools ride along, so bulk renames batch per round.
 
 Every tool call is announced by a `{"step": {id, tool, args}}` line before
-it runs. Its `args` are only the short ones a label needs (`page_id`,
-`query`, `title`, `folder`, `source`, `pdf_page`, …), never a note's
-content. Once it ran, the call streams back as an
+it runs. Its `args` are only the short ones the running label reads
+(`_STEP_ARGS`: `page_id`, `block_id`, `query`, `title`, `folder`, `label`,
+`source`, `pdf_page`, `mode`), never a note's content. Once it ran, the call streams back as an
 `{"action": {kind, summary, tool, args, result}}` NDJSON line (kinds
 list/read/view/search/rename/move/edit/create, plus `error` with `error: true` for
 failed/blocked calls) that the chat saves in the message. A change also says
@@ -603,8 +609,11 @@ notes". Each entry is a link that opens the page or the block
 (`openBlock(blockId, pageId)` of `GammaNavContext`). Actions saved before
 the structured fields fall back to their summary. While the reply streams,
 the pill names the step running now ("Searching library for “…”…") in
-place of the "Thinking" pill. Only applied mutations count against
-`MAX_TOOL_ACTIONS` and trigger the home-feed refresh (`onLibraryChange`), and
+place of the "Thinking" pill, from those arguments (`runningLabel`):
+"Renaming “A” to “B”…", "Moving “A” to ML/Generative…", "Appending to a
+note…", "Reading notes of “A”…" when `read_block` names a page. Only
+applied mutations count against `MAX_TOOL_ACTIONS` and trigger the
+home-feed refresh (`onLibraryChange`), and
 the note-block tools' actions carry `page_id`/`src_page_id` so the frontend
 reloads the open page's block tree when the AI touched it (`onNotesChange`;
 with the page's live socket up the tools' ops already arrived through it and

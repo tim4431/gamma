@@ -4,21 +4,20 @@
 // "\"). The overlay draws either as key caps; an unbound command falls back
 // to its palette name in quotes. The token stays literal in the i18n key, so
 // a translation keeps it (docs/dev/onboarding.md, docs/dev/i18n.md).
-import { ALL_COMMANDS } from "../app/commands.js";
-import { chordLabel, effectiveKeys, normalizeChord } from "../shared/lib/hotkeys.js";
+import { commandById, commandChord } from "../app/commands.js";
+import { chordLabel, normalizeChord } from "../shared/lib/hotkeys.js";
 
 export const KEY_TOKEN = /\{key:([^{}\s]+)\}/g;
 const COMMAND_ID = /^[a-z]+\.[A-Za-z]+$/;
-const COMMANDS = new Map(ALL_COMMANDS.map((cmd) => [cmd.id, cmd]));
 
 // What `{key:name}` shows under these bindings: { chord } to draw as caps,
 // { text } for an unbound command, or null when the name is neither a
 // catalog command nor a chord (the tests keep tour copy from doing that).
 export function resolveKey(name, bindings) {
   if (COMMAND_ID.test(name)) {
-    const cmd = COMMANDS.get(name);
+    const cmd = commandById(name);
     if (!cmd) return null;
-    const chord = effectiveKeys(cmd, bindings)[0];
+    const chord = commandChord(name, bindings);
     return chord ? { chord } : { text: `“${cmd.label}”` };
   }
   const chord = normalizeChord(name);
