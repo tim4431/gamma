@@ -92,9 +92,50 @@ export async function pdfScenarios({ server, browser, alice, makePdf, step, unti
     assertNoProblems(page);
   });
 
-  await step("pdf: clicking the overlay focuses its note row", async () => {
+  await step("pdf: clicking the overlay focuses its note row; the row's dot jumps back and the highlight pulses once", async () => {
     await page.click('[data-page="1"] [data-hl-id]');
     await until(async () => (await page.$(".blockRow.focused .blockQuote")) != null, { what: "focused highlight row" });
+    await page.click(".blockRow.focused .highlightDotBtn");
+    await page.waitForSelector('[data-page="1"] [data-hl-id].pdfHlFlash', { timeout: 3000 });
+    await page.waitForSelector('[data-page="1"] [data-hl-id].pdfHlFlash', { state: "detached", timeout: 5000 });
+    assertNoProblems(page);
+  });
+
+  // With the notes window closed the new highlight's row can't render. The
+  // jump to it used to keep "unfolding" the tree as a load, so the highlight
+  // was never sent, and the next edit was refused for naming a block the
+  // server didn't have.
+  await step("pdf: a highlight made with the notes window closed is saved, and so is the next", async () => {
+    const toggleNotes = async () => {
+      await page.getByRole("button", { name: "View", exact: true }).click();
+      await page.locator(".menuPopover").getByRole("button", { name: "Notes" }).click();
+      await page.keyboard.press("Escape");
+    };
+    const highlight = async (needle) => {
+      await selectPdfText(page, 1, needle);
+      await page.waitForSelector(".plainTip .colorBtn", { timeout: 5000 });
+      await page.locator(".plainTip .colorBtn").first().click();
+    };
+    const saved = (needle) => until(async () => {
+      const d = await account.api(`/api/blocks/${pageId}/subtree`);
+      return (d.block.children || []).some((b) => b.properties?.quote === needle);
+    }, { what: `highlight "${needle}" saved` });
+    await toggleNotes();
+    await highlight("Quantum");
+    await saved("Quantum");
+    await toggleNotes();
+    await page.locator(".blockRow .blockQuote", { hasText: "Quantum" }).waitFor();
+    await highlight("Second line");
+    await saved("Second line");
+    // A collapsed notes window (double-click on its grip) hides the rows the
+    // same way; the highlight must still reach the server.
+    const grip = page.locator(".dockWindow .dockGrip", { hasText: "Notes" });
+    await grip.dblclick();
+    await page.locator(".dockWindow.collapsed .dockGrip", { hasText: "Notes" }).waitFor();
+    await highlight("arrays");
+    await saved("arrays");
+    await grip.dblclick();
+    await page.locator(".blockRow .blockQuote", { hasText: "arrays" }).waitFor();
     assertNoProblems(page);
   });
 
@@ -329,7 +370,7 @@ export async function pdfScenarios({ server, browser, alice, makePdf, step, unti
     // What the server reports it did with the selection (ai_context.selection_context).
     const coverage = { context: [{ title: "Rydberg paper", doc_id: docId, native: false, native_requested: false,
       partial: true, chars: 900, pages: 0, pages_shown: 0,
-      selection: { passages: [{ page: 2, section: "Results", found: false, crop: true }] } }] };
+      selection: { passages: [{ page: 2, section: "Results", found: false, crop: true, box: [0.1, 0.1, 0.6, 0.2] }] } }] };
     await page.route("**/api/ai/chat", async (route) => {
       requests.push(route.request().postDataJSON());
       await route.fulfill({ contentType: "application/x-ndjson",
@@ -360,7 +401,11 @@ export async function pdfScenarios({ server, browser, alice, makePdf, step, unti
       assert(Array.isArray(sel.box) && sel.box.length === 4 && sel.box[0] < sel.box[2] && sel.box[1] < sel.box[3]
         && sel.box.every((v) => v >= 0 && v <= 1), `box as page fractions: ${JSON.stringify(sel.box)}`);
       await page.getByText("Model saw text around p. 2 · Results").waitFor();
-      await page.getByText("Picture of the selection sent").waitFor();
+      // Opening the pill shows the picture, drawn again from the saved box.
+      await page.getByRole("button", { name: "Picture of the selection sent" }).click();
+      const crop = page.locator("img.chatCoverageCrop");
+      await crop.waitFor();
+      await until(() => crop.evaluate((img) => img.complete && img.naturalWidth > 0), { what: "the selection picture loads" });
     } finally {
       await page.unroute("**/api/ai/chat");
     }

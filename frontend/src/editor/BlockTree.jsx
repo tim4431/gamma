@@ -42,6 +42,7 @@ import { API, apiJson, assetUrl, copyText, withWorkspace } from "../shared/lib/u
 import { CopyIcon, ExportIcon, MessageSquareIcon, PlusIcon, Trash2Icon } from "../shared/ui/Icons";
 import { T, t } from "../shared/i18n/i18n.js";
 import { guideEvents } from "../guide/events.js";
+import { pageKindLabel } from "../library/libraryUtils";
 import {
   applyImageEdit, applyTableEdit, formatTables, htmlTableToMarkdown,
   MdImage, MdTableWrap, noteTableMade, tsvToMarkdown,
@@ -960,7 +961,7 @@ function BlockRow({
     return [
       ...pageHits.slice(0, np).map((p) => ({
         kind: "page", id: p.id, title: p.content, isPdf: !!p._attachment,
-        meta: [p._attachment ? "PDF" : t("Notes page"), p._folders?.[0]].filter(Boolean).join(" · "),
+        meta: [pageKindLabel(p._attachment), p._folders?.[0]].filter(Boolean).join(" · "),
       })),
       ...blockHits.slice(0, nb).map((b) => ({
         kind: "block", id: b.id, title: refBlockText(b.content, labelOf) || t("(empty)"), meta: refBlockPath(b), block: b,
@@ -1050,7 +1051,7 @@ function BlockRow({
     const value = ta.value;
     const cursor = ta.selectionStart;
     setSlashMenu(null);
-    if (c.name === "table") noteTableMade(block.id);
+    if (c.name === "table") noteTableMade(block.id, value, start);
     c.run({
       value,
       start,
@@ -1197,28 +1198,30 @@ function BlockRow({
     setPasteMenu(null);
     const ta = ref.current;
     if (!pm || !ta) return;
+    // True once the text is in; false when the paste was abandoned.
     const doReplace = (text) => {
       // The pasted URL must still be where we left it (typing dismisses the
       // menu, but an async titled-link fetch can land late).
-      if (ta.value.slice(pm.start, pm.end) !== pm.url) return;
-      ta.view?.dispatch({
+      if (!ta.view || ta.value.slice(pm.start, pm.end) !== pm.url) return false;
+      ta.view.dispatch({
         changes: { from: pm.start, to: pm.end, insert: text },
         selection: { anchor: pm.start + text.length },
         userEvent: "input",
       });
       ta.focus();
+      return true;
     };
     if (item.make) {
-      if (item.name === "table") noteTableMade(block.id);
       let text = item.make();
+      const val = ta.value || "";
       if (item.block) {
         // A block-level construct (a table) must start and end on its own
         // line — pad like the direct html-table paste does.
-        const val = ta.value || "";
         if (pm.start > 0 && val[pm.start - 1] !== "\n") text = "\n" + text;
         if (pm.end < val.length && val[pm.end] !== "\n") text += "\n";
       }
-      doReplace(text);
+      // Only a table that landed counts toward the tables tour's offer.
+      if (doReplace(text) && item.name === "table") noteTableMade(block.id, val, pm.start);
     } else if (item.name === "blocks") {
       // Parse server-side (same parser as the .md file import), remove the
       // pasted text from this block, then hand the tree to App to insert.
@@ -1295,7 +1298,7 @@ function BlockRow({
             selection: { anchor: start + lead.length + md.length },
             userEvent: "input",
           });
-          noteTableMade(block.id);
+          noteTableMade(block.id, val, start);
           return;
         }
       }

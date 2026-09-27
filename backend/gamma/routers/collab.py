@@ -7,6 +7,7 @@ import json
 import secrets
 
 from fastapi import APIRouter, HTTPException, Request, WebSocket, WebSocketDisconnect
+from fastapi.responses import JSONResponse
 
 from .. import collab
 from ..auth import (ANONYMOUS_NAME, SESSION_COOKIE, actor_of, is_link_visitor, link_name, link_ratelimit,
@@ -54,7 +55,8 @@ async def post_ops(page_id: str, payload: OpsRequest, request: Request):
                             client=payload.client[:32], share_scoped=scope is not None,
                             cursor=cursor)
     except OpError as e:
-        raise HTTPException(status_code=e.status, detail=e.detail)
+        body = {"detail": e.detail, **({"missing": e.missing} if e.missing else {})}
+        return JSONResponse(status_code=e.status, content=body)
     return {"seq": result["seq"], "at": result["at"], "ops": result["ops"],
             "removed_uploads": result["removed_uploads"]}
 

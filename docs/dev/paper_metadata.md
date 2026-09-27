@@ -25,6 +25,11 @@ the slide citation on the page block (`properties.meta` / `properties.bibtex`
 The registry helpers (`_fetch_arxiv` / `_arxiv_search` — both parse Atom
 entries through `_arxiv_entry_meta` — `_fetch_doi`, `_crossref_search`) also
 back the chat agent's `search_papers` tool ([ai_tools.md](ai_tools.md)).
+Every registry call goes through `_http_get` (20 s timeout);
+`GAMMA_METADATA_LOOKUP=off` makes it fail at once, so every lookup finds
+nothing (an offline server; the browser suite sets it — a slow Crossref
+otherwise held a page's first open, and a test's `networkidle` wait, for
+up to 40 s).
 
 **What the steps read.** Identifier scans and title matching use a
 `SCAN_CHARS` (20k) head window, deliberately decoupled from the AI-context

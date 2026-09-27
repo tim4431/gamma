@@ -39,8 +39,10 @@ so an expired ChatGPT grant is re-tried immediately. The probe's model:
 the entry's optional `test_model` (editable in the form's Models step), else
 the `model` sent with the request (the client passes its effective metadata
 model — the cheap utility model), else the entry's first model. A failed probe
-carries an `auth` flag on 401/403 so the row renders
-"sign-in expired — reconnect" instead of the upstream body. Upstream error
+carries the failure's `kind` (see "Chat endpoint"; `no_model` when the entry
+has none picked) and an `auth` flag on 401/403, so the row renders the chat
+error card's headline and fix ("OpenAI rejected the API key — Update key"),
+the upstream body only on hover. Upstream error
 details are summarized before display everywhere (`upstream_detail` in
 `ai_client.py`): JSON bodies reduce to their message field, HTML error pages
 (a proxy's 502 page) to their `<title>`.
@@ -144,8 +146,8 @@ Shared AI provider, `/api/admin/ai-providers*`), so the members of a lab do
 not each need a key. A shared entry has an account entry's shape (`id, name,
 protocol, api_key, base_url, models, test_model, created_at`, plus `oauth`
 for a sign-in). It holds an API key, or a ChatGPT subscription the admin
-signs in to from the same form: `POST /api/admin/ai-providers/chatgpt/start`
-and `complete`, the account flow's `begin_chatgpt_signin` /
+signs in to from the same form: `POST /api/admin/ai-providers/chatgpt/start`,
+`status` and `complete`, the account flow's `begin_chatgpt_signin` /
 `redeem_chatgpt_signin` with the state bound to `("server", <admin>)`, so
 neither flow's state redeems on the other. `provider_id` on `complete`
 reconnects an entry. The same helpers validate both lists (`new_key_entry`,
@@ -203,9 +205,8 @@ Settings → AI. How each caller surfaces it:
 
 A third protocol, `chatgpt`, holds OAuth tokens instead of a key (Codex CLI's
 PKCE flow in `gamma/chatgpt_oauth.py`; entries created only via
-`POST /api/ai/oauth/chatgpt/start`+`complete` — the user pastes the
-localhost:1455 callback URL since nothing listens there; access tokens refresh
-lazily in `ai_runtime`). Its wire is the Responses API on
+`POST /api/ai/oauth/chatgpt/start`, `status` and `complete`; access tokens
+refresh lazily in `ai_runtime`). Its wire is the Responses API on
 `chatgpt.com/backend-api/codex` (stream-only SSE; non-stream callers join
 deltas), and PDF attachments go as native `input_file` parts with an automatic
 retry as extracted text if the backend rejects them. That retry applies to
@@ -226,6 +227,39 @@ started it. Token refreshes are serialized per account and re-read the
 entries first (`_refreshed_oauth` in `ai_settings.py`): OpenAI rotates refresh
 tokens, so of two parallel refreshes the second would fail and save stale
 tokens over the fresh ones.
+
+**How a sign-in reaches the server.** Codex CLI's client id has one
+registered redirect, `http://localhost:1455/auth/callback`, which only works
+where something listens on the browser's own machine. `chatgpt_oauth.begin`
+keeps each sign-in in memory (15 minutes, bound to its owner) until the first
+of three endings:
+
+- **Caught.** When the page runs at a loopback address and the request came
+  from loopback (the desktop app's own server, a localhost install; a
+  reverse proxy on the same host passes only the second test), the server
+  listens on `127.0.0.1:1455` for the redirect and exchanges its code. The
+  listener takes the port only while such a sign-in waits and never with
+  `SO_REUSEADDR` on Windows, so Codex CLI's own login or another Gamma
+  server holding the port makes it fall back to the other two.
+- **Device code.** Otherwise `start` also asks OpenAI for a one-time code
+  (Codex CLI's `--device-auth`: `POST /api/accounts/deviceauth/usercode`,
+  then `/token` until the user enters it at `auth.openai.com/codex/device`,
+  the answer's code exchanged with its own verifier and the redirect
+  `https://auth.openai.com/deviceauth/callback`). There is no poller thread:
+  each `status` call polls when OpenAI's interval is up, so polling stops
+  when the form stops asking. The account has to turn device code sign-in on
+  in ChatGPT's security settings (a workspace's admin, for Edu and
+  Enterprise), which is why it is offered next to the paste, not instead of it.
+- **Pasted.** The redirect page fails to load and the user pastes its
+  address; a paste that doesn't parse leaves the sign-in waiting.
+
+The form (`useProviderEditor` in `SettingsAi.jsx`) asks `status` every 2.5 s
+while the server may catch the sign-in, and calls `complete` with an empty
+`callback` once it is `ready`. A paste of a callback address connects without
+the Connect button, and in Chromium the address is also picked up from the
+clipboard when the tab regains focus (the browser asks once). Both are
+unofficial OpenAI endpoints, like the rest of this flow, so they may need
+maintenance.
 
 ## Chat endpoint
 
@@ -266,16 +300,19 @@ stream, the provider's wording:
 
 `_failure_info` in `routers/ai.py` puts that `kind` beside the plain-string
 `detail` of the HTTP error (a `JSONResponse`) and on the stream's closing
-`{"error"}` line. It adds the upstream `status` and the connection
-(`provider_id`, `provider_name`, `provider_auth`). The login check
-(`/api/ai/health`) and the Test probe carry the same `kind`.
+`{"error"}` line. It adds the connection (`provider_id`, `provider_name`,
+`provider_auth`); an upstream status needs no field of its own, since the
+detail already opens with it ("upstream 529: …"). The login check
+(`/api/ai/health`) and the Test probe carry the same `kind`, and the probe
+one more: `no_model`, an entry with no model picked.
 
 The client saves the classification on the reply (`errorKind`,
-`errorDetail`, `errorStatus`, `errorProvider`, `errorProviderId`,
-`errorAuth`) and renders a card instead of the raw text. `chat/chatErrors.js`
+`errorDetail`, `errorProvider`, `errorProviderId`, `errorAuth`) and
+renders a card instead of the raw text. `chat/chatErrors.js`
 holds the copy per kind: a headline ("OpenAI rejected the API key", "Lost
 the connection to Gamma" for the browser's own `TypeError`), one sentence,
-and the fix. The login check's warning strip shows the same headlines.
+and the fix. The login check's warning strip and the Test result on a
+Settings connection row show the same headlines.
 Update key / Sign in again / Edit connection open Settings → Connections on
 that entry's form (`openAiKeysEditor({entry})` in App). Connect AI and Add
 your own key open the pane; New chat starts over. On the latest reply,
@@ -403,9 +440,13 @@ start of the paper (`selection_context`):
 The question labels each passage "Selected passage (PDF page 7; section
 "Methods › Noise model"; a picture … is attached)" (`final_prompt`, from the
 located entries `gather_inputs` puts in the open paper's coverage as
-`selection: {passages: [{page, section, found, crop}]}`). The reply's chip
-reads "Model saw text around p. 7 · Methods › Noise model", plus "Picture of
-the selection sent" when one went. Nothing placed at all falls back to the
+`selection: {passages: [{page, section, found, crop, box}]}`, `box` only
+with a picture: the grown crop box, rounded). The reply's chip reads "Model
+saw text around p. 7 · Methods › Noise model", plus "Picture of the selection
+sent" when one went; opening that pill shows the picture, drawn again from the
+saved page and box by `GET /api/ai/selection-crop/{doc_id}` through the same
+`render_selection_crop`. Replies saved before the box was kept show the pill
+without a picture. Nothing placed at all falls back to the
 plain head excerpt. With a native PDF attachment there is no window and no
 picture, and the passages carry the viewer's page only.
 
@@ -490,7 +531,8 @@ saying what it is in words, with its icon: "Block at your cursor · added
 automatically, × to leave out", "Selection in this note", "PDF passage ·
 p. 7", "Attached block", "Selected note text". The second previews the text
 with the markdown dropped and inline math typeset (`chat/chipText.js`,
-KaTeX). A dashed border marks what rode along by itself (the cursor block
+KaTeX; the words between formulas go through search's `plainSnippet`, the
+same rule as the search rows and the `[[` picker). A dashed border marks what rode along by itself (the cursor block
 and the editor's selection in it); what the user attached keeps a solid
 one. They clear on send and on a page switch, since the ids belong to the
 page. Ctrl+click on a highlight card sends the quote as a PDF passage, not
@@ -583,9 +625,9 @@ answers. Each adapter's `request` maps the tool defs and the
 `parallel_tool_calls` when tools ride along, so bulk renames batch per round.
 
 Every tool call is announced by a `{"step": {id, tool, args}}` line before
-it runs. Its `args` are only the short ones a label needs (`page_id`,
-`query`, `title`, `folder`, `source`, `pdf_page`, …), never a note's
-content. Once it ran, the call streams back as an
+it runs. Its `args` are only the short ones the running label reads
+(`_STEP_ARGS`: `page_id`, `block_id`, `query`, `title`, `folder`, `label`,
+`source`, `pdf_page`, `mode`), never a note's content. Once it ran, the call streams back as an
 `{"action": {kind, summary, tool, args, result}}` NDJSON line (kinds
 list/read/view/search/rename/move/edit/create, plus `error` with `error: true` for
 failed/blocked calls) that the chat saves in the message. A change also says
@@ -603,8 +645,11 @@ notes". Each entry is a link that opens the page or the block
 (`openBlock(blockId, pageId)` of `GammaNavContext`). Actions saved before
 the structured fields fall back to their summary. While the reply streams,
 the pill names the step running now ("Searching library for “…”…") in
-place of the "Thinking" pill. Only applied mutations count against
-`MAX_TOOL_ACTIONS` and trigger the home-feed refresh (`onLibraryChange`), and
+place of the "Thinking" pill, from those arguments (`runningLabel`):
+"Renaming “A” to “B”…", "Moving “A” to ML/Generative…", "Appending to a
+note…", "Reading notes of “A”…" when `read_block` names a page. Only
+applied mutations count against `MAX_TOOL_ACTIONS` and trigger the
+home-feed refresh (`onLibraryChange`), and
 the note-block tools' actions carry `page_id`/`src_page_id` so the frontend
 reloads the open page's block tree when the AI touched it (`onNotesChange`;
 with the page's live socket up the tools' ops already arrived through it and

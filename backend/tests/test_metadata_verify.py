@@ -326,3 +326,16 @@ def test_arxiv_id_from_source_url_is_trusted(guest, monkeypatch):
     r = guest.post("/api/metadata/fetch", json={"block_id": page["id"]})
     assert r.status_code == 200, r.text
     assert r.json()["source"] == "arxiv"
+
+
+def test_lookup_switch_fails_fast(monkeypatch):
+    """GAMMA_METADATA_LOOKUP=off (the browser suite): every registry call
+    fails before it connects, and the lookups find nothing."""
+    monkeypatch.setattr(metadata, "METADATA_LOOKUP", False)
+    try:
+        metadata._http_get("https://api.crossref.org/works")
+        raise AssertionError("the switched-off lookup went out")
+    except OSError as e:
+        assert "GAMMA_METADATA_LOOKUP" in str(e)
+    assert metadata._crossref_search(REAL_TITLE) == []
+    assert metadata._fetch_arxiv("2601.00001") is None

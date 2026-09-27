@@ -75,7 +75,7 @@ or says it is a manual look (**manual**).
 | 5.2 | Unreachable server → back on the launcher with the error text | auto: *unreachable remote falls back to the launcher with the error* |
 | 5.3 | Remote cards and bar-menu rows carry a reachability dot: green for a live server, red for a dead URL, dim until probed | auto: *remote reachability dot: on for the live server, off for a dead URL* |
 | 5.4 | Foreign URLs (`window.open`, `location` changes, `target=_blank` chips) open in the system browser; the window stays on the server | auto: *navigation guard: foreign URLs open outside, the window stays* |
-| 5.5 | ChatGPT-OAuth sign-in: the auth page opens in the system browser and the pasted callback URL completes it in Gamma | manual |
+| 5.5 | ChatGPT-OAuth sign-in: the auth page opens in the system browser. On a local server Gamma connects by itself once the sign-in finishes (the tab says "Signed in to ChatGPT"); on a remote one the pasted callback URL, or the device code entered at auth.openai.com/codex/device, completes it | manual |
 | 5.6 | HTTPS remote with a self-signed cert shows Chromium's interstitial (expected: use a real cert) | manual |
 
 ## 6. Look and feel

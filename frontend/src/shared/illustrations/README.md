@@ -5,7 +5,7 @@ Import them through `index.js`.
 
 | File | Purpose |
 | --- | --- |
-| `AppearanceIllustrations.jsx` | Theme palettes and PDF color sample |
+| `AppearanceIllustrations.jsx` | Theme swatches (each painted from its theme's tokens) and PDF color sample |
 | `TransferPreview.jsx` | Live import/export examples driven by the selected options |
 | `FormatIllustration.jsx` | App marks for app formats; shared PDF, notes and Markdown icons for document formats |
 | `brands/` | Local app icons and their source/license notes |

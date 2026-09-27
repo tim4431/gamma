@@ -6,11 +6,11 @@
     "text-dim / bg-surface": 2.85,
     "accent / bg-surface": 4.22,
     "accent / bg-page": 3.86,
-    "on-accent / accent-dark": 4.22
+    "on-accent / accent-fill": 4.22
   },
   "dark": {
     "text-muted / bg-hover": 3.58,
-    "on-accent / accent-dark": 4.22
+    "on-accent / accent-fill": 4.22
   },
   "gamma-light": {
     "text-muted / bg-page": 4.3,
@@ -33,7 +33,7 @@
     "text-dim / bg-surface": 2.48,
     "accent / bg-surface": 3.41,
     "accent / bg-page": 3,
-    "on-accent / accent-dark": 3.68,
+    "on-accent / accent-fill": 3.68,
     "danger / bg-surface": 4.29
   },
   "gray": {
@@ -43,6 +43,6 @@
     "text-dim / bg-surface": 2.76,
     "accent / bg-surface": 3.84,
     "accent / bg-page": 3.48,
-    "on-accent / accent-dark": 4.22
+    "on-accent / accent-fill": 4.22
   }
 }

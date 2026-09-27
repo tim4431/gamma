@@ -5,20 +5,20 @@ import { LibraryDisplaySettings } from "./SettingsLibraryDisplay";
 import { MenuSelect } from "../shared/ui/Menus";
 import { ContrastIcon, GlobeIcon, HelpCircleIcon, LayoutIcon, MaximizeIcon, MoonIcon } from "../shared/ui/Icons";
 import { ThemePreview, PdfPreview } from "../shared/illustrations";
-import { UI_SCALE } from "../app/prefs";
+import { UI_SCALE, themeScheme } from "../app/prefs";
 import { LANGUAGES, T, t } from "../shared/i18n/i18n.js";
 
+// The swatches paint from each theme's own tokens (ThemePreview).
 const THEMES = [
-  ["system", T("System"), T("Match your device"), "#eef0f3", "#ffffff", "#353b45", "#6089bb"],
-  ["light", T("Light"), T("Bright & crisp"), "#f5f5f5", "#ffffff", "#1a1a1a", "#3a7bd5"],
-  ["dark", T("Dark"), T("A quieter backdrop"), "#181818", "#292929", "#eeeeee", "#5b9bd5"],
-  ["gamma-light", T("Gamma Light"), T("Warm gray & amber"), "#e7e5de", "#efeee9", "#292822", "#92620e"],
-  ["gamma-dark", T("Gamma Dark"), T("Charcoal & soft gold"), "#1b1b1a", "#272725", "#f0ede6", "#e8b451"],
-  ["sepia", T("Sepia"), T("Warm paper, deep ink"), "#e9e1cb", "#fdf6e3", "#073642", "#1b6fa3"],
-  ["solarized", T("Solarized Light"), T("Warm paper, softer ink"), "#eee8d5", "#fdf6e3", "#657b83", "#268bd2"],
-  ["gray", T("Gray"), T("Soft & neutral"), "#e3e3e3", "#f4f4f4", "#2d2d2d", "#3a7bd5"],
+  ["system", T("System"), T("Match your device")],
+  ["light", T("Light"), T("Bright & crisp")],
+  ["dark", T("Dark"), T("A quieter backdrop")],
+  ["gamma-light", T("Gamma Light"), T("Warm gray & amber")],
+  ["gamma-dark", T("Gamma Dark"), T("Charcoal & soft gold")],
+  ["sepia", T("Sepia"), T("Warm paper, deep ink")],
+  ["solarized", T("Solarized Light"), T("Warm paper, softer ink")],
+  ["gray", T("Gray"), T("Soft & neutral")],
 ];
-const DARK = THEMES.find((theme) => theme[0] === "dark");
 
 export function AppearanceSettings({ value, diagnostics }) {
   return (
@@ -27,7 +27,7 @@ export function AppearanceSettings({ value, diagnostics }) {
 
       <Section title={t("Theme")} scope="account" prefs={SECTION_PREFS.appearance["Theme"]}>
         <PictureChoices label={t("Theme")} value={value.theme} onChange={value.setTheme}
-          options={THEMES.map((theme) => ({ value: theme[0], label: theme[1], hint: theme[2], preview: <ThemePreview theme={theme} dark={DARK} /> }))} />
+          options={THEMES.map(([id, label, hint]) => ({ value: id, label, hint, preview: <ThemePreview theme={id} scheme={themeScheme(id)} /> }))} />
       </Section>
 
       <Section title={t("Language")} scope="account" prefs={SECTION_PREFS.appearance["Language"]}>

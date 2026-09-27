@@ -227,8 +227,14 @@ async def ub_get_subtree(block_id: str, request: Request):
     scope = share_scope(request)
     with connect_pages_db(resolve_ws(request)) as conn:
         assert_block_in_scope(conn, block_id, scope)
+        # One read snapshot for the tree and its seq: a batch committed
+        # between two separate reads would be counted but missing, and the
+        # client would never learn of it (a block it deleted stays on screen).
+        if not conn.in_transaction:
+            conn.execute("BEGIN")
         rows = fetch_subtree(conn, block_id)
         seq = latest_seq(conn, block_id) if rows and rows[0][1] == "root" else None
+        conn.rollback()
     if not rows:
         raise HTTPException(status_code=404, detail="block not found")
     out = {"block": build_tree(rows, block_id)}

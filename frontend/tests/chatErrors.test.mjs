@@ -21,10 +21,10 @@ test("a rejected credential names the connection and asks for the right fix", ()
 
 test("the server's classification rides on the thrown error and is saved on the reply", () => {
   const err = chatFailure("AI call failed: upstream 529: Overloaded",
-    { kind: "overloaded", status: 529, provider_name: "Anthropic", provider_id: "p1", provider_auth: "key" });
+    { kind: "overloaded", provider_name: "Anthropic", provider_id: "p1", provider_auth: "key" });
   assert.deepEqual(failureFields(err), {
     errorKind: "overloaded", errorDetail: "AI call failed: upstream 529: Overloaded",
-    errorStatus: 529, errorProvider: "Anthropic", errorProviderId: "p1",
+    errorProvider: "Anthropic", errorProviderId: "p1",
   });
   // An unknown or missing kind (an older server) is "other"; a detail that
   // isn't a string (a validation error) still reads.

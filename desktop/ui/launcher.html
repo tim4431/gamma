@@ -11,72 +11,70 @@
   .wrap { max-width: 680px; margin: 0 auto; padding: 40px 28px 64px; }
   .head { display: flex; align-items: center; gap: 14px; margin-bottom: 6px; }
   .head svg { width: 40px; height: 40px; flex-shrink: 0; }
-  h1 { font-size: 21px; margin: 0; letter-spacing: -0.01em; }
+  h1 { font-size: var(--fs-xl); font-weight: 600; line-height: var(--lh-tight); margin: 0; }
   .sub { color: var(--text-muted); margin: 0 0 26px; }
-  .sectionTitle { display: flex; align-items: center; gap: 8px; color: var(--text-muted); font-size: 11px; font-weight: 600; text-transform: uppercase; letter-spacing: 0.05em; margin: 22px 0 8px; }
+  /* A section label: Gamma's (sentence case, the text keeps its own case). */
+  .sectionTitle { display: flex; align-items: center; gap: 8px; color: var(--text-secondary); font-size: var(--fs-xs); font-weight: 600; margin: 22px 0 8px; }
   .cards { display: flex; flex-direction: column; gap: 8px; }
   .card {
     background: var(--bg-card); border: 1px solid var(--border); border-radius: var(--radius-lg);
     padding: 12px 14px; display: flex; align-items: center; gap: 12px;
   }
   .card:hover { border-color: var(--border-light); }
-  .card .kind { width: 34px; height: 34px; border-radius: 9px; background: var(--bg-elevated); border: 1px solid var(--border); display: flex; align-items: center; justify-content: center; color: var(--text-muted); flex-shrink: 0; }
-  .card .kind svg { width: 17px; height: 17px; }
+  .card .kind { width: 34px; height: 34px; border-radius: var(--radius-md); background: var(--bg-elevated); border: 1px solid var(--border); display: flex; align-items: center; justify-content: center; color: var(--text-muted); flex-shrink: 0; }
+  .card .kind svg { width: 20px; height: 20px; stroke-width: 1.92; }
   .card .info { flex: 1; min-width: 0; }
-  .card .name { font-weight: 600; font-size: 14px; display: flex; align-items: center; gap: 8px; }
+  .card .name { font-weight: 600; font-size: var(--fs-md); display: flex; align-items: center; gap: 8px; }
   .card .name .text { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
-  .badge { font-size: 10.5px; font-weight: 500; color: var(--text-muted); border: 1px solid var(--border); border-radius: 99px; padding: 1px 7px; flex-shrink: 0; }
+  .badge { font-size: var(--fs-2xs); font-weight: 500; color: var(--text-muted); border: 1px solid var(--border); border-radius: var(--radius-full); padding: 1px 7px; flex-shrink: 0; }
   .badge.last { color: var(--accent); border-color: var(--accent-bg); background: var(--accent-bg-light); }
-  .card .detail { color: var(--text-muted); font-size: 11.5px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; margin-top: 2px; }
+  .card .detail { color: var(--text-muted); font-size: var(--fs-xs); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; margin-top: 2px; }
   .card .detail .sep { margin: 0 6px; color: var(--text-dim); }
   .card .actions { display: flex; align-items: center; gap: 2px; flex-shrink: 0; }
   .card .actions .uiBtn { margin-right: 6px; }
   .adders { display: flex; gap: 8px; margin-top: 12px; }
-  .status { margin-top: 16px; color: var(--text-muted); min-height: 20px; font-size: 12px; }
+  .status { margin-top: 16px; color: var(--text-muted); min-height: 20px; font-size: var(--fs-xs); }
   .status.err { color: var(--danger); white-space: pre-wrap; -webkit-user-select: text; user-select: text; }
 
   /* A server that would not open: what happened, in its own words underneath,
      and the one thing that would fix it. Raw output stays folded away. */
   .fail { margin-top: 16px; border: 1px solid var(--border); border-left: 3px solid var(--danger); border-radius: var(--radius-lg); background: var(--bg-card); padding: 12px 14px; }
   .fail .fHead { display: flex; align-items: flex-start; gap: 8px; }
-  .fail .fHead svg { width: 16px; height: 16px; color: var(--danger); flex-shrink: 0; margin-top: 1px; }
-  .fail .fTitle { font-size: 13px; font-weight: 600; flex: 1; }
-  .fail .fHint { color: var(--text-muted); font-size: 12px; margin-top: 6px; }
-  .fail .fDetail, .fail details pre { font-family: ui-monospace, Consolas, Menlo, monospace; line-height: 1.5; background: var(--bg-input); border: 1px solid var(--border); border-radius: var(--radius-md); -webkit-user-select: text; user-select: text; }
-  .fail .fDetail { font-size: 11.5px; color: var(--text-secondary); padding: 6px 8px; margin-top: 8px; white-space: pre-wrap; }
+  .fail .fHead > svg { width: 16px; height: 16px; stroke-width: 2.4; color: var(--danger); flex-shrink: 0; margin-top: 1px; }
+  .fail .fTitle { font-size: var(--fs-sm); font-weight: 600; flex: 1; }
+  .fail .fHint { color: var(--text-muted); font-size: var(--fs-xs); margin-top: 6px; }
+  .fail .fDetail, .fail details pre { font-family: var(--font-mono); line-height: 1.5; background: var(--bg-input); border: 1px solid var(--border); border-radius: var(--radius-md); -webkit-user-select: text; user-select: text; }
+  .fail .fDetail { font-size: var(--fs-xs); color: var(--text-secondary); padding: 6px 8px; margin-top: 8px; white-space: pre-wrap; }
   .fail .fActs { display: flex; gap: 6px; margin-top: 10px; flex-wrap: wrap; }
   .fail details { margin: 10px 0 0; }
-  .fail details pre { margin: 6px 0 0; max-height: 220px; overflow: auto; font-size: 11px; color: var(--text-muted); padding: 8px 10px; }
+  .fail details pre { margin: 6px 0 0; max-height: 220px; overflow: auto; font-size: var(--fs-2xs); color: var(--text-muted); padding: 8px 10px; }
   .empty { color: var(--text-muted); text-align: center; padding: 30px 16px; border: 1px dashed var(--border-light); border-radius: var(--radius-lg); }
   .empty b { color: var(--text-secondary); }
 
   dialog {
     background: var(--bg-elevated); color: var(--text-primary); border: 1px solid var(--border);
-    border-radius: var(--radius-lg); box-shadow: var(--shadow-3); padding: 20px; width: 400px; max-width: 90vw;
+    border-radius: var(--radius-lg); box-shadow: var(--shadow-3); padding: 20px; width: 440px; max-width: 90vw;
   }
   dialog::backdrop { background: rgba(0, 0, 0, 0.4); }
-  dialog h3 { margin: 0 0 12px; font-size: 14px; }
-  dialog p { margin: 0 0 8px; color: var(--text-muted); font-size: 12px; }
-  dialog label { display: block; color: var(--text-muted); font-size: 11.5px; margin: 10px 0 4px; }
-  dialog .row { display: flex; justify-content: flex-end; gap: 8px; margin-top: 18px; }
-  .creds { font: 12px/1.7 ui-monospace, Consolas, Menlo, monospace; background: var(--bg-input); border: 1px solid var(--border); border-radius: var(--radius-md); padding: 8px 10px; -webkit-user-select: text; user-select: text; white-space: pre; }
+  dialog h3 { margin: 0 0 12px; font-size: var(--fs-md); font-weight: 600; }
+  dialog p { margin: 0 0 8px; color: var(--text-muted); font-size: var(--fs-xs); }
+  dialog label { display: block; color: var(--text-muted); font-size: var(--fs-xs); margin: 10px 0 4px; }
+  dialog .row { display: flex; flex-wrap: wrap; justify-content: flex-end; gap: 8px; margin-top: 18px; }
+  .creds { font-family: var(--font-mono); font-size: var(--fs-xs); line-height: 1.7; background: var(--bg-input); border: 1px solid var(--border); border-radius: var(--radius-md); padding: 8px 10px; -webkit-user-select: text; user-select: text; white-space: pre; }
 
   .settings { background: var(--bg-card); border: 1px solid var(--border); border-radius: var(--radius-lg); padding: 12px 14px; }
   .setRow { display: flex; align-items: center; justify-content: space-between; gap: 12px; padding: 6px 0; }
-  .setRow .l { font-size: 13px; }
-  .setRow .d { color: var(--text-muted); font-size: 11.5px; margin-top: 1px; }
-  .setRow .d.path { font: 11.5px/1.4 ui-monospace, Consolas, Menlo, monospace; word-break: break-all; -webkit-user-select: text; user-select: text; }
+  .setRow .l { font-size: var(--fs-sm); }
+  .setRow .d { color: var(--text-muted); font-size: var(--fs-xs); margin-top: 1px; }
+  .setRow .d.path { font-family: var(--font-mono); word-break: break-all; -webkit-user-select: text; user-select: text; }
   .setRow .btns { display: flex; gap: 6px; flex-shrink: 0; }
-  .switch { position: relative; width: 34px; height: 20px; border-radius: 99px; background: var(--bg-active); border: 1px solid var(--border-light); cursor: pointer; flex-shrink: 0; transition: background 0.15s; }
-  .switch::after { content: ''; position: absolute; top: 2px; left: 2px; width: 14px; height: 14px; border-radius: 50%; background: #fff; transition: left 0.15s; box-shadow: 0 1px 2px rgba(0,0,0,0.3); }
-  .switch.on { background: var(--accent); border-color: var(--accent); }
-  .switch.on::after { left: 16px; }
   details { margin-top: 14px; color: var(--text-muted); }
-  details summary { cursor: pointer; font-size: 12px; }
+  details summary { cursor: pointer; font-size: var(--fs-xs); }
   details .settings { margin-top: 8px; }
-  details label { display: block; font-size: 11.5px; margin: 8px 0 3px; }
+  details label { display: block; font-size: var(--fs-xs); margin: 8px 0 3px; }
   details .row { margin-top: 12px; display: flex; justify-content: space-between; align-items: center; gap: 10px; }
-  .foot { margin-top: 26px; color: var(--text-dim); font-size: 11px; display: flex; justify-content: space-between; }
+  .detected { font-size: var(--fs-2xs); }
+  .foot { margin-top: 26px; color: var(--text-dim); font-size: var(--fs-2xs); display: flex; justify-content: space-between; }
 </style>
 </head>
 <body>
@@ -126,7 +124,7 @@
         <div class="l">Reopen the last server at launch</div>
         <div class="d">Off: start on this page every time.</div>
       </div>
-      <div class="switch" id="swOpenLast" role="switch"></div>
+      <label class="switch"><input type="checkbox" role="switch" id="swOpenLast" aria-label="Reopen the last server at launch"><span class="switchTrack"></span></label>
     </div>
     <div class="setRow">
       <div>
@@ -157,7 +155,7 @@
       <label>Frontend dist directory</label>
       <input class="uiInput mono" id="setStatic" spellcheck="false" />
       <div class="row">
-        <span id="detected" style="font-size:11px"></span>
+        <span class="detected" id="detected"></span>
         <button class="uiBtn sm" id="btnSaveSettings">Save</button>
       </div>
     </div>
@@ -224,7 +222,7 @@
   <div class="row">
     <button class="uiBtn" onclick="dlgRemove.close()">Cancel</button>
     <button class="uiBtn" id="btnRemoveKeep">Remove, keep files</button>
-    <button class="uiBtn danger" id="btnRemoveWipe">Delete everything</button>
+    <button class="uiBtn primary danger" id="btnRemoveWipe">Delete everything</button>
   </div>
 </dialog>
 
@@ -357,7 +355,7 @@
       cards.appendChild(card);
     }
 
-    $('swOpenLast').classList.toggle('on', Boolean(state.settings.openLastOnLaunch));
+    $('swOpenLast').checked = Boolean(state.settings.openLastOnLaunch);
     renderUpdate(state.update || {});
     $('setPython').value = state.settings.pythonPath || '';
     $('setBackend').value = state.settings.backendDir || '';
@@ -488,8 +486,8 @@
   };
   $('remoteUrl').addEventListener('keydown', (e) => { if (e.key === 'Enter') $('btnCreateRemote').click(); });
   $('renameName').addEventListener('keydown', (e) => { if (e.key === 'Enter') $('btnRename').click(); });
-  $('swOpenLast').onclick = async () => {
-    await gammaShell.setSettings({ openLastOnLaunch: !state.settings.openLastOnLaunch });
+  $('swOpenLast').onchange = async () => {
+    await gammaShell.setSettings({ openLastOnLaunch: $('swOpenLast').checked });
     refresh();
   };
   $('btnSaveSettings').onclick = async () => {

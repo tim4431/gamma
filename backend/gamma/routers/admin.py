@@ -26,10 +26,10 @@ from fastapi.responses import FileResponse
 from pydantic import BaseModel
 from starlette.background import BackgroundTask
 
-from .. import ai_settings, backups, cloud_auth, workspaces
+from .. import ai_settings, backups, chatgpt_oauth, cloud_auth, workspaces
 from ..auth import require_admin
-from .ai import (AIProviderRequest, ChatGPTAuthComplete, begin_chatgpt_signin, new_chatgpt_entry,
-                 reconnect_chatgpt_entry, redeem_chatgpt_signin, seeded_chatgpt_models)
+from .ai import (AIProviderRequest, ChatGPTAuthComplete, ChatGPTAuthStart, ChatGPTAuthStatus, begin_chatgpt_signin,
+                 new_chatgpt_entry, reconnect_chatgpt_entry, redeem_chatgpt_signin, seeded_chatgpt_models)
 from ..db import connect_users_db
 from ..logbuf import tail as _log_tail
 from .. import version
@@ -191,8 +191,8 @@ def _cloud() -> dict:
 # Test button, the model list and a sign-in's subscription usage go through
 # /api/ai/providers/{id}/test|usage and /api/ai/model-catalog, which take
 # that id from an admin. A ChatGPT sign-in is made (or reconnected) through
-# /ai-providers/chatgpt/start + complete, the account flow's helpers with
-# the state bound to ("server", admin).
+# /ai-providers/chatgpt/start + status + complete, the account flow's helpers
+# with the state bound to ("server", admin).
 
 def _shared_ai_view() -> dict:
     config = ai_settings.load_server_ai()
@@ -251,8 +251,13 @@ def add_ai_provider(payload: AIProviderRequest, request: Request):
 
 
 @router.post("/ai-providers/chatgpt/start")
-def shared_chatgpt_start(request: Request):
-    return begin_chatgpt_signin(("server", require_admin(request)))
+def shared_chatgpt_start(request: Request, payload: ChatGPTAuthStart | None = None):
+    return begin_chatgpt_signin(("server", require_admin(request)), request, payload)
+
+
+@router.post("/ai-providers/chatgpt/status")
+def shared_chatgpt_status(payload: ChatGPTAuthStatus, request: Request):
+    return chatgpt_oauth.status(("server", require_admin(request)), payload.state)
 
 
 # Sync def: the code exchange and the model listing are network round trips.

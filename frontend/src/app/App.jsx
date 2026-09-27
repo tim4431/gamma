@@ -55,6 +55,7 @@ import {
   outdentBlock,
   toggleCollapsed,
   expandToBlock,
+  isFoldedAway,
   updateBlockTree,
   removeBlockTree,
   flattenBlocks,
@@ -76,6 +77,7 @@ import { chordLabel, dispatch as dispatchHotkey, effectiveKeys, isTextField } fr
 import { APP_COMMANDS, liveAppCommands } from "./appCommands.js";
 import { stepList } from "../shared/ui/listKeys.js";
 import { BLOCK_COMMANDS } from "../editor/blockCommands.js";
+import { commandChord } from "./commands.js";
 import { loadSession, saveSession, clearSession, setSessionScope } from "./sessionState";
 import { ROLE_LABEL, workspaceMeta } from "../settings/SettingsWorkspace";
 import { AuthLoading, LoginPage, SessionConflictPage, ShareBlockedPage, WorkspaceUnavailablePage } from "../auth/LoginPage";
@@ -95,6 +97,7 @@ import { ShareAccessPill } from "../sharing/ShareAccess";
 import { BrandMark } from "../shared/ui/BrandMark";
 import { cleanLinkName, loadLinkName, saveLinkName, LINK_NAME_MAX } from "../collaboration/linkName";
 import SettingsDialog from "../settings/SettingsDialog";
+import { useProviderEditor } from "../settings/SettingsAi";
 import ReportProblem from "../support/ReportProblem";
 import { useGuide } from "../guide/useGuide";
 import GuideOverlay from "../guide/GuideOverlay";
@@ -2602,9 +2605,6 @@ function LibraryApp({ publicPage = null, initialServerConfig = null }) {
   // only ever returns a masked hint, so key fields here start empty and an
   // empty key on edit means "keep the stored one".
   const [aiKeysInfo, setAiKeysInfo] = useState(null); // masked GET /ai/settings: {providers: [], protocols: []}
-  const [aiKeysForm, setAiKeysForm] = useState(null); // null | {id: ""=add, protocol, name, api_key, base_url, models}
-  const [aiKeysBusy, setAiKeysBusy] = useState(false);
-  const [aiKeysError, setAiKeysError] = useState("");
   // Per-entry results of the list's Test button (a tiny live completion):
   // id -> {busy} | {ok, model, latency_ms} | {ok: false, error}
   const [aiKeyTests, setAiKeyTests] = useState({});
@@ -2613,8 +2613,20 @@ function LibraryApp({ publicPage = null, initialServerConfig = null }) {
   const [aiKeyUsage, setAiKeyUsage] = useState({});
   // Login connection check (POST /ai/health, Settings → Provider and models):
   // null = nothing to report; a failed result renders the chat panel's
-  // warning strip ("sign-in expired — reconnect") until fixed or dismissed.
+  // warning strip (the chat error card's headline for the failure's kind)
+  // until fixed or dismissed.
   const [aiHealth, setAiHealth] = useState(null);
+  // The connect dialog (settings/SettingsAi.jsx useProviderEditor, the path
+  // Settings → Server's shared entries take too). A saved change refreshes
+  // the model switchers and, while the chat shows the login check's warning
+  // strip, re-runs the check (the edit may have fixed or removed its
+  // credential); a connection the dialog made is tested at once.
+  const aiEditor = useProviderEditor({
+    info: aiKeysInfo, setInfo: setAiKeysInfo,
+    base: `${API}/ai/providers`, signIn: `${API}/ai/oauth/chatgpt`,
+    onSaved: () => { refreshAiModels(); if (aiHealth) checkAiHealth(); },
+    onConnected: (entry, form) => finishNewConnection(entry, !!form.fromChat),
+  });
 
   // The settings page (account popover → Settings…): two-column modal,
   // categories on the left, the selected pane on the right.
@@ -2739,9 +2751,8 @@ function LibraryApp({ publicPage = null, initialServerConfig = null }) {
     : chatModel;
 
   async function loadAiKeys() {
-    setAiKeysError("");
+    aiEditor.close();
     setAiKeysInfo(null);
-    setAiKeysForm(null);
     setAiKeyTests({});
     setAiKeyUsage({});
     try {
@@ -2762,7 +2773,7 @@ function LibraryApp({ publicPage = null, initialServerConfig = null }) {
         .filter((provider) => oauthProtocols.has(provider.protocol))
         .forEach((provider) => queryAiProviderUsage(provider));
     } catch (err) {
-      setAiKeysError(err.message);
+      aiEditor.setAiKeysError(err.message);
     }
   }
 
@@ -2840,41 +2851,16 @@ function LibraryApp({ publicPage = null, initialServerConfig = null }) {
     const target = service ? { service } : entry ? { entry } : null;
     if (AI_SETTINGS_PANES.includes(settingsOpen) && aiKeysInfo) openAiForm(target, aiKeysInfo);
     else pendingAiFormRef.current = target;
-    setSettingsOpen("ai");
-    setOpenPopover(null);
+    openSettingsPane("ai");
   }
   function openAiForm(target, info) {
-    if (target?.service) startAddAiProvider(target.service, info, { fromChat: true });
+    if (target?.service) aiEditor.startAdd(target.service, { list: info, fromChat: true });
     const own = target?.entry && info.providers?.find((p) => p.id === target.entry && !p.shared);
-    if (own) startEditAiProvider(own);
+    if (own) aiEditor.startEdit(own);
   }
 
-  const aiProtocolOf = (id) => aiKeysInfo?.protocols?.find((p) => p.id === id);
-  // Sign-in protocols (ChatGPT OAuth) have no key/base-URL fields — the
-  // backend marks them with auth: "oauth" in the protocols payload.
-  const isOauthProto = (id) => aiProtocolOf(id)?.auth === "oauth";
   // The model switchers everywhere feed off /ai/models — refresh after edits.
   const refreshAiModels = () => apiJson(`${API}/ai/models`).then(setAiInfo).catch(() => {});
-
-  // A new connection's form, set to `service`: a protocol id, or "other"
-  // (the first named service, else a custom endpoint). Without one it starts
-  // on the first tile, the subscription sign-in.
-  // `fromChat`: opened from the chat's setup card — once connected, Settings
-  // closes and the chat's message box takes the focus.
-  function startAddAiProvider(service, info = aiKeysInfo, { fromChat = false } = {}) {
-    setAiKeysError("");
-    const protocols = info?.protocols || [];
-    const preset = service === "other" ? info?.services?.[0] : null;
-    const protocol = preset?.protocol
-      || (service === "other" ? protocols.find((p) => p.auth !== "oauth")?.id : service)
-      || "";
-    setAiKeysForm({
-      id: "", protocol: protocols.some((p) => p.id === protocol) ? protocol : (protocols.find((p) => p.auth === "oauth") || protocols[0])?.id || "chatgpt",
-      name: "", api_key: "", base_url: preset?.base_url || "", models: "", test_model: "",
-      ...(service === "other" && !preset ? { custom: true } : {}),
-      ...(fromChat ? { fromChat: true } : {}),
-    });
-  }
 
   // A connection the dialog just made: test it right away, and when the
   // dialog came from the chat's setup card go back to the chat, ready to ask.
@@ -2883,134 +2869,11 @@ function LibraryApp({ publicPage = null, initialServerConfig = null }) {
     testAiProvider(entry);
     if (!fromChat) return;
     const model = parseFolderTags(entry.models)[0];
-    setAiKeysForm(null);
+    aiEditor.close();
     setSettingsOpen(null);
     setStatus(model ? t("Connected — {model} ready", { model }) : t("Connected"));
     setChatHidden(false);
     setChatFocusSignal((n) => n + 1);
-  }
-
-  function startEditAiProvider(p) {
-    setAiKeysError("");
-    setAiKeysForm({ id: p.id, protocol: p.protocol, name: p.name || "", api_key: "", base_url: p.base_url || "", models: p.models || "", test_model: p.test_model || "" });
-  }
-
-  // Model picker for the form: API protocols are listed live from the
-  // provider's /v1/models (typed key, or the stored one when editing);
-  // ChatGPT (OAuth) is listed live from the codex backend via the entry's
-  // sign-in token (nothing to list before connecting).
-  const [aiModelCatalog, setAiModelCatalog] = useState(null); // null | {loading} | {models} | {error}
-  const catalogRequest = useRef(0);
-  const catalogTarget = JSON.stringify([aiKeysForm?.id, aiKeysForm?.protocol, aiKeysForm?.api_key, aiKeysForm?.base_url, aiKeysForm?.oauthConnectedAt]);
-  const catalogTargetRef = useRef(catalogTarget);
-  catalogTargetRef.current = catalogTarget;
-  async function loadModelCatalog() {
-    const f = aiKeysForm;
-    if (!f) return;
-    const request = ++catalogRequest.current;
-    const target = catalogTarget;
-    setAiModelCatalog({ loading: true });
-    try {
-      const d = await apiJson(`${API}/ai/model-catalog`, {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({
-          provider_id: f.id || "", protocol: f.protocol,
-          api_key: f.api_key.trim(), base_url: f.base_url.trim(),
-        }),
-      });
-      if (request === catalogRequest.current && target === catalogTargetRef.current) setAiModelCatalog({ models: d.models || [] });
-    } catch (err) {
-      if (request === catalogRequest.current && target === catalogTargetRef.current) setAiModelCatalog({ error: friendlyApiError(err) });
-    }
-  }
-  function addCatalogModel(m) {
-    if (!m) return;
-    setAiKeysForm((f) => {
-      if (!f) return f;
-      const cur = parseFolderTags(f.models);
-      return cur.includes(m) ? f : { ...f, models: [...cur, m].join(", ") };
-    });
-  }
-  function removeModel(m) {
-    setAiKeysForm((f) => f ? { ...f, models: parseFolderTags(f.models).filter((x) => x !== m).join(", ") } : f);
-  }
-  const [customModel, setCustomModel] = useState(""); // free-form entry next to the picker
-  const formModels = parseFolderTags(aiKeysForm?.models);
-  const availModels = (aiModelCatalog?.models || []).filter((m) => !formModels.includes(m));
-  // A ChatGPT entry that isn't signed in yet can't list models — its list
-  // comes from the connected account, so the fetch waits for Connect.
-  const formStoredEntry = aiKeysForm?.id ? aiKeysInfo?.providers?.find((p) => p.id === aiKeysForm.id) : null;
-  const formOauthPending = !!aiKeysForm && isOauthProto(aiKeysForm.protocol) && !formStoredEntry?.oauth_connected;
-
-  // Debounce credential edits, and discard responses for an older endpoint/key.
-  useEffect(() => {
-    setAiModelCatalog(null);
-    const f = aiKeysForm;
-    if (!f) return;
-    const stored = f.id ? aiKeysInfo?.providers?.find((p) => p.id === f.id) : null;
-    const ready = isOauthProto(f.protocol) ? stored?.oauth_connected : f.api_key?.trim() || stored?.key_hint;
-    if (!ready) return;
-    const timer = setTimeout(loadModelCatalog, 500);
-    return () => { clearTimeout(timer); catalogRequest.current++; };
-  }, [catalogTarget, formStoredEntry?.oauth_connected]);
-  useEffect(() => { setCustomModel(""); }, [aiKeysForm?.id, aiKeysForm?.protocol]);
-
-  // "Sign in with ChatGPT": opens the OAuth page in a new tab. Its redirect
-  // (localhost:1455) fails to load — the user pastes that URL back into the
-  // form and submit completes the exchange server-side.
-  async function startChatGPTAuth() {
-    setAiKeysError("");
-    try {
-      const d = await apiJson(`${API}/ai/oauth/chatgpt/start`, { method: "POST" });
-      setAiKeysForm((f) => (f ? { ...f, oauthState: d.state } : f));
-      window.open(d.auth_url, "_blank", "noopener");
-    } catch (err) {
-      setAiKeysError(err.message);
-    }
-  }
-
-  async function submitAiProvider() {
-    const f = aiKeysForm;
-    if (!f) return;
-    const oauth = isOauthProto(f.protocol);
-    const oauthCb = oauth ? (f.oauthCallback || "").trim() : "";
-    if (oauth && !oauthCb && !f.id) { setAiKeysError(t("Sign in with ChatGPT and paste the callback URL to connect.")); return; }
-    if (oauthCb && !f.oauthState) { setAiKeysError(t("Hit “Open ChatGPT sign-in” first, then paste the URL it ends on.")); return; }
-    if (!oauth && !f.id && !f.api_key.trim()) { setAiKeysError(t("An API key is required.")); return; }
-    // Complete the OAuth exchange when a callback was pasted; otherwise a
-    // plain field edit (name/models — plus key/base URL for key entries).
-    const req = oauthCb
-      ? { url: `${API}/ai/oauth/chatgpt/complete`, method: "POST",
-          body: { state: f.oauthState, callback: oauthCb, provider_id: f.id || "",
-                  name: f.name.trim(), models: f.models.trim() } }
-      : { url: `${API}/ai/providers${f.id ? `/${f.id}` : ""}`, method: f.id ? "PUT" : "POST",
-          body: { protocol: f.protocol, name: f.name.trim(), base_url: f.base_url.trim(), models: f.models.trim(),
-                  test_model: (f.test_model || "").trim(),
-                  ...(f.api_key.trim() ? { api_key: f.api_key.trim() } : {}) } };
-    // A connection made in this dialog (`fresh` survives the sign-in step,
-    // which keeps the form open on the new entry) is tested once saved.
-    let made = null;
-    await runAiKeysRequest(async () => {
-      const info = await apiJson(req.url, {
-        method: req.method,
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify(req.body),
-      });
-      const fresh = info.providers.find((p) => !aiKeysInfo.providers.some((old) => old.id === p.id));
-      if (oauthCb) {
-        const connected = f.id ? info.providers.find((p) => p.id === f.id) : fresh;
-        if (connected && f.fromChat && parseFolderTags(connected.models).length) made = connected;
-        else if (connected) {
-          setAiKeysForm((current) => current?.oauthState === f.oauthState
-            ? { ...current, id: connected.id, models: connected.models || "", oauthState: "", oauthCallback: "", oauthConnectedAt: Date.now(), fresh: current.fresh || !f.id } : current);
-        }
-      } else {
-        made = f.id ? (f.fresh ? info.providers.find((p) => p.id === f.id) : null) : fresh;
-      }
-      return info;
-    }, !oauthCb);
-    if (made) finishNewConnection(made, !!f.fromChat);
   }
 
   function deleteAiProvider(p) {
@@ -3023,28 +2886,10 @@ function LibraryApp({ publicPage = null, initialServerConfig = null }) {
       onConfirm: async () => {
         // Close a form that edits this entry — saving it would 404 ("provider
         // not found") — and forget it as the active key.
-        await runAiKeysRequest(() => apiJson(`${API}/ai/providers/${p.id}`, { method: "DELETE" }), aiKeysForm?.id === p.id);
+        await aiEditor.run(() => apiJson(`${API}/ai/providers/${p.id}`, { method: "DELETE" }), aiEditor.aiKeysForm?.id === p.id);
         if (aiProvider === p.id) setAiProvider("");
       },
     });
-  }
-
-  // Shared busy/error/refresh protocol for provider-list mutations.
-  async function runAiKeysRequest(call, closeForm = false) {
-    setAiKeysBusy(true);
-    setAiKeysError("");
-    try {
-      setAiKeysInfo(await call());
-      if (closeForm) setAiKeysForm(null);
-      refreshAiModels();
-      // A provider edit may have fixed (or removed) the credential behind the
-      // chat panel's warning strip — re-run the check while one is showing.
-      if (aiHealth) checkAiHealth();
-    } catch (err) {
-      setAiKeysError(err.message);
-    } finally {
-      setAiKeysBusy(false);
-    }
   }
 
   // User management moved into Settings → Users (settings/SettingsDialog.jsx UsersSettings,
@@ -3827,17 +3672,25 @@ function LibraryApp({ publicPage = null, initialServerConfig = null }) {
   const aiMarkTimersRef = useRef(new Map());
   const aiMarkSeqRef = useRef(0);
   const autosaveTimerRef = useRef(null);
-  const suppressAutosaveRef = useRef(true); // skip initial mount + doc loads
+  // Trees that did not come from an edit here: "load" (fetched from the
+  // server — it becomes the collab base as is) or "remote" (another client's
+  // ops applied — the base already has them, so the diff sends only our own
+  // edits in the same render). Neither is an undo step. Kept on the tree
+  // VALUE, never a flag beside setBlocks: a flag outlived a load React
+  // skipped (nothing changed) or was set by an effect that runs before the
+  // autosave one, and the edit committed with it was taken for a load and
+  // never sent — the server later refused the block as unknown.
+  const treeOriginRef = useRef(new WeakMap());
+  const loaded = (tree) => { treeOriginRef.current.set(tree, "load"); return tree; };
   const saveNowRef = useRef(false); // next autosave runs without the debounce (editor close)
   // THE undo history (Ctrl+Z anywhere on the page, editors included):
   // derived from the block tree's transitions, see blockHistory.js. Declared
-  // right after the load flag so its effect reads it before the autosave
-  // effect resets it.
+  // before the autosave effect so its effect sees a tree's origin first.
   const caretRef = useRef(null);         // {id, from, to} the open editor's live selection
   const caretBeforeRef = useRef(null);   // {id, from, to} of the last editor change
   const pendingCaretRef = useRef(null);  // caret to place once a restore has committed
   const blockHistory = useBlockHistory(blocks, setBlocks, {
-    loadRef: suppressAutosaveRef,
+    isLoad: (tree) => treeOriginRef.current.has(tree),
     pageId: focusedBlockId,
     enabled: !readOnly && !!focusedBlockId,
     caretRef,
@@ -3948,7 +3801,7 @@ function LibraryApp({ publicPage = null, initialServerConfig = null }) {
     setOpenPopover(null);
     if (blockId) pendingBlockScrollRef.current = blockId;
     if (pageId && pageId !== focusedBlockId) { openPage(pageId); return; }
-    if (blockId) { suppressAutosaveRef.current = true; setBlocks((prev) => expandToBlock(prev, blockId)); }
+    if (blockId) setBlocks((prev) => expandToBlock(prev, blockId));
   };
   useEffect(() => {
     const h = (e) => jumpToRef.current?.(e.detail?.page, e.detail?.block);
@@ -3967,14 +3820,16 @@ function LibraryApp({ publicPage = null, initialServerConfig = null }) {
       row.scrollIntoView({ block: "center", behavior: "smooth" });
       setFocusedId(id);
       pendingBlockScrollRef.current = null;
-    } else if (flattenBlocks(blocks).some((b) => b.id === id)) {
-      // Block exists but is inside a collapsed parent — expand and try again
-      if (!readOnly) suppressAutosaveRef.current = true;
+    } else if (isFoldedAway(blocks, id)) {
+      // Inside a collapsed parent: unfold (a view change — no ops, no undo
+      // step) and try again once it renders.
       setBlocks((prev) => expandToBlock(prev, id));
-    } else {
-      // Block not in tree yet — keep ref and wait for next blocks change
     }
-  }, [blocks, readOnly]);
+    // Otherwise the row isn't rendered yet (not in the tree yet, or the notes
+    // window is closed or collapsed — a highlight made on the PDF alone):
+    // keep the ref and try again on the next tree change or when the notes
+    // come back.
+  }, [blocks, notesVisible, collapsedWins.notes, phonePanel]);
 
   // A page's passive landing (openBlock): the notes scroll to where the
   // reader left off, else to the top, and that row flashes once — but no
@@ -4010,12 +3865,12 @@ function LibraryApp({ publicPage = null, initialServerConfig = null }) {
 
   // The page's live session (collaboration/usePageCollab.js): the tree's transitions become ops
   // sent in debounced batches, other clients' batches arrive over the page
-  // socket and apply below, presence rides the same socket. A load (the
-  // suppress flag) makes the tree the session's base instead of a change.
+  // socket and apply below, presence rides the same socket. A load (a tree
+  // marked by `loaded`) becomes the session's base instead of a change.
   const applyRemoteRef = useRef(null);
   const loadedSeqRef = useRef(null); // the op-log seq the last fetched tree reflects
   // An empty page opens with one client-minted placeholder block (openBlock)
-  // that the server has never seen. It is set under the load suppress flag,
+  // that the server has never seen. It arrives with the load,
   // so the collab base must NOT count it as known — the first edit to it is
   // then diffed as an `insert`, not a `set` on a block the server rejects
   // (404 "no such block"). Cleared once that insert has been queued.
@@ -4034,8 +3889,8 @@ function LibraryApp({ publicPage = null, initialServerConfig = null }) {
   collabRef.current = collab;
   // Ops from another client (or a server-side writer): the page block's own
   // changes update the title/properties state, the rest apply to the tree
-  // as a load-like transition (no history entry, nothing re-sent) and fold
-  // into every undo snapshot.
+  // as a "remote" transition (no history entry; the base already has them,
+  // so nothing of theirs is re-sent) and fold into every undo snapshot.
   applyRemoteRef.current = (ops, pageId, pos) => {
     if (pageId !== focusedBlockId) return;
     for (const op of ops) {
@@ -4054,10 +3909,11 @@ function LibraryApp({ publicPage = null, initialServerConfig = null }) {
     }
     const treeOps = ops.filter((op) => !(op.op === "set" && op.id === pageId));
     if (!treeOps.length) return;
-    suppressAutosaveRef.current = true;
     setBlocks((prev) => {
       try {
-        return applyOps(prev, treeOps, pageId, pos);
+        const next = applyOps(prev, treeOps, pageId, pos);
+        if (next !== prev) treeOriginRef.current.set(next, "remote");
+        return next;
       } catch (err) {
         // A batch we can't apply (should not happen): resync from the server
         // rather than take the page down.
@@ -4072,18 +3928,20 @@ function LibraryApp({ publicPage = null, initialServerConfig = null }) {
   function flushPendingSave() { collabRef.current.flush(); }
   useEffect(() => {
     if (!focusedBlockId) return;
-    if (suppressAutosaveRef.current) {
-      suppressAutosaveRef.current = false;
-      const seed = seedBlockIdRef.current;
+    const origin = treeOriginRef.current.get(blocks);
+    treeOriginRef.current.delete(blocks); // one transition's worth: an undo back to this tree is an edit
+    const seed = seedBlockIdRef.current;
+    if (origin === "load") {
       const known = seed ? blocks.filter((b) => b.id !== seed) : blocks;
       collab.commit(known, { isLoad: true, seq: loadedSeqRef.current });
       loadedSeqRef.current = null;
       return;
     }
     if (readOnly) return;
-    const ops = collab.commit(blocks, { now: saveNowRef.current });
+    // Another client's ops don't make the untouched placeholder ours to save.
+    const idle = origin === "remote" && seed && blocks.some((b) => b.id === seed && !b.content && !b.children?.length);
+    const ops = collab.commit(idle ? blocks.filter((b) => b.id !== seed) : blocks, { now: saveNowRef.current });
     saveNowRef.current = false;
-    const seed = seedBlockIdRef.current;
     if (seed && ops.some((op) => op.op === "insert" && op.id === seed)) seedBlockIdRef.current = null;
   }, [blocks, readOnly]);
   // Our place on the page for the others: the focused row (an open editor
@@ -4156,7 +4014,6 @@ function LibraryApp({ publicPage = null, initialServerConfig = null }) {
       return null;
     }
     if (findBlock(blocks)) {
-      suppressAutosaveRef.current = true;
       pendingBlockScrollRef.current = id;
       setBlocks((prev) => expandToBlock(prev, id));
     } else {
@@ -4399,12 +4256,10 @@ function LibraryApp({ publicPage = null, initialServerConfig = null }) {
       let children = normalizeBlocks((data.block?.children) || []);
       if (keepUi) children = keepUiFlags(children, blocksRef.current);
       loadedSeqRef.current = data.seq ?? null;
-      suppressAutosaveRef.current = true;
-      setBlocks(children);
+      setBlocks(loaded(children));
       return children;
     } catch {
-      suppressAutosaveRef.current = true;
-      setBlocks([]);
+      setBlocks(loaded([]));
       return [];
     }
   }
@@ -5034,11 +4889,10 @@ function LibraryApp({ publicPage = null, initialServerConfig = null }) {
       ? `${src}${src.includes("?") ? "&" : "?"}share=${encodeURIComponent(token)}`
       : src ? pdfProxyUrl(src, { share: token }) : "";
 
-    suppressAutosaveRef.current = true;
     setFocusedBlockId(block?.id || "");
     setFocusedBlock(block || null);
     setPageTitle(block?.content || defaultPageTitle(pageAttachment(block)));
-    setBlocks(childBlocks);
+    setBlocks(loaded(childBlocks));
     setDocId(props.doc_id || share.doc_id || "");
     setInputUrl(src);
     setPdfUrl(proxiedUrl);
@@ -5097,7 +4951,6 @@ function LibraryApp({ publicPage = null, initialServerConfig = null }) {
       const childBlocks = normalizeBlocks(block.children || []);
       loadedSeqRef.current = subtreeData.seq ?? null;
 
-      suppressAutosaveRef.current = true;
       setMissingPage("");
       setFocusedBlockId(blockId);
       setFocusedBlock(block);
@@ -5114,20 +4967,19 @@ function LibraryApp({ publicPage = null, initialServerConfig = null }) {
         openedPdfUrl = opts?.viewerUrl || (src.startsWith("/api/") ? src : pdfProxyUrl(src));
         setInputUrl(src);
         setPdfUrl(openedPdfUrl);
-        setBlocks(childBlocks);
+        setBlocks(loaded(childBlocks));
       } else {
         setInputUrl("");
         setPdfUrl("");
         if (childBlocks.length === 0 && !readOnly) {
           const seedId = makeId();
           seedBlockIdRef.current = seedId;
-          suppressAutosaveRef.current = true;
           // A page created from "New page" gets the title first (Notion-
           // style); the seed block waits for Enter there.
           if (!opts?.focusTitle) pendingFocusRef.current = seedId;
-          setBlocks([{ id: seedId, content: "", children: [], collapsed: false, editMode: !opts?.focusTitle, properties: {} }]);
+          setBlocks(loaded([{ id: seedId, content: "", children: [], collapsed: false, editMode: !opts?.focusTitle, properties: {} }]));
         } else {
-          setBlocks(childBlocks);
+          setBlocks(loaded(childBlocks));
         }
       }
 
@@ -5369,10 +5221,9 @@ function LibraryApp({ publicPage = null, initialServerConfig = null }) {
   function goHome(refreshHome = true, keepFilters = false) {
     leaveCurrentPage();
     clearSession();
-    suppressAutosaveRef.current = true;
     setFocusedBlockId(null);
     setFocusedBlock(null);
-    setBlocks([]);
+    setBlocks(loaded([]));
     setPdfUrl("");
     setDocId("");
     setInputUrl("");
@@ -6576,7 +6427,9 @@ function LibraryApp({ publicPage = null, initialServerConfig = null }) {
     downloadPdf: () => exportRawPdf(),
     importDialog: () => { setOpenPopover(null); setImportOpen(true); },
     newPage: () => createPage(),
-    share: () => setOpenPopover((p) => (p === "share" ? null : "share")),
+    // As the topbar's link button: load the open page's share settings, then
+    // show the popover (a bare toggle showed a stale target or none).
+    share: () => openPageShare(focusedBlockId),
     metadata: () => openMetaPopover(),
     attach: () => setOpenPopover((p) => (p === "attach" ? null : "attach")),
     reportProblem: () => { setOpenPopover(null); setReportOpen(true); },
@@ -6608,6 +6461,10 @@ function LibraryApp({ publicPage = null, initialServerConfig = null }) {
   // events (guide/triggers.js); never in the share view.
   const unfiledLibrary = useMemo(() => homeBlocks.length >= 10
     && homeBlocks.every((b) => !b.properties?.folder && !b.properties?.category), [homeBlocks]);
+  // Nothing in the library yet but the seeded Welcome page, once the listing
+  // has come back: the first tour is offered on it, and the library shows
+  // "Start your library".
+  const freshLibrary = useMemo(() => homeLoaded && isFreshLibrary(homeBlocks), [homeLoaded, homeBlocks]);
   // The seeded Welcome page's PDF (gamma/seed.py), the first tour's demo
   // paper while the library still has it: no arXiv download, works offline.
   const welcomePdf = useMemo(() => {
@@ -6616,9 +6473,9 @@ function LibraryApp({ publicPage = null, initialServerConfig = null }) {
   }, [homeBlocks]);
   const guide = useGuide({
     services: {
-      // A finished tour's `finish`: "pen" re-arms the pen last drawn with
+      // A finished tour's `restore`: "pen" re-arms the pen last drawn with
       // when the handwriting tour leaves the eraser or the lasso armed.
-      finish: (what) => {
+      restore: (what) => {
         if (what !== "pen") return;
         setInkUi((s) => (s.open && s.pen && (s.tool === "eraser" || s.tool === "select") ? { ...s, tool: s.pen, options: false } : s));
       },
@@ -6666,7 +6523,6 @@ function LibraryApp({ publicPage = null, initialServerConfig = null }) {
       // tour picks neither its setup step nor its chat steps too early
       aiConfigured: aiInfo ? !!aiInfo.enabled && !!aiInfo.models?.length : undefined,
       aiEditable: !authUser?.is_guest, // a guest can't store keys
-      chatVisible: isPhone ? phonePanel === "chat" : !chatHidden && !collapsedWins.chat,
       pdfChatVisible: !!pageAttach && !pdfHidden && !collapsedWins.pdf && !isPhone,
       guideAvailable: !settingsOpen,
       // the phone (compact) layout: Home is the bottom bar's Library tab
@@ -6679,9 +6535,7 @@ function LibraryApp({ publicPage = null, initialServerConfig = null }) {
       onPage: !!focusedBlockId,
       editable: !readOnly,
       unfiledLibrary,
-      // nothing in the library yet but the seeded Welcome page: the first
-      // tour is offered on it
-      emptyLibrary: homeLoaded && isFreshLibrary(homeBlocks),
+      emptyLibrary: freshLibrary,
       installable: HOME_SCREEN_INSTALLABLE,
       // a demo server: progress per visit, the first-run tour offered on arrival
       demo: !!serverConfig?.demo,
@@ -6968,10 +6822,10 @@ function LibraryApp({ publicPage = null, initialServerConfig = null }) {
   // follows the last of them. homeMatchCount is null without a query.
   const homeQueryText = homeQuery.trim();
   const homeMatchCount = homeQueryText ? homeItems.filter((it) => it._match).length : null;
+  // A menu row's / box's key hint: the chord this account gave the command.
   const commandKeyLabel = (id) => {
-    const cmd = APP_COMMANDS.find((c) => c.id === id);
-    const keys = cmd ? effectiveKeys(cmd, keybindings) : [];
-    return keys.length ? chordLabel(keys[0]) : "";
+    const chord = commandChord(id, keybindings);
+    return chord ? chordLabel(chord) : "";
   };
   // The quiet row goes right after the matches (they lead the listing).
   const withSearchMore = (nodes) => (homeMatchCount > 0 && homeMatchCount <= nodes.length
@@ -6990,8 +6844,7 @@ function LibraryApp({ publicPage = null, initialServerConfig = null }) {
   // A library with nothing of the user's in it yet (only the seeded Welcome
   // page, or nothing) shows "Start your library" at its root instead of the
   // empty line; a folder or label view keeps its own message.
-  const libraryStart = homeLoaded && lib.organize && !folderFilter && !categoryFilter
-    && isFreshLibrary(homeBlocks) ? (
+  const libraryStart = freshLibrary && lib.organize && !folderFilter && !categoryFilter ? (
     <LibraryEmpty
       onOpenLink={() => setOpenPopover("add")}
       onUpload={uploadFiles}
@@ -7532,7 +7385,6 @@ function LibraryApp({ publicPage = null, initialServerConfig = null }) {
                 onJump={(id) => {
                   if (!id) return;
                   pendingBlockScrollRef.current = id;
-                  suppressAutosaveRef.current = true;
                   setBlocks((prev) => expandToBlock(prev, id));
                 }}
               />
@@ -9695,6 +9547,7 @@ function LibraryApp({ publicPage = null, initialServerConfig = null }) {
               inkPenOnly={inkPenOnly}
               inkPressure={inkPressure}
               inkFlash={inkFlash}
+              flashHighlightId={flashingId}
               onInkStroke={readOnly ? undefined : handleInkStroke}
               onInkErase={readOnly ? undefined : handleInkErase}
               onInkErasePartial={readOnly ? undefined : handleInkErasePartial}
@@ -10156,28 +10009,13 @@ function LibraryApp({ publicPage = null, initialServerConfig = null }) {
           openPaper: (id) => { setSettingsOpen(null); openPage(id); },
         }}
         ai={{
+          ...aiEditor,
           chatModel: chatSendModel,
           setChatModel,
           chatEffort,
           setChatEffort,
-          aiKeysInfo,
-          aiKeysError,
-          setAiKeysError,
-          aiKeysBusy,
-          aiKeysForm,
-          setAiKeysForm,
           aiProvider,
           setAiProvider,
-          aiModelCatalog,
-          formOauthPending,
-          formModels,
-          availModels,
-          customModel,
-          setCustomModel,
-          aiProtocolOf,
-          isOauthProto,
-          startAddAiProvider,
-          startEditAiProvider,
           deleteAiProvider,
           aiKeyTests,
           testAiProvider,
@@ -10192,11 +10030,6 @@ function LibraryApp({ publicPage = null, initialServerConfig = null }) {
           setDictationModel,
           dictationLang,
           setDictationLang,
-          startChatGPTAuth,
-          loadModelCatalog,
-          addCatalogModel,
-          removeModel,
-          submitAiProvider,
         }}
         prompts={{
           aiInfo,

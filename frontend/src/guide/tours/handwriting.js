@@ -6,7 +6,7 @@ import { T } from "../../shared/i18n/i18n.js";
 // worth it (the drawing is a note you can caption), then the pen's options,
 // the eraser and the lasso. The practice steps spotlight the whole PDF pane,
 // tool strip included, so the user can pick a tool and use it inside one
-// hole. Finishing re-arms the pen (`finish`), so the next drag writes.
+// hole. Finishing re-arms the pen (`restore`), so the next drag writes.
 export default {
   id: "handwriting",
   version: 2,
@@ -15,7 +15,7 @@ export default {
   trigger: { event: "ink.stroke" },
   offerAnchor: "pdf.inkButton",
   offer: { title: T("You're writing on the PDF"), line: T("Erase, undo, recolour, and caption your drawing.") },
-  finish: "pen",
+  restore: "pen",
   steps: [
     { id: "ink-draw", anchor: "pdf.pane", reveal: "ink.toolbar", placement: "inside", creates: "notes.ink",
       title: T("Pick a pen and write or draw on the page"), advanceOn: { event: "ink.stroke" } },

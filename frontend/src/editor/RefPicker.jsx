@@ -1,17 +1,13 @@
 // The [[ link picker's popup: anchored at the caret like the "/" menu, pages
-// then blocks under their section titles, the typed text marked in bold,
-// and a key-hint footer. editor/BlockTree.jsx owns the trigger, the lists
+// then blocks under their section titles, the typed text marked as in
+// Search and Quick Open (MarkedText), and a key-hint footer. editor/BlockTree.jsx owns the trigger, the lists
 // (editor/refLists.js) and the keys; `rows` are
 // {kind: "page" | "block", id, title, meta, isPdf}.
 import React, { useEffect } from "react";
 import { useCaretAnchored } from "./LatexEditor";
-import { markedParts } from "../search/snippets";
+import { MarkedText } from "../search/SearchPanel";
 import { FileGlyph } from "../shared/ui/Icons";
 import { t } from "../shared/i18n/i18n.js";
-
-function Marked({ text, query, lead }) {
-  return markedParts(text, query, {}, lead).map((p, i) => (p.mark ? <b key={i}>{p.text}</b> : <React.Fragment key={i}>{p.text}</React.Fragment>));
-}
 
 export function RefPickerPopup({ rows, selected, anchor, query, onPick }) {
   const [ref, style] = useCaretAnchored(anchor, false, [rows]);
@@ -31,7 +27,7 @@ export function RefPickerPopup({ rows, selected, anchor, query, onPick }) {
           >
             <span className="refPopupIcon">{r.kind === "page" ? <FileGlyph isPdf={r.isPdf} size={16} /> : <span className="refPopupDot" />}</span>
             <span className="refPopupBody">
-              <span className="refPopupText"><Marked text={r.title} query={query} lead={r.kind === "block" ? 48 : 0} /></span>
+              <span className="refPopupText"><MarkedText text={r.title} query={query} lead={r.kind === "block" ? 48 : 0} /></span>
               {r.meta ? <span className="refPopupMeta">{r.meta}</span> : null}
             </span>
           </button>

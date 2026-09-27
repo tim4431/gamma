@@ -212,6 +212,19 @@ export function expandToBlock(blocks, targetId) {
   return walk(blocks);
 }
 
+// True when a collapsed ancestor hides `targetId` — what expandToBlock unfolds.
+export function isFoldedAway(blocks, targetId) {
+  const walk = (list, hidden) => {
+    for (const b of list || []) {
+      if (b.id === targetId) return hidden;
+      const found = walk(b.children, hidden || !!b.collapsed);
+      if (found !== null) return found;
+    }
+    return null;
+  };
+  return walk(blocks, false) === true;
+}
+
 function makeNewBlock({ parentId = null, properties = {} } = {}) {
   return {
     id: makeBlockId(),

@@ -48,6 +48,14 @@ def test_index_html_falls_back_and_revalidates(tmp_path, monkeypatch):
     assert c.get("/some/deep/route", headers={"If-None-Match": r.headers["etag"]}).status_code == 304
 
 
+def test_a_nul_byte_in_the_path_is_a_404(tmp_path, monkeypatch):
+    # A scanner's "%00": Path.resolve() raised ValueError and the request
+    # became a 500 in the server log.
+    c = _static_client(tmp_path, monkeypatch)
+    assert c.get("/%00.html").status_code == 404
+    assert c.get("/assets/%00").status_code == 404
+
+
 def test_web_app_manifest_has_its_media_type(tmp_path, monkeypatch):
     c = _static_client(tmp_path, monkeypatch)
     r = c.get("/media/manifest.webmanifest")

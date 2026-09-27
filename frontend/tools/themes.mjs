@@ -38,7 +38,7 @@ export const PAIRS = [
   ["--text-dim", "--bg-surface", 3],
   ["--accent", "--bg-surface", 4.5],
   ["--accent", "--bg-page", 4.5],
-  ["--on-accent", "--accent-dark", 4.5],
+  ["--on-accent", "--accent-fill", 4.5],
   ["--danger", "--bg-surface", 4.5],
 ];
 

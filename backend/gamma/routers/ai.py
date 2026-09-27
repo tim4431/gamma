@@ -1,6 +1,7 @@
 """AI chat, provider settings, model discovery, and ChatGPT OAuth routes."""
 
 import hashlib
+import ipaddress
 import json
 import queue
 import re
@@ -13,7 +14,7 @@ from concurrent.futures import ThreadPoolExecutor
 from urllib.request import urlopen
 
 from fastapi import APIRouter, File, Form, HTTPException, Request, UploadFile
-from fastapi.responses import JSONResponse, StreamingResponse
+from fastapi.responses import JSONResponse, Response, StreamingResponse
 from pydantic import BaseModel, Field, field_validator
 
 from .. import ai_catalog, ai_protocols, ai_usage, chatgpt_oauth, translate_engines
@@ -53,6 +54,7 @@ from ..ai_context import (
     gather_inputs as _gather_inputs,
     parse_images as _parse_images,
     pdf_path as _pdf_path,
+    render_selection_crop,
     request_note_selections,
 )
 from ..ai_settings import (
@@ -189,14 +191,12 @@ def _failure(error: Exception, what: str = "AI call failed") -> str:
 
 
 def _failure_info(error: Exception, rt: dict | None = None, entry: dict | None = None) -> dict:
-    """What the chat shows a failure as, beside the raw ``detail`` string:
-    its ``kind`` (ai_client.failure_kind), the upstream ``status`` when there
-    was one, and the connection it went through (``provider_id``,
-    ``provider_name``, ``provider_auth`` = "key" | "oauth") so the error card
-    can name it and open its settings."""
+    """What the chat shows a failure as, beside the raw ``detail`` string
+    (which already names an upstream status, "upstream 529: …"): its
+    ``kind`` (ai_client.failure_kind) and the connection it went through
+    (``provider_id``, ``provider_name``, ``provider_auth`` = "key" |
+    "oauth") so the error card can name it and open its settings."""
     info = {"kind": failure_kind(error)}
-    if isinstance(error, UpstreamError):
-        info["status"] = error.status
     conf = (rt or {}).get("providers", {}).get((entry or {}).get("provider"))
     if conf:
         info.update(provider_id=entry["provider"], provider_name=conf.get("name") or "",
@@ -204,10 +204,12 @@ def _failure_info(error: Exception, rt: dict | None = None, entry: dict | None =
     return info
 
 
-# The arguments a {"step"} line repeats: the short ones a "now running"
-# label needs (never a note's content).
-_STEP_ARGS = ("page_id", "block_id", "query", "title", "folder", "label", "title_contains",
-              "source", "pdf_page", "mode")
+# The arguments a {"step"} line repeats: the short ones the chat's "now
+# running" label reads (chat/agentSteps.js runningLabel), never a note's
+# content — the page a call reads, views, renames or moves; read_block's
+# block (a page id names the page); the query or source; the PDF page; the
+# new title or folder; list_pages' label filter; edit_block's mode.
+_STEP_ARGS = ("page_id", "block_id", "query", "title", "folder", "label", "source", "pdf_page", "mode")
 
 
 def _step_event(name: str, call: dict) -> dict:
@@ -261,6 +263,30 @@ def pdf_text_status(doc_id: str, request: Request, preview: int = 0):
     except Exception as e:
         log.warning(f"[pdf-text-status] {e}")
         return {"found": True, "ok": False, "chars": 0, **index}
+
+
+# Sync def: pdfium renders in the threadpool.
+@router.get("/ai/selection-crop/{doc_id}")
+def selection_crop(doc_id: str, request: Request, page: int, box: str):
+    """The picture of a selected region a chat message sent the model, drawn
+    again from the page and crop box saved on the reply's context report
+    (``selection.passages[].box``, ``x0,y0,x1,y1`` page fractions) so the
+    chat can show it. A document's file never changes under its id, so the
+    picture caches."""
+    ws = require_ws(request)
+    if not doc_id or not all(c in "0123456789abcdef" for c in doc_id):
+        raise HTTPException(status_code=400, detail="invalid document id")
+    try:
+        x0, y0, x1, y1 = (float(v) for v in box.split(","))
+    except ValueError:
+        raise HTTPException(status_code=400, detail="invalid box")
+    if not (0 <= x0 < x1 <= 1 and 0 <= y0 < y1 <= 1) or page < 1:
+        raise HTTPException(status_code=400, detail="invalid box")
+    path = _pdf_path(ws, doc_id)
+    image = render_selection_crop(path, page, (x0, y0, x1, y1)) if path else None
+    if not image:
+        raise HTTPException(status_code=404, detail="not found")
+    return Response(image[0], media_type=image[1], headers={"Cache-Control": "private, max-age=86400"})
 
 
 # The grounding clause is deliberate: a PDF's text below this prompt is
@@ -495,9 +521,9 @@ def _probe_entry(user: str, entry: dict, fallback_model: str = "", retry: bool =
     """One tiny live completion through a saved entry — answers "does this
     credential still work" without waiting for a real chat to 502. The result
     is in-body ({ok, model, latency_ms} / {ok: False, error, auth, kind});
-    `auth` marks a broken credential (expired sign-in / rejected key) so the
-    UI can say "reconnect" instead of dumping the upstream body, and `kind`
-    is ai_client.failure_kind (absent when no model is picked)."""
+    `auth` marks a broken credential (expired sign-in / rejected key), and
+    `kind` is ai_client.failure_kind, or ``no_model`` for an entry with no
+    model picked — the UI words the failure by its kind."""
     provider_id = entry.get("id")
     # An explicit probe is an explicit retry: drop the refresh backoff so a
     # ChatGPT entry re-attempts its token refresh now instead of reusing a
@@ -509,7 +535,7 @@ def _probe_entry(user: str, entry: dict, fallback_model: str = "", retry: bool =
         return _no_credential(entry)
     model = _probe_model(entry, fallback_model)
     if not model:
-        return {"ok": False, "model": "", "auth": False,
+        return {"ok": False, "model": "", "auth": False, "kind": "no_model",
                 "error": "no model picked — edit the connection and choose one"}
     started = time.time()
     try:
@@ -1176,41 +1202,49 @@ def ai_transcribe(request: Request, file: UploadFile = File(...),
 
 
 # --- ChatGPT subscription sign-in (OAuth PKCE, Codex CLI's flow) --------------
-# start → the browser opens auth.openai.com; after login it is redirected to
-# http://localhost:1455/auth/callback (which fails to load — nothing listens
-# there when Gamma runs remotely). The user pastes that URL into complete,
-# which redeems the code with the stashed PKCE verifier and stores the tokens
-# on a provider entry. See gamma/chatgpt_oauth.py.
+# start → the browser opens auth.openai.com, and gamma/chatgpt_oauth.py keeps
+# the sign-in until the server has its code: caught from the redirect on this
+# machine, or through the device code the form's status calls poll — else the
+# user pastes the address the redirect failed to load. complete then stores
+# the tokens on a provider entry.
 
-_OAUTH_STATES: dict = {}  # state -> {"verifier", "owner", "at"} — in-memory, 15 min TTL
-_OAUTH_STATE_TTL = 900
+class ChatGPTAuthStart(BaseModel):
+    local: bool = False   # the page runs at a loopback address
+    device: bool = False  # also ask for a device code (the form shows it)
 
 
-def begin_chatgpt_signin(owner) -> dict:
+class ChatGPTAuthStatus(BaseModel):
+    state: str = ""
+
+
+def _same_machine(request: Request, claimed: bool) -> bool:
+    """Whether the browser runs on this server's machine: the page says it is
+    at a loopback address, and the request came from loopback too. (A reverse
+    proxy on the same host passes the second test, never the first.)"""
+    try:
+        ip = ipaddress.ip_address(request.client.host if request.client else "")
+    except ValueError:
+        return False
+    mapped = getattr(ip, "ipv4_mapped", None)
+    return claimed and (ip.is_loopback or bool(mapped and mapped.is_loopback))
+
+
+def begin_chatgpt_signin(owner, request: Request, payload: ChatGPTAuthStart | None) -> dict:
     """Start a sign-in for ``owner``: an account name (its own entry), or
     ``("server", <admin>)`` for a shared entry (routers/admin.py). Returns
-    {auth_url, state}."""
-    now = time.time()
-    for k in [k for k, v in _OAUTH_STATES.items() if now - v["at"] > _OAUTH_STATE_TTL]:
-        del _OAUTH_STATES[k]
-    state, verifier, url = chatgpt_oauth.start_auth()
-    _OAUTH_STATES[state] = {"verifier": verifier, "owner": owner, "at": now}
-    return {"auth_url": url, "state": state}
+    {auth_url, state, local, device}."""
+    payload = payload or ChatGPTAuthStart()
+    return chatgpt_oauth.begin(owner, local=_same_machine(request, payload.local), device=payload.device)
 
 
 def redeem_chatgpt_signin(owner, state: str, callback: str) -> dict:
-    """The tokens of a sign-in ``owner`` started (400 otherwise): the pasted
-    redirect URL's code redeemed with the stashed PKCE verifier. The state
-    belongs to whoever started it — another account, or the same admin's
-    own-entry form, can't redeem it (and so can't attach that login's
-    tokens elsewhere)."""
-    st = _OAUTH_STATES.pop(state, None)
-    if not st or st.get("owner") != owner or time.time() - st["at"] > _OAUTH_STATE_TTL:
-        raise HTTPException(status_code=400,
-                            detail="sign-in session expired — hit 'Open ChatGPT sign-in' again")
+    """The tokens of a sign-in ``owner`` started (400 otherwise): the ones the
+    server caught, else the pasted redirect URL's code. The state belongs to
+    whoever started it — another account, or the same admin's own-entry
+    form, can't redeem it (and so can't attach that login's tokens
+    elsewhere)."""
     try:
-        code = chatgpt_oauth.parse_callback(callback, state)
-        return chatgpt_oauth.exchange_code(code, st["verifier"])
+        return chatgpt_oauth.redeem(owner, state, callback)
     except ValueError as e:
         raise HTTPException(status_code=400, detail=str(e))
     except Exception as e:
@@ -1244,14 +1278,21 @@ def seeded_chatgpt_models(user: str, entry_id: str) -> str:
     return ", ".join(live[:2])[:MAX_MODELS_LEN]
 
 
+# Sync def: asking for a device code is a network round trip.
 @router.post("/ai/oauth/chatgpt/start")
-async def chatgpt_auth_start(request: Request):
-    return begin_chatgpt_signin(_require_editor(request))
+def chatgpt_auth_start(request: Request, payload: ChatGPTAuthStart | None = None):
+    return begin_chatgpt_signin(_require_editor(request), request, payload)
+
+
+# Sync def: a due device code is polled with OpenAI.
+@router.post("/ai/oauth/chatgpt/status")
+def chatgpt_auth_status(payload: ChatGPTAuthStatus, request: Request):
+    return chatgpt_oauth.status(_require_editor(request), payload.state)
 
 
 class ChatGPTAuthComplete(BaseModel):
     state: str = ""
-    callback: str = ""      # pasted redirect URL (or a bare authorization code)
+    callback: str = ""      # pasted redirect URL (or a bare code); "" once status is ready
     provider_id: str = ""   # existing entry to reconnect; "" creates a new one
     name: str = ""
     models: str = ""

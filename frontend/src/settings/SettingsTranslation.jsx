@@ -255,7 +255,7 @@ function TranslationServices({ value }) {
                 onChange: (event) => setForm((prev) => ({ ...prev, fields: { ...prev.fields, [f.id]: event.target.value } })),
               };
               return (
-                <Field key={f.id} label={t(f.label)} hint={f.secret && form.configured ? t("leave empty to keep the current one") : null}>
+                <Field key={f.id} label={t(f.label)} hint={f.secret && form.configured ? t("Leave empty to keep the current one") : null}>
                   {f.secret ? <PasswordInput autoComplete="new-password" {...props} />
                     : <input className="aiKeyInput" type="text" autoComplete="off" {...props} />}
                 </Field>

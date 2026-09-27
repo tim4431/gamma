@@ -4,7 +4,7 @@
 // App provides context (open paper, library, selections) and the model/effort/
 // prompt preferences it also needs elsewhere.
 import React, { useCallback, useContext, useEffect, useMemo, useRef, useState, useSyncExternalStore } from "react";
-import { API, apiJson, copyText, isPdfFile, readNdjson } from "../shared/lib/utils";
+import { API, apiJson, copyText, isPdfFile, readNdjson, withWorkspace } from "../shared/lib/utils";
 import { stepList } from "../shared/ui/listKeys.js";
 import { DockWindow, ChatCiteContext, ChatMarkdown, AutoGrowTextarea, GammaNavContext, useCopied, useTextScale } from "../shared/ui/Widgets";
 import PaperMentionInput from "./PaperMentionInput";
@@ -95,11 +95,17 @@ function ContextCoverage({ items }) {
           : `Only ${span} of ${what} fit the context budget — the rest was not visible to the model. Raise the budget in Settings / AI / Advanced AI settings / Context size, or turn on Tools so it can read and search the whole paper.`);
       out.push({ short, long, refused });
     }
-    if ((c.selection?.passages || []).some((p) => p.crop)) {
+    const cropped = (c.selection?.passages || []).filter((p) => p.crop);
+    if (cropped.length) {
       out.push({
         short: T("Picture of the selection sent"),
         long: t("The selected text looked like a formula or table (or wasn't in the extracted text), so the model also got a picture of that region of the page."),
         refused: false,
+        // Drawn again by the server from the saved page + crop box — the
+        // same picture the model got. Replies saved before the box was kept
+        // have none to show.
+        pictures: c.doc_id ? cropped.filter((p) => p.box?.length === 4).map((p) =>
+          withWorkspace(`${API}/ai/selection-crop/${c.doc_id}?page=${p.page}&box=${p.box.join(",")}`)) : [],
       });
     }
     return out;
@@ -117,6 +123,9 @@ function ContextCoverage({ items }) {
         </button>
       ))}
       {notes[open] ? <p className="chatCoverageNote">{notes[open].long}</p> : null}
+      {notes[open]?.pictures?.map((src) => (
+        <img key={src} className="chatCoverageCrop" src={src} alt={t("Picture of the selection sent")} draggable={false} />
+      ))}
     </div>
   );
 }
@@ -318,7 +327,7 @@ function ChatSetupCard({ info, isAdmin, onConnect, openSettings }) {
   const tiles = info && !info.failed ? aiServiceTiles(info, { long: true }) : [];
   return (
     <div className="chatSetup" data-guide="chat.setup">
-      <span className="chatSetupIcon" aria-hidden="true"><SparklesIcon size={16} /></span>
+      <span className="chatSetupIcon" aria-hidden="true"><SparklesIcon size={20} /></span>
       <div className="chatSetupTitle">{t("Chat with your papers")}</div>
       <p className="chatSetupText">
         {t("Ask about the paper you are reading and get answers that cite the page they come from. The assistant can also search, summarize and organize your library.")}
@@ -1394,14 +1403,10 @@ export default function ChatDock({
       {!readOnly && aiHealth && !aiHealth.ok ? (
         // The login connection check found the active provider broken — say so
         // here, where the failure would otherwise surface mid-conversation,
-        // in the error card's words. Only a probe with no model picked comes
-        // without a kind.
+        // in the error card's words.
         <div className="chatHealthStrip" title={aiHealth.error || ""}>
           <span className="chatHealthText">
-            {aiHealth.kind ? failureCopy(aiHealth.kind, { provider: aiHealth.provider_name, auth: aiHealth.provider_auth }).headline : <>
-              {aiHealth.provider_name ? `${aiHealth.provider_name}: ` : ""}
-              {t("connection failed — {unreachable}", { unreachable: aiHealth.error || t("provider unreachable") })}
-            </>}
+            {failureCopy(aiHealth.kind, { provider: aiHealth.provider_name, auth: aiHealth.provider_auth }).headline}
           </span>
           <button className="uiBtn sm" onClick={() => openAiKeysEditor({ entry: aiHealth.provider_id })}>{t("Fix…")}</button>
           <button className="uiClose" onClick={dismissAiHealth} title={t("Dismiss")} aria-label={t("Dismiss")}><XIcon size={14} /></button>
@@ -1810,7 +1815,7 @@ export default function ChatDock({
             </button>
           ) : (
             <>
-              {canDictate ? <button className="uiBtn chatCircleBtn chatMicBtn" data-guide="chat.voice" type="button" onClick={startDictation} title={t("Dictate — transcribed with your OpenAI key")} aria-label={t("Start dictation")}>
+              {canDictate ? <button className="uiBtn chatCircleBtn chatMicBtn" type="button" onClick={startDictation} title={t("Dictate — transcribed with your OpenAI key")} aria-label={t("Start dictation")}>
                 <MicIcon size={14} />
               </button> : null}
               <button className="uiBtn primary chatCircleBtn" type="submit" disabled={aiOff || !chatInput.trim()} title={t("Send")} aria-label={t("Send")}>

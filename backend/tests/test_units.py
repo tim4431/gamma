@@ -293,6 +293,8 @@ def test_selection_crops_render_unreliable_regions(monkeypatch):
     images = ai_context.selection_crops("u", "d" * 24, passages, located)
     assert images == [("image/png", "aW1n"), ("image/png", "aW1n")]
     assert [w["crop"] for w in located] == [False, True, True, False]
+    # The rendered box is saved with the entry (the chat shows it again).
+    assert [w.get("box") for w in located] == [None, list(rendered[0][1]), list(rendered[1][1]), None]
     # A tiny box (one symbol) is grown to a readable strip of its line.
     page_no, (x0, y0, x1, y1) = rendered[0]
     assert page_no == 3 and x1 - x0 >= 0.3 and y1 - y0 >= 0.05
