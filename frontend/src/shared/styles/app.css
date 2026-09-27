@@ -3822,6 +3822,23 @@ html.appFocusFullscreen, html.appFocusFullscreen body { overflow: hidden; oversc
 }
 .topbar button.linkNameTag:hover { border-color: var(--accent-dark); color: var(--text-primary); }
 .topbar .linkNameInput { margin-left: 6px; width: 11em; max-width: 38%; padding: 1px 7px; font-size: calc(12px * var(--ui-font-scale, 1)); }
+/* The share view's brand mark (a page share's way to this server's front
+   door) and its access pill (sharing/ShareAccess.jsx): the role in bold with
+   its icon, then who shared it; phones keep the icon and the role. */
+.shareBrand { display: inline-flex; flex-shrink: 0; padding: 4px; border-radius: 6px; }
+a.shareBrand:hover { background: var(--bg-hover); }
+.shareAccess {
+  display: inline-flex; align-items: center; gap: 6px; flex-shrink: 0;
+  padding: 3px 10px 3px 8px; border: 1px solid var(--border); border-radius: 999px;
+  background: var(--bg-block); color: var(--text-secondary);
+  font-size: calc(13px * var(--ui-font-scale, 1)); white-space: nowrap;
+}
+.shareAccess > svg { flex: none; color: var(--text-muted); }
+.shareAccess.edit > svg { color: var(--accent); }
+.shareAccess b { color: var(--text-primary); font-weight: 600; }
+.shareAccessOwner { display: inline-flex; align-items: center; gap: 5px; color: var(--text-muted); }
+.shareAccessOwner .peerAvatar { border: none; }
+.phoneUI .shareAccessOwner { display: none; }
 .uiCheckRow {
   display: flex;
   align-items: center;

@@ -120,6 +120,35 @@ export async function shareScenarios({ server, browser, alice, bob, step, until,
     await alice.api("/api/share-settings/folder?name=sharedlab", { method: "DELETE" });
   });
 
+  await step("share view: the topbar says who shared it and what a visitor may do; Sign in keeps the page", async () => {
+    const shown = await alice.api("/api/blocks", { method: "POST", body: { parent_id: "root", content: "Visitor bar page" } });
+    await alice.api("/api/blocks", { method: "POST", body: { parent_id: shown.id, content: "a note for visitors" } });
+    const { token: barToken } = await alice.api(`/api/share/${shown.id}`, { method: "POST" });
+    const ctx = await browser.newContext({ viewport: { width: 1280, height: 860 } });
+    const page = await openPage(ctx, `${server.base}/?share=${barToken}`);
+    await page.locator(".blockRow", { hasText: "a note for visitors" }).waitFor({ timeout: 15000 });
+    const pill = page.locator(".shareAccess");
+    const text = await pill.textContent();
+    assert(text.includes("View only") && text.includes(`shared by`) && text.includes(alice.name), `the role and who shared it (${text})`);
+    assertEq(await pill.getAttribute("title"), `You can read this page. Only ${alice.name} can change it.`, "the sentence behind it");
+    assertEq(await page.locator("a.shareBrand").getAttribute("href"), "/", "the mark leads to the server's front door");
+    // Sign in opens the share's own sign-in, and Back returns to the page
+    await page.getByRole("button", { name: "Sign in", exact: true }).click();
+    await page.getByText("Sign in to open this shared page", { exact: true }).waitFor();
+    await page.getByRole("button", { name: "Back to the shared page", exact: true }).click();
+    await page.locator(".blockRow", { hasText: "a note for visitors" }).waitFor();
+    // signing in keeps the page and offers to copy it
+    await page.getByRole("button", { name: "Sign in", exact: true }).click();
+    await page.fill(".loginInput >> nth=0", bob.name);
+    await page.fill("input[type=password]", bob.password);
+    await page.click("button.loginBtn[type=submit]");
+    await page.getByRole("button", { name: "Add to my library", exact: true }).waitFor({ timeout: 15000 });
+    assertEq(await page.getByRole("button", { name: "Sign in", exact: true }).count(), 0, "no Sign in once signed in");
+    assertNoProblems(page);
+    await ctx.close();
+    await alice.api(`/api/share-settings/${shown.id}`, { method: "DELETE" });
+  });
+
   await step("share gate: a dead link, a signed-in-only link opened anonymously and an invite-only link each show their page", async () => {
     const gated = await alice.api("/api/blocks", { method: "POST", body: { parent_id: "root", content: "Gated share page" } });
     await alice.api("/api/blocks", { method: "POST", body: { parent_id: gated.id, content: "a note behind the gate" } });

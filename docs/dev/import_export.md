@@ -302,7 +302,9 @@ invite-only ones work too. Two entry points:
 - The share view's topbar: a signed-in non-guest viewer gets "Add to my
   library" (the same function on `window.location.href`). The page's owner
   gets "Open in my library" instead, a plain jump to `?page=<id>`, since the
-  page is already theirs.
+  page is already theirs. A visitor with no account gets "Sign in" (the
+  share's own sign-in gate), after which the link opens again with the
+  import button.
 
 The remote must be recent enough to serve `mode=gamma` and the CORS
 header; an older one surfaces as "couldn't reach …" / "too old" in the

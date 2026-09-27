@@ -88,6 +88,8 @@ import * as inkStore from "../ink/inkStore";
 import { usePageCollab } from "../collaboration/usePageCollab";
 import { applyOps, applyPatch, keepUiFlags } from "../shared/model/blockOps";
 import { PresenceBar } from "../collaboration/Presence";
+import { ShareAccessPill } from "../sharing/ShareAccess";
+import { BrandMark } from "../shared/ui/BrandMark";
 import { cleanLinkName, loadLinkName, saveLinkName, LINK_NAME_MAX } from "../collaboration/linkName";
 import SettingsDialog from "../settings/SettingsDialog";
 import ReportProblem from "../support/ReportProblem";
@@ -7088,6 +7090,8 @@ function LibraryApp({ publicPage = null, initialServerConfig = null }) {
         cloudLogin={serverConfig?.cloud}
         next={shareGate === "login" ? undefined : "/"}
         subtitle={shareGate === "login" ? t("Sign in to open this shared page") : t("Sign in to your library")}
+        // the share view's own Sign in (the link had opened): back to reading
+        onBack={shareGate === "login" && shareInfo?.owner ? () => setShareGate(null) : undefined}
       />
     ) : (
       <ShareBlockedPage
@@ -9159,14 +9163,20 @@ function LibraryApp({ publicPage = null, initialServerConfig = null }) {
         </>
       ) : (
         <div className="topbar">
-          <button
-            className="iconBtn homeBtn" disabled={!sharedFolder || !focusedBlockId}
-            title={sharedFolder ? t("Back to the shared folder") : t("Home")}
-            aria-label={sharedFolder ? t("Back to the shared folder") : t("Home")}
-            onClick={() => goSharedPage("")}
-          >
-            <HomeIcon size={17} />
-          </button>
+          {sharedFolder ? (
+            <button
+              className="iconBtn homeBtn" disabled={!focusedBlockId}
+              title={t("Back to the shared folder")} aria-label={t("Back to the shared folder")}
+              onClick={() => goSharedPage("")}
+            >
+              <HomeIcon size={17} />
+            </button>
+          ) : publicPage ? (
+            // a page host has no front door of its own
+            <BrandMark className="shareBrand" size={24} />
+          ) : (
+            <a className="shareBrand" href="/" title={t("Gamma")} aria-label={t("Gamma")}><BrandMark size={24} /></a>
+          )}
           {sharedFolder ? (
             // A folder share: the folder path from the shared folder down,
             // each crumb returning to that folder's listing, then the page.
@@ -9185,12 +9195,7 @@ function LibraryApp({ publicPage = null, initialServerConfig = null }) {
           ) : (
             <span className="readOnlyTitle">{pageTitle}</span>
           )}
-          {shareInfo ? (
-            <span className="uiTag"
-              title={shareInfo.canEdit ? t("Your edits save to the owner's page") : t("Read-only share link")}>
-              {shareInfo.canEdit ? t("Can edit") : t("View only")}{shareInfo.owner ? t(" · shared by {owner}", { owner: shareInfo.owner }) : ""}
-            </span>
-          ) : null}
+          {shareInfo ? <ShareAccessPill info={shareInfo} folder={!!sharedFolder && !focusedBlockId} /> : null}
           {shareInfo?.canEdit && linkName ? (renamingLink ? (
             <input
               className="linkNameInput"
@@ -9232,6 +9237,9 @@ function LibraryApp({ publicPage = null, initialServerConfig = null }) {
               title={t("Copy this page — blocks, highlights, its PDF and files — into your own library")}
               onClick={() => importSharedPage(publicPage ? `${window.location.origin}/?share=${encodeURIComponent(initialShare)}` : window.location.href)}
             >{t("Add to my library")}</button>
+          ) : shareInfo && !shareInfo.viewer && !publicPage ? (
+            // no account behind this visitor: the share's own sign-in gate
+            <button className="uiBtn sm primary" onClick={() => { setLoginError(""); setShareGate("login"); }}>{t("Sign in")}</button>
           ) : null}
           {renderOverflowMenu(true)}
         </div>

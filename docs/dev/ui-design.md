@@ -154,15 +154,21 @@ cloud share's access as the same tiles and View / Edit toggle
 ([mirror.md](mirror.md) "What the person sees").
 Every change saves at once; nothing is a bespoke control. There is no
 "reset link": stopping and sharing again mints a new address. The read-only
-view shows the counterpart tag ("Can edit · shared by …", and "as <name>" for
-a visitor without an account) in its top bar.
+view's top bar is the visitor's side of it: the brand mark (the way to the
+server's front door; a folder share keeps its Back to the shared folder
+button), the title, the access pill (`sharing/ShareAccess.jsx`: an eye or a
+pencil with "View only" / "Can edit", then "· shared by" with the owner's
+avatar initial and name, the sentence behind it as its hover title; phones
+keep the icon and the role), "as <name>" for an editing visitor without an
+account, and one action: Sign in for a visitor with no account, "Add to my
+library" for a signed-in one, "Open in my library" for the owner.
 
 ### Sign-in and status pages
 
 `AuthShell` in `auth/LoginPage.jsx` frames every page shown before or
 instead of the app: the login (also a share link's sign-in gate), loading,
 an unavailable workspace, a session conflict and a blocked share link. It
-shows the brand mark (`/media/icons/favicon.svg`) over the name, or over the
+shows the brand mark (`shared/ui/BrandMark.jsx`, the favicon artwork) over the name, or over the
 situation's headline on a status page. The card hangs at a fixed height near
 the optical centre instead of being centred, so an error that appears
 mid-form grows it downward and the fields never move. Log in is the one

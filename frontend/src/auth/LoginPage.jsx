@@ -1,11 +1,8 @@
 import React from "react";
 import { PasswordInput } from "../settings/SettingsKit";
-import { AlertCircleIcon, ChevronRightIcon } from "../shared/ui/Icons";
+import { AlertCircleIcon, ArrowLeftIcon, ChevronRightIcon } from "../shared/ui/Icons";
+import { BrandMark } from "../shared/ui/BrandMark";
 import { t, tn } from "../shared/i18n/i18n.js";
-
-// The brand mark: the favicon's artwork (generated from design/brand/marks/,
-// served under /media/ like the tab icon, so it is usually cached already).
-const MARK_URL = "/media/icons/favicon.svg";
 
 // Every page shown before (or instead of) the app: login, loading, an
 // unavailable workspace, a session conflict, a blocked share link. A page
@@ -16,7 +13,7 @@ function AuthShell({ headline, children }) {
     <div className="app">
       <div className="loginPage">
         <div className="loginCard">
-          <img className="loginMark" src={MARK_URL} alt="" width="48" height="48" />
+          <BrandMark className="loginMark" size={48} />
           {headline
             ? <h1 className="loginTitle loginHeadline">{headline}</h1>
             : <div className="loginTitle">{t("Gamma")}</div>}
@@ -92,7 +89,8 @@ function takeCloudError() {
 // lasts; the password form (and the cloud sign-in) fold behind an Admin
 // sign-in link, collapsed until asked for. docs/dev/guests.md "Demo mode".
 // `error`: a message, or {text, field: "password"} when the password was
-// refused — that field then takes the focus and a red border.
+// refused — that field then takes the focus and a red border. `onBack`
+// returns to what the visitor was reading (a share view's own Sign in).
 export function LoginPage({
   username,
   password,
@@ -106,6 +104,7 @@ export function LoginPage({
   demo = false,
   guestTtlHours,
   next = window.location.pathname + window.location.search,
+  onBack,
 }) {
   const [cloudError] = React.useState(takeCloudError);
   const leadsWithDemo = demo && !!onGuestLogin;
@@ -119,7 +118,7 @@ export function LoginPage({
     {cloudLogin?.enabled ? <>
       <a className="loginCloudBtn" href={`/api/auth/cloud/start?next=${encodeURIComponent(next)}`}
         title={t("Sign in through {issuer}", { issuer: cloudLogin.issuer })}>
-        <img src={MARK_URL} alt="" width="18" height="18" />
+        <BrandMark size={18} />
         {t("Sign in with Gamma Cloud")}
       </a>
       {cloudError ? <LoginError>{cloudError}</LoginError> : null}
@@ -165,6 +164,11 @@ export function LoginPage({
       <AuthShell>
         <p className="loginSubtitle">{subtitleText}</p>
         {signIn}
+        {onBack ? (
+          <button type="button" className="loginDisclosure" onClick={onBack}>
+            <ArrowLeftIcon size={13} />{t("Back to the shared page")}
+          </button>
+        ) : null}
         {/* No self-service sign-up on a Gamma server (server-config's
             `registration` is always off); with Gamma Cloud sign-in on,
             whether a newcomer gets in is the admin's policy, so say nothing. */}

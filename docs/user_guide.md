@@ -129,7 +129,7 @@ The **link button** in the top bar shares the open page, Notion-style:
 
 - **Who**: *anyone with the link*, *signed-in users*, or *invited people only* — plus a **View / Edit** toggle for that audience.
 - **Invite** people by name, each with their own view or edit right. Members of the workspace keep their workspace role on top.
-- Viewers see the PDF, highlights and notes, no login needed; editors edit alongside you, with live cursors. A visitor editing through an anyone-with-the-link share is asked for a display name.
+- Viewers see the PDF, highlights and notes, no login needed; editors edit alongside you, with live cursors. A visitor editing through an anyone-with-the-link share is asked for a display name. The top bar tells a visitor whether they can view or edit and who shared the page, and offers **Sign in**, or **Add to my library** once signed in.
 - **Stop sharing** ends the link; share again for a new one. Copied links carry the workspace, so a teammate opening one lands in the right library.
 - A link for signed-in users asks a visitor to sign in right there. A stopped or incompletely copied link says so and offers the way to the server's own front door.
 
