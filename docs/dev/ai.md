@@ -440,9 +440,13 @@ start of the paper (`selection_context`):
 The question labels each passage "Selected passage (PDF page 7; section
 "Methods › Noise model"; a picture … is attached)" (`final_prompt`, from the
 located entries `gather_inputs` puts in the open paper's coverage as
-`selection: {passages: [{page, section, found, crop}]}`). The reply's chip
-reads "Model saw text around p. 7 · Methods › Noise model", plus "Picture of
-the selection sent" when one went. Nothing placed at all falls back to the
+`selection: {passages: [{page, section, found, crop, box}]}`, `box` only
+with a picture: the grown crop box, rounded). The reply's chip reads "Model
+saw text around p. 7 · Methods › Noise model", plus "Picture of the selection
+sent" when one went; opening that pill shows the picture, drawn again from the
+saved page and box by `GET /api/ai/selection-crop/{doc_id}` through the same
+`render_selection_crop`. Replies saved before the box was kept show the pill
+without a picture. Nothing placed at all falls back to the
 plain head excerpt. With a native PDF attachment there is no window and no
 picture, and the passages carry the viewer's page only.
 

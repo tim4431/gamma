@@ -14,7 +14,7 @@ from concurrent.futures import ThreadPoolExecutor
 from urllib.request import urlopen
 
 from fastapi import APIRouter, File, Form, HTTPException, Request, UploadFile
-from fastapi.responses import JSONResponse, StreamingResponse
+from fastapi.responses import JSONResponse, Response, StreamingResponse
 from pydantic import BaseModel, Field, field_validator
 
 from .. import ai_catalog, ai_protocols, ai_usage, chatgpt_oauth, translate_engines
@@ -54,6 +54,7 @@ from ..ai_context import (
     gather_inputs as _gather_inputs,
     parse_images as _parse_images,
     pdf_path as _pdf_path,
+    render_selection_crop,
     request_note_selections,
 )
 from ..ai_settings import (
@@ -262,6 +263,30 @@ def pdf_text_status(doc_id: str, request: Request, preview: int = 0):
     except Exception as e:
         log.warning(f"[pdf-text-status] {e}")
         return {"found": True, "ok": False, "chars": 0, **index}
+
+
+# Sync def: pdfium renders in the threadpool.
+@router.get("/ai/selection-crop/{doc_id}")
+def selection_crop(doc_id: str, request: Request, page: int, box: str):
+    """The picture of a selected region a chat message sent the model, drawn
+    again from the page and crop box saved on the reply's context report
+    (``selection.passages[].box``, ``x0,y0,x1,y1`` page fractions) so the
+    chat can show it. A document's file never changes under its id, so the
+    picture caches."""
+    ws = require_ws(request)
+    if not doc_id or not all(c in "0123456789abcdef" for c in doc_id):
+        raise HTTPException(status_code=400, detail="invalid document id")
+    try:
+        x0, y0, x1, y1 = (float(v) for v in box.split(","))
+    except ValueError:
+        raise HTTPException(status_code=400, detail="invalid box")
+    if not (0 <= x0 < x1 <= 1 and 0 <= y0 < y1 <= 1) or page < 1:
+        raise HTTPException(status_code=400, detail="invalid box")
+    path = _pdf_path(ws, doc_id)
+    image = render_selection_crop(path, page, (x0, y0, x1, y1)) if path else None
+    if not image:
+        raise HTTPException(status_code=404, detail="not found")
+    return Response(image[0], media_type=image[1], headers={"Cache-Control": "private, max-age=86400"})
 
 
 # The grounding clause is deliberate: a PDF's text below this prompt is

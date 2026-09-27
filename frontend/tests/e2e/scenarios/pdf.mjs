@@ -361,7 +361,7 @@ export async function pdfScenarios({ server, browser, alice, makePdf, step, unti
     // What the server reports it did with the selection (ai_context.selection_context).
     const coverage = { context: [{ title: "Rydberg paper", doc_id: docId, native: false, native_requested: false,
       partial: true, chars: 900, pages: 0, pages_shown: 0,
-      selection: { passages: [{ page: 2, section: "Results", found: false, crop: true }] } }] };
+      selection: { passages: [{ page: 2, section: "Results", found: false, crop: true, box: [0.1, 0.1, 0.6, 0.2] }] } }] };
     await page.route("**/api/ai/chat", async (route) => {
       requests.push(route.request().postDataJSON());
       await route.fulfill({ contentType: "application/x-ndjson",
@@ -392,7 +392,11 @@ export async function pdfScenarios({ server, browser, alice, makePdf, step, unti
       assert(Array.isArray(sel.box) && sel.box.length === 4 && sel.box[0] < sel.box[2] && sel.box[1] < sel.box[3]
         && sel.box.every((v) => v >= 0 && v <= 1), `box as page fractions: ${JSON.stringify(sel.box)}`);
       await page.getByText("Model saw text around p. 2 · Results").waitFor();
-      await page.getByText("Picture of the selection sent").waitFor();
+      // Opening the pill shows the picture, drawn again from the saved box.
+      await page.getByRole("button", { name: "Picture of the selection sent" }).click();
+      const crop = page.locator("img.chatCoverageCrop");
+      await crop.waitFor();
+      await until(() => crop.evaluate((img) => img.complete && img.naturalWidth > 0), { what: "the selection picture loads" });
     } finally {
       await page.unroute("**/api/ai/chat");
     }

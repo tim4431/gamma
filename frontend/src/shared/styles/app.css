@@ -4478,6 +4478,16 @@ a.shareBrand:hover { background: var(--bg-hover); }
   font-size: calc(var(--fs-xs) * var(--text-scale, 1));
   line-height: var(--lh-ui);
 }
+/* The picture of a selected region the model got, under its pill's note. */
+.chatCoverageCrop {
+  display: block;
+  align-self: flex-start;
+  max-width: 100%;
+  height: auto;
+  border: 1px solid var(--border);
+  border-radius: var(--radius-sm);
+  background: var(--bg-block);
+}
 /* The agent's work in a reply (AgentSteps / AgentChanges in ChatDock): one
    pill summing up the steps, expanding to every call's chip below; then the
    changes it made, each old → new, under an accent rule. */

@@ -305,6 +305,7 @@ the request's workspace — the extension names none, so its personal one.
 | PUT / DELETE | `/translate/engines/{id}` | set (`{fields: {…}}`, an empty secret keeps the stored one) or remove a service's credentials (400 for a service that needs no key); guests 403; answers the GET shape |
 | POST | `/translate/engines/{id}/test` | translate one sentence into `{lang}` with the stored credentials; in-body `{ok, text}` / `{ok: false, error}` |
 | GET | `/pdf-text-status` | whether a doc has extractable text |
+| GET | `/ai/selection-crop/{doc_id}?page=&box=x0,y0,x1,y1` | the picture of a selected region a chat reply sent the model, drawn again from its saved page + crop box (page fractions); any workspace member |
 
 ### Chats (`chats.py`, prefix `/api/chats`)
 

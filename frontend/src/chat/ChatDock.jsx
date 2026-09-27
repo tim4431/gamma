@@ -4,7 +4,7 @@
 // App provides context (open paper, library, selections) and the model/effort/
 // prompt preferences it also needs elsewhere.
 import React, { useCallback, useContext, useEffect, useMemo, useRef, useState, useSyncExternalStore } from "react";
-import { API, apiJson, copyText, isPdfFile, readNdjson } from "../shared/lib/utils";
+import { API, apiJson, copyText, isPdfFile, readNdjson, withWorkspace } from "../shared/lib/utils";
 import { stepList } from "../shared/ui/listKeys.js";
 import { DockWindow, ChatCiteContext, ChatMarkdown, AutoGrowTextarea, GammaNavContext, useCopied, useTextScale } from "../shared/ui/Widgets";
 import PaperMentionInput from "./PaperMentionInput";
@@ -95,11 +95,17 @@ function ContextCoverage({ items }) {
           : `Only ${span} of ${what} fit the context budget — the rest was not visible to the model. Raise the budget in Settings / AI / Advanced AI settings / Context size, or turn on Tools so it can read and search the whole paper.`);
       out.push({ short, long, refused });
     }
-    if ((c.selection?.passages || []).some((p) => p.crop)) {
+    const cropped = (c.selection?.passages || []).filter((p) => p.crop);
+    if (cropped.length) {
       out.push({
         short: T("Picture of the selection sent"),
         long: t("The selected text looked like a formula or table (or wasn't in the extracted text), so the model also got a picture of that region of the page."),
         refused: false,
+        // Drawn again by the server from the saved page + crop box — the
+        // same picture the model got. Replies saved before the box was kept
+        // have none to show.
+        pictures: c.doc_id ? cropped.filter((p) => p.box?.length === 4).map((p) =>
+          withWorkspace(`${API}/ai/selection-crop/${c.doc_id}?page=${p.page}&box=${p.box.join(",")}`)) : [],
       });
     }
     return out;
@@ -117,6 +123,9 @@ function ContextCoverage({ items }) {
         </button>
       ))}
       {notes[open] ? <p className="chatCoverageNote">{notes[open].long}</p> : null}
+      {notes[open]?.pictures?.map((src) => (
+        <img key={src} className="chatCoverageCrop" src={src} alt={t("Picture of the selection sent")} draggable={false} />
+      ))}
     </div>
   );
 }

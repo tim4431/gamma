@@ -872,12 +872,22 @@ def selection_context(ws: str, doc_id: str, passages: list[dict],
 
 def _crop_box(box):
     """A selection's box grown to the minimum crop size and padded, still
-    inside the page."""
+    inside the page — rounded, because it is saved on the chat message and
+    the picture is rendered again from it (``render_selection_crop``)."""
     x0, y0, x1, y1 = box
     grow_w = max(0.0, _CROP_MIN_W - (x1 - x0)) / 2 + _CROP_PAD
     grow_h = max(0.0, _CROP_MIN_H - (y1 - y0)) / 2 + _CROP_PAD
-    return (max(0.0, x0 - grow_w), max(0.0, y0 - grow_h),
-            min(1.0, x1 + grow_w), min(1.0, y1 + grow_h))
+    return tuple(round(v, 4) for v in (max(0.0, x0 - grow_w), max(0.0, y0 - grow_h),
+                                        min(1.0, x1 + grow_w), min(1.0, y1 + grow_h)))
+
+
+def render_selection_crop(path, page: int, box):
+    """The picture of a selected region the model is sent: ``box`` is the
+    grown crop box (``_crop_box``) as page fractions, top-left origin.
+    ``(bytes, media_type, width, height)`` or None. The chat shows the same
+    picture again from the saved box (``GET /api/ai/selection-crop``)."""
+    image, _ = render_page(str(path), page, _CROP_MAX_SIDE, box=box)
+    return image
 
 
 def selection_crops(ws: str, doc_id: str, passages: list[dict],
@@ -887,7 +897,7 @@ def selection_crops(ws: str, doc_id: str, passages: list[dict],
     formula (``text_unreliable``) — rendered from the PDF by the page and
     box the viewer reported, as ``(media_type, base64)`` image parts. Marks
     ``crop`` on each passage's located entry so the question says a picture
-    is attached."""
+    is attached, with the ``box`` it was cut from so the chat can show it."""
     images = []
     path = pdf_path(ws, doc_id)
     if not path:
@@ -899,10 +909,11 @@ def selection_crops(ws: str, doc_id: str, passages: list[dict],
             continue
         if where["found"] and not text_unreliable(passage["text"]):
             continue
-        image, _ = render_page(str(path), passage["page"], _CROP_MAX_SIDE, box=_crop_box(passage["box"]))
+        box = _crop_box(passage["box"])
+        image = render_selection_crop(path, passage["page"], box)
         if image:
             images.append((image[1], base64.standard_b64encode(image[0]).decode("ascii")))
-            where["crop"] = True
+            where.update(crop=True, box=list(box))
     return images
 
 

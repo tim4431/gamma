@@ -88,7 +88,32 @@ def test_chat_sends_selection_place_and_formula_picture(org, ai_provider, monkey
     assert seen["images"] == [("image/png", "cG5n")]
     first = json.loads(response.text.splitlines()[0])["context"][0]
     # Too short to anchor on text: placed on the viewer's page by its box.
-    assert first["selection"]["passages"] == [{"page": 2, "section": "2 Methods", "found": False, "crop": True}]
+    # The crop box goes along so the chat can show the picture again.
+    assert first["selection"]["passages"] == [{"page": 2, "section": "2 Methods", "found": False, "crop": True,
+                                               "box": [0.09, 0.39, 0.51, 0.46]}]
+
+
+def test_selection_crop_redraws_the_saved_region(org, monkeypatch):
+    """The chat shows the picture a reply sent from its saved page + box."""
+    from gamma import ai_context
+    import gamma.routers.ai as ai
+    c, _ = org
+    rendered = []
+
+    def render(src, page_no, max_side, box=None):
+        rendered.append((page_no, box))
+        return (b"png", "image/png", 4, 4), 2
+
+    monkeypatch.setattr(ai, "_pdf_path", lambda ws, doc: "fake.pdf")
+    monkeypatch.setattr(ai_context, "render_page", render)
+    doc = "ab" * 12
+    response = c.get(f"/api/ai/selection-crop/{doc}?page=2&box=0.09,0.39,0.51,0.46")
+    assert response.status_code == 200 and response.content == b"png"
+    assert response.headers["content-type"] == "image/png"
+    assert rendered == [(2, (0.09, 0.39, 0.51, 0.46))]
+    for bad in ("0.5,0.1,0.2,0.3", "0,0,1", "a,b,c,d", "0,0,1.5,1"):
+        assert c.get(f"/api/ai/selection-crop/{doc}?page=2&box={bad}").status_code == 400
+    assert c.get(f"/api/ai/selection-crop/not-hex?page=2&box=0,0,1,1").status_code == 400
 
 
 def test_context_deduplicates_and_rejects_non_pages(org):
