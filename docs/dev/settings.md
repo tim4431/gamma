@@ -429,8 +429,10 @@ guard.
 
 ## Chat settings are global
 
-The chat header shortcut edits the **same shared preferences** as Settings:
-model, reasoning effort, single-paper context budget and tool permissions.
+The chat's shortcuts edit the **same shared preferences** as Settings: the
+composer's model chip (model and reasoning effort, a `MenuSelect` with a
+second section) and the header's ⚙ popover (single-paper context budget,
+tool permissions, the token counts).
 The Tools button and checkbox also edit the global `agentEnabled` preference;
 there is no conversation-local tools override or reset on New chat.
 Permissions remain scoped by chat kind (folder, PDF, notes), applying to all

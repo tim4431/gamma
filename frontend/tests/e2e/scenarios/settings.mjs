@@ -1,4 +1,4 @@
-import { Account, wanted } from "../harness.mjs";
+import { Account, FAKE_AI_MODELS, fakeAiModels, wanted } from "../harness.mjs";
 import fs from "node:fs";
 import path from "node:path";
 
@@ -686,11 +686,13 @@ export async function settingsScenarios(env) {
       await row(page, "Default chat model").getByRole("button").first().click();
       await page.getByText("test-model-b", { exact: true }).last().click();
       await page.getByRole("button", { name: "Close settings", exact: true }).click();
+      // The model (and reasoning effort) is the composer's chip.
+      const modelChip = page.getByRole("button", { name: "Model and reasoning effort", exact: true });
+      assert((await modelChip.innerText()).includes("test-model-b"));
+      await modelChip.click();
+      await page.locator(".uiSelectMenu").getByRole("button", { name: "test-model-a", exact: true }).click();
       await page.locator('[title^="Chat settings"]').click();
       const popover = page.locator(".chatSettingsPop");
-      assert((await popover.innerText()).includes("test-model-b"));
-      await popover.getByRole("button", { name: "Switch model" }).click();
-      await page.getByText("test-model-a", { exact: true }).last().click();
       await popover.locator('input[type="number"]').fill("42000");
       await popover.locator('input[type="number"]').press("Tab");
       await popover.getByRole("checkbox", { name: "Allow tools in all chats" }).uncheck();
@@ -713,6 +715,24 @@ export async function settingsScenarios(env) {
       assertEq(await popover.getByRole("button", { name: "Read", exact: true }).getAttribute("aria-pressed"), "true");
       assertNoProblems(page);
     } finally { await ctx.close(); }
+  });
+
+  await step("settings: the composer's mic shows only when a connection can transcribe; Full PDF only with a PDF in context", async () => {
+    for (const transcribe of [false, true]) {
+      const { ctx, page } = await setup(undefined, (c) => fakeAiModels(c, { ...FAKE_AI_MODELS, transcribe }));
+      try {
+        const chip = page.getByRole("button", { name: "Model and reasoning effort", exact: true });
+        await chip.waitFor();
+        assertEq(await page.getByRole("button", { name: "Start dictation" }).count(), transcribe ? 1 : 0, `mic with transcribe=${transcribe}`);
+        assertEq(await page.getByRole("button", { name: "Full PDF" }).count(), 0, "no PDF in the library's context");
+        await chip.click();
+        await page.locator(".uiSelectMenu").getByRole("button", { name: "high", exact: true }).click();
+        await until(async () => (await chip.innerText()).includes("model · high"), { what: "the chip names the effort" });
+        await chip.click();
+        await page.locator(".uiSelectMenu").getByRole("button", { name: "Default", exact: true }).click();
+        assertNoProblems(page);
+      } finally { await ctx.close(); }
+    }
   });
 
   await step("settings: with no AI connected the chat is a setup card whose tiles open the connect dialog", async () => {

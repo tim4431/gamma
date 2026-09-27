@@ -146,6 +146,8 @@ def test_added_provider_is_masked_and_enables_ai(alice):
     assert models["default"] == f"{p['id']}:claude-test-model"
     assert [m["model"] for m in models["models"]] == ["claude-test-model", "claude-other"]
     assert models["models"][0]["provider_name"] == "My DeepSeek"
+    # An Anthropic key can't take dictation: the chat shows no mic.
+    assert models["transcribe"] is False
 
     # ...and the same masked view comes back on GET
     g = alice.get("/api/ai/settings").json()
@@ -174,6 +176,8 @@ def test_second_provider_adds_its_models(alice):
     # The openai entry has no models picked — it offers none (there is no
     # built-in default model), and the Test button says so instead of failing.
     assert [m["model"] for m in models] == ["claude-solo"]
+    # ...but an OpenAI key transcribes with no models picked: the mic shows.
+    assert alice.get("/api/ai/models").json()["transcribe"] is True
     pid = r.json()["providers"][1]["id"]
     body = alice.post(f"/api/ai/providers/{pid}/test").json()
     assert body["ok"] is False and "no model" in body["error"]

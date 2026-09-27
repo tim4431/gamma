@@ -304,6 +304,10 @@ def ai_models(request: Request):
         # the translation picker offers them next to the models.
         "translate_engines": translate_engines.configured(user),
         "efforts": ["low", "medium", "high"],  # offered in the UI; omitted unless picked
+        # Whether some connection takes dictation (Protocol.transcription —
+        # an OpenAI-protocol key; the chat's mic shows only then). The same
+        # entries /ai/transcribe picks from, models picked or not.
+        "transcribe": any(ai_protocols.of(conf).transcription(conf) for conf in rt["providers"].values()),
         "default_prompt": _SYSTEM_PROMPT,   # shown in the prompt editor
         "metadata_prompt": METADATA_PROMPT,  # AI metadata-extraction fallback
         "cite_prompt": CITE_PROMPT,          # PPT-style citation generator

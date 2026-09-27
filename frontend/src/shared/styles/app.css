@@ -457,12 +457,12 @@
   .metaInput,
   .mdImgCaptionInput
 ):focus-visible,
-:is(.homeFindBox, .searchInputWrap, .pdfPageWidget):focus-within {
+:is(.homeFindBox, .searchInputWrap, .pdfPageWidget, .chatComposer):focus-within {
   outline: none;
   border-color: var(--accent);
   box-shadow: 0 0 0 3px var(--accent-bg);
 }
-.searchInputWrap .searchInput:focus-visible { box-shadow: none; }
+:is(.searchInputWrap .searchInput, .chatComposer .chatInput):focus-visible { box-shadow: none; }
 
 /* Section and panel labels (docs/dev/ui-design.md): sentence case at a
    readable size in --text-secondary, like the Settings rail. The text keeps
@@ -4169,31 +4169,58 @@ a.shareBrand:hover { background: var(--bg-hover); }
 }
 @keyframes reportRecordPulse { 50% { opacity: 0.35; } }
 @media (prefers-reduced-motion: reduce) { .reportRecordDot { animation: none; } }
-.chatInputRow {
+/* The composer (CHAT-06): one rounded box holding the context chips, the
+   message at full width and a toolbar ([+], Full PDF, the model chip, mic,
+   send). The box takes the field focus ring while anything inside has focus. */
+.chatComposer {
   position: relative;
   display: flex;
-  gap: 4px;
-  padding: 4px 2px;
+  flex-direction: column;
+  gap: 2px;
+  margin: 4px 2px 2px;
+  padding: 6px 6px 5px;
+  border: 1px solid var(--border);
+  border-radius: 14px;
+  background: var(--bg-surface);
+  box-shadow: 0 1px 3px rgba(0, 0, 0, 0.06);
   flex-shrink: 0;
+  min-width: 0;
 }
+.chatComposer.off { box-shadow: none; }
+.chatComposerBar { display: flex; align-items: center; gap: 4px; min-width: 0; }
+.chatComposerSpacer { flex: 1; }
+.chatComposer .chatSelChip { margin: 0 0 2px; }
+.chatComposer .chatImgPreviewRow, .chatComposer .chatReferenceStrip { padding: 2px 0; }
 .chatInput {
   flex: 1;
-  background: var(--bg-surface);
-  border: 1px solid var(--border);
-  border-radius: 4px;
-  color: var(--text-secondary);
-  padding: 5px 8px;
-  font-size: calc(12px * var(--ui-font-scale, 1));
+  background: transparent;
+  border: none;
+  color: var(--text-primary);
+  padding: 4px 6px 6px;
+  font-size: calc(14px * var(--ui-font-scale, 1));
   font-family: inherit;
   outline: none;
 }
 .chatInputArea {
   resize: none;
-  max-height: 140px;
-  overflow-y: auto !important; /* AutoGrow sets inline height; cap + scroll past 140px */
+  /* AutoGrow sets the inline height; past eight lines the box scrolls. */
+  max-height: calc(8 * 1.45em + 10px);
+  overflow-y: auto !important;
   line-height: 1.45;
   font-family: inherit;
 }
+/* The model chip: a borderless pill naming the model (and effort), whose
+   menu opens upward with the reasoning effort as a second section. */
+.chatModelChip { min-width: 0; display: inline-flex; }
+.chatModelChip .uiSelectBtn {
+  border-color: transparent;
+  background: transparent;
+  color: var(--text-muted);
+  max-width: 180px;
+  min-width: 0;
+}
+.chatModelChip .uiSelectBtn:hover { background: var(--bg-hover); color: var(--text-primary); }
+.chatModelChip .uiSelectLabel { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .chatMentionInput { flex: 1; min-width: 0; display: flex; }
 .chatMentionInput textarea { width: 100%; min-width: 0; }
 .chatMentionPicker {
@@ -4727,13 +4754,12 @@ a.shareBrand:hover { background: var(--bg-hover); }
 }
 .chatPdfToggle {
   gap: 3px;
-  font-size: calc(10px * var(--ui-font-scale, 1));
+  font-size: calc(11px * var(--ui-font-scale, 1));
   align-self: center;
   border-radius: 999px;
   height: 26px;
   padding: 0 8px;
 }
-.chatPdfToggle:disabled { opacity: 0.4; cursor: default; }
 /* Info pill next to the PDF toggle when the provider refuses PDF files */
 .chatPdfToggle.chatPdfWarn { padding: 0 6px; color: var(--danger); }
 

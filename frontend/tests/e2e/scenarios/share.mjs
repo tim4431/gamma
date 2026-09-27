@@ -21,7 +21,7 @@ export async function shareScenarios({ server, browser, alice, bob, step, until,
       await page.waitForSelector(".readOnlyTitle");
       if (phone) await page.getByRole("button", { name: "AI chat", exact: true }).click();
       await page.locator(".chatMessages strong", { hasText: "saved answer" }).waitFor();
-      assertEq(await page.locator(".chatInputRow, .chatMsgActionBtn[title^='Edit']").count(), 0, "no chat editing controls");
+      assertEq(await page.locator(".chatComposer, .chatMsgActionBtn[title^='Edit']").count(), 0, "no chat editing controls");
       assertEq(await page.getByRole("button", { name: "New chat", exact: true }).count(), 0, "no new chat action");
       await page.getByRole("button", { name: "Find in this conversation" }).click();
       await page.getByPlaceholder("Find in chat…").fill("saved answer");
@@ -43,7 +43,7 @@ export async function shareScenarios({ server, browser, alice, bob, step, until,
     const ctx = await bob.context(browser);
     const page = await openPage(ctx, `${server.base}/?share=${chatToken}`);
     await page.locator(".chatMessages strong", { hasText: "saved answer" }).waitFor();
-    assertEq(await page.locator(".chatInputRow").count(), 0, "page editors also get read-only chat");
+    assertEq(await page.locator(".chatComposer").count(), 0, "page editors also get read-only chat");
     assertNoProblems(page);
     await ctx.close();
     assertEq(JSON.stringify((await alice.api(`/api/chats/${shared.id}`)).messages), JSON.stringify(saved.messages), "owner's conversation is unchanged");

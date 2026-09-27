@@ -1,7 +1,7 @@
 // Tours are manual, compact, and never submit a message or activate the mic.
 export async function contextualGuideScenarios(env) {
   const { server, browser, alice, step, until, assert, assertEq, assertNoProblems, openPage, makePdf, flags } = env;
-  const models = { enabled: true, models: [{ id: "demo:model", provider: "demo", provider_name: "Demo", model: "model" }], default: "demo:model" };
+  const models = { enabled: true, transcribe: true, models: [{ id: "demo:model", provider: "demo", provider_name: "Demo", model: "model" }], default: "demo:model" };
   for (const mode of ["library", "pdf", "hidden-pdf", "phone"]) {
     await step(`guide: manual chat tour ${mode}`, async () => {
       const mobile = mode === "phone";

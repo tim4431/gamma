@@ -78,8 +78,10 @@ Notes live in the **Notes panel** as a nested outline. Highlights and free notes
 
 Open the chat from the **View menu (≡, top right) → AI Chat**. Configure providers in Settings → AI → Connections: Anthropic or OpenAI keys, any OpenAI-compatible gateway, or sign in with your **ChatGPT subscription** (no API key). Keys are stored per account on the server and never shown to the browser again. Until something is connected, the chat shows a setup card instead of a message box: pick a service there and the connect dialog opens on it. A guest account can't store keys; it gets AI only when the administrator shares a connection.
 
-- **Enter sends**, Shift+Enter is a newline. The **model and effort switchers** are in the panel header. A mic button dictates into the input.
-- **Context**: in a paper the chat reads that paper's text automatically. The **PDF toggle** attaches the actual file (so the model sees figures and tables); it turns itself off once the file has been sent in a conversation, to avoid re-billing it every message.
+- **The message box** holds everything that goes with a message: the context chips on top, your text, then a row with **+** (attach files or library pages), **Full PDF**, the **model chip** and Send. **Enter sends**, Shift+Enter is a newline.
+- **Model and reasoning effort**: click the model chip (for example *gpt-5.2 ▾*) to switch the model or set the reasoning effort. The ⚙ in the chat header keeps the context size, the tools and the token counts.
+- **Voice**: the mic dictates into the box. It shows only when one of your connections can transcribe (an OpenAI API key).
+- **Context**: in a paper the chat reads that paper's text automatically. **Full PDF** (shown while a PDF is in context) attaches the actual file, so the model sees figures and tables; it turns itself off once the file has been sent in a conversation, to avoid re-billing it every message.
 - **Add more**: paste images, Ctrl+drag a region of the page (see [Reading](#reading-and-highlighting)), type **`@`** to attach another paper from your library, or use the **+ menu** to attach files or pick several papers (optionally with your notes and highlights).
 - **Quote passages**: click a highlight to put it in the chat as a **PDF passage**; Ctrl+click more highlights to add up to six passages.
 - **What goes with a message** shows as chips above the message box, each saying what it is. The block your cursor is on rides along by itself (a dashed chip, **Block at your cursor**); its × leaves it out.

@@ -271,9 +271,13 @@ it matters: "Model saw pages 1–9 of 22" for a truncated paper, "PDF file not
 accepted — sent as text" when the file was requested but the provider took
 text instead. `/api/ai/models` marks each model `native_pdf` (false for
 ChatGPT sign-in entries: their wire is the Codex backend, which refuses
-`input_file` parts). The chat's PDF button doesn't default on for such a
-model; switching it on by hand shows a warning pill, and pending uploaded
-PDFs get the same warning on their chips.
+`input_file` parts). The composer's Full PDF switch (shown only while a
+PDF is in context) doesn't default on for such a model; switching it on by
+hand shows a warning pill, and pending uploaded PDFs get the same warning on
+their chips. `/api/ai/models` also says `transcribe`: whether some
+connection takes dictation (`Protocol.transcription` > 0, an OpenAI-protocol
+key, models picked or not — the same entries `/api/ai/transcribe` picks
+from); the composer's mic shows only then.
 
 PDF extraction (`gamma/pdf_text.py`) is serialized behind a lock — pdfium is
 not thread-safe and overlapping extractions fail both — and reads up to
@@ -418,7 +422,7 @@ passage, not a block chip.
 
 Reasoning models burn invisible tokens — keep `max_tokens` generous (empty
 responses raise with the finish reason). `/api/ai/models` feeds the chat
-panel's switchers and the prompt editor (four editable prompts: chat system,
+panel's model chip and the prompt editor (four editable prompts: chat system,
 metadata extraction, PPT citation — defaults in `ai.py` — and the library-agent
 base prompt, default in `ai_tools.py`).
 

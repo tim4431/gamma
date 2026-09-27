@@ -309,6 +309,7 @@ export async function pdfScenarios({ server, browser, alice, makePdf, step, unti
       });
       await page.locator(".chatSelChips").getByText("PDF passage", { exact: true }).waitFor();
       await page.locator(".chatSelChips").getByText("· p. 2", { exact: true }).waitFor();
+      assertEq(await page.getByRole("button", { name: "Full PDF" }).count(), 1, "a PDF in context offers the Full PDF switch");
       await page.locator("textarea.chatInputArea").fill("What does this say?");
       await page.getByRole("button", { name: "Send", exact: true }).click();
       await until(() => requests.length === 1, { what: "the chat request" });

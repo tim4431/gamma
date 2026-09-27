@@ -399,6 +399,9 @@ export default function ChatDock({
   const ctxUsed = contextUsed(chatMessages);
   const ctxWindow = useContextWindow(ctxUsed ? headerModel?.id : "");
   const nativePdf = activeModel ? activeModel.native_pdf !== false : true;
+  // The mic shows only when a connection can transcribe (an OpenAI-protocol
+  // key — /api/ai/models `transcribe`); without one dictation can only fail.
+  const canDictate = !aiOff && !!aiInfo?.transcribe;
   const nativePdfNote = nativePdf ? "" :
     t("{provider} does not accept PDF files — the PDF is sent as extracted text instead (first {chatContextChars} characters; Settings / AI / Advanced AI settings / Context size).", { provider: activeModel?.provider_name || t("This provider"), chatContextChars: (chatContextChars || 0).toLocaleString() });
   const attachPdfManualRef = useRef(false); // the user toggled the PDF button themselves
@@ -409,6 +412,9 @@ export default function ChatDock({
   }, [nativePdf]);
   // Extra chat context: selected PDF pages + whether to include notes/highlights.
   const [chatDocs, setChatDocs] = useState([]);
+  // The Full PDF switch shows only while a PDF is in context: the open
+  // page's, or an attached page's.
+  const pdfInContext = !!pageAttach || chatDocs.some((id) => pageAttachment(homeBlocks.find((b) => b.id === id)));
   const [chatIncludeNotes, setChatIncludeNotes] = useState(false);
   const [chatFiles, setChatFiles] = useState([]); // uploaded PDFs ({name, data}) pending send
   const [docPicker, setDocPicker] = useState(false); // "Add pages" modal
@@ -1038,8 +1044,9 @@ export default function ChatDock({
 
   // Header: one icon strip (the PDF zoom column's buttons, laid flat) —
   // the context ring (opens the settings popover, whose Tokens section
-  // spells it out), ⚙ chat settings (model, reasoning effort, context size — the same prefs
-  // Settings / AI edits, in a popover), Tools, Find, New chat.
+  // spells it out), ⚙ chat settings (context size, tools and tokens — the
+  // same prefs Settings / AI edits, in a popover; the model and effort are
+  // the composer's model chip), Tools, Find, New chat.
   const settingsOpen = openPopover === "chatsettings";
   const findBtn = (
     <button type="button" className={`ctlBtn ${chatFindOpen ? "modeActive" : ""}`}
@@ -1052,7 +1059,6 @@ export default function ChatDock({
     <>
       <div className="ctlBtnRow chatPanelHeaderBtns">
         {headerModels.length > 0 ? (() => {
-          const multiProvider = new Set(headerModels.map((m) => m.provider)).size > 1;
           const totalUsage = conversationUsage(chatMessages);
           const usageTitle = totalUsage ? t("; this conversation: {input} tokens in, {output} out", { input: fmtTokens(totalUsage.input), output: fmtTokens(totalUsage.output) }) : "";
           const ctxText = !ctxUsed ? ""
@@ -1070,35 +1076,13 @@ export default function ChatDock({
               ) : null}
               <button type="button" data-guide="chat.settings" className={`ctlBtn ${settingsOpen ? "modeActive" : ""}`}
                 onClick={toggleSettings}
-                title={t("Chat settings — {model}{chatEffort}, context {chatContextChars} chars{usageTitle}", { model: headerModel.model || "model", chatEffort: chatEffort ? `, effort: ${chatEffort}` : "", chatContextChars: chatContextChars.toLocaleString(), usageTitle })}
+                title={t("Chat settings — context {chatContextChars} chars, tools, tokens{usageTitle}", { chatContextChars: chatContextChars.toLocaleString(), usageTitle })}
                 aria-label={t("Chat settings")} aria-expanded={settingsOpen}>
                 <SettingsIcon size={15} />
               </button>
               {settingsOpen ? (
                 <div className="popover chatSettingsPop">
-                  <div className="popoverHint">{t("Global settings for all chats in this browser. Changes also appear in Settings.")}</div>
-                  <div className="popoverSection">{t("Model")}</div>
-                  <MenuSelect
-                    block
-                    label={t("Switch model")}
-                    value={headerModel.id}
-                    onChange={setChatModel}
-                    options={headerModels.map((m) => [
-                      m.id,
-                      multiProvider ? `${m.model} · ${m.provider_name || m.provider}` : m.model,
-                    ])}
-                  />
-                  <div className="popoverSection">{t("Reasoning effort")}</div>
-                  <MenuSelect
-                    block
-                    label={t("Reasoning effort — leave on 'default' unless the model supports it")}
-                    value={chatEffort}
-                    onChange={setChatEffort}
-                    options={[
-                      ["", "default"],
-                      ...(aiInfo.efforts || ["low", "medium", "high"]).map((ef) => [ef, ef]),
-                    ]}
-                  />
+                  <div className="popoverHint">{t("Global settings for all chats in this browser. Changes also appear in Settings. The model and reasoning effort are on the message box.")}</div>
                   <div className="popoverSection">{t("Context per page · {pages}", { pages: approxPages(chatContextChars) })}</div>
                   <CharSlider value={chatContextChars} onChange={setChatContextChars} />
                   <div className="popoverHint">
@@ -1427,80 +1411,85 @@ export default function ChatDock({
             onConnect={(service) => openAiKeysEditor?.(service)} />
         ) : null}
       </div>
-      {!readOnly ? <>
-      {pdfSelections.length || chatNotes?.length || cursorChip ? (
-        <div className="chatSelChips">
-          {cursorChip ? (
-            cursorChip.sel ? (
-              <SelChip kind="isCursor" icon="selection" auto label={t("Selection in this note")} text={cursorChip.sel.text}
-                title={`${t("The text you selected in this note — the assistant changes only this part.")}\n\n${cursorChip.sel.text}`}
-                onRemove={() => setCursorOff(cursorChip.id)}
-                removeTitle={t("Don't send the selection with this message")} />
-            ) : (
-              <SelChip kind="isCursor" icon="cursor" auto label={t("Block at your cursor")}
-                note={t("added automatically, × to leave out")} text={cursorChip.text}
-                title={`${t("Your cursor is on this block — it rides with the message, so \"this block\" means it.")}\n\n${cursorChip.text}`}
-                onRemove={() => setCursorOff(cursorChip.id)}
-                removeTitle={t("Don't send the cursor block with this message")} />
-            )
-          ) : null}
-          {pdfSelections.map((s, i) => (
-            <SelChip key={`p${i}`} text={s.text} icon="passage"
-              label={pdfSelections.length > 1 ? t("PDF passage {i}", { i: i + 1 }) : t("PDF passage")}
-              note={s.page ? t("p. {page}", { page: s.page }) : ""}
-              title={`${s.text}\n\n${t("Hold Ctrl while selecting in the PDF to add more passages")}`}
-              onRemove={() => setPdfSelections((prev) => prev.filter((_, j) => j !== i))}
-              removeTitle={t("Remove this passage")} />
-          ))}
-          {(chatNotes || []).map((n, i) => (
-            <SelChip key={`n${i}`} kind={n.kind === "block" ? "isBlock" : "isNote"} text={n.text}
-              icon={n.kind === "block" ? "block" : "selection"}
-              label={n.kind === "block" ? t("Attached block") : t("Selected note text")}
-              title={`${n.kind === "block" ? t("A note block attached with Ctrl+click or the ⋮⋮ menu — the assistant gets its text and id") : t("Note text selected with Ctrl held — the assistant changes only this part")}\n\n${n.text}`}
-              onRemove={() => setChatNotes?.((prev) => prev.filter((_, j) => j !== i))}
-              removeTitle={n.kind === "block" ? t("Detach this block") : t("Remove this passage")} />
-          ))}
-        </div>
-      ) : null}
-      {chatDocs.length ? (
-        <div className="chatReferenceStrip" aria-label={t("Attached library pages")}>
-          <span className="chatReferenceLabel" title={t("Paper details and text stay in context for follow-up questions. Notes are optional in the library picker.")}>{t("Context")}</span>
-          {chatDocs.map((id) => <span className="chatReferenceChip" key={id}>
-            <button type="button" className="crumbBtn" title={homeBlocks.find((b) => b.id === id)?.content || t("Unavailable page")} onClick={() => onOpenPage?.(id)}><BookIcon size={12} /><span className="linkChipText">{homeBlocks.find((b) => b.id === id)?.content || t("Unavailable page")}</span></button>
-            <button type="button" className="uiClose uiCloseSm" aria-label={t("Remove {page} from context", { page: homeBlocks.find((b) => b.id === id)?.content || t("page") })} onClick={() => setChatDocs((prev) => prev.filter((p) => p !== id))}><XIcon size={11} /></button>
-          </span>)}
-        </div>
-      ) : null}
-      {chatFiles.length ? (
-        <div className="chatImgPreviewRow">
-          {chatFiles.map((f, i) => (
-            <span key={i} className="chatFileChip" title={nativePdf ? t("{name} — sent with your next message", { name: f.name }) : t("{name} — {nativePdfNote}", { name: f.name, nativePdfNote: nativePdfNote })}>
-              {nativePdf ? <FileIcon size={12} /> : <AlertCircleIcon size={12} />}
-              <span className="chatFileChipName">{f.name}</span>
-              <button type="button" className="uiClose uiCloseSm chatFileChipRemove" title={t("Remove file")}
-                onClick={() => setChatFiles((prev) => prev.filter((_, j) => j !== i))}>×</button>
-            </span>
-          ))}
-        </div>
-      ) : null}
-      {chatImages.length ? (
-        <div className="chatImgPreviewRow" data-guide="chat.imageContext">
-          {chatImages.map((src, i) => (
-            <span key={i} className="chatImgPreview">
-              <img src={src} alt={t("pasted figure")} />
-              <button type="button" className="uiClose uiCloseSm uiCloseDanger chatImgRemove" title={t("Remove image")}
-                onClick={() => setChatImages((prev) => prev.filter((_, j) => j !== i))}>×</button>
-            </span>
-          ))}
-        </div>
-      ) : null}
+      {!readOnly ? (
+      // One box (CHAT-06): the context chips on top, the message at full
+      // width, then a toolbar — [+], the Full PDF switch while a PDF is in
+      // context, the model chip (with reasoning effort), the mic when a
+      // connection can transcribe, send / stop. While recording the text
+      // and the toolbar give way to the waveform row.
       <form
-        className="chatInputRow"
+        className={`chatComposer${aiOff ? " off" : ""}`}
         data-guide="chat.composer"
         onSubmit={(e) => { e.preventDefault(); sendChatMessage(); }}
       >
+        {pdfSelections.length || chatNotes?.length || cursorChip ? (
+          <div className="chatSelChips">
+            {cursorChip ? (
+              cursorChip.sel ? (
+                <SelChip kind="isCursor" icon="selection" auto label={t("Selection in this note")} text={cursorChip.sel.text}
+                  title={`${t("The text you selected in this note — the assistant changes only this part.")}\n\n${cursorChip.sel.text}`}
+                  onRemove={() => setCursorOff(cursorChip.id)}
+                  removeTitle={t("Don't send the selection with this message")} />
+              ) : (
+                <SelChip kind="isCursor" icon="cursor" auto label={t("Block at your cursor")}
+                  note={t("added automatically, × to leave out")} text={cursorChip.text}
+                  title={`${t("Your cursor is on this block — it rides with the message, so \"this block\" means it.")}\n\n${cursorChip.text}`}
+                  onRemove={() => setCursorOff(cursorChip.id)}
+                  removeTitle={t("Don't send the cursor block with this message")} />
+              )
+            ) : null}
+            {pdfSelections.map((s, i) => (
+              <SelChip key={`p${i}`} text={s.text} icon="passage"
+                label={pdfSelections.length > 1 ? t("PDF passage {i}", { i: i + 1 }) : t("PDF passage")}
+                note={s.page ? t("p. {page}", { page: s.page }) : ""}
+                title={`${s.text}\n\n${t("Hold Ctrl while selecting in the PDF to add more passages")}`}
+                onRemove={() => setPdfSelections((prev) => prev.filter((_, j) => j !== i))}
+                removeTitle={t("Remove this passage")} />
+            ))}
+            {(chatNotes || []).map((n, i) => (
+              <SelChip key={`n${i}`} kind={n.kind === "block" ? "isBlock" : "isNote"} text={n.text}
+                icon={n.kind === "block" ? "block" : "selection"}
+                label={n.kind === "block" ? t("Attached block") : t("Selected note text")}
+                title={`${n.kind === "block" ? t("A note block attached with Ctrl+click or the ⋮⋮ menu — the assistant gets its text and id") : t("Note text selected with Ctrl held — the assistant changes only this part")}\n\n${n.text}`}
+                onRemove={() => setChatNotes?.((prev) => prev.filter((_, j) => j !== i))}
+                removeTitle={n.kind === "block" ? t("Detach this block") : t("Remove this passage")} />
+            ))}
+          </div>
+        ) : null}
+        {chatDocs.length ? (
+          <div className="chatReferenceStrip" aria-label={t("Attached library pages")}>
+            <span className="chatReferenceLabel" title={t("Paper details and text stay in context for follow-up questions. Notes are optional in the library picker.")}>{t("Context")}</span>
+            {chatDocs.map((id) => <span className="chatReferenceChip" key={id}>
+              <button type="button" className="crumbBtn" title={homeBlocks.find((b) => b.id === id)?.content || t("Unavailable page")} onClick={() => onOpenPage?.(id)}><BookIcon size={12} /><span className="linkChipText">{homeBlocks.find((b) => b.id === id)?.content || t("Unavailable page")}</span></button>
+              <button type="button" className="uiClose uiCloseSm" aria-label={t("Remove {page} from context", { page: homeBlocks.find((b) => b.id === id)?.content || t("page") })} onClick={() => setChatDocs((prev) => prev.filter((p) => p !== id))}><XIcon size={11} /></button>
+            </span>)}
+          </div>
+        ) : null}
+        {chatFiles.length ? (
+          <div className="chatImgPreviewRow">
+            {chatFiles.map((f, i) => (
+              <span key={i} className="chatFileChip" title={nativePdf ? t("{name} — sent with your next message", { name: f.name }) : t("{name} — {nativePdfNote}", { name: f.name, nativePdfNote: nativePdfNote })}>
+                {nativePdf ? <FileIcon size={12} /> : <AlertCircleIcon size={12} />}
+                <span className="chatFileChipName">{f.name}</span>
+                <button type="button" className="uiClose uiCloseSm chatFileChipRemove" title={t("Remove file")}
+                  onClick={() => setChatFiles((prev) => prev.filter((_, j) => j !== i))}>×</button>
+              </span>
+            ))}
+          </div>
+        ) : null}
+        {chatImages.length ? (
+          <div className="chatImgPreviewRow" data-guide="chat.imageContext">
+            {chatImages.map((src, i) => (
+              <span key={i} className="chatImgPreview">
+                <img src={src} alt={t("pasted figure")} />
+                <button type="button" className="uiClose uiCloseSm uiCloseDanger chatImgRemove" title={t("Remove image")}
+                  onClick={() => setChatImages((prev) => prev.filter((_, j) => j !== i))}>×</button>
+              </span>
+            ))}
+          </div>
+        ) : null}
         {dictation === "rec" ? (
-          <>
+          <div className="chatComposerBar chatRecBar">
             <button className="uiBtn chatCircleBtn chatMicBtn" type="button" onClick={() => finishDictation("cancel")} title={t("Cancel recording")} aria-label={t("Cancel recording")}>
               <XIcon size={13} />
             </button>
@@ -1515,70 +1504,9 @@ export default function ChatDock({
             <button className="uiBtn primary chatCircleBtn" type="button" onClick={() => finishDictation("send")} title={t("Stop and send")} aria-label={t("Stop, transcribe and send")}>
               <ArrowUpIcon size={14} strokeWidth={2.4} />
             </button>
-          </>
+          </div>
         ) : (
         <>
-        <span data-popover="chatdocs" className="popoverAnchor">
-          <button
-            type="button"
-            className={`chatAttachToggle chatPlusBtn ${(chatDocs.length || chatIncludeNotes) ? "on" : ""}`}
-            data-guide="chat.context"
-            disabled={aiOff}
-            onClick={() => setOpenPopover((p) => (p === "chatdocs" ? null : "chatdocs"))}
-            title={t("Add photos & files, or pages from your library")}
-            aria-label={t("Add attachments or chat context")}
-          >
-            +{chatDocs.length ? <span className="chatPlusCount">{chatDocs.length}</span> : null}
-          </button>
-          {openPopover === "chatdocs" ? (
-            <div className="popover popUp chatPlusMenu">
-              <button type="button" className="chatPlusMenuItem"
-                onClick={() => { setOpenPopover(null); fileInputRef.current?.click(); }}>
-                <span className="chatPlusMenuIcon">
-                  <PaperclipIcon size={15} />
-                </span>
-                <span className="chatPlusMenuLabel">{t("Add photos & files")}</span>
-                <span className="chatPlusMenuHint">{t("Images or PDFs from your computer")}</span>
-              </button>
-              <button type="button" className="chatPlusMenuItem"
-                onClick={() => { setOpenPopover(null); setDocPickerQuery(""); setDocPicker(true); }}>
-                <span className="chatPlusMenuIcon">
-                  <BookIcon size={15} />
-                </span>
-                <span className="chatPlusMenuLabel">{t("Add pages from library")}</span>
-                <span className="chatPlusMenuHint">{chatDocs.length ? `${chatDocs.length} selected` : t("Search your pages")}</span>
-              </button>
-            </div>
-          ) : null}
-        </span>
-        <input
-          ref={fileInputRef}
-          type="file"
-          multiple
-          accept="image/*,application/pdf"
-          style={{ display: "none" }}
-          onChange={(e) => { addChatFiles(Array.from(e.target.files || [])); e.target.value = ""; }}
-        />
-        {!aiOff ? <button
-          type="button"
-          className={`chatAttachToggle chatPdfToggle ${attachPdf ? "on" : ""}`}
-          disabled={!pageAttach && !chatDocs.length}
-          onClick={() => { attachPdfManualRef.current = true; setAttachPdf((v) => !v); }}
-          title={!nativePdf
-            ? `${attachPdf ? "On, but: " : ""}${nativePdfNote}`
-            : attachPdf
-              ? t("Full PDF file is sent with each message (model sees figures & tables). Click to switch to extracted text only.") : t("Send the full PDF file with your messages so the model sees figures & tables (uses more tokens). Click to enable.")}
-        >
-          <FileIcon size={12} />
-          PDF
-        </button> : null}
-        {attachPdf && !nativePdf && !aiOff ? (
-          <button type="button" className="chatAttachToggle chatPdfToggle chatPdfWarn"
-            onClick={() => setStatus(nativePdfNote)} title={nativePdfNote}
-            aria-label={t("This provider cannot accept PDF files")}>
-            <AlertCircleIcon size={12} />
-          </button>
-        ) : null}
         <PaperMentionInput
           key={chatKey}
           pages={homeBlocks} openTabs={openTabs} selected={chatDocs}
@@ -1601,28 +1529,114 @@ export default function ChatDock({
             : agentAsk || t("Ask…")
           ) + t(" (@ paper)")}
         />
-        {busyHere ? (
-          <button className="uiBtn chatCircleBtn chatStopBtn" type="button" onClick={stopChat} title={t("Stop generating")} aria-label={t("Stop generating")}>
-            <StopIcon size={11} />
-          </button>
-        ) : dictation === "busy" ? (
-          <button className="uiBtn chatCircleBtn chatMicBtn" type="button" disabled title={t("Transcribing…")} aria-label={t("Transcribing")}>
-            <span className="transferSpin inline" />
-          </button>
-        ) : (
-          <>
-            {!aiOff ? <button className="uiBtn chatCircleBtn chatMicBtn" data-guide="chat.voice" type="button" onClick={startDictation} title={t("Dictate — transcribed with your OpenAI key")} aria-label={t("Start dictation")}>
-              <MicIcon size={13} />
-            </button> : null}
-            <button className="uiBtn primary chatCircleBtn" type="submit" disabled={aiOff || !chatInput.trim()} title={t("Send")} aria-label={t("Send")}>
-              <ArrowUpIcon size={14} strokeWidth={2.4} />
+        <div className="chatComposerBar">
+          <span data-popover="chatdocs" className="popoverAnchor">
+            <button
+              type="button"
+              className={`chatAttachToggle chatPlusBtn ${(chatDocs.length || chatIncludeNotes) ? "on" : ""}`}
+              data-guide="chat.context"
+              disabled={aiOff}
+              onClick={() => setOpenPopover((p) => (p === "chatdocs" ? null : "chatdocs"))}
+              title={t("Add photos & files, or pages from your library")}
+              aria-label={t("Add attachments or chat context")}
+            >
+              +{chatDocs.length ? <span className="chatPlusCount">{chatDocs.length}</span> : null}
             </button>
-          </>
-        )}
+            {openPopover === "chatdocs" ? (
+              <div className="popover popUp chatPlusMenu">
+                <button type="button" className="chatPlusMenuItem"
+                  onClick={() => { setOpenPopover(null); fileInputRef.current?.click(); }}>
+                  <span className="chatPlusMenuIcon">
+                    <PaperclipIcon size={15} />
+                  </span>
+                  <span className="chatPlusMenuLabel">{t("Add photos & files")}</span>
+                  <span className="chatPlusMenuHint">{t("Images or PDFs from your computer")}</span>
+                </button>
+                <button type="button" className="chatPlusMenuItem"
+                  onClick={() => { setOpenPopover(null); setDocPickerQuery(""); setDocPicker(true); }}>
+                  <span className="chatPlusMenuIcon">
+                    <BookIcon size={15} />
+                  </span>
+                  <span className="chatPlusMenuLabel">{t("Add pages from library")}</span>
+                  <span className="chatPlusMenuHint">{chatDocs.length ? `${chatDocs.length} selected` : t("Search your pages")}</span>
+                </button>
+              </div>
+            ) : null}
+          </span>
+          <input
+            ref={fileInputRef}
+            type="file"
+            multiple
+            accept="image/*,application/pdf"
+            style={{ display: "none" }}
+            onChange={(e) => { addChatFiles(Array.from(e.target.files || [])); e.target.value = ""; }}
+          />
+          {pdfInContext && !aiOff ? <button
+            type="button"
+            className={`chatAttachToggle chatPdfToggle ${attachPdf ? "on" : ""}`}
+            aria-pressed={attachPdf}
+            onClick={() => { attachPdfManualRef.current = true; setAttachPdf((v) => !v); }}
+            title={!nativePdf
+              ? `${attachPdf ? t("On, but: ") : ""}${nativePdfNote}`
+              : attachPdf
+                ? t("Full PDF file is sent with each message (model sees figures & tables). Click to switch to extracted text only.") : t("Send the full PDF file with your messages so the model sees figures & tables (uses more tokens). Click to enable.")}
+          >
+            <FileIcon size={12} />
+            {t("Full PDF")}
+          </button> : null}
+          {attachPdf && pdfInContext && !nativePdf && !aiOff ? (
+            <button type="button" className="chatAttachToggle chatPdfToggle chatPdfWarn"
+              onClick={() => setStatus(nativePdfNote)} title={nativePdfNote}
+              aria-label={t("This provider cannot accept PDF files")}>
+              <AlertCircleIcon size={12} />
+            </button>
+          ) : null}
+          <span className="chatComposerSpacer" />
+          {!aiOff && headerModels.length ? (
+            <span className="chatModelChip">
+              <MenuSelect
+                up
+                label={t("Model and reasoning effort")}
+                heading={t("Model")}
+                value={headerModel.id}
+                onChange={setChatModel}
+                display={chatEffort ? `${headerModel.model} · ${chatEffort}` : headerModel.model}
+                options={headerModels.map((m) => [
+                  m.id,
+                  new Set(headerModels.map((x) => x.provider)).size > 1 ? `${m.model} · ${m.provider_name || m.provider}` : m.model,
+                ])}
+                sections={[{
+                  label: t("Reasoning effort"),
+                  value: chatEffort,
+                  onChange: setChatEffort,
+                  options: [["", t("Default")], ...(aiInfo.efforts || ["low", "medium", "high"]).map((ef) => [ef, ef])],
+                }]}
+              />
+            </span>
+          ) : null}
+          {busyHere ? (
+            <button className="uiBtn chatCircleBtn chatStopBtn" type="button" onClick={stopChat} title={t("Stop generating")} aria-label={t("Stop generating")}>
+              <StopIcon size={11} />
+            </button>
+          ) : dictation === "busy" ? (
+            <button className="uiBtn chatCircleBtn chatMicBtn" type="button" disabled title={t("Transcribing…")} aria-label={t("Transcribing")}>
+              <span className="transferSpin inline" />
+            </button>
+          ) : (
+            <>
+              {canDictate ? <button className="uiBtn chatCircleBtn chatMicBtn" data-guide="chat.voice" type="button" onClick={startDictation} title={t("Dictate — transcribed with your OpenAI key")} aria-label={t("Start dictation")}>
+                <MicIcon size={13} />
+              </button> : null}
+              <button className="uiBtn primary chatCircleBtn" type="submit" disabled={aiOff || !chatInput.trim()} title={t("Send")} aria-label={t("Send")}>
+                <ArrowUpIcon size={14} strokeWidth={2.4} />
+              </button>
+            </>
+          )}
+        </div>
         </>
         )}
       </form>
-      </> : null}
+      ) : null}
       {docPicker ? (
         <div className="reportOverlay" onClick={() => setDocPicker(false)}>
           <div className="reportModal docPickerModal" onClick={(e) => e.stopPropagation()}
