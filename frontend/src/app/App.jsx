@@ -6626,6 +6626,8 @@ function LibraryApp({ publicPage = null, initialServerConfig = null }) {
       chatVisible: isPhone ? phonePanel === "chat" : !chatHidden && !collapsedWins.chat,
       pdfChatVisible: !!pageAttach && !pdfHidden && !collapsedWins.pdf && !isPhone,
       guideAvailable: !settingsOpen,
+      // the phone (compact) layout: Home is the bottom bar's Library tab
+      phone: !!isPhone,
       sharedWorkspace: workspaces.some((w) => !w.personal),
       // the open page's share audience ("" unshared or not loaded): the
       // sharing tour words its access step for an anyone-with-the-link share

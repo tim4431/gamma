@@ -2222,7 +2222,7 @@
   "The page is on the share host but its share was not made; publishing again makes the link.": "页面已在分享服务器上，但分享链接尚未创建；再次发布即可生成链接。",
   "The page it pointed to was unshared, or the link was copied incompletely. Ask the person who sent it for a new link.": "它指向的页面已取消分享，或者链接复制得不完整。请向发送链接的人索取新链接。",
   "The page's conflicts, one by one": "此页面的冲突，逐个处理",
-  "The paper, its highlights and your note are saved. Open Home to find it in your library.": "论文、它的高亮和你的笔记都已保存。打开首页，就能在文库里找到它。",
+  "The paper, its highlights and your note are saved. Go back to your library to find it there.": "论文、它的高亮和你的笔记都已保存。回到文库就能找到它。",
   "The quota must be a whole number of MB, or blank.": "配额必须是整数 MB，或留空。",
   "The quote, marked in the PDF": "引文已在 PDF 中标出",
   "The recording came out empty.": "录制结果为空。",

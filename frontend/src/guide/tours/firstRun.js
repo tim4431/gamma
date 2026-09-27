@@ -134,7 +134,7 @@ export default {
       anchor: "header.home",
       placement: "bottom",
       title: T("Back to your library"),
-      body: T("The paper, its highlights and your note are saved. Open Home to find it in your library."),
+      body: T("The paper, its highlights and your note are saved. Go back to your library to find it there."),
       advanceOn: { event: "home.opened" },
       next: T("Finish"),
     },

@@ -100,7 +100,7 @@ test("eventMatches honours the payload match", () => {
   assert.equal(eventMatches({ event: "popover.opened" }, "page.opened", {}), false);
 });
 
-const facts = { view: "page", onPage: true, editable: true, hasPdf: true, guideAvailable: true };
+const facts = { view: "page", onPage: true, editable: true, hasPdf: true, guideAvailable: true, phone: false };
 const at = (name, payload = {}) => ({ name, payload });
 
 test("a triggered tour is offered after its event, once per version", () => {
@@ -121,6 +121,8 @@ test("count, doneOn and state triggers", () => {
   const palette = TOURS["quick-open"];
   assert.equal(canOffer(palette, { facts, progress: null, event: at("home.opened"), seen: 3 }), false);
   assert.equal(canOffer(palette, { facts, progress: null, event: at("home.opened"), seen: 4 }), true);
+  assert.equal(canOffer(palette, { facts: { ...facts, phone: true }, progress: null, event: at("home.opened"), seen: 4 }), false,
+    "no Ctrl+P hint on the phone layout");
   assert.equal(retiresOffer(palette, at("palette.opened")), true);
   assert.equal(retiresOffer(palette, at("home.opened")), false);
   const ws = TOURS.workspaces;

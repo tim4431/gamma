@@ -22,11 +22,13 @@ export const blockRefs = {
 };
 
 // Offered on the fourth trip back to the library in one sitting, unless the
-// palette has been used already.
+// palette has been used already — never on the phone layout, where Home is
+// the bottom bar's Library tab and there is no keyboard shortcut to teach.
 export const quickOpen = {
   id: "quick-open",
   version: 1,
   hint: true,
+  requires: { phone: false },
   trigger: { event: "home.opened", count: 4, doneOn: { event: "palette.opened" } },
   steps: [{ id: "quick-open", anchor: "header.home", placement: "bottom", title: T("Next time, press {key:app.quickOpen} to jump to any page without going home.") }],
 };
