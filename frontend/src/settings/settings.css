@@ -365,6 +365,15 @@
 .settingsNoMargin { margin: 0; }
 /* Model chips in the provider form — .categoryTag, same look as page labels. */
 .aiModelChips { display: flex; flex-wrap: wrap; gap: 5px; }
+/* The connect dialog's key step: "Get a key at …", then the live check. */
+.aiKeyLink { display: inline-flex; align-items: center; gap: 4px; align-self: flex-start; font-size: calc(12px * var(--ui-font-scale, 1)); color: var(--accent); text-decoration: none; }
+.aiKeyLink:hover { text-decoration: underline; }
+.aiKeyCheck { display: flex; align-items: center; gap: 5px; font-size: calc(12px * var(--ui-font-scale, 1)); color: var(--text-muted); }
+.aiKeyCheck.aiTestOk { color: var(--ok); }
+.aiKeyCheck.aiKeysError { color: var(--danger); }
+.aiMoreOptions { margin-top: 6px; }
+.aiMoreOptions > summary { cursor: pointer; font-size: calc(12px * var(--ui-font-scale, 1)); color: var(--text-muted); }
+.aiMoreOptions[open] > summary { margin-bottom: 6px; }
 /* …and the same chips on the saved-provider rows. */
 .aiProvModels { display: inline-flex; flex-wrap: wrap; gap: 4px; margin-top: 2px; }
 .aiUsage {

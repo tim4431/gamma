@@ -275,7 +275,9 @@ export default function ChatDock({
   chatContextChars, setChatContextChars, multiContextChars,
   // openAiKeysEditor(service?) opens Settings → Connections, with the
   // connect dialog set to `service` when one is named (the setup card).
-  aiInfo, aiProvider, openAiKeysEditor, openSettings, isAdmin = false,
+  // focusSignal: bumped by App when a connection made from the setup card is
+  // ready — the message box takes the focus once the chat is enabled.
+  aiInfo, aiProvider, openAiKeysEditor, openSettings, isAdmin = false, focusSignal = 0,
   aiHealth, dismissAiHealth,
   openPopover, setOpenPopover,
   setStatus, askConfirm,
@@ -319,6 +321,14 @@ export default function ChatDock({
       .catch(() => { if (live) setSetupInfo({ failed: true }); });
     return () => { live = false; };
   }, [aiOff]);
+  const composerRef = useRef(null);
+  const focusPendingRef = useRef(false);
+  useEffect(() => { if (focusSignal) focusPendingRef.current = true; }, [focusSignal]);
+  useEffect(() => {
+    if (!focusPendingRef.current || aiOff || !aiInfo) return;
+    focusPendingRef.current = false;
+    composerRef.current?.querySelector("textarea")?.focus();
+  }, [focusSignal, aiOff, aiInfo]);
   const folderChat = organizeFolder != null;
   // Which of the three chat kinds this is — each has its own tool permission
   // map in Settings → AI → Chat (app/prefDefs.js CHAT_KINDS): the folder chat, a
@@ -1418,6 +1428,7 @@ export default function ChatDock({
       // connection can transcribe, send / stop. While recording the text
       // and the toolbar give way to the waveform row.
       <form
+        ref={composerRef}
         className={`chatComposer${aiOff ? " off" : ""}`}
         data-guide="chat.composer"
         onSubmit={(e) => { e.preventDefault(); sendChatMessage(); }}

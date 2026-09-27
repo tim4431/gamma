@@ -19,7 +19,16 @@ via `POST/PUT/DELETE /api/ai/providers[/{id}]`. An entry offers exactly the
 models picked for it (from the provider's live listing in the form): there is
 no built-in default model, so an entry with none picked offers nothing and its
 Test button says so (migration step 15 wrote the old defaults into entries
-that had relied on them). A saved entry never switches between sign-in and
+that had relied on them). The connect dialog (`ProviderForm` in
+`settings/SettingsAi.jsx`) picks the live list's first model when nothing is
+picked yet — still a pick from the provider's own listing, never a model name
+in code — so a new connection is not saved offering nothing. The same live
+listing is the dialog's key check ("Key works · 14 models available", or the
+provider's refusal), and each adapter (or `SERVICES` preset) names what its
+keys look like and where to make one (`key_placeholder`, `key_url`, sent with
+the protocols in `GET /api/ai/settings`; empty for a sign-in protocol, and not
+shown for a custom endpoint). A connection made in the dialog is tested right
+after it is saved. A saved entry never switches between sign-in and
 API key (`PUT` with such a protocol is a 400). The generic prefs endpoints
 refuse the key; the only read path is the masked `GET /api/ai/settings` (last-4
 hint, never the key), guests can't write. `POST /api/ai/providers/{id}/test`

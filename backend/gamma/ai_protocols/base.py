@@ -119,6 +119,11 @@ class Protocol:
     entry = True         # an entry may name it (False: a variant another protocol switches to)
     native_pdf = True    # the provider takes the PDF file itself, not only extracted text
     streams_only = False # the reply always arrives as SSE, even for a caller that wants it whole
+    # The connect form's API-key field: what the provider's keys look like
+    # (the placeholder) and where to make one. Only for the provider's own
+    # endpoint — a custom base URL on the same wire shows neither.
+    key_placeholder = ""
+    key_url = ""
 
     @property
     def base_url(self) -> str:

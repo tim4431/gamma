@@ -167,19 +167,27 @@ export async function settingsScenarios(env) {
       await openSettings(page);
       await nav(page, "Connections").click();
       await page.getByRole("button", { name: "+ Add provider", exact: true }).click();
-      const dialog = page.getByRole("dialog", { name: "Add key", exact: true });
-      await dialog.getByRole("button", { name: "AI service", exact: true }).click();
-      await page.getByText("OpenAI API", { exact: true }).click();
+      const dialog = page.getByRole("dialog", { name: "Connect an AI service", exact: true });
+      await dialog.getByRole("group", { name: "AI service" }).getByRole("button", { name: "OpenAI API", exact: true }).click();
       const key = dialog.locator('input[autocomplete="new-password"]');
+      assertEq(await key.getAttribute("placeholder"), "sk-proj-…", "the provider's own key shape");
+      assertEq(await dialog.getByRole("link", { name: /^Get a key at platform\.openai\.com/ }).getAttribute("href"), "https://platform.openai.com/api-keys");
       await key.fill("old-key");
       await until(() => calls.length === 1);
       await key.fill("new-key");
       await until(() => calls.length === 2);
       await dialog.getByRole("button", { name: "100 usable" }).waitFor();
+      // The live list doubles as the key check, and its first model is picked.
+      await dialog.getByText("Key works · 100 models available", { exact: true }).waitFor();
+      await dialog.getByRole("button", { name: "Remove gpt-test-000", exact: true }).waitFor();
       const input = dialog.getByRole("combobox", { name: "Add a model" });
+      // The dialog scrolls in this short window, and a scroll closes the list:
+      // bring the box into view before opening it.
+      await input.scrollIntoViewIfNeeded();
+      await page.waitForTimeout(100);
       await input.click();
       const list = page.getByRole("listbox", { name: "Available models" });
-      assertEq(await list.getByRole("option").count(), 100);
+      assertEq(await list.getByRole("option").count(), 99);
       const bounds = await list.boundingBox();
       assert(bounds.y >= 0 && bounds.y + bounds.height <= 650, "model list fits the viewport");
       assert(await list.evaluate((el) => el.scrollHeight > el.clientHeight), "long list is scrollable");
@@ -218,23 +226,24 @@ export async function settingsScenarios(env) {
       await openSettings(page);
       await nav(page, "Connections").click();
       await page.getByRole("button", { name: "+ Add provider", exact: true }).click();
-      const dialog = page.getByRole("dialog", { name: "Add key", exact: true });
-      await dialog.getByRole("button", { name: "AI service", exact: true }).click();
-      await page.getByText("DeepSeek", { exact: true }).click();
+      // The connection is tested once saved; the test is answered here, offline.
+      await page.route("**/api/ai/providers/*/test", (route) => route.fulfill({ json: { ok: true, model: "deepseek-flash", latency_ms: 300 } }));
+      const dialog = page.getByRole("dialog", { name: "Connect an AI service", exact: true });
+      // Other opens the named services, the first one chosen.
+      await dialog.getByRole("group", { name: "AI service" }).getByRole("button", { name: "Other", exact: true }).click();
+      assert((await dialog.getByRole("button", { name: "Service", exact: true }).innerText()).includes("DeepSeek"), "the first named service");
       // A preset's endpoint is fixed: no Base URL field to fill.
       assertEq(await dialog.getByRole("textbox", { name: /Base URL/ }).count(), 0);
       await dialog.locator('input[autocomplete="new-password"]').fill("sk-deepseek-e2e");
       await dialog.getByRole("button", { name: "2 usable" }).waitFor();
       assertEq(calls.at(-1).protocol, "openai");
       assertEq(calls.at(-1).base_url, "https://api.deepseek.com");
-      const input = dialog.getByRole("combobox", { name: "Add a model" });
-      await input.click();
-      await page.getByRole("listbox", { name: "Available models" })
-        .getByRole("option", { name: "deepseek-flash", exact: true }).click();
-      await dialog.getByRole("button", { name: "Add key", exact: true }).click();
+      await dialog.getByRole("button", { name: "Remove deepseek-flash", exact: true }).waitFor();
+      await dialog.getByRole("button", { name: "Connect", exact: true }).click();
       await until(() => dialog.count().then((n) => n === 0));
       const saved = page.locator(".aiProvRow").filter({ hasText: "sk-deepseek-e2e".slice(-4) });
       await saved.locator(".aiProvName").filter({ hasText: "DeepSeek" }).waitFor();
+      await saved.getByText(/working · deepseek-flash/).waitFor(); // tested right after saving
       assertNoProblems(page);
     } finally {
       await ctx.close();
@@ -264,9 +273,8 @@ export async function settingsScenarios(env) {
       await openSettings(page);
       await nav(page, "Connections").click();
       await page.getByRole("button", { name: "+ Add provider", exact: true }).click();
-      const dialog = page.getByRole("dialog", { name: "Add key", exact: true });
-      await dialog.getByRole("button", { name: "AI service", exact: true }).click();
-      await page.getByRole("button", { name: "ChatGPT subscription", exact: true }).click();
+      const dialog = page.getByRole("dialog", { name: "Connect an AI service", exact: true });
+      await dialog.getByRole("group", { name: "AI service" }).getByRole("button", { name: "ChatGPT", exact: true }).click();
       await dialog.getByRole("button", { name: "Open ChatGPT sign-in", exact: true }).click();
       await until(() => page.evaluate(() => !!window.testSignInUrl));
       const state = await page.evaluate(() => new URL(window.testSignInUrl).searchParams.get("state"));
@@ -640,14 +648,17 @@ export async function settingsScenarios(env) {
       assertEq(await page.locator(".promptTextarea").first().inputValue(), "Saved test prompt");
       await nav(page, "Connections").click();
       await page.getByRole("button", { name: "+ Add provider", exact: true }).click();
-      const dialog = page.getByRole("dialog", { name: "Add key", exact: true });
-      await dialog.getByRole("button", { name: "AI service", exact: true }).click();
-      await page.getByText("Custom endpoint", { exact: true }).click();
+      const dialog = page.getByRole("dialog", { name: "Connect an AI service", exact: true });
+      const services = dialog.getByRole("group", { name: "AI service" });
+      await services.getByRole("button", { name: "Other", exact: true }).click();
+      await dialog.getByRole("button", { name: "Service", exact: true }).click();
+      await page.locator(".uiSelectMenu").getByRole("button", { name: "Custom endpoint", exact: true }).click();
       await dialog.getByRole("button", { name: "API protocol", exact: true }).waitFor();
+      assertEq(await dialog.getByRole("link", { name: /^Get a key at/ }).count(), 0, "a custom endpoint has no key link");
       await dialog.getByRole("textbox", { name: /Base URL/ }).fill("https://example.invalid");
-      await dialog.getByRole("button", { name: "AI service", exact: true }).click();
-      await page.getByText("OpenAI API", { exact: true }).click();
+      await services.getByRole("button", { name: "OpenAI API", exact: true }).click();
       assertEq(await dialog.getByRole("textbox", { name: /Base URL/ }).count(), 0);
+      await dialog.getByText("More options — name, test model", { exact: true }).click();
       await dialog.getByRole("textbox", { name: /Name/ }).fill("Unsaved connection");
       await dialog.getByRole("button", { name: "Cancel", exact: true }).click();
       await dialog.getByRole("button", { name: "Keep editing", exact: true }).click();
@@ -735,9 +746,18 @@ export async function settingsScenarios(env) {
     }
   });
 
-  await step("settings: with no AI connected the chat is a setup card whose tiles open the connect dialog", async () => {
-    const { ctx, page } = await setup(undefined, (c) => c.route("**/api/ai/models*", (route) => route.fulfill({
-      json: { enabled: false, models: [], default: "", efforts: ["low", "medium", "high"] } })));
+  await step("settings: with no AI connected the chat is a setup card; connecting from it comes back to the chat, ready", async () => {
+    // The model list the browser sees flips once the connection is saved
+    // (the real server stores it; its model listing and test are faked).
+    let connected = false;
+    const { ctx, page } = await setup(undefined, async (c) => {
+      await c.route("**/api/ai/models*", (route) => route.fulfill({ json: connected
+        ? { ...FAKE_AI_MODELS, default: "x:claude-e2e", models: [{ id: "x:claude-e2e", provider: "x", provider_name: "Anthropic", model: "claude-e2e" }] }
+        : { enabled: false, models: [], default: "", efforts: ["low", "medium", "high"] } }));
+      await c.route("**/api/ai/model-catalog", (route) => route.fulfill({ json: { models: ["claude-e2e", "claude-e2e-mini"] } }));
+      await c.route("**/api/ai/providers/*/test", (route) => route.fulfill({ json: { ok: true, model: "claude-e2e", latency_ms: 200 } }));
+      await c.route("**/api/ai/providers", (route) => { connected = true; return route.continue(); });
+    });
     try {
       const tiles = page.locator(".chatSetup").getByRole("group", { name: "Connect an AI service" });
       await tiles.getByRole("button", { name: /^Anthropic/ }).waitFor();
@@ -748,11 +768,24 @@ export async function settingsScenarios(env) {
       assertEq(await page.getByRole("button", { name: "Find in this conversation" }).count(), 0, "no header tools without AI");
       assertEq(await page.getByRole("button", { name: "Start dictation" }).count(), 0, "no mic without AI");
       await tiles.getByRole("button", { name: /^Anthropic/ }).click();
-      const dialog = page.getByRole("dialog", { name: "Add key", exact: true });
+      const dialog = page.getByRole("dialog", { name: "Connect an AI service", exact: true });
       await dialog.waitFor();
-      assert((await dialog.getByRole("button", { name: "AI service", exact: true }).innerText()).includes("Anthropic"), "the dialog is on the tile's service");
+      assertEq(await dialog.getByRole("group", { name: "AI service" }).getByRole("button", { name: "Anthropic", exact: true }).getAttribute("aria-pressed"), "true", "the dialog is on the tile's service");
+      await dialog.locator('input[autocomplete="new-password"]').fill("sk-ant-e2e-key-4242");
+      await dialog.getByText("Key works · 2 models available", { exact: true }).waitFor();
+      await dialog.getByRole("button", { name: "Connect", exact: true }).click();
+      // Settings closes and the chat takes the question.
+      await page.getByRole("dialog", { name: "Settings", exact: true }).waitFor({ state: "detached" });
+      await page.getByText("Connected — claude-e2e ready", { exact: true }).waitFor();
+      await until(() => input.evaluate((el) => el === document.activeElement), { what: "the message box has the focus" });
+      assert(!await input.isDisabled(), "the composer is enabled");
       assertNoProblems(page);
-    } finally { await ctx.close(); }
+    } finally {
+      await ctx.close();
+      for (const p of (await user.api("/api/ai/settings")).providers.filter((p) => p.key_hint === "…4242")) {
+        await user.api(`/api/ai/providers/${p.id}`, { method: "DELETE" });
+      }
+    }
   });
 
   await step("settings: the chat header's context ring shows the last reply's size", async () => {
@@ -984,19 +1017,19 @@ export async function settingsScenarios(env) {
       await openSettings(page);
       await nav(page, "Server").click();
       await row(page, "Shared AI provider").getByRole("button", { name: "+ Add provider", exact: true }).click();
-      const dialog = page.getByRole("dialog", { name: "Add shared key", exact: true });
+      // The connection is tested once saved; the test is answered here, offline.
+      await page.route("**/api/ai/providers/*/test", (route) => route.fulfill({ json: { ok: true, model: "lab-model", latency_ms: 300 } }));
+      const dialog = page.getByRole("dialog", { name: "Connect a shared AI service", exact: true });
       // A key or a ChatGPT sign-in (the next step connects one).
-      await dialog.getByRole("button", { name: "AI service", exact: true }).click();
-      await page.locator(".uiSelectMenu").getByRole("button", { name: "ChatGPT subscription", exact: true }).waitFor();
-      await page.locator(".uiSelectMenu").getByRole("button", { name: "OpenAI API", exact: true }).click();
+      const services = dialog.getByRole("group", { name: "AI service" });
+      await services.getByRole("button", { name: "ChatGPT", exact: true }).waitFor();
+      await services.getByRole("button", { name: "OpenAI API", exact: true }).click();
       await dialog.locator('input[autocomplete="new-password"]').fill("sk-shared-e2e-key-7777");
       await dialog.getByRole("button", { name: "2 usable" }).waitFor();
-      await dialog.getByRole("combobox", { name: "Add a model" }).click();
-      await page.getByRole("listbox", { name: "Available models" })
-        .getByRole("option", { name: "lab-model", exact: true }).click();
-      await dialog.getByRole("button", { name: "Add key", exact: true }).click();
+      await dialog.getByRole("button", { name: "Remove lab-model", exact: true }).waitFor();
+      await dialog.getByRole("button", { name: "Connect", exact: true }).click();
       await until(() => dialog.count().then((n) => n === 0));
-      await page.locator(".settingsPane .aiProvRow").filter({ hasText: "…7777" }).waitFor();
+      await page.locator(".settingsPane .aiProvRow").filter({ hasText: "…7777" }).getByText(/working · lab-model/).waitFor();
       assert(!await row(page, "Guests may use it").locator("input").isChecked(), "guests are off by default");
       // The shared allowance: tokens per account / guest per day, 0 = unlimited.
       const perAccount = row(page, "Allowance per account").locator("input");
@@ -1065,9 +1098,8 @@ export async function settingsScenarios(env) {
       await openSettings(page);
       await nav(page, "Server").click();
       await row(page, "Shared AI provider").getByRole("button", { name: "+ Add provider", exact: true }).click();
-      const dialog = page.getByRole("dialog", { name: "Add shared key", exact: true });
-      await dialog.getByRole("button", { name: "AI service", exact: true }).click();
-      await page.locator(".uiSelectMenu").getByRole("button", { name: "ChatGPT subscription", exact: true }).click();
+      const dialog = page.getByRole("dialog", { name: "Connect a shared AI service", exact: true });
+      await dialog.getByRole("group", { name: "AI service" }).getByRole("button", { name: "ChatGPT", exact: true }).click();
       await dialog.getByRole("button", { name: "Open ChatGPT sign-in", exact: true }).click();
       await until(() => page.evaluate(() => !!window.testSignInUrl), { what: "the sign-in page opened" });
       const state = await page.evaluate(() => new URL(window.testSignInUrl).searchParams.get("state"));

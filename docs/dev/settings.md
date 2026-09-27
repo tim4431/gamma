@@ -287,7 +287,12 @@ Preferences:
 AI:
 
 - **Connections**: the provider list (empty state: one sentence and the Add
-  button; the server's shared entries follow the account's own as read-only
+  button, which opens the connect dialog, "Connect an AI service": service
+  tiles (`IconChoices`: ChatGPT, Anthropic, OpenAI API, Other — Other opens
+  the named services, a custom endpoint and its API format), the key with the
+  provider's placeholder, a "Get a key at …" link and the live check, then
+  the models with the name and test model under More options; its button is
+  Connect, and the new connection is tested once saved; the server's shared entries follow the account's own as read-only
   rows tagged "Shared by this server", selectable as the active key but
   without Test / Manage / delete), the login connection check, the models
   (default chat, metadata, dictation) and the account's token usage
@@ -301,7 +306,9 @@ AI:
   `chat/ChatDock.jsx`) opens this pane through `openAiKeysEditor(service)`,
   and the add dialog comes up set to the tile's service once the key list
   has loaded; the card's tiles and the dialog's service tiles are one list
-  (`aiServiceTiles` in `SettingsAi.jsx`).
+  (`aiServiceTiles` in `SettingsAi.jsx`). Once a connection made from the
+  card is saved with a model, Settings closes, the status says "Connected —
+  <model> ready" and the chat's message box takes the focus.
 - **Chat**: **Chat** (the default reasoning effort and the
   snapshot-clearing switch), then **Tools**: the master switch and, per chat
   kind (folder / PDF / notes), the tool chips (`AgentToolPicker`, the same
@@ -363,7 +370,9 @@ add/edit form as Connections (`ProviderRow`, `ProviderForm`; the form's
 state comes from `useProviderEditor` over `/api/admin/ai-providers`
 instead of App's aiKeys group). An entry is an API-key service or a ChatGPT
 subscription signed in with the account form's paste-the-callback steps
-(`/api/admin/ai-providers/chatgpt/*`). Each row has Test, Manage and delete,
+(`/api/admin/ai-providers/chatgpt/*`); the dialog is titled "Connect a
+shared AI service" and tests a new entry once it is saved. Each row has
+Test, Manage and delete,
 plus Usage (the subscription's windows) on a sign-in; "+ Add provider" is
 the section's action. A "Guests may use it" switch (default off) decides
 whether guests get them ([ai.md](ai.md) "Shared provider entries").

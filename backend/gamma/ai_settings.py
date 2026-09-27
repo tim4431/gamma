@@ -167,7 +167,8 @@ def mask_entry(entry: dict, hint: bool = True) -> dict:
 def protocol_choices() -> dict:
     """What the settings form offers: the protocols (auth "oauth" = sign-in
     entries, no API key field) and the named services."""
-    protocols = [{"id": pid, "label": proto.label, "default_base_url": proto.base_url, "auth": proto.auth}
+    protocols = [{"id": pid, "label": proto.label, "default_base_url": proto.base_url, "auth": proto.auth,
+                  "key_placeholder": proto.key_placeholder, "key_url": proto.key_url}
                  for pid, proto in ai_protocols.PROTOCOLS.items()]
     return {"protocols": protocols, "services": ai_protocols.SERVICES}
 

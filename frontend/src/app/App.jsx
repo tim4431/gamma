@@ -2734,7 +2734,7 @@ function LibraryApp({ publicPage = null, initialServerConfig = null }) {
       // Opened from the chat's setup card: the connect dialog comes up set
       // to the service whose tile was clicked.
       if (pendingAddRef.current) {
-        startAddAiProvider(pendingAddRef.current, info);
+        startAddAiProvider(pendingAddRef.current, info, { fromChat: true });
         pendingAddRef.current = null;
       }
       // The server's shared entries may have changed (Settings → Server).
@@ -2838,7 +2838,9 @@ function LibraryApp({ publicPage = null, initialServerConfig = null }) {
   // A new connection's form, set to `service`: a protocol id, or "other"
   // (the first named service, else a custom endpoint). Without one it starts
   // on the first tile, the subscription sign-in.
-  function startAddAiProvider(service, info = aiKeysInfo) {
+  // `fromChat`: opened from the chat's setup card — once connected, Settings
+  // closes and the chat's message box takes the focus.
+  function startAddAiProvider(service, info = aiKeysInfo, { fromChat = false } = {}) {
     setAiKeysError("");
     const protocols = info?.protocols || [];
     const preset = service === "other" ? info?.services?.[0] : null;
@@ -2849,7 +2851,22 @@ function LibraryApp({ publicPage = null, initialServerConfig = null }) {
       id: "", protocol: protocols.some((p) => p.id === protocol) ? protocol : (protocols.find((p) => p.auth === "oauth") || protocols[0])?.id || "chatgpt",
       name: "", api_key: "", base_url: preset?.base_url || "", models: "", test_model: "",
       ...(service === "other" && !preset ? { custom: true } : {}),
+      ...(fromChat ? { fromChat: true } : {}),
     });
+  }
+
+  // A connection the dialog just made: test it right away, and when the
+  // dialog came from the chat's setup card go back to the chat, ready to ask.
+  const [chatFocusSignal, setChatFocusSignal] = useState(0);
+  function finishNewConnection(entry, fromChat) {
+    testAiProvider(entry);
+    if (!fromChat) return;
+    const model = parseFolderTags(entry.models)[0];
+    setAiKeysForm(null);
+    setSettingsOpen(null);
+    setStatus(model ? t("Connected — {model} ready", { model }) : t("Connected"));
+    setChatHidden(false);
+    setChatFocusSignal((n) => n + 1);
   }
 
   function startEditAiProvider(p) {
@@ -2950,21 +2967,29 @@ function LibraryApp({ publicPage = null, initialServerConfig = null }) {
           body: { protocol: f.protocol, name: f.name.trim(), base_url: f.base_url.trim(), models: f.models.trim(),
                   test_model: (f.test_model || "").trim(),
                   ...(f.api_key.trim() ? { api_key: f.api_key.trim() } : {}) } };
+    // A connection made in this dialog (`fresh` survives the sign-in step,
+    // which keeps the form open on the new entry) is tested once saved.
+    let made = null;
     await runAiKeysRequest(async () => {
       const info = await apiJson(req.url, {
         method: req.method,
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify(req.body),
       });
+      const fresh = info.providers.find((p) => !aiKeysInfo.providers.some((old) => old.id === p.id));
       if (oauthCb) {
-        const connected = info.providers.find((p) => f.id ? p.id === f.id : !aiKeysInfo.providers.some((old) => old.id === p.id));
-        if (connected) {
+        const connected = f.id ? info.providers.find((p) => p.id === f.id) : fresh;
+        if (connected && f.fromChat && parseFolderTags(connected.models).length) made = connected;
+        else if (connected) {
           setAiKeysForm((current) => current?.oauthState === f.oauthState
-            ? { ...current, id: connected.id, models: connected.models || "", oauthState: "", oauthCallback: "", oauthConnectedAt: Date.now() } : current);
+            ? { ...current, id: connected.id, models: connected.models || "", oauthState: "", oauthCallback: "", oauthConnectedAt: Date.now(), fresh: current.fresh || !f.id } : current);
         }
+      } else {
+        made = f.id ? (f.fresh ? info.providers.find((p) => p.id === f.id) : null) : fresh;
       }
       return info;
     }, !oauthCb);
+    if (made) finishNewConnection(made, !!f.fromChat);
   }
 
   function deleteAiProvider(p) {
@@ -8681,6 +8706,7 @@ function LibraryApp({ publicPage = null, initialServerConfig = null }) {
           chatSystem={chatSystem} aiInfo={aiInfo} aiProvider={aiProvider}
           chatContextChars={chatContextChars} setChatContextChars={setChatContextChars} multiContextChars={multiContextChars}
           openAiKeysEditor={openAiKeysEditor}
+          focusSignal={chatFocusSignal}
           openSettings={(pane) => { setOpenPopover(null); setSettingsOpen(pane); }}
           isAdmin={!!authUser?.is_admin}
           aiHealth={aiHealth} dismissAiHealth={() => setAiHealth(null)}
