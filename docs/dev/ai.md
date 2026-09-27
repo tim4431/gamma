@@ -146,8 +146,8 @@ Shared AI provider, `/api/admin/ai-providers*`), so the members of a lab do
 not each need a key. A shared entry has an account entry's shape (`id, name,
 protocol, api_key, base_url, models, test_model, created_at`, plus `oauth`
 for a sign-in). It holds an API key, or a ChatGPT subscription the admin
-signs in to from the same form: `POST /api/admin/ai-providers/chatgpt/start`
-and `complete`, the account flow's `begin_chatgpt_signin` /
+signs in to from the same form: `POST /api/admin/ai-providers/chatgpt/start`,
+`status` and `complete`, the account flow's `begin_chatgpt_signin` /
 `redeem_chatgpt_signin` with the state bound to `("server", <admin>)`, so
 neither flow's state redeems on the other. `provider_id` on `complete`
 reconnects an entry. The same helpers validate both lists (`new_key_entry`,
@@ -205,9 +205,8 @@ Settings → AI. How each caller surfaces it:
 
 A third protocol, `chatgpt`, holds OAuth tokens instead of a key (Codex CLI's
 PKCE flow in `gamma/chatgpt_oauth.py`; entries created only via
-`POST /api/ai/oauth/chatgpt/start`+`complete` — the user pastes the
-localhost:1455 callback URL since nothing listens there; access tokens refresh
-lazily in `ai_runtime`). Its wire is the Responses API on
+`POST /api/ai/oauth/chatgpt/start`, `status` and `complete`; access tokens
+refresh lazily in `ai_runtime`). Its wire is the Responses API on
 `chatgpt.com/backend-api/codex` (stream-only SSE; non-stream callers join
 deltas), and PDF attachments go as native `input_file` parts with an automatic
 retry as extracted text if the backend rejects them. That retry applies to
@@ -228,6 +227,39 @@ started it. Token refreshes are serialized per account and re-read the
 entries first (`_refreshed_oauth` in `ai_settings.py`): OpenAI rotates refresh
 tokens, so of two parallel refreshes the second would fail and save stale
 tokens over the fresh ones.
+
+**How a sign-in reaches the server.** Codex CLI's client id has one
+registered redirect, `http://localhost:1455/auth/callback`, which only works
+where something listens on the browser's own machine. `chatgpt_oauth.begin`
+keeps each sign-in in memory (15 minutes, bound to its owner) until the first
+of three endings:
+
+- **Caught.** When the page runs at a loopback address and the request came
+  from loopback (the desktop app's own server, a localhost install; a
+  reverse proxy on the same host passes only the second test), the server
+  listens on `127.0.0.1:1455` for the redirect and exchanges its code. The
+  listener takes the port only while such a sign-in waits and never with
+  `SO_REUSEADDR` on Windows, so Codex CLI's own login or another Gamma
+  server holding the port makes it fall back to the other two.
+- **Device code.** Otherwise `start` also asks OpenAI for a one-time code
+  (Codex CLI's `--device-auth`: `POST /api/accounts/deviceauth/usercode`,
+  then `/token` until the user enters it at `auth.openai.com/codex/device`,
+  the answer's code exchanged with its own verifier and the redirect
+  `https://auth.openai.com/deviceauth/callback`). There is no poller thread:
+  each `status` call polls when OpenAI's interval is up, so polling stops
+  when the form stops asking. The account has to turn device code sign-in on
+  in ChatGPT's security settings (a workspace's admin, for Edu and
+  Enterprise), which is why it is offered next to the paste, not instead of it.
+- **Pasted.** The redirect page fails to load and the user pastes its
+  address; a paste that doesn't parse leaves the sign-in waiting.
+
+The form (`useProviderEditor` in `SettingsAi.jsx`) asks `status` every 2.5 s
+while the server may catch the sign-in, and calls `complete` with an empty
+`callback` once it is `ready`. A paste of a callback address connects without
+the Connect button, and in Chromium the address is also picked up from the
+clipboard when the tab regains focus (the browser asks once). Both are
+unofficial OpenAI endpoints, like the rest of this flow, so they may need
+maintenance.
 
 ## Chat endpoint
 

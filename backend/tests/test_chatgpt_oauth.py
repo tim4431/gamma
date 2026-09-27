@@ -1,12 +1,14 @@
-"""ChatGPT subscription sign-in: OAuth helpers, the connect endpoints, and the
-chatgpt wire protocol (Responses API request shape + SSE parsing). All external
-calls are faked — no network."""
+"""ChatGPT subscription sign-in: OAuth helpers, the connect endpoints (a
+pasted address, the device code, the redirect caught on this machine), and
+the chatgpt wire protocol (Responses API request shape + SSE parsing). All
+external calls are faked — no network beyond a loopback listener."""
 
 import base64
 import io
 import json
 import time
 import urllib.error
+import urllib.request
 
 import bcrypt
 import pytest
@@ -567,3 +569,125 @@ def test_reasoning_efforts_from_an_anthropic_listing_then_models_dev(monkeypatch
     assert ai_catalog.reasoning_efforts("p", conf, "no-reasoning") == ([], "models.dev")
     assert ai_catalog.reasoning_efforts("p", conf, "older-entry") == (None, "")
     assert ai_catalog.context_window("p", conf, "older-entry") == (8000, "models.dev")
+
+
+# --- The sign-in finishing without a paste ------------------------------------
+
+def _device_api(monkeypatch, *, pending_polls=1):
+    """OpenAI's device code endpoints, faked: the code counts as entered
+    after ``pending_polls`` polls that answer 403."""
+    calls = {"usercode": 0, "token": 0}
+
+    def fake(path, body):
+        calls[path] += 1
+        if path == "usercode":
+            assert body == {"client_id": co.CLIENT_ID}
+            return {"device_auth_id": "dev-1", "usercode": "ABCD-1234", "interval": "0"}
+        assert body == {"device_auth_id": "dev-1", "user_code": "ABCD-1234"}
+        if calls["token"] <= pending_polls:
+            raise urllib.error.HTTPError("u", 403, "pending", {}, io.BytesIO(b""))
+        return {"authorization_code": "dev-code", "code_challenge": "c", "code_verifier": "dev-verifier"}
+
+    monkeypatch.setattr(co, "_device_request", fake)
+    return calls
+
+
+def _due(state):
+    """Skip the rest of OpenAI's poll interval."""
+    co._PENDING[state]["device"]["next_poll"] = 0
+
+
+def test_device_code_answer_is_read_like_codex_does(monkeypatch):
+    _device_api(monkeypatch)
+    # `usercode` is an alias, the interval a string; 0 means the default 5 s.
+    assert co.request_device_code() == {"device_auth_id": "dev-1", "user_code": "ABCD-1234", "interval": 5}
+
+
+def test_plain_start_asks_openai_nothing(erin, monkeypatch):
+    monkeypatch.setattr(co, "_device_request", lambda *a: pytest.fail("no device code was asked for"))
+    body = erin.post("/api/ai/oauth/chatgpt/start").json()
+    assert body["local"] is False and body["device"] is None
+
+
+def test_device_code_sign_in_connects_without_a_paste(erin, monkeypatch):
+    calls = _device_api(monkeypatch)
+    exchanged = []
+    monkeypatch.setattr(co, "_token_request", lambda form: exchanged.append(form) or _fake_tokens(email="dev@example.com"))
+    start = erin.post("/api/ai/oauth/chatgpt/start", json={"device": True, "local": True}).json()
+    # The test client is no loopback browser: nothing listens, a code is offered.
+    assert start["local"] is False
+    assert start["device"] == {"user_code": "ABCD-1234", "verification_url": "https://auth.openai.com/codex/device"}
+    state = start["state"]
+
+    def status():
+        return erin.post("/api/ai/oauth/chatgpt/status", json={"state": state}).json()
+
+    assert status() == {"ready": False, "error": ""} and calls["token"] == 0  # the interval isn't up
+    _due(state)
+    assert status() == {"ready": False, "error": ""} and calls["token"] == 1  # asked: not entered yet
+    r = erin.post("/api/ai/oauth/chatgpt/complete", json={"state": state})
+    assert r.status_code == 400 and "not signed in yet" in r.json()["detail"]
+    _due(state)
+    assert status() == {"ready": True, "error": ""}
+    assert exchanged[-1]["redirect_uri"] == co.DEVICE_REDIRECT_URI
+    assert exchanged[-1]["code_verifier"] == "dev-verifier"  # the device flow's own
+    # The early complete left the sign-in waiting; this one redeems it.
+    r = erin.post("/api/ai/oauth/chatgpt/complete", json={"state": state, "models": "gpt-x"})
+    assert r.status_code == 200, r.text
+    entry = next(p for p in r.json()["providers"] if p.get("account") == "dev@example.com")
+    assert entry["oauth_connected"] is True and entry["models"] == "gpt-x"
+    assert erin.delete(f"/api/ai/providers/{entry['id']}").status_code == 200
+    assert status()["error"]  # redeemed: gone
+
+
+def test_a_failed_device_code_says_so(monkeypatch):
+    def refused(path, body):
+        if path == "usercode":
+            return {"device_auth_id": "dev-1", "user_code": "ABCD-1234", "interval": 5}
+        raise urllib.error.HTTPError("u", 410, "Gone", {}, io.BytesIO(b""))
+
+    monkeypatch.setattr(co, "_device_request", refused)
+    state = co.begin("someone", device=True)["state"]
+    _due(state)
+    result = co.status("someone", state)
+    assert result["ready"] is False and "device code sign-in failed" in result["error"]
+    # The pasted address still works.
+    monkeypatch.setattr(co, "_token_request", lambda form: _fake_tokens())
+    assert co.redeem("someone", state, f"http://localhost:1455/auth/callback?code=x&state={state}")["account_id"]
+
+
+def test_a_wrong_paste_keeps_the_sign_in_waiting(monkeypatch):
+    monkeypatch.setattr(co, "_token_request", lambda form: _fake_tokens())
+    state = co.begin("someone")["state"]
+    with pytest.raises(ValueError, match="state mismatch"):
+        co.redeem("someone", state, "http://localhost:1455/auth/callback?code=x&state=an-older-one")
+    with pytest.raises(ValueError, match="expired"):  # not theirs
+        co.redeem("someone-else", state, f"http://localhost:1455/auth/callback?code=x&state={state}")
+    assert co.status("someone-else", state)["error"]
+    assert co.redeem("someone", state, f"http://localhost:1455/auth/callback?code=x&state={state}")["account_id"]
+    with pytest.raises(ValueError, match="expired"):  # one-shot
+        co.redeem("someone", state, "x")
+
+
+def test_the_redirect_is_caught_on_this_machine(monkeypatch):
+    monkeypatch.setattr(co, "CALLBACK_PORT", 0)  # any free port, never the real 1455
+    monkeypatch.setattr(co, "_device_request", lambda *a: pytest.fail("the redirect needs no device code"))
+    monkeypatch.setattr(co, "_token_request", lambda form: _fake_tokens(email="local@example.com"))
+    started = co.begin("someone", local=True, device=True)
+    assert started["local"] is True and started["device"] is None
+    state = started["state"]
+    base = f"http://127.0.0.1:{co._server.server_address[1]}/auth/callback"
+    direct = urllib.request.build_opener(urllib.request.ProxyHandler({}))
+    assert co.status("someone", state) == {"ready": False, "error": ""}
+    with pytest.raises(urllib.error.HTTPError) as unknown:
+        direct.open(f"{base}?code=x&state=not-ours", timeout=5)
+    assert unknown.value.code == 400
+    with direct.open(f"{base}?code=abc&state={state}", timeout=5) as page:
+        assert b"Signed in to ChatGPT" in page.read()
+    assert co.status("someone", state) == {"ready": True, "error": ""}
+    assert co.redeem("someone", state)["email"] == "local@example.com"
+    # Nothing left to wait for: the port is let go.
+    deadline = time.time() + 5
+    while co._server is not None and time.time() < deadline:
+        time.sleep(0.05)
+    assert co._server is None

@@ -16,6 +16,7 @@ properties.ppt_cite — the slide citation is generated in the same fetch).
 """
 
 import json
+import os
 import re
 import sqlite3
 import urllib.parse
@@ -61,8 +62,16 @@ _DOI_RE = re.compile(r"\b(10\.\d{4,9}/[^\s\"'<>]+)")
 _ATOM = "{http://www.w3.org/2005/Atom}"
 _ARXIV_NS = "{http://arxiv.org/schemas/atom}"
 
+# GAMMA_METADATA_LOOKUP=off keeps the server from asking the registries
+# (arXiv, doi.org, Crossref, Open Library, Google Books — an offline server,
+# the browser suite): every lookup fails at once and finds nothing, instead
+# of waiting out its timeout.
+METADATA_LOOKUP = os.environ.get("GAMMA_METADATA_LOOKUP", "").strip().lower() not in ("0", "off", "false", "no")
+
 
 def _http_get(url: str, accept: str = "", timeout: int = 20) -> bytes:
+    if not METADATA_LOOKUP:
+        raise OSError("registry lookups are switched off (GAMMA_METADATA_LOOKUP)")
     headers = {"User-Agent": "gamma-pdf-annotator/1.0 (metadata lookup)"}
     if accept:
         headers["Accept"] = accept

@@ -1,6 +1,6 @@
 """A ChatGPT subscription as a SHARED server entry (docs/dev/ai.md "Shared
 provider entries"): an admin signs in through /api/admin/ai-providers/
-chatgpt/start + complete, the tokens are stored encrypted in the server's
+chatgpt/start + status + complete, the tokens are stored encrypted in the server's
 config, every account's runtime offers the entry (without the signed-in
 e-mail), an expired token is refreshed once under the entry's own lock and
 written back, and the allowance meters it like a shared key. All external
@@ -122,6 +122,9 @@ def test_sign_in_states_do_not_cross(admin, member, monkeypatch):
     state = admin.post("/api/admin/ai-providers/chatgpt/start").json()["state"]
     r = admin.post("/api/ai/oauth/chatgpt/complete", json={"state": state, "callback": "code"})
     assert r.status_code == 400
+    # …or watched as one…
+    assert admin.post("/api/ai/oauth/chatgpt/status", json={"state": state}).json()["error"]
+    assert member.post("/api/admin/ai-providers/chatgpt/status", json={"state": state}).status_code == 403
     # …and an own state can't become a shared entry.
     state = admin.post("/api/ai/oauth/chatgpt/start").json()["state"]
     r = admin.post("/api/admin/ai-providers/chatgpt/complete", json={"state": state, "callback": "code"})

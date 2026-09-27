@@ -377,8 +377,9 @@ lists the server's shared connections with the same rows and the same
 add/edit form as Connections (`ProviderRow`, `ProviderForm`; both forms'
 state is `useProviderEditor`, here over `/api/admin/ai-providers`, for the
 account's list over `/api/ai/providers` in App). An entry is an API-key service or a ChatGPT
-subscription signed in with the account form's paste-the-callback steps
-(`/api/admin/ai-providers/chatgpt/*`); the dialog is titled "Connect a
+subscription signed in with the account form's steps
+(`/api/admin/ai-providers/chatgpt/*`; [ai.md](ai.md) "How a sign-in reaches
+the server"); the dialog is titled "Connect a
 shared AI service" and tests a new entry once it is saved. Each row has
 Test, Manage and delete,
 plus Usage (the subscription's windows) on a sign-in; "+ Add provider" is

@@ -180,9 +180,11 @@ tablet dimensions and DPR 2. That is browser emulation, not an iPad measurement.
 python — or the interpreter `GAMMA_E2E_PYTHON` names — over a fresh
 `GAMMA_DATA_DIR` under the OS temp dir, on a free port, serving a copy of
 `frontend/dist` taken at start, so a build during the run cannot break its
-page loads), creates the accounts `alice` / `bob`, and drives Playwright's
-Chromium (`playwright` is a devDependency; the browser is downloaded once on
-first launch). A failed step saves a screenshot of every open page plus the
+page loads, with the update check, the models.dev catalog and the paper
+registry lookups switched off so no step waits on the internet), creates
+the accounts `alice` / `bob`, and drives Playwright's Chromium
+(`playwright` is a devDependency; the browser is downloaded once on first
+launch). A failed step saves a screenshot of every open page plus the
 pages' recorded problems and the server log's tail under the temp dir's
 `failures/`, and the temp dir is kept (the summary prints its path). A page
 the step closed on its way out (the usual `finally { await ctx.close() }`)

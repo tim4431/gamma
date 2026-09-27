@@ -1,41 +1,9 @@
 import React from "react";
-import { API, apiJson, copyText } from "../shared/lib/utils";
-import { PaneHead, Section, Row, Segmented, Step } from "./SettingsKit";
-import { LinkIcon, KeyIcon, CopyIcon, CheckIcon, RefreshIcon, UnlinkIcon, ShieldIcon } from "../shared/ui/Icons";
+import { API, apiJson } from "../shared/lib/utils";
+import { CopyField, PaneHead, Section, Row, Segmented, Step } from "./SettingsKit";
+import { LinkIcon, KeyIcon, RefreshIcon, UnlinkIcon, ShieldIcon } from "../shared/ui/Icons";
 import { codexSetupCommand, claudeConnectCommand, claudePluginInstallCommands, dshInstallCommand, dshStartCommand } from "./assistantSetup";
 import { t } from "../shared/i18n/i18n.js";
-
-const COPIED = t("Copied. You can paste it now.");
-const COPY_MANUALLY = t("Select the text above and copy it manually.");
-
-// A read-only code box with the copy button in its corner. A successful copy
-// swaps the icon for a check; the status text is visible only when the
-// clipboard was refused (the check already says the rest, but the sentence
-// stays in the DOM for assistive tech).
-function CopyField({ label, value, action, rows = 2 }) {
-  const [status, setStatus] = React.useState("");
-  React.useEffect(() => setStatus(""), [value]);
-  React.useEffect(() => {
-    if (status !== COPIED) return undefined;
-    const timer = setTimeout(() => setStatus(""), 2000);
-    return () => clearTimeout(timer);
-  }, [status]);
-  const copy = async () => {
-    try { setStatus(await copyText(value) ? COPIED : COPY_MANUALLY); }
-    catch { setStatus(COPY_MANUALLY); }
-  };
-  const copied = status === COPIED;
-  return <div className="integrationDetails">
-    <div className="integrationCode">
-      <textarea className="aiKeyInput" aria-label={label} readOnly rows={rows} value={value}
-        onFocus={(event) => event.target.select()} />
-      <button type="button" className={`uiBtn sm iconSq integrationCopy${copied ? " on" : ""}`} aria-label={action} title={action} onClick={copy}>
-        {copied ? <CheckIcon size={16} /> : <CopyIcon size={16} />}
-      </button>
-    </div>
-    <span className={`settingDesc integrationCopyStatus${copied ? " srOnly" : ""}`} role="status">{status}</span>
-  </div>;
-}
 
 const dateOf = (seconds) => new Date(seconds * 1000).toLocaleDateString(undefined, { year: "numeric", month: "short", day: "numeric" });
 

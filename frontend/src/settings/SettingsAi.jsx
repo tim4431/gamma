@@ -13,7 +13,7 @@ import { MenuSelect } from "../shared/ui/Menus";
 import { cachedPercent, fmtTokens, usageDetail } from "../chat/tokenUsage";
 import { failureCopy, fixLabel } from "../chat/chatErrors";
 import { ModelPicker } from "./ModelPicker";
-import { Section, SubDialog, Step, Field, Empty, IconChoices, PercentMeter, Row, PasswordInput, StatText, Toggle, UnitInput } from "./SettingsKit";
+import { Section, SubDialog, Step, Field, CopyField, Empty, IconChoices, PercentMeter, Row, PasswordInput, StatText, Toggle, UnitInput } from "./SettingsKit";
 import { SECTION_PREFS } from "./sectionPrefs.js";
 import { ActivityIcon, CheckIcon, ExternalLinkIcon, GlobeIcon, KeyIcon, MicIcon, PaperIcon, RefreshIcon, SparklesIcon, Trash2Icon, UserIcon, XIcon } from "../shared/ui/Icons";
 import { T, getLocale, t, tn } from "../shared/i18n/i18n.js";
@@ -174,15 +174,34 @@ function ProviderRow({ provider, protocol, oauth, active = false, radio = null, 
   );
 }
 
+// The page runs at a loopback address, so this browser shares the server's
+// machine and the server can catch the sign-in's localhost redirect itself.
+const onThisMachine = () => /^(localhost|127(\.\d+){3}|\[::1\])$/.test(window.location.hostname);
+
+// A sign-in's redirect address as copied from the address bar (of the sign-in
+// `state` when one is given).
+function signInAddress(text, state = "") {
+  try {
+    const url = new URL(text);
+    return url.pathname === "/auth/callback" && !!url.searchParams.get("code")
+      && (!state || url.searchParams.get("state") === state);
+  } catch {
+    return false;
+  }
+}
+
+// A form's sign-in fields once it is connected, or before a new start.
+const SIGN_IN_CLEARED = { oauthState: "", oauthCallback: "", oauthLocal: false, oauthDevice: null, oauthWaitError: "" };
+
 // The connect dialog's state, one path for both provider lists: the
 // account's own (App: `base` /api/ai/providers, sign-in at
 // /api/ai/oauth/chatgpt) and Settings → Server's shared entries
 // (/api/admin/ai-providers, sign-in at `${base}/chatgpt`). ProviderForm's
 // `value` contract over the REST collection `base` (POST adds, PUT/DELETE
 // `${base}/<id>`, each answering with the list; a ChatGPT sign-in goes
-// through `${signIn}/start` + `complete`, the paste-the-callback flow). The
-// model picker lists live through /api/ai/model-catalog, which takes a saved
-// entry's id (a shared one from an admin).
+// through `${signIn}/start`, `status` while the server may catch it, and
+// `complete`). The model picker lists live through /api/ai/model-catalog,
+// which takes a saved entry's id (a shared one from an admin).
 // `onSaved()` hears every change `run` saved (the account refreshes its
 // model list and login check, the Server section says so);
 // `onConnected(entry, form)` hears a connection this dialog just made, once
@@ -237,19 +256,105 @@ export function useProviderEditor({ info, setInfo, base, signIn = `${base}/chatg
   }, [target, stored?.oauth_connected]); // eslint-disable-line react-hooks/exhaustive-deps
   React.useEffect(() => { setCustomModel(""); }, [form?.id, form?.protocol]);
 
-  // "Open ChatGPT sign-in": the OAuth page in a new tab. Its redirect
-  // (localhost:1455) fails to load — the user pastes that URL back into the
-  // form, and Connect completes the exchange server-side.
+  // "Open ChatGPT sign-in": the OAuth page in a new tab. The server listens
+  // for its localhost:1455 redirect when this browser shares its machine
+  // (`oauthLocal`), and otherwise offers a device code (`oauthDevice`); either
+  // way the form asks `${signIn}/status` until the server has the sign-in.
+  // Elsewhere the redirect page fails to load and its address is pasted.
   async function startChatGPTAuth() {
     setError("");
     try {
-      const d = await apiJson(`${signIn}/start`, { method: "POST" });
-      setForm((f) => (f ? { ...f, oauthState: d.state } : f));
+      const d = await apiJson(`${signIn}/start`, {
+        method: "POST", headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ local: onThisMachine(), device: true }),
+      });
+      setForm((f) => (f ? { ...f, ...SIGN_IN_CLEARED, oauthState: d.state, oauthLocal: !!d.local, oauthDevice: d.device || null } : f));
       window.open(d.auth_url, "_blank", "noopener");
     } catch (err) {
       setError(err.message);
     }
   }
+
+  // The form and list as they are now, for the waits below.
+  const latest = React.useRef({});
+  latest.current = { form, info };
+  const completing = React.useRef("");
+
+  // Finish the sign-in (or a reconnect) with the pasted address, or with ""
+  // once the server has it. The form stays open on the entry so its models
+  // can be picked from the account's live list — unless the chat's setup
+  // card opened it and the sign-in already brought models.
+  async function connectSignIn(callback = "") {
+    const f = latest.current.form;
+    if (!f?.oauthState) { setError(t("Hit “Open ChatGPT sign-in” first, then paste the URL it ends on.")); return; }
+    if (completing.current === f.oauthState) return;
+    completing.current = f.oauthState;
+    let made = null;
+    try {
+      await run(async () => {
+        const next = await apiJson(`${signIn}/complete`, {
+          method: "POST", headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({ state: f.oauthState, callback, provider_id: f.id || "", name: f.name.trim(), models: f.models.trim() }),
+        });
+        const connected = f.id ? next.providers.find((p) => p.id === f.id)
+          : next.providers.find((p) => !(latest.current.info?.providers || []).some((old) => old.id === p.id));
+        if (connected && f.fromChat && parseFolderTags(connected.models).length) made = connected;
+        else if (connected) {
+          setForm((current) => current?.oauthState === f.oauthState
+            ? { ...current, ...SIGN_IN_CLEARED, id: connected.id, models: connected.models || "",
+                oauthConnectedAt: Date.now(), fresh: current.fresh || !f.id }
+            : current);
+        }
+        return next;
+      });
+    } finally {
+      completing.current = "";
+    }
+    if (made) onConnected?.(made, f);
+  }
+
+  // While the server may catch the sign-in itself, ask every few seconds
+  // (a device code is polled with OpenAI on these calls, at its own pace).
+  const watching = form && isOauth(form.protocol) && form.oauthState && (form.oauthLocal || form.oauthDevice)
+    && !form.oauthWaitError ? form.oauthState : "";
+  React.useEffect(() => {
+    if (!watching) return undefined;
+    let stopped = false;
+    let timer = 0;
+    const ask = async () => {
+      try {
+        const s = await apiJson(`${signIn}/status`, {
+          method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ state: watching }),
+        });
+        if (stopped) return;
+        if (s.ready) { connectSignIn(""); return; }
+        if (s.error) { setForm((f) => (f?.oauthState === watching ? { ...f, oauthWaitError: s.error } : f)); return; }
+      } catch {}
+      if (!stopped) timer = setTimeout(ask, 2500);
+    };
+    timer = setTimeout(ask, 2500);
+    return () => { stopped = true; clearTimeout(timer); };
+  }, [watching]); // eslint-disable-line react-hooks/exhaustive-deps
+
+  // Back from the sign-in tab with its address copied: where the browser
+  // lets a page read the clipboard (Chromium, asking once), connect with it.
+  const pasting = form && isOauth(form.protocol) && form.oauthState && !form.oauthLocal ? form.oauthState : "";
+  React.useEffect(() => {
+    if (!pasting || !navigator.clipboard?.readText || !navigator.permissions?.query) return undefined;
+    let tried = "";
+    const onFocus = async () => {
+      try {
+        if ((await navigator.permissions.query({ name: "clipboard-read" })).state === "denied") return;
+        const text = (await navigator.clipboard.readText()).trim();
+        if (text === tried || !signInAddress(text, pasting)) return;
+        tried = text;
+        setForm((f) => (f?.oauthState === pasting ? { ...f, oauthCallback: text } : f));
+        connectSignIn(text);
+      } catch {}
+    };
+    window.addEventListener("focus", onFocus);
+    return () => window.removeEventListener("focus", onFocus);
+  }, [pasting]); // eslint-disable-line react-hooks/exhaustive-deps
 
   // One change to the list (a save here, a delete from the row): busy while
   // it runs, the list it answers with kept, the form closed on request.
@@ -272,42 +377,27 @@ export function useProviderEditor({ info, setInfo, base, signIn = `${base}/chatg
     if (!f) return;
     const oauth = isOauth(f.protocol);
     const callback = oauth ? (f.oauthCallback || "").trim() : "";
-    if (oauth && !callback && !f.id) { setError(t("Sign in with ChatGPT and paste the callback URL to connect.")); return; }
-    if (callback && !f.oauthState) { setError(t("Hit “Open ChatGPT sign-in” first, then paste the URL it ends on.")); return; }
+    // A typed callback completes the sign-in (or a reconnect).
+    if (callback) { await connectSignIn(callback); return; }
+    if (oauth && !f.id) {
+      setError(f.oauthState ? t("Finish the sign-in first, or paste the address it ended on.") : t("Open ChatGPT sign-in first."));
+      return;
+    }
     if (!oauth && !f.id && !f.api_key.trim()) { setError(t("An API key is required.")); return; }
-    // A pasted callback completes the sign-in (or a reconnect); otherwise a
-    // plain field edit (name/models — plus key/base URL for key entries).
-    const req = callback
-      ? { url: `${signIn}/complete`, method: "POST",
-          body: { state: f.oauthState, callback, provider_id: f.id || "", name: f.name.trim(), models: f.models.trim() } }
-      : { url: `${base}${f.id ? `/${encodeURIComponent(f.id)}` : ""}`, method: f.id ? "PUT" : "POST",
-          body: { protocol: f.protocol, name: f.name.trim(), base_url: f.base_url.trim(), models: f.models.trim(),
-            test_model: (f.test_model || "").trim(), ...(f.api_key.trim() ? { api_key: f.api_key.trim() } : {}) } };
+    // A plain field edit (name/models — plus key/base URL for key entries).
     // A connection made in this dialog (`fresh` survives the sign-in step,
     // which keeps the form open on the new entry) is handed on once saved.
     let made = null;
     await run(async () => {
-      const next = await apiJson(req.url, {
-        method: req.method, headers: { "Content-Type": "application/json" }, body: JSON.stringify(req.body),
+      const next = await apiJson(`${base}${f.id ? `/${encodeURIComponent(f.id)}` : ""}`, {
+        method: f.id ? "PUT" : "POST", headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ protocol: f.protocol, name: f.name.trim(), base_url: f.base_url.trim(), models: f.models.trim(),
+          test_model: (f.test_model || "").trim(), ...(f.api_key.trim() ? { api_key: f.api_key.trim() } : {}) }),
       });
-      const fresh = next.providers.find((p) => !(info?.providers || []).some((old) => old.id === p.id));
-      if (callback) {
-        // Connected: the form stays open on the entry so its models can be
-        // picked from the account's live list — unless the chat's setup card
-        // opened it and the sign-in already brought models.
-        const connected = f.id ? next.providers.find((p) => p.id === f.id) : fresh;
-        if (connected && f.fromChat && parseFolderTags(connected.models).length) made = connected;
-        else if (connected) {
-          setForm((current) => current?.oauthState === f.oauthState
-            ? { ...current, id: connected.id, models: connected.models || "", oauthState: "", oauthCallback: "",
-                oauthConnectedAt: Date.now(), fresh: current.fresh || !f.id }
-            : current);
-        }
-      } else {
-        made = f.id ? (f.fresh ? next.providers.find((p) => p.id === f.id) : null) : fresh;
-      }
+      made = f.id ? (f.fresh ? next.providers.find((p) => p.id === f.id) : null)
+        : next.providers.find((p) => !(info?.providers || []).some((old) => old.id === p.id));
       return next;
-    }, !callback);
+    }, true);
     if (made) onConnected?.(made, f);
   }
 
@@ -347,6 +437,7 @@ export function useProviderEditor({ info, setInfo, base, signIn = `${base}/chatg
     aiProtocolOf: protocolOf,
     isOauthProto: isOauth,
     startChatGPTAuth,
+    connectSignIn,
     loadModelCatalog,
     addCatalogModel: (m) => m && setForm((f) => {
       if (!f) return f;
@@ -489,6 +580,75 @@ export function SharedAiProviderSettings({ setStatus, confirm }) {
   </>;
 }
 
+// Step 2 for a ChatGPT sign-in. OpenAI ends the sign-in on localhost:1455
+// (Codex CLI's registered redirect). When this browser shares the server's
+// machine, the server catches it and the form only waits. Anywhere else that
+// page fails to load: its address is pasted here, which connects at once, or
+// the device code is entered at OpenAI instead while the form waits.
+function ChatGPTSignIn({ form, setForm, busy, start, connect }) {
+  const started = !!form.oauthState;
+  // Until the start answers, where the page runs predicts what it will say.
+  const local = started ? !!form.oauthLocal : onThisMachine();
+  const device = form.oauthDevice;
+  const waiting = started && (local || device) && !form.oauthWaitError ? (
+    <div className="aiKeyCheck" role="status"><span className="transferSpin inline" /> {t("Waiting for the sign-in…")}</div>
+  ) : null;
+  const where = (device?.verification_url || "").replace(/^https?:\/\//, "");
+  const paste = (
+    <Field label={t("Callback URL")} hint={t("The full address the sign-in ended on")}>
+      <input
+        className="aiKeyInput" type="text" spellCheck={false}
+        placeholder="http://localhost:1455/auth/callback?code=…"
+        value={form.oauthCallback || ""}
+        onChange={(event) => setForm((f) => ({ ...f, oauthCallback: event.target.value }))}
+        onPaste={(event) => {
+          const text = event.clipboardData.getData("text").trim();
+          if (!signInAddress(text)) return;
+          event.preventDefault();
+          setForm((f) => ({ ...f, oauthCallback: text }));
+          connect(text);
+        }}
+      />
+    </Field>
+  );
+  return <>
+    <ol className="oauthInstructions">
+      <li>{t("Open ChatGPT sign-in below and log in.")}</li>
+      {local ? <li>{t("Gamma connects as soon as you are done. There is nothing to copy.")}</li> : <>
+        <li>{t("It ends on a page that cannot load (“localhost refused to connect”). That is expected.")}</li>
+        <li>{t("Copy that page's address and paste it below. Gamma connects right away.")}</li>
+      </>}
+    </ol>
+    <div className="reportModalBtns settingsAlignStart">
+      <button className="uiBtn" disabled={busy} onClick={start}>
+        {started ? t("Re-open ChatGPT sign-in") : t("Open ChatGPT sign-in")}
+      </button>
+    </div>
+    {local ? <>
+      {waiting}
+      {started ? (
+        <details className="aiMoreOptions">
+          <summary>{t("Did not connect? Paste the address instead")}</summary>
+          {paste}
+        </details>
+      ) : null}
+    </> : paste}
+    {device ? (
+      <Field group label={t("Or sign in with a code instead")}
+        hint={t("Needs device code sign-in, turned on in ChatGPT's security settings (for a school or work account, by its administrator).")}>
+        <CopyField label={t("One-time code")} value={device.user_code} action={t("Copy one-time code")} rows={1} />
+        <a className="aiKeyLink" href={device.verification_url} target="_blank" rel="noopener noreferrer">
+          {t("Enter it at {where}", { where })}<ExternalLinkIcon size={14} />
+        </a>
+        {waiting}
+      </Field>
+    ) : null}
+    {form.oauthWaitError ? (
+      <div className="aiKeyCheck aiKeysError" role="status"><XIcon size={14} /> {form.oauthWaitError}</div>
+    ) : null}
+  </>;
+}
+
 // The connect dialog, for the account's list and Settings →
 // Server's shared one alike: 1 a service tile (Other opens the named
 // services, a custom endpoint and its API format); 2 the API key — the
@@ -513,6 +673,7 @@ function ProviderForm({ value, onCancel }) {
     aiProtocolOf,
     isOauthProto,
     startChatGPTAuth,
+    connectSignIn,
     loadModelCatalog,
     addCatalogModel,
     removeModel,
@@ -595,27 +756,8 @@ function ProviderForm({ value, onCancel }) {
           ? t("No API key — usage is billed to your ChatGPT subscription.") : t("Stored on the server, never shown to the browser again.")}
       >
         {oauth ? (
-          <>
-            <ol className="oauthInstructions">
-              <li>{t("Open ChatGPT sign-in below and log in.")}</li>
-              <li>{t("It ends on a localhost error page — that is expected.")}</li>
-              <li>{t("Copy the full callback URL from the address bar.")}</li>
-              <li>{t("Paste it below and select Connect.")}</li>
-            </ol>
-            <div className="reportModalBtns settingsAlignStart">
-              <button className="uiBtn" disabled={aiKeysBusy} onClick={startChatGPTAuth}>
-                {aiKeysForm.oauthState ? t("Re-open ChatGPT sign-in") : t("Open ChatGPT sign-in")}
-              </button>
-            </div>
-            <Field label={t("Callback URL")} hint={t("The full address the sign-in ended on")}>
-              <input
-                className="aiKeyInput" type="text" spellCheck={false}
-                placeholder="http://localhost:1455/auth/callback?code=…"
-                value={aiKeysForm.oauthCallback || ""}
-                onChange={(event) => setAiKeysForm((form) => ({ ...form, oauthCallback: event.target.value }))}
-              />
-            </Field>
-          </>
+          <ChatGPTSignIn form={aiKeysForm} setForm={setAiKeysForm} busy={aiKeysBusy}
+            start={startChatGPTAuth} connect={connectSignIn} />
         ) : (
           <>
             <Field label={t("API key")} hint={aiKeysForm.id ? t("Leave empty to keep the current one") : null}>

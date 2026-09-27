@@ -1,6 +1,7 @@
 """AI chat, provider settings, model discovery, and ChatGPT OAuth routes."""
 
 import hashlib
+import ipaddress
 import json
 import queue
 import re
@@ -1176,41 +1177,49 @@ def ai_transcribe(request: Request, file: UploadFile = File(...),
 
 
 # --- ChatGPT subscription sign-in (OAuth PKCE, Codex CLI's flow) --------------
-# start → the browser opens auth.openai.com; after login it is redirected to
-# http://localhost:1455/auth/callback (which fails to load — nothing listens
-# there when Gamma runs remotely). The user pastes that URL into complete,
-# which redeems the code with the stashed PKCE verifier and stores the tokens
-# on a provider entry. See gamma/chatgpt_oauth.py.
+# start → the browser opens auth.openai.com, and gamma/chatgpt_oauth.py keeps
+# the sign-in until the server has its code: caught from the redirect on this
+# machine, or through the device code the form's status calls poll — else the
+# user pastes the address the redirect failed to load. complete then stores
+# the tokens on a provider entry.
 
-_OAUTH_STATES: dict = {}  # state -> {"verifier", "owner", "at"} — in-memory, 15 min TTL
-_OAUTH_STATE_TTL = 900
+class ChatGPTAuthStart(BaseModel):
+    local: bool = False   # the page runs at a loopback address
+    device: bool = False  # also ask for a device code (the form shows it)
 
 
-def begin_chatgpt_signin(owner) -> dict:
+class ChatGPTAuthStatus(BaseModel):
+    state: str = ""
+
+
+def _same_machine(request: Request, claimed: bool) -> bool:
+    """Whether the browser runs on this server's machine: the page says it is
+    at a loopback address, and the request came from loopback too. (A reverse
+    proxy on the same host passes the second test, never the first.)"""
+    try:
+        ip = ipaddress.ip_address(request.client.host if request.client else "")
+    except ValueError:
+        return False
+    mapped = getattr(ip, "ipv4_mapped", None)
+    return claimed and (ip.is_loopback or bool(mapped and mapped.is_loopback))
+
+
+def begin_chatgpt_signin(owner, request: Request, payload: ChatGPTAuthStart | None) -> dict:
     """Start a sign-in for ``owner``: an account name (its own entry), or
     ``("server", <admin>)`` for a shared entry (routers/admin.py). Returns
-    {auth_url, state}."""
-    now = time.time()
-    for k in [k for k, v in _OAUTH_STATES.items() if now - v["at"] > _OAUTH_STATE_TTL]:
-        del _OAUTH_STATES[k]
-    state, verifier, url = chatgpt_oauth.start_auth()
-    _OAUTH_STATES[state] = {"verifier": verifier, "owner": owner, "at": now}
-    return {"auth_url": url, "state": state}
+    {auth_url, state, local, device}."""
+    payload = payload or ChatGPTAuthStart()
+    return chatgpt_oauth.begin(owner, local=_same_machine(request, payload.local), device=payload.device)
 
 
 def redeem_chatgpt_signin(owner, state: str, callback: str) -> dict:
-    """The tokens of a sign-in ``owner`` started (400 otherwise): the pasted
-    redirect URL's code redeemed with the stashed PKCE verifier. The state
-    belongs to whoever started it — another account, or the same admin's
-    own-entry form, can't redeem it (and so can't attach that login's
-    tokens elsewhere)."""
-    st = _OAUTH_STATES.pop(state, None)
-    if not st or st.get("owner") != owner or time.time() - st["at"] > _OAUTH_STATE_TTL:
-        raise HTTPException(status_code=400,
-                            detail="sign-in session expired — hit 'Open ChatGPT sign-in' again")
+    """The tokens of a sign-in ``owner`` started (400 otherwise): the ones the
+    server caught, else the pasted redirect URL's code. The state belongs to
+    whoever started it — another account, or the same admin's own-entry
+    form, can't redeem it (and so can't attach that login's tokens
+    elsewhere)."""
     try:
-        code = chatgpt_oauth.parse_callback(callback, state)
-        return chatgpt_oauth.exchange_code(code, st["verifier"])
+        return chatgpt_oauth.redeem(owner, state, callback)
     except ValueError as e:
         raise HTTPException(status_code=400, detail=str(e))
     except Exception as e:
@@ -1244,14 +1253,21 @@ def seeded_chatgpt_models(user: str, entry_id: str) -> str:
     return ", ".join(live[:2])[:MAX_MODELS_LEN]
 
 
+# Sync def: asking for a device code is a network round trip.
 @router.post("/ai/oauth/chatgpt/start")
-async def chatgpt_auth_start(request: Request):
-    return begin_chatgpt_signin(_require_editor(request))
+def chatgpt_auth_start(request: Request, payload: ChatGPTAuthStart | None = None):
+    return begin_chatgpt_signin(_require_editor(request), request, payload)
+
+
+# Sync def: a due device code is polled with OpenAI.
+@router.post("/ai/oauth/chatgpt/status")
+def chatgpt_auth_status(payload: ChatGPTAuthStatus, request: Request):
+    return chatgpt_oauth.status(_require_editor(request), payload.state)
 
 
 class ChatGPTAuthComplete(BaseModel):
     state: str = ""
-    callback: str = ""      # pasted redirect URL (or a bare authorization code)
+    callback: str = ""      # pasted redirect URL (or a bare code); "" once status is ready
     provider_id: str = ""   # existing entry to reconnect; "" creates a new one
     name: str = ""
     models: str = ""
