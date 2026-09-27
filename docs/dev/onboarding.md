@@ -2,13 +2,13 @@
 
 **Status: the engine, the two manual tours (first paper, AI chat), six
 triggered tours, seven hints and the welcome page with its sample PDF are
-built. The first paper tour is also offered to every new library.** The
-synced `onboarding` pref and the checklist are still design.
+built. The first paper tour is also offered to every new library.** A synced
+`onboarding` pref and a checklist are not built (see "Not built").
 What exists: `frontend/src/guide/` (anchor registry, event bus, trigger rules
-in `triggers.js`, `useGuide`, `GuideOverlay`, one file per tour in `tours/`,
-the hints in `tours/hints.js`), the node test `tests/guide.test.mjs` and the
-e2e scenarios `guide.mjs` (first paper), `contextualGuide.mjs` (AI chat) and
-`triggeredGuide.mjs` (offers and hints).
+in `triggers.js`, `useGuide`, `GuideOverlay` and its positioner `place.js`,
+one file per tour in `tours/`, the hints in `tours/hints.js`), the node test
+`tests/guide.test.mjs` and the e2e scenarios `guide.mjs` (first paper),
+`contextualGuide.mjs` (AI chat) and `triggeredGuide.mjs` (offers and hints).
 
 The first tour is a welcome card, the add-a-paper demo, then the user's
 own highlight on that paper, a typed note demonstration, an `llm` label
@@ -49,8 +49,8 @@ Esc, the scrim, a tile) keeps it. Only a tour with a `finishCard` ends this
 way; the others close after their last step.
 
 Progress is a localStorage key per account (`gamma-guide:<account>:<tourId>`;
-the first tour keeps its older `gamma-guide:first-run`), not yet the synced
-pref. On a demo server (`facts.demo`, from `GET /api/server-config`'s
+the first tour keeps its older `gamma-guide:first-run`; see "Storage"). On a
+demo server (`facts.demo`, from `GET /api/server-config`'s
 `demo`) the same keys live in sessionStorage (`guideStorage(demo)` in
 `triggers.js`), so every visit starts fresh ([guests.md](guests.md) "Demo
 mode"). Every new account starts with the Welcome page and its sample PDF
@@ -141,7 +141,7 @@ an amber **Tip** chip over one plain sentence that says why it helps, with
 |---|---|---|
 | Citations in answers | an AI reply finishes with a citation link (`chat.cited`) | the link; a demo clicks it and waits for `citation.shown`, then the marked passage in the PDF |
 | Sharing a page | the page gets its first share link (`share.created`: the first audience tile picked or person invited) | (choose who can open it,) the link, who has access, general access (worded for what an anyone-with-the-link share exposes when it is one, `shareAudience`), stop sharing — inside the Share popover, top to bottom |
-| Editing tables | the user makes a table (/table, or a pasted spreadsheet or html table) and it first renders (`table.created`); opening a page that has one offers nothing | (add one with /table,) a cell to type into, the + strips and the row/column handles, the corner handle (copy, move or delete the whole table) |
+| Editing tables | the user makes a table (/table, or a pasted spreadsheet or html table) and it first renders (`table.created`); opening a page that has one offers nothing | (add one with /table,) a cell to type into, the + strips and the row/column handles, the corner handle (copy, move or delete the whole table) — on the table just made when the page has several, each card clear of the table |
 | Handwriting | the first stroke (`ink.stroke`) | (draw something,) the drawing's note block and its caption, tap the pen again for colour, width and pen vs monoline, erase part of it (Ctrl+Z brings it back), the lasso; finishing re-arms the pen |
 | Working together | another account or a link visitor comes onto the page (`peer.joined`; your own second tab or the desktop app beside the browser is nobody else) | the avatar stack, their block, undo |
 | Shared workspaces | the account belongs to a shared workspace (state) | the account menu's switcher and card |
@@ -221,8 +221,14 @@ Engine abilities available to every step:
 - **`optional` steps.** Passed over silently when their anchor is not on
   screen: when the step starts, or when it leaves while showing (the block
   someone else was on, once they go).
-- **`pick: "last"`** in the registry for an anchor that repeats where the
-  newest one is meant (the latest chat reply's citation).
+- **`pick`** in the registry for an anchor that repeats: `"last"` where the
+  newest one is meant (the latest chat reply's citation), `"recent"` where
+  it is the one inside the element marked `data-guide-recent` (the table
+  the user just made, not an older one above it).
+- **`avoid: anchor`** on a step: a box the card keeps clear of besides the
+  spotlight. The tables tour's add strip sits under the table, so with no
+  room below the card goes above the whole table, else beside it, never
+  flipped onto it (`guide/place.js`).
 - **`data-guide-active`** on whatever the guide points at, so a control that
   only shows on hover also shows then (the table's + strips).
 - **`show`** on a tour: a surface App brings up before the first step
@@ -300,10 +306,15 @@ step completes only for its matching type.
   A `waitFor` with a `status` shows it on the card with a spinner while it
   waits ("Fetching the paper…" for the add demo's download); after 20 s the
   card adds "This can take a minute on a slow connection."
-- `{name}` in typed text is filled from the tour's `vars` (an object, or a
-  function of the facts: the first tour's `demoUrl`), which the localStorage
-  key `gamma-guide-vars` overrides — how the browser suite points the demo at
-  an uploaded PDF of its own.
+- The demos above are actions too: `{previewHighlight: true}`,
+  `{previewArea: true, context?}` and `{note: text}`, which types into the
+  note block App's `prepareNote` opens, through CodeMirror, resuming an
+  unfinished example and never replacing the user's own writing.
+- Typed text (`type`, `note`) is `T()`-marked in the tour and translated
+  when typed. `{name}` in it is filled from the tour's `vars` (an object, or
+  a function of the facts: the first tour's `demoUrl`), which the
+  localStorage key `gamma-guide-vars` overrides — how the browser suite
+  points the demo at an uploaded PDF of its own.
 - From the demo's initial pause through its final action, the sheet swallows
   clicks, the card shows ▶ Watch and a thin line of the actions done so far,
   and Back/Next are hidden. **Skip this demo** stops the actions (their
@@ -329,8 +340,8 @@ The survey behind these choices is [docs/research/onboarding.md](../research/onb
 3. Moving, renaming or removing a control never silently breaks the guide.
    The failure mode is a named test failure, never a card pointing at nothing.
 4. Adding or changing a step is editing data in one file, not React code.
-5. Nothing is forced. Every surface is dismissable, everything can be reopened
-   from one place, and the share view never shows any of it.
+5. Nothing is forced. Every surface is dismissable, every tour can be
+   replayed from one place, and the share view never shows any of it.
 
 ## Three layers
 
@@ -339,9 +350,9 @@ edited or switched off without the others.
 
 | Layer | What it is | Driven by | Where the content lives |
 |---|---|---|---|
-| **Welcome page** | A real page in the new workspace ("Welcome to Gamma"), with its own sample PDF attached, so every tour step has something to act on | Seeding | `backend/gamma/onboarding/welcome.md` (imported through the `.md` parser at seed time, not Python tuples) |
+| **Welcome page** | A real page in the new workspace ("Welcome to Gamma"), with its own sample PDF attached, so every tour step has something to act on | Seeding | `backend/gamma/onboarding/welcome.md` (imported through the `.md` parser at seed time) |
 | **Tours** | Sequential coach marks: a spotlight on one control plus a card. Task-driven: a step advances when the user does the thing, or on Next | The guide engine | `frontend/src/guide/tours/*.js`, one declarative script per tour |
-| **Checklist + hints** | "Getting started" checklist with progress (persists until done or dismissed), plus one-off hints right after first use of a feature | State, not sequence | `frontend/src/guide/checklist.js` (design); hints are built, as one-step triggered guides in `frontend/src/guide/tours/hints.js` |
+| **Hints** | One card right after the first use of a feature, beside the control, no dimming | Triggers (state or event), not sequence | `frontend/src/guide/tours/hints.js`, one-step triggered guides |
 
 The order matters for reconfigurability: content (the welcome page) changes
 most often and costs nothing to change; tours change when the UI changes and
@@ -354,92 +365,103 @@ selects by class name, text or DOM position.** It selects by anchor id.
 
 - An anchor is a `data-guide="<id>"` attribute on the element the guide should
   point at. Ids are dotted and named by meaning, not by look:
-  `header.attach`, `header.share`, `header.search`, `home.import`,
-  `home.newPage`, `page.focusedBlock`, `pdf.textLayer`, `dock.chat`,
-  `dock.notes`, `row.handle`, `account.menu`, `settings.ai`.
+  `header.add`, `header.share`, `add.urlInput`, `pdf.textLayer`,
+  `dock.notes`, `notes.table`, `account.tour`, `chat.composer`, `share.link`.
 - `frontend/src/guide/anchors.js` is the registry: every id with a one-line
-  description, the view it lives in (`home` / `page` / `pdf` / `any`, which
-  the browser suite checks are present; any other view — `chat`, `table`,
-  `presence`, `merge`… — names the situation that brings the anchor up and is
-  not checked), for anchors inside a menu or popover the `open` path the
-  engine clicks first, and `pick: "last"` when the newest of several is
-  meant. Adding an attribute in JSX without registering it, or referencing
-  an unregistered id from a tour, fails `npm test`; the scan also reads a
-  conditional `data-guide={cond ? "id" : undefined}`.
-- Dev inspector: `/?guide=inspect` outlines every anchor currently in the DOM
-  with its id, the way Figma's inspect overlay labels layers. This is how you
-  re-point a tour after a redesign: open the inspector, read the id, edit the
-  step.
+  description, the view it lives in (`home` / `page` / `pdf` / `any`; any
+  other view — `chat`, `table`, `presence`, `merge`… — names the situation
+  that brings the anchor up), for anchors inside a menu or popover the
+  `open` path the engine clicks first, and `pick` when the anchor repeats:
+  `"last"` for the newest (the latest chat reply's citation), `"recent"` for
+  the one inside the element the app marks `data-guide-recent` (the table
+  the user just made, below), else the first.
+- Adding an attribute in JSX without registering it, registering an id no
+  element carries, or referencing an unregistered id from a tour fails
+  `npm test`; the scan also reads a conditional
+  `data-guide={cond ? "id" : undefined}`.
 - Anchors move with the JSX they decorate. When a control is deleted, delete
-  its registry row; the tests then name every step that referenced it.
+  its registry row; the tests then name every step that referenced it. The
+  registry may keep a control no tour points at yet (`header.search`,
+  `chat.context`…), as long as an element carries it.
 
 Because App.jsx is still being decomposed ([frontend-refactor.md](frontend-refactor.md)),
 anchors are the only thing the guide needs from it. No guide code imports App
-state directly; App passes the few facts the engine needs (view mode, whether
-the page has a PDF, whether an AI provider is configured and whether the
-account may add one, the open page's share audience) through one
-`useGuide()` call.
+state directly; App passes what the engine needs through one `useGuide()`
+call: the facts steps and triggers are matched against (`view`, `hasPdf`,
+`pdfChatVisible`, `aiConfigured`, `aiEditable`, `onPage`, `editable`,
+`phone`, `guideAvailable`, `sharedWorkspace`, `shareAudience`,
+`unfiledLibrary`, `emptyLibrary`, `installable`, `demo`, `welcomePdf`), the
+services demos and tour ends call (`show`, `restore`, `openSettings`,
+`findEquation`, `findFigure`, `snapshotDemo`, `prepareNote`) and `tidy`.
 
 ## Tour scripts
 
-A tour is data. `frontend/src/guide/tours/firstRun.js`:
+A tour is data, one file in `frontend/src/guide/tours/`, registered in
+`tours/index.js` (whose order is the Tours menu's). Every string is marked
+`T()` and translated when shown or typed ([i18n.md](i18n.md)).
+`tours/tables.js`:
 
 ```js
 export default {
-  id: "first-run",
-  version: 2,                 // bump to re-offer the tour to everyone who finished v1
-  title: "Your first paper",
-  estimate: "2 min",
-  when: { signedIn: true, shareMode: false, readOnly: false },
+  id: "tables",
+  version: 2,
+  title: T("Editing tables"),
+  requires: { onPage: true, editable: true },
+  trigger: { event: "table.created" },
+  offerAnchor: "notes.table",
+  offer: { title: T("You made a table"), line: T("Cells, rows and columns are edited in place.") },
   steps: [
-    {
-      id: "open-welcome",
-      anchor: "home.card.welcome",   // the seeded page's card
-      title: "Every paper is a page",
-      body: "Notes and highlights live on the page that carries the PDF. Open the welcome paper.",
-      advanceOn: { event: "page.opened", match: { seeded: "welcome" } },
-      fallback: { action: "navigate", to: { page: "welcome" } },  // Next does it for you
-    },
-    {
-      id: "highlight",
-      anchor: "pdf.textLayer",
-      placement: "left",
-      title: "Select text to highlight it",
-      body: "Drag over a sentence in the PDF. The highlight becomes a block in your notes.",
-      advanceOn: { event: "highlight.created" },
-      requires: { view: "page", hasPdf: true },
-    },
-    {
-      id: "outline",
-      anchor: "page.focusedBlock",
-      title: "Notes are an outline",
-      body: "Enter makes a sibling, Tab indents, Shift+Tab outdents.",
-      advanceOn: { event: "block.indented" },
-    },
-    { id: "search", anchor: "header.search", body: "Ctrl+F searches this paper's notes, the PDF text and the whole library.", advanceOn: { event: "search.opened" } },
-    { id: "chat", anchor: "dock.chat", requires: { aiConfigured: true }, skipWhenUnmet: true, body: "Ask about the open paper. Answers cite pages you can click.", advanceOn: { event: "chat.sent" } },
-    { id: "chat-setup", anchor: "dock.chat", requires: { aiConfigured: false }, skipWhenUnmet: true, body: "Chat needs an AI key. Add one under Settings → AI.", advanceOn: { event: "settings.opened", match: { pane: "ai" } } },
-    { id: "share", anchor: "header.share", body: "Share the page as a link. Viewers see your highlights; editors can add their own.", advanceOn: { event: "share.opened" } },
+    { id: "table-make", anchor: "dock.notes", placement: "left", creates: "notes.table",
+      title: T("Type /table in a note, then click outside it"), advanceOn: { event: "table.shown" } },
+    { id: "table-cell", anchor: "notes.table", placement: "bottom",
+      title: T("Click any cell and type: {key:Tab} moves to the next, {key:Enter} saves"), advanceOn: { event: "table.edited" } },
+    { id: "table-add", anchor: "notes.tableAdd", avoid: "notes.table", placement: "bottom",
+      title: T("+ adds a row or column; hover a row or column for its handle: drag to move, click for options") },
+    { id: "table-whole", anchor: "notes.tableCorner", avoid: "notes.table", placement: "top",
+      title: T("The corner selects the whole table: copy, move or delete it"), next: T("Done") },
   ],
 };
 ```
 
+Tour fields:
+
+- `id`, `version` (an integer; bump it only when a finished user should be
+  offered the tour again), `title` (the Tours menu and the offer).
+- `requires`: facts that must hold to start or offer it. A value that is an
+  array means one of its values.
+- `trigger`, `offer: {title, line}`, `offerAnchor`, `offerPlacement`: when
+  and how it is offered by itself (Triggered tours and hints, above).
+- `hint: true`: a one-step triggered guide, never in the Tours menu.
+- `show`: a surface App brings up before the first step (`"chat"`).
+- `restore`: what App restores when the last step is done (`"pen"`).
+- `welcome: true` with `minutes`: the first `intro` step is the centred
+  welcome card, which is also the offer.
+- `finishCard`: the card the tour ends on (`guide/finish.js`).
+- `vars`: values for `{name}` in typed text, an object or a function of the
+  facts.
+
 Step fields:
 
-- `anchor` (required), `placement` (auto by default; the positioner flips to
-  fit), `title`, `body` (markdown, rendered by the app's markdown component so
-  kbd marks and links work).
-- `requires`: facts that must hold for the step to make sense. With
-  `skipWhenUnmet` the step is dropped from this run; without it the engine
-  shows a **detour card** instead: "This step needs an open paper", pointing at
-  the anchor that gets you there (`fallback.action`). A step never blocks.
-- `advanceOn`: an event from the catalog below, optionally with a `match` on
-  its payload. Next always advances too; task-driven advancement is a
-  convenience, not a gate. `advanceOn: null` means Next only.
-- `open`: a path the engine performs before showing the step when the anchor
-  is inside a closed surface, e.g. `["account.menu"]` clicks the account menu
-  so `account.workspaces` becomes visible. Declared per anchor in the registry,
-  overridable per step.
+- `id`, `anchor` (null: a centred card; an anchorless hint sits in the
+  bottom-left corner), `title` (one short line) and `body` (at most one
+  sentence; `bodyTouch` words it for a touch screen). Both take `**bold**`,
+  `*italic*`, `` `code` `` and `{key:…}`.
+- `placement`: the card's preferred side (`top`, `bottom`, `left`, `right`),
+  or `inside` to tuck it into the anchor's bottom-right corner (the whole
+  PDF viewer). `avoid`: another anchor whose box the card keeps clear of as
+  well (the table above its add strip).
+- `requires`: facts for this step; a step whose facts do not hold is left
+  out of the run when the tour starts (the AI chat tour's steps per place).
+  Nothing is ever shown for a step that does not apply.
+- `advanceOn: {event, match?}`: the user's action that completes the step,
+  shown as "Your turn". Without it, Next advances.
+- `next`: the primary button's label (Done, Finish).
+- `do: [...]`: a demo (Demo steps, above), with `delay` (the pause before
+  the first action, 900 ms) and `skippable: false`.
+- `optional`, `creates`, `reveal`: see the engine abilities above.
+- `intro`, with `outline`, `later` and `footnote`: the welcome card.
+
+`open` paths live in the registry, not on steps.
 
 ## The event catalog
 
@@ -462,14 +484,15 @@ where the thing happens:
 | `ink.stroke` | App's `handleInkStroke` |
 | `ink.options`, `ink.erased`, `ink.undone` | App, when the armed tool's options row opens; `handleInkErase` / `handleInkErasePartial`; `inkUndo` (not redo) |
 | `table.shown` | MdTableWrap, when an editable table mounts |
-| `table.created`, `table.edited` | MdTableWrap: the first render of a table made with /table or a paste (BlockTree marks the block, `noteTableMade`), and a cell editor's commit |
+| `table.created`, `table.edited` | MdTableWrap: the first render of a table made with /table or a paste, and a cell editor's commit. BlockTree notes the block and where in it the table went (`noteTableMade`); the table that renders there takes `data-guide-recent`, so the table anchors (`pick: "recent"`) point at it and not at an older table on the page |
 | `conflict.shown` | MergeResolver's versions |
 | `ref.search` | BlockTree, when the `[[` search shows results |
 | `math.previewed` | MathLivePreview, when it comes up |
 | `settings.opened` `{pane}` | App, whenever Settings opens (on any pane) |
-| `block.created`, `block.indented` | catalogued, not emitted yet |
+| `block.created`, `block.indented` | catalogued, not emitted |
 
-A test asserts every `advanceOn`, trigger and `doneOn` name is in the catalog.
+A test asserts every `advanceOn`, trigger and `doneOn` name is in the catalog;
+emitting a name outside it logs a warning and does nothing.
 
 Events are the seam that keeps tours out of App.jsx: instrumenting a new
 event is one line at the point where the thing happens, and every future tour
@@ -477,33 +500,38 @@ can use it.
 
 ## The engine
 
-`frontend/src/guide/useGuide.js` + `GuideOverlay.jsx`, mounted once in App.
+`frontend/src/guide/useGuide.js` holds the state; `GuideOverlay.jsx`,
+mounted once in App, renders what it says.
 
-State machine: `idle` → `offered` (the small invitation card) → `running
-{tourId, stepIndex}` ↔ `waiting` (anchor not in the DOM yet) → `done` /
-`dismissed`.
-
-- **Finding the anchor**: `document.querySelector('[data-guide="id"]')`,
-  retried on a `MutationObserver` for up to 3 s (the page may still be loading:
-  the PDF skeleton, a lazily mounted dock). If it never appears the step is
-  reported (`guideEvents.emit("guide.anchorMissing")` plus a `console.warn`)
-  and the tour skips it rather than showing a card in the void. The e2e suite
-  already fails on console errors; the scenario promotes this warning too.
-- **Spotlight**: one fixed overlay with an SVG mask cut out around the anchor's
-  rect (the Driver.js shape). The cutout passes pointer events through so the
-  user acts on the real control; the dimmed area swallows clicks. Repositioned
-  on scroll and resize via `ResizeObserver` + `requestAnimationFrame`; the
-  anchor is scrolled into view first.
-- **Card**: the app's popover look (same tokens as the account menu and the
-  Share popover, per [ui-design.md](ui-design.md)), 320 px: status chip and
-  "Step n of m", title, body, progress, then Back / Next or the step's skip
-  link (see Manual tours). On phone and iPad widths the card becomes a
-  bottom sheet and the spotlight stays; touch targets follow [ipad.md](ipad.md).
-  Esc dismisses. Focus stays where the user is working; the card is
-  `aria-live="polite"`, never a focus trap.
-- **No new dependency.** The positioner is about sixty lines (measure rect,
-  pick side, clamp to viewport). The app already positions popovers without a
-  library.
+- **State**: at most one of a run (`{tour, steps, index, done, finishing}`:
+  the steps left after `requires` and `creates`, the current one, the Done
+  moment, the finish card) or an offer (`{tour}`). A synchronous
+  `activity` ref reserves the one surface, so an offer never lands on a
+  starting tour. Progress is written as it goes (Storage, below).
+- **Finding the anchor**: `anchorElement(id)` in the registry, re-measured on
+  every DOM mutation, resize and scroll plus a 250 ms retry while it mounts.
+  An anchor that has not appeared after 3 s skips the step (the overlay logs
+  `guide: anchor "…" not found`, except for an `optional` step, which passes
+  silently) or withdraws the offer. A demo action waits up to 4 s for its
+  anchor, then shows "couldn't finish".
+- **Spotlight**: one fixed SVG with an even-odd path: the dimmed sheet with a
+  rounded hole around the anchor, padded 6 px, and a pulsing accent ring.
+  The hole is unpainted, so pointer events reach the real control; the
+  painted sheet swallows clicks. While a demo acts, a shield swallows
+  clicks in the hole too. The anchor is scrolled into view (`nearest`) when
+  the step opens.
+- **Card** (`place.js`): 320 px, the popover look (same tokens as the account
+  menu, [ui-design.md](ui-design.md)). It goes on the step's `placement`
+  when that fits, else below, above, right, left, each judged clear of the
+  spotlight and of the step's `avoid` box; clamped to the viewport; a beak
+  on the edge that faces the anchor. At 640 px and narrower it is a bottom
+  sheet (above the phone layout's tab bar). It is `role="dialog"` with
+  `aria-live="polite"` and never takes focus: mousedown is prevented, so an
+  editor keeps its caret.
+- **Keys**: Esc leaves the tour (or dismisses an offer); → and Enter
+  advance, ← goes back, never inside a text field; a demo swallows them
+  while it acts. The demo's own synthetic keys are ignored.
+- **No dependency.** The positioner is `place.js`, about sixty lines.
 
 ## Starting and replaying
 
@@ -511,23 +539,23 @@ Open **Account > Tours** and choose a tour; the menu lists the ones that can
 start here (see Manual tours), and every tour can be replayed. Triggered tours
 and hints also come by themselves, once each (see above), unless Suggest
 tours is off. AI chat opens its dock if needed; PDF-specific steps are
-included only when the PDF is visible. Share views do not mount tours.
+included only when the PDF is visible. The share view shows none of it
+(`useGuide`'s `enabled` is false there), and no URL starts a tour.
 
 ## Storage
 
-One synced, account-wide pref `onboarding` (add it to `db.USER_PREF_KEYS`;
-no schema step, the prefs KV already exists):
+Progress is per browser. Each tour has one localStorage key per account,
+`gamma-guide:<account>:<tourId>` (the first tour keeps its older
+`gamma-guide:first-run`), holding `{state, step?, version}`: `offered`,
+`running` (with the step), `dismissed` (with the step it was left on) or
+`done`. A tour whose stored `version` is its current one is not offered
+again. On a demo server the same keys live in sessionStorage
+(`guideStorage(demo)`), and when storage is unavailable a memory copy keeps
+the offers for the page load. `gamma-guide-vars` overrides a tour's `vars`
+(the browser suite points the first tour's demo at its own PDF).
 
-```json
-{ "tours": { "first-run": { "version": 2, "step": 4, "state": "running" } },
-  "checklist": { "highlight": "2026-09-18T10:00:00Z", "share": null },
-  "hints": { "chat-empty": true },
-  "dismissedAt": null }
-```
-
-localStorage (`gamma-onboarding:<user>`) is the instant-paint cache, server
-wins, same rule as `appearance` ([settings.md](settings.md)). No per-workspace
-scope: you learn the app once, not once per workspace.
+Whether tours are suggested at all is the account's `suggestTours`
+preference, synced with the profile ([settings.md](settings.md)).
 
 ## The welcome page and its sample PDF
 
@@ -572,97 +600,88 @@ scope: you learn the app once, not once per workspace.
   `commit_ops` does, on a connection closed right there) after
   `blocks_store.create_page` made the page ([collab.md](collab.md)).
 
-## Checklist and hints
+## Hints and empty states
 
-- The checklist (`checklist.js`) is five items, each `{id, label, doneOn:
-  event, tour: {id, step}}`: import or open a paper, make a highlight, indent a
-  block, search, share. Completion is recorded from the same event bus, so
-  doing the thing on your own counts even if you never ran the tour (the
-  Linear pattern). Progress shows as a thin bar in the popover and a dot on the
-  account button until done or dismissed.
-- Hints are built: one-step triggered guides in `tours/hints.js` (see
-  Triggered tours and hints). The chat with no AI provider gets no hint: its
-  empty state is the setup card with a tile per service. Empty states in
-  the library and the notes column stay where they are; hints point at
-  controls, empty states explain areas. A library with no pages of the
-  user's own shows "Start your library" (`home.empty`,
-  [home_library.md](home_library.md)), whose tour link starts the first
-  tour.
+Hints are one-step triggered guides in `tours/hints.js` (see Triggered
+tours and hints). The chat with no AI provider gets no hint: its empty state
+is the setup card with a tile per service. Empty states in the library and
+the notes column stay where they are; hints point at controls, empty states
+explain areas. A library with no pages of the user's own shows "Start your
+library" (`home.empty`, [home_library.md](home_library.md)), whose tour link
+starts the first tour. App works out that fresh-library state once
+(`isFreshLibrary` over the loaded listing) for both that card and the
+`emptyLibrary` fact.
 
 ## Files
 
 ```
 frontend/src/guide/
-  anchors.js        registry: id → {description, view, open?, pick?}
+  anchors.js        registry: id → {description, view, open?, pick?}; anchorElement
   events.js         guideEvents bus + the catalog
   triggers.js       when a tour is offered; per-account progress
   keys.js           {key:…} in copy: a command's chord for this account
   finish.js         a tour's finish card: what the run made
+  place.js          where a card goes beside its spotlight
   useGuide.js       state machine, offers, reveal, demo actions
-  GuideOverlay.jsx  spotlight + card + bottom sheet, offer and hint cards
-  checklist.js      items and their events (design)
+  previewHighlight.js, previewArea.js, typeDemoNote.js   the demos that drag or type
+  GuideOverlay.jsx  spotlight + card + bottom sheet, offer, hint and finish cards
   tours/*.js        one file per tour; tours/index.js registers them
   tours/hints.js    the hints
   guide.css
 backend/gamma/onboarding/welcome.md   the seeded page (and the sample PDF's source)
 backend/gamma/seed.py                 seed_welcome: parses it, renders the PDF, one op batch
 backend/tests/test_welcome.py         who gets it, the PDF, the op batch, the fallbacks
-frontend/tests/guide.test.mjs         schema, anchor references, event names, unique ids
+frontend/tests/guide.test.mjs         schema, anchor references, event names, triggers, placement
 frontend/tests/e2e/scenarios/guide.mjs            the first-run tour end to end, home anchors present
 frontend/tests/e2e/scenarios/contextualGuide.mjs  the AI chat tour on the library, a paper, a hidden PDF,
                                                   a phone, and with no AI connected
 frontend/tests/e2e/scenarios/auth.mjs             demo mode: the guest lands and gets the first-run offer (sessionStorage)
 frontend/tests/e2e/scenarios/triggeredGuide.mjs   offers and hints: tables (made by /table or a paste,
-                                                  not merely shown), sharing (offered, and from
-                                                  the menu with and without a link), citations, math,
-                                                  Ctrl+P, Back, workspaces, presence, handwriting from the
-                                                  menu (draw, note, style, erase, lasso, the pen
-                                                  re-armed), Suggest tours off
+                                                  not merely shown, pointed at the new one), sharing
+                                                  (offered, and from the menu with and without a link),
+                                                  citations, math, Ctrl+P, Back, workspaces, presence,
+                                                  handwriting from the menu (draw, note, style, erase,
+                                                  lasso, the pen re-armed), Suggest tours off
 ```
 
 ## Validation
 
-- `npm test`: every tour parses against the step schema; every `anchor` is in
-  the registry; every `advanceOn`, trigger and `doneOn` event is in the
-  catalog; a hint is one step; ids are unique; `version` is an integer; the
-  trigger rules (event, `count`, `doneOn`, state, the trigger's `requires`,
-  version) behave; a demo server keeps progress in sessionStorage.
-- `npm run e2e -- --only "triggered guide"`: each offer appears after its
-  event without dimming the app; Show me runs the tour (inside the Share
-  popover and the account menu without closing them); a hover-only control
-  shows while pointed at; a hint keeps the editor's caret; an optional step
-  whose anchor left passes without a warning; nothing is offered twice, or
-  at all once Suggest tours is off in Settings.
-- `npm run e2e` (`guide.mjs`): for each view (`home`, `page`, `pdf`) every
-  registry anchor declared for that view is in the DOM (after performing its
-  `open` path); the first-run tour is driven end to end by performing each
-  step's action and asserting the card moved to the next anchor; the detour
-  card shows when a step's requirement is unmet; `?guide=` starts a tour; the
-  share view mounts nothing; any `guide.anchorMissing` warning fails the run.
+- `npm test` (`guide.test.mjs`): every step's `anchor`, `creates`, `reveal`
+  and `avoid` and every offer anchor is in the registry; every registered
+  anchor is carried by an element and every `data-guide` in the source is
+  registered; every `advanceOn`, trigger, `doneOn` and finish-card event is
+  in the catalog; ids are unique; `version` is an integer; a hint is one
+  triggered step; the trigger rules (event, `count`, `doneOn`, state, the
+  trigger's `requires`, `anyOf`, version) behave; progress survives a
+  reload, separates accounts, tolerates broken storage and stays in
+  sessionStorage on a demo server; the AI chat and sharing tours pick their
+  steps per situation; every `{key:…}` names a command or a key; offer copy
+  is catalogued; the finish card lists only what the run made; a repeated
+  anchor picks as its `pick` says; a card keeps clear of its `avoid` box.
+- `guide.mjs`: every `home` anchor without an `open` path is present once;
+  the first tour runs end to end from the Tours menu (welcome card, the add
+  demo, both practice highlights, the note and label demos, Home, the finish
+  card's items and tiles) and replays on the paper already open; without the
+  vars override its demo opens the Welcome page's PDF with no resolver call,
+  and falls back to arXiv once that page is deleted; a new account's empty
+  library is offered the tour once.
+- `contextualGuide.mjs`: the AI chat tour's steps per place, the figure
+  snapshot taken back when the tour ends unsent, and the setup card with no
+  AI connected.
+- `triggeredGuide.mjs`: each offer appears after its event without dimming
+  the app; Show me runs the tour (inside the Share popover and the account
+  menu without closing them); a hover-only control shows while pointed at;
+  the tables tour points at the table just made and its cards keep clear of
+  it; a hint keeps the editor's caret; a `creates` step or an optional step
+  whose anchor is there or gone passes without a warning; nothing is offered
+  twice, or at all once Suggest tours is off in Settings.
 - Backend (`test_welcome.py`, `test_guests.py`): a new account's workspace
   holds the welcome page with its PDF, `seeded` property and one op batch; a
   guest's names the lifetime; existing, shared and non-empty workspaces are
   never seeded; a refused PDF or a missing welcome.md never fails the
   account.
-- `npm run e2e` (`guide.mjs`): without the vars override the first tour's
-  demo opens the Welcome page's PDF with no resolver call, and falls back to
-  arXiv once that page is deleted.
 
-## Build order
-
-1. Anchors + registry + inspector + the node test. Decorate the roughly
-   fifteen controls the first tour needs. No visible change.
-2. Event bus + the ten emit points.
-3. Engine + overlay, driven by a hard-coded two-step tour behind `?guide=`.
-4. `firstRun.js` in full, the `onboarding` pref, the invitation card and the
-   account-menu entry. E2e scenario.
-5. Welcome page as markdown + rendered sample PDF, seeded for new accounts
-   (built).
-6. Checklist popover, then hints.
-
-Steps 1 to 3 are invisible to users and safe to merge one at a time.
-
-## Rules once this exists
+## Rules
 
 - New control worth teaching: add `data-guide`, register it, done. Never point
   a step at a class.
@@ -673,5 +692,18 @@ Steps 1 to 3 are invisible to users and safe to merge one at a time.
   affected steps.
 - Copy changes: edit the tour file or `welcome.md`. Bump `version` only when a
   finished user should see the tour again.
-- Keep this doc, [settings.md](settings.md) (the `onboarding` pref) and
-  [api.md](api.md) (the prefs key list) in step.
+- Keep this doc and [settings.md](settings.md) (the `suggestTours`
+  preference) in step.
+
+## Not built
+
+Two parts of the first design were never built, and the September 2026 UI
+review turned them down for now:
+
+- **A synced `onboarding` preference.** Progress stays per browser (see
+  Storage), so a tour finished on one computer is offered again on another.
+- **A Getting-started checklist**: a few first tasks (add a paper,
+  highlight, write a note, search, share) ticked from the event bus whether
+  or not a tour ran, each with a way into the matching tour.
+  `block.created` and `block.indented` are catalogued for it and emitted
+  nowhere.
