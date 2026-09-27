@@ -6610,6 +6610,10 @@ function LibraryApp({ publicPage = null, initialServerConfig = null }) {
   // events (guide/triggers.js); never in the share view.
   const unfiledLibrary = useMemo(() => homeBlocks.length >= 10
     && homeBlocks.every((b) => !b.properties?.folder && !b.properties?.category), [homeBlocks]);
+  // Nothing in the library yet but the seeded Welcome page, once the listing
+  // has come back: the first tour is offered on it, and the library shows
+  // "Start your library".
+  const freshLibrary = useMemo(() => homeLoaded && isFreshLibrary(homeBlocks), [homeLoaded, homeBlocks]);
   // The seeded Welcome page's PDF (gamma/seed.py), the first tour's demo
   // paper while the library still has it: no arXiv download, works offline.
   const welcomePdf = useMemo(() => {
@@ -6668,7 +6672,6 @@ function LibraryApp({ publicPage = null, initialServerConfig = null }) {
       // tour picks neither its setup step nor its chat steps too early
       aiConfigured: aiInfo ? !!aiInfo.enabled && !!aiInfo.models?.length : undefined,
       aiEditable: !authUser?.is_guest, // a guest can't store keys
-      chatVisible: isPhone ? phonePanel === "chat" : !chatHidden && !collapsedWins.chat,
       pdfChatVisible: !!pageAttach && !pdfHidden && !collapsedWins.pdf && !isPhone,
       guideAvailable: !settingsOpen,
       // the phone (compact) layout: Home is the bottom bar's Library tab
@@ -6681,9 +6684,7 @@ function LibraryApp({ publicPage = null, initialServerConfig = null }) {
       onPage: !!focusedBlockId,
       editable: !readOnly,
       unfiledLibrary,
-      // nothing in the library yet but the seeded Welcome page: the first
-      // tour is offered on it
-      emptyLibrary: homeLoaded && isFreshLibrary(homeBlocks),
+      emptyLibrary: freshLibrary,
       installable: HOME_SCREEN_INSTALLABLE,
       // a demo server: progress per visit, the first-run tour offered on arrival
       demo: !!serverConfig?.demo,
@@ -6992,8 +6993,7 @@ function LibraryApp({ publicPage = null, initialServerConfig = null }) {
   // A library with nothing of the user's in it yet (only the seeded Welcome
   // page, or nothing) shows "Start your library" at its root instead of the
   // empty line; a folder or label view keeps its own message.
-  const libraryStart = homeLoaded && lib.organize && !folderFilter && !categoryFilter
-    && isFreshLibrary(homeBlocks) ? (
+  const libraryStart = freshLibrary && lib.organize && !folderFilter && !categoryFilter ? (
     <LibraryEmpty
       onOpenLink={() => setOpenPopover("add")}
       onUpload={uploadFiles}

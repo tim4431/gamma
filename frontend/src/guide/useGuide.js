@@ -74,7 +74,7 @@ async function runAction(action, vars, live, cancelled, seen, onCleanup, service
   if (action.previewHighlight) return previewHighlight(live, cancelled, onCleanup);
   if (action.previewArea) return previewArea(live, cancelled, onCleanup,
     { find: action.context ? services.findFigure : services.findEquation, context: action.context, services });
-  if (action.note) return typeDemoNote(action.note, services.prepareNote, live, cancelled);
+  if (action.note) return typeDemoNote(t(action.note), services.prepareNote, live, cancelled);
   if (action.wait) { await sleep(action.wait); return; }
   if (action.waitFor) { await waitEvent(action.waitFor, seen, action.timeout); return; }
   if (action.click) {
@@ -464,12 +464,9 @@ export function useGuide({ enabled = true, suggest = true, scope = "", facts = {
     const onKey = (e) => {
       if (!e.isTrusted) return; // the demo's own synthetic keys
       if (e.key === "Escape") { e.preventDefault(); e.stopPropagation(); dismiss(); return; }
+      // A demo owns navigation while it acts.
       if (busy) {
-        if (["Escape", "ArrowRight", "ArrowLeft", "Enter"].includes(e.key)) {
-          e.preventDefault();
-          e.stopPropagation();
-          if (e.key === "Escape") dismiss();
-        }
+        if (["ArrowRight", "ArrowLeft", "Enter"].includes(e.key)) { e.preventDefault(); e.stopPropagation(); }
         return;
       }
       const t = e.target;
@@ -543,6 +540,5 @@ export function useGuide({ enabled = true, suggest = true, scope = "", facts = {
     start, next, back, dismiss,
     // The tours the Tours menu lists here, in registry order.
     startable: () => Object.values(TOURS).filter((tour) => canStart(tour.id)).map(({ id, title }) => ({ id, title })),
-    progressOf: (id) => TOURS[id] ? progress.current.read(TOURS[id], scope) : null,
   };
 }
