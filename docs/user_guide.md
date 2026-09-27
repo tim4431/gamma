@@ -88,7 +88,7 @@ Open the chat from the **View menu (≡, top right) → AI Chat**. Configure pro
 - **Quote passages**: click a highlight to put it in the chat as a **PDF passage**; Ctrl+click more highlights to add up to six passages.
 - **What goes with a message** shows as chips above the message box, each saying what it is. The block your cursor is on rides along by itself (a dashed chip, **Block at your cursor**); its × leaves it out.
 - **Change just part of a note**: drag across a note's text — the note opens and the drag selects, and the chat's chip becomes **Selection in this note**. Ask for the change ("make this more concise", "translate this") and the assistant rewrites only the selected text, never the rest of the note. Hold Ctrl while dragging to select without opening the note and to collect several passages.
-- **Citations are clickable**: an answer's `p. 12` link jumps the PDF to the quoted passage and highlights it.
+- **Citations are clickable**: an answer's `p. 12` link jumps the PDF to the quoted passage and highlights it. Hover over it (or long-press on a touch screen) to read the quoted passage first.
 - **Token counts**: a dim line under each reply shows ↑ tokens sent, ↓ tokens received, and how much the provider served from its cache. Settings → AI → Connections → **Token usage** totals today, the week and the month per model.
 - Per message: **copy**, **edit & re-send** (discards the replies after it), and a **stop** button while streaming. **Ctrl+F inside the panel** finds text in the conversation.
 - Each paper and each folder keeps its own conversation; **New chat** starts over. Chats in a shared workspace are visible to its members.

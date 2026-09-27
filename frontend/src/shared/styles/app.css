@@ -4792,6 +4792,63 @@ a.shareBrand:hover { background: var(--bg-hover); }
   white-space: nowrap;
 }
 .gammaLinkSrc::before { content: "·"; margin-right: 5px; }
+/* A citation in a chat answer (CitationPill): a small tinted pill on the
+   text's baseline, 17 px tall, so a "p. 2" mid-sentence keeps the line
+   height. */
+.chatCite {
+  display: inline-block;
+  box-sizing: border-box;
+  max-width: 100%;
+  height: calc(17px * var(--ui-font-scale, 1) * var(--text-scale, 1));
+  padding: 0 6px;
+  border-radius: 999px;
+  background: var(--accent-bg);
+  color: var(--accent);
+  font-size: calc(11px * var(--ui-font-scale, 1) * var(--text-scale, 1));
+  font-weight: 600;
+  line-height: calc(17px * var(--ui-font-scale, 1) * var(--text-scale, 1));
+  text-decoration: none;
+  vertical-align: baseline;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  cursor: pointer;
+}
+.chatCite:hover { background: color-mix(in srgb, var(--accent) 22%, transparent); }
+.chatCite:focus-visible { outline: 2px solid var(--accent); outline-offset: 1px; }
+.chatCiteSrc { font-weight: 500; }
+/* Its preview: the cited paper, the PDF page and the quote itself. */
+.chatCitePreview {
+  position: fixed;
+  z-index: 1000;
+  width: max-content;
+  max-width: 280px;
+  padding: 8px 10px;
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  background: var(--bg-raised);
+  box-shadow: 0 6px 20px rgba(0, 0, 0, 0.18);
+  color: var(--text-primary);
+  font-size: calc(12px * var(--ui-font-scale, 1));
+  line-height: 1.45;
+  pointer-events: none;
+}
+.chatCitePreviewTitle { font-weight: 600; overflow-wrap: anywhere; }
+.chatCitePreviewPage { color: var(--text-muted); font-size: calc(11px * var(--ui-font-scale, 1)); }
+.chatCitePreviewQuote {
+  margin: 6px 0 0;
+  padding: 0 0 0 8px;
+  border-left: 2px solid var(--accent);
+  padding-right: 3px;
+  font-style: italic;
+  color: var(--text-secondary);
+  display: -webkit-box;
+  -webkit-line-clamp: 5;
+  -webkit-box-orient: vertical;
+  overflow: hidden;
+}
+.chatCitePreviewHint { margin-top: 6px; color: var(--text-muted); font-size: calc(11px * var(--ui-font-scale, 1)); }
+.chatCitePreviewHint kbd { font-family: inherit; }
 .chatToolActionHead:hover:not(.plain) { color: var(--text); }
 .chatToolAction.err .chatToolActionHead { color: var(--danger); }
 .chatToolActionHead svg { flex: none; }

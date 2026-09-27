@@ -2,6 +2,7 @@
 // markdown, and the auto-growing textarea.
 import React, { createContext, useCallback, useContext, useEffect, useLayoutEffect, useMemo, useRef, useState } from "react";
 import { textOf } from "../lib/textOf";
+import { createPortal } from "react-dom";
 import ReactMarkdown, { defaultUrlTransform } from "react-markdown";
 import remarkGfm from "remark-gfm";
 import remarkMath from "remark-math";
@@ -10,7 +11,7 @@ import "katex/dist/katex.min.css";
 import { CheckIcon, ChevronDownIcon, CopyIcon, ExternalLinkIcon, FileGlyph, FileTextIcon, PinIcon, QuoteIcon } from "./Icons";
 import { useWheelPan } from "./wheelPan";
 import { assetUrl, copyText } from "../lib/utils";
-import { parseGammaLink } from "../model/gammaLinks.js";
+import { gammaLinksIn, parseGammaLink } from "../model/gammaLinks.js";
 import { remarkPaperLinks } from "../lib/remarkPaperLinks.js";
 import { mermaidFence, normalizeChatMarkdown, remarkMermaid } from "../lib/mermaidMarkdown.js";
 import { MermaidDiagram, mermaidCodeProps } from "./MermaidDiagram";
@@ -241,16 +242,99 @@ function GammaLinkCard({ link, label, guide, children }) {
   );
 }
 
+// The chat's citations are compact pills (CitationPill) — only inside the
+// chat transcript, which provides this context: { titleOf(pageId) →
+// {title, short} | null } names the cited paper. Other ChatMarkdown users (a
+// note's preview on the PDF, the slide citation) keep the card.
+const ChatCiteContext = createContext(null);
+// Whether the reply being rendered cites more than one paper: then every
+// page-number pill also names its source ("Vaswani · p. 2").
+const CiteMultiContext = createContext(false);
+const PAGE_LABEL = /^pp?\.\s*\d/i;
+
+// A citation inside a reply: a small tinted pill on the text's baseline, so a
+// "p. 2" mid-sentence doesn't push the lines apart. Hovering, focusing or
+// long-pressing it previews the cited passage (paper, PDF page, the quote);
+// a click (or Enter) opens it in the PDF like the card does.
+function CitationPill({ link, children }) {
+  const nav = useContext(GammaNavContext);
+  const cite = useContext(ChatCiteContext);
+  const multi = useContext(CiteMultiContext);
+  const ref = useRef(null);
+  const timer = useRef(null);
+  const longPressed = useRef(false); // a long-press opened the preview: its click doesn't navigate
+  const [preview, setPreview] = useState(null); // {left, top | bottom}
+  const raw = textOf(children).trim();
+  const own = /^(https?:\/\/|\/?\?)/i.test(raw) ? "" : raw;
+  const source = cite?.titleOf?.(link.pageId) || null;
+  const pageLabel = `p. ${link.page}`;
+  const named = multi && source?.short && (!own || PAGE_LABEL.test(own));
+  const show = () => {
+    clearTimeout(timer.current);
+    const r = ref.current?.getBoundingClientRect();
+    if (!r) return;
+    const left = Math.max(8, Math.min(r.left, window.innerWidth - 296));
+    setPreview(r.bottom + 170 > window.innerHeight
+      ? { left, bottom: window.innerHeight - r.top + 6 }
+      : { left, top: r.bottom + 6 });
+  };
+  const hide = () => { clearTimeout(timer.current); setPreview(null); };
+  const later = (fn, ms) => { clearTimeout(timer.current); timer.current = setTimeout(fn, ms); };
+  useEffect(() => () => clearTimeout(timer.current), []);
+  // The preview is fixed to the viewport: any scroll would leave it behind.
+  useEffect(() => {
+    if (!preview) return undefined;
+    window.addEventListener("scroll", hide, true);
+    return () => window.removeEventListener("scroll", hide, true);
+  }, [preview]);
+  const tipId = `cite-${link.pageId}-${link.page}`;
+  return (
+    <>
+      <a ref={ref} href={link.href || "#"} className="chatCite gammaLink-citation" data-guide="chat.citation"
+        aria-describedby={preview ? tipId : undefined}
+        onMouseEnter={() => later(show, 250)}
+        onMouseLeave={hide}
+        onFocus={show}
+        onBlur={hide}
+        onTouchStart={() => { longPressed.current = false; later(() => { longPressed.current = true; show(); }, 450); }}
+        onTouchMove={() => clearTimeout(timer.current)}
+        onTouchEnd={() => clearTimeout(timer.current)}
+        onContextMenu={(e) => { if (longPressed.current) e.preventDefault(); }}
+        onMouseDown={(e) => e.stopPropagation()}
+        onClick={(e) => {
+          if (longPressed.current) { e.preventDefault(); longPressed.current = false; return; }
+          hide();
+          if (e.metaKey || e.ctrlKey || e.shiftKey || e.altKey || !nav) return;
+          e.preventDefault();
+          e.stopPropagation();
+          nav.openPage?.(link.pageId, { pageId: link.pageId, page: link.page, quote: link.quote });
+        }}>
+        {named ? <span className="chatCiteSrc" data-markdown-copy-ignore="">{source.short} · </span> : null}
+        <span className="gammaLinkLabel">{own ? children : pageLabel}</span>
+      </a>
+      {preview ? createPortal(
+        <div id={tipId} role="tooltip" className="chatCitePreview" style={preview}>
+          <div className="chatCitePreviewTitle">{source?.title || t("This paper")}</div>
+          <div className="chatCitePreviewPage">{t("PDF page {page}", { page: link.page })}</div>
+          {link.quote ? <blockquote className="chatCitePreviewQuote">“{link.quote}”</blockquote> : null}
+          <div className="chatCitePreviewHint">{t("Open in PDF")} <kbd>↵</kbd></div>
+        </div>, document.body) : null}
+    </>
+  );
+}
+
 // Keep the renderer type stable: replacing it on each streamed delta unmounts
 // links and loses clicks when an update lands between mouse-down and mouse-up.
 // Context supplies the latest navigation callback without replacing the link.
 function ChatMarkdownLink({ href, children, title }) {
   const nav = useContext(GammaNavContext);
+  const inChat = useContext(ChatCiteContext);
   const link = nav ? parseGammaLink(href, window.location.origin) : null;
   // The chat writes its own citations, so a link it produced is this
   // library's by construction; a foreign host in chat text is an ordinary
   // external link.
   const cited = link?.kind === "citation";
+  if (link && !link.foreign && cited && inChat) return <CitationPill link={{ ...link, href }}>{children}</CitationPill>;
   if (link && !link.foreign) return <GammaLinkCard link={{ ...link, href }} guide={cited ? "chat.citation" : undefined}>{children}</GammaLinkCard>;
   return <a href={href} className="gammaLinkCard" target="_blank" rel="noreferrer" title={title || href}>
     <ExternalLinkIcon size={14} aria-hidden="true" /><span className="gammaLinkLabel">{children}</span>
@@ -264,16 +348,20 @@ const CHAT_MARKDOWN_COPY_COMPONENTS = { ...CHAT_MARKDOWN_COMPONENTS, ...CHAT_COP
 // GammaNavContext; Ctrl/Cmd-click still opens a new tab.
 const ChatMarkdown = React.memo(function ChatMarkdown({ text, copyBlocks = false }) {
   const normalized = useMemo(() => normalizeChatMarkdown(text), [text]);
+  const multiSource = useMemo(() => new Set(gammaLinksIn(normalized)
+    .filter((link) => link.kind === "citation").map((link) => link.pageId)).size > 1, [normalized]);
   return (
     <div onCopy={handleMarkdownCopy}>
-      <ReactMarkdown
-        remarkPlugins={[remarkGfm, remarkMath, remarkPaperLinks, remarkMermaid]}
-        rehypePlugins={[rehypeKatex]}
-        urlTransform={(url) => assetUrl(defaultUrlTransform(url))}
-        components={copyBlocks ? CHAT_MARKDOWN_COPY_COMPONENTS : CHAT_MARKDOWN_COMPONENTS}
-      >
-        {normalized}
-      </ReactMarkdown>
+      <CiteMultiContext.Provider value={multiSource}>
+        <ReactMarkdown
+          remarkPlugins={[remarkGfm, remarkMath, remarkPaperLinks, remarkMermaid]}
+          rehypePlugins={[rehypeKatex]}
+          urlTransform={(url) => assetUrl(defaultUrlTransform(url))}
+          components={copyBlocks ? CHAT_MARKDOWN_COPY_COMPONENTS : CHAT_MARKDOWN_COMPONENTS}
+        >
+          {normalized}
+        </ReactMarkdown>
+      </CiteMultiContext.Provider>
     </div>
   );
 });
@@ -619,6 +707,7 @@ function useTextScale({ enabled } = {}) {
 
 export {
   AutoGrowTextarea,
+  ChatCiteContext,
   GammaLinkCard,
   GammaNavContext,
   BlockDropIndicator,
