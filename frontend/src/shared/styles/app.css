@@ -52,6 +52,8 @@
   --callout-important: #8a63d2;
   --callout-quote: #8d8d8d;
   --drag-accent: #64b5f6;
+  /* A PDF page's file glyph (FileGlyph .pdf): papers part from notes at a glance. */
+  --kind-pdf: #e0776b;
   /* The dark thumb pair keeps its own names so .pdfViewer.pdfDark can re-pin
      it while the light theme is active. */
   --scrollbar-thumb-dark: #3f3f3f;
@@ -908,6 +910,7 @@ body {
   --bracket-active-ring: rgba(140, 170, 255, 0.65);
 }
 :is([data-theme="light"], [data-theme="gamma-light"], [data-theme="sepia"], [data-theme="solarized"], [data-theme="gray"]) {
+  --kind-pdf: #c8483b;
   --bracket-1: #0431fa;
   --bracket-2: #319331;
   --bracket-3: #7b3814;
@@ -2794,9 +2797,38 @@ mark.merge-del { background: color-mix(in srgb, var(--danger) 16%, transparent);
   width: 100%;
 }
 .searchResult:hover { background: var(--bg-hover); }
-.searchResultPage { font-size: calc(11px * var(--ui-font-scale, 1)); color: var(--accent-dark); font-weight: 600; }
+/* A row's head: kind glyph, title (the query marked), then its badges and
+   page tag. */
+.searchResultPage {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  min-width: 0;
+  font-size: calc(12px * var(--ui-font-scale, 1));
+  color: var(--text-primary);
+  font-weight: 600;
+}
+.searchResultTitle { min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.searchResultPage .kindGlyph { flex-shrink: 0; }
+.searchPageTag {
+  flex-shrink: 0;
+  padding: 0 5px;
+  font-size: calc(10.5px * var(--ui-font-scale, 1));
+  font-weight: 500;
+  color: var(--text-muted);
+  border: 1px solid var(--border);
+  border-radius: 4px;
+}
+/* The query inside result text (search/snippets.js). */
+mark.searchMark {
+  background: color-mix(in srgb, #f5c542 45%, transparent);
+  color: inherit;
+  border-radius: 2px;
+  padding: 0 1px;
+}
+.searchSectionCount { margin-left: 6px; font-weight: 500; letter-spacing: 0; color: var(--text-dim); opacity: 0.8; }
 .searchKindBadge {
-  margin-left: 6px;
+  flex-shrink: 0;
   padding: 0 5px;
   font-size: calc(9px * var(--ui-font-scale, 1));
   font-weight: 500;

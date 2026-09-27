@@ -393,12 +393,20 @@ export function LabelGlyph({ dashed } = {}) {
 
 // Big file glyph — a document sheet with a folded corner. A PDF-backed page
 // gets a small "PDF" tab so it reads as an annotated paper at a glance.
-export function FileGlyph({ isPdf }) {
+// `size` draws it as a small kind icon (search results, tabs, Ctrl+P), the
+// "PDF" lettering a solid band there; without it the surface's CSS sizes
+// the tile. A PDF's glyph carries `.pdf`, tinted with --kind-pdf.
+export function FileGlyph({ isPdf, size }) {
+  const small = !!size && size < 24;
   return (
-    <svg className="tileGlyph fileGlyph" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round" strokeLinejoin="round">
+    <svg className={`tileGlyph fileGlyph${isPdf ? " pdf" : ""}${size ? " kindGlyph" : ""}`}
+      style={size ? { width: size, height: size } : undefined} aria-hidden="true"
+      viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth={small ? 2 : 1.5} strokeLinecap="round" strokeLinejoin="round">
       <path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z" fill="var(--bg-raised)" />
       <path d="M14 2v6h6" />
-      {isPdf ? (
+      {isPdf && small ? (
+        <rect x="7.5" y="12.5" width="9" height="5" rx="1" fill="currentColor" stroke="none" />
+      ) : isPdf ? (
         <text x="12" y="17" textAnchor="middle" fontSize="5" fontWeight="700" fill="currentColor" stroke="none">PDF</text>
       ) : (
         <>

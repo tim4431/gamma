@@ -114,6 +114,7 @@ The home page is a recents feed of all your pages, with a **Recently viewed** st
 - **Ctrl+P** is the quick way to another page: a palette listing your recent pages, filtered by title, folder or label as you type (small typos are forgiven, like the library's search box) — ↑↓ and Enter open it.
 - **Enter / Shift+Enter** step through matches; the chevron collapses the result lists into a compact find bar (make that the default in Settings → Reading & editing).
 - Matching is forgiving: "3000" finds "3,000-qubit", even across a line break. Opening a library hit loads the paper and scrolls to the highlighted match.
+- Each result shows whether it is a paper or a page, its section's count, and the query marked in its title and text; notes read as plain text, without their markdown.
 
 ## Metadata and citations
 

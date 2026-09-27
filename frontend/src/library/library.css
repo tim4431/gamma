@@ -479,6 +479,7 @@
 .folderGlyph { color: var(--accent); }
 .labelGlyph { color: var(--text-secondary); }
 .fileGlyph { color: var(--text-muted); }
+.fileGlyph.kindGlyph.pdf { color: var(--kind-pdf); }
 .tileRenameInput {
   width: 100%;
   border-color: var(--accent-dark);
