@@ -408,6 +408,9 @@ Use the existing shared controls: `PictureChoices` for illustrated choices,
 `IconChoices` for a small exclusive set pictured as icon tiles (the share
 popover's audience, handwriting's "Draws with"), `Segmented` for two or three
 short words, `ToggleGroup` for independent chips.
+An irreversible action sits in the pane's or dialog's Danger zone
+(`Section tone="danger"`, buttons `uiBtn sm dangerBtn`, a hint that says
+what is lost; [ui-design.md](ui-design.md) "Dialogs").
 Editor dialogs are one layout: a `SubDialog` (its title row always carries
 the × unless `closeButton={false}`), `Field`s — the label on its own line,
 one hint line under it, the control below — and a `DialogButtons` footer

@@ -21,7 +21,7 @@ import {
   CheckIcon, DatabaseIcon, ExportIcon, GlobeIcon, HardDriveIcon, ImportIcon, LogOutIcon, PenIcon,
   PlusIcon, ShieldIcon, Trash2Icon, UserIcon, UsersIcon,
 } from "../shared/ui/Icons";
-import { T, t } from "../shared/i18n/i18n.js";
+import { T, t, tn } from "../shared/i18n/i18n.js";
 
 // Workspace roles as the UI words them (docs/dev/workspaces.md); the account
 // menu's switcher in App.jsx reads the same table.
@@ -316,9 +316,9 @@ export function NameDialog({ title, label, hint, initial, submitLabel, busy, err
 }
 
 // One workspace, everything its owner (or, with `admin`, a server admin)
-// can do to it, in the settings-row grammar: General (name, storage),
-// Access (shared; admins edit, owners read), Members (shared), Actions
-// (default, kind, join, leave, delete — each a labelled row with a hint).
+// can do to it, in the settings-row grammar: General (name, storage,
+// default, kind, join), Access (shared; admins edit, owners read), Members
+// (shared) and the Danger zone (leave, delete — each hint says what is lost).
 // `canOpen` / `onOpen` wire the Open button; `onLeft` fires after the
 // caller leaves or deletes it (the pane switches away if it was the open
 // one). `personalCount` hides Delete on an account's last personal workspace.
@@ -427,6 +427,7 @@ export function ManageWorkspaceDialog({ wsId, me, admin, accounts, confirm, setS
     ? (mine ? t("Your personal workspace{default}", { default: info.default ? t(" · your default") : "" }) : t("{personal_of}'s personal workspace{default}", { personal_of: info.personal_of, default: info.default ? t(" · their default") : "" }))
     : `${info.access === "public" ? "Public" : "Shared"} workspace · ${info.role ? `you ${ROLE_TEXT[info.role]}` : "you manage it as an admin"}`;
   const canDelete = manages && (!isPersonal || personalCount == null || personalCount > 1);
+  const canLeave = !isPersonal && explicitMember && !soleOwner;
 
   const Surface = inline ? WorkspacePage : SubDialog;
   return (
@@ -441,35 +442,6 @@ export function ManageWorkspaceDialog({ wsId, me, admin, accounts, confirm, setS
                 {manages ? <button className="uiBtn sm" disabled={ws.busy} onClick={() => setRenaming(true)}>{t("Rename")}</button> : null}
               </Row>
               <StorageRow quota={info.quota} me={me} />
-            </Section>
-            {!isPersonal ? (
-              <Section title={t("Access")}>
-                <AccessRows info={info} canEdit={!!admin} onUpdate={async (patch) => {
-                  const d = await ws.update(patch);
-                  if (d && patch.access) done(d.access === "public" ? t("{name} is open to everyone on this server.", { name: d.name }) : t("{name} is private.", { name: d.name }));
-                  else if (d && "quota_mb" in patch) done(d.quota_mb ? t("Workspace quota set to {quota_mb} MB.", { quota_mb: d.quota_mb }) : t("Workspace quota removed."));
-                }} />
-                {!admin ? <div className="settingsPaneHint">{t("Access and the workspace's quota are set by a server admin.")}</div> : null}
-              </Section>
-            ) : null}
-            {!isPersonal ? (
-              <Section
-                title={t("Members")}
-                action={manages ? (
-                  <button className="uiBtn sm" disabled={ws.busy} onClick={() => { ws.setError(""); setInviting(true); }}>
-                    <PlusIcon size={13} /> {t("Invite")}
-                  </button>
-                ) : null}
-              >
-                <MembersList info={info} me={me} canManage={manages} busy={ws.busy} onSetRole={ws.setRole} onRemove={remove} onCancel={cancelInvite} />
-                {info.access === "public" && !explicitMember ? (
-                  <div className="settingsPaneHint">{t("You are in because the workspace is public — everyone on this server is.")}</div>
-                ) : manages ? (
-                  <div className="settingsPaneHint">{t("Naming someone Owner hands the workspace on; the role menu is how ownership moves.")}</div>
-                ) : null}
-              </Section>
-            ) : null}
-            <Section title={t("Actions")}>
               {mine && !info.default ? (
                 <Row icon={CheckIcon} label={t("Default workspace")} hint={t("where the extension and plain links land")}
                   title={t("Requests that name no workspace — the browser extension's clips, older clients, a link without a workspace — land in your default workspace.")}>
@@ -501,17 +473,51 @@ export function ManageWorkspaceDialog({ wsId, me, admin, accounts, confirm, setS
                   </button>
                 </Row>
               ) : null}
-              {!isPersonal && explicitMember && !soleOwner ? (
-                <Row icon={LogOutIcon} label={t("Leave")} hint={t("you will need a new invitation to come back")}>
-                  <button className="uiBtn sm" disabled={ws.busy} onClick={() => remove(me)}>{t("Leave")}</button>
-                </Row>
-              ) : null}
-              {canDelete ? (
-                <Row icon={Trash2Icon} label={t("Delete workspace")} hint={isPersonal ? t("everything in it, and its backups") : t("everything in it, for every member")}>
-                  <button className="uiBtn sm danger" disabled={ws.busy} onClick={destroy}>{t("Delete…")}</button>
-                </Row>
-              ) : null}
             </Section>
+            {!isPersonal ? (
+              <Section title={t("Access")}>
+                <AccessRows info={info} canEdit={!!admin} onUpdate={async (patch) => {
+                  const d = await ws.update(patch);
+                  if (d && patch.access) done(d.access === "public" ? t("{name} is open to everyone on this server.", { name: d.name }) : t("{name} is private.", { name: d.name }));
+                  else if (d && "quota_mb" in patch) done(d.quota_mb ? t("Workspace quota set to {quota_mb} MB.", { quota_mb: d.quota_mb }) : t("Workspace quota removed."));
+                }} />
+                {!admin ? <div className="settingsPaneHint">{t("Access and the workspace's quota are set by a server admin.")}</div> : null}
+              </Section>
+            ) : null}
+            {!isPersonal ? (
+              <Section
+                title={t("Members")}
+                action={manages ? (
+                  <button className="uiBtn sm" disabled={ws.busy} onClick={() => { ws.setError(""); setInviting(true); }}>
+                    <PlusIcon size={13} /> {t("Invite")}
+                  </button>
+                ) : null}
+              >
+                <MembersList info={info} me={me} canManage={manages} busy={ws.busy} onSetRole={ws.setRole} onRemove={remove} onCancel={cancelInvite} />
+                {info.access === "public" && !explicitMember ? (
+                  <div className="settingsPaneHint">{t("You are in because the workspace is public — everyone on this server is.")}</div>
+                ) : manages ? (
+                  <div className="settingsPaneHint">{t("Naming someone Owner hands the workspace on; the role menu is how ownership moves.")}</div>
+                ) : null}
+              </Section>
+            ) : null}
+            {canLeave || canDelete ? (
+              <Section title={t("Danger zone")} tone="danger">
+                {canLeave ? (
+                  <Row icon={LogOutIcon} label={t("Leave")} hint={t("You lose access until someone invites you again.")}>
+                    <button className="uiBtn sm dangerBtn" disabled={ws.busy} onClick={() => remove(me)}>{t("Leave…")}</button>
+                  </Row>
+                ) : null}
+                {canDelete ? (
+                  <Row icon={Trash2Icon} label={t("Delete workspace")} hint={isPersonal
+                    ? t("Deletes every page, PDF, chat and backup in it. Can't be undone.")
+                    : tn("Deletes every page, PDF, chat and backup in it, for its {n} member. Can't be undone.",
+                      "Deletes every page, PDF, chat and backup in it, for all {n} members. Can't be undone.", members.length)}>
+                    <button className="uiBtn sm dangerBtn" disabled={ws.busy} onClick={destroy}>{t("Delete…")}</button>
+                  </Row>
+                ) : null}
+              </Section>
+            ) : null}
           </>
         ) : null}
         {ws.error && !inviting && !renaming ? <div className="settingsPaneHint aiKeysError">{ws.error}</div> : null}
@@ -550,7 +556,7 @@ export function WorkspaceDataMenus({ w, exportWorkspace, importWorkspace, closeS
   if (w.role !== "viewer") {
     items.push({ icon: PlusIcon, label: T("Merge a backup into it…"), title: T("Add the backup's pages that are not there yet; nothing existing changes"),
       onClick: () => run(() => importWorkspace(w.id, "merge")) });
-    if (w.role === "owner") items.push({ icon: ImportIcon, label: T("Restore from a backup (replace)…"), title: t("Replace {name}'s pages and chats with a backup zip", { name: w.name }),
+    if (w.role === "owner") items.push({ icon: ImportIcon, label: T("Restore from a backup (replace)…"), title: t("Replace {name}'s pages and chats with a backup zip", { name: w.name }), danger: true,
       onClick: () => run(() => importWorkspace(w.id, "replace")) });
   }
   return <ActionMenu label={t("Data")} icon={DatabaseIcon} items={items} />;

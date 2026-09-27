@@ -81,16 +81,20 @@ function ScopeTag({ scope, prefs }) {
 
 // `guide`: a data-guide anchor id (guide/anchors.js) for the whole section,
 // header and rows, which then sit in one box a tour can point at.
-export function Section({ title, scope, prefs, action, guide, children }) {
+// `tone="danger"`: the "Danger zone" of a pane or dialog — a red label and
+// rule over its rows in a red-edged box. Its buttons are `uiBtn sm
+// dangerBtn` (red at rest) and each row's hint says what is lost.
+export function Section({ title, scope, prefs, action, guide, tone, children }) {
+  const danger = tone === "danger";
   const body = (
     <>
-      <div className="setSection" data-setting={title}>
+      <div className={`setSection${danger ? " danger" : ""}`} data-setting={title}>
         <span className="setSectionLabel">{title}</span>
         <span className="setSectionRule" />
         {scope ? <ScopeTag scope={scope} prefs={prefs} /> : null}
         {action}
       </div>
-      {children}
+      {danger ? <div className="setDangerBox">{children}</div> : children}
     </>
   );
   return guide ? <div className="setSectionGroup" data-guide={guide}>{body}</div> : body;

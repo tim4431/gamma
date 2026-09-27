@@ -94,6 +94,11 @@
   flex-shrink: 0;
 }
 .setSectionRule { flex: 1; height: 1px; background: var(--border-subtle); }
+/* Section tone="danger": red label and rule, the rows in a red-edged box. */
+.setSection.danger .setSectionLabel { color: var(--danger); }
+.setSection.danger .setSectionRule { background: var(--danger-border); }
+.setDangerBox { border: 1px solid var(--danger-border); border-radius: 10px; padding: 1px 0; flex-shrink: 0; }
+.setDangerBox > .setRow + .setRow { border-top: 1px solid var(--border-subtle); }
 /* A section a tour points at (Section's `guide`): header and rows in one box. */
 .setSectionGroup { display: flex; flex-direction: column; }
 

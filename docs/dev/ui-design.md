@@ -118,6 +118,15 @@ Destructive affordances all read from one set of tokens — `--danger`,
 secondary, `.uiBtn.danger` and a menu's `danger` row are the same red in both
 themes. Never hardcode a red.
 
+An irreversible action in a settings pane or editor dialog lives in its
+**Danger zone**: settingsKit's `Section tone="danger"` (red label and rule,
+the rows in a `--danger-border` box). Its buttons are `uiBtn sm dangerBtn`,
+red at rest, and each row's hint says what is lost in one line ("Deletes
+every page, PDF, chat and backup in it, for all 2 members. Can't be
+undone."). The workspace manager (Leave, Delete workspace) and the Users
+account editor (Delete account) use it; a menu row that replaces data (a
+backup restore) is a `danger` row.
+
 ### The share popover
 
 `sharing/SharePopover.jsx` (the topbar link button) is the one place a page

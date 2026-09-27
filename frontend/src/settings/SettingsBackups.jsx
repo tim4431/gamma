@@ -192,7 +192,7 @@ export function WorkspaceBackups({ value }) {
                 <ActionMenu
                   label={t("Restore")} icon={ImportIcon}
                   items={[
-                    ...(owner ? [{ icon: ImportIcon, label: T("Replace…"), title: T("Put the workspace back exactly as it was in this snapshot"), onClick: () => restore(w, b, "replace") }] : []),
+                    ...(owner ? [{ icon: ImportIcon, label: T("Replace…"), title: T("Put the workspace back exactly as it was in this snapshot"), danger: true, onClick: () => restore(w, b, "replace") }] : []),
                     { icon: PlusIcon, label: T("Merge…"), title: T("Add what the snapshot has and the workspace lacks"), onClick: () => restore(w, b, "merge") },
                   ]}
                 />

@@ -12,7 +12,7 @@
 // for admins, Settings → Server), not here.
 import React from "react";
 import { API, apiJson, fmtBytes } from "../shared/lib/utils";
-import { PaneHead, SubDialog, Field, UnitInput, Empty, QuotaMeter, PasswordInput } from "./SettingsKit";
+import { PaneHead, Section, Row, SubDialog, Field, UnitInput, Empty, QuotaMeter, PasswordInput } from "./SettingsKit";
 import { CloudIdentityRow } from "./SettingsCloudSignIn";
 import { ManageWorkspaceDialog, useAccounts } from "./SettingsWorkspace";
 import { BookIcon, HardDriveIcon, PenIcon, PlusIcon, ShieldIcon, Trash2Icon, UserIcon, UsersIcon } from "../shared/ui/Icons";
@@ -217,13 +217,16 @@ export function UsersSettings({ value, selfOnly = false }) {
             />
             <ShieldIcon size={13} /> {t("Admin privilege")}
           </label>
+          {u.username !== myName ? (
+            <Section title={t("Danger zone")} tone="danger">
+              <Row icon={Trash2Icon} label={t("Delete account")}
+                hint={t("Deletes {username} with every page, PDF and setting of theirs. Can't be undone.", { username: u.username })}>
+                <button className="uiBtn sm dangerBtn" disabled={busy} onClick={() => deleteAccount(u)}>{t("Delete…")}</button>
+              </Row>
+            </Section>
+          ) : null}
           {error ? <div className="settingsPaneHint aiKeysError">{error}</div> : null}
           <div className="reportModalBtns">
-            {u.username !== myName ? (
-              <button className="uiBtn danger" disabled={busy} onClick={() => deleteAccount(u)}>
-                <Trash2Icon size={13} /> {t("Delete…")}
-              </button>
-            ) : null}
             <button className="uiBtn" onClick={closeEdit}>{t("Cancel")}</button>
             <button className="uiBtn primary" disabled={busy} onClick={saveAccount}>{t("Save")}</button>
           </div>
