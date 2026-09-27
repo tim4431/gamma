@@ -353,7 +353,7 @@ export default function GuideOverlay({ guide, keybindings }) {
                 <div className="guideFoot">
                   {inviting && !offer.hint ? <button className="uiBtn sm ghost" onClick={dismiss}>{t("Not now")}</button> : null}
                   {showBack ? <button className="uiBtn" onClick={back}>{t("Back")}</button> : null}
-                  {link ? <button className="guideLink" onClick={next}>{link}</button> : null}
+                  {link ? <button className="uiBtn sm ghost guideLink" onClick={next}>{link}</button> : null}
                   <span className="guideBtns">
                     {showPrimary ? <button className="uiBtn primary" onClick={next}>{primaryLabel}</button> : null}
                   </span>
