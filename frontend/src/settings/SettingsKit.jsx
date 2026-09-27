@@ -291,11 +291,12 @@ export function Field({ label, hint, children }) {
 // input's own class (aiKeyInput in settings forms, loginInput on the login
 // page); everything else is passed through to the <input>. The eye is kept
 // out of the Tab order so Enter/Tab flow stays input → next control.
-export function PasswordInput({ className = "aiKeyInput", ...props }) {
+// `inputRef` reaches the <input> itself (the login page focuses it).
+export function PasswordInput({ className = "aiKeyInput", inputRef, ...props }) {
   const [shown, setShown] = React.useState(false);
   return (
     <span className="pwField">
-      <input {...props} className={className} type={shown ? "text" : "password"} />
+      <input {...props} ref={inputRef} className={className} type={shown ? "text" : "password"} />
       <button
         type="button" className="ctlBtn pwToggle" tabIndex={-1}
         title={shown ? t("Hide password") : t("Show password")}

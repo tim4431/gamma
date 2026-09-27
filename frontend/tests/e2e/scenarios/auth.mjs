@@ -20,14 +20,27 @@ export async function authScenarios({ server, browser, alice, step, until, asser
     const ctx = await browser.newContext();
     const page = await openPage(ctx, `${server.base}/`);
     await page.waitForSelector(".loginInput");
+    assert((await page.textContent(".loginFoot")).includes("Accounts are made by the person who runs this server."), "who makes accounts");
     await page.fill(".loginInput >> nth=0", "alice");
     await page.fill("input[type=password]", "nope");
     await page.click(".loginBtn");
     await page.waitForSelector(".loginError");
+    assert((await page.textContent(".loginError")).includes("That username and password don't match."), "names the mismatch");
+    assert(await page.evaluate(() => document.activeElement?.type === "password" && document.activeElement.getAttribute("aria-invalid") === "true"),
+      "the password field takes the focus, marked invalid");
+    // a locked-out sign-in and an unreachable server say so, not "wrong password"
+    await page.route("**/api/login", (route) => route.fulfill({ status: 429, contentType: "application/json", body: "{}" }));
+    await page.click(".loginBtn");
+    await until(async () => (await page.textContent(".loginError")).includes("Too many attempts."), { what: "the rate-limit message" });
+    await page.unroute("**/api/login");
+    await page.route("**/api/login", (route) => route.abort());
+    await page.click(".loginBtn");
+    await until(async () => (await page.textContent(".loginError")).includes("Can't reach the server."), { what: "the network message" });
+    await page.unroute("**/api/login");
     await page.fill("input[type=password]", "alice-pw");
     await page.click(".loginBtn");
     await page.waitForSelector(".folderNewBtn", { timeout: 15000 });
-    assertNoProblems(page, [/401/]);
+    assertNoProblems(page, [/401/, /429/]);
     await ctx.close();
   });
 
@@ -37,6 +50,7 @@ export async function authScenarios({ server, browser, alice, step, until, asser
       const page = await openPage(ctx, `${server.base}/`);
       await page.waitForSelector(".loginGuestBtn");
       assertEq(await page.getByRole("button", { name: "Try the demo" }).count(), 0, "no demo button off a demo server");
+      assert(/^A private workspace for \d+ hours?, then deleted$/.test(await page.textContent(".loginGuestNote")), "the guest button says the workspace goes");
       await page.click(".loginGuestBtn");
       await page.locator(".pageCard, .fileRow", { hasText: "Welcome" }).first().waitFor({ timeout: 15000 });
       const session = await page.evaluate(() => fetch("/api/session").then((r) => r.json()));

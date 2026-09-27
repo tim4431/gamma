@@ -1,17 +1,37 @@
 import React from "react";
 import { PasswordInput } from "../settings/SettingsKit";
-import { ChevronRightIcon } from "../shared/ui/Icons";
+import { AlertCircleIcon, ChevronRightIcon } from "../shared/ui/Icons";
 import { t, tn } from "../shared/i18n/i18n.js";
 
-function AuthShell({ children }) {
+// The brand mark: the favicon's artwork (generated from design/brand/marks/,
+// served under /media/ like the tab icon, so it is usually cached already).
+const MARK_URL = "/media/icons/favicon.svg";
+
+// Every page shown before (or instead of) the app: login, loading, an
+// unavailable workspace, a session conflict, a blocked share link. A page
+// that reports a situation (`headline`) leads with it under the mark; the
+// others with the name.
+function AuthShell({ headline, children }) {
   return (
     <div className="app">
       <div className="loginPage">
         <div className="loginCard">
-          <div className="loginTitle">{t("Gamma")}</div>
+          <img className="loginMark" src={MARK_URL} alt="" width="48" height="48" />
+          {headline
+            ? <h1 className="loginTitle loginHeadline">{headline}</h1>
+            : <div className="loginTitle">{t("Gamma")}</div>}
           {children}
         </div>
       </div>
+    </div>
+  );
+}
+
+function LoginError({ children }) {
+  return (
+    <div className="loginError" role="alert">
+      <AlertCircleIcon size={16} aria-hidden="true" />
+      <span>{children}</span>
     </div>
   );
 }
@@ -22,8 +42,7 @@ export function AuthLoading() {
 
 export function WorkspaceUnavailablePage() {
   return (
-    <AuthShell>
-      <p className="loginSubtitle">{t("This workspace is unavailable")}</p>
+    <AuthShell headline={t("This workspace is unavailable")}>
       <p className="loginConflictText">
         {t("It may have been deleted, or your account may no longer have access. Ask a workspace owner to invite you if you need access.")}
       </p>
@@ -40,8 +59,7 @@ export function WorkspaceUnavailablePage() {
 // the user reloads into the account that now owns the session.
 export function SessionConflictPage({ tabUser, activeUser, onReload }) {
   return (
-    <AuthShell>
-      <p className="loginSubtitle">{t("Signed in elsewhere")}</p>
+    <AuthShell headline={t("Signed in elsewhere")}>
       <p className="loginConflictText">
         {t("This tab was open as {tabUser}, but this browser is now signed in as {activeUser} (from another tab). This tab has been paused so the two accounts' data can't mix.", {
           tabUser: <b>{tabUser}</b>, activeUser: <b>{activeUser}</b> })}
@@ -73,6 +91,8 @@ function takeCloudError() {
 // the demo — the guest login — and a line saying how long the workspace
 // lasts; the password form (and the cloud sign-in) fold behind an Admin
 // sign-in link, collapsed until asked for. docs/dev/guests.md "Demo mode".
+// `error`: a message, or {text, field: "password"} when the password was
+// refused — that field then takes the focus and a red border.
 export function LoginPage({
   username,
   password,
@@ -90,14 +110,21 @@ export function LoginPage({
   const [cloudError] = React.useState(takeCloudError);
   const leadsWithDemo = demo && !!onGuestLogin;
   const [signInOpen, setSignInOpen] = React.useState(false);
+  const errorText = typeof error === "string" ? error : error?.text || "";
+  const badPassword = error?.field === "password";
+  const passwordRef = React.useRef(null);
+  React.useEffect(() => { if (badPassword) passwordRef.current?.focus(); }, [error, badPassword]);
+  const hours = Number(guestTtlHours) || 0;
   const signIn = <>
-    {cloudLogin?.enabled ? (
-      <a className="loginBtn loginCloudBtn" href={`/api/auth/cloud/start?next=${encodeURIComponent(next)}`}
+    {cloudLogin?.enabled ? <>
+      <a className="loginCloudBtn" href={`/api/auth/cloud/start?next=${encodeURIComponent(next)}`}
         title={t("Sign in through {issuer}", { issuer: cloudLogin.issuer })}>
+        <img src={MARK_URL} alt="" width="18" height="18" />
         {t("Sign in with Gamma Cloud")}
       </a>
-    ) : null}
-    {cloudError ? <div className="loginError" role="alert">{cloudError}</div> : null}
+      {cloudError ? <LoginError>{cloudError}</LoginError> : null}
+      <div className="loginOr">{t("or use your account on this server")}</div>
+    </> : cloudError ? <LoginError>{cloudError}</LoginError> : null}
     <form onSubmit={onSubmit}>
       <input
         type="text"
@@ -111,32 +138,45 @@ export function LoginPage({
         value={password}
         onChange={(event) => onPasswordChange(event.target.value)}
         placeholder={t("Password")}
-        className="loginInput"
+        className={`loginInput${badPassword ? " invalid" : ""}`}
+        aria-invalid={badPassword || undefined}
+        inputRef={passwordRef}
         autoComplete="current-password"
       />
-      {error ? <div className="loginError">{error}</div> : null}
+      {errorText ? <LoginError>{errorText}</LoginError> : null}
       <button type="submit" className="loginBtn" disabled={!username.trim() || !password.trim()}>
         {t("Log in")}
       </button>
       {onGuestLogin && !leadsWithDemo ? (
         <button type="button" className="loginGuestBtn" onClick={onGuestLogin}>
           {t("Continue as guest")}
+          {hours ? (
+            <span className="loginGuestNote">
+              {tn("A private workspace for {n} hour, then deleted", "A private workspace for {n} hours, then deleted", hours)}
+            </span>
+          ) : null}
         </button>
       ) : null}
     </form>
   </>;
+  const subtitleText = subtitle || t("Read papers, highlight, and keep what you learn — in one place.");
   if (!leadsWithDemo) {
     return (
       <AuthShell>
-        <p className="loginSubtitle">{subtitle || t("Annotate PDFs, Share Your Thinking")}</p>
+        <p className="loginSubtitle">{subtitleText}</p>
         {signIn}
+        {/* No self-service sign-up on a Gamma server (server-config's
+            `registration` is always off); with Gamma Cloud sign-in on,
+            whether a newcomer gets in is the admin's policy, so say nothing. */}
+        {cloudLogin?.enabled ? null : (
+          <p className="loginFoot">{t("New here? Accounts are made by the person who runs this server.")}</p>
+        )}
       </AuthShell>
     );
   }
-  const hours = Number(guestTtlHours) || 0;
   return (
     <AuthShell>
-      <p className="loginSubtitle">{subtitle || t("Annotate PDFs, Share Your Thinking")}</p>
+      <p className="loginSubtitle">{subtitleText}</p>
       <button type="button" className="loginBtn" onClick={onGuestLogin}>
         {t("Try the demo")}
       </button>
@@ -145,8 +185,8 @@ export function LoginPage({
           ? tn("Your own workspace for {n} hour, then it is deleted.", "Your own workspace for {n} hours, then it is deleted.", hours)
           : t("Your own workspace for a while, then it is deleted.")}
       </p>
-      {error && !signInOpen ? <div className="loginError" role="alert">{error}</div> : null}
-      {cloudError && !signInOpen ? <div className="loginError" role="alert">{cloudError}</div> : null}
+      {errorText && !signInOpen ? <LoginError>{errorText}</LoginError> : null}
+      {cloudError && !signInOpen ? <LoginError>{cloudError}</LoginError> : null}
       <button type="button" className="loginDisclosure" aria-expanded={signInOpen}
         onClick={() => setSignInOpen((open) => !open)}>
         <ChevronRightIcon size={13} className={`loginDisclosureChev ${signInOpen ? "open" : ""}`} />
@@ -164,8 +204,7 @@ export function LoginPage({
 export function ShareBlockedPage({ reason, viewer, onSwitchAccount, onSignIn, offerHome = false }) {
   const missing = reason !== "forbidden";
   return (
-    <AuthShell>
-      <p className="loginSubtitle">{missing ? t("This link doesn't work") : t("Not shared with you")}</p>
+    <AuthShell headline={missing ? t("This link doesn't work") : t("Not shared with you")}>
       <p className="loginConflictText">
         {missing
           ? t("The page it pointed to was unshared, or the link was copied incompletely. Ask the person who sent it for a new link.")

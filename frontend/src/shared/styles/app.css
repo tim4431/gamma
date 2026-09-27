@@ -3938,27 +3938,44 @@ html.appFocusFullscreen, html.appFocusFullscreen body { overflow: hidden; oversc
 .chatReferenceChip svg, .chatMsgPdfs .crumbBtn svg { flex-shrink: 0; }
 .chatReferenceChip .uiClose { flex-shrink: 0; margin-right: 3px; }
 /* --- Login page --- */
+/* The card hangs from a fixed height near the optical centre instead of being
+   centred: an error box appearing mid-form grows it downward, so the fields
+   above never move under the pointer. */
 .loginPage {
+  flex: 1;
+  min-height: 0;
+  overflow-y: auto;
   display: flex;
-  align-items: center;
+  align-items: flex-start;
   justify-content: center;
-  min-height: 100vh;
+  padding: max(24px, 12vh) 16px 24px;
   background: var(--bg-page);
 }
 .loginCard {
   background: var(--bg-surface);
   border: 1px solid var(--border);
   border-radius: 12px;
-  padding: 40px 36px 32px;
+  padding: 32px 36px 28px;
   width: 100%;
-  max-width: 360px;
+  max-width: 380px;
+}
+.loginMark {
+  display: block;
+  width: 48px;
+  height: 48px;
+  margin: 0 auto 12px;
 }
 .loginTitle {
-  font-size: calc(32px * var(--ui-font-scale, 1));
+  font-size: calc(26px * var(--ui-font-scale, 1));
   font-weight: 700;
   color: var(--text-primary);
   text-align: center;
-  margin-bottom: 4px;
+  margin: 0 0 6px;
+}
+.loginHeadline {
+  font-size: calc(22px * var(--ui-font-scale, 1));
+  line-height: 1.25;
+  margin-bottom: 12px;
 }
 .loginLoading {
   color: var(--text-muted);
@@ -3966,9 +3983,10 @@ html.appFocusFullscreen, html.appFocusFullscreen body { overflow: hidden; oversc
   margin-bottom: 24px;
 }
 .loginSubtitle {
-  color: var(--text-muted);
+  color: var(--text-secondary);
   text-align: center;
-  margin-bottom: 24px;
+  line-height: 1.45;
+  margin-bottom: 22px;
   font-size: calc(14px * var(--ui-font-scale, 1));
 }
 
@@ -3983,11 +4001,21 @@ html.appFocusFullscreen, html.appFocusFullscreen body { overflow: hidden; oversc
   outline: none;
   border-color: var(--accent);
 }
+.loginInput.invalid { border-color: var(--danger); }
 .loginError {
-  color: #e05555;
+  display: flex;
+  align-items: flex-start;
+  gap: 8px;
+  padding: 8px 10px;
+  margin-bottom: 12px;
+  border: 1px solid var(--danger-border);
+  border-radius: 6px;
+  background: var(--danger-bg);
+  color: var(--danger);
   font-size: calc(13px * var(--ui-font-scale, 1));
-  margin-bottom: 10px;
+  line-height: 1.4;
 }
+.loginError > svg { flex: none; margin-top: 1px; }
 .loginBtn {
   display: block;
   width: 100%;
@@ -4003,8 +4031,35 @@ html.appFocusFullscreen, html.appFocusFullscreen body { overflow: hidden; oversc
   font-family: inherit;
 }
 .loginBtn:disabled { opacity: 0.5; cursor: default; }
-.loginCloudBtn { display: block; text-align: center; text-decoration: none; margin-bottom: 14px; box-sizing: border-box; }
 .loginBtn:hover:not(:disabled) { filter: brightness(1.1); }
+/* Gamma Cloud: an outlined secondary, so Log in stays the one primary */
+.loginCloudBtn {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  gap: 8px;
+  width: 100%;
+  padding: 9px 10px;
+  margin-bottom: 14px;
+  border: 1px solid var(--border-light);
+  border-radius: 6px;
+  background: var(--bg-surface);
+  color: var(--text-primary);
+  font-size: calc(14px * var(--ui-font-scale, 1));
+  font-weight: 600;
+  text-decoration: none;
+}
+.loginCloudBtn:hover { background: var(--bg-hover); }
+.loginCloudBtn > img { flex: none; }
+.loginOr {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  margin: 0 0 14px;
+  color: var(--text-muted);
+  font-size: calc(12px * var(--ui-font-scale, 1));
+}
+.loginOr::before, .loginOr::after { content: ""; flex: 1; height: 1px; background: var(--border); }
 .loginGuestBtn {
   display: block;
   width: 100%;
@@ -4018,6 +4073,19 @@ html.appFocusFullscreen, html.appFocusFullscreen body { overflow: hidden; oversc
   font-family: inherit;
 }
 .loginGuestBtn:hover { background: var(--bg-hover); }
+.loginGuestNote {
+  display: block;
+  margin-top: 2px;
+  color: var(--text-muted);
+  font-size: calc(11.5px * var(--ui-font-scale, 1));
+}
+.loginFoot {
+  margin: 16px 0 0;
+  color: var(--text-muted);
+  text-align: center;
+  font-size: calc(12px * var(--ui-font-scale, 1));
+  line-height: 1.5;
+}
 /* a demo server's login: Try the demo first, the password form folded */
 .loginDemoNote {
   color: var(--text-muted);
@@ -4043,9 +4111,11 @@ html.appFocusFullscreen, html.appFocusFullscreen body { overflow: hidden; oversc
 .loginDisclosureChev.open { transform: rotate(90deg); }
 .loginDisclosureBody { margin-top: 12px; }
 .loginConflictText {
+  color: var(--text-secondary);
+  text-align: center;
   font-size: calc(14px * var(--ui-font-scale, 1));
   line-height: 1.5;
-  margin-bottom: 18px;
+  margin: 0 0 20px;
 }
 .loginConflictHint {
   color: var(--text-muted);
@@ -5499,7 +5569,6 @@ html.appFocusFullscreen, html.appFocusFullscreen body { overflow: hidden; oversc
 .pdfViewer.inkSelect .pdfPageWrap { cursor: default; }
 .mcpConsent { max-width: 480px; }
 .mcpConsentPage { overflow: auto; }
-.mcpConsentPage .loginPage { padding: 24px 12px; }
 .mcpConsent p { line-height: 1.5; }
 .mcpCallback { overflow-wrap: anywhere; }
 .mcpPermissions { margin: 8px 0 16px; padding: 16px; border: 1px solid var(--border-subtle); border-radius: 8px; }

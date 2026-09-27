@@ -451,7 +451,7 @@ function LibraryApp({ publicPage = null, initialServerConfig = null }) {
   }), [authUser?.user, wsId]);
   const [loginUser, setLoginUser] = useState("");
   const [loginPass, setLoginPass] = useState("");
-  const [loginError, setLoginError] = useState("");
+  const [loginError, setLoginError] = useState(""); // a message, or {text, field} (LoginPage)
   // Username that now owns the browser session when it's no longer this tab's
   // user (someone logged into another account from a second tab) — freezes the
   // tab behind SessionConflictPage until reload.
@@ -598,16 +598,22 @@ function LibraryApp({ publicPage = null, initialServerConfig = null }) {
   async function doLogin(e, then = checkSession) {
     e?.preventDefault();
     setLoginError("");
+    let res;
     try {
-      const res = await fetch(`${API}/login`, {
+      res = await fetch(`${API}/login`, {
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({ username: loginUser, password: loginPass }),
         credentials: "include",
       });
-      if (!res.ok) { setLoginError(t("Invalid credentials")); return; }
-      await then();
-    } catch { setLoginError(t("Login failed")); }
+    } catch { setLoginError(t("Can't reach the server.")); return; }
+    if (!res.ok) {
+      setLoginError(res.status === 401
+        ? { text: t("That username and password don't match. Check both, or ask your server's admin to reset the password."), field: "password" }
+        : res.status === 429 ? t("Too many attempts. Wait a few minutes, then try again.") : t("Login failed"));
+      return;
+    }
+    try { await then(); } catch { setLoginError(t("Login failed")); }
   }
 
   async function doGuestLogin() {

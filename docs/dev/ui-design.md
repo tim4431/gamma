@@ -148,6 +148,20 @@ Every change saves at once; nothing is a bespoke control. There is no
 view shows the counterpart tag ("Can edit · shared by …", and "as <name>" for
 a visitor without an account) in its top bar.
 
+### Sign-in and status pages
+
+`AuthShell` in `auth/LoginPage.jsx` frames every page shown before or
+instead of the app: the login (also a share link's sign-in gate), loading,
+an unavailable workspace, a session conflict and a blocked share link. It
+shows the brand mark (`/media/icons/favicon.svg`) over the name, or over the
+situation's headline on a status page. The card hangs at a fixed height near
+the optical centre instead of being centred, so an error that appears
+mid-form grows it downward and the fields never move. Log in is the one
+primary button; Gamma Cloud is an outlined secondary above an "or use your
+account on this server" divider. A failed sign-in says why (wrong password,
+too many attempts, server unreachable) in a `--danger`-tinted `.loginError`
+box, and a refused password also takes the focus and a red border.
+
 ## File map (frontend/src)
 
 | File | Owns |

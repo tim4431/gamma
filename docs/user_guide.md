@@ -6,7 +6,7 @@ Everything you can do in Gamma, one section per part of the app. The [README](..
 
 ## Getting started
 
-1. **Sign in.** Your administrator gives you an account, or click **Continue as guest** (**Try the demo** on a demo server) to try things out: you get a workspace of your own that is deleted with everything in it after a while (a day unless the admin changed it; the account menu says when).
+1. **Sign in.** Your administrator gives you an account, or click **Continue as guest** (**Try the demo** on a demo server) to try things out: you get a workspace of your own that is deleted with everything in it after a while (a day unless the admin changed it; the guest button says how long and the account menu says when).
 2. **Add a paper.** Click **+** in the top bar and paste any link — an arXiv page, a DOI, or a publisher page; Gamma finds the PDF (and falls back to a legal open-access copy via Unpaywall when the DOI is paywalled). Or upload PDFs, or **drag files or whole folders into the window** — subfolders become library folders.
 3. **Read it.** The paper opens with a Notes panel beside it. Select text to highlight, type under the highlight to comment. That's a note; everything else builds on that.
 
