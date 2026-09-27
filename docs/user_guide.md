@@ -98,7 +98,9 @@ Open the chat from the **View menu (≡, top right) → AI Chat**. Configure pro
 
 On the home page or in a folder, the chat can act on your library: list, read and search the papers in view, compare findings, rename pages, file them into folders — *"rename these to AuthorYear style"*, *"which of these measure T1?"*. It can also search the web for papers (Crossref, arXiv) and read a document by DOI, arXiv id or URL.
 
-Every tool call shows as a chip you can expand to see exactly what it did, with its arguments and result. Permissions are per tool in Settings → AI → Chat, and the agent can never delete anything or edit your notes. Details: [the agent tools guide](dev/ai_tools.md).
+In a paper or a notes page it can also edit your notes when you ask — rewrite a block, add one, append to it, move it — if the **Edit note blocks** permission is on.
+
+While it works, a pill under your question says what it is doing ("Searching library for …"). Afterwards the pill sums up its steps ("6 steps · listed, read 1 page · 1 failed") and expands to every call with its arguments and result, and everything it changed is listed under it — **Changed in your library** (old title → new, where a page was filed) and **Changed in your notes** — each a link to the page or note. Permissions are per tool in Settings → AI → Chat, and the agent can never delete anything. Details: [the agent tools guide](dev/ai_tools.md).
 
 ## Library and organization
 

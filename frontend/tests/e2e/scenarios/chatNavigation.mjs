@@ -264,4 +264,63 @@ export async function chatNavigationScenarios(env) {
       assertNoProblems(page);
     } finally { await ctx.close(); }
   });
+
+  await step("chat navigation: the agent's steps sum up in one pill that names the running step; its changes link to what changed", async () => {
+    await alice.api("/api/chats/home", { method: "PUT", body: { messages: [] } });
+    const ctx = await alice.context(browser);
+    await fakeAiModels(ctx);
+    await ctx.addInitScript(() => {
+      localStorage.setItem("gamma-ai-login-check", "off");
+      const fetch = window.fetch.bind(window);
+      window.fetch = (input, init) => {
+        if (String(input).endsWith("/api/ai/chat")) {
+          return Promise.resolve(new Response(new ReadableStream({
+            start(controller) {
+              window.chatStream = {
+                push: (event) => controller.enqueue(new TextEncoder().encode(JSON.stringify(event) + "\n")),
+                finish: () => controller.close(),
+              };
+            },
+          }), { headers: { "Content-Type": "application/x-ndjson" } }));
+        }
+        return fetch(input, init);
+      };
+    });
+    const page = await openPage(ctx, `${server.base}/?ws=${alice.ws}`);
+    try {
+      const input = page.getByRole("combobox", { name: "Message AI" });
+      await input.waitFor();
+      await page.waitForLoadState("networkidle");
+      await input.fill("Tidy up the library");
+      await input.press("Enter");
+      await page.waitForFunction(() => !!window.chatStream);
+      const pill = page.locator(".chatSteps");
+      // The step running now replaces "Thinking".
+      await page.evaluate(() => window.chatStream.push({ step: { id: "c1", tool: "search_library", args: { query: "cavity" } } }));
+      await pill.filter({ hasText: "Searching library for “cavity”…" }).waitFor();
+      assertEq(await page.locator(".chatThinking").count(), 0, "the running step stands in for the Thinking pill");
+      await page.evaluate(({ id, title }) => {
+        const s = window.chatStream;
+        s.push({ action: { kind: "search", tool: "search_library", summary: "Searched library for “cavity” — 1 hit", args: { query: "cavity" }, result: "…" } });
+        s.push({ action: { kind: "rename", tool: "rename_page", summary: `Renamed “${title}” → “Kimble 2008”`, args: { page_id: id, title: "Kimble 2008" }, result: "ok",
+          page_id: id, title, from: title, to: "Kimble 2008" } });
+        s.push({ action: { kind: "error", tool: "rename_page", summary: "error: no such page", args: {}, result: "error: no such page", error: true } });
+        s.push({ delta: "Renamed one paper." });
+        s.finish();
+      }, { id: pdf.id, title: "Chat navigation paper" });
+      await pill.filter({ hasText: "3 steps · searched" }).waitFor();
+      assert((await pill.innerText()).includes("1 failed"), "failures are counted on the pill");
+      const changes = page.locator(".chatChanges");
+      await changes.filter({ hasText: "Changed in your library · 1" }).waitFor();
+      assertEq(await changes.locator(".chatChangeOld").innerText(), "Chat navigation paper");
+      // The chips are one click away.
+      assertEq(await page.locator(".chatToolAction").count(), 0);
+      await pill.click();
+      assertEq(await page.locator(".chatToolAction").count(), 3);
+      // The new title opens the renamed page.
+      await changes.getByRole("button", { name: "Kimble 2008", exact: true }).click();
+      await until(() => new URL(page.url()).searchParams.get("block") === pdf.id);
+      assertNoProblems(page);
+    } finally { await ctx.close(); }
+  });
 }

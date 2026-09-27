@@ -4760,9 +4760,67 @@ a.shareBrand:hover { background: var(--bg-hover); }
   overflow: hidden;
 }
 .chatBubble.ai .chatPdfChip { background: var(--bg-raised); color: var(--text-muted); }
+/* The agent's work in a reply (AgentSteps / AgentChanges in ChatDock): one
+   pill summing up the steps, expanding to every call's chip below; then the
+   changes it made, each old → new, under an accent rule. */
+.chatStepsWrap { display: flex; flex-direction: column; gap: 6px; margin-bottom: 8px; min-width: 0; }
+.chatSteps {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  align-self: flex-start;
+  max-width: 100%;
+  padding: 3px 10px;
+  border: 1px solid var(--border-subtle);
+  border-radius: 999px;
+  background: var(--bg-raised);
+  color: var(--text-muted);
+  font: inherit;
+  font-size: calc(11.5px * var(--ui-font-scale, 1) * var(--text-scale, 1));
+  line-height: 1.5;
+  cursor: pointer;
+}
+.chatSteps:hover { color: var(--text-primary); }
+.chatSteps svg { flex: none; }
+.chatStepsText { min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.chatStepsFailed { flex: none; color: var(--danger); }
+.chatStepsFailed::before { content: "·"; margin-right: 6px; color: var(--text-muted); }
+.chatSteps .transferSpin.inline { flex: none; }
+.chatChanges {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  margin: 0 0 10px;
+  padding: 4px 0 4px 10px;
+  border-left: 2px solid var(--accent);
+  font-size: calc(13px * var(--ui-font-scale, 1) * var(--text-scale, 1));
+  line-height: 1.45;
+}
+.chatChangesHead {
+  color: var(--text-muted);
+  font-size: calc(11px * var(--ui-font-scale, 1) * var(--text-scale, 1));
+  font-weight: 600;
+  letter-spacing: 0.03em;
+  text-transform: uppercase;
+}
+.chatChange { display: flex; align-items: flex-start; gap: 7px; min-width: 0; }
+.chatChange > svg { flex: none; margin-top: 0.2em; color: var(--text-muted); }
+.chatChangeText { min-width: 0; overflow-wrap: anywhere; }
+.chatChangeOld { color: var(--text-muted); }
+.chatChangeLink {
+  padding: 0;
+  border: 0;
+  background: none;
+  color: var(--accent);
+  font: inherit;
+  text-align: left;
+  cursor: pointer;
+}
+.chatChangeLink:hover { text-decoration: underline; }
+.chatChangeLink:focus-visible { outline: 2px solid var(--accent); outline-offset: 1px; }
 /* Agent tool calls (folder/paper chat): one row per call, click to expand the
    arguments and the output the model got back. */
-.chatToolActions { display: flex; flex-direction: column; gap: 3px; margin-bottom: 6px; }
+.chatToolActions { display: flex; flex-direction: column; gap: 3px; }
 .chatToolAction { display: flex; flex-direction: column; gap: 3px; min-width: 0; }
 .chatToolActionHead {
   display: flex;

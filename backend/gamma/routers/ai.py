@@ -200,6 +200,19 @@ def _failure_info(error: Exception, rt: dict | None = None, entry: dict | None =
     return info
 
 
+# The arguments a {"step"} line repeats: the short ones a "now running"
+# label needs (never a note's content).
+_STEP_ARGS = ("page_id", "block_id", "query", "title", "folder", "label", "title_contains",
+              "source", "pdf_page", "mode")
+
+
+def _step_event(name: str, call: dict) -> dict:
+    """The {"step"} line announcing one tool call before it runs."""
+    args = call.get("arguments") if isinstance(call.get("arguments"), dict) else {}
+    return {"id": call.get("id") or "", "tool": name,
+            "args": {k: str(args[k])[:120] for k in _STEP_ARGS if args.get(k) not in (None, "")}}
+
+
 def _failure_response(status: int, detail: str, info: dict) -> JSONResponse:
     """An HTTP error whose body carries the failure's kind next to its
     ``detail`` (still a plain string, as every other error's)."""
@@ -1422,6 +1435,10 @@ def ai_chat(payload: AIChatRequest, request: Request):
                 # A model copying a renamed tool out of replayed history still
                 # names the current one here (ai_context.DEPRECATED_TOOLS).
                 name = _canonical_tool(call["name"])
+                # The step about to run, so the chat can say what the agent
+                # is doing now ("Searching library for …") instead of
+                # "Thinking"; its action follows once it finished.
+                yield ("step", _step_event(name, call))
                 if name in armed and name in MUTATING_TOOLS and actions >= MAX_TOOL_ACTIONS:
                     result = ("error: change limit for one message reached — "
                               "stop and tell the user")

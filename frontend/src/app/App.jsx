@@ -4140,8 +4140,9 @@ function LibraryApp({ publicPage = null, initialServerConfig = null }) {
   }
 
   // A [[ref]] chip or a copied block link: scroll to it on this page, else
-  // open the page that holds it.
-  async function openBlockLink(id) {
+  // open the page that holds it (`pageId` when the caller knows it — the
+  // chat's list of the agent's note changes).
+  async function openBlockLink(id, pageId) {
     function findBlock(list) {
       for (const b of list || []) {
         if (b.id === id) return b;
@@ -4157,7 +4158,7 @@ function LibraryApp({ publicPage = null, initialServerConfig = null }) {
     } else {
       pushNav(); // block-ref click = link jump to another page
       pendingBlockScrollRef.current = id;
-      const rootId = refCache[id]?.page_root_id;
+      const rootId = pageId || refCache[id]?.page_root_id;
       await openBlock(rootId && rootId !== id ? rootId : id, { link: true });
     }
   }

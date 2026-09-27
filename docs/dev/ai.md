@@ -544,12 +544,27 @@ answers. Each adapter's `request` maps the tool defs and the
 `tool_calls`/`role:"tool"` turns to its wire. The Responses body enables
 `parallel_tool_calls` when tools ride along, so bulk renames batch per round.
 
-Every tool call streams back as an
+Every tool call is announced by a `{"step": {id, tool, args}}` line before
+it runs (`args` only the short ones a label needs: `page_id`, `query`,
+`title`, `folder`, `source`, `pdf_page`, … — never a note's content), then
+streams back as an
 `{"action": {kind, summary, tool, args, result}}` NDJSON line (kinds
 list/read/view/search/rename/move/edit/create, plus `error` with `error: true` for
-failed/blocked calls) that the chat renders as a chip and saves in the message
-— clicking a chip expands the arguments and the (truncated, `_DETAIL_CAP`)
-output the model got; only applied mutations count against
+failed/blocked calls) that the chat saves in the message. A change also says
+what changed: `rename_page` / `move_page` carry `title` (the page's title
+before the call) and `from` / `to` (old and new title, old and new folder
+path, `""` = the library root), the note tools their page's `title`, and a
+change tool that changed nothing carries `noop: true`. The chat shows a
+reply's actions as one pill ("6 steps · listed, read 1 page · 1 failed",
+`chat/agentSteps.js`) that expands to every call's chip — the arguments
+and the (truncated, `_DETAIL_CAP`) output the model got — and, under it,
+the changes grouped as "Changed in your library" (old title struck through
+→ new, "… moved to ML/Generative") and "Changed in your notes", each a link
+that opens the page or the block (`openBlock(blockId, pageId)` of
+`GammaNavContext`). Actions saved before the structured fields fall back to
+their summary. While the reply streams, the pill names the step running
+now ("Searching library for “…”…") in place of the "Thinking" pill; only
+applied mutations count against
 `MAX_TOOL_ACTIONS` and trigger the home-feed refresh (`onLibraryChange`), and
 the note-block tools' actions carry `page_id`/`src_page_id` so the frontend
 reloads the open page's block tree when the AI touched it (`onNotesChange`;

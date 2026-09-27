@@ -3,10 +3,10 @@
 // pasted figures, the "+" context picker, and the per-message PDF attach.
 // App provides context (open paper, library, selections) and the model/effort/
 // prompt preferences it also needs elsewhere.
-import React, { useCallback, useEffect, useMemo, useRef, useState, useSyncExternalStore } from "react";
+import React, { useCallback, useContext, useEffect, useMemo, useRef, useState, useSyncExternalStore } from "react";
 import { API, apiJson, copyText, isPdfFile, readNdjson } from "../shared/lib/utils";
 import { stepList } from "../shared/ui/listKeys.js";
-import { DockWindow, ChatCiteContext, ChatMarkdown, AutoGrowTextarea, useCopied, useTextScale } from "../shared/ui/Widgets";
+import { DockWindow, ChatCiteContext, ChatMarkdown, AutoGrowTextarea, GammaNavContext, useCopied, useTextScale } from "../shared/ui/Widgets";
 import PaperMentionInput from "./PaperMentionInput";
 import { MAX_CHAT_REFERENCES } from "./paperMentions";
 import { READ_TOOLS, WRITE_TOOLS, toolsForKind } from "./chatSettings";
@@ -15,6 +15,7 @@ import { createTitleScorer } from "../library/librarySearch";
 import { pageAttachment } from "../library/libraryUtils";
 import { ActionMenu, MenuSelect } from "../shared/ui/Menus";
 import { chatFailure, failureCopy, failureFields, fixLabel } from "./chatErrors";
+import { changePlace, noteChangeText, runningLabel, splitActions, stepsSummary } from "./agentSteps";
 import { guideEvents } from "../guide/events.js";
 import { gammaLinksIn } from "../shared/model/gammaLinks.js";
 import { CharSlider, approxPages } from "../settings/SettingsKit";
@@ -135,6 +136,69 @@ function ChatErrorCard({ message, compact, actions }) {
       ) : null}
     </div>
   );
+}
+
+// The agent's work in a reply (chat/agentSteps.js): one pill summing up its
+// steps, which expands to every call's chip (arguments and output), and
+// under it the changes — renamed or filed pages, edited or added notes —
+// each old → new with a link to what changed. While the reply streams, the
+// pill names the step running now.
+function AgentSteps({ actions, running, open, onToggle, titleOf, children }) {
+  const { failed } = splitActions(actions);
+  const live = !!running;
+  return (
+    <div className="chatStepsWrap">
+      <button type="button" className={`chatSteps${live ? " live" : ""}`} onClick={onToggle} aria-expanded={open}
+        title={open ? t("Hide the steps") : t("Show every step with its arguments and output")}>
+        {live ? <span className="transferSpin inline" aria-hidden="true" /> : <CheckIcon size={12} />}
+        <span className="chatStepsText">{live ? runningLabel(running, titleOf) : stepsSummary(actions)}</span>
+        {failed && !live ? <span className="chatStepsFailed">{t("{n} failed", { n: failed })}</span> : null}
+        {actions.length ? (open ? <ChevronUpIcon size={11} /> : <ChevronDownIcon size={11} />) : null}
+      </button>
+      {open ? children : null}
+    </div>
+  );
+}
+
+function AgentChanges({ actions, onOpenPage }) {
+  const nav = useContext(GammaNavContext);
+  const { library, notes } = splitActions(actions);
+  if (!library.length && !notes.length) return null;
+  const pageLink = (id, label) => id
+    ? <button type="button" className="chatChangeLink" onClick={() => onOpenPage?.(id)}>{label}</button>
+    : <span>{label}</span>;
+  const blockLink = (a, label) => a.block_id && nav?.openBlock
+    ? <button type="button" className="chatChangeLink" onClick={() => nav.openBlock(a.block_id, a.page_id)}>{label}</button>
+    : pageLink(a.page_id, label);
+  const libraryRow = (a) => {
+    if (a.kind === "rename" && a.to) {
+      return <><s className="chatChangeOld">{a.from}</s> → {pageLink(a.page_id, a.to)}</>;
+    }
+    if (a.kind === "move" && a.title) {
+      return <span title={a.from ? t("Was in: {folders}", { folders: a.from }) : undefined}>
+        {t("{page} moved to {folder}", { page: pageLink(a.page_id, a.title), folder: <strong>{a.to || t("the library root")}</strong> })}
+      </span>;
+    }
+    return pageLink(a.page_id, a.summary); // saved before the structured fields
+  };
+  const noteRow = (a) => (a.title ? noteChangeText(a, blockLink(a, `“${a.title}”`)) : blockLink(a, a.summary));
+  const group = (rows, place) => rows.length ? (
+    <div className="chatChanges" key={place}>
+      <div className="chatChangesHead">
+        {place === "library" ? t("Changed in your library · {n}", { n: rows.length }) : t("Changed in your notes · {n}", { n: rows.length })}
+      </div>
+      {rows.map((a, j) => {
+        const Icon = ACTION_ICONS[a.kind] || PencilIcon;
+        return (
+          <div key={j} className="chatChange">
+            <Icon size={12} />
+            <span className="chatChangeText">{changePlace(a) === "library" ? libraryRow(a) : noteRow(a)}</span>
+          </div>
+        );
+      })}
+    </div>
+  ) : null;
+  return <>{group(library, "library")}{group(notes, "notes")}</>;
 }
 
 // The token line under a reply, Claude Code style: prompt in, reply out,
@@ -818,6 +882,7 @@ export default function ChatDock({
     let usage = null; // the provider's token report, summed over the reply's rounds
     let lastRound = null; // the latest round's report alone — the context ring's figure
     let liveChars = 0; // characters received since the last report — the running estimate
+    let running = null; // the tool call running now ({"step"} line), until its action lands
     const liveArgs = new Map(); // tool call id -> argument chars previewed so far (cumulative)
     const aiMsg = (extra = {}) => ({
       role: "ai", text: acc,
@@ -866,7 +931,10 @@ export default function ChatDock({
       await readNdjson(res, (events) => {
         for (const ev of events) {
           if (ev.error) throw chatFailure(ev.error, ev);
-          if (ev.action) {
+          if (ev.step) {
+            running = ev.step;
+          } else if (ev.action) {
+            running = null;
             actions.push(ev.action);
             // Live: the notes panel lights up the block the agent just
             // read/edited (and reloads the tree for an applied edit).
@@ -890,7 +958,9 @@ export default function ChatDock({
             liveChars += (ev.delta || "").length;
           }
         }
-        if (acc || actions.length || usage) showReply(aiMsg({ partial: true, live: liveChars }));
+        if (acc || actions.length || usage || running) {
+          showReply(aiMsg({ partial: true, live: liveChars, ...(running ? { step: running } : {}) }));
+        }
       });
       showReply(aiMsg({ text: acc || (actions.length ? "" : t("(no response)")) }), true);
       if (gammaLinksIn(acc).some((link) => link.kind === "citation")) guideEvents.emit("chat.cited");
@@ -1430,9 +1500,12 @@ export default function ChatDock({
                     {!isUser && m.context?.length ? (
                       <ContextCoverage items={m.context} />
                     ) : null}
-                    {!isUser && m.actions?.length ? (
+                    {!isUser && (m.actions?.length || (isResponding && m.step)) ? (
+                      <AgentSteps actions={m.actions || []} running={isResponding ? m.step : null}
+                        open={openActions.has(`${i}:steps`)} onToggle={() => toggleAction(`${i}:steps`)}
+                        titleOf={(id) => citeTitles.titleOf(id)?.title || ""}>
                       <div className="chatToolActions">
-                        {m.actions.map((a, j) => {
+                        {(m.actions || []).map((a, j) => {
                           const Icon = ACTION_ICONS[a.kind] || FolderIcon;
                           // Chats saved before tool output was recorded have
                           // no raw call — those chips stay plain text.
@@ -1460,7 +1533,9 @@ export default function ChatDock({
                           );
                         })}
                       </div>
+                      </AgentSteps>
                     ) : null}
+                    {!isUser && m.actions?.length ? <AgentChanges actions={m.actions} onOpenPage={onOpenPage} /> : null}
                     {isUser && m.contextPages?.length ? <div className="chatMsgPdfs">
                       {m.contextPages.map((p) => <button type="button" key={p.id} className="crumbBtn" title={p.title} onClick={() => onOpenPage?.(p.id)}><BookIcon size={11} /><span className="linkChipText">{p.title}</span></button>)}
                     </div> : null}
@@ -1470,7 +1545,7 @@ export default function ChatDock({
                     {!isUser && m.errorKind && !isResponding ? (
                       <ChatErrorCard message={m} compact={!m.error} actions={errorActions(m, i)} />
                     ) : null}
-                    {isResponding ? (
+                    {isResponding && !m.step ? (
                       <div className="chatThinking" role="status" aria-label={m.text ? t("AI is responding") : t("AI is thinking")}>
                         <span aria-hidden="true">{m.text ? t("Responding") : t("Thinking")}</span>
                         <span className="chatTyping" aria-hidden="true"><span /><span /><span /></span>
