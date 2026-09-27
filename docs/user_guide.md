@@ -108,8 +108,9 @@ The home page is a recents feed of all your pages, with a **Recently viewed** st
 
 <img alt="A query is typed, results appear grouped as titles, this paper's notes and the text of every PDF, a folder chip narrows them, and the chosen paper opens at the match" src="assets/branding/gamma-demo-search-light.svg" width="100%">
 
-**Ctrl+F** searches everything at once: page titles, this paper's notes, this PDF's text, other notes, reference links, and the full text of every PDF in the library — with match-case, whole-word and regex toggles.
+**Ctrl+F** on a page, or **Ctrl+Shift+F** anywhere, searches everything at once: page titles, this paper's notes, this PDF's text, other notes, reference links, and the full text of every PDF in the library — with match-case and whole-word toggles.
 
+- **On the home page** Ctrl+F goes to the listing's *Filter by title or label* box instead: it matches page titles and folder or label names only, floats the matches to the top and dims the rest. When nothing matches, *Search inside notes and PDFs* (or Enter in the box) hands your words to the full search; with matches, the row under them does the same.
 - **Filter chips**: type a label or folder name and press Tab — label chips match exactly, folder chips include everything beneath them (`qc` pulls in `qc/neutral-atom`).
 - **Ctrl+P** is the quick way to another page: a palette listing your recent pages, filtered by title, folder or label as you type (small typos are forgiven, like the library's search box) — ↑↓ and Enter open it.
 - **Enter / Shift+Enter** step through matches; the chevron collapses the result lists into a compact find bar (make that the default in Settings → Reading & editing).
@@ -268,7 +269,7 @@ Preferences apply immediately; browser-only ones (theme, layout) are marked *Thi
 
 | Keys | Does |
 |---|---|
-| Ctrl+F / Ctrl+Shift+F | Search everything (find-in-chat when the chat is focused; on the home page, the listing's box; in Settings or a dialog, its own search box — press again for the next one) / always the full panel |
+| Ctrl+F / Ctrl+Shift+F | On a page: search everything (find-in-chat when the chat is focused; in Settings or a dialog, its own search box — press again for the next one). On the home page: filter the listing by title or label / always the full search |
 | Ctrl+, | Open settings |
 | Ctrl+P | Quick open: pick a page by title, folder or label (recent pages first) |
 | Ctrl+Shift+P | Command palette: every command by name, with its keys (also `>` typed into Ctrl+P) |

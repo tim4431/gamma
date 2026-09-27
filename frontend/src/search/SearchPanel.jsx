@@ -34,7 +34,7 @@ export default function SearchPanel({
   focusedBlockId, homeBlocks, allFolderPaths,
   openBlock, pendingBlockScrollRef,
   pdfSearchRef, scrollToRef, cancelCoarseRestoreRef, setPdfHidden, docNonce,
-  onFindMarks, detailsDefault, wakeTasks,
+  onFindMarks, detailsDefault, wakeTasks, initialQuery = "",
 }) {
   const [query, setQuery] = useState("");
   const [labels, setLabels] = useState([]); // confirmed filter chips
@@ -56,6 +56,14 @@ export default function SearchPanel({
   const q = query.trim();
 
   useEffect(() => { if (open) setPinned(false); }, [open]);
+  // Opened with a query from elsewhere (the home listing's filter box): it
+  // replaces whatever was typed last, filters included.
+  useEffect(() => {
+    if (!open || !initialQuery) return;
+    setQuery(initialQuery);
+    setLabels([]);
+    pendingFindRef.current = null;
+  }, [open, initialQuery]);
   useEffect(() => { setSugIdx(0); }, [query]);
   useEffect(() => { setFindIndex(0); }, [pdfMatches]);
 

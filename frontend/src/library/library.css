@@ -309,7 +309,7 @@
 .homeFindBox:focus-within { border-color: var(--text-dim); }
 .homeFindBox.active { color: var(--accent); }
 .homeFindInput {
-  width: 110px;
+  width: 170px;
   border: none;
   background: none;
   padding: 0;
@@ -319,6 +319,49 @@
 }
 .homeFindInput:focus { outline: none; box-shadow: none; }
 .homeFindClear { flex-shrink: 0; }
+@media (max-width: 600px) { .homeFindInput { width: 110px; } }
+/* Past the filter box (ListSearchElsewhere): the banner when nothing in the
+   listing matched, and the quiet row that follows the matches. */
+.homeSearchBanner {
+  display: flex;
+  align-items: center;
+  flex-wrap: wrap;
+  gap: 8px 12px;
+  margin: 2px 4px 8px;
+  padding: 10px 12px;
+  border: 1px solid var(--border);
+  border-radius: 10px;
+  background: var(--bg-elevated);
+  font-size: calc(13px * var(--ui-font-scale, 1));
+  color: var(--text-secondary);
+}
+.homeSearchBannerText { flex: 1 1 220px; min-width: 0; }
+.homeSearchBannerText strong { color: var(--text-primary); }
+.homeSearchBannerBtn { display: inline-flex; align-items: center; gap: 6px; }
+.homeSearchKey {
+  font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
+  font-size: calc(10.5px * var(--ui-font-scale, 1));
+  opacity: 0.8;
+  margin-left: 4px;
+}
+.homeSearchMore {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  width: 100%;
+  padding: 6px 10px;
+  border: 1px dashed var(--border);
+  border-radius: 8px;
+  background: none;
+  color: var(--text-muted);
+  font: inherit;
+  font-size: calc(12.5px * var(--ui-font-scale, 1));
+  text-align: left;
+  cursor: pointer;
+}
+.homeSearchMore span { min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.homeSearchMore:hover { color: var(--text-primary); border-color: var(--border-hover); background: var(--bg-block); }
+.fileGrid .homeSearchMore { grid-column: 1 / -1; }
 /* non-matching rows/cards stay in place, just out of the way */
 .homeDim { opacity: 0.34; }
 .homeDim:hover { opacity: 0.75; }

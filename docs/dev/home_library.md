@@ -94,14 +94,23 @@ turns it into the display name. Opening it (`?unlabelled=1` in the URL,
 loses all its labels (`clearPagesLabels`). It has no rename/delete menu and
 its back row is plain navigation.
 
-A search box sits left of the sort pill (`ListFindBox`, live as you type, per
-view, not persisted). It never drops anything: matching items float to the top
+A filter box sits left of the sort pill (`ListFindBox`, "Filter by title or
+label", live as you type, per view, not persisted; Ctrl+F on the home page
+focuses it). It never drops anything: matching items float to the top
 of the current sort and the rest stay in place dimmed (`.homeDim`). A page
 matches on its title or its folder/label chips through `createLibraryMatcher`
 ([librarySearch.js](../../frontend/src/library/librarySearch.js), shared with
 Ctrl+P): the workspace search's typo-tolerant title scorer, case/diacritic-
 folded, every whitespace term must hit the title or a chip, and title hits
 outrank chip-only ones.
+
+The box does not read notes or PDF text, and says where that search is
+(`ListSearchElsewhere`): with nothing matched, a banner above the listing
+("No title or label matches …") offers *Search inside notes and PDFs* with
+the full search's shortcut, and Enter in the box does the same; with
+matches, a quiet row right after the last match offers it. Both open the
+workspace search with the query filled in (SearchPanel's `initialQuery`,
+App's `openSearchWith`). Neither is a `.fileRow` / `.folderRow`.
 
 **New page** and **New folder** are the FIRST items of the listing itself,
 not toolbar buttons. New page (`newPageAllowed`: not in a label view, not

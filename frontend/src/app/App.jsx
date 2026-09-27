@@ -26,7 +26,7 @@ import { cutObject, moveObjectInTree } from "../editor/mdObjects";
 import { scanMathSpans } from "../editor/mdScan";
 import { sourceRangeOfSelection } from "../editor/clickToSource";
 import { FileChipContext, forgetDocPages, rememberDocPage, setUploadReporter, uploadFilesAsLines, xhrUpload } from "../transfers/FileChip";
-import { CardLabels, KindToggle, ListFindBox, PageCard, ViewToggle } from "../library/FileBrowser";
+import { CardLabels, KindToggle, ListFindBox, ListSearchElsewhere, PageCard, ViewToggle } from "../library/FileBrowser";
 import ChatDock from "../chat/ChatDock";
 import { createChatSession } from "../chat/chatSession";
 import SearchPanel from "../search/SearchPanel";
@@ -2372,6 +2372,12 @@ function LibraryApp({ publicPage = null, initialServerConfig = null }) {
   // The Ctrl+P palette (library/QuickOpen.jsx): null, or {prefix} — "" lists
   // pages, ">" the commands (Ctrl+Shift+P).
   const [quickOpen, setQuickOpen] = useState(null);
+  // A query handed to the workspace search as it opens (the listing's
+  // "Search inside notes and PDFs"); cleared whenever the search is closed,
+  // so a later plain open keeps whatever was typed in it.
+  const [searchSeed, setSearchSeed] = useState("");
+  useEffect(() => { if (openPopover !== "search") setSearchSeed(""); }, [openPopover]);
+  const openSearchWith = (query) => { setQuickOpen(null); setSearchSeed(query); setOpenPopover("search"); };
   // The app commands' context (app/appCommands.js) and the account's
   // keybindings, refreshed every render for the once-mounted key listener.
   const appCmdRef = useRef(null);
@@ -6715,6 +6721,24 @@ function LibraryApp({ publicPage = null, initialServerConfig = null }) {
     return [...items.filter((it) => it._match), ...items.filter((it) => !it._match)];
   }, [scopePages, categoryFilter, childFolders, folderMeta, scopeLabels, labelMeta, viewedAtById, homeSort, homeKinds, homeQuery]);
   const homeVisibleItems = useMemo(() => homeItems.slice(0, homeShowCount), [homeItems, homeShowCount]);
+  // The filter box matches titles and chips only; past it, the workspace
+  // search reads notes and PDF text. With nothing matched a banner hands the
+  // query over (Enter in the box does the same); with matches a quiet row
+  // follows the last of them. homeMatchCount is null without a query.
+  const homeQueryText = homeQuery.trim();
+  const homeMatchCount = homeQueryText ? homeItems.filter((it) => it._match).length : null;
+  const commandKeyLabel = (id) => {
+    const cmd = APP_COMMANDS.find((c) => c.id === id);
+    const keys = cmd ? effectiveKeys(cmd, keybindings) : [];
+    return keys.length ? chordLabel(keys[0]) : "";
+  };
+  // The quiet row goes right after the matches (they lead the listing).
+  const withSearchMore = (nodes) => (homeMatchCount > 0 && homeMatchCount <= nodes.length
+    ? [...nodes.slice(0, homeMatchCount), searchElsewhere(false), ...nodes.slice(homeMatchCount)] : nodes);
+  const searchElsewhere = (none) => (
+    <ListSearchElsewhere key="search-elsewhere" query={homeQueryText} none={none}
+      keyLabel={commandKeyLabel("app.searchAll")} onSearch={() => openSearchWith(homeQueryText)} />
+  );
   // "New folder" leads the listing wherever folders are listed — not inside a
   // label view or with the listing filtered to files or labels.
   const newFolderAllowed = lib.organize && !categoryFilter && homeKinds !== "files" && homeKinds !== "labels";
@@ -7876,7 +7900,8 @@ function LibraryApp({ publicPage = null, initialServerConfig = null }) {
               <div className="homeListBar" data-guide="home.listing">
                 <span className="homeListLabel">{categoryFilter === NO_LABEL ? t("Unlabelled") : categoryFilter ? t("Labelled") : folderFilter ? t("Contents") : t("Library")}</span>
                 <span className="homeListSpacer" />
-                <ListFindBox value={homeQuery} onChange={setHomeQuery} />
+                <ListFindBox value={homeQuery} onChange={setHomeQuery} keyLabel={commandKeyLabel("app.search")}
+                  onEnter={homeMatchCount === 0 ? () => openSearchWith(homeQueryText) : undefined} />
                 <MenuSelect
                   icon={ArrowUpDownIcon}
                   label={categoryFilter ? t("Sort this label") : folderFilter ? t("Sort this folder — subfolders inherit it") : t("Sort the library — folders inherit it")}
@@ -7900,6 +7925,7 @@ function LibraryApp({ publicPage = null, initialServerConfig = null }) {
                 <ViewToggle view={homeView} onChange={changeHomeView} />
               </div>
             ) : null}
+            {homeMode && homeMatchCount === 0 ? searchElsewhere(true) : null}
             {homeMode && homeView === "grid" ? (
                 <>
                   {homeItems.length === 0 && !newFolderOpen ? (
@@ -7947,7 +7973,7 @@ function LibraryApp({ publicPage = null, initialServerConfig = null }) {
                         onClick={() => { setNewFolderName(""); setNewFolderOpen(true); }}
                       />
                     )}
-                    {homeVisibleItems.map((item) => {
+                    {withSearchMore(homeVisibleItems.map((item) => {
                       const dim = homeQuery && !item._match ? "homeDim" : "";
                       if (item.kind === "label") { const l = item.label; return (
                       <PageCard
@@ -8037,7 +8063,7 @@ function LibraryApp({ publicPage = null, initialServerConfig = null }) {
                           ) : null}
                         </PageCard>
                       );
-                    })}
+                    }))}
                   </div>
                   {homeItems.length > homeVisibleItems.length ? (
                     <button ref={loadMoreRef} className="loadMoreBtn" onClick={() => setHomeShowCount((c) => c + HOME_PAGE_CHUNK)}>
@@ -8079,7 +8105,7 @@ function LibraryApp({ publicPage = null, initialServerConfig = null }) {
                         <span className="folderName">{t("New folder")}</span>
                       </button>
                     )}
-                    {homeVisibleItems.map((item) => {
+                    {withSearchMore(homeVisibleItems.map((item) => {
                       const dim = homeQuery && !item._match ? "homeDim" : "";
                       if (item.kind === "label") { const l = item.label; return (
                       <div
@@ -8177,7 +8203,7 @@ function LibraryApp({ publicPage = null, initialServerConfig = null }) {
                           ) : null}
                         </div>
                       );
-                    })}
+                    }))}
                   </div>
                   {homeItems.length > homeVisibleItems.length ? (
                     <button ref={loadMoreRef} className="loadMoreBtn" onClick={() => setHomeShowCount((c) => c + HOME_PAGE_CHUNK)}>
@@ -8828,6 +8854,7 @@ function LibraryApp({ publicPage = null, initialServerConfig = null }) {
         setPdfHidden={setPdfHidden}
         docNonce={pdfDocNonce}
         onFindMarks={setFindMarks}
+        initialQuery={searchSeed}
       />
       {focusedBlockId && !homeMode ? (
         <span data-popover="share" className="popoverAnchor">
