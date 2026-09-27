@@ -154,7 +154,7 @@
    its own case, so only real acronyms are uppercase. Each class's own rule
    holds its layout (dock titles also a size step up). */
 :is(.dockGrip, .homeListLabel, .pinnedLabel, .carouselLabel, .popoverLabel, .popoverSection,
-  .searchSection, .ctxMenuLabel, .slashMenuTitle, .keyGroupLabel, .quickOpenSection) {
+  .searchSection, .ctxMenuLabel, .slashMenuTitle, .refPopupHead, .keyGroupLabel, .quickOpenSection) {
   font-size: var(--fs-xs);
   font-weight: 600;
   letter-spacing: 0;
@@ -583,7 +583,7 @@ body {
   --co-color: var(--callout-note);
   border-left: 3px solid var(--co-color);
   background: color-mix(in srgb, var(--co-color) 8%, transparent);
-  padding-left: 10px;
+  padding: 0 12px;
   color: var(--text-primary);
 }
 .blockEditorCm .cm-line.cmCallout-tip { --co-color: var(--callout-tip); }
@@ -593,6 +593,13 @@ body {
 .blockEditorCm .cm-line.cmCallout-quote { --co-color: var(--callout-quote); }
 .blockEditorCm .cm-line.cmCalloutFirst { border-top-left-radius: var(--radius-sm); border-top-right-radius: var(--radius-sm); }
 .blockEditorCm .cm-line.cmCalloutLast { border-bottom-left-radius: var(--radius-sm); border-bottom-right-radius: var(--radius-sm); }
+/* The rendered box's metrics (no jump when the block opens): its 6px
+   padding above the title line and below the last line, and the title's
+   2px under it (4px for a foldable one's <summary>). Padding, not margins:
+   CodeMirror measures a line by its box. */
+.blockEditorCm .cm-line.cmCalloutFirst { padding-top: 6px; padding-bottom: 2px; }
+.blockEditorCm .cm-line.cmCalloutFirst.cmCalloutFold:not(.cmCalloutLast) { padding-bottom: 4px; }
+.blockEditorCm .cm-line.cmCalloutLast { padding-bottom: 6px; }
 .blockEditorCm .cmCalloutTitle { color: var(--co-color); font-weight: 600; }
 /* Live task/bullet/rule markers in the editor. */
 .blockEditorCm .cm-line.cmTaskDone { color: var(--text-muted); }
@@ -616,8 +623,12 @@ body {
 .blockEditorCm .cmImgWidget[draggable="true"] { cursor: grab; }
 /* The editor's table widget: the rendered table's look, read-only (cells are
    edited in the rendered view); a click puts the caret after it, right-click
-   shows the source, and it drags like the picture. */
-.blockEditorCm .cmTableWidget { display: inline-block; max-width: 100%; overflow-x: auto; margin: 4px 0; border-radius: var(--radius-sm); cursor: grab; vertical-align: top; }
+   shows the source, and it drags like the picture. It sits where the
+   rendered table does: the object frame's 3px halo as padding, 6px under the
+   line above (3px here plus the padding; none on the first line) and the
+   14px the rendered table keeps under it for its + row. */
+.blockEditorCm .cmTableWidget { display: inline-block; box-sizing: border-box; max-width: 100%; overflow-x: auto; padding: 3px; margin: 3px 0 14px; border-radius: var(--radius-sm); cursor: grab; vertical-align: top; }
+.blockEditorCm .cm-line:first-child .cmTableWidget { margin-top: 0; }
 .blockEditorCm .cmTableWidget table { border-collapse: collapse; font-size: 0.95em; }
 .blockEditorCm .cmTableWidget :is(th, td) { border: 1px solid var(--border); padding: 3px 8px; text-align: left; min-width: 36px; white-space: nowrap; }
 .blockEditorCm .cmTableWidget :is(th, td):empty::after { content: "\00a0"; }
@@ -791,11 +802,13 @@ body {
 
 /* The rendered view keeps the editor's height (no jump when a block opens):
    its outer margins stop at the block's edges (the hover line and peer
-   carets are overlays, not content), and a list hugs the line above it as
-   its source lines do. */
+   carets are overlays, not content), and a list, a quote or callout and a
+   table hug the line above them as their source lines do (:where keeps a
+   callout's title, a <p>, at its own 2px). */
 .blockRendered > :first-child { margin-top: 0; }
 .blockRendered > :nth-last-child(1 of :not(.mdGapLine, .peerCaret)) { margin-bottom: 0; }
-.blockRendered p:has(+ :is(ul, ol, pre)) { margin-bottom: 0; }
+.blockRendered p:has(+ :where(ul, ol, pre, blockquote, details, .mdObject-table)) { margin-bottom: 0; }
+.blockRendered p + blockquote { margin-top: 0; }
 
 .blockRendered ul,
 .blockRendered ol {
@@ -888,19 +901,19 @@ body {
   transition: transform var(--dur-fast);
 }
 .blockRendered details.callout[open] > summary.calloutTitle::before { transform: rotate(45deg); }
-.blockRendered details.callout[open] > summary.calloutTitle { margin-bottom: 4px; }
-.blockRendered .callout-tip { --co-color: var(--callout-tip); }
-.blockRendered .callout-warning { --co-color: var(--callout-warning); }
-.blockRendered .callout-danger { --co-color: var(--callout-danger); }
-.blockRendered .callout-important { --co-color: var(--callout-important); }
-.blockRendered .callout-quote { --co-color: var(--callout-quote); }
+.blockRendered details.callout[open] > summary.calloutTitle:not(:last-child) { margin-bottom: 4px; }
+.blockRendered .callout.callout-tip { --co-color: var(--callout-tip); }
+.blockRendered .callout.callout-warning { --co-color: var(--callout-warning); }
+.blockRendered .callout.callout-danger { --co-color: var(--callout-danger); }
+.blockRendered .callout.callout-important { --co-color: var(--callout-important); }
+.blockRendered .callout.callout-quote { --co-color: var(--callout-quote); }
 .blockRendered .calloutTitle {
   font-weight: 600;
   color: var(--co-color);
   margin: 0 0 2px;
 }
 .blockRendered :is(blockquote, details).callout p:last-child,
-.blockRendered blockquote > p:last-child { margin-bottom: 0; }
+.blockRendered :is(blockquote, details) > :last-child { margin-bottom: 0; }
 /* Every note table renders inside MdTableWrap (editor/MdTools.jsx): the wrapper owns
    scrolling and, when editable, hosts the hover controls — "+" strips on the
    right/bottom edges and the column/row handle pills. */
@@ -925,6 +938,9 @@ body {
   margin: 6px 0;
 }
 .mdTableScroll { overflow-x: auto; }
+/* At the block's top edge a table starts there, inside its frame's halo, as
+   the editor's first line does. */
+.blockRendered > .mdObject-table:first-child > .mdTableWrap { margin-top: 0; }
 /* Reserve the gutters the strips live in so they don't overlap neighbors. */
 .mdTableEditable { margin-right: 14px; margin-bottom: 14px; }
 .mdTableAdd {
@@ -1050,7 +1066,7 @@ body {
 }
 .mdImgFrame:is(:hover, :has(.mdImgTools :focus-visible)) .mdImgTools { opacity: 1; pointer-events: auto; }
 .mdImgTools a.ctlBtn { text-decoration: none; }
-.mdImgTools .ctlBtn.danger:hover { background: rgba(224, 92, 92, 0.15); color: #e05c5c; }
+.mdImgTools .ctlBtn.danger:hover { background: var(--danger-bg); color: var(--danger); }
 /* The edge drag grips shared by sized figures (note images, Mermaid
    diagrams — shared/ui/ResizeGrip.jsx), one per side; each frame reveals
    them on hover. */
@@ -1466,7 +1482,7 @@ body {
   position: fixed;
   inset: 0;
   background: rgba(40, 80, 160, 0.2);
-  border: 3px dashed var(--accent-dark);
+  border: 3px dashed var(--accent-fill);
   color: var(--text-bright);
   font-size: var(--fs-2xl);
   font-weight: 600;
@@ -2193,7 +2209,7 @@ button.pdfOutlineChevron:hover { background: rgba(128, 128, 128, 0.28); color: v
 }
 .tabsMenuRow.picked { background: var(--bg-hover); }
 .tabsMenuRow.current { font-weight: 600; }
-.tabsMenuRow.current .tabsMenuTitle { color: var(--accent-dark); }
+.tabsMenuRow.current .tabsMenuTitle { color: var(--accent-fill); }
 .tabsMenuTitle { flex: 1; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .tabsMenuPin { display: inline-flex; color: var(--text-dim); flex-shrink: 0; }
 .tabsMenuRow .kindGlyph { flex-shrink: 0; }
@@ -2240,21 +2256,21 @@ button.pdfOutlineChevron:hover { background: rgba(128, 128, 128, 0.28); color: v
    for conflicts, a dot (accent: local edits not pushed, green: up to
    date, red: a problem); the words are its tooltip. */
 .topbar .iconBtn.mirrorPill { position: relative; }
-.mirrorPill.warn svg { color: #d9822b; }
+.mirrorPill.warn svg { color: var(--warn); }
 .mirrorPill.error svg { color: var(--danger); }
 .mirrorPill.busy svg, .mirrorSpin svg { animation: mirrorSpin 1.2s linear infinite; }
 @keyframes mirrorSpin { to { transform: rotate(360deg); } }
 .mirrorPillDot { position: absolute; right: 5px; bottom: 5px; width: 7px; height: 7px; border-radius: 50%; background: var(--text-dim); box-shadow: 0 0 0 2px var(--bg-elevated); pointer-events: none; }
 .mirrorPillDot.ok { background: var(--ok); }
 .mirrorPillDot.pending { background: var(--accent); }
-.mirrorPillDot.warn { background: #d9822b; }
+.mirrorPillDot.warn { background: var(--warn); }
 .mirrorPillDot.error { background: var(--danger); }
-.mirrorPillBadge { position: absolute; top: -3px; right: -4px; min-width: 15px; height: 15px; padding: 0 4px; border-radius: var(--radius-full); font-size: var(--fs-2xs); font-weight: 600; line-height: 1; color: #fff; background: #d9822b; display: inline-flex; align-items: center; justify-content: center; box-shadow: 0 0 0 2px var(--bg-elevated); pointer-events: none; }
+.mirrorPillBadge { position: absolute; top: -3px; right: -4px; min-width: 15px; height: 15px; padding: 0 4px; border-radius: var(--radius-full); font-size: var(--fs-2xs); font-weight: 600; line-height: 1; color: #fff; background: var(--warn); display: inline-flex; align-items: center; justify-content: center; box-shadow: 0 0 0 2px var(--bg-elevated); pointer-events: none; }
 .mirrorPopBtns { display: inline-flex; gap: 2px; flex-shrink: 0; }
 .mirrorState.pending > svg { color: var(--accent); }
 .mirrorState.error > svg { color: var(--danger); }
 .mirrorStateLine .uiBtn { margin-left: auto; }
-.mirrorConflictBtn { color: #d9822b; }
+.mirrorConflictBtn { color: var(--warn); }
 /* A log row: the row itself opens its changes, the arrow opens the page. */
 .mirrorPopItemRow { display: flex; align-items: center; gap: 2px; }
 .mirrorPopItemRow .popoverItem { flex: 1; min-width: 0; }
@@ -2267,7 +2283,7 @@ button.pdfOutlineChevron:hover { background: rgba(128, 128, 128, 0.28); color: v
 .mirrorChangeGlyph { font-family: var(--font-mono); width: 10px; flex-shrink: 0; font-weight: 600; }
 .mirrorChange.add .mirrorChangeGlyph { color: var(--ok); }
 .mirrorChange.del .mirrorChangeGlyph { color: var(--danger); }
-.mirrorChange.mod .mirrorChangeGlyph { color: #d9822b; }
+.mirrorChange.mod .mirrorChangeGlyph { color: var(--warn); }
 .mirrorChangeText { white-space: pre-wrap; word-break: break-word; min-width: 0; border-radius: var(--radius-xs); padding: 0 3px; max-height: 96px; overflow: auto; }
 .mirrorChange.add .mirrorChangeText { background: color-mix(in srgb, var(--ok) 12%, transparent); }
 .mirrorChange.del .mirrorChangeText { background: color-mix(in srgb, var(--danger) 10%, transparent); text-decoration: line-through; color: var(--text-muted); }
@@ -2286,8 +2302,8 @@ button.pdfOutlineChevron:hover { background: rgba(128, 128, 128, 0.28); color: v
 /* The state block: one icon, one short line, bars while a round runs. */
 .mirrorState { display: flex; align-items: flex-start; gap: 7px; padding: 4px 4px 8px; font-size: var(--fs-sm); color: var(--text-primary); min-width: 0; }
 .mirrorState > svg { flex-shrink: 0; margin-top: 2px; }
-.mirrorState.ok > svg { color: var(--accent-dark); }
-.mirrorState.warn > svg { color: #d9822b; }
+.mirrorState.ok > svg { color: var(--accent-fill); }
+.mirrorState.warn > svg { color: var(--warn); }
 .mirrorState.busy > svg { animation: mirrorSpin 1.2s linear infinite; }
 .mirrorStateBody { display: flex; flex-direction: column; gap: 4px; min-width: 0; flex: 1; }
 .mirrorStateLine { display: flex; align-items: baseline; gap: 8px; min-width: 0; }
@@ -2302,20 +2318,19 @@ button.pdfOutlineChevron:hover { background: rgba(128, 128, 128, 0.28); color: v
 /* The settings view: icon + control rows, a confirm strip, the action chips. */
 .mirrorSetActions { display: flex; gap: 6px; flex-wrap: wrap; padding: 6px 4px; }
 .mirrorConfirm { display: flex; flex-wrap: wrap; align-items: center; gap: 6px; padding: 6px 4px; font-size: var(--fs-xs); color: var(--text-secondary); }
-.mirrorConfirm > svg { color: #d9822b; flex-shrink: 0; }
+.mirrorConfirm > svg { color: var(--warn); flex-shrink: 0; }
 .mirrorConfirmBtns { display: inline-flex; gap: 6px; margin-left: auto; }
-.mirrorMore { font-size: var(--fs-xs); color: var(--text-muted); }
 /* The merge chip on a block row and the conflict card (MergeResolver.jsx):
    one card for the chip's popover, the sync pill's list and Settings — the
    kind line (with ‹ n / N › on a row chip), the versions (ours · theirs
    side by side, the merged text under them), each with its Use / Keep. */
 .mergeChipWrap { position: absolute; right: 4px; top: 2px; z-index: 4; }
-.mergeChip { display: inline-flex; align-items: center; justify-content: center; width: 18px; height: 18px; border-radius: 50%; border: 1px solid #d9822b; background: var(--bg-elevated); color: #d9822b; cursor: pointer; padding: 0; }
-.mergeChip:hover, .mergeChip.on { background: #d9822b; color: #fff; }
+.mergeChip { display: inline-flex; align-items: center; justify-content: center; width: 18px; height: 18px; border-radius: 50%; border: 1px solid var(--warn); background: var(--bg-elevated); color: var(--warn); cursor: pointer; padding: 0; }
+.mergeChip:hover, .mergeChip.on { background: var(--warn); color: #fff; }
 .mergePopover { position: absolute; right: 0; top: 22px; width: 480px; max-width: calc(100vw - 24px); z-index: var(--z-float); cursor: default; text-align: left; font-weight: normal; }
 .mergeCard { display: flex; flex-direction: column; gap: 6px; min-width: 0; }
 .mergeHead { display: flex; align-items: flex-start; gap: 8px; padding: 2px 4px 4px; }
-.mergeKindIcon { display: inline-flex; align-items: center; justify-content: center; width: 26px; height: 26px; border-radius: var(--radius-md); background: color-mix(in srgb, #d9822b 14%, transparent); color: #d9822b; flex-shrink: 0; }
+.mergeKindIcon { display: inline-flex; align-items: center; justify-content: center; width: 26px; height: 26px; border-radius: var(--radius-md); background: var(--warn-bg); color: var(--warn); flex-shrink: 0; }
 .mergeHeadText { display: flex; flex-direction: column; gap: 1px; min-width: 0; flex: 1; }
 .mergeHeadText .popoverTitle, .mergeHeadText .popoverHint { padding: 0; }
 .mergePage { font-weight: 500; color: var(--text-muted); }
@@ -2331,13 +2346,13 @@ button.pdfOutlineChevron:hover { background: rgba(128, 128, 128, 0.28); color: v
 .mergeVersionHead .uiTag { margin-left: auto; }
 .mergeSide { display: inline-flex; align-items: center; gap: 4px; font-size: var(--fs-2xs); font-weight: 600; padding: 1px 6px; border-radius: var(--radius-full); color: var(--text-primary); flex-shrink: 0; }
 .mergeSide.mine { background: color-mix(in srgb, var(--accent) 22%, transparent); }
-.mergeSide.theirs { background: color-mix(in srgb, #d9822b 24%, transparent); }
+.mergeSide.theirs { background: color-mix(in srgb, var(--warn) 24%, transparent); }
 .mergeSide.result { background: var(--bg-hover); }
 .mergeSideHint { padding: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; min-width: 0; }
 .mergeText { font-size: var(--fs-sm); line-height: 1.5; white-space: pre-wrap; word-break: break-word; color: var(--text-primary); max-height: 180px; overflow: auto; }
 .mergeText mark { border-radius: var(--radius-xs); padding: 0 1px; color: inherit; }
 mark.merge-mine { background: color-mix(in srgb, var(--accent) 28%, transparent); }
-mark.merge-theirs { background: color-mix(in srgb, #d9822b 30%, transparent); }
+mark.merge-theirs { background: color-mix(in srgb, var(--warn) 30%, transparent); }
 mark.merge-both { background: var(--bg-hover); text-decoration: underline dotted; }
 mark.merge-add { background: color-mix(in srgb, var(--ok) 25%, transparent); }
 mark.merge-del { background: color-mix(in srgb, var(--danger) 16%, transparent); text-decoration: line-through; color: var(--text-muted); }
@@ -2350,9 +2365,9 @@ mark.merge-del { background: color-mix(in srgb, var(--danger) 16%, transparent);
 .mirrorCards .mergeCard { padding: 8px; border-radius: var(--radius-lg); border: 1px solid var(--border-subtle); }
 /* A clone row's avatar in Settings carries its state. */
 .mirrorAvatar.ok { color: var(--ok); }
-.mirrorAvatar.warn { color: #d9822b; }
+.mirrorAvatar.warn { color: var(--warn); }
 .mirrorAvatar.busy svg { animation: mirrorSpin 1.2s linear infinite; }
-.uiTag.warn { color: #d9822b; border-color: color-mix(in srgb, #d9822b 45%, transparent); }
+.uiTag.warn { color: var(--warn); border-color: color-mix(in srgb, var(--warn) 45%, transparent); }
 .uiTag.ok { color: var(--ok); border-color: color-mix(in srgb, var(--ok) 45%, transparent); }
 .uiTag.failed { color: var(--danger); border-color: currentColor; }
 .uiTag.pending { color: var(--accent); border-color: color-mix(in srgb, var(--accent) 45%, transparent); }
@@ -2365,7 +2380,7 @@ mark.merge-del { background: color-mix(in srgb, var(--danger) 16%, transparent);
 .mirrorDiff { font-family: var(--font-mono); font-size: var(--fs-2xs); display: inline-flex; gap: 5px; white-space: nowrap; }
 .mirrorDiff .add { color: var(--ok); }
 .mirrorDiff .del { color: var(--danger); }
-.mirrorDiff .mod { color: #d9822b; }
+.mirrorDiff .mod { color: var(--warn); }
 .popoverHint { font-size: var(--fs-2xs); color: var(--text-muted); line-height: 1.45; padding: 0 4px; }
 .popoverSection {
   padding: 4px 4px 0;
@@ -2414,7 +2429,7 @@ mark.merge-del { background: color-mix(in srgb, var(--danger) 16%, transparent);
 .publishState .mirrorStateLine .iconBtn { margin-left: auto; }
 .uiBtn .mirrorSpin { display: inline-flex; }
 .settingsPaneHint.shareSummary { display: flex; align-items: flex-start; gap: 6px; padding: 0 8px 2px; }
-.settingsPaneHint.shareWarn { color: #d9822b; }
+.settingsPaneHint.shareWarn { color: var(--warn); }
 .shareWarn svg { flex-shrink: 0; margin-top: 2px; }
 .sharePopover .aiProvActions { display: inline-flex; align-items: center; gap: 6px; }
 /* The invite box on top of who has access: the picker (its matches open
@@ -2444,12 +2459,15 @@ mark.merge-del { background: color-mix(in srgb, var(--danger) 16%, transparent);
 }
 .copyBoxBody { min-width: 0; }
 .copyBoxBtn { position: absolute; top: 6px; right: 6px; }
-.userPopover { min-width: 268px; }
+/* The account menu grows with the interface size, like the rows in it
+   (controls zoom, docs/dev/ui-design.md); it never gets narrower than at
+   100 %, where the unscaled avatar would wrap the card's line. */
+.userPopover { min-width: max(268px, calc(268px * var(--ui-scale, 1))); }
 /* The account menu's notices (what the red dot is about): a tinted row per
    notice, its sentence and a link to the pane that resolves it. */
 .accountNotices { display: flex; flex-direction: column; gap: 4px; margin-top: 2px; }
 .accountNotice {
-  --notice-tone: #d9822b;
+  --notice-tone: var(--warn);
   display: flex;
   align-items: flex-start;
   gap: 8px;
@@ -2473,15 +2491,26 @@ mark.merge-del { background: color-mix(in srgb, var(--danger) 16%, transparent);
   border: none;
   background: none;
   font-family: inherit; font-weight: inherit; line-height: inherit;
-  color: var(--accent-dark);
+  color: var(--accent-fill);
   cursor: pointer;
 }
 .accountNoticeAction:hover { text-decoration: underline; }
 
 /* workspace switcher rows in the account popover */
-/* A workspace row is a menu row whose icon is the workspace's initial. */
+/* A workspace row is a menu row whose icon is the workspace's initial. The
+   name keeps its width and the meta ("personal · default") takes what is
+   left, ellipsized: a narrow menu never shows a row without its name. */
 .ctxMenuItem.wsItem .ctxMenuIcon { width: 20px; }
-.ctxMenuItem.wsItem .wsItemMeta { margin-left: 8px; }
+.ctxMenuItem.wsItem .ctxMenuText { flex: 0 1 auto; }
+.ctxMenuItem.wsItem .wsItemMeta {
+  flex: 1 1 0;
+  min-width: 0;
+  margin-left: 8px;
+  overflow: hidden;
+  text-align: right;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
 .wsItemBadge {
   width: 20px;
   height: 20px;
@@ -2496,8 +2525,7 @@ mark.merge-del { background: color-mix(in srgb, var(--danger) 16%, transparent);
   color: var(--accent-bright);
   border: 1px solid var(--border);
 }
-.wsItemName { flex: 1; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
-.wsItemMeta { font-size: var(--fs-2xs); color: var(--text-muted); flex-shrink: 0; }
+.wsItemMeta { font-size: var(--fs-2xs); color: var(--text-muted); }
 .wsItemCheck { color: var(--accent-bright); flex-shrink: 0; }
 
 /* account card header inside the popover */
@@ -2589,7 +2617,7 @@ mark.merge-del { background: color-mix(in srgb, var(--danger) 16%, transparent);
   box-shadow: 0 1px 2px rgba(0, 0, 0, 0.35);
   transition: transform var(--dur-base) ease;
 }
-.switch input:checked + .switchTrack { background: var(--accent-dark); }
+.switch input:checked + .switchTrack { background: var(--accent-fill); }
 .switch input:checked + .switchTrack::after { transform: translateX(14px); }
 .switch input:focus-visible + .switchTrack {
   outline: 2px solid var(--focus-ring);
@@ -2722,8 +2750,8 @@ mark.searchMark {
   font-family: inherit;
 }
 .searchToggle.on {
-  background: color-mix(in srgb, var(--accent-dark) 18%, transparent);
-  border-color: var(--accent-dark);
+  background: color-mix(in srgb, var(--accent-fill) 18%, transparent);
+  border-color: var(--accent-fill);
   color: var(--text-primary);
 }
 .searchSection {
@@ -2777,7 +2805,7 @@ mark.searchMark {
 .sash-vertical { height: 5px; cursor: row-resize; }
 .sash:hover,
 .sash[data-resize-handle-state="hover"],
-.sash[data-resize-handle-state="drag"] { background: var(--accent-dark); transition: none; }
+.sash[data-resize-handle-state="drag"] { background: var(--accent-fill); transition: none; }
 
 /* uniform window chrome */
 .dockWindow {
@@ -3139,13 +3167,13 @@ html.appFocusFullscreen, html.appFocusFullscreen body { overflow: hidden; oversc
 .citeWarnHint { color: var(--danger); padding: 0 8px 4px; }
 .sourcePopover { min-width: 300px; right: 0; }
 
-.searchResult.active { background: color-mix(in srgb, var(--accent-dark) 14%, transparent); }
+.searchResult.active { background: color-mix(in srgb, var(--accent-fill) 14%, transparent); }
 
 .dockPreview {
   position: fixed;
   z-index: var(--z-refpopup);
-  background: color-mix(in srgb, var(--accent-dark) 25%, transparent);
-  border: 2px solid var(--accent-dark);
+  background: color-mix(in srgb, var(--accent-fill) 25%, transparent);
+  border: 2px solid var(--accent-fill);
   border-radius: var(--radius-md);
   pointer-events: none;
   transition: left var(--dur-fast) ease, top var(--dur-fast) ease, width var(--dur-fast) ease, height var(--dur-fast) ease;
@@ -3198,7 +3226,7 @@ html.appFocusFullscreen, html.appFocusFullscreen body { overflow: hidden; oversc
   border-radius: var(--radius-sm);
   user-select: none;
 }
-.chatToolPermRow:hover { background: color-mix(in srgb, var(--accent-dark) 8%, transparent); }
+.chatToolPermRow:hover { background: color-mix(in srgb, var(--accent-fill) 8%, transparent); }
 .chatToolPermRow input { margin: 0; }
 .chatToolPermRow svg { flex: none; opacity: 0.75; }
 .chatMessages {
@@ -3470,8 +3498,11 @@ html.appFocusFullscreen, html.appFocusFullscreen body { overflow: hidden; oversc
 .pwField:has(> .aiKeyInput) { margin-bottom: 6px; }
 .setField .pwField { margin-bottom: 0; }
 .loginCard .pwField { margin-bottom: 12px; }
-.aiKeysError { color: #e5534b; }
-.aiTestOk { color: #4caf50; }
+/* Status text: an error, a passed check. The line often also carries a
+   muted hint class that is declared later (.settingsPaneHint, .aiProvDesc,
+   .aiKeyCheck), so the pair outranks it. */
+.aiKeysError, :is(.settingsPaneHint, .aiProvDesc, .aiKeyCheck).aiKeysError { color: var(--danger); }
+.aiTestOk, :is(.settingsPaneHint, .aiProvDesc, .aiKeyCheck).aiTestOk { color: var(--ok); }
 /* --- Interface size (Settings → Appearance) ----------------------------
    Text uses --ui-font-scale; controls zoom their box, text and icon together.
    Reset the text multiplier inside controls to scale exactly once. Include
@@ -3569,7 +3600,7 @@ html.appFocusFullscreen, html.appFocusFullscreen body { overflow: hidden; oversc
 }
 .uiBtn.on:hover:not(:disabled) { background: var(--bg-selected); color: var(--text-primary); }
 .uiBtn.ghost { background: transparent; border-color: transparent; box-shadow: none; }
-.uiBtn.primary { background: var(--accent-dark); border-color: transparent; color: var(--on-accent); }
+.uiBtn.primary { background: var(--accent-fill); border-color: transparent; color: var(--on-accent); }
 .uiBtn.primary:hover:not(:disabled) { background: var(--accent-hover); color: var(--on-accent); }
 .uiBtn.danger { color: var(--danger); border-color: var(--danger-border); }
 .uiBtn.danger:hover:not(:disabled) { background: var(--danger-bg); border-color: var(--danger); color: var(--danger); }
@@ -3607,8 +3638,9 @@ html.appFocusFullscreen, html.appFocusFullscreen body { overflow: hidden; oversc
 }
 /* Flat at rest: rows are separated by a straight inset hairline (a border
    would curve around the radius and read as a card edge), and only hover
-   paints the rounded highlight. */
-.aiProvRow:not(:last-of-type)::after {
+   paints the rounded highlight. A row is a <label> or a <div> (only a row
+   with a radio is a label), so "not the last" is "followed by a row". */
+.aiProvRow:has(+ .aiProvRow)::after {
   content: "";
   position: absolute;
   left: 8px;
@@ -3631,9 +3663,9 @@ html.appFocusFullscreen, html.appFocusFullscreen body { overflow: hidden; oversc
 }
 .quotaBarFill {
   display: block; height: 100%; border-radius: 2px;
-  background: var(--accent-dark); transition: width var(--dur-slow) ease;
+  background: var(--accent-fill); transition: width var(--dur-slow) ease;
 }
-.quotaBarFill.warn { background: #d9822b; }
+.quotaBarFill.warn { background: var(--warn); }
 .quotaBarFill.full { background: #e5534b; }
 /* meters inside user-list rows stay compact */
 .aiProvMeta .quotaMeter { max-width: 260px; }
@@ -3664,7 +3696,7 @@ html.appFocusFullscreen, html.appFocusFullscreen body { overflow: hidden; oversc
   font-weight: 500;
   vertical-align: 1px;
 }
-.uiTag.admin { color: #4a9eff; border-color: rgba(74, 158, 255, 0.4); }
+.uiTag.admin { color: var(--accent); border-color: color-mix(in srgb, var(--accent) 40%, transparent); }
 /* Text for screen readers only: the sentence behind an icon, a table header without a visible word. */
 .srOnly { position: absolute; width: 1px; height: 1px; overflow: hidden; clip: rect(0 0 0 0); white-space: nowrap; }
 /* The share view's "as <name>" tag (an editing visitor without an account) and
@@ -3675,7 +3707,7 @@ html.appFocusFullscreen, html.appFocusFullscreen body { overflow: hidden; oversc
   flex-shrink: 1; min-width: 0; max-width: 38%; overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
   cursor: pointer;
 }
-.topbar button.linkNameTag:hover { border-color: var(--accent-dark); color: var(--text-primary); }
+.topbar button.linkNameTag:hover { border-color: var(--accent-fill); color: var(--text-primary); }
 .topbar .linkNameInput { margin-left: 6px; width: 11em; max-width: 38%; padding: 1px 7px; font-size: var(--fs-xs); }
 /* The share view's brand mark (a page share's way to this server's front
    door) and its access pill (sharing/ShareAccess.jsx): the role in bold with
@@ -4303,7 +4335,7 @@ a.shareBrand:hover { background: var(--bg-hover); }
 }
 .chatMsgActionBtn:disabled { opacity: 0.4; cursor: default; }
 .chatBubbleRow.findHit .chatBubble {
-  outline: 2px solid var(--accent-dark);
+  outline: 2px solid var(--accent-fill);
   outline-offset: 3px;
 }
 /* edit-in-place bubble */
@@ -4362,7 +4394,7 @@ a.shareBrand:hover { background: var(--bg-hover); }
   flex-shrink: 0;
 }
 .chatFindRow .searchToggle:disabled { opacity: 0.35; cursor: default; }
-.chatClearBtn.on { color: var(--text-primary); border-color: var(--accent-dark); background: color-mix(in srgb, var(--accent-dark) 15%, transparent); }
+.chatClearBtn.on { color: var(--text-primary); border-color: var(--accent-fill); background: color-mix(in srgb, var(--accent-fill) 15%, transparent); }
 /* pasted figures: pending previews + in-bubble display */
 .chatImgPreviewRow {
   display: flex;
@@ -4704,7 +4736,7 @@ a.shareBrand:hover { background: var(--bg-hover); }
   right: 3px;
   width: 8px;
   height: 8px;
-  border: 2px solid var(--accent-dark);
+  border: 2px solid var(--accent-fill);
   border-top-color: transparent;
   border-radius: 50%;
   animation: transferSpin 0.8s linear infinite;
@@ -4787,7 +4819,7 @@ a.shareBrand:hover { background: var(--bg-hover); }
 }
 .topbar .navBackBtn:hover {
   background: var(--accent-bg);
-  border-color: var(--accent-dark);
+  border-color: var(--accent-fill);
   color: var(--accent-bright);
   transform: translateX(-1px);
 }
@@ -4800,7 +4832,7 @@ a.shareBrand:hover { background: var(--bg-hover); }
   height: 15px;
   padding: 0 3px;
   border-radius: var(--radius-full);
-  background: var(--accent-dark);
+  background: var(--accent-fill);
   color: var(--on-accent);
   font-size: var(--fs-2xs);
   font-weight: 600;
@@ -5174,7 +5206,7 @@ a.shareBrand:hover { background: var(--bg-hover); }
   font-weight: 600;
   color: var(--accent);
   background: var(--accent-bg-light);
-  border: 1px solid var(--accent-dark);
+  border: 1px solid var(--accent-fill);
   border-radius: var(--radius-full);
   padding: 0 7px;
   margin-left: 8px;
@@ -5196,7 +5228,7 @@ a.shareBrand:hover { background: var(--bg-hover); }
   text-overflow: ellipsis;
   white-space: nowrap;
 }
-.blockLinkChip:hover { background: var(--accent-dark); border-color: #4a8abf; color: var(--on-accent); }
+.blockLinkChip:hover { background: var(--accent-fill); border-color: #4a8abf; color: var(--on-accent); }
 [data-scheme="light"] .blockLinkChip { background: #e3effa; color: #2b6bcb; border-color: #b5d2ee; }
 [data-scheme="light"] .blockLinkChip:hover { background: #cfe3f7; color: #1d5ab3; }
 :is([data-theme="gamma-light"], [data-theme="gamma-dark"]) .blockLinkChip { background: var(--accent-bg); color: var(--accent); border-color: var(--border-light); }
@@ -5227,7 +5259,7 @@ a.shareBrand:hover { background: var(--bg-hover); }
   font-size: var(--fs-sm);
   color: var(--text-primary);
 }
-.ctxMenuItem:hover { background: var(--bg-hover); }
+.ctxMenuItem:hover:not(:disabled) { background: var(--bg-hover); }
 .moveBlockList .ctxMenuItem:focus-visible { background: var(--bg-hover); outline: none; }
 /* Menu rows with a leading glyph (e.g. the tab menu's pin/close). */
 .ctxMenuItemIconed {
@@ -5252,11 +5284,11 @@ a.shareBrand:hover { background: var(--bg-hover); }
   text-overflow: ellipsis;
   white-space: nowrap;
 }
-/* Destructive rows (Delete) — same red language as .uiBtn.danger. */
-.ctxMenuItem.danger:hover { background: var(--danger-bg); color: var(--danger); }
-.ctxMenuItem.danger:hover .ctxMenuIcon { color: var(--danger); }
+/* Destructive rows (Delete) — same red language as .uiBtn.danger. A
+   disabled row never lights up on hover, in a popover menu either. */
+.ctxMenuItem.danger:hover:not(:disabled) { background: var(--danger-bg); color: var(--danger); }
+.ctxMenuItem.danger:hover:not(:disabled) .ctxMenuIcon { color: var(--danger); }
 .ctxMenuItem:disabled { opacity: 0.45; cursor: default; }
-.ctxMenuItem:disabled:hover { background: none; }
 
 /* Section label row inside a menu (MenuLabel). */
 .ctxMenuLabel {
@@ -5301,11 +5333,11 @@ a.shareBrand:hover { background: var(--bg-hover); }
   font-size: var(--fs-sm);
   color: var(--text-primary);
 }
-.topbar .popover .ctxMenuItem:hover,
-.popover .ctxMenuItem:hover { background: var(--bg-hover); }
+.topbar .popover .ctxMenuItem:hover:not(:disabled),
+.popover .ctxMenuItem:hover:not(:disabled) { background: var(--bg-hover); }
 .popover .ctxMenuItem.danger { color: var(--danger); }
 .popover .ctxMenuItem.danger .ctxMenuIcon { color: var(--danger); }
-.popover .ctxMenuItem.danger:hover { background: var(--danger-bg); }
+.popover .ctxMenuItem.danger:hover:not(:disabled) { background: var(--danger-bg); }
 .popover .ctxMenuDivider { margin: 2px 0; }
 .popover .ctxSubMenu { padding: 4px; }
 
@@ -5337,13 +5369,9 @@ a.shareBrand:hover { background: var(--bg-hover); }
   overflow-y: auto;
   padding: 4px;
 }
+/* Section title (the shared section-label look, like .slashMenuTitle). */
 .refPopupHead {
   padding: 8px 10px 3px;
-  font-size: var(--fs-2xs);
-  font-weight: 600;
-  letter-spacing: 0.04em;
-  text-transform: uppercase;
-  color: var(--text-dim);
   user-select: none;
 }
 .refPopupHead:first-child { padding-top: 4px; }
@@ -5373,7 +5401,6 @@ a.shareBrand:hover { background: var(--bg-hover); }
   text-overflow: ellipsis;
 }
 .refPopupText { font-size: var(--fs-md); }
-.refPopupText b { font-weight: 600; }
 .refPopupMeta { font-size: var(--fs-xs); color: var(--text-muted); }
 /* The key hints pinned under a caret popup's scrolling list: the [[ picker's
    and the "/" menu's. Each popup's own rule reaches over its padding. */
@@ -5381,7 +5408,7 @@ a.shareBrand:hover { background: var(--bg-hover); }
   position: sticky;
   border-top: 1px solid var(--border-subtle);
   border-radius: 0 0 var(--radius-md) var(--radius-md);
-  background: var(--bg-surface);
+  background: var(--bg-elevated);
   font-size: var(--fs-2xs);
   color: var(--text-dim);
   user-select: none;
@@ -5548,7 +5575,6 @@ a.shareBrand:hover { background: var(--bg-hover); }
 .transferFooter { flex-shrink: 0; padding-top: 14px; margin-top: 14px; border-top: 1px solid var(--border-subtle); align-items: center; }
 .transferHelp { font-size: var(--fs-xs); color: var(--text-secondary); }
 .transferHelp summary { cursor: pointer; padding: 6px 0; }
-.transferModal :is(button, input):focus-visible { outline: 2px solid var(--accent); outline-offset: 2px; }
 @media (max-width: 620px) {
   .transferModal { padding: 14px; width: calc(100vw - 20px); max-height: calc(100dvh - 20px); }
   .transferFormatRow { grid-template-columns: minmax(0, 1fr); gap: 6px; }
@@ -5765,6 +5791,20 @@ a.shareBrand:hover { background: var(--bg-hover); }
   pointer-events: none;
 }
 @keyframes inkFlashFade { 0%, 60% { opacity: 1; } 100% { opacity: 0; } }
+/* A highlight a jump landed on (from its note, a deep link, a search hit):
+   one ring in its own hue that swells and fades while the fill deepens.
+   The rects keep their blend, so on a light page the ring tints like the
+   highlight itself.
+   Reduced motion: a still ring for as long as the flash lasts. */
+.pdfPageWrap [data-hl-id].pdfHlFlash { animation: pdfHlFlash 1s ease-out; }
+@keyframes pdfHlFlash {
+  0% { box-shadow: 0 0 0 0 var(--hl-line, var(--hl)), 0 0 0 0 var(--hl-line, var(--hl)); }
+  30% { box-shadow: 0 0 0 2px var(--hl-line, var(--hl)), 0 0 0 5px var(--hl-line, var(--hl)); filter: saturate(2.2); }
+  100% { box-shadow: 0 0 0 6px transparent, 0 0 0 10px transparent; }
+}
+@media (prefers-reduced-motion: reduce) {
+  .pdfPageWrap [data-hl-id].pdfHlFlash { box-shadow: 0 0 0 3px var(--hl-line, var(--hl)); }
+}
 
 /* The tool strip: top-centre of the viewer, the control-box surface laid
    flat. Row one is the tools (presets, eraser, lasso, hand, close,

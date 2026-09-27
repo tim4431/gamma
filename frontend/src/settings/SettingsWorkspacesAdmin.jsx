@@ -136,17 +136,17 @@ function NewWorkspaceDialog({ me, accounts, setStatus, onCreated, onClose }) {
   return (
     <SubDialog title={t("New shared workspace")} onClose={onClose} draft={form}>
       <div className="settingsForm">
-        <Field label={t("Name")} hint={t("a lab, a course, a reading room — personal workspaces are made from Manage workspaces")}>
+        <Field label={t("Name")} hint={t("A lab, a course, a reading room — personal workspaces are made from Manage workspaces")}>
           <input
             className="aiKeyInput" type="text" autoFocus value={form.name}
             onChange={(e) => set({ name: e.target.value })}
             onKeyDown={(e) => { if (e.key === "Enter") submit(); }}
           />
         </Field>
-        <Field label={t("Owner")} hint={t("who manages it — you unless you pick someone")}>
+        <Field label={t("Owner")} hint={t("Who manages it — you unless you pick someone")}>
           <AccountPicker accounts={accounts} value={form.owner} onChange={(owner) => set({ owner })} compact />
         </Field>
-        <Field label={t("Access")} hint={form.access === "public" ? t("every account on this server can open it") : t("members only, by invitation")}>
+        <Field label={t("Access")} hint={form.access === "public" ? t("Every account on this server can open it") : t("Members only, by invitation")}>
           <MenuSelect value={form.access} label={t("Access")} options={ACCESS_OPTIONS} block onChange={(access) => set({ access })} />
         </Field>
         {form.access === "public" ? (
@@ -154,7 +154,7 @@ function NewWorkspaceDialog({ me, accounts, setStatus, onCreated, onClose }) {
             <MenuSelect value={form.public_role} label={t("Public role")} options={PUBLIC_ROLE_OPTIONS} block onChange={(public_role) => set({ public_role })} />
           </Field>
         ) : null}
-        <Field label={t("Workspace quota")} hint={t("total uploads · blank = unlimited")}>
+        <Field label={t("Workspace quota")} hint={t("Total uploads · blank = unlimited")}>
           <UnitInput unit="MB" min={0} placeholder="unlimited" value={form.quota_mb} onChange={(quota_mb) => set({ quota_mb })} />
         </Field>
         {error ? <div className="settingsPaneHint aiKeysError">{error}</div> : null}

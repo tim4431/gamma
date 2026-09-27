@@ -3,14 +3,8 @@
     "color": 7,
     "shadow": 4
   },
-  "settings/settings.css": {
-    "color": 4
-  },
   "shared/styles/app.css": {
-    "color": 111,
+    "color": 84,
     "shadow": 3
-  },
-  "transfers/importReview.css": {
-    "color": 1
   }
 }

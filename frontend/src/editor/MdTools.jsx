@@ -6,7 +6,7 @@
 // a text transform on the block's markdown source — scanImages / scanTables
 // (mdScan.js) locate the nth rendered construct so the components can
 // address "their" source range without a position map from the renderer.
-import React, { useEffect, useRef, useState } from "react";
+import React, { useEffect, useRef, useState, useSyncExternalStore } from "react";
 import { createPortal } from "react-dom";
 import { parseTable, scanImages, scanTables, serializeTable } from "./mdScan";
 import { ContextMenu, MenuItem } from "../shared/ui/Menus";
@@ -299,12 +299,23 @@ export function MdImage({ src, alt, width, idx, onEdit }) {
 // map, keyed by block id + table index, and the mount effect reopens there.
 const _tableEditSession = new Map(); // editKey → {row, col}
 
-// Blocks that just got a table from /table or a paste: the first time a
-// table renders there as an editable one, the guide hears "table.created" —
-// the tables tour is offered beside the table the user made, never merely
-// for opening a page that has one.
-const _madeTables = new Set(); // block ids
-export function noteTableMade(blockId) { _madeTables.add(blockId); }
+// Blocks that just got a table from /table or a paste, and where in the
+// block it went: when that table first renders as an editable one, the guide
+// hears "table.created" — the tables tour is offered beside the table the
+// user made, never merely for opening a page that has one. `source` is the
+// block's text before the insert at `at`; the tables starting before `at`
+// give the new table's index.
+const _madeTables = new Map(); // block id → index of the new table in it
+export function noteTableMade(blockId, source, at) {
+  _madeTables.set(blockId, scanTables(source || "").filter((tb) => tb.from < at).length);
+}
+// The table made most recently (its editKey) carries data-guide-recent, so
+// the guide's table anchors pick that one (anchors.js, pick: "recent"), not
+// the page's first table.
+let _recentTable = null;
+const _recentListeners = new Set();
+const subscribeRecentTable = (fn) => { _recentListeners.add(fn); return () => _recentListeners.delete(fn); };
+const recentTable = () => _recentTable;
 
 export function MdTableWrap({ idx, onEdit, model, editKey, children }) {
   const wrapRef = useRef(null);
@@ -321,9 +332,17 @@ export function MdTableWrap({ idx, onEdit, model, editKey, children }) {
   useEffect(() => {
     if (!editable) return;
     guideEvents.emit("table.shown");
-    if (editKey && _madeTables.delete(editKey.slice(0, editKey.lastIndexOf(":")))) guideEvents.emit("table.created");
+    const blockId = editKey?.slice(0, editKey.lastIndexOf(":"));
+    if (editKey && _madeTables.get(blockId) === idx) {
+      _madeTables.delete(blockId);
+      _recentTable = editKey;
+      _recentListeners.forEach((fn) => fn());
+      guideEvents.emit("table.created");
+    }
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [editable]);
+  const recentKey = useSyncExternalStore(subscribeRecentTable, recentTable);
+  const recent = !!editKey && recentKey === editKey;
   const dragRef = useRef(null); // {kind, at, from, startX, startY, moved, to}
 
   const stop = (e) => e.stopPropagation();
@@ -507,6 +526,7 @@ export function MdTableWrap({ idx, onEdit, model, editKey, children }) {
     <div
       className={`mdTableWrap${onEdit ? " mdTableEditable" : ""}`}
       data-guide={onEdit ? "notes.table" : undefined}
+      data-guide-recent={recent ? "" : undefined}
       ref={wrapRef}
       onMouseOver={onOver}
       onMouseLeave={() => setHover(null)}

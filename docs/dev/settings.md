@@ -246,7 +246,10 @@ The account card:
 Preferences:
 
 - **Appearance** ([SettingsAppearance.jsx](../../frontend/src/settings/SettingsAppearance.jsx)):
-  how things look. The eight theme cards (`PictureChoices`), the interface
+  how things look. The eight theme cards (`PictureChoices`; each swatch
+  is drawn under its theme's `data-theme` / `data-scheme`, so it paints
+  from that theme's own tokens, `ThemePreview` in
+  `shared/illustrations/`), the interface
   language (a `MenuSelect`: System / English / 中文, [i18n.md](i18n.md)), the
   dark-page switch with its live PDF sample, **Library**: the live card demo
   with the thumbnails / folders / labels switches
@@ -371,9 +374,9 @@ At the bottom of the rail:
 
 **Shared AI provider** (Server, `SettingsAi.jsx` `SharedAiProviderSettings`)
 lists the server's shared connections with the same rows and the same
-add/edit form as Connections (`ProviderRow`, `ProviderForm`; the form's
-state comes from `useProviderEditor` over `/api/admin/ai-providers`
-instead of App's aiKeys group). An entry is an API-key service or a ChatGPT
+add/edit form as Connections (`ProviderRow`, `ProviderForm`; both forms'
+state is `useProviderEditor`, here over `/api/admin/ai-providers`, for the
+account's list over `/api/ai/providers` in App). An entry is an API-key service or a ChatGPT
 subscription signed in with the account form's paste-the-callback steps
 (`/api/admin/ai-providers/chatgpt/*`); the dialog is titled "Connect a
 shared AI service" and tests a new entry once it is saved. Each row has
@@ -495,7 +498,8 @@ An irreversible action sits in the pane's or dialog's Danger zone
 (`Section tone="danger"`; the rules are in [ui-design.md](ui-design.md)
 "Dialogs"). Editor dialogs share one layout. A `SubDialog`'s title row
 carries the × unless `closeButton={false}`. Each `Field` puts the label on
-its own line, one hint line under it and the control below. A
+its own line, one hint line under it (a sentence, capital first) and the
+control below. A
 `DialogButtons` footer's `footnote` says what a disabled primary button
 waits for ("Fill in the server and its token to continue."). Editor dialogs
 accept a `draft` value for dismissal protection. See

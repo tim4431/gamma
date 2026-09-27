@@ -8,7 +8,7 @@ import assert from "node:assert/strict";
 import fs from "node:fs";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
-import { ALL_COMMANDS, GROUPS, fixedKeys } from "../src/app/commands.js";
+import { ALL_COMMANDS, GROUPS, commandById, commandChord, fixedKeys } from "../src/app/commands.js";
 import { APP_COMMANDS } from "../src/app/appCommands.js";
 import { BLOCK_COMMANDS } from "../src/editor/blockCommands.js";
 import { chordLabel, conflicts, effectiveKeys, normalizeChord } from "../src/shared/lib/hotkeys.js";
@@ -57,6 +57,17 @@ test("the user guide's cheat sheet names every default shortcut", () => {
 test("fixedKeys follows the Enter preference", () => {
   assert.deepEqual(fixedKeys(false)[0][0], ["Shift-Enter"]);
   assert.deepEqual(fixedKeys(true)[0][0], ["Enter"]);
+});
+
+test("commandChord is the chord a command answers to for this account", () => {
+  assert.equal(commandChord("app.quickOpen", {}), "Mod-p");
+  assert.equal(commandChord("app.redo", {}), "Mod-y", "the first of several defaults");
+  assert.equal(commandChord("app.quickOpen", { "app.quickOpen": "Mod-Shift-o" }), "Mod-Shift-o", "a rebound command");
+  assert.equal(commandChord("app.quickOpen", { "app.quickOpen": null }), "", "an unbound command");
+  assert.equal(commandChord("app.share", {}), "", "a command with no default");
+  assert.equal(commandChord("app.nothing", {}), "");
+  assert.equal(commandById("app.share").label, "Share this page…");
+  assert.equal(commandById("app.nothing"), null);
 });
 
 const tree = () => [

@@ -216,7 +216,7 @@ function Versions({ conflict, busy, onUse }) {
         <span className="popoverHint mergeActionsHint">
           {keeps ? t("Keeps the text as it is and marks the conflict resolved") : t("Puts the {side} text into the block", { side: t(SIDE[selected].label).toLowerCase() })}
         </span>
-        <button type="button" className="uiBtn sm primary" data-guide="merge.apply" disabled={busy} onClick={() => onUse(keeps ? "keep" : selected)}
+        <button type="button" className="uiBtn sm primary" disabled={busy} onClick={() => onUse(keeps ? "keep" : selected)}
           title={keeps ? t("Mark resolved as it is") : t("Write the chosen text; the next round pushes it")}>
           <CheckIcon size={14} /> {t("Apply")}
         </button>

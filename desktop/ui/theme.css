@@ -1,6 +1,6 @@
 /* Shell chrome styling — the launcher and the shell bar. The tokens come
    from tokens.css, linked before this file: a copy of Gamma's own
-   frontend/src/shared/styles/tokens.css (`npm run desktop-tokens` in
+   frontend/src/shared/styles/tokens.css (`npm run copy-tokens` in
    frontend/ refreshes it, frontend/tests/themes.test.mjs checks it), so the
    chrome paints every theme exactly as Gamma does. The theme is the
    `data-theme` the Gamma page last reported (none = dark, like Gamma's
@@ -22,67 +22,95 @@
 html, body { margin: 0; }
 body {
   color: var(--text-primary);
-  font: 13px/1.45 var(--font-sans);
+  font-family: var(--font-sans);
+  font-size: var(--fs-sm);
+  line-height: var(--lh-ui);
   -webkit-user-select: none;
   user-select: none;
 }
 
-/* --- the unified controls (Gamma's class names) -------------------------- */
+/* --- the unified controls (Gamma's class names and recipes, app.css) ----- */
+
+/* Icons come in Gamma's three sizes, set where each sits: 14 inline with
+   text, 16 in buttons, 20 in card tiles. Like Gamma's Icon, the stroke is
+   1.6 px whatever the size: stroke-width 1.6 x 24 / size = 2.74 / 2.4 /
+   1.92 (a check mark 2 px: 3.43 at 14). */
 
 /* The unified controls set display themselves, which would beat the UA's
    [hidden] rule — keep the attribute meaningful for every control. */
 [hidden] { display: none !important; }
 
+/* Keyboard focus: Gamma's one ring, shown only for keyboard focus; menu
+   rows draw it inside. Fields take the accent border and a halo instead. */
+:where(button, a[href], summary, [role="button"], input:is([type="checkbox"], [type="radio"]), [tabindex]:not([tabindex="-1"])):focus-visible {
+  outline: 2px solid var(--focus-ring);
+  outline-offset: 2px;
+}
+
+/* Buttons: .uiBtn the secondary (a bordered rect with a faint lift),
+   .primary the one solid accent action, .ghost a tertiary text button,
+   .danger outlined red, .primary.danger the solid confirm. Heights: 32,
+   .sm 28; .iconSq is square at the same heights. */
 .uiBtn {
   display: inline-flex;
   align-items: center;
   justify-content: center;
-  gap: 6px;
+  gap: var(--space-3);
+  min-height: 32px;
   background: var(--bg-elevated);
   border: 1px solid var(--border);
-  border-radius: 9px;
+  border-radius: var(--radius-md);
   color: var(--text-secondary);
-  font: inherit;
-  font-size: 12px;
+  font-family: inherit;
+  font-size: var(--fs-sm);
   font-weight: 500;
-  padding: 5px 14px;
-  min-height: 30px;
+  line-height: var(--lh-ui);
+  padding: var(--space-2) 14px;
   cursor: pointer;
   white-space: nowrap;
+  box-shadow: var(--shadow-1);
+  transition: background var(--dur-fast) ease, color var(--dur-fast) ease, border-color var(--dur-fast) ease, box-shadow var(--dur-fast) ease;
 }
-.uiBtn:hover:not(:disabled) { background: var(--bg-hover); color: var(--text-primary); border-color: var(--border-light); }
-.uiBtn:active:not(:disabled) { background: var(--bg-active); }
-.uiBtn:disabled { opacity: 0.45; cursor: default; }
-.uiBtn.primary { background: var(--accent); border-color: var(--accent); color: var(--on-accent); }
-.uiBtn.primary:hover:not(:disabled) { background: var(--accent-dark); border-color: var(--accent-dark); color: var(--on-accent); filter: brightness(1.05); }
-.uiBtn.danger { color: var(--danger); border-color: var(--danger-border); background: transparent; }
-.uiBtn.danger:hover:not(:disabled) { background: var(--danger-bg); color: var(--danger); border-color: var(--danger); }
-.uiBtn.sm { min-height: 28px; font-size: 11.5px; padding: 4px 12px; border-radius: 8px; }
-.uiBtn.iconSq { width: 28px; height: 28px; min-height: 0; padding: 0; flex-shrink: 0; }
-.uiBtn svg { width: 15px; height: 15px; flex-shrink: 0; }
+.uiBtn:hover:not(:disabled) { background: var(--bg-hover); color: var(--text-primary); }
+.uiBtn:active:not(:disabled) { background: var(--bg-active); box-shadow: none; }
+.uiBtn.sm { min-height: 28px; font-size: var(--fs-xs); padding: var(--space-2) var(--space-5); }
+.uiBtn.iconSq { width: 32px; height: 32px; padding: 0; flex-shrink: 0; }
+.uiBtn.sm.iconSq { width: 28px; height: 28px; }
+.uiBtn.ghost { background: transparent; border-color: transparent; box-shadow: none; }
+.uiBtn.primary { background: var(--accent-fill); border-color: transparent; color: var(--on-accent); }
+.uiBtn.primary:hover:not(:disabled) { background: var(--accent-hover); color: var(--on-accent); }
+.uiBtn.danger { color: var(--danger); border-color: var(--danger-border); }
+.uiBtn.danger:hover:not(:disabled) { background: var(--danger-bg); border-color: var(--danger); color: var(--danger); }
+.uiBtn.primary.danger { background: var(--danger); border-color: transparent; color: #fff; }
+.uiBtn.primary.danger:hover:not(:disabled) { background: var(--danger); filter: brightness(1.08); color: #fff; }
+.uiBtn:disabled { color: var(--text-dim); cursor: default; box-shadow: none; }
+.uiBtn.primary:disabled { color: var(--on-accent); opacity: 0.45; }
+.uiBtn svg { width: 16px; height: 16px; stroke-width: 2.4; flex-shrink: 0; }
 
-/* Flat icon button (hover tools, bar actions). */
+/* The frameless icon button (hover tools, bar actions): 26 px, a 16 px icon. */
 .ctlBtn {
   display: inline-flex;
   align-items: center;
   justify-content: center;
-  width: 28px;
-  height: 28px;
+  width: 26px;
+  height: 26px;
   padding: 0;
   border: none;
   border-radius: var(--radius-sm);
   background: transparent;
-  color: var(--text-muted);
+  color: var(--text-tertiary);
   cursor: pointer;
   flex-shrink: 0;
 }
-.ctlBtn:hover { background: var(--bg-hover); color: var(--text-primary); }
-.ctlBtn.danger:hover { background: var(--danger-bg); color: var(--danger); }
-.ctlBtn svg { width: 15px; height: 15px; }
+.ctlBtn:hover:not(:disabled) { background: var(--bg-active); color: var(--text-primary); }
+.ctlBtn.danger:hover:not(:disabled) { background: var(--danger-bg); color: var(--danger); }
+.ctlBtn:disabled { opacity: 0.4; cursor: default; }
+.ctlBtn svg { width: 16px; height: 16px; stroke-width: 2.4; }
 
 .uiInput {
   width: 100%;
-  font: inherit;
+  font-family: inherit;
+  font-size: inherit;
   color: var(--text-primary);
   background: var(--bg-input);
   border: 1px solid var(--border);
@@ -90,8 +118,17 @@ body {
   padding: 7px 10px;
   outline: none;
 }
-.uiInput:focus { border-color: var(--accent); box-shadow: 0 0 0 2px var(--accent-bg); }
-.uiInput.mono { font: 12px/1.4 var(--font-mono); }
+.uiInput:focus { border-color: var(--accent); box-shadow: 0 0 0 3px var(--accent-bg); }
+.uiInput.mono { font-family: var(--font-mono); font-size: var(--fs-xs); }
+
+/* On/off: Gamma's switch, a checkbox under a track. */
+.switch { position: relative; display: inline-flex; flex-shrink: 0; width: 34px; height: 20px; }
+.switch input { position: absolute; inset: 0; width: 100%; height: 100%; margin: 0; opacity: 0; cursor: pointer; }
+.switchTrack { position: relative; width: 34px; height: 20px; border-radius: var(--radius-full); background: var(--bg-subtle); transition: background var(--dur-base) ease; pointer-events: none; }
+.switchTrack::after { content: ""; position: absolute; top: 2px; left: 2px; width: 16px; height: 16px; border-radius: 50%; background: #fff; box-shadow: 0 1px 2px rgba(0, 0, 0, 0.35); transition: transform var(--dur-base) ease; }
+.switch input:checked + .switchTrack { background: var(--accent-fill); }
+.switch input:checked + .switchTrack::after { transform: translateX(14px); }
+.switch input:focus-visible + .switchTrack { outline: 2px solid var(--focus-ring); outline-offset: 2px; }
 
 .dot { width: 7px; height: 7px; border-radius: 50%; background: var(--text-dim); opacity: 0.5; flex-shrink: 0; }
 .dot.on { background: var(--ok); opacity: 1; }

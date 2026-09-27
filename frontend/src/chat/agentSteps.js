@@ -48,21 +48,43 @@ export function stepsSummary(actions = []) {
 }
 
 // What the step running right now is doing, from its {"step"} line
-// ({tool, args}); `titleOf(pageId)` names a page when the library knows it.
+// ({tool, args} — the short arguments the server repeats, _STEP_ARGS in
+// routers/ai.py); `titleOf(pageId)` names a page when the library knows it
+// (read_block's block_id is one when it names a whole page).
 export function runningLabel(step, titleOf = () => "") {
   const args = step?.args || {};
   const title = args.page_id ? titleOf(args.page_id) : "";
+  const folder = args.folder || "";
   switch (step?.tool) {
-    case "list_pages": return t("Listing pages…");
+    case "list_pages":
+      return args.label ? t("Listing pages labelled “{label}”…", { label: args.label })
+        : folder ? t("Listing pages in {folder}…", { folder }) : t("Listing pages…");
+    case "list_folders": return folder ? t("Listing folders in {folder}…", { folder }) : t("Listing folders…");
     case "read_page": return title ? t("Reading “{title}”…", { title }) : t("Reading a page…");
-    case "read_block": return title ? t("Reading notes of “{title}”…", { title }) : t("Reading notes…");
+    case "read_block": {
+      const page = args.block_id ? titleOf(args.block_id) : "";
+      return page ? t("Reading notes of “{title}”…", { title: page }) : t("Reading notes…");
+    }
+    case "read_chats": return title ? t("Reading the chat about “{title}”…", { title }) : t("Reading chats…");
     case "view_pdf_page": return t("Looking at PDF page {page}…", { page: args.pdf_page || "?" });
     case "search_library": return t("Searching library for “{query}”…", { query: args.query || "" });
     case "search_papers": return t("Searching papers for “{query}”…", { query: args.query || "" });
     case "fetch_paper": return t("Fetching {source}…", { source: args.source || t("a document") });
-    case "rename_page": return title ? t("Renaming “{title}”…", { title }) : t("Renaming a page…");
-    case "move_page": return title ? t("Filing “{title}”…", { title }) : t("Filing a page…");
-    case "edit_block": return t("Editing a note…");
+    case "rename_page":
+      if (args.title) {
+        return title ? t("Renaming “{title}” to “{to}”…", { title, to: args.title }) : t("Renaming to “{to}”…", { to: args.title });
+      }
+      return title ? t("Renaming “{title}”…", { title }) : t("Renaming a page…");
+    case "move_page":
+      if (folder) return title ? t("Moving “{title}” to {folder}…", { title, folder }) : t("Moving a page to {folder}…", { folder });
+      return title ? t("Moving “{title}”…", { title }) : t("Moving a page…");
+    case "edit_block":
+      return {
+        append: () => t("Appending to a note…"),
+        prepend: () => t("Prepending to a note…"),
+        patch: () => t("Editing part of a note…"),
+        selection: () => t("Editing the selection…"),
+      }[args.mode]?.() || t("Editing a note…");
     case "create_block": return t("Adding a note…");
     case "move_block": return t("Moving a note…");
     default: return t("Working…");
