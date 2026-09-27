@@ -165,7 +165,7 @@ async def ub_get_or_create_by_doc(doc_id: str, payload: UBByDocCreate, request: 
 @router.get("/blocks/{block_id}/children")
 async def ub_get_children(block_id: str, request: Request):
     scope = share_scope(request)
-    if scope is not None and block_id == "root" and not scope.folder:
+    if scope is not None and block_id == "root" and not scope.lists_library:
         # A page share may not enumerate the owner's library; a folder share
         # lists the pages it reaches — the share view's home library.
         raise HTTPException(status_code=403, detail="not accessible via this share link")

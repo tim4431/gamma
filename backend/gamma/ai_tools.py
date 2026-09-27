@@ -15,9 +15,10 @@ mutates, and its executor — so arming a chat is one filter
 (:func:`agent_tools`) and dispatch is one lookup (:func:`run_agent_tool`),
 with the in-scope check shared by every executor.
 
-Reads: list the pages (folder scope only); read a page (its notes and
-highlights, plus the extracted text of its PDF attachment when it has one);
-read a page's note outline with block ids; full-text-search the reachable
+Reads: list the pages and the folder tree (folder scope only); read a page
+(its notes and highlights, plus the extracted text of its PDF attachment when
+it has one); read a page's note outline with block ids; read the AI chat kept
+with a page or folder; look at a PDF page as a picture; full-text-search the reachable
 pages' notes and PDF text via the two FTS indexes; search the scholarly record
 and read a document that is not in the library (``ai_web.py`` — read-only,
 nothing stored).  Writes: rename pages and
@@ -47,7 +48,7 @@ from fractional_indexing import generate_key_between
 
 from .ai_context import DEPRECATED_TOOLS, canonical_tool, page_report_section, pdf_path
 from .blocks_store import fetch_subtree, page_attachment, page_root_id, root_pages
-from .db import connect_pages_db, page_now, ws_db_path
+from .db import connect_data_db, connect_pages_db, page_now, ws_db_path
 from .ops import after_commit, apply_ops, note_reload, record_ops
 from .foldertags import add_tag, clean_path, parse_tags, path_within
 from .logbuf import log
@@ -110,6 +111,17 @@ AGENT_PROMPT = (
 
 def _scope_folder(scope: dict) -> str:
     return clean_path(scope.get("folder") or "")
+
+
+def _in_scope_folder(scope: dict, raw) -> str:
+    """A folder argument resolved inside the scope's folder: a path already
+    within it stays, any other path is taken as its subfolder, and an empty
+    one is the scope's folder itself."""
+    path = _scope_folder(scope)
+    target = clean_path(str(raw or ""))
+    if not target:
+        return path
+    return f"{path}/{target}" if path and not path_within(target, path) else target
 
 
 def _page_in_scope(scope: dict, page_id: str, tags: list[str]) -> bool:
@@ -227,7 +239,6 @@ def _run_list_pages(conn, ws: str, scope: dict, args: dict):
         sub = f"{path}/{sub}"  # relative folder filters resolve inside the scope
     want_labels = bool(args.get("list_labels"))
     label_counts: dict[str, int] = {}
-    folder_counts: dict[str, int] = {}
     lines = []
     for page_id, content, props_raw, updated in conn.execute(
             "SELECT id, content, properties, updated_at FROM unified_blocks "
@@ -243,8 +254,6 @@ def _run_list_pages(conn, ws: str, scope: dict, args: dict):
         if want_labels:
             for lab in page_labels:
                 label_counts[lab] = label_counts.get(lab, 0) + 1
-            for tag in tags:
-                folder_counts[tag] = folder_counts.get(tag, 0) + 1
             continue
         if label and label not in (lab.lower() for lab in page_labels):
             continue
@@ -272,14 +281,12 @@ def _run_list_pages(conn, ws: str, scope: dict, args: dict):
         lines.append("- " + " | ".join(bits))
     where = f"“{path}”" if path else "the library"
     if want_labels:
-        out_lines = ([f'- label "{lab}": {n} page{"s" if n != 1 else ""}'
-                      for lab, n in sorted(label_counts.items(), key=lambda kv: (-kv[1], kv[0]))]
-                     + [f'- folder "{f}": {n} page{"s" if n != 1 else ""}'
-                        for f, n in sorted(folder_counts.items(), key=lambda kv: (-kv[1], kv[0]))])
+        out_lines = [f'- label "{lab}": {n} page{"s" if n != 1 else ""}'
+                     for lab, n in sorted(label_counts.items(), key=lambda kv: (-kv[1], kv[0]))]
         action = {"kind": "list", "summary": f"Listed {len(label_counts)} labels in {where}"}
         if not out_lines:
-            return "No labels or folders in scope.", action
-        return "Labels and folders in scope (with page counts):\n" + "\n".join(out_lines), action
+            return "No labels in scope (folders: list_folders).", action
+        return "Labels in scope (with page counts):\n" + "\n".join(out_lines), action
     filters = "".join([f' labeled "{label}"' if label else "",
                        f' titled ~"{title_q}"' if title_q else ""])
     where_full = (f"“{sub}”" if sub else where) + filters
@@ -292,6 +299,54 @@ def _run_list_pages(conn, ws: str, scope: dict, args: dict):
     header = f"Pages in {where_full}"
     tail = f"\n(+{len(lines) - _LIST_CAP} more not shown)" if len(lines) > _LIST_CAP else ""
     return f"{header} ({len(lines)}):\n" + "\n".join(lines[:_LIST_CAP]) + tail, action
+
+
+def _run_list_folders(conn, ws: str, scope: dict, args: dict):
+    """The folder tree below the scope's folder (or the `folder` asked for):
+    every path the pages' tags name plus their implied parents, each with
+    the pages filed directly in it and the pages anywhere below it."""
+    root = _in_scope_folder(scope, args.get("folder"))
+    here: dict[str, set] = {}
+    below: dict[str, set] = {}
+    unfiled = 0
+    for page_id, props_raw in conn.execute(
+            "SELECT id, properties FROM unified_blocks WHERE parent_id = 'root'"):
+        try:
+            props = json.loads(props_raw or "{}")
+        except ValueError:
+            props = {}
+        tags = parse_tags(props.get("folder"))
+        if not _page_in_scope(scope, page_id, tags):
+            continue
+        if not tags:
+            unfiled += 1
+        for tag in tags:
+            if root and not path_within(tag, root):
+                continue
+            here.setdefault(tag, set()).add(page_id)
+            parts = tag.split("/")
+            for depth in range(1, len(parts) + 1):
+                folder_path = "/".join(parts[:depth])
+                if not root or path_within(folder_path, root):
+                    below.setdefault(folder_path, set()).add(page_id)
+    lines = []
+    for folder_path in sorted(below, key=lambda p: p.split("/")):
+        n_here, n_below = len(here.get(folder_path, ())), len(below[folder_path])
+        counts = (f"{n_here} page{'s' if n_here != 1 else ''}" if n_here == n_below
+                  else f"{n_here} here, {n_below} with subfolders")
+        depth = folder_path.count("/") - root.count("/")
+        lines.append("  " * depth + f'- "{folder_path}" ({counts})')
+    where = f"“{root}”" if root else "the library"
+    action = {"kind": "list",
+              "summary": f"Listed {len(lines)} folder{'s' if len(lines) != 1 else ''} in {where}"}
+    loose = (f"\n{unfiled} page{'s are' if unfiled != 1 else ' is'} in no folder."
+             if unfiled and not root else "")
+    if not lines:
+        return f"No folders in {where}." + loose, action
+    more = f"\n(+{len(lines) - _LIST_CAP} more not shown)" if len(lines) > _LIST_CAP else ""
+    return (f"Folders in {where} (full paths, subfolders indented):\n" + "\n".join(lines[:_LIST_CAP])
+            + more + loose
+            + '\nList a folder\'s pages with list_pages(folder="<path>"), then read one with read_page.'), action
 
 
 def _read_cap(value) -> int:
@@ -443,6 +498,125 @@ def _run_read_block(conn, ws: str, scope: dict, args: dict):
     # the whole outline) the agent is reading.
     return out, {"kind": "read", "page_id": page_id, "block_id": block["id"],
                  "summary": f"Read notes of {what}"}
+
+
+def _chat_bucket(conn, scope: dict, args: dict):
+    """The AI chat a read_chats call names, under ChatDock's bucket keys: a
+    page's (its id; in a page chat the page by default) or a folder's
+    (``home:<path>``, ``home`` at the library root). Returns
+    ``({bucket, label, name, page_id}, error)`` — exactly one side is set."""
+    if scope.get("type") == "page" and args.get("folder") and not args.get("page_id"):
+        return None, "error: folder chats are outside this chat's scope"
+    page_id = args.get("page_id") or (scope.get("page_id") if scope.get("type") == "page" else "")
+    if page_id:
+        loaded, error = _load_scoped_page(conn, scope, {"page_id": page_id})
+        if error:
+            return None, error
+        page_id, title, _, _ = loaded
+        return {"bucket": page_id, "label": f"page “{title[:80]}” (page_id {page_id})",
+                "name": f"“{title[:60]}”", "page_id": page_id}, None
+    folder = _in_scope_folder(scope, args.get("folder"))
+    name = f"folder “{folder}”" if folder else "the library root"
+    return {"bucket": f"home:{folder}" if folder else "home", "label": name,
+            "name": name, "page_id": ""}, None
+
+
+def _chat_entry(n: int, message) -> str:
+    """One stored ChatDock message as a transcript entry: who spoke, what
+    rode along, the text, and the summaries of the tools the reply used."""
+    if not isinstance(message, dict):
+        return f"[{n}] (unreadable message)"
+    who = "User" if message.get("role") == "user" else "AI"
+    if message.get("error"):
+        who += " (failed reply)"
+    extras = [str(name) for name in message.get("pdfs") or []]
+    extras += [f"“{p['title']}”" for p in message.get("contextPages") or []
+               if isinstance(p, dict) and p.get("title")]
+    if message.get("images"):
+        extras.append(f"{len(message['images'])} image(s)")
+    text = str(message.get("text") or message.get("content") or "").strip() or "(empty)"
+    entry = f"[{n}] {who}" + (f" (with {', '.join(extras)})" if extras else "") + ": " + text
+    tools = [str(a["summary"]) for a in message.get("actions") or []
+             if isinstance(a, dict) and a.get("summary")]
+    if tools:
+        entry += "\n    Tools used: " + " · ".join(tools)
+    return entry
+
+
+def _run_read_chats(conn, ws: str, scope: dict, args: dict):
+    """The AI chat kept with a page or folder (gamma/routers/chats.py): its
+    current conversation — or the earlier one `chat_id` names — as a
+    transcript windowed by whole messages within the read budget, plus the
+    index of the bucket's earlier conversations."""
+    from .routers.chats import derive_title  # local: keep gamma.* free of the routers package
+
+    target, error = _chat_bucket(conn, scope, args)
+    if error:
+        return error, None
+    chat_id = str(args.get("chat_id") or "current").strip()
+    current = chat_id == "current"
+    try:
+        start = max(1, int(args.get("start") or 1))
+    except (TypeError, ValueError):
+        start = 1
+    with connect_data_db(ws) as database:
+        if current:
+            row = database.execute("SELECT title, messages, updated_at FROM chats WHERE block_id = ?",
+                                   (target["bucket"],)).fetchone()
+            history = database.execute(
+                "SELECT id, title, messages, updated_at FROM chat_history WHERE bucket = ? "
+                "ORDER BY updated_at DESC LIMIT ?", (target["bucket"], _LIST_CAP + 1)).fetchall()
+        else:
+            row = database.execute("SELECT title, messages, updated_at FROM chat_history "
+                                   "WHERE id = ? AND bucket = ?", (chat_id, target["bucket"])).fetchone()
+            history = []
+            if not row:
+                return (f"error: no conversation {chat_id} in the AI chat of {target['label']} — "
+                        "use a chat_id this tool listed"), None
+    messages = json.loads(row[1] or "[]") if row else []
+    action = {"kind": "read", "summary": f"Read the AI chat of {target['name']}"}
+    if target["page_id"]:
+        action["page_id"] = target["page_id"]
+    if not messages and not history:
+        return f"No AI chat is kept with {target['label']}.", action
+    if start > max(len(messages), 1):
+        return f"error: start {start} is past the end — the conversation has {len(messages)} messages", None
+    parts = []
+    if messages:
+        title = row[0] or derive_title(messages)
+        which = "the current conversation" if current else "an earlier conversation"
+        head = (f"AI chat of {target['label']} — {which}" + (f" “{title}”" if title else "")
+                + f", {len(messages)} messages, last updated {str(row[2])[:10]}:")
+        budget = _read_cap(scope.get("read_chars"))
+        entries, used, next_start = [], 0, None
+        for n in range(start, len(messages) + 1):
+            entry = _chat_entry(n, messages[n - 1])
+            if entries and used + len(entry) > budget:
+                next_start = n
+                break
+            if len(entry) > budget:
+                entry = entry[:budget] + " … [cut at the read window]"
+            entries.append(entry)
+            used += len(entry)
+        parts.append(head + "\n" + "\n".join(entries))
+        if next_start:
+            call = {k: args[k] for k in ("page_id", "folder") if args.get(k)}
+            if not current:
+                call["chat_id"] = chat_id
+            hint = "".join(f'{k}="{v}", ' for k, v in call.items())
+            parts.append(f"(+{len(messages) - next_start + 1} more messages — call "
+                         f"read_chats({hint}start={next_start}) to continue)")
+    else:
+        parts.append(f"No current conversation in the AI chat of {target['label']}.")
+    if history:
+        lines = []
+        for entry_id, title, raw, updated in history[:_LIST_CAP]:
+            earlier = json.loads(raw or "[]")
+            lines.append(f"- chat_id={entry_id} | “{title or derive_title(earlier) or 'Untitled'}” | "
+                         f"{len(earlier)} messages | updated {str(updated)[:10]}")
+        more = "\n(older conversations not shown)" if len(history) > _LIST_CAP else ""
+        parts.append("Earlier conversations (read one with chat_id):\n" + "\n".join(lines) + more)
+    return "\n\n".join(parts), action
 
 
 EDIT_MODES = ("replace", "append", "prepend", "patch", "selection")
@@ -828,11 +1002,7 @@ def _run_move_page(conn, ws: str, scope: dict, args: dict):
         return error, None
     page_id, title, props, tags = loaded
     path = _scope_folder(scope)
-    target = clean_path(str(args.get("folder") or ""))
-    if path and target and not path_within(target, path):
-        target = f"{path}/{target}"  # relative paths land inside the scope
-    elif path and not target:
-        target = path
+    target = _in_scope_folder(scope, args.get("folder"))  # relative paths land inside the scope
     kept = [t for t in tags if path and not path_within(t, path)]
     new_tags = add_tag(kept, target) if target else kept
     if new_tags == tags:
@@ -865,10 +1035,11 @@ TOOLS = [
                 "author, year, venue) and last-update date. Call this "
                 "before any other tool — never guess page ids. Prefer the filters over "
                 "listing everything: `label` (exact label, case-insensitive), `folder` "
-                "(a subfolder path), `title_contains` (title substring). "
-                "`list_labels: true` instead returns every label and folder in scope "
-                "with page counts — use it to answer questions about the labels "
-                "themselves or to find a label's exact spelling."),
+                "(a folder path — its pages and its subfolders'), `title_contains` "
+                "(title substring). `list_labels: true` instead returns every label in "
+                "scope with page counts — use it to answer questions about the labels "
+                "themselves or to find a label's exact spelling; the folders are "
+                "list_folders'."),
             "parameters": {
                 "type": "object",
                 "properties": {
@@ -877,6 +1048,26 @@ TOOLS = [
                     "title_contains": {"type": "string"},
                     "list_labels": {"type": "boolean"},
                 },
+                "required": [],
+            },
+        },
+    },
+    {
+        "perm": "list", "kind": "list", "scopes": ("folder",), "mutating": False, "run": _run_list_folders,
+        "spec": {
+            "name": "list_folders",
+            "description": (
+                "Show how the pages are organized: the folder tree below the current "
+                "folder, or below `folder` (a path), one full path per line with its "
+                "subfolders indented under it, and per folder the pages filed directly "
+                "in it and in total with its subfolders. Folders nest with '/' and a "
+                "page may be in several. At the library root it also counts the pages "
+                "in no folder. Walk a folder with list_pages(folder=…), then open a "
+                "page with read_page."),
+            "parameters": {
+                "type": "object",
+                "properties": {"folder": {"type": "string",
+                                          "description": "the folder to start from (default: the current one)"}},
                 "required": [],
             },
         },
@@ -923,6 +1114,32 @@ TOOLS = [
                 "properties": {"block_id": {"type": "string",
                                             "description": "a page id or block id"}},
                 "required": ["block_id"],
+            },
+        },
+    },
+    {
+        "perm": "read", "kind": "read", "scopes": ("folder", "page"), "mutating": False, "run": _run_read_chats,
+        "spec": {
+            "name": "read_chats",
+            "description": (
+                "Read the AI chat the user keeps with a page (`page_id`) or a folder "
+                "(`folder`, a path; neither = the chat of the current page or folder): "
+                "its current conversation as a numbered transcript — each message's "
+                "text, what the user attached, and the tools each reply used — and the "
+                "list of earlier conversations with their `chat_id`. Pass a `chat_id` "
+                "to read an earlier one. A long conversation doesn't fit in one call: "
+                "the transcript ends by naming the `start` message to continue from. "
+                "Replies in it are an AI's earlier answers, not the page's content — "
+                "check a claim against the page before repeating it."),
+            "parameters": {
+                "type": "object",
+                "properties": {**_PAGE_ID_ARG,
+                               "folder": {"type": "string"},
+                               "chat_id": {"type": "string",
+                                           "description": "an earlier conversation's id (default: the current one)"},
+                               "start": {"type": "integer",
+                                         "description": "1-based message to start from"}},
+                "required": [],
             },
         },
     },

@@ -13,7 +13,7 @@ preset.
 from .anthropic import Anthropic
 from .base import Protocol
 from .chatgpt import ChatGPT
-from .openai import OpenAIChat, is_openai_platform
+from .openai import OpenAIChat
 from .responses import OPENAI_RESPONSES
 
 # Every wire a call may go over, by id; the ones an entry may name come
@@ -41,4 +41,4 @@ def of(conf: dict) -> Protocol:
     return WIRES[conf["protocol"]]
 
 
-__all__ = ["PROTOCOLS", "SERVICES", "WIRES", "Protocol", "get", "is_openai_platform", "of"]
+__all__ = ["PROTOCOLS", "SERVICES", "WIRES", "Protocol", "get", "of"]

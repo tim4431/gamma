@@ -53,7 +53,6 @@ PUSH_DELAY = 5.0        # seconds a profile change settles before it is pushed
 SIGN_IN_TIMEOUT = 5     # the pull a sign-in, or a browser reading the profile, waits for
 READ_SYNC_EVERY = 60    # seconds: a browser reading the profile syncs it at most this often
 PROFILE_PATH = "/api/me/prefs/" + PROFILE_PREF_KEY
-RESOLUTIONS = ("merge", "fetch", "push")
 
 
 def _background(fn) -> None:

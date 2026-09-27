@@ -16,7 +16,7 @@
 // (DELETE /api/pages/{id}/publish for each page), never the clone actions.
 import React from "react";
 import { API, apiJson, fmtBytes } from "../shared/lib/utils";
-import { Section, SubDialog, Field, IconChoices, Segmented, Empty } from "./SettingsKit";
+import { Section, SubDialog, Field, IconChoices, Segmented, Empty, WorkspaceFolder } from "./SettingsKit";
 import { ActionMenu, MenuSelect } from "../shared/ui/Menus";
 import {
   AlertCircleIcon, ArrowDownIcon, ArrowUpDownIcon, CheckIcon, CloudDownloadIcon, CloudIcon, CloudOffIcon, HardDriveIcon, LinkIcon,
@@ -254,7 +254,8 @@ export function MirrorsSection({ mirrors, refresh, workspaces, currentId, switch
             {m.conflicts_open ? <span className="uiTag warn">{n(m.conflicts_open, "conflict")}</span> : null}
           </span>
           <span className="aiProvDesc" title={m.remote_url}>
-            {t("clone of")} {m.remote_name} {t("· origin")} {hostOf(m.remote_url)}
+            {t("clone of")} {m.remote_name} {t("· origin")} {hostOf(m.remote_url)}{" · "}
+            <WorkspaceFolder id={m.workspace_id} />
           </span>
           <span className="aiProvDesc">{mirrorStatusLine(m)}</span>
         </span>

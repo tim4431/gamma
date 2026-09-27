@@ -4,7 +4,7 @@ import fs from "node:fs";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
 import { ACCOUNT_PREFS } from "../src/app/prefDefs.js";
-import { SECTION_PREFS, UNTAGGED_PREFS, accountPrefs } from "../src/settings/sectionPrefs.js";
+import { SECTION_PREFS, accountPrefs } from "../src/settings/sectionPrefs.js";
 
 const SETTINGS = path.join(path.dirname(fileURLToPath(import.meta.url)), "../src/settings");
 
@@ -55,7 +55,7 @@ test("every account section in the panes passes its own entry as prefs, and ever
   assert.deepEqual(table.filter((key) => !used.has(key)), [], "table entries no section uses");
 });
 
-test("every account preference is held by a section, or listed as untagged", () => {
-  const held = new Set([...Object.values(SECTION_PREFS).flatMap((s) => Object.values(s).flat()), ...UNTAGGED_PREFS]);
+test("every account preference is held by a section", () => {
+  const held = new Set(Object.values(SECTION_PREFS).flatMap((s) => Object.values(s).flat()));
   assert.deepEqual(ACCOUNT_PREFS.filter((name) => !held.has(name)), []);
 });

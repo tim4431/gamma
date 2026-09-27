@@ -29,12 +29,14 @@ RUN chmod +x /usr/local/bin/docker-entrypoint.sh
 
 # The build stamp the admin dashboard shows and compares against the latest
 # GitHub release (gamma/version.py): docker.yml passes the release version
-# (empty for a plain push to main) and the commit sha.
+# (or <tag>-dev.<n> plus the branch for any other build) and the commit sha.
 ARG GAMMA_VERSION=""
+ARG GAMMA_BRANCH=""
 ARG GAMMA_COMMIT=""
 ENV GAMMA_DATA_DIR=/data \
     GAMMA_STATIC_DIR=/app/static \
     GAMMA_VERSION=$GAMMA_VERSION \
+    GAMMA_BRANCH=$GAMMA_BRANCH \
     GAMMA_COMMIT=$GAMMA_COMMIT \
     PYTHONUNBUFFERED=1
 

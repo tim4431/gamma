@@ -52,17 +52,17 @@ visible viewport and refreshed after scrolling, resizing, or font/layout
 changes. Long and tall equations scroll within the preview; clicking it
 retains editor focus; its height is capped at 45% of the window.
 
-Error underlines: the raw span under the caret is parsed by KaTeX on every
-change (`katex.__parse`, memoized, the same options as the preview) and the
-error it reports is underlined where its position points — an undefined
-`\command` at the command, `\begin{aligned}…\end{align}` at the `\end`, a
-stray `}` at the brace. An unfinished formula reports a zero-length error at
-the end of the input, which lands on the last character. The range the
-caret touches is hidden, so a half-typed `\fo` or the open tail of
-`\frac{a}{` is never flagged until the caret moves on; the message is the
-mark's hover title. Only raw spans are checked — a span the caret has left
-renders as a widget, where KaTeX's own red error text shows. Unmatched
-brackets keep their separate mark from the bracket-pair pass.
+Error underlines: KaTeX parses the raw span under the caret on every change
+(`katex.__parse` with the preview's options, memoized), and the error is
+underlined where its position points: an undefined `\command` at the
+command, `\begin{aligned}…\end{align}` at the `\end`, a stray `}` at the
+brace. An unfinished formula reports a zero-length error at the end of the
+input, which lands on the last character. The range the caret touches is
+not underlined, so a half-typed `\fo` or the open tail of `\frac{a}{` waits
+until the caret moves on. The message is the mark's hover title. Only raw
+spans are checked: a span the caret has left renders as a widget, which
+shows KaTeX's own red error text. Unmatched brackets keep their own mark
+from the bracket-pair pass.
 
 Implementation: `editor/latexInput.js` contains delimiter edits and the shared
 `escapedAt` check. `editor/latexLint.js` (pure) turns KaTeX's parse error

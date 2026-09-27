@@ -1,11 +1,12 @@
 # Mermaid diagrams
 
 Notes and AI replies render closed `mermaid` Markdown fences as SVG diagrams.
-Use `/mermaid` in a note to insert a starter flowchart. Clicking a note's diagram
-opens the normal source editor; leaving the editor renders the updated diagram.
-Hovering a diagram shows its toolbar — the same flat icon buttons as a note
-image's hover strip: show source (`</>`), copy source, download SVG. Ordinary
-code blocks keep their existing behavior.
+Use `/mermaid` in a note to insert a starter flowchart. A note's diagram is an
+object like a picture: a click selects it, and its right-click menu's "Edit
+markdown source" opens the source editor; leaving the editor renders the
+updated diagram. Hovering a diagram shows its toolbar — the same flat icon
+buttons as a note image's hover strip: show source (`</>`), copy source,
+download SVG. Ordinary code blocks keep their existing behavior.
 
 A note's diagram resizes like a note image: a grip on each side
 (`shared/ui/ResizeGrip.jsx`, shared with `MdImage`) drags the width — the
@@ -20,10 +21,10 @@ same nth-construct idiom as images and tables in `editor/MdTools.jsx`);
 `remarkMermaid` carries the width into the HTML as `data-mermaid-width`.
 `scanMermaidFences` also reports where each fence ends (`end`, `closed`);
 the object frame in `editor/MdObject.jsx` uses that to move or delete a
-whole diagram ([ui-design.md](ui-design.md)). The
-figure hugs the drawing even without a stored size (it reads Mermaid's own
-`max-width` cap), so the grip always sits at the diagram's edge. Read-only
-views and chat replies show no grip.
+whole diagram ([ui-design.md](ui-design.md)). The figure hugs the drawing
+even without a stored size (it reads Mermaid's own `max-width` cap), so the
+grip always sits at the diagram's edge. Read-only views and chat replies
+show no grip.
 
 Math in flowchart and sequence labels: Mermaid itself typesets only its
 `$$...$$` delimiters, so `mermaidMath` in `shared/lib/mermaidMarkdown.js`

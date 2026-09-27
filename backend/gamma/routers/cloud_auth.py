@@ -12,6 +12,10 @@
   to ``next``, or back to the login page with ``?cloud_error=``; the
   preference profile is pulled before the redirect and this server put on
   the person's server list (gamma/cloud_sync.py);
+- ``GET /api/auth/cloud/connect/start?next=`` (admins) → the account
+  server's page that connects this server; ``…/connect/callback`` saves the
+  client it hands back and returns to ``next`` with ``?cloud_connect=ok``
+  or ``?cloud_connect_error=`` (Settings → Server → Sign-in shows it);
 - ``GET /api/auth/cloud/status`` / ``POST /api/auth/cloud/unlink`` for the
   signed-in account's own identity (Settings → Account & sync); an unlink takes
   this server off the person's server list and revokes the grant.
@@ -23,14 +27,14 @@
 """
 
 from typing import Literal
-from urllib.parse import urlencode
+from urllib.parse import parse_qsl, urlencode, urlsplit
 
 from fastapi import APIRouter, HTTPException, Request
 from fastapi.responses import RedirectResponse
 from pydantic import BaseModel
 
 from .. import cloud_auth, cloud_sync, config, ratelimit, server_settings
-from ..auth import require_personal_user, require_user, set_session_cookie
+from ..auth import require_admin, require_personal_user, require_user, set_session_cookie
 from ..cloud_auth import CloudAuthError
 from ..db import connect_users_db
 from ..logbuf import log
@@ -42,7 +46,8 @@ router = APIRouter()
 @router.get("/api/server-config")
 async def server_config():
     cfg = cloud_auth.settings()
-    return {"cloud": {"enabled": cfg["enabled"], "issuer": cfg["issuer"] if cfg["enabled"] else ""},
+    enabled = cfg["enabled"] and not cloud_auth.needs_connect()  # an unconnected server offers no cloud button
+    return {"cloud": {"enabled": enabled, "issuer": cfg["issuer"] if enabled else ""},
             "password_login": True, "registration": False, "guest": not cfg["share_host"],
             "guest_ttl_hours": server_settings.guest_ttl_hours(), "demo": server_settings.demo_mode(),
             "page_host": config.page_host_pattern()}
@@ -59,6 +64,8 @@ def cloud_start(request: Request, next: str = "/", link: str = ""):
     try:
         url = cloud_auth.begin(request, link_user=link_user, next_path=cloud_auth.safe_next(next))
     except CloudAuthError as e:
+        if str(e) == cloud_auth.NOT_CONNECTED:  # a page to show it on, not an error body
+            return _login_redirect(str(e), cloud_auth.safe_next(next))
         raise HTTPException(503, str(e))
     return RedirectResponse(url, status_code=302, headers={"Cache-Control": "no-store"})
 
@@ -91,12 +98,41 @@ def cloud_callback(request: Request, code: str = "", state: str = "", error: str
     return resp
 
 
+@router.get("/api/auth/cloud/connect/start")
+def cloud_connect_start(request: Request, next: str = "/"):
+    require_admin(request)
+    next_path = cloud_auth.safe_next(next)
+    try:
+        url = cloud_auth.connect_begin(next_path=next_path)
+    except CloudAuthError as e:
+        return _back(next_path, cloud_connect_error=str(e))
+    return RedirectResponse(url, status_code=302, headers={"Cache-Control": "no-store"})
+
+
+@router.get("/api/auth/cloud/connect/callback")
+def cloud_connect_callback(request: Request, code: str = "", state: str = "", error: str = "",
+                           error_description: str = ""):
+    require_admin(request)
+    ratelimit.check(f"cloud-connect:ip:{ratelimit.client_ip(request)}", 30, 600)
+    next_path, problem = cloud_auth.connect_finish(code=code, state=state, error=error_description or error)
+    return _back(next_path, **({"cloud_connect_error": problem} if problem else {"cloud_connect": "ok"}))
+
+
+def _back(path: str, **params) -> RedirectResponse:
+    """A redirect to ``path`` with ``params`` added to its query."""
+    url = urlsplit(path)
+    query = urlencode([*parse_qsl(url.query), *params.items()])
+    return RedirectResponse(f"{url.path or '/'}?{query}", status_code=302, headers={"Cache-Control": "no-store"})
+
+
 @router.get("/api/auth/cloud/status")
 async def cloud_status(request: Request):
     user = require_user(request)
     cfg = cloud_auth.settings()
-    # the issuer is the portal's address too: Settings → Account & sync opens it from here
-    return {"identity": cloud_auth.status_of(user), "enabled": cfg["enabled"], "issuer": cfg["issuer"]}
+    # the issuer is the portal's address too: Settings → Account & sync opens it from here;
+    # ``connected`` false: the Link button waits for an admin to connect this server
+    return {"identity": cloud_auth.status_of(user), "enabled": cfg["enabled"], "issuer": cfg["issuer"],
+            "connected": not cloud_auth.needs_connect()}
 
 
 @router.get("/api/auth/cloud/sync-status")

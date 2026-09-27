@@ -119,9 +119,7 @@ export function IntegrationSettings({ workspaceId }) {
     } catch (err) { setMessage(err.message); }
     finally { setBusy(false); }
   };
-  const config = data ? `[mcp_servers.gamma]
-url = ${JSON.stringify(data.mcp_url)}
-bearer_token_env_var = "GAMMA_TOKEN"` : "";
+  const config = data ? `[mcp_servers.gamma]\nurl = ${JSON.stringify(data.mcp_url)}\nbearer_token_env_var = "GAMMA_TOKEN"` : "";
   const setup = data ? codexSetupCommand(data.mcp_url, platform) : "";
   const isClaude = method === "claude";
   const isDsh = method === "dsh";

@@ -164,6 +164,17 @@ def test_resolve_pdf_bare_arxiv_doi_goes_to_arxiv(guest, monkeypatch):
     assert r.json()["source_url"] == "https://arxiv.org/pdf/2301.12345"
 
 
+def test_resolve_pdf_arxiv_html_page_goes_to_its_pdf(guest, monkeypatch):
+    """arXiv's HTML rendering (/html/<id>) resolves like its abstract page,
+    old-style ids included."""
+    _fake(monkeypatch)
+    for page, pdf in (("https://arxiv.org/html/2310.06825v1#S2", "https://arxiv.org/pdf/2310.06825v1"),
+                      ("https://arxiv.org/html/cond-mat/0402216", "https://arxiv.org/pdf/cond-mat/0402216")):
+        r = guest.post("/api/resolve-pdf", json={"source_url": page})
+        assert r.status_code == 200, r.text
+        assert r.json()["source_url"] == pdf
+
+
 def test_proxy_rejects_non_pdf(guest, monkeypatch):
     made = _fake(monkeypatch, data=b"<html>paywall</html>", ctype="text/html")
     r = guest.get("/api/pdf", params={"source_url": "https://example.org/not-a-pdf"})

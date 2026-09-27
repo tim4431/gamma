@@ -631,20 +631,22 @@ class _NotesPdfBuilder(_Builder):
     def add_page(self, n, rows, page):
         self.pages.append(page)
 
-    def response(self) -> Response:
+    def render(self) -> bytes:
         try:
-            # The request's connection is closed by the time response() runs,
+            # The request's connection is closed by the time render() runs,
             # so [[ref]]/![[embed]] resolution opens its own (read-only use).
             with connect_pages_db(self.ws) as conn:
-                pdf_bytes = render_document(
+                return render_document(
                     self.pages, uploads_dir=self.uploads_dir,
                     highlights=self.opts["highlights"], notes=self.opts["notes"],
                     resolve_ref=_block_ref_resolver(conn))
         except Exception as e:
             log(f"notes PDF export failed for '{self.base}': {e}")
             raise HTTPException(status_code=400, detail=f"could not build the PDF: {e}")
+
+    def response(self) -> Response:
         return Response(
-            content=pdf_bytes,
+            content=self.render(),
             media_type="application/pdf",
             headers={"Content-Disposition": _content_disposition(f"{self.base}{self.suffix}")},
         )
@@ -682,51 +684,50 @@ def _run_export(conn, ws, mode: str, root_ids, base: str, opts: dict,
     return builder
 
 
-# Sync on purpose: rendering + zipping runs in FastAPI's threadpool.
-@router.get("/pages/{block_id}/export")
-def export_page(block_id: str, request: Request, mode: str = "readable", pdf: int = 1,
-                highlights: int = 1, notes: int = 1):
-    """One page in any export format (see the _Builder classes): ``readable``
-    Markdown (bare .md when it references no local assets, else a .zip with an
-    assets/ folder; ``highlights=0``/``notes=0`` — the dialog's switches —
-    leave out the quoted PDF text or your own writing), ``obsidian`` (an
-    Obsidian vault zip: the page as ``<folder>/<Title>.md`` with wikilinks,
-    the PDF and images under attachments/), ``notes-pdf`` (the
-    notes typeset as their own PDF document — the one format a page without a
-    PDF can still export as one), ``logseq-graph`` (a complete Logseq file
-    graph, both switches pinned on), ``zotero-rdf`` (a one-item Zotero RDF
-    library), or ``gamma`` (a scoped account backup any Gamma imports via
-    /api/import-data?mode=merge)."""
-    ws = resolve_ws(request)
-    scope = share_scope(request)
-    opts = {"pdf": bool(pdf), "highlights": bool(highlights), "notes": bool(notes),
-            "folder_scope": None}
+def _export_opts(pdf=True, highlights=True, notes=True, folder_scope=None) -> dict:
+    return {"pdf": bool(pdf), "highlights": bool(highlights), "notes": bool(notes),
+            "folder_scope": folder_scope}
+
+
+def page_builder(ws: str, block_id: str, mode: str, opts: dict, scope=None) -> _Builder:
+    """One page walked through the mode's builder (named by the page's slug,
+    ``builder.base``). ``scope`` is the request's share scope, None for a
+    member. Raises HTTPException like the routes."""
     with connect_pages_db(ws) as conn:
         assert_block_in_scope(conn, block_id, scope)
-        if not conn.execute("SELECT 1 FROM unified_blocks WHERE id = ?", (block_id,)).fetchone():
-            raise HTTPException(status_code=404, detail="page not found")
         row = conn.execute("SELECT content FROM unified_blocks WHERE id = ?", (block_id,)).fetchone()
-        slug = slugify(row[0], block_id)
-        builder = _run_export(conn, ws, mode, [block_id], slug, opts)
-
-    # A single readable page referencing no local assets is just the .md.
-    if mode == "readable" and not builder.assets:
-        return _md_response(builder.entries[0][1], slug)
-    return builder.response()
+        if row is None:
+            raise HTTPException(status_code=404, detail="page not found")
+        return _run_export(conn, ws, mode, [block_id], slugify(row[0], block_id), opts)
 
 
-# Sync on purpose: PyPDF2 rewriting is CPU-bound; the threadpool keeps the loop free.
-@router.get("/pages/{block_id}/export-pdf")
-def export_page_pdf(block_id: str, request: Request, notes: int = 0, highlights: int = 1):
-    """The page's PDF with its highlights burned in as standard /Highlight
-    annotations (notes become the annotation popup text), so they survive in
-    any external PDF viewer. ``notes=1`` additionally paints every non-empty
-    note onto the page itself, in the nearest free space with a leader line
-    back to its highlight — readable without opening popups, and printable.
-    ``highlights=0`` skips the annotation layer, so ``highlights=0&notes=1``
-    gives a clean PDF carrying only the written notes."""
-    ws = resolve_ws(request)
-    scope = share_scope(request)
+def page_markdown(ws: str, page_id: str, *, highlights=True, notes=True) -> tuple[str, str]:
+    """One page as readable Markdown, unbundled — upload references stay
+    ``/api/uploads/…`` links: ``(markdown, file name)``. For callers that
+    hand over the text itself (the MCP export); downloads bundle through
+    ``_MarkdownBuilder``."""
+    with connect_pages_db(ws) as conn:
+        page = build_tree(fetch_subtree(conn, page_id), page_id)
+        if page is None:
+            raise HTTPException(status_code=404, detail="page not found")
+        md = render_readable(page, highlights=highlights, notes=notes,
+                             resolve_ref=_block_ref_resolver(conn))
+    return md, f"{slugify(page.get('content'), page_id)}.md"
+
+
+def page_notes_pdf(ws: str, page_id: str, *, highlights=True, notes=True) -> tuple[bytes, str]:
+    """The page's notes typeset as their own PDF document: ``(pdf bytes,
+    file name)``."""
+    builder = page_builder(ws, page_id, "notes-pdf", _export_opts(highlights=highlights, notes=notes))
+    return builder.render(), f"{builder.base}{builder.suffix}"
+
+
+def annotated_pdf(ws: str, block_id: str, *, highlights=True, notes=False, author="",
+                  scope=None) -> tuple[bytes, str, int, int]:
+    """The page's PDF with its highlights (and ink) as standard annotations
+    and, with ``notes``, its notes painted on the pages: ``(pdf bytes, file
+    name, annotations written, notes drawn)``. Both off = the stored PDF as
+    is. Raises HTTPException like the routes."""
     with connect_pages_db(ws) as conn:
         assert_block_in_scope(conn, block_id, scope)
         rows = fetch_subtree(conn, block_id)
@@ -750,7 +751,7 @@ def export_page_pdf(block_id: str, request: Request, notes: int = 0, highlights:
     pdf_bytes = pdf_path.read_bytes()
     if highlights:
         try:
-            pdf_bytes, written = annotate_pdf(pdf_bytes, marks, author=request.state.user or "",
+            pdf_bytes, written = annotate_pdf(pdf_bytes, marks, author=author,
                                               ink=_collect_ink(blocks, ws_uploads_dir(ws)))
         except Exception as e:
             raise HTTPException(status_code=400, detail=f"could not annotate PDF: {str(e) or type(e).__name__}") from e
@@ -764,13 +765,53 @@ def export_page_pdf(block_id: str, request: Request, notes: int = 0, highlights:
         except Exception as e:
             raise HTTPException(status_code=400, detail=f"could not render notes: {e}")
 
-    slug = slugify(root.get("content"), block_id)
     suffix = "-notes" if notes else "-annotated" if highlights else ""
+    return pdf_bytes, f"{slugify(root.get('content'), block_id)}{suffix}.pdf", written, drawn
+
+
+# Sync on purpose: rendering + zipping runs in FastAPI's threadpool.
+@router.get("/pages/{block_id}/export")
+def export_page(block_id: str, request: Request, mode: str = "readable", pdf: int = 1,
+                highlights: int = 1, notes: int = 1):
+    """One page in any export format (see the _Builder classes): ``readable``
+    Markdown (bare .md when it references no local assets, else a .zip with an
+    assets/ folder; ``highlights=0``/``notes=0`` — the dialog's switches —
+    leave out the quoted PDF text or your own writing), ``obsidian`` (an
+    Obsidian vault zip: the page as ``<folder>/<Title>.md`` with wikilinks,
+    the PDF and images under attachments/), ``notes-pdf`` (the
+    notes typeset as their own PDF document — the one format a page without a
+    PDF can still export as one), ``logseq-graph`` (a complete Logseq file
+    graph, both switches pinned on), ``zotero-rdf`` (a one-item Zotero RDF
+    library), or ``gamma`` (a scoped account backup any Gamma imports via
+    /api/import-data?mode=merge)."""
+    ws = resolve_ws(request)
+    builder = page_builder(ws, block_id, mode, _export_opts(pdf, highlights, notes),
+                           share_scope(request))
+    # A single readable page referencing no local assets is just the .md.
+    if mode == "readable" and not builder.assets:
+        return _md_response(builder.entries[0][1], builder.base)
+    return builder.response()
+
+
+# Sync on purpose: PyPDF2 rewriting is CPU-bound; the threadpool keeps the loop free.
+@router.get("/pages/{block_id}/export-pdf")
+def export_page_pdf(block_id: str, request: Request, notes: int = 0, highlights: int = 1):
+    """The page's PDF with its highlights burned in as standard /Highlight
+    annotations (notes become the annotation popup text), so they survive in
+    any external PDF viewer. ``notes=1`` additionally paints every non-empty
+    note onto the page itself, in the nearest free space with a leader line
+    back to its highlight — readable without opening popups, and printable.
+    ``highlights=0`` skips the annotation layer, so ``highlights=0&notes=1``
+    gives a clean PDF carrying only the written notes."""
+    ws = resolve_ws(request)
+    pdf_bytes, filename, written, drawn = annotated_pdf(
+        ws, block_id, highlights=bool(highlights), notes=bool(notes),
+        author=request.state.user or "", scope=share_scope(request))
     return Response(
         content=pdf_bytes,
         media_type="application/pdf",
         headers={
-            "Content-Disposition": _content_disposition(f"{slug}{suffix}.pdf"),
+            "Content-Disposition": _content_disposition(filename),
             "X-Annotations-Written": str(written),
             "X-Notes-Rendered": str(drawn),
         },
@@ -785,7 +826,7 @@ _folder_export_progress: dict[str, dict] = {}
 @router.get("/folders/export-progress")
 def folder_export_progress(request: Request):
     scope = share_scope(request)
-    if scope is not None and not scope.folder:
+    if scope is not None and not scope.lists_library:
         raise HTTPException(status_code=403, detail="not accessible via this share link")
     ws = resolve_ws(request)
     return _folder_export_progress.get(ws) or {"active": False, "total": 0, "done": 0}
@@ -821,8 +862,7 @@ def export_folder(request: Request, name: str, mode: str = "readable", pdf: int 
         raise HTTPException(status_code=403, detail="not accessible via this share link")
     ws = resolve_ws(request)
     folder_slug = slugify(name.replace("/", "-"), "")
-    opts = {"pdf": bool(pdf), "highlights": bool(highlights), "notes": bool(notes),
-            "folder_scope": name}
+    opts = _export_opts(pdf, highlights, notes, folder_scope=name)
     with connect_pages_db(ws) as conn:
         roots = conn.execute(
             f"SELECT {BLOCK_COLUMNS} FROM unified_blocks WHERE parent_id = 'root'"

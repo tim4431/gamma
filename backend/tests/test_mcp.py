@@ -44,7 +44,8 @@ def test_initialize_and_read_tools(client, connection):
     assert init.json()["result"]["serverInfo"]["icons"][0]["src"].startswith("data:image/png;base64,")
     assert rpc(client, item["token"], "notifications/initialized", notification=True).status_code == 202
     tools = rpc(client, item["token"], "tools/list").json()["result"]["tools"]
-    assert {t["name"] for t in tools} == {"list_pages", "read_page", "read_block", "search_library", "read_gamma_link"}
+    assert {t["name"] for t in tools} == {"list_pages", "list_folders", "read_page", "read_block", "read_chats",
+                                          "view_pdf_page", "search_library", "read_gamma_link", "export_page"}
     assert all(t["annotations"]["readOnlyHint"] for t in tools)
     assert all(t["icons"] == init.json()["result"]["serverInfo"]["icons"] for t in tools)
     for name, arguments, expected in [
@@ -60,6 +61,97 @@ def test_initialize_and_read_tools(client, connection):
         text = result["content"][0]["text"]
         assert expected in text
         assert f"http://localhost/?ws={ws}&page=" in text
+
+
+def call(client, token, name, arguments):
+    response = rpc(client, token, "tools/call", {"name": name, "arguments": arguments})
+    assert response.status_code == 200, response.text
+    return response.json()["result"]
+
+
+def _pdf_page(c, title):
+    """A page carrying a stored two-page PDF, with one highlight (its note
+    under it) and an image block; the highlight's id is ``<page id>-hl``."""
+    import io
+    from PyPDF2 import PdfWriter
+
+    w = PdfWriter()
+    for _ in range(2):
+        w.add_blank_page(width=612, height=792)
+    buf = io.BytesIO()
+    w.write(buf)
+    up = c.post("/api/uploads", files={"file": ("p.pdf", buf.getvalue(), "application/pdf")})
+    assert up.status_code == 200, up.text
+    page = make_page(c, title, properties={"doc_id": up.json()["doc_id"], "source_url": up.json()["source_url"]})
+    rect = {"x1": 100, "y1": 72, "x2": 300, "y2": 92, "width": 612, "height": 792, "pageNumber": 1}
+    r = c.put(f"/api/blocks/{page['id']}/children", json={"blocks": [
+        {"id": f"{page['id']}-hl", "content": "McpHighlightNote", "properties": {
+            "highlight_id": f"{page['id']}-hl", "quote": "McpQuotedPassage", "pdf_page": 1,
+            "pdf_position": {"pageNumber": 1, "boundingRect": dict(rect), "rects": [rect]}}, "children": []},
+        {"id": f"{page['id']}-img", "content": "![figure](/api/uploads/abc123.png)", "properties": {}, "children": []},
+    ]})
+    assert r.status_code == 200, r.text
+    return page
+
+
+def test_folders_chats_and_pdf_pictures(client, connection):
+    c, ws, item = connection
+    paper = _pdf_page(c, "Folder tree paper")
+    assert c.put(f"/api/blocks/{paper['id']}", json={"properties": {"folder": "mcp/tree"}}).status_code == 200
+    result = call(client, item["token"], "list_folders", {})
+    assert not result["isError"] and '"mcp/tree" (1 page)' in result["content"][0]["text"]
+    assert c.put(f"/api/chats/{paper['id']}", json={"messages": [
+        {"role": "user", "text": "UniqueMcpChatQuestion"}, {"role": "ai", "text": "An answer"}]}).status_code == 200
+    result = call(client, item["token"], "read_chats", {"page_id": paper["id"]})
+    text = result["content"][0]["text"]
+    assert not result["isError"] and "[1] User: UniqueMcpChatQuestion" in text
+    assert f"Page URL: http://localhost/?ws={ws}&page={paper['id']}" in text
+    # The PDF page arrives as an image the client shows the model.
+    result = call(client, item["token"], "view_pdf_page", {"page_id": paper["id"], "pdf_page": 2})
+    assert not result["isError"] and "PDF page 2 of 2" in result["content"][0]["text"]
+    (image,) = [part for part in result["content"] if part["type"] == "image"]
+    assert image["mimeType"] in ("image/jpeg", "image/png") and len(image["data"]) > 100
+
+
+def test_export_page_formats(client, connection):
+    import base64
+    import io
+    from PyPDF2 import PdfReader
+
+    c, ws, item = connection
+    paper = _pdf_page(c, "Exported paper")
+    token = item["token"]
+    # Markdown is the text itself; upload links point at this server and workspace.
+    result = call(client, token, "export_page", {"page_id": paper["id"], "format": "markdown"})
+    text = result["content"][0]["text"]
+    assert not result["isError"] and len(result["content"]) == 1
+    assert "# Exported paper" in text and "> McpQuotedPassage" in text and "McpHighlightNote" in text
+    assert f"(http://localhost/api/uploads/abc123.png?ws={ws})" in text
+    no_notes = call(client, token, "export_page", {"page_id": paper["id"], "format": "markdown", "notes": False})
+    assert "McpQuotedPassage" in no_notes["content"][0]["text"]
+    assert "McpHighlightNote" not in no_notes["content"][0]["text"]
+    # The annotated PDF is an embedded file, named like the Export dialog's download.
+    result = call(client, token, "export_page", {"page_id": paper["id"], "format": "pdf"})
+    assert not result["isError"], result
+    text_part, file_part = result["content"]
+    assert "-notes.pdf" in text_part["text"]
+    resource = file_part["resource"]
+    assert file_part["type"] == "resource" and resource["mimeType"] == "application/pdf"
+    assert resource["uri"].startswith(f"http://localhost/api/pages/{paper['id']}/export-pdf?ws={ws}")
+    annots = PdfReader(io.BytesIO(base64.b64decode(resource["blob"]))).pages[0]["/Annots"]
+    assert any(a.get_object()["/Subtype"] == "/Highlight" for a in annots)
+    # The notes typeset as a PDF work for any page, with or without a paper.
+    note_page = make_page(c, "Notes only page")
+    c.post("/api/blocks", json={"parent_id": note_page["id"], "content": "a typeset note"})
+    result = call(client, token, "export_page", {"page_id": note_page["id"], "format": "notes_pdf"})
+    assert not result["isError"], result
+    assert base64.b64decode(result["content"][1]["resource"]["blob"]).startswith(b"%PDF")
+    # Refusals are tool errors the model can act on.
+    result = call(client, token, "export_page", {"page_id": note_page["id"], "format": "pdf"})
+    assert result["isError"] and "page has no PDF" in result["content"][0]["text"]
+    result = call(client, token, "export_page", {"page_id": f"{paper['id']}-hl", "format": "markdown"})  # a block
+    assert result["isError"] and "No such page" in result["content"][0]["text"]
+    assert call(client, token, "export_page", {"page_id": paper["id"], "format": "docx"})["isError"]
 
 
 @pytest.mark.parametrize("name,args", [

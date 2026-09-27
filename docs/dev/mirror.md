@@ -58,8 +58,8 @@ copy rebuilds its own).
 
 A mirror may name the only pages that travel: `mirrors.page_filter`, a JSON
 list of page ids (NULL, what every mirror made by hand has, means every
-page; migration step 19). Publishing is the one thing that makes such a
-mirror today. With a filter a round:
+page; migration step 19). Only publishing makes such a mirror. With a
+filter a round:
 
 - takes from both change feeds, and from its retry list, only the listed
   pages, and fetches only their missing files (`missing_uploads(ws,
@@ -82,7 +82,7 @@ ask for a sync-on-change round (`ops.commit_listeners` get the page id; the
 engine caches each copy's filter in `_filters`). Several filtered mirrors of
 one remote workspace may coexist (each local workspace that publishes to the
 same account has its own); a second unfiltered mirror of the same remote is
-still refused. Changes to the filter are made under `round_lock(ws)`, the
+refused. Changes to the filter are made under `round_lock(ws)`, the
 lock a round holds, so no round sees half of one.
 
 ## The change feed (remote side)
@@ -120,11 +120,11 @@ Inside a page the same rule holds at block level, **an edit beats a
 delete** (a move counts as an edit): a subtree the remote deleted stays when something in it was
 edited here (the push re-inserts it there), and a subtree deleted here
 comes back whole when the remote edited inside it. A block the remote
-moved *out* of a subtree deleted here is no part of that deletion any
-more: it comes back whole (with its own children) where the remote put
-it, while the subtree it left stays deleted unless something still inside
-it was touched there — without this the push would delete the moved block
-on the remote too (`_reconcile_remote_ops`, `escaped`). Same-block text edits
+moved *out* of a subtree deleted here is not part of that deletion: it
+comes back whole (with its own children) where the remote put it
+(`_reconcile_remote_ops`, `escaped`), else the push would delete it on
+the remote too. The subtree it left stays deleted unless something still
+inside it was touched there. Same-block text edits
 merge by span through `gamma/textmerge.py` on whichever server applies the
 op; two edits to the same characters resolve by the remote's order.
 
@@ -170,13 +170,13 @@ Pull-only mirrors (a read token, or a viewer's, or the *Receive only*
 direction) apply the remote's changes and never push; local edits stay
 local and survive later remote changes to other spans of the same block,
 since the saved base is always the remote's tree. Such a round does not
-walk the local feed and leaves the local cursor where it is, so the first
-round that may push — the direction switched back to two-way, or a
-write token or role restored on the remote after a spell as a viewer
-(such a round drops to pull only for its own duration and reports it as
-its error) — finds every edit made here meanwhile; `pending_local` stays
-true until then. (Switching back to two-way also resets the cursor, for
-copies from before this rule.) The direction of a detached copy cannot be
+walk the local feed and leaves the local cursor where it is. The first
+round that may push again finds every edit made here meanwhile, and
+`pending_local` stays true until then. That round comes once the
+direction is back to two-way, or once the remote restores a write token or
+role (while either is read-only, a two-way copy's round drops to pull only
+and reports that as its error). Switching back to two-way also resets the local cursor, for copies whose
+receive-only rounds moved it. The direction of a detached copy cannot be
 changed (400): reattaching restores the one it had.
 
 ## Rounds and cadence
@@ -200,15 +200,20 @@ shorter than the poll interval). The first pass runs
 by a restart continues at once; "Sync now" (`POST /api/mirrors/{ws}/sync`,
 `?wait=1` for the answer) runs one on demand. Rounds of one mirror never
 overlap: a second caller waits for the round lock and reads the mirror's
-row only once it holds it, so a page unpublished or a detach done while
-it waited is what it runs with. What the person does *while* a round
-runs is kept too: the round only ever patches its keys of the status JSON
-(`_patch_status`, one read-modify-write under a lock, the same path every
-other writer of the status takes), it saves the feeds' cursors only when
-nothing reset them meanwhile, a detach makes it stop at its next page
-(the pages left over go on the retry list for the reattach), and a force
-is noted as `status.force` and applied by the next round under the lock
-(`_start_force`), never by the running one. A round that cannot reach the remote records the error on the
+row only once it holds it, so it runs with a page unpublished or a detach
+done while it waited. What the person does *while* a round runs is kept
+too:
+
+- the round only patches its own keys of the status JSON (`_patch_status`,
+  one read-modify-write under a lock, the path every writer of the status
+  takes);
+- it saves the feeds' cursors only when nothing reset them meanwhile;
+- a detach makes it stop at its next page (the pages left over go on the
+  retry list for the reattach);
+- a force is noted as `status.force` and applied by the next round under
+  the lock (`_start_force`), never by the running one.
+
+A round that cannot reach the remote records the error on the
 mirror and moves no cursor. A page that fails inside a round — whatever the
 exception — is reported, kept on the mirror's `retry` list with the flags
 it had, and worked again next round (the feeds' cursors have moved past
@@ -375,52 +380,56 @@ mirror's own answer apart.
   `GET /api/pages/{id}/publish` when the popover opens, then every 5 s while
   a round runs or a local edit waits (`pending_local`), else every 20 s.
   - Not published, allowed: "Keep this page reachable while this computer
-    is off." and a primary **Publish**; where the plan caps publishing
-    (the answer's `limit` has a `max`) the hint counts instead, "3 of 5
-    pages published". While it runs the button is disabled and shows the
-    spinning refresh glyph; a refusal shows its `detail` under the row, and
-    the cap's refusal (a 409 carrying `limit`) adds an *Open account* button
-    to the issuer's portal, the Settings Account row's target.
+    is off." and a primary **Publish**. Where the plan caps publishing (the
+    answer's `limit` has a `max`) the hint counts instead, "3 of 5 pages
+    published". While it runs the button is disabled and shows the
+    spinning refresh glyph. A refusal shows its `detail` under the row; the
+    cap's refusal (a 409 carrying `limit`) adds an *Open account* button to
+    the issuer's portal, the Settings Account row's target.
   - Not published, refused: the `reason` as the row's hint. When the reason
-    is the sign-in one, *Link Gamma Cloud account* opens Settings → Account & sync,
-    where the existing link flow runs.
+    is the sign-in one, *Link Gamma Cloud account* opens Settings → Account
+    & sync, where the link flow runs.
   - Published but without a share there (publishing failed after the page
     reached the share host): the row says so and offers *Publish again*,
     the same `POST`, which finishes the job.
-  - Published: the cloud link as the row hint with *Copy link* — the
-    answer's `public_url`, the page's pretty address when the share host
-    has page hosts, with the token link in the row's hover title as the
-    fallback that also works — a danger
-    icon button that asks inline before it unpublishes, the state line
-    (`mirrorState` of the answer's `mirror`, the pill's icon and words) with
-    a *Sync now* icon button (`POST /api/mirrors/{ws}/sync?wait=1`; off,
-    and the state line says so, while the publication is detached — the
-    answer's `mirror` carries `mode` and `detached` for that, and the
-    refusal's `reason` shows under the row), and
-    the cloud share's access as the local share draws it: the three
-    audience tiles (their hints in the share host's terms) and the View /
-    Edit segmented as the section's action. A change is
-    `POST /api/pages/{id}/publish {audience, role}`, shown at once and put
-    back when the server refuses.
+  - Published:
+    - the cloud link as the row hint with *Copy link*: the answer's
+      `public_url`, the page's pretty address when the share host has page
+      hosts, with the token link (which always works) in the row's hover
+      title;
+    - a danger icon button that asks inline before it unpublishes;
+    - the state line (`mirrorState` of the answer's `mirror`, the pill's
+      icon and words) with a *Sync now* icon button
+      (`POST /api/mirrors/{ws}/sync?wait=1`). While the publication is
+      detached the button is off, the state line says so (the answer's
+      `mirror` carries `mode` and `detached`) and the answer's `reason`
+      shows under the row;
+    - the cloud share's access as the local share draws it: the three
+      audience tiles (their hints in the share host's terms) and the View /
+      Edit segmented as the section's action. A change is
+      `POST /api/pages/{id}/publish {audience, role}`, shown at once and
+      put back when the server refuses.
   - A viewer of the workspace sees the state and the link but no buttons.
 - **The header's sync pill** shows for a publication only on a published
-  page (a clone syncs the whole workspace, so its pill is on every page; a
-  publication syncs the pages in its filter, so its pill is on those;
-  Settings → Account & sync → Sync pill, *Synced pages* / *Every page*, can put it on every page instead). Its
-  tooltip and name line say *Published to Gamma Cloud* with the count of
-  pages and the host; its gear keeps *Automatic sync* and *Sync after an
-  edit* and hides *Direction*, the forces, *Detach* and *Remove origin*,
-  which would break it (a detached publication still offers *Reattach*).
-  The first publication in a workspace sets `publishing` on the open
-  workspace, so the pill appears without a reload.
+  page. A clone syncs the whole workspace, so its pill is on every page; a
+  publication syncs the pages in its filter, so its pill is on those.
+  Settings → Account & sync → Sync pill (*Synced pages* / *Every page*)
+  can put it on every page instead. Its tooltip and name line say
+  *Published to Gamma Cloud* with the count of pages and the host. Its gear
+  keeps *Automatic sync* and *Sync after an edit* and hides *Direction*,
+  the forces, *Detach* and *Remove origin*, which would break it (a
+  detached publication still offers *Reattach*). The first publication in
+  a workspace sets `publishing` on the open workspace, so the pill appears
+  without a reload.
 - **Settings → Account & sync** (the sync sections in `SettingsSync.jsx`,
   `PublishingSection` in `SettingsMirrors.jsx`) lists publications under
-  *Publishing*, above *Clones* (the pill's gear link opens this pane for both): the state avatar, the workspace's
-  name with its tags, *N published pages · host*, the status line, a
-  *Conflicts* button when any wait, and a "more" menu with *Sync now* and
-  a danger *Stop publishing all* (confirmed, then
-  `DELETE /api/pages/{id}/publish?ws=` for every page in the filter).
-  Open conflicts there raise the `publish-conflicts` notice on that pane.
+  *Publishing*, above *Clones*; the pill's gear link opens this pane for
+  both. A row has the state avatar, the workspace's name with its tags,
+  *N published pages · host*, the status line, a *Conflicts* button when
+  any wait, and a "more" menu with *Sync now* and a danger *Stop
+  publishing all* (confirmed, then `DELETE /api/pages/{id}/publish?ws=`
+  for every page in the filter). Open conflicts there raise the
+  `publish-conflicts` notice on that pane.
 
 ### The desktop switcher
 
@@ -478,7 +487,7 @@ has are created on the other, as always.
 **Force.** *Force pull* / *Force push* (`POST /api/mirrors/{ws}/force`
 `{direction: pull | push}`) makes one side identical to the other whatever
 happened: the next round starts by clearing the bases and cursors
-(`_start_force`, under the round lock — a round already running finishes
+(`_start_force`, under the round lock; a round already running finishes
 as it was), every page goes through the
 adopt policy (`theirs` for pull, `mine` for push), and pages the losing side
 alone has — including pages the winner deleted after a sync, whose
@@ -540,34 +549,34 @@ share there and the mirror's raw status, plus `can_publish` / `reason` for
 the popover.
 
 **The plan's cap.** The share host limits how many pages a Gamma Cloud
-plan may publish: `config.PLAN_PAGE_LIMITS` (`{"free": 5}`; the env var
-`GAMMA_FREE_PAGE_LIMIT` overrides the free plan's number, 0 lifts it;
-other plans are unlimited). A person's workspace there holds only
-published pages, so the count is its root pages. The one place a
-publishing mirror makes a page there, `POST /api/pages`, answers 402 with
-"Free plan: up to 5 published pages. Unpublish one, or upgrade your Gamma
-Cloud plan." and `{limit, used, plan}` for an account's default personal
-workspace once it holds that many (`publish.cap_refusal`), after the "id
-taken" check, so a round re-creating a page that is already there, and
-every round of a page already published, is never refused. The plan is the
-identity's last `plan` claim, which the share host stores at every exchange
-and sign-in. It applies only while the server is a share host; a
-self-hosted server never counts. On the publishing side, `publish` reads
-`GET /api/publish/limit` on the share host before a page's first round
-there; a full workspace is exchanged once more first, so an upgrade counts
-at once. Still full, the page leaves the filter again and the answer is 409
-with the share host's words and `limit: {used, max, plan}`; a 402 the round
-itself met (the workspace filled up meanwhile) ends the same way.
-Unpublishing deletes the copy there, which frees a slot. `GET
-/api/pages/{id}/publish` carries the same `limit` whenever the account
-holds a publishing token, read fresh on every call.
+plan may publish (the numbers and their setting:
+[cloud_accounts.md](cloud_accounts.md) "The plan's cap"). A person's
+workspace there holds only published pages, so the count is its root
+pages. It applies only while the server is a share host; a self-hosted
+server never counts.
 
-**Public addresses.** With `GAMMA_PAGE_HOST` set on the share host (a
-pattern such as `{username}-pages.gammapdf.com`, checked at startup: one
-`{username}`, a hostname otherwise), every published page also has a pretty
-address on a hostname per account,
-`https://<username>-pages.gammapdf.com/<slug>-<page id>`. The suffix keeps
-page hosts apart from service hostnames (services are never named with it).
+- **The share host.** The one place a publishing mirror makes a page
+  there, `POST /api/pages`, answers 402 once an account's default personal
+  workspace is full (`publish.cap_refusal`): "Free plan: up to 5 published
+  pages. Unpublish one, or upgrade your Gamma Cloud plan." with `{limit,
+  used, plan}`. The check comes after the "id taken" one, so a round
+  re-creating a page that is already there, or any round of a page already
+  published, is never refused.
+- **The publishing side.** `publish` reads `GET /api/publish/limit` on the
+  share host before a page's first round there. A full workspace is
+  exchanged once more first, so an upgrade counts at once. Still full, the
+  page leaves the filter again and the answer is 409 with the share host's
+  words and `limit: {used, max, plan}`. A 402 the round itself met (the
+  workspace filled up meanwhile) ends the same way. `GET
+  /api/pages/{id}/publish` carries the same `limit` whenever the account
+  holds a publishing token, read fresh on every call.
+
+Unpublishing deletes the copy there, which frees a slot.
+
+**Public addresses.** With `GAMMA_PAGE_HOST` set on the share host
+([cloud_accounts.md](cloud_accounts.md) "Page hosts"), every published page
+also has a pretty address on a hostname per account,
+`https://<username>-pages.gammapdf.com/<slug>-<page id>`.
 The slug (`publish.slug`, mirrored in `frontend/src/shared/lib/slug.js`,
 pinned by `tests/shared/slug.json`) is the title ASCII-folded (NFKD, marks
 dropped), lowercased, runs of anything but `[a-z0-9]` turned into one `-`,
@@ -581,15 +590,15 @@ scheme and port; without a pattern it is the token link.
 
 A page host serves the same SPA (asset URLs are root-relative, so any host
 loads them). At boot (`PageHostGate` in `App.jsx`) the app reads
-`/api/server-config`; when `page_host` is set and the hostname matches it,
+`/api/server-config`. When `page_host` is set and the hostname matches it,
 it calls `GET /api/pages/resolve-public?host=&path=` and enters the share
 view with the token it returns, as if `?share=<token>` were in the URL
-(`utils.setShareView`); the address bar keeps the pretty address, its slug
+(`utils.setShareView`). The address bar keeps the pretty address, its slug
 brought in line with the current title. The resolver reads the username out
-of the host, takes the page with the trailing id (a page id may hold a `-`,
-so every tail after a `-` is tried, the longest shared page winning) from
-that account's default personal workspace, and answers its share; the
-share's audience and role apply as for the token link. Any other path on a
+of the host and takes the page with the trailing id from that account's
+default personal workspace. A page id may hold a `-`, so every tail after
+a `-` is tried, the longest shared page winning. It answers the page's
+share, whose audience and role apply as for the token link. Any other path on a
 page host, the home included, is the share view's "not found". Cookies are
 per host, so on a page host nobody is signed in: a page shared only with
 signed-in users or invited people shows the sign-in gate there, and its

@@ -15,7 +15,7 @@ from fastapi import APIRouter, HTTPException, Request
 from fastapi.responses import JSONResponse
 from pydantic import BaseModel
 
-from .. import accounts, captcha, config, db, mail, oidc, ratelimit, servers, sessions
+from .. import accounts, captcha, config, connect, db, mail, oidc, ratelimit, servers, sessions
 from ..log import log
 
 router = APIRouter(prefix="/api")
@@ -380,6 +380,34 @@ def revoke_device(grant_id: str, request: Request):
         if not row:
             raise HTTPException(404, "no such device")
         oidc.revoke_grant(conn, grant_id, actor=account["id"])
+        servers.drop_grant(conn, account["id"], grant_id)
+        conn.commit()
+    return {"ok": True}
+
+
+class ServerRef(BaseModel):
+    url: str
+
+
+@router.post("/servers/remove")
+def remove_server(body: ServerRef, request: Request):
+    """Take a server that is no longer signed in off the list."""
+    with closing(db.connect()) as conn:
+        account = portal_account(conn, request)
+        if not servers.unlink(conn, account["id"], servers.norm_url(body.url)):
+            raise HTTPException(404, "no such server")
+        conn.commit()
+    return {"ok": True}
+
+
+@router.post("/connected/{client_id}/disconnect")
+def disconnect_server(client_id: str, request: Request):
+    """Delete a server client this account connected: nobody signs in to
+    that server with Gamma Cloud until it is connected again."""
+    with closing(db.connect()) as conn:
+        account = portal_account(conn, request)
+        if not connect.disconnect(conn, account["id"], client_id):
+            raise HTTPException(404, "no such server")
         conn.commit()
     return {"ok": True}
 

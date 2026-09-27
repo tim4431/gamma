@@ -35,7 +35,7 @@ import bcrypt
 import json
 
 from gamma import backups as backups_mod, cloud_auth, cloud_sync, guests, migrations, workspaces
-from gamma.db import SchemaOutdated, connect_users_db, page_now, ws_dir
+from gamma.db import SchemaOutdated, connect_users_db, ws_dir
 from gamma.seed import create_account
 
 

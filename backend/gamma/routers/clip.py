@@ -41,12 +41,12 @@ from ..server_settings import can_store
 from .. import pdf_meta
 from ..storage import DIGEST_CHARS, url_filename
 from .metadata import fetch_page_metadata, registry_record
-from .pdf import download_pdf, resolve_source
+from .pdf import ARXIV_ID, download_pdf, resolve_source
 
 router = APIRouter(prefix="/api", tags=["clip"])
 
 _DOI_RE = re.compile(r"(10\.\d{4,9}/[^\s?#\"'<>]+)", re.I)
-_ARXIV_RE = re.compile(r"(?:arxiv(?:\.org/(?:abs|pdf)/|[:.]\s*)|^)([0-9]{4}\.[0-9]{4,5})(?:v\d+)?", re.I)
+_ARXIV_RE = re.compile(r"(?:arxiv(?:\.org/(?:abs|pdf|html)/|[:.]\s*)|^)(" + ARXIV_ID + r")(?:v\d+)?", re.I)
 
 WEB_CLIPS_TITLE = "Web clips"
 
@@ -101,7 +101,7 @@ def find_page(conn, doi: str = "", arxiv_id: str = "", urls: tuple = ()) -> dict
         if doi and (str(meta.get("doi") or "").lower() == doi or doi in src.lower()
                     or norm_doi(web) == doi):
             return block_to_dict(row)
-        if arxiv_id and (str(meta.get("arxiv_id") or "").split("v")[0] == arxiv_id
+        if arxiv_id and (norm_arxiv(str(meta.get("arxiv_id") or "")) == arxiv_id
                          or norm_arxiv(src) == arxiv_id or norm_arxiv(web) == arxiv_id):
             return block_to_dict(row)
     return None

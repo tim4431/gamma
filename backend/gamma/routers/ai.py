@@ -68,6 +68,7 @@ from ..ai_settings import (
     mask_entry,
     new_key_entry,
     new_provider_id,
+    own_entries,
     protocol_choices,
     provider_label,
     require_ai_runtime,
@@ -308,7 +309,7 @@ def ai_models(request: Request):
         "cite_prompt": CITE_PROMPT,          # PPT-style citation generator
         "agent_prompt": AGENT_PROMPT,        # library-agent base role prompt
         # The shared entries' allowance ({limit, used, exhausted}; None when
-        # none is metered): the pickers mark the shared models once it's used up.
+        # no shared entry applies): the account card's meter.
         "allowance": rt["allowance"],
     }
 
@@ -322,7 +323,7 @@ def ai_models(request: Request):
 
 def _masked_settings(request: Request) -> dict:
     user = request.state.user
-    own = [mask_entry(e) for e in load_provider_entries(user) if not is_server_id(e.get("id"))]
+    own = [mask_entry(e) for e in own_entries(user)]
     # Shared rows: only an admin sees their key hint.
     shared = [{**mask_entry(e, hint=request.state.is_admin), "shared": True}
               for e in server_entries_for(user)]
@@ -371,7 +372,7 @@ def ai_usage_summary(request: Request):
     30-day split by kind (chat, translate, metadata, cite, test) and by
     model. Calls through the server's shared entries count here too, and
     ``allowance`` is their 24-hour allowance ({limit, used, exhausted}; None
-    when none is metered — ai_settings.shared_allowance)."""
+    when no shared entry applies — ai_settings.shared_allowance)."""
     user = require_user(request)
     return {**ai_usage.summary(user), "allowance": shared_allowance(user)}
 
@@ -627,7 +628,7 @@ def ai_health(payload: AIHealthRequest, request: Request):
     answers in-body: {configured, ok, auth?, error?, ...}. The entries are
     the ones the account can use: its own, then the server's shared ones."""
     user = require_user(request)
-    entries = [e for e in load_provider_entries(user) if not is_server_id(e.get("id"))] + server_entries_for(user)
+    entries = own_entries(user) + server_entries_for(user)
     entry = (next((e for e in entries if e.get("id") == payload.provider_id), None)
              or (entries[0] if entries else None))
     if not entry:
@@ -1168,6 +1169,16 @@ def new_chatgpt_entry(entry_id: str, oauth: dict, name: str, models: str) -> dic
             "models": models.strip()[:MAX_MODELS_LEN], "created_at": page_now(), "oauth": oauth}
 
 
+def reconnect_chatgpt_entry(entry: dict, oauth: dict, name: str, models: str) -> None:
+    """New tokens on an existing ChatGPT entry; a non-blank name or model
+    list replaces the stored one."""
+    entry["oauth"] = oauth
+    if name.strip():
+        entry["name"] = name.strip()[:MAX_NAME_LEN]
+    if models.strip():
+        entry["models"] = models.strip()[:MAX_MODELS_LEN]
+
+
 def seeded_chatgpt_models(user: str, entry_id: str) -> str:
     """A new sign-in's first models, asked live from the account through
     ``user``'s runtime (the tokens must be stored first); "" when the
@@ -1202,11 +1213,7 @@ def chatgpt_auth_complete(payload: ChatGPTAuthComplete, request: Request):
         entry = next((e for e in entries if e.get("id") == payload.provider_id), None)
         if not entry or entry.get("protocol") != "chatgpt":
             raise HTTPException(status_code=404, detail="provider not found")
-        entry["oauth"] = oauth
-        if payload.name.strip():
-            entry["name"] = payload.name.strip()[:MAX_NAME_LEN]
-        if payload.models.strip():
-            entry["models"] = payload.models.strip()[:MAX_MODELS_LEN]
+        reconnect_chatgpt_entry(entry, oauth, payload.name, payload.models)
     else:
         if len(entries) >= MAX_PROVIDERS:
             raise HTTPException(status_code=400, detail="too many providers")

@@ -261,7 +261,15 @@ whole export set before the walk — the DB connection is closed by the time
 `response()` runs. Adding an export format = adding a builder; the
 endpoints, progress plumbing and `_zip_response` stay untouched. A builder
 whose download isn't a zip overrides `response()` instead (`_NotesPdfBuilder`
-returns one PDF).
+returns one PDF, rendered by its `render()`).
+
+The single-page exports are also plain functions, for callers without a
+request: `page_builder` (one page through a mode's builder, what
+`/pages/{id}/export` runs), `page_markdown` (the readable Markdown, unbundled,
+upload links left as `/api/uploads/…`), `page_notes_pdf` and `annotated_pdf`
+(what `/pages/{id}/export-pdf` runs). They raise `HTTPException` like the
+routes. The MCP `export_page` tool is their other caller ([mcp.md](mcp.md)
+"Export a page").
 
 ## Gamma-to-Gamma export
 

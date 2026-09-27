@@ -27,7 +27,7 @@ export function AppearanceSettings({ value, diagnostics }) {
 
       <Section title={t("Theme")} scope="account" prefs={SECTION_PREFS.appearance["Theme"]}>
         <PictureChoices label={t("Theme")} value={value.theme} onChange={value.setTheme}
-          options={THEMES.map((theme) => ({ value: theme[0], label: t(theme[1]), hint: t(theme[2]), preview: <ThemePreview theme={theme} dark={DARK} /> }))} />
+          options={THEMES.map((theme) => ({ value: theme[0], label: theme[1], hint: theme[2], preview: <ThemePreview theme={theme} dark={DARK} /> }))} />
       </Section>
 
       <Section title={t("Language")} scope="account" prefs={SECTION_PREFS.appearance["Language"]}>

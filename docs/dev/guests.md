@@ -8,112 +8,115 @@ try-it box (demo.gammapdf.com). The workspace model itself is
 
 ## Guests keep nothing
 
-There is no shared `guest` account any more. `POST /api/login-guest` mints
-a fresh account for the visitor:
+Every guest login is a throwaway account of its own. `POST /api/login-guest`
+(`gamma/guests.py new_guest()`) makes:
 
-- username `guest-<8 url-safe chars>`, `is_guest = 1`, empty
-  `password_hash` (`gamma/guests.py new_guest()`), its own personal
-  workspace through `workspaces.ensure_personal(name, welcome=True)` (the
-  welcome page from `gamma/seed.py`, which names the lifetime: "deleted …
-  24 hours after you started"), then, when `GAMMA_GUEST_SEED` names a
-  workspace zip (the one backup format, [workspaces.md](workspaces.md)
-  "Backups"), that zip restored into it (`ws_backup.restore_zip(ws, path,
-  "replace")`) so every visitor starts from the admin's sample library. A
-  seed that cannot be restored is logged as a warning and skipped: the
-  visitor keeps the welcome page;
-- a normal session row (`guest_date` = the creation date); the response is
-  `{"ok": true, "username": ...}`;
-- refused on a share host (unchanged), 503 once the live guest accounts
-  reach `GAMMA_GUEST_MAX` (default 500, `0` turns guest logins off; the
-  count and the insert are one statement), rate limited to 10 per IP per
-  hour (a login creates a workspace directory, so the cap is tighter than
-  the old one). The endpoint is a sync `def`: it writes files.
+- the account: username `guest-<8 url-safe chars>`, `is_guest = 1`, an
+  empty `password_hash`;
+- its personal workspace, through `workspaces.ensure_personal(name,
+  welcome=True)`, with the welcome page from `gamma/seed.py`, which names
+  the lifetime ("It stays for 24 hours after you started"). When
+  `GAMMA_GUEST_SEED` names a workspace zip (the one backup format,
+  [workspaces.md](workspaces.md) "Export and backups"), that zip is
+  restored into it (`ws_backup.restore_zip(ws, path, "replace")`), so every
+  visitor starts from the admin's sample library. A seed that cannot be
+  restored is logged as a warning and skipped; the visitor keeps the
+  welcome page;
+- a normal session row (`guest_date` = the creation date). The response is
+  `{"ok": true, "username": ...}`.
 
-Everything already keyed on `is_guest` keeps applying to the new accounts:
-no exports, no workspace creation, no cloud link, no integrations, no
-notices, no provider editing, the bounded default quota
-(`server_settings.user_limits` decides by `is_guest`, never by name), the
-shared AI keys only while the admin's switch is on. `auth.is_guest_workspace`
-(`workspaces.is_guest_workspace`) means "a personal workspace whose owner is
-a guest": backup import and the reviewed Gamma import refuse it, it keeps no
-snapshots, scheduled backups skip it. Admins may set a guest's storage
-limits and delete it, never give it a password, the admin flag or a new
-name.
+The endpoint is a sync `def` because it writes files. It is refused on a
+share host and answers 503 once the live guest accounts reach
+`GAMMA_GUEST_MAX` (default 500, `0` turns guest logins off; the count and
+the insert are one statement). Each login creates a workspace directory, so
+it is rate limited to 10 per IP per hour.
 
-**Expiry.** A guest account lives `guest_ttl_hours` (server setting, default
-24; `GAMMA_GUEST_TTL_HOURS` overrides and the Settings row says so) after
-`users.created_at`. Two enforcers, one helper:
+Everything keyed on `is_guest` applies: no exports, no workspace creation,
+no cloud link, no integrations, no notices, no provider editing, the
+bounded default quota (`server_settings.user_limits` decides by `is_guest`,
+never by name), and the shared AI keys only while the admin's switch is on.
+`workspaces.is_guest_workspace` means "a personal workspace whose owner is
+a guest": backup import and the reviewed Gamma import refuse it, it keeps
+no snapshots, and scheduled backups skip it. Admins may set a guest's
+storage limits and delete it, but never give it a password, the admin flag
+or a new name.
+
+**Expiry.** A guest account lives `guest_ttl_hours` after
+`users.created_at` (a server setting, default 24; `GAMMA_GUEST_TTL_HOURS`
+overrides it and the Settings row says so). Expiry is computed from
+`created_at` on every check, never stored, so a shorter lifetime applies to
+existing guests at once. Two places enforce it:
 
 - the session middleware treats an expired guest session as signed out,
   deletes the account on the spot (off the event loop) and clears the
-  cookie; a tab that still sends `X-Gamma-User: guest-…` gets the usual 409
+  cookie. A tab that still sends `X-Gamma-User: guest-…` gets the usual 409
   "reload the tab". `auth.session_lookup` (the websocket handshake) answers
   None for an expired guest;
-- `gamma/guests.py` runs a sweeper in the app lifespan (every 10 minutes,
-  the same shape as `backup_schedule.lifespan`) that deletes every expired
-  guest account nobody came back for;
-- both call `workspaces.delete_account(username)`, the one account deletion
-  (sessions, identities and the cloud grant, integration tokens, publisher
-  sessions, the account's workspaces, its usage rows and prefs, the users
-  row), which `DELETE /api/admin/users/{name}` and `manage.py delete-user`
-  use too. An admin may delete a guest account like any other.
+- the sweeper `gamma/guests.py` runs in the app lifespan (every 10 minutes,
+  shaped like `backup_schedule.lifespan`) deletes the expired guest
+  accounts nobody came back for.
 
-A guest's `POST /api/logout` deletes the account right away: nothing can
-sign into it again. The account menu's Log out says so first for a guest
-(a confirmation, "Log out and delete"). A shorter lifetime applies to existing guests at once
-(expiry is computed from `created_at` on every check, not stored).
+Both call `workspaces.delete_account(username)`, the one account deletion:
+sessions, identities and the cloud grant, integration tokens, publisher
+sessions, the account's workspaces, its usage rows and prefs, the users
+row. `DELETE /api/admin/users/{name}` and `manage.py delete-user` use it
+too, so an admin may delete a guest account like any other.
 
-The old midnight rollover is gone: `sessions.guest_date` stays in the
-schema (written with the creation date, read by nothing). Migration step
-`guest_accounts` (v20) deletes the legacy shared `guest` account and its
-workspace from existing data directories, and turns any other `is_guest`
-row (`manage.py create-user` without a password used to make one) into a
-normal password-less account, so the expiry never deletes it; `create-user`
-without a password now makes exactly that. `manage.py setup` creates no
-guest; `manage.py sweep-guests` deletes the expired ones now (`--all` every
-guest).
+A guest's `POST /api/logout` deletes the account right away, since nothing
+can sign into it again. For a guest, the account menu's Log out asks first
+("Log out and delete").
 
-`GET /api/session` adds `guest_expires_at` (UTC ISO) for a guest session;
-`GET /api/server-config` adds `guest_ttl_hours` and `demo`. `GET/PUT
-/api/admin/settings` carry `guest_ttl_hours` (1–720, `guest_ttl_source`
-`environment` / `saved` / `default`, `guest_ttl_hours_range`) and
-`demo_mode` (`demo_mode_source`); a PUT of either is 400 while its
-environment variable decides (`gamma/server_settings.py guest_settings`).
+`sessions.guest_date` stays in the schema, written with the creation date
+and read by nothing. Migration step `guest_accounts` (v20) deletes the
+legacy shared `guest` account and its workspace. It also turns every other
+`is_guest` row (older builds made one for `manage.py create-user` without a
+password) into a normal password-less account, which is what `create-user`
+without a password makes, so the expiry never deletes it. `manage.py setup`
+creates no guest; `manage.py sweep-guests` deletes the expired ones now
+(`--all`: every guest).
+
+`GET /api/session` adds `guest_expires_at` (UTC ISO) for a guest session,
+and `GET /api/server-config` adds `guest_ttl_hours` and `demo`.
+`GET/PUT /api/admin/settings` carry `guest_ttl_hours` (1–720, with
+`guest_ttl_source` `environment` / `saved` / `default` and
+`guest_ttl_hours_range`) and `demo_mode` (with `demo_mode_source`). A PUT
+of either is 400 while its environment variable decides
+(`gamma/server_settings.py guest_settings`).
 
 ## The shared AI allowance
 
 The admin's shared provider entries (`gamma/ai_settings.py`, Settings →
 Server → Shared AI; an API key or a ChatGPT subscription the admin signs in
-to) are what "per-server AI access" means: every account gets them after
-its own entries, the guest switch adds guests, and every
-account that is not a guest may add its own keys on top. The allowance
-meters the shared entries only, per account, over a rolling 24 hours:
+to) are what "per-server AI access" means. Every account gets them after
+its own entries, the guest switch adds guests, and every account that is
+not a guest may add its own keys on top. The allowance meters the shared
+entries only, per account, over a rolling 24 hours:
 
-- the shared config (`settings` KV `ai_providers`) gains
-  `"allowance": {"accounts": N, "guests": N}` — tokens (input + output as
+- the shared config (`settings` KV `ai_providers`) holds
+  `"allowance": {"accounts": N, "guests": N}`: tokens (input + output as
   the providers report them, `gamma/ai_usage.py`) per account per 24 h,
-  `0` = unlimited (the default for both), at most 10^9; a guest account
+  `0` = unlimited (the default for both), at most 10^9. A guest account
   takes the `guests` limit, every other account (admins included) the
   `accounts` one;
 - `GET/PUT /api/admin/ai-providers` read and write it next to `guests`
-  (`PUT {"allowance": {"accounts": N}}` — either key alone; anything but a
+  (`PUT {"allowance": {"accounts": N}}`, either key alone; anything but a
   whole number in range is a 400);
 - `ai_runtime(user)` reports `"allowance": {"limit", "used", "exhausted"}`
-  whenever a shared entry applies (`limit` 0 = unlimited, never exhausted;
-  `null` while none applies), `used` being
-  `ai_usage.shared_used(user)`: the account's rows on `server:` provider
-  ids in the last 24 h; it also puts `{"user", "limit"}` on every shared
-  provider conf, and the shared models stay listed once it is used up;
-- the choke point is `ai_client.open_ai` (every token-spending call goes
-  through it): `check_allowance` re-reads the count on each call and raises
-  `AllowanceExhausted`, a 429 whose `detail` reads "This server's shared AI
-  allowance for your account is used up (U of L tokens in the last 24
-  hours). Add your own key in Settings → AI, or try again later." A chat
-  stream refused after its first round ends with that text as its `error`
-  line; the Test probe and the login test report it in-body. Dictation
-  reports no tokens: never metered, only refused while the allowance is
-  used up. Model listings spend nothing and are never refused. An
-  account's own entries are never marked, so never metered;
+  whenever a shared entry applies (`null` otherwise; `limit` 0 = unlimited,
+  never exhausted). `used` is `ai_usage.shared_used(user)`, the account's
+  rows on `server:` provider ids in the last 24 h. It also puts
+  `{"user", "limit"}` on every shared provider conf; the shared models stay
+  listed once the allowance is used up;
+- the choke point is `ai_client.open_ai`, which every token-spending call
+  goes through. `check_allowance` re-reads the count on each call and
+  raises `AllowanceExhausted`, a 429 whose `detail` reads "This server's
+  shared AI allowance for your account is used up (U of L tokens in the
+  last 24 hours). Add your own key in Settings → AI, or try again later."
+  A chat stream refused after its first round ends with that text as its
+  `error` line; the Test probe and the login test report it in-body.
+  Dictation reports no tokens, so it is never metered, only refused while
+  the allowance is used up. Model listings spend nothing and are never
+  refused. An account's own entries are never marked, so never metered;
 - the Usage pane's Reset (`DELETE /api/ai/usage`) keeps the rows the
   allowance still counts, so it cannot refill it;
 - `GET /api/ai/models` and `GET /api/ai/usage` carry the same `allowance`
@@ -129,20 +132,20 @@ allowance work the same on every server.
 - The login page (`auth/LoginPage.jsx`, while `GET /api/server-config`
   says `demo` and guests are allowed) leads with **Try the demo** (a guest
   login) and a line saying the workspace lasts `guest_ttl_hours` hours and
-  nothing is kept; the password form and the Gamma Cloud button fold behind
-  an **Admin sign-in** link, collapsed by default (the admin still signs in
-  to add the shared key and set the allowance).
+  nothing is kept. The password form and the Gamma Cloud button fold behind
+  an **Admin sign-in** link, collapsed by default; the admin still signs in
+  there to add the shared key and set the allowance.
 - The guide keeps its progress in `sessionStorage` instead of
   `localStorage` (`guideStorage(demo)` in `guide/triggers.js`), so every
-  visit starts fresh, and **Your first paper** is offered on the library
-  right after the guest lands: a state trigger whose own
+  visit starts fresh. **Your first paper** is offered on the library right
+  after the guest lands: a state trigger whose own
   `requires: {demo: true, view: "home"}` gates only the offer, so the tour
   stays manually startable everywhere. Like every offer it waits for
   Suggest tours ([onboarding.md](onboarding.md)).
 - The account card names when the workspace goes ("Temporary workspace ·
   deleted in 5 hours", from `guest_expires_at`, `auth/guestExpiry.js`),
-  with the hint that it stays until then or until log-out; that line is
-  every guest's, demo server or not.
+  with the hint that it stays until then or until log-out. Every guest
+  sees that line, demo server or not.
 - The account card of any account a shared entry applies to shows what it
   spent through the shared entries (`AllowanceMeter` in
   `settings/SettingsKit.jsx`: "Server AI: 1.2k of 50k tokens in the last

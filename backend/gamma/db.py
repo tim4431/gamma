@@ -430,8 +430,7 @@ def set_pref(username: str, key: str, value, ws: str = "", *, updated_at: str | 
             if key == PROFILE_PREF_KEY:
                 row = db.execute("SELECT updated_at FROM user_prefs WHERE username = ? AND workspace_id = ? AND key = ?",
                                  (username, scope, key)).fetchone()
-                if row and row[0] >= stamp:
-                    stamp = _stamp_after(row[0])
+                stamp = _stamp_newer_than(row[0] if row else "")
             db.execute(
                 "INSERT INTO user_prefs (username, workspace_id, key, value, updated_at) VALUES (?, ?, ?, ?, ?) "
                 "ON CONFLICT(username, workspace_id, key) DO UPDATE SET value = excluded.value, "
@@ -466,12 +465,16 @@ def restamp_pref(username: str, key: str, old: str, new: str, ws: str = "") -> b
     return bool(cur.rowcount)
 
 
-def _stamp_after(ts: str) -> str:
-    """``ts`` plus one millisecond, in page_now()'s form."""
+def _stamp_newer_than(stored: str) -> str:
+    """``page_now()``, or ``stored`` plus one millisecond when that is not
+    older: the profile's stamp never goes back."""
+    stamp = page_now()
+    if not stored or stored < stamp:
+        return stamp
     try:
-        t = datetime.fromisoformat(ts.replace("Z", "+00:00"))
+        t = datetime.fromisoformat(stored.replace("Z", "+00:00"))
     except ValueError:
-        return page_now()
+        return stamp
     return (t + timedelta(milliseconds=1)).astimezone(timezone.utc).strftime("%Y-%m-%dT%H:%M:%S.%f") + "Z"
 
 
@@ -517,9 +520,7 @@ def patch_profile(username: str, changes: dict) -> tuple[dict, str]:
     for _ in range(5):  # another write landed between the read and this one: read again
         value, at = get_profile(username)
         merged = {**value, **changes}
-        stamp = page_now()
-        if at and at >= stamp:
-            stamp = _stamp_after(at)
+        stamp = _stamp_newer_than(at)
         if replace_profile_if(username, merged, at, stamp):
             break
     else:  # an unreadable stored row: replace it

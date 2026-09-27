@@ -14,7 +14,7 @@ demo (demo.gammapdf.com) runs a branch build of the server image:
 
 | Workflow | File | Runs when | Produces |
 |---|---|---|---|
-| `check` | `check.yml` | every pull request to `main`, except one that only touches the account server or the website | pass/fail: brand asset consistency, backend pytest, frontend unit tests + build, the browser suite, extension zip (~4 min) |
+| `check` | `check.yml` | every pull request to `main`, except one that only touches the account server or the website | pass/fail: brand asset consistency, backend pytest, frontend unit tests + build, the browser suite (3 parallel workers), extension zip (~5 min) |
 | `desktop` | `desktop.yml` | manual dispatch only (`release` skill) | Windows installer, macOS dmg + zip, Debian/Ubuntu deb, the update-feed files → GitHub Release `v<version>`; the MSIX artifact + a Microsoft Store submission when the secrets exist; a Docker tag `<version>` |
 | `extension` | `extension.yml` | manual dispatch only (`release` skill) | `gamma-connector-<version>.zip` → GitHub Release `extension-v<version>` |
 | `docker` | `docker.yml` | every push to `main` except one that only touches the account server or the website; dispatched by the desktop release with a version; dispatched from any branch for the demo (`update-demo-server` skill) | `ghcr.io/tim4431/gamma:sha-<short>` on every run; `:latest` only from `main`; `:<version>` and `:<major.minor>` when dispatched with a version; linux/amd64 + arm64 |
@@ -37,6 +37,8 @@ update-account-server ──▶ cloud.yml --ref <branch>: test → ghcr gamma-cl
                           then pull + restart on the VPS          ← no merge needed
 update-demo-server ──▶ docker.yml --ref <branch>: ghcr gamma :sha-<short> (never :latest)
                        then pin that tag in the demo's project    ← no merge needed
+update-needed ──▶ compares what each deployment runs with the code, then runs
+                  update-account-server → update-demo-server → update-server for the ones behind
 release skill ─┬──▶ desktop.yml  meta: version = max(package.json, newest v* tag + patch)
  (gh workflow  │        build Win/mac/Linux with that version pinned, smoke on all three
   run)         │        publish: Release v<version> (notes = commits since previous tag)
@@ -125,9 +127,11 @@ then runs `gh workflow run docker.yml --ref v<version> -f version=…` so the
 server image gets the same version tag (a tag made with `GITHUB_TOKEN`
 would not trigger `docker.yml` by itself). `docker.yml` also bakes the
 build stamp into the image as build args (`GAMMA_VERSION` = the dispatched
-version, empty for a plain push to main; `GAMMA_COMMIT` = the sha), which
-the admin dashboard shows and compares against the latest release
-(`gamma/version.py`, [user_db.md](user_db.md)).
+version, or `<newest v* tag>-dev.<commits since it>` for any other build,
+with `GAMMA_BRANCH` = the branch it was built from; `GAMMA_COMMIT` = the
+sha), which the admin dashboard shows and compares against the latest
+release and, for a `-dev` build, its branch's head (`gamma/version.py`,
+[user_db.md](user_db.md)). The checkout is full-depth for the tags.
 
 No push trigger: the app bundles the backend and the frontend, so a path
 filter would release it on nearly every merge. It runs only when dispatched

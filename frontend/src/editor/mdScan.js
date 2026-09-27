@@ -1,15 +1,43 @@
-// The source scanners for a note's images and tables, shared by the rendered
-// view's tools (MdTools.jsx), the object frame (MdObject.jsx) and the block
-// editor's live rendering (BlockCmEditor.jsx), so all three agree on which
-// construct is "the nth one". Pure: no DOM, no React.
-import { scanMathSpans } from "./markCommands";
+// The source scanners for a note's math, images and tables, shared by the
+// rendered view (BlockTree's mdPreprocess, the tools in MdTools.jsx, the
+// object frame in MdObject.jsx) and the block editor's live rendering
+// (BlockCmEditor.jsx), so all of them agree on which construct is "the nth
+// one". Pure: no DOM, no React.
+import { escapedAt } from "./latexInput.js";
 import { scanFences } from "./fences.js";
-import { scanImageSyntax } from "./mdMarks";
+import { scanImageSyntax } from "./mdMarks.js";
 
-// Ranges an image regex must not fire inside — mirrors mdPreprocess's span
-// protection (math, ``` fences, inline code) so the nth scanned image is the
-// nth rendered one.
-function protectedSpans(content) {
+// All CLOSED math spans in the text: [{from, to, display}] with from/to
+// including the delimiters. Same tokenizer as latexEditor's findMathAtCursor
+// (escaped \$ skipped), but only complete pairs — an unclosed opener stays
+// raw text while it's being typed. Inline spans must sit on one line and be
+// non-empty; "$5 and $3" across prose otherwise pairs into a bogus formula.
+export function scanMathSpans(text) {
+  const re = /\$\$?/g;
+  const spans = [];
+  let m, open = null;
+  while ((m = re.exec(text))) {
+    if (escapedAt(text, m.index)) continue;
+    const tok = { i: m.index, len: m[0].length };
+    if (!open) {
+      open = tok;
+    } else if (tok.len === open.len) {
+      const inner = text.slice(open.i + open.len, tok.i);
+      const ok = inner.trim() && (open.len === 2 || !inner.includes("\n"));
+      if (ok) spans.push({ from: open.i, to: tok.i + tok.len, display: open.len === 2 });
+      open = null;
+    } else {
+      // Mismatched pair ($ ... $$): treat the later token as a fresh opener.
+      open = tok;
+    }
+  }
+  return spans;
+}
+
+// Ranges markdown syntax must not be recognized inside (math, ``` fences,
+// inline code), sorted: mdPreprocess rewrites only outside them, and the
+// image scan skips them, so the nth scanned image is the nth rendered one.
+export function protectedSpans(content) {
   const spans = scanMathSpans(content).map((s) => ({ from: s.from, to: s.to }));
   for (const f of scanFences(content)) spans.push({ from: f.from, to: f.to });
   for (const m of content.matchAll(/`[^`\n]+`/g)) {

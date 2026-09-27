@@ -33,7 +33,7 @@ def nuser(client):
 
 @pytest.fixture(autouse=True)
 def _quiet_sources(monkeypatch):
-    monkeypatch.setattr(version, "_cache", {"at": 0.0, "ttl": 0.0, "release": None, "error": ""})
+    monkeypatch.setattr(version, "_cache", {})
     monkeypatch.setattr(version, "VERSION", "0.2.1")
     monkeypatch.setattr(version, "_fetch_latest", lambda: {"version": "0.2.1", "url": "", "published_at": ""})
     monkeypatch.setattr(logbuf, "_last_seq", {"info": 0, "warning": 0, "error": 0})
@@ -65,7 +65,7 @@ def test_update_notice_until_the_release_is_seen(nadmin, nuser, monkeypatch):
     assert _ids(nadmin) == []
     # the next release brings it back
     monkeypatch.setattr(version, "_fetch_latest", lambda: {"version": "0.4.0", "url": "", "published_at": ""})
-    version._cache["ttl"] = 0.0
+    version._cache.clear()
     assert _ids(nadmin) == ["update"]
 
 

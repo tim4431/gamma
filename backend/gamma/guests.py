@@ -36,10 +36,6 @@ def _parse(ts: str) -> datetime | None:
         return None
 
 
-def _now() -> datetime:
-    return datetime.now(timezone.utc)
-
-
 def expires_at(created_at: str, ttl_hours: int | None = None) -> str:
     """When a guest account created at ``created_at`` goes (UTC ISO, the
     ``page_now`` shape); "" for an unparseable time."""
@@ -57,7 +53,7 @@ def is_expired(created_at: str, *, now: datetime | None = None, ttl_hours: int |
     if created is None:
         return True
     hours = guest_ttl_hours() if ttl_hours is None else ttl_hours
-    return (now or _now()) >= created + timedelta(hours=hours)
+    return (now or datetime.now(timezone.utc)) >= created + timedelta(hours=hours)
 
 
 def account_expires_at(username: str) -> str:

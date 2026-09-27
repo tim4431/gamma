@@ -1,7 +1,7 @@
 // Conflict resolution for a clone (docs/dev/mirror.md), in git's words:
 // local is this clone, remote is origin. One card — ConflictCard — serves
 // every surface: the chip on a block row (its popover walks the page's
-// conflicts one by one), the sync pill's list and Settings → Workspaces.
+// conflicts one by one), the sync pill's list and Settings → Account & sync.
 // A block both sides edited shows what each side changed as a word diff
 // against the text before either edit (removed words struck through, added
 // words in the side's colour), and under them the text that is in the block

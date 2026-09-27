@@ -7,18 +7,21 @@ What exists: `frontend/src/guide/` (anchor registry, event bus, trigger rules
 in `triggers.js`, `useGuide`, `GuideOverlay`, one file per tour in `tours/`,
 the hints in `tours/hints.js`), the node test `tests/guide.test.mjs` and the
 e2e scenarios `guide.mjs` (first paper), `contextualGuide.mjs` (AI chat) and
-`triggeredGuide.mjs` (offers and hints). The first tour is a welcome card,
-the add-a-paper demo, then the user's own highlight on that paper, a typed
-note demonstration, an `llm` label demonstration, and a final spotlight on
-the Home button. Returning to the library emits `home.opened`, shows Done,
-and completes the tour automatically; Finish can also close it. Progress is
-a localStorage key per account (`gamma-guide:<account>:<tourId>`; the first
-tour keeps its older `gamma-guide:first-run`), not yet the synced pref; on a
-demo server (`facts.demo`, from `GET /api/server-config`'s `demo`) the same
-keys live in sessionStorage instead (`guideStorage(demo)` in `triggers.js`),
-so every visit starts fresh ([guests.md](guests.md) "Demo mode"). The
-seeded welcome page in `gamma/seed.py` is unchanged (guest workspaces only,
-hard-coded block tuples).
+`triggeredGuide.mjs` (offers and hints).
+
+The first tour is a welcome card, the add-a-paper demo, then the user's
+own highlight on that paper, a typed note demonstration, an `llm` label
+demonstration, and a final spotlight on the Home button. Returning to the
+library emits `home.opened`, shows Done, and completes the tour
+automatically; Finish can also close it.
+
+Progress is a localStorage key per account (`gamma-guide:<account>:<tourId>`;
+the first tour keeps its older `gamma-guide:first-run`), not yet the synced
+pref. On a demo server (`facts.demo`, from `GET /api/server-config`'s
+`demo`) the same keys live in sessionStorage (`guideStorage(demo)` in
+`triggers.js`), so every visit starts fresh ([guests.md](guests.md) "Demo
+mode"). `gamma/seed.py` seeds the welcome page from hard-coded block
+tuples, in guest workspaces only.
 
 ## Manual tours (implemented)
 
@@ -26,13 +29,16 @@ The account menu's **Tours** submenu lists the tours that can start where the
 user is (`guide.startable()`): a tour's `requires` hold and its first step's
 anchor, or the control that reveals it, is on screen. A tour with `show`
 brings up its own surface first (AI chat opens the chat). So **Your first
-paper** and **AI chat** are always listed; **Sharing a page** and **Editing
-tables** on any page you can edit, **Handwriting** on any PDF you can edit —
-each begins by having you make the thing it explains when there is none yet
-(see "Steps that have the user make something"); **Working together** only
-while someone else is on the page. Hints are never listed. `?guide=` URLs
-never start a tour, and the chat header has no guide button. Cards use short
-titles, without body paragraphs. In Chinese a tour is 教程.
+paper** and **AI chat** are always listed. **Sharing a page** is listed on
+any open page, **Editing tables** on any page you can edit and
+**Handwriting** on any PDF you can edit; each begins by having you make the
+thing it explains when there is none yet (see "Steps that have the user
+make something"). **Shared workspaces** is listed once you belong to one.
+**Working together**, **Citations in answers** and **Resolving a conflict**
+are listed only while their subject is on screen: someone else on the page,
+a cited reply, a conflict's versions. Hints are never listed. `?guide=` URLs
+never start a tour, and the chat header has no guide button. Cards use
+short titles, without body paragraphs. In Chinese a tour is 教程.
 
 AI chat starts in the message box and types `summarize the paper for me`, then
 points to voice input. Existing drafts are restored after the example; an
@@ -51,10 +57,10 @@ show Done before advancing automatically.
 A tour with a `trigger` is also offered by itself, once per `version`, right
 **after** the thing it explains happened, never on mere contact with a
 control (focusing the chat composer offers nothing). The offer is a card
-beside the anchor with the tour's name,
-its length and **Show me** / **Not now**; it does not dim the app or move
-focus. A **hint** (`hint: true`) is a one-step triggered guide: its card is
-the whole thing, with **Got it**.
+beside the anchor with the tour's name, its number of steps and **Show
+me** / **Not now**; it does not dim the app or move focus. A **hint**
+(`hint: true`) is a one-step triggered guide: its card is the whole thing,
+with **Got it**.
 
 | Guide | Offered when | Points at |
 |---|---|---|
@@ -80,7 +86,7 @@ Rules the engine keeps (`useGuide.js`, `triggers.js`):
   first 3 s after load. The tour-level `requires` also gates manual starts;
   the trigger's `requires` gates only the offer, which is how the first-run
   tour is offered on a demo server's library while staying startable from
-  the Tours menu everywhere. Step-level `requires` still filters steps.
+  the Tours menu everywhere. Step-level `requires` filters steps.
 - **After the render.** An event is judged after the render it came with,
   so the facts include what the same action changed (`share.created` sees
   the new link). Only events some trigger listens for are queued.
@@ -105,7 +111,7 @@ Engine abilities available to every step:
 - **Reveal by `open` path.** A step whose anchor is registered with
   `open: [...]` is revealed by clicking through that path (skipping the
   parts already open) instead of tidying the app first; every other step
-  still gets App's `tidy` (close the topbar popovers). The sharing tour
+  gets App's `tidy` (close the topbar popovers). The sharing tour
   stays inside the Share popover this way, the workspaces tour inside the
   account menu.
 - **The card is inert to the page.** It never takes focus (mousedown is
@@ -328,6 +334,7 @@ where the thing happens:
 | `share.created` | App's `createShareLink` |
 | `peer.joined` | App, when someone else appears on the open page |
 | `ink.stroke` | App's `handleInkStroke` |
+| `ink.options`, `ink.erased`, `ink.undone` | App, when the armed tool's options row opens; `handleInkErase` / `handleInkErasePartial`; `inkUndo` (not redo) |
 | `table.shown` | MdTableWrap, when an editable table mounts |
 | `conflict.shown` | MergeResolver's versions |
 | `ref.search` | BlockTree, when the `[[` search shows results |

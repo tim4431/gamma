@@ -1,7 +1,9 @@
 // Code fences in a block's source, pure: where they are and whether a
-// position sits inside one. Split from codeHighlight.js (which re-exports
-// them) so the formatting commands (markCommands.js) and node tests can
-// load them without highlight.js and the DOM.
+// position sits inside one — for the editor's live decorations, blockTree's
+// markdown preprocessing and key handling, and the formatting commands
+// (markCommands.js). Apart from codeHighlight.js so node tests load them
+// without highlight.js and the DOM.
+
 // All ``` fenced regions in the text, in order:
 //   [{from, to, innerFrom, innerTo, lang, closed}]
 // from/to include the fence marker lines (to = end of the closing line, or

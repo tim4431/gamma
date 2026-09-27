@@ -33,12 +33,15 @@ def infouser(client):
 
 @pytest.fixture(autouse=True)
 def _fresh_cache(monkeypatch):
-    monkeypatch.setattr(version, "_cache", {"at": 0.0, "ttl": 0.0, "release": None, "error": ""})
+    monkeypatch.setattr(version, "_cache", {})
 
 
 def test_parse_version():
-    assert version.parse_version("v1.2.3") == (1, 2, 3)
-    assert version.parse_version("0.2") == (0, 2, 0)
+    assert version.parse_version("v1.2.3") == (1, 2, 3, 0)
+    assert version.parse_version("0.2") == (0, 2, 0, 0)
+    assert version.parse_version("0.2.9-dev.12") == (0, 2, 9, 12)
+    assert version.parse_version("0.2.9") < version.parse_version("0.2.9-dev.1") < version.parse_version("0.2.10")
+    assert version.parse_version("0.2.9-rc.1") is None
     assert version.parse_version("extension-v0.2.0") is None
     assert version.parse_version("") is None
 
@@ -88,3 +91,44 @@ def test_server_info_without_a_version_or_network(infoadmin, monkeypatch):
     monkeypatch.setattr(version, "VERSION", "1.0.0")
     info = infoadmin.get("/api/admin/server-info", params={"refresh": 1}).json()
     assert info["label"] == "v1.0.0" and info["update_available"] is None
+
+
+def test_a_dev_build_is_compared_with_its_branch(infoadmin, monkeypatch):
+    monkeypatch.setattr(version, "VERSION", "0.2.9-dev.12")
+    monkeypatch.setattr(version, "COMMIT", "4bd648ce474a")
+    monkeypatch.setattr(version, "BRANCH", "main")
+    monkeypatch.setattr(version, "_fetch_latest", lambda: {"version": "0.2.9", "url": "https://example/rel", "published_at": ""})
+    urls = []
+
+    def compare(ahead, behind):
+        def get(url):
+            urls.append(url)
+            return {"ahead_by": ahead, "behind_by": behind, "html_url": "https://example/compare"}
+        return get
+    # main has three commits this build lacks (and one of its own, from a branch build)
+    monkeypatch.setattr(version, "_get_json", compare(3, 1))
+    info = infoadmin.get("/api/admin/server-info").json()
+    assert urls == [f"{version.COMPARE_API}/4bd648ce474a...main?per_page=1&page=2"]
+    assert info["branch"] == "main" and info["label"] == "v0.2.9-dev.12 (4bd648ce474a)"
+    assert info["latest_build"] == {"version": "0.2.9-dev.14", "branch": "main", "ahead_by": 3, "url": "https://example/compare"}
+    assert info["update"] == {"kind": "build", "version": "0.2.9-dev.14", "url": "https://example/compare"}
+    assert info["update_available"] is True
+    # the branch has nothing new: up to date, although the release is older
+    monkeypatch.setattr(version, "_get_json", compare(0, 0))
+    info = infoadmin.get("/api/admin/server-info", params={"refresh": 1}).json()
+    assert info["update"] is None and info["update_available"] is False
+    # a newer release wins over the branch
+    monkeypatch.setattr(version, "_get_json", compare(5, 0))
+    monkeypatch.setattr(version, "_fetch_latest", lambda: {"version": "0.3.0", "url": "https://example/rel", "published_at": ""})
+    info = infoadmin.get("/api/admin/server-info", params={"refresh": 1}).json()
+    assert info["update"] == {"kind": "release", "version": "0.3.0", "url": "https://example/rel"}
+
+
+def test_a_release_build_never_asks_about_a_branch(infoadmin, monkeypatch):
+    monkeypatch.setattr(version, "VERSION", "0.2.9")
+    monkeypatch.setattr(version, "COMMIT", "4bd648ce474a")
+    monkeypatch.setattr(version, "BRANCH", "main")
+    monkeypatch.setattr(version, "_fetch_latest", lambda: {"version": "0.2.9", "url": "", "published_at": ""})
+    monkeypatch.setattr(version, "_get_json", lambda url: pytest.fail(f"asked {url}"))
+    info = infoadmin.get("/api/admin/server-info").json()
+    assert info["latest_build"] is None and info["update_available"] is False

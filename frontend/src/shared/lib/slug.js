@@ -1,8 +1,8 @@
 // Published pages' public addresses (docs/dev/mirror.md "Publishing"):
 // https://<username>-pages.gammapdf.com/<slug>-<page id> on the share host.
 // The slug is decoration (routing uses the trailing id); these mirror
-// backend/gamma/publish.py `slug` / `page_host_user`, and the cases in
-// tests/shared/slug.json pin both sides.
+// backend/gamma/publish.py `slug` / `page_host_user`; the cases in
+// tests/shared/slug.json pin the slug on both sides.
 
 const SLUG_MAX = 60;
 const PLACEHOLDER = "{username}";

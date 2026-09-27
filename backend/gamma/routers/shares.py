@@ -37,7 +37,7 @@ import sqlite3
 from fastapi import APIRouter, HTTPException, Request
 from pydantic import BaseModel
 
-from ..auth import (SHARE_AUDIENCES, SHARE_ROLES, note_share_miss, require_ws, serialize_share_users,
+from ..auth import (SHARE_AUDIENCES, SHARE_ROLES, ShareScope, note_share_miss, require_ws, serialize_share_users,
                     share_access, share_lookup)
 from ..blocks_store import page_attachment, root_pages
 from ..db import connect_pages_db, connect_users_db, page_now
@@ -52,35 +52,28 @@ class ShareSettings(BaseModel):
     users: list | None = None  # ["carol"] or [{"name": "carol", "role": "edit"}] (bare names = view)
 
 
-# A share's target: the column that names it and its value, the other
-# column ''. Everything below takes one and never asks which kind it is.
-def _page_target(page_id: str) -> dict:
-    return {"page_id": page_id, "folder": ""}
-
-
-def _folder_target(folder: str) -> dict:
-    return {"page_id": "", "folder": folder}
-
-
 def _settings(share: dict) -> dict:
     return {"token": share["token"], "page_id": share["page_id"], "folder": share["folder"],
             "audience": share["audience"], "role": share["role"], "users": share["users"],
             "created_by": share["created_by"]}
 
 
-def _unshared(target: dict) -> dict:
-    return {"token": None, "page_id": target["page_id"], "folder": target["folder"]}
+# A share's target is the ShareScope it grants: the page or the folder, the
+# other ''. Everything below takes one and never asks which kind it is.
+
+def _unshared(target: ShareScope) -> dict:
+    return {"token": None, "page_id": target.page, "folder": target.folder}
 
 
-def _find(ws: str, target: dict) -> dict | None:
+def _find(ws: str, target: ShareScope) -> dict | None:
     with connect_users_db() as conn:
         row = conn.execute(
             "SELECT token FROM shares WHERE workspace_id = ? AND page_id = ? AND folder = ?",
-            (ws, target["page_id"], target["folder"])).fetchone()
+            (ws, target.page, target.folder)).fetchone()
     return share_lookup(row[0]) if row else None
 
 
-def _require_page(ws: str, page_id: str) -> dict:
+def _require_page(ws: str, page_id: str) -> ShareScope:
     """The page target; 404/400 unless page_id is one of the workspace's root pages."""
     with connect_pages_db(ws) as conn:
         row = conn.execute(
@@ -89,10 +82,10 @@ def _require_page(ws: str, page_id: str) -> dict:
         raise HTTPException(status_code=404, detail="page not found")
     if row[0] != "root":
         raise HTTPException(status_code=400, detail="only pages can be shared")
-    return _page_target(page_id)
+    return ShareScope(page=page_id)
 
 
-def _require_folder(ws: str, name: str) -> dict:
+def _require_folder(ws: str, name: str) -> ShareScope:
     """The folder target; 400 for an empty path, 404 unless some page is
     filed in the folder (folders exist only through their pages)."""
     folder = clean_path(name or "")
@@ -101,7 +94,7 @@ def _require_folder(ws: str, name: str) -> dict:
     with connect_pages_db(ws) as conn:
         if not root_pages(conn, folder):
             raise HTTPException(status_code=404, detail="folder not found")
-    return _folder_target(folder)
+    return ShareScope(folder=folder)
 
 
 def _page_doc_id(ws: str, page_id: str) -> str:
@@ -153,7 +146,7 @@ def _validated(editor: str, current: dict, payload: ShareSettings) -> dict:
 
 # ---- the four operations, the same for both targets -------------------------
 
-def _create(ws: str, request: Request, target: dict, payload: ShareSettings | None) -> dict:
+def _create(ws: str, request: Request, target: ShareScope, payload: ShareSettings | None) -> dict:
     """Create the target's share link (defaults: anyone, view) — or, when one
     exists, return it unchanged so re-sharing never invalidates a link already
     sent around. An optional body applies settings to a NEW link only."""
@@ -167,19 +160,19 @@ def _create(ws: str, request: Request, target: dict, payload: ShareSettings | No
         conn.execute(
             "INSERT INTO shares (token, workspace_id, page_id, folder, created_by, audience, role, allowed_users, "
             "created_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)",
-            (token, ws, target["page_id"], target["folder"], request.state.user, fields["audience"],
+            (token, ws, target.page, target.folder, request.state.user, fields["audience"],
              fields["role"], serialize_share_users(fields["users"]), page_now()),
         )
         conn.commit()
     return _settings(share_lookup(token))
 
 
-def _get(ws: str, target: dict) -> dict:
+def _get(ws: str, target: ShareScope) -> dict:
     share = _find(ws, target)
     return _settings(share) if share else _unshared(target)
 
 
-def _update(ws: str, request: Request, target: dict, payload: ShareSettings, what: str) -> dict:
+def _update(ws: str, request: Request, target: ShareScope, payload: ShareSettings, what: str) -> dict:
     """Change who may open the link and what they may do. The token stays."""
     share = _find(ws, target)
     if not share:
@@ -194,11 +187,11 @@ def _update(ws: str, request: Request, target: dict, payload: ShareSettings, wha
     return _settings(share_lookup(share["token"]))
 
 
-def _delete(ws: str, target: dict) -> dict:
+def _delete(ws: str, target: ShareScope) -> dict:
     """Stop sharing: the token dies; sharing again mints a new one."""
     with connect_users_db() as conn:
         cur = conn.execute("DELETE FROM shares WHERE workspace_id = ? AND page_id = ? AND folder = ?",
-                           (ws, target["page_id"], target["folder"]))
+                           (ws, target.page, target.folder))
         conn.commit()
     return {"ok": True, "removed": cur.rowcount}
 
@@ -246,13 +239,13 @@ async def get_folder_share_settings(request: Request, name: str):
 @router.put("/share-settings/folder")
 async def update_folder_share_settings(request: Request, name: str, payload: ShareSettings):
     ws = require_ws(request, write=True)
-    return _update(ws, request, _folder_target(clean_path(name or "")), payload, "folder")
+    return _update(ws, request, ShareScope(folder=clean_path(name or "")), payload, "folder")
 
 
 @router.delete("/share-settings/folder")
 async def delete_folder_share(request: Request, name: str):
     ws = require_ws(request, write=True)
-    return _delete(ws, _folder_target(clean_path(name or "")))
+    return _delete(ws, ShareScope(folder=clean_path(name or "")))
 
 
 # ---- page shares ------------------------------------------------------------
@@ -276,13 +269,13 @@ async def get_share_settings(page_id: str, request: Request):
 @router.put("/share-settings/{page_id}")
 async def update_share_settings(page_id: str, payload: ShareSettings, request: Request):
     ws = require_ws(request, write=True)
-    return _update(ws, request, _page_target(page_id), payload, "page")
+    return _update(ws, request, ShareScope(page=page_id), payload, "page")
 
 
 @router.delete("/share-settings/{page_id}")
 async def delete_share(page_id: str, request: Request):
     ws = require_ws(request, write=True)
-    return _delete(ws, _page_target(page_id))
+    return _delete(ws, ShareScope(page=page_id))
 
 
 # ---- resolving a link -------------------------------------------------------

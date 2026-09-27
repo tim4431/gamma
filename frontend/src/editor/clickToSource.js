@@ -150,14 +150,21 @@ export function gapInSource(source, at, spans = []) {
   return { offset: start, insert: true };
 }
 
-// The rendered view's top-level blocks, top to bottom, with the gap between
-// each pair: [{y, half, below}] — `y` the gap's middle (client coords),
-// `half` its hover reach, `below` the block under it. The reach covers the
-// gap plus up to 6px into each block (a third of the shorter one at most, so
-// the reaches around a short block — an empty line — never meet).
-export function renderedGaps(container, skip) {
-  const kids = [...container.children].filter((k) => k !== skip
-    && !k.hasAttribute("data-markdown-copy-ignore") && k.getClientRects().length);
+// The rendered view's top-level blocks, top to bottom: its shown children
+// minus the overlays marked data-markdown-copy-ignore (the gap line, other
+// people's carets).
+export function renderedBlocks(container) {
+  return [...container.children].filter((k) =>
+    !k.hasAttribute("data-markdown-copy-ignore") && k.getClientRects().length);
+}
+
+// The gap between each pair of the rendered view's blocks: [{y, half,
+// below}] — `y` the gap's middle (client coords), `half` its hover reach,
+// `below` the block under it. The reach covers the gap plus up to 6px into
+// each block (a third of the shorter one at most, so the reaches around a
+// short block — an empty line — never meet).
+export function renderedGaps(container) {
+  const kids = renderedBlocks(container);
   const gaps = [];
   for (let i = 1; i < kids.length; i++) {
     const a = kids[i - 1].getBoundingClientRect(), b = kids[i].getBoundingClientRect();

@@ -149,7 +149,7 @@ device.
 
 The viewer reports each phase to the host (`onLoadState`), which drives the
 status pill, stamps `performance.mark("pdf-<phase>", {detail: {url, ms}})`
-and writes `pdf <phase> +<ms>` to the session log (Settings → Advanced). `ms`
+and writes `pdf <phase> +<ms>` to the session log (Settings → Diagnostics). `ms`
 counts from the `open` phase of that url.
 
 | Phase | Meaning |

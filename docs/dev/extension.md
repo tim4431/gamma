@@ -10,7 +10,7 @@ and text selections. Server side: `gamma/routers/clip.py`. No build step
 
 ## What it does
 
-1. **Save a paper from its landing page.** arXiv abs, publisher page, DOI
+1. **Save a paper from its landing page.** arXiv abs or HTML, publisher page, DOI
    link, OpenReview… the toolbar badge shows `PDF` / `arX` / `DOI` (`?` for
    a DOI merely found in the text). The popup shows the detected title, a
    folder picker and labels → **Save to Gamma** → *Open in Gamma*
@@ -73,7 +73,7 @@ helpers — never re-implement it in the extension.
 |---|---|
 | `manifest.json` | MV3: module service worker, `<all_urls>` content script, popup, options, `save-to-gamma` command. `host_permissions: ["<all_urls>"]` — the same install warning the content script already carries, and it makes cookie-carrying fetches to the (user-configured) server origin and the PDF-from-tab fetch work without runtime permission prompts |
 | `worker.js` | per-tab state in `chrome.storage.session` (`tab:<id>` → `{candidate, hit, preview, auth, saving, error}`), badge/icon, `lookup` + `preview`, the save pipeline, context menus, keyboard command, notifications, the publisher-session status cache + automatic refresh (`publisher:auto`, `publisher:attempts` in session storage), and the message API (`get-state`, `save`, `clip-selection`, `auth-changed`, `publisher-status`, `open`) |
-| `doi.js` | the DOI-in-a-URL-path rule (`gammaDoiFromPath`), one file loaded by the content script and imported by the worker |
+| `ids.js` | the identifier rules — a DOI used as a URL path (`gammaDoiFromPath`) and the arXiv id (`gammaArxivId`) — one file loaded by the content script and imported by the worker, tested in `tests/` |
 | `detect.js` | content script (`document_idle`): identifier extraction, re-run on SPA URL changes; answers `get-detection` / `get-selection` / `fetch-pdf` (downloads a PDF from inside the page and relays it base64 — publisher bot checks that 403 the worker's fetch accept the page's own same-origin request) |
 | `api.js` | settings (`chrome.storage.sync`: `server, folder, labels, allowOa, saveCopy`), `api()` fetch wrapper (`credentials: "include"`, JSON `detail` → `ApiError{status}`), `login/logout/whoAmI` |
 | `publisherSessions.js` | Publisher-host validation and the connection flow (checks the active tab and account, then sends a snapshot to Gamma); the automatic-refresh rule (`shouldAutoRefresh`, `REFRESH_AFTER` / `RETRY_AFTER`) and the status text (`describeSession`) — pure, tested in `tests/` |
@@ -92,9 +92,9 @@ helpers — never re-implement it in the extension.
 
 | Signal | Yields |
 |---|---|
-| `arxiv.org/abs|pdf/<id>` in the URL, `citation_arxiv_id` | `arxiv_id` (version stripped) |
-| a DOI used as a path — `doi.org/<doi>`, `/doi/…/10.…` (Atypon, Wiley), publisher PDF paths built on it (APS `/prl/pdf/<doi>`, Springer `/content/pdf/<doi>.pdf`, IOP `/article/<doi>/pdf`; the view/file suffix stripped by `doi.js`, the same rule as the server's `norm_doi`) — then `citation_doi`, `dc.identifier`, `prism.doi`, JSON-LD `*Article` identifiers | `doi` |
-| `contentType === application/pdf` / `.pdf` URL, `citation_pdf_url`, `<link rel=alternate type=application/pdf>` | `pdf_url` |
+| `arxiv.org/abs|pdf|html/<id>` in the URL, `citation_arxiv_id` — new-style (`2310.06825`) and old-style (`cond-mat/0402216`) ids, the server's `pdf.ARXIV_ID` shape | `arxiv_id` (version stripped) |
+| a DOI used as a path — `doi.org/<doi>`, `/doi/…/10.…` (Atypon, Wiley), publisher PDF paths built on it (APS `/prl/pdf/<doi>`, Springer `/content/pdf/<doi>.pdf`, IOP `/article/<doi>/pdf`; the view/file suffix stripped by `ids.js`, the same rule as the server's `norm_doi`) — then `citation_doi`, `dc.identifier`, `prism.doi`, JSON-LD `*Article` identifiers | `doi` |
+| `contentType === application/pdf` / `.pdf` URL, `citation_pdf_url`, `<link rel=alternate type=application/pdf>` (a page advertising none has no `pdf_url` — never itself) | `pdf_url` |
 | `citation_title`, JSON-LD headline, `dc.title`, `og:title`, `document.title` | `title` |
 | DOI regex over the first 30 k chars of visible text (only when nothing else matched) | `kind: "maybe"` |
 
@@ -270,7 +270,10 @@ side and the security model: [paper_metadata.md](paper_metadata.md#connected-pub
   (dedup + folder refinement, no PDF / dead link → web-page path with
   selection + re-clip dedup, `doc_id` path, `save_copy`, lookup by arXiv
   version / DOI / web_url, the preview with faked registries + its cache,
-  `norm_doi` on publisher paths, folders, clip notes, 401s).
+  `norm_doi` on publisher paths, `norm_arxiv` on HTML URLs and old-style ids,
+  an arXiv HTML page saving its PDF, folders, clip notes, 401s).
+- `extension/tests/*.test.mjs` (`node --test extension/tests/*.test.mjs`) —
+  the pure modules: `ids.js` and `publisherSessions.js`.
 - End-to-end recipe (not checked in): Playwright `launchPersistentContext`
   with `--load-extension=extension --headless=new` on the cached ms-playwright
   Chromium, a throwaway backend (`GAMMA_DATA_DIR`, `GAMMA_ADMIN_USER/PASSWORD`,

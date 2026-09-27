@@ -128,13 +128,6 @@ export const AlertCircleIcon = (p) => (
 export const ActivityIcon = (p) => (
   <Icon {...p}><path d="M22 12h-2.48a2 2 0 0 0-1.93 1.46l-2.35 8.36a.25.25 0 0 1-.48 0L9.24 2.18a.25.25 0 0 0-.48 0l-2.35 8.36A2 2 0 0 1 4.49 12H2" /></Icon>
 );
-export const BrainIcon = (p) => (
-  <Icon {...p}>
-    <path d="M9.5 4A2.5 2.5 0 0 0 7 6.5v.25A2.75 2.75 0 0 0 5.25 12 3.25 3.25 0 0 0 7 18.25V19a2 2 0 0 0 4 0V5.5A1.5 1.5 0 0 0 9.5 4Z" />
-    <path d="M14.5 4A2.5 2.5 0 0 1 17 6.5v.25A2.75 2.75 0 0 1 18.75 12 3.25 3.25 0 0 1 17 18.25V19a2 2 0 0 1-4 0V5.5A1.5 1.5 0 0 1 14.5 4Z" />
-    <path d="M7 9.5h1.5A2.5 2.5 0 0 1 11 12" /><path d="M17 9.5h-1.5A2.5 2.5 0 0 0 13 12" />
-  </Icon>
-);
 export const UploadIcon = (p) => (
   <Icon {...p}><path d="M12 15V3" /><path d="m7 8 5-5 5 5" /><path d="M21 17v2a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-2" /></Icon>
 );
@@ -246,9 +239,6 @@ export const LayoutIcon = (p) => (
 );
 export const MonitorIcon = (p) => (
   <Icon {...p}><rect x="2" y="3" width="20" height="14" rx="2" /><line x1="8" y1="21" x2="16" y2="21" /><line x1="12" y1="17" x2="12" y2="21" /></Icon>
-);
-export const SunIcon = (p) => (
-  <Icon {...p}><circle cx="12" cy="12" r="4" /><path d="M12 2v2" /><path d="M12 20v2" /><path d="m4.93 4.93 1.41 1.41" /><path d="m17.66 17.66 1.41 1.41" /><path d="M2 12h2" /><path d="M20 12h2" /><path d="m6.34 17.66-1.41 1.41" /><path d="m19.07 4.93-1.41 1.41" /></Icon>
 );
 export const MoonIcon = (p) => (
   <Icon {...p}><path d="M12 3a6 6 0 0 0 9 9 9 9 0 1 1-9-9Z" /></Icon>

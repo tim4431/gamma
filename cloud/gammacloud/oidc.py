@@ -14,8 +14,10 @@ Clients:
   [::1]), which is what a local Gamma sidecar listens on. It may always
   ask for ``offline_access`` (a refresh token, so a laptop signs in while
   offline).
-- **share-host** and **container** clients: confidential, one row each,
-  created at provisioning, exact redirect URIs. They get a refresh token
+- **share-host**, **container** and **server** clients: confidential, one
+  row each, exact redirect URIs. Admins create the first two; a *server*
+  client is a self-hosted Gamma server someone connected themselves
+  (``connect.py``) and belongs to that account. They get a refresh token
   only together with the ``prefs`` scope: a server syncing a person's
   preference profile between sign-ins needs one.
 
@@ -126,6 +128,9 @@ def discovery() -> dict:
                              "email_verified", "name", "plan"],
         # not OIDC: where a Gamma server publishes pages ("" = no share host)
         "gamma_share_host": config.SHARE_HOST_URL,
+        # not OIDC: how a self-hosted Gamma server gets its client (connect.py)
+        "gamma_server_connect_endpoint": f"{base}/connect-server",
+        "gamma_server_connect_token_endpoint": f"{base}/api/servers/connect/token",
     }
 
 
@@ -142,12 +147,15 @@ def get_client(conn, client_id: str):
     return {**dict(row), "redirect_uris": json.loads(row["redirect_uris"])}
 
 
+CLIENT_KINDS = ("share-host", "container", "server")
+
+
 def create_client(conn, *, name: str, kind: str, redirect_uris: list[str], server_id: str = "",
-                  actor: str = "") -> tuple[str, str]:
+                  actor: str = "", owner: str = "") -> tuple[str, str]:
     """A confidential client; returns (client_id, secret) — the secret is
-    shown once."""
-    if kind not in ("share-host", "container"):
-        raise accounts.Problem(400, "kind must be share-host or container")
+    shown once. ``owner``: the account that connected a ``server`` client."""
+    if kind not in CLIENT_KINDS:
+        raise accounts.Problem(400, "kind must be " + ", ".join(CLIENT_KINDS))
     if not redirect_uris:
         raise accounts.Problem(400, "a redirect URI is required")
     for uri in redirect_uris:
@@ -158,11 +166,20 @@ def create_client(conn, *, name: str, kind: str, redirect_uris: list[str], serve
             raise accounts.Problem(400, f"bad redirect URI: {uri}")
     client_id = "gc_" + new_token(12)
     secret = new_token(32)
-    conn.execute("INSERT INTO oauth_clients (client_id, secret_hash, kind, name, redirect_uris, server_id, created_at) "
-                 "VALUES (?, ?, ?, ?, ?, ?, ?)",
-                 (client_id, token_hash(secret), kind, name[:100], json.dumps(redirect_uris), server_id, now()))
-    audit(conn, "client.create", actor=actor, detail=f"{client_id} {kind} {name}")
+    conn.execute("INSERT INTO oauth_clients (client_id, secret_hash, kind, name, redirect_uris, server_id, created_at, "
+                 "owner_account_id) VALUES (?, ?, ?, ?, ?, ?, ?, ?)",
+                 (client_id, token_hash(secret), kind, name[:100], json.dumps(redirect_uris), server_id, now(), owner))
+    audit(conn, "client.create", owner, actor, f"{client_id} {kind} {name}")
     return client_id, secret
+
+
+def rotate_secret(conn, client_id: str, actor: str = "") -> str:
+    """A new secret for a confidential client; the old one stops working at
+    once, its grants stay (they belong to the client id)."""
+    secret = new_token(32)
+    conn.execute("UPDATE oauth_clients SET secret_hash = ? WHERE client_id = ?", (token_hash(secret), client_id))
+    audit(conn, "client.rotate", actor=actor, detail=client_id)
+    return secret
 
 
 def delete_client(conn, client_id: str, actor: str = "") -> bool:
@@ -223,6 +240,10 @@ def begin(conn, params: dict) -> dict:
         raise OAuthError("invalid_client", "unknown client", 400)
     redirect_uri = params.get("redirect_uri", "")
     if not redirect_allowed(client, redirect_uri):
+        if client["kind"] == "desktop" and redirect_uri.startswith("https://"):
+            # a Gamma server at a public address, still on the desktop client
+            raise OAuthError("invalid_request", "This Gamma server is not connected to Gamma Cloud yet. Its admin "
+                             "connects it in Gamma's Settings → Server → Sign-in.", 400)
         raise OAuthError("invalid_request", "redirect_uri is not registered for this client", 400)
     try:
         if params.get("response_type") != "code":
@@ -484,6 +505,7 @@ def purge_expired(conn) -> None:
     conn.execute("DELETE FROM oauth_codes WHERE expires_at <= ?", (ts,))
     conn.execute("DELETE FROM access_tokens WHERE expires_at <= ?", (ts,))
     conn.execute("DELETE FROM email_tokens WHERE expires_at <= ?", (ts,))
+    conn.execute("DELETE FROM server_connects WHERE expires_at <= ?", (ts,))
     conn.execute("UPDATE grants SET revoked_at = ?, refresh_hash = NULL WHERE expires_at <= ? AND revoked_at IS NULL",
                  (ts, ts))
     conn.execute("DELETE FROM refresh_history WHERE grant_id IN (SELECT id FROM grants WHERE revoked_at IS NOT NULL)")

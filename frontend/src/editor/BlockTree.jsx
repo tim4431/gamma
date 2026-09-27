@@ -18,7 +18,7 @@ import { MermaidDiagram, mermaidCodeProps } from "../shared/ui/MermaidDiagram";
 import { mapOutsideCodeFences, remarkMermaid, scanMermaidFences, setMermaidWidth } from "../shared/lib/mermaidMarkdown.js";
 import { MdObject, findObject } from "./MdObject";
 import { cutObject } from "./mdObjects";
-import { blockSpans } from "./mdScan";
+import { blockSpans, parseTable, protectedSpans, scanMathSpans, scanTables } from "./mdScan";
 import { LinkIcon, PenIcon } from "../shared/ui/Icons";
 import { FileChip, parseUploadUrl, postFile, uploadFilesAsLines } from "../transfers/FileChip";
 import {
@@ -26,12 +26,12 @@ import {
   LatexAcPopup, MathLivePreview, mathTabJump,
 } from "./LatexEditor";
 import { BlockCmEditor, OBJECT_DRAG_TYPE } from "./BlockCmEditor";
-import { scanMathSpans } from "./markCommands";
 import { expandBlankLines } from "./mdMarks";
 import { BLOCK_COMMANDS } from "./blockCommands.js";
 import { dispatch as dispatchHotkey } from "../shared/lib/hotkeys.js";
 import { blockStartInSource, gapInSource, renderedGaps, sourceOffsetAtPoint } from "./clickToSource";
-import { fenceInnerAt, highlightCode, makeCopyButton, scanFences } from "./codeHighlight";
+import { highlightCode, makeCopyButton } from "./codeHighlight";
+import { fenceInnerAt } from "./fences.js";
 import { filterSlashCommands, SlashMenuPopup } from "./SlashMenu";
 import { remarkCallouts } from "./callouts";
 import { PeerChips, RenderedCarets } from "../collaboration/Presence";
@@ -42,7 +42,7 @@ import { T, t } from "../shared/i18n/i18n.js";
 import { guideEvents } from "../guide/events.js";
 import {
   applyImageEdit, applyTableEdit, formatTables, htmlTableToMarkdown,
-  MdImage, MdTableWrap, parseTable, scanTables, tsvToMarkdown,
+  MdImage, MdTableWrap, tsvToMarkdown,
 } from "./MdTools";
 
 // Module-level ref for native HTML5 drag-and-drop (shared with App's drop handlers)
@@ -95,14 +95,9 @@ function mdPreprocessProse(content, nested) {
       content = `${before}$$ ${tex.replace(/\s*\n\s*/g, " ")} $$${after}`;
     }
   }
-  const spans = scanMathSpans(content).map((s) => ({ from: s.from, to: s.to }));
-  // ``` fences claim first (sorted by from, earlier span wins in
-  // applyOutsideSpans) — a [[ref]] or == inside code must stay literal.
-  for (const f of scanFences(content)) spans.push({ from: f.from, to: f.to });
-  for (const m of content.matchAll(/`[^`\n]+`/g)) {
-    spans.push({ from: m.index, to: m.index + m[0].length });
-  }
-  return applyOutsideSpans(content, spans, (seg) => seg
+  // Outside math, ``` fences and inline code (where two overlap, the earlier
+  // wins in applyOutsideSpans) — a [[ref]] or == inside code stays literal.
+  return applyOutsideSpans(content, protectedSpans(content), (seg) => seg
     // Sized images: legacy Logseq {:width N} first, then Obsidian ![alt|300].
     .replace(/!\[([^\]]*)\]\(([^)]+)\)\{:width\s+(\d+)\}/g, '<img src="$2" alt="$1" width="$3" />')
     .replace(/!\[([^\]|]*)\|(\d+)(?:x\d+)?\]\(([^)]+)\)/g, '<img src="$3" alt="$1" width="$2" />')
@@ -1063,7 +1058,7 @@ function BlockRow({
 
   function trackGapLine(e) {
     const el = e.currentTarget;
-    const gap = renderedGaps(el, el.querySelector(":scope > .mdGapLine"))
+    const gap = renderedGaps(el)
       .find((g) => Math.abs(e.clientY - g.y) <= g.half);
     const top = gap ? gap.y - el.getBoundingClientRect().top : null;
     setGapLine((cur) => (cur?.top === top ? cur : gap ? { top, half: gap.half, below: gap.below } : null));

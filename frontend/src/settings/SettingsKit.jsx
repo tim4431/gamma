@@ -1,8 +1,10 @@
 // The building blocks every settings pane is composed from — and nothing
 // else: PaneHead › Section › Row/Toggle for the panes themselves, SubDialog ›
 // Step/Field for the editor dialogs they open, plus the small shared controls
-// (Segmented, PictureChoices, Stepper, UnitInput, CharSlider, AccountPicker, LogBox, Stat, Empty, QuotaMeter/PercentMeter, KeyBinding). New settings
-// UI should reuse these; bespoke classes are for layout only.
+// (Segmented, PictureChoices/IconChoices, ToggleGroup, Stepper, UnitInput,
+// CharSlider, PasswordInput, AccountPicker, LogBox, Stat/StatText, Empty,
+// WorkspaceFolder, QuotaMeter/PercentMeter/AllowanceMeter, KeyCaps/KeyBinding).
+// New settings UI should reuse these; bespoke classes are for layout only.
 import React from "react";
 import { API, apiJson, copyText, fmtBytes } from "../shared/lib/utils";
 import { AlertCircleIcon, CheckIcon, CloudCheckIcon, EyeIcon, EyeOffIcon, MonitorIcon, RefreshIcon, ShieldIcon, UndoIcon, UserIcon } from "../shared/ui/Icons";
@@ -469,6 +471,16 @@ export function LogBox({ icon, label, description, entries, emptyText, copyStatu
 
 export function Empty({ icon: Icon, children }) {
   return <div className="setEmpty"><Icon size={26} />{children}</div>;
+}
+
+// A workspace's folder in the server's data directory (workspaces/<id>/),
+// shown in its row's detail line so the files can be found on disk.
+export function WorkspaceFolder({ id }) {
+  return (
+    <span className="wsFolder" title={t("Folder in the server's data directory")}>
+      {`workspaces/${id}`}
+    </span>
+  );
 }
 
 // Notion-style people picker: a search box over the account directory with

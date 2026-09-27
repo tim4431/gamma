@@ -25,7 +25,7 @@ from fastapi import HTTPException, Request
 from fastapi.responses import JSONResponse
 
 from . import guests, publisher_sessions
-from .blocks_store import page_root_id, root_pages
+from .blocks_store import page_root_id
 from .config import USERS_DB
 from .foldertags import clean_path, parse_tags, path_within
 from .logbuf import log
@@ -308,13 +308,6 @@ def requested_ws(carrier) -> str:
     return (carrier.query_params.get("ws") or carrier.headers.get(WORKSPACE_HEADER) or "").strip()
 
 
-def is_guest_workspace(ws: str) -> bool:
-    """A personal workspace whose owner is a guest account."""
-    from . import workspaces  # local: workspaces imports seed, which imports db
-
-    return workspaces.is_guest_workspace(ws)
-
-
 def workspace_access(username: str, requested: str, default_ws: str) -> tuple[str, str | None]:
     """``(workspace_id, role)`` for an account's request: the named
     workspace, else the account's default (created on the spot if the
@@ -383,8 +376,8 @@ class ShareScope:
     the root block id) or one folder (``folder``, a folder-label path — the
     pages filed there or below it, gamma/foldertags.py rules, membership
     read live so pages filed later join and pages moved out leave). Every
-    share-enabled endpoint asks it whether a page or block is in reach;
-    nothing else branches on the kind.
+    share-enabled endpoint asks it what is in reach, and the shares router
+    uses it as a share's target; nothing else branches on the kind.
     """
 
     __slots__ = ("page", "folder")
@@ -397,8 +390,11 @@ class ShareScope:
         return cls(page=share.get("page_id") or "", folder=share.get("folder") or "")
 
     @property
-    def kind(self) -> str:
-        return "folder" if self.folder else "page"
+    def lists_library(self) -> bool:
+        """Whether the share view is a library (the root listing of the pages
+        in reach, folder-export progress): a folder share's is, a page share
+        never enumerates the workspace."""
+        return bool(self.folder)
 
     def allows_page(self, conn, page_id: str) -> bool:
         """Whether ``page_id`` is a root page inside the scope."""
@@ -423,15 +419,6 @@ class ShareScope:
         """Whether a folder-wide read (export) of ``name`` stays inside the
         scope: a folder share covers itself and its subfolders."""
         return bool(self.folder) and path_within(clean_path(name), self.folder)
-
-    def page_ids(self, conn) -> list[str]:
-        """The root pages the scope reaches right now."""
-        if self.page:
-            return [self.page]
-        return list(root_pages(conn, self.folder))
-
-    def __eq__(self, other):
-        return isinstance(other, ShareScope) and (self.page, self.folder) == (other.page, other.folder)
 
     def __repr__(self):
         return f"ShareScope(page={self.page!r}, folder={self.folder!r})"

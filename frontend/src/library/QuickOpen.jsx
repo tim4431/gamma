@@ -46,8 +46,7 @@ export default function QuickOpen({ open, prefix = "", commands, onClose, pages,
     listRef.current?.querySelector('[aria-selected="true"]')?.scrollIntoView({ block: "nearest" });
   }, [active]);
 
-  // The commands that apply are read once per opening of the mode: App
-  // builds the list from its current state.
+  // The commands that apply: App builds the list from its current state.
   const commandList = useMemo(() => (open && commandMode && commands ? commands() : []), [open, commandMode, commands]);
 
   const results = useMemo(() => {

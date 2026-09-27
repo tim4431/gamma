@@ -20,7 +20,7 @@ from datetime import datetime, timezone
 
 from . import config
 
-SCHEMA_VERSION = 4
+SCHEMA_VERSION = 5
 BUSY_TIMEOUT = 10  # seconds a connection waits for another writer
 
 
@@ -98,13 +98,26 @@ PREFS = """CREATE TABLE IF NOT EXISTS prefs (
 
 # The Gamma servers a person linked their identity on (``servers.py``):
 # each registers its confirmed public URL (normalized, one row per URL).
+# ``grant_id`` is the grant of the token it last registered with, which is
+# how the portal shows a server and its sign-in as one row.
 SERVERS_LINKED = """CREATE TABLE IF NOT EXISTS servers_linked (
         account_id TEXT NOT NULL REFERENCES accounts(id),
         url TEXT NOT NULL,
         name TEXT NOT NULL DEFAULT '',
         linked_at TEXT NOT NULL,
         last_seen_at TEXT NOT NULL,
+        grant_id TEXT NOT NULL DEFAULT '',
         PRIMARY KEY (account_id, url)
+    )"""
+
+# A server connection a person approved (``connect.py``), waiting for the
+# server to fetch its client with the code (expires quickly).
+SERVER_CONNECTS = """CREATE TABLE IF NOT EXISTS server_connects (
+        code_hash TEXT PRIMARY KEY,
+        account_id TEXT NOT NULL,
+        server TEXT NOT NULL,
+        code_challenge TEXT NOT NULL,
+        expires_at TEXT NOT NULL
     )"""
 
 SCHEMA = [
@@ -162,8 +175,10 @@ SCHEMA = [
         note TEXT NOT NULL DEFAULT ''
     )""",
     # OIDC clients: ``secret_hash`` NULL = public client (PKCE only).
-    # ``kind``: desktop / share-host / container. ``redirect_uris`` is a JSON
-    # list; the desktop client's is empty because loopback is matched by rule.
+    # ``kind``: desktop / share-host / container / server. ``redirect_uris``
+    # is a JSON list; the desktop client's is empty because loopback is
+    # matched by rule. ``owner_account_id``: the person who connected a
+    # ``server`` client (``connect.py``); "" for the ones admins create.
     """CREATE TABLE IF NOT EXISTS oauth_clients (
         client_id TEXT PRIMARY KEY,
         secret_hash TEXT,
@@ -171,7 +186,8 @@ SCHEMA = [
         name TEXT NOT NULL,
         redirect_uris TEXT NOT NULL DEFAULT '[]',
         server_id TEXT NOT NULL DEFAULT '',
-        created_at TEXT NOT NULL
+        created_at TEXT NOT NULL,
+        owner_account_id TEXT NOT NULL DEFAULT ''
     )""",
     # A sign-in in progress on the authorize page (expires quickly).
     """CREATE TABLE IF NOT EXISTS oauth_requests (
@@ -248,6 +264,7 @@ SCHEMA = [
     )""",
     PREFS,
     SERVERS_LINKED,
+    SERVER_CONNECTS,
 ]
 
 
@@ -319,11 +336,20 @@ def _step_profile(conn) -> None:
     conn.execute(SERVERS_LINKED)
 
 
+def _step_connect(conn) -> None:
+    """Servers a person connects themselves: the client's owner, the
+    pending connections, and the grant a linked server registered with."""
+    _add_column(conn, "oauth_clients", "owner_account_id", "TEXT NOT NULL DEFAULT ''")
+    _add_column(conn, "servers_linked", "grant_id", "TEXT NOT NULL DEFAULT ''")
+    conn.execute(SERVER_CONNECTS)
+
+
 STEPS: list = [
     # (version, name, fn(conn)) — append only; see docs/dev/cloud_accounts.md.
     (2, "external_logins", _step_external_logins),
     (3, "devices", _step_devices),
     (4, "profile", _step_profile),
+    (5, "connect", _step_connect),
 ]
 
 

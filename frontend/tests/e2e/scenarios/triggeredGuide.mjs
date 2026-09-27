@@ -9,7 +9,7 @@ import { editRow } from "./notes.mjs";
 import { waitForPdf } from "./pdf.mjs";
 
 export async function triggeredGuideScenarios(env) {
-  const { server, browser, step, until, assert, assertEq, assertNoProblems, openPage, makePdf, flags } = env;
+  const { server, browser, step, until, assert, assertEq, assertNoProblems, openPage, makePdf } = env;
   if (!wanted("triggered guide")) return;
   server.manage("create-user", "tourist", "tourist-pw");
   const user = await new Account(server, "tourist", "tourist-pw").login();

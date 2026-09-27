@@ -230,6 +230,41 @@ def test_lookup_by_arxiv_and_doi(guest, upstream, meta_calls):
     assert guest.get("/api/library/lookup").status_code == 400
 
 
+def test_clip_arxiv_html_page_with_old_style_id(guest, upstream, meta_calls):
+    """arXiv's HTML rendering carries no citation meta tags: the extension
+    sends the id read off the URL (old-style here) and the server saves the
+    paper's PDF, not a web page."""
+    page = "https://arxiv.org/html/cond-mat/0402216"
+    r = guest.post("/api/clip", json={"source_url": page, "arxiv_id": "cond-mat/0402216",
+                                      "title": "Cavity QED for superconducting circuits"})
+    assert r.status_code == 200, r.text
+    body = r.json()
+    assert body["doc_id"] and "note" not in body
+    _, props = _props(body["block_id"])
+    assert props["source_url"] == "https://arxiv.org/pdf/cond-mat/0402216"
+    assert props["web_url"] == page
+    assert meta_calls == [(guest_name(), body["block_id"], "", "cond-mat/0402216")]
+    for params in ({"arxiv_id": "cond-mat/0402216"}, {"url": "https://arxiv.org/abs/cond-mat/0402216v1"},
+                   {"url": page}):
+        lk = guest.get("/api/library/lookup", params=params)
+        assert lk.status_code == 200 and lk.json()["block_id"] == body["block_id"], params
+
+
+def test_norm_arxiv_reads_html_urls_and_old_style_ids():
+    cases = {
+        "https://arxiv.org/html/2310.06825v1#S2": "2310.06825",
+        "https://arxiv.org/html/cond-mat/0402216": "cond-mat/0402216",
+        "https://arxiv.org/abs/cond-mat/0402216v1": "cond-mat/0402216",
+        "https://arxiv.org/pdf/math.GT/0309136v2": "math.GT/0309136",
+        "arXiv:hep-th/9901001": "hep-th/9901001",
+        "solv-int/9901001v3": "solv-int/9901001",  # a "v" in the archive is not a version
+        "2601.01234v2": "2601.01234",
+        "https://example.org/papers/1234567": "",
+    }
+    for text, aid in cases.items():
+        assert clip_mod.norm_arxiv(text) == aid, text
+
+
 def test_preview_resolves_identifier_to_registry_record(guest, monkeypatch):
     """The popup's pre-save title: arXiv first, then doi.org; publisher path
     suffixes are not part of the DOI; answers are cached per identifier."""

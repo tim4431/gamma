@@ -6,7 +6,7 @@ import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { API, apiJson, usePersistedState } from "../shared/lib/utils";
 import { ACCOUNT_PREFS, PREFS, profileOf, readProfile, setterName } from "./prefDefs.js";
 
-export { CHAT_KINDS, FILE_LABEL_MODES, FREE_TRANSLATE_ENGINE, THEMES, TRANSLATE_LANGS, UI_SCALE, translateModelFor } from "./prefDefs.js";
+export { FREE_TRANSLATE_ENGINE, TRANSLATE_LANGS, UI_SCALE, translateModelFor } from "./prefDefs.js";
 
 const PREF_NAMES = Object.keys(PREFS);
 
@@ -24,15 +24,15 @@ export function useAppPrefs() {
 }
 
 const PROFILE_URL = `${API}/prefs/profile`;
-// Changes are pushed once they settle, so a slider does not PUT per tick.
+// Changes are pushed once they settle, so a slider does not send one per tick.
 const PUSH_DELAY_MS = 1000;
 // Focus flaps must not hammer the server: wake pulls at most this often.
 const PULL_MIN_MS = 15000;
 
 // Keeps the account-scoped preferences in step with the account's profile
 // (/api/prefs/profile, one object keyed by preference name). `user` is the
-// signed-in account, or "" for signed out, guest (one shared account) and
-// share views — those keep working from localStorage alone.
+// signed-in account, or "" for signed out, a guest and share views — those
+// keep working from localStorage alone.
 //
 // The server copy wins on load and on a focus pull; an account without a
 // profile is seeded from this browser. Local changes push after they settle,
@@ -47,10 +47,10 @@ const PULL_MIN_MS = 15000;
 // settings/syncState.js):
 // - `state`: "signed-out" (localStorage only), "loading" (the first pull),
 //   "loaded" (in step with the server), "pending" (a change settling),
-//   "pushing" (its PUT in flight), "failed" (the last pull or push failed;
+//   "pushing" (its PATCH in flight), "failed" (the last pull or push failed;
 //   `error` says why);
 // - Sets of preference names: `pending` (the value differs from the copy
-//   the server last confirmed), `inflight` (sent in the PUT now on its
+//   the server last confirmed), `inflight` (sent in the PATCH now on its
 //   way), `failed` (a push of exactly this value failed; the next change
 //   sends it again), `awaitingCloud` (pushed since Gamma Cloud last
 //   reported the profile synced);
@@ -78,8 +78,8 @@ export function useProfileSync(prefs, user) {
   const confirmedRef = useRef(null); // {name: JSON} the server confirmed holding; null = not loaded
   const timerRef = useRef(null);
   const pushIdRef = useRef(0);
-  const sendingRef = useRef(0); // PUTs not answered yet
-  const lastPushRef = useRef(Promise.resolve()); // the newest PUT, for flush()
+  const sendingRef = useRef(0); // pushes not answered yet
+  const lastPushRef = useRef(Promise.resolve()); // the newest push, for flush()
   const [status, setStatus] = useState(() => ({ state: user ? "loading" : "signed-out", error: "" }));
   const [flight, setFlight] = useState(IDLE);
   const [cloudChoice, setCloudChoice] = useState(false);
@@ -127,7 +127,7 @@ export function useProfileSync(prefs, user) {
       if (!timerRef.current && syncedRef.current === now) mark("loaded");
     }, (err) => {
       sendingRef.current -= 1;
-      // A failed PUT leaves the change pending, so a later pull doesn't revert it.
+      // A failed push leaves the change pending, so a later pull doesn't revert it.
       if (syncedRef.current === now) syncedRef.current = before;
       if (latest.current.user !== u) return;
       settle((f) => ({ ...f, failed: { ...f.failed, ...Object.fromEntries(names.map((name) => [name, sent[name]])) } }));
@@ -193,8 +193,7 @@ export function useProfileSync(prefs, user) {
 
   useEffect(() => { schedule(); }, [snap, user]);
 
-  // Unmounting (main.jsx remounts the app on a language change) must not
-  // drop a change that was still settling.
+  // Unmounting must not drop a change that was still settling.
   useEffect(() => () => { if (timerRef.current) pushRef.current(true); }, []);
 
   useEffect(() => {

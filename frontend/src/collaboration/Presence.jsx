@@ -5,7 +5,7 @@
 import React, { useLayoutEffect, useState } from "react";
 import { t } from "../shared/i18n/i18n.js";
 import { renderedCaretRect } from "../editor/clickToSource";
-import { scanMathSpans } from "../editor/BlockCmEditor";
+import { scanMathSpans } from "../editor/mdScan";
 
 function initial(peer) {
   const name = (peer?.name || "").trim();

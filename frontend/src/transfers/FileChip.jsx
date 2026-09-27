@@ -195,7 +195,8 @@ export function FileChip({ href, text }) {
     pageItem = (
       <MenuItem icon={PlusIcon}
         title={isPdf
-          ? t("Make a page for this PDF: the viewer, highlights, chat and metadata — the file is not uploaded again") : t("Import this markdown as a note page — a copy; the file stays as it is")}
+          ? t("Make a page for this PDF: the viewer, highlights, chat and metadata — the file is not uploaded again")
+          : t("Import this markdown as a note page — a copy; the file stays as it is")}
         onClick={() => { close(); makePage(); }}>{t("Add to library")}</MenuItem>
     );
   }

@@ -159,7 +159,7 @@ def link_server(body: ServerBody, request: Request):
         account, row = bearer(conn, request)
         ratelimit.check(f"servers-write:{account['id']}", 60, 3600)
         url = _server_url(conn, row, body.url)
-        server = servers.link(conn, account["id"], url, servers.norm_name(body.name, url))
+        server = servers.link(conn, account["id"], url, servers.norm_name(body.name, url), row["grant_id"])
         conn.commit()
     return {"server": server}
 

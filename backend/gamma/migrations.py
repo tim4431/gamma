@@ -594,7 +594,7 @@ def _v21_folder_shares(conn: sqlite3.Connection) -> None:
     """``shares`` gains ``folder``: a share names a page (``page_id``) or a
     folder-label path (``folder``, the pages filed there or below it), the
     other column ''. The page unique index becomes partial and a folder
-    twin joins it (docs/dev/workspaces.md "Shares")."""
+    twin joins it (docs/dev/api.md "Shares")."""
     if "folder" not in _columns(conn, "shares"):
         conn.execute("ALTER TABLE shares ADD COLUMN folder TEXT NOT NULL DEFAULT ''")
     conn.execute("DROP INDEX IF EXISTS idx_shares_page")

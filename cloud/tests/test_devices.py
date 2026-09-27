@@ -214,7 +214,7 @@ def test_the_devices_page(client):
     sign_in(client, device_id="install-0001-abcd", device_name="Tim's <ThinkPad>")
     page = client.get("/devices").text
     assert "Tim&#x27;s &lt;ThinkPad&gt;" in page and "<ThinkPad>" not in page
-    assert "Gamma apps" in page and "Browsers" in page and "This browser" in page
+    assert "Gamma servers" in page and "Browsers" in page and "This browser" in page
     assert "aria-label='Sign out Tim&#x27;s &lt;ThinkPad&gt;'" in page
     assert "<time datetime=" in page
     # the inline script must parse: an apostrophe inside a single-quoted JS
@@ -222,7 +222,7 @@ def test_the_devices_page(client):
     script = page[page.rindex("<script>") + 8:page.rindex("</script>")]
     for line in script.splitlines():
         assert _open_quote(line) is None, line
-    assert 'confirm("Sign out every Gamma app' in script
+    assert 'confirm("Sign out every Gamma server' in script
 
 
 # --- browsers -----------------------------------------------------------------
@@ -302,7 +302,7 @@ def test_the_app_step_stays_done_after_signing_everything_out(client):
     sign_in(client)
     client.post("/api/devices/revoke-all", json={})
     page = client.get("/").text
-    assert "Get started" not in page and "No Gamma app is signed in right now" in page
+    assert "Get started" not in page and "No Gamma server is signed in right now" in page
 
 
 def test_pages_send_a_signed_out_browser_back_after_sign_in(client):
@@ -324,7 +324,7 @@ def test_upgrade_to_devices(client):
         conn.execute("DROP TABLE refresh_history")
         conn.execute("PRAGMA user_version = 2")
         conn.commit()
-    assert db.ensure_current() == ["devices", "profile"]
+    assert db.ensure_current() == ["devices", "profile", "connect"]
     assert db.ensure_current() == []
     with closing(db.connect()) as conn:
         assert conn.execute("SELECT app_signed_in_at FROM accounts").fetchone()[0]  # from the audit
