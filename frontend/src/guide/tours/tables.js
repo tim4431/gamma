@@ -10,6 +10,7 @@ export default {
   requires: { onPage: true, editable: true },
   trigger: { event: "table.shown" },
   offerAnchor: "notes.table",
+  offer: { title: T("You made a table"), line: T("Cells, rows and columns are edited in place.") },
   steps: [
     { id: "table-make", anchor: "dock.notes", placement: "left", creates: "notes.table",
       title: T("Type /table in a note, then click outside it"), advanceOn: { event: "table.shown" } },

@@ -86,7 +86,40 @@
 /* While a demo acts, the whole sheet swallows clicks (the hole included) so
    a stray click can't derail it; the card stays usable for Skip / leave. */
 .guideShield { position: absolute; inset: 0; pointer-events: auto; }
-.guideCardCorner { right: 16px; bottom: 16px; width: 300px; }
+/* A card with nothing to point at sits bottom-left, clear of the chat
+   composer's Send button in the right dock. */
+.guideCardCorner { left: 16px; bottom: 16px; width: 300px; }
+/* The beak on the card edge facing the anchor: a square turned 45°, drawn
+   with the card's own border on its two outer sides. */
+.guideBeak {
+  position: absolute;
+  width: 14px;
+  height: 14px;
+  background: var(--bg-elevated);
+  transform: rotate(45deg);
+  pointer-events: none;
+}
+.guideBeak.beak-bottom { top: -8px; border-left: 1px solid var(--border); border-top: 1px solid var(--border); box-shadow: -1px -1px 1px rgba(0, 0, 0, 0.04); }
+.guideBeak.beak-top { bottom: -8px; border-right: 1px solid var(--border); border-bottom: 1px solid var(--border); box-shadow: 1px 1px 1px rgba(0, 0, 0, 0.06); }
+.guideBeak.beak-right { left: -8px; border-left: 1px solid var(--border); border-bottom: 1px solid var(--border); box-shadow: -1px 1px 1px rgba(0, 0, 0, 0.05); }
+.guideBeak.beak-left { right: -8px; border-right: 1px solid var(--border); border-top: 1px solid var(--border); box-shadow: 1px -1px 1px rgba(0, 0, 0, 0.05); }
+/* An offer's accent rule runs over the top edge; a beak there takes it. */
+.guideInvitation:not(.guideHint) .guideBeak.beak-bottom { top: -9px; border-color: var(--accent); border-width: 2px 0 0 2px; }
+/* An offer or hint marks the control it is about without dimming anything:
+   a ring and a soft halo that pulse twice, then stay. Clicks pass through,
+   so hover-only controls still work. */
+.guideBeacon {
+  position: fixed;
+  border: 2px solid var(--accent);
+  border-radius: 10px;
+  box-shadow: 0 0 0 5px color-mix(in srgb, var(--accent) 20%, transparent);
+  pointer-events: none;
+  animation: guideBeacon 1s ease-in-out 2;
+}
+@keyframes guideBeacon {
+  0%, 100% { box-shadow: 0 0 0 5px color-mix(in srgb, var(--accent) 20%, transparent); }
+  50% { box-shadow: 0 0 0 9px color-mix(in srgb, var(--accent) 6%, transparent); }
+}
 /* The demo's pointer glides between targets; a press shrinks it briefly. */
 .guideCursor {
   position: fixed;
@@ -112,7 +145,7 @@
 }
 @media (prefers-reduced-motion: reduce) {
   .guideCursor, .guideCursor.dragging, .guideDimFill { transition: none; }
-  .guideRing, .guideCard { animation: none; }
+  .guideRing, .guideCard, .guideBeacon { animation: none; }
 }
 /* One type scale for every card: tour and offer titles 15/600, a hint's
    sentence 14/500, bodies 13/1.5, meta 11. */
@@ -183,7 +216,8 @@
   border-color: var(--border-light);
 }
 
-/* Narrow screens: the card becomes a bottom sheet; the spotlight stays. */
+/* Narrow screens: the card becomes a bottom sheet; the spotlight stays.
+   On the phone layout it sits above the bottom tab bar. */
 @media (max-width: 640px) {
   .guideCard:not(.guideCardCentered) {
     top: auto !important;
@@ -192,7 +226,12 @@
     bottom: calc(12px + env(safe-area-inset-bottom));
     width: auto !important;
   }
+  .phoneUI .guideCard:not(.guideCardCentered):not(.guideCardAbove) {
+    bottom: calc(56px + env(safe-area-inset-bottom));
+  }
   .guideCardCentered { width: min(340px, calc(100vw - 32px)); }
+  /* A sheet is not beside its anchor. */
+  .guideBeak { display: none; }
   /* Keep lower controls, especially the composer, usable during practice. */
   .guideCard.guideCardAbove {
     top: calc(12px + env(safe-area-inset-top)) !important;

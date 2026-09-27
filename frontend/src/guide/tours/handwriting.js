@@ -12,6 +12,7 @@ export default {
   requires: { hasPdf: true, editable: true },
   trigger: { event: "ink.stroke" },
   offerAnchor: "pdf.inkButton",
+  offer: { title: T("You're writing on the PDF"), line: T("Erase, undo, recolour, and caption your drawing.") },
   steps: [
     { id: "ink-draw", anchor: "pdf.pane", reveal: "ink.toolbar", placement: "inside", creates: "notes.ink",
       title: T("Pick a pen, then draw on the page"), advanceOn: { event: "ink.stroke" } },

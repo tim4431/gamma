@@ -14,7 +14,7 @@ Everything you can do in Gamma, one section per part of the app. The [README](..
 
 On open, each paper's title, authors and venue are filled in automatically (arXiv → DOI → AI), see [Metadata and citations](#metadata-and-citations).
 
-**Guided tours.** The account menu (top right) → **Tours** lists **Your first paper** and **AI chat** — short walkthroughs that point at the real controls and wait for you to try them.
+**Guided tours.** The account menu (top right) → **Tours** lists the tours that fit where you are: **Your first paper** and **AI chat** anywhere, **Sharing a page** and **Editing tables** on a page, **Handwriting** on a PDF — short walkthroughs that point at the real controls and wait for you to try them. Short tips and tour offers also appear right after you first use a feature, saying what just happened; turn them off in Settings → Appearance → **Suggest tours**.
 
 ## Reading and highlighting
 

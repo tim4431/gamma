@@ -58,8 +58,13 @@ show Done before advancing automatically.
 A tour with a `trigger` is also offered by itself, once per `version`, right
 **after** the thing it explains happened, never on mere contact with a
 control (focusing the chat composer offers nothing). The offer is a card
-beside the anchor with the tour's name, its number of steps and **Show
-me** / **Not now**; it does not dim the app or move focus. A **hint**
+beside the anchor: "Quick tour · N steps", then what just happened and why
+the tour is worth it — the tour's `offer: { title, line }` ("You made a
+table" / "Cells, rows and columns are edited in place."), else its name —
+and **Show me** / **Not now**; the Tours menu keeps the plain name. It does
+not dim the app or move focus: a beak on the card's edge points at the
+control and a beacon (an accent ring and halo that pulse twice, then stay,
+with clicks passing through) marks it. A **hint**
 (`hint: true`) is a one-step triggered guide: its card is the whole thing,
 an amber **Tip** chip over one plain sentence that says why it helps, with
 **Got it**.
@@ -78,7 +83,7 @@ an amber **Tip** chip over one plain sentence that says why it helps, with
 | hint: Ctrl+P | the 4th return to the library in one load (`home.opened`, `count: 4`), unless the palette was used (`doneOn: palette.opened`) | Home |
 | hint: Back | the first link jump (`nav.pushed`), unless Back was already used (`doneOn: nav.back`) | the Back button: it returns to the same spot, or `{key:app.back}` |
 | hint: folders | the library has 10+ pages and no folder or label (state) | the listing bar |
-| hint: install | iPhone/iPad Safari, not yet the home-screen app (state) | no anchor: a corner card |
+| hint: install | iPhone/iPad Safari, not yet the home-screen app (state) | no anchor: a bottom-left card |
 | Your first paper | on a demo server only, on the library once the guest lands (state, `trigger.requires: {demo: true, view: "home"}`) | no anchor: a corner card; Show me starts the tour |
 
 Rules the engine keeps (`useGuide.js`, `triggers.js`):
@@ -107,7 +112,9 @@ Rules the engine keeps (`useGuide.js`, `triggers.js`):
 - **Where the offer points.** `offerAnchor` (default: the first step's
   anchor) and `offerPlacement`. Offers are never revealed: if the anchor
   leaves (the popover closed, the formula ended), the offer goes and counts
-  as dismissed. An anchorless hint is a card in the corner.
+  as dismissed. An anchorless hint is a card in the bottom-left corner,
+  clear of the chat composer; on the phone layout every card is a sheet
+  above the bottom tab bar.
 
 Engine abilities available to every step:
 

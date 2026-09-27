@@ -10,6 +10,7 @@ export default {
   trigger: { event: "share.created" },
   offerAnchor: "share.link",
   offerPlacement: "left",
+  offer: { title: T("Your page has a link now"), line: T("Anyone who gets it can read the page. See how to limit that.") },
   steps: [
     { id: "share-create", anchor: "share.link", placement: "left", creates: "share.access",
       title: T("Create a link for this page"), advanceOn: { event: "share.created" } },

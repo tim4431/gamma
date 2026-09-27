@@ -16,9 +16,11 @@ import "./guide.css";
 import { t, tn } from "../shared/i18n/i18n.js";
 
 const PAD = 6;          // spotlight padding around the anchor
+const BEACON_INSET = 3; // an offer's beacon sits closer to its anchor than the spotlight
 const GAP = 12;         // card distance from the spotlight
 const MARGIN = 12;      // card distance from the viewport edge
 const CARD_W = 300;
+const BEAK_INSET = 23; // the beak's centre stays 16 px (plus its half) from a card corner
 const WAIT_MS = 3000;   // how long a missing anchor may take to mount
 
 // **bold**, *italic*, `code`, `{key:…}` key caps (guide/keys.js) and
@@ -70,7 +72,19 @@ function placeCard(rect, cardH, vw, vh, prefer) {
   else { left = r.left - GAP - CARD_W; top = r.top + r.height / 2 - cardH / 2; }
   left = Math.max(MARGIN, Math.min(left, vw - CARD_W - MARGIN));
   top = Math.max(MARGIN, Math.min(top, vh - cardH - MARGIN));
-  return { top, left, side };
+  return { top, left, side, beak: beakAt(side, r, top, left, cardH) };
+}
+
+// The beak on the card edge that faces the anchor, centred on the anchor
+// (clamped away from the corners) — none when the clamped card overlaps it.
+function beakAt(side, r, top, left, cardH) {
+  const clamp = (v, max) => Math.max(BEAK_INSET, Math.min(v, max - BEAK_INSET));
+  if (side === "bottom" || side === "top") {
+    if (side === "bottom" ? top < r.bottom : top + cardH > r.top) return null;
+    return { x: clamp(r.left + r.width / 2 - left, CARD_W) };
+  }
+  if (side === "right" ? left < r.right : left + CARD_W > r.left) return null;
+  return { y: clamp(r.top + r.height / 2 - top, cardH) };
 }
 
 // keybindings: the account's Settings → Keyboard overrides, so a `{key:…}`
@@ -179,6 +193,11 @@ export default function GuideOverlay({ guide, keybindings }) {
         {rect ? <path d={hole} className="guideRing" /> : null}
       </svg> : null}
       {busy && rect ? <div className="guideShield" aria-hidden="true" /> : null}
+      {/* An offer or hint marks its control without dimming anything. */}
+      {inviting && rect ? (
+        <div className="guideBeacon" aria-hidden="true"
+          style={{ top: rect.top + BEACON_INSET, left: rect.left + BEACON_INSET, width: rect.width - 2 * BEACON_INSET, height: rect.height - 2 * BEACON_INSET }} />
+      ) : null}
       {!inviting && live?.cursor ? (
         <div
           className={`guideCursor ${live.cursor.pressed ? "pressed" : ""} ${live.cursor.dragging ? "dragging" : ""}`}
@@ -202,6 +221,10 @@ export default function GuideOverlay({ guide, keybindings }) {
           aria-live="polite"
           aria-label={plainText(t(step.title), keybindings)}
         >
+          {cardPos?.beak ? (
+            <span className={`guideBeak beak-${cardPos.side}`} aria-hidden="true"
+              style={cardPos.beak.x != null ? { left: cardPos.beak.x - 7 } : { top: cardPos.beak.y - 7 }} />
+          ) : null}
           <div className="guideHead">
             <span className="guideStep">
               {inviting ? (offer.hint ? <span className="guideChip tip">{t("Tip")}</span> : tn("Quick tour · {n} step", "Quick tour · {n} steps", offer.count)) : `${index + 1} / ${count}`}

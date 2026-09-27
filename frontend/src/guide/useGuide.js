@@ -410,9 +410,10 @@ export function useGuide({ enabled = true, suggest = true, scope = "", facts = {
     return () => window.removeEventListener("keydown", onKey, true);
   }, [run, busy, next, back, dismiss]);
 
-  // What the overlay shows for an offer: a tour's name and length, or a
-  // hint's one card. Stable while it stays up, so the overlay keeps its
-  // anchor tracking.
+  // What the overlay shows for an offer: a tour's length under what just
+  // happened and why the tour is worth it (its `offer: {title, line}`, else
+  // its name), or a hint's one card. Stable while it stays up, so the
+  // overlay keeps its anchor tracking.
   const offerTour = offerAvailable ? offer.tour : null;
   const offerCard = useMemo(() => {
     if (!offerTour) return null;
@@ -420,7 +421,8 @@ export function useGuide({ enabled = true, suggest = true, scope = "", facts = {
     return {
       id: offerTour.id,
       hint: !!offerTour.hint,
-      title: offerTour.hint ? steps[0]?.title : offerTour.title,
+      title: offerTour.hint ? steps[0]?.title : offerTour.offer?.title || offerTour.title,
+      body: offerTour.hint ? steps[0]?.body : offerTour.offer?.line,
       anchor: offerTour.hint ? steps[0]?.anchor || null : offerAnchor(offerTour),
       placement: offerTour.hint ? steps[0]?.placement : offerTour.offerPlacement,
       count: steps.length,

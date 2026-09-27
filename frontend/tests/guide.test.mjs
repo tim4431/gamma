@@ -188,3 +188,15 @@ test("a {key:…} follows the account's keybindings", () => {
   assert.equal(resolveKey("app.noSuchCommand", {}), null);
   assert.equal(keyText("Press {key:app.quickOpen} or {key:Tab}", { "app.quickOpen": "Mod-Shift-o" }), "Press Ctrl+Shift+O or Tab");
 });
+
+// An offer says what just happened and why the tour is worth it; both lines
+// are T()-marked, so the catalog has them.
+test("offer copy is catalogued", () => {
+  const zh = JSON.parse(readFileSync(new URL("../src/shared/i18n/locales/zh.json", import.meta.url), "utf8"));
+  for (const tour of Object.values(TOURS).filter((t) => t.offer)) {
+    assert.ok(tour.trigger && !tour.hint, `${tour.id}: only a triggered tour has an offer`);
+    for (const key of ["title", "line"]) {
+      assert.ok(tour.offer[key] && tour.offer[key] in zh, `${tour.id}: offer.${key} must be a T()-marked string`);
+    }
+  }
+});
