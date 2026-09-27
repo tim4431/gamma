@@ -5214,7 +5214,7 @@ a.shareBrand:hover { background: var(--bg-hover); }
   font-size: var(--fs-sm);
   color: var(--text-primary);
 }
-.ctxMenuItem:hover { background: var(--bg-hover); }
+.ctxMenuItem:hover:not(:disabled) { background: var(--bg-hover); }
 .moveBlockList .ctxMenuItem:focus-visible { background: var(--bg-hover); outline: none; }
 /* Menu rows with a leading glyph (e.g. the tab menu's pin/close). */
 .ctxMenuItemIconed {
@@ -5239,11 +5239,11 @@ a.shareBrand:hover { background: var(--bg-hover); }
   text-overflow: ellipsis;
   white-space: nowrap;
 }
-/* Destructive rows (Delete) — same red language as .uiBtn.danger. */
-.ctxMenuItem.danger:hover { background: var(--danger-bg); color: var(--danger); }
-.ctxMenuItem.danger:hover .ctxMenuIcon { color: var(--danger); }
+/* Destructive rows (Delete) — same red language as .uiBtn.danger. A
+   disabled row never lights up on hover, in a popover menu either. */
+.ctxMenuItem.danger:hover:not(:disabled) { background: var(--danger-bg); color: var(--danger); }
+.ctxMenuItem.danger:hover:not(:disabled) .ctxMenuIcon { color: var(--danger); }
 .ctxMenuItem:disabled { opacity: 0.45; cursor: default; }
-.ctxMenuItem:disabled:hover { background: none; }
 
 /* Section label row inside a menu (MenuLabel). */
 .ctxMenuLabel {
@@ -5288,11 +5288,11 @@ a.shareBrand:hover { background: var(--bg-hover); }
   font-size: var(--fs-sm);
   color: var(--text-primary);
 }
-.topbar .popover .ctxMenuItem:hover,
-.popover .ctxMenuItem:hover { background: var(--bg-hover); }
+.topbar .popover .ctxMenuItem:hover:not(:disabled),
+.popover .ctxMenuItem:hover:not(:disabled) { background: var(--bg-hover); }
 .popover .ctxMenuItem.danger { color: var(--danger); }
 .popover .ctxMenuItem.danger .ctxMenuIcon { color: var(--danger); }
-.popover .ctxMenuItem.danger:hover { background: var(--danger-bg); }
+.popover .ctxMenuItem.danger:hover:not(:disabled) { background: var(--danger-bg); }
 .popover .ctxMenuDivider { margin: 2px 0; }
 .popover .ctxSubMenu { padding: 4px; }
 
