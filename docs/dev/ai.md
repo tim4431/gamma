@@ -368,7 +368,11 @@ notes. The server resolves all three against the request's context pages.
 - `focus_block_id` — the block row the cursor is on (`focusedId` in
   `app/App.jsx` → `focusedNote`). The chat shows it as a "Cursor" chip, like a
   PDF selection, and sends it with every message; the chip's × leaves it out
-  until the cursor moves to another block. Its text and sub-blocks enter the
+  until the cursor moves to another block. Opening a page focuses no row (it
+  lands where the reader left off, else at the top, and only flashes that
+  row), so the chip first appears after a real click or caret move; explicit
+  jumps (a `?block=` link, a highlight, a backlink, a search hit) do focus
+  their row. Its text and sub-blocks enter the
   context as an id-labelled outline ("The user's cursor is on this note
   block …"), and the agent prompt says "this block" / "here" mean that id.
   So *"expand this"* edits the right block without a `read_block` first.

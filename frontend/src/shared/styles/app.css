@@ -720,6 +720,14 @@ body {
   background: var(--bg-elevated);
 }
 
+/* The row a page opened at (where the reader left off): one accent tint
+   that fades, so the eye finds it without the row being focused. */
+.blockRow.landed { animation: blockLanded 1.2s ease-out; }
+@keyframes blockLanded {
+  0%, 25% { background: color-mix(in srgb, var(--accent) 16%, transparent); }
+  100% { background: transparent; }
+}
+
 /* Look comes from .uiClose; this only handles layout + hover-reveal. */
 .blockDeleteBtn {
   align-self: flex-start;

@@ -3877,6 +3877,24 @@ function LibraryApp({ publicPage = null, initialServerConfig = null }) {
     }
   }, [blocks, readOnly]);
 
+  // A page's passive landing (openBlock): the notes scroll to where the
+  // reader left off, else to the top, and that row flashes once — but no
+  // row is focused, so the chat's Cursor chip waits for a real click or
+  // caret. Explicit jumps (deep links, highlights, backlinks, search hits,
+  // citations) go through pendingBlockScrollRef above and do focus.
+  const landingRef = useRef(null); // {id} ("" = the top) until the page's rows render
+  useEffect(() => {
+    const land = landingRef.current;
+    if (!land) return;
+    landingRef.current = null;
+    const list = document.querySelector(".sidebar .blockList");
+    if (!list) return;
+    const row = land.id ? list.querySelector(`.blockRowWrap[data-block-id="${land.id}"]`) : null;
+    if (!row) { list.scrollTop = 0; return; }
+    list.scrollTop += row.getBoundingClientRect().top - list.getBoundingClientRect().top;
+    triggerFlash(land.id);
+  }, [blocks]);
+
   // Fetch backlinks for the focused block. Not in the share view: backlinks
   // span the library, so the server refuses share tokens (403) by design.
   useEffect(() => {
@@ -4076,7 +4094,7 @@ function LibraryApp({ publicPage = null, initialServerConfig = null }) {
     requestAnimationFrame(() => {
       requestAnimationFrame(() => {
         setFlashingId(highlightId);
-        flashTimerRef.current = setTimeout(() => setFlashingId(null), 1000);
+        flashTimerRef.current = setTimeout(() => setFlashingId(null), 1200);
       });
     });
   }
@@ -5006,21 +5024,13 @@ function LibraryApp({ publicPage = null, initialServerConfig = null }) {
         }
       }
 
-      // Scroll notes panel to where the reader left off (text-only pages,
-      // "" = the top) or else to the most recently updated block, unless a
-      // specific target was already queued (e.g. ?block=... deep link).
+      // The notes land where the reader left off (text-only pages) or at the
+      // top — a passive landing that focuses no row (see landingRef) —
+      // unless an explicit target was already queued (a ?block= deep link).
       const notePos = !attachment ? readPosRef.current[blockId] : null;
-      if (!pendingBlockScrollRef.current && notePos && notePos.page === 0) {
-        if (notePos.block && flattenBlocks(childBlocks).some((b) => b.id === notePos.block)) {
-          pendingBlockScrollRef.current = notePos.block;
-        }
-      } else if (!pendingBlockScrollRef.current && childBlocks.length > 0) {
-        let latest = null;
-        for (const b of flattenBlocks(childBlocks)) {
-          if (!latest || (b.updated_at || "") > (latest.updated_at || "")) latest = b;
-        }
-        if (latest) pendingBlockScrollRef.current = latest.id;
-      }
+      landingRef.current = pendingBlockScrollRef.current ? null : {
+        id: notePos?.page === 0 && notePos.block && flattenBlocks(childBlocks).some((b) => b.id === notePos.block) ? notePos.block : "",
+      };
 
       const newUrl = withWorkspace(`${window.location.pathname}?block=${encodeURIComponent(blockId)}`);
       window.history.replaceState({}, "", newUrl);
@@ -8219,6 +8229,7 @@ function LibraryApp({ publicPage = null, initialServerConfig = null }) {
                 const rowProps = {
                   focusedId,
                   setFocusedId,
+                  flashingId, // a page's landing row flashes once (landingRef)
                   // The AI agent's live footprint (handleAgentEvent); rootId
                   // places a ghost row for a block being created at top level.
                   aiMarks,

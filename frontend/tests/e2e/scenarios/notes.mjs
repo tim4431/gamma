@@ -99,6 +99,9 @@ export async function noteScenarios({ server, browser, alice, step, until, sleep
     await page.waitForSelector(".blockRow", { timeout: 15000 });
     await until(async () => (await page.textContent("body")).includes("first"), { what: "content after reload" });
     assert((await page.textContent("body")).includes("Reading list"), "title after reload");
+    // Opening a page is a passive landing: no row is focused (so the chat
+    // gets no Cursor block) until the reader clicks one.
+    assertEq(await page.locator(".blockRow.focused").count(), 0, "opening a page focuses no row");
     assertNoProblems(page);
   });
 
