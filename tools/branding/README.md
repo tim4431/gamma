@@ -51,7 +51,7 @@ reuse `design/brand/compositions/logo.svg`. Run the full build after modifying a
 
 Consumer copies stay committed at existing paths. The generator does not alter
 recordings, screenshots, third-party logos, or frontend theme CSS. The Gamma
-Light/Dark app themes remain in `frontend/src/shared/styles/app.css`.
+Light/Dark app themes remain in `frontend/src/shared/styles/tokens.css`.
 
 README feature illustrations share the logo placement, warm paper background, amber
 curves and card shadow defined in `branding.py`, with 72 px headings and 28 px

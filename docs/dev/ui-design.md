@@ -3,6 +3,26 @@
 The rules that keep the frontend looking like one product. New UI should
 follow them instead of inventing new patterns.
 
+## Tokens
+
+[`shared/styles/tokens.css`](../../frontend/src/shared/styles/tokens.css)
+is the one place a design value is defined: every theme's colours and
+`color-scheme`, the type stacks (`--font-sans`, `--font-mono`), the corner
+radii (`--radius-control`, `--radius-surface`), the surface shadow and the
+stacking layers (`--z-*`). It holds custom properties only, no component
+rules. `index.html` links it as the first stylesheet (Vite bundles it into
+the render-blocking entry CSS), so the first frame, splash included, paints
+from the same values as the app; the pre-paint script only sets the theme
+attribute. Component rules read tokens and never declare a colour token
+(`tests/themes.test.mjs`); a component-local custom property (`--co-color`,
+`--peer`, `--notice-tone`) stays with its component.
+
+The desktop shell's chrome loads a committed copy,
+`desktop/ui/tokens.css`, and the Latin subset of Inter in
+`desktop/ui/fonts/` (its pages load from disk and can't reach the frontend
+bundle). `npm run desktop-tokens` in `frontend/` refreshes both, and
+`tests/themes.test.mjs` fails while either copy differs from its source.
+
 ## One control set, everywhere
 
 Mermaid diagram previews in notes and chat use the shared component and toolbar
@@ -40,8 +60,8 @@ already exists. Bespoke CSS classes are for **layout only**.
   fields, workspace folders. Bare `code`/`pre`/`kbd`/`samp` get it from a
   zero-specificity rule.
 - Never name a font family in a component rule; use one of the two tokens.
-  The desktop shell's `ui/theme.css` carries the same tokens but doesn't
-  bundle the font file.
+  The desktop shell gets both from its copy of the tokens and carries the
+  Latin Inter file itself (see Tokens).
 - Counts, times and page numbers use `font-variant-numeric: tabular-nums`
   (the grouped rule under `body` in app.css), so they keep their width as
   the digits change.

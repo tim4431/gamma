@@ -17,12 +17,12 @@
     <meta name="apple-mobile-web-app-status-bar-style" content="default" />
     <meta name="theme-color" content="#1b1b1a" />
     <title>Gamma — Annotate PDFs, Share Your Thinking</title>
-    <!-- The theme must be set before the first frame: app.css (render-blocking)
-         paints its dark :root tokens otherwise, a dark flash on a light OS.
-         Same rule as App.jsx's theme effect, which takes over once React is
-         up: a pinned theme as stored, anything else ("system", none) follows
-         the OS scheme. The control size likewise, or the buttons jump once
-         the bundle applies it. -->
+    <!-- The theme must be set before the first frame: tokens.css (linked
+         below, render-blocking) paints its dark :root tokens otherwise, a dark
+         flash on a light OS. Same rule as App.jsx's theme effect, which takes
+         over once React is up: a pinned theme as stored, anything else
+         ("system", none) follows the OS scheme. The control size likewise, or
+         the buttons jump once the bundle applies it. -->
     <script>
       (function () {
         var root = document.documentElement, t = null, s = NaN;
@@ -38,34 +38,17 @@
         if (s >= 0.7 && s <= 1.6) root.style.setProperty("--ui-scale", s); // UI_SCALE in app/prefDefs.js
       })();
     </script>
+    <!-- The design tokens (every theme's colours and color-scheme, the type
+         stacks), first and render-blocking: the page and the splash below
+         paint from them on the first frame, in dev and in the build alike. -->
+    <link rel="stylesheet" href="/src/shared/styles/tokens.css" />
     <style>
-      html, body, #root { margin: 0; height: 100%; background: #111; }
-      html { color-scheme: dark; }
-      @media (prefers-color-scheme: light) {
-        html, body, #root { background: #f6f6f4; }
-        html { color-scheme: light; }
-      }
-      html[data-theme="light"], html[data-theme="light"] body, html[data-theme="light"] #root { background: #f6f6f4; }
-      html[data-theme="light"] { color-scheme: light; }
-      html[data-theme="dark"], html[data-theme="dark"] body, html[data-theme="dark"] #root { background: #111; }
-      html[data-theme="dark"] { color-scheme: dark; }
-      html[data-theme="gamma-light"], html[data-theme="gamma-light"] body, html[data-theme="gamma-light"] #root { background: #e7e5de; }
-      html[data-theme="gamma-light"] { color-scheme: light; }
-      html[data-theme="gamma-dark"], html[data-theme="gamma-dark"] body, html[data-theme="gamma-dark"] #root { background: #1b1b1a; }
-      html[data-theme="gamma-dark"] { color-scheme: dark; }
-      html[data-theme="sepia"], html[data-theme="sepia"] body, html[data-theme="sepia"] #root { background: #f0e9d6; }
-      html[data-theme="sepia"] { color-scheme: light; }
-      html[data-theme="solarized"], html[data-theme="solarized"] body, html[data-theme="solarized"] #root { background: #eee8d5; }
-      html[data-theme="solarized"] { color-scheme: light; }
-      html[data-theme="gray"], html[data-theme="gray"] body, html[data-theme="gray"] #root { background: #e9e9e9; }
-      html[data-theme="gray"] { color-scheme: light; }
+      html, body, #root { margin: 0; height: 100%; background: var(--bg-page); }
       /* First-load splash: index.html is tiny and paints immediately, while
          the app bundle downloads and parses. The brand mark, the name and a
          spinner say "Gamma is on its way"; after 8 s one quiet line says a
          slow connection is the reason. Lives inside #root, so React's first
-         render commit replaces it. The theme tokens come from app.css, which
-         the built page links render-blocking; the fallbacks cover the dev
-         server, where styles arrive with the script. */
+         render commit replaces it. */
       #splash {
         position: fixed;
         inset: 0;
@@ -74,13 +57,13 @@
         align-items: center;
         justify-content: center;
         gap: 12px;
-        color: var(--text-muted, #8a8a8a);
-        font: 13px var(--font-sans, system-ui, -apple-system, sans-serif);
+        color: var(--text-muted);
+        font: 13px var(--font-sans);
       }
       #splash .mark { display: block; filter: drop-shadow(0 2px 6px rgba(0, 0, 0, 0.18)); }
       #splash .name {
         margin-bottom: 6px;
-        color: var(--text-primary, #8a8a8a);
+        color: var(--text-primary);
         font-size: 18px;
         font-weight: 600;
       }

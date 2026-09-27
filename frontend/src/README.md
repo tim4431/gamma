@@ -25,7 +25,7 @@ through barrel files. `main.jsx` remains the Vite entry point.
 | `shared/lib/` | API transport and helpers (`utils.js`), the multipart upload (`xhrUpload.js`), search text normalization, canvas sizing, published pages' slugs and page hosts (`slug.js`), and keyboard chords + the shortcut dispatcher (`hotkeys.js`) |
 | `shared/ui/` | Reused widgets, menus, icons, and menu hover intent |
 | `shared/illustrations/` | Decorative settings/import previews and their local image assets |
-| `shared/styles/` | `app.css`: theme, base controls, and cross-application styles |
+| `shared/styles/` | `tokens.css`: every design token (theme colours, type, radii, layers), linked first by `index.html`; `app.css`: base controls and cross-application styles |
 
 ## Placement and naming
 

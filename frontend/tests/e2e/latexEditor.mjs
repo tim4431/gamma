@@ -59,6 +59,7 @@ try {
   });
   await page.goto("http://localhost/");
   await page.addStyleTag({ content: readFileSync(path.join(root, "node_modules/katex/dist/katex.min.css"), "utf8") });
+  await page.addStyleTag({ content: readFileSync(path.join(root, "src/shared/styles/tokens.css"), "utf8") });
   await page.addStyleTag({ content: readFileSync(path.join(root, "src/shared/styles/app.css"), "utf8").replace(/^@import[^;]+;/, "") });
   await page.addScriptTag({ content: bundle.outputFiles[0].text });
   await page.waitForFunction(() => window.editorRef?.current?.view);

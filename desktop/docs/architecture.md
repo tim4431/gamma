@@ -139,8 +139,11 @@ pages mirrors the page's `data-theme` attribute (`dark`/`light`/`gamma-light`/
 `gamma-dark`/`sepia`/`solarized`/`gray`; none = dark) to the main process, which restyles the bar, the
 launcher, the window background and the Windows title-bar overlay. The last
 theme is persisted so the chrome is right before any page has loaded. The
-tokens in `ui/theme.css` are copies of `frontend/src/shared/styles/app.css`'s, and the
-icons are the same stroke glyphs as `frontend/src/shared/ui/Icons.jsx`.
+tokens are Gamma's own: `ui/tokens.css` is a committed copy of
+`frontend/src/shared/styles/tokens.css` and `ui/fonts/` holds the Latin
+subset of Inter (`npm run desktop-tokens` in `frontend/` refreshes both;
+`frontend/tests/themes.test.mjs` fails while they differ). The icons are the
+same stroke glyphs as `frontend/src/shared/ui/Icons.jsx`.
 
 ## In-app updates
 
@@ -219,8 +222,10 @@ dialog (tests only); `GAMMA_SHELL_NO_UPDATE=1` disables the updater.
 - `preload.js` — exposes the `gammaShell` IPC bridge **only on `file:`
   URLs**; on server pages it exposes nothing and only reports `data-theme`
   changes.
-- `ui/theme.css` — Gamma's tokens + the unified control classes (`uiBtn`,
-  `ctlBtn`, `uiInput`, the `dot` states) for the shell pages.
+- `ui/tokens.css` — a copy of Gamma's design tokens (see Theme);
+  `ui/fonts/` — Inter, Latin subset, with its licence.
+- `ui/theme.css` — the Inter `@font-face` + the unified control classes
+  (`uiBtn`, `ctlBtn`, `uiInput`, the `dot` states) for the shell pages.
 - `ui/bar.html` — the shell bar. `ui/launcher.html` — the server picker.
   Both plain HTML, no build step.
 - `lib/registry.js` — `servers.json` load/save, add/rename/remove,
