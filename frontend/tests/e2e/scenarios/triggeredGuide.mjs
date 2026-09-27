@@ -5,7 +5,7 @@
 // takes the caret or closes the popover it points into. A fresh account, so
 // no earlier scenario has seen these offers.
 import { Account, wanted } from "../harness.mjs";
-import { editRow } from "./notes.mjs";
+import { closeEditor, editRow } from "./notes.mjs";
 import { waitForPdf } from "./pdf.mjs";
 
 export async function triggeredGuideScenarios(env) {
@@ -22,35 +22,84 @@ export async function triggeredGuideScenarios(env) {
   const progress = (page, id) => page.evaluate((id) => JSON.parse(localStorage.getItem(`gamma-guide:tourist:${id}`) || "null")?.state, id);
   const primary = (page) => page.locator(".guideCard .uiBtn.primary");
 
-  await step("triggered guide: a new table offers the table tour; hover tools show while pointed at", async () => {
-    const pg = await user.api("/api/pages", { method: "POST", body: { title: "Table page" } });
-    await user.api("/api/blocks", { method: "POST", body: { parent_id: pg.id, content: "| a | b |\n|---|---|\n| 1 | 2 |" } });
-    const { ctx, page } = await open(`&page=${pg.id}`);
+  // Type /table into the row's block and close the editor: the table renders.
+  const makeTable = async (page, rowText) => {
+    await editRow(page, rowText);
+    await page.keyboard.press("Enter");
+    await page.keyboard.type("/table");
+    await page.locator(".slashMenu .slashMenuItem", { hasText: "2×2 markdown table" }).click();
+    await until(async () => (await page.locator(".blockEditorCm .cm-content").textContent()).includes("|"), { what: "the table source is in the editor" });
+    await closeEditor(page);
+    await page.waitForSelector('[data-guide="notes.table"]');
+  };
+
+  await step("triggered guide: opening a page with a table offers nothing; making one offers the tour, which starts in a cell", async () => {
+    const existing = await user.api("/api/pages", { method: "POST", body: { title: "Table page" } });
+    await user.api("/api/blocks", { method: "POST", body: { parent_id: existing.id, content: "| a | b |\n|---|---|\n| 1 | 2 |" } });
+    const pg = await user.api("/api/pages", { method: "POST", body: { title: "Grid page" } });
+    const grid = await user.api("/api/blocks", { method: "POST", body: { parent_id: pg.id, content: "grid here" } });
+    const { ctx, page } = await open(`&page=${existing.id}`);
     try {
+      await page.waitForSelector('[data-guide="notes.table"]');
+      await page.waitForTimeout(1500);
+      assertEq(await page.locator("[data-guide-offer]").count(), 0, "a table that is merely there offers nothing");
+      await page.goto(`${server.base}/?ws=${user.ws}&page=${pg.id}`);
+      await makeTable(page, "grid here");
       await page.waitForSelector('[data-guide-offer="tables"] .guideCard');
       assertEq(await page.locator(".guideDim").count(), 0, "an offer does not dim the app");
-      assertEq(await page.locator(".guideCard .guideStep").textContent(), "Quick tour · 4 steps", "the add-a-table step is dropped: there is one");
+      assertEq(await page.locator(".guideCard .guideStep").textContent(), "Quick tour · 3 steps", "the add-a-table step is dropped: there is one");
       await page.getByRole("button", { name: "Show me" }).click();
+      // First what the user came for: a cell, typed into in place.
+      await page.waitForSelector('[data-guide-overlay="table-cell"] .guideCard');
+      await page.locator('[data-guide="notes.table"] td').first().click();
+      await page.locator(".mdTableCellInput").fill("42");
+      await page.keyboard.press("Enter");
+      await until(async () => (await user.api(`/api/blocks/${pg.id}/subtree`)).block.children.find((b) => b.id === grid.id)?.content.includes("42"),
+        { what: "the cell edit is saved" });
       await page.waitForSelector('[data-guide-overlay="table-add"] .guideCard');
       const add = page.locator('[data-guide="notes.tableAdd"]');
       await until(async () => (await add.getAttribute("data-guide-active")) !== null, { what: "the add strip is marked active" });
       await until(async () => (await add.evaluate((el) => getComputedStyle(el).opacity)) === "1", { what: "the hover-only strip shows" });
       await primary(page).click();
-      await page.waitForSelector('[data-guide-overlay="table-move"]');
-      assertEq(await add.getAttribute("data-guide-active"), null, "the previous anchor is unmarked");
-      await primary(page).click();
-      await page.waitForSelector('[data-guide-overlay="table-cell"]');
-      await primary(page).click();
       await page.waitForSelector('[data-guide-overlay="table-whole"]');
+      assertEq(await add.getAttribute("data-guide-active"), null, "the previous anchor is unmarked");
       await primary(page).click();
       await until(async () => await page.locator(".guideCard").count() === 0);
       assertEq(await progress(page, "tables"), "done");
-      await page.reload();
-      await page.waitForSelector('[data-guide="notes.table"]');
+      await makeTable(page, "grid here");
       await page.waitForTimeout(1500);
       assertEq(await page.locator("[data-guide-offer]").count(), 0, "offered once per version");
       assertNoProblems(page);
     } finally { await ctx.close(); }
+  });
+
+  await step("triggered guide: a pasted spreadsheet offers the table tour too, as html or as cells chosen as Table", async () => {
+    const clips = [
+      { kind: "html", data: { "text/html": "<table><tr><td>a</td><td>b</td></tr><tr><td>1</td><td>2</td></tr></table>", "text/plain": "a\tb\n1\t2" } },
+      { kind: "cells", data: { "text/plain": "a\tb\n1\t2" }, choose: "Table" },
+    ];
+    for (const clip of clips) {
+      const pg = await user.api("/api/pages", { method: "POST", body: { title: `Pasted ${clip.kind}` } });
+      await user.api("/api/blocks", { method: "POST", body: { parent_id: pg.id, content: "paste here" } });
+      const { ctx, page } = await open(`&page=${pg.id}`);
+      try {
+        await editRow(page, "paste here");
+        await page.keyboard.press("Enter");
+        await page.evaluate((data) => {
+          const dt = new DataTransfer();
+          for (const [type, value] of Object.entries(data)) dt.setData(type, value);
+          document.querySelector(".blockEditorCm .cm-content")
+            .dispatchEvent(new ClipboardEvent("paste", { clipboardData: dt, bubbles: true, cancelable: true }));
+        }, clip.data);
+        if (clip.choose) await page.locator(".slashMenu .slashMenuItem", { hasText: clip.choose }).first().click();
+        // (the caret rests after it, so the editor shows it as a table)
+        await until(async () => await page.locator(".blockEditorCm .cmTableWidget").count() === 1, { what: `the ${clip.kind} paste became a table` });
+        await closeEditor(page);
+        await page.waitForSelector('[data-guide-offer="tables"] .guideCard');
+        await page.getByRole("button", { name: "Not now" }).click();
+        assertNoProblems(page);
+      } finally { await ctx.close(); }
+    }
   });
 
   await step("triggered guide: the table's corner handle selects the whole table; the menu or Delete removes it", async () => {
@@ -346,7 +395,7 @@ export async function triggeredGuideScenarios(env) {
 
   await step("triggered guide: Suggest tours off in Settings stops offers on every device", async () => {
     const pg = await user.api("/api/pages", { method: "POST", body: { title: "Quiet table" } });
-    await user.api("/api/blocks", { method: "POST", body: { parent_id: pg.id, content: "| x |\n|---|\n| 1 |" } });
+    await user.api("/api/blocks", { method: "POST", body: { parent_id: pg.id, content: "quiet grid" } });
     const home = await open("");
     try {
       await home.page.click('[data-guide="header.account"]');
@@ -358,11 +407,11 @@ export async function triggeredGuideScenarios(env) {
       await until(async () => (await user.api("/api/prefs/profile")).value?.suggestTours === false, { what: "the switch reaches the account" });
       assertNoProblems(home.page);
     } finally { await home.ctx.close(); }
-    // Another browser still holds "on" locally until the account's profile
-    // loads; nothing may be offered in between.
+    // Another browser still holds "on" locally; the account's "off" wins
+    // there too, so making a table offers nothing.
     const { ctx, page } = await open(`&page=${pg.id}`, { setup: (ctx) => ctx.addInitScript(() => localStorage.removeItem("gamma-guide:tourist:tables")) });
     try {
-      await page.waitForSelector('[data-guide="notes.table"]');
+      await makeTable(page, "quiet grid");
       await page.waitForTimeout(1500);
       assertEq(await page.locator("[data-guide-offer]").count(), 0, "no offer while suggestions are off");
       assertNoProblems(page);

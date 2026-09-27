@@ -111,7 +111,7 @@ an amber **Tip** chip over one plain sentence that says why it helps, with
 |---|---|---|
 | Citations in answers | an AI reply finishes with a citation link (`chat.cited`) | the link; a demo clicks it and waits for `citation.shown`, then the marked passage in the PDF |
 | Sharing a page | the page gets its first share link (`share.created`: the first audience tile picked or person invited) | (choose who can open it,) the link, who has access, general access (worded for what an anyone-with-the-link share exposes when it is one, `shareAudience`), stop sharing — inside the Share popover, top to bottom |
-| Editing tables | an editable table renders in the notes (`table.shown`) | (add one with /table,) the + strips, row/column handles, cells, the corner handle (copy or delete the whole table) |
+| Editing tables | the user makes a table (/table, or a pasted spreadsheet or html table) and it first renders (`table.created`); opening a page that has one offers nothing | (add one with /table,) a cell to type into, the + strips and the row/column handles, the corner handle (copy, move or delete the whole table) |
 | Handwriting | the first stroke (`ink.stroke`) | (draw something,) the drawing's note block and its caption, tap the pen again for colour, width and pen vs monoline, erase part of it (Ctrl+Z brings it back), the lasso; finishing re-arms the pen |
 | Working together | another account or a link visitor comes onto the page (`peer.joined`; your own second tab or the desktop app beside the browser is nobody else) | the avatar stack, their block, undo |
 | Shared workspaces | the account belongs to a shared workspace (state) | the account menu's switcher and card |
@@ -409,6 +409,7 @@ where the thing happens:
 | `ink.stroke` | App's `handleInkStroke` |
 | `ink.options`, `ink.erased`, `ink.undone` | App, when the armed tool's options row opens; `handleInkErase` / `handleInkErasePartial`; `inkUndo` (not redo) |
 | `table.shown` | MdTableWrap, when an editable table mounts |
+| `table.created`, `table.edited` | MdTableWrap: the first render of a table made with /table or a paste (BlockTree marks the block, `noteTableMade`), and a cell editor's commit |
 | `conflict.shown` | MergeResolver's versions |
 | `ref.search` | BlockTree, when the `[[` search shows results |
 | `math.previewed` | MathLivePreview, when it comes up |
@@ -533,7 +534,8 @@ frontend/tests/guide.test.mjs         schema, anchor references, event names, un
 frontend/tests/e2e/scenarios/guide.mjs            the first-run tour end to end, home anchors present
 frontend/tests/e2e/scenarios/contextualGuide.mjs  the AI chat tour on desktop and phone
 frontend/tests/e2e/scenarios/auth.mjs             demo mode: the guest lands and gets the first-run offer (sessionStorage)
-frontend/tests/e2e/scenarios/triggeredGuide.mjs   offers and hints: tables, sharing (offered, and from
+frontend/tests/e2e/scenarios/triggeredGuide.mjs   offers and hints: tables (made by /table or a paste,
+                                                  not merely shown), sharing (offered, and from
                                                   the menu with and without a link), citations, math,
                                                   Ctrl+P, Back, workspaces, presence, handwriting from the
                                                   menu (draw, note, style, erase, lasso, the pen

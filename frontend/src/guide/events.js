@@ -22,6 +22,8 @@ export const EVENTS = [
   "ink.erased",       // handwriting was erased
   "ink.undone",       // a handwriting change was undone
   "table.shown",      // an editable table rendered in the notes
+  "table.created",    // a table made with /table or a paste first rendered as one
+  "table.edited",     // a table cell's in-place editor committed
   "conflict.shown",   // a clone conflict's versions were shown
   "ref.search",       // the [[ block search opened with results
   "math.previewed",   // the live formula preview came up while typing math

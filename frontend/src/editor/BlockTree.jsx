@@ -44,7 +44,7 @@ import { T, t } from "../shared/i18n/i18n.js";
 import { guideEvents } from "../guide/events.js";
 import {
   applyImageEdit, applyTableEdit, formatTables, htmlTableToMarkdown,
-  MdImage, MdTableWrap, tsvToMarkdown,
+  MdImage, MdTableWrap, noteTableMade, tsvToMarkdown,
 } from "./MdTools";
 
 // Module-level ref for native HTML5 drag-and-drop (shared with App's drop handlers)
@@ -1049,6 +1049,7 @@ function BlockRow({
     const value = ta.value;
     const cursor = ta.selectionStart;
     setSlashMenu(null);
+    if (c.name === "table") noteTableMade(block.id);
     c.run({
       value,
       start,
@@ -1207,6 +1208,7 @@ function BlockRow({
       ta.focus();
     };
     if (item.make) {
+      if (item.name === "table") noteTableMade(block.id);
       let text = item.make();
       if (item.block) {
         // A block-level construct (a table) must start and end on its own
@@ -1292,6 +1294,7 @@ function BlockRow({
             selection: { anchor: start + lead.length + md.length },
             userEvent: "input",
           });
+          noteTableMade(block.id);
           return;
         }
       }

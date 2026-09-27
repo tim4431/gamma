@@ -105,11 +105,13 @@ const at = (name, payload = {}) => ({ name, payload });
 
 test("a triggered tour is offered after its event, once per version", () => {
   const tables = TOURS.tables;
-  assert.equal(canOffer(tables, { facts, progress: null, event: at("table.shown"), seen: 1 }), true);
+  assert.equal(canOffer(tables, { facts, progress: null, event: at("table.created"), seen: 1 }), true);
   assert.equal(canOffer(tables, { facts, progress: null, event: at("page.opened"), seen: 1 }), false);
+  assert.equal(canOffer(tables, { facts, progress: null, event: at("table.shown"), seen: 1 }), false,
+    "a table that merely renders (opening a page that has one) offers nothing");
   assert.equal(canOffer(tables, { facts, progress: null }), false, "an event trigger never fires on a state check");
-  assert.equal(canOffer(tables, { facts, progress: { state: "dismissed", version: tables.version }, event: at("table.shown"), seen: 1 }), false);
-  assert.equal(canOffer(tables, { facts, progress: { state: "done", version: tables.version - 1 }, event: at("table.shown"), seen: 1 }), true,
+  assert.equal(canOffer(tables, { facts, progress: { state: "dismissed", version: tables.version }, event: at("table.created"), seen: 1 }), false);
+  assert.equal(canOffer(tables, { facts, progress: { state: "done", version: tables.version - 1 }, event: at("table.created"), seen: 1 }), true,
     "a new version offers again");
   assert.equal(canOffer(TOURS.handwriting, { facts: { ...facts, hasPdf: false }, progress: null, event: at("ink.stroke"), seen: 1 }), false,
     "requires gates the offer");
