@@ -198,6 +198,29 @@ export async function triggeredGuideScenarios(env) {
     } finally { await ctx.close(); }
   });
 
+  await step("triggered guide: the first link jump offers the Back hint; Back returns and retires it", async () => {
+    const target = await user.api("/api/pages", { method: "POST", body: { title: "Jump target" } });
+    const source = await user.api("/api/pages", { method: "POST", body: { title: "Jump source" } });
+    await user.api("/api/blocks", { method: "POST", body: { parent_id: source.id, content: `See [Jump target](/?page=${target.id})` } });
+    const { ctx, page } = await open(`&page=${source.id}`);
+    try {
+      assertEq(await page.locator('[data-guide="header.back"]').count(), 0, "no Back before a jump");
+      await page.locator("a.gammaLinkCard", { hasText: "Jump target" }).click();
+      await until(() => new URL(page.url()).searchParams.get("page") === target.id || new URL(page.url()).searchParams.get("block") === target.id,
+        { what: "the link opened its page" });
+      await page.waitForSelector('[data-guide-offer="back"] .guideCard');
+      assertEq(await page.locator(".guideCard .guideStep").textContent(), "Tip");
+      assertEq(await page.locator(".guideDim").count(), 0, "a hint does not dim the app");
+      // Going back on their own is what the hint teaches: it retires it.
+      await page.getByRole("button", { name: "Back", exact: true }).click();
+      await until(() => [new URL(page.url()).searchParams.get("page"), new URL(page.url()).searchParams.get("block")].includes(source.id),
+        { what: "Back returned to the source page" });
+      await until(async () => await page.locator(".guideCard").count() === 0, { what: "the hint went with the first Back" });
+      assertEq(await progress(page, "back"), "done");
+      assertNoProblems(page);
+    } finally { await ctx.close(); }
+  });
+
   await step("triggered guide: joining a shared workspace offers its tour, which opens the account menu", async () => {
     server.manage("create-workspace", "Tour lab", "tourist", "shared");
     const { ctx, page } = await open("");

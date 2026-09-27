@@ -127,6 +127,13 @@ test("count, doneOn and state triggers", () => {
     "a state trigger is not an event trigger");
 });
 
+test("the Back hint comes with the first link jump and retires once Back is used", () => {
+  const back = TOURS.back;
+  assert.equal(canOffer(back, { facts, progress: null, event: at("nav.pushed"), seen: 1 }), true);
+  assert.equal(retiresOffer(back, at("nav.back")), true);
+  assert.equal(retiresOffer(back, at("nav.pushed")), false);
+});
+
 test("the first-run tour is offered on a demo server's library only, and stays manual elsewhere", () => {
   const firstRun = TOURS["first-run"];
   const home = { ...facts, view: "home", onPage: false };
@@ -160,7 +167,7 @@ test("a demo server keeps guide progress in sessionStorage, anyone else in local
 
 test("hints are single cards kept out of the Tours menu", () => {
   const hints = Object.values(TOURS).filter((t) => t.hint).map((t) => t.id);
-  assert.deepEqual(hints, ["math-keys", "block-refs", "quick-open", "folders", "install"]);
+  assert.deepEqual(hints, ["math-keys", "block-refs", "quick-open", "back", "folders", "install"]);
 });
 
 // Keys in guide copy: `{key:<command id>}` shows the account's chord for a

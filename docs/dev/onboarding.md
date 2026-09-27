@@ -1,7 +1,7 @@
 # Onboarding: tours and contextual guides
 
 **Status: the engine, the two manual tours (first paper, AI chat), seven
-triggered tours and five hints are built.** The welcome page, synced
+triggered tours and six hints are built.** The welcome page, synced
 `onboarding` pref, first-sign-in invitation and checklist are still design.
 What exists: `frontend/src/guide/` (anchor registry, event bus, trigger rules
 in `triggers.js`, `useGuide`, `GuideOverlay`, one file per tour in `tours/`,
@@ -76,6 +76,7 @@ an amber **Tip** chip over one plain sentence that says why it helps, with
 | hint: math keys | the live formula preview comes up (`math.previewed`) | the preview: Tab and `\` |
 | hint: block references | the `[[` search shows results (`ref.search`) | the search: mention vs `![[…]]` |
 | hint: Ctrl+P | the 4th return to the library in one load (`home.opened`, `count: 4`), unless the palette was used (`doneOn: palette.opened`) | Home |
+| hint: Back | the first link jump (`nav.pushed`), unless Back was already used (`doneOn: nav.back`) | the Back button: it returns to the same spot, or `{key:app.back}` |
 | hint: folders | the library has 10+ pages and no folder or label (state) | the listing bar |
 | hint: install | iPhone/iPad Safari, not yet the home-screen app (state) | no anchor: a corner card |
 | Your first paper | on a demo server only, on the library once the guest lands (state, `trigger.requires: {demo: true, view: "home"}`) | no anchor: a corner card; Show me starts the tour |
@@ -339,6 +340,7 @@ where the thing happens:
 |---|---|
 | `popover.opened` `{name}` | App, when a topbar popover opens |
 | `page.opened` `{id}`, `home.opened` | App's page open and `goHome` |
+| `nav.pushed`, `nav.back` | App's `pushNav` (a link jump recorded where you were) and `goBackNav` (the Back button or Alt+←) |
 | `palette.opened` | App, when the Ctrl+P palette opens |
 | `highlight.created` `{id, kind}` | App's highlight creation path |
 | `chat.sent`, `chat.cited` | ChatDock's send, and the end of a reply holding a citation (`gammaLinksIn`) |
@@ -471,7 +473,7 @@ frontend/tests/e2e/scenarios/contextualGuide.mjs  the AI chat tour on desktop an
 frontend/tests/e2e/scenarios/auth.mjs             demo mode: the guest lands and gets the first-run offer (sessionStorage)
 frontend/tests/e2e/scenarios/triggeredGuide.mjs   offers and hints: tables, sharing (offered, and from
                                                   the menu with and without a link), citations, math,
-                                                  Ctrl+P, workspaces, presence, handwriting from the
+                                                  Ctrl+P, Back, workspaces, presence, handwriting from the
                                                   menu (draw, style, erase, undo), Suggest tours off
 ```
 

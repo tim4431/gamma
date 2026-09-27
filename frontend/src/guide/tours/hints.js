@@ -31,6 +31,17 @@ export const quickOpen = {
   steps: [{ id: "quick-open", anchor: "header.home", placement: "bottom", title: T("Next time, press {key:app.quickOpen} to jump to any page without going home.") }],
 };
 
+// Offered after the first link jump (a citation, a page link, a chat
+// citation): Back returns to the exact spot. Retired silently once the user
+// has gone back on their own.
+export const back = {
+  id: "back",
+  version: 1,
+  hint: true,
+  trigger: { event: "nav.pushed", doneOn: { event: "nav.back" } },
+  steps: [{ id: "back", anchor: "header.back", placement: "bottom", title: T("Back takes you to where you were, at the same spot. Or press {key:app.back}.") }],
+};
+
 export const folders = {
   id: "folders",
   version: 1,
@@ -50,4 +61,4 @@ export const install = {
   steps: [{ id: "install", anchor: null, title: T("Install Gamma for full screen and a Home Screen icon: tap Share, then Add to Home Screen.") }],
 };
 
-export default [mathKeys, blockRefs, quickOpen, folders, install];
+export default [mathKeys, blockRefs, quickOpen, back, folders, install];

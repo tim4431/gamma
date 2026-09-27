@@ -253,6 +253,7 @@
   "Automatic sync": "自动同步",
   "Available models": "可用模型",
   "Back": "返回",
+  "Back takes you to where you were, at the same spot. Or press {key:app.back}.": "“返回”会带你回到刚才的位置，停在同一处。也可以按 {key:app.back}。",
   "Back to the shared folder": "返回分享的文件夹",
   "Back to where you were": "回到之前的位置",
   "Back to where you were{steps} — Alt+← · right-click to clear": "回到之前的位置{steps}——Alt+← · 右键清除",

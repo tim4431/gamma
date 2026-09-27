@@ -14,6 +14,7 @@
 
 export const ANCHORS = {
   "header.home": { view: "any", description: "The Home button in the topbar" },
+  "header.back": { view: "nav", description: "Back to where you were before a link jump; there only after one" },
   "header.add": { view: "any", description: "Add — new page, PDF by URL / arXiv / DOI, uploads" },
   "header.tasks": { view: "any", description: "Background tasks (downloads, uploads, indexing)" },
   "header.search": { view: "any", description: "Workspace search (Ctrl+F)" },

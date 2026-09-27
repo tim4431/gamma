@@ -5200,12 +5200,14 @@ function LibraryApp({ publicPage = null, initialServerConfig = null }) {
       scale: pdfEffScale,
     };
     setNavStack((prev) => [...prev.slice(-29), entry]);
+    guideEvents.emit("nav.pushed");
   }
 
   async function goBackNav() {
     const entry = navStack[navStack.length - 1];
     if (!entry) return;
     setNavStack((prev) => prev.slice(0, -1));
+    guideEvents.emit("nav.back");
     if (entry.blockId && entry.blockId === focusedBlockId) {
       restorePdfScroll(entry, entry.blockId, pdfUrl); // same document — just return to the reading position
     } else if (entry.blockId) {
@@ -9058,6 +9060,7 @@ function LibraryApp({ publicPage = null, initialServerConfig = null }) {
             {navStackLen > 0 ? (
               <button
                 className="iconBtn navBackBtn"
+                data-guide="header.back"
                 onClick={goBackNav}
                 onContextMenu={(e) => { e.preventDefault(); setNavStack([]); }}
                 title={t("Back to where you were{steps} — Alt+← · right-click to clear", { steps: navStackLen > 1 ? ` (${navStackLen} steps)` : "" })}

@@ -6,6 +6,8 @@ export const EVENTS = [
   "popover.opened",   // {name} — a topbar popover opened: add, search, user, share, downloads
   "page.opened",      // {id}
   "home.opened",      // returned to the library
+  "nav.pushed",       // a link jump recorded a place for Back to return to
+  "nav.back",         // Back (the button or Alt+←) returned to that place
   "palette.opened",   // the Ctrl+P page palette opened
   "highlight.created", // {id, kind: "text" | "area"}
   "block.created",
