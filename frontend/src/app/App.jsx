@@ -76,6 +76,7 @@ import { chordLabel, dispatch as dispatchHotkey, effectiveKeys, isTextField } fr
 import { APP_COMMANDS, liveAppCommands } from "./appCommands.js";
 import { stepList } from "../shared/ui/listKeys.js";
 import { BLOCK_COMMANDS } from "../editor/blockCommands.js";
+import { commandChord } from "./commands.js";
 import { loadSession, saveSession, clearSession, setSessionScope } from "./sessionState";
 import { ROLE_LABEL, workspaceMeta } from "../settings/SettingsWorkspace";
 import { AuthLoading, LoginPage, SessionConflictPage, ShareBlockedPage, WorkspaceUnavailablePage } from "../auth/LoginPage";
@@ -6973,10 +6974,10 @@ function LibraryApp({ publicPage = null, initialServerConfig = null }) {
   // follows the last of them. homeMatchCount is null without a query.
   const homeQueryText = homeQuery.trim();
   const homeMatchCount = homeQueryText ? homeItems.filter((it) => it._match).length : null;
+  // A menu row's / box's key hint: the chord this account gave the command.
   const commandKeyLabel = (id) => {
-    const cmd = APP_COMMANDS.find((c) => c.id === id);
-    const keys = cmd ? effectiveKeys(cmd, keybindings) : [];
-    return keys.length ? chordLabel(keys[0]) : "";
+    const chord = commandChord(id, keybindings);
+    return chord ? chordLabel(chord) : "";
   };
   // The quiet row goes right after the matches (they lead the listing).
   const withSearchMore = (nodes) => (homeMatchCount > 0 && homeMatchCount <= nodes.length

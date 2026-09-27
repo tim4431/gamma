@@ -30,7 +30,10 @@ A **command** is declared once, as an object in one of two catalogs:
 two lists (`ALL_COMMANDS`, `GROUPS`) and, for the surfaces that show the
 whole picture, lists the keys the outliner owns outright (`fixedKeys`:
 Enter, Tab, Backspace on an empty note, ←/→ folding at the text's edge, `/`,
-Esc).
+Esc). `commandChord(id, bindings)` is the one lookup of the chord a command
+answers to for this account (its first effective key, `""` when unbound):
+the home library's key hints (the page menu's Rename / Delete, the filter
+box) and the guide's `{key:…}` tokens (`guide/keys.js`) both read it.
 
 The three surfaces read that catalog and nothing else:
 
