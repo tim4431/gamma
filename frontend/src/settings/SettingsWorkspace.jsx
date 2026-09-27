@@ -516,7 +516,7 @@ export function ManageWorkspaceDialog({ wsId, me, admin, accounts, confirm, setS
               <Section title={t("Danger zone")} tone="danger">
                 {canLeave ? (
                   <Row icon={LogOutIcon} label={t("Leave")} hint={t("You lose access until someone invites you again.")}>
-                    <button className="uiBtn sm dangerBtn" disabled={ws.busy} onClick={() => remove(me)}>{t("Leave…")}</button>
+                    <button className="uiBtn sm danger" disabled={ws.busy} onClick={() => remove(me)}>{t("Leave…")}</button>
                   </Row>
                 ) : null}
                 {canDelete ? (
@@ -524,7 +524,7 @@ export function ManageWorkspaceDialog({ wsId, me, admin, accounts, confirm, setS
                     ? t("Deletes every page, PDF, chat and backup in it. Can't be undone.")
                     : tn("Deletes every page, PDF, chat and backup in it, for its {n} member. Can't be undone.",
                       "Deletes every page, PDF, chat and backup in it, for all {n} members. Can't be undone.", members.length)}>
-                    <button className="uiBtn sm dangerBtn" disabled={ws.busy} onClick={destroy}>{t("Delete…")}</button>
+                    <button className="uiBtn sm danger" disabled={ws.busy} onClick={destroy}>{t("Delete…")}</button>
                   </Row>
                 ) : null}
               </Section>

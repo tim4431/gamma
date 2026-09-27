@@ -96,7 +96,7 @@ function ScopeTag({ scope, prefs }) {
 // header and rows, which then sit in one box a tour can point at.
 // `tone="danger"`: the "Danger zone" of a pane or dialog — a red label and
 // rule over its rows in a red-edged box. Its buttons are `uiBtn sm
-// dangerBtn` (red at rest) and each row's hint says what is lost.
+// danger` (red at rest) and each row's hint says what is lost.
 export function Section({ title, scope, prefs, action, guide, tone, children }) {
   const danger = tone === "danger";
   const body = (

@@ -9909,12 +9909,12 @@ function LibraryApp({ publicPage = null, initialServerConfig = null }) {
               <button className="uiBtn" onClick={() => setConfirmBox(null)} autoFocus>{t("Cancel")}</button>
               {confirmBox.altLabel ? (
                 <button
-                  className={`uiBtn ${confirmBox.altDanger ? "dangerBtn" : ""}`}
+                  className={`uiBtn ${confirmBox.altDanger ? "danger" : ""}`}
                   onClick={() => { const fn = confirmBox.onAlt; setConfirmBox(null); fn?.(); }}
                 >{confirmBox.altLabel}</button>
               ) : null}
               <button
-                className={`uiBtn primary ${confirmBox.danger ? "dangerBtn" : ""}`}
+                className={`uiBtn primary ${confirmBox.danger ? "danger" : ""}`}
                 onClick={() => { const fn = confirmBox.onConfirm; setConfirmBox(null); fn?.(); }}
               >{confirmBox.confirmLabel ? t(confirmBox.confirmLabel) : t("OK")}</button>
             </div>

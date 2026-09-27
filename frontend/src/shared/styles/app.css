@@ -204,6 +204,8 @@ html, body, #root {
    Keep native panning and pinch zoom; drawing surfaces override this with none. */
 html {
   touch-action: manipulation;
+  /* Native checkboxes, radios, ranges and progress bars take the theme's accent. */
+  accent-color: var(--accent);
   --ui-font-scale: var(--ui-scale, 1);
   font-size: calc(16px * var(--ui-font-scale));
 }
@@ -213,6 +215,9 @@ body {
   color: var(--text-primary);
   background: var(--bg-page);
 }
+/* Form controls take the page's face, not the browser's control font.
+   Zero specificity; the size stays with the control reset below. */
+:where(button, input, select, textarea) { font-family: inherit; }
 /* Zero specificity: a component's own font rule still wins. */
 :where(code, pre, kbd, samp) { font-family: var(--font-mono); }
 /* Counts, times and page numbers keep their width as the digits change. */
@@ -259,22 +264,7 @@ body {
   font-size: var(--fs-md);
 }
 
-.topbar button {
-  padding: 7px 12px;
-  background: var(--bg-raised);
-  color: var(--text-primary);
-  border: 1px solid var(--border-hover);
-  border-radius: var(--radius-sm);
-  cursor: pointer;
-  font: inherit;
-  font-size: var(--fs-sm);
-}
-
-.topbar button:hover {
-  background: var(--bg-hover);
-}
-
-/* icon-only buttons and tab chrome override the generic topbar button look */
+/* The topbar's icon buttons (a button with text in the topbar is a uiBtn). */
 .topbar .iconBtn {
   padding: 0;
   width: 32px;
@@ -295,12 +285,14 @@ body {
 /* --- unified close / dismiss control -------------------------------------
    One look for every "×" in the app, modeled on the tab close button:
    a round, dim glyph that brightens with a soft circular fill on hover and
-   presses in on click. Variants: Lg (pane close), Sm (chips/tags), Danger
-   (delete). Apply `.uiClose` to any dismiss button instead of a bespoke class. */
+   presses in on click. Sizes: Sm 20 (chips, tags, rows), the default 24
+   (docks, cards, find bars), Lg 28 (dialogs, panes). Danger turns red on
+   hover (delete). Apply `.uiClose` to any dismiss button instead of a
+   bespoke class. */
 .uiClose {
   padding: 0;
-  width: 18px;
-  height: 18px;
+  width: 24px;
+  height: 24px;
   flex-shrink: 0;
   background: none;
   border: none;
@@ -317,16 +309,8 @@ body {
 .uiClose:hover { background: var(--bg-subtle); color: var(--text-bright); }
 .uiClose:active { transform: scale(0.82); }
 .uiClose.uiCloseLg { width: 28px; height: 28px; font-size: var(--fs-xl); }
-.uiClose.uiCloseSm { width: 16px; height: 16px; font-size: var(--fs-xs); }
-.uiClose.uiCloseDanger:hover { background: rgba(224, 92, 92, 0.15); color: #e05c5c; }
-/* out-specify the generic ".topbar button" pill for close buttons in the topbar */
-.topbar .uiClose {
-  padding: 0;
-  background: none;
-  border: none;
-  border-radius: 50%;
-}
-.topbar .uiClose:hover { background: var(--bg-subtle); }
+.uiClose.uiCloseSm { width: 20px; height: 20px; font-size: var(--fs-xs); }
+.uiClose.uiCloseDanger:hover { background: var(--danger-bg); color: var(--danger); }
 
 .status {
   padding: 8px 12px;
@@ -367,10 +351,6 @@ body {
   .topbar {
     padding: 6px 8px;
     gap: 4px;
-  }
-  .topbar button {
-    padding: 7px 10px;
-    font-size: var(--fs-sm);
   }
 
 }
@@ -1138,7 +1118,6 @@ body {
   height: 14px;
   margin: 0 6px 0 0;
   vertical-align: -2px;
-  accent-color: var(--accent);
   cursor: pointer;
 }
 .mdTaskCheckbox:disabled { cursor: default; }
@@ -1657,8 +1636,8 @@ body {
 
 /* Viewer control boxes — ONE surface, three placements: the zoom column
    (mid-left), the TOC toggle (top-left) and the fullscreen toggle
-   (bottom-left) are all a .pdfCtlBox: the same elevated 28px-wide rounded
-   box with the same 22px transparent inner buttons. Only the position
+   (bottom-left) are all a .pdfCtlBox: the same elevated 32px-wide rounded
+   box with the same 26px transparent inner buttons (.ctlBtn's size). Only the position
    differs, via the modifier class — so any change to how these render
    (sizing, touch targets, theming) lands on all three at once. */
 .pdfCtlBox {
@@ -1668,7 +1647,7 @@ body {
   flex-direction: column;
   align-items: center;
   gap: 2px;
-  width: 28px;
+  width: 32px;
   background: var(--bg-elevated);
   border: 1px solid var(--border);
   border-radius: var(--radius-md);
@@ -1680,8 +1659,8 @@ body {
 :is(.pdfCtlBox button, .ctlBtn) {
   background: transparent;
   border: none;
-  width: 22px;
-  height: 22px;
+  width: 26px;
+  height: 26px;
   padding: 0;
   border-radius: var(--radius-sm);
   display: flex;
@@ -2378,7 +2357,7 @@ mark.merge-del { background: color-mix(in srgb, var(--danger) 16%, transparent);
 .mergeActions { display: flex; align-items: center; gap: 8px; justify-content: flex-end; padding: 4px 4px 2px; }
 .mergeActionsHint { padding: 0; flex: 1; text-align: right; min-width: 0; }
 .mergeVersion.selected { border-color: var(--accent); box-shadow: 0 0 0 1px var(--accent) inset; }
-.mergePick { margin: 0 2px 0 0; accent-color: var(--accent); flex-shrink: 0; cursor: pointer; }
+.mergePick { margin: 0 2px 0 0; flex-shrink: 0; cursor: pointer; }
 /* Lists of cards (the pill's conflicts view, Settings' conflicts). */
 .mirrorCards { display: flex; flex-direction: column; gap: 10px; }
 .mirrorCards .mergeCard { padding: 8px; border-radius: var(--radius-lg); border: 1px solid var(--border-subtle); }
@@ -2439,10 +2418,6 @@ mark.merge-del { background: color-mix(in srgb, var(--danger) 16%, transparent);
 .sharePopover { width: 440px; max-width: calc(100vw - 24px); max-height: min(80vh, calc(100dvh - 80px)); overflow-y: auto; padding: 10px 12px 12px; }
 .sharePopoverHead { display: flex; align-items: center; justify-content: space-between; gap: 8px; margin-bottom: 2px; }
 .sharePopover .popoverTitle { min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
-/* Beat the generic ".topbar button" pill: controls inside keep the shared
-   uiBtn look (.on / .primary / .danger still win, they are more specific). */
-.topbar .sharePopover .uiBtn:where(:not(.on, .primary, .danger)) { background: var(--bg-elevated); border: 1px solid var(--border); color: var(--text-secondary); }
-.topbar .sharePopover .uiBtn:where(:not(.on, .primary, .danger)):hover:not(:disabled) { background: var(--bg-hover); }
 .sharePopover .settingText { min-width: 0; }
 .sharePopover .setRow .settingDesc { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .sharePopover .shareNoLink .settingDesc { white-space: normal; } /* before a link: the sentence wraps */
@@ -3575,20 +3550,26 @@ html.appFocusFullscreen, html.appFocusFullscreen body { overflow: hidden; oversc
   box-shadow: var(--shadow-2);
 }
 
-/* Buttons: VS-Code-settings-style rounded rects — soft radius, quiet border,
-   faint lift, width from content. */
+/* Buttons (docs/dev/ui-design.md, "Buttons"): one hierarchy everywhere.
+   .uiBtn is the secondary button (a bordered rect with a faint lift);
+   .primary the one solid accent action of a surface; .ghost a tertiary
+   text button with no frame until hover; .danger the outlined destructive
+   button, red at rest, and .primary.danger the solid one. Heights: .sm 28,
+   the default 32; .iconSq is square at the same heights. .on is a chosen
+   option (segmented groups). */
 .uiBtn {
   display: inline-flex;
   align-items: center;
   justify-content: center;
-  gap: 5px;
+  gap: var(--space-3);
+  min-height: 32px;
   background: var(--bg-elevated);
   border: 1px solid var(--border);
   border-radius: var(--radius-md);
   color: var(--text-secondary);
   font-size: var(--fs-sm);
   font-weight: 500;
-  padding: 5px 14px;
+  padding: var(--space-2) 14px;
   cursor: pointer;
   font-family: inherit;
   line-height: var(--lh-ui);
@@ -3597,10 +3578,9 @@ html.appFocusFullscreen, html.appFocusFullscreen body { overflow: hidden; oversc
   transition: background var(--dur-fast) ease, color var(--dur-fast) ease, border-color var(--dur-fast) ease, box-shadow var(--dur-fast) ease;
 }
 .uiBtn:active:not(:disabled) { background: var(--bg-active); box-shadow: none; }
-.uiBtn:disabled { opacity: 0.45; cursor: default; box-shadow: none; }
-.uiBtn.sm { min-height: 28px; font-size: var(--fs-xs); padding: 4px 12px; border-radius: var(--radius-md); }
+.uiBtn.sm { min-height: 28px; font-size: var(--fs-xs); padding: var(--space-2) var(--space-5); }
 /* Icon-only square variant (delete/edit row actions). */
-.uiBtn.iconSq { width: 27px; height: 25px; padding: 0; flex-shrink: 0; }
+.uiBtn.iconSq { width: 32px; height: 32px; padding: 0; flex-shrink: 0; }
 .uiBtn.sm.iconSq { width: 28px; height: 28px; }
 .uiBtn.sm.iconSq svg { width: 15px; height: 15px; }
 /* Dropdown trigger (Codex-style select): a uiBtn whose content is the
@@ -3618,18 +3598,23 @@ html.appFocusFullscreen, html.appFocusFullscreen body { overflow: hidden; oversc
 /* Selected state for a button that is a choice rather than an action —
    segmented groups (Settings) light the active option this way. */
 .uiBtn.on {
-  background: var(--accent-bg);
-  border-color: var(--accent-dark);
+  background: var(--bg-selected);
+  border-color: var(--accent);
   color: var(--text-primary);
 }
-.uiBtn.on:hover:not(:disabled) { background: var(--accent-bg); color: var(--text-primary); }
+.uiBtn.on:hover:not(:disabled) { background: var(--bg-selected); color: var(--text-primary); }
+.uiBtn.ghost { background: transparent; border-color: transparent; box-shadow: none; }
 .uiBtn.primary { background: var(--accent-dark); border-color: transparent; color: var(--on-accent); }
 .uiBtn.primary:hover:not(:disabled) { background: var(--accent-hover); color: var(--on-accent); }
-.uiBtn.danger:hover:not(:disabled) {
-  color: var(--danger);
-  border-color: var(--danger-border);
-  background: var(--danger-bg);
-}
+.uiBtn.danger { color: var(--danger); border-color: var(--danger-border); }
+.uiBtn.danger:hover:not(:disabled) { background: var(--danger-bg); border-color: var(--danger); color: var(--danger); }
+.uiBtn.danger.on { background: var(--danger-bg); border-color: var(--danger); }
+.uiBtn.primary.danger { background: var(--danger); border-color: transparent; color: #fff; }
+.uiBtn.primary.danger:hover:not(:disabled) { background: var(--danger); filter: brightness(1.08); color: #fff; }
+/* Disabled: the label fades to the faint text, the lift goes; a filled
+   button fades as a whole. */
+.uiBtn:disabled { color: var(--text-dim); cursor: default; box-shadow: none; }
+.uiBtn.primary:disabled { color: var(--on-accent); opacity: 0.45; }
 /* inline link-style button inside the chat empty-state hint */
 .chatEmptyLink {
   background: none;
@@ -3717,8 +3702,7 @@ html.appFocusFullscreen, html.appFocusFullscreen body { overflow: hidden; oversc
 /* Text for screen readers only: the sentence behind an icon, a table header without a visible word. */
 .srOnly { position: absolute; width: 1px; height: 1px; overflow: hidden; clip: rect(0 0 0 0); white-space: nowrap; }
 /* The share view's "as <name>" tag (an editing visitor without an account) and
-   its rename field. The tag is a button, so it out-specifies the topbar's
-   generic pill and keeps the tag's own size; it never squeezes the title. */
+   its rename field. It never squeezes the title. */
 .topbar button.linkNameTag {
   padding: 1px 7px; font-size: var(--fs-2xs); line-height: inherit; border-radius: var(--radius-full);
   border: 1px solid var(--border-subtle); background: var(--bg-block); color: var(--text-muted);
@@ -4665,6 +4649,7 @@ a.shareBrand:hover { background: var(--bg-hover); }
   border-radius: var(--radius-full);
   width: 27px;
   height: 27px;
+  min-height: 0;
   padding: 0;
   border: none;
   flex-shrink: 0;
@@ -5312,7 +5297,7 @@ a.shareBrand:hover { background: var(--bg-hover); }
   font-size: var(--fs-sm);
 }
 /* The same rows in a popover menu under a topbar button (account, View,
-   Add): the generic topbar button look must not reach them. */
+   Add). */
 .topbar .popover .ctxMenuItem,
 .popover .ctxMenuItem {
   background: none;
@@ -5620,11 +5605,6 @@ a.shareBrand:hover { background: var(--bg-hover); }
   max-height: 6.5em;
   overflow-y: auto;
 }
-.uiBtn.primary.dangerBtn { background: var(--danger); border-color: transparent; color: #fff; }
-.uiBtn.primary.dangerBtn:hover:not(:disabled) { background: var(--danger); filter: brightness(1.08); color: #fff; }
-/* secondary danger (e.g. the confirm dialog's alternative action): outlined red */
-.uiBtn.dangerBtn:not(.primary) { color: var(--danger); border-color: var(--danger-border); }
-.uiBtn.dangerBtn:not(.primary):hover:not(:disabled) { background: var(--danger-bg); border-color: var(--danger); color: var(--danger); }
 
 /* Page header "Attach a document" popover (docs/dev/block_centric.md). */
 .attachPopover { min-width: 280px; }

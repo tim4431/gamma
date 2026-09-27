@@ -221,7 +221,7 @@ export function UsersSettings({ value, selfOnly = false }) {
             <Section title={t("Danger zone")} tone="danger">
               <Row icon={Trash2Icon} label={t("Delete account")}
                 hint={t("Deletes {username} with every page, PDF and setting of theirs. Can't be undone.", { username: u.username })}>
-                <button className="uiBtn sm dangerBtn" disabled={busy} onClick={() => deleteAccount(u)}>{t("Delete…")}</button>
+                <button className="uiBtn sm danger" disabled={busy} onClick={() => deleteAccount(u)}>{t("Delete…")}</button>
               </Row>
             </Section>
           ) : null}

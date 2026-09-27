@@ -344,7 +344,7 @@
 .homeDim:hover { opacity: 0.75; }
 /* the sort trigger (a uiBtn sm, ~26px from its padding) sits between the
    28px-tall toggle groups — pin its height so the toolbar reads as one row */
-.homeListBar .uiSelectBtn { height: 28px; padding-top: 0; padding-bottom: 0; }
+.homeListBar .uiSelectBtn { height: 28px; min-height: 28px; padding-top: 0; padding-bottom: 0; }
 .homeViewToggle {
   display: inline-flex;
   gap: 2px;

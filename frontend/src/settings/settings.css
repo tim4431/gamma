@@ -132,7 +132,7 @@
 /* Number box, alone or paired with a slider / Save button. */
 .setSlider { display: inline-flex; align-items: center; gap: 8px; flex-shrink: 0; }
 .setNum { width: 92px; flex: 0 0 auto; margin-bottom: 0; text-align: right; }
-.setRange { width: 108px; accent-color: var(--accent); cursor: pointer; }
+.setRange { width: 108px; cursor: pointer; }
 
 /* Joined pill buttons (segmented choice). Layout only — the buttons are
    .uiBtn, and .uiBtn.on (app.css) carries the selected look. */
@@ -441,7 +441,7 @@
 /* min-width is the wrap trigger: below it the actions move to their own
    line rather than squeezing the name/description text (see .aiProvRow). */
 .aiProvRow .aiProvMeta { flex: 1; min-width: 170px; }
-.aiProvRadio { margin: 0 2px 0 0; flex-shrink: 0; accent-color: var(--accent); align-self: center; }
+.aiProvRadio { margin: 0 2px 0 0; flex-shrink: 0; align-self: center; }
 /* Leading glyph tile — same language as .setIcon, one size up for a list row. */
 .aiProvAvatar {
   width: 30px; height: 30px; flex-shrink: 0;
@@ -500,7 +500,7 @@
 .metaStatRow .searchToggle:hover { color: var(--text-primary); }
 .metaStatRow:last-child { border-bottom: none; }
 .metaStatRow:hover { background: var(--bg-hover); }
-.metaStatRow input[type="checkbox"] { accent-color: var(--accent); margin: 0; }
+.metaStatRow input[type="checkbox"] { margin: 0; }
 .metaStatHeader {
   position: sticky;
   top: 0;

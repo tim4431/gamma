@@ -116,7 +116,7 @@ function WelcomeContent({ step, minutes, onStart, onLater, bindings }) {
         </ol>
       ) : null}
       <div className="guideFoot">
-        <button className="uiBtn" onClick={onLater}>{step.later ? t(step.later) : t("Not now")}</button>
+        <button className="uiBtn ghost" onClick={onLater}>{step.later ? t(step.later) : t("Not now")}</button>
         <span className="guideBtns"><button className="uiBtn primary" onClick={onStart}>{step.next ? t(step.next) : t("Start")}</button></span>
       </div>
       {step.footnote ? <div className="guideFootnote">{t(step.footnote)}</div> : null}
@@ -394,7 +394,7 @@ export default function GuideOverlay({ guide, keybindings }) {
                   stays (empty) through the Done moment, so the card does not jump. */}
               {showPrimary || showBack || link || done ? (
                 <div className="guideFoot">
-                  {inviting && !offer.hint ? <button className="uiBtn sm" onClick={dismiss}>{t("Not now")}</button> : null}
+                  {inviting && !offer.hint ? <button className="uiBtn sm ghost" onClick={dismiss}>{t("Not now")}</button> : null}
                   {showBack ? <button className="uiBtn" onClick={back}>{t("Back")}</button> : null}
                   {link ? <button className="guideLink" onClick={next}>{link}</button> : null}
                   <span className="guideBtns">

@@ -107,9 +107,9 @@ already exists. Bespoke CSS classes are for **layout only**.
 
 | Class / component | Use for |
 |---|---|
-| `uiBtn` (+ `sm`, `on`, `primary`, `danger`, `iconSq`) | every button; `sm` is the shared 28 px compact size, `on` = toggled state, `iconSq` = square icon-only (combine with `sm` for compact toolbars) |
-| `ctlBtn` / `ctlBtnRow` / `pdfCtlBox` | the flat 22 px icon buttons of the PDF zoom column: `pdfCtlBox` = the elevated vertical box, `ctlBtnRow` = the same buttons laid flat with no box (chat header), `modeActive` = on. **`ctlBtn` (frameless) is the DEFAULT style for any icon button** — new icon toolbars (e.g. the image hover tools) use it, not bespoke button styles |
-| `uiClose` (+ `uiCloseSm`/`uiCloseLg`) | every × close button |
+| `uiBtn` (+ `primary`, `ghost`, `danger`, `sm`, `iconSq`, `on`) | every button with a label, in the topbar too (there is no generic topbar button style); the hierarchy and sizes are under Buttons below |
+| `ctlBtn` / `ctlBtnRow` / `pdfCtlBox` | the flat 26 px icon buttons (a 16 px icon) of the PDF zoom column: `pdfCtlBox` = the elevated vertical box, `ctlBtnRow` = the same buttons laid flat with no box (chat header), `modeActive` = on. **`ctlBtn` (frameless) is the DEFAULT style for any icon button** — new icon toolbars (e.g. the image hover tools) use it, not bespoke button styles |
+| `uiClose` (+ `uiCloseSm`/`uiCloseLg`) | every × close button: round, 24 px (Sm 20 for chips and rows, Lg 28 for dialogs and panes) |
 | `aiKeyInput` | every text/number/password input in dialogs and settings |
 | `switch` / `switchTrack` | every on/off toggle |
 | `MenuSelect` / `ActionMenu` ([Menus.jsx](../../frontend/src/shared/ui/Menus.jsx)) | every dropdown: Codex-style pill trigger + checkmarked `ContextMenu`. No native `<select>` anywhere |
@@ -118,6 +118,27 @@ already exists. Bespoke CSS classes are for **layout only**.
 | `KeyCaps` / `KeyBinding` ([SettingsKit.jsx](../../frontend/src/settings/SettingsKit.jsx); `KeyCaps` lives in [shared/ui/KeyCaps.jsx](../../frontend/src/shared/ui/KeyCaps.jsx), shared with the guide) | a keyboard chord as `.keyCap` key caps; `KeyBinding` is the rebindable version (click, press the new keys; reset button when changed) — [hotkeys.md](hotkeys.md) |
 | `popoverAnchor` | the `position: relative; inline-flex` wrapper every popover trigger sits in (`data-popover="…"` on the same element) — never inline that style |
 | `Section`'s `scope` tag (`.setScope`, [settings.md](settings.md)) | where a settings section's values live: a 14 px icon and one muted word in the small caption size, "account" or "browser". An account tag's icon is the sync state of that section's own settings (check, cloud-check, spinning refresh, warning — the only colour); the sentence is the hover `title` and `aria-label`, never text |
+
+### Buttons
+
+One hierarchy, the same on every surface:
+
+| Class | Look | Use |
+|---|---|---|
+| `uiBtn primary` | solid accent fill | the one main action of a surface (Save, Copy link, Invite, Log in) |
+| `uiBtn` | the secondary button: a bordered rect on the elevated surface with `--shadow-1` | every other action |
+| `uiBtn ghost` | no frame or fill until hover | tertiary actions: a toolbar's text button, "Set up AI…" |
+| `uiBtn danger` | outlined, red at rest | a destructive action beside others (Delete…, Leave…, Stop sharing, Remove) |
+| `uiBtn primary danger` | solid red | the confirming click of a destructive action |
+
+Sizes: the default is 32 px tall, `sm` 28 (settings rows, popovers,
+toolbars); `iconSq` is a square at the same heights. `ctlBtn` is the frameless
+26 px icon button, `uiClose` the round × (20 / 24 / 28). Buttons and fields
+take `--radius-md`, icon buttons and chips `--radius-sm`. States: hover
+`--bg-hover`, pressed `--bg-active`, `on` (a chosen option) `--bg-selected`
+with an accent border, disabled the faint text colour with no lift (a filled
+button fades as a whole). Native checkboxes, radios and ranges take the
+accent from one `accent-color` on the root.
 
 ### Type
 
@@ -277,13 +298,13 @@ line of explanation, the same shape as a settings `PaneHead`, over the
 right-aligned `.reportModalBtns` row. Escape closes them.
 
 Destructive affordances all read from one set of tokens — `--danger`,
-`--danger-bg`, `--danger-border` — so the solid confirm button, the outlined
-secondary, `.uiBtn.danger` and a menu's `danger` row are the same red in both
-themes. Never hardcode a red.
+`--danger-bg`, `--danger-border` — so the solid confirm button
+(`.uiBtn.primary.danger`), the outlined one (`.uiBtn.danger`) and a menu's
+`danger` row are the same red in both themes. Never hardcode a red.
 
 An irreversible action in a settings pane or editor dialog lives in its
 **Danger zone**: settingsKit's `Section tone="danger"` (red label and rule,
-the rows in a `--danger-border` box). Its buttons are `uiBtn sm dangerBtn`,
+the rows in a `--danger-border` box). Its buttons are `uiBtn sm danger`,
 red at rest, and each row's hint says what is lost in one line ("Deletes
 every page, PDF, chat and backup in it, for all 2 members. Can't be
 undone."). The workspace manager (Leave, Delete workspace) and the Users
@@ -310,7 +331,7 @@ described: three `IconChoices` tiles — Anyone / Signed in / Invited only —
 and, as the section's action, one View / Edit `Segmented`, disabled before a
 share exists and under Invited only; one summary sentence under the tiles is
 the only prose, amber `.shareWarn` when a link is editable without sign-in),
-then Stop sharing: a labelled outlined `dangerBtn` that opens the inline
+then Stop sharing: a labelled `uiBtn sm danger` that opens the inline
 `mirrorConfirm` Unpublish uses, naming how many invited people lose access.
 Nothing is shared by opening the popover: the first tile picked creates the
 share with that audience, the first invitation creates it as Invited only.
