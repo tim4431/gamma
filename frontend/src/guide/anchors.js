@@ -9,8 +9,10 @@
 // there; any other view names the situation that brings the anchor up (a
 // chat reply with a citation, a table in the notes…) and is never checked.
 // open: anchors inside a closed surface list the anchors the engine clicks
-// first to reveal them. pick: "last" when the anchor repeats and the newest
-// one is meant (the latest chat reply); the first one otherwise.
+// first to reveal them. pick: when the anchor repeats, "last" means the
+// newest one (the latest chat reply), "recent" the one inside the element
+// the app marks data-guide-recent (the table the user just made); the first
+// one otherwise, and when nothing is marked.
 
 export const ANCHORS = {
   "header.home": { view: "any", description: "The Home button in the topbar; on a phone, the bottom bar's Library tab" },
@@ -42,9 +44,9 @@ export const ANCHORS = {
   "dock.notes": { view: "page", description: "The notes: docked beside a PDF, or filling the page without one" },
   "notes.editor": { view: "page", open: ["dock.notes"], description: "The active note editor" },
   "notes.ink": { view: "ink", pick: "last", description: "A handwriting block in the notes: its caption and the drawing" },
-  "notes.table": { view: "table", description: "An editable table in the notes" },
-  "notes.tableAdd": { view: "table", description: "The strip under a table that adds a row" },
-  "notes.tableCorner": { view: "table", description: "The corner handle that selects a whole table" },
+  "notes.table": { view: "table", pick: "recent", description: "An editable table in the notes" },
+  "notes.tableAdd": { view: "table", pick: "recent", description: "The strip under a table that adds a row" },
+  "notes.tableCorner": { view: "table", pick: "recent", description: "The corner handle that selects a whole table" },
   "notes.peers": { view: "presence", description: "Avatars on the block another person is on" },
   "editor.refSearch": { view: "editing", description: "The [[ block search while typing a reference" },
   "editor.mathPreview": { view: "editing", description: "The live preview of the formula being typed" },
@@ -68,8 +70,11 @@ export const ATTR = "data-guide";
 
 export function anchorElement(id) {
   if (!id) return null;
-  const all = document.querySelectorAll(`[${ATTR}="${id}"]`);
-  return (ANCHORS[id]?.pick === "last" ? all[all.length - 1] : all[0]) || null;
+  const all = [...document.querySelectorAll(`[${ATTR}="${id}"]`)];
+  const pick = ANCHORS[id]?.pick;
+  if (pick === "last") return all[all.length - 1] || null;
+  if (pick === "recent") return all.find((el) => el.closest(`[${ATTR}-recent]`)) || all[0] || null;
+  return all[0] || null;
 }
 
 // Which views an anchor is expected in; used by the e2e presence check.

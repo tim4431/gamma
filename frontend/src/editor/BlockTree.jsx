@@ -1050,7 +1050,7 @@ function BlockRow({
     const value = ta.value;
     const cursor = ta.selectionStart;
     setSlashMenu(null);
-    if (c.name === "table") noteTableMade(block.id);
+    if (c.name === "table") noteTableMade(block.id, value, start);
     c.run({
       value,
       start,
@@ -1209,7 +1209,7 @@ function BlockRow({
       ta.focus();
     };
     if (item.make) {
-      if (item.name === "table") noteTableMade(block.id);
+      if (item.name === "table") noteTableMade(block.id, ta.value, pm.start);
       let text = item.make();
       if (item.block) {
         // A block-level construct (a table) must start and end on its own
@@ -1295,7 +1295,7 @@ function BlockRow({
             selection: { anchor: start + lead.length + md.length },
             userEvent: "input",
           });
-          noteTableMade(block.id);
+          noteTableMade(block.id, val, start);
           return;
         }
       }

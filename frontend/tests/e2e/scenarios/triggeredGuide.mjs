@@ -33,10 +33,12 @@ export async function triggeredGuideScenarios(env) {
     await page.waitForSelector('[data-guide="notes.table"]');
   };
 
-  await step("triggered guide: opening a page with a table offers nothing; making one offers the tour, which starts in a cell", async () => {
+  await step("triggered guide: opening a page with a table offers nothing; making one offers the tour on the new table, which starts in a cell", async () => {
     const existing = await user.api("/api/pages", { method: "POST", body: { title: "Table page" } });
     await user.api("/api/blocks", { method: "POST", body: { parent_id: existing.id, content: "| a | b |\n|---|---|\n| 1 | 2 |" } });
     const pg = await user.api("/api/pages", { method: "POST", body: { title: "Grid page" } });
+    // An older table above: the offer and the steps point at the one made.
+    await user.api("/api/blocks", { method: "POST", body: { parent_id: pg.id, content: "| old | table |\n|---|---|\n| x | y |" } });
     const grid = await user.api("/api/blocks", { method: "POST", body: { parent_id: pg.id, content: "grid here" } });
     const { ctx, page } = await open(`&page=${existing.id}`);
     try {
@@ -48,18 +50,34 @@ export async function triggeredGuideScenarios(env) {
       await page.waitForSelector('[data-guide-offer="tables"] .guideCard');
       assertEq(await page.locator(".guideDim").count(), 0, "an offer does not dim the app");
       assertEq(await page.locator(".guideCard .guideStep").textContent(), "Quick tour · 3 steps", "the add-a-table step is dropped: there is one");
+      const tables = page.locator('[data-guide="notes.table"]');
+      const pointedAt = async (el) => (await el.getAttribute("data-guide-active")) !== null;
+      await until(async () => await pointedAt(tables.nth(1)), { what: "the offer points at the table just made" });
+      assert(!(await pointedAt(tables.nth(0))), "not at the page's older table");
       await page.getByRole("button", { name: "Show me" }).click();
       // First what the user came for: a cell, typed into in place.
       await page.waitForSelector('[data-guide-overlay="table-cell"] .guideCard');
-      await page.locator('[data-guide="notes.table"] td').first().click();
+      await until(async () => await pointedAt(tables.nth(1)), { what: "the step points at the new table" });
+      await tables.nth(1).locator("td").first().click();
       await page.locator(".mdTableCellInput").fill("42");
       await page.keyboard.press("Enter");
       await until(async () => (await user.api(`/api/blocks/${pg.id}/subtree`)).block.children.find((b) => b.id === grid.id)?.content.includes("42"),
         { what: "the cell edit is saved" });
       await page.waitForSelector('[data-guide-overlay="table-add"] .guideCard');
-      const add = page.locator('[data-guide="notes.tableAdd"]');
+      const add = page.locator('[data-guide="notes.tableAdd"]').nth(1);
       await until(async () => (await add.getAttribute("data-guide-active")) !== null, { what: "the add strip is marked active" });
       await until(async () => (await add.evaluate((el) => getComputedStyle(el).opacity)) === "1", { what: "the hover-only strip shows" });
+      // With no room under the strip (the table at the bottom of the window)
+      // the card goes above the whole table or beside it, never onto it.
+      const size = page.viewportSize();
+      const box = await tables.nth(1).boundingBox();
+      await page.setViewportSize({ width: size.width, height: Math.ceil(box.y + box.height + 40) });
+      await until(async () => {
+        const card = await page.locator(".guideCard").boundingBox();
+        const tb = await tables.nth(1).boundingBox();
+        return card.x >= tb.x + tb.width || card.x + card.width <= tb.x || card.y >= tb.y + tb.height || card.y + card.height <= tb.y;
+      }, { what: "the add card keeps clear of the table" });
+      await page.setViewportSize(size);
       await primary(page).click();
       await page.waitForSelector('[data-guide-overlay="table-whole"]');
       assertEq(await add.getAttribute("data-guide-active"), null, "the previous anchor is unmarked");

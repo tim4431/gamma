@@ -11,6 +11,7 @@
 import { useEffect, useLayoutEffect, useRef, useState } from "react";
 import { anchorElement } from "./anchors.js";
 import { keyText, resolveKey } from "./keys.js";
+import { CARD_W, placeCard } from "./place.js";
 import { KeyCaps } from "../shared/ui/KeyCaps.jsx";
 import { CheckIcon, HighlightIcon, LabelIcon, PaperIcon, PencilIcon, XIcon } from "../shared/ui/Icons";
 import "./guide.css";
@@ -18,10 +19,6 @@ import { t, tn } from "../shared/i18n/i18n.js";
 
 const PAD = 6;          // spotlight padding around the anchor
 const BEACON_INSET = 3; // an offer's beacon sits closer to its anchor than the spotlight
-const GAP = 12;         // card distance from the spotlight
-const MARGIN = 12;      // card distance from the viewport edge
-const CARD_W = 320;
-const BEAK_INSET = 23; // the beak's centre stays 16 px (plus its half) from a card corner
 const WAIT_MS = 3000;   // how long a missing anchor may take to mount
 const SLOW_MS = 20000;  // a demo's wait this long says it is still working
 
@@ -57,49 +54,6 @@ const Beacon = ({ rect }) => (
 // Keep the caret where the user is typing, and keep a popover the card
 // points into open (outside-click checks listen on the document).
 const keepFocus = (e) => { e.preventDefault(); e.stopPropagation(); };
-
-// Where the card goes relative to the spotlight: the step's preferred side
-// when it fits, else below, above, right, left; clamped to the viewport.
-// "inside" tucks the card into the target's bottom-right corner, for large
-// targets such as the whole viewer.
-function placeCard(rect, cardH, vw, vh, prefer) {
-  const r = rect;
-  if (prefer === "inside") {
-    return {
-      side: "inside",
-      top: Math.max(MARGIN, r.bottom - GAP - cardH),
-      left: Math.max(MARGIN, Math.min(r.right - GAP - CARD_W, vw - CARD_W - MARGIN)),
-    };
-  }
-  const fits = {
-    bottom: r.bottom + GAP + cardH + MARGIN <= vh,
-    top: r.top - GAP - cardH - MARGIN >= 0,
-    right: r.right + GAP + CARD_W + MARGIN <= vw,
-    left: r.left - GAP - CARD_W - MARGIN >= 0,
-  };
-  const order = [prefer, "bottom", "top", "right", "left"].filter(Boolean);
-  const side = order.find((s) => fits[s]) || "bottom";
-  let top, left;
-  if (side === "bottom") { top = r.bottom + GAP; left = r.left + r.width / 2 - CARD_W / 2; }
-  else if (side === "top") { top = r.top - GAP - cardH; left = r.left + r.width / 2 - CARD_W / 2; }
-  else if (side === "right") { left = r.right + GAP; top = r.top + r.height / 2 - cardH / 2; }
-  else { left = r.left - GAP - CARD_W; top = r.top + r.height / 2 - cardH / 2; }
-  left = Math.max(MARGIN, Math.min(left, vw - CARD_W - MARGIN));
-  top = Math.max(MARGIN, Math.min(top, vh - cardH - MARGIN));
-  return { top, left, side, beak: beakAt(side, r, top, left, cardH) };
-}
-
-// The beak on the card edge that faces the anchor, centred on the anchor
-// (clamped away from the corners) — none when the clamped card overlaps it.
-function beakAt(side, r, top, left, cardH) {
-  const clamp = (v, max) => Math.max(BEAK_INSET, Math.min(v, max - BEAK_INSET));
-  if (side === "bottom" || side === "top") {
-    if (side === "bottom" ? top < r.bottom : top + cardH > r.top) return null;
-    return { x: clamp(r.left + r.width / 2 - left, CARD_W) };
-  }
-  if (side === "right" ? left < r.right : left + CARD_W > r.left) return null;
-  return { y: clamp(r.top + r.height / 2 - top, cardH) };
-}
 
 // A welcome tour's intro (and its offer): what the tour does and how long
 // it takes, an outline marking what Gamma shows and what the user tries,
@@ -237,8 +191,12 @@ export default function GuideOverlay({ guide, keybindings }) {
         }
         return;
       }
+      // A step's `avoid` anchor is a box its card keeps clear of too (the
+      // table above its add strip).
+      const a = step.avoid && anchor === step.anchor ? anchorElement(step.avoid)?.getBoundingClientRect() : null;
       setRect({ top: b.top - PAD, left: b.left - PAD, width: b.width + PAD * 2, height: b.height + PAD * 2,
-        right: b.right + PAD, bottom: b.bottom + PAD });
+        right: b.right + PAD, bottom: b.bottom + PAD,
+        avoid: a?.width ? { top: a.top - PAD, left: a.left - PAD, right: a.right + PAD, bottom: a.bottom + PAD } : null });
     };
     const schedule = () => { if (!raf) raf = requestAnimationFrame(measure); };
     measure();
@@ -270,7 +228,7 @@ export default function GuideOverlay({ guide, keybindings }) {
     if (!card) return;
     const vw = window.innerWidth, vh = window.innerHeight;
     if (!rect) { setCardPos(null); return; }
-    setCardPos(placeCard(rect, card.offsetHeight, vw, vh, step?.placement));
+    setCardPos(placeCard(rect, card.offsetHeight, vw, vh, step?.placement, rect.avoid));
   }, [visible, rect, step]);
 
   if (!visible || !step) return null;
