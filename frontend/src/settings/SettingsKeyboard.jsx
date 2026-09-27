@@ -38,11 +38,14 @@ export function KeyboardSettings({ value }) {
   return (
     <div className="keyboardPane">
       <PaneHead icon={KeyboardIcon} title={t("Keyboard shortcuts")}>
-        <input
-          className="aiKeyInput keyFilter" type="search" data-find
-          placeholder={t("Filter shortcuts")} aria-label={t("Filter shortcuts")}
-          value={filter} onChange={(e) => setFilter(e.target.value)}
-        />
+        <span className="keyFilterBox">
+          <input
+            className="aiKeyInput keyFilter" type="search" data-find
+            placeholder={t("Filter shortcuts")} aria-label={t("Filter shortcuts")}
+            value={filter} onChange={(e) => setFilter(e.target.value)}
+          />
+          {filter ? <button type="button" className="uiClose uiCloseSm" aria-label={t("Clear filter")} onClick={() => setFilter("")}>×</button> : null}
+        </span>
       </PaneHead>
       <Section title={t("Shortcuts")} scope="account" prefs={SECTION_PREFS.keyboard["Shortcuts"]}
         action={(
@@ -86,7 +89,7 @@ export function KeyboardSettings({ value }) {
       {fixed.length || enterRow ? (
         <Section title={t("Built in")} scope="account" prefs={SECTION_PREFS.keyboard["Built in"]}>
           {enterRow ? (
-            <Row icon={CornerDownLeftIcon} label={enterLabel}
+            <Row icon={CornerDownLeftIcon} label={t("Enter makes")}
               hint={enterNewNote ? t("Shift+Enter inserts a new line") : t("Shift+Enter creates a new note")}>
               <Segmented value={enterNewNote ? "note" : "line"}
                 onChange={(choice) => setEnterNewNote(choice === "note")}

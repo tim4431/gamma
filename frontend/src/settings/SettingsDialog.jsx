@@ -204,7 +204,7 @@ function StorageCard() {
   React.useEffect(() => { apiJson(`${API}/quota`).then(setQ).catch(() => {}); }, []);
   if (!q) return null;
   return (
-    <div className="setCard">
+    <div className="setCard" data-setting={t("Uploaded files")}>
       <div className="setCardHead">
         <span className="setIcon"><HardDriveIcon size={15} /></span>
         <span className="settingText">
@@ -820,6 +820,47 @@ function AdvancedSettings({ value }) {
 
 // --- the dialog -------------------------------------------------------------
 
+// The label with each query word marked where it occurs.
+function MarkedText({ text, words }) {
+  const pattern = words.map((w) => w.replace(/[.*+?^${}()|[\]\\]/g, "\\$&")).join("|");
+  if (!pattern) return text;
+  return text.split(new RegExp(`(${pattern})`, "gi")).map((part, i) => (i % 2
+    ? <mark key={i} className="settingsSearchMark">{part}</mark> : part));
+}
+
+// Search results that explain themselves: per match the pane's icon, the
+// label with the query marked, the row's hint, and "Pane › Section" on the
+// right. More than six results fall into one caption per pane (the right
+// side then names only the section).
+function SearchResults({ results, query, nav, onPick }) {
+  const words = query.trim().split(/\s+/).filter(Boolean);
+  const paneOf = (id) => nav.find(([key]) => key === id) || [id, id, SearchIcon];
+  const grouped = results.length > 6;
+  const panes = grouped ? [...new Set(results.map((r) => r.pane))] : [null];
+  return panes.map((group) => {
+    const [, paneLabel] = group ? paneOf(group) : [];
+    return (
+      <React.Fragment key={group || "all"}>
+        {group ? <div className="settingsSearchGroup">{t(paneLabel)}</div> : null}
+        {results.filter((r) => !group || r.pane === group).map((r) => {
+          const [, label, Icon] = paneOf(r.pane);
+          const where = grouped ? r.section || "" : [t(label), r.section].filter(Boolean).join(" › ");
+          return (
+            <button key={`${r.pane}:${r.label}`} type="button" className="uiBtn settingsSearchResult" onClick={() => onPick(r.pane, r.target)}>
+              <span className="setIcon"><Icon size={15} /></span>
+              <span className="settingText">
+                <span className="settingLabel"><MarkedText text={r.label} words={words} /></span>
+                {r.hint ? <span className="settingDesc">{r.hint}</span> : null}
+              </span>
+              <small>{where}</small>
+            </button>
+          );
+        })}
+      </React.Fragment>
+    );
+  });
+}
+
 const SYNC_POLL_MS = 15000;
 const SYNC_SOON_MS = 6000; // the server pushes to Gamma Cloud 5 s after a change lands
 
@@ -975,7 +1016,7 @@ export default function SettingsDialog({
                 onKeyDown={(event) => {
                   // Enter opens the first match; the arrows walk the list (the modal's onKeyDown).
                   if (event.key === "Enter" && query.trim() && results.length && !event.nativeEvent.isComposing) {
-                    event.preventDefault(); navigate(results[0].pane, results[0].label);
+                    event.preventDefault(); navigate(results[0].pane, results[0].target);
                   }
                 }} />
               {query ? <button className="uiClose uiCloseSm" aria-label={t("Clear search")} onClick={() => setQuery("")}>×</button> : null}
@@ -998,8 +1039,7 @@ export default function SettingsDialog({
             <main className="settingsPane" ref={paneRef} key={pane}>
               {query.trim() ? <>
                 <PaneHead icon={SearchIcon} title={t("Search settings")}>{tn("{n} matching setting", "{n} matching settings", results.length)}</PaneHead>
-                {results.length ? results.map(({ pane: id, label }) => <button key={`${id}:${label}`} className="uiBtn settingsSearchResult"
-                  onClick={() => navigate(id, label)}><span>{label}</span><small>{t(allNav.find(([key]) => key === id)?.[1] || "")}</small></button>)
+                {results.length ? <SearchResults results={results} query={query} nav={allNav} onPick={navigate} />
                   : <Empty icon={SearchIcon}>{t('No settings found. Try "model", "PDF", or "storage".')}</Empty>}
               </> : <>
                 {pane === "appearance" ? <AppearanceSettings value={papers} diagnostics={diagnostics} /> : null}

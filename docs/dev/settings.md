@@ -388,9 +388,19 @@ button, or a "Link Gamma Cloud account" button that round-trips through the
 account server ([cloud_accounts.md](cloud_accounts.md)).
 
 Search is backed by [settingsNavigation.js](../../frontend/src/settings/settingsNavigation.js).
-It searches labels and synonyms, filters out inaccessible management pages,
-then opens the destination, focusing the
-matching `data-setting` element. Add an entry when adding a new setting.
+Each entry names its pane, the setting's label, the section it sits in, its
+one-line hint (the row's own words) and English synonyms; a setting one
+level down (in a workspace's Manage page, a row's menu) also names the
+`target` on the pane itself that the jump focuses. Every query word must
+appear in the label, synonyms, hint or section; entries whose label holds
+them all come first, and inaccessible management pages are filtered out.
+A result is a row-like button: the pane's icon, the label with the query
+marked, the hint, and "Pane › Section" on the right; past six results they
+group under one caption per pane. Picking one opens the pane and focuses
+the matching `data-setting` element. Add an entry when adding a new
+setting; `tests/settingsSearch.test.mjs` fails when an entry's target is
+no `data-setting` its pane renders. The search box and the Keyboard filter
+carry their own × (the browser's is hidden).
 Legacy pane names resolve through `resolveSettingsPane`; old notes, search,
 viewer and context entry points also jump to their section.
 
