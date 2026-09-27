@@ -232,7 +232,7 @@ One share link per page or per folder of a workspace. What a token reaches and w
 
 | Method | Path | Purpose |
 |---|---|---|
-| POST | `/share/{page_id}` | create the page's share link (defaults `anyone`/`view`; optional body `{audience, role, users}` applies to a NEW link) or return the existing one unchanged — root blocks only (400 otherwise); workspace editors and owners |
+| POST | `/share/{page_id}` | create the page's share link (defaults `anyone`/`view`; optional body `{audience, role, users}` applies to a NEW link, validated like a PUT — the Share popover always sends one: the audience tile picked, or `list` with the first person invited) or return the existing one unchanged — root blocks only (400 otherwise); workspace editors and owners |
 | GET/PUT/DELETE | `/share-settings/{page_id}` | read settings (`{token: null}` when unshared; any member) / change `audience`, `role`, `users` (`["carol"]` or `[{name, role}]`; validated: unknown usernames or roles → 400; the token stays; `edit`+`anyone` is allowed — see "Link visitors" above) / stop sharing (the token dies) — editors and owners |
 | POST | `/share/folder?name=` | the same for a folder (`name` a folder-label path): 400 for an empty path, 404 when no page is filed in the folder |
 | GET/PUT/DELETE | `/share-settings/folder?name=` | the folder share's settings, changes and stop, as for a page. The share follows the folder's renames (`POST /folders/rename`) and dies with the folder |

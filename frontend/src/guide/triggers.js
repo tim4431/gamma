@@ -16,8 +16,9 @@
 // The tour-level `requires` gates offers and manual starts alike.
 import { eventMatches } from "./events.js";
 
+// A required value that is an array means "one of these".
 export function factsMatch(requires, facts) {
-  return Object.entries(requires || {}).every(([key, value]) => facts[key] === value);
+  return Object.entries(requires || {}).every(([key, value]) => (Array.isArray(value) ? value.includes(facts[key]) : facts[key] === value));
 }
 
 // Whether `event` is the tour's trigger event (its `count` is checked by

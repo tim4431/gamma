@@ -252,6 +252,30 @@ def test_share_settings_roundtrip(bob, carol, anon):
     assert bob.post(f"/api/share/{page['id']}").json()["token"] != token
 
 
+def test_a_new_share_takes_the_access_it_is_created_with(bob, carol, anon):
+    """The Share popover creates a share with the audience picked, or Invited
+    only with the first person invited — never anyone-with-the-link by
+    default. The body applies to a NEW link only."""
+    page = make_page(bob, "Invite first")
+    r = bob.post(f"/api/share/{page['id']}", json={"audience": "list", "users": [{"name": "carol_share", "role": "view"}]})
+    assert r.status_code == 200, r.text
+    created = r.json()
+    assert (created["audience"], created["role"], created["users"]) == (
+        "list", "view", [{"name": "carol_share", "role": "view"}])
+    assert anon.get(f"/api/share/{created['token']}").status_code == 401
+    assert carol.get(f"/api/share/{created['token']}").status_code == 200
+    # an existing link is returned unchanged, whatever the body says
+    again = bob.post(f"/api/share/{page['id']}", json={"audience": "anyone"}).json()
+    assert (again["token"], again["audience"]) == (created["token"], "list")
+    # validated like a PUT: nothing is created from a bad body
+    other = make_page(bob, "Bad first share")
+    assert bob.post(f"/api/share/{other['id']}", json={"audience": "list", "users": ["nobody_here"]}).status_code == 400
+    assert bob.post(f"/api/share/{other['id']}", json={"audience": "everyone"}).status_code == 400
+    assert bob.get(f"/api/share-settings/{other['id']}").json()["token"] is None
+    r = bob.post(f"/api/share/{other['id']}", json={"audience": "users"})
+    assert (r.json()["audience"], r.json()["role"]) == ("users", "view")
+
+
 def test_signed_in_visitor_reads_the_owners_page(bob, carol):
     """A ?share= token decides WHOSE data is read — a signed-in visitor sees
     the owner's page, not a lookup in their own library."""

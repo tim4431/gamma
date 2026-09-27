@@ -72,7 +72,7 @@ an amber **Tip** chip over one plain sentence that says why it helps, with
 | Guide | Offered when | Points at |
 |---|---|---|
 | Citations in answers | an AI reply finishes with a citation link (`chat.cited`) | the link; a demo clicks it and waits for `citation.shown`, then the marked passage in the PDF |
-| Sharing a page | the page gets its first share link (`share.created`) | (create the link,) access, people, the link — inside the Share popover |
+| Sharing a page | the page gets its first share link (`share.created`: the first audience tile picked or person invited) | (choose who can open it,) the link, who has access, general access (worded for what an anyone-with-the-link share exposes when it is one, `shareAudience`), stop sharing — inside the Share popover, top to bottom |
 | Editing tables | an editable table renders in the notes (`table.shown`) | (add one with /table,) the + strips, row/column handles, cells, the corner handle (copy or delete the whole table) |
 | Handwriting | the first stroke (`ink.stroke`) | (draw something,) tap the pen again for colour, width and pen vs monoline, erase part of it, undo, the lasso, the ink block in the notes |
 | Working together | another account or a link visitor comes onto the page (`peer.joined`; your own second tab or the desktop app beside the browser is nobody else) | the avatar stack, their block, undo |
@@ -94,7 +94,10 @@ Rules the engine keeps (`useGuide.js`, `triggers.js`):
   first 3 s after load. The tour-level `requires` also gates manual starts;
   the trigger's `requires` gates only the offer, which is how the first-run
   tour is offered on a demo server's library while staying startable from
-  the Tours menu everywhere. Step-level `requires` filters steps.
+  the Tours menu everywhere. Step-level `requires` filters steps when the
+  tour starts, so two steps can be variants of one another (the sharing
+  tour's access step for `shareAudience: "anyone"` and for the rest). A
+  required value that is an array means one of its values.
 - **After the render.** An event is judged after the render it came with,
   so the facts include what the same action changed (`share.created` sees
   the new link). Only events some trigger listens for are queued.
@@ -152,7 +155,9 @@ Engine abilities available to every step:
 - **`show`** on a tour: a surface App brings up before the first step
   (`services.show("chat")`).
 - **`Section guide="…"`** in the settings kit groups a section's header and
-  rows under one anchor (the Share popover's Access and People).
+  rows under one anchor (the Share popover's Who has access and General
+  access; its Link section carries `share.link` only once a link exists,
+  which is what the tour's create step waits for).
 - **Keys in copy** (`guide/keys.js`). Titles and bodies render `**bold**`,
   `*italic*`, `` `code` `` and key tokens: `{key:app.quickOpen}` names a
   command of the catalog ([hotkeys.md](hotkeys.md)) and shows the chord it
@@ -272,7 +277,8 @@ selects by class name, text or DOM position.** It selects by anchor id.
 Because App.jsx is still being decomposed ([frontend-refactor.md](frontend-refactor.md)),
 anchors are the only thing the guide needs from it. No guide code imports App
 state directly; App passes the few facts the engine needs (view mode, whether
-the page has a PDF, whether an AI provider is configured) through one
+the page has a PDF, whether an AI provider is configured, the open page's
+share audience) through one
 `useGuide()` call.
 
 ## Tour scripts
@@ -352,7 +358,7 @@ where the thing happens:
 | `highlight.created` `{id, kind}` | App's highlight creation path |
 | `chat.sent`, `chat.cited` | ChatDock's send, and the end of a reply holding a citation (`gammaLinksIn`) |
 | `citation.shown` | PdfCitationOverlay, once a quote is found and marked |
-| `share.created` | App's `createShareLink` |
+| `share.created` | App's `createShareLink` (the Share popover's first audience tile, or its first invitation) |
 | `peer.joined` | App, when another account or a link visitor appears on the open page (a peer whose `user` is not this account) |
 | `ink.stroke` | App's `handleInkStroke` |
 | `ink.options`, `ink.erased`, `ink.undone` | App, when the armed tool's options row opens; `handleInkErase` / `handleInkErasePartial`; `inkUndo` (not redo) |

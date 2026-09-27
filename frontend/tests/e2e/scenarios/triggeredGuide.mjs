@@ -90,12 +90,14 @@ export async function triggeredGuideScenarios(env) {
     const { ctx, page } = await open(`&page=${pg.id}`);
     try {
       await page.click('[data-guide="header.share"]');
-      await page.getByRole("button", { name: "Create link" }).click();
+      await page.locator(".sharePopover").getByRole("button", { name: "Anyone", exact: true }).click();
       await page.waitForSelector('[data-guide-offer="sharing"] .guideCard');
       await page.getByRole("button", { name: "Show me" }).click();
-      for (const id of ["share-access", "share-people", "share-link"]) {
+      // the popover top to bottom; an anyone-with-the-link share gets the access step that says so
+      for (const id of ["share-link", "share-people", "share-access-anyone", "share-stop"]) {
         await page.waitForSelector(`[data-guide-overlay="${id}"] .guideCard`);
         assertEq(await page.locator(".sharePopover").count(), 1, `the share popover stays open at ${id}`);
+        if (id === "share-access-anyone") assert((await page.textContent(".guideCard")).includes("no sign-in needed"), "the anyone wording");
         await primary(page).click();
       }
       await until(async () => await page.locator(".guideCard").count() === 0);
@@ -108,7 +110,7 @@ export async function triggeredGuideScenarios(env) {
     } finally { await ctx.close(); }
   });
 
-  await step("triggered guide: from the menu, the sharing tour has the user create the link only when there is none", async () => {
+  await step("triggered guide: from the menu, the sharing tour has the user pick who can open the page only when there is no link", async () => {
     const pg = await user.api("/api/pages", { method: "POST", body: { title: "Menu shared page" } });
     const { ctx, page } = await open(`&page=${pg.id}`);
     const startSharing = async () => {
@@ -119,8 +121,9 @@ export async function triggeredGuideScenarios(env) {
     try {
       await startSharing();
       await page.waitForSelector('[data-guide-overlay="share-create"] .guideCard');
-      await page.getByRole("button", { name: "Create link" }).click();
-      await page.waitForSelector('[data-guide-overlay="share-access"] .guideCard');
+      await page.locator(".sharePopover").getByRole("button", { name: "Signed in", exact: true }).click();
+      await page.waitForSelector('[data-guide-overlay="share-link"] .guideCard');
+      assertEq((await user.api(`/api/share-settings/${pg.id}`)).audience, "users", "the pick is the new share's audience");
       await page.keyboard.press("Escape");
       await until(async () => await page.locator(".guideCard").count() === 0);
       // Shared now: the link shows up only once the popover has loaded, and
@@ -130,7 +133,7 @@ export async function triggeredGuideScenarios(env) {
       const warnings = [];
       page.on("console", (m) => { if (m.type() === "warning" && m.text().startsWith("guide:")) warnings.push(m.text()); });
       await startSharing();
-      await page.waitForSelector('[data-guide-overlay="share-access"] .guideCard');
+      await page.waitForSelector('[data-guide-overlay="share-link"] .guideCard');
       assertEq(warnings.length, 0, `no anchor warning: ${warnings.join("; ")}`);
       assertNoProblems(page);
     } finally { await ctx.close(); }

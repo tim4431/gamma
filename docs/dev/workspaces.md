@@ -164,7 +164,11 @@ then the account's default. An inaccessible explicit workspace is refused;
 the server does not fall back to another library. A share token chooses its
 own workspace and confines access to one page, or to the pages filed in one
 folder ([api.md](api.md) "Shares"). Workspace roles and the share's invites
-determine whether that person can view or edit them.
+determine whether that person can view or edit them. The Share popover
+shows a shared workspace's members as one row under *Who has access* (the
+member count; for a public workspace, that anyone signed in can read too),
+since they open every page with their workspace role whatever the share
+says.
 
 Pass the workspace ID to data helpers such as `connect_pages_db` and
 `commit_ops`. Use `request.state.user` as the actor in the operation log.

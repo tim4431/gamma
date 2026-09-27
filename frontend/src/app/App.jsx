@@ -5439,9 +5439,9 @@ function LibraryApp({ publicPage = null, initialServerConfig = null }) {
   }
 
   // Share popover (owner; sharing/SharePopover.jsx). Opening it only LOADS the
-  // state — a page is not published until "Create link"; settings changes
-  // save immediately and the token only changes on "Stop
-  // sharing".
+  // state — nothing is shared until the first audience tile is picked or the
+  // first person invited, which creates the share with that access; settings
+  // changes save immediately and the token only changes on "Stop sharing".
   function applyShareSettings(data) {
     setShareSettings(data);
     setShareError("");
@@ -5462,14 +5462,22 @@ function LibraryApp({ publicPage = null, initialServerConfig = null }) {
       setStatus(t("Share failed: {message}", { message: err.message }));
     }
   }
-  async function createShareLink() {
-    if (!shareTarget || shareMode) return;
+  // `settings` ({audience, role, users}) is the new share's access — the
+  // tile picked, or Invited only with the first person invited.
+  async function createShareLink(settings) {
+    if (!shareTarget || shareMode) return false;
     try {
-      applyShareSettings(await apiJson(shareApi(shareTarget, "share"), { method: "POST" }));
+      applyShareSettings(await apiJson(shareApi(shareTarget, "share"), {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify(settings || {}),
+      }));
       resetShareCopied();
       guideEvents.emit("share.created");
+      return true;
     } catch (err) {
-      setStatus(t("Share failed: {message}", { message: err.message }));
+      setShareError(err.message); // e.g. "unknown user(s): …" — shown in the popover
+      return false;
     }
   }
   async function updateShareSettings(patch) {
@@ -5487,9 +5495,11 @@ function LibraryApp({ publicPage = null, initialServerConfig = null }) {
     }
   }
   // People: invitations are additive to general access (Notion-style) —
-  // each invited account carries its own view/edit.
+  // each invited account carries its own view/edit. The first invitation on
+  // an unshared page or folder creates its share, Invited only.
   function inviteShareUser(name, role) {
-    const current = shareSettings?.users || [];
+    if (!shareSettings?.token) return createShareLink({ audience: "list", users: [{ name, role }] });
+    const current = shareSettings.users || [];
     if (current.some((u) => u.name === name)) return true;
     return updateShareSettings({ users: [...current, { name, role }] });
   }
@@ -6481,6 +6491,10 @@ function LibraryApp({ publicPage = null, initialServerConfig = null }) {
       pdfChatVisible: !!pageAttach && !pdfHidden && !collapsedWins.pdf && !isPhone,
       guideAvailable: !settingsOpen,
       sharedWorkspace: workspaces.some((w) => !w.personal),
+      // the open page's share audience ("" unshared or not loaded): the
+      // sharing tour words its access step for an anyone-with-the-link share
+      shareAudience: shareTarget?.kind === "page" && shareTarget.id === focusedBlockId && shareSettings?.token
+        ? shareSettings.audience : "",
       onPage: !!focusedBlockId,
       editable: !readOnly,
       unfiledLibrary,
@@ -7138,11 +7152,12 @@ function LibraryApp({ publicPage = null, initialServerConfig = null }) {
   // section is App's (metadata + copy state).
   const sharePopover = (
     <SharePopover
-      target={shareTarget}
+      target={shareTarget?.kind === "page" ? { ...shareTarget, title: pageTitle } : shareTarget}
       settings={shareSettings}
       error={shareError}
       me={authUser?.user || ""}
       meIsGuest={!!authUser?.is_guest}
+      workspace={workspace}
       shareUrl={shareUrl}
       copied={!!shareCopied}
       onCopy={copyShareLink}

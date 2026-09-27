@@ -125,12 +125,13 @@ The home page is a recents feed of all your pages, with a **Recently viewed** st
 
 ## Sharing a page
 
-The **link button** in the top bar shares the open page, Notion-style:
+The **link button** in the top bar shares the open page, Notion-style. Opening it shares nothing yet:
 
-- **Who**: *anyone with the link*, *signed-in users*, or *invited people only* — plus a **View / Edit** toggle for that audience.
-- **Invite** people by name, each with their own view or edit right. Members of the workspace keep their workspace role on top.
-- Viewers see the PDF, highlights and notes, no login needed; editors edit alongside you, with live cursors. A visitor editing through an anyone-with-the-link share is asked for a display name. The top bar tells a visitor whether they can view or edit and who shared the page, and offers **Sign in**, or **Add to my library** once signed in.
-- **Stop sharing** ends the link; share again for a new one. Copied links carry the workspace, so a teammate opening one lands in the right library.
+- **Link**, on top: once the page is shared, its address and **Copy link**. Copied links carry the workspace, so a teammate opening one lands in the right library.
+- **Who has access**: invite people by name, each with their own **View** or **Edit**. Inviting someone on a page that isn't shared yet creates its link for *invited people only*. In a shared workspace, its members are listed too: they open every page with their workspace role.
+- **General access**: *anyone with the link*, *signed-in users*, or *invited people only*, plus a **View / Edit** toggle for that audience. Picking one on a page that isn't shared yet creates the link with that access.
+- Viewers see the PDF, highlights and notes; with *anyone with the link* no login is needed. Editors edit alongside you, with live cursors. A visitor editing through an anyone-with-the-link share is asked for a display name. The top bar tells a visitor whether they can view or edit and who shared the page, and offers **Sign in**, or **Add to my library** once signed in.
+- **Stop sharing**, at the bottom, asks first, then ends the link and every invitation; share again for a new one.
 - A link for signed-in users asks a visitor to sign in right there. A stopped or incompletely copied link says so and offers the way to the server's own front door.
 
 **Sharing a folder** works the same way: right-click a folder and choose **Share…**, or open the folder and press the top bar's link button. The link opens every page filed in the folder — including pages you file there later — as a read-only library view of that folder; visitors open a page like you would and return with the home button. The same audience and View / Edit choices apply; an edit link lets people edit those pages' notes but never move pages in or out of the folder.

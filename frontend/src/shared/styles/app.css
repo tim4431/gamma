@@ -2630,18 +2630,19 @@ mark.merge-del { background: color-mix(in srgb, var(--danger) 16%, transparent);
 /* The Share popover (sharing/SharePopover.jsx): hangs off the topbar's link
    button like the account menu, at the workspace dialogs' width; settings
    rows, IconChoices audience tiles and people rows from the settings kit.
-   The link row's long address ellipsizes; one summary line replaces
-   per-row hints. On phones the bottom bar's popover rule takes over. */
+   The title (the page's or folder's name) and the link row's long address
+   ellipsize; one summary line replaces per-row hints. On phones the bottom
+   bar's popover rule takes over. */
 .sharePopover { width: 440px; max-width: calc(100vw - 24px); max-height: min(80vh, calc(100dvh - 80px)); overflow-y: auto; padding: 10px 12px 12px; }
 .sharePopoverHead { display: flex; align-items: center; justify-content: space-between; gap: 8px; margin-bottom: 2px; }
-.sharePopover .popoverTitle { display: inline-flex; align-items: center; gap: 8px; min-width: 0; }
-.sharePopover .sharePopoverTarget { display: inline-flex; align-items: center; gap: 4px; max-width: 220px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; font-weight: 500; }
+.sharePopover .popoverTitle { min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 /* Beat the generic ".topbar button" pill: controls inside keep the shared
    uiBtn look (.on / .primary / .danger still win, they are more specific). */
 .topbar .sharePopover .uiBtn:where(:not(.on, .primary, .danger)) { background: var(--bg-elevated); border: 1px solid var(--border); color: var(--text-secondary); }
 .topbar .sharePopover .uiBtn:where(:not(.on, .primary, .danger)):hover:not(:disabled) { background: var(--bg-hover); }
 .sharePopover .settingText { min-width: 0; }
 .sharePopover .setRow .settingDesc { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.sharePopover .shareNoLink .settingDesc { white-space: normal; } /* before a link: the sentence wraps */
 .shareLinkBtns { display: inline-flex; align-items: center; gap: 6px; }
 /* Gamma Cloud (PublishSection): the not-published row's sentence or refusal
    wraps; the state line's Sync-now button sits at its end. */
@@ -2657,10 +2658,21 @@ mark.merge-del { background: color-mix(in srgb, var(--danger) 16%, transparent);
 .settingsPaneHint.shareWarn { color: #d9822b; }
 .shareWarn svg { flex-shrink: 0; margin-top: 2px; }
 .sharePopover .aiProvActions { display: inline-flex; align-items: center; gap: 6px; }
-/* Inline invite under the people list: picker, then role + buttons. */
-.shareInvite { display: flex; flex-direction: column; gap: 6px; padding: 4px 8px 6px; }
-.shareInviteRow { display: flex; align-items: center; justify-content: space-between; gap: 8px; }
-.shareInviteBtns { display: inline-flex; gap: 6px; }
+/* The invite box on top of who has access: the picker (its matches open
+   under the box) beside the Invite button. */
+.shareInvite { display: flex; align-items: flex-start; gap: 8px; padding: 4px 8px 6px; }
+.shareInvite .setPick { flex: 1; min-width: 0; }
+.shareInvite > .uiBtn.sm { flex-shrink: 0; min-height: 32px; }
+/* ...its field and match rows keep the settings kit's look, not the
+   topbar's own input and pill button. */
+.topbar .sharePopover .shareInvite .aiKeyInput { padding: 7px 10px; font-size: calc(12px * var(--ui-font-scale, 1)); }
+.topbar .sharePopover .setPickItem { padding: 5px 7px; border: 0; border-radius: 7px; background: transparent; font-size: calc(12px * var(--ui-font-scale, 1)); }
+.topbar .sharePopover .setPickItem:is(.cursor, :hover) { background: var(--bg-hover); }
+.topbar .sharePopover .setPickItem.picked { background: var(--accent-bg); }
+/* Stop sharing: the button at the end of the link's sections, or its
+   inline confirm across the width. */
+.shareStop { display: flex; justify-content: flex-end; padding: 8px 8px 2px; }
+.shareStop .mirrorConfirm { flex: 1; padding: 4px 0; }
 /* Slide citation / BibTeX: a sub-label line, then a copy box. */
 .citeHead { display: flex; align-items: baseline; gap: 4px; padding: 6px 8px 4px; }
 .citeLabel { font-size: calc(12px * var(--ui-font-scale, 1)); font-weight: 600; color: var(--text-secondary); }

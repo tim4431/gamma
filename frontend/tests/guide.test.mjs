@@ -8,7 +8,7 @@ import { join } from "node:path";
 import { ANCHORS } from "../src/guide/anchors.js";
 import { EVENTS, eventMatches } from "../src/guide/events.js";
 import { TOURS } from "../src/guide/tours/index.js";
-import { canOffer, createGuideProgress, guideProgressKey, guideStorage, retiresOffer } from "../src/guide/triggers.js";
+import { canOffer, createGuideProgress, factsMatch, guideProgressKey, guideStorage, retiresOffer } from "../src/guide/triggers.js";
 import { keyNames, keyText, resolveKey } from "../src/guide/keys.js";
 
 function walk(dir, out = []) {
@@ -163,6 +163,19 @@ test("a demo server keeps guide progress in sessionStorage, anyone else in local
     globalThis.localStorage = saved.local;
     globalThis.sessionStorage = saved.session;
   }
+});
+
+test("the sharing tour follows the popover and words access for an anyone-with-the-link share", () => {
+  assert.equal(factsMatch({ shareAudience: ["", "list"] }, { shareAudience: "list" }), true, "an array requires one of its values");
+  assert.equal(factsMatch({ shareAudience: ["", "list"] }, { shareAudience: "anyone" }), false);
+  const steps = (shareAudience) => TOURS.sharing.steps.filter((s) => factsMatch(s.requires, { shareAudience })).map((s) => s.id);
+  assert.deepEqual(steps("anyone"), ["share-create", "share-link", "share-people", "share-access-anyone", "share-stop"]);
+  for (const audience of ["", "users", "list"]) {
+    assert.deepEqual(steps(audience), ["share-create", "share-link", "share-people", "share-access", "share-stop"], `audience "${audience}"`);
+  }
+  const create = TOURS.sharing.steps[0];
+  assert.equal(create.creates, "share.link", "the link exists only once the page is shared");
+  assert.equal(create.advanceOn.event, "share.created");
 });
 
 test("hints are single cards kept out of the Tours menu", () => {
