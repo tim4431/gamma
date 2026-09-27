@@ -6596,6 +6596,19 @@ function LibraryApp({ publicPage = null, initialServerConfig = null }) {
         const hits = await pdfSearchRef.current?.(/Attention\s*\(/i);
         return hits?.[0] || null;
       },
+      // The AI chat tour's figure: the first figure caption, whose figure
+      // the demo frames (guide/previewArea.js).
+      findFigure: async () => {
+        const hits = await pdfSearchRef.current?.(/\b(?:Figure|Fig\.)\s*\d+\s*[:.]/);
+        return hits?.[0] ? { ...hits[0], figure: true } : null;
+      },
+      // That demo's snapshot stays in the chat for the tour's next step;
+      // when the tour ends, the PDF snapshots added since go again (a sent
+      // one is gone already, a pasted image is never touched).
+      snapshotDemo: () => {
+        const before = new Set(chatImages);
+        return () => setChatImages((prev) => prev.filter((src) => before.has(src) || !pdfImagesRef.current.has(src)));
+      },
       prepareNote: (text) => {
         const flat = flattenBlocks(blocks);
         const existing = flat.find((b) => b.properties?.guide_demo === "attention-note" && text.startsWith(b.content || ""));
@@ -6616,7 +6629,11 @@ function LibraryApp({ publicPage = null, initialServerConfig = null }) {
     scope: authUser?.user || "",
     facts: {
       view: homeMode ? "home" : pageAttach ? "pdf" : "page", hasPdf: !!pageAttach,
-      aiConfigured: !!aiInfo?.enabled && !!aiInfo?.models?.length,
+      // unknown (undefined) until /api/ai/models answers, so the AI chat
+      // tour picks neither its setup step nor its chat steps too early
+      aiConfigured: aiInfo ? !!aiInfo.enabled && !!aiInfo.models?.length : undefined,
+      aiEditable: !authUser?.is_guest, // a guest can't store keys
+
       chatVisible: isPhone ? phonePanel === "chat" : !chatHidden && !collapsedWins.chat,
       pdfChatVisible: !!pageAttach && !pdfHidden && !collapsedWins.pdf && !isPhone,
       guideAvailable: !settingsOpen,
@@ -6642,6 +6659,7 @@ function LibraryApp({ publicPage = null, initialServerConfig = null }) {
   });
   useEffect(() => { if (openPopover) guideEvents.emit("popover.opened", { name: openPopover }); }, [openPopover]);
   useEffect(() => { if (quickOpen) guideEvents.emit("palette.opened"); }, [quickOpen]);
+  useEffect(() => { if (settingsOpen) guideEvents.emit("settings.opened", { pane: settingsOpen }); }, [settingsOpen]);
   useEffect(() => { if (inkUi.options) guideEvents.emit("ink.options"); }, [inkUi.options]);
   // Someone ELSE: another account or a link visitor, not this account's own
   // second tab or the desktop app beside the browser.

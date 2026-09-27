@@ -53,15 +53,27 @@ test("tours reference registered anchors and catalogued events", () => {
 });
 
 const aiTour = TOURS["ai-chat"];
-test("the first tours are manual and AI chat uses compact, conditional steps", () => {
+test("the first tours are manual; AI chat has steps per place, each ending on the user's Send", () => {
   assert.deepEqual(TOURS["first-run"].requires || {}, {}, "the first-run tour starts from the Tours menu everywhere");
   assert.equal(TOURS["first-run"].trigger.event, undefined, "offered by state, on a demo server or an empty library");
   assert.equal(aiTour.trigger, undefined);
   assert.equal(aiTour.show, "chat");
-  assert.deepEqual(aiTour.steps.map((s) => s.id), ["chat-question", "chat-voice", "chat-box", "chat-box-context"]);
-  assert.ok(aiTour.steps.every((s) => !s.body));
-  assert.equal(aiTour.steps[0].do[0].text, "summarize the paper for me");
-  assert.deepEqual(aiTour.steps[2].requires, { pdfChatVisible: true });
+  const stepsIn = (facts) => aiTour.steps.filter((s) => factsMatch(s.requires, facts)).map((s) => s.id);
+  // No AI connected: the setup card, finished by opening Settings → Connections.
+  assert.deepEqual(stepsIn({ aiConfigured: false, aiEditable: true, view: "pdf" }), ["chat-setup"]);
+  assert.deepEqual(aiTour.steps.find((s) => s.id === "chat-setup").advanceOn, { event: "settings.opened", match: { pane: "ai" } });
+  assert.deepEqual(stepsIn({ aiConfigured: false, aiEditable: false, view: "home" }), [], "a guest can't connect: no tour");
+  assert.deepEqual(stepsIn({ view: "home" }), [], "nothing before the AI state is known");
+  assert.deepEqual(stepsIn({ aiConfigured: true, view: "pdf", pdfChatVisible: true }),
+    ["chat-question", "chat-figure", "chat-snapshot", "chat-send-paper"]);
+  assert.deepEqual(stepsIn({ aiConfigured: true, view: "pdf", pdfChatVisible: false }), ["chat-question", "chat-send-paper"]);
+  assert.deepEqual(stepsIn({ aiConfigured: true, view: "page" }), ["chat-question-notes", "chat-note-selection", "chat-send-notes"]);
+  assert.deepEqual(stepsIn({ aiConfigured: true, view: "home" }), ["chat-question-library", "chat-tools", "chat-send-library"]);
+  for (const s of aiTour.steps.filter((x) => x.id.startsWith("chat-send-"))) {
+    assert.deepEqual(s.advanceOn, { event: "chat.sent" }, `${s.id} waits for the user's own send`);
+  }
+  assert.ok(!aiTour.steps.some((s) => s.anchor === "chat.voice"), "no voice step");
+  assert.ok(aiTour.steps.filter((s) => s.do).every((s) => s.do.every((a) => !a.press && !a.click)), "the tour never sends");
 });
 
 test("progress survives reload, separates accounts, and tolerates broken browser storage", () => {

@@ -79,12 +79,36 @@ itself is the action (Next, Done): a demo has **Skip this demo**, the user's
 turn has Back and a quiet **Skip step**, so the task, not skipping it, is
 the loudest thing on the card.
 
-AI chat starts in the message box and types `summarize the paper for me`, then
-points to voice input. Existing drafts are restored after the example; an
-empty composer keeps the example ready to edit. The tour never submits a
-message or starts recording. If the current page carries a PDF and its window
-is visible, it demonstrates Ctrl-drag and points to the resulting image in
-chat context. Hidden PDFs, notes pages, and phone chat omit those steps.
+AI chat (`tours/aiChat.js`) has steps per place, chosen by step-level
+`requires`, each ending on Send: a "Your turn" step on the composer that
+waits for the user's own send (`chat.sent`), its link reading Done. The tour
+never submits a message or starts recording, and there is no voice step.
+
+- **On a paper** (`view: "pdf"`): the message box types *What is the main
+  result, and where is it shown?* ("Ask about this paper; type @ to bring in
+  another one"); with the PDF window visible, the Ctrl-drag demo frames a
+  figure (`findFigure`, below) and releases, so the snapshot lands in the
+  chat, and the next step points at it; then Send ("answers link to the exact
+  passages they quote"). Hidden PDFs and phone chat skip the figure steps.
+- **On a page of notes** (`view: "page"`): *Turn these notes into a short
+  summary*, then the notes ("Drag across a note's text to change just that
+  part", optional), then Send.
+- **On the library** (`view: "home"`): *Which of these papers use attention?
+  File them into ML/attention* ("it can search, read and file your pages" —
+  true under the default tool permissions), then the Tools button
+  (optional), then Send.
+- **No AI connected** (`aiConfigured: false`, and `aiEditable`: the account
+  can store keys — a guest cannot, and gets no tour): one step on the chat's
+  setup card (`chat.setup`), "Chat needs an AI connection: add a key, or sign
+  in with ChatGPT". Clicking a tile opens Settings → Connections, whose
+  `settings.opened {pane: "ai"}` finishes it. The message box is disabled
+  then, so nothing is typed into it.
+
+`aiConfigured` is unknown (undefined) until `/api/ai/models` answers, so
+neither variant is picked too early. Existing drafts are restored after an
+example; an empty composer keeps the example ready to edit. When the tour
+ends without a send, the figure demo's snapshot leaves the chat again (the
+engine's tour-end cleanups, below).
 
 The paper tour frames the actual attention equation, types a note through
 CodeMirror without replacing existing writing, adds the `llm` label through
@@ -159,6 +183,10 @@ Rules the engine keeps (`useGuide.js`, `triggers.js`):
   above the bottom tab bar.
 
 Engine abilities available to every step:
+
+- **Tour-end cleanups.** A demo action gets `services.onTourEnd(fn)` next to
+  its step's `onCleanup`: what it leaves for the tour's later steps (the AI
+  chat tour's snapshot) is taken back when the tour ends, however it ends.
 
 - **Reveal by `open` path.** A step whose anchor is registered with
   `open: [...]` is revealed by clicking through that path (skipping the
@@ -239,8 +267,13 @@ the first text renders (its page may still be rendering) before settling
 for any visible passage, as other papers do.
 
 The next demo, `{previewArea: true}`, uses the PDF's real Ctrl+pointer-drag
-handler to draw a rectangle, with a Ctrl badge beside the animated cursor.
-It cancels the drag before release, so it creates no snapshot or annotation.
+handler to draw a rectangle, with a Ctrl badge beside the animated cursor,
+around the attention formula App's `findEquation` service finds. It cancels
+the drag before release, so it creates no snapshot or annotation. With
+`context: true` (the AI chat tour) it aims at a figure instead — App's
+`findFigure` finds the first "Figure N:" caption, and the box is the gap in
+the running text above it, labels included — and releases, so the snapshot
+goes to the chat; `snapshotDemo` takes it back when the tour ends.
 The user then draws their own rectangle and chooses a colour. The
 `highlight.created` event carries `kind: "text" | "area"`, so each practice
 step completes only for its matching type.
@@ -335,8 +368,8 @@ selects by class name, text or DOM position.** It selects by anchor id.
 Because App.jsx is still being decomposed ([frontend-refactor.md](frontend-refactor.md)),
 anchors are the only thing the guide needs from it. No guide code imports App
 state directly; App passes the few facts the engine needs (view mode, whether
-the page has a PDF, whether an AI provider is configured, the open page's
-share audience) through one
+the page has a PDF, whether an AI provider is configured and whether the
+account may add one, the open page's share audience) through one
 `useGuide()` call.
 
 ## Tour scripts
@@ -425,7 +458,8 @@ where the thing happens:
 | `conflict.shown` | MergeResolver's versions |
 | `ref.search` | BlockTree, when the `[[` search shows results |
 | `math.previewed` | MathLivePreview, when it comes up |
-| `block.created`, `block.indented`, `settings.opened` | catalogued, not emitted yet |
+| `settings.opened` `{pane}` | App, whenever Settings opens (on any pane) |
+| `block.created`, `block.indented` | catalogued, not emitted yet |
 
 A test asserts every `advanceOn`, trigger and `doneOn` name is in the catalog.
 
@@ -564,7 +598,8 @@ backend/gamma/seed.py                 seed_welcome: parses it, renders the PDF, 
 backend/tests/test_welcome.py         who gets it, the PDF, the op batch, the fallbacks
 frontend/tests/guide.test.mjs         schema, anchor references, event names, unique ids
 frontend/tests/e2e/scenarios/guide.mjs            the first-run tour end to end, home anchors present
-frontend/tests/e2e/scenarios/contextualGuide.mjs  the AI chat tour on desktop and phone
+frontend/tests/e2e/scenarios/contextualGuide.mjs  the AI chat tour on the library, a paper, a hidden PDF,
+                                                  a phone, and with no AI connected
 frontend/tests/e2e/scenarios/auth.mjs             demo mode: the guest lands and gets the first-run offer (sessionStorage)
 frontend/tests/e2e/scenarios/triggeredGuide.mjs   offers and hints: tables (made by /table or a paste,
                                                   not merely shown), sharing (offered, and from

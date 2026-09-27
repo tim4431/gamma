@@ -72,7 +72,8 @@ const belowField = (el) => {
 async function runAction(action, vars, live, cancelled, seen, onCleanup, services) {
   const check = () => { if (cancelled()) throw new Error("cancelled"); };
   if (action.previewHighlight) return previewHighlight(live, cancelled, onCleanup);
-  if (action.previewArea) return previewArea(live, cancelled, onCleanup, action.context ? null : services.findEquation, action.context);
+  if (action.previewArea) return previewArea(live, cancelled, onCleanup,
+    { find: action.context ? services.findFigure : services.findEquation, context: action.context, services });
   if (action.note) return typeDemoNote(action.note, services.prepareNote, live, cancelled);
   if (action.wait) { await sleep(action.wait); return; }
   if (action.waitFor) { await waitEvent(action.waitFor, seen, action.timeout); return; }
@@ -379,6 +380,12 @@ export function useGuide({ enabled = true, suggest = true, scope = "", facts = {
     const timer = setTimeout(() => advance(at), 1100);
     return () => clearTimeout(timer);
   }, [run?.done, step]);
+  // What a demo leaves for the rest of its tour (the AI chat tour's
+  // snapshot, pointed at by the next step) is taken back when the tour ends,
+  // however it ends; a step's own cleanups run when the step does.
+  const tourEnd = useRef([]);
+  const runningTour = run?.tour || null;
+  useEffect(() => () => { tourEnd.current.splice(0).forEach((fn) => fn()); }, [runningTour]);
   useEffect(() => {
     if (!step?.do) return undefined;
     let cancelled = false;
@@ -403,7 +410,8 @@ export function useGuide({ enabled = true, suggest = true, scope = "", facts = {
           // A wait that may be long says what it waits for ("Fetching the
           // paper…"), the card back beside the step's own anchor.
           if (action.status) show({ anchor: null, cursor: null, status: action.status });
-          await runAction(action, vars, show, () => cancelled, seen, (cleanup) => cleanups.push(cleanup), servicesRef.current);
+          await runAction(action, vars, show, () => cancelled, seen, (cleanup) => cleanups.push(cleanup),
+            { ...servicesRef.current, onTourEnd: (fn) => tourEnd.current.push(fn) });
           doneActions++;
           show({ ...last, status: null });
         }
