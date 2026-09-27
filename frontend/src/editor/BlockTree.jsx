@@ -1197,28 +1197,30 @@ function BlockRow({
     setPasteMenu(null);
     const ta = ref.current;
     if (!pm || !ta) return;
+    // True once the text is in; false when the paste was abandoned.
     const doReplace = (text) => {
       // The pasted URL must still be where we left it (typing dismisses the
       // menu, but an async titled-link fetch can land late).
-      if (ta.value.slice(pm.start, pm.end) !== pm.url) return;
-      ta.view?.dispatch({
+      if (!ta.view || ta.value.slice(pm.start, pm.end) !== pm.url) return false;
+      ta.view.dispatch({
         changes: { from: pm.start, to: pm.end, insert: text },
         selection: { anchor: pm.start + text.length },
         userEvent: "input",
       });
       ta.focus();
+      return true;
     };
     if (item.make) {
-      if (item.name === "table") noteTableMade(block.id, ta.value, pm.start);
       let text = item.make();
+      const val = ta.value || "";
       if (item.block) {
         // A block-level construct (a table) must start and end on its own
         // line — pad like the direct html-table paste does.
-        const val = ta.value || "";
         if (pm.start > 0 && val[pm.start - 1] !== "\n") text = "\n" + text;
         if (pm.end < val.length && val[pm.end] !== "\n") text += "\n";
       }
-      doReplace(text);
+      // Only a table that landed counts toward the tables tour's offer.
+      if (doReplace(text) && item.name === "table") noteTableMade(block.id, val, pm.start);
     } else if (item.name === "blocks") {
       // Parse server-side (same parser as the .md file import), remove the
       // pasted text from this block, then hand the tree to App to insert.
