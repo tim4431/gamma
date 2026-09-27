@@ -752,7 +752,7 @@ export function InkToolbar({ tools, active, options, eraserMode, eraserSize, las
           aria-pressed={active === null}><HandIcon size={16} /></button>
         <span className="pdfInkSep" />
         <button type="button" className="ctlBtn" onClick={onClose} title={t("Close the handwriting tools (Esc)")} aria-label={t("Close the handwriting tools")}><XIcon size={16} /></button>
-        <span className="pdfInkHistory" data-guide="ink.history">
+        <span className="pdfInkHistory">
           <button type="button" className="ctlBtn" aria-label={t("Undo ink")} title={t("Undo handwriting")} disabled={!canUndo} onClick={onUndo}><UndoIcon aria-hidden="true" /></button>
           <button type="button" className="ctlBtn" aria-label={t("Redo ink")} title={t("Redo handwriting")} disabled={!canRedo} onClick={onRedo}><RedoIcon aria-hidden="true" /></button>
         </span>

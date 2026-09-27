@@ -72,8 +72,8 @@ test("the first tours are manual; AI chat has steps per place, each ending on th
   for (const s of aiTour.steps.filter((x) => x.id.startsWith("chat-send-"))) {
     assert.deepEqual(s.advanceOn, { event: "chat.sent" }, `${s.id} waits for the user's own send`);
   }
-  assert.ok(!aiTour.steps.some((s) => s.anchor === "chat.voice"), "no voice step");
-  assert.ok(aiTour.steps.filter((s) => s.do).every((s) => s.do.every((a) => !a.press && !a.click)), "the tour never sends");
+  // Its demos only type: nothing presses Send or the mic (which carries no anchor to point at).
+  assert.ok(aiTour.steps.filter((s) => s.do).every((s) => s.do.every((a) => !a.press && !a.click)), "the tour never sends or records");
 });
 
 test("a tour's end state is `restore`, never to be confused with its `finishCard`", () => {
