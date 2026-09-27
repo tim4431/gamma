@@ -35,7 +35,7 @@ const INK_COLOR_NAMES = {
   "#fde047": T("Yellow"), "#86efac": T("Mint"), "#7dd3fc": T("Light blue"), "#f9a8d4": T("Pink"),
   "#fdba74": T("Peach"), "#c4b5fd": T("Lavender"), "#67e8f9": T("Cyan"), "#d4d4d8": T("Light gray"),
 };
-const inkColorName = (hex) => t(INK_COLOR_NAMES[nearestInkColor(hex)] || T("Custom colour"));
+const inkColorName = (hex) => t(INK_COLOR_NAMES[nearestInkColor(hex)] || T("Custom color"));
 const inkKindName = (kind) => (kind === "highlighter" ? t("Highlighter") : t("Pen"));
 
 // Re-render when any draft or file changes.
@@ -769,8 +769,8 @@ export function InkToolbar({ tools, active, options, eraserMode, eraserSize, las
               style={{ background: c }} onClick={() => edit({ color: c })} title={inkColorName(c)} aria-label={inkColorName(c)} />
           ))}
           <label className={"colorBtn inkSwatch inkCustomColor" + (palette.includes(preset.color) ? "" : " selected")}
-            title={t("Custom colour")} style={{ "--ink-custom": preset.color }}>
-            <input type="color" value={preset.color} aria-label={t("Custom colour")}
+            title={t("Custom color")} style={{ "--ink-custom": preset.color }}>
+            <input type="color" value={preset.color} aria-label={t("Custom color")}
               onChange={(e) => edit({ color: e.target.value.toLowerCase() })} />
           </label>
           <span className="pdfInkSep" />
