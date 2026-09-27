@@ -3,7 +3,7 @@ import { Panel, PanelGroup, PanelResizeHandle } from "react-resizable-panels";
 import PdfViewer, { clampZoom } from "../pdf/PdfViewer";
 import { highlightSpot, rangeSpot } from "../pdf/pdfSelectionSpot";
 import { COLORS } from "../shared/model/highlightColors.js";
-import { fmtDate, getLocale, resolveLocale, t, T } from "../shared/i18n/i18n.js";
+import { fmtDate, getLocale, resolveLocale, t, T, tn } from "../shared/i18n/i18n.js";
 import { REOPEN_SETTINGS_KEY } from "../settings/settingsNavigation.js";
 import { ExportDialog, ImportDialog } from "../transfers/ImportExport";
 import ImportReviewDialog from "../transfers/ImportReviewDialog";
@@ -106,7 +106,9 @@ import {
   cleanFolderPath,
   cleanFolderSegment,
   findPageForUrl,
+  formatFullDate,
   formatRelativeTime,
+  formatShortDate,
   friendlyApiError,
   pageAttachment,
   attachmentSource,
@@ -6835,14 +6837,30 @@ function LibraryApp({ publicPage = null, initialServerConfig = null }) {
       ? (folderFilter ? t("No labels on the pages in this folder yet.") : t("No labels yet — add one from a page’s label field."))
       : folderFilter ? (lib.organize ? t("This folder is empty — start a page here or drag pages onto it from the library.") : t("This folder is empty."))
       : t("No pages yet — start with “New page”, or open a PDF from the + button above.");
-  // Timestamp shown on a library card follows the active sort: sorted by view
-  // time → viewed (falling back to modified, same as the sort), by added →
-  // created; modified otherwise (incl. Title A–Z).
-  const cardTime = (item) => formatRelativeTime(
+  // Timestamp shown on a library card and in the list's date column follows
+  // the active sort: sorted by view time → viewed (falling back to modified,
+  // same as the sort), by added → created; modified otherwise (incl. Title
+  // A–Z). The column's header names it.
+  const sortStamp = (item) => (
     homeSort === "viewed" ? (item._viewedAt || item._updatedAt)
       : homeSort === "created" ? item._createdAt
       : item._updatedAt
   );
+  const cardTime = (item) => formatRelativeTime(sortStamp(item));
+  const dateColumnTitle = homeSort === "viewed" ? t("Viewed") : homeSort === "created" ? t("Added") : t("Modified");
+  // A list row's trailing columns, the same on every row: kind ("PDF",
+  // "Page", or a folder's / label's page count), the date, and the pin slot
+  // (kept empty where there is nothing to pin, so the columns line up).
+  const rowColumns = (item, kind, pin = null) => {
+    const stamp = sortStamp(item);
+    return (
+      <>
+        <span className="fileRowKind">{kind}</span>
+        <span className="fileRowDate" title={formatFullDate(stamp) || undefined}>{formatShortDate(stamp)}</span>
+        {pin || <span className="fileRowPinSlot" aria-hidden="true" />}
+      </>
+    );
+  };
   // Page-shaped view of the visible slice (shift-range selection, BlockTree).
   const homeVisiblePages = useMemo(
     () => homeVisibleItems.filter((it) => it.kind === "page").map((it) => it.block),
@@ -8162,6 +8180,14 @@ function LibraryApp({ publicPage = null, initialServerConfig = null }) {
                         <span className="folderName">{t("New folder")}</span>
                       </button>
                     )}
+                    {homeVisibleItems.length ? (
+                      <div className="fileListHead" aria-hidden="true">
+                        <span className="fileListHeadName">{t("Name")}</span>
+                        <span className="fileRowKind">{t("Kind")}</span>
+                        <span className="fileRowDate">{dateColumnTitle}</span>
+                        <span className="fileRowPinSlot" />
+                      </div>
+                    ) : null}
                     {withSearchMore(homeVisibleItems.map((item) => {
                       const dim = homeQuery && !item._match ? "homeDim" : "";
                       if (item.kind === "label") { const l = item.label; return (
@@ -8180,7 +8206,7 @@ function LibraryApp({ publicPage = null, initialServerConfig = null }) {
                       >
                         <LabelIcon size={15} strokeDasharray={l === NO_LABEL ? "2 1.5" : undefined} />
                         <span className="folderName">{labelTitle(l)}</span>
-                        <span className="folderCount">{labelMeta[l]?.count || 0}</span>
+                        {rowColumns(item, tn("{n} page", "{n} pages", labelMeta[l]?.count || 0))}
                       </div>
                       ); }
                       if (item.kind === "folder") { const f = item.folder; return (
@@ -8214,7 +8240,7 @@ function LibraryApp({ publicPage = null, initialServerConfig = null }) {
                         ) : (
                           <span className="folderName">{f.slice(f.lastIndexOf("/") + 1)}</span>
                         )}
-                        <span className="folderCount">{folderMeta[f]?.count || 0}</span>
+                        {rowColumns(item, tn("{n} page", "{n} pages", folderMeta[f]?.count || 0))}
                       </div>
                       ); }
                       const b = item.block;
@@ -8250,14 +8276,13 @@ function LibraryApp({ publicPage = null, initialServerConfig = null }) {
                           )}
                           <CardLabels className="fileRowLabels" folders={b._folders} labels={b._labels}
                             mode={fileLabels} onLabelMenu={(l) => openTagMenu("label", l)} />
-                          <span className="fileRowKind">{pageKindLabel(b._attachment)}</span>
-                          {lib.pin ? (
+                          {rowColumns(item, pageKindLabel(b._attachment), lib.pin ? (
                             <button
                               className={`pinBtn fileRowPin ${isPinned ? "pinned" : ""}`}
                               title={isPinned ? t("Unpin") : t("Pin to top")}
                               onClick={(e) => { e.stopPropagation(); setPagesPinned([id], !isPinned); }}
                             ><PinIcon filled={isPinned} size={12} /></button>
-                          ) : null}
+                          ) : null)}
                         </div>
                       );
                     }))}

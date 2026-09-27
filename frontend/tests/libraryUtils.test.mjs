@@ -6,7 +6,7 @@ import { readFile } from "node:fs/promises";
 import { test } from "node:test";
 import {
   addFolderTag, cleanFolderPath, cleanFolderSegment, defaultPageTitle, findPageForUrl,
-  formatRelativeTime, normalizeLinkInput, pageAttachment, parseFolderTags,
+  formatFullDate, formatRelativeTime, formatShortDate, normalizeLinkInput, pageAttachment, parseFolderTags,
 } from "../src/library/libraryUtils.js";
 
 const shared = JSON.parse(await readFile(new URL("../../tests/shared/foldertags.json", import.meta.url), "utf8"));
@@ -16,6 +16,23 @@ test("folder tag rules match gamma/foldertags.py", () => {
   for (const c of shared.clean_segment) assert.equal(cleanFolderSegment(c.input), c.output, JSON.stringify(c));
   for (const c of shared.clean_path) assert.equal(cleanFolderPath(c.input), c.output, JSON.stringify(c));
   for (const c of shared.add_tag) assert.deepEqual(addFolderTag([...c.tags], c.path), c.output, c.note);
+});
+
+test("formatShortDate: today with the time, yesterday, a day this year, else the year", () => {
+  // Built in local time: the column speaks the reader's time zone.
+  const now = new Date(2026, 8, 13, 15, 0).getTime();
+  const iso = (...parts) => new Date(...parts).toISOString();
+  assert.match(formatShortDate(iso(2026, 8, 13, 9, 41), now), /^Today, 9:41/);
+  assert.equal(formatShortDate(iso(2026, 8, 12, 23, 59), now), "Yesterday");
+  assert.equal(formatShortDate(iso(2026, 8, 1, 8, 0), now), "Sep 1");
+  assert.equal(formatShortDate(iso(2026, 0, 2, 8, 0), now), "Jan 2");
+  assert.equal(formatShortDate(iso(2023, 5, 1), now), "2023");
+  assert.match(formatShortDate(iso(2026, 8, 13, 16, 0), now), /^Today/, "a clock a little ahead is still today");
+  assert.equal(formatShortDate("", now), "");
+  assert.equal(formatShortDate("not a date", now), "");
+  // A bare server timestamp is UTC, like formatRelativeTime's.
+  assert.equal(formatShortDate("2023-06-01T12:00:00", now), "2023");
+  assert.match(formatFullDate(iso(2026, 8, 12, 9, 5)), /Sep 12, 2026/);
 });
 
 test("formatRelativeTime picks the coarsest unit and reads bare timestamps as UTC", () => {

@@ -478,7 +478,7 @@ body {
 /* Zero specificity: a component's own font rule still wins. */
 :where(code, pre, kbd, samp) { font-family: var(--font-mono); }
 /* Counts, times and page numbers keep their width as the digits change. */
-:is(.pdfPageWidget, .pageCardTime, .pageCardCount, .folderCount, .chatHistAge,
+:is(.pdfPageWidget, .pageCardTime, .pageCardCount, .fileRowDate, .chatHistAge,
   .chatFindCount, .searchFindCount, .chatPlusCount, .pdfTransPct, .transferProgress) {
   font-variant-numeric: tabular-nums;
 }

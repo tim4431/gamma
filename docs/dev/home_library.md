@@ -122,6 +122,16 @@ matches, a quiet row right after the last match offers it. Both open the
 workspace search with the query filled in (SearchPanel's `initialQuery`,
 App's `openSearchWith`). Neither is a `.fileRow` / `.folderRow`.
 
+The list view is a table: every row ends in the same trailing columns
+(`rowColumns` in App.jsx) — kind (64 px, "PDF" / "Page", a folder's or
+label's page count), the date the active sort uses (110 px, right-aligned,
+`formatShortDate` in libraryUtils.js: "Today, 9:41", "Yesterday", "Sep 12",
+else the year; the full date in its title, the same clock as a card's
+`cardTime`) and the pin slot, reserved on rows that have no pin. A thin
+header (`.fileListHead`, not a `.fileRow`) names the columns, its date
+column following the sort (Modified / Viewed / Added). A PDF's file glyph
+is tinted with `--kind-pdf`. Under 600 px the date column hides.
+
 **New page** and **New folder** are the FIRST items of the listing itself,
 not toolbar buttons. New page (`newPageAllowed`: not in a label view, not
 while only folders show) is a `pageCardAdd` tile / `folderNewBtn` row that

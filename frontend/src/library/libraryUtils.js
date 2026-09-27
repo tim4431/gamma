@@ -1,7 +1,7 @@
 // Pure application-domain helpers. Keeping these outside App makes the rules
 // usable by dialogs, home views, and future tests without coupling them to React.
 
-import { t } from "../shared/i18n/i18n.js";
+import { fmtDate, t } from "../shared/i18n/i18n.js";
 
 export function parseFolderTags(raw) {
   return (raw || "").split(",").map((value) => value.trim()).filter(Boolean);
@@ -31,9 +31,12 @@ export function addFolderTag(tags, path) {
   return [...tags.filter((t) => t !== path && !path.startsWith(t + "/")), path];
 }
 
+// A stored timestamp → a Date (a bare one is UTC, as the server writes it).
+const parseStamp = (iso) => new Date(/[Zz]|[+-]\d\d:?\d\d$/.test(iso) ? iso : `${iso}Z`);
+
 export function formatRelativeTime(iso, now = Date.now()) {
   if (!iso) return "";
-  const then = new Date(/[Zz]|[+-]\d\d:?\d\d$/.test(iso) ? iso : `${iso}Z`).getTime();
+  const then = parseStamp(iso).getTime();
   const secs = Math.max(1, Math.floor((now - then) / 1000));
   if (secs < 60) return t("{n}s ago", { n: secs });
   const mins = Math.floor(secs / 60);
@@ -47,6 +50,30 @@ export function formatRelativeTime(iso, now = Date.now()) {
   const months = Math.floor(days / 30);
   if (months < 12) return t("{n}mo ago", { n: months });
   return t("{n}y ago", { n: Math.floor(days / 365) });
+}
+
+// The list view's date column, in the reader's time zone: "Today, 9:41",
+// "Yesterday", "Sep 12" within the year, else the year alone.
+export function formatShortDate(iso, now = Date.now()) {
+  if (!iso) return "";
+  const then = parseStamp(iso);
+  if (Number.isNaN(then.getTime())) return "";
+  const today = new Date(now);
+  today.setHours(0, 0, 0, 0);
+  const day = new Date(then);
+  day.setHours(0, 0, 0, 0);
+  const days = Math.round((today - day) / 86400000);
+  if (days <= 0) return t("Today, {time}", { time: fmtDate(then, { hour: "numeric", minute: "2-digit" }) });
+  if (days === 1) return t("Yesterday");
+  if (then.getFullYear() === today.getFullYear()) return fmtDate(then, { month: "short", day: "numeric" });
+  return String(then.getFullYear());
+}
+
+// The full date and time, for the date column's hover title.
+export function formatFullDate(iso) {
+  if (!iso) return "";
+  const then = parseStamp(iso);
+  return Number.isNaN(then.getTime()) ? "" : fmtDate(then, { dateStyle: "medium", timeStyle: "short" });
 }
 
 // The page's attachment — today the single PDF slot (`properties.doc_id` +

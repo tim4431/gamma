@@ -114,7 +114,7 @@
   word-break: break-word;
   mask-image: linear-gradient(to bottom, #000 70%, transparent);
 }
-.pageCard:hover .fileGlyph, .pageCard.selected .fileGlyph { color: var(--accent); }
+.pageCard:hover .fileGlyph:not(.pdf), .pageCard.selected .fileGlyph:not(.pdf) { color: var(--accent); }
 .pageCardBody {
   display: flex;
   flex-direction: column;
@@ -139,7 +139,7 @@
   font-size: calc(10.5px * var(--ui-font-scale, 1));
 }
 .pageCardTime { margin-left: auto; color: var(--text-dim); white-space: nowrap; }
-:is(.pageCardKind, .fileRowKind) { font-size: calc(9.5px * var(--ui-font-scale, 1)); font-weight: 600; letter-spacing: 0.04em; text-transform: uppercase; color: var(--text-dim); }
+.pageCardKind { font-size: calc(9.5px * var(--ui-font-scale, 1)); font-weight: 600; letter-spacing: 0.04em; text-transform: uppercase; color: var(--text-dim); }
 .pageCardCount {
   font-size: calc(10px * var(--ui-font-scale, 1));
   color: var(--text-muted);
@@ -220,14 +220,6 @@
   overflow: hidden;
   text-overflow: ellipsis;
   white-space: nowrap;
-}
-.folderCount {
-  font-size: calc(11px * var(--ui-font-scale, 1));
-  color: var(--text-muted);
-  background: var(--bg-raised);
-  border-radius: 999px;
-  padding: 1px 8px;
-  flex-shrink: 0;
 }
 .folderHint { font-size: calc(11px * var(--ui-font-scale, 1)); color: var(--text-dim); flex-shrink: 0; }
 .folderBackRow svg { color: var(--text-muted); }
@@ -438,7 +430,7 @@
   width: 20px;
   height: 20px;
 }
-.fileRow:hover .fileGlyph, .fileRow.selected .fileGlyph { color: var(--accent); }
+.fileRow:hover .fileGlyph:not(.pdf), .fileRow.selected .fileGlyph:not(.pdf) { color: var(--accent); }
 .fileRowName {
   flex: 1;
   min-width: 0;
@@ -455,9 +447,49 @@
   font-size: calc(14px * var(--ui-font-scale, 1));
   padding: 2px 6px;
 }
-/* type/size comes from the shared :is(.pageCardKind, .fileRowKind) rule */
-.fileRowKind { flex: 0 0 auto; }
-.fileRowPin { flex: 0 0 auto; opacity: 0; transition: opacity 0.12s; }
+/* The trailing columns every list row shares (rowColumns in App.jsx):
+   kind, the date the sort uses, and the pin slot — fixed widths, so they
+   line up down the list and under the header. */
+.fileRowKind {
+  flex: 0 0 64px;
+  font-size: calc(12px * var(--ui-font-scale, 1));
+  color: var(--text-muted);
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+.fileRowDate {
+  flex: 0 0 110px;
+  text-align: right;
+  font-size: calc(12px * var(--ui-font-scale, 1));
+  color: var(--text-muted);
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+.fileRowPin, .fileRowPinSlot { flex: 0 0 22px; width: 22px; }
+.fileRowPin { opacity: 0; transition: opacity 0.12s; }
+/* The thin column header above the rows (not a .fileRow: callers count those). */
+.fileListHead {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  padding: 2px 11px 5px;
+  margin-bottom: 2px;
+  border-bottom: 1px solid var(--border-subtle);
+  font-size: calc(11.5px * var(--ui-font-scale, 1));
+  color: var(--text-dim);
+  user-select: none;
+}
+.fileListHead .fileRowKind, .fileListHead .fileRowDate { font-size: inherit; color: inherit; }
+.fileListHeadName { flex: 1; min-width: 0; padding-left: 30px; }
+/* A narrow list keeps the name readable: no date column, a tighter kind
+   column and a shorter chip line. */
+@media (max-width: 600px) {
+  .fileRowDate { display: none; }
+  .fileRowKind { flex-basis: 52px; }
+  .fileList .fileRowLabels { max-width: 34%; }
+}
 .fileRow:hover .fileRowPin { opacity: 0.6; }
 .fileRowPin:hover, .fileRowPin.pinned { opacity: 1; }
 /* Chip line on a file row (shared base above): capped so it never pushes the
@@ -476,7 +508,7 @@
   background: var(--bg-raised);
   border-radius: 4px;
   padding: 0 6px;
-  font-size: calc(10px * var(--ui-font-scale, 1));
+  font-size: calc(11px * var(--ui-font-scale, 1));
   white-space: nowrap;
 }
 /* line the folder-row icon up with the file-row icon column */
@@ -522,7 +554,7 @@
 .folderGlyph { color: var(--accent); }
 .labelGlyph { color: var(--text-secondary); }
 .fileGlyph { color: var(--text-muted); }
-.fileGlyph.kindGlyph.pdf { color: var(--kind-pdf); }
+.fileGlyph.pdf { color: var(--kind-pdf); }
 .tileRenameInput {
   width: 100%;
   border-color: var(--accent-dark);
@@ -558,7 +590,7 @@
   background: var(--bg-raised);
   border-radius: 4px;
   padding: 0 6px;
-  font-size: calc(10px * var(--ui-font-scale, 1));
+  font-size: calc(11px * var(--ui-font-scale, 1));
 }
 
 /* Quick open (Ctrl+P): the page palette, docked near the top like VS Code's. */
