@@ -1,14 +1,16 @@
 import { T } from "../../shared/i18n/i18n.js";
 // Hints: one card beside a control, no dimming, "Got it" and gone. Each is
 // a triggered guide with a single step (guide/triggers.js) and never
-// appears in the Tours menu.
+// appears in the Tours menu. The copy is one plain sentence with its
+// reason; `{key:…}` shows a key as caps — a command's the way this account
+// has it bound (guide/keys.js).
 
 export const mathKeys = {
   id: "math-keys",
   version: 1,
   hint: true,
   trigger: { event: "math.previewed" },
-  steps: [{ id: "math-keys", anchor: "editor.mathPreview", placement: "top", title: T("Tab jumps to the next { }; type \\ for commands") }],
+  steps: [{ id: "math-keys", anchor: "editor.mathPreview", placement: "top", title: T("Press {key:Tab} to jump to the next { }. Type {key:\\} to look up a symbol.") }],
 };
 
 export const blockRefs = {
@@ -16,17 +18,41 @@ export const blockRefs = {
   version: 1,
   hint: true,
   trigger: { event: "ref.search" },
-  steps: [{ id: "block-refs", anchor: "editor.refSearch", placement: "right", title: T("Pick a block to mention it; ![[…]] embeds a live copy") }],
+  steps: [{ id: "block-refs", anchor: "editor.refSearch", placement: "right", title: T("Pick a page or note to link it here. Start with `![[` instead to embed a live, editable copy.") }],
 };
 
 // Offered on the fourth trip back to the library in one sitting, unless the
-// palette has been used already.
+// palette has been used already — never on the phone layout, where Home is
+// the bottom bar's Library tab and there is no keyboard shortcut to teach.
 export const quickOpen = {
   id: "quick-open",
   version: 1,
   hint: true,
+  requires: { phone: false },
   trigger: { event: "home.opened", count: 4, doneOn: { event: "palette.opened" } },
-  steps: [{ id: "quick-open", anchor: "header.home", placement: "bottom", title: T("Ctrl+P (⌘P) opens any page without going home") }],
+  steps: [{ id: "quick-open", anchor: "header.home", placement: "bottom", title: T("Next time, press {key:app.quickOpen} to jump to any page without going home.") }],
+};
+
+// Offered after the first link jump (a citation, a page link, a chat
+// citation): Back returns to the exact spot. Retired silently once the user
+// has gone back on their own.
+export const back = {
+  id: "back",
+  version: 1,
+  hint: true,
+  trigger: { event: "nav.pushed", doneOn: { event: "nav.back" } },
+  steps: [{ id: "back", anchor: "header.back", placement: "bottom", title: T("Back takes you to where you were, at the same spot. Or press {key:app.back}.") }],
+};
+
+// A clone conflict's versions came up (the block chip's popover, the sync
+// pill's list): one calm sentence beside the choice — true for the merged
+// three-column case and the diverged two-column one alike.
+export const conflicts = {
+  id: "conflicts",
+  version: 1,
+  hint: true,
+  trigger: { event: "conflict.shown" },
+  steps: [{ id: "conflicts", anchor: "merge.versions", placement: "left", title: T("Nothing was lost: both versions are kept here. Pick the one to keep, then Apply.") }],
 };
 
 export const folders = {
@@ -35,7 +61,7 @@ export const folders = {
   hint: true,
   requires: { view: "home", unfiledLibrary: true },
   trigger: {},
-  steps: [{ id: "folders", anchor: "home.listing", placement: "bottom", title: T("Right-click a paper to move it into a folder") }],
+  steps: [{ id: "folders", anchor: "home.listing", placement: "bottom", title: T("Tidy up with folders: right-click a page and choose Move to folder.") }],
 };
 
 // iPad and iPhone Safari: the installed app gets the whole screen.
@@ -45,7 +71,7 @@ export const install = {
   hint: true,
   requires: { installable: true },
   trigger: {},
-  steps: [{ id: "install", anchor: null, title: T("Add Gamma to your Home Screen: Share, then Add to Home Screen") }],
+  steps: [{ id: "install", anchor: null, title: T("Install Gamma for full screen and a Home Screen icon: tap Share, then Add to Home Screen.") }],
 };
 
-export default [mathKeys, blockRefs, quickOpen, folders, install];
+export default [mathKeys, blockRefs, quickOpen, back, conflicts, folders, install];

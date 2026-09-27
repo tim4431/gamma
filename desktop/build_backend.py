@@ -50,6 +50,8 @@ def main():
         # The SPA the server serves; backend_entry points GAMMA_STATIC_DIR here.
         "--add-data", f"{frontend_dist}{sep}frontend_dist",
         "--add-data", f"{REPO / 'backend' / 'gamma' / 'mcp_icon.png'}{sep}gamma",
+        # The seeded Welcome page (gamma/seed.py reads it next to the package).
+        "--add-data", f"{REPO / 'backend' / 'gamma' / 'onboarding' / 'welcome.md'}{sep}gamma/onboarding",
         # uvicorn resolves loop/protocol classes from strings at runtime.
         "--collect-all", "uvicorn",
         "--collect-all", "websockets",  # uvicorn loads its websocket protocol lazily

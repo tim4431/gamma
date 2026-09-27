@@ -1,4 +1,4 @@
-import { Account, wanted } from "../harness.mjs";
+import { Account, fakeAiModels, wanted } from "../harness.mjs";
 
 export async function mentionScenarios(env) {
   const { server, browser, step, openPage, assert, assertEq, assertNoProblems, until, flags, makePdf } = env;
@@ -13,6 +13,7 @@ export async function mentionScenarios(env) {
   }
   const setup = async (opts, pageId = papers[2].id) => {
     const ctx = await user.context(browser, opts);
+    await fakeAiModels(ctx);
     await ctx.addInitScript(() => localStorage.setItem("gamma-ai-login-check", "off"));
     const page = await openPage(ctx, `${server.base}/?page=${pageId}&ws=${user.ws}`);
     const requests = [];
@@ -216,6 +217,9 @@ export async function mentionScenarios(env) {
       await page.keyboard.up("Control");
       const noteChip = page.locator(".chatSelChips .isNote");
       await noteChip.waitFor({ timeout: 5000 });
+      // Chips say what they are in words; one the user attached is solid.
+      await noteChip.getByText("Selected note text", { exact: true }).waitFor();
+      assert(!await noteChip.evaluate((el) => el.classList.contains("auto")), "an attached passage keeps a solid border");
       assertEq(await page.locator(".blockEditorCm").count(), 0, "a Ctrl+drag never opens the editor");
 
       // A plain drag opens the editor and keeps selecting in the raw source:
@@ -232,10 +236,12 @@ export async function mentionScenarios(env) {
       await page.waitForSelector(".blockEditorCm .cm-content", { timeout: 5000 });
       await page.mouse.move(end.right, end.y, { steps: 5 });
       await page.mouse.up();
-      // The Cursor chip turns into a Selection chip holding just the selection.
-      const selChip = page.locator(".chatSelChips .isCursor").filter({ has: page.getByRole("img", { name: "Selection", exact: true }) });
+      // The cursor block's chip turns into a Selection chip holding just the
+      // selection, dashed: nobody attached it, it rides along with the cursor.
+      const selChip = page.locator(".chatSelChips .isCursor").filter({ hasText: "Selection in this note" });
       await selChip.waitFor({ timeout: 5000 });
-      const chipText = await selChip.textContent();
+      assert(await selChip.evaluate((el) => el.classList.contains("auto")), "the cursor's selection is marked automatic");
+      const chipText = await selChip.locator(".chatSelChipText").textContent();
       assert(chipText.includes("End.") && !chipText.includes("Noise"), `selection chip: ${chipText}`);
 
       await input.click(); // closes the editor; the selection chip stays

@@ -11,8 +11,10 @@ each account's personal workspaces on its row under **Settings → Users**.
 
 ## Personal and shared libraries
 
-Every account starts with a personal workspace and can create more. Each
-personal workspace has exactly one member, its owner. Use page share links
+Every account starts with a personal workspace, holding the Welcome page
+and its sample PDF ([onboarding.md](onboarding.md)), and can create more
+(those start empty). Each personal workspace has exactly one member, its
+owner. Use page share links
 to give others access to individual pages; personal workspaces cannot invite
 additional workspace members.
 
@@ -164,7 +166,11 @@ then the account's default. An inaccessible explicit workspace is refused;
 the server does not fall back to another library. A share token chooses its
 own workspace and confines access to one page, or to the pages filed in one
 folder ([api.md](api.md) "Shares"). Workspace roles and the share's invites
-determine whether that person can view or edit them.
+determine whether that person can view or edit them. The Share popover
+shows a shared workspace's members as one row under *Who has access* (the
+member count; for a public workspace, that anyone signed in can read too),
+since they open every page with their workspace role whatever the share
+says.
 
 Pass the workspace ID to data helpers such as `connect_pages_db` and
 `commit_ops`. Use `request.state.user` as the actor in the operation log.
@@ -219,6 +225,13 @@ library data:
 viewer role, then releases the `wsReady` startup gate. It never invents an
 owner role for an unknown workspace. Viewer layout restoration also waits
 for this scope.
+
+A page or block link that finds nothing (the page was deleted, or lives in a
+workspace this account can't reach) lands on the library with a notice under
+the topbar, "That page isn't here", offering Search the library (quick open)
+and Dismiss. The dead id is dropped from the address bar. A link clicked
+inside the app that answers 404 shows the same notice and leaves the open page
+as it was. Other failures (a 500, the network) stay in the status pill.
 
 Switching navigates to `/?ws=<id>` and reloads the app. Tabs, the current page
 and the live editing session belong to the library being left. Within a

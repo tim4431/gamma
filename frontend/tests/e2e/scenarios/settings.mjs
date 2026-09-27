@@ -1,4 +1,4 @@
-import { Account, wanted } from "../harness.mjs";
+import { Account, FAKE_AI_MODELS, fakeAiModels, wanted } from "../harness.mjs";
 import fs from "node:fs";
 import path from "node:path";
 
@@ -21,7 +21,8 @@ export async function settingsScenarios(env) {
     return { ctx, page };
   }
   async function openSettings(page) {
-    await page.getByRole("button", { name: "Account & settings", exact: true }).click();
+    // The account button — on a phone, the bottom bar's More.
+    await page.locator('[data-guide="header.account"]').click();
     await page.getByRole("button", { name: "Settings…", exact: true }).click();
     await page.getByRole("dialog", { name: "Settings", exact: true }).waitFor();
   }
@@ -33,11 +34,11 @@ export async function settingsScenarios(env) {
     await row(page, label).waitFor({ state: "visible" });
   }
 
-  await step("settings: a translation service is set up under Reading and picked as the translator", async () => {
+  await step("settings: a translation service is set up in the Translation pane and picked as the translator", async () => {
     const { ctx, page } = await setup();
     try {
       await openSettings(page);
-      await nav(page, "Reading & editing").click();
+      await nav(page, "Translation").click();
       // Microsoft's free service needs no setup: only a Test button.
       const microsoft = row(page, "Microsoft (free)");
       assert((await microsoft.innerText()).includes("No key needed"));
@@ -61,8 +62,8 @@ export async function settingsScenarios(env) {
       await row(page, "Translate with").getByRole("button", { name: "Translate with", exact: true }).click();
       await page.locator(".uiSelectMenu").getByRole("button", { name: "Google Cloud Translation" }).click();
       await until(() => page.evaluate(() => localStorage.getItem("gamma-translate-model")).then((v) => v === "engine:google"));
-      // Reasoning effort means nothing to a translation service; the speed
-      // rows sit in the same Translation section.
+      // Reasoning effort means nothing to a translation service; the Speed
+      // section keeps only the parallel requests.
       await row(page, "Parallel requests").waitFor();
       assertEq(await row(page, "Translation effort").count(), 0);
       await google.getByRole("button", { name: "Remove key", exact: true }).click();
@@ -166,19 +167,27 @@ export async function settingsScenarios(env) {
       await openSettings(page);
       await nav(page, "Connections").click();
       await page.getByRole("button", { name: "+ Add provider", exact: true }).click();
-      const dialog = page.getByRole("dialog", { name: "Add key", exact: true });
-      await dialog.getByRole("button", { name: "AI service", exact: true }).click();
-      await page.getByText("OpenAI API", { exact: true }).click();
+      const dialog = page.getByRole("dialog", { name: "Connect an AI service", exact: true });
+      await dialog.getByRole("group", { name: "AI service" }).getByRole("button", { name: "OpenAI API", exact: true }).click();
       const key = dialog.locator('input[autocomplete="new-password"]');
+      assertEq(await key.getAttribute("placeholder"), "sk-proj-…", "the provider's own key shape");
+      assertEq(await dialog.getByRole("link", { name: /^Get a key at platform\.openai\.com/ }).getAttribute("href"), "https://platform.openai.com/api-keys");
       await key.fill("old-key");
       await until(() => calls.length === 1);
       await key.fill("new-key");
       await until(() => calls.length === 2);
       await dialog.getByRole("button", { name: "100 usable" }).waitFor();
+      // The live list doubles as the key check, and its first model is picked.
+      await dialog.getByText("Key works · 100 models available", { exact: true }).waitFor();
+      await dialog.getByRole("button", { name: "Remove gpt-test-000", exact: true }).waitFor();
       const input = dialog.getByRole("combobox", { name: "Add a model" });
+      // The dialog scrolls in this short window, and a scroll closes the list:
+      // bring the box into view before opening it.
+      await input.scrollIntoViewIfNeeded();
+      await page.waitForTimeout(100);
       await input.click();
       const list = page.getByRole("listbox", { name: "Available models" });
-      assertEq(await list.getByRole("option").count(), 100);
+      assertEq(await list.getByRole("option").count(), 99);
       const bounds = await list.boundingBox();
       assert(bounds.y >= 0 && bounds.y + bounds.height <= 650, "model list fits the viewport");
       assert(await list.evaluate((el) => el.scrollHeight > el.clientHeight), "long list is scrollable");
@@ -217,23 +226,24 @@ export async function settingsScenarios(env) {
       await openSettings(page);
       await nav(page, "Connections").click();
       await page.getByRole("button", { name: "+ Add provider", exact: true }).click();
-      const dialog = page.getByRole("dialog", { name: "Add key", exact: true });
-      await dialog.getByRole("button", { name: "AI service", exact: true }).click();
-      await page.getByText("DeepSeek", { exact: true }).click();
+      // The connection is tested once saved; the test is answered here, offline.
+      await page.route("**/api/ai/providers/*/test", (route) => route.fulfill({ json: { ok: true, model: "deepseek-flash", latency_ms: 300 } }));
+      const dialog = page.getByRole("dialog", { name: "Connect an AI service", exact: true });
+      // Other opens the named services, the first one chosen.
+      await dialog.getByRole("group", { name: "AI service" }).getByRole("button", { name: "Other", exact: true }).click();
+      assert((await dialog.getByRole("button", { name: "Service", exact: true }).innerText()).includes("DeepSeek"), "the first named service");
       // A preset's endpoint is fixed: no Base URL field to fill.
       assertEq(await dialog.getByRole("textbox", { name: /Base URL/ }).count(), 0);
       await dialog.locator('input[autocomplete="new-password"]').fill("sk-deepseek-e2e");
       await dialog.getByRole("button", { name: "2 usable" }).waitFor();
       assertEq(calls.at(-1).protocol, "openai");
       assertEq(calls.at(-1).base_url, "https://api.deepseek.com");
-      const input = dialog.getByRole("combobox", { name: "Add a model" });
-      await input.click();
-      await page.getByRole("listbox", { name: "Available models" })
-        .getByRole("option", { name: "deepseek-flash", exact: true }).click();
-      await dialog.getByRole("button", { name: "Add key", exact: true }).click();
+      await dialog.getByRole("button", { name: "Remove deepseek-flash", exact: true }).waitFor();
+      await dialog.getByRole("button", { name: "Connect", exact: true }).click();
       await until(() => dialog.count().then((n) => n === 0));
       const saved = page.locator(".aiProvRow").filter({ hasText: "sk-deepseek-e2e".slice(-4) });
       await saved.locator(".aiProvName").filter({ hasText: "DeepSeek" }).waitFor();
+      await saved.getByText(/working · deepseek-flash/).waitFor(); // tested right after saving
       assertNoProblems(page);
     } finally {
       await ctx.close();
@@ -263,9 +273,8 @@ export async function settingsScenarios(env) {
       await openSettings(page);
       await nav(page, "Connections").click();
       await page.getByRole("button", { name: "+ Add provider", exact: true }).click();
-      const dialog = page.getByRole("dialog", { name: "Add key", exact: true });
-      await dialog.getByRole("button", { name: "AI service", exact: true }).click();
-      await page.getByRole("button", { name: "ChatGPT subscription", exact: true }).click();
+      const dialog = page.getByRole("dialog", { name: "Connect an AI service", exact: true });
+      await dialog.getByRole("group", { name: "AI service" }).getByRole("button", { name: "ChatGPT", exact: true }).click();
       await dialog.getByRole("button", { name: "Open ChatGPT sign-in", exact: true }).click();
       await until(() => page.evaluate(() => !!window.testSignInUrl));
       const state = await page.evaluate(() => new URL(window.testSignInUrl).searchParams.get("state"));
@@ -475,19 +484,19 @@ export async function settingsScenarios(env) {
       assertEq(await sync("Interface"), "browser");
       assertEq(await tag("Interface").innerText(), "browser");
       assertEq(await tag("Interface").locator("svg").count(), 1);
-      // one change spins only the section holding it
-      await nav(page, "Reading & editing").click();
-      await until(() => sync("Notes").then((v) => v === "saved"));
-      await row(page, "Enter key").getByRole("button", { name: "New note", exact: true }).click();
-      await until(() => sync("Notes").then((v) => v === "syncing"));
-      assertEq(await sync("Search opens as"), "saved");
-      assertEq(await sync("PDFs"), "saved");
-      await until(() => sync("Notes").then((v) => v === "saved"));
+      // one change spins only the section holding it: the Enter key sits
+      // in Keyboard › Built in, next to the keys it swaps
+      await nav(page, "Keyboard").click();
+      await until(() => sync("Built in").then((v) => v === "saved"));
+      await row(page, "Enter makes").getByRole("button", { name: "New note", exact: true }).click();
+      await until(() => sync("Built in").then((v) => v === "syncing"));
+      assertEq(await sync("Shortcuts"), "saved");
+      await until(() => sync("Built in").then((v) => v === "saved"));
       assertEq((await user.api("/api/prefs/profile")).value?.enterNewNote, true);
       await nav(page, "Appearance").click();
       assertEq(await sync("Theme"), "saved");
-      await nav(page, "Reading & editing").click();
-      await row(page, "Enter key").getByRole("button", { name: "New line", exact: true }).click();
+      await nav(page, "Keyboard").click();
+      await row(page, "Enter makes").getByRole("button", { name: "New line", exact: true }).click();
       await until(async () => (await user.api("/api/prefs/profile")).value?.enterNewNote === false);
       assertNoProblems(page);
     } finally { await ctx.close(); }
@@ -533,7 +542,7 @@ export async function settingsScenarios(env) {
       assert((await row(page, "Interface size").innerText()).includes("110%"));
       await row(page, "Interface size").getByRole("button", { name: "Reset", exact: true }).click();
       if (flags.keep) await page.screenshot({ path: `${server.dir}/settings-appearance.png`, animations: "disabled" });
-      await nav(page, "Diagnostics").click();
+      await nav(page, "Help & diagnostics").click();
       await nav(page, "Appearance").click();
       if (flags.keep) await page.screenshot({ path: `${server.dir}/settings-library.png`, animations: "disabled" });
       await page.getByRole("checkbox", { name: "Labels", exact: true }).uncheck();
@@ -639,14 +648,17 @@ export async function settingsScenarios(env) {
       assertEq(await page.locator(".promptTextarea").first().inputValue(), "Saved test prompt");
       await nav(page, "Connections").click();
       await page.getByRole("button", { name: "+ Add provider", exact: true }).click();
-      const dialog = page.getByRole("dialog", { name: "Add key", exact: true });
-      await dialog.getByRole("button", { name: "AI service", exact: true }).click();
-      await page.getByText("Custom endpoint", { exact: true }).click();
+      const dialog = page.getByRole("dialog", { name: "Connect an AI service", exact: true });
+      const services = dialog.getByRole("group", { name: "AI service" });
+      await services.getByRole("button", { name: "Other", exact: true }).click();
+      await dialog.getByRole("button", { name: "Service", exact: true }).click();
+      await page.locator(".uiSelectMenu").getByRole("button", { name: "Custom endpoint", exact: true }).click();
       await dialog.getByRole("button", { name: "API protocol", exact: true }).waitFor();
+      assertEq(await dialog.getByRole("link", { name: /^Get a key at/ }).count(), 0, "a custom endpoint has no key link");
       await dialog.getByRole("textbox", { name: /Base URL/ }).fill("https://example.invalid");
-      await dialog.getByRole("button", { name: "AI service", exact: true }).click();
-      await page.getByText("OpenAI API", { exact: true }).click();
+      await services.getByRole("button", { name: "OpenAI API", exact: true }).click();
       assertEq(await dialog.getByRole("textbox", { name: /Base URL/ }).count(), 0);
+      await dialog.getByText("More options — name, test model", { exact: true }).click();
       await dialog.getByRole("textbox", { name: /Name/ }).fill("Unsaved connection");
       await dialog.getByRole("button", { name: "Cancel", exact: true }).click();
       await dialog.getByRole("button", { name: "Keep editing", exact: true }).click();
@@ -685,11 +697,13 @@ export async function settingsScenarios(env) {
       await row(page, "Default chat model").getByRole("button").first().click();
       await page.getByText("test-model-b", { exact: true }).last().click();
       await page.getByRole("button", { name: "Close settings", exact: true }).click();
+      // The model (and reasoning effort) is the composer's chip.
+      const modelChip = page.getByRole("button", { name: "Model and reasoning effort", exact: true });
+      assert((await modelChip.innerText()).includes("test-model-b"));
+      await modelChip.click();
+      await page.locator(".uiSelectMenu").getByRole("button", { name: "test-model-a", exact: true }).click();
       await page.locator('[title^="Chat settings"]').click();
       const popover = page.locator(".chatSettingsPop");
-      assert((await popover.innerText()).includes("test-model-b"));
-      await popover.getByRole("button", { name: "Switch model" }).click();
-      await page.getByText("test-model-a", { exact: true }).last().click();
       await popover.locator('input[type="number"]').fill("42000");
       await popover.locator('input[type="number"]').press("Tab");
       await popover.getByRole("checkbox", { name: "Allow tools in all chats" }).uncheck();
@@ -712,6 +726,66 @@ export async function settingsScenarios(env) {
       assertEq(await popover.getByRole("button", { name: "Read", exact: true }).getAttribute("aria-pressed"), "true");
       assertNoProblems(page);
     } finally { await ctx.close(); }
+  });
+
+  await step("settings: the composer's mic shows only when a connection can transcribe; Full PDF only with a PDF in context", async () => {
+    for (const transcribe of [false, true]) {
+      const { ctx, page } = await setup(undefined, (c) => fakeAiModels(c, { ...FAKE_AI_MODELS, transcribe }));
+      try {
+        const chip = page.getByRole("button", { name: "Model and reasoning effort", exact: true });
+        await chip.waitFor();
+        assertEq(await page.getByRole("button", { name: "Start dictation" }).count(), transcribe ? 1 : 0, `mic with transcribe=${transcribe}`);
+        assertEq(await page.getByRole("button", { name: "Full PDF" }).count(), 0, "no PDF in the library's context");
+        await chip.click();
+        await page.locator(".uiSelectMenu").getByRole("button", { name: "high", exact: true }).click();
+        await until(async () => (await chip.innerText()).includes("model · high"), { what: "the chip names the effort" });
+        await chip.click();
+        await page.locator(".uiSelectMenu").getByRole("button", { name: "Default", exact: true }).click();
+        assertNoProblems(page);
+      } finally { await ctx.close(); }
+    }
+  });
+
+  await step("settings: with no AI connected the chat is a setup card; connecting from it comes back to the chat, ready", async () => {
+    // The model list the browser sees flips once the connection is saved
+    // (the real server stores it; its model listing and test are faked).
+    let connected = false;
+    const { ctx, page } = await setup(undefined, async (c) => {
+      await c.route("**/api/ai/models*", (route) => route.fulfill({ json: connected
+        ? { ...FAKE_AI_MODELS, default: "x:claude-e2e", models: [{ id: "x:claude-e2e", provider: "x", provider_name: "Anthropic", model: "claude-e2e" }] }
+        : { enabled: false, models: [], default: "", efforts: ["low", "medium", "high"] } }));
+      await c.route("**/api/ai/model-catalog", (route) => route.fulfill({ json: { models: ["claude-e2e", "claude-e2e-mini"] } }));
+      await c.route("**/api/ai/providers/*/test", (route) => route.fulfill({ json: { ok: true, model: "claude-e2e", latency_ms: 200 } }));
+      await c.route("**/api/ai/providers", (route) => { connected = true; return route.continue(); });
+    });
+    try {
+      const tiles = page.locator(".chatSetup").getByRole("group", { name: "Connect an AI service" });
+      await tiles.getByRole("button", { name: /^Anthropic/ }).waitFor();
+      assertEq(await tiles.getByRole("button").count(), 4, "ChatGPT, Anthropic, OpenAI API, Other service");
+      const input = page.getByRole("combobox", { name: "Message AI" });
+      assert(await input.isDisabled(), "a send could only fail");
+      assertEq(await input.getAttribute("placeholder"), "Connect an AI service to start chatting");
+      assertEq(await page.getByRole("button", { name: "Find in this conversation" }).count(), 0, "no header tools without AI");
+      assertEq(await page.getByRole("button", { name: "Start dictation" }).count(), 0, "no mic without AI");
+      await tiles.getByRole("button", { name: /^Anthropic/ }).click();
+      const dialog = page.getByRole("dialog", { name: "Connect an AI service", exact: true });
+      await dialog.waitFor();
+      assertEq(await dialog.getByRole("group", { name: "AI service" }).getByRole("button", { name: "Anthropic", exact: true }).getAttribute("aria-pressed"), "true", "the dialog is on the tile's service");
+      await dialog.locator('input[autocomplete="new-password"]').fill("sk-ant-e2e-key-4242");
+      await dialog.getByText("Key works · 2 models available", { exact: true }).waitFor();
+      await dialog.getByRole("button", { name: "Connect", exact: true }).click();
+      // Settings closes and the chat takes the question.
+      await page.getByRole("dialog", { name: "Settings", exact: true }).waitFor({ state: "detached" });
+      await page.getByText("Connected — claude-e2e ready", { exact: true }).waitFor();
+      await until(() => input.evaluate((el) => el === document.activeElement), { what: "the message box has the focus" });
+      assert(!await input.isDisabled(), "the composer is enabled");
+      assertNoProblems(page);
+    } finally {
+      await ctx.close();
+      for (const p of (await user.api("/api/ai/settings")).providers.filter((p) => p.key_hint === "…4242")) {
+        await user.api(`/api/ai/providers/${p.id}`, { method: "DELETE" });
+      }
+    }
   });
 
   await step("settings: the chat header's context ring shows the last reply's size", async () => {
@@ -751,10 +825,10 @@ export async function settingsScenarios(env) {
       await row(page, "Interface size").getByRole("button", { name: "Reset", exact: true }).click();
       await page.setViewportSize({ width: 390, height: 844 });
       await page.getByRole("button", { name: "Back", exact: true }).click();
-      await nav(page, "Reading & editing").click();
-      await row(page, "Enter key").waitFor();
-      await row(page, "Enter key").getByRole("button", { name: "New note", exact: true }).click();
-      assert((await row(page, "Enter key").innerText()).includes("Shift+Enter inserts a new line"));
+      await nav(page, "Keyboard").click();
+      await row(page, "Enter makes").waitFor();
+      await row(page, "Enter makes").getByRole("button", { name: "New note", exact: true }).click();
+      assert((await row(page, "Enter makes").innerText()).includes("Shift+Enter inserts a new line"));
       await page.getByRole("button", { name: "Back", exact: true }).click();
       await nav(page, "Appearance").click();
       for (const [folders, labels, mode] of [[false, false, "off"], [false, true, "labels"], [true, false, "folders"], [true, true, "both"]]) {
@@ -841,7 +915,7 @@ export async function settingsScenarios(env) {
       await page.reload();
       await page.waitForSelector(".folderNewBtn");
       await openSettings(page);
-      await nav(page, "Diagnostics").click();
+      await nav(page, "Help & diagnostics").click();
       await row(page, "Report a problem").getByRole("button", { name: "Report…", exact: true }).click();
       await dialog.waitFor();
       await dialog.getByText("Preview the report", { exact: true }).click();
@@ -943,19 +1017,19 @@ export async function settingsScenarios(env) {
       await openSettings(page);
       await nav(page, "Server").click();
       await row(page, "Shared AI provider").getByRole("button", { name: "+ Add provider", exact: true }).click();
-      const dialog = page.getByRole("dialog", { name: "Add shared key", exact: true });
+      // The connection is tested once saved; the test is answered here, offline.
+      await page.route("**/api/ai/providers/*/test", (route) => route.fulfill({ json: { ok: true, model: "lab-model", latency_ms: 300 } }));
+      const dialog = page.getByRole("dialog", { name: "Connect a shared AI service", exact: true });
       // A key or a ChatGPT sign-in (the next step connects one).
-      await dialog.getByRole("button", { name: "AI service", exact: true }).click();
-      await page.locator(".uiSelectMenu").getByRole("button", { name: "ChatGPT subscription", exact: true }).waitFor();
-      await page.locator(".uiSelectMenu").getByRole("button", { name: "OpenAI API", exact: true }).click();
+      const services = dialog.getByRole("group", { name: "AI service" });
+      await services.getByRole("button", { name: "ChatGPT", exact: true }).waitFor();
+      await services.getByRole("button", { name: "OpenAI API", exact: true }).click();
       await dialog.locator('input[autocomplete="new-password"]').fill("sk-shared-e2e-key-7777");
       await dialog.getByRole("button", { name: "2 usable" }).waitFor();
-      await dialog.getByRole("combobox", { name: "Add a model" }).click();
-      await page.getByRole("listbox", { name: "Available models" })
-        .getByRole("option", { name: "lab-model", exact: true }).click();
-      await dialog.getByRole("button", { name: "Add key", exact: true }).click();
+      await dialog.getByRole("button", { name: "Remove lab-model", exact: true }).waitFor();
+      await dialog.getByRole("button", { name: "Connect", exact: true }).click();
       await until(() => dialog.count().then((n) => n === 0));
-      await page.locator(".settingsPane .aiProvRow").filter({ hasText: "…7777" }).waitFor();
+      await page.locator(".settingsPane .aiProvRow").filter({ hasText: "…7777" }).getByText(/working · lab-model/).waitFor();
       assert(!await row(page, "Guests may use it").locator("input").isChecked(), "guests are off by default");
       // The shared allowance: tokens per account / guest per day, 0 = unlimited.
       const perAccount = row(page, "Allowance per account").locator("input");
@@ -1024,9 +1098,8 @@ export async function settingsScenarios(env) {
       await openSettings(page);
       await nav(page, "Server").click();
       await row(page, "Shared AI provider").getByRole("button", { name: "+ Add provider", exact: true }).click();
-      const dialog = page.getByRole("dialog", { name: "Add shared key", exact: true });
-      await dialog.getByRole("button", { name: "AI service", exact: true }).click();
-      await page.locator(".uiSelectMenu").getByRole("button", { name: "ChatGPT subscription", exact: true }).click();
+      const dialog = page.getByRole("dialog", { name: "Connect a shared AI service", exact: true });
+      await dialog.getByRole("group", { name: "AI service" }).getByRole("button", { name: "ChatGPT", exact: true }).click();
       await dialog.getByRole("button", { name: "Open ChatGPT sign-in", exact: true }).click();
       await until(() => page.evaluate(() => !!window.testSignInUrl), { what: "the sign-in page opened" });
       const state = await page.evaluate(() => new URL(window.testSignInUrl).searchParams.get("state"));
@@ -1047,14 +1120,16 @@ export async function settingsScenarios(env) {
 
   // The red dot (app/notices.js): the feed is faked so no real error or
   // release is needed; the acks go to the real server.
-  await step("settings: a notice dots the account button and Settings… lands on its pane", async () => {
+  await step("settings: a notice dots the account button, the menu says what it is, and Settings… lands on its pane", async () => {
     server.manage("set-admin", "settings-user", "on");
     const ctx = await user.context(browser);
     try {
       await ctx.addInitScript(() => localStorage.setItem("gamma-ai-login-check", "off"));
       const seen = [];
       let notices = [
-        { id: "update", fingerprint: "9.9.9", tone: "warn", pane: "server", title: "Gamma v9.9.9 is available" },
+        { id: "update", fingerprint: "9.9.9", tone: "warn", pane: "server", title: "Gamma v9.9.9 is available",
+          message: "Gamma v{version} is available — this server runs v{current}", params: { version: "9.9.9", current: "1.0.0" } },
+        // an older server sends no message: the title shows as it is
         { id: "backup-failed", fingerprint: "t1", tone: "error", pane: "backups", title: "A backup task failed" },
       ];
       await ctx.route("**/api/notices", (route) => route.fulfill({ json: { notices } }));
@@ -1069,7 +1144,14 @@ export async function settingsScenarios(env) {
       const account = page.getByRole("button", { name: "Account & settings", exact: true });
       await account.locator(".noticeDot").waitFor();
       assertEq(await account.locator(".noticeDot").getAttribute("data-tone"), "error", "the strongest notice colours the dot");
+      assertEq(await account.getAttribute("title"), "Account & settings — 2 notices", "the hover title counts them");
       await account.click();
+      // The menu names each notice, with a link to the pane that resolves it.
+      const rows = page.getByTestId("account-notices");
+      await rows.waitFor();
+      assert((await rows.textContent()).includes("Gamma v9.9.9 is available — this server runs v1.0.0"), "the message with its values");
+      assert((await rows.textContent()).includes("A backup task failed"), "a title-only notice");
+      await rows.getByRole("button", { name: /See the update/ }).waitFor();
       const item = page.getByRole("button", { name: "Settings…", exact: true });
       await item.locator(".noticeDot").waitFor();
       await item.click();
@@ -1091,6 +1173,19 @@ export async function settingsScenarios(env) {
       // so other browsers agree.
       await until(async () => (await user.api("/api/prefs/notices-seen")).value?.update === "9.9.9",
         { what: "the ack stored with the account" });
+      // A new notice arrives (the feed is polled on focus); its row's link
+      // opens its pane, as Settings… would.
+      await page.keyboard.press("Escape");
+      await page.getByRole("dialog", { name: "Settings", exact: true }).waitFor({ state: "detached" });
+      notices = [{ id: "storage", fingerprint: "90", tone: "warn", pane: "account", title: "Your storage is nearly full (95 of 100 MB used)",
+        message: "Your storage is nearly full ({used} of {quota} MB used)", params: { used: 95, quota: 100 } }];
+      await page.evaluate(() => window.dispatchEvent(new Event("focus")));
+      await account.locator(".noticeDot").waitFor();
+      await account.click();
+      await page.getByTestId("account-notices").getByRole("button", { name: /Review storage/ }).click();
+      await page.getByRole("dialog", { name: "Settings", exact: true }).waitFor();
+      assertEq(await nav(page, "Account & sync").getAttribute("aria-current"), "page", "the row's link opens its pane");
+      await until(() => seen.includes("storage:90"), { what: "visiting the pane resolves it" });
       assertNoProblems(page);
     } finally {
       await ctx.close();

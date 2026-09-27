@@ -210,18 +210,18 @@ export function FileChip({ href, text }) {
     >
       <a className="fileChipMain" href={url} target="_blank" rel="noreferrer">
         <span className={`fileChipIcon fileChipIcon-${isPdf ? "pdf" : "file"}`}>
-          {isPdf ? <PaperIcon size={13} strokeWidth={2} /> : <FileIcon size={13} strokeWidth={2} />}
+          {isPdf ? <PaperIcon size={14} /> : <FileIcon size={14} />}
         </span>
         <span className="linkChipText">{name}</span>
       </a>
       {canOpen && page ? (
         <button type="button" className="fileChipBtn fileChipOpen" title={t("Open the page \"{name}\"", { name: page.title || name })} aria-label={t("Open page")}
           onClick={openPage}>
-          <ExternalLinkIcon size={12} />
+          <ExternalLinkIcon size={14} />
         </button>
       ) : null}
       <a className="fileChipBtn fileChipDownload" href={url} download={name} title={t("Download")} aria-label={t("Download")}>
-        <DownloadIcon size={12} />
+        <DownloadIcon size={14} />
       </a>
       {menu ? (
         <ContextMenu x={menu.x} y={menu.y} onClose={close}>

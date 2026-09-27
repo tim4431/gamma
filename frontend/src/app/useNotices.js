@@ -1,6 +1,7 @@
 // The red dot's feed: polls GET /api/notices slowly (and on window focus,
 // which is when someone comes back to a tab), and records the ack when a
-// Settings pane a notice points at is visited. One instance, in App.jsx;
+// Settings pane a notice points at is visited. `list` is the notices
+// themselves (the account menu shows one row each). One instance, in App.jsx;
 // SettingsDialog gets the value as a prop. Off in share views and for
 // guests (the server answers an empty list for them anyway).
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
@@ -45,5 +46,5 @@ export function useNotices(enabled) {
     }
   }, []);
   const summary = useMemo(() => summarizeNotices(list), [list]);
-  return useMemo(() => ({ ...summary, markSeen }), [summary, markSeen]);
+  return useMemo(() => ({ ...summary, list, markSeen }), [summary, list, markSeen]);
 }

@@ -5,7 +5,7 @@ import { MenuSelect } from "../shared/ui/Menus";
 import { T, t, tn } from "../shared/i18n/i18n.js";
 import {
   PaneHead, Section, Row, Toggle, Segmented, ToggleGroup, IconChoices, UnitInput, CharSlider, approxPages,
-  Stat, Empty, QuotaMeter, LogBox, SettingsDraftContext, SettingsSyncContext, useSettingsDraft,
+  Stat, Empty, QuotaMeter, LogBox, NavAccountCard, SettingsDraftContext, SettingsSyncContext, useSettingsDraft,
 } from "./SettingsKit";
 import { SECTION_PREFS } from "./sectionPrefs.js";
 import { AppearanceSettings } from "./SettingsAppearance";
@@ -28,9 +28,9 @@ import {
   EyeIcon,
   ContrastIcon,
   DatabaseIcon,
-  CornerDownLeftIcon,
   FileTextIcon,
   FolderIcon,
+  FoldersIcon,
   GlobeIcon,
   HandIcon,
   LinkIcon,
@@ -53,15 +53,21 @@ import {
   UserIcon,
   UsersIcon,
   KeyboardIcon,
+  LanguagesIcon,
+  XIcon,
 } from "../shared/ui/Icons";
 
-// One sidebar, three groups: everyday preferences, AI, management. Every
-// pane is one click from any other; nothing opens a second dialog.
+// One rail: the account card on top (the Account & sync pane), then
+// captioned groups — everyday preferences, AI, the library's housekeeping
+// and, for admins only, Administration (it changes the server for everyone)
+// — with Help & diagnostics pinned to the bottom. Every pane is one click
+// from any other; nothing opens a second dialog.
+const ACCOUNT_NAV = ["account", T("Account & sync"), UserIcon];
 const PREFERENCE_NAV = [
   ["appearance", T("Appearance"), ContrastIcon],
   ["reading", T("Reading & editing"), BookIcon],
+  ["translation", T("Translation"), LanguagesIcon],
   ["keyboard", T("Keyboard"), KeyboardIcon],
-  ["account", T("Account & sync"), UserIcon],
 ];
 const AI_NAV = [
   ["ai", T("Connections"), SparklesIcon],
@@ -70,16 +76,18 @@ const AI_NAV = [
   ["prompts", T("Prompts"), TypeIcon],
   ["integrations", T("Integrations"), LinkIcon],
 ];
-const MANAGEMENT_NAV = [
-  ["workspaces", T("Workspaces"), UsersIcon],
+const LIBRARY_NAV = [
+  ["workspaces", T("Workspaces"), FoldersIcon],
   ["backups", T("Backups"), DatabaseIcon],
-  ["maintenance", T("Library maintenance"), HardDriveIcon],
+  ["maintenance", T("Maintenance"), HardDriveIcon],
+];
+const ADMIN_NAV = [
   ["users", T("Users"), UsersIcon],
   ["server", T("Server"), ServerIcon],
-  ["diagnostics", T("Diagnostics"), ActivityIcon],
 ];
+const HELP_NAV = ["diagnostics", T("Help & diagnostics"), BugIcon];
 
-// --- Editor: notes + search + PDF viewer -----------------------------------
+// --- Reading & editing: PDFs, handwriting, search ---------------------------
 
 // What draws on the page with the handwriting tools open: the stored
 // preference is "fingers never draw" (inkPenOnly), pictured as two tiles.
@@ -175,22 +183,6 @@ function SearchSettings({ value }) {
   );
 }
 
-function NotesSettings({ value }) {
-  return (
-    <>
-
-      <Section title={t("Notes")} scope="account" prefs={SECTION_PREFS.reading["Notes"]}>
-        <Row icon={CornerDownLeftIcon} label={t("Enter key")}
-          hint={value.enterNewNote ? t("Shift+Enter inserts a new line") : t("Shift+Enter creates a new note")}>
-          <Segmented value={value.enterNewNote ? "note" : "line"}
-            onChange={(choice) => value.setEnterNewNote(choice === "note")}
-            options={[["note", t("New note")], ["line", t("New line")]]} />
-        </Row>
-      </Section>
-    </>
-  );
-}
-
 // Kick off a full search-index rebuild (the Library pane's Index section).
 async function requestReindex(setStatus, scheduledSuffix, wakeTasks) {
   try {
@@ -198,7 +190,7 @@ async function requestReindex(setStatus, scheduledSuffix, wakeTasks) {
     if (result.scheduled || result.busy) wakeTasks?.();
     setStatus(result.busy
       ? t("Indexing is already running—see the tasks popover.") : result.scheduled
-        ? t("Re-indexing {scheduled} paper{_s} {scheduledSuffix}", { scheduled: result.scheduled, _s: result.scheduled === 1 ? "" : "s", scheduledSuffix })
+        ? tn("Re-indexing {n} paper {scheduledSuffix}", "Re-indexing {n} papers {scheduledSuffix}", result.scheduled, { scheduledSuffix })
         : t("No papers with PDFs to index."));
   } catch (err) {
     setStatus(t("Reindex failed: {message}", { message: err.message }));
@@ -213,9 +205,9 @@ function StorageCard() {
   React.useEffect(() => { apiJson(`${API}/quota`).then(setQ).catch(() => {}); }, []);
   if (!q) return null;
   return (
-    <div className="setCard">
+    <div className="setCard" data-setting={t("Uploaded files")}>
       <div className="setCardHead">
-        <span className="setIcon"><HardDriveIcon size={15} /></span>
+        <span className="setIcon"><HardDriveIcon size={16} /></span>
         <span className="settingText">
           <span className="settingLabel">{t("Uploaded files")}</span>
           <span className="settingDesc">{t("PDFs and images on the server · up to {max_upload_mb} MB each", { max_upload_mb: q.max_upload_mb })}</span>
@@ -299,7 +291,7 @@ function MetaStatusSection({ value }) {
       });
       value.setStatus(r.busy
         ? t("Indexing is already running—try again when it finishes.")
-        : t("Indexing {papers} in the background.", { papers: docIds.length === 1 ? "1 paper" : `${docIds.length} papers` }));
+        : tn("Indexing {n} paper in the background.", "Indexing {n} papers in the background.", docIds.length));
       value.wakeTasks?.();
       pollRefresh();
     } catch (err) {
@@ -373,7 +365,8 @@ function MetaStatusSection({ value }) {
       }
     }
     setBusy(null);
-    value.setStatus(t("Metadata: {ok} fetched{failed}{stopped}.", { ok, failed: failed ? `, ${failed} failed` : "", stopped: stopRef.current ? " (stopped)" : "" }));
+    value.setStatus([t("Metadata: {ok} fetched", { ok }), failed ? t("{failed} failed", { failed }) : "", stopRef.current ? t("stopped") : ""]
+      .filter(Boolean).join(" · "));
     refresh();
   }
 
@@ -401,10 +394,10 @@ function MetaStatusSection({ value }) {
   );
   const metaCell = (p) => {
     if (!p.has_meta) {
-      return p.meta_error ? cell("bad", "failed", p.meta_error) : cell("muted", "none", t("No metadata yet"));
+      return p.meta_error ? cell("bad", t("failed"), p.meta_error) : cell("muted", t("none"), t("No metadata yet"));
     }
     const src = metaSourceInfo({ source: p.meta_source, kind: p.meta_kind, unverified: p.meta_unverified });
-    if (!src) return cell("ok", "yes", t("Metadata resolved"));
+    if (!src) return cell("ok", t("yes"), t("Metadata resolved"));
     return cell(src.warn ? "bad" : p.meta_source === "ai" ? "muted" : "ok", src.short, src.hint);
   };
   // Text and index are separate columns: extraction state is only known once
@@ -419,9 +412,9 @@ function MetaStatusSection({ value }) {
   );
   const indexCell = (p) => (
     p.indexed
-      ? cell("ok", "indexed", t("In the search index"))
+      ? cell("ok", t("indexed"), t("In the search index"))
       : p.index_stale
-        ? cell("muted", "stale", t("Indexed with an older extractor version — Reindex refreshes it"))
+        ? cell("muted", t("stale"), t("Indexed with an older extractor version — Reindex refreshes it"))
         : cell("muted", "—", t("Not in the search index yet"))
   );
 
@@ -433,7 +426,7 @@ function MetaStatusSection({ value }) {
           <MenuSelect
             label={t("Show papers")} value={filterMode} onChange={setFilterMode}
             options={[
-              ["all", `All (${list.length})`],
+              ["all", t("All ({n})", { n: list.length })],
               ["attention", t("Needs attention")],
               ["unverified", t("Unverified AI ({n})", { n: unverified.length })],
               ["missing", t("Missing metadata ({n})", { n: missing.length })],
@@ -451,10 +444,10 @@ function MetaStatusSection({ value }) {
           <button className="uiBtn sm iconSq" aria-label={t("Reindex")}
             title={t("Re-extract every paper into the search index (also fills in the text column)")}
             onClick={() => { requestReindex(value.setStatus, t("— text status fills in as it runs."), value.wakeTasks); pollRefresh(); }}>
-            <RefreshIcon size={13} />
+            <RefreshIcon size={16} />
           </button>
           <button className="uiBtn sm iconSq" onClick={refresh} disabled={!!busy} title={t("Reload this table")} aria-label={t("Reload")}>
-            <ActivityIcon size={13} />
+            <ActivityIcon size={16} />
           </button>
         </span>
       }
@@ -465,11 +458,11 @@ function MetaStatusSection({ value }) {
       {list.length ? (
         <>
           <div className="setStats">
-            <Stat icon={PaperIcon} label="verified" value={counts.verified} total={list.length}
+            <Stat icon={PaperIcon} label={t("verified")} value={counts.verified} total={list.length}
               title={t("Metadata from a registry (arXiv/DOI/Crossref), edited by hand, or a non-paper document — nothing left to verify. Missing and unverified AI records count against this.")} />
             <Stat icon={FileTextIcon} label={t("text layer")} value={counts.text} total={list.length}
               title={t("Papers whose PDF yielded extractable text")} />
-            <Stat icon={SearchIcon} label="indexed" value={counts.indexed} total={list.length}
+            <Stat icon={SearchIcon} label={t("indexed")} value={counts.indexed} total={list.length}
               title={t("Papers covered by the full-text search index")} />
           </div>
           <div className="metaStatTable">
@@ -515,7 +508,7 @@ function MetaStatusSection({ value }) {
                     title={t("Extract this paper's text into the search index now")}
                     onClick={(e) => { e.preventDefault(); e.stopPropagation(); indexDocs([p.doc_id]); }}
                   >
-                    <RefreshIcon size={13} />
+                    <RefreshIcon size={14} />
                   </button>
                 ) : <span />}
               </label>
@@ -530,17 +523,17 @@ function MetaStatusSection({ value }) {
             <div className="metaStatBatchRow">
               <span className="metaStatProgress">
                 {selected.size
-                  ? `${selected.size} selected`
+                  ? t("{n} selected", { n: selected.size })
                   : needsWork.length || toIndex.length
-                    ? [missing.length && `${missing.length} missing metadata`,
-                       unverified.length && `${unverified.length} unverified (AI)`,
-                       toIndex.length && `${toIndex.length} to index`]
+                    ? [missing.length && t("{n} missing metadata", { n: missing.length }),
+                       unverified.length && t("{n} unverified (AI)", { n: unverified.length }),
+                       toIndex.length && t("{n} to index", { n: toIndex.length })]
                         .filter(Boolean).join(" · ")
                     : t("Everything is verified and indexed")}
               </span>
               <button className="uiBtn sm primary" disabled={!targets.length} onClick={() => retry(targets)}
                 title={selected.size ? t("Fetch metadata for the selected papers") : t("Fetch metadata for papers that are missing it or have an unverified AI record")}>
-                <SparklesIcon size={13} />{selected.size ? t("Fetch selected") : t("Fetch needed")}
+                <SparklesIcon size={14} />{selected.size ? t("Fetch selected") : t("Fetch needed")}
               </button>
               <button className="uiBtn sm" disabled={!shown.length} onClick={() => retry(shown)}
                 title={filterMode === "all"
@@ -550,7 +543,7 @@ function MetaStatusSection({ value }) {
               <button className="uiBtn sm" disabled={!indexTargets.length || indexing}
                 onClick={() => indexDocs(indexTargets.map((p) => p.doc_id))}
                 title={indexing ? t("Indexing is already running — progress in the tasks popover") : selected.size ? t("Extract the selected papers' text into the search index") : t("Extract only the papers the search index is missing or holds at an older extractor version")}>
-                <RefreshIcon size={13} />{indexing ? t("Indexing…") : selected.size ? t("Reindex selected") : t("Reindex needed")}
+                <RefreshIcon size={14} />{indexing ? t("Indexing…") : selected.size ? t("Reindex selected") : t("Reindex needed")}
               </button>
             </div>
           )}
@@ -792,7 +785,7 @@ function AdvancedSettings({ value }) {
     .filter((entry) => level === "all" || (level === "warn" ? !!entry.tone : entry.tone === "error"));
   return (
     <>
-      <PaneHead icon={ActivityIcon} title={t("Diagnostics")} />
+      <PaneHead icon={BugIcon} title={t("Help & diagnostics")} />
       <Section title={t("Tracing")}>
         <Toggle
           icon={BugIcon}
@@ -828,6 +821,47 @@ function AdvancedSettings({ value }) {
 }
 
 // --- the dialog -------------------------------------------------------------
+
+// The label with each query word marked where it occurs.
+function MarkedText({ text, words }) {
+  const pattern = words.map((w) => w.replace(/[.*+?^${}()|[\]\\]/g, "\\$&")).join("|");
+  if (!pattern) return text;
+  return text.split(new RegExp(`(${pattern})`, "gi")).map((part, i) => (i % 2
+    ? <mark key={i} className="settingsSearchMark">{part}</mark> : part));
+}
+
+// Search results that explain themselves: per match the pane's icon, the
+// label with the query marked, the row's hint, and "Pane › Section" on the
+// right. More than six results fall into one caption per pane (the right
+// side then names only the section).
+function SearchResults({ results, query, nav, onPick }) {
+  const words = query.trim().split(/\s+/).filter(Boolean);
+  const paneOf = (id) => nav.find(([key]) => key === id);
+  const grouped = results.length > 6;
+  const panes = grouped ? [...new Set(results.map((r) => r.pane))] : [null];
+  return panes.map((group) => {
+    const [, paneLabel] = group ? paneOf(group) : [];
+    return (
+      <React.Fragment key={group || "all"}>
+        {group ? <div className="settingsSearchGroup">{t(paneLabel)}</div> : null}
+        {results.filter((r) => !group || r.pane === group).map((r) => {
+          const [, label, Icon] = paneOf(r.pane);
+          const where = grouped ? r.section || "" : [t(label), r.section].filter(Boolean).join(" › ");
+          return (
+            <button key={`${r.pane}:${r.label}`} type="button" className="uiBtn settingsSearchResult" onClick={() => onPick(r.pane, r.target)}>
+              <span className="setIcon"><Icon size={16} /></span>
+              <span className="settingText">
+                <span className="settingLabel"><MarkedText text={r.label} words={words} /></span>
+                {r.hint ? <span className="settingDesc">{r.hint}</span> : null}
+              </span>
+              <small>{where}</small>
+            </button>
+          );
+        })}
+      </React.Fragment>
+    );
+  });
+}
 
 const SYNC_POLL_MS = 15000;
 const SYNC_SOON_MS = 6000; // the server pushes to Gamma Cloud 5 s after a change lands
@@ -865,7 +899,7 @@ function useCloudSyncStatus(open, local) {
 }
 
 export default function SettingsDialog({
-  activePane, onPaneChange, onClose, papers, notes, keyboard, library, ai, prompts,
+  activePane, onPaneChange, onClose, papers, keyboard, library, ai, prompts,
   context, search, users, workspace, backups, server, diagnostics, profileSync, notices,
 }) {
   const syncState = useCloudSyncStatus(!!activePane, profileSync);
@@ -884,7 +918,7 @@ export default function SettingsDialog({
     if (id === "server") return !!server;
     return true;
   };
-  const allNav = [...PREFERENCE_NAV, ...AI_NAV, ...MANAGEMENT_NAV];
+  const allNav = [ACCOUNT_NAV, ...PREFERENCE_NAV, ...AI_NAV, ...LIBRARY_NAV, ...ADMIN_NAV, HELP_NAV];
   const allowed = allNav.filter(([id]) => available(id));
   const requested = resolveSettingsPane(activePane);
   const pane = allowed.some(([id]) => id === requested) ? requested : "appearance";
@@ -899,7 +933,7 @@ export default function SettingsDialog({
   });
   React.useEffect(() => {
     if (!activePane) { setQuery(""); setPending(null); setMobileIndex(false); return; }
-    const legacyTarget = { notes: t("Enter key"), search: t("On the home page"), viewer: t("Imported annotations"),
+    const legacyTarget = { notes: t("Enter makes"), search: t("On the home page"), viewer: t("Imported annotations"),
       context: t("Single paper") }[activePane];
     if (legacyTarget) setJump({ label: legacyTarget });
   }, [activePane]);
@@ -916,6 +950,8 @@ export default function SettingsDialog({
     target.focus({ preventScroll: true });
     target.scrollIntoView({ block: "center", behavior: "instant" });
   }, [jump, pane, query, activePane]);
+  // The account card's storage line: read it again whenever the dialog opens.
+  React.useEffect(() => { if (activePane) users?.refreshQuota?.(); }, [!!activePane]); // eslint-disable-line react-hooks/exhaustive-deps
   // Keep keyboard navigation inside the settings surface; Escape uses the same
   // draft guard as Close and clicking the backdrop.
   React.useEffect(() => {
@@ -929,12 +965,21 @@ export default function SettingsDialog({
 
   const aiValue = { ...ai, aiInfo: prompts.aiInfo };
   const paperValue = { ...papers, chatModelName: (ai.aiModels || []).find((m) => m.id === ai.chatModel)?.model };
+  const dot = (id) => (notices?.panes?.[id]
+    ? <i className={`noticeDot inline ${dotTone(notices.panes[id])}`} data-tone={notices.panes[id]} aria-hidden="true" /> : null);
   const navButton = ([id, label, Icon]) => <button key={id} type="button"
     className={`settingsNavBtn ${pane === id && !query ? "active" : ""}`}
     aria-current={pane === id && !query ? "page" : undefined} onClick={() => navigate(id)}>
-    <Icon size={17} /><span>{t(label)}</span>
-    {notices?.panes?.[id] ? <i className={`noticeDot inline ${dotTone(notices.panes[id])}`} data-tone={notices.panes[id]} aria-hidden="true" /> : null}
+    <Icon size={16} /><span>{t(label)}</span>
+    {dot(id)}
   </button>;
+  const navGroup = (caption, items, tag) => {
+    const shown = items.filter(([id]) => available(id));
+    return shown.length ? <React.Fragment key={caption}>
+      <div className="settingsNavGroup">{caption}{tag}</div>
+      {shown.map(navButton)}
+    </React.Fragment> : null;
+  };
   return (
     <SettingsDraftContext.Provider value={drafts}>
       <SettingsSyncContext.Provider value={syncState}>
@@ -973,34 +1018,41 @@ export default function SettingsDialog({
                 onKeyDown={(event) => {
                   // Enter opens the first match; the arrows walk the list (the modal's onKeyDown).
                   if (event.key === "Enter" && query.trim() && results.length && !event.nativeEvent.isComposing) {
-                    event.preventDefault(); navigate(results[0].pane, results[0].label);
+                    event.preventDefault(); navigate(results[0].pane, results[0].target);
                   }
                 }} />
-              {query ? <button className="uiClose uiCloseSm" aria-label={t("Clear search")} onClick={() => setQuery("")}>×</button> : null}
+              {query ? <button className="uiClose uiCloseSm" aria-label={t("Clear search")} onClick={() => setQuery("")}><XIcon size={14} /></button> : null}
             </div>
-            <button className="uiClose uiCloseLg" onClick={() => guard(onClose)} aria-label={t("Close settings")}>×</button>
+            <button className="uiClose uiCloseLg" onClick={() => guard(onClose)} aria-label={t("Close settings")}><XIcon size={16} /></button>
           </div>
           <div className="settingsBody" inert={pending ? "" : undefined}>
             <nav className="settingsSidebar" aria-label={t("Settings categories")}>
-              {PREFERENCE_NAV.filter(([id]) => available(id)).map(navButton)}
-              <div className="settingsNavGroup">{t("AI")}</div>
-              {AI_NAV.filter(([id]) => available(id)).map(navButton)}
-              <div className="settingsNavGroup">{t("Manage")}</div>
-              {MANAGEMENT_NAV.filter(([id]) => available(id)).map(navButton)}
+              {available("account") ? (
+                <NavAccountCard name={users.me} usedBytes={users.quotaInfo?.used_bytes} quotaMb={users.quotaInfo?.quota_mb}
+                  label={t(ACCOUNT_NAV[1])} active={pane === "account" && !query} dot={dot("account")}
+                  onClick={() => navigate("account")} />
+              ) : null}
+              {navGroup(t("Preferences"), PREFERENCE_NAV)}
+              {navGroup(t("AI"), AI_NAV)}
+              {navGroup(t("Library"), LIBRARY_NAV)}
+              {navGroup(t("Administration"), ADMIN_NAV, <span className="uiTag admin">{t("admin")}</span>)}
+              <div className="settingsNavBottom">{navButton(HELP_NAV)}</div>
             </nav>
             <main className="settingsPane" ref={paneRef} key={pane}>
               {query.trim() ? <>
                 <PaneHead icon={SearchIcon} title={t("Search settings")}>{tn("{n} matching setting", "{n} matching settings", results.length)}</PaneHead>
-                {results.length ? results.map(({ pane: id, label }) => <button key={`${id}:${label}`} className="uiBtn settingsSearchResult"
-                  onClick={() => navigate(id, label)}><span>{label}</span><small>{t(allNav.find(([key]) => key === id)?.[1] || "")}</small></button>)
+                {results.length ? <SearchResults results={results} query={query} nav={allNav} onPick={navigate} />
                   : <Empty icon={SearchIcon}>{t('No settings found. Try "model", "PDF", or "storage".')}</Empty>}
               </> : <>
                 {pane === "appearance" ? <AppearanceSettings value={papers} diagnostics={diagnostics} /> : null}
                 {pane === "reading" ? <>
                   <PaneHead icon={BookIcon} title={t("Reading & editing")} />
                   <ViewerSettings value={papers} />
+                  <SearchSettings value={search} />
+                </> : null}
+                {pane === "translation" ? <>
+                  <PaneHead icon={LanguagesIcon} title={t("Translation")} />
                   <TranslationSettings value={paperValue} />
-                  <NotesSettings value={notes} /><SearchSettings value={search} />
                 </> : null}
                 {pane === "keyboard" && keyboard ? <KeyboardSettings value={keyboard} /> : null}
                 {pane === "maintenance" ? <MaintenanceSettings value={library} /> : null}

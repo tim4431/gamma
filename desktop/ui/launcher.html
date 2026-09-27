@@ -3,6 +3,7 @@
 <head>
 <meta charset="utf-8" />
 <title>Gamma — Servers</title>
+<link rel="stylesheet" href="tokens.css" />
 <link rel="stylesheet" href="theme.css" />
 <style>
   html, body { background: var(--bg-page); height: 100%; }
@@ -15,7 +16,7 @@
   .sectionTitle { display: flex; align-items: center; gap: 8px; color: var(--text-muted); font-size: 11px; font-weight: 600; text-transform: uppercase; letter-spacing: 0.05em; margin: 22px 0 8px; }
   .cards { display: flex; flex-direction: column; gap: 8px; }
   .card {
-    background: var(--bg-card); border: 1px solid var(--border); border-radius: var(--radius-surface);
+    background: var(--bg-card); border: 1px solid var(--border); border-radius: var(--radius-lg);
     padding: 12px 14px; display: flex; align-items: center; gap: 12px;
   }
   .card:hover { border-color: var(--border-light); }
@@ -36,31 +37,31 @@
 
   /* A server that would not open: what happened, in its own words underneath,
      and the one thing that would fix it. Raw output stays folded away. */
-  .fail { margin-top: 16px; border: 1px solid var(--border); border-left: 3px solid var(--danger); border-radius: var(--radius-surface); background: var(--bg-card); padding: 12px 14px; }
+  .fail { margin-top: 16px; border: 1px solid var(--border); border-left: 3px solid var(--danger); border-radius: var(--radius-lg); background: var(--bg-card); padding: 12px 14px; }
   .fail .fHead { display: flex; align-items: flex-start; gap: 8px; }
   .fail .fHead svg { width: 16px; height: 16px; color: var(--danger); flex-shrink: 0; margin-top: 1px; }
   .fail .fTitle { font-size: 13px; font-weight: 600; flex: 1; }
   .fail .fHint { color: var(--text-muted); font-size: 12px; margin-top: 6px; }
-  .fail .fDetail, .fail details pre { font-family: ui-monospace, Consolas, Menlo, monospace; line-height: 1.5; background: var(--bg-input); border: 1px solid var(--border); border-radius: var(--radius-control); -webkit-user-select: text; user-select: text; }
+  .fail .fDetail, .fail details pre { font-family: ui-monospace, Consolas, Menlo, monospace; line-height: 1.5; background: var(--bg-input); border: 1px solid var(--border); border-radius: var(--radius-md); -webkit-user-select: text; user-select: text; }
   .fail .fDetail { font-size: 11.5px; color: var(--text-secondary); padding: 6px 8px; margin-top: 8px; white-space: pre-wrap; }
   .fail .fActs { display: flex; gap: 6px; margin-top: 10px; flex-wrap: wrap; }
   .fail details { margin: 10px 0 0; }
   .fail details pre { margin: 6px 0 0; max-height: 220px; overflow: auto; font-size: 11px; color: var(--text-muted); padding: 8px 10px; }
-  .empty { color: var(--text-muted); text-align: center; padding: 30px 16px; border: 1px dashed var(--border-light); border-radius: var(--radius-surface); }
+  .empty { color: var(--text-muted); text-align: center; padding: 30px 16px; border: 1px dashed var(--border-light); border-radius: var(--radius-lg); }
   .empty b { color: var(--text-secondary); }
 
   dialog {
     background: var(--bg-elevated); color: var(--text-primary); border: 1px solid var(--border);
-    border-radius: var(--radius-surface); box-shadow: var(--shadow-surface); padding: 20px; width: 400px; max-width: 90vw;
+    border-radius: var(--radius-lg); box-shadow: var(--shadow-3); padding: 20px; width: 400px; max-width: 90vw;
   }
   dialog::backdrop { background: rgba(0, 0, 0, 0.4); }
   dialog h3 { margin: 0 0 12px; font-size: 14px; }
   dialog p { margin: 0 0 8px; color: var(--text-muted); font-size: 12px; }
   dialog label { display: block; color: var(--text-muted); font-size: 11.5px; margin: 10px 0 4px; }
   dialog .row { display: flex; justify-content: flex-end; gap: 8px; margin-top: 18px; }
-  .creds { font: 12px/1.7 ui-monospace, Consolas, Menlo, monospace; background: var(--bg-input); border: 1px solid var(--border); border-radius: var(--radius-control); padding: 8px 10px; -webkit-user-select: text; user-select: text; white-space: pre; }
+  .creds { font: 12px/1.7 ui-monospace, Consolas, Menlo, monospace; background: var(--bg-input); border: 1px solid var(--border); border-radius: var(--radius-md); padding: 8px 10px; -webkit-user-select: text; user-select: text; white-space: pre; }
 
-  .settings { background: var(--bg-card); border: 1px solid var(--border); border-radius: var(--radius-surface); padding: 12px 14px; }
+  .settings { background: var(--bg-card); border: 1px solid var(--border); border-radius: var(--radius-lg); padding: 12px 14px; }
   .setRow { display: flex; align-items: center; justify-content: space-between; gap: 12px; padding: 6px 0; }
   .setRow .l { font-size: 13px; }
   .setRow .d { color: var(--text-muted); font-size: 11.5px; margin-top: 1px; }
@@ -228,6 +229,15 @@
 </dialog>
 
 <script>
+  // Gamma's theme on the chrome: tokens.css derives each theme's colours
+  // with its scheme's recipe, so the scheme goes beside it (DARK_THEMES in
+  // Gamma's app/prefDefs.js; none = dark, like Gamma's :root).
+  const DARK_THEMES = ['dark', 'gamma-dark'];
+  function paintTheme(theme) {
+    const t = theme || 'dark';
+    document.documentElement.setAttribute('data-scheme', DARK_THEMES.includes(t) ? 'dark' : 'light');
+    document.documentElement.setAttribute('data-theme', t);
+  }
   const ICONS = {
     local: '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><ellipse cx="12" cy="5" rx="8" ry="3"/><path d="M4 5v6c0 1.66 3.58 3 8 3s8-1.34 8-3V5"/><path d="M4 11v6c0 1.66 3.58 3 8 3s8-1.34 8-3v-6"/></svg>',
     remote: '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="9"/><path d="M3 12h18"/><path d="M12 3a14 14 0 0 1 0 18a14 14 0 0 1 0-18"/></svg>',
@@ -264,7 +274,7 @@
 
   async function refresh() {
     state = await gammaShell.list();
-    document.documentElement.setAttribute('data-theme', state.theme || 'dark');
+    paintTheme(state.theme);
     const cards = $('cards');
     cards.innerHTML = '';
     if (!state.servers.length) {

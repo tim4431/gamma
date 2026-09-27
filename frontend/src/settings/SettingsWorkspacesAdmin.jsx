@@ -8,10 +8,10 @@
 import React from "react";
 import { API, apiJson, fmtBytes } from "../shared/lib/utils";
 import { MenuSelect } from "../shared/ui/Menus";
-import { Section, SubDialog, Field, Empty, UnitInput, AccountPicker } from "./SettingsKit";
+import { Section, SubDialog, Field, DialogButtons, Empty, UnitInput, AccountPicker } from "./SettingsKit";
 import { ManageWorkspaceDialog, useAccounts, ACCESS_OPTIONS, PUBLIC_ROLE_OPTIONS } from "./SettingsWorkspace";
 import { GlobeIcon, PenIcon, PlusIcon, UsersIcon } from "../shared/ui/Icons";
-import { t } from "../shared/i18n/i18n.js";
+import { t, tn } from "../shared/i18n/i18n.js";
 
 export function WorkspacesAdmin({ value }) {
   const { me, workspaces: mine, switchWorkspace, refreshSession, setStatus, confirm, closeSettings } = value;
@@ -35,7 +35,7 @@ export function WorkspacesAdmin({ value }) {
     return (
       <div key={w.id} className="aiProvRow">
         <span className={`aiProvAvatar ${isPublic ? "active" : ""}`}>
-          {isPublic ? <GlobeIcon size={15} /> : <UsersIcon size={15} />}
+          {isPublic ? <GlobeIcon size={16} /> : <UsersIcon size={16} />}
         </span>
         <span className="aiProvMeta">
           <span className="aiProvName">
@@ -43,7 +43,7 @@ export function WorkspacesAdmin({ value }) {
             {isPublic ? <span className="uiTag">{w.public_role === "editor" ? t("public · everyone edits") : t("public · everyone views")}</span> : null}
           </span>
           <span className="aiProvDesc">
-            {`${owners.length ? `owner ${owners.join(", ")}` : "no owner"} · ${w.members.length} member${w.members.length === 1 ? "" : "s"}`}
+            {`${owners.length ? t("owner {names}", { names: owners.join(", ") }) : t("no owner")} · ${tn("{n} member", "{n} members", w.members.length)}`}
             {` · ${fmtBytes(w.used_bytes)}`}
             {w.quota_mb ? t(" of {quota_mb} MB", { quota_mb: w.quota_mb }) : ""}
           </span>
@@ -53,7 +53,7 @@ export function WorkspacesAdmin({ value }) {
             <button className="uiBtn sm" onClick={() => { closeSettings?.(); switchWorkspace(w.id); }}>{t("Open")}</button>
           ) : null}
           <button className="uiBtn sm" onClick={() => setManage(w.id)} title={t("Manage {name}", { name: w.name })}>
-            <PenIcon size={13} /> {t("Manage")}
+            <PenIcon size={14} /> {t("Manage")}
           </button>
         </span>
       </div>
@@ -70,7 +70,7 @@ export function WorkspacesAdmin({ value }) {
             title={t("Shared workspaces")}
             action={(
               <button className="uiBtn sm" onClick={() => setCreating(true)}>
-                <PlusIcon size={13} /> {t("New workspace")}
+                <PlusIcon size={14} /> {t("New workspace")}
               </button>
             )}
           >
@@ -158,12 +158,12 @@ function NewWorkspaceDialog({ me, accounts, setStatus, onCreated, onClose }) {
           <UnitInput unit="MB" min={0} placeholder="unlimited" value={form.quota_mb} onChange={(quota_mb) => set({ quota_mb })} />
         </Field>
         {error ? <div className="settingsPaneHint aiKeysError">{error}</div> : null}
-        <div className="reportModalBtns">
+        <DialogButtons footnote={form.name.trim() && form.owner ? null : t("Give it a name and an owner to continue.")}>
           <button className="uiBtn" onClick={onClose}>{t("Cancel")}</button>
           <button className="uiBtn primary" disabled={busy || !form.name.trim() || !form.owner} onClick={submit}>
             {busy ? t("Creating…") : t("Create")}
           </button>
-        </div>
+        </DialogButtons>
       </div>
     </SubDialog>
   );

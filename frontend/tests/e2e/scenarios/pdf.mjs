@@ -3,6 +3,7 @@
 // row + persisted position), the library card, and the search panel hitting
 // PDF text on another page.
 import { tree, same } from "./notes.mjs";
+import { fakeAiModels } from "../harness.mjs";
 
 // Select `needle` inside one text-layer span of `pageNo` and release the
 // mouse the way the viewer listens for it (document-level mouseup).
@@ -39,6 +40,7 @@ export async function pdfScenarios({ server, browser, alice, makePdf, step, unti
     const created = await account.api(`/api/blocks/by-doc/${docId}`, { method: "POST", body: { default_title: "Rydberg paper", source_url: up.source_url } });
     pageId = created.id;
     ctx = await account.context(browser);
+    await fakeAiModels(ctx); // the chat steps below send (their /api/ai/chat is faked)
     page = await openPage(ctx, `${server.base}/?page=${pageId}&ws=${account.ws}`);
     await waitForPdf(page, 1);
     await until(async () => (await page.$$("[data-page]")).length >= 2, { what: "two page wrappers" });
@@ -109,6 +111,25 @@ export async function pdfScenarios({ server, browser, alice, makePdf, step, unti
     assertNoProblems(page);
   });
 
+  await step("pdf: flipped pages draw palette highlights in a dark-tuned set; other colours keep screening", async () => {
+    const mark = page.locator('[data-page="1"] div[data-hl-id]').first();
+    const look = () => mark.evaluate((el) => { const s = getComputedStyle(el); return `${s.backgroundColor} ${s.mixBlendMode}`; });
+    assertEq(await mark.getAttribute("data-hl-color"), "0", "the first palette colour is tagged by its index");
+    assert((await look()).endsWith(" multiply"), "a light page multiplies");
+    const flip = (on) => page.locator(".pdfViewer").evaluate((el, on) => el.classList.toggle("pdfDark", on), on);
+    await flip(true);
+    try {
+      assertEq(await look(), "rgba(250, 204, 21, 0.3) normal", "the dark-tuned yellow, not screened");
+      assertEq(await page.locator(".pdfNoteBadge").first().evaluate((el) => getComputedStyle(el).backgroundColor), "rgb(42, 42, 42)", "a dark note badge");
+      // A colour from another app has no palette index and keeps the screen blend.
+      await mark.evaluate((el) => { el.removeAttribute("data-hl-color"); el.style.setProperty("--hl", "rgba(255, 0, 0, 0.4)"); });
+      assertEq(await look(), "rgba(255, 0, 0, 0.4) screen");
+    } finally { await flip(false); }
+    await page.reload();
+    await waitForPdf(page);
+    assertNoProblems(page);
+  });
+
   await step("pdf: interface scale keeps note badges anchored and Tours consistent", async () => {
     // Sizes are compared with interface size 100% (measured first), not pinned in pixels.
     let base;
@@ -138,7 +159,7 @@ export async function pdfScenarios({ server, browser, alice, makePdf, step, unti
       }, { what: `badge keeps its place and size when the PDF zooms (interface scale ${scale})` });
       await page.getByRole("button", { name: "Account & settings", exact: true }).click();
       const settings = page.getByRole("button", { name: "Settings…", exact: true });
-      const tours = page.locator('summary[data-guide="account.tour"]');
+      const tours = page.locator('[data-guide="account.tour"]');
       const settingsBox = await settings.boundingBox();
       const toursBox = await tours.boundingBox();
       assert(Math.abs(settingsBox.height - toursBox.height) < 1, "Tours matches adjacent menu controls");
@@ -327,7 +348,9 @@ export async function pdfScenarios({ server, browser, alice, makePdf, step, unti
         window.getSelection().addRange(range);
         span.dispatchEvent(new MouseEvent("mouseup", { bubbles: true }));
       });
-      await page.locator(".chatSelChips").getByRole("img", { name: "Selection", exact: true }).waitFor();
+      await page.locator(".chatSelChips").getByText("PDF passage", { exact: true }).waitFor();
+      await page.locator(".chatSelChips").getByText("· p. 2", { exact: true }).waitFor();
+      assertEq(await page.getByRole("button", { name: "Full PDF" }).count(), 1, "a PDF in context offers the Full PDF switch");
       await page.locator("textarea.chatInputArea").fill("What does this say?");
       await page.getByRole("button", { name: "Send", exact: true }).click();
       await until(() => requests.length === 1, { what: "the chat request" });

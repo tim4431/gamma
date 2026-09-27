@@ -37,12 +37,15 @@ App.jsx decomposition.
 |---|---|
 | `docs/assets/branding/` | Generated Gamma PDF logo, hero SVG/PNG pairs and README illustrations; edit sources in `design/brand/` and `tools/branding/` |
 | `docs/assets/demos/` | README demos as small animated WebP images |
-| `docs/assets/screenshots/` | Documentation stills; guest welcome blocks reference their GitHub raw URLs |
+| `docs/assets/screenshots/` | Documentation stills |
+| `backend/gamma/onboarding/welcome.md` | The seeded Welcome page ([onboarding.md](onboarding.md)); Docker copies it with `gamma/`, the desktop freeze adds it with `--add-data` |
 | `frontend/public/media/icons/` | Favicon, served at `/media/icons/favicon.svg` |
+| `frontend/public/media/gamma-scene-light.svg` | The demo server's landing picture: a generated crop of the hero composition |
 | `desktop/assets/icon.png` | Electron window and installer icon |
 | `desktop/assets/entitlements.mac.plist` | macOS signing entitlements |
 | `desktop/assets/appx/` | Microsoft Store package tiles, splash screens, and scale variants |
 | `desktop/assets/store/` | Store listing artwork and listing text |
+| `desktop/ui/tokens.css`, `desktop/ui/fonts/` | The shell's committed copies of the design tokens and the Latin Inter file; `npm run desktop-tokens` in `frontend/` refreshes them ([ui-design.md](ui-design.md#the-desktop-shell)) |
 | `extension/assets/icons/` | Connector toolbar, manifest, and notification icons |
 
 Keep generated assets with their consumer so the frontend build and the extension
@@ -91,8 +94,5 @@ The recording instructions and helpers live in [tools/readme-media/](../../tools
 Published assets live in `docs/assets/demos/` and `docs/assets/screenshots/`;
 raw captures, workspace exports and QA frames stay in ignored `artifacts/readme-media/`.
 Keep the README's
-relative image links and `backend/gamma/seed.py` screenshot URLs in sync when
-renaming media. New guest pages use the seed URLs; existing guest pages pick
-up changes on their next reset. Existing user-authored links are not rewritten.
-GitHub raw URLs reflect the published repository, so moved screenshots become
-available there once the asset changes reach `main`.
+relative image links in sync when renaming media. Existing user-authored links
+are not rewritten.

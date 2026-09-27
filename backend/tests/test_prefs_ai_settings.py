@@ -1,6 +1,7 @@
 """Per-user prefs KV store (tab sync) + GUI-configured AI provider keys."""
 
 import io
+import json
 import zipfile
 
 import pytest
@@ -146,6 +147,8 @@ def test_added_provider_is_masked_and_enables_ai(alice):
     assert models["default"] == f"{p['id']}:claude-test-model"
     assert [m["model"] for m in models["models"]] == ["claude-test-model", "claude-other"]
     assert models["models"][0]["provider_name"] == "My DeepSeek"
+    # An Anthropic key can't take dictation: the chat shows no mic.
+    assert models["transcribe"] is False
 
     # ...and the same masked view comes back on GET
     g = alice.get("/api/ai/settings").json()
@@ -174,6 +177,8 @@ def test_second_provider_adds_its_models(alice):
     # The openai entry has no models picked — it offers none (there is no
     # built-in default model), and the Test button says so instead of failing.
     assert [m["model"] for m in models] == ["claude-solo"]
+    # ...but an OpenAI key transcribes with no models picked: the mic shows.
+    assert alice.get("/api/ai/models").json()["transcribe"] is True
     pid = r.json()["providers"][1]["id"]
     body = alice.post(f"/api/ai/providers/{pid}/test").json()
     assert body["ok"] is False and "no model" in body["error"]
@@ -188,6 +193,13 @@ def test_deepseek_service_preset(alice, monkeypatch):
     g = alice.get("/api/ai/settings").json()
     svc = next(s for s in g["services"] if s["id"] == "deepseek")
     assert svc["protocol"] == "openai" and svc["base_url"] == "https://api.deepseek.com"
+    # The connect form's key field: a placeholder and where to make a key,
+    # from the adapter (or the service preset), never from UI code.
+    assert svc["key_url"].startswith("https://") and svc["key_placeholder"]
+    protos = {p["id"]: p for p in g["protocols"]}
+    assert protos["anthropic"]["key_url"].startswith("https://") and protos["anthropic"]["key_placeholder"]
+    assert protos["openai"]["key_url"].startswith("https://")
+    assert protos["chatgpt"]["key_url"] == "" and protos["chatgpt"]["key_placeholder"] == ""
 
     r = alice.post("/api/ai/providers", json={
         "protocol": "openai", "api_key": "sk-deepseek-test-1234",
@@ -354,6 +366,14 @@ def test_ai_health_ping_checks_credential_for_free(alice, monkeypatch):
     body = alice.post("/api/ai/health", json={"provider_id": pid, "mode": "ping"}).json()
     assert body["ok"] is False and body["auth"] is True
     assert "invalid x-api-key" in body["error"]
+    # The chat's warning strip words it like the chat's error card does.
+    assert body["kind"] == "auth" and body["provider_auth"] == "key"
+
+    def not_an_api(req):  # a gateway answering with its HTML page
+        raise json.JSONDecodeError("Expecting value", "<html>", 0)
+    monkeypatch.setattr(ai_catalog, "fetch_json", not_an_api)
+    body = alice.post("/api/ai/health", json={"provider_id": pid, "mode": "ping"}).json()
+    assert body["ok"] is False and body["kind"] == "bad_endpoint"
 
     def no_listing(req):
         raise _http_error(404, "")

@@ -13,7 +13,7 @@ from concurrent.futures import ThreadPoolExecutor
 from urllib.request import urlopen
 
 from fastapi import APIRouter, File, Form, HTTPException, Request, UploadFile
-from fastapi.responses import StreamingResponse
+from fastapi.responses import JSONResponse, StreamingResponse
 from pydantic import BaseModel, Field, field_validator
 
 from .. import ai_catalog, ai_protocols, ai_usage, chatgpt_oauth, translate_engines
@@ -23,6 +23,7 @@ from ..ai_client import (
     add_usage as _add_usage,
     call_ai as _call_ai,
     check_allowance as _check_allowance,
+    failure_kind,
     open_ai as _open_ai,
     partial_json_object as _partial_json_object,
     partial_json_strings as _partial_json_strings,
@@ -183,6 +184,41 @@ def _failure(error: Exception, what: str = "AI call failed") -> str:
     return error.detail if isinstance(error, AllowanceExhausted) else f"{what}: {error}"
 
 
+def _failure_info(error: Exception, rt: dict | None = None, entry: dict | None = None) -> dict:
+    """What the chat shows a failure as, beside the raw ``detail`` string:
+    its ``kind`` (ai_client.failure_kind), the upstream ``status`` when there
+    was one, and the connection it went through (``provider_id``,
+    ``provider_name``, ``provider_auth`` = "key" | "oauth") so the error card
+    can name it and open its settings."""
+    info = {"kind": failure_kind(error)}
+    if isinstance(error, UpstreamError):
+        info["status"] = error.status
+    conf = (rt or {}).get("providers", {}).get((entry or {}).get("provider"))
+    if conf:
+        info.update(provider_id=entry["provider"], provider_name=conf.get("name") or "",
+                    provider_auth=ai_protocols.of(conf).auth)
+    return info
+
+
+# The arguments a {"step"} line repeats: the short ones a "now running"
+# label needs (never a note's content).
+_STEP_ARGS = ("page_id", "block_id", "query", "title", "folder", "label", "title_contains",
+              "source", "pdf_page", "mode")
+
+
+def _step_event(name: str, call: dict) -> dict:
+    """The {"step"} line announcing one tool call before it runs."""
+    args = call.get("arguments") if isinstance(call.get("arguments"), dict) else {}
+    return {"id": call.get("id") or "", "tool": name,
+            "args": {k: str(args[k])[:120] for k in _STEP_ARGS if args.get(k) not in (None, "")}}
+
+
+def _failure_response(status: int, detail: str, info: dict) -> JSONResponse:
+    """An HTTP error whose body carries the failure's kind next to its
+    ``detail`` (still a plain string, as every other error's)."""
+    return JSONResponse(status_code=status, content={"detail": detail, **info})
+
+
 def _search_index_status(ws: str, doc_id: str) -> dict:
     """Whether the search index covers this doc — same rules as
     /api/metadata/status (ver mismatch = stale, re-indexed lazily)."""
@@ -304,6 +340,10 @@ def ai_models(request: Request):
         # the translation picker offers them next to the models.
         "translate_engines": translate_engines.configured(user),
         "efforts": ["low", "medium", "high"],  # offered in the UI; omitted unless picked
+        # Whether some connection takes dictation (Protocol.transcription —
+        # an OpenAI-protocol key; the chat's mic shows only then). The same
+        # entries /ai/transcribe picks from, models picked or not.
+        "transcribe": any(ai_protocols.of(conf).transcription(conf) for conf in rt["providers"].values()),
         "default_prompt": _SYSTEM_PROMPT,   # shown in the prompt editor
         "metadata_prompt": METADATA_PROMPT,  # AI metadata-extraction fallback
         "cite_prompt": CITE_PROMPT,          # PPT-style citation generator
@@ -430,7 +470,7 @@ async def ai_provider_delete(provider_id: str, request: Request):
 def _no_credential(entry: dict) -> dict:
     """The in-body failure for an entry ``ai_runtime`` dropped: no key, or a
     ChatGPT sign-in whose refresh failed."""
-    return {"ok": False, "auth": True,
+    return {"ok": False, "auth": True, "kind": "auth",
             "error": "ChatGPT sign-in expired or disconnected — sign in again"
             if _is_oauth_protocol(entry.get("protocol"))
             else "entry has no usable credential — set an API key or sign in again"}
@@ -448,9 +488,10 @@ def _probe_model(entry: dict, fallback: str = "") -> str:
 def _probe_entry(user: str, entry: dict, fallback_model: str = "", retry: bool = True) -> dict:
     """One tiny live completion through a saved entry — answers "does this
     credential still work" without waiting for a real chat to 502. The result
-    is in-body ({ok, model, latency_ms} / {ok: False, error, auth}); `auth`
-    marks a broken credential (expired sign-in / rejected key) so the UI can
-    say "reconnect" instead of dumping the upstream body."""
+    is in-body ({ok, model, latency_ms} / {ok: False, error, auth, kind});
+    `auth` marks a broken credential (expired sign-in / rejected key) so the
+    UI can say "reconnect" instead of dumping the upstream body, and `kind`
+    is ai_client.failure_kind (absent when no model is picked)."""
     provider_id = entry.get("id")
     # An explicit probe is an explicit retry: drop the refresh backoff so a
     # ChatGPT entry re-attempts its token refresh now instead of reusing a
@@ -473,7 +514,7 @@ def _probe_entry(user: str, entry: dict, fallback_model: str = "", retry: bool =
                  on_usage=ai_usage.recorder("test", probe_entry, rt))
     except Exception as e:
         auth = isinstance(e, UpstreamError) and e.status in (401, 403)
-        return {"ok": False, "model": model, "error": str(e), "auth": auth}
+        return {"ok": False, "model": model, "error": str(e), "auth": auth, "kind": failure_kind(e)}
     return {"ok": True, "model": model, "latency_ms": int((time.time() - started) * 1000)}
 
 
@@ -634,7 +675,8 @@ def ai_health(payload: AIHealthRequest, request: Request):
     if not entry:
         return {"configured": False, "ok": True}
     result = {"configured": True, "provider_id": entry.get("id"), "mode": payload.mode,
-              "provider_name": provider_label(entry)}
+              "provider_name": provider_label(entry),
+              "provider_auth": "oauth" if _is_oauth_protocol(entry.get("protocol")) else "key"}
     # A shared sign-in's refresh backoff is the admin's to reset: every
     # account's login runs this check, and a dead shared grant must not be
     # retried once per login.
@@ -650,14 +692,14 @@ def ai_health(payload: AIHealthRequest, request: Request):
         ai_catalog.fetch_json(ai_protocols.of(conf).ping_request(conf))
     except urllib.error.HTTPError as e:
         if e.code in (401, 403):
-            return {**result, "ok": False, "auth": True, "error": _upstream_detail(e, 200)}
+            return {**result, "ok": False, "auth": True, "kind": "auth", "error": _upstream_detail(e, 200)}
         if e.code in (404, 405):
             # An OpenAI-compatible gateway without /v1/models — can't verify
             # for free; don't cry wolf.
             return {**result, "ok": True, "unverified": True}
-        return {**result, "ok": False, "auth": False, "error": _upstream_detail(e, 200)}
+        return {**result, "ok": False, "auth": False, "kind": failure_kind(e), "error": _upstream_detail(e, 200)}
     except Exception as e:
-        return {**result, "ok": False, "auth": False, "error": str(e)[:200]}
+        return {**result, "ok": False, "auth": False, "kind": failure_kind(e), "error": str(e)[:200]}
     return {**result, "ok": True}
 
 
@@ -1241,7 +1283,10 @@ def ai_chat(payload: AIChatRequest, request: Request):
     # The chat reads (and its tools edit) the request's workspace; the AI
     # providers are the account's own. A viewer gets no mutating tools.
     ws = require_ws(request)
-    rt = require_ai_runtime(user)
+    try:
+        rt = require_ai_runtime(user)
+    except HTTPException as e:
+        return _failure_response(e.status_code, e.detail, _failure_info(e))
 
     entry = _resolve_model(rt, payload.model)
     effort = _resolve_effort(payload.effort)
@@ -1391,6 +1436,10 @@ def ai_chat(payload: AIChatRequest, request: Request):
                 # A model copying a renamed tool out of replayed history still
                 # names the current one here (ai_context.DEPRECATED_TOOLS).
                 name = _canonical_tool(call["name"])
+                # The step about to run, so the chat can say what the agent
+                # is doing now ("Searching library for …") instead of
+                # "Thinking"; its action follows once it finished.
+                yield ("step", _step_event(name, call))
                 if name in armed and name in MUTATING_TOOLS and actions >= MAX_TOOL_ACTIONS:
                     result = ("error: change limit for one message reached — "
                               "stop and tell the user")
@@ -1435,7 +1484,7 @@ def ai_chat(payload: AIChatRequest, request: Request):
                             yield json.dumps({kind: data}) + "\n"
                     except Exception as e:
                         log.warning(f"[ai_chat] agent stream error: {e}")
-                        yield json.dumps({"error": _failure(e)}) + "\n"
+                        yield json.dumps({"error": _failure(e), **_failure_info(e, rt, entry)}) + "\n"
 
                 return StreamingResponse(keepalive_lines(agent_ndjson(), "ai_chat"),
                                          media_type="application/x-ndjson")
@@ -1453,7 +1502,7 @@ def ai_chat(payload: AIChatRequest, request: Request):
                         yield json.dumps({"usage": u}) + "\n"
                 except Exception as e:
                     log.warning(f"[ai_chat] stream error: {e}")
-                    yield json.dumps({"error": _failure(e)}) + "\n"
+                    yield json.dumps({"error": _failure(e), **_failure_info(e, rt, entry)}) + "\n"
                 finally:
                     resp.close()
 
@@ -1481,8 +1530,10 @@ def ai_chat(payload: AIChatRequest, request: Request):
             count_usage(u)
         return {"response": text, "context": state.get("coverage") or [],
                 **({"usage": usage[0]} if usage else {})}
+    except AllowanceExhausted as e:
+        return _failure_response(e.status_code, e.detail, _failure_info(e, rt, entry))
     except HTTPException:
         raise
     except Exception as e:
         log.warning(f"[ai_chat] API error: {e}")
-        raise HTTPException(status_code=502, detail=f"AI call failed: {e}")
+        return _failure_response(502, f"AI call failed: {e}", _failure_info(e, rt, entry))

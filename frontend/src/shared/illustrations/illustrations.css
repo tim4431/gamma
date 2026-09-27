@@ -1,11 +1,12 @@
-/* Decorative illustration styles. Widget and dialog layouts stay with their owners. */
+/* Decorative illustration styles. Widget and dialog layouts stay with their owners.
+   ds-allow-start: a drawing of a paper and its notes, in its own fixed colours and sizes */
 .formatIllustration { color: var(--text-secondary); }
 .formatIllustration svg { width: 48px; height: 48px; }
 .formatAppIcon { width: 48px; height: 48px; background: currentColor; mask: var(--app-icon) center / contain no-repeat; -webkit-mask: var(--app-icon) center / contain no-repeat; }
 .formatAppImage { width: 48px; height: 48px; object-fit: contain; filter: grayscale(1); }
 .transferPreview { margin: 0; min-width: 0; }
 .transferPreview figcaption { font-size: 11px; color: var(--text-muted); margin-bottom: 8px; }
-.transferPaper { position: relative; min-height: 310px; padding: 22px 18px 32px; border: 1px solid #ddd; border-radius: 3px; background: #fff; color: #39444b; font-size: 11px; line-height: 1.55; }
+.transferPaper { position: relative; min-height: 310px; padding: 22px 18px 32px; border: 1px solid #ddd; border-radius: var(--radius-xs); background: #fff; color: #39444b; font-size: 11px; line-height: 1.55; }
 .transferPaperTitle { font-size: 15px; font-weight: 600; line-height: 1.3; }
 .transferPaperByline { margin: 6px 0 22px; color: #77818a; font-size: 9px; }
 .transferPaperLines { display: flex; flex-direction: column; gap: 6px; margin: 12px 0; }
@@ -32,3 +33,4 @@
 .appearancePdfPreview { color: #2e2c29; }
 .appearancePdfPreview.isDark { color: #efefef; }
 .appearancePdfPreview.isDark .appearancePdfPaper { fill: #101010; stroke: #383838; }
+/* ds-allow-end */

@@ -59,6 +59,13 @@ def test_chat_agent_loop_streams_actions(org, monkeypatch):
     assert actions[0]["tool"] == "rename_page"
     assert actions[0]["args"]["title"] == "Ada2019 cavity"
     assert actions[0]["result"].startswith("ok")
+    assert (actions[0]["from"], actions[0]["to"]) == ("cavity paper", "Ada2019 cavity")
+    # Each call is announced before it runs ({"step"}), then its action.
+    kinds = [next(iter(l)) for l in lines if next(iter(l)) in ("step", "action")]
+    assert kinds == ["step", "action"]
+    step = next(l["step"] for l in lines if "step" in l)
+    assert step == {"id": "t1", "tool": "rename_page",
+                    "args": {"page_id": ids["a"], "title": "Ada2019 cavity"}}
     assert text == "Renamed it."
     assert props(c, ids["a"])["content"] == "Ada2019 cavity"
 

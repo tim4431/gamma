@@ -1,18 +1,21 @@
 // Shared presentational widgets: workspace chrome, dockable windows, chat
 // markdown, and the auto-growing textarea.
-import React, { createContext, useCallback, useContext, useEffect, useMemo, useRef, useState } from "react";
+import React, { createContext, useCallback, useContext, useEffect, useLayoutEffect, useMemo, useRef, useState } from "react";
 import { textOf } from "../lib/textOf";
+import { createPortal } from "react-dom";
 import ReactMarkdown, { defaultUrlTransform } from "react-markdown";
 import remarkGfm from "remark-gfm";
 import remarkMath from "remark-math";
 import rehypeKatex from "rehype-katex";
 import "katex/dist/katex.min.css";
-import { CheckIcon, CopyIcon, ExternalLinkIcon, FileTextIcon, PinIcon, QuoteIcon } from "./Icons";
+import { CheckIcon, ChevronDownIcon, CopyIcon, ExternalLinkIcon, FileGlyph, FileTextIcon, PinIcon, QuoteIcon, XIcon } from "./Icons";
+import { useWheelPan } from "./wheelPan";
 import { assetUrl, copyText } from "../lib/utils";
-import { parseGammaLink } from "../model/gammaLinks.js";
+import { gammaLinksIn, parseGammaLink } from "../model/gammaLinks.js";
 import { remarkPaperLinks } from "../lib/remarkPaperLinks.js";
 import { mermaidFence, normalizeChatMarkdown, remarkMermaid } from "../lib/mermaidMarkdown.js";
 import { MermaidDiagram, mermaidCodeProps } from "./MermaidDiagram";
+import { highlightCode } from "../../editor/codeHighlight.js";
 import { t } from "../../shared/i18n/i18n.js";
 
 // Shared chrome for every dockable window: one grip (drag to move/reorder,
@@ -30,7 +33,7 @@ function DockWindow({ title, onGrip, onGripDoubleClick, onClose, headerContent, 
           title={t("Drag to move this window · double-click to collapse/expand")}
         >⠿ {title}</span>
         {onClose ? (
-          <button className="uiClose" onClick={onClose} title={t("Close window (reopen from the ⋮ menu)")} aria-label={t("Close {title}", { title: title })}>×</button>
+          <button className="uiClose" onClick={onClose} title={t("Close window (reopen from the View menu)")} aria-label={t("Close {title}", { title: title })}><XIcon size={14} /></button>
         ) : null}
         <span className="dockHeaderSpacer" />
         {collapsed ? null : headerContent}
@@ -160,7 +163,7 @@ function ChatCopyBlock({ as: Tag, children }) {
         <button type="button" className="chatCopyButton" onClick={copyContent}
           aria-label={isCode ? t("Copy code") : t("Copy quoted text")}
           title={failed ? t("Copy failed — select the text and press Ctrl+C") : t("Copy only this block's content")}>
-          {copied ? <CheckIcon size={12} /> : <CopyIcon size={12} />}
+          {copied ? <CheckIcon size={14} /> : <CopyIcon size={14} />}
           <span aria-live="polite">{failed ? t("Try again") : copied ? t("Copied") : t("Copy")}</span>
         </button>
       </div>
@@ -168,10 +171,20 @@ function ChatCopyBlock({ as: Tag, children }) {
     </div>
   );
 }
+// A fenced block in a reply, coloured by the same highlight.js wrapper and
+// theme as the notes' code cards (editor/codeHighlight.js).
+function HighlightedCode({ children }) {
+  const codeProps = React.Children.toArray(children).find((c) => c?.props)?.props || {};
+  const lang = /language-([\w+#-]+)/.exec(codeProps.className || "")?.[1] || "";
+  const raw = textOf(codeProps.children).replace(/\n$/, "");
+  const html = useMemo(() => highlightCode(raw, lang), [raw, lang]);
+  return <code className="hljs" dangerouslySetInnerHTML={{ __html: html }} />;
+}
 function ChatPre({ children, copy = false }) {
   const diagram = mermaidCodeProps(children);
   if (diagram) return <MermaidDiagram {...diagram} />;
-  return copy ? <ChatCopyBlock as="pre">{children}</ChatCopyBlock> : <pre>{children}</pre>;
+  const code = <HighlightedCode>{children}</HighlightedCode>;
+  return copy ? <ChatCopyBlock as="pre">{code}</ChatCopyBlock> : <pre>{code}</pre>;
 }
 const ChatCopyPre = ({ children }) => <ChatPre copy>{children}</ChatPre>;
 const CHAT_COPY_COMPONENTS = {
@@ -229,16 +242,99 @@ function GammaLinkCard({ link, label, guide, children }) {
   );
 }
 
+// The chat's citations are compact pills (CitationPill) — only inside the
+// chat transcript, which provides this context: { titleOf(pageId) →
+// {title, short} | null } names the cited paper. Other ChatMarkdown users (a
+// note's preview on the PDF, the slide citation) keep the card.
+const ChatCiteContext = createContext(null);
+// Whether the reply being rendered cites more than one paper: then every
+// page-number pill also names its source ("Vaswani · p. 2").
+const CiteMultiContext = createContext(false);
+const PAGE_LABEL = /^pp?\.\s*\d/i;
+
+// A citation inside a reply: a small tinted pill on the text's baseline, so a
+// "p. 2" mid-sentence doesn't push the lines apart. Hovering, focusing or
+// long-pressing it previews the cited passage (paper, PDF page, the quote);
+// a click (or Enter) opens it in the PDF like the card does.
+function CitationPill({ link, children }) {
+  const nav = useContext(GammaNavContext);
+  const cite = useContext(ChatCiteContext);
+  const multi = useContext(CiteMultiContext);
+  const ref = useRef(null);
+  const timer = useRef(null);
+  const longPressed = useRef(false); // a long-press opened the preview: its click doesn't navigate
+  const [preview, setPreview] = useState(null); // {left, top | bottom}
+  const raw = textOf(children).trim();
+  const own = /^(https?:\/\/|\/?\?)/i.test(raw) ? "" : raw;
+  const source = cite?.titleOf?.(link.pageId) || null;
+  const pageLabel = `p. ${link.page}`;
+  const named = multi && source?.short && (!own || PAGE_LABEL.test(own));
+  const show = () => {
+    clearTimeout(timer.current);
+    const r = ref.current?.getBoundingClientRect();
+    if (!r) return;
+    const left = Math.max(8, Math.min(r.left, window.innerWidth - 296));
+    setPreview(r.bottom + 170 > window.innerHeight
+      ? { left, bottom: window.innerHeight - r.top + 6 }
+      : { left, top: r.bottom + 6 });
+  };
+  const hide = () => { clearTimeout(timer.current); setPreview(null); };
+  const later = (fn, ms) => { clearTimeout(timer.current); timer.current = setTimeout(fn, ms); };
+  useEffect(() => () => clearTimeout(timer.current), []);
+  // The preview is fixed to the viewport: any scroll would leave it behind.
+  useEffect(() => {
+    if (!preview) return undefined;
+    window.addEventListener("scroll", hide, true);
+    return () => window.removeEventListener("scroll", hide, true);
+  }, [preview]);
+  const tipId = `cite-${link.pageId}-${link.page}`;
+  return (
+    <>
+      <a ref={ref} href={link.href || "#"} className="chatCite gammaLink-citation" data-guide="chat.citation"
+        aria-describedby={preview ? tipId : undefined}
+        onMouseEnter={() => later(show, 250)}
+        onMouseLeave={hide}
+        onFocus={show}
+        onBlur={hide}
+        onTouchStart={() => { longPressed.current = false; later(() => { longPressed.current = true; show(); }, 450); }}
+        onTouchMove={() => clearTimeout(timer.current)}
+        onTouchEnd={() => clearTimeout(timer.current)}
+        onContextMenu={(e) => { if (longPressed.current) e.preventDefault(); }}
+        onMouseDown={(e) => e.stopPropagation()}
+        onClick={(e) => {
+          if (longPressed.current) { e.preventDefault(); longPressed.current = false; return; }
+          hide();
+          if (e.metaKey || e.ctrlKey || e.shiftKey || e.altKey || !nav) return;
+          e.preventDefault();
+          e.stopPropagation();
+          nav.openPage?.(link.pageId, { pageId: link.pageId, page: link.page, quote: link.quote });
+        }}>
+        {named ? <span className="chatCiteSrc" data-markdown-copy-ignore="">{source.short} · </span> : null}
+        <span className="gammaLinkLabel">{own ? children : pageLabel}</span>
+      </a>
+      {preview ? createPortal(
+        <div id={tipId} role="tooltip" className="chatCitePreview" style={preview}>
+          <div className="chatCitePreviewTitle">{source?.title || t("This paper")}</div>
+          <div className="chatCitePreviewPage">{t("PDF page {page}", { page: link.page })}</div>
+          {link.quote ? <blockquote className="chatCitePreviewQuote">“{link.quote}”</blockquote> : null}
+          <div className="chatCitePreviewHint">{t("Open in PDF")} <kbd>↵</kbd></div>
+        </div>, document.body) : null}
+    </>
+  );
+}
+
 // Keep the renderer type stable: replacing it on each streamed delta unmounts
 // links and loses clicks when an update lands between mouse-down and mouse-up.
 // Context supplies the latest navigation callback without replacing the link.
 function ChatMarkdownLink({ href, children, title }) {
   const nav = useContext(GammaNavContext);
+  const inChat = useContext(ChatCiteContext);
   const link = nav ? parseGammaLink(href, window.location.origin) : null;
   // The chat writes its own citations, so a link it produced is this
   // library's by construction; a foreign host in chat text is an ordinary
   // external link.
   const cited = link?.kind === "citation";
+  if (link && !link.foreign && cited && inChat) return <CitationPill link={{ ...link, href }}>{children}</CitationPill>;
   if (link && !link.foreign) return <GammaLinkCard link={{ ...link, href }} guide={cited ? "chat.citation" : undefined}>{children}</GammaLinkCard>;
   return <a href={href} className="gammaLinkCard" target="_blank" rel="noreferrer" title={title || href}>
     <ExternalLinkIcon size={14} aria-hidden="true" /><span className="gammaLinkLabel">{children}</span>
@@ -252,16 +348,20 @@ const CHAT_MARKDOWN_COPY_COMPONENTS = { ...CHAT_MARKDOWN_COMPONENTS, ...CHAT_COP
 // GammaNavContext; Ctrl/Cmd-click still opens a new tab.
 const ChatMarkdown = React.memo(function ChatMarkdown({ text, copyBlocks = false }) {
   const normalized = useMemo(() => normalizeChatMarkdown(text), [text]);
+  const multiSource = useMemo(() => new Set(gammaLinksIn(normalized)
+    .filter((link) => link.kind === "citation").map((link) => link.pageId)).size > 1, [normalized]);
   return (
     <div onCopy={handleMarkdownCopy}>
-      <ReactMarkdown
-        remarkPlugins={[remarkGfm, remarkMath, remarkPaperLinks, remarkMermaid]}
-        rehypePlugins={[rehypeKatex]}
-        urlTransform={(url) => assetUrl(defaultUrlTransform(url))}
-        components={copyBlocks ? CHAT_MARKDOWN_COPY_COMPONENTS : CHAT_MARKDOWN_COMPONENTS}
-      >
-        {normalized}
-      </ReactMarkdown>
+      <CiteMultiContext.Provider value={multiSource}>
+        <ReactMarkdown
+          remarkPlugins={[remarkGfm, remarkMath, remarkPaperLinks, remarkMermaid]}
+          rehypePlugins={[rehypeKatex]}
+          urlTransform={(url) => assetUrl(defaultUrlTransform(url))}
+          components={copyBlocks ? CHAT_MARKDOWN_COPY_COMPONENTS : CHAT_MARKDOWN_COMPONENTS}
+        >
+          {normalized}
+        </ReactMarkdown>
+      </CiteMultiContext.Provider>
     </div>
   );
 });
@@ -313,10 +413,21 @@ function PopoverAnchor({ name, children, className = "" }) {
   );
 }
 
+// The topbar's tab strip (Chrome-style). Each tab leads with its page's kind
+// icon (`kindOf(id)` → "pdf" | "page"); pinned tabs are 36px icons stuck to
+// the left edge. The strip keeps the active tab in view, pans with a plain
+// mouse wheel, and when it overflows fades its right edge and shows a
+// "⌄ n" button whose popover lists every open tab with a filter.
+const PINNED_STEP = 38; // a pinned tab's width + the strip's gap: where the next one sticks
+const TAB_FADE = 40; // the right-edge fade the active tab keeps clear of
+
 function OpenTabs({
   tabs,
   activeId,
   tabElements,
+  kindOf,
+  menuOpen = false,
+  onMenuOpenChange,
   onReorder,
   onOpen,
   onClose,
@@ -326,69 +437,198 @@ function OpenTabs({
   // ref (read during dragover) with a state twin for the .dragging style.
   const dragTab = useRef(null);
   const [draggingId, setDraggingId] = useState(null);
+  const stripRef = useRef(null);
+  const wheelPan = useWheelPan();
+  const setStrip = useCallback((el) => { stripRef.current = el; wheelPan(el); }, [wheelPan]);
+  // Whether the tabs overflow the strip, whether it is scrolled off its
+  // start (tabs pass under the pinned ones: those get an edge) and to its
+  // end (nothing hidden on the right: the fade goes).
+  const [overflow, setOverflow] = useState({ over: false, atStart: true, atEnd: true });
+  const measure = useCallback(() => {
+    const el = stripRef.current;
+    if (!el) return;
+    const over = el.scrollWidth > el.clientWidth + 1;
+    const atStart = el.scrollLeft <= 1;
+    const atEnd = el.scrollLeft + el.clientWidth >= el.scrollWidth - 1;
+    setOverflow((o) => (o.over === over && o.atStart === atStart && o.atEnd === atEnd ? o : { over, atStart, atEnd }));
+  }, []);
+  useEffect(() => {
+    const el = stripRef.current;
+    if (!el) return undefined;
+    const observer = new ResizeObserver(measure);
+    observer.observe(el);
+    el.addEventListener("scroll", measure, { passive: true });
+    return () => { observer.disconnect(); el.removeEventListener("scroll", measure); };
+  }, [measure]);
+  const pinnedCount = tabs.filter((tab) => tab.pinned).length;
+  // Keep the active tab in view: clear of the pinned tabs stuck at the left
+  // and of the fade on the right. Positions are in the strip's content
+  // (offsetLeft; the strip is the offset parent).
+  useLayoutEffect(() => {
+    const strip = stripRef.current;
+    const tab = activeId ? tabElements.current.get(activeId) : null;
+    if (strip && tab && !tab.classList.contains("pinned")) {
+      const left = tab.offsetLeft - pinnedCount * PINNED_STEP;
+      const right = tab.offsetLeft + tab.offsetWidth + TAB_FADE - strip.clientWidth;
+      if (strip.scrollLeft > left) strip.scrollLeft = Math.max(0, left);
+      else if (strip.scrollLeft < right) strip.scrollLeft = right;
+    }
+    measure();
+  }, [activeId, tabs, pinnedCount, tabElements, measure]);
+  // The strip stops overflowing (tabs closed): the menu has nothing to add.
+  useEffect(() => { if (!overflow.over && menuOpen) onMenuOpenChange?.(false); }, [overflow.over, menuOpen, onMenuOpenChange]);
+
+  // The all-tabs menu: a filter over the titles, ↑↓ to pick, Enter opens.
+  const [filter, setFilter] = useState("");
+  const [pick, setPick] = useState(0);
+  useEffect(() => { if (menuOpen) { setFilter(""); setPick(Math.max(0, tabs.findIndex((tab) => tab.id === activeId))); } }, [menuOpen]); // eslint-disable-line react-hooks/exhaustive-deps
+  const listRef = useRef(null);
+  useEffect(() => {
+    listRef.current?.querySelector('[aria-selected="true"]')?.scrollIntoView({ block: "nearest" });
+  }, [pick, menuOpen]);
+  const needle = filter.trim().toLowerCase();
+  const listed = needle ? tabs.filter((tab) => (tab.title || "").toLowerCase().includes(needle)) : tabs;
+  const openFromMenu = (tab) => {
+    if (!tab) return;
+    onMenuOpenChange?.(false);
+    if (tab.id !== activeId) onOpen(tab.id);
+  };
+  const kindIcon = (tab, size) => <FileGlyph isPdf={kindOf?.(tab.id) === "pdf"} size={size} />;
+
   return (
-    <div className="tabStrip" role="tablist">
-      {tabs.map((tab) => (
-        <div
-          key={tab.id}
-          role="tab"
-          ref={(element) => {
-            if (element) tabElements.current.set(tab.id, element);
-            else tabElements.current.delete(tab.id);
-          }}
-          className={`tab ${tab.id === activeId ? "active" : ""} ${draggingId === tab.id ? "dragging" : ""} ${tab.pinned ? "pinned" : ""}`}
-          title={tab.title}
-          draggable
-          onDragStart={(event) => {
-            dragTab.current = tab.id;
-            setDraggingId(tab.id);
-            event.dataTransfer.effectAllowed = "move";
-          }}
-          onDragEnd={() => {
-            dragTab.current = null;
-            setDraggingId(null);
-          }}
-          onDragOver={(event) => {
-            const draggedId = dragTab.current;
-            if (!draggedId || draggedId === tab.id) return;
-            event.preventDefault();
-            onReorder(draggedId, tab.id);
-          }}
-          onDrop={(event) => event.preventDefault()}
-          onClick={() => {
-            if (tab.id !== activeId) onOpen(tab.id);
-          }}
-          onAuxClick={(event) => {
-            // Middle-click close skips pinned tabs — pinning is a guard
-            // against exactly this kind of accidental close.
-            if (event.button === 1 && !tab.pinned) {
+    <>
+      <div ref={setStrip} role="tablist"
+        className={`tabStrip${overflow.over && !overflow.atEnd ? " fadeEnd" : ""}${overflow.atStart ? "" : " scrolled"}`}>
+        {tabs.map((tab, index) => (
+          <div
+            key={tab.id}
+            role="tab"
+            aria-selected={tab.id === activeId}
+            aria-label={tab.pinned ? tab.title : undefined}
+            ref={(element) => {
+              if (element) tabElements.current.set(tab.id, element);
+              else tabElements.current.delete(tab.id);
+            }}
+            className={`tab ${tab.id === activeId ? "active" : ""} ${draggingId === tab.id ? "dragging" : ""} ${tab.pinned ? "pinned" : ""}`}
+            style={tab.pinned ? { left: index * PINNED_STEP } : undefined}
+            title={tab.title}
+            draggable
+            onDragStart={(event) => {
+              dragTab.current = tab.id;
+              setDraggingId(tab.id);
+              event.dataTransfer.effectAllowed = "move";
+            }}
+            onDragEnd={() => {
+              dragTab.current = null;
+              setDraggingId(null);
+            }}
+            onDragOver={(event) => {
+              const draggedId = dragTab.current;
+              if (!draggedId || draggedId === tab.id) return;
               event.preventDefault();
-              onClose(tab.id);
-            }
-          }}
-          onContextMenu={(event) => {
-            event.preventDefault();
-            onContext(tab, event.clientX, event.clientY);
-          }}
-        >
-          {tab.pinned ? <span className="tabPin"><PinIcon filled size={11} /></span> : null}
-          <span className="tabTitle">{tab.title}</span>
-          {tab.pinned ? null : (
-            <button
-              className="uiClose tabClose"
-              onClick={(event) => {
-                event.stopPropagation();
+              onReorder(draggedId, tab.id);
+            }}
+            onDrop={(event) => event.preventDefault()}
+            onClick={() => {
+              if (tab.id !== activeId) onOpen(tab.id);
+            }}
+            onAuxClick={(event) => {
+              // Middle-click close skips pinned tabs — pinning is a guard
+              // against exactly this kind of accidental close.
+              if (event.button === 1 && !tab.pinned) {
+                event.preventDefault();
                 onClose(tab.id);
-              }}
-              title={t("Close tab")}
-              aria-label={t("Close {title}", { title: tab.title })}
-            >
-              ×
-            </button>
-          )}
-        </div>
-      ))}
-    </div>
+              }
+            }}
+            onContextMenu={(event) => {
+              event.preventDefault();
+              onContext(tab, event.clientX, event.clientY);
+            }}
+          >
+            <span className="tabKind">{kindIcon(tab, 14)}</span>
+            {tab.pinned ? null : <span className="tabTitle">{tab.title}</span>}
+            {tab.pinned ? null : (
+              <button
+                className="uiClose tabClose"
+                onClick={(event) => {
+                  event.stopPropagation();
+                  onClose(tab.id);
+                }}
+                title={t("Close tab")}
+                aria-label={t("Close {title}", { title: tab.title })}
+              >
+                <XIcon size={14} />
+              </button>
+            )}
+          </div>
+        ))}
+      </div>
+      {overflow.over ? (
+        <span data-popover="tabs" className="popoverAnchor tabsMenuAnchor">
+          <button
+            className={`iconBtn tabsMenuBtn ${menuOpen ? "activeIcon" : ""}`}
+            onClick={() => onMenuOpenChange?.(!menuOpen)}
+            title={t("All open tabs")}
+            aria-label={t("All open tabs")}
+            aria-expanded={menuOpen}
+          >
+            <ChevronDownIcon size={14} />
+            <span className="tabsMenuCount">{tabs.length}</span>
+          </button>
+          {menuOpen ? (
+            <div className="popover tabsPopover" role="dialog" aria-label={t("All open tabs")}>
+              <input
+                autoFocus
+                className="searchInput"
+                value={filter}
+                placeholder={t("Find an open tab")}
+                aria-label={t("Find an open tab")}
+                onChange={(event) => { setFilter(event.target.value); setPick(0); }}
+                onKeyDown={(event) => {
+                  if (event.nativeEvent.isComposing) return;
+                  if (event.key === "ArrowDown" || event.key === "ArrowUp") {
+                    event.preventDefault();
+                    const step = event.key === "ArrowDown" ? 1 : -1;
+                    setPick((i) => (listed.length ? (i + step + listed.length) % listed.length : 0));
+                  } else if (event.key === "Enter") {
+                    event.preventDefault();
+                    openFromMenu(listed[pick]);
+                  } else if (event.key === "Escape") {
+                    event.preventDefault();
+                    onMenuOpenChange?.(false);
+                  }
+                }}
+              />
+              <div ref={listRef} className="tabsMenuList" role="listbox" aria-label={t("All open tabs")}>
+                {listed.map((tab, i) => (
+                  <div
+                    key={tab.id}
+                    role="option"
+                    aria-selected={i === pick}
+                    className={`tabsMenuRow${tab.id === activeId ? " current" : ""}${i === pick ? " picked" : ""}`}
+                    title={tab.title}
+                    onMouseEnter={() => setPick(i)}
+                    onClick={() => openFromMenu(tab)}
+                  >
+                    {kindIcon(tab, 14)}
+                    <span className="tabsMenuTitle">{tab.title}</span>
+                    {tab.pinned ? <span className="tabsMenuPin"><PinIcon filled size={14} /></span> : (
+                      <button
+                        className="uiClose uiCloseSm"
+                        onClick={(event) => { event.stopPropagation(); onClose(tab.id); }}
+                        title={t("Close tab")}
+                        aria-label={t("Close {title}", { title: tab.title })}
+                      ><XIcon size={14} /></button>
+                    )}
+                  </div>
+                ))}
+                {!listed.length ? <div className="popoverHint">{t("No open tab matches.")}</div> : null}
+              </div>
+            </div>
+          ) : null}
+        </span>
+      ) : null}
+    </>
   );
 }
 
@@ -467,6 +707,7 @@ function useTextScale({ enabled } = {}) {
 
 export {
   AutoGrowTextarea,
+  ChatCiteContext,
   GammaLinkCard,
   GammaNavContext,
   BlockDropIndicator,

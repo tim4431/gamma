@@ -25,6 +25,8 @@ def is_openai_platform(base_url: str) -> bool:
 class OpenAIChat(Protocol):
     id = "openai"
     label = "OpenAI Chat Completions API"
+    key_placeholder = "sk-proj-…"
+    key_url = "https://platform.openai.com/api-keys"
 
     def wire(self, conf, tools=None):
         # Tool calls to OpenAI itself go over the Responses API (reasoning

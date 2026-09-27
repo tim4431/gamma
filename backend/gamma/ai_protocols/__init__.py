@@ -25,9 +25,11 @@ PROTOCOLS = {pid: p for pid, p in WIRES.items() if p.entry}
 
 # Named services the settings form offers next to the raw protocols: a
 # protocol plus that service's endpoint. An entry made from one is just
-# protocol + base URL; the preset only names it (form, provider label).
+# protocol + base URL; the preset only names it (form, provider label) and
+# says what its keys look like and where to make one (the form's key field).
 SERVICES = [
-    {"id": "deepseek", "label": "DeepSeek", "protocol": "openai", "base_url": "https://api.deepseek.com"},
+    {"id": "deepseek", "label": "DeepSeek", "protocol": "openai", "base_url": "https://api.deepseek.com",
+     "key_placeholder": "sk-…", "key_url": "https://platform.deepseek.com/api_keys"},
 ]
 
 

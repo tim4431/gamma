@@ -2,11 +2,12 @@
 // App.jsx's one window keydown listener dispatches this catalog
 // (shared/lib/hotkeys.js) with a ctx of handles it refreshes every render;
 // the command palette (Ctrl+Shift+P) lists the same entries, and Settings →
-// Keyboard rebinds them. Only the long-standing keys, Ctrl+Shift+P, F2 and
-// Ctrl+, have defaults; the rest are palette entries until the account gives
-// them a chord.
-// ctx: { shareMode, homeMode, hasPage, hasPdf, readOnly, search(all),
-// palette(prefix), back(), undo(redo), renameTitle(), toggleChat(),
+// Keyboard rebinds them. Only the long-standing keys, Ctrl+Shift+P, F2,
+// Delete and Ctrl+, have defaults; the rest are palette entries until the
+// account gives them a chord.
+// ctx: { shareMode, homeMode, hasPage, hasPdf, readOnly, homePick (the one
+// page selected on the home library), homePicks (how many), search(all),
+// palette(prefix), back(), undo(redo), renameTitle(), deletePages(), toggleChat(),
 // togglePdf(), toggleNotes(), openSettings(pane), exportAs(format),
 // downloadPdf(), importDialog(), newPage(), share(), metadata(), attach(),
 // reportProblem() }.
@@ -83,7 +84,7 @@ export const APP_COMMANDS = [
   cmd("app.renameTitle", t("Rename page"), GROUP_PAGE, "F2", (c) => {
     if (isTextField(document.activeElement) && !document.activeElement.closest(".cm-editor")) return false;
     c.renameTitle();
-  }, { when: (c) => c.hasPage && !c.readOnly }),
+  }, { when: (c) => (c.hasPage && !c.readOnly) || !!c.homePick }),
   cmd("app.share", t("Share this page…"), GROUP_PAGE, null, (c) => { c.share(); }, { when: (c) => c.hasPage && !c.shareMode }),
   cmd("app.metadata", t("Paper metadata…"), GROUP_PAGE, null, (c) => { c.metadata(); }, { when: (c) => c.hasPdf }),
   cmd("app.attach", t("Attach a PDF…"), GROUP_PAGE, null, (c) => { c.attach(); }, { when: (c) => c.hasPage && !c.hasPdf && !c.readOnly }),
@@ -97,6 +98,12 @@ export const APP_COMMANDS = [
   cmd("app.toggleNotes", t("Show or hide the notes"), GROUP_VIEW, null, (c) => { c.toggleNotes(); }, { when: (c) => c.hasPdf }),
 
   cmd("app.newPage", t("New page"), GROUP_LIBRARY, null, (c) => { c.newPage(); }, { when: (c) => !c.shareMode }),
+  // The file manager's Delete: the pages selected on the home library, after
+  // the usual confirmation (the page menu shows the key next to Delete).
+  cmd("app.deletePages", t("Delete the selected pages"), GROUP_LIBRARY, "Delete", (c) => {
+    if (isTextField(document.activeElement)) return false;
+    c.deletePages();
+  }, { when: (c) => c.homePicks > 0 }),
   cmd("app.import", t("Import…"), GROUP_LIBRARY, null, (c) => { c.importDialog(); }, { when: (c) => !c.shareMode }),
   cmd("app.exportObsidian", t("Export the library as an Obsidian vault"), GROUP_LIBRARY, null, (c) => { c.exportAs("obsidian"); }, { when: (c) => !c.shareMode }),
   cmd("app.exportGamma", t("Export the library as a Gamma backup"), GROUP_LIBRARY, null, (c) => { c.exportAs("gamma"); }, { when: (c) => !c.shareMode }),

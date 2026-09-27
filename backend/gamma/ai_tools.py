@@ -227,6 +227,10 @@ def _sibling_position(conn, parent_id: str, after_id, block_id: str = "") -> tup
 # Each returns (result_text, action): result_text goes back to the model;
 # action is the {kind, summary} event streamed to the UI and saved with the
 # chat message, for every successful call (reads included); errors carry None.
+# A change also names what changed, so the chat can list it without parsing
+# the summary: rename/move_page carry `title` (the page's title before the
+# call) and `from` / `to` (old and new title, old and new folder path — ""
+# is the library root); the note tools carry `title` (their page's title).
 
 def _run_list_pages(conn, ws: str, scope: dict, args: dict):
     path = _scope_folder(scope)
@@ -755,7 +759,7 @@ def _run_edit_block(conn, ws: str, scope: dict, args: dict):
             "patch": "Edited part of", "selection": "Edited the selection in"}[mode]
     return (f'ok — block [{block["id"]}] updated' + (f" ({mode})" if mode != "replace" else ""),
             {"kind": "edit", "page_id": page_id, "block_id": block["id"], "mode": mode,
-             "summary": f"{verb} a note in “{page_title[:60]}”"})
+             "title": page_title, "summary": f"{verb} a note in “{page_title[:60]}”"})
 
 
 def _run_create_block(conn, ws: str, scope: dict, args: dict):
@@ -776,7 +780,7 @@ def _run_create_block(conn, ws: str, scope: dict, args: dict):
         actor=scope.get("actor", ""), client="ai"))
     return (f"ok — created block [{block_id}]",
             {"kind": "create", "page_id": page_id, "block_id": block_id,
-             "summary": f"Added a note in “{page_title[:60]}”"})
+             "title": page_title, "summary": f"Added a note in “{page_title[:60]}”"})
 
 
 def _run_move_block(conn, ws: str, scope: dict, args: dict):
@@ -821,7 +825,7 @@ def _run_move_block(conn, ws: str, scope: dict, args: dict):
         note_reload(ws, conn, page_id, scope.get("actor", ""))
     where = (f"page “{page_title[:60]}”" if page_id != src_page_id
              else f"“{page_title[:60]}”")
-    action = {"kind": "move", "page_id": page_id, "block_id": block["id"],
+    action = {"kind": "move", "page_id": page_id, "block_id": block["id"], "title": page_title,
               "summary": f"Moved a note within {where}" if page_id == src_page_id
                          else f"Moved a note “{src_title[:40]}” → {where}"}
     if page_id != src_page_id:
@@ -993,7 +997,8 @@ def _run_rename_page(conn, ws: str, scope: dict, args: dict):
     after_commit(ws, conn, apply_ops(
         conn, page_id, [{"op": "set", "id": page_id, "content": new}], actor=scope.get("actor", ""), client="ai"))
     return (f'ok — renamed to "{new}"',
-            {"kind": "rename", "page_id": page_id, "summary": f"Renamed “{title}” → “{new}”"})
+            {"kind": "rename", "page_id": page_id, "title": title, "from": title, "to": new,
+             "summary": f"Renamed “{title}” → “{new}”"})
 
 
 def _run_move_page(conn, ws: str, scope: dict, args: dict):
@@ -1013,7 +1018,9 @@ def _run_move_page(conn, ws: str, scope: dict, args: dict):
         actor=scope.get("actor", ""), client="ai"))
     where = target or "the library root"
     return (f'ok — moved to "{where}"',
-            {"kind": "move", "page_id": page_id, "summary": f"Moved “{title}” → {where}"})
+            {"kind": "move", "page_id": page_id, "title": title,
+             "from": ", ".join(tags), "to": target,
+             "summary": f"Moved “{title}” → {where}"})
 
 
 # --- registry ------------------------------------------------------------------
@@ -1552,10 +1559,12 @@ def run_agent_tool(ws: str, scope: dict, name: str, args: dict,
         result, action = f"error: {e}", None
     if action is None:
         # No-op or refused call (empty title, page out of scope, …): still show
-        # it, tagged as an error only when the tool actually failed.
+        # it, tagged as an error only when the tool actually failed; a change
+        # tool that changed nothing says so (`noop`), so no list counts it.
         failed = result.startswith("error")
         action = {"kind": "error" if failed else tool["kind"],
-                  "summary": result.split("\n")[0][:200], "error": failed}
+                  "summary": result.split("\n")[0][:200], "error": failed,
+                  **({"noop": True} if tool["mutating"] and not failed else {})}
     images = action.pop("images", None)
     chip = tool_action(action["kind"], action["summary"], name, args, result,
                        error=bool(action.get("error")),

@@ -1,9 +1,9 @@
-// Settings → Reading › Translation, everything translation in one section:
-// the viewer's translate button, target language, the selection translator,
-// what translates (a chat model or a machine-translation service), the
-// services' rows (Microsoft needs no key; Google and Youdao keys are
-// write-only like the AI keys: /api/translate/engines masks them) and the
-// speed (effort, parallel requests).
+// Settings → Translation, a pane of its own in three sections: Viewer &
+// selection (the viewer's translate button, target language, the selection
+// translator), Service (what translates — a chat model or a
+// machine-translation service — and the services' rows: Microsoft needs no
+// key; Google and Youdao keys are write-only like the AI keys:
+// /api/translate/engines masks them) and Speed (effort, parallel requests).
 import React from "react";
 import { API, apiJson } from "../shared/lib/utils";
 import { friendlyApiError } from "../library/libraryUtils";
@@ -29,13 +29,14 @@ const ENGINE_FORMS = {
   },
 };
 
-// One section, in the order a reader meets it: what shows in the viewer,
-// then what translates (a model or a service, and the services' keys), then
-// how fast. "Translate with" names this server's provider entries, so it
-// alone stays with the browser (its row's own tag).
+// In the order a reader meets it: what shows in the viewer, then what
+// translates (a model or a service, and the services' keys), then how fast.
+// "Translate with" names this server's provider entries, so it stays with
+// the browser (its row's own tag); the service keys are the account's, kept
+// on the server — the Service section holds no profile preference.
 export function TranslationSettings({ value }) {
-  return (
-    <Section title={t("Translation")} scope="account" prefs={SECTION_PREFS.reading["Translation"]}>
+  return (<>
+    <Section title={t("Viewer & selection")} scope="account" prefs={SECTION_PREFS.translation["Viewer & selection"]}>
       <Toggle
         icon={LanguagesIcon}
         label={t("Translation button")}
@@ -74,6 +75,8 @@ export function TranslationSettings({ value }) {
         onChange={value.setSelTranslateAuto}
         disabled={!value.selTranslate}
       />
+    </Section>
+    <Section title={t("Service")}>
       <Row
         icon={SparklesIcon}
         label={t("Translate with")}
@@ -84,9 +87,9 @@ export function TranslationSettings({ value }) {
         <TranslateModelSelect value={value} />
       </Row>
       <TranslationServices value={value} />
-      <TranslationPerformance value={value} />
     </Section>
-  );
+    <TranslationPerformance value={value} />
+  </>);
 }
 
 // Effort means nothing to a translation service, so its row hides while one
@@ -96,7 +99,7 @@ function TranslationPerformance({ value }) {
   const engines = value.translateEngines || [];
   const engine = !engines.length
     || translateModelFor(value.translateModel, engines, value.aiModels || []).startsWith("engine:");
-  return <>
+  return <Section title={t("Speed")} scope="account" prefs={SECTION_PREFS.translation["Speed"]}>
     {!engine ? <Row
       icon={ActivityIcon}
       label={t("Translation effort")}
@@ -122,7 +125,7 @@ function TranslationPerformance({ value }) {
           if (Number.isFinite(n)) value.setTranslateParallel(Math.max(1, Math.min(32, n)));
         }} />
     </Row>
-  </>;
+  </Section>;
 }
 
 // "" = the default; a set-up service ("engine:<id>") or a model id. A stale
@@ -202,8 +205,8 @@ function TranslationServices({ value }) {
 
   const canEdit = info?.can_edit;
   return (
-    // The key rows sit right under "Translate with"; the wrapper is the
-    // search target for "Translation services".
+    // The key rows sit right under "Translate with" in the Service section;
+    // the wrapper is the search target for "Translation services".
     <div data-setting={t("Translation services")}>
       {info?.engines.map((engine) => {
         const result = tests[engine.id];
@@ -234,7 +237,7 @@ function TranslationServices({ value }) {
               <button className="uiBtn sm" disabled={busy} onClick={() => edit(engine)}>{t("Edit")}</button>
               <button className="uiBtn sm iconSq danger" disabled={busy} title={t("Remove this key")}
                 aria-label={t("Remove key")} onClick={() => remove(engine)}>
-                <Trash2Icon size={13} />
+                <Trash2Icon size={16} />
               </button>
             </span> : <button className="uiBtn sm" disabled={busy} onClick={() => edit(engine)}>{t("Set up")}</button>) : null}
           </Row>

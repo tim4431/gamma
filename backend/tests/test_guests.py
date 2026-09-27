@@ -253,6 +253,7 @@ def test_admin_guest_settings_round_trip(gadmin, monkeypatch):
     assert s["guest_ttl_hours_range"] == [1, 720]
     cfg = _new_client().get("/api/server-config").json()
     assert cfg["guest_ttl_hours"] == 24 and cfg["demo"] is False and cfg["guest"] is True
+    assert cfg["guest_seeded"] is False
 
     r = gadmin.put("/api/admin/settings", json={"guest_ttl_hours": 48, "demo_mode": True})
     assert r.status_code == 200, r.text
@@ -284,6 +285,9 @@ def test_admin_guest_settings_round_trip(gadmin, monkeypatch):
     # non-admins cannot change them
     c, _ = _guest_client()
     assert c.put("/api/admin/settings", json={"demo_mode": True}).status_code == 403
+    # the demo landing promises a sample library only when guests get one
+    monkeypatch.setenv("GAMMA_GUEST_SEED", "/srv/seed.zip")
+    assert _new_client().get("/api/server-config").json()["guest_seeded"] is True
 
 
 def test_manage_sweep_guests(capsys):

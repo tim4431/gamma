@@ -26,7 +26,7 @@ import { ChatMarkdown, useCopied } from "../shared/ui/Widgets";
 import { PdfCitationOverlay } from "./PdfCitationOverlay";
 import { citationRuns, runChars } from "./pdfCitation.js";
 import { noteBadgeAnchor } from "./noteAnchor.js";
-import { COLORS } from "../shared/model/highlightColors.js";
+import { COLORS, paletteIndex } from "../shared/model/highlightColors.js";
 import { t } from "../shared/i18n/i18n.js";
 pdfjsLib.GlobalWorkerOptions.workerSrc = pdfWorkerUrl;
 // One worker for every document. pdf.js otherwise starts a fresh worker per
@@ -1574,7 +1574,7 @@ function PdfViewer({ url, citation = null, highlights, pdfScaleValue, scrollRef,
             aria-label={t("Toggle table of contents")}
             type="button"
           >
-            <OutlineIcon size={15} />
+            <OutlineIcon size={16} />
           </button>
         </div>
       ) : null}
@@ -1696,7 +1696,7 @@ function OutlineNode({ item, depth, onDest, onUrl }) {
             aria-label={open ? t("Collapse section") : t("Expand section")}
             type="button"
           >
-            <ChevronRightIcon size={10} strokeWidth={2.5} />
+            <ChevronRightIcon size={10} />
           </button>
         ) : (
           <span className="pdfOutlineChevron" />
@@ -1786,7 +1786,7 @@ function NoteBadge({ hlId, text, style, onClick, onContextMenu }) {
           }}
           onContextMenu={(e) => { hideNow(); onContextMenu(e); }}
         >
-          <MessageSquareIcon size={10} strokeWidth={2.2} />
+          <MessageSquareIcon size={10} />
         </button>
       </span>
       {tip ? createPortal(
@@ -2215,20 +2215,26 @@ const PdfPage = React.memo(function PdfPage({ citation, pageNumber, pdfDoc, scal
         // Area notes (Ctrl+drag rectangles) draw as an outline with a faint
         // wash — a solid multiply fill would tint the figure underneath.
         const isArea = !!h.position?.area;
-        const color = h.color || "rgba(255,226,143,0.65)";
+        const color = h.color || COLORS[0];
+        // The colour rides in --hl (the border in --hl-line, defaulting to
+        // it), and a palette colour is tagged with its index: dark pages
+        // swap in a dark-tuned set by index (app.css, "Flip page colors").
+        const palette = paletteIndex(color);
         const elements = [];
         for (const r of rects) {
-          elements.push(<div key={h.id + "-" + r.x1 + "-" + r.y1} data-hl-id={h.id} style={{
+          elements.push(<div key={h.id + "-" + r.x1 + "-" + r.y1} data-hl-id={h.id}
+            data-hl-color={palette >= 0 ? palette : undefined} style={{
             position: "absolute", zIndex: 2, cursor: "pointer",
             left: r.x1 * curW / storedW, top: r.y1 * curH / storedH,
             width: Math.max(1, (r.x2 - r.x1) * curW / storedW),
             height: Math.max(1, (r.y2 - r.y1) * curH / storedH),
             mixBlendMode: "multiply",
+            "--hl": color,
             ...(isArea ? {
               boxSizing: "border-box", borderRadius: 3,
-              border: `2px solid ${color}`,
-              background: `color-mix(in srgb, ${color} 25%, transparent)`,
-            } : { background: color }),
+              border: "2px solid var(--hl-line, var(--hl))",
+              background: "color-mix(in srgb, var(--hl) 25%, transparent)",
+            } : { background: "var(--hl)" }),
             ...(isLink ? (isArea
               ? { border: "2px solid rgba(70, 130, 255, 0.9)" }
               : { borderBottom: "2px solid rgba(70, 130, 255, 0.9)", borderRadius: 1 }) : {}),
@@ -2363,7 +2369,7 @@ function PlainTip({ onConfirm, onLink, translate }) {
             type="button"
             title={t("Link this reference to a paper (DOI / arXiv / existing PDF)")}
           >
-            <LinkIcon size={13} />
+            <LinkIcon size={14} />
           </button>
         ) : null}
         {translate ? (
@@ -2379,7 +2385,7 @@ function PlainTip({ onConfirm, onLink, translate }) {
             aria-expanded={!!trans?.open}
             title={t("Translate the selected text into {lang}", { lang: translate.langLabel })}
           >
-            <LanguagesIcon size={13} />
+            <LanguagesIcon size={14} />
           </button>
         ) : null}
       </div>
@@ -2400,7 +2406,7 @@ function SelTranslation({ trans, langLabel, tooLong, onToggle, keep }) {
       <div className="selTransHead">
         <button type="button" className="selTransToggle" aria-expanded={trans.open}
           onMouseDown={keep} onClick={onToggle}>
-          <ChevronRightIcon size={13} className={`selTransChev ${trans.open ? "open" : ""}`} />
+          <ChevronRightIcon size={14} className={`selTransChev ${trans.open ? "open" : ""}`} />
           <span>{t("Translation")}</span>
           <span className="selTransLang">{langLabel}</span>
           {loading ? <span className="pillSpin" aria-hidden="true" /> : null}
@@ -2409,7 +2415,7 @@ function SelTranslation({ trans, langLabel, tooLong, onToggle, keep }) {
           <button type="button" className="ctlBtn selTransCopy" title={t("Copy translation")} aria-label={t("Copy translation")}
             onMouseDown={keep}
             onClick={async () => { if (await copyText(trans.text)) flashCopied(); }}>
-            {copied ? <CheckIcon size={13} /> : <CopyIcon size={13} />}
+            {copied ? <CheckIcon size={16} /> : <CopyIcon size={16} />}
           </button>
         ) : null}
       </div>

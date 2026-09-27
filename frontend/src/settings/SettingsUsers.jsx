@@ -12,10 +12,10 @@
 // for admins, Settings → Server), not here.
 import React from "react";
 import { API, apiJson, fmtBytes } from "../shared/lib/utils";
-import { PaneHead, SubDialog, Field, UnitInput, Empty, QuotaMeter, PasswordInput } from "./SettingsKit";
+import { PaneHead, Section, Row, SubDialog, Field, UnitInput, Empty, QuotaMeter, PasswordInput } from "./SettingsKit";
 import { CloudIdentityRow } from "./SettingsCloudSignIn";
 import { ManageWorkspaceDialog, useAccounts } from "./SettingsWorkspace";
-import { BookIcon, HardDriveIcon, PenIcon, PlusIcon, ShieldIcon, Trash2Icon, UserIcon, UsersIcon } from "../shared/ui/Icons";
+import { BookIcon, HardDriveIcon, PenIcon, ShieldIcon, Trash2Icon, UserIcon, UsersIcon } from "../shared/ui/Icons";
 import { T, t } from "../shared/i18n/i18n.js";
 
 export function UsersSettings({ value, selfOnly = false }) {
@@ -173,7 +173,7 @@ export function UsersSettings({ value, selfOnly = false }) {
       onConfirm: async () => {
         const d = await usersCall(`/${encodeURIComponent(u.username)}`, "DELETE");
         if (!d) return;
-        setStatus(d.warning || `Deleted ${u.username}.`);
+        setStatus(d.warning || t("Deleted {name}.", { name: u.username }));
         setEdit(null);
       },
     });
@@ -215,15 +215,18 @@ export function UsersSettings({ value, selfOnly = false }) {
               type="checkbox" checked={edit.is_admin} disabled={lastAdmin(u)}
               onChange={(e) => setEdit((f) => ({ ...f, is_admin: e.target.checked }))}
             />
-            <ShieldIcon size={13} /> {t("Admin privilege")}
+            <ShieldIcon size={14} /> {t("Admin privilege")}
           </label>
+          {u.username !== myName ? (
+            <Section title={t("Danger zone")} tone="danger">
+              <Row icon={Trash2Icon} label={t("Delete account")}
+                hint={t("Deletes {username} with every page, PDF and setting of theirs. Can't be undone.", { username: u.username })}>
+                <button className="uiBtn sm danger" disabled={busy} onClick={() => deleteAccount(u)}>{t("Delete…")}</button>
+              </Row>
+            </Section>
+          ) : null}
           {error ? <div className="settingsPaneHint aiKeysError">{error}</div> : null}
           <div className="reportModalBtns">
-            {u.username !== myName ? (
-              <button className="uiBtn danger" disabled={busy} onClick={() => deleteAccount(u)}>
-                <Trash2Icon size={13} /> {t("Delete…")}
-              </button>
-            ) : null}
             <button className="uiBtn" onClick={closeEdit}>{t("Cancel")}</button>
             <button className="uiBtn primary" disabled={busy} onClick={saveAccount}>{t("Save")}</button>
           </div>
@@ -273,7 +276,7 @@ export function UsersSettings({ value, selfOnly = false }) {
     return (
       <div key={u.username} className="aiProvRow">
         <span className={`aiProvAvatar ${u.is_admin ? "active" : ""}`}>
-          {u.is_admin ? <ShieldIcon size={15} /> : <UserIcon size={15} />}
+          {u.is_admin ? <ShieldIcon size={16} /> : <UserIcon size={16} />}
         </span>
         <span className="aiProvMeta">
           <span className="aiProvName">
@@ -285,7 +288,7 @@ export function UsersSettings({ value, selfOnly = false }) {
           {u.is_guest || u.max_upload_mb != null ? (
             <span className="aiProvDesc">
               {[u.is_guest ? t("shared demo workspace, resets daily") : "",
-                u.max_upload_mb != null ? `max file ${u.max_upload_mb} MB` : ""].filter(Boolean).join(" · ")}
+                u.max_upload_mb != null ? t("max file {mb} MB", { mb: u.max_upload_mb }) : ""].filter(Boolean).join(" · ")}
             </span>
           ) : null}
           <QuotaMeter usedBytes={u.used_bytes} quotaMb={u.quota_mb ?? defaults?.quota_mb} />
@@ -294,11 +297,11 @@ export function UsersSettings({ value, selfOnly = false }) {
           {isAdmin ? (
             <>
               <button className="uiBtn sm" disabled={busy} title={t("Storage limits for {username}", { username: u.username })} onClick={() => openStorage(u)}>
-                <HardDriveIcon size={13} /> {t("Storage")}
+                <HardDriveIcon size={14} /> {t("Storage")}
               </button>
               {!u.is_guest ? (
                 <button className="uiBtn sm" disabled={busy} title={t("Rename {username}, set a password, or grant admin", { username: u.username })} onClick={() => openAccount(u)}>
-                  <PenIcon size={13} /> {t("Edit")}
+                  <PenIcon size={14} /> {t("Edit")}
                 </button>
               ) : null}
             </>
@@ -308,7 +311,7 @@ export function UsersSettings({ value, selfOnly = false }) {
           <div className="aiProvSub">
             {wsList.map((w) => (
               <div key={w.id} className="aiProvSubRow">
-                <span className="aiProvSubIcon"><BookIcon size={13} /></span>
+                <span className="aiProvSubIcon"><BookIcon size={14} /></span>
                 <span className="aiProvSubMeta">
                   <span className="aiProvSubName">
                     {w.name}
@@ -321,7 +324,7 @@ export function UsersSettings({ value, selfOnly = false }) {
                     <button className="uiBtn sm" onClick={() => { closeSettings?.(); switchWorkspace?.(w.id); }}>{t("Open")}</button>
                   ) : null}
                   <button className="uiBtn sm" onClick={() => setManage(w.id)} title={t("Manage {name}", { name: w.name })}>
-                    <PenIcon size={13} /> {t("Manage")}
+                    <PenIcon size={14} /> {t("Manage")}
                   </button>
                 </span>
               </div>
@@ -371,7 +374,7 @@ export function UsersSettings({ value, selfOnly = false }) {
               type="checkbox" checked={!!addForm.is_admin}
               onChange={(e) => setAddForm((f) => ({ ...f, is_admin: e.target.checked }))}
             />
-            <ShieldIcon size={13} /> {t("Grant the admin privilege")}
+            <ShieldIcon size={14} /> {t("Grant the admin privilege")}
           </label>
           {error ? <div className="settingsPaneHint aiKeysError">{error}</div> : null}
           <div className="reportModalBtns">

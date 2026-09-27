@@ -171,9 +171,11 @@ def create_app() -> FastAPI:
     if static_dir and static_dir.is_dir():
         index_html = static_dir / "index.html"
         # The web app manifest (/media/manifest.webmanifest, the "Add to Home
-        # Screen" install): FileResponse guesses types from the OS table,
-        # which lacks this one on Windows and in slim images.
+        # Screen" install) and the bundled interface font (/assets/*.woff2):
+        # FileResponse guesses types from the OS table, which may lack these
+        # on Windows and in slim images.
         mimetypes.add_type("application/manifest+json", ".webmanifest")
+        mimetypes.add_type("font/woff2", ".woff2")
 
         def revalidating(file: Path, request: Request):
             """An unhashed file (index.html, favicons) changes in place on

@@ -2,7 +2,8 @@
 
 - ``GET /api/server-config`` (public): what the login page needs — whether
   cloud sign-in is on and the account server's address, whether guests may
-  sign in, for how long (``guest_ttl_hours``) and ``demo`` mode
+  sign in, for how long (``guest_ttl_hours``), whether a guest starts with
+  the ``GAMMA_GUEST_SEED`` library (``guest_seeded``) and ``demo`` mode
   (docs/dev/guests.md) — and ``page_host``, the per-account page hostname
   pattern (``GAMMA_PAGE_HOST``, "" = none), by which the app knows it was
   opened on a page host (gamma/publish.py);
@@ -50,7 +51,7 @@ async def server_config():
     return {"cloud": {"enabled": enabled, "issuer": cfg["issuer"] if enabled else ""},
             "password_login": True, "registration": False, "guest": not cfg["share_host"],
             "guest_ttl_hours": server_settings.guest_ttl_hours(), "demo": server_settings.demo_mode(),
-            "page_host": config.page_host_pattern()}
+            "guest_seeded": bool(config.guest_seed_path()), "page_host": config.page_host_pattern()}
 
 
 @router.get("/api/auth/cloud/start")

@@ -31,12 +31,15 @@ export const SECTION_PREFS = Object.freeze({
   }),
   reading: sections({
     PDFs: ["embAnnots", "oaFallback", "metaAutoFetch", "pdfSaveLocal"],
-    Translation: ["translateEnabled", "translateLang", "selTranslate", "selTranslateAuto", "translateEffort", "translateParallel"],
-    Notes: ["enterNewNote"],
     "Search opens as": ["searchDetailsHome", "searchDetailsPaper"],
+  }),
+  translation: sections({
+    "Viewer & selection": ["translateEnabled", "translateLang", "selTranslate", "selTranslateAuto"],
+    Speed: ["translateEffort", "translateParallel"],
   }),
   keyboard: sections({
     Shortcuts: ["keybindings"],
+    "Built in": ["enterNewNote"],
   }),
   sync: sections({
     "Sync status": ["syncPillScope"],

@@ -53,7 +53,9 @@ export function scanSources(root = SRC) {
   return keys;
 }
 
-export const placeholders = (text) => [...String(text).matchAll(/\{(\w+)\}/g)].map((m) => m[1]).sort();
+// `{key:app.quickOpen}` (a key in guide copy, guide/keys.js) counts too: a
+// translation keeps it verbatim.
+export const placeholders = (text) => [...String(text).matchAll(/\{(\w+|key:[^{}\s]+)\}/g)].map((m) => m[1]).sort();
 
 // The problems of one catalog against the scanned keys, as messages.
 export function checkCatalog(catalog, keys) {

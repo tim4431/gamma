@@ -20,21 +20,23 @@
   </g>
 
   <!-- left: mark, name, promise -->
-  <g transform="translate(140 300)">{{gamma-logo}}</g>
-  <text x="142" y="500" font-family="Inter, 'Segoe UI', Roboto, Helvetica, Arial, sans-serif" font-size="52" font-weight="600" letter-spacing="-1" fill="#1a1a18">Read papers. Keep what you learn.</text>
-  <text x="142" y="562" font-family="Inter, 'Segoe UI', Roboto, Helvetica, Arial, sans-serif" font-size="27" fill="#6b6a65">Highlight PDFs, take outliner notes with live math,</text>
-  <text x="142" y="600" font-family="Inter, 'Segoe UI', Roboto, Helvetica, Arial, sans-serif" font-size="27" fill="#6b6a65">and search your whole library — on your own machine.</text>
-  <g>
-    <rect x="142" y="660" width="178.6" height="44" rx="22" fill="#ecdfc4"/>
-    <text x="231.3" y="689" text-anchor="middle" font-family="Inter, 'Segoe UI', Roboto, Helvetica, Arial, sans-serif" font-size="22" font-weight="500" fill="#5a4a24">Self-hosted</text>
-  </g>
-  <g>
-    <rect x="336.6" y="660" width="241.6" height="44" rx="22" fill="#ecdfc4"/>
-    <text x="457.40000000000003" y="689" text-anchor="middle" font-family="Inter, 'Segoe UI', Roboto, Helvetica, Arial, sans-serif" font-size="22" font-weight="500" fill="#5a4a24">Markdown + LaTeX</text>
-  </g>
-  <g>
-    <rect x="594.2" y="660" width="380.2" height="44" rx="22" fill="#ecdfc4"/>
-    <text x="784.3000000000001" y="689" text-anchor="middle" font-family="Inter, 'Segoe UI', Roboto, Helvetica, Arial, sans-serif" font-size="22" font-weight="500" fill="#5a4a24">Ask an AI about your papers</text>
+  <g id="hero-promise">
+    <g transform="translate(140 300)">{{gamma-logo}}</g>
+    <text x="142" y="500" font-family="Inter, 'Segoe UI', Roboto, Helvetica, Arial, sans-serif" font-size="52" font-weight="600" letter-spacing="-1" fill="#1a1a18">Read papers. Keep what you learn.</text>
+    <text x="142" y="562" font-family="Inter, 'Segoe UI', Roboto, Helvetica, Arial, sans-serif" font-size="27" fill="#6b6a65">Highlight PDFs, take outliner notes with live math,</text>
+    <text x="142" y="600" font-family="Inter, 'Segoe UI', Roboto, Helvetica, Arial, sans-serif" font-size="27" fill="#6b6a65">and search your whole library — on your own machine.</text>
+    <g>
+      <rect x="142" y="660" width="178.6" height="44" rx="22" fill="#ecdfc4"/>
+      <text x="231.3" y="689" text-anchor="middle" font-family="Inter, 'Segoe UI', Roboto, Helvetica, Arial, sans-serif" font-size="22" font-weight="500" fill="#5a4a24">Self-hosted</text>
+    </g>
+    <g>
+      <rect x="336.6" y="660" width="241.6" height="44" rx="22" fill="#ecdfc4"/>
+      <text x="457.40000000000003" y="689" text-anchor="middle" font-family="Inter, 'Segoe UI', Roboto, Helvetica, Arial, sans-serif" font-size="22" font-weight="500" fill="#5a4a24">Markdown + LaTeX</text>
+    </g>
+    <g>
+      <rect x="594.2" y="660" width="380.2" height="44" rx="22" fill="#ecdfc4"/>
+      <text x="784.3000000000001" y="689" text-anchor="middle" font-family="Inter, 'Segoe UI', Roboto, Helvetica, Arial, sans-serif" font-size="22" font-weight="500" fill="#5a4a24">Ask an AI about your papers</text>
+    </g>
   </g>
 
   <!-- right: a paper, its notes, and the link between a highlight and its block -->

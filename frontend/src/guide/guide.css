@@ -15,7 +15,7 @@
    pointer events fall through to the real control beneath it. */
 .guideDimFill {
   fill: rgba(0, 0, 0, 0.42);
-  transition: d 180ms ease;
+  transition: d var(--dur-base) ease;
 }
 .guideRing {
   fill: none;
@@ -35,13 +35,13 @@
   background: var(--bg-elevated);
   color: var(--text-primary);
   border: 1px solid var(--border);
-  border-radius: var(--radius-surface);
-  box-shadow: var(--shadow-surface);
-  padding: 12px 14px 12px;
+  border-radius: var(--radius-lg);
+  box-shadow: var(--shadow-2);
+  padding: 14px 16px 12px;
   display: flex;
   flex-direction: column;
-  gap: 6px;
-  animation: guideIn 160ms ease-out;
+  gap: 8px;
+  animation: guideIn var(--dur-base) ease-out;
 }
 @keyframes guideIn {
   from { opacity: 0; transform: translateY(4px); }
@@ -55,106 +55,292 @@
   animation: none;
   padding: 18px 20px 16px;
 }
+/* Head: the status chip (watch / your turn / done), the step count on the
+   right, the close button. */
 .guideHead {
   display: flex;
   align-items: center;
-  justify-content: space-between;
-  min-height: 18px;
+  gap: 8px;
+  min-height: 20px;
 }
+.guideCount {
+  margin-left: auto;
+  font-size: var(--fs-2xs);
+  color: var(--text-muted);
+  font-variant-numeric: tabular-nums;
+}
+.guideStep + .guideClose, .guideChip + .guideClose { margin-left: auto; }
 .guideStep {
-  font-size: calc(11px * var(--ui-font-scale, 1));
+  font-size: var(--fs-2xs);
   font-weight: 600;
   letter-spacing: 0.02em;
   color: var(--text-muted);
   font-variant-numeric: tabular-nums;
 }
-.guideClose { margin-right: -4px; }
-.guideDone {
-  margin-left: 8px;
-  color: var(--accent);
-}
+.guideClose { margin-right: -6px; }
 .guideRoot.done .guideRing { animation: none; stroke-opacity: 1; }
-.guideBusy, .guideFailed {
-  margin-left: 8px;
-  font-weight: 500;
-  text-transform: uppercase;
-  letter-spacing: 0.06em;
-  font-size: calc(10px * var(--ui-font-scale, 1));
-  color: var(--text-muted);
+.guideChip.watch { background: color-mix(in srgb, var(--bg-raised) 70%, transparent); color: var(--text-secondary); }
+.guideChip.turn, .guideChip.accent { background: var(--accent-bg); color: var(--accent); }
+.guideChip.turn::before, .guideChip.accent::before {
+  content: "";
+  width: 6px;
+  height: 6px;
+  border-radius: 50%;
+  background: var(--accent);
+  box-shadow: 0 0 0 3px color-mix(in srgb, var(--accent) 28%, transparent);
 }
-.guideFailed { color: var(--danger); text-transform: none; letter-spacing: 0; font-size: calc(11px * var(--ui-font-scale, 1)); }
+.guideChip.done { background: color-mix(in srgb, var(--ok) 16%, transparent); color: color-mix(in srgb, var(--ok) 80%, var(--text-primary)); }
+.guideChip.failed { background: var(--danger-bg); color: var(--danger); }
+/* A demo's long wait: a spinner and what it waits for. */
+.guideWait {
+  display: flex;
+  align-items: flex-start;
+  gap: 8px;
+  font-size: var(--fs-xs);
+  color: var(--text-secondary);
+}
+.guideWaitSlow { display: block; margin-top: 2px; color: var(--text-muted); }
+.guideSpinner {
+  flex: none;
+  width: 12px;
+  height: 12px;
+  margin-top: 2px;
+  border: 2px solid var(--border);
+  border-top-color: var(--accent);
+  border-radius: 50%;
+  animation: guideSpin 800ms linear infinite;
+}
+@keyframes guideSpin { to { transform: rotate(360deg); } }
+/* Progress: a thin line for a demo's actions, then one segment per step. */
+.guideDemoBar { height: 3px; border-radius: 2px; background: var(--border); overflow: hidden; }
+.guideDemoBar i { display: block; height: 100%; background: var(--text-muted); border-radius: 2px; transition: width var(--dur-slow) ease; }
+.guideSegments { display: flex; gap: 3px; margin-top: 2px; }
+.guideSegments i { flex: 1; height: 3px; border-radius: 2px; background: var(--border); }
+.guideSegments i.done { background: color-mix(in srgb, var(--accent) 45%, transparent); }
+.guideSegments i.on { background: var(--accent); }
+.guideLink {
+  border: 0;
+  background: none;
+  padding: 4px 0;
+  font: inherit;
+  font-size: var(--fs-xs);
+  color: var(--text-muted);
+  cursor: pointer;
+  text-decoration: underline;
+  text-underline-offset: 3px;
+  text-decoration-color: var(--border-light);
+}
+.guideLink:hover { color: var(--text-primary); }
 /* While a demo acts, the whole sheet swallows clicks (the hole included) so
    a stray click can't derail it; the card stays usable for Skip / leave. */
 .guideShield { position: absolute; inset: 0; pointer-events: auto; }
-.guideCardCorner { right: 16px; bottom: 16px; width: 300px; }
+/* A card with nothing to point at sits bottom-left, clear of the chat
+   composer's Send button in the right dock. */
+.guideCardCorner { left: 16px; bottom: 16px; width: 320px; }
+/* The beak on the card edge facing the anchor: a square turned 45°, drawn
+   with the card's own border on its two outer sides. */
+.guideBeak {
+  position: absolute;
+  width: 14px;
+  height: 14px;
+  background: var(--bg-elevated);
+  transform: rotate(45deg);
+  pointer-events: none;
+}
+.guideBeak.beak-bottom { top: -8px; border-left: 1px solid var(--border); border-top: 1px solid var(--border); box-shadow: -1px -1px 1px rgba(0, 0, 0, 0.04); }
+.guideBeak.beak-top { bottom: -8px; border-right: 1px solid var(--border); border-bottom: 1px solid var(--border); box-shadow: 1px 1px 1px rgba(0, 0, 0, 0.06); }
+.guideBeak.beak-right { left: -8px; border-left: 1px solid var(--border); border-bottom: 1px solid var(--border); box-shadow: -1px 1px 1px rgba(0, 0, 0, 0.05); }
+.guideBeak.beak-left { right: -8px; border-right: 1px solid var(--border); border-top: 1px solid var(--border); box-shadow: 1px -1px 1px rgba(0, 0, 0, 0.05); }
+/* An offer's accent rule runs over the top edge; a beak there takes it. */
+.guideInvitation:not(.guideHint) .guideBeak.beak-bottom { top: -9px; border-color: var(--accent); border-width: 2px 0 0 2px; }
+/* An offer or hint marks the control it is about without dimming anything:
+   a ring and a soft halo that pulse twice, then stay. Clicks pass through,
+   so hover-only controls still work. */
+.guideBeacon {
+  position: fixed;
+  border: 2px solid var(--accent);
+  border-radius: var(--radius-lg);
+  box-shadow: 0 0 0 5px color-mix(in srgb, var(--accent) 20%, transparent);
+  pointer-events: none;
+  animation: guideBeacon 1s ease-in-out 2;
+}
+@keyframes guideBeacon {
+  0%, 100% { box-shadow: 0 0 0 5px color-mix(in srgb, var(--accent) 20%, transparent); }
+  50% { box-shadow: 0 0 0 9px color-mix(in srgb, var(--accent) 6%, transparent); }
+}
 /* The demo's pointer glides between targets; a press shrinks it briefly. */
 .guideCursor {
   position: fixed;
   top: -4px;
   left: -3px;
   pointer-events: none;
-  transition: transform 520ms cubic-bezier(0.22, 0.61, 0.36, 1);
+  transition: transform 520ms cubic-bezier(0.22, 0.61, 0.36, 1), opacity var(--dur-base) ease;
   filter: drop-shadow(0 1px 2px rgba(0, 0, 0, 0.45));
   z-index: 1;
 }
-.guideCursor.pressed svg { transform: scale(0.85); transform-origin: 4px 4px; transition: transform 90ms; }
-.guideCursor.dragging { transition: transform 40ms linear; }
+/* While the demo types, the pointer waits below the field, faded. */
+.guideCursor.faded { opacity: 0.4; }
+.guideCursor.pressed svg { transform: scale(0.85); transform-origin: 4px 4px; transition: transform var(--dur-fast); }
+.guideCursor.dragging { transition: transform 40ms linear; } /* ds-allow: follows the pointer */
 .guideModifier {
   position: absolute;
   top: 24px;
   left: 10px;
   padding: 3px 6px;
   border: 1px solid var(--border);
-  border-radius: 5px;
+  border-radius: var(--radius-sm);
   background: var(--bg-elevated);
   color: var(--text-primary);
-  font: 600 calc(11px * var(--ui-font-scale, 1)) system-ui;
+  font: 600 var(--fs-2xs) var(--font-sans);
 }
 @media (prefers-reduced-motion: reduce) {
   .guideCursor, .guideCursor.dragging, .guideDimFill { transition: none; }
-  .guideRing, .guideCard { animation: none; }
+  .guideRing, .guideCard, .guideBeacon { animation: none; }
 }
+/* One type scale for every card: tour and offer titles 15/600, a hint's
+   sentence 14/500, bodies 13/1.5, meta 11. */
 .guideTitle {
-  font-size: calc(14px * var(--ui-font-scale, 1));
+  font-size: var(--fs-body);
   font-weight: 600;
-  line-height: 1.3;
+  line-height: 1.35;
 }
-.guideCardCentered .guideTitle { font-size: calc(17px * var(--ui-font-scale, 1)); }
+.guideCardCentered .guideTitle { font-size: var(--fs-lg); }
 .guideBody {
-  font-size: calc(12.5px * var(--ui-font-scale, 1));
+  font-size: var(--fs-sm);
   line-height: 1.5;
   color: var(--text-secondary);
 }
 .guideBody p { margin: 0; }
 .guideBody p + p { margin-top: 6px; }
-.guideBody code {
-  font-size: calc(11.5px * var(--ui-font-scale, 1));
+.guideTitle code, .guideBody code {
+  font-size: var(--fs-xs);
   padding: 1px 5px;
-  border-radius: 4px;
+  border-radius: var(--radius-xs);
   background: var(--bg-raised);
   border: 1px solid var(--border);
 }
 .guideFoot {
   display: flex;
   align-items: center;
-  justify-content: space-between;
-  margin-top: 6px;
+  gap: 8px;
+  min-height: 28px;
+  margin-top: 2px;
 }
-.guideDots { display: inline-flex; gap: 4px; }
-.guideDots i {
-  width: 5px;
-  height: 5px;
-  border-radius: 50%;
-  background: var(--border-light);
-}
-.guideDots i.done { background: var(--accent-bg); }
-.guideDots i.on { background: var(--accent); width: 14px; border-radius: 3px; }
-.guideBtns { display: inline-flex; gap: 6px; }
-.guideInvitation .guideCard { border-top: 2px solid var(--accent); gap: 8px; }
+.guideBtns { display: inline-flex; gap: 6px; margin-left: auto; }
+.guideInvitation .guideCard { border-top: 2px solid var(--accent); }
 .guideInvitation .guideStep { color: var(--accent); }
-.guideInvitation .guideTitle { font-size: calc(16px * var(--ui-font-scale, 1)); }
+/* A hint is a sentence with a Tip chip, not a heading under an accent rule. */
+.guideHint .guideCard { border-top-width: 1px; border-top-color: var(--border); }
+.guideHint .guideTitle { font-size: var(--fs-md); font-weight: 500; line-height: 1.5; }
+.guideChip {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  padding: 1px 9px 1px 8px;
+  border-radius: var(--radius-full);
+  font-size: var(--fs-2xs);
+  font-weight: 600;
+  letter-spacing: 0.01em;
+  white-space: nowrap;
+}
+.guideChip.tip {
+  background: color-mix(in srgb, var(--callout-warning) 16%, transparent);
+  color: color-mix(in srgb, var(--callout-warning) 80%, var(--text-primary));
+}
+/* Keys in the copy: the settings kit's key caps, a size up. */
+.guideCard .keyCaps { vertical-align: 1px; margin: 0 1px; }
+.guideCard .keyCap {
+  font-size: var(--fs-xs);
+  line-height: 18px;
+  font-weight: 600;
+  color: var(--text-primary);
+  background: var(--bg-raised);
+  border-color: var(--border-light);
+}
 
-/* Narrow screens: the card becomes a bottom sheet; the spotlight stays. */
+/* The welcome card: a tour's intro and its arrival offer, centred. As an
+   offer it dims nothing; the dimming starts with the tour. */
+.guideCard.guideCardWelcome {
+  width: 440px;
+  padding: 24px 26px 18px;
+  gap: 12px;
+  border-top: 1px solid var(--border);
+}
+.guideCardWelcome .guideTitle { font-size: var(--fs-xl); letter-spacing: -0.01em; }
+.guideCardWelcome .guideBody { font-size: var(--fs-md); }
+.guideOutline { list-style: none; margin: 2px 0 4px; padding: 0; display: flex; flex-direction: column; gap: 9px; }
+.guideOutline li {
+  display: flex;
+  align-items: center;
+  gap: 11px;
+  font-size: var(--fs-md);
+}
+.guideOutlineNum {
+  flex: none;
+  width: 24px;
+  height: 24px;
+  border-radius: 50%;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  background: var(--accent-bg);
+  color: var(--accent);
+  font-weight: 600;
+  font-size: var(--fs-xs);
+}
+.guideOutlineKind { margin-left: auto; font-size: var(--fs-xs); color: var(--text-muted); white-space: nowrap; }
+.guideFootnote { font-size: var(--fs-xs); color: var(--text-muted); }
+
+/* The finish card, over a light scrim (clicking it closes the card). */
+.guideScrim { position: absolute; inset: 0; background: rgba(0, 0, 0, 0.22); pointer-events: auto; }
+.guideFinishBadge {
+  width: 40px;
+  height: 40px;
+  border-radius: 50%;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  background: var(--accent-bg);
+  color: var(--accent);
+}
+.guideFinishBadge + .guideClose { margin-left: auto; align-self: flex-start; }
+.guideMade {
+  list-style: none;
+  margin: 0;
+  padding: 10px 12px;
+  display: flex;
+  flex-direction: column;
+  gap: 7px;
+  border: 1px solid var(--border);
+  border-radius: var(--radius-lg);
+  background: color-mix(in srgb, var(--bg-raised) 35%, var(--bg-elevated));
+}
+.guideMade li { display: flex; align-items: center; gap: 9px; font-size: var(--fs-sm); }
+.guideMade strong { font-weight: 600; }
+.guideMadeIcon { flex: none; width: 16px; display: inline-flex; justify-content: center; color: var(--accent); }
+.guideNextLabel { font-size: var(--fs-xs); color: var(--text-muted); margin-bottom: -4px; }
+.guideNext { display: flex; gap: 8px; }
+.guideNext button {
+  flex: 1;
+  display: flex;
+  flex-direction: column;
+  align-items: flex-start;
+  gap: 2px;
+  padding: 9px 11px;
+  text-align: left;
+  font: inherit;
+  color: var(--text-primary);
+  background: var(--bg-elevated);
+  border: 1px solid var(--border);
+  border-radius: var(--radius-md);
+  cursor: pointer;
+}
+.guideNext button:hover { border-color: var(--border-hover); background: var(--bg-hover); }
+.guideNext b { font-size: var(--fs-sm); font-weight: 600; }
+.guideNext small { font-size: var(--fs-xs); color: var(--text-muted); }
+
+/* Narrow screens: the card becomes a bottom sheet; the spotlight stays.
+   On the phone layout it sits above the bottom tab bar. */
 @media (max-width: 640px) {
   .guideCard:not(.guideCardCentered) {
     top: auto !important;
@@ -163,7 +349,13 @@
     bottom: calc(12px + env(safe-area-inset-bottom));
     width: auto !important;
   }
+  .phoneUI .guideCard:not(.guideCardCentered):not(.guideCardAbove) {
+    bottom: calc(56px + env(safe-area-inset-bottom));
+  }
   .guideCardCentered { width: min(340px, calc(100vw - 32px)); }
+  .guideCard.guideCardWelcome { width: min(440px, calc(100vw - 32px)); padding: 20px 18px 16px; }
+  /* A sheet is not beside its anchor. */
+  .guideBeak { display: none; }
   /* Keep lower controls, especially the composer, usable during practice. */
   .guideCard.guideCardAbove {
     top: calc(12px + env(safe-area-inset-top)) !important;

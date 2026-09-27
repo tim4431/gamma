@@ -94,9 +94,9 @@ export async function inkEditingScenarios({ server, browser, alice, bob, makePdf
   await step("ink edit: color and width affect only selected ink, persist samples, and use visible undo/redo", async () => {
     const before = await stored();
     await menu().getByRole("button", { name: "Color", exact: true }).tap();
-    await menu().getByRole("button", { name: "Ink color #dc2626", exact: true }).tap();
+    await menu().getByRole("button", { name: "Red", exact: true }).tap();
     await menu().getByRole("button", { name: "Width", exact: true }).tap();
-    await menu().getByRole("button", { name: "pen width 4 pt", exact: true }).tap();
+    await menu().getByRole("button", { name: "Pen width 4 pt", exact: true }).tap();
     await until(async () => (await stored())?.strokes[0].size === 4 && (await stored()).strokes[0].color === "#dc2626");
     assertEq(JSON.stringify((await stored()).strokes[0].pts), JSON.stringify(before.strokes[0].pts), "pressure/time unchanged");
     assertEq((await stored(secondId)).strokes[0].color, "#1d4ed8");
@@ -200,7 +200,7 @@ export async function inkEditingScenarios({ server, browser, alice, bob, makePdf
   });
 
   await step("ink edit: mouse and pen hover show tool footprint without drawing", async () => {
-    await page.getByRole("button", { name: /^Pen .*\(1\)/ }).tap();
+    await page.getByRole("button", { name: / pen · .* · key 1\b/ }).tap();
     const p = await point(300, 330), cursor = page.locator('[data-page="1"] .inkCursor');
     await page.mouse.move(p.x, p.y); await cursor.waitFor({ state: "visible" });
     const penSize = await cursor.evaluate((el) => el.getBoundingClientRect().width);
@@ -299,7 +299,7 @@ export async function inkEditingScenarios({ server, browser, alice, bob, makePdf
     const editMenu = edit.getByRole("toolbar", { name: "Edit handwriting", exact: true });
     await editMenu.waitFor();
     await editMenu.getByRole("button", { name: "Color", exact: true }).tap();
-    await editMenu.getByRole("button", { name: "Ink color #15803d", exact: true }).tap();
+    await editMenu.getByRole("button", { name: "Green", exact: true }).tap();
     await until(async () => (await stored()).strokes[0].color === "#15803d");
     assertNoProblems(edit);
     await editCtx.close();

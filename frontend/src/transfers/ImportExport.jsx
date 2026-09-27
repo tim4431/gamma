@@ -31,7 +31,7 @@ function FormatChoices({ label, value, onChange, onConfirm, options }) {
 function TransferDialog({ title, step, setStep, firstTitle, secondTitle, onCancel, children, action, actionLabel, busy, needsReview, onContinue }) {
   const head = React.useRef(null);
   React.useEffect(() => { head.current?.focus(); }, [step]);
-  return <SubDialog title={title} onClose={onCancel} className="transferModal" closeButton>
+  return <SubDialog title={title} onClose={onCancel} className="transferModal">
     <nav className="transferProgress" aria-label={t("Step {step} of {total}", { step: step + 1, total: needsReview ? 2 : 1 })}>
       {step > 0 ? <button type="button" className="crumbBtn" onClick={() => setStep(0)}>1. {firstTitle}</button>
         : <span aria-current="step">{needsReview ? "1. " : ""}{firstTitle}</span>}

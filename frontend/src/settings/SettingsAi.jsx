@@ -11,10 +11,10 @@ import { friendlyApiError, parseFolderTags } from "../library/libraryUtils";
 import { MenuSelect } from "../shared/ui/Menus";
 import { cachedPercent, fmtTokens, usageDetail } from "../chat/tokenUsage";
 import { ModelPicker } from "./ModelPicker";
-import { Section, SubDialog, Step, Field, Empty, PercentMeter, Row, PasswordInput, StatText, Toggle, UnitInput } from "./SettingsKit";
+import { Section, SubDialog, Step, Field, Empty, IconChoices, PercentMeter, Row, PasswordInput, StatText, Toggle, UnitInput } from "./SettingsKit";
 import { SECTION_PREFS } from "./sectionPrefs.js";
-import { ActivityIcon, GlobeIcon, KeyIcon, MicIcon, PaperIcon, RefreshIcon, SparklesIcon, Trash2Icon, UserIcon } from "../shared/ui/Icons";
-import { T, getLocale, t } from "../shared/i18n/i18n.js";
+import { ActivityIcon, CheckIcon, ExternalLinkIcon, GlobeIcon, KeyIcon, MicIcon, PaperIcon, RefreshIcon, SparklesIcon, Trash2Icon, UserIcon, XIcon } from "../shared/ui/Icons";
+import { T, getLocale, t, tn } from "../shared/i18n/i18n.js";
 
 // Spoken languages for dictation, by native name. The pick "" follows the
 // display language, "auto" leaves the language to the model.
@@ -23,6 +23,46 @@ const DICTATION_LANGS = [
   ["de", t("Deutsch")], ["fr", t("Français")], ["es", t("Español")], ["pt", t("Português")],
   ["it", t("Italiano")], ["ru", "Русский"], ["hi", "हिन्दी"], ["ar", "العربية"],
 ];
+
+// The ways to connect an AI service, as tiles: each protocol the server
+// offers (sign-in first, then the API-key ones in the server's order), then
+// "Other" for the named services and a custom endpoint. The chat's setup
+// card and the connect dialog both draw from it; `long` gives the card's
+// fuller hints. A tile's value is a protocol id or "other".
+const SERVICE_TILES = {
+  chatgpt: { label: t("ChatGPT"), hint: t("Subscription sign-in"), long: t("Sign in with your subscription. No API key.") },
+  anthropic: { label: t("Anthropic"), hint: t("API key"), long: t("Claude models, with an API key") },
+  openai: { label: t("OpenAI API"), hint: t("API key"), long: t("GPT models, with an API key") },
+};
+
+export function aiServiceTiles(info, { long = false, only = null } = {}) {
+  const protocols = [...(info?.protocols || [])]
+    .sort((a, b) => Number(b.auth === "oauth") - Number(a.auth === "oauth"))
+    .filter((p) => !only || only(p));
+  const tiles = protocols.map((p) => {
+    const known = SERVICE_TILES[p.id];
+    const oauth = p.auth === "oauth";
+    return {
+      value: p.id,
+      label: known?.label || p.label,
+      hint: known ? (long ? known.long : known.hint) : oauth ? t("Subscription sign-in") : t("API key"),
+      Icon: oauth ? UserIcon : KeyIcon,
+    };
+  });
+  const keyProtocol = (info?.protocols || []).find((p) => p.auth !== "oauth");
+  if (keyProtocol && (!only || only(keyProtocol))) {
+    const names = (info?.services || []).map((s) => s.label).join(", ");
+    tiles.push({
+      value: "other",
+      label: long ? t("Other service") : t("Other"),
+      hint: long
+        ? (names ? t("{services} or any OpenAI-compatible endpoint", { services: names }) : t("Any OpenAI-compatible endpoint"))
+        : (names ? t("{services}, custom URL", { services: names }) : t("Custom URL")),
+      Icon: GlobeIcon,
+    });
+  }
+  return tiles;
+}
 
 function formatPercent(value) {
   const n = Number(value);
@@ -73,7 +113,7 @@ function ProviderRow({ provider, protocol, oauth, active = false, radio = null, 
     <label className={`aiProvRow ${radio ? "aiProvSelectable" : ""} ${active ? "active" : ""}`}>
       {radio}
       <span className={`aiProvAvatar ${active ? "active" : ""}`}>
-        {oauth ? <SparklesIcon size={15} /> : <KeyIcon size={15} />}
+        {oauth ? <SparklesIcon size={16} /> : <KeyIcon size={16} />}
       </span>
       <span className="aiProvMeta">
         <span className="aiProvName">
@@ -131,7 +171,9 @@ function ProviderRow({ provider, protocol, oauth, active = false, radio = null, 
 // `${base}/chatgpt/start` + `complete`, the account form's paste-the-callback
 // flow). The model picker lists live through /api/ai/model-catalog, which
 // takes a saved shared entry's id from an admin.
-function useProviderEditor({ info, setInfo, base, onSaved }) {
+// `onConnected(entry)` hears a connection this form just made, once it is
+// saved with its models — the Server section tests it right away.
+function useProviderEditor({ info, setInfo, base, onSaved, onConnected }) {
   const [form, setForm] = React.useState(null);
   const [busy, setBusy] = React.useState(false);
   const [error, setError] = React.useState("");
@@ -211,18 +253,23 @@ function useProviderEditor({ info, setInfo, base, onSaved }) {
         const connected = next.providers.find((p) => form.id ? p.id === form.id
           : !(info?.providers || []).some((old) => old.id === p.id));
         setForm((current) => current?.oauthState === form.oauthState && connected
-          ? { ...current, id: connected.id, models: connected.models || "", oauthState: "", oauthCallback: "" } : current);
+          ? { ...current, id: connected.id, models: connected.models || "", oauthState: "", oauthCallback: "", fresh: current.fresh || !form.id } : current);
         onSaved?.();
         return;
       }
-      setInfo(await apiJson(`${base}${form.id ? `/${encodeURIComponent(form.id)}` : ""}`, {
+      const next = await apiJson(`${base}${form.id ? `/${encodeURIComponent(form.id)}` : ""}`, {
         method: form.id ? "PUT" : "POST", headers: { "Content-Type": "application/json" },
         body: JSON.stringify({ protocol: form.protocol, name: form.name.trim(), base_url: form.base_url.trim(),
           models: form.models.trim(), test_model: (form.test_model || "").trim(),
           ...(form.api_key.trim() ? { api_key: form.api_key.trim() } : {}) }),
-      }));
+      });
+      setInfo(next);
       setForm(null);
       onSaved?.();
+      // Made in this dialog (added, or signed in and now saved): test it.
+      const made = form.id ? (form.fresh ? next.providers.find((p) => p.id === form.id) : null)
+        : next.providers.find((p) => !(info?.providers || []).some((old) => old.id === p.id));
+      if (made) onConnected?.(made);
     } catch (err) {
       setError(err.message);
     } finally {
@@ -277,7 +324,8 @@ export function SharedAiProviderSettings({ setStatus, confirm }) {
     apiJson(base).then((v) => { if (active) setInfo(v); }).catch((err) => { if (active) setLoadError(err.message); });
     return () => { active = false; };
   }, [base]);
-  const editor = useProviderEditor({ info, setInfo, base, onSaved: () => setStatus?.(t("Shared AI provider saved.")) });
+  const editor = useProviderEditor({ info, setInfo, base, onSaved: () => setStatus?.(t("Shared AI provider saved.")),
+    onConnected: (entry) => test(entry) });
   async function test(p) {
     setTests((prev) => ({ ...prev, [p.id]: { busy: true } }));
     let result;
@@ -353,7 +401,7 @@ export function SharedAiProviderSettings({ setStatus, confirm }) {
               onClick={() => editor.startEdit(provider)}>{t("Manage")}</button>
             <button className="uiBtn sm iconSq danger" title={t("Remove this shared key")} aria-label={t("Remove shared key")}
               onClick={() => remove(provider)}>
-              <Trash2Icon size={13} />
+              <Trash2Icon size={16} />
             </button>
           </ProviderRow>
         );
@@ -378,7 +426,7 @@ export function SharedAiProviderSettings({ setStatus, confirm }) {
       {loadError ? <p className="settingsPaneHint aiKeysError" role="alert">{loadError}</p> : null}
     </Section>
     {editor.aiKeysForm ? (
-      <SubDialog draft={editor.aiKeysForm} title={editor.aiKeysForm.id ? t("Edit shared key") : t("Add shared key")}
+      <SubDialog draft={editor.aiKeysForm} title={editor.aiKeysForm.id ? t("Edit shared key") : t("Connect a shared AI service")}
         onClose={editor.close}>
         <ProviderForm value={editor} onCancel={editor.close} />
       </SubDialog>
@@ -386,6 +434,14 @@ export function SharedAiProviderSettings({ setStatus, confirm }) {
   </>;
 }
 
+// The connect dialog, for the account's list and Settings →
+// Server's shared one alike: 1 a service tile (Other opens the named
+// services, a custom endpoint and its API format); 2 the API key — the
+// provider's own placeholder and "Get a key at …" link (key_placeholder /
+// key_url from the adapter or the service preset), checked live by the
+// debounced model fetch — or the ChatGPT sign-in; 3 the models, the live
+// list's first one picked when nothing is, with the name and test model
+// under More options.
 function ProviderForm({ value, onCancel }) {
   const {
     aiKeysForm,
@@ -412,6 +468,7 @@ function ProviderForm({ value, onCancel }) {
   // recognized by that pair.
   const services = aiKeysInfo.services || [];
   const [service, setService] = React.useState(() => {
+    if (aiKeysForm.custom) return "custom";
     const base = (aiKeysForm.base_url || "").replace(/\/$/, "");
     const preset = services.find((item) => item.protocol === aiKeysForm.protocol && item.base_url === base);
     if (preset) return preset.id;
@@ -420,36 +477,65 @@ function ProviderForm({ value, onCancel }) {
   });
   const oauth = isOauthProto(aiKeysForm.protocol);
   const protocol = aiProtocolOf(aiKeysForm.protocol);
+  const preset = services.find((item) => item.id === service);
   // A saved connection can't turn from sign-in into API key or back (the
   // server refuses it): editing offers only services of the same kind.
   const offered = (protocolId) => !aiKeysForm.id || isOauthProto(protocolId) === oauth;
+  const tiles = aiServiceTiles(aiKeysInfo, { only: (item) => offered(item.id) });
+  const tile = aiKeysInfo.protocols.some((item) => item.id === service) ? service : "other";
+  const choose = (next) => {
+    setService(next);
+    const named = services.find((item) => item.id === next);
+    if (named) setAiKeysForm((form) => ({ ...form, protocol: named.protocol, base_url: named.base_url, models: "", test_model: "" }));
+    else if (next !== "custom") setAiKeysForm((form) => ({ ...form, protocol: next, base_url: "", models: "", test_model: "" }));
+    else if (oauth) setAiKeysForm((form) => ({ ...form, protocol: "openai", base_url: "", models: "", test_model: "" }));
+  };
+  const pickTile = (next) => {
+    if (next !== "other") choose(next);
+    else if (tile !== "other") choose(services.find((item) => offered(item.protocol))?.id || "custom");
+  };
+  // What the key field shows: the preset's own hint, else the protocol's
+  // when it points at the provider's own endpoint; a custom endpoint has none.
+  const keyHelp = preset || (service === "custom" ? null : protocol);
+  const keyUrl = keyHelp?.key_url || "";
+  const keyWhere = keyUrl.replace(/^https?:\/\//, "").replace(/\/$/, "");
+  const stored = aiKeysForm.id ? aiKeysInfo.providers?.find((item) => item.id === aiKeysForm.id) : null;
+  // The live model list doubles as the key check: listing needs a key the
+  // provider accepts, so a list is "the key works" and a refusal says why.
+  const keyChecked = !oauth && !!(aiKeysForm.api_key.trim() || stored?.key_hint);
+  // The first model of the live list is picked when none is, once per list:
+  // a connection is never saved offering nothing, and no model name is
+  // written into the code.
+  const [autoPicked, setAutoPicked] = React.useState(false);
+  React.useEffect(() => {
+    const first = aiModelCatalog?.models?.[0];
+    if (!first || parseFolderTags(aiKeysForm.models).length) return;
+    addCatalogModel(first);
+    setAutoPicked(true);
+  }, [aiModelCatalog]); // eslint-disable-line react-hooks/exhaustive-deps
+  const [moreOpen, setMoreOpen] = React.useState(() => !!(aiKeysForm.name || aiKeysForm.test_model));
 
   return (
     <div className="settingsForm">
-      <Step n={1} title={t("Connect a service")} hint={t("Choose a service, or use your own endpoint.")}>
-        <MenuSelect block label={t("AI service")} value={service}
-          onChange={(next) => {
-            setService(next);
-            const preset = services.find((item) => item.id === next);
-            if (preset) setAiKeysForm((form) => ({ ...form, protocol: preset.protocol, base_url: preset.base_url, models: "", test_model: "" }));
-            else if (next !== "custom") setAiKeysForm((form) => ({ ...form, protocol: next, base_url: "", models: "", test_model: "" }));
-            else if (oauth) setAiKeysForm((form) => ({ ...form, protocol: "openai", base_url: "", models: "", test_model: "" }));
-          }} options={[
-            ...aiKeysInfo.protocols.filter((item) => offered(item.id))
-              .map((item) => [item.id, ({ openai: t("OpenAI API"), anthropic: t("Anthropic"), chatgpt: t("ChatGPT subscription") })[item.id] || item.label]),
-            ...services.filter((item) => offered(item.protocol)).map((item) => [item.id, item.label]),
-            ...(offered("openai") ? [["custom", t("Custom endpoint")]] : []),
-          ]} />
+      <Step n={1} title={t("Choose a service")}>
+        <IconChoices label={t("AI service")} value={tile} onChange={pickTile} options={tiles} />
+        {tile === "other" ? <Field label={t("Service")}>
+          <MenuSelect block label={t("Service")} value={service} onChange={choose}
+            options={[
+              ...services.filter((item) => offered(item.protocol)).map((item) => [item.id, item.label]),
+              ...(offered("openai") ? [["custom", t("Custom endpoint")]] : []),
+            ]} />
+        </Field> : null}
         {service === "custom" ? <Field label={t("API format")} hint={t("Use the format supported by your service")}>
           <MenuSelect block label={t("API protocol")} value={aiKeysForm.protocol}
-            onChange={(protocol) => setAiKeysForm((form) => ({ ...form, protocol }))}
+            onChange={(next) => setAiKeysForm((form) => ({ ...form, protocol: next }))}
             options={aiKeysInfo.protocols.filter((item) => !isOauthProto(item.id)).map((item) => [item.id, item.label])} />
         </Field> : null}
       </Step>
 
       <Step
         n={2}
-        title={oauth ? t("Sign in with ChatGPT") : t("Credentials")}
+        title={oauth ? t("Sign in with ChatGPT") : t("Paste your API key")}
         hint={oauth
           ? t("No API key — usage is billed to your ChatGPT subscription.") : t("Stored on the server, never shown to the browser again.")}
       >
@@ -480,11 +566,16 @@ function ProviderForm({ value, onCancel }) {
             <Field label={t("API key")} hint={aiKeysForm.id ? t("leave empty to keep the current one") : null}>
               <PasswordInput
                 autoComplete="new-password" spellCheck={false}
-                placeholder={t("sk-…")}
+                placeholder={keyHelp?.key_placeholder || t("API key")}
                 value={aiKeysForm.api_key}
                 onChange={(event) => setAiKeysForm((form) => ({ ...form, api_key: event.target.value }))}
               />
             </Field>
+            {keyUrl ? (
+              <a className="aiKeyLink" href={keyUrl} target="_blank" rel="noopener noreferrer">
+                {t("Get a key at {where}", { where: keyWhere })}<ExternalLinkIcon size={14} />
+              </a>
+            ) : null}
             {service === "custom" ? <Field label={t("Base URL")} hint={t("optional — default {default_base_url}", { default_base_url: protocol?.default_base_url || "" })}>
               <input
                 className="aiKeyInput" type="text" spellCheck={false}
@@ -493,29 +584,31 @@ function ProviderForm({ value, onCancel }) {
                 onChange={(event) => setAiKeysForm((form) => ({ ...form, base_url: event.target.value }))}
               />
             </Field> : null}
+            {keyChecked && aiModelCatalog ? (
+              <div className={`aiKeyCheck ${aiModelCatalog.error ? "aiKeysError" : aiModelCatalog.models ? "aiTestOk" : ""}`} role="status">
+                {aiModelCatalog.loading ? <><span className="transferSpin inline" /> {t("Checking the key…")}</>
+                  : aiModelCatalog.models ? <><CheckIcon size={14} /> {tn("Key works · {n} model available", "Key works · {n} models available", aiModelCatalog.models.length)}</>
+                  : <><XIcon size={14} /> {aiModelCatalog.error}</>}
+              </div>
+            ) : null}
           </>
         )}
-        <Field label={t("Name")} hint={t('optional — e.g. "work key"')}>
-          <input
-            className="aiKeyInput" type="text" spellCheck={false}
-            value={aiKeysForm.name}
-            onChange={(event) => setAiKeysForm((form) => ({ ...form, name: event.target.value }))}
-          />
-        </Field>
       </Step>
 
       <Step
         n={3}
         title={t("Models")}
-        hint={formModels.length
-          ? t("Offered in the chat model menu.") : t("None picked yet — pick at least one to use this connection.")}
+        hint={autoPicked && formModels.length
+          ? t("The first model of your list is picked for you; add more for the chat menu.")
+          : formModels.length
+            ? t("Offered in the chat model menu.") : t("None picked yet — pick at least one to use this connection.")}
       >
         {formModels.length ? (
           <div className="aiModelChips">
             {formModels.map((model) => (
               <span className="categoryTag" key={model}>
                 {model}
-                <button className="uiClose uiCloseSm" title={t("Remove model")} aria-label={t("Remove {model}", { model: model })} onClick={() => removeModel(model)}>×</button>
+                <button className="uiClose uiCloseSm" title={t("Remove model")} aria-label={t("Remove {model}", { model: model })} onClick={() => removeModel(model)}><XIcon size={14} /></button>
               </span>
             ))}
           </div>
@@ -532,27 +625,37 @@ function ProviderForm({ value, onCancel }) {
             {aiModelCatalog?.loading
               ? <><span className="transferSpin inline" /> {t("fetching…")}</>
               : aiModelCatalog?.models
-                ? <><RefreshIcon size={12} /> {aiModelCatalog.models.length} {t("usable")}</>
-                : <><RefreshIcon size={12} /> {t("Fetch")}</>}
+                ? <><RefreshIcon size={14} /> {aiModelCatalog.models.length} {t("usable")}</>
+                : <><RefreshIcon size={14} /> {t("Fetch")}</>}
           </button>
         </div>
         {aiModelCatalog?.error ? (
           <div className="reportModalHint settingsNoMargin">
-            {aiModelCatalog.error}{" "}
-            <button className="searchToggle" title={t("Retry loading the model list")} onClick={loadModelCatalog}><RefreshIcon size={12} /></button>
+            {keyChecked ? t("No model list without a working key.") : aiModelCatalog.error}{" "}
+            <button className="searchToggle" title={t("Retry loading the model list")} onClick={loadModelCatalog}><RefreshIcon size={14} /></button>
           </div>
         ) : null}
-        <Field label={t("Test model")} hint={t("used by the Test button and the login connection check")}>
-          <MenuSelect
-            label={t("Test model")}
-            value={formModels.includes(aiKeysForm.test_model) ? aiKeysForm.test_model : ""}
-            onChange={(model) => setAiKeysForm((form) => ({ ...form, test_model: model }))}
-            options={[
-              ["", t("Auto — metadata model, else first")],
-              ...formModels.map((model) => [model, model]),
-            ]}
-          />
-        </Field>
+        <details className="aiMoreOptions" open={moreOpen} onToggle={(event) => setMoreOpen(event.currentTarget.open)}>
+          <summary>{t("More options — name, test model")}</summary>
+          <Field label={t("Name")} hint={t('optional — e.g. "work key"')}>
+            <input
+              className="aiKeyInput" type="text" spellCheck={false}
+              value={aiKeysForm.name}
+              onChange={(event) => setAiKeysForm((form) => ({ ...form, name: event.target.value }))}
+            />
+          </Field>
+          <Field label={t("Test model")} hint={t("used by the Test button and the login connection check")}>
+            <MenuSelect
+              label={t("Test model")}
+              value={formModels.includes(aiKeysForm.test_model) ? aiKeysForm.test_model : ""}
+              onChange={(model) => setAiKeysForm((form) => ({ ...form, test_model: model }))}
+              options={[
+                ["", t("Auto — metadata model, else first")],
+                ...formModels.map((model) => [model, model]),
+              ]}
+            />
+          </Field>
+        </details>
       </Step>
 
       {aiKeysError ? <div className="settingsPaneHint aiKeysError">{aiKeysError}</div> : null}
@@ -560,9 +663,8 @@ function ProviderForm({ value, onCancel }) {
         <button className="uiBtn" onClick={onCancel}>{t("Cancel")}</button>
         <button className="uiBtn primary" disabled={aiKeysBusy} onClick={submitAiProvider}>
           {aiKeysBusy
-            ? t("Saving…") : oauth
-              ? ((aiKeysForm.oauthCallback || "").trim() || !aiKeysForm.id ? t("Connect") : t("Save changes"))
-              : aiKeysForm.id ? t("Save changes") : t("Add key")}
+            ? t("Saving…")
+            : !aiKeysForm.id || (oauth && (aiKeysForm.oauthCallback || "").trim()) ? t("Connect") : t("Save changes")}
         </button>
       </div>
     </div>
@@ -641,7 +743,7 @@ function AiUsageSection({ confirm, setStatus, canReset = true }) {
     <>
       <Section title={t("Token usage")} action={
         <button className="uiBtn sm" disabled={busy} title={t("Fetch the latest counts")} onClick={load}>
-          <RefreshIcon size={12} /> {t("Refresh")}
+          <RefreshIcon size={14} /> {t("Refresh")}
         </button>} />
       {error ? <p className="settingsPaneHint aiKeysError" role="alert">{t("Usage unavailable: {error}", { error: error })}</p> : null}
       {!data && !error ? <p className="setNotice">{t("Loading…")}</p> : null}
@@ -747,7 +849,7 @@ export function AiSettings({ value, confirm, setStatus }) {
                     title={t("Edit connection and available models")} onClick={() => value.startEditAiProvider(provider)}>{t("Manage")}</button>
                   <button className="uiBtn sm iconSq danger" disabled={value.aiKeysBusy} title={t("Remove this key")}
                     aria-label={t("Remove key")} onClick={() => value.deleteAiProvider(provider)}>
-                    <Trash2Icon size={13} />
+                    <Trash2Icon size={16} />
                   </button>
                 </> : null}
               </ProviderRow>
@@ -778,7 +880,7 @@ export function AiSettings({ value, confirm, setStatus }) {
           ) : null}
           {value.aiKeysForm ? (
             <SubDialog draft={value.aiKeysForm}
-              title={value.aiKeysForm.id ? t("Edit key") : t("Add key")}
+              title={value.aiKeysForm.id ? t("Edit key") : t("Connect an AI service")}
               onClose={closeKeyForm}
             >
               <ProviderForm value={value} onCancel={closeKeyForm} />

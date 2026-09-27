@@ -1,6 +1,6 @@
 # Import and export
 
-The ⋮ menu's Import…/Export… dialogs and every pipeline behind them: embedded
+The View menu's (≡) Import…/Export… dialogs and every pipeline behind them: embedded
 PDF annotations, Logseq graphs, Zotero libraries, Markdown notes (Obsidian
 vaults, Notion exports), Markdown and Obsidian vault export, the notes
 typeset as their own PDF, and the annotated-PDF writer. Code: `gamma/routers/imports.py`, `gamma/zotero_import.py`,
@@ -30,7 +30,7 @@ Because imported annotations would otherwise render twice (pdf.js paints them
 into the canvas AND the blocks draw as overlays), the Settings → Reading → PDF
 viewer → "Annotations inside the file" preference either hides them viewer-side
 (`annotationMode: DISABLE`, default) or sends `strip: true` so the import
-rewrites the stored PDF without them (the ⋮ menu's "Import…" dialog can
+rewrites the stored PDF without them (the View menu's "Import…" dialog can
 override that for one run; the auto-import on open always follows the
 preference); stripped blocks get `properties.annot_stripped`, which tells
 `/export-pdf` to write them again (it skips `imported_annot` blocks only while
@@ -38,7 +38,7 @@ the original is still embedded).
 
 ## The Import dialog
 
-The ⋮ menu's single "Import…" entry → `ImportDialog` in `transfers/ImportExport.jsx`, the
+The View menu's single "Import…" entry → `ImportDialog` in `transfers/ImportExport.jsx`, the
 export dialog's counterpart. Step one is a source card: annotations embedded
 in this PDF, a Logseq .pdf + .edn, a Zotero library .zip, Markdown notes (one
 `.md` or a `.zip` such as a Notion export), or a Gamma export .zip. Double-click
@@ -310,7 +310,9 @@ invite-only ones work too. Two entry points:
 - The share view's topbar: a signed-in non-guest viewer gets "Add to my
   library" (the same function on `window.location.href`). The page's owner
   gets "Open in my library" instead, a plain jump to `?page=<id>`, since the
-  page is already theirs.
+  page is already theirs. A visitor with no account gets "Sign in" (the
+  share's own sign-in gate), after which the link opens again with the
+  import button.
 
 The remote must be recent enough to serve `mode=gamma` and the CORS
 header; an older one surfaces as "couldn't reach …" / "too old" in the
@@ -318,7 +320,7 @@ status line and the transfer row.
 
 ## The Export dialog
 
-The ⋮ menu's single "Export…" entry → `ExportDialog` in `transfers/ImportExport.jsx`.
+The View menu's single "Export…" entry → `ExportDialog` in `transfers/ImportExport.jsx`.
 Step one is a format card. The PDF row holds Annotated PDF, the Notes row PDF
 and Markdown, the ZIP row Obsidian, Logseq, Zotero and Gamma. Double-click or
 Next confirms. Formats with editable options get a review step: the

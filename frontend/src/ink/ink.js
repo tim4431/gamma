@@ -41,6 +41,26 @@ export const PEN_COLORS = ["#1f1f1f", "#6b7280", "#1d4ed8", "#0284c7", "#0f766e"
   "#ca8a04", "#ea580c", "#dc2626", "#db2777", "#7c3aed", "#92400e", "#ffffff"];
 export const HIGHLIGHTER_COLORS = ["#fde047", "#86efac", "#7dd3fc", "#f9a8d4", "#fdba74", "#c4b5fd", "#67e8f9", "#d4d4d8"];
 export const HIGHLIGHTER_OPACITY = 0.6;
+// The palette colour nearest to `hex` (#rgb or #rrggbb) by the "redmean"
+// weighted RGB distance — a palette colour maps to itself; null for what is
+// not a hex colour. The tool strip names a custom colour after it.
+export function nearestInkColor(hex) {
+  const rgb = (h) => {
+    const m = /^#?([0-9a-f]{3}|[0-9a-f]{6})$/i.exec(String(h || "").trim());
+    if (!m) return null;
+    const v = m[1].length === 3 ? m[1].replace(/./g, "$&$&") : m[1];
+    return [0, 2, 4].map((i) => parseInt(v.slice(i, i + 2), 16));
+  };
+  const c = rgb(hex);
+  if (!c) return null;
+  let best = null, bestD = Infinity;
+  for (const p of [...PEN_COLORS, ...HIGHLIGHTER_COLORS]) {
+    const q = rgb(p), rm = (c[0] + q[0]) / 2;
+    const d = (2 + rm / 256) * (c[0] - q[0]) ** 2 + 4 * (c[1] - q[1]) ** 2 + (2 + (255 - rm) / 256) * (c[2] - q[2]) ** 2;
+    if (d < bestD) { best = p; bestD = d; }
+  }
+  return best;
+}
 // Cap on a stroke's nominal width (pt); scaling a selection stops here.
 export const MAX_STROKE_SIZE = 100;
 export const DEFAULT_TOOLS = [

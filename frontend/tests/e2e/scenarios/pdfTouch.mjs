@@ -164,6 +164,7 @@ export async function pdfTouchScenarios({ server, browser, alice, makePdf, step,
     for (const [theme, flip, expected] of [["sepia", false, [253, 246, 227]], ["dark", true, [15, 15, 15]]]) {
       await page.evaluate(([theme, flip]) => {
         document.documentElement.setAttribute("data-theme", theme);
+        document.documentElement.setAttribute("data-scheme", theme === "dark" ? "dark" : "light");
         document.querySelector(".pdfViewer").classList.toggle("pdfDark", flip);
       }, [theme, flip]);
       for (const direction of ["in", "out"]) {
