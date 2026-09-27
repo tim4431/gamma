@@ -14,6 +14,7 @@ import { parseGammaLink } from "../model/gammaLinks.js";
 import { remarkPaperLinks } from "../lib/remarkPaperLinks.js";
 import { mermaidFence, normalizeChatMarkdown, remarkMermaid } from "../lib/mermaidMarkdown.js";
 import { MermaidDiagram, mermaidCodeProps } from "./MermaidDiagram";
+import { highlightCode } from "../../editor/codeHighlight.js";
 import { t } from "../../shared/i18n/i18n.js";
 
 // Shared chrome for every dockable window: one grip (drag to move/reorder,
@@ -169,10 +170,20 @@ function ChatCopyBlock({ as: Tag, children }) {
     </div>
   );
 }
+// A fenced block in a reply, coloured by the same highlight.js wrapper and
+// theme as the notes' code cards (editor/codeHighlight.js).
+function HighlightedCode({ children }) {
+  const codeProps = React.Children.toArray(children).find((c) => c?.props)?.props || {};
+  const lang = /language-([\w+#-]+)/.exec(codeProps.className || "")?.[1] || "";
+  const raw = textOf(codeProps.children).replace(/\n$/, "");
+  const html = useMemo(() => highlightCode(raw, lang), [raw, lang]);
+  return <code className="hljs" dangerouslySetInnerHTML={{ __html: html }} />;
+}
 function ChatPre({ children, copy = false }) {
   const diagram = mermaidCodeProps(children);
   if (diagram) return <MermaidDiagram {...diagram} />;
-  return copy ? <ChatCopyBlock as="pre">{children}</ChatCopyBlock> : <pre>{children}</pre>;
+  const code = <HighlightedCode>{children}</HighlightedCode>;
+  return copy ? <ChatCopyBlock as="pre">{code}</ChatCopyBlock> : <pre>{code}</pre>;
 }
 const ChatCopyPre = ({ children }) => <ChatPre copy>{children}</ChatPre>;
 const CHAT_COPY_COMPONENTS = {

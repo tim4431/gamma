@@ -3642,95 +3642,124 @@ html.appFocusFullscreen, html.appFocusFullscreen body { overflow: hidden; oversc
   padding: 0 2px;
 }
 .chatBubbleRow.user { justify-content: flex-end; }
-.chatBubbleRow.ai { justify-content: flex-start; }
+.chatBubbleRow.ai { justify-content: flex-start; margin-bottom: 12px; }
 .chatBubble {
   max-width: 88%;
-  border-radius: calc(12px * var(--text-scale, 1));
-  padding: 6px 10px;
-  font-size: calc(12px * var(--ui-font-scale, 1) * var(--text-scale, 1));
+  border-radius: calc(16px * var(--text-scale, 1));
+  padding: 7px 12px;
+  font-size: calc(14px * var(--ui-font-scale, 1) * var(--text-scale, 1));
   line-height: 1.5;
   overflow-wrap: break-word;
   min-width: 0;
 }
+/* The user's message: a soft tinted bubble on the right. */
 .chatBubble.user {
-  background: var(--accent-dark);
-  color: var(--on-accent);
-  border-bottom-right-radius: 4px;
-}
-.chatBubble.ai {
-  background: var(--bg-block);
-  border: 1px solid var(--border-subtle);
-  color: var(--text-secondary);
-  border-bottom-left-radius: 4px;
-  max-width: 96%;
-}
-/* A request that failed before any reply text arrived (message.error). */
-.chatBubble.ai.error {
-  background: var(--danger-bg);
-  border-color: var(--danger-border);
-  color: var(--danger);
-}
-.chatUserText { white-space: pre-wrap; }
-/* Markdown inside AI bubbles: explicit text sizes must follow the same
-   transcript scale as body text, including nested headings and code. */
-.chatBubble.ai p { margin: 0 0 6px; }
-.chatBubble.ai p:last-child { margin-bottom: 0; }
-.chatBubble.ai h1, .chatBubble.ai h2, .chatBubble.ai h3, .chatBubble.ai h4 {
-  margin: 8px 0 4px;
-  font-size: calc(13px * var(--ui-font-scale, 1) * var(--text-scale, 1));
+  background: var(--accent-bg);
   color: var(--text-primary);
 }
-.chatBubble.ai ul, .chatBubble.ai ol { margin: 0 0 6px; padding-left: 18px; }
-.chatBubble.ai li { margin: 2px 0; }
+/* An answer is prose, not a bubble: full column width, the notes' reading
+   size, no frame. */
+.chatBubble.ai {
+  background: none;
+  border-radius: 0;
+  padding: 0 2px;
+  max-width: 100%;
+  color: var(--text-primary);
+  line-height: 1.6;
+}
+/* A request that failed before any reply text arrived (message.error) and
+   was saved before failures became cards (no errorKind). */
+.chatBubble.ai.error {
+  background: var(--danger-bg);
+  border: 1px solid var(--danger-border);
+  border-radius: calc(12px * var(--text-scale, 1));
+  padding: 6px 10px;
+  color: var(--danger);
+  font-size: calc(13px * var(--ui-font-scale, 1) * var(--text-scale, 1));
+  line-height: 1.5;
+}
+.chatUserText { white-space: pre-wrap; }
+/* Markdown inside answers: explicit text sizes must follow the same
+   transcript scale as body text, including nested headings and code. */
+.chatBubble.ai p { margin: 0 0 10px; }
+.chatBubble.ai p:last-child { margin-bottom: 0; }
+.chatBubble.ai :is(h1, h2, h3, h4, h5, h6) {
+  margin: 12px 0 4px;
+  font-size: calc(14px * var(--ui-font-scale, 1) * var(--text-scale, 1));
+  font-weight: 600;
+  line-height: 1.35;
+  color: var(--text-primary);
+}
+.chatBubble.ai h1 { font-size: calc(16px * var(--ui-font-scale, 1) * var(--text-scale, 1)); }
+.chatBubble.ai h2 { font-size: calc(15px * var(--ui-font-scale, 1) * var(--text-scale, 1)); }
+.chatBubble.ai :is(h1, h2, h3, h4, h5, h6):first-child { margin-top: 0; }
+.chatBubble.ai ul, .chatBubble.ai ol { margin: 0 0 10px; padding-left: 20px; }
+.chatBubble.ai li { margin: 3px 0; }
+.chatBubble.ai li > p { margin-bottom: 3px; }
 .chatBubble.ai code {
-  background: var(--bg-surface);
-  border: 1px solid var(--border-subtle);
-  border-radius: 3px;
-  padding: 0 3px;
-  font-size: calc(11px * var(--ui-font-scale, 1) * var(--text-scale, 1));
+  background: var(--bg-raised);
+  border-radius: 4px;
+  padding: 1px 4px;
+  font-size: calc(12.5px * var(--ui-font-scale, 1) * var(--text-scale, 1));
 }
 .chatBubble.ai pre {
-  background: var(--bg-surface);
+  background: var(--bg-input);
   border: 1px solid var(--border-subtle);
   border-radius: 6px;
-  padding: 8px;
+  padding: 8px 10px;
   overflow-x: auto;
-  margin: 4px 0 6px;
+  margin: 4px 0 10px;
+  line-height: 1.5;
 }
 .chatBubble.ai pre code { background: none; border: none; padding: 0; }
-.chatCopyBlock { min-width: 0; margin: 4px 0 6px; }
-.chatCopyCode {
-  background: var(--bg-surface);
-  border: 1px solid var(--border-subtle);
-  border-radius: 6px;
-  overflow: hidden;
+/* A code block or quote with its own Copy button, floating top-right on
+   hover instead of taking a row of its own. */
+.chatCopyBlock { position: relative; min-width: 0; margin: 4px 0 10px; }
+.chatCopyTools {
+  position: absolute;
+  top: 4px;
+  right: 4px;
+  z-index: 1;
+  user-select: none;
+  opacity: 0;
+  transition: opacity 0.12s;
 }
-.chatCopyTools { display: flex; justify-content: flex-end; padding: 3px 6px; user-select: none; }
+.chatCopyBlock:hover .chatCopyTools,
+.chatCopyBlock:focus-within .chatCopyTools { opacity: 1; }
+@media (hover: none) { .chatCopyTools { opacity: 1; } }
 .chatCopyButton {
   display: inline-flex;
   align-items: center;
   gap: 4px;
-  padding: 2px 4px;
-  border: 0;
-  border-radius: 4px;
-  background: transparent;
+  padding: 2px 5px;
+  border: 1px solid var(--border-subtle);
+  border-radius: 5px;
+  background: var(--bg-raised);
   color: var(--text-muted);
   font: inherit;
   font-size: calc(11px * var(--ui-font-scale, 1) * var(--text-scale, 1));
   cursor: pointer;
 }
 .chatCopyButton:hover { background: var(--bg-hover); color: var(--text-primary); }
-.chatBubble.ai .chatCopyCode > pre { margin: 0; border: 0; border-radius: 0; }
-.chatBubble.ai .chatCopyQuote > blockquote { margin-top: 0; }
-.chatBubble.ai table { border-collapse: collapse; margin: 4px 0 6px; display: block; overflow-x: auto; }
-.chatBubble.ai th, .chatBubble.ai td { border: 1px solid var(--border); padding: 3px 8px; }
+.chatBubble.ai .chatCopyCode > pre { margin: 0; }
+.chatBubble.ai .chatCopyQuote > blockquote { margin: 0; }
+.chatBubble.ai table {
+  border-collapse: collapse;
+  margin: 4px 0 10px;
+  display: block;
+  overflow-x: auto;
+  font-size: calc(13px * var(--ui-font-scale, 1) * var(--text-scale, 1));
+  line-height: 1.45;
+}
+.chatBubble.ai th, .chatBubble.ai td { border: 1px solid var(--border-subtle); padding: 5px 10px; text-align: left; }
+.chatBubble.ai th { background: var(--bg-raised); font-weight: 600; }
 .chatBubble.ai blockquote {
   border-left: 3px solid var(--border);
-  margin: 4px 0 6px;
-  padding: 0 0 0 8px;
+  margin: 4px 0 10px;
+  padding: 0 0 0 10px;
   color: var(--text-muted);
 }
-.chatBubble.ai .katex-display { margin: 6px 0; overflow-x: auto; overflow-y: hidden; }
+.chatBubble.ai .katex-display { margin: 8px 0; overflow-x: auto; overflow-y: hidden; }
 /* The live status stays inside the reply alongside tool activity and text. */
 .chatThinking {
   display: flex;
@@ -4539,7 +4568,7 @@ a.shareBrand:hover { background: var(--bg-hover); }
   min-width: 0;
 }
 .chatBubbleRow.user .chatMsgCol { align-items: flex-end; }
-.chatBubbleRow.ai .chatMsgCol { max-width: 96%; }
+.chatBubbleRow.ai .chatMsgCol { flex: 1 1 auto; max-width: 100%; }
 .chatMsgCol .chatBubble { max-width: 100%; }
 /* Under a reply: the token line (always visible, dim) and the hover actions. */
 .chatMsgFoot { display: flex; align-items: center; gap: 8px; min-height: 22px; }
@@ -4592,7 +4621,7 @@ a.shareBrand:hover { background: var(--bg-hover); }
 .chatMsgActionBtn:disabled { opacity: 0.4; cursor: default; }
 .chatBubbleRow.findHit .chatBubble {
   outline: 2px solid var(--accent-dark);
-  outline-offset: 1px;
+  outline-offset: 3px;
 }
 /* edit-in-place bubble */
 .chatEditBubble { width: 100%; }
@@ -4699,7 +4728,7 @@ a.shareBrand:hover { background: var(--bg-hover); }
   font-size: calc(10px * var(--ui-font-scale, 1) * var(--text-scale, 1));
   padding: 1px 8px;
   border-radius: 999px;
-  background: rgba(255, 255, 255, 0.18);
+  background: color-mix(in srgb, var(--text-primary) 9%, transparent);
   color: inherit;
   white-space: nowrap;
   max-width: 100%;
