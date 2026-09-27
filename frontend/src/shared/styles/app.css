@@ -3679,6 +3679,31 @@ html.appFocusFullscreen, html.appFocusFullscreen body { overflow: hidden; oversc
   line-height: 1.5;
 }
 .chatUserText { white-space: pre-wrap; }
+/* A failed request (ChatErrorCard): what went wrong, the fix, the details. */
+.chatErrorCard {
+  margin-top: 8px;
+  padding: 10px 12px;
+  border: 1px solid var(--danger-border);
+  border-radius: 10px;
+  background: var(--danger-bg);
+  color: var(--text-primary);
+  font-size: calc(13px * var(--ui-font-scale, 1) * var(--text-scale, 1));
+  line-height: 1.5;
+}
+.chatErrorCard:first-child { margin-top: 0; }
+.chatErrorCard.compact { padding: 7px 10px; }
+.chatErrorHead { display: flex; align-items: flex-start; gap: 6px; font-weight: 600; color: var(--danger); }
+.chatErrorHead svg { flex: none; margin-top: 0.15em; }
+.chatErrorText { margin-top: 2px; }
+.chatErrorActions { display: flex; flex-wrap: wrap; gap: 6px; margin-top: 8px; }
+.chatErrorDetails { margin-top: 8px; color: var(--text-muted); font-size: calc(12px * var(--ui-font-scale, 1) * var(--text-scale, 1)); }
+.chatErrorDetails summary { cursor: pointer; width: fit-content; }
+.chatErrorDetails pre {
+  margin: 4px 0 0;
+  white-space: pre-wrap;
+  overflow-wrap: anywhere;
+  font-size: calc(11.5px * var(--ui-font-scale, 1) * var(--text-scale, 1));
+}
 /* Markdown inside answers: explicit text sizes must follow the same
    transcript scale as body text, including nested headings and code. */
 .chatBubble.ai p { margin: 0 0 10px; }

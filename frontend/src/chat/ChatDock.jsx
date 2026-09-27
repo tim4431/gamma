@@ -13,7 +13,8 @@ import { READ_TOOLS, WRITE_TOOLS, toolsForKind } from "./chatSettings";
 import { addUsage, cachedPercent, contextUsed, conversationUsage, fmtTokens, liveUsage, usageDetail } from "./tokenUsage";
 import { createTitleScorer } from "../library/librarySearch";
 import { pageAttachment } from "../library/libraryUtils";
-import { MenuSelect } from "../shared/ui/Menus";
+import { ActionMenu, MenuSelect } from "../shared/ui/Menus";
+import { chatFailure, failureCopy, failureFields, fixLabel } from "./chatErrors";
 import { guideEvents } from "../guide/events.js";
 import { gammaLinksIn } from "../shared/model/gammaLinks.js";
 import { CharSlider, approxPages } from "../settings/SettingsKit";
@@ -109,6 +110,29 @@ function ContextCoverage({ items }) {
           {n.short}
         </span>
       ))}
+    </div>
+  );
+}
+
+// A failed request as a card (message.errorKind, chat/chatErrors.js): a
+// headline saying what went wrong, one plain sentence, the buttons that fix
+// it, and the provider's own words folded under "Details". A reply that
+// broke off partway keeps its text and gets the compact card (no sentence)
+// under it.
+function ChatErrorCard({ message, compact, actions }) {
+  const copy = failureCopy(message.errorKind, { provider: message.errorProvider, auth: message.errorAuth });
+  const fromProvider = !["network", "not_configured"].includes(message.errorKind);
+  return (
+    <div className={`chatErrorCard${compact ? " compact" : ""}`}>
+      <div className="chatErrorHead"><AlertCircleIcon size={15} /><span>{copy.headline}</span></div>
+      {!compact ? <div className="chatErrorText">{copy.text}</div> : null}
+      {actions.length ? <div className="chatErrorActions">{actions}</div> : null}
+      {message.errorDetail ? (
+        <details className="chatErrorDetails">
+          <summary>{fromProvider ? t("Details from the provider") : t("Details")}</summary>
+          <pre>{message.errorDetail}</pre>
+        </details>
+      ) : null}
     </div>
   );
 }
@@ -278,6 +302,9 @@ export default function ChatDock({
   // focusSignal: bumped by App when a connection made from the setup card is
   // ready — the message box takes the focus once the chat is enabled.
   aiInfo, aiProvider, openAiKeysEditor, openSettings, isAdmin = false, focusSignal = 0,
+  // Opens Settings → Connections on one entry's form (an error card's
+  // "Update key"); falls back to the pane.
+  openAiEntry,
   aiHealth, dismissAiHealth,
   openPopover, setOpenPopover,
   setStatus, askConfirm,
@@ -720,7 +747,7 @@ export default function ChatDock({
   // Core chat send. baseMessages overrides the history (used when re-sending
   // an edited message: everything after the edited message is discarded,
   // ChatGPT-style).
-  async function sendChat(rawText, { baseMessages, referenceMessage } = {}) {
+  async function sendChat(rawText, { baseMessages, referenceMessage, model } = {}) {
     if (readOnly || aiOff) return;
     const text = (rawText || "").trim();
     if (!text || busyHere) return;
@@ -810,7 +837,7 @@ export default function ChatDock({
           prompt: text,
           page_id: focusedBlockId || "",
           history: prevMessages.filter((m) => !m.error), // failed replies aren't answers
-          model: chatModel || "",
+          model: model || chatModel || "",
           selections,
           focus_block_id: cursorChip ? cursorChip.id : "",
           context_blocks: contextBlocks,
@@ -829,14 +856,16 @@ export default function ChatDock({
         }),
       });
       if (!res.ok) {
-        let detail = `${res.status} ${res.statusText}`;
-        try { detail = (await res.json()).detail || detail; } catch {}
-        throw new Error(detail);
+        // The body names the failure's kind beside its detail (the server's
+        // failure_kind) — the error card's headline and fix come from it.
+        let body = {};
+        try { body = await res.json(); } catch {}
+        throw chatFailure(body.detail || `${res.status} ${res.statusText}`, body);
       }
       // NDJSON stream: {"delta": "…"} per chunk, {"error": "…"} on failure.
       await readNdjson(res, (events) => {
         for (const ev of events) {
-          if (ev.error) throw new Error(ev.error);
+          if (ev.error) throw chatFailure(ev.error, ev);
           if (ev.action) {
             actions.push(ev.action);
             // Live: the notes panel lights up the block the agent just
@@ -872,16 +901,14 @@ export default function ChatDock({
       // that the provider failed — the server says that in-band.
       const reason = err?.name === "TypeError"
         ? t("lost the connection to the server ({message})", { message: err.message }) : err.message;
-      // A reply that never started is an error bubble (`error: true`): shown
-      // and saved so the failure is visible after a reload, but rendered
-      // apart from answers and never replayed to the model as one. A reply
-      // cut off mid-stream keeps its text and just notes the failure.
-      showReply(aiMsg({
-        text: stopped
-          ? (acc ? `${acc}\n\n*(stopped)*` : "*(stopped)*")
-          : (acc ? `${acc}\n\n**Error:** ${reason}` : `Error: ${reason}`),
-        ...(!stopped && !acc ? { error: true } : {}),
-      }), true);
+      // A reply that never started is an error (`error: true`): shown as a
+      // card and saved so the failure is visible after a reload, but never
+      // replayed to the model as an answer. A reply cut off mid-stream keeps
+      // its text and gets the compact card under it. errorKind & co. carry
+      // what the card says (chat/chatErrors.js).
+      showReply(aiMsg(stopped
+        ? { text: acc ? `${acc}\n\n*(stopped)*` : "*(stopped)*" }
+        : { text: acc || `Error: ${reason}`, ...(acc ? {} : { error: true }), ...failureFields(err) }), true);
     } finally {
       session.finish(sendKey);
       onAgentEvent?.({ type: "done", key: sendKey });
@@ -1061,6 +1088,45 @@ export default function ChatDock({
     }
   }, []);
 
+  // Re-send the user message a failed reply answered, through the
+  // edit-and-resend path (the reply and anything after it are replaced);
+  // `model` retries with another model.
+  function retryReply(idx, model) {
+    const asked = chatMessages[idx - 1];
+    if (asked?.role !== "user" || busyHere) return;
+    sendChat(asked.text, { baseMessages: chatMessages.slice(0, idx - 1), referenceMessage: asked, model });
+  }
+
+  // An error card's buttons: the fix for its kind (open the failing
+  // connection's form, connect a service, start over), and on the latest
+  // reply Retry and a model switch that retries with the model picked.
+  function errorActions(m, idx) {
+    const copy = failureCopy(m.errorKind, { provider: m.errorProvider, auth: m.errorAuth });
+    const latest = idx === chatMessages.length - 1 && !busyHere && !readOnly;
+    const out = [];
+    const openEntry = () => (openAiEntry && m.errorProviderId ? openAiEntry(m.errorProviderId) : openAiKeysEditor?.());
+    const fix = {
+      connect: openAiKeysEditor, own_key: openAiKeysEditor, key: openEntry, signin: openEntry,
+      connection: openEntry, new_chat: latest ? newChat : null,
+    }[copy.fix];
+    if (fix && !readOnly) {
+      out.push(<button key="fix" type="button" className="uiBtn sm primary" onClick={() => fix()}>{fixLabel(copy.fix)}</button>);
+    }
+    if (latest) {
+      out.push(<button key="retry" type="button" className="uiBtn sm" onClick={() => retryReply(idx)}>{t("Retry")}</button>);
+      const others = copy.switchModel ? headerModels.filter((x) => x.id !== chatModel) : [];
+      if (others.length) {
+        const multiProvider = new Set(headerModels.map((x) => x.provider)).size > 1;
+        out.push(<ActionMenu key="switch" label={t("Switch model")} items={others.map((x) => ({
+          label: multiProvider ? `${x.model} · ${x.provider_name || x.provider}` : x.model,
+          title: t("Switch to this model and retry"),
+          onClick: () => { setChatModel(x.id); retryReply(idx, x.id); },
+        }))} />);
+      }
+    }
+    return out;
+  }
+
   async function copyChatMessage(idx, text) {
     if (await copyText(text || "")) flashCopiedMsg(idx);
   }
@@ -1233,13 +1299,15 @@ export default function ChatDock({
         // here, where the failure would otherwise surface mid-conversation.
         <div className="chatHealthStrip" title={aiHealth.error || ""}>
           <span className="chatHealthText">
-            {aiHealth.provider_name ? `${aiHealth.provider_name}: ` : ""}
-            {aiHealth.auth
-              ? t("authentication is broken — sign in again or update the key.")
-              : t("connection failed — {unreachable}", { unreachable: aiHealth.error || t("provider unreachable") })}
+            {aiHealth.kind ? failureCopy(aiHealth.kind, { provider: aiHealth.provider_name, auth: aiHealth.provider_auth }).headline : <>
+              {aiHealth.provider_name ? `${aiHealth.provider_name}: ` : ""}
+              {aiHealth.auth
+                ? t("authentication is broken — sign in again or update the key.")
+                : t("connection failed — {unreachable}", { unreachable: aiHealth.error || t("provider unreachable") })}
+            </>}
           </span>
           {openAiKeysEditor ? (
-            <button className="uiBtn sm" onClick={openAiKeysEditor}>{t("Fix…")}</button>
+            <button className="uiBtn sm" onClick={() => (openAiEntry ? openAiEntry(aiHealth.provider_id) : openAiKeysEditor())}>{t("Fix…")}</button>
           ) : null}
           <button className="uiClose" onClick={dismissAiHealth} title={t("Dismiss")} aria-label={t("Dismiss")}>×</button>
         </div>
@@ -1343,7 +1411,7 @@ export default function ChatDock({
             return (
               <div key={i} className={`chatBubbleRow ${isUser ? "user" : "ai"}${isFindHit ? " findHit" : ""}`} data-msg-idx={i}>
                 <div className="chatMsgCol">
-                  <div className={`chatBubble ${isUser ? "user" : "ai"}${m.error ? " error" : ""}`}>
+                  <div className={`chatBubble ${isUser ? "user" : "ai"}${m.error && !m.errorKind ? " error" : ""}`}>
                     {m.images?.length ? (
                       <div className="chatMsgImages">
                         {m.images.map((src, j) => <img key={j} src={src} className="chatMsgImage" alt={t("pasted figure")} />)}
@@ -1398,7 +1466,10 @@ export default function ChatDock({
                     </div> : null}
                     {isUser
                       ? <div className="chatUserText">{m.text}</div>
-                      : m.text ? <ChatMarkdown text={m.text} copyBlocks /> : null}
+                      : m.text && !(m.error && m.errorKind) ? <ChatMarkdown text={m.text} copyBlocks /> : null}
+                    {!isUser && m.errorKind && !isResponding ? (
+                      <ChatErrorCard message={m} compact={!m.error} actions={errorActions(m, i)} />
+                    ) : null}
                     {isResponding ? (
                       <div className="chatThinking" role="status" aria-label={m.text ? t("AI is responding") : t("AI is thinking")}>
                         <span aria-hidden="true">{m.text ? t("Responding") : t("Thinking")}</span>

@@ -29,6 +29,13 @@ TOOL_IMAGES_NOTE = "Pictures returned by the tool calls above, in call order:"
 EMPTY_REPLY_HINT = ("a reasoning model may have spent the whole token budget thinking; "
                     "try effort: low or a shorter request")
 
+
+class NotAnAIStream(RuntimeError):
+    """A streamed call answered without a single server-sent event: the
+    endpoint is reachable but is not an AI API (a web page, a proxy's login
+    screen, a base URL missing its path). ai_client.failure_kind calls it
+    ``bad_endpoint``."""
+
 # The keys a model listing may carry a context window under: Anthropic's
 # max_input_tokens, the Codex backend's context_window, OpenRouter's /
 # Together's / Fireworks' context_length, Mistral's max_context_length,
@@ -180,7 +187,9 @@ class Protocol:
         counts when the provider sent them. Raises on a fully empty response
         (neither text nor tool calls) with the stop reason attached."""
         state = {"got": False, "stop": "", "usage": None}
+        seen = False
         for event in sse_json(response):
+            seen = True
             for out in self.stream_event(event, state):
                 state["got"] = state["got"] or out[0] in ("text", "tool")
                 yield out
@@ -189,6 +198,8 @@ class Protocol:
             yield out
         if state["usage"]:
             yield ("usage", state["usage"])
+        if not state["got"] and not seen:
+            raise NotAnAIStream("the endpoint answered without any AI stream events — check the connection's base URL")
         if not state["got"]:
             raise RuntimeError(f"empty response (stop reason={state['stop'] or 'unknown'} — {EMPTY_REPLY_HINT})")
 

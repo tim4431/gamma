@@ -2868,6 +2868,29 @@ function LibraryApp({ publicPage = null, initialServerConfig = null }) {
     setAiKeysForm({ id: p.id, protocol: p.protocol, name: p.name || "", api_key: "", base_url: p.base_url || "", models: p.models || "", test_model: p.test_model || "" });
   }
 
+  // A chat error card's "Update key" / "Edit connection" (and the login
+  // check's Fix…): Settings → Connections with that entry's form open. A
+  // shared entry is the admin's to edit (Settings → Server), so it gets the
+  // pane alone. The form opens once the pane has (re)loaded the entries.
+  const pendingAiEntryRef = useRef("");
+  function openAiEntry(providerId) {
+    const ownEntry = (info) => info?.providers?.find((p) => p.id === providerId && !p.shared);
+    if (["ai", "assistant", "ai-advanced", "context", "prompts"].includes(settingsOpen) && aiKeysInfo) {
+      openAiKeysEditor();
+      if (ownEntry(aiKeysInfo)) startEditAiProvider(ownEntry(aiKeysInfo));
+      return;
+    }
+    pendingAiEntryRef.current = providerId || "";
+    openAiKeysEditor();
+  }
+  useEffect(() => {
+    const id = pendingAiEntryRef.current;
+    if (!id || !aiKeysInfo) return;
+    pendingAiEntryRef.current = "";
+    const entry = aiKeysInfo.providers?.find((p) => p.id === id && !p.shared);
+    if (entry) startEditAiProvider(entry);
+  }, [aiKeysInfo]);
+
   // Model picker for the form: API protocols are listed live from the
   // provider's /v1/models (typed key, or the stored one when editing);
   // ChatGPT (OAuth) is listed live from the codex backend via the entry's
@@ -8788,7 +8811,7 @@ function LibraryApp({ publicPage = null, initialServerConfig = null }) {
           dictationModel={dictationModel} dictationLang={dictationLang}
           chatSystem={chatSystem} aiInfo={aiInfo} aiProvider={aiProvider}
           chatContextChars={chatContextChars} setChatContextChars={setChatContextChars} multiContextChars={multiContextChars}
-          openAiKeysEditor={openAiKeysEditor}
+          openAiKeysEditor={openAiKeysEditor} openAiEntry={openAiEntry}
           focusSignal={chatFocusSignal}
           openSettings={(pane) => { setOpenPopover(null); setSettingsOpen(pane); }}
           isAdmin={!!authUser?.is_admin}

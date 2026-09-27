@@ -1,6 +1,7 @@
 """Per-user prefs KV store (tab sync) + GUI-configured AI provider keys."""
 
 import io
+import json
 import zipfile
 
 import pytest
@@ -365,6 +366,14 @@ def test_ai_health_ping_checks_credential_for_free(alice, monkeypatch):
     body = alice.post("/api/ai/health", json={"provider_id": pid, "mode": "ping"}).json()
     assert body["ok"] is False and body["auth"] is True
     assert "invalid x-api-key" in body["error"]
+    # The chat's warning strip words it like the chat's error card does.
+    assert body["kind"] == "auth" and body["provider_auth"] == "key"
+
+    def not_an_api(req):  # a gateway answering with its HTML page
+        raise json.JSONDecodeError("Expecting value", "<html>", 0)
+    monkeypatch.setattr(ai_catalog, "fetch_json", not_an_api)
+    body = alice.post("/api/ai/health", json={"provider_id": pid, "mode": "ping"}).json()
+    assert body["ok"] is False and body["kind"] == "bad_endpoint"
 
     def no_listing(req):
         raise _http_error(404, "")

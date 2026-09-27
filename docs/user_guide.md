@@ -91,6 +91,7 @@ Open the chat from the **View menu (≡, top right) → AI Chat**. Configure pro
 - **Citations are clickable**: an answer's `p. 12` link jumps the PDF to the quoted passage and highlights it. Hover over it (or long-press on a touch screen) to read the quoted passage first.
 - **Token counts**: a dim line under each reply shows ↑ tokens sent, ↓ tokens received, and how much the provider served from its cache. Settings → AI → Connections → **Token usage** totals today, the week and the month per model.
 - Per message: **copy**, **edit & re-send** (discards the replies after it), and a **stop** button while streaming. **Ctrl+F inside the panel** finds text in the conversation.
+- **When a request fails**, the reply says why — a rejected key, a rate limit, an overloaded service, a lost connection — with the button that fixes it: **Update key** opens that connection in Settings, **Retry** asks again, **Switch model** retries with another model. The provider's own message is folded under *Details*.
 - Each paper and each folder keeps its own conversation; **New chat** starts over. Chats in a shared workspace are visible to its members.
 
 ### The library agent

@@ -3,6 +3,7 @@ count its tokens. Everything that differs between providers lives on the
 protocol adapters (gamma/ai_protocols); route handlers deal in the common
 ``messages`` representation and call :func:`call_ai` or :func:`open_ai`."""
 
+import http.client
 import json
 import re
 import urllib.error
@@ -11,6 +12,7 @@ import urllib.request
 from fastapi import HTTPException
 
 from . import ai_protocols, ai_usage
+from .ai_protocols.base import NotAnAIStream
 from .logbuf import log
 
 
@@ -48,6 +50,57 @@ class AllowanceExhausted(HTTPException):
 
     def __str__(self):
         return self.detail
+
+
+# What a failure message says when the status alone doesn't (a 400 about the
+# context, an error event inside a stream): one wording list for every
+# provider, since none of this is protocol-specific.
+_TOO_LONG = re.compile(r"context.{0,24}(length|window|limit)|maximum context|too many tokens|"
+                       r"prompt is too long|input is too long|too large|reduce the length", re.I)
+_RATE = re.compile(r"rate.?limit|quota|too many requests|usage limit", re.I)
+_OVERLOADED = re.compile(r"overloaded|temporarily unavailable|over capacity|service unavailable", re.I)
+
+
+def failure_kind(error: Exception) -> str:
+    """One word for why an AI call failed, so a UI can show a headline and
+    the action that fixes it instead of the provider's raw text:
+    ``not_configured`` (no usable connection), ``allowance`` (the server's
+    shared allowance is used up), ``auth`` (401/403: key or sign-in
+    rejected), ``rate`` (429, quota), ``overloaded`` (5xx, 529),
+    ``unreachable`` (no connection, a timeout, a stream cut off),
+    ``bad_endpoint`` (an answer that isn't an AI API's), ``too_long`` (the
+    prompt exceeds the model's context) or ``other``."""
+    if isinstance(error, AllowanceExhausted):
+        return "allowance"
+    if isinstance(error, HTTPException):
+        return "not_configured" if error.status_code == 503 else "other"
+    status = error.status if isinstance(error, UpstreamError) else (
+        error.code if isinstance(error, urllib.error.HTTPError) else 0)
+    text = str(error)
+    if status:
+        if status in (401, 403):
+            return "auth"
+        if status == 413 or (status == 400 and _TOO_LONG.search(text)):
+            return "too_long"
+        if status == 429:
+            return "rate"
+        if status >= 500:
+            return "overloaded"
+        if status in (404, 405) and "model" not in text.lower():
+            return "bad_endpoint"
+        return "other"
+    if isinstance(error, (NotAnAIStream, json.JSONDecodeError)):
+        return "bad_endpoint"
+    if isinstance(error, (urllib.error.URLError, TimeoutError, ConnectionError, http.client.HTTPException)):
+        return "unreachable"
+    # Error events inside a stream carry no status, only the provider's words.
+    if _TOO_LONG.search(text):
+        return "too_long"
+    if _RATE.search(text):
+        return "rate"
+    if _OVERLOADED.search(text):
+        return "overloaded"
+    return "other"
 
 
 def check_allowance(conf: dict) -> None:

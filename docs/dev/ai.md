@@ -51,9 +51,11 @@ credential for free — OAuth entries hit the usage endpoint, API keys list
 `/v1/models`, both 401 on a dead credential (404/405 = gateway without a
 listing → ok-but-unverified, no false alarm) — and `"test"` runs the same tiny
 completion as the Test button. The answer is always in-body
-(`{configured, ok, auth?, error?}`); a failure renders as a warning strip in
-the chat window ("authentication is broken — sign in again"), dismissed or
-cleared by a passing Test / provider edit.
+(`{configured, ok, auth?, kind?, error?}`); a failure renders as a warning
+strip in the chat window with the chat error card's headline for its `kind`
+("OpenAI rejected the API key"; see "Chat endpoint") and a Fix… button that
+opens that entry's form, dismissed or cleared by a passing Test / provider
+edit.
 
 `ai_runtime(user)` in `gamma/ai_settings.py` builds the per-request config and
 model registry from the account's own entries followed by the server's shared
@@ -245,11 +247,39 @@ idle timeout (nginx and Synology default to 60 s, Cloudflare to 100 s) does
 not cut the response while the model thinks over a long context.
 Clients skip `ping`. A consumer that leaves before the source
 ends (Stop, or the connection dropped anyway) stops the source at its next
-yield and logs a warning with the elapsed time. The client turns a
-failure with no reply text into an AI message carrying `error: true` — shown
-as an error bubble, saved with the chat so it survives a reload, but left out
-of the `history` it sends on later turns, and `build_messages` skips such
-items too should an older client send them.
+yield and logs a warning with the elapsed time.
+
+A failure says what kind it is. `ai_client.failure_kind` classifies it in
+one place, from the upstream status and, for an error event inside a
+stream, the provider's wording: `not_configured` (no usable connection,
+the 503), `allowance` (the shared allowance), `auth` (401/403), `rate`
+(429, quota), `overloaded` (5xx, 529), `unreachable` (no connection, a
+timeout, a cut-off stream), `bad_endpoint` (a 404 page, a reply that isn't
+JSON, or a stream without a single server-sent event —
+`ai_protocols.base.NotAnAIStream`), `too_long` (the context) or `other`.
+`_failure_info` in `routers/ai.py` puts that `kind` beside the unchanged
+string `detail` of the HTTP error (a `JSONResponse`) and on the stream's
+closing `{"error"}` line, with the upstream `status` and the connection
+(`provider_id`, `provider_name`, `provider_auth`). The login check
+(`/api/ai/health`) and the Test probe add the same `kind`.
+
+The client (`chat/chatErrors.js`) saves the classification on the reply
+(`errorKind`, `errorDetail`, `errorStatus`, `errorProvider`,
+`errorProviderId`, `errorAuth`) and renders a card instead of the raw text:
+a headline ("OpenAI rejected the API key", "Rate limit or quota reached",
+"Lost the connection to Gamma" for the browser's own `TypeError`), one
+sentence, and the buttons that fix it. Update key / Sign in again / Edit
+connection open Settings → Connections on that entry's form
+(`openAiEntry` in App); Connect AI and Add your own key open the pane; New
+chat starts over. On the latest reply, Retry re-sends the question through
+the edit-and-resend path and Switch model retries with the model picked.
+The raw text is folded under "Details from the provider". A failure with no
+reply text is an AI message carrying `error: true`, saved with the chat so
+it survives a reload but left out of the `history` it sends on later turns
+(`build_messages` skips such items too should an older client send them). A
+reply that broke off keeps its text and gets the compact card under it.
+Replies saved before the classification keep their plain red bubble. The
+login check's warning strip uses the same headlines.
 
 Context is *pages from the user's knowledge base* (`ai_context.gather_inputs`
 → `page_report_section`): each page contributes its title, a properties line
