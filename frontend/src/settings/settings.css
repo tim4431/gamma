@@ -710,11 +710,6 @@
 .keyFilter { width: 220px; margin: 0; }
 .keyGroupLabel {
   margin: 10px 8px 2px;
-  font-size: calc(11px * var(--ui-font-scale, 1));
-  font-weight: 600;
-  letter-spacing: 0.04em;
-  text-transform: uppercase;
-  color: var(--text-dim);
 }
 .keyBinding { display: inline-flex; align-items: center; gap: 6px; }
 .keyChip { min-width: 72px; justify-content: center; }

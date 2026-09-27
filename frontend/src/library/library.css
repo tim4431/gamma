@@ -6,10 +6,6 @@
   padding: 0 4px;
 }
 .carouselLabel {
-  font-size: calc(12px * var(--ui-font-scale, 1));
-  color: var(--text-muted);
-  text-transform: uppercase;
-  letter-spacing: 0.05em;
   margin-bottom: 8px;
 }
 /* No arrow chrome: the wheel pans it sideways (handler in CardCarousel),
@@ -139,7 +135,8 @@
   font-size: calc(10.5px * var(--ui-font-scale, 1));
 }
 .pageCardTime { margin-left: auto; color: var(--text-dim); white-space: nowrap; }
-.pageCardKind { font-size: calc(9.5px * var(--ui-font-scale, 1)); font-weight: 600; letter-spacing: 0.04em; text-transform: uppercase; color: var(--text-dim); }
+/* The card's kind label in sentence case like the section labels ("Page"; "PDF" is an acronym). */
+.pageCardKind { font-size: calc(11px * var(--ui-font-scale, 1)); font-weight: 500; color: var(--text-muted); }
 .pageCardCount {
   font-size: calc(10px * var(--ui-font-scale, 1));
   color: var(--text-muted);
@@ -260,13 +257,6 @@
   justify-content: space-between;
   gap: 8px;
   padding: 2px 10px 6px;
-}
-.homeListLabel {
-  font-size: calc(10px * var(--ui-font-scale, 1));
-  font-weight: 600;
-  text-transform: uppercase;
-  letter-spacing: 0.06em;
-  color: var(--text-dim);
 }
 .loadMoreBtn {
   display: block;
@@ -517,11 +507,6 @@
   display: flex;
   align-items: center;
   gap: 5px;
-  font-size: calc(10px * var(--ui-font-scale, 1));
-  font-weight: 600;
-  text-transform: uppercase;
-  letter-spacing: 0.06em;
-  color: var(--text-dim);
   padding: 2px 6px 6px;
 }
 .pinnedLabel svg { color: var(--accent); }

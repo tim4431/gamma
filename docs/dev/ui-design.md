@@ -46,6 +46,18 @@ already exists. Bespoke CSS classes are for **layout only**.
   (the grouped rule under `body` in app.css), so they keep their width as
   the digits change.
 
+### Section labels
+
+Panel and section names (dock titles, Library, Recently viewed, Pinned, the
+popover, search and menu section captions, the Keyboard pane's groups) share
+one rule in app.css: sentence case, 12 px, weight 600, `--text-secondary`
+(dock titles a step up, 13 px), the Settings rail's look.
+Labels get no `text-transform: uppercase` or letter-spacing: the text keeps
+its own case, so only acronyms ("PDF") are capitals. A new label class joins
+that list and keeps only its layout in its own rule. The kind label on a card
+("Page", "PDF") is the small muted version: 11 px, weight 500,
+`--text-muted`; in the list it is a plain muted column.
+
 ### Keyboard focus
 
 - **One ring**: every button, link, summary, `role="button"`, checkbox,

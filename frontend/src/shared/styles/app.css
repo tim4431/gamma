@@ -464,6 +464,19 @@
 }
 .searchInputWrap .searchInput:focus-visible { box-shadow: none; }
 
+/* Section and panel labels (docs/dev/ui-design.md): sentence case at a
+   readable size in --text-secondary, like the Settings rail. The text keeps
+   its own case, so only real acronyms are uppercase. Each class's own rule
+   holds its layout (dock titles also a size step up). */
+:is(.dockGrip, .homeListLabel, .pinnedLabel, .carouselLabel, .popoverLabel, .popoverSection,
+  .searchSection, .ctxMenuLabel, .slashMenuTitle, .keyGroupLabel) {
+  font-size: calc(12px * var(--ui-font-scale, 1));
+  font-weight: 600;
+  letter-spacing: 0;
+  text-transform: none;
+  color: var(--text-secondary);
+}
+
 :is(.userCardMeta, .settingText, .aiProvMeta) {
   display: flex;
   flex-direction: column;
@@ -2563,7 +2576,7 @@ button.pdfOutlineChevron:hover { background: rgba(128, 128, 128, 0.28); color: v
 .mirrorPopover .setRow { padding: 5px 4px; gap: 9px; }
 .topbar .mirrorPopover .uiBtn:where(:not(.on, .primary, .danger)) { background: var(--bg-elevated); border: 1px solid var(--border); color: var(--text-secondary); }
 .topbar .mirrorPopover .uiBtn:where(:not(.on, .primary, .danger)):hover:not(:disabled) { background: var(--bg-hover); }
-.popoverLabel { display: flex; align-items: center; gap: 5px; font-size: calc(10.5px * var(--ui-font-scale, 1)); font-weight: 600; letter-spacing: 0.04em; text-transform: uppercase; color: var(--text-dim); padding: 6px 4px 2px; }
+.popoverLabel { display: flex; align-items: center; gap: 5px; padding: 6px 4px 2px; }
 .mirrorPopHead { display: flex; align-items: center; gap: 8px; padding: 2px 4px 8px; }
 .mirrorPopHead .popoverTitle { padding: 0; }
 .mirrorPopIcon { display: inline-flex; align-items: center; justify-content: center; width: 28px; height: 28px; border-radius: 8px; background: var(--accent-bg-light); color: var(--accent); flex-shrink: 0; }
@@ -2655,11 +2668,6 @@ mark.merge-del { background: color-mix(in srgb, var(--danger) 16%, transparent);
 .mirrorDiff .mod { color: #d9822b; }
 .popoverHint { font-size: calc(11px * var(--ui-font-scale, 1)); color: var(--text-muted); line-height: 1.45; padding: 0 4px; }
 .popoverSection {
-  font-size: calc(10px * var(--ui-font-scale, 1));
-  font-weight: 600;
-  text-transform: uppercase;
-  letter-spacing: 0.06em;
-  color: var(--text-dim);
   padding: 4px 4px 0;
 }
 .popoverDivider { border-top: 1px solid var(--border-subtle); margin: 4px 0; }
@@ -3004,11 +3012,6 @@ mark.searchMark {
   color: var(--text-primary);
 }
 .searchSection {
-  font-size: calc(10px * var(--ui-font-scale, 1));
-  font-weight: 600;
-  text-transform: uppercase;
-  letter-spacing: 0.06em;
-  color: var(--text-dim);
   padding: 6px 4px 2px;
 }
 /* Match counter + prev/next for the open PDF, inline in the search bar
@@ -3084,11 +3087,7 @@ mark.searchMark {
   cursor: grab;
   touch-action: none;
   user-select: none;
-  font-size: calc(11px * var(--ui-font-scale, 1));
-  font-weight: 600;
-  letter-spacing: 0.05em;
-  text-transform: uppercase;
-  color: var(--text-muted);
+  font-size: calc(13px * var(--ui-font-scale, 1));
   white-space: nowrap;
   flex-shrink: 0;
 }
@@ -5229,10 +5228,6 @@ a.shareBrand:hover { background: var(--bg-hover); }
 
 /* Section label row inside a menu (MenuLabel). */
 .ctxMenuLabel {
-  font-size: calc(10px * var(--ui-font-scale, 1));
-  letter-spacing: 0.06em;
-  text-transform: uppercase;
-  color: var(--text-dim);
   padding: 6px 10px 2px;
   border-top: 1px solid var(--border-subtle);
   margin-top: 4px;
@@ -5366,11 +5361,6 @@ a.shareBrand:hover { background: var(--bg-hover); }
    "Paste as" chooser's heading (the popover labels' look). */
 .slashMenuTitle {
   padding: 8px 9px 3px;
-  font-size: calc(10.5px * var(--ui-font-scale, 1));
-  font-weight: 600;
-  letter-spacing: 0.04em;
-  text-transform: uppercase;
-  color: var(--text-dim);
   user-select: none;
 }
 .slashMenuTitle:first-child { padding-top: 4px; }
