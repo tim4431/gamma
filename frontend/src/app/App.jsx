@@ -4674,18 +4674,23 @@ function LibraryApp({ publicPage = null, initialServerConfig = null }) {
   }
 
   // "New page": a blank page in the open folder (if any), opened with its
-  // title ready to type. What the page carries (a PDF…) is attached on the
-  // page itself afterwards — creation never needs a file.
-  async function createPage(folder = folderFilter) {
+  // title ready to type — or, given a title (Ctrl+P's "Create page"), opened
+  // under it. What the page carries (a PDF…) is attached on the page itself
+  // afterwards — creation never needs a file.
+  async function createPage(folder = folderFilter, title = "") {
     if (shareMode) return;
     setOpenPopover(null);
     try {
       const created = await apiJson(`${API}/pages`, {
         method: "POST",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ title: "", ...(folder ? { folder } : {}) }),
+        body: JSON.stringify({ title, ...(folder ? { folder } : {}) }),
       });
       await fetchHomeBlocks();
+      if (title) {
+        await openBlock(created.id, { pushNav: true });
+        return;
+      }
       await openBlock(created.id, { pushNav: true, focusTitle: true });
       setTitleDraft("");
       setTitleEditing(true);
@@ -9838,6 +9843,12 @@ function LibraryApp({ publicPage = null, initialServerConfig = null }) {
         openTabs={openTabs}
         currentPageId={focusedBlockId}
         onOpen={openPage}
+        folders={allFolderPaths}
+        folderMeta={folderMeta}
+        onOpenFolder={(path) => { if (!homeMode) goHome(); openFolder(path); }}
+        onOpenLabel={(name) => { if (!homeMode) goHome(); openLabel(name, ""); }}
+        onSearch={openSearchWith}
+        onCreate={lib.organize ? (title) => createPage(homeMode ? folderFilter : "", title) : null}
       />
       <GuideOverlay guide={guide} keybindings={keybindings} />
       <SettingsDialog

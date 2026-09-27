@@ -9,7 +9,8 @@ export async function quickOpenScenarios(env) {
   const titles = ["Cavity readout", "Cavity sensors", "Quantum correction", "Atomic clocks"];
   const papers = {};
   for (const title of titles) {
-    const properties = title === "Atomic clocks" ? { category: "horlogerie" } : undefined;
+    const properties = title === "Atomic clocks" ? { category: "horlogerie" }
+      : title === "Cavity readout" ? { folder: "optics/cavities" } : undefined;
     papers[title] = await user.api("/api/blocks", { method: "POST", body: { parent_id: "root", content: title, properties } });
   }
 
@@ -28,13 +29,17 @@ export async function quickOpenScenarios(env) {
         "the open page is tagged Current");
 
       // A label matches like a title, typos included ("horlogerie" is only a label).
+      const pageRows = dialog.locator('[role="option"][data-kind="page"]');
       await input.fill("horlogeire");
-      await until(async () => (await dialog.getByRole("option").count()) === 1, { what: "the label's page alone" });
-      assert(/Atomic clocks/.test(await dialog.getByRole("option").textContent()), "the labelled page matches");
-      assertEq(await dialog.getByRole("option").locator(".labelTagBadge").textContent(), "horlogerie", "the row shows its label");
+      await until(async () => (await pageRows.count()) === 1, { what: "the label's page alone" });
+      assert(/Atomic clocks/.test(await pageRows.textContent()), "the labelled page matches");
+      assertEq(await pageRows.locator(".labelTagBadge").textContent(), "horlogerie", "the row shows its label");
+      assert(/horlogerie/.test(await dialog.locator('[role="option"][data-kind="label"]').textContent()), "the label itself is listed");
+      assertEq(await dialog.locator('[role="option"][data-action]').count(), 2, "the search and create actions end the list");
 
       await input.fill("cavity");
-      await until(async () => (await dialog.getByRole("option").count()) === 2);
+      await until(async () => (await pageRows.count()) === 2);
+      assertEq(await dialog.locator(".quickOpenSection").first().textContent(), "Pages", "results sit under section headings");
       await page.keyboard.press("ArrowDown");
       const picked = await dialog.locator('[role="option"][aria-selected="true"] strong').textContent();
       await page.keyboard.press("Enter");
@@ -45,6 +50,46 @@ export async function quickOpenScenarios(env) {
       await dialog.waitFor();
       await page.keyboard.press("Escape");
       assertEq(await page.getByRole("dialog", { name: "Open a page" }).count(), 0, "Escape closes the palette");
+      assertNoProblems(page);
+    } finally { await ctx.close(); }
+  });
+
+  await step("quickopen: folders open their view; Ctrl+Enter searches everywhere, Shift+Enter creates the page", async () => {
+    const ctx = await user.context(browser);
+    const page = await openPage(ctx, `${server.base}/?page=${papers["Atomic clocks"].id}&ws=${user.ws}`);
+    try {
+      await page.locator(".blockList").first().waitFor();
+      const dialog = page.getByRole("dialog", { name: "Open a page" });
+      const input = dialog.getByRole("textbox", { name: "Search pages by title or label" });
+      // A folder is a row of its own; picking it opens the folder view.
+      await page.keyboard.press("Control+p");
+      await input.fill("cavities");
+      const folderRow = dialog.locator('[role="option"][data-kind="folder"]');
+      await until(async () => (await folderRow.count()) === 1, { what: "the folder matches" });
+      assert(/in optics/.test(await folderRow.textContent()), "the folder row names its parent");
+      await folderRow.click();
+      await until(async () => new URL(page.url()).searchParams.get("folder") === "optics/cavities", { what: "the folder view opens" });
+      await page.locator(".fileRow", { hasText: "Cavity readout" }).waitFor();
+
+      // Ctrl+Enter hands the query to the workspace search.
+      await page.keyboard.press("Control+p");
+      await input.fill("quantum");
+      await page.keyboard.press("Control+Enter");
+      const search = page.locator(".searchPopover .searchInput");
+      await search.waitFor();
+      await until(async () => (await search.inputValue()) === "quantum", { what: "the search opens with the query" });
+      await page.keyboard.press("Escape");
+      await page.mouse.click(5, 300);
+
+      // Shift+Enter creates a page with the query as its title, and opens it.
+      await page.keyboard.press("Control+p");
+      await input.fill("Fresh cavity idea");
+      await page.keyboard.press("Shift+Enter");
+      await until(async () => (await user.api("/api/blocks/root/children")).children.some((b) => b.content === "Fresh cavity idea"),
+        { what: "the page exists" });
+      const created = (await user.api("/api/blocks/root/children")).children.find((b) => b.content === "Fresh cavity idea");
+      await until(() => new URL(page.url()).searchParams.get("block") === created.id, { what: "the new page opens" });
+      assert(String(created.properties?.folder || "").includes("optics/cavities"), "it lands in the folder the palette was opened over");
       assertNoProblems(page);
     } finally { await ctx.close(); }
   });

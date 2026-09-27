@@ -571,5 +571,18 @@
 /* the chip line keeps its file-row cap; the option style would stretch it */
 .quickOpenRow .fileRowLabels { flex: 0 1 auto; }
 .quickOpenTag { flex-shrink: 0; font-style: normal; font-size: calc(10px * var(--ui-font-scale, 1)); color: var(--text-dim); }
+/* Section headings (Recent / Open tabs / … or Pages / Folders / Labels /
+   Actions) and the time or count on a row's right. */
+.quickOpenSection {
+  padding: 8px 8px 3px;
+  font-size: calc(10.5px * var(--ui-font-scale, 1));
+  font-weight: 600;
+  color: var(--text-dim);
+}
+.quickOpenSection:first-child { padding-top: 2px; }
+.quickOpenTime { flex-shrink: 0; font-style: normal; font-size: calc(11px * var(--ui-font-scale, 1)); color: var(--text-dim); white-space: nowrap; }
+.quickOpenAction { font-size: calc(12px * var(--ui-font-scale, 1)); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.quickOpenRow .quickOpenFolderIcon { color: var(--accent); }
+.quickOpenRow .kindGlyph { flex-shrink: 0; }
 .quickOpen .chatMentionHint { padding: 6px 6px 0; }
 .quickOpenKey { font-family: var(--font-mono); }

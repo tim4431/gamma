@@ -31,13 +31,23 @@ listing.
 Quick open ([QuickOpen.jsx](../../frontend/src/library/QuickOpen.jsx)) is the
 keyboard way into the library from anywhere: Ctrl+P (the `app.quickOpen`
 command, [hotkeys.md](hotkeys.md); not in a share view) opens a palette over
-the pages. With no query the order is the recents queue, then open tabs,
-then the rest by last edit; a query ranks through `createLibraryMatcher` (the
-listing search box's matcher, below) with recency as the tie-break. Each row
-shows the page's folder and label chips (`CardLabels`, as on a file row), so
-a label-only match reads as one. Enter opens through `openPage`, the same
-path as a card double-click. A query starting with `>` is the command
-palette ([hotkeys.md](hotkeys.md)).
+the library. With no query it lists pages under three headings, Recent (the
+recents queue), Open tabs and Everything else (by last edit), each row with
+its time on the right (viewed for a recent page, else modified; the open
+page says Current). A query ranks through `createLibraryMatcher` (the
+listing's filter box matcher, below) with recency as the tie-break, in the
+sections Pages, Folders (matched on the name or the path; "in parent · n
+pages") and Labels, the matched characters marked (`markedParts` from
+`search/snippets.js`: exact matches only, a typo match stays unmarked). Each
+page row shows the page's folder and label chips (`CardLabels`, as on a file
+row), so a label-only match reads as one. Every typed list ends with the
+Actions: *Search inside notes and PDFs for "q"* (Ctrl+Enter from the input;
+the workspace search opens with the query, App's `openSearchWith`) and
+*Create page "q"* (Shift+Enter; `createPage` with that title, in the folder
+the home view has open; only where `lib.organize`). Enter opens a page
+through `openPage`, the same path as a card double-click, and a folder or
+label in its home view. A query starting with `>` is the command palette
+([hotkeys.md](hotkeys.md)).
 
 ## Folders and labels
 

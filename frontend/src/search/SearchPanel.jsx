@@ -17,7 +17,7 @@
 // with pdf.js and the match is highlighted and scrolled into view — positions
 // come from the same engine that draws the page, so they are always exact.
 
-import React, { useEffect, useMemo, useRef, useState } from "react";
+import React, { useEffect, useLayoutEffect, useMemo, useRef, useState } from "react";
 import { API, apiJson } from "../shared/lib/utils";
 import { ChevronDownIcon, ChevronRightIcon, ChevronUpIcon, FileGlyph, FolderIcon, LabelIcon, SearchIcon } from "../shared/ui/Icons";
 
@@ -56,9 +56,10 @@ export default function SearchPanel({
   const q = query.trim();
 
   useEffect(() => { if (open) setPinned(false); }, [open]);
-  // Opened with a query from elsewhere (the home listing's filter box): it
-  // replaces whatever was typed last, filters included.
-  useEffect(() => {
+  // Opened with a query from elsewhere (the home listing's filter box,
+  // Ctrl+P): it replaces whatever was typed last, filters included — before
+  // the first paint, so the box never shows the old text.
+  useLayoutEffect(() => {
     if (!open || !initialQuery) return;
     setQuery(initialQuery);
     setLabels([]);

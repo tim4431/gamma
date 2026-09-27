@@ -113,7 +113,7 @@ The home page is a recents feed of all your pages, with a **Recently viewed** st
 
 - **On the home page** Ctrl+F goes to the listing's *Filter by title or label* box instead: it matches page titles and folder or label names only, floats the matches to the top and dims the rest. When nothing matches, *Search inside notes and PDFs* (or Enter in the box) hands your words to the full search; with matches, the row under them does the same.
 - **Filter chips**: type a label or folder name and press Tab — label chips match exactly, folder chips include everything beneath them (`qc` pulls in `qc/neutral-atom`).
-- **Ctrl+P** is the quick way to another page: a palette listing your recent pages, filtered by title, folder or label as you type (small typos are forgiven, like the library's search box) — ↑↓ and Enter open it.
+- **Ctrl+P** is the quick way to another page: a palette listing your recent pages, open tabs and the rest, filtered by title, folder or label as you type (small typos are forgiven, like the library's filter box). Matching folders and labels get rows of their own and open their view. ↑↓ and Enter open the pick; **Ctrl+Enter** searches notes and PDFs for what you typed, **Shift+Enter** creates a page with it as the title.
 - **Enter / Shift+Enter** step through matches; the chevron collapses the result lists into a compact find bar (make that the default in Settings → Reading & editing).
 - Matching is forgiving: "3000" finds "3,000-qubit", even across a line break. Opening a library hit loads the paper and scrolls to the highlighted match.
 - Each result shows whether it is a paper or a page, its section's count, and the query marked in its title and text; notes read as plain text, without their markdown.
@@ -275,7 +275,7 @@ Preferences apply immediately; browser-only ones (theme, layout) are marked *Thi
 |---|---|
 | Ctrl+F / Ctrl+Shift+F | On a page: search everything (find-in-chat when the chat is focused; in Settings or a dialog, its own search box — press again for the next one). On the home page: filter the listing by title or label / always the full search |
 | Ctrl+, | Open settings |
-| Ctrl+P | Quick open: pick a page by title, folder or label (recent pages first) |
+| Ctrl+P | Quick open: pick a page, folder or label (recent pages first); in it, Ctrl+Enter searches everywhere, Shift+Enter creates the page |
 | Ctrl+Shift+P | Command palette: every command by name, with its keys (also `>` typed into Ctrl+P) |
 | F2 | Rename the page |
 | Ctrl+Z / Ctrl+Y (or Ctrl+Shift+Z) | Undo / redo, one history per page |
