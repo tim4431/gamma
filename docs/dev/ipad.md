@@ -33,12 +33,28 @@ app counts as one browser, separate from Safari).
 | The status bar colour | `app/App.jsx`, the theme effect | With the *default* status-bar style the bar sits above the viewport and is painted with `theme-color`; the effect sets that meta to the topbar's background (`--bg-surface`) whenever the theme changes, so the bar continues the topbar for every theme. `black-translucent` was rejected: it puts content under the bar with fixed light text, wrong on the light themes. |
 | Standalone-mode CSS | `shared/styles/app.css`, `@media (display-mode: standalone)` | The document stops rubber-banding (`overscroll-behavior: none` on html/body; the panes still scroll) and `.app` pads `env(safe-area-inset-bottom)` for the home indicator. There is no top inset to absorb with the default status bar. |
 
+## Layout by orientation
+
+An iPad's Safari sends a desktop-class UA, so the layout follows the
+screen, not the device (`PHONE_MQ` / `useIsPhone` in App.jsx):
+
+- **Upright** — a coarse pointer, portrait, at most 1024px wide (every iPad
+  up to the 12.9" Pro, and Android tablets) — gets the compact shell the
+  phone uses (`.phoneUI`): the PDF or the notes full width, Notes and Chat
+  as full-screen panels, one bottom bar. Two docks squeezed into 820px left
+  ~200px columns that pushed the chat header's buttons off screen. The bar
+  has room for its labels, and its popovers keep a menu's width at the
+  right end instead of spanning the screen (the `min-width: 701px` block
+  under the phone rules in `app.css`).
+- **Landscape** gets the desktop docks, as on a laptop. Turning the tablet
+  swaps the shell live; the dock arrangement is kept for the way back.
+- A phone keeps the compact shell both ways: narrower than 700px, or a
+  coarse pointer on a screen under 500px tall.
+
 Nothing else is tablet-specific: the viewport meta already disables
 browser zoom in favour of the viewer's own pinch-zoom, `touch-action:
-manipulation` removes double-tap zoom, and an iPad gets the desktop
-layout (its Safari sends a desktop-class UA and is wider than the phone
-breakpoint, `useIsPhone` in App.jsx) with the touch rules the ink layer and
-the viewer already carry.
+manipulation` removes double-tap zoom, and both layouts carry the touch
+rules the ink layer and the viewer already have.
 
 ## Not built (and why)
 
@@ -66,6 +82,8 @@ the viewer already carry.
   theme change; the bundled stylesheet carries the standalone block (the
   document overscroll rule and the home-indicator inset — Chromium cannot
   emulate `display-mode`, CDP accepts the feature but `matchMedia` ignores
-  it). Chromium, not an iPad: the Add to Home Screen flow, the status-bar
-  paint and the home indicator need the device.
+  it); upright (834×1194) is the compact shell — the PDF full width, Notes
+  full screen from the bottom bar — and rotating to landscape brings the
+  docks back. Chromium, not an iPad: the Add to Home Screen flow, the
+  status-bar paint and the home indicator need the device.
 - `node tools/branding/build.mjs --check` pins the icons to the mark.

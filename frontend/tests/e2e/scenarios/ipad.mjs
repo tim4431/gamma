@@ -1,8 +1,9 @@
 // The installed web app (docs/dev/ipad.md): the manifest and its icons, the
-// home-screen head tags, theme-color following the theme, and the
-// standalone-mode stylesheet. Chromium in a tablet-sized touch context —
-// emulation, not an iPad.
-export async function ipadScenarios({ server, browser, alice, step, until, assert, assertEq, assertNoProblems, openPage }) {
+// home-screen head tags, theme-color following the theme, the
+// standalone-mode stylesheet, and the layout by orientation (upright: the
+// compact shell; landscape: the docks). Chromium in a tablet-sized touch
+// context — emulation, not an iPad.
+export async function ipadScenarios({ server, browser, alice, makePdf, step, until, assert, assertEq, assertNoProblems, openPage }) {
   await step("ipad: install manifest, icons, status-bar colour and standalone mode", async () => {
     const ctx = await alice.context(browser, { hasTouch: true, deviceScaleFactor: 2, viewport: { width: 834, height: 1194 } });
     try {
@@ -93,6 +94,29 @@ export async function ipadScenarios({ server, browser, alice, step, until, asser
       await until(() => page.url().includes("folder=tapfolder"), { what: "a tap opens the folder" });
       await page.locator(".pageCard, .fileRow", { hasText: "Tap to open paper" }).first().tap();
       await until(() => page.url().includes(`block=${paper.id}`), { what: "a tap opens the page" });
+      assertNoProblems(page);
+    } finally { await ctx.close(); }
+  });
+
+  await step("ipad: upright is the compact shell with full-screen panels; landscape brings the docks back", async () => {
+    const up = await alice.upload("/api/uploads", makePdf([["An upright tablet reads full width."]]), "upright.pdf", "application/pdf");
+    const paper = await alice.api(`/api/blocks/by-doc/${up.doc_id}`, { method: "POST", body: { default_title: "Upright paper", source_url: up.source_url } });
+    const ctx = await alice.context(browser, { hasTouch: true, viewport: { width: 834, height: 1194 } });
+    try {
+      const page = await openPage(ctx, `${server.base}/?ws=${alice.ws}&block=${paper.id}`);
+      await page.waitForSelector(".app.phoneUI .phoneBottomBar");
+      await page.waitForSelector('[data-page="1"] .textLayer span', { timeout: 20000 });
+      assertEq(await page.locator(".dockWindow").count(), 0, "no docked windows while upright");
+      const viewer = await page.locator(".viewerWrap").boundingBox();
+      assert(viewer.width > 800, `the PDF takes the full width: ${viewer.width}`);
+      await page.getByRole("button", { name: "Notes", exact: true }).tap();
+      const notes = page.locator(".phonePanel:not(.phonePanelHidden) .dockWindow");
+      await notes.waitFor();
+      assert((await notes.boundingBox()).width > 800, "Notes open full screen");
+      await page.setViewportSize({ width: 1194, height: 834 });
+      await until(async () => (await page.locator(".app.phoneUI").count()) === 0, { what: "landscape leaves the compact shell" });
+      await page.locator(".dockSlot .dockWindow").first().waitFor();
+      assertEq(await page.locator(".phoneBottomBar").count(), 0, "no bottom bar with the docks");
       assertNoProblems(page);
     } finally { await ctx.close(); }
   });

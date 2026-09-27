@@ -125,16 +125,21 @@ import { createLibraryMatcher } from "../library/librarySearch";
 // fail closed (ignored) rather than show a spurious error row.
 const TRANSFER_PHASES = new Set(["start", "progress", "done", "cached", "error", "cancelled"]);
 
-// Phone detection: below 700px the desktop dock system is unusable, so the
-// workspace switches to a single full-width panel with a bottom tab bar. The
-// second clause keeps a rotated (landscape) phone in the phone layout — the
-// width crosses 700px but a touch device that short is still a phone, and
-// flipping to the desktop docks mid-rotation is jarring.
-const PHONE_MQ = "(max-width: 700px), (pointer: coarse) and (max-height: 500px)";
+// The compact layout ("phone" in the code): below 700px the desktop dock
+// system is unusable, so the workspace switches to a single full-width panel
+// with a bottom tab bar. The second clause keeps a rotated (landscape) phone
+// in it — the width crosses 700px but a touch device that short is still a
+// phone, and flipping to the desktop docks mid-rotation is jarring. The third
+// gives a tablet held upright the same shell: two docks squeezed into 820px
+// leave ~200px columns, while a full-width reader with full-screen Notes and
+// Chat fits; turning it to landscape brings the docks back (docs/dev/ipad.md).
+const PHONE_MQ = "(max-width: 700px), (pointer: coarse) and (max-height: 500px), "
+  + "(pointer: coarse) and (orientation: portrait) and (max-width: 1024px)";
 // A browser that declares itself mobile gets the phone layout regardless of
 // the viewport numbers. "Request desktop site" flips this flag along with the
 // UA, so it stays the escape hatch back to the desktop docks. Android tablets
-// ("Android" without "Mobile") and iPads (desktop-class UA) are not phones.
+// ("Android" without "Mobile") and iPads (desktop-class UA) are not phones:
+// they get the compact layout only while upright, from PHONE_MQ.
 const UA_MOBILE = navigator.userAgentData?.mobile
   ?? /iPhone|iPod|Android.+Mobile|Mobile.+Android/i.test(navigator.userAgent);
 function useIsPhone() {

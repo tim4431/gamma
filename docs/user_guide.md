@@ -232,7 +232,7 @@ The installed web app still needs the server to be reachable. For a library that
 - The Notes and Chat windows are dockable: **drag the ⠿ grip** to dock them left, right or bottom (the drop position decides the order); **double-click the grip to collapse** a window to its header bar and back; **×** closes it (reopen from the View menu — ≡, top right). Drag the dividers to resize. Each paper remembers its own layout.
 - **Tabs** sync to your account across devices. Middle-click closes a tab; right-click pins it (pinned tabs stay left and can't be middle-closed); drag to reorder.
 - **Background tasks** (uploads, fetches, exports) show in the top bar's tasks popover with progress.
-- On a phone everything becomes full-screen views behind a bottom tab bar (Library/PDF · Notes · Chat).
+- On a phone, and on a tablet held upright, everything becomes full-screen views behind a bottom tab bar (Library/PDF · Notes · Chat); turn the tablet sideways for the docked windows.
 
 ## Report a problem
 

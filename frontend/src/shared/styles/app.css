@@ -2988,8 +2988,9 @@ mark.merge-del { background: color-mix(in srgb, var(--danger) 16%, transparent);
 }
 .chatPanel.chatWindow { padding: 0 6px 6px; display: flex; flex-direction: column; overflow: hidden; }
 
-/* --- phone layout (≤700px): dock slots collapse, windows become full-screen
-   overlays over the work area, switched from a bottom tab bar --- */
+/* --- compact layout (phones, and tablets held upright — PHONE_MQ in
+   App.jsx): dock slots collapse, windows become full-screen overlays over
+   the work area, switched from a bottom tab bar --- */
 .phonePanel {
   position: absolute;
   inset: 0;
@@ -3084,6 +3085,14 @@ mark.merge-del { background: color-mix(in srgb, var(--danger) 16%, transparent);
   max-width: none;
   max-height: 70vh;
   overflow-y: auto;
+}
+/* An upright tablet (or a landscape phone): room for the tab labels and
+   44px targets, and a popover keeps a menu's width at the right end instead
+   of stretching across the whole screen. */
+@media (min-width: 701px) {
+  .phoneTabBar.hasActions .phoneTab > span { display: inline; }
+  .phoneBottomBar .topbar.phoneActions .iconBtn { width: 44px; height: 44px; }
+  .phoneBottomBar .popover { left: auto; width: min(480px, calc(100% - 12px)); }
 }
 
 /* App fullscreen is the fallback when native fullscreen is unavailable.
