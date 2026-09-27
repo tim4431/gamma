@@ -72,11 +72,11 @@ export async function triggeredGuideScenarios(env) {
       const size = page.viewportSize();
       const box = await tables.nth(1).boundingBox();
       await page.setViewportSize({ width: size.width, height: Math.ceil(box.y + box.height + 40) });
-      await until(async () => {
-        const card = await page.locator(".guideCard").boundingBox();
-        const tb = await tables.nth(1).boundingBox();
-        return card.x >= tb.x + tb.width || card.x + card.width <= tb.x || card.y >= tb.y + tb.height || card.y + card.height <= tb.y;
-      }, { what: "the add card keeps clear of the table" });
+      const card = page.locator(".guideCard");
+      await until(async () => !/\bside-bottom\b/.test(await card.getAttribute("class")), { what: "the card leaves the crowded space under the strip" });
+      const [cb, tb] = [await card.boundingBox(), await tables.nth(1).boundingBox()];
+      assert(cb.x >= tb.x + tb.width || cb.x + cb.width <= tb.x || cb.y >= tb.y + tb.height || cb.y + cb.height <= tb.y,
+        `the add card keeps clear of the table (${await card.getAttribute("class")})`);
       await page.setViewportSize(size);
       await primary(page).click();
       await page.waitForSelector('[data-guide-overlay="table-whole"]');
