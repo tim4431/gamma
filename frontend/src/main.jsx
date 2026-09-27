@@ -1,6 +1,11 @@
 import React from "react";
 import ReactDOM from "react-dom/client";
 import { loadLocale, resolveLocale, setLocale } from "./shared/i18n/i18n.js";
+// The interface font (--font-sans in app.css), bundled so it needs no
+// third-party request: one variable woff2 per unicode subset, each fetched
+// only when text in its range (or, for the italic set, italic text) shows.
+import "@fontsource-variable/inter/wght.css";
+import "@fontsource-variable/inter/wght-italic.css";
 import "./shared/styles/app.css";
 import "./library/library.css";
 import "./settings/settings.css";

@@ -27,6 +27,25 @@ already exists. Bespoke CSS classes are for **layout only**.
 | `popoverAnchor` | the `position: relative; inline-flex` wrapper every popover trigger sits in (`data-popover="…"` on the same element) — never inline that style |
 | `Section`'s `scope` tag (`.setScope`, [settings.md](settings.md)) | where a settings section's values live: a 14 px icon and one muted word in the small caption size, "account" or "browser". An account tag's icon is the sync state of that section's own settings (check, cloud-check, spinning refresh, warning — the only colour); the sentence is the hover `title` and `aria-label`, never text |
 
+### Type
+
+- **One interface face**: Inter, bundled (`@fontsource-variable/inter`,
+  imported in `main.jsx`): one variable woff2 per unicode subset, upright and
+  italic, served from `/assets/` with the bundle and fetched only when text in
+  its range shows. No third-party request, so it works offline and in the
+  desktop sidecar. `--font-sans` names it with system and CJK fallbacks
+  (Chinese text keeps the OS face); `body` uses it and everything else
+  inherits (`font: inherit` on form controls).
+- **One monospace stack**, `--font-mono`: code, raw math, key caps, cron
+  fields, workspace folders. Bare `code`/`pre`/`kbd`/`samp` get it from a
+  zero-specificity rule.
+- Never name a font family in a component rule; use one of the two tokens.
+  The desktop shell's `ui/theme.css` carries the same tokens but doesn't
+  bundle the font file.
+- Counts, times and page numbers use `font-variant-numeric: tabular-nums`
+  (the grouped rule under `body` in app.css), so they keep their width as
+  the digits change.
+
 ### Interface size and text size
 
 - **Interface size** (Settings / Appearance, `gamma-ui-scale`, a `Stepper` over

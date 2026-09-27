@@ -607,7 +607,7 @@
 
 .integrationDetails { display: grid; gap: 10px; padding: 8px 0; }
 .integrationDetails p { margin: 0; font-size: calc(13px * var(--ui-font-scale, 1)); line-height: 1.5; }
-.integrationDetails textarea { width: 100%; box-sizing: border-box; resize: vertical; font-family: monospace; }
+.integrationDetails textarea { width: 100%; box-sizing: border-box; resize: vertical; font-family: var(--font-mono); }
 .integrationDetails > button { justify-self: start; }
 .integrationActions { display: flex; flex-wrap: wrap; align-items: center; gap: 8px; }
 .integrationCode { position: relative; }

@@ -63,6 +63,10 @@
   --radius-control: 6px;
   --radius-surface: 10px;
   --shadow-surface: 0 8px 24px rgba(0, 0, 0, 0.28);
+  /* Type: one interface face (Inter, bundled in main.jsx) with system and
+     CJK fallbacks, and one monospace stack for code, raw math and key caps. */
+  --font-sans: "Inter Variable", Inter, -apple-system, BlinkMacSystemFont, "Segoe UI Variable Text", "Segoe UI", system-ui, Roboto, "Helvetica Neue", Arial, "PingFang SC", "Hiragino Sans GB", "Microsoft YaHei", "Noto Sans CJK SC", sans-serif;
+  --font-mono: ui-monospace, "SF Mono", SFMono-Regular, "Cascadia Mono", Menlo, Consolas, "Liberation Mono", monospace;
   /* Floating-layer stacking scale — keep menus/tips ordered consistently. */
   --z-dock: 20;
   --z-phone-overlay: 80;
@@ -465,9 +469,16 @@ html {
 }
 
 body {
-  font-family: Arial, sans-serif;
+  font-family: var(--font-sans);
   color: var(--text-primary);
   background: var(--bg-page);
+}
+/* Zero specificity: a component's own font rule still wins. */
+:where(code, pre, kbd, samp) { font-family: var(--font-mono); }
+/* Counts, times and page numbers keep their width as the digits change. */
+:is(.pdfPageWidget, .pageCardTime, .pageCardCount, .folderCount, .chatHistAge,
+  .chatFindCount, .searchFindCount, .chatPlusCount, .pdfTransPct, .transferProgress) {
+  font-variant-numeric: tabular-nums;
 }
 
 .app {
@@ -824,7 +835,7 @@ body {
   background: var(--bg-input);
   border-radius: 4px;
   padding: 1px 3px;
-  font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
+  font-family: var(--font-mono);
   font-size: 0.9em;
 }
 .blockEditorCm .cmLinkText { color: var(--accent-bright); text-decoration: underline; }
@@ -883,7 +894,7 @@ body {
 
 /* Raw $math$ source under edit reads as code: monospace, slightly smaller. */
 .blockEditorCm .cmMathRaw {
-  font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
+  font-family: var(--font-mono);
   font-size: 0.9em;
 }
 
@@ -927,7 +938,7 @@ body {
 /* --- ``` code blocks in the editor ---------------------------------------- */
 /* Raw (caret-touched) fence: mono, tinted lines; the ``` marker lines dim. */
 .blockEditorCm .cm-line.cmCodeLine {
-  font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, "Liberation Mono", monospace;
+  font-family: var(--font-mono);
   font-size: 0.88em;
   background: var(--bg-input);
   padding: 0 8px;
@@ -947,7 +958,7 @@ body {
 .cmCodeWidget code {
   display: block;
   padding: 8px 10px;
-  font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, "Liberation Mono", monospace;
+  font-family: var(--font-mono);
   font-size: 0.88em;
   line-height: 1.5;
   white-space: pre;
@@ -957,7 +968,7 @@ body {
   top: 5px;
   right: 9px;
   font-size: calc(10px * var(--ui-font-scale, 1));
-  font-family: var(--font-ui, inherit);
+  font-family: var(--font-sans);
   color: var(--text-muted);
   user-select: none;
   pointer-events: none;
@@ -2449,7 +2460,7 @@ button.pdfOutlineChevron:hover { background: rgba(128, 128, 128, 0.28); color: v
 .mirrorChanges { list-style: none; margin: 2px 0 8px 16px; padding: 2px 6px 2px 8px; display: flex; flex-direction: column; gap: 3px; border-left: 2px solid var(--border-subtle); }
 .mirrorChangesNone { padding: 2px 4px 8px 20px; }
 .mirrorChange { display: flex; gap: 6px; font-size: calc(12px * var(--ui-font-scale, 1)); line-height: 1.4; color: var(--text-secondary); min-width: 0; }
-.mirrorChangeGlyph { font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace; width: 10px; flex-shrink: 0; font-weight: 700; }
+.mirrorChangeGlyph { font-family: var(--font-mono); width: 10px; flex-shrink: 0; font-weight: 700; }
 .mirrorChange.add .mirrorChangeGlyph { color: var(--ok); }
 .mirrorChange.del .mirrorChangeGlyph { color: var(--danger); }
 .mirrorChange.mod .mirrorChangeGlyph { color: #d9822b; }
@@ -2547,7 +2558,7 @@ mark.merge-del { background: color-mix(in srgb, var(--danger) 16%, transparent);
 .mirrorPopItemTitle { font-size: calc(13px * var(--ui-font-scale, 1)); color: var(--text-primary); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; max-width: 100%; }
 .mirrorPopItemMeta { font-size: calc(11px * var(--ui-font-scale, 1)); color: var(--text-dim); display: inline-flex; gap: 8px; align-items: baseline; }
 /* git-style block counts: +added −removed ~changed */
-.mirrorDiff { font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace; font-size: calc(11px * var(--ui-font-scale, 1)); display: inline-flex; gap: 5px; white-space: nowrap; }
+.mirrorDiff { font-family: var(--font-mono); font-size: calc(11px * var(--ui-font-scale, 1)); display: inline-flex; gap: 5px; white-space: nowrap; }
 .mirrorDiff .add { color: var(--ok); }
 .mirrorDiff .del { color: var(--danger); }
 .mirrorDiff .mod { color: #d9822b; }
@@ -3634,7 +3645,7 @@ html.appFocusFullscreen, html.appFocusFullscreen body { overflow: hidden; oversc
 .aiProvRow:hover { background: var(--bg-hover); }
 .aiProvName { font-size: calc(12.5px * var(--ui-font-scale, 1)); font-weight: 600; color: var(--text-primary); }
 .aiProvDesc { font-size: calc(11px * var(--ui-font-scale, 1)); color: var(--text-muted); overflow-wrap: anywhere; }
-.wsFolder { font-family: monospace; user-select: all; }
+.wsFolder { font-family: var(--font-mono); user-select: all; }
 .aiProvActions { display: flex; gap: 6px; flex-shrink: 0; margin-left: auto; }
 
 /* Storage meter (QuotaMeter): thin cloud-drive-style usage bar. */
@@ -4308,7 +4319,7 @@ html.appFocusFullscreen, html.appFocusFullscreen body { overflow: hidden; oversc
   padding: 6px 8px;
   max-height: 220px;
   overflow: auto;
-  font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
+  font-family: var(--font-mono);
   font-size: calc(10.5px * var(--ui-font-scale, 1) * var(--text-scale, 1));
   line-height: 1.45;
   color: var(--text-muted);
@@ -4798,7 +4809,7 @@ html.appFocusFullscreen, html.appFocusFullscreen body { overflow: hidden; oversc
   max-height: 160px;
   overflow: auto;
   margin: 0;
-  font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
+  font-family: var(--font-mono);
   font-size: calc(11px * var(--ui-font-scale, 1));
   line-height: 1.5;
   color: var(--text-secondary);
@@ -5063,7 +5074,7 @@ html.appFocusFullscreen, html.appFocusFullscreen body { overflow: hidden; oversc
   overflow: hidden;
 }
 .latexAcName {
-  font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
+  font-family: var(--font-mono);
   font-size: calc(12px * var(--ui-font-scale, 1));
   color: var(--text-secondary);
   white-space: nowrap;
@@ -5105,7 +5116,7 @@ html.appFocusFullscreen, html.appFocusFullscreen body { overflow: hidden; oversc
   min-width: 30px;
   padding: 3px 2px;
   text-align: center;
-  font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
+  font-family: var(--font-mono);
   font-size: calc(11px * var(--ui-font-scale, 1));
   color: var(--text-secondary);
   background: var(--bg-input);
@@ -5199,7 +5210,7 @@ html.appFocusFullscreen, html.appFocusFullscreen body { overflow: hidden; oversc
 .linkPromptModal { width: min(520px, calc(100vw - 32px)); }
 .linkPromptUrl {
   word-break: break-all;
-  font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
+  font-family: var(--font-mono);
   font-size: calc(11.5px * var(--ui-font-scale, 1));
   line-height: 1.5;
   color: var(--text-secondary);
@@ -5504,7 +5515,7 @@ html.appFocusFullscreen, html.appFocusFullscreen body { overflow: hidden; oversc
   display: inline-block;
   min-width: 18px;
   padding: 0 5px;
-  font: 500 calc(11px * var(--ui-font-scale, 1)) / 18px ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
+  font: 500 calc(11px * var(--ui-font-scale, 1)) / 18px var(--font-mono);
   text-align: center;
   color: var(--text-secondary);
   background: var(--bg-block);
