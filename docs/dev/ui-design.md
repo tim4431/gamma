@@ -46,6 +46,31 @@ already exists. Bespoke CSS classes are for **layout only**.
   (the grouped rule under `body` in app.css), so they keep their width as
   the digits change.
 
+### Keyboard focus
+
+- **One ring**: every button, link, summary, `role="button"`, checkbox,
+  radio, range and tabbable element shows `outline: 2px solid
+  var(--focus-ring)` (the theme's accent) at a 2 px offset on
+  `:focus-visible`, so mouse clicks never show it. The rule sits in the
+  primitives layer of app.css with only `:focus-visible`'s specificity:
+  a widget that draws its own focus overrides it (the switch's track, the
+  key chip, rows that highlight like `.chatHistRow`). Rows that fill a list
+  (menu items, popover items, search results, the Settings rail) draw it
+  inside (`outline-offset: -2px`), where the list can't clip it.
+- **Fields** show focus as the accent border plus a 3 px `--accent-bg` halo,
+  on click and keyboard alike. The field list is next to the ring rule; a
+  field inside a framing box (`.searchInputWrap`, `.homeFindBox`,
+  `.pdfPageWidget`) leaves the halo to the box (`:focus-within`). A new
+  field joins that list instead of writing its own `:focus` border.
+- **Hover-revealed controls reveal on focus too.** Every rule that shows a
+  control on hover (`opacity`/`visibility`) has a twin for the control's own
+  `:focus-visible` (or the row's `:focus-within` when the row holds the
+  focus), so the ring never lands on something invisible.
+- `outline: none` only on an element that has its own focus style, or on a
+  borderless inline editor where the caret is the focus (the block editor,
+  the chat bubble edit, the label input, table cells, which are outlined
+  while edited).
+
 ### Interface size and text size
 
 - **Interface size** (Settings / Appearance, `gamma-ui-scale`, a `Stepper` over

@@ -69,6 +69,8 @@
      CJK fallbacks, and one monospace stack for code, raw math and key caps. */
   --font-sans: "Inter Variable", Inter, -apple-system, BlinkMacSystemFont, "Segoe UI Variable Text", "Segoe UI", system-ui, Roboto, "Helvetica Neue", Arial, "PingFang SC", "Hiragino Sans GB", "Microsoft YaHei", "Noto Sans CJK SC", sans-serif;
   --font-mono: ui-monospace, "SF Mono", SFMono-Regular, "Cascadia Mono", Menlo, Consolas, "Liberation Mono", monospace;
+  /* The keyboard focus ring: the theme's accent. */
+  --focus-ring: var(--accent);
   /* Floating-layer stacking scale — keep menus/tips ordered consistently. */
   --z-dock: 20;
   --z-phone-overlay: 80;
@@ -419,10 +421,48 @@
   color: var(--text-primary);
 }
 
-:is(.uiClose, .uiBtn, .crumbBtn):focus-visible {
-  outline: 2px solid var(--accent);
-  outline-offset: 1px;
+/* Keyboard focus (docs/dev/ui-design.md): one ring on every interactive
+   element, shown only for keyboard focus. It carries only :focus-visible's
+   own specificity, so a widget that draws its own focus (switch track, key
+   chip, highlighted list rows) overrides it. A container focused by script
+   (tabindex="-1") keeps the browser's default. */
+:where(
+  button, a[href], summary, [role="button"],
+  input:is([type="checkbox"], [type="radio"], [type="range"]),
+  [tabindex]:not([tabindex="-1"])
+):focus-visible {
+  outline: 2px solid var(--focus-ring);
+  outline-offset: 2px;
 }
+/* Rows that fill their list draw the ring inside, where the list can't
+   clip it and it doesn't overlap the next row. */
+:is(.ctxMenuItem, .popoverItem, .searchResult, .chatMentionOption, .settingsNavBtn):focus-visible {
+  outline-offset: -2px;
+}
+/* Fields: the accent as border plus a soft halo, on click and keyboard
+   alike. A field inside a box that frames it (search chips, the home
+   filter, the PDF page widget) leaves the ring to the box. */
+:is(
+  .searchInput,
+  .promptTextarea,
+  .reportProblemText,
+  .aiKeyInput,
+  .loginInput,
+  .folderNewInput,
+  .fileRowRename,
+  .tileRenameInput,
+  .linkNameInput,
+  .chatInput,
+  .titleEdit,
+  .metaInput,
+  .mdImgCaptionInput
+):focus-visible,
+:is(.homeFindBox, .searchInputWrap, .pdfPageWidget):focus-within {
+  outline: none;
+  border-color: var(--accent);
+  box-shadow: 0 0 0 3px var(--accent-bg);
+}
+.searchInputWrap .searchInput:focus-visible { box-shadow: none; }
 
 :is(.userCardMeta, .settingText, .aiProvMeta) {
   display: flex;
@@ -737,7 +777,8 @@ body {
 }
 
 .blockRow:hover .blockDeleteBtn,
-.blockRow.focused .blockDeleteBtn {
+.blockRow.focused .blockDeleteBtn,
+.blockDeleteBtn:focus-visible {
   opacity: 1;
 }
 
@@ -1006,8 +1047,8 @@ body {
   opacity: 0;
   z-index: 1;
 }
-:is(.codeBlock, .cmCodeWidget):hover .codeCopyBtn { opacity: 1; }
-:is(.codeBlock, .cmCodeWidget):hover .codeLangBadge { opacity: 0; }
+:is(.codeBlock, .cmCodeWidget):hover .codeCopyBtn, .codeCopyBtn:focus-visible { opacity: 1; }
+:is(.codeBlock, .cmCodeWidget):is(:hover, :has(.codeCopyBtn:focus-visible)) .codeLangBadge { opacity: 0; }
 
 /* highlight.js token colors, theme-aware (dark: VSCode-ish, light: GitHub-ish).
    Applies to both the editor's code widget and the rendered view. */
@@ -1241,7 +1282,7 @@ body {
   transition: opacity 0.12s;
 }
 /* Also while a tour points at the table ([data-guide-active], guide/). */
-.mdTableWrap:hover .mdTableAdd, .mdTableWrap[data-guide-active] .mdTableAdd, .mdTableAdd[data-guide-active] { opacity: 1; }
+.mdTableWrap:hover .mdTableAdd, .mdTableWrap[data-guide-active] .mdTableAdd, .mdTableAdd[data-guide-active], .mdTableAdd:focus-visible { opacity: 1; }
 .mdTableAdd:hover { background: var(--bg-subtle); color: var(--text-bright); border-style: solid; }
 .mdTableAddCol { top: 0; bottom: 0; right: -13px; width: 11px; }
 .mdTableAddRow { left: 0; right: 0; bottom: -13px; height: 11px; }
@@ -1281,7 +1322,7 @@ body {
   display: flex; align-items: center; justify-content: center;
   cursor: pointer; opacity: 0; transition: opacity 0.12s;
 }
-.mdTableWrap:hover .mdTableCorner, .mdObjectSelected .mdTableCorner, .mdTableCorner[data-guide-active] { opacity: 1; }
+.mdTableWrap:hover .mdTableCorner, .mdObjectSelected .mdTableCorner, .mdTableCorner[data-guide-active], .mdTableCorner:focus-visible { opacity: 1; }
 
 /* The object frame (MdObject.jsx) around every rendered image, table and
    diagram: a small halo that selects the object on a press instead of
@@ -1345,7 +1386,7 @@ body {
   pointer-events: none;
   transition: opacity 0.12s;
 }
-.mdImgFrame:hover .mdImgTools { opacity: 1; pointer-events: auto; }
+.mdImgFrame:is(:hover, :has(.mdImgTools :focus-visible)) .mdImgTools { opacity: 1; pointer-events: auto; }
 .mdImgTools a.ctlBtn { text-decoration: none; }
 .mdImgTools .ctlBtn.danger:hover { background: rgba(224, 92, 92, 0.15); color: #e05c5c; }
 /* The edge drag grips shared by sized figures (note images, Mermaid
@@ -1390,7 +1431,6 @@ body {
   border-radius: 6px;
   outline: none;
 }
-.mdImgCaptionInput:focus { border-color: var(--accent); }
 .mdLightbox {
   position: fixed;
   inset: 0;
@@ -1789,7 +1829,6 @@ body {
   width: 100%;
   max-width: 480px;
 }
-.titleEdit:focus { outline: none; border-color: var(--accent-dark); }
 
 /* --- home button (icon-style, identical on editor and read-only) --- */
 .homeBtn {
@@ -2263,7 +2302,7 @@ button.pdfOutlineChevron:hover { background: rgba(128, 128, 128, 0.28); color: v
   opacity: 0;
   transition: opacity 0.15s;
 }
-.blockRow:hover .attachModeBtn { opacity: 1; }
+.blockRow:hover .attachModeBtn, .attachModeBtn:focus-visible { opacity: 1; }
 /* A link named a page that isn't in this workspace (App's missingPage): a
    dismissible amber notice under the topbar, over the library or the page. */
 .missingPageNotice {
@@ -2841,7 +2880,6 @@ mark.merge-del { background: color-mix(in srgb, var(--danger) 16%, transparent);
   padding: 8px 10px;
   font-size: calc(13px * var(--ui-font-scale, 1));
 }
-.searchInput:focus { border-color: var(--accent-dark); }
 .searchResults { max-height: 50vh; overflow-y: auto; display: flex; flex-direction: column; gap: 2px; }
 .searchHint { font-size: calc(12px * var(--ui-font-scale, 1)); color: var(--text-dim); padding: 8px 4px; }
 .topbar .searchResult,
@@ -2914,7 +2952,6 @@ mark.searchMark {
   border: 1px solid var(--border);
   border-radius: 6px;
 }
-.searchInputWrap:focus-within { border-color: var(--accent-dark); }
 .searchInputWrap .searchInput {
   flex: 1;
   min-width: 90px;
@@ -3582,7 +3619,6 @@ html.appFocusFullscreen, html.appFocusFullscreen body { overflow: hidden; oversc
   cursor: pointer;
 }
 .chatCopyButton:hover { background: var(--bg-hover); color: var(--text-primary); }
-.chatCopyButton:focus-visible { outline: 2px solid var(--accent); outline-offset: 1px; }
 .chatBubble.ai .chatCopyCode > pre { margin: 0; border: 0; border-radius: 0; }
 .chatBubble.ai .chatCopyQuote > blockquote { margin-top: 0; }
 .chatBubble.ai table { border-collapse: collapse; margin: 4px 0 6px; display: block; overflow-x: auto; }
@@ -3637,7 +3673,6 @@ html.appFocusFullscreen, html.appFocusFullscreen body { overflow: hidden; oversc
   padding: 8px 10px;
   resize: vertical;
 }
-.promptTextarea:focus { border-color: var(--text-dim); }
 /* AI provider key editor (Settings → AI providers) */
 .aiKeyInput {
   width: 100%;
@@ -3645,7 +3680,6 @@ html.appFocusFullscreen, html.appFocusFullscreen body { overflow: hidden; oversc
   padding: 7px 10px;
   margin-bottom: 6px;
 }
-.aiKeyInput:focus { border-color: var(--text-dim); }
 /* Password box with the show/hide eye (settingsKit PasswordInput): the input
    keeps its own class; the wrapper only positions the ctlBtn over its right
    edge and takes over the input's bottom margin so the eye stays centred. */
@@ -4014,7 +4048,6 @@ a.shareBrand:hover { background: var(--bg-hover); }
   padding: 8px 10px;
   resize: vertical;
 }
-.reportProblemText:focus { border-color: var(--text-dim); }
 .reportPreview summary {
   cursor: pointer;
   font-size: calc(12px * var(--ui-font-scale, 1));
@@ -4083,7 +4116,6 @@ a.shareBrand:hover { background: var(--bg-hover); }
   font-family: inherit;
   outline: none;
 }
-.chatInput:focus { border-color: var(--text-dim); }
 .chatInputArea {
   resize: none;
   max-height: 140px;
@@ -4174,10 +4206,6 @@ a.shareBrand:hover { background: var(--bg-hover); }
   padding: 10px 12px;
   margin-bottom: 12px;
   font-size: calc(14px * var(--ui-font-scale, 1));
-}
-.loginInput:focus {
-  outline: none;
-  border-color: var(--accent);
 }
 .loginInput.invalid { border-color: var(--danger); }
 .loginError {
@@ -4541,10 +4569,6 @@ a.shareBrand:hover { background: var(--bg-hover); }
 .gammaLinkCard:hover {
   background: var(--accent-bg-light);
   border-color: var(--accent);
-}
-.gammaLinkCard:focus-visible {
-  outline: 2px solid var(--accent);
-  outline-offset: 2px;
 }
 .gammaLinkCard > svg { flex: none; }
 .gammaLinkLabel { min-width: 0; overflow-wrap: anywhere; }
@@ -5092,8 +5116,7 @@ a.shareBrand:hover { background: var(--bg-hover); }
 }
 .metaInput:hover { border-color: var(--border); }
 .metaInput:focus {
-  outline: none;
-  border-color: var(--accent-dark);
+  border-color: var(--accent);
   background: var(--bg-input);
   color: var(--text-primary);
 }

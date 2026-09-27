@@ -587,7 +587,6 @@
 .settingsUnsaved { display: flex; align-items: center; flex-wrap: wrap; gap: 10px; border-top: 1px solid var(--border); padding: 16px 20px; font-size: calc(13px * var(--ui-font-scale, 1)); background: var(--bg-elevated); }
 .settingsUnsaved > span { flex: 1; min-width: 180px; }
 .settingsPane [data-setting]:focus { outline: 2px solid var(--accent); outline-offset: 3px; border-radius: 5px; }
-.settingsModal :is(button, summary):focus-visible { outline: 2px solid var(--accent); outline-offset: 2px; }
 
 /* Appearance: comparable palette sketches, then the page and interface controls. */
 .appearanceSettings { min-width: 0; }

@@ -242,7 +242,6 @@
   font-size: calc(13px * var(--ui-font-scale, 1));
   padding: 3px 8px;
 }
-.folderNewInput:focus { border-color: var(--accent-dark); }
 /* breadcrumb segments in the folder header */
 .crumbBtn {
   background: none;
@@ -298,7 +297,6 @@
   box-shadow: 0 1px 2px rgba(0, 0, 0, 0.05);
   color: var(--text-dim);
 }
-.homeFindBox:focus-within { border-color: var(--text-dim); }
 .homeFindBox.active { color: var(--accent); }
 .homeFindInput {
   width: 170px;
@@ -491,7 +489,7 @@
   .fileList .fileRowLabels { max-width: 34%; }
 }
 .fileRow:hover .fileRowPin { opacity: 0.6; }
-.fileRowPin:hover, .fileRowPin.pinned { opacity: 1; }
+.fileRowPin:hover, .fileRowPin.pinned, .fileRowPin:focus-visible { opacity: 1; }
 /* Chip line on a file row (shared base above): capped so it never pushes the
    kind/pin off the row. Order in the row: name … [labels] PDF pin. */
 .fileRowLabels {
@@ -578,7 +576,7 @@
 .pinBtn.pinned { color: var(--accent); }
 /* placement/reveal comes from the shared :is(.pageCardClose, .tilePinBtn) rule */
 .pageCard:hover .tilePinBtn { opacity: 0.7; }
-.tilePinBtn:hover, .tilePinBtn.pinned { opacity: 1; }
+.tilePinBtn:hover, .tilePinBtn.pinned, .tilePinBtn:focus-visible { opacity: 1; }
 
 /* folder tags on file rows */
 .folderTagBadge {
