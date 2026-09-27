@@ -104,6 +104,9 @@
    under the seeds, wherever the recipe would land visibly elsewhere (more
    than 0.006 in oklab); drop one to take the derived shade instead. The
    recipes have zero specificity (:where), so any value a theme names wins.
+   They match any element carrying the attributes, not only the root, so a
+   subtree can show another theme in its own colours (the Appearance pane's
+   theme swatches).
    `node tools/themes.mjs` prints every theme's text contrast;
    tests/themes.test.mjs fails when a change makes one worse. */
 
@@ -113,7 +116,7 @@
    on screen in a light theme, --bg-block a quiet fill, --bg-selected the
    focused block, --bg-deeper a sunken well, --bg-elevated what floats
    (popovers, menus, tips). */
-:where(:root) {
+:where(:root, [data-theme]) {
   /* Seed defaults. */
   --accent-fill: var(--accent);
   --on-accent: #fff;

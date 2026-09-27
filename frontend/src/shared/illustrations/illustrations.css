@@ -34,3 +34,10 @@
 .appearancePdfPreview.isDark { color: #efefef; }
 .appearancePdfPreview.isDark .appearancePdfPaper { fill: #101010; stroke: #383838; }
 /* ds-allow-end */
+/* The theme swatches (ThemePreview): each scene carries its theme's
+   attributes, so these tokens are that theme's own. */
+.themeScene .themeChrome { fill: var(--bg-page); }
+.themeScene .themeContent { fill: var(--bg-surface); stroke: var(--border); }
+.themeScene .themeInk { stroke: var(--text-primary); }
+.themeScene .themeAccentLine { stroke: var(--accent); }
+.themeScene .themeAccent { fill: var(--accent); }

@@ -31,7 +31,9 @@ The root carries `data-scheme="light|dark"` beside `data-theme`, and the
 scheme picks the recipe (`DARK_THEMES` / `themeScheme` in `app/prefDefs.js`).
 Three places set both attributes: `index.html`'s pre-paint, App.jsx's theme
 effect and the desktop shell. A rule that differs by scheme keys on
-`[data-scheme="light"]`, never on a list of themes.
+`[data-scheme="light"]`, never on a list of themes. The recipes match any
+element carrying the attributes, not only the root, so a subtree can show
+another theme in its own colours: the Appearance pane's swatches do.
 
 The recipes are `:where()` rules, so a value a theme names always wins. Their
 percentages are fitted to Light and Dark. Under its seeds, a theme lists the

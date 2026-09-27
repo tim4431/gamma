@@ -246,7 +246,10 @@ The account card:
 Preferences:
 
 - **Appearance** ([SettingsAppearance.jsx](../../frontend/src/settings/SettingsAppearance.jsx)):
-  how things look. The eight theme cards (`PictureChoices`), the interface
+  how things look. The eight theme cards (`PictureChoices`; each swatch
+  is drawn under its theme's `data-theme` / `data-scheme`, so it paints
+  from that theme's own tokens, `ThemePreview` in
+  `shared/illustrations/`), the interface
   language (a `MenuSelect`: System / English / 中文, [i18n.md](i18n.md)), the
   dark-page switch with its live PDF sample, **Library**: the live card demo
   with the thumbnails / folders / labels switches
