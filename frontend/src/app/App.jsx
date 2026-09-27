@@ -2614,7 +2614,8 @@ function LibraryApp({ publicPage = null, initialServerConfig = null }) {
   const [aiKeyUsage, setAiKeyUsage] = useState({});
   // Login connection check (POST /ai/health, Settings → Provider and models):
   // null = nothing to report; a failed result renders the chat panel's
-  // warning strip ("sign-in expired — reconnect") until fixed or dismissed.
+  // warning strip (the chat error card's headline for the failure's kind)
+  // until fixed or dismissed.
   const [aiHealth, setAiHealth] = useState(null);
 
   // The settings page (account popover → Settings…): two-column modal,

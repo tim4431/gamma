@@ -10,6 +10,7 @@ import { API, apiJson } from "../shared/lib/utils";
 import { friendlyApiError, parseFolderTags } from "../library/libraryUtils";
 import { MenuSelect } from "../shared/ui/Menus";
 import { cachedPercent, fmtTokens, usageDetail } from "../chat/tokenUsage";
+import { failureCopy, fixLabel } from "../chat/chatErrors";
 import { ModelPicker } from "./ModelPicker";
 import { Section, SubDialog, Step, Field, Empty, IconChoices, PercentMeter, Row, PasswordInput, StatText, Toggle, UnitInput } from "./SettingsKit";
 import { SECTION_PREFS } from "./sectionPrefs.js";
@@ -106,9 +107,13 @@ function ProviderUsage({ usage }) {
 // shared tag), the credential line, its models, the last Test result and
 // the usage windows, then the caller's buttons. `radio` is the active-key
 // picker of the account's own list; `onFix` opens the entry's editor from
-// a failed test.
+// a failed test. A failed test reads as the chat's error card does for its
+// kind (chat/chatErrors.js), the provider's own words on hover.
 function ProviderRow({ provider, protocol, oauth, active = false, radio = null, test, usage, onFix, children }) {
   const models = parseFolderTags(provider.models);
+  const failed = test && !test.busy && !test.ok && test.kind
+    ? failureCopy(test.kind, { provider: provider.label || provider.protocol, auth: oauth ? "oauth" : "key" }) : null;
+  const fix = failed && onFix && ["key", "signin", "connection"].includes(failed.fix) ? failed.fix : "";
   return (
     <label className={`aiProvRow ${radio ? "aiProvSelectable" : ""} ${active ? "active" : ""}`}>
       {radio}
@@ -145,14 +150,15 @@ function ProviderRow({ provider, protocol, oauth, active = false, radio = null, 
             {test.busy
               ? t("Testing…") : test.ok
                 ? `✓ working · ${test.model} · ${(test.latency_ms / 1000).toFixed(1)}s`
-                : test.auth && onFix ? (
-                  // Broken credential: one clear line + the fix,
-                  // never the upstream body (hover shows the detail).
+                : failed ? (
                   <>
-                    ✗ {oauth ? t("ChatGPT sign-in expired") : t("API key rejected")} —{" "}
-                    <button className="chatEmptyLink" onClick={(event) => { event.preventDefault(); onFix(); }}>
-                      {oauth ? "reconnect" : t("update the key")}
-                    </button>
+                    ✗ {failed.headline}
+                    {fix ? <>
+                      {" — "}
+                      <button className="chatEmptyLink" onClick={(event) => { event.preventDefault(); onFix(); }}>
+                        {fixLabel(fix)}
+                      </button>
+                    </> : null}
                   </>
                 ) : `✗ ${test.error}`}
           </span>

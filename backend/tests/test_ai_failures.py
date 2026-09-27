@@ -1,6 +1,6 @@
 """How a failed chat is reported: ai_client.failure_kind names the failure,
-and /api/ai/chat carries that kind (plus the upstream status and the
-connection's name) next to its plain-string ``detail`` — on the HTTP error
+and /api/ai/chat carries that kind (plus the connection's name) next to
+its plain-string ``detail``, which names the upstream status — on the HTTP error
 and on the stream's closing error line — so the chat can show an error card
 with the action that fixes it."""
 
@@ -67,7 +67,7 @@ def test_http_failure_carries_its_kind_next_to_the_detail(org, monkeypatch):
         assert r.status_code == 502, r.text
         body = r.json()
         assert body["detail"] == "AI call failed: upstream 401: Incorrect API key provided: sk-t***123"
-        assert body["kind"] == "auth" and body["status"] == 401
+        assert body["kind"] == "auth"
         assert body["provider_name"].startswith("Anthropic") and body["provider_auth"] == "key"
         assert body["provider_id"]
 
@@ -90,7 +90,7 @@ def test_stream_error_line_carries_its_kind(org, monkeypatch):
     lines = [json.loads(line) for line in r.text.splitlines() if line.strip()]
     assert "".join(line.get("delta", "") for line in lines) == "Partial"
     assert lines[-1]["error"] == "AI call failed: upstream 529: Overloaded"
-    assert lines[-1]["kind"] == "overloaded" and lines[-1]["status"] == 529
+    assert lines[-1]["kind"] == "overloaded"
 
 
 def test_no_connection_is_not_configured(client):

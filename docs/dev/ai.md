@@ -39,8 +39,10 @@ so an expired ChatGPT grant is re-tried immediately. The probe's model:
 the entry's optional `test_model` (editable in the form's Models step), else
 the `model` sent with the request (the client passes its effective metadata
 model — the cheap utility model), else the entry's first model. A failed probe
-carries an `auth` flag on 401/403 so the row renders
-"sign-in expired — reconnect" instead of the upstream body. Upstream error
+carries the failure's `kind` (see "Chat endpoint"; `no_model` when the entry
+has none picked) and an `auth` flag on 401/403, so the row renders the chat
+error card's headline and fix ("OpenAI rejected the API key — Update key"),
+the upstream body only on hover. Upstream error
 details are summarized before display everywhere (`upstream_detail` in
 `ai_client.py`): JSON bodies reduce to their message field, HTML error pages
 (a proxy's 502 page) to their `<title>`.
@@ -265,16 +267,19 @@ stream, the provider's wording:
 
 `_failure_info` in `routers/ai.py` puts that `kind` beside the plain-string
 `detail` of the HTTP error (a `JSONResponse`) and on the stream's closing
-`{"error"}` line. It adds the upstream `status` and the connection
-(`provider_id`, `provider_name`, `provider_auth`). The login check
-(`/api/ai/health`) and the Test probe carry the same `kind`.
+`{"error"}` line. It adds the connection (`provider_id`, `provider_name`,
+`provider_auth`); an upstream status needs no field of its own, since the
+detail already opens with it ("upstream 529: …"). The login check
+(`/api/ai/health`) and the Test probe carry the same `kind`, and the probe
+one more: `no_model`, an entry with no model picked.
 
 The client saves the classification on the reply (`errorKind`,
-`errorDetail`, `errorStatus`, `errorProvider`, `errorProviderId`,
-`errorAuth`) and renders a card instead of the raw text. `chat/chatErrors.js`
+`errorDetail`, `errorProvider`, `errorProviderId`, `errorAuth`) and
+renders a card instead of the raw text. `chat/chatErrors.js`
 holds the copy per kind: a headline ("OpenAI rejected the API key", "Lost
 the connection to Gamma" for the browser's own `TypeError`), one sentence,
-and the fix. The login check's warning strip shows the same headlines.
+and the fix. The login check's warning strip and the Test result on a
+Settings connection row show the same headlines.
 Update key / Sign in again / Edit connection open Settings → Connections on
 that entry's form (`openAiKeysEditor({entry})` in App). Connect AI and Add
 your own key open the pane; New chat starts over. On the latest reply,
