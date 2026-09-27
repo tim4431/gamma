@@ -28,6 +28,7 @@ import React from "react";
 import { API, apiJson, fmtBytes } from "../shared/lib/utils";
 import { Row, Segmented, Toggle } from "../settings/SettingsKit";
 import { ConflictCard, Marked, useConflicts, wordDiff } from "./MergeResolver";
+import { MenuItem } from "../shared/ui/Menus";
 import { T, t } from "../shared/i18n/i18n.js";
 import {
   ActivityIcon, AlertCircleIcon, ArrowDownIcon, ArrowLeftIcon, ArrowUpDownIcon, ArrowUpIcon, CheckIcon,
@@ -317,9 +318,9 @@ function SettingsView({ info, wsId, publication, onBack, reload, onOpenSettings 
           </button>
         </div>
       )}
-      <button className="popoverItem mirrorMore" onClick={onOpenSettings}>
-        <SettingsIcon size={14} /> {publication ? t("Publishing in Settings") : t("All clones in Settings")}
-      </button>
+      <MenuItem icon={SettingsIcon} onClick={onOpenSettings}>
+        {publication ? t("Publishing in Settings") : t("All clones in Settings")}
+      </MenuItem>
     </>
   );
 }

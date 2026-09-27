@@ -2317,7 +2317,6 @@ button.pdfOutlineChevron:hover { background: rgba(128, 128, 128, 0.28); color: v
 .mirrorConfirm { display: flex; flex-wrap: wrap; align-items: center; gap: 6px; padding: 6px 4px; font-size: var(--fs-xs); color: var(--text-secondary); }
 .mirrorConfirm > svg { color: #d9822b; flex-shrink: 0; }
 .mirrorConfirmBtns { display: inline-flex; gap: 6px; margin-left: auto; }
-.mirrorMore { font-size: var(--fs-xs); color: var(--text-muted); }
 /* The merge chip on a block row and the conflict card (MergeResolver.jsx):
    one card for the chip's popover, the sync pill's list and Settings — the
    kind line (with ‹ n / N › on a row chip), the versions (ours · theirs
