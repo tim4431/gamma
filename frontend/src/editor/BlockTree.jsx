@@ -42,6 +42,7 @@ import { API, apiJson, assetUrl, copyText, withWorkspace } from "../shared/lib/u
 import { CopyIcon, ExportIcon, MessageSquareIcon, PlusIcon, Trash2Icon } from "../shared/ui/Icons";
 import { T, t } from "../shared/i18n/i18n.js";
 import { guideEvents } from "../guide/events.js";
+import { pageKindLabel } from "../library/libraryUtils";
 import {
   applyImageEdit, applyTableEdit, formatTables, htmlTableToMarkdown,
   MdImage, MdTableWrap, noteTableMade, tsvToMarkdown,
@@ -960,7 +961,7 @@ function BlockRow({
     return [
       ...pageHits.slice(0, np).map((p) => ({
         kind: "page", id: p.id, title: p.content, isPdf: !!p._attachment,
-        meta: [p._attachment ? "PDF" : t("Notes page"), p._folders?.[0]].filter(Boolean).join(" · "),
+        meta: [pageKindLabel(p._attachment), p._folders?.[0]].filter(Boolean).join(" · "),
       })),
       ...blockHits.slice(0, nb).map((b) => ({
         kind: "block", id: b.id, title: refBlockText(b.content, labelOf) || t("(empty)"), meta: refBlockPath(b), block: b,

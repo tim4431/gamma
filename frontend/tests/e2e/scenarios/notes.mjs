@@ -488,7 +488,7 @@ export async function noteScenarios({ server, browser, alice, step, until, sleep
       await picker.waitFor();
       assertEq(await picker.locator(".refPopupHead").first().textContent(), "Pages", "pages come first");
       assertEq(await picker.locator(".refPopupItem.selected .refPopupText").innerText(), "Quantum Linkable Target");
-      assertEq(await picker.locator(".refPopupItem.selected .refPopupText b").innerText(), "Linkable", "the typed text is marked");
+      assertEq(await picker.locator(".refPopupItem.selected .refPopupText mark.searchMark").innerText(), "Linkable", "the typed text is marked");
       await p2.keyboard.press("Enter");
       await until(async () => (await tree(alice2, src.id))[0]?.content === `start [[${target.id}]]`, { what: "Enter links the page" });
       // "]]" typed after the exact title of one page links it; an unknown title stays text.

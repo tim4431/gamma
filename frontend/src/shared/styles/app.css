@@ -5358,7 +5358,6 @@ a.shareBrand:hover { background: var(--bg-hover); }
   text-overflow: ellipsis;
 }
 .refPopupText { font-size: var(--fs-md); }
-.refPopupText b { font-weight: 600; }
 .refPopupMeta { font-size: var(--fs-xs); color: var(--text-muted); }
 /* The key hints pinned under a caret popup's scrolling list: the [[ picker's
    and the "/" menu's. Each popup's own rule reaches over its padding. */
