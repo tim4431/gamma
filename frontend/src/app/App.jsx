@@ -9541,6 +9541,7 @@ function LibraryApp({ publicPage = null, initialServerConfig = null }) {
               inkPenOnly={inkPenOnly}
               inkPressure={inkPressure}
               inkFlash={inkFlash}
+              flashHighlightId={flashingId}
               onInkStroke={readOnly ? undefined : handleInkStroke}
               onInkErase={readOnly ? undefined : handleInkErase}
               onInkErasePartial={readOnly ? undefined : handleInkErasePartial}

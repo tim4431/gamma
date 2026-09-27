@@ -5749,6 +5749,20 @@ a.shareBrand:hover { background: var(--bg-hover); }
   pointer-events: none;
 }
 @keyframes inkFlashFade { 0%, 60% { opacity: 1; } 100% { opacity: 0; } }
+/* A highlight a jump landed on (from its note, a deep link, a search hit):
+   one ring in its own hue that swells and fades while the fill deepens.
+   The rects keep their blend, so on a light page the ring tints like the
+   highlight itself.
+   Reduced motion: a still ring for as long as the flash lasts. */
+.pdfPageWrap [data-hl-id].pdfHlFlash { animation: pdfHlFlash 1s ease-out; }
+@keyframes pdfHlFlash {
+  0% { box-shadow: 0 0 0 0 var(--hl-line, var(--hl)), 0 0 0 0 var(--hl-line, var(--hl)); }
+  30% { box-shadow: 0 0 0 2px var(--hl-line, var(--hl)), 0 0 0 5px var(--hl-line, var(--hl)); filter: saturate(2.2); }
+  100% { box-shadow: 0 0 0 6px transparent, 0 0 0 10px transparent; }
+}
+@media (prefers-reduced-motion: reduce) {
+  .pdfPageWrap [data-hl-id].pdfHlFlash { box-shadow: 0 0 0 3px var(--hl-line, var(--hl)); }
+}
 
 /* The tool strip: top-centre of the viewer, the control-box surface laid
    flat. Row one is the tools (presets, eraser, lasso, hand, close,
