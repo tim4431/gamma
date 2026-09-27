@@ -50,6 +50,20 @@ export const TRANSLATE_LANGS = [
   ["es", "Español"], ["pt", "Português"], ["it", "Italiano"], ["ru", "Русский"],
 ];
 
+// The translated view's language until the account picks one: the first of
+// the browser's languages on offer (en-GB → en, zh-Hant / zh-TW / zh-HK →
+// zh-TW, other zh → zh-CN), else Simplified Chinese.
+export function defaultTranslateLang(languages = typeof navigator === "undefined" ? [] : navigator.languages || [navigator.language]) {
+  const codes = TRANSLATE_LANGS.map(([code]) => code);
+  for (const tag of languages) {
+    const lower = String(tag || "").toLowerCase();
+    if (lower.startsWith("zh")) return /hant|-tw|-hk|-mo/.test(lower) ? "zh-TW" : "zh-CN";
+    const base = lower.split("-")[0];
+    if (codes.includes(base)) return base;
+  }
+  return "zh-CN";
+}
+
 // The translation service that needs no setup (Microsoft's free endpoint).
 export const FREE_TRANSLATE_ENGINE = "engine:microsoft";
 
@@ -150,7 +164,7 @@ export const PREFS = {
   // at import time.
   embAnnots: pref("gamma-embedded-annots", ACCOUNT, "hide", oneOf(["hide", "strip"])),
 
-  // --- Translation (Settings → Reading › Translation) ---
+  // --- Translation (Settings → Translation) ---
   // Master switch: off removes the translate button from the viewer.
   translateEnabled: flag("gamma-translate-enabled", ACCOUNT, true),
   // Selection translation: a translate button in the text-selection popup
@@ -158,8 +172,9 @@ export const PREFS = {
   // text is selected instead of on click.
   selTranslate: flag("gamma-sel-translate", ACCOUNT, true),
   selTranslateAuto: flag("gamma-sel-translate-auto", ACCOUNT, false),
-  // Target language for the translated view (the 文A button in the viewer).
-  translateLang: pref("gamma-translate-lang", ACCOUNT, "zh-CN", oneOf(TRANSLATE_LANGS.map(([code]) => code))),
+  // Target language for the translated view (the 文A button in the viewer);
+  // until one is picked, the browser's language when it is on offer.
+  translateLang: pref("gamma-translate-lang", ACCOUNT, defaultTranslateLang(), oneOf(TRANSLATE_LANGS.map(([code]) => code))),
   // Parallel translation requests: chunks of a page are translated this many
   // at a time — the whole-document queue never exceeds it either. Clamped to
   // 1–32 (a chunk is ~1200 chars, so even 32 stays well under provider rate
@@ -178,7 +193,7 @@ export const PREFS = {
   searchDetailsHome: flag("gamma-search-details-home", ACCOUNT, true),
   searchDetailsPaper: flag("gamma-search-details", ACCOUNT, false),
 
-  // --- Notes (Settings → Reading) ---
+  // --- Notes (Settings → Keyboard › Built in) ---
   // Enter key in the note editor: off (default) = Enter types a line break and
   // Shift+Enter starts a new note; on = the Logseq-style swap of the two.
   enterNewNote: flag("gamma-enter-new-note", ACCOUNT, false),
@@ -201,7 +216,7 @@ export const PREFS = {
   })),
 
   // --- Models (Settings → AI → Connections; the translation pick is
-  // Reading › Translation's "Translate with") ---
+  // Translation › Service's "Translate with") ---
   // Model picks name entries of this server's provider list ("<entry>:<model>"),
   // which never leave the server, so they stay with the browser like the chat
   // model itself (App.jsx `gamma-chat-model`). "" = follow the chat model; a

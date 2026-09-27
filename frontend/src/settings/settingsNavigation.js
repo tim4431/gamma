@@ -4,7 +4,7 @@ import { t } from "../shared/i18n/i18n.js";
 export const REOPEN_SETTINGS_KEY = "gamma-reopen-settings";
 // Old entry points stay valid while everyday preferences use five destinations.
 const PANE_ALIASES = {
-  general: "appearance", papers: "appearance", viewer: "reading", notes: "reading", search: "reading",
+  general: "appearance", papers: "appearance", viewer: "reading", notes: "keyboard", search: "reading",
   context: "ai-advanced", library: "appearance", workspace: "workspaces", advanced: "diagnostics", sync: "account",
 };
 export const resolveSettingsPane = (pane) => PANE_ALIASES[pane] || pane;
@@ -27,15 +27,15 @@ const entries = [
   ["reading", t("Draws with"), "handwriting pen finger touch stylus ink"],
   ["reading", t("Stylus draws right away"), "handwriting pen ink"],
   ["reading", t("Pressure-sensitive strokes"), "handwriting pen ink width"],
-  ["reading", t("Translation button"), "translation shortcut viewer"],
-  ["reading", t("Translate into"), "translation language"],
-  ["reading", t("Translate a selection"), "translation popup highlight selected text button"],
-  ["reading", t("Translate on select"), "translation popup selected text automatic"],
-  ["reading", t("Translate with"), "translation model engine service AI Google Youdao"],
-  ["reading", t("Translation services"), "translation engine API key Google Cloud Youdao"],
-  ["reading", t("Translation effort"), "translation reasoning thinking speed"],
-  ["reading", t("Parallel requests"), "translation concurrency speed"],
-  ["reading", t("Enter key"), "notes line keyboard shift"],
+  ["translation", t("Translation button"), "translation shortcut viewer"],
+  ["translation", t("Translate into"), "translation language"],
+  ["translation", t("Translate a selection"), "translation popup highlight selected text button"],
+  ["translation", t("Translate on select"), "translation popup selected text automatic"],
+  ["translation", t("Translate with"), "translation model engine service AI Google Youdao"],
+  ["translation", t("Translation services"), "translation engine API key Google Cloud Youdao"],
+  ["translation", t("Translation effort"), "translation reasoning thinking speed"],
+  ["translation", t("Parallel requests"), "translation concurrency speed"],
+  ["keyboard", t("Enter makes"), "enter key new note line break keyboard shift return"],
   ["reading", t("On the home page"), "search panel find bar expand results"],
   ["reading", t("On a page"), "search panel find bar expand results"],
   ["keyboard", t("Keyboard shortcuts"), "keys hotkeys bindings rebind command palette VSCode"],

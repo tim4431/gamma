@@ -166,7 +166,7 @@ def free_translate_failing(username):
     failing = translate_engines.free_failing(username)
     if not failing:
         return None
-    return Notice("free-translate", failing["since"], "warn", "reading",
+    return Notice("free-translate", failing["since"], "warn", "translation",
                   "Microsoft's free translation keeps failing — set up Google or Youdao")
 
 

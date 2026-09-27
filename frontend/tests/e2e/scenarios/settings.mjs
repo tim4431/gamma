@@ -33,11 +33,11 @@ export async function settingsScenarios(env) {
     await row(page, label).waitFor({ state: "visible" });
   }
 
-  await step("settings: a translation service is set up under Reading and picked as the translator", async () => {
+  await step("settings: a translation service is set up in the Translation pane and picked as the translator", async () => {
     const { ctx, page } = await setup();
     try {
       await openSettings(page);
-      await nav(page, "Reading & editing").click();
+      await nav(page, "Translation").click();
       // Microsoft's free service needs no setup: only a Test button.
       const microsoft = row(page, "Microsoft (free)");
       assert((await microsoft.innerText()).includes("No key needed"));
@@ -61,8 +61,8 @@ export async function settingsScenarios(env) {
       await row(page, "Translate with").getByRole("button", { name: "Translate with", exact: true }).click();
       await page.locator(".uiSelectMenu").getByRole("button", { name: "Google Cloud Translation" }).click();
       await until(() => page.evaluate(() => localStorage.getItem("gamma-translate-model")).then((v) => v === "engine:google"));
-      // Reasoning effort means nothing to a translation service; the speed
-      // rows sit in the same Translation section.
+      // Reasoning effort means nothing to a translation service; the Speed
+      // section keeps only the parallel requests.
       await row(page, "Parallel requests").waitFor();
       assertEq(await row(page, "Translation effort").count(), 0);
       await google.getByRole("button", { name: "Remove key", exact: true }).click();
@@ -475,19 +475,19 @@ export async function settingsScenarios(env) {
       assertEq(await sync("Interface"), "browser");
       assertEq(await tag("Interface").innerText(), "browser");
       assertEq(await tag("Interface").locator("svg").count(), 1);
-      // one change spins only the section holding it
-      await nav(page, "Reading & editing").click();
-      await until(() => sync("Notes").then((v) => v === "saved"));
-      await row(page, "Enter key").getByRole("button", { name: "New note", exact: true }).click();
-      await until(() => sync("Notes").then((v) => v === "syncing"));
-      assertEq(await sync("Search opens as"), "saved");
-      assertEq(await sync("PDFs"), "saved");
-      await until(() => sync("Notes").then((v) => v === "saved"));
+      // one change spins only the section holding it: the Enter key sits
+      // in Keyboard › Built in, next to the keys it swaps
+      await nav(page, "Keyboard").click();
+      await until(() => sync("Built in").then((v) => v === "saved"));
+      await row(page, "Enter makes").getByRole("button", { name: "New note", exact: true }).click();
+      await until(() => sync("Built in").then((v) => v === "syncing"));
+      assertEq(await sync("Shortcuts"), "saved");
+      await until(() => sync("Built in").then((v) => v === "saved"));
       assertEq((await user.api("/api/prefs/profile")).value?.enterNewNote, true);
       await nav(page, "Appearance").click();
       assertEq(await sync("Theme"), "saved");
-      await nav(page, "Reading & editing").click();
-      await row(page, "Enter key").getByRole("button", { name: "New line", exact: true }).click();
+      await nav(page, "Keyboard").click();
+      await row(page, "Enter makes").getByRole("button", { name: "New line", exact: true }).click();
       await until(async () => (await user.api("/api/prefs/profile")).value?.enterNewNote === false);
       assertNoProblems(page);
     } finally { await ctx.close(); }
@@ -771,10 +771,10 @@ export async function settingsScenarios(env) {
       await row(page, "Interface size").getByRole("button", { name: "Reset", exact: true }).click();
       await page.setViewportSize({ width: 390, height: 844 });
       await page.getByRole("button", { name: "Back", exact: true }).click();
-      await nav(page, "Reading & editing").click();
-      await row(page, "Enter key").waitFor();
-      await row(page, "Enter key").getByRole("button", { name: "New note", exact: true }).click();
-      assert((await row(page, "Enter key").innerText()).includes("Shift+Enter inserts a new line"));
+      await nav(page, "Keyboard").click();
+      await row(page, "Enter makes").waitFor();
+      await row(page, "Enter makes").getByRole("button", { name: "New note", exact: true }).click();
+      assert((await row(page, "Enter makes").innerText()).includes("Shift+Enter inserts a new line"));
       await page.getByRole("button", { name: "Back", exact: true }).click();
       await nav(page, "Appearance").click();
       for (const [folders, labels, mode] of [[false, false, "off"], [false, true, "labels"], [true, false, "folders"], [true, true, "both"]]) {

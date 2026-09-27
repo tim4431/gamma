@@ -7,7 +7,7 @@ Where every setting lives, and how the Settings dialog is built.
 | Layer | Storage | Examples |
 |---|---|---|
 | Per browser | `localStorage`, one `gamma-*` key per preference, all declared in `PREFS` ([frontend/src/app/prefDefs.js](../../frontend/src/app/prefDefs.js)) with scope `browser` — except `gamma-link-name`, the share view's display name for a visitor without an account, owned by `src/collaboration/linkName.js` because the fetch wrapper reads it outside React | what describes this device: the interface size (`gamma-ui-scale`, applied pre-paint by `index.html`), the status bar, the handwriting input rules and the tool strip's presets, eraser and lasso choices (`gamma-ink-*`), the metadata and translation model picks and dictation (they name this server's provider entries, like the chat model `gamma-chat-model`), and whether a page's "Linked from" section is folded (`gamma-backlinks-collapsed`); outside `PREFS`, diagnostics tracing (`gamma-debug-log`) |
-| Per account, profile | the account-wide `profile` prefs key (`/api/prefs/profile`, one JSON object keyed by preference name), every `PREFS` entry with scope `account`; each also keeps its `gamma-*` localStorage key as the instant-paint cache | appearance (theme — the pre-paint script reads `gamma-theme` — flip page colors, and whether tours are suggested, `suggestTours`, [onboarding.md](onboarding.md)), the interface language (`gamma-language`, read by `main.jsx` before the first render, [i18n.md](i18n.md)), reading and editing (imported annotations, translation button and language, selection translation, Enter key, how search opens), library display and PDF fetching, the sync pill's scope (`syncPillScope`), chat behaviour (tools switch, per-kind tool permissions, reasoning effort, the login connection check, tool limits, snapshot clearing), translation effort and parallel requests, context budgets, prompts, keyboard shortcuts (`keybindings`: command id → chord or null, [hotkeys.md](hotkeys.md)) |
+| Per account, profile | the account-wide `profile` prefs key (`/api/prefs/profile`, one JSON object keyed by preference name), every `PREFS` entry with scope `account`; each also keeps its `gamma-*` localStorage key as the instant-paint cache | appearance (theme — the pre-paint script reads `gamma-theme` — flip page colors, and whether tours are suggested, `suggestTours`, [onboarding.md](onboarding.md)), the interface language (`gamma-language`, read by `main.jsx` before the first render, [i18n.md](i18n.md)), reading and editing (imported annotations, how search opens), translation (button and language, selection translation), the Enter key, library display and PDF fetching, the sync pill's scope (`syncPillScope`), chat behaviour (tools switch, per-kind tool permissions, reasoning effort, the login connection check, tool limits, snapshot clearing), translation effort and parallel requests, context budgets, prompts, keyboard shortcuts (`keybindings`: command id → chord or null, [hotkeys.md](hotkeys.md)) |
 | Session only | React state, nothing stored | the Ctrl+scroll text size of the notes list and the chat transcript (`useTextScale` in [Widgets.jsx](../../frontend/src/shared/ui/Widgets.jsx)) — resets on reload |
 | Per account, synced | `/api/prefs/{key}` (small JSON KV, `user_prefs` in `users.db`) | per account AND workspace: open tabs (`open-tabs`), the recently-viewed queue (`recent-views`), pinned folders (`pinned-folders`; pinned pages are a page property), reading positions (`read-pos`) — they name one workspace's pages; account-wide: active AI key (`ai-provider`) and the preference profile (`profile`, previous row). Server wins on load, localStorage (keyed `user@workspace`) is the instant-paint cache. The recents-card cover thumbnails are workspace data, through their own `/api/page-snaps` store (`page_snaps` in the workspace's `data.db` — over the prefs size cap) |
 | Per account, seen notices | the account-wide `notices-seen` prefs key (`db.NOTICES_SEEN_PREF_KEY`), `{notice id: fingerprint}`, written only by `POST /api/notices/{id}/seen` (below, "Notices") | which release and which log error the account has already looked at |
@@ -57,7 +57,7 @@ of `PREFS`. `tests/sectionPrefs.test.mjs` checks the table against `PREFS`
 and against every `scope="account"` in the panes' sources, and that every
 account preference is held by a section. A browser preference inside an
 account section carries its own tag on its row (`Row`'s `scope="browser"`):
-"Translate with" in Reading › Translation is the one case.
+"Translate with" in Translation › Service is the one case.
 
 `useProfileSync` returns its overall state (signed-out / loading
 / loaded / pending / pushing / failed) and, as sets of preference names:
@@ -86,7 +86,7 @@ them for one section, first rule that applies:
 | one of them awaiting the cloud, and the cloud failed | warning + account, in red | the cloud's error |
 | otherwise, linked | cloud-check + account | "Synced with Gamma Cloud at <time>" |
 
-So changing the Enter key spins only the Notes section, for the second the
+So changing the Enter key spins only Keyboard › Built in, for the second the
 change settles plus its PATCH (and at least 700 ms, so a quick save is seen
 rather than flickered). The server's acceptance is the commit: its own
 push to Gamma Cloud is coalesced (5 s) and retried by the hourly check. The
@@ -154,7 +154,7 @@ and integration tokens get an empty list. The sources:
 | `publish-conflicts` | everyone | Account | warn | a workspace publishing pages to Gamma Cloud has open sync conflicts | per publication, as `mirror-conflicts` |
 | `cloud-sync` | everyone | Account | warn | the account's Gamma Cloud sync is in its `error` state (`cloud_sync.profile_status`) | the failure's timestamp |
 | `cloud-sync-choice` | everyone | Account | warn | the first settings sync with Gamma Cloud found two different copies and waits for Fetch from cloud / Push to cloud (state `choose`) | constant: seen once |
-| `free-translate` | everyone who met the failures | Reading & editing | warn | Microsoft's free translation service failed `FREE_ALERT_AFTER` (3) times in a row, in memory (`translate_engines.free_failing`); one success ends it, and the Microsoft row names the error | the streak's start time |
+| `free-translate` | everyone who met the failures | Translation | warn | Microsoft's free translation service failed `FREE_ALERT_AFTER` (3) times in a row, in memory (`translate_engines.free_failing`); one success ends it, and the Microsoft row names the error | the streak's start time |
 | `storage` | everyone | Account | warn / error | personal storage past 90 % of the quota / full; only computed for an account under a quota, and the upload walk is remembered ten minutes (`notices.forget_usage`) | `90` / `full` |
 
 Warnings in the log are deliberately not a notice (too noisy for a dot).
@@ -233,25 +233,30 @@ Preferences:
   open-access fallback, metadata auto-fetch and saving external PDFs.
   **Handwriting**: two `IconChoices` tiles ("Draws with": pen only / pen and
   finger — the stored preference is `inkPenOnly`) plus the
-  stylus-draws-right-away and pressure switches. **Translation**, everything
-  translation in one section
-  ([SettingsTranslation.jsx](../../frontend/src/settings/SettingsTranslation.jsx)):
-  the viewer's button and the language, the selection popup's translate
-  button and translate-on-select, "Translate with" (a chat model or a set-up
+  stylus-draws-right-away and pressure switches. **Search opens as**: on the
+  home page and on a page (Full panel / Find bar).
+- **Translation** (pane id `translation`,
+  [SettingsTranslation.jsx](../../frontend/src/settings/SettingsTranslation.jsx)),
+  in three sections. **Viewer & selection**: the viewer's button and the
+  language (`translateLang`; with none stored, the first of the browser's
+  languages on offer — `defaultTranslateLang` in `app/prefDefs.js`, en-* →
+  English — else Simplified Chinese), the selection popup's translate button
+  and translate-on-select. **Service** (no scope tag: its keys are the
+  account's, kept on the server): "Translate with" (a chat model or a set-up
   translation service; a browser pref, tagged on its row), the Microsoft
   (free) row with only Test (no key), the Google / Youdao credential rows
-  with Test / Edit / remove, then translation effort (hidden while a
+  with Test / Edit / remove. **Speed**: translation effort (hidden while a
   translation service is picked, or with no AI connection) and parallel
   requests.
-  **Notes**: the Enter key. **Search opens as**: on the home page and on a
-  page (Full panel / Find bar).
 - **Keyboard** ([SettingsKeyboard.jsx](../../frontend/src/settings/SettingsKeyboard.jsx),
   [hotkeys.md](hotkeys.md)): a filter box in the head, then **Shortcuts**
   (the one account section, "Reset all" as its action) listing every command
   of the catalog by group — each row a `KeyBinding`: the chord as key caps,
   click-then-press to rebind, Backspace unbinds, a reset button when it
   differs from the default, red caps and "Also used by …" when two commands
-  share a chord — and **Built in**, the outliner's fixed keys read-only.
+  share a chord — and **Built in**, the outliner's fixed keys read-only, led
+  by the Enter key's one choice: "Enter makes" New note / New line
+  (`enterNewNote`; the legacy `notes` pane id lands here).
 
 AI:
 

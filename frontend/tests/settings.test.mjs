@@ -19,7 +19,7 @@ test("permission presets preserve explicit restrictions and the applicable tools
 });
 
 test("settings search finds controls on nested AI pages without exposing inaccessible management pages", () => {
-  const allowed = ["appearance", "reading", "ai", "assistant", "ai-advanced", "prompts", "account", "maintenance", "diagnostics"];
+  const allowed = ["appearance", "reading", "translation", "ai", "assistant", "ai-advanced", "prompts", "account", "maintenance", "diagnostics"];
   assert.equal(searchSettings("translation concurrency", allowed)[0].label, "Parallel requests");
   assert.equal(searchSettings("  FLIP colors  ", allowed)[0].pane, "appearance");
   assert.equal(searchSettings("password", allowed).some((item) => item.pane === "users"), false);
@@ -29,7 +29,8 @@ test("settings search finds controls on nested AI pages without exposing inacces
 });
 
 test("legacy settings destinations resolve to the reorganized pages", () => {
-  for (const old of ["notes", "viewer", "search"]) assert.equal(resolveSettingsPane(old), "reading");
+  for (const old of ["viewer", "search"]) assert.equal(resolveSettingsPane(old), "reading");
+  assert.equal(resolveSettingsPane("notes"), "keyboard");
   assert.equal(resolveSettingsPane("context"), "ai-advanced");
   assert.equal(resolveSettingsPane("library"), "appearance");
   for (const id of ["assistant", "prompts", "ai-advanced"]) assert.equal(resolveSettingsPane(id), id);
@@ -83,6 +84,18 @@ test("the profile codec keeps valid entries and drops the rest", async () => {
   for (const bad of [null, "x", [], 3]) assert.deepEqual(readProfile(bad), {});
   const bytes = JSON.stringify({ value: profileOf({ ...defaults, chatSystem: "p".repeat(12000), agentSystem: "p".repeat(12000) }) }).length;
   assert.ok(bytes < 64 * 1024, "fits the prefs size cap");
+});
+
+test("the translated view's language defaults to the browser's when it is on offer", async () => {
+  const { defaultTranslateLang } = await import("../src/app/prefDefs.js");
+  assert.equal(defaultTranslateLang(["en-GB", "zh-CN"]), "en");
+  assert.equal(defaultTranslateLang(["de-AT"]), "de");
+  assert.equal(defaultTranslateLang(["zh"]), "zh-CN");
+  assert.equal(defaultTranslateLang(["zh-TW"]), "zh-TW");
+  assert.equal(defaultTranslateLang(["zh-Hant-HK"]), "zh-TW");
+  assert.equal(defaultTranslateLang(["nl-NL", "ja-JP"]), "ja", "the first language on offer");
+  assert.equal(defaultTranslateLang(["nl"]), "zh-CN");
+  assert.equal(defaultTranslateLang([]), "zh-CN");
 });
 
 test("the translation pick resolves to what is sent: the pick, the free service, or the chat model", async () => {

@@ -48,7 +48,7 @@ Tap an active pen preset again to choose **Pen** (width follows stylus pressure)
 - On a translated page the button hides or shows the translation (all pages at once). On a page not yet translated, it translates that page.
 - **Right-click** the button (long-press on touch) for *Translate whole document*. The pages nearest you come first; a click on the button stops the job.
 - **Translate a selection**: select text and click 文A in the highlight popup. The translation opens under the colors, with a copy button. Turn on *Translate on select* to skip the click.
-- **What translates** is Settings → Reading & editing → Translation → *Translate with*: a chat model, or a translation service.
+- **What translates** is Settings → Translation → *Translate with*: a chat model, or a translation service. *Translate into* starts at your browser's language when it is one of the offered ones.
   - **Microsoft (free)** works with no setup, and is the default when you have no AI connection. It is unofficial and could stop working; if it keeps failing, a dot on the account button leads to the row that says why.
   - **Google Cloud Translation** and **Youdao** need your own key, added in the same section.
   - A chat model keeps formulas and citation markers intact; a service is faster and costs less per page.
@@ -60,7 +60,7 @@ Tap an active pen preset again to choose **Pen** (width follows stylus pressure)
 
 Notes live in the **Notes panel** as a nested outline. Highlights and free notes are the same kind of block, so a paper's notes and a plain page are edited the same way.
 
-- **Editing**: Enter inserts a line break, **Shift+Enter starts a new note** (swap the two in Settings → Reading & editing). **Tab / Shift+Tab** indent and outdent. Backspace in an empty note deletes it. Drag the **⋮⋮ handle** to reorder or re-nest; the **+** under it makes a new block below. Clicking a note opens it with the cursor on the character you clicked, and the page scrolls so that spot stays under the pointer. Hover the gap between two paragraphs, formulas or lists inside a note and a line appears; click it to start a new line there.
+- **Editing**: Enter inserts a line break, **Shift+Enter starts a new note** (swap the two in Settings → Keyboard → *Enter makes*). **Tab / Shift+Tab** indent and outdent. Backspace in an empty note deletes it. Drag the **⋮⋮ handle** to reorder or re-nest; the **+** under it makes a new block below. Clicking a note opens it with the cursor on the character you clicked, and the page scrolls so that spot stays under the pointer. Hover the gap between two paragraphs, formulas or lists inside a note and a line appears; click it to start a new line there.
 - **Live rendering, Obsidian-style**: the block you are on stays raw; everything else renders — headings, bold/italic/code/strike, `==highlight==`, bullets, todos, quotes, `> [!note]` callouts, tables, code fences with syntax colors, images, and links.
 - **Math**: `$…$` inline and `$$…$$` display math render with KaTeX. While typing, a live preview floats over the raw source, brackets are pair-colored, `\command` autocompletes, and **Tab hops between `{}` arguments**. `$` auto-pairs; type `\begin{` to complete an environment.
 - **Pictures**: paste a screenshot or drag an image into a note. Pictures sit centred; hover one for zoom, caption, download and delete, and **drag the grip on either side** to resize (stored Obsidian-style as `![alt|300](…)`).
@@ -251,8 +251,9 @@ Settings (account menu → Settings) has one sidebar: your account card on top (
 |---|---|---|
 | Account card | Account & sync | Your account, storage meter and Gamma Cloud link; **Settings sync** (*Sync now*; when this server and the cloud hold different settings, a dialog asks *Fetch from cloud* or *Push to cloud*); published pages, **Clones** (offline copies) and the sync pill |
 | Preferences | Appearance | Theme (system + seven), language, flip page colors, library cards (thumbnails / folders / labels), interface size, tour suggestions |
-| | Reading & editing | PDFs (imported annotations, open-access fallback, metadata auto-fetch, saving external PDFs), handwriting (pen only / pen and finger, pressure), translation (button, language, selection, model or service and its keys, speed), the Enter key, how search opens |
-| | Keyboard | Every shortcut, rebindable |
+| | Reading & editing | PDFs (imported annotations, open-access fallback, metadata auto-fetch, saving external PDFs), handwriting (pen only / pen and finger, pressure), how search opens |
+| | Translation | The viewer's button and language, selection translation, what translates (a chat model or a service, and the services' keys), speed |
+| | Keyboard | Every shortcut, rebindable; what Enter makes (a new note or a new line) |
 | AI | Connections | Providers and keys, ChatGPT sign-in, default models, token usage |
 | | Chat | Default reasoning effort, snapshot clearing, which tools the agent may use per chat kind |
 | | Advanced | Tool limits, context budgets |

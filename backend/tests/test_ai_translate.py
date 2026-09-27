@@ -465,7 +465,7 @@ def test_free_service_failures_warn_and_notify_until_it_answers(dave, carol, mon
         r = dave.post("/api/ai/translate", json={"texts": [f"down {i}"], "lang": "de", "model": "engine:microsoft"})
         assert r.status_code == 502
     (notice,) = notices(dave)
-    assert notice["pane"] == "reading" and notice["tone"] == "warn"
+    assert notice["pane"] == "translation" and notice["tone"] == "warn"
     assert notices(carol) == []  # an account that never met the failures isn't told
     row = next(e for e in dave.get("/api/translate/engines").json()["engines"] if e["id"] == "microsoft")
     assert row["failing"] == {"since": notice["fingerprint"], "error": "Microsoft: connection refused"}

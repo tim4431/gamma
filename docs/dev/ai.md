@@ -643,7 +643,7 @@ while shown, the invisible original text layer stands down.
 
 Targets are the allowlisted `TRANSLATE_LANGS` codes
 (`gamma/translate_engines.py`, shared by both translation paths; mirrored in
-`frontend/src/app/prefDefs.js`). What translates is Settings → Reading ›
+`frontend/src/app/prefDefs.js`). What translates is Settings → Translation ›
 "Translate with" (`translateModel`, a browser pref; "" is the default).
 `translateModelFor` (`app/prefDefs.js`) turns the pick into what is sent:
 the pick while it is still offered, the free Microsoft service when there
@@ -661,7 +661,7 @@ request go upstream once. Caps: 200 texts / 60k chars per request.
 
 **Selection translation.** The text-selection popup (`PlainTip` in
 `pdf/PdfViewer.jsx`, the highlight colors + link) carries a 文A button
-when Settings → Reading › "Translate a selection" is on (`selTranslate`,
+when Settings → Translation › "Translate a selection" is on (`selTranslate`,
 account pref, default on).
 
 - It sends the selection as ONE text through the page translator's request

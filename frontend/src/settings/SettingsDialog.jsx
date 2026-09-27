@@ -28,7 +28,6 @@ import {
   EyeIcon,
   ContrastIcon,
   DatabaseIcon,
-  CornerDownLeftIcon,
   FileTextIcon,
   FolderIcon,
   FoldersIcon,
@@ -54,6 +53,7 @@ import {
   UserIcon,
   UsersIcon,
   KeyboardIcon,
+  LanguagesIcon,
 } from "../shared/ui/Icons";
 
 // One rail: the account card on top (the Account & sync pane), then
@@ -65,6 +65,7 @@ const ACCOUNT_NAV = ["account", T("Account & sync"), UserIcon];
 const PREFERENCE_NAV = [
   ["appearance", T("Appearance"), ContrastIcon],
   ["reading", T("Reading & editing"), BookIcon],
+  ["translation", T("Translation"), LanguagesIcon],
   ["keyboard", T("Keyboard"), KeyboardIcon],
 ];
 const AI_NAV = [
@@ -175,22 +176,6 @@ function SearchSettings({ value }) {
           title={t("On a page, Ctrl+F defaults to the compact browser-style find bar; the full panel adds the grouped result lists.")}>
           <Segmented value={value.searchDetailsPaper ? "panel" : "bar"} onChange={(v) => value.setSearchDetailsPaper(v === "panel")}
             options={SEARCH_SHAPES} />
-        </Row>
-      </Section>
-    </>
-  );
-}
-
-function NotesSettings({ value }) {
-  return (
-    <>
-
-      <Section title={t("Notes")} scope="account" prefs={SECTION_PREFS.reading["Notes"]}>
-        <Row icon={CornerDownLeftIcon} label={t("Enter key")}
-          hint={value.enterNewNote ? t("Shift+Enter inserts a new line") : t("Shift+Enter creates a new note")}>
-          <Segmented value={value.enterNewNote ? "note" : "line"}
-            onChange={(choice) => value.setEnterNewNote(choice === "note")}
-            options={[["note", t("New note")], ["line", t("New line")]]} />
         </Row>
       </Section>
     </>
@@ -905,7 +890,7 @@ export default function SettingsDialog({
   });
   React.useEffect(() => {
     if (!activePane) { setQuery(""); setPending(null); setMobileIndex(false); return; }
-    const legacyTarget = { notes: t("Enter key"), search: t("On the home page"), viewer: t("Imported annotations"),
+    const legacyTarget = { notes: t("Enter makes"), search: t("On the home page"), viewer: t("Imported annotations"),
       context: t("Single paper") }[activePane];
     if (legacyTarget) setJump({ label: legacyTarget });
   }, [activePane]);
@@ -1021,10 +1006,13 @@ export default function SettingsDialog({
                 {pane === "reading" ? <>
                   <PaneHead icon={BookIcon} title={t("Reading & editing")} />
                   <ViewerSettings value={papers} />
-                  <TranslationSettings value={paperValue} />
-                  <NotesSettings value={notes} /><SearchSettings value={search} />
+                  <SearchSettings value={search} />
                 </> : null}
-                {pane === "keyboard" && keyboard ? <KeyboardSettings value={keyboard} /> : null}
+                {pane === "translation" ? <>
+                  <PaneHead icon={LanguagesIcon} title={t("Translation")} />
+                  <TranslationSettings value={paperValue} />
+                </> : null}
+                {pane === "keyboard" && keyboard ? <KeyboardSettings value={{ ...keyboard, setEnterNewNote: notes?.setEnterNewNote }} /> : null}
                 {pane === "maintenance" ? <MaintenanceSettings value={library} /> : null}
                 {pane === "ai" ? <>
                   <PaneHead icon={SparklesIcon} title={t("Connections")} />
