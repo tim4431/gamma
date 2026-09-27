@@ -21,12 +21,16 @@
 //     higher than our ack's) — otherwise ours is the newer value and it is
 //     dropped;
 //   - catches up after a reconnect from the op log (GET …/ops?since=), or
-//     asks for a reload when the log no longer reaches back.
+//     asks for a reload when the log no longer reaches back;
+//   - heals a batch the server refused for naming a block it doesn't have
+//     (404 with `missing`) while the base holds that block: the block goes
+//     out again as an insert ahead of the batch, rather than the whole
+//     queue being dropped and the page reloaded without our edits.
 //
 // The "base" tree is what the server is known to hold from this tab's point
 // of view: every commit diffs against it and advances it; remote ops advance
 // it too. Positions live in one Map shared with blockOps.
-import { applyOps, diffTrees, pushOp, seedPositions } from "../shared/model/blockOps.js";
+import { applyOps, diffTrees, indexTree, pushOp, seedPositions } from "../shared/model/blockOps.js";
 import { t } from "../shared/i18n/i18n.js";
 
 export const TYPING_DEBOUNCE_MS = 350;
@@ -34,12 +38,13 @@ export const STRUCTURAL_DEBOUNCE_MS = 80;
 export const CURSOR_THROTTLE_MS = 80;
 export const RETRY_MS = 3000;
 export const MAX_RETRIES = 8;
+export const MAX_RESCUES = 20; // blocks re-sent per page before a refusal reloads instead
 const SOCKET_OPEN = 1; // WebSocket.OPEN
 
 function pageSession(pageId = "") {
   return {
     pageId, base: [], pos: new Map(), queue: [], timer: null, sending: null,
-    inflight: new Map(), deferred: new Map(), retries: 0, seq: 0,
+    inflight: new Map(), deferred: new Map(), retries: 0, rescues: 0, seq: 0,
     pending: new Map(), catchingUp: null, reloading: false,
   };
 }
@@ -130,6 +135,25 @@ export function createCollabSession({ clientId, api, openSocket, keepalivePost, 
 
   // --- outgoing ops ----------------------------------------------------------
 
+  // Inserts re-creating block `id` and its subtree as the base holds them,
+  // or null when the base doesn't have it or the budget is spent.
+  // Re-inserting an id the server does have is a move + set there, so
+  // descendants that did reach it converge instead of failing.
+  function rescue(s, id) {
+    if (!id || s.rescues >= MAX_RESCUES) return null;
+    const hit = indexTree(s.base, s.pageId).get(id);
+    if (!hit) return null;
+    const out = [];
+    const walk = (node, parent) => {
+      const position = s.pos.get(node.id);
+      out.push({ op: "insert", id: node.id, parent, ...(position ? { position } : {}),
+        content: node.content || "", props: node.properties || {} });
+      for (const c of node.children || []) walk(c, node.id);
+    };
+    walk(hit.node, hit.parent);
+    return out;
+  }
+
   function send(s = st.session) {
     if (s.sending || !s.queue.length) return s.sending;
     const page = s.pageId;
@@ -193,7 +217,15 @@ export function createCollabSession({ clientId, api, openSocket, keepalivePost, 
         saved = true;
       } catch (err) {
         const status = err?.status || 0;
-        if (status >= 400 && status < 500 && status !== 408 && status !== 429) {
+        const lost = status === 404 ? rescue(s, err?.data?.missing) : null;
+        if (lost) {
+          // The server never got this block (its insert was lost) or lost
+          // it since: send it again ahead of the refused batch. Nothing of
+          // the batch was written, so it goes out again unchanged.
+          s.rescues += 1;
+          s.queue = [...lost, ...ops, ...s.queue];
+          saved = null; // not refused: the send below carries it
+        } else if (status >= 400 && status < 500 && status !== 408 && status !== 429) {
           // The server refused the batch (stale ids, a permission change):
           // resync rather than loop on it.
           o().onStatus?.(t("Save rejected: {message}", { message: err.message }));

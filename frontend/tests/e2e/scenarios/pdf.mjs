@@ -98,6 +98,35 @@ export async function pdfScenarios({ server, browser, alice, makePdf, step, unti
     assertNoProblems(page);
   });
 
+  // With the notes window closed the new highlight's row can't render. The
+  // jump to it used to keep "unfolding" the tree as a load, so the highlight
+  // was never sent, and the next edit was refused for naming a block the
+  // server didn't have.
+  await step("pdf: a highlight made with the notes window closed is saved, and so is the next", async () => {
+    const toggleNotes = async () => {
+      await page.getByRole("button", { name: "View", exact: true }).click();
+      await page.locator(".menuPopover").getByRole("button", { name: "Notes" }).click();
+      await page.keyboard.press("Escape");
+    };
+    const highlight = async (needle) => {
+      await selectPdfText(page, 1, needle);
+      await page.waitForSelector(".plainTip .colorBtn", { timeout: 5000 });
+      await page.locator(".plainTip .colorBtn").first().click();
+    };
+    const saved = (needle) => until(async () => {
+      const d = await account.api(`/api/blocks/${pageId}/subtree`);
+      return (d.block.children || []).some((b) => b.properties?.quote === needle);
+    }, { what: `highlight "${needle}" saved` });
+    await toggleNotes();
+    await highlight("Quantum");
+    await saved("Quantum");
+    await toggleNotes();
+    await page.locator(".blockRow .blockQuote", { hasText: "Quantum" }).waitFor();
+    await highlight("Second line");
+    await saved("Second line");
+    assertNoProblems(page);
+  });
+
   await step("pdf: a highlight with a note shows a badge that opens the note", async () => {
     const data = await account.api(`/api/blocks/${pageId}/subtree`);
     const highlight = data.block.children.find((block) => block.properties?.highlight_id);

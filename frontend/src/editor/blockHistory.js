@@ -5,8 +5,9 @@
 //
 // Every committed change to `blocks` is classified by diffing it against the
 // previous committed tree:
-//   - loads (the caller flagged the transition with `loadRef`, the same flag
-//     that stops the autosave) and undo/redo applications are never recorded;
+//   - trees that did not come from an edit here (`isLoad(tree)`: a load, or
+//     another client's ops — the caller marks them) and undo/redo
+//     applications are never recorded;
 //   - opening/closing editors and collapse toggles are not edits;
 //   - everything else (add/delete/move/indent, property changes such as a
 //     highlight colour or link, any content change — typing, checkboxes,
@@ -120,7 +121,7 @@ function withEditMode(list, keepId) {
 }
 
 // Options:
-//   loadRef     — ref that is true for a load transition (shared with autosave)
+//   isLoad(tree) — true for a tree that came from the server, not an edit
 //   pageId      — the stack is cleared when it changes
 //   enabled     — false while read-only / no page
 //   caretRef    — {id, from, to} the open editor's live selection (App keeps
@@ -133,7 +134,7 @@ export function useBlockHistory(blocks, setBlocks, opts) {
   const st = useRef({ undo: [], redo: [], prev: blocks, prevCaret: null, displaced: null, intent: null, lastEdit: null });
   const optsRef = useRef({ setBlocks, ...opts });
   optsRef.current = { setBlocks, ...opts };
-  const { loadRef, pageId } = opts;
+  const { pageId } = opts;
 
   const clear = useCallback(() => {
     st.current.undo = [];
@@ -154,8 +155,8 @@ export function useBlockHistory(blocks, setBlocks, opts) {
     return c ? { id, from: c.from, to: c.to } : null;
   };
 
-  // Must run before the autosave effect consumes loadRef (effects run in
-  // declaration order — call this hook right after the flag is declared).
+  // Must run before the autosave effect forgets the tree's origin (effects
+  // run in declaration order — call this hook before that effect).
   useEffect(() => {
     const s = st.current;
     const prev = s.prev;
@@ -165,7 +166,7 @@ export function useBlockHistory(blocks, setBlocks, opts) {
     const displaced = s.displaced;
     s.displaced = null;
     try {
-      if (loadRef.current || prev === blocks) return;
+      if (prev === blocks || optsRef.current.isLoad?.(blocks)) return;
       if (intent === "undo") { s.redo.push({ tree: prev, caret: displaced }); return; }
       if (intent === "redo") { s.undo.push({ tree: prev, caret: displaced }); return; }
       const kind = classifyTransition(prev, blocks);
@@ -193,7 +194,7 @@ export function useBlockHistory(blocks, setBlocks, opts) {
       const live = optsRef.current.caretRef?.current;
       s.prevCaret = live ? { ...live } : null;
     }
-  }, [blocks, loadRef]);
+  }, [blocks]);
 
   // Stable, so a once-mounted key listener can call it. Returns the action
   // description, or false when empty. `inEditor`: from an open editor —

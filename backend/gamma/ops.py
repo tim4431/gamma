@@ -54,10 +54,14 @@ _ID_RE = re.compile(r"^[A-Za-z0-9_-]{1,64}$")
 
 
 class OpError(Exception):
-    def __init__(self, status: int, detail: str):
+    """A refused batch. ``missing``: the unknown block or parent id behind a
+    404, so a client that holds that block can send it again as an insert."""
+
+    def __init__(self, status: int, detail: str, missing: str = ""):
         super().__init__(detail)
         self.status = status
         self.detail = detail
+        self.missing = missing
 
 
 class SetOp(BaseModel):
@@ -154,7 +158,7 @@ class _Batch:
     def require_in_page(self, block_id: str, what: str = "block") -> None:
         page = self.page_of(block_id)
         if page is None:
-            raise OpError(404, f"no such {what}: {block_id}")
+            raise OpError(404, f"no such {what}: {block_id}", missing=block_id)
         if page != self.page_id:
             raise OpError(403, f"{what} {block_id} is outside this page")
 
@@ -190,7 +194,7 @@ class _Batch:
         row = self.conn.execute(
             "SELECT content, properties FROM unified_blocks WHERE id = ?", (block_id,)).fetchone()
         if not row:
-            raise OpError(404, f"no such block: {block_id}")
+            raise OpError(404, f"no such block: {block_id}", missing=block_id)
         self.require_in_page(block_id)
         content, patch = op.get("content"), op.get("props")
         if content is None and patch is None:

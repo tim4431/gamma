@@ -55,6 +55,7 @@ import {
   outdentBlock,
   toggleCollapsed,
   expandToBlock,
+  isFoldedAway,
   updateBlockTree,
   removeBlockTree,
   flattenBlocks,
@@ -3827,17 +3828,25 @@ function LibraryApp({ publicPage = null, initialServerConfig = null }) {
   const aiMarkTimersRef = useRef(new Map());
   const aiMarkSeqRef = useRef(0);
   const autosaveTimerRef = useRef(null);
-  const suppressAutosaveRef = useRef(true); // skip initial mount + doc loads
+  // Trees that did not come from an edit here: "load" (fetched from the
+  // server — it becomes the collab base as is) or "remote" (another client's
+  // ops applied — the base already has them, so the diff sends only our own
+  // edits in the same render). Neither is an undo step. Kept on the tree
+  // VALUE, never a flag beside setBlocks: a flag outlived a load React
+  // skipped (nothing changed) or was set by an effect that runs before the
+  // autosave one, and the edit committed with it was taken for a load and
+  // never sent — the server later refused the block as unknown.
+  const treeOriginRef = useRef(new WeakMap());
+  const loaded = (tree) => { treeOriginRef.current.set(tree, "load"); return tree; };
   const saveNowRef = useRef(false); // next autosave runs without the debounce (editor close)
   // THE undo history (Ctrl+Z anywhere on the page, editors included):
   // derived from the block tree's transitions, see blockHistory.js. Declared
-  // right after the load flag so its effect reads it before the autosave
-  // effect resets it.
+  // before the autosave effect so its effect sees a tree's origin first.
   const caretRef = useRef(null);         // {id, from, to} the open editor's live selection
   const caretBeforeRef = useRef(null);   // {id, from, to} of the last editor change
   const pendingCaretRef = useRef(null);  // caret to place once a restore has committed
   const blockHistory = useBlockHistory(blocks, setBlocks, {
-    loadRef: suppressAutosaveRef,
+    isLoad: (tree) => treeOriginRef.current.has(tree),
     pageId: focusedBlockId,
     enabled: !readOnly && !!focusedBlockId,
     caretRef,
@@ -3948,7 +3957,7 @@ function LibraryApp({ publicPage = null, initialServerConfig = null }) {
     setOpenPopover(null);
     if (blockId) pendingBlockScrollRef.current = blockId;
     if (pageId && pageId !== focusedBlockId) { openPage(pageId); return; }
-    if (blockId) { suppressAutosaveRef.current = true; setBlocks((prev) => expandToBlock(prev, blockId)); }
+    if (blockId) setBlocks((prev) => expandToBlock(prev, blockId));
   };
   useEffect(() => {
     const h = (e) => jumpToRef.current?.(e.detail?.page, e.detail?.block);
@@ -3967,14 +3976,16 @@ function LibraryApp({ publicPage = null, initialServerConfig = null }) {
       row.scrollIntoView({ block: "center", behavior: "smooth" });
       setFocusedId(id);
       pendingBlockScrollRef.current = null;
-    } else if (flattenBlocks(blocks).some((b) => b.id === id)) {
-      // Block exists but is inside a collapsed parent — expand and try again
-      if (!readOnly) suppressAutosaveRef.current = true;
+    } else if (isFoldedAway(blocks, id)) {
+      // Inside a collapsed parent: unfold (a view change — no ops, no undo
+      // step) and try again once it renders.
       setBlocks((prev) => expandToBlock(prev, id));
-    } else {
-      // Block not in tree yet — keep ref and wait for next blocks change
     }
-  }, [blocks, readOnly]);
+    // Otherwise the row isn't rendered yet (not in the tree yet, or the notes
+    // window is closed or collapsed — a highlight made on the PDF alone):
+    // keep the ref and try again on the next tree change or when the notes
+    // come back.
+  }, [blocks, notesVisible, collapsedWins.notes, phonePanel]);
 
   // A page's passive landing (openBlock): the notes scroll to where the
   // reader left off, else to the top, and that row flashes once — but no
@@ -4010,12 +4021,12 @@ function LibraryApp({ publicPage = null, initialServerConfig = null }) {
 
   // The page's live session (collaboration/usePageCollab.js): the tree's transitions become ops
   // sent in debounced batches, other clients' batches arrive over the page
-  // socket and apply below, presence rides the same socket. A load (the
-  // suppress flag) makes the tree the session's base instead of a change.
+  // socket and apply below, presence rides the same socket. A load (a tree
+  // marked by `loaded`) becomes the session's base instead of a change.
   const applyRemoteRef = useRef(null);
   const loadedSeqRef = useRef(null); // the op-log seq the last fetched tree reflects
   // An empty page opens with one client-minted placeholder block (openBlock)
-  // that the server has never seen. It is set under the load suppress flag,
+  // that the server has never seen. It arrives with the load,
   // so the collab base must NOT count it as known — the first edit to it is
   // then diffed as an `insert`, not a `set` on a block the server rejects
   // (404 "no such block"). Cleared once that insert has been queued.
@@ -4034,8 +4045,8 @@ function LibraryApp({ publicPage = null, initialServerConfig = null }) {
   collabRef.current = collab;
   // Ops from another client (or a server-side writer): the page block's own
   // changes update the title/properties state, the rest apply to the tree
-  // as a load-like transition (no history entry, nothing re-sent) and fold
-  // into every undo snapshot.
+  // as a "remote" transition (no history entry; the base already has them,
+  // so nothing of theirs is re-sent) and fold into every undo snapshot.
   applyRemoteRef.current = (ops, pageId, pos) => {
     if (pageId !== focusedBlockId) return;
     for (const op of ops) {
@@ -4054,10 +4065,11 @@ function LibraryApp({ publicPage = null, initialServerConfig = null }) {
     }
     const treeOps = ops.filter((op) => !(op.op === "set" && op.id === pageId));
     if (!treeOps.length) return;
-    suppressAutosaveRef.current = true;
     setBlocks((prev) => {
       try {
-        return applyOps(prev, treeOps, pageId, pos);
+        const next = applyOps(prev, treeOps, pageId, pos);
+        if (next !== prev) treeOriginRef.current.set(next, "remote");
+        return next;
       } catch (err) {
         // A batch we can't apply (should not happen): resync from the server
         // rather than take the page down.
@@ -4072,18 +4084,20 @@ function LibraryApp({ publicPage = null, initialServerConfig = null }) {
   function flushPendingSave() { collabRef.current.flush(); }
   useEffect(() => {
     if (!focusedBlockId) return;
-    if (suppressAutosaveRef.current) {
-      suppressAutosaveRef.current = false;
-      const seed = seedBlockIdRef.current;
+    const origin = treeOriginRef.current.get(blocks);
+    treeOriginRef.current.delete(blocks); // one transition's worth: an undo back to this tree is an edit
+    const seed = seedBlockIdRef.current;
+    if (origin === "load") {
       const known = seed ? blocks.filter((b) => b.id !== seed) : blocks;
       collab.commit(known, { isLoad: true, seq: loadedSeqRef.current });
       loadedSeqRef.current = null;
       return;
     }
     if (readOnly) return;
-    const ops = collab.commit(blocks, { now: saveNowRef.current });
+    // Another client's ops don't make the untouched placeholder ours to save.
+    const idle = origin === "remote" && seed && blocks.some((b) => b.id === seed && !b.content && !b.children?.length);
+    const ops = collab.commit(idle ? blocks.filter((b) => b.id !== seed) : blocks, { now: saveNowRef.current });
     saveNowRef.current = false;
-    const seed = seedBlockIdRef.current;
     if (seed && ops.some((op) => op.op === "insert" && op.id === seed)) seedBlockIdRef.current = null;
   }, [blocks, readOnly]);
   // Our place on the page for the others: the focused row (an open editor
@@ -4156,7 +4170,6 @@ function LibraryApp({ publicPage = null, initialServerConfig = null }) {
       return null;
     }
     if (findBlock(blocks)) {
-      suppressAutosaveRef.current = true;
       pendingBlockScrollRef.current = id;
       setBlocks((prev) => expandToBlock(prev, id));
     } else {
@@ -4399,12 +4412,10 @@ function LibraryApp({ publicPage = null, initialServerConfig = null }) {
       let children = normalizeBlocks((data.block?.children) || []);
       if (keepUi) children = keepUiFlags(children, blocksRef.current);
       loadedSeqRef.current = data.seq ?? null;
-      suppressAutosaveRef.current = true;
-      setBlocks(children);
+      setBlocks(loaded(children));
       return children;
     } catch {
-      suppressAutosaveRef.current = true;
-      setBlocks([]);
+      setBlocks(loaded([]));
       return [];
     }
   }
@@ -5034,11 +5045,10 @@ function LibraryApp({ publicPage = null, initialServerConfig = null }) {
       ? `${src}${src.includes("?") ? "&" : "?"}share=${encodeURIComponent(token)}`
       : src ? pdfProxyUrl(src, { share: token }) : "";
 
-    suppressAutosaveRef.current = true;
     setFocusedBlockId(block?.id || "");
     setFocusedBlock(block || null);
     setPageTitle(block?.content || defaultPageTitle(pageAttachment(block)));
-    setBlocks(childBlocks);
+    setBlocks(loaded(childBlocks));
     setDocId(props.doc_id || share.doc_id || "");
     setInputUrl(src);
     setPdfUrl(proxiedUrl);
@@ -5097,7 +5107,6 @@ function LibraryApp({ publicPage = null, initialServerConfig = null }) {
       const childBlocks = normalizeBlocks(block.children || []);
       loadedSeqRef.current = subtreeData.seq ?? null;
 
-      suppressAutosaveRef.current = true;
       setMissingPage("");
       setFocusedBlockId(blockId);
       setFocusedBlock(block);
@@ -5114,20 +5123,19 @@ function LibraryApp({ publicPage = null, initialServerConfig = null }) {
         openedPdfUrl = opts?.viewerUrl || (src.startsWith("/api/") ? src : pdfProxyUrl(src));
         setInputUrl(src);
         setPdfUrl(openedPdfUrl);
-        setBlocks(childBlocks);
+        setBlocks(loaded(childBlocks));
       } else {
         setInputUrl("");
         setPdfUrl("");
         if (childBlocks.length === 0 && !readOnly) {
           const seedId = makeId();
           seedBlockIdRef.current = seedId;
-          suppressAutosaveRef.current = true;
           // A page created from "New page" gets the title first (Notion-
           // style); the seed block waits for Enter there.
           if (!opts?.focusTitle) pendingFocusRef.current = seedId;
-          setBlocks([{ id: seedId, content: "", children: [], collapsed: false, editMode: !opts?.focusTitle, properties: {} }]);
+          setBlocks(loaded([{ id: seedId, content: "", children: [], collapsed: false, editMode: !opts?.focusTitle, properties: {} }]));
         } else {
-          setBlocks(childBlocks);
+          setBlocks(loaded(childBlocks));
         }
       }
 
@@ -5369,10 +5377,9 @@ function LibraryApp({ publicPage = null, initialServerConfig = null }) {
   function goHome(refreshHome = true, keepFilters = false) {
     leaveCurrentPage();
     clearSession();
-    suppressAutosaveRef.current = true;
     setFocusedBlockId(null);
     setFocusedBlock(null);
-    setBlocks([]);
+    setBlocks(loaded([]));
     setPdfUrl("");
     setDocId("");
     setInputUrl("");
@@ -7532,7 +7539,6 @@ function LibraryApp({ publicPage = null, initialServerConfig = null }) {
                 onJump={(id) => {
                   if (!id) return;
                   pendingBlockScrollRef.current = id;
-                  suppressAutosaveRef.current = true;
                   setBlocks((prev) => expandToBlock(prev, id));
                 }}
               />

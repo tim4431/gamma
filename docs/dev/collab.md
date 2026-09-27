@@ -82,7 +82,8 @@ page can cause, [paper_metadata.md](paper_metadata.md)). Pruned to the newest `K
 per page, checked every `PRUNE_EVERY` batches. `GET /api/pages/{id}/ops?since=`
 returns the batches after a seq (410 when the log no longer reaches back: the
 client reloads the tree); `GET /blocks/{id}/subtree` on a page carries the
-`seq` its tree reflects.
+`seq` its tree reflects, both read in one snapshot (a batch committed between
+two separate reads would be counted but missing from the tree).
 
 ## Commit listeners
 
@@ -169,9 +170,15 @@ as React state. The session owns:
 
 - **the base tree**: what the server is known to hold from this tab's point of
   view. The block tree's transition effect calls
-  `commit(tree)`: a load transition (the existing suppress flag, also set for
-  remote applies) makes the tree the new base; any other transition is
-  diffed against the base (`diffTrees`) and the ops queued. One exception:
+  `commit(tree)`: a load (a fetched tree, marked by App's `loaded()`) makes
+  the tree the new base; any other transition is diffed against the base
+  (`diffTrees`) and the ops queued. The mark sits on the tree value itself
+  (a `WeakMap` of tree → `"load"` / `"remote"`), read once by the
+  transition that commits it — never a flag set beside `setBlocks`: such a
+  flag outlived a load React skipped (nothing changed) or was set by an
+  effect running before the autosave one, and the edit committed with it
+  was taken for a load and never sent. A view change (unfolding to reveal a
+  block) is not a load either: it diffs to nothing. One exception:
   an empty page opens with a client-minted placeholder block
   (`seedBlockIdRef` in App.jsx) that the server has never seen, so the load
   commit leaves it out of the base — the first edit to it diffs as an
@@ -184,8 +191,12 @@ as React state. The session owns:
   `set` ops on one block coalesce (`pushOp`); typing flushes
   after 350 ms, a structural op after 80 ms, an editor closing at once
   (`saveNowRef`), `flush()` before navigation. The POST response is the ack:
-  re-keyed positions are adopted from it. Most 4xx responses reject the queue
-  and reload the page. Network failures, 408 and 429 retry up to eight times;
+  re-keyed positions are adopted from it. A 404 naming a block the server
+  doesn't have (`missing` in the body) while the base holds it — its insert
+  was lost — sends that block and its subtree again as inserts ahead of the
+  refused batch (up to `MAX_RESCUES` per page), so the queued edits survive.
+  Other 4xx responses reject the queue and reload the page. Network
+  failures, 408 and 429 retry up to eight times;
   pending content stays protected during retries. After retry exhaustion,
   unsaved operations remain in memory for a later flush, with an error status.
 - **same-block merge**: a content `set` carries `base`, the text the change
@@ -213,7 +224,9 @@ as React state. The session owns:
   applies immediately, so successive updates to different keys are preserved.
   Other operations apply at
   once — to the base, to the on-screen tree through `onRemoteOps` (a
-  load-like transition: no history entry, nothing re-sent), and to every
+  `"remote"` transition: no history entry; it is diffed like an edit, and
+  since the base already has the ops only an edit of ours rendered in the
+  same pass goes out), and to every
   undo snapshot (`blockHistory.rebase`), so undoing your own edit never
   reverts someone else's.
 - **ordered catch-up**: `seq` means the last contiguous batch processed,

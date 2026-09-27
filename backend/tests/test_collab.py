@@ -112,7 +112,11 @@ def test_ops_rejects_bad_structure(guest):
     assert _ops(guest, page["id"], [{"op": "insert", "id": "ruP", "parent": "root", "content": "p"}]).status_code == 403
     # blocks of another page are out of reach, unknown ones are 404
     assert _ops(guest, page["id"], [{"op": "set", "id": other["id"], "content": "x"}]).status_code == 403
-    assert _ops(guest, page["id"], [{"op": "set", "id": "nope", "content": "x"}]).status_code == 404
+    r = _ops(guest, page["id"], [{"op": "set", "id": "nope", "content": "x"}])
+    assert r.status_code == 404 and r.json()["missing"] == "nope"  # the client re-sends it as an insert
+    r = _ops(guest, page["id"], [{"op": "move", "id": "ruA", "parent": "nope2"}])
+    assert r.status_code == 404 and r.json()["missing"] == "nope2"
+    assert "missing" not in _ops(guest, "ruA", [{"op": "set", "id": "ruB", "content": "x"}]).json()  # not a page
     assert _ops(guest, page["id"], [{"op": "insert", "id": "ruC", "parent": other["id"], "content": "c"}]).status_code == 403
     # a bad batch writes nothing (the earlier op in it is rolled back)
     seq = guest.get(f"/api/pages/{page['id']}/ops").json()["seq"]

@@ -149,6 +149,36 @@ test("a rejected batch drops the queue and reloads the page", async (t) => {
   assert.equal(h.session.hasPending(), false);
 });
 
+test("a batch refused for a block the server lacks sends that block again, subtree and all", async (t) => {
+  // The tab holds "c" (with a child) that never reached the server — its
+  // insert was lost. The edit to it is refused; the next POST re-creates it.
+  const bodies = [];
+  const h = setup(t, async (url, init) => {
+    const body = JSON.parse(init.body);
+    bodies.push(body.ops);
+    if (bodies.length === 1) { const e = new Error("no such block: c"); e.status = 404; e.data = { detail: e.message, missing: "c" }; throw e; }
+    return batch(1, body.ops, ME);
+  });
+  const c = { ...block("c", "held"), position: "a2", children: [{ ...block("d", "child"), position: "a0" }] };
+  h.load("page-a", [block("a"), { ...block("b"), position: "a1" }, c]);
+  h.edit([block("a"), { ...block("b"), position: "a1" }, { ...c, content: "edited" }]);
+  await h.session.flush();
+  assert.deepEqual(bodies[1].map((op) => [op.op, op.id]), [["insert", "c"], ["insert", "d"], ["set", "c"]]);
+  assert.deepEqual([bodies[1][0].parent, bodies[1][0].position, bodies[1][0].content], ["page-a", "a2", "edited"]);
+  assert.equal(bodies[1][1].parent, "c");
+  assert.deepEqual(h.reloads, []);
+  assert.equal(h.status.length, 0);
+  assert.equal(h.session.hasPending(), false);
+});
+
+test("a refused block this tab doesn't hold still drops the queue and reloads", async (t) => {
+  const h = setup(t, async () => { const e = new Error("no such parent: zz"); e.status = 404; e.data = { missing: "zz" }; throw e; });
+  h.edit([block("a", "mine"), block("b")]);
+  await h.session.flush();
+  assert.match(h.status[0], /^Save rejected/);
+  assert.deepEqual(h.reloads, ["page-a"]);
+});
+
 test("navigating during a slow save keeps each page's queued ops separate", async (t) => {
   const firstAck = deferred();
   let first = true;
