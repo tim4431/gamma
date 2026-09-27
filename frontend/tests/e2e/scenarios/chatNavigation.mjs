@@ -204,4 +204,64 @@ export async function chatNavigationScenarios(env) {
       assertNoProblems(page);
     } finally { await ctx.close(); }
   });
+
+  await step("chat navigation: a failed request is a card with its fix; Retry asks again; a broken-off reply keeps its text", async () => {
+    await alice.api(`/api/chats/${pdf.id}`, { method: "PUT", body: { messages: [] } });
+    const ctx = await alice.context(browser);
+    await fakeAiModels(ctx);
+    await ctx.addInitScript(() => {
+      localStorage.setItem("gamma-ai-login-check", "off");
+      window.chatCalls = 0;
+      const fetch = window.fetch.bind(window);
+      const lines = (events) => new Response(events.map((e) => JSON.stringify(e) + "\n").join(""),
+        { headers: { "Content-Type": "application/x-ndjson" } });
+      window.fetch = (input, init) => {
+        if (String(input).endsWith("/api/ai/chat")) {
+          window.chatCalls += 1;
+          // 1st: the provider refused the key (the server's classified 502);
+          // 2nd (Retry): an answer that breaks off with an overloaded error.
+          if (window.chatCalls === 1) {
+            return Promise.resolve(new Response(JSON.stringify({
+              detail: "AI call failed: upstream 401: Incorrect API key provided: sk-t***123",
+              kind: "auth", status: 401, provider_name: "OpenAI", provider_id: "nope", provider_auth: "key",
+            }), { status: 502, headers: { "Content-Type": "application/json" } }));
+          }
+          return Promise.resolve(lines([{ delta: "Half an answer" },
+            { error: "AI call failed: upstream 529: Overloaded", kind: "overloaded", status: 529, provider_name: "OpenAI" }]));
+        }
+        return fetch(input, init);
+      };
+    });
+    const page = await openPage(ctx, `${server.base}/?ws=${alice.ws}&page=${pdf.id}`);
+    try {
+      const input = page.getByRole("combobox", { name: "Message AI" });
+      await input.waitFor();
+      await page.waitForLoadState("networkidle");
+      await input.fill("Summarize this");
+      await input.press("Enter");
+      const card = page.locator(".chatErrorCard");
+      await card.filter({ hasText: "OpenAI rejected the API key" }).waitFor();
+      await card.getByRole("button", { name: "Update key", exact: true }).waitFor();
+      // The provider's own words are folded away under Details.
+      assertEq(await card.locator("details:not([open]) summary", { hasText: "Details from the provider" }).count(), 1);
+      // Retry re-sends the question: the card is replaced by the new reply,
+      // which broke off — its text stays, with the compact card under it.
+      await card.getByRole("button", { name: "Retry", exact: true }).click();
+      await page.locator(".chatErrorCard.compact", { hasText: "OpenAI is overloaded" }).waitFor();
+      assert((await page.locator(".chatBubble.ai").innerText()).includes("Half an answer"), "the partial answer stays");
+      assertEq(await page.locator(".chatErrorCard").count(), 1, "the refused request was replaced, not kept");
+      let saved;
+      await until(async () => {
+        saved = await alice.api(`/api/chats/${pdf.id}`);
+        return saved.messages?.length === 2 && saved.messages.at(-1).errorKind && !saved.messages.at(-1).partial;
+      });
+      assertEq(saved.messages.at(-1).text, "Half an answer");
+      assertEq(saved.messages.at(-1).errorKind, "overloaded");
+      assertEq(saved.messages.at(-1).error, undefined, "a broken-off answer is still an answer");
+      // The saved card survives a reload.
+      await page.reload();
+      await page.locator(".chatErrorCard.compact", { hasText: "OpenAI is overloaded" }).waitFor();
+      assertNoProblems(page);
+    } finally { await ctx.close(); }
+  });
 }
