@@ -173,15 +173,48 @@ with a faked feed and real acks.
 
 ## The Settings dialog
 
-One dialog, one sidebar in three groups, defined by `PREFERENCE_NAV`,
-`AI_NAV` and `MANAGEMENT_NAV` in
-[SettingsDialog.jsx](../../frontend/src/settings/SettingsDialog.jsx). Every
-pane is one click from any other; nothing opens a second dialog or a
-"back" link. Panes carry no explanatory subtitle: a section rule's right-hand
+One dialog, one sidebar
+([SettingsDialog.jsx](../../frontend/src/settings/SettingsDialog.jsx)): the
+account card on top (`NavAccountCard`: avatar initial, name, "Account ·
+4 KB used" and the storage bar, from `/api/quota` like the account menu; it
+opens the account pane, whose name "Account & sync" is its accessible name,
+and carries that pane's notice dot), then four captioned groups —
+`PREFERENCE_NAV` (Preferences), `AI_NAV` (AI), `LIBRARY_NAV` (Library) and
+`ADMIN_NAV` (Administration, with an `admin` tag, rendered only for admins:
+it changes the server for everyone) — and `HELP_NAV`, Help & diagnostics,
+pinned to the rail's bottom. Every pane is one click from any other;
+nothing opens a second dialog or a "back" link. Panes carry no explanatory subtitle: a section rule's right-hand
 tag (an icon plus "account" or "browser", `Section`'s `scope` prop, matching
 the settings' scope in `PREFS`; an account tag's icon is the sync state of
 that section's own settings, above) says where a setting lives, a row's
 short hint what it does, and the hover `title` the rest.
+
+The account card:
+
+- **Account & sync** (pane id `account`; `sync` is an alias): the signed-in
+  account's row, storage meter and Gamma Cloud link row.
+  Under it, the sync sections
+  ([SettingsSync.jsx](../../frontend/src/settings/SettingsSync.jsx)):
+  **Publishing** lists the workspaces that publish pages to Gamma Cloud
+  (`PublishingSection` in SettingsMirrors.jsx: the count of pages, the
+  state, Conflicts when any wait, a "more" menu with Sync now and Stop
+  publishing all; an empty state for the signed-in with nothing published).
+  **Clones** (`MirrorsSection` in
+  [SettingsMirrors.jsx](../../frontend/src/settings/SettingsMirrors.jsx))
+  lists the account's mirrors of remote workspaces in git's words (each row:
+  status line, Open, Sync or Reattach, Conflicts — the conflict cards, each
+  resolved there or opened on its block — and a "more" `ActionMenu` with
+  Force pull / Force push, Detach, Remove origin) and offers "Clone a remote
+  workspace" (a `SubDialog`: origin server, write token, into a new or an
+  existing workspace, name, direction) — [mirror.md](mirror.md). Both
+  sections are hidden for the guest. The same state sits in the header as
+  the sync pill (`collaboration/MirrorPopover.jsx`) while a clone is open;
+  the clone's own settings (cadence, direction, force pull / push, detach /
+  reattach, remove origin) live in that pill's gear view, stored on the
+  server per mirror (`mirrors.poll_s`, `on_change`, `mode`). Last comes
+  **Sync status**, the sync pill's scope (a `Segmented`: synced pages only,
+  or every page of a workspace that syncs some — `syncPillScope`,
+  [mirror.md](mirror.md) "Publishing").
 
 Preferences:
 
@@ -219,30 +252,6 @@ Preferences:
   click-then-press to rebind, Backspace unbinds, a reset button when it
   differs from the default, red caps and "Also used by …" when two commands
   share a chord — and **Built in**, the outliner's fixed keys read-only.
-- **Account & sync** (pane id `account`; `sync` is an alias): the signed-in
-  account's row, storage meter and Gamma Cloud link row.
-  Under it, the sync sections
-  ([SettingsSync.jsx](../../frontend/src/settings/SettingsSync.jsx)):
-  **Publishing** lists the workspaces that publish pages to Gamma Cloud
-  (`PublishingSection` in SettingsMirrors.jsx: the count of pages, the
-  state, Conflicts when any wait, a "more" menu with Sync now and Stop
-  publishing all; an empty state for the signed-in with nothing published).
-  **Clones** (`MirrorsSection` in
-  [SettingsMirrors.jsx](../../frontend/src/settings/SettingsMirrors.jsx))
-  lists the account's mirrors of remote workspaces in git's words (each row:
-  status line, Open, Sync or Reattach, Conflicts — the conflict cards, each
-  resolved there or opened on its block — and a "more" `ActionMenu` with
-  Force pull / Force push, Detach, Remove origin) and offers "Clone a remote
-  workspace" (a `SubDialog`: origin server, write token, into a new or an
-  existing workspace, name, direction) — [mirror.md](mirror.md). Both
-  sections are hidden for the guest. The same state sits in the header as
-  the sync pill (`collaboration/MirrorPopover.jsx`) while a clone is open;
-  the clone's own settings (cadence, direction, force pull / push, detach /
-  reattach, remove origin) live in that pill's gear view, stored on the
-  server per mirror (`mirrors.poll_s`, `on_change`, `mode`). Last comes
-  **Sync status**, the sync pill's scope (a `Segmented`: synced pages only,
-  or every page of a workspace that syncs some — `syncPillScope`,
-  [mirror.md](mirror.md) "Publishing").
 
 AI:
 
@@ -281,7 +290,7 @@ AI:
   `(OAuth)` suffix the provider mints — or token), its scope, the connected
   and expiry dates, and an icon-only Disconnect.
 
-Manage:
+Library:
 
 - **Workspaces**: storage meter, personal and shared workspaces (each row:
   Open, a Data menu with export and import, Manage — an inline detail page
@@ -299,16 +308,22 @@ Manage:
   a Run now / Edit / Duplicate / Delete `ActionMenu`), then the server-kept
   snapshots per workspace (Back up all, and per workspace: back up now,
   download, restore, delete).
-- **Library maintenance**: workspace storage, search-index rebuilding and
-  the per-paper metadata / text / index health table.
-- **Users** (admins): accounts, each with its personal workspaces and
+- **Maintenance** (the pane's head says Library maintenance): workspace
+  storage, search-index rebuilding and the per-paper metadata / text / index
+  health table.
+
+Administration (admins only):
+
+- **Users**: accounts, each with its personal workspaces and
   labelled Storage / Edit buttons.
-- **Server** (admins): the dashboard (build, uptime, warnings, the update
+- **Server**: the dashboard (build, uptime, warnings, the update
   check), the public server URL, storage defaults (each box saves on Enter
   or blur), **Guests**, the shared AI provider, shared workspaces, server
   backups and the log with its level filter ([user_db.md](user_db.md)).
-- **Diagnostics**: browser tracing, the browser session log and, under
-  Help, the Report a problem button (the same dialog as the account menu's
+At the bottom of the rail:
+
+- **Help & diagnostics** (pane id `diagnostics`): browser tracing, the
+  browser session log and, under Help, the Report a problem button (the same dialog as the account menu's
   entry; [debugging.md](debugging.md) "Report a problem").
 
 **Shared AI provider** (Server, `SettingsAi.jsx` `SharedAiProviderSettings`)

@@ -639,6 +639,24 @@ export function QuotaMeter({ usedBytes, quotaMb, barOnly }) {
   );
 }
 
+// The account at the top of the Settings rail, where every app puts it:
+// avatar initial, name, "Account · 4 KB used" and the storage bar (with a
+// quota). It opens the account pane, whose name (`label`) is its accessible
+// name; `dot` is that pane's notice dot.
+export function NavAccountCard({ name, usedBytes, quotaMb, label, active, dot, onClick }) {
+  return (
+    <button type="button" className={`setNavAccount${active ? " active" : ""}`} aria-label={label}
+      aria-current={active ? "page" : undefined} onClick={onClick}>
+      <span className="setNavAvatar" aria-hidden="true">{(name || "?").slice(0, 1).toUpperCase()}</span>
+      <span className="setNavAccountText">
+        <span className="setNavAccountName"><span>{name}</span>{dot}</span>
+        <span className="settingDesc">{usedBytes != null ? t("Account · {used} used", { used: fmtBytes(usedBytes) }) : t("Account")}</span>
+        <QuotaMeter usedBytes={usedBytes} quotaMb={quotaMb} barOnly />
+      </span>
+    </button>
+  );
+}
+
 // Percentage-only variant of QuotaMeter. It deliberately shares the exact
 // quotaMeter/quotaBar markup and warning thresholds so provider allowance and
 // storage quota read as the same kind of capacity indicator.

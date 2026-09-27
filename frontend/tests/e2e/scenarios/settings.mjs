@@ -533,7 +533,7 @@ export async function settingsScenarios(env) {
       assert((await row(page, "Interface size").innerText()).includes("110%"));
       await row(page, "Interface size").getByRole("button", { name: "Reset", exact: true }).click();
       if (flags.keep) await page.screenshot({ path: `${server.dir}/settings-appearance.png`, animations: "disabled" });
-      await nav(page, "Diagnostics").click();
+      await nav(page, "Help & diagnostics").click();
       await nav(page, "Appearance").click();
       if (flags.keep) await page.screenshot({ path: `${server.dir}/settings-library.png`, animations: "disabled" });
       await page.getByRole("checkbox", { name: "Labels", exact: true }).uncheck();
@@ -861,7 +861,7 @@ export async function settingsScenarios(env) {
       await page.reload();
       await page.waitForSelector(".folderNewBtn");
       await openSettings(page);
-      await nav(page, "Diagnostics").click();
+      await nav(page, "Help & diagnostics").click();
       await row(page, "Report a problem").getByRole("button", { name: "Report…", exact: true }).click();
       await dialog.waitFor();
       await dialog.getByText("Preview the report", { exact: true }).click();

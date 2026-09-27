@@ -122,7 +122,7 @@ The home page is a recents feed of all your pages, with a **Recently viewed** st
 
 - The **(i) button** in the Notes panel's title row opens the metadata popover: title, authors, venue, year, DOI, arXiv — all editable (Enter saves), with **↻ refetch**, an AI title-fill button, and a health check of the extracted PDF text (with a preview of what the AI actually reads).
 - The share popover holds the **BibTeX** entry and a slide-ready **citation** that pastes into PowerPoint with real italics, each with a copy button.
-- Settings → Library maintenance shows a per-paper metadata and search-index health table with batch retry.
+- Settings → Maintenance shows a per-paper metadata and search-index health table with batch retry.
 
 ## Sharing a page
 
@@ -241,28 +241,28 @@ The installed web app still needs the server to be reachable. For a library that
 
 ## Report a problem
 
-Something broke? Open the account menu and choose **Report a problem…** (it is also under Settings → Diagnostics → Help). Say what happened and, if you know, how to bring it back. Gamma adds what a maintainer needs to reproduce it: which build the server runs, your browser and screen, what kind of view was open, and the app's own recent log lines — never your notes, files or names, and any secret-looking text is masked; the preview shows exactly what goes out. **Record…** captures your screen while you show the problem (the dialog shrinks to a small pill with a Stop button; up to three minutes, no sound); the recording is saved to your downloads and you drop it into the GitHub form. **Open GitHub issue** opens the bug form with everything filled in for you to review before posting, and copies the same report to your clipboard; **Copy report** is for sending it any other way.
+Something broke? Open the account menu and choose **Report a problem…** (it is also under Settings → Help & diagnostics). Say what happened and, if you know, how to bring it back. Gamma adds what a maintainer needs to reproduce it: which build the server runs, your browser and screen, what kind of view was open, and the app's own recent log lines — never your notes, files or names, and any secret-looking text is masked; the preview shows exactly what goes out. **Record…** captures your screen while you show the problem (the dialog shrinks to a small pill with a Stop button; up to three minutes, no sound); the recording is saved to your downloads and you drop it into the GitHub form. **Open GitHub issue** opens the bug form with everything filled in for you to review before posting, and copies the same report to your clipboard; **Copy report** is for sending it any other way.
 
 ## Settings at a glance
 
-Settings (account menu → Settings) has one sidebar in three groups; the search box at the top (Ctrl+F) finds any setting by name — Enter opens the first match, ↑/↓ walk the list.
+Settings (account menu → Settings) has one sidebar: your account card on top (it opens Account & sync), four groups under it, and Help & diagnostics at the bottom. The search box at the top (Ctrl+F) finds any setting by name and says what it does and where it lives — Enter opens the first match, ↑/↓ walk the list.
 
 | Group | Pane | What's there |
 |---|---|---|
+| Account card | Account & sync | Your account, storage meter and Gamma Cloud link; **Settings sync** (*Sync now*; when this server and the cloud hold different settings, a dialog asks *Fetch from cloud* or *Push to cloud*); published pages, **Clones** (offline copies) and the sync pill |
 | Preferences | Appearance | Theme (system + seven), language, flip page colors, library cards (thumbnails / folders / labels), interface size, tour suggestions |
 | | Reading & editing | PDFs (imported annotations, open-access fallback, metadata auto-fetch, saving external PDFs), handwriting (pen only / pen and finger, pressure), translation (button, language, selection, model or service and its keys, speed), the Enter key, how search opens |
 | | Keyboard | Every shortcut, rebindable |
-| | Account & sync | Your account, storage meter and Gamma Cloud link; **Settings sync** (*Sync now*; when this server and the cloud hold different settings, a dialog asks *Fetch from cloud* or *Push to cloud*); published pages, **Clones** (offline copies) and the sync pill |
 | AI | Connections | Providers and keys, ChatGPT sign-in, default models, token usage |
 | | Chat | Default reasoning effort, snapshot clearing, which tools the agent may use per chat kind |
 | | Advanced | Tool limits, context budgets |
 | | Prompts | The system prompts |
 | | Integrations | Codex / Claude Code / DeepSeek Harness / MCP connections and tokens |
-| Manage | Workspaces | Personal and shared workspaces, export / import |
-| | Backups | Server-side snapshots |
-| | Library maintenance | Storage, search-index rebuild, metadata health table |
-| | Users, Server | Administrators: accounts, the dashboard, public URL, storage defaults, shared workspaces, server backups, the log |
-| | Diagnostics | This browser's session log, debug tracing, Report a problem |
+| Library | Workspaces | Personal and shared workspaces, export / import |
+| | Backups | Scheduled backup tasks and server-side snapshots |
+| | Maintenance | Storage, search-index rebuild, metadata health table |
+| Administration (admins only) | Users, Server | Accounts, the dashboard, public URL, storage defaults, shared workspaces, server backups, the log |
+| Help & diagnostics | | This browser's session log, debug tracing, Report a problem |
 
 Preferences apply immediately; browser-only ones (theme, layout) are marked *This browser*, the rest sync with your account.
 

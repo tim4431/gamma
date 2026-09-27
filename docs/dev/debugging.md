@@ -358,7 +358,7 @@ save path, workspaces, auth or rendering of URLs should add a step here; the
   shows the build and the update check. Backend code must log through
   `gamma/logbuf.py`'s `log` (never `print()`); use `log.warning` for what an
   admin should notice. Secrets are masked at insert time. Gone on restart.
-- **Session log + debug tracing** — Settings → Diagnostics: browser-side event
+- **Session log + debug tracing** — Settings → Help & diagnostics: browser-side event
   log; the "Debug logging" toggle traces reading-position/restore/sync
   events into it and the console. Every PDF load phase lands here as
   `pdf <phase> +<ms>` (ms since the viewer started opening that url) and as
@@ -384,7 +384,7 @@ save path, workspaces, auth or rendering of URLs should add a step here; the
 - **Status bar** — Settings → Appearance turns the floating status pill into a
   persistent bar under the tabs.
 - **Report a problem** — account menu → "Report a problem…", or the Help
-  section of Settings → Diagnostics. `src/support/ReportProblem.jsx` asks
+  section of Settings → Help & diagnostics. `src/support/ReportProblem.jsx` asks
   what happened and how to reproduce it; `src/support/problemReport.js`
   (pure, tested by `tests/problemReport.test.mjs`) builds the report. It
   carries the build (`build` on `GET /api/session`,
@@ -406,7 +406,7 @@ save path, workspaces, auth or rendering of URLs should add a step here; the
     (or opening the form) downloads it, the steps name it, and the reporter
     drops it into the form. The e2e step stubs the picker with a canvas
     stream, so the recorder itself runs.
-- **Library health** — Settings → Library maintenance lists, per paper:
+- **Library health** — Settings → Maintenance lists, per paper:
   metadata state, extracted-text chars, and search-index coverage, with
   per-row retry/reindex buttons plus batch actions: Fetch needed / Refetch
   all for metadata, and Reindex needed (only papers the index is missing,

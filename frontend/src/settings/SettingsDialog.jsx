@@ -5,7 +5,7 @@ import { MenuSelect } from "../shared/ui/Menus";
 import { T, t, tn } from "../shared/i18n/i18n.js";
 import {
   PaneHead, Section, Row, Toggle, Segmented, ToggleGroup, IconChoices, UnitInput, CharSlider, approxPages,
-  Stat, Empty, QuotaMeter, LogBox, SettingsDraftContext, SettingsSyncContext, useSettingsDraft,
+  Stat, Empty, QuotaMeter, LogBox, NavAccountCard, SettingsDraftContext, SettingsSyncContext, useSettingsDraft,
 } from "./SettingsKit";
 import { SECTION_PREFS } from "./sectionPrefs.js";
 import { AppearanceSettings } from "./SettingsAppearance";
@@ -31,6 +31,7 @@ import {
   CornerDownLeftIcon,
   FileTextIcon,
   FolderIcon,
+  FoldersIcon,
   GlobeIcon,
   HandIcon,
   LinkIcon,
@@ -55,13 +56,16 @@ import {
   KeyboardIcon,
 } from "../shared/ui/Icons";
 
-// One sidebar, three groups: everyday preferences, AI, management. Every
-// pane is one click from any other; nothing opens a second dialog.
+// One rail: the account card on top (the Account & sync pane), then
+// captioned groups — everyday preferences, AI, the library's housekeeping
+// and, for admins only, Administration (it changes the server for everyone)
+// — with Help & diagnostics pinned to the bottom. Every pane is one click
+// from any other; nothing opens a second dialog.
+const ACCOUNT_NAV = ["account", T("Account & sync"), UserIcon];
 const PREFERENCE_NAV = [
   ["appearance", T("Appearance"), ContrastIcon],
   ["reading", T("Reading & editing"), BookIcon],
   ["keyboard", T("Keyboard"), KeyboardIcon],
-  ["account", T("Account & sync"), UserIcon],
 ];
 const AI_NAV = [
   ["ai", T("Connections"), SparklesIcon],
@@ -70,14 +74,16 @@ const AI_NAV = [
   ["prompts", T("Prompts"), TypeIcon],
   ["integrations", T("Integrations"), LinkIcon],
 ];
-const MANAGEMENT_NAV = [
-  ["workspaces", T("Workspaces"), UsersIcon],
+const LIBRARY_NAV = [
+  ["workspaces", T("Workspaces"), FoldersIcon],
   ["backups", T("Backups"), DatabaseIcon],
-  ["maintenance", T("Library maintenance"), HardDriveIcon],
+  ["maintenance", T("Maintenance"), HardDriveIcon],
+];
+const ADMIN_NAV = [
   ["users", T("Users"), UsersIcon],
   ["server", T("Server"), ServerIcon],
-  ["diagnostics", T("Diagnostics"), ActivityIcon],
 ];
+const HELP_NAV = ["diagnostics", T("Help & diagnostics"), BugIcon];
 
 // --- Editor: notes + search + PDF viewer -----------------------------------
 
@@ -792,7 +798,7 @@ function AdvancedSettings({ value }) {
     .filter((entry) => level === "all" || (level === "warn" ? !!entry.tone : entry.tone === "error"));
   return (
     <>
-      <PaneHead icon={ActivityIcon} title={t("Diagnostics")} />
+      <PaneHead icon={BugIcon} title={t("Help & diagnostics")} />
       <Section title={t("Tracing")}>
         <Toggle
           icon={BugIcon}
@@ -884,7 +890,7 @@ export default function SettingsDialog({
     if (id === "server") return !!server;
     return true;
   };
-  const allNav = [...PREFERENCE_NAV, ...AI_NAV, ...MANAGEMENT_NAV];
+  const allNav = [ACCOUNT_NAV, ...PREFERENCE_NAV, ...AI_NAV, ...LIBRARY_NAV, ...ADMIN_NAV, HELP_NAV];
   const allowed = allNav.filter(([id]) => available(id));
   const requested = resolveSettingsPane(activePane);
   const pane = allowed.some(([id]) => id === requested) ? requested : "appearance";
@@ -916,6 +922,8 @@ export default function SettingsDialog({
     target.focus({ preventScroll: true });
     target.scrollIntoView({ block: "center", behavior: "instant" });
   }, [jump, pane, query, activePane]);
+  // The account card's storage line: read it again whenever the dialog opens.
+  React.useEffect(() => { if (activePane) users?.refreshQuota?.(); }, [!!activePane]); // eslint-disable-line react-hooks/exhaustive-deps
   // Keep keyboard navigation inside the settings surface; Escape uses the same
   // draft guard as Close and clicking the backdrop.
   React.useEffect(() => {
@@ -929,12 +937,21 @@ export default function SettingsDialog({
 
   const aiValue = { ...ai, aiInfo: prompts.aiInfo };
   const paperValue = { ...papers, chatModelName: (ai.aiModels || []).find((m) => m.id === ai.chatModel)?.model };
+  const dot = (id) => (notices?.panes?.[id]
+    ? <i className={`noticeDot inline ${dotTone(notices.panes[id])}`} data-tone={notices.panes[id]} aria-hidden="true" /> : null);
   const navButton = ([id, label, Icon]) => <button key={id} type="button"
     className={`settingsNavBtn ${pane === id && !query ? "active" : ""}`}
     aria-current={pane === id && !query ? "page" : undefined} onClick={() => navigate(id)}>
     <Icon size={17} /><span>{t(label)}</span>
-    {notices?.panes?.[id] ? <i className={`noticeDot inline ${dotTone(notices.panes[id])}`} data-tone={notices.panes[id]} aria-hidden="true" /> : null}
+    {dot(id)}
   </button>;
+  const navGroup = (caption, items, tag) => {
+    const shown = items.filter(([id]) => available(id));
+    return shown.length ? <React.Fragment key={caption}>
+      <div className="settingsNavGroup">{caption}{tag}</div>
+      {shown.map(navButton)}
+    </React.Fragment> : null;
+  };
   return (
     <SettingsDraftContext.Provider value={drafts}>
       <SettingsSyncContext.Provider value={syncState}>
@@ -982,11 +999,16 @@ export default function SettingsDialog({
           </div>
           <div className="settingsBody" inert={pending ? "" : undefined}>
             <nav className="settingsSidebar" aria-label={t("Settings categories")}>
-              {PREFERENCE_NAV.filter(([id]) => available(id)).map(navButton)}
-              <div className="settingsNavGroup">{t("AI")}</div>
-              {AI_NAV.filter(([id]) => available(id)).map(navButton)}
-              <div className="settingsNavGroup">{t("Manage")}</div>
-              {MANAGEMENT_NAV.filter(([id]) => available(id)).map(navButton)}
+              {available("account") ? (
+                <NavAccountCard name={users.me} usedBytes={users.quotaInfo?.used_bytes} quotaMb={users.quotaInfo?.quota_mb}
+                  label={t(ACCOUNT_NAV[1])} active={pane === "account" && !query} dot={dot("account")}
+                  onClick={() => navigate("account")} />
+              ) : null}
+              {navGroup(t("Preferences"), PREFERENCE_NAV)}
+              {navGroup(t("AI"), AI_NAV)}
+              {navGroup(t("Library"), LIBRARY_NAV)}
+              {navGroup(t("Administration"), ADMIN_NAV, <span className="uiTag admin">{t("admin")}</span>)}
+              <div className="settingsNavBottom">{navButton(HELP_NAV)}</div>
             </nav>
             <main className="settingsPane" ref={paneRef} key={pane}>
               {query.trim() ? <>

@@ -41,7 +41,7 @@
   text-align: left;
   font-size: calc(14px * var(--ui-font-scale, 1));
   color: var(--text-secondary);
-  padding: 10px 12px;
+  padding: 6px 12px;
   border-radius: 7px;
   cursor: pointer;
 }
@@ -544,7 +544,32 @@
 .settingsMobileBack { display: none; }
 .settingsSidebar { padding: 16px 10px; }
 .settingsNavBtn { flex-shrink: 0; }
-.settingsNavGroup { margin-top: 16px; padding: 8px 12px; }
+.settingsNavGroup { display: flex; align-items: center; margin-top: 12px; padding: 4px 12px; }
+.settingsNavGroup .uiTag { margin-left: 7px; }
+/* Help & diagnostics, pinned under the groups at the rail's bottom. */
+.settingsNavBottom { margin-top: auto; padding-top: 12px; display: flex; flex-direction: column; }
+/* NavAccountCard: the account at the top of the rail. */
+.setNavAccount {
+  display: flex; align-items: center; gap: 10px; flex-shrink: 0;
+  width: 100%; padding: 9px 10px; margin-bottom: 4px;
+  border: 1px solid var(--border-subtle); border-radius: 10px;
+  background: var(--bg-surface); color: var(--text-primary);
+  font: inherit; text-align: left; cursor: pointer;
+}
+.setNavAccount:hover { border-color: var(--border-hover); }
+.setNavAccount.active { border-color: var(--accent-dark); background: var(--accent-bg); }
+.setNavAvatar {
+  width: 30px; height: 30px; flex-shrink: 0; border-radius: 50%;
+  display: inline-flex; align-items: center; justify-content: center;
+  background: var(--accent-bg); color: var(--accent);
+  font-size: calc(14px * var(--ui-font-scale, 1)); font-weight: 700;
+}
+.setNavAccount.active .setNavAvatar { background: var(--bg-surface); }
+.setNavAccountText { display: flex; flex-direction: column; gap: 2px; flex: 1; min-width: 0; }
+.setNavAccountName { display: flex; align-items: center; gap: 6px; font-size: calc(13.5px * var(--ui-font-scale, 1)); font-weight: 600; }
+.setNavAccountName > span { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.setNavAccountText .settingDesc { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.setNavAccount .quotaBar { margin: 3px 0 0; }
 .settingsNavBtn span { white-space: normal; }
 .settingsPane { overscroll-behavior: contain; }
 .setHead { padding: 0 0 18px; gap: 12px; }
