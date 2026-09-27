@@ -1,5 +1,7 @@
 import { useRef } from "react";
 import { t } from "../shared/i18n/i18n.js";
+import { PAGE_FILE_ACCEPT } from "../shared/lib/utils";
+import { BrandMark } from "../shared/ui/BrandMark";
 import { DownloadIcon, FilePlusIcon, LinkIcon, UploadIcon } from "../shared/ui/Icons.jsx";
 
 // "Start your library": what a library with nothing of the user's in it yet
@@ -26,7 +28,7 @@ export default function LibraryEmpty({ onOpenLink, onUpload, onNewPage, onImport
   return (
     <section className="libEmpty" data-guide="home.empty" aria-labelledby="libEmptyTitle">
       <div className="libEmptyHead">
-        <img className="libEmptyMark" src="/media/icons/favicon.svg" alt="" width="40" height="40" />
+        <BrandMark className="libEmptyMark" size={40} />
         <div>
           <h2 className="libEmptyTitle" id="libEmptyTitle">{t("Start your library")}</h2>
           <p className="libEmptyLead">{t("Add a paper to read, highlight and take notes on — or bring the library you already have.")}</p>
@@ -46,7 +48,7 @@ export default function LibraryEmpty({ onOpenLink, onUpload, onNewPage, onImport
       <input
         ref={fileRef}
         type="file"
-        accept=".pdf,.md,.markdown,application/pdf,text/markdown"
+        accept={PAGE_FILE_ACCEPT}
         multiple
         hidden
         onChange={(e) => { const files = Array.from(e.target.files || []); e.target.value = ""; if (files.length) onUpload(files); }}

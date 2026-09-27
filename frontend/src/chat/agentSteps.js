@@ -9,7 +9,8 @@ import { t, tn } from "../shared/i18n/i18n.js";
 const CHANGE_KINDS = new Set(["rename", "move", "edit", "create"]);
 const LIBRARY_TOOLS = new Set(["rename_page", "move_page"]);
 
-// A call that changed something. Actions saved before `noop` existed mark a
+// A call that changed something (listed in the reply, and ChatDock refreshes
+// the home feed after one). Actions saved before `noop` existed mark a
 // change that changed nothing only by their "ok — …" summary.
 export function isChange(a) {
   return !!a && !a.error && !a.noop && CHANGE_KINDS.has(a.kind) && !/^ok\b/.test(a.summary || "");

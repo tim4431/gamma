@@ -31,23 +31,27 @@ listing.
 Quick open ([QuickOpen.jsx](../../frontend/src/library/QuickOpen.jsx)) is the
 keyboard way into the library from anywhere: Ctrl+P (the `app.quickOpen`
 command, [hotkeys.md](hotkeys.md); not in a share view) opens a palette over
-the library. With no query it lists pages under three headings, Recent (the
-recents queue), Open tabs and Everything else (by last edit), each row with
-its time on the right (viewed for a recent page, else modified; the open
-page says Current). A query ranks through `createLibraryMatcher` (the
-listing's filter box matcher, below) with recency as the tie-break, in the
-sections Pages, Folders (matched on the name or the path; "in parent · n
-pages") and Labels, the matched characters marked (`markedParts` from
-`search/snippets.js`: exact matches only, a typo match stays unmarked). Each
-page row shows the page's folder and label chips (`CardLabels`, as on a file
-row), so a label-only match reads as one. Every typed list ends with the
-Actions: *Search inside notes and PDFs for "q"* (Ctrl+Enter from the input;
-the workspace search opens with the query, App's `openSearchWith`) and
-*Create page "q"* (Shift+Enter; `createPage` with that title, in the folder
-the home view has open; only where `lib.organize`). Enter opens a page
-through `openPage`, the same path as a card double-click, and a folder or
-label in its home view. A query starting with `>` is the command palette
-([hotkeys.md](hotkeys.md)).
+the library.
+
+- With no query it lists pages under three headings: Recent (the recents
+  queue), Open tabs, and Everything else by last edit. Each row shows its
+  time on the right, viewed for a recent page and modified otherwise; the
+  open page says Current.
+- A query ranks through `createLibraryMatcher` (the listing's filter box
+  matcher, below), recency breaking ties. Results fall under Pages, Folders
+  (matched on the name or the path) and Labels. The matched characters are
+  marked (`MarkedText` in SearchPanel.jsx over `markedParts` from
+  `search/snippets.js`); a typo-only match stays unmarked. A page row shows
+  its folder and label chips (`CardLabels`, as on a file row), so a
+  label-only match reads as one.
+- A typed list ends with two actions. *Search inside notes and PDFs for "q"*
+  (Ctrl+Enter) opens the workspace search with the query (App's
+  `openSearchWith`). *Create page "q"* (Shift+Enter, only where
+  `lib.organize`) calls `createPage` with that title, in the folder the home
+  view has open.
+- Enter opens a page through `openPage`, the same path as a card
+  double-click, and a folder or label in its home view. A query starting
+  with `>` is the command palette ([hotkeys.md](hotkeys.md)).
 
 ## Folders and labels
 
@@ -114,23 +118,23 @@ Ctrl+P): the workspace search's typo-tolerant title scorer, case/diacritic-
 folded, every whitespace term must hit the title or a chip, and title hits
 outrank chip-only ones.
 
-The box does not read notes or PDF text, and says where that search is
-(`ListSearchElsewhere`): with nothing matched, a banner above the listing
+The box reads no notes or PDF text, and points to the search that does
+(`ListSearchElsewhere`). With nothing matched, a banner above the listing
 ("No title or label matches …") offers *Search inside notes and PDFs* with
-the full search's shortcut, and Enter in the box does the same; with
-matches, a quiet row right after the last match offers it. Both open the
-workspace search with the query filled in (SearchPanel's `initialQuery`,
-App's `openSearchWith`). Neither is a `.fileRow` / `.folderRow`.
+the full search's shortcut. Enter in the box does the same. With matches, a
+quiet row right after the last match offers it. Both open the workspace
+search with the query filled in (SearchPanel's `initialQuery`, App's
+`openSearchWith`). Neither is a `.fileRow` / `.folderRow`.
 
-The list view is a table: every row ends in the same trailing columns
-(`rowColumns` in App.jsx) — kind (64 px, "PDF" / "Page", a folder's or
-label's page count), the date the active sort uses (110 px, right-aligned,
-`formatShortDate` in libraryUtils.js: "Today, 9:41", "Yesterday", "Sep 12",
-else the year; the full date in its title, the same clock as a card's
-`cardTime`) and the pin slot, reserved on rows that have no pin. A thin
-header (`.fileListHead`, not a `.fileRow`) names the columns, its date
-column following the sort (Modified / Viewed / Added). A PDF's file glyph
-is tinted with `--kind-pdf`. Under 600 px the date column hides.
+The list view is a table. Every row ends in the same trailing columns
+(`rowColumns` in App.jsx): the kind ("PDF", "Page", or a folder's or label's
+page count), the date the active sort uses, and the pin slot, kept empty on
+rows without a pin. The date is `formatShortDate` from libraryUtils.js
+("Today, 9:41", "Yesterday", "Sep 12", else the year), with the full date in
+its title. It reads the same clock as a card's `cardTime`. A thin header
+(`.fileListHead`, not a `.fileRow`) names the columns, and its date column
+follows the sort (Modified / Viewed / Added). A PDF's file glyph is tinted
+with `--kind-pdf`. Under 600 px the date column hides.
 
 **New page** and **New folder** are the FIRST items of the listing itself,
 not toolbar buttons. New page (`newPageAllowed`: not in a label view, not
@@ -141,33 +145,35 @@ attached on the page afterwards (the paperclip in the page header, or a PDF
 dropped on the open page). New folder is the same tile/row shape and turns
 into its own name input in place (Enter or blur commits, Escape cancels); it
 is hidden while the folder is filtered to files-only, to labels, or inside a
-label view. The toolbar is search box → sort → kind → list/grid.
+label view. The toolbar is filter box → sort → kind → list/grid.
 
 In the compact layout (`.phoneUI`: phones and upright tablets,
-[ipad.md](ipad.md)) the toolbar wraps: at the library's root its label
-becomes a large "Library" heading (`homeListRoot`; a folder or label view
-keeps the small label, the breadcrumb above names it), then the search box
-the full width, then sort, kind and list/grid on one row. A file row gives
-the title its own line, wrapping, with the folder and label chips on a
-second line under it (the Phone block at the end of `library.css`).
+[ipad.md](ipad.md)) the toolbar wraps. At the library's root its label
+becomes a large "Library" heading (`homeListRoot`); a folder or label view
+keeps the small label, since the breadcrumb above names it. The filter box
+takes the full width, then sort, kind and list/grid share one row. A file
+row gives the title its own wrapping line, with the folder and label chips
+on a second line (the Phone block at the end of `library.css`).
 
 Search chips (Tab autosuggest) cover both kinds: label chips match exactly,
 folder chips match by prefix.
 
-**Start your library.** A library with nothing of the user's in it yet —
-no root pages, or only seeded ones (`properties.seeded`, the Welcome page
-every new account starts with; `isFreshLibrary` in `library/libraryUtils.js`,
-the same test the first tour's offer uses) — shows `library/LibraryEmpty.jsx`
-at the root instead of the empty line, in both views, above the New page /
-New folder items and the Welcome page: a dashed card with the mark, four
-action cards (a paper from a link — the Add popover with its URL field
-focused; uploads — the Add popover's file types; a blank note page —
-`createPage`; the Import dialog), the first tour when it can start, and the
-drop tip. Only once the listing has loaded, only where the library can be
-organized (`lib.organize`: not for a workspace viewer or a share visitor),
-never in a folder or label view (they keep their own messages). It goes with
-the first page of the user's own. Anchor `home.empty` (view `fresh`, so the
-browser suite's presence check skips it).
+**Start your library.** A library with nothing of the user's in it yet
+shows `library/LibraryEmpty.jsx` at the root, in both views, instead of the
+empty line. Nothing of the user's means no root pages, or only seeded ones
+(`properties.seeded`, the Welcome page every new account starts with):
+`isFreshLibrary` in `library/libraryUtils.js`, the same test the first
+tour's offer uses. The panel sits above the New page / New folder items and
+the Welcome page: a dashed card with the mark and four action cards. They
+open a paper from a link (the Add popover, its URL field focused), upload
+files (the Add menu's file types, `PAGE_FILE_ACCEPT` in
+`shared/lib/utils.js`), start a blank note page (`createPage`) and open the
+Import dialog. A footer offers the first tour when it can start, and the
+drop tip. The panel shows only once the listing has loaded, only where the
+library can be organized (`lib.organize`: not for a workspace viewer or a
+share visitor), and never in a folder or label view, which keep their own
+messages. It goes with the first page of the user's own. Its anchor is
+`home.empty` (view `fresh`, so the browser suite's presence check skips it).
 
 ## The card
 
@@ -237,23 +243,28 @@ non-passive listener in `CardCarousel`), touch swipes natively.
 ## The context menu
 
 The home right-click menu (page/folder/label) is built from the `shared/ui/Menus.jsx`
-primitives, in groups split by dividers (`menuGroups`). A page's menu is the
-same whatever surface it was opened on: Open (Enter) · Rename (F2) | Pin ·
-Add label ▸ · Move to folder ▸ · Duplicate | Copy link · Share… · Export… ·
-Ask AI about this page | Delete (Del), the shortcuts shown as each row's
-`keys` (the effective chords of `app.renameTitle` and `app.deletePages`,
-which act on the single / all selected pages of the listing). "Add label"
-lists every label in the library, checked when all the acted-on pages
-carry it (a click then removes it), and ends with "New label…", a name
-typed in place. Share…, Export… and Ask AI act on the page itself, so they
-open it first and run once it is on screen (`openPageThen`). A folder's
-menu: Open | New page here · New subfolder | Rename · Pin · Share… ·
-Export… | Delete. A "Move to folder" flyout lists every folder path ordered by the
-*active home sort* (`folderMenuPaths`, via the library-wide `folderMeta`
-rollup), checks the ones the selection already carries, and ends with the
-per-tag "remove from" rows; adding still uses the soft-link `addPagesToFolder`
-(same as dropping a card on a folder). Every page card surface opens the SAME
-menu — the Recently-viewed strip and the pinned strip included.
+primitives, in groups split by dividers (`menuGroups`). Every page card
+surface opens the SAME page menu, the Recently-viewed strip and the pinned
+strip included:
+
+- A page: Open (Enter) · Rename (F2) | Pin · Add label ▸ · Move to folder ▸ ·
+  Duplicate | Copy link · Share… · Export… · Ask AI about this page |
+  Delete (Del). The shortcuts are each row's `keys`: the effective chords
+  of `app.renameTitle` and `app.deletePages`, which act on the one / all
+  selected pages of the listing.
+- "Add label" lists every label in the library, checked when all the
+  acted-on pages carry it (a click then removes it). It ends with "New
+  label…", a name typed in place.
+- Share…, Export… and Ask AI act on the page itself, so they open it first
+  and run once it is on screen (`openPageThen`).
+- A folder: Open | New page here · New subfolder | Rename · Pin · Share… ·
+  Export… | Delete.
+
+The "Move to folder" flyout lists every folder path ordered by the *active
+home sort* (`folderMenuPaths`, via the library-wide `folderMeta` rollup) and
+checks the ones the selection already carries. It ends with the per-tag
+"remove from" rows. Adding uses the soft-link `addPagesToFolder`, the same
+as dropping a card on a folder.
 
 A folder's menu also has **Share…**. It opens the folder, then the share
 popover under the topbar's link button, which an open folder shows as a

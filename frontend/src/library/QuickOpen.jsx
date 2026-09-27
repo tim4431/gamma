@@ -4,7 +4,8 @@
 // Typing ranks pages, folders and labels through createLibraryMatcher — the
 // home listing's search: typo-tolerant, on the title or the folder/label
 // chips, title hits first — in sections of their own with the matched
-// characters marked, and ends with two actions: search inside notes and
+// characters marked (exact matches only; a typo-only match stays
+// unmarked), and ends with two actions: search inside notes and
 // PDFs for the query (Ctrl+Enter; the workspace search opens with it) and
 // create a page titled with it (Shift+Enter). ↑↓ moves, Enter opens, Esc
 // closes. Rows reuse the chat mention picker's option style and the home
@@ -19,7 +20,7 @@ import React, { useEffect, useMemo, useRef, useState } from "react";
 import { FileGlyph, FolderIcon, LabelIcon, PlusIcon, SearchIcon, TerminalIcon } from "../shared/ui/Icons";
 import { commandIcon } from "../app/commandIcons.jsx";
 import { chordLabel } from "../shared/lib/hotkeys.js";
-import { markedParts } from "../search/snippets";
+import { MarkedText } from "../search/SearchPanel";
 import { CardLabels } from "./FileBrowser";
 import { createLibraryMatcher } from "./librarySearch";
 import { formatRelativeTime, pageAttachment, parseFolderTags } from "./libraryUtils";
@@ -30,15 +31,6 @@ const MAX_CONTAINERS = 8;
 const COMMAND_PREFIX = ">";
 const SEARCH_CHORD = "Mod-Enter";
 const CREATE_CHORD = "Shift-Enter";
-
-// The query's characters marked in a row's name (search/snippets.js: exact
-// matches through the normalized text; a typo-only match stays unmarked).
-function Marked({ text, query }) {
-  if (!query) return text;
-  return markedParts(text, query).map((p, i) => (
-    p.mark ? <mark key={i} className="searchMark">{p.text}</mark> : <React.Fragment key={i}>{p.text}</React.Fragment>
-  ));
-}
 
 export default function QuickOpen({
   open, prefix = "", commands, onClose, pages, recentViews, openTabs, currentPageId, onOpen,
@@ -213,7 +205,7 @@ export default function QuickOpen({
         <button key={r.key} {...optionProps(r, i, { title: f, "data-kind": "folder" })}>
           <FolderIcon size={16} className="quickOpenFolderIcon" />
           <span>
-            <strong><Marked text={f.slice(f.lastIndexOf("/") + 1)} query={q} /></strong>
+            <strong><MarkedText text={f.slice(f.lastIndexOf("/") + 1)} query={q} /></strong>
             {parent ? <small>{t("in {parent}", { parent })}</small> : null}
           </span>
           <em className="quickOpenTime">{count}</em>
@@ -224,7 +216,7 @@ export default function QuickOpen({
       return (
         <button key={r.key} {...optionProps(r, i, { title: r.label, "data-kind": "label" })}>
           <LabelIcon size={16} />
-          <span><strong><Marked text={r.label} query={q} /></strong></span>
+          <span><strong><MarkedText text={r.label} query={q} /></strong></span>
           <em className="quickOpenTime">{tn("{n} page", "{n} pages", labelCounts.get(r.label) || 0)}</em>
         </button>
       );
@@ -237,7 +229,7 @@ export default function QuickOpen({
     return (
       <button key={r.key} {...optionProps(r, i, { title: [title, detail].filter(Boolean).join("\n"), "data-kind": "page" })}>
         <FileGlyph isPdf={!!pageAttachment(page)} size={16} />
-        <span><strong><Marked text={title} query={q} /></strong>{detail && <small>{detail}</small>}</span>
+        <span><strong><MarkedText text={title} query={q} /></strong>{detail && <small>{detail}</small>}</span>
         <CardLabels className="fileRowLabels" folders={parseFolderTags(page.properties?.folder)} labels={parseFolderTags(page.properties?.category)} />
         {page.id === currentPageId
           ? <em className="quickOpenTag">{t("Current")}</em>

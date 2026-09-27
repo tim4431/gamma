@@ -45,9 +45,8 @@ export function BacklinksPanel({ backlinks, pageId, pageTitle, pages, refCache, 
   }, [backlinks, pageId]);
 
   if (!groups.length) return null;
-  const open = (bl) => onOpen(bl);
   const keyOpen = (bl) => (e) => {
-    if (e.key === "Enter" || e.key === " ") { e.preventDefault(); open(bl); }
+    if (e.key === "Enter" || e.key === " ") { e.preventDefault(); onOpen(bl); }
   };
   return (
     <section className="backlinksPanel">
@@ -61,17 +60,17 @@ export function BacklinksPanel({ backlinks, pageId, pageTitle, pages, refCache, 
         return (
           <div key={g.id} className="backlinkGroup">
             <div className="backlinkPage" role="button" tabIndex={0} title={t("Open the page \"{name}\"", { name: g.title })}
-              onClick={() => open(g.items[0])} onKeyDown={keyOpen(g.items[0])}>
+              onClick={() => onOpen(g.items[0])} onKeyDown={keyOpen(g.items[0])}>
               <FileGlyph isPdf={isPdf} size={14} />
               <span className="backlinkPageTitle">{g.title}</span>
             </div>
             {g.items.map((bl) => (
               <div key={bl.id} className="backlinkItem" role="button" tabIndex={0}
                 title={t("Open the page on this block")}
-                onClick={() => open(bl)} onKeyDown={keyOpen(bl)}>
+                onClick={() => onOpen(bl)} onKeyDown={keyOpen(bl)}>
                 <div className="blockRendered backlinkSnippet">
                   {(bl.content || "").trim()
-                    ? <BlockMarkdown content={bl.content} blockId={`backlink:${bl.id}`} refLabels={refLabels} onBlockRefClick={() => open(bl)} />
+                    ? <BlockMarkdown content={bl.content} blockId={`backlink:${bl.id}`} refLabels={refLabels} onBlockRefClick={() => onOpen(bl)} />
                     : <span className="blockPlaceholder">{t("(empty)")}</span>}
                 </div>
               </div>

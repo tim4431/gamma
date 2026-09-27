@@ -7,9 +7,9 @@ import assert from "node:assert/strict";
 import fs from "node:fs";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
-import { DESKTOP_COPIES } from "../tools/desktop-tokens.mjs";
-import { BASELINE, THEME_SCHEMES, contrastTable, failures, parseColor, parseRules, resolveTheme } from "../tools/themes.mjs";
-import { DARK_THEMES, THEMES, themeScheme } from "../src/app/prefDefs.js";
+import { DESKTOP_COPIES, sameCopy } from "../tools/desktop-tokens.mjs";
+import { BASELINE, contrastTable, failures, parseColor, parseRules, resolveTheme } from "../tools/themes.mjs";
+import { DARK_THEMES, THEMES, UI_SCALE, themeScheme } from "../src/app/prefDefs.js";
 
 const FRONTEND = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "..");
 const read = (p) => fs.readFileSync(path.join(FRONTEND, p), "utf8");
@@ -25,21 +25,24 @@ test("the token evaluator mixes like a browser", () => {
 });
 
 test("every pinned theme is in tokens.css, on the scheme prefDefs gives it", () => {
-  assert.deepEqual(Object.keys(THEME_SCHEMES).sort(), [...PINNED].sort());
   for (const theme of PINNED) {
-    assert.equal(THEME_SCHEMES[theme], themeScheme(theme), theme);
     assert.match(TOKENS, new RegExp(`\\[data-theme="${theme}"\\]`), `${theme} has a block`);
     const { values, colors } = resolveTheme(theme, TOKENS);
     assert.equal(values["color-scheme"], themeScheme(theme), `${theme}: color-scheme`);
     const [r, g, b] = colors["--ground"];
     assert.equal(0.2126 * r + 0.7152 * g + 0.0722 * b < 128, themeScheme(theme) === "dark", `${theme}: the ground suits the scheme`);
   }
-  // The copies of the dark list outside the bundle.
+  // The copies of the theme lists outside the bundle.
   const list = (text, re) => JSON.parse(`[${text.match(re)[1].replace(/'/g, '"')}]`).sort();
-  assert.deepEqual(list(read("index.html"), /data-scheme", \[([^\]]*)\]\.includes/), [...DARK_THEMES].sort(), "index.html's pre-paint");
+  const html = read("index.html");
+  assert.deepEqual(list(html, /if \(!\[([^\]]*)\]\.includes\(t\)\)/), [...PINNED].sort(), "index.html's pre-paint: the pinned themes");
+  assert.deepEqual(list(html, /data-scheme", \[([^\]]*)\]\.includes/), [...DARK_THEMES].sort(), "index.html's pre-paint");
   for (const page of ["bar.html", "launcher.html"]) {
     assert.deepEqual(list(read(`../desktop/ui/${page}`), /const DARK_THEMES = \[([^\]]*)\]/), [...DARK_THEMES].sort(), `desktop/ui/${page}`);
   }
+  // The pre-paint's interface-size bounds are UI_SCALE's.
+  const [, min, max] = html.match(/s >= ([\d.]+) && s <= ([\d.]+)/);
+  assert.deepEqual([+min, +max], [UI_SCALE.min, UI_SCALE.max], "index.html's pre-paint: the UI_SCALE bounds");
 });
 
 test("every colour token resolves in every theme", () => {
@@ -73,14 +76,9 @@ test("no theme's text contrast gets worse than the baseline", () => {
   assert.deepEqual(worse, [], "contrast fell below the baseline (node tools/themes.mjs shows the table)");
 });
 
-// A checkout may turn LF into CRLF in text files; the bytes that matter don't.
-const same = (a, b) => (/\.(css|txt)$/.test(a)
-  ? fs.readFileSync(a, "utf8").replace(/\r\n/g, "\n") === fs.readFileSync(b, "utf8").replace(/\r\n/g, "\n")
-  : fs.readFileSync(a).equals(fs.readFileSync(b)));
-
 test("the desktop shell carries the same tokens and font as the app", () => {
   for (const [from, to] of DESKTOP_COPIES) {
-    assert.ok(fs.existsSync(to) && same(from, to),
+    assert.ok(sameCopy(from, to),
       `${path.relative(FRONTEND, to)} differs from ${path.relative(FRONTEND, from)}: run \`npm run desktop-tokens\` in frontend/`);
   }
   for (const page of ["bar.html", "launcher.html"]) {

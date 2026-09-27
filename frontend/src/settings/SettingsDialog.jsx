@@ -87,7 +87,7 @@ const ADMIN_NAV = [
 ];
 const HELP_NAV = ["diagnostics", T("Help & diagnostics"), BugIcon];
 
-// --- Editor: notes + search + PDF viewer -----------------------------------
+// --- Reading & editing: PDFs, handwriting, search ---------------------------
 
 // What draws on the page with the handwriting tools open: the stored
 // preference is "fingers never draw" (inkPenOnly), pictured as two tiles.
@@ -836,7 +836,7 @@ function MarkedText({ text, words }) {
 // side then names only the section).
 function SearchResults({ results, query, nav, onPick }) {
   const words = query.trim().split(/\s+/).filter(Boolean);
-  const paneOf = (id) => nav.find(([key]) => key === id) || [id, id, SearchIcon];
+  const paneOf = (id) => nav.find(([key]) => key === id);
   const grouped = results.length > 6;
   const panes = grouped ? [...new Set(results.map((r) => r.pane))] : [null];
   return panes.map((group) => {
@@ -899,7 +899,7 @@ function useCloudSyncStatus(open, local) {
 }
 
 export default function SettingsDialog({
-  activePane, onPaneChange, onClose, papers, notes, keyboard, library, ai, prompts,
+  activePane, onPaneChange, onClose, papers, keyboard, library, ai, prompts,
   context, search, users, workspace, backups, server, diagnostics, profileSync, notices,
 }) {
   const syncState = useCloudSyncStatus(!!activePane, profileSync);
@@ -1054,7 +1054,7 @@ export default function SettingsDialog({
                   <PaneHead icon={LanguagesIcon} title={t("Translation")} />
                   <TranslationSettings value={paperValue} />
                 </> : null}
-                {pane === "keyboard" && keyboard ? <KeyboardSettings value={{ ...keyboard, setEnterNewNote: notes?.setEnterNewNote }} /> : null}
+                {pane === "keyboard" && keyboard ? <KeyboardSettings value={keyboard} /> : null}
                 {pane === "maintenance" ? <MaintenanceSettings value={library} /> : null}
                 {pane === "ai" ? <>
                   <PaneHead icon={SparklesIcon} title={t("Connections")} />

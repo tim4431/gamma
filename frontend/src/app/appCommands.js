@@ -2,9 +2,9 @@
 // App.jsx's one window keydown listener dispatches this catalog
 // (shared/lib/hotkeys.js) with a ctx of handles it refreshes every render;
 // the command palette (Ctrl+Shift+P) lists the same entries, and Settings →
-// Keyboard rebinds them. Only the long-standing keys, Ctrl+Shift+P, F2 and
-// Ctrl+, have defaults; the rest are palette entries until the account gives
-// them a chord.
+// Keyboard rebinds them. Only the long-standing keys, Ctrl+Shift+P, F2,
+// Delete and Ctrl+, have defaults; the rest are palette entries until the
+// account gives them a chord.
 // ctx: { shareMode, homeMode, hasPage, hasPdf, readOnly, homePick (the one
 // page selected on the home library), homePicks (how many), search(all),
 // palette(prefix), back(), undo(redo), renameTitle(), deletePages(), toggleChat(),

@@ -9,7 +9,7 @@ import { ExportDialog, ImportDialog } from "../transfers/ImportExport";
 import ImportReviewDialog from "../transfers/ImportReviewDialog";
 import { parseGammaLink } from "../shared/model/gammaLinks.js";
 import { pageHostUser, publicPath } from "../shared/lib/slug.js";
-import { API, apiJson, getShareToken, setShareView, withShare, withWorkspace, setCurrentWorkspace, getCurrentWorkspace, setLinkName, makeId, fmtBytes, getDocIdForUrl, isPdfFile, isMarkdownFile, metaSourceInfo, resolvePdfUrl, pdfProxyUrl, probePdfUrl, setExpectedUser, getExpectedUser, usePersistedState, usePersistedFlag, copyText, copyRich, readNdjson } from "../shared/lib/utils";
+import { API, apiJson, getShareToken, setShareView, withShare, withWorkspace, setCurrentWorkspace, getCurrentWorkspace, setLinkName, makeId, fmtBytes, getDocIdForUrl, isPdfFile, isMarkdownFile, PAGE_FILE_ACCEPT, metaSourceInfo, resolvePdfUrl, pdfProxyUrl, probePdfUrl, setExpectedUser, getExpectedUser, usePersistedState, usePersistedFlag, copyText, copyRich, readNdjson } from "../shared/lib/utils";
 import {
   BlockDropIndicator,
   ChatMarkdown,
@@ -277,6 +277,9 @@ const RECENTS_CAP = 24;
 // Agent tools whose applied action changes the open page's block tree
 // (handleAgentEvent reloads it and lights the block up).
 const AI_BLOCK_TOOLS = ["edit_block", "create_block", "move_block"];
+// The Settings panes of the AI group ("context" is an old name of
+// ai-advanced): entering one loads the masked key list and the prompt drafts.
+const AI_SETTINGS_PANES = ["ai", "assistant", "ai-advanced", "context", "prompts"];
 // A block's text for a chat chip (cursor block, attached block): its note,
 // else its highlight quote.
 const blockChipText = (b) => (b.content || "").trim() || blockQuote(b).trim() || t("(empty block)");
@@ -2624,6 +2627,9 @@ function LibraryApp({ publicPage = null, initialServerConfig = null }) {
     } catch {}
     return null;
   });
+  // Settings on one pane, closing the popover that led there (the account
+  // menu, a notice, the sync pill, the Share popover's cloud row, the chat).
+  const openSettingsPane = (pane) => { setOpenPopover(null); setSettingsOpen(pane); };
   // The first settings sync with Gamma Cloud found two different copies:
   // Settings → Account & sync asks which to keep, opened once per page load.
   const askedCloudChoice = useRef(false);
@@ -2742,12 +2748,9 @@ function LibraryApp({ publicPage = null, initialServerConfig = null }) {
     try {
       const info = await apiJson(`${API}/ai/settings`);
       setAiKeysInfo(info);
-      // Opened from the chat's setup card: the connect dialog comes up set
-      // to the service whose tile was clicked.
-      if (pendingAddRef.current) {
-        startAddAiProvider(pendingAddRef.current, info, { fromChat: true });
-        pendingAddRef.current = null;
-      }
+      // Opened by the chat on a service or an entry (openAiKeysEditor).
+      openAiForm(pendingAiFormRef.current, info);
+      pendingAiFormRef.current = null;
       // The server's shared entries may have changed (Settings → Server).
       refreshAiModels();
       // Usage is account status, not an edit action: fetch it as soon as the
@@ -2822,21 +2825,29 @@ function LibraryApp({ publicPage = null, initialServerConfig = null }) {
   // moving between them keeps it (their edits refresh it themselves).
   const prevSettingsPaneRef = useRef(null);
   useEffect(() => {
-    const aiPanes = ["ai", "assistant", "ai-advanced", "context", "prompts"];
     const cameFrom = prevSettingsPaneRef.current;
     prevSettingsPaneRef.current = settingsOpen;
-    if (aiPanes.includes(settingsOpen) && !aiPanes.includes(cameFrom) && authUser?.user && !shareMode) loadAiKeys();
+    if (AI_SETTINGS_PANES.includes(settingsOpen) && !AI_SETTINGS_PANES.includes(cameFrom) && authUser?.user && !shareMode) loadAiKeys();
   }, [settingsOpen]);
 
-  // Settings → Connections; `service` (a protocol id or "other", from the
-  // chat's setup card) also opens the connect dialog on that service once
-  // the pane has loaded the key list. Buttons pass their click event, which
-  // names nothing.
-  const pendingAddRef = useRef(null);
-  function openAiKeysEditor(service) {
-    if (typeof service === "string") pendingAddRef.current = service;
+  // Settings → Connections. `service` (a protocol id or "other", from the
+  // chat's setup card) also opens the connect dialog set to that service;
+  // `entry` (a chat error card's "Update key" / "Edit connection", the login
+  // check's Fix…) opens that entry's form. A shared entry is the admin's to
+  // edit (Settings → Server), so it gets the pane alone. The form opens at
+  // once when the pane has the key list, else when loadAiKeys lands.
+  const pendingAiFormRef = useRef(null); // {service} | {entry} | null
+  function openAiKeysEditor({ service = "", entry = "" } = {}) {
+    const target = service ? { service } : entry ? { entry } : null;
+    if (AI_SETTINGS_PANES.includes(settingsOpen) && aiKeysInfo) openAiForm(target, aiKeysInfo);
+    else pendingAiFormRef.current = target;
     setSettingsOpen("ai");
     setOpenPopover(null);
+  }
+  function openAiForm(target, info) {
+    if (target?.service) startAddAiProvider(target.service, info, { fromChat: true });
+    const own = target?.entry && info.providers?.find((p) => p.id === target.entry && !p.shared);
+    if (own) startEditAiProvider(own);
   }
 
   const aiProtocolOf = (id) => aiKeysInfo?.protocols?.find((p) => p.id === id);
@@ -2884,29 +2895,6 @@ function LibraryApp({ publicPage = null, initialServerConfig = null }) {
     setAiKeysError("");
     setAiKeysForm({ id: p.id, protocol: p.protocol, name: p.name || "", api_key: "", base_url: p.base_url || "", models: p.models || "", test_model: p.test_model || "" });
   }
-
-  // A chat error card's "Update key" / "Edit connection" (and the login
-  // check's Fix…): Settings → Connections with that entry's form open. A
-  // shared entry is the admin's to edit (Settings → Server), so it gets the
-  // pane alone. The form opens once the pane has (re)loaded the entries.
-  const pendingAiEntryRef = useRef("");
-  function openAiEntry(providerId) {
-    const ownEntry = (info) => info?.providers?.find((p) => p.id === providerId && !p.shared);
-    if (["ai", "assistant", "ai-advanced", "context", "prompts"].includes(settingsOpen) && aiKeysInfo) {
-      openAiKeysEditor();
-      if (ownEntry(aiKeysInfo)) startEditAiProvider(ownEntry(aiKeysInfo));
-      return;
-    }
-    pendingAiEntryRef.current = providerId || "";
-    openAiKeysEditor();
-  }
-  useEffect(() => {
-    const id = pendingAiEntryRef.current;
-    if (!id || !aiKeysInfo) return;
-    pendingAiEntryRef.current = "";
-    const entry = aiKeysInfo.providers?.find((p) => p.id === id && !p.shared);
-    if (entry) startEditAiProvider(entry);
-  }, [aiKeysInfo]);
 
   // Model picker for the form: API protocols are listed live from the
   // provider's /v1/models (typed key, or the stored one when editing);
@@ -4158,7 +4146,7 @@ function LibraryApp({ publicPage = null, initialServerConfig = null }) {
 
   // A [[ref]] chip or a copied block link: scroll to it on this page, else
   // open the page that holds it (`pageId` when the caller knows it — the
-  // chat's list of the agent's note changes).
+  // chat's list of the agent's note changes, a backlink).
   async function openBlockLink(id, pageId) {
     function findBlock(list) {
       for (const b of list || []) {
@@ -4783,6 +4771,7 @@ function LibraryApp({ publicPage = null, initialServerConfig = null }) {
   // as opening a new PDF, then bound to THIS page via POST
   // /pages/{id}/attachment — no new page is created.
   const [attachUrl, setAttachUrl] = useState("");
+  const attachFileRef = useRef(null); // its "Upload a PDF…" row's hidden picker
   // The metadata popover under its header button. Fixed positioning so it
   // floats above the window stack instead of being clipped by the notes
   // window / drawn under the chat below it.
@@ -5647,22 +5636,30 @@ function LibraryApp({ publicPage = null, initialServerConfig = null }) {
     pendingPageActionRef.current = { id, action };
     openBlock(id, { restoreScroll: true });
   }
+  // The open page's Share popover (the topbar's link button, the page menu).
+  function openPageShare(id) {
+    loadShareSettings({ kind: "page", id });
+    setShareError("");
+    loadPublishState();
+    setOpenPopover("share");
+  }
+  // The chat window shown and expanded (on a phone, its panel).
+  function showChat() {
+    setChatHidden(false);
+    setCollapsedWins((prev) => ({ ...prev, chat: false }));
+    if (isPhone) setPhonePanel("chat");
+  }
   useEffect(() => {
     const pending = pendingPageActionRef.current;
     if (!pending || pending.id !== focusedBlockId) return;
     pendingPageActionRef.current = null;
     if (pending.action === "share") {
-      loadShareSettings({ kind: "page", id: pending.id });
-      setShareError("");
-      loadPublishState();
-      setOpenPopover("share");
+      openPageShare(pending.id);
     } else if (pending.action === "export") {
       setExportFolder(null);
       setExportOpen(true);
     } else if (pending.action === "ask") {
-      setChatHidden(false);
-      setCollapsedWins((prev) => ({ ...prev, chat: false }));
-      if (isPhone) setPhonePanel("chat");
+      showChat();
       setTimeout(() => document.querySelector(".chatInputArea")?.focus(), 200);
     }
   }, [focusedBlockId]); // eslint-disable-line react-hooks/exhaustive-deps
@@ -6408,7 +6405,7 @@ function LibraryApp({ publicPage = null, initialServerConfig = null }) {
   // Entering AI settings initializes prompt drafts; navigation guards protect
   // any subsequent edits until Save or Cancel.
   useEffect(() => {
-    if (!["ai", "prompts", "assistant", "ai-advanced", "context"].includes(settingsOpen)) return;
+    if (!AI_SETTINGS_PANES.includes(settingsOpen)) return;
     setPromptDraft(chatSystem || aiInfo?.default_prompt || "");
     setMetaPromptDraft(metaPrompt || aiInfo?.metadata_prompt || "");
     setCitePromptDraft(citePrompt || aiInfo?.cite_prompt || "");
@@ -6627,13 +6624,8 @@ function LibraryApp({ publicPage = null, initialServerConfig = null }) {
         setInkUi((s) => (s.open && s.pen && (s.tool === "eraser" || s.tool === "select") ? { ...s, tool: s.pen, options: false } : s));
       },
       // the first tour's finish card: "Connect an AI provider"
-      openSettings: (pane) => { setSettingsOpen(pane); setOpenPopover(null); },
-      show: (surface) => {
-        if (surface !== "chat") return;
-        setChatHidden(false);
-        setCollapsedWins((prev) => ({ ...prev, chat: false }));
-        if (isPhone) setPhonePanel("chat");
-      },
+      openSettings: (pane) => appCmdRef.current.openSettings(pane),
+      show: (surface) => { if (surface === "chat") showChat(); },
       findEquation: async () => {
         const hits = await pdfSearchRef.current?.(/Attention\s*\(/i);
         return hits?.[0] || null;
@@ -6675,7 +6667,6 @@ function LibraryApp({ publicPage = null, initialServerConfig = null }) {
       // tour picks neither its setup step nor its chat steps too early
       aiConfigured: aiInfo ? !!aiInfo.enabled && !!aiInfo.models?.length : undefined,
       aiEditable: !authUser?.is_guest, // a guest can't store keys
-
       chatVisible: isPhone ? phonePanel === "chat" : !chatHidden && !collapsedWins.chat,
       pdfChatVisible: !!pageAttach && !pdfHidden && !collapsedWins.pdf && !isPhone,
       guideAvailable: !settingsOpen,
@@ -7409,7 +7400,7 @@ function LibraryApp({ publicPage = null, initialServerConfig = null }) {
         onPublish: publishPage,
         onUnpublish: unpublishPage,
         onSync: syncPublication,
-        onLink: () => { setOpenPopover(null); setSettingsOpen("account"); },
+        onLink: () => openSettingsPane("account"),
         accountUrl: serverConfig?.cloud?.issuer ? `${serverConfig.cloud.issuer}/` : "",
       } : null}
       citation={shareTarget?.kind !== "folder" && (pageMeta || pageBibtex) ? (
@@ -7482,16 +7473,11 @@ function LibraryApp({ publicPage = null, initialServerConfig = null }) {
     setFocusedId(newId);
   }
   // Who links here (editor/BacklinksPanel.jsx), under the notes and above
-  // the tail; an entry opens its page at the linking block.
-  function openBacklink(bl) {
-    if (bl.page_root_id && bl.page_root_id !== focusedBlockId) {
-      pendingBlockScrollRef.current = bl.id;
-      openBlock(bl.page_root_id, { pushNav: true });
-    } else openBlockLink(bl.id);
-  }
+  // the tail; an entry opens its page at the linking block, a link jump
+  // like a [[ref]] chip's.
   const backlinksPanel = !homeMode && focusedBlockId && backlinks.length ? (
     <BacklinksPanel backlinks={backlinks} pageId={focusedBlockId} pageTitle={pageTitle} pages={pageBlocks}
-      refCache={refCache} onFetchRefs={onFetchRefs} onOpen={openBacklink}
+      refCache={refCache} onFetchRefs={onFetchRefs} onOpen={(bl) => openBlockLink(bl.id, bl.page_root_id)}
       collapsed={appPrefs.backlinksCollapsed} onCollapsedChange={appPrefs.setBacklinksCollapsed} />
   ) : null;
   const notesTail = !homeMode && !readOnly && focusedBlockId ? (
@@ -7703,21 +7689,16 @@ function LibraryApp({ publicPage = null, initialServerConfig = null }) {
                         <div className="popoverHint attachFileName" title={attachmentSource(pageAttach)}>
                           <PaperclipIcon size={14} /> {pageAttach.name || defaultPageTitle(pageAttach)}
                         </div>
-                        <button className="popoverItem" onClick={() => { setPdfHidden((h) => !h); setOpenPopover(null); }}>
-                          {pdfHidden ? <EyeIcon className="popoverItemIcon" size={16} /> : <EyeOffIcon className="popoverItemIcon" size={16} />}
+                        <MenuItem icon={pdfHidden ? EyeIcon : EyeOffIcon} onClick={() => { setPdfHidden((h) => !h); setOpenPopover(null); }}>
                           {pdfHidden ? t("Show the PDF") : t("Hide the PDF")}
-                        </button>
+                        </MenuItem>
                         {pdfUrl ? (
-                          <button className="popoverItem" onClick={exportRawPdf} title={t("Download the PDF file exactly as stored — no highlights or notes")}>
-                            <DownloadIcon className="popoverItemIcon" size={16} />
+                          <MenuItem icon={DownloadIcon} onClick={exportRawPdf} title={t("Download the PDF file exactly as stored — no highlights or notes")}>
                             {t("Download the PDF")}
-                          </button>
+                          </MenuItem>
                         ) : null}
                         {!readOnly ? (
-                          <button className="popoverItem" onClick={detachPdfFromPage}>
-                            <ScissorsIcon className="popoverItemIcon" size={16} />
-                            {t("Detach the PDF…")}
-                          </button>
+                          <MenuItem icon={ScissorsIcon} onClick={detachPdfFromPage}>{t("Detach the PDF…")}</MenuItem>
                         ) : null}
                       </div>
                     ) : openPopover === "attach" ? (
@@ -7734,16 +7715,14 @@ function LibraryApp({ publicPage = null, initialServerConfig = null }) {
                             else if (e.key === "Escape") setOpenPopover(null);
                           }}
                         />
-                        <label className="popoverItem" aria-disabled={loading || undefined}>
-                          {t("Upload a PDF…")}
-                          <input
-                            type="file"
-                            accept=".pdf,application/pdf"
-                            style={{ display: "none" }}
-                            disabled={loading}
-                            onChange={(e) => { const f = e.target.files?.[0]; e.target.value = ""; if (f) attachPdfToPage({ file: f }); }}
-                          />
-                        </label>
+                        <MenuItem icon={UploadIcon} disabled={loading} onClick={() => attachFileRef.current?.click()}>{t("Upload a PDF…")}</MenuItem>
+                        <input
+                          ref={attachFileRef}
+                          type="file"
+                          accept=".pdf,application/pdf"
+                          hidden
+                          onChange={(e) => { const f = e.target.files?.[0]; e.target.value = ""; if (f) attachPdfToPage({ file: f }); }}
+                        />
                       </div>
                     ) : null}
                   </span>
@@ -8830,9 +8809,9 @@ function LibraryApp({ publicPage = null, initialServerConfig = null }) {
           dictationModel={dictationModel} dictationLang={dictationLang}
           chatSystem={chatSystem} aiInfo={aiInfo} aiProvider={aiProvider}
           chatContextChars={chatContextChars} setChatContextChars={setChatContextChars} multiContextChars={multiContextChars}
-          openAiKeysEditor={openAiKeysEditor} openAiEntry={openAiEntry}
+          openAiKeysEditor={openAiKeysEditor}
           focusSignal={chatFocusSignal}
-          openSettings={(pane) => { setOpenPopover(null); setSettingsOpen(pane); }}
+          openSettings={openSettingsPane}
           isAdmin={!!authUser?.is_admin}
           aiHealth={aiHealth} dismissAiHealth={() => setAiHealth(null)}
           openPopover={openPopover} setOpenPopover={setOpenPopover}
@@ -8888,39 +8867,42 @@ function LibraryApp({ publicPage = null, initialServerConfig = null }) {
     );
   }
 
-  // The "≡" View menu's rows, shared by the editing and read-only topbars;
-  // on a phone the More sheet lists them instead of a View button. Read-only
+  // The "≡" View menu's rows (shared/ui/Menus.jsx), shared by the editing
+  // and read-only topbars; on a phone the More sheet lists them instead of a
+  // View button. A window toggle carries a check while shown. Read-only
   // share views omit AI chat and the import actions. A phone's bottom tabs
   // already switch Notes and Chat, so there only the PDF toggle is a window.
-  // The View menu's rows (also the phone's More sheet), as menu rows
-  // (shared/ui/Menus.jsx): a window toggle carries a check while shown.
   const viewMenuItems = (menuReadOnly) => {
     const pdfRow = !homeMode && !!pageAttach;
     const shown = (on) => (on ? <CheckIcon size={14} className="ctxMenuCheck" /> : null);
     const exportable = (focusedBlock && !homeMode) || (homeMode && folderFilter);
-    return (
-      <>
-        {!isPhone || pdfRow ? <div className="popoverSection">{t("Windows")}</div> : null}
-        {pdfRow ? (
-          <MenuItem icon={FileIcon} trailing={shown(!pdfHidden)} onClick={() => setPdfHidden((v) => !v)}>PDF</MenuItem>
-        ) : null}
-        {!homeMode && !isPhone ? (
-          <MenuItem icon={FileTextIcon} trailing={shown(notesVisible)} onClick={() => setNotesVisible((v) => !v)}>{t("Notes")}</MenuItem>
-        ) : null}
-        {(!menuReadOnly || focusedBlockId) && !isPhone ? (
-          <MenuItem icon={SparklesIcon} trailing={shown(!chatHidden)} onClick={() => setChatHidden((v) => !v)}>{t("AI Chat")}</MenuItem>
-        ) : null}
-        {!menuReadOnly && (!isPhone || pdfRow) ? <MenuDivider /> : null}
-        {!menuReadOnly ? (
+    return menuGroups(
+      [
+        (!isPhone || pdfRow) && <div key="windows" className="popoverSection">{t("Windows")}</div>,
+        pdfRow && (
+          <MenuItem key="pdf" icon={FileIcon} trailing={shown(!pdfHidden)} onClick={() => setPdfHidden((v) => !v)}>PDF</MenuItem>
+        ),
+        !homeMode && !isPhone && (
+          <MenuItem key="notes" icon={FileTextIcon} trailing={shown(notesVisible)} onClick={() => setNotesVisible((v) => !v)}>{t("Notes")}</MenuItem>
+        ),
+        (!menuReadOnly || focusedBlockId) && !isPhone && (
+          <MenuItem key="chat" icon={SparklesIcon} trailing={shown(!chatHidden)} onClick={() => setChatHidden((v) => !v)}>{t("AI Chat")}</MenuItem>
+        ),
+      ],
+      [
+        !menuReadOnly && (
           <MenuItem
+            key="import"
             icon={ImportIcon}
             onClick={() => { setOpenPopover(null); setImportOpen(true); }}
             title={t("Bring in highlights — the ones saved inside this PDF file, a Logseq export, or a whole Zotero library")}
           >{t("Import…")}</MenuItem>
-        ) : null}
-        {exportable ? <MenuDivider /> : null}
-        {exportable ? (
+        ),
+      ],
+      [
+        exportable && (
           <MenuItem
+            key="export"
             icon={ExportIcon}
             onClick={() => {
               setOpenPopover(null);
@@ -8931,13 +8913,14 @@ function LibraryApp({ publicPage = null, initialServerConfig = null }) {
               ? t("Download the “{folderFilter}” folder — every page in it as Markdown, a Logseq graph, a Zotero library, or a Gamma export", { folderFilter })
               : t("Download this page — the PDF with highlights and notes, Markdown, a Logseq graph, a Zotero library, or a Gamma export")}
           >{t("Export…")}</MenuItem>
-        ) : null}
-        {!homeMode && pdfUrl ? <MenuDivider /> : null}
-        {!homeMode && pdfUrl ? (
-          <MenuItem icon={DownloadIcon} onClick={exportRawPdf}
+        ),
+      ],
+      [
+        !homeMode && pdfUrl && (
+          <MenuItem key="download" icon={DownloadIcon} onClick={exportRawPdf}
             title={t("Download the PDF file exactly as stored — no highlights or notes")}>{t("Download PDF")}</MenuItem>
-        ) : null}
-      </>
+        ),
+      ],
     );
   };
   const renderOverflowMenu = (menuReadOnly) => (
@@ -9032,7 +9015,7 @@ function LibraryApp({ publicPage = null, initialServerConfig = null }) {
             <input
               ref={addFilesRef}
               type="file"
-              accept=".pdf,.md,.markdown,application/pdf,text/markdown"
+              accept={PAGE_FILE_ACCEPT}
               multiple
               hidden
               onChange={(e) => { const files = Array.from(e.target.files || []); e.target.value = ""; setOpenPopover(null); if (files.length) uploadFiles(files); }}
@@ -9135,11 +9118,7 @@ function LibraryApp({ publicPage = null, initialServerConfig = null }) {
         <span data-popover="share" className="popoverAnchor">
           <button
             className={`iconBtn ${openPopover === "share" ? "activeIcon" : ""}`}
-            onClick={() => {
-              const opening = openPopover !== "share";
-              if (opening) { loadShareSettings({ kind: "page", id: focusedBlockId }); setShareError(""); loadPublishState(); }
-              setOpenPopover(opening ? "share" : null);
-            }}
+            onClick={() => { if (openPopover === "share") setOpenPopover(null); else openPageShare(focusedBlockId); }}
             disabled={loading}
             data-guide="header.share"
             title={t("Share")}
@@ -9178,7 +9157,7 @@ function LibraryApp({ publicPage = null, initialServerConfig = null }) {
           open={openPopover === "mirror"}
           onToggle={() => setOpenPopover(openPopover === "mirror" ? null : "mirror")}
           jumpTo={(pageId, blockId) => jumpToRef.current?.(pageId, blockId)}
-          onOpenSettings={() => { setSettingsOpen("account"); setOpenPopover(null); }}
+          onOpenSettings={() => openSettingsPane("account")}
         />
       ) : null}
       {authUser?.user && (
@@ -9250,7 +9229,7 @@ function LibraryApp({ publicPage = null, initialServerConfig = null }) {
                       <span className="accountNoticeBody">
                         <span className="accountNoticeText">{noticeText(notice)}</span>
                         <button type="button" className="accountNoticeAction"
-                          onClick={() => { setSettingsOpen(notice.pane); setOpenPopover(null); }}>
+                          onClick={() => openSettingsPane(notice.pane)}>
                           {noticeAction(notice)} →
                         </button>
                       </span>
@@ -9281,12 +9260,12 @@ function LibraryApp({ publicPage = null, initialServerConfig = null }) {
               {!authUser.is_guest ? (
                 <MenuItem
                   icon={UsersIcon}
-                  onClick={() => { setSettingsOpen("workspaces"); setOpenPopover(null); }}
+                  onClick={() => openSettingsPane("workspaces")}
                   title={t("All your workspaces: rename, members, export and import, create another")}
                 >{t("Workspaces…")}</MenuItem>
               ) : null}
               <MenuDivider />
-              <MenuItem icon={SettingsIcon} onClick={() => { setSettingsOpen(notices.firstPane || "general"); setOpenPopover(null); }}
+              <MenuItem icon={SettingsIcon} onClick={() => openSettingsPane(notices.firstPane || "general")}
                 trailing={notices.tone ? <span className={`noticeDot inline ${dotTone(notices.tone)}`} aria-hidden="true" /> : null}>
                 {t("Settings…")}
               </MenuItem>
@@ -10163,11 +10142,7 @@ function LibraryApp({ publicPage = null, initialServerConfig = null }) {
           setStatus,
           refreshQuota, // keep the client-side pre-upload size check in sync without a re-login
         }}
-        notes={{
-          enterNewNote,
-          setEnterNewNote,
-        }}
-        keyboard={{ keybindings, setKeybindings, enterNewNote }}
+        keyboard={{ keybindings, setKeybindings, enterNewNote, setEnterNewNote }}
         library={{
           // batch metadata retry uses the same prompt/model/context prefs as
           // the per-paper fetch in the metadata popover

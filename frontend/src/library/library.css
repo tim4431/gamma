@@ -316,7 +316,7 @@
 .homeSearchBannerText strong { color: var(--text-primary); }
 .homeSearchBannerBtn { display: inline-flex; align-items: center; gap: 6px; }
 .homeSearchKey {
-  font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
+  font-family: var(--font-mono);
   font-size: var(--fs-2xs);
   opacity: 0.8;
   margin-left: 4px;
@@ -585,12 +585,7 @@
 .quickOpenTag { flex-shrink: 0; font-style: normal; font-size: var(--fs-2xs); color: var(--text-dim); }
 /* Section headings (Recent / Open tabs / … or Pages / Folders / Labels /
    Actions) and the time or count on a row's right. */
-.quickOpenSection {
-  padding: 8px 8px 3px;
-  font-size: var(--fs-2xs);
-  font-weight: 600;
-  color: var(--text-dim);
-}
+.quickOpenSection { padding: 8px 8px 3px; } /* type: the shared label rule in app.css */
 .quickOpenSection:first-child { padding-top: 2px; }
 .quickOpenTime { flex-shrink: 0; font-style: normal; font-size: var(--fs-2xs); color: var(--text-dim); white-space: nowrap; }
 .quickOpenAction { font-size: var(--fs-xs); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
@@ -611,9 +606,6 @@
 .phoneUI .homeListLabel { flex: 1 0 100%; }
 .phoneUI .homeListLabel.homeListRoot {
   font-size: var(--fs-2xl);
-  font-weight: 600;
-  letter-spacing: 0;
-  text-transform: none;
   color: var(--text-primary);
 }
 .phoneUI .homeListSpacer { display: none; }
@@ -705,7 +697,6 @@
 }
 .libEmptyCard:hover { background: var(--bg-block); border-color: var(--border-hover); }
 .libEmptyCard.primary { border-color: var(--accent-dark); }
-.libEmptyCard:focus-visible { outline: 2px solid var(--accent); outline-offset: 1px; }
 .libEmptyCardIcon {
   flex: 0 0 auto;
   display: flex;

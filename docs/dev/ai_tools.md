@@ -262,14 +262,14 @@ refuses to execute them if called. Output/argument sizes are capped
 (`_LIST_CAP`, `_DETAIL_CAP`, `_ARG_CAP`), and the loop itself is bounded —
 rounds and a ≤200-mutation guard, detailed in [ai.md](ai.md).
 
-**Every tool call is shown in the reply** — reads included. One pill sums
-them up ("6 steps · listed, read 1 page · 1 failed") and expands to a line
-per call: listing, reading and searching as ☰/📖/🔍, a viewed PDF page as
-👁, the web tools as 🌐/⬇, renames, moves and note edits/creates as
-✎/📁/＋, each expanding to the arguments and the output the model got.
-Everything that changed is listed again under the pill — "Changed in your
-library" (renamed and filed pages, old → new) and "Changed in your notes"
-(edited, added and moved blocks) — each entry a link to the page or block,
-so there is always a visible record of what the agent looked at and
-changed. The note tools' actions carry their page's `title` for that list;
-a change tool that changed nothing is marked `noop` and not listed.
+**Every tool call is shown in the reply**, reads included, so there is
+always a visible record of what the agent looked at and changed. One pill
+sums them up ("6 steps · listed, read 1 page · 1 failed") and expands to a
+line per call, its icon naming the action kind (`ACTION_ICONS` in
+`chat/ChatDock.jsx`: list, book, search, eye, globe, download, pencil,
+folder, plus). Each line expands to the arguments and the output the model
+got. Everything that changed is listed again under the pill: "Changed in
+your library" (renamed and filed pages, old → new) and "Changed in your
+notes" (edited, added and moved blocks), each entry a link to the page or
+block. The note tools' actions carry their page's `title` for that list; a
+change tool that changed nothing is marked `noop` and not listed.

@@ -29,6 +29,14 @@ import { t } from "../shared/i18n/i18n.js";
 
 export { buildSearchRegex, normalizeQuery };
 
+// `text` with the query's matches marked (search/snippets.js markedParts):
+// a result row here, a row of the Ctrl+P palette (library/QuickOpen.jsx).
+export function MarkedText({ text, query, opts, lead = 0 }) {
+  return markedParts(text, query, opts, lead).map((p, i) => (
+    p.mark ? <mark key={i} className="searchMark">{p.text}</mark> : <React.Fragment key={i}>{p.text}</React.Fragment>
+  ));
+}
+
 export default function SearchPanel({
   open, onOpenChange,
   focusedBlockId, homeBlocks, allFolderPaths,
@@ -282,9 +290,7 @@ export default function SearchPanel({
   const pagesById = useMemo(() => new Map(homeBlocks.map((b) => [b.id, b])), [homeBlocks]);
   const isPdfPage = (id) => !!pageAttachment(pagesById.get(id));
   const markOpts = { caseSensitive, wholeWord };
-  const marked = (text, opts = markOpts, lead = 0) => markedParts(text, q, opts, lead).map((p, i) => (
-    p.mark ? <mark key={i} className="searchMark">{p.text}</mark> : <React.Fragment key={i}>{p.text}</React.Fragment>
-  ));
+  const marked = (text, opts = markOpts, lead = 0) => <MarkedText text={text} query={q} opts={opts} lead={lead} />;
   const section = (label, count) => (
     <div className="searchSection">{label}{count ? <span className="searchSectionCount">{count}</span> : null}</div>
   );

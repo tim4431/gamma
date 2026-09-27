@@ -128,7 +128,7 @@ async function runAction(action, vars, live, cancelled, seen, onCleanup, service
 async function showToursMenu() {
   await revealAnchor("account.tour", () => false);
   const el = await waitAnchor("account.tour").catch(() => null);
-  if (el && !el.closest("details")?.open && el.getAttribute("aria-expanded") !== "true") el.click();
+  if (el && el.getAttribute("aria-expanded") !== "true") el.click();
 }
 
 // Reveal an anchor inside a closed surface: click through its registered
@@ -158,8 +158,9 @@ const CREATES_GRACE_MS = 1500; // what turns up this soon was there already
 // itself; the Tours menu still works. facts: what App knows (view, hasPdf,
 // demo…), matched against `requires`. services: App's hands — show(surface) brings
 // up a tour's `show` surface, finish(what) restores what a tour's `finish`
-// names once its last step is done, plus the demo helpers. tidy: closes
-// App's transient popovers when a step needs none of them.
+// names once its last step is done, openSettings(pane) serves the finish
+// card's AI tile, plus the demo helpers. tidy: closes App's transient
+// popovers when a step needs none of them.
 export function useGuide({ enabled = true, suggest = true, scope = "", facts = {}, services = {}, tidy } = {}) {
   const servicesRef = useRef(services);
   servicesRef.current = services;
@@ -233,11 +234,11 @@ export function useGuide({ enabled = true, suggest = true, scope = "", facts = {
     activity.current = null;
   }, []);
 
+  const finished = useRef(null); // the tour whose last step just completed
   // Moves on from step `from`, or from wherever the run is (null): a pass-over
   // the engine scheduled for one step never moves a later one.
   // Past the last step the tour is done; one with a `finishCard` shows it
   // (still "running", so nothing else is offered meanwhile).
-  const finished = useRef(null); // the tour whose last step just completed
   const advance = useCallback((from = null) => {
     setRun((r) => {
       if (!r || (from !== null && r.index !== from)) return r;
@@ -506,7 +507,7 @@ export function useGuide({ enabled = true, suggest = true, scope = "", facts = {
   // the paper (the AI chat tour, or connecting a provider first), "tours"
   // opens the account menu's Tours list.
   const finishing = !!run?.finishing && runAvailable;
-  const finish = useMemo(() => {
+  const finishCard = useMemo(() => {
     if (!finishing) return null;
     const spec = run.tour.finishCard;
     const ai = !!factsRef.current.aiConfigured;
@@ -526,7 +527,8 @@ export function useGuide({ enabled = true, suggest = true, scope = "", facts = {
   }, [stop, start]);
   return {
     running: !!run && runAvailable,
-    finishing, finish, finishAction,
+    // Past the last step: the finish card (null otherwise) and its tiles' action.
+    finishCard, finishAction,
     offer: offerCard,
     acceptOffer, dismissOffer,
     tour: run?.tour || null,

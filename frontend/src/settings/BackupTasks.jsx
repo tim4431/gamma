@@ -57,7 +57,7 @@ function TaskEditor({ initial, workspaces, onClose, onSaved }) {
   const [parsed] = React.useState(() => (initial?.cron ? fromUtcCron(initial.cron, OFFSET)
     : { preset: "daily", hour: 3, minute: 0, weekdays: [1], monthday: 1 }));
   const [preset, setPreset] = React.useState(parsed?.preset || "custom");
-  const [time, setTime] = React.useState(parsed ? `${pad(parsed.hour)}:${pad(parsed.minute)}` : "03:00");
+  const [time, setTime] = React.useState(parsed ? clock(parsed) : "03:00");
   const [weekdays, setWeekdays] = React.useState(parsed?.weekdays || [1]);
   const [monthday, setMonthday] = React.useState(parsed?.monthday || 1);
   const [unit, setUnit] = React.useState(draft.retention_mode === "count" ? "count" : "days");

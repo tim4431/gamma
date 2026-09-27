@@ -227,7 +227,7 @@
   margin-top: 2px;
 }
 .guideBtns { display: inline-flex; gap: 6px; margin-left: auto; }
-.guideInvitation .guideCard { border-top: 2px solid var(--accent); gap: 8px; }
+.guideInvitation .guideCard { border-top: 2px solid var(--accent); }
 .guideInvitation .guideStep { color: var(--accent); }
 /* A hint is a sentence with a Tip chip, not a heading under an accent rule. */
 .guideHint .guideCard { border-top-width: 1px; border-top-color: var(--border); }

@@ -18,11 +18,11 @@
     <meta name="theme-color" content="#1b1b1a" />
     <title>Gamma — Annotate PDFs, Share Your Thinking</title>
     <!-- The theme and its scheme must be set before the first frame:
-         tokens.css (linked below, render-blocking) paints its dark defaults
-         otherwise, a dark flash on a light OS. Same rule as App.jsx's theme effect, which takes
-         over once React is up: a pinned theme as stored, anything else
-         ("system", none) follows the OS scheme. The control size likewise, or
-         the buttons jump once the bundle applies it. -->
+         otherwise tokens.css (linked below, render-blocking) paints its dark
+         defaults, a dark flash on a light OS. Same rule as App.jsx's theme
+         effect, which takes over once React is up: a pinned theme as stored,
+         anything else ("system", none) follows the OS scheme. The control
+         size likewise, or the buttons jump once the bundle applies it. -->
     <script>
       (function () {
         var root = document.documentElement, t = null, s = NaN;
@@ -30,7 +30,7 @@
           t = localStorage.getItem("gamma-theme");
           s = parseFloat(localStorage.getItem("gamma-ui-scale"));
         } catch (e) {}
-        // THEMES in app/prefDefs.js, less "system"
+        // THEMES in app/prefDefs.js, less "system" (tests/themes.test.mjs)
         if (!["light", "dark", "gamma-light", "gamma-dark", "sepia", "solarized", "gray"].includes(t)) {
           t = window.matchMedia && window.matchMedia("(prefers-color-scheme: dark)").matches ? "dark" : "light";
         }

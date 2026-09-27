@@ -21,14 +21,15 @@ no built-in default model, so an entry with none picked offers nothing and its
 Test button says so (migration step 15 wrote the old defaults into entries
 that had relied on them). The connect dialog (`ProviderForm` in
 `settings/SettingsAi.jsx`) picks the live list's first model when nothing is
-picked yet — still a pick from the provider's own listing, never a model name
-in code — so a new connection is not saved offering nothing. The same live
-listing is the dialog's key check ("Key works · 14 models available", or the
-provider's refusal), and each adapter (or `SERVICES` preset) names what its
-keys look like and where to make one (`key_placeholder`, `key_url`, sent with
-the protocols in `GET /api/ai/settings`; empty for a sign-in protocol, and not
-shown for a custom endpoint). A connection made in the dialog is tested right
-after it is saved. A saved entry never switches between sign-in and
+picked yet. That is still a pick from the provider's own listing, never a
+model name in code, and a new connection is never saved offering nothing.
+The same live listing is the dialog's key check ("Key works · 14 models
+available", or the provider's refusal). The key field's placeholder and its
+"Get a key at …" link come from the adapter or the `SERVICES` preset
+(`key_placeholder`, `key_url`, sent with the protocols in
+`GET /api/ai/settings`). Both are empty for a sign-in protocol and hidden for
+a custom endpoint. A connection made in the dialog is tested right after it
+is saved. A saved entry never switches between sign-in and
 API key (`PUT` with such a protocol is a 400). The generic prefs endpoints
 refuse the key; the only read path is the masked `GET /api/ai/settings` (last-4
 hint, never the key), guests can't write. `POST /api/ai/providers/{id}/test`
@@ -67,8 +68,9 @@ each protocol's administrator-controlled default base URL, including
 `GAMMA_AI_CHATGPT_BASE_URL`.
 
 Named services (`SERVICES` in `gamma/ai_protocols/__init__.py`, sent as `services` with the
-settings) are form presets: a protocol plus a fixed endpoint, listed in the
-form's service menu between the protocols and "Custom endpoint". DeepSeek is
+settings) are form presets: a protocol plus a fixed endpoint and its key
+hints, offered under the connect dialog's Other tile above "Custom
+endpoint". DeepSeek is
 the `openai` protocol at `https://api.deepseek.com`. An entry made from one
 stores only protocol + base URL; `provider_label` recognizes the pair and
 names the entry after the service when it has no name of its own. The
@@ -108,9 +110,9 @@ branches on a protocol id. Routes, the chat loop, `ai_settings` and
 
 | Concern | Adapter member |
 |---|---|
-| what the form offers | `label`, `base_url` (env default, `config.AI_BASE_URLS`), `auth` (`"key"` / `"oauth"` + the `oauth` module that refreshes tokens), `entry` |
+| what the form offers | `label`, `base_url` (env default, `config.AI_BASE_URLS`), `auth` (`"key"` / `"oauth"` + the `oauth` module that refreshes tokens), `entry`, `key_placeholder` / `key_url` (the key field's hint and "Get a key at" link, for the provider's own endpoint) |
 | the chat call | `wire(conf, tools)` (a sibling wire for some calls), `request(...)`, `reply_text`, `read_reply`, `streams_only` |
-| the stream | `events` (one loop in the base) over `stream_event` / `stream_end` |
+| the stream | `events` (one loop in the base) over `stream_event` / `stream_end`; a stream without a single event raises `NotAnAIStream` |
 | token counts | `usage(raw)` → `{input, output, cache_read, cache_write}` |
 | models | `models_request`, `models(data, conf)` → `[{id, context_window}]`, `catalog_hints` |
 | credential check | `ping_request` (default: the model listing) |
@@ -251,35 +253,41 @@ yield and logs a warning with the elapsed time.
 
 A failure says what kind it is. `ai_client.failure_kind` classifies it in
 one place, from the upstream status and, for an error event inside a
-stream, the provider's wording: `not_configured` (no usable connection,
-the 503), `allowance` (the shared allowance), `auth` (401/403), `rate`
-(429, quota), `overloaded` (5xx, 529), `unreachable` (no connection, a
-timeout, a cut-off stream), `bad_endpoint` (a 404 page, a reply that isn't
-JSON, or a stream without a single server-sent event —
-`ai_protocols.base.NotAnAIStream`), `too_long` (the context) or `other`.
-`_failure_info` in `routers/ai.py` puts that `kind` beside the unchanged
-string `detail` of the HTTP error (a `JSONResponse`) and on the stream's
-closing `{"error"}` line, with the upstream `status` and the connection
-(`provider_id`, `provider_name`, `provider_auth`). The login check
-(`/api/ai/health`) and the Test probe add the same `kind`.
+stream, the provider's wording:
 
-The client (`chat/chatErrors.js`) saves the classification on the reply
-(`errorKind`, `errorDetail`, `errorStatus`, `errorProvider`,
-`errorProviderId`, `errorAuth`) and renders a card instead of the raw text:
-a headline ("OpenAI rejected the API key", "Rate limit or quota reached",
-"Lost the connection to Gamma" for the browser's own `TypeError`), one
-sentence, and the buttons that fix it. Update key / Sign in again / Edit
-connection open Settings → Connections on that entry's form
-(`openAiEntry` in App); Connect AI and Add your own key open the pane; New
-chat starts over. On the latest reply, Retry re-sends the question through
-the edit-and-resend path and Switch model retries with the model picked.
-The raw text is folded under "Details from the provider". A failure with no
-reply text is an AI message carrying `error: true`, saved with the chat so
-it survives a reload but left out of the `history` it sends on later turns
-(`build_messages` skips such items too should an older client send them). A
-reply that broke off keeps its text and gets the compact card under it.
-Replies saved before the classification keep their plain red bubble. The
-login check's warning strip uses the same headlines.
+- `not_configured`: no usable connection (the 503).
+- `allowance`: the shared allowance is used up.
+- `auth`: 401/403. `rate`: 429 or a quota. `overloaded`: 5xx or 529.
+- `unreachable`: no connection, a timeout, a cut-off stream.
+- `bad_endpoint`: a 404 page, a reply that isn't JSON, or a stream without
+  a single server-sent event (`ai_protocols.base.NotAnAIStream`).
+- `too_long`: the prompt exceeds the context. Anything else is `other`.
+
+`_failure_info` in `routers/ai.py` puts that `kind` beside the plain-string
+`detail` of the HTTP error (a `JSONResponse`) and on the stream's closing
+`{"error"}` line. It adds the upstream `status` and the connection
+(`provider_id`, `provider_name`, `provider_auth`). The login check
+(`/api/ai/health`) and the Test probe carry the same `kind`.
+
+The client saves the classification on the reply (`errorKind`,
+`errorDetail`, `errorStatus`, `errorProvider`, `errorProviderId`,
+`errorAuth`) and renders a card instead of the raw text. `chat/chatErrors.js`
+holds the copy per kind: a headline ("OpenAI rejected the API key", "Lost
+the connection to Gamma" for the browser's own `TypeError`), one sentence,
+and the fix. The login check's warning strip shows the same headlines.
+Update key / Sign in again / Edit connection open Settings → Connections on
+that entry's form (`openAiKeysEditor({entry})` in App). Connect AI and Add
+your own key open the pane; New chat starts over. On the latest reply,
+Retry re-sends the question through the edit-and-resend path, and Switch
+model retries with the model picked. The provider's own text is folded
+under "Details from the provider".
+
+A failure with no reply text is an AI message carrying `error: true`. It is
+saved with the chat so it survives a reload, but left out of the `history`
+the client sends on later turns (`build_messages` skips such items too,
+should an older client send them). A reply that broke off keeps its text
+and gets the compact card under it. Replies saved before the classification
+keep their plain red bubble.
 
 Context is *pages from the user's knowledge base* (`ai_context.gather_inputs`
 → `page_report_section`): each page contributes its title, a properties line
@@ -310,13 +318,13 @@ it matters: "Model saw pages 1–9 of 22" for a truncated paper, "PDF file not
 accepted — sent as text" when the file was requested but the provider took
 text instead. `/api/ai/models` marks each model `native_pdf` (false for
 ChatGPT sign-in entries: their wire is the Codex backend, which refuses
-`input_file` parts). The composer's Full PDF switch (shown only while a
-PDF is in context) doesn't default on for such a model; switching it on by
-hand shows a warning pill, and pending uploaded PDFs get the same warning on
+`input_file` parts). The composer's Full PDF switch, shown only while a PDF
+is in context, doesn't default on for such a model. Switching it on by hand
+shows a warning pill, and pending uploaded PDFs get the same warning on
 their chips. `/api/ai/models` also says `transcribe`: whether some
 connection takes dictation (`Protocol.transcription` > 0, an OpenAI-protocol
-key, models picked or not — the same entries `/api/ai/transcribe` picks
-from); the composer's mic shows only then.
+key, models picked or not). These are the entries `/api/ai/transcribe` picks
+from, and the composer's mic shows only then.
 
 PDF extraction (`gamma/pdf_text.py`) is serialized behind a lock — pdfium is
 not thread-safe and overlapping extractions fail both — and reads up to
@@ -410,12 +418,12 @@ notes. The server resolves all three against the request's context pages.
 
 - `focus_block_id` — the block row the cursor is on (`focusedId` in
   `app/App.jsx` → `focusedNote`). The chat shows it as a "Block at your
-  cursor" chip, like a PDF selection, and sends it with every message; the chip's × leaves it out
-  until the cursor moves to another block. Opening a page focuses no row (it
-  lands where the reader left off, else at the top, and only flashes that
-  row), so the chip first appears after a real click or caret move; explicit
-  jumps (a `?block=` link, a highlight, a backlink, a search hit) do focus
-  their row. Its text and sub-blocks enter the
+  cursor" chip, like a PDF selection, and sends it with every message. The
+  chip's × leaves it out until the cursor moves to another block. Opening a
+  page focuses no row (it lands where the reader left off, else at the top,
+  and only flashes that row), so the chip first appears after a real click
+  or caret move. Explicit jumps (a `?block=` link, a highlight, a backlink,
+  a search hit) do focus their row. Its text and sub-blocks enter the
   context as an id-labelled outline ("The user's cursor is on this note
   block …"), and the agent prompt says "this block" / "here" mean that id.
   So *"expand this"* edits the right block without a `read_block` first.
@@ -432,8 +440,8 @@ notes. The server resolves all three against the request's context pages.
   - The open editor's selection. A plain drag on a rendered note opens the
     editor and keeps selecting in the raw source. App's `noteSel` (settled
     120 ms after the last change) turns the cursor chip into a "Selection
-    in this note" chip. It survives the editor closing when the chat input is clicked, and
-    is dropped once sent.
+    in this note" chip. It survives the editor closing when the chat input
+    is clicked, and is dropped once sent.
   - A Ctrl+drag across rendered text. `sourceRangeOfSelection`
     (`editor/clickToSource.js`) maps both ends back to source offsets and
     widens an end inside a formula to the whole formula. A selection it
@@ -449,15 +457,16 @@ notes. The server resolves all three against the request's context pages.
   reply.
 
 Chips render in the composer's chip strip next to PDF passages
-(`SelChip` in `chat/ChatDock.jsx`). Each is two lines: a label saying what
-it is in words, with its icon ("Block at your cursor · added automatically,
-× to leave out", "Selection in this note", "PDF passage · p. 7", "Attached
-block", "Selected note text"), over a one-line preview of the text with the
-markdown dropped and inline math typeset (`chat/chipText.js`, KaTeX). A
-dashed border marks what rode along by itself (the cursor block and the
-editor's selection in it); what the user attached keeps a solid one. They
-clear on send and on a page switch, since the ids belong to the page. Ctrl+click on a highlight card sends the quote as a PDF
-passage, not a block chip.
+(`SelChip` in `chat/ChatDock.jsx`). Each is two lines. The first is a label
+saying what it is in words, with its icon: "Block at your cursor · added
+automatically, × to leave out", "Selection in this note", "PDF passage ·
+p. 7", "Attached block", "Selected note text". The second previews the text
+with the markdown dropped and inline math typeset (`chat/chipText.js`,
+KaTeX). A dashed border marks what rode along by itself (the cursor block
+and the editor's selection in it); what the user attached keeps a solid
+one. They clear on send and on a page switch, since the ids belong to the
+page. Ctrl+click on a highlight card sends the quote as a PDF passage, not
+a block chip.
 
 Reasoning models burn invisible tokens — keep `max_tokens` generous (empty
 responses raise with the finish reason). `/api/ai/models` feeds the chat
@@ -545,26 +554,27 @@ answers. Each adapter's `request` maps the tool defs and the
 `parallel_tool_calls` when tools ride along, so bulk renames batch per round.
 
 Every tool call is announced by a `{"step": {id, tool, args}}` line before
-it runs (`args` only the short ones a label needs: `page_id`, `query`,
-`title`, `folder`, `source`, `pdf_page`, … — never a note's content), then
-streams back as an
+it runs. Its `args` are only the short ones a label needs (`page_id`,
+`query`, `title`, `folder`, `source`, `pdf_page`, …), never a note's
+content. Once it ran, the call streams back as an
 `{"action": {kind, summary, tool, args, result}}` NDJSON line (kinds
 list/read/view/search/rename/move/edit/create, plus `error` with `error: true` for
 failed/blocked calls) that the chat saves in the message. A change also says
 what changed: `rename_page` / `move_page` carry `title` (the page's title
 before the call) and `from` / `to` (old and new title, old and new folder
-path, `""` = the library root), the note tools their page's `title`, and a
-change tool that changed nothing carries `noop: true`. The chat shows a
-reply's actions as one pill ("6 steps · listed, read 1 page · 1 failed",
-`chat/agentSteps.js`) that expands to every call's chip — the arguments
-and the (truncated, `_DETAIL_CAP`) output the model got — and, under it,
-the changes grouped as "Changed in your library" (old title struck through
-→ new, "… moved to ML/Generative") and "Changed in your notes", each a link
-that opens the page or the block (`openBlock(blockId, pageId)` of
-`GammaNavContext`). Actions saved before the structured fields fall back to
-their summary. While the reply streams, the pill names the step running
-now ("Searching library for “…”…") in place of the "Thinking" pill; only
-applied mutations count against
+path, `""` = the library root), and the note tools their page's `title`. A
+change tool that changed nothing carries `noop: true`.
+
+The chat shows a reply's actions as one pill ("6 steps · listed, read 1
+page · 1 failed", `chat/agentSteps.js`). It expands to every call's chip:
+the arguments and the (truncated, `_DETAIL_CAP`) output the model got.
+Under it the changes are grouped as "Changed in your library" (old title
+struck through → new, "… moved to ML/Generative") and "Changed in your
+notes". Each entry is a link that opens the page or the block
+(`openBlock(blockId, pageId)` of `GammaNavContext`). Actions saved before
+the structured fields fall back to their summary. While the reply streams,
+the pill names the step running now ("Searching library for “…”…") in
+place of the "Thinking" pill. Only applied mutations count against
 `MAX_TOOL_ACTIONS` and trigger the home-feed refresh (`onLibraryChange`), and
 the note-block tools' actions carry `page_id`/`src_page_id` so the frontend
 reloads the open page's block tree when the AI touched it (`onNotesChange`;

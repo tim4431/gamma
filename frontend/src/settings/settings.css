@@ -79,7 +79,7 @@
 /* PaneHead's breadcrumbs (a page one level down) and its right-hand action. */
 .setHead .setCrumb { font-weight: 500; color: var(--text-muted); padding: 0; }
 .setHead .setCrumb:hover { color: var(--accent); }
-.setHead .crumbSep { margin: 0 6px; font-weight: 400; color: var(--text-dim); }
+.setHead .crumbSep { margin: 0 6px; font-weight: 400; }
 .setHeadAction { margin-left: auto; flex-shrink: 0; display: inline-flex; gap: 6px; }
 .settingsPaneHint { font-size: var(--fs-xs); color: var(--text-muted); line-height: 1.45; }
 

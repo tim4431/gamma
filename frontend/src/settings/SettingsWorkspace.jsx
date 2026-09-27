@@ -317,16 +317,8 @@ export function NameDialog({ title, label, hint, initial, submitLabel, busy, err
   );
 }
 
-// One workspace, everything its owner (or, with `admin`, a server admin)
-// can do to it, in the settings-row grammar: General (name, storage,
-// default, kind, join), Access (shared; admins edit, owners read), Members
-// (shared) and the Danger zone (leave, delete — each hint says what is lost).
-// `canOpen` / `onOpen` wire the Open button; `onLeft` fires after the
-// caller leaves or deletes it (the pane switches away if it was the open
-// one). `personalCount` hides Delete on an account's last personal workspace.
-// `inline` (Settings → Workspaces) makes it a page of the pane: one
-// breadcrumb head "Workspaces › <name>" with Open workspace at its right,
-// and no footer — every row saves at once. Elsewhere it is a SubDialog.
+// The Manage page as a page of Settings → Workspaces: one breadcrumb head
+// "Workspaces › <name>" whose first crumb goes back.
 function WorkspacePage({ title, subtitle, action, onClose, children }) {
   return <>
     <PaneHead icon={FoldersIcon} title={title} action={action}
@@ -335,6 +327,16 @@ function WorkspacePage({ title, subtitle, action, onClose, children }) {
   </>;
 }
 
+// One workspace, everything its owner (or, with `admin`, a server admin)
+// can do to it, in the settings-row grammar: General (name, storage,
+// default, kind, join), Access (shared; admins edit, owners read), Members
+// (shared) and the Danger zone (leave, delete — each hint says what is lost).
+// `canOpen` / `onOpen` wire the Open button; `onLeft` fires after the
+// caller leaves or deletes it (the pane switches away if it was the open
+// one). `personalCount` hides Delete on an account's last personal workspace.
+// `inline` (Settings → Workspaces) makes it a WorkspacePage with Open
+// workspace at the head's right and no footer — every row saves at once.
+// Elsewhere it is a SubDialog.
 export function ManageWorkspaceDialog({ wsId, me, admin, accounts, confirm, setStatus, canOpen, onOpen, onClose, onLeft, personalCount, inline = false }) {
   const ws = useWorkspace(wsId);
   const cloudSignIn = useCloudSignIn();

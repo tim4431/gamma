@@ -274,7 +274,7 @@ Settings (account menu → Settings) has one sidebar: your account card on top (
 | Administration (admins only) | Users, Server | Accounts, the dashboard, public URL, storage defaults, shared workspaces, server backups, the log |
 | Help & diagnostics | | This browser's session log, debug tracing, Report a problem |
 
-Preferences apply immediately; browser-only ones (theme, layout) are marked *This browser*, the rest sync with your account.
+Preferences apply immediately. Each section is tagged *account* (it follows your account to every browser) or *browser* (this device only, like the interface size and handwriting).
 
 ## Shortcut cheat sheet
 

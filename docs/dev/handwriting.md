@@ -24,10 +24,11 @@ e2e `tests/e2e/scenarios/ink.mjs` and `inkEditing.mjs`.
   editing) and *Remove*; the change applies to that preset, so the row is
   the user's own set of pens (up to 12, kept in localStorage,
   `gamma-ink-tools`). Colours are named in words, never hex codes: a
-  preset reads "Pink highlighter · 14 pt · key 7" and each swatch is titled
-  and labelled by its name (`INK_COLOR_NAMES` in `InkLayer.jsx`); a custom
-  colour takes the name of the nearest palette colour (`nearestInkColor` in
-  `ink.js`, redmean distance). Keys while the strip is open: `1`–`9` arm the preset
+  preset reads "Pink highlighter · 14 pt · key 7", and each swatch is
+  titled and labelled by its name (`INK_COLOR_NAMES` in `InkLayer.jsx`). A
+  custom colour takes the name of the nearest palette colour
+  (`nearestInkColor` in `ink.js`, redmean distance). Keys while the strip
+  is open: `1`–`9` arm the preset
   at that position, `P` / `H` step through the pens / highlighters, `E`
   `L` `V` the eraser / lasso / hand, `Esc`, `Delete` (the lasso
   selection), and **`Ctrl+Z` / `Ctrl+Shift+Z` step the strokes** (each

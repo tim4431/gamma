@@ -15,7 +15,7 @@ import { createTitleScorer } from "../library/librarySearch";
 import { pageAttachment } from "../library/libraryUtils";
 import { ActionMenu, MenuSelect } from "../shared/ui/Menus";
 import { chatFailure, failureCopy, failureFields, fixLabel } from "./chatErrors";
-import { changePlace, noteChangeText, runningLabel, splitActions, stepsSummary } from "./agentSteps";
+import { changePlace, isChange, noteChangeText, runningLabel, splitActions, stepsSummary } from "./agentSteps";
 import { guideEvents } from "../guide/events.js";
 import { gammaLinksIn } from "../shared/model/gammaLinks.js";
 import { CharSlider, approxPages } from "../settings/SettingsKit";
@@ -256,7 +256,6 @@ function ContextRing({ fraction }) {
   );
 }
 
-const MUTATING_KINDS = new Set(["rename", "move", "edit", "create"]);
 // The note-block mutators: their actions carry the page id(s) they touched,
 // so the open page's block tree can reload and show the change.
 const BLOCK_TOOLS = new Set(["edit_block", "create_block", "move_block"]);
@@ -338,7 +337,7 @@ function ChatSetupCard({ info, isAdmin, onConnect, openSettings }) {
       {isAdmin && openSettings ? (
         <p className="chatSetupNote">
           {t("Or share one with everyone on this server: {link}", {
-            link: <button type="button" className="chatSetupLink" onClick={() => openSettings("server")}>{t("Settings › Server › Shared AI provider")}</button>,
+            link: <button type="button" className="chatEmptyLink" onClick={() => openSettings("server")}>{t("Settings › Server › Shared AI provider")}</button>,
           })}
         </p>
       ) : null}
@@ -361,14 +360,12 @@ export default function ChatDock({
   chatModel, setChatModel, chatEffort, setChatEffort, chatSystem,
   dictationModel, dictationLang,
   chatContextChars, setChatContextChars, multiContextChars,
-  // openAiKeysEditor(service?) opens Settings → Connections, with the
-  // connect dialog set to `service` when one is named (the setup card).
-  // focusSignal: bumped by App when a connection made from the setup card is
-  // ready — the message box takes the focus once the chat is enabled.
+  // openAiKeysEditor({service, entry}?) opens Settings → Connections: with
+  // `service` the connect dialog set to it (the setup card), with `entry`
+  // that connection's form (an error card's "Update key", the login check's
+  // Fix…). focusSignal: bumped by App when a connection made from the setup
+  // card is ready — the message box takes the focus once the chat is enabled.
   aiInfo, aiProvider, openAiKeysEditor, openSettings, isAdmin = false, focusSignal = 0,
-  // Opens Settings → Connections on one entry's form (an error card's
-  // "Update key"); falls back to the pane.
-  openAiEntry,
   aiHealth, dismissAiHealth,
   openPopover, setOpenPopover,
   setStatus, askConfirm,
@@ -495,6 +492,9 @@ export default function ChatDock({
       ? aiInfo.models.filter((m) => m.provider === aiProvider) : aiInfo.models)
     : [];
   const headerModel = headerModels.find((m) => m.id === chatModel) || headerModels[0] || null;
+  // A model's name in the pickers, with its connection's when there are several.
+  const multiProvider = new Set(headerModels.map((m) => m.provider)).size > 1;
+  const modelLabel = (m) => (multiProvider ? `${m.model} · ${m.provider_name || m.provider}` : m.model);
   // The context ring: the latest reply's size against the model's window,
   // which is asked only once there is something to show.
   const ctxUsed = contextUsed(chatMessages);
@@ -984,7 +984,7 @@ export default function ChatDock({
       onAgentEvent?.({ type: "done", key: sendKey });
       // Agent tools changed the library — reload the home feed. Read-only
       // tool calls (list/read/search) render as chips but change nothing.
-      if (actions.some((a) => MUTATING_KINDS.has(a.kind))) onLibraryChange?.();
+      if (actions.some(isChange)) onLibraryChange?.();
       // Note-block edits carry the page(s) they touched, so the open page's
       // block tree can reload and show the change.
       const notePages = [...new Set(actions
@@ -1158,13 +1158,19 @@ export default function ChatDock({
     }
   }, []);
 
-  // Re-send the user message a failed reply answered, through the
-  // edit-and-resend path (the reply and anything after it are replaced);
-  // `model` retries with another model.
+  // Edit-and-resend (ChatGPT-style): user message `idx` goes again as
+  // `text`, and it and everything after it are replaced; `model` overrides
+  // the chat's pick.
+  function resendFrom(idx, text, model) {
+    sendChat(text, { baseMessages: chatMessages.slice(0, idx), referenceMessage: chatMessages[idx], model });
+  }
+
+  // Re-send the user message a failed reply answered; `model` retries with
+  // another model.
   function retryReply(idx, model) {
     const asked = chatMessages[idx - 1];
     if (asked?.role !== "user" || busyHere) return;
-    sendChat(asked.text, { baseMessages: chatMessages.slice(0, idx - 1), referenceMessage: asked, model });
+    resendFrom(idx - 1, asked.text, model);
   }
 
   // An error card's buttons: the fix for its kind (open the failing
@@ -1174,7 +1180,7 @@ export default function ChatDock({
     const copy = failureCopy(m.errorKind, { provider: m.errorProvider, auth: m.errorAuth });
     const latest = idx === chatMessages.length - 1 && !busyHere && !readOnly;
     const out = [];
-    const openEntry = () => (openAiEntry && m.errorProviderId ? openAiEntry(m.errorProviderId) : openAiKeysEditor?.());
+    const openEntry = () => openAiKeysEditor({ entry: m.errorProviderId });
     const fix = {
       connect: openAiKeysEditor, own_key: openAiKeysEditor, key: openEntry, signin: openEntry,
       connection: openEntry, new_chat: latest ? newChat : null,
@@ -1186,9 +1192,8 @@ export default function ChatDock({
       out.push(<button key="retry" type="button" className="uiBtn sm" onClick={() => retryReply(idx)}>{t("Retry")}</button>);
       const others = copy.switchModel ? headerModels.filter((x) => x.id !== chatModel) : [];
       if (others.length) {
-        const multiProvider = new Set(headerModels.map((x) => x.provider)).size > 1;
         out.push(<ActionMenu key="switch" label={t("Switch model")} items={others.map((x) => ({
-          label: multiProvider ? `${x.model} · ${x.provider_name || x.provider}` : x.model,
+          label: modelLabel(x),
           title: t("Switch to this model and retry"),
           onClick: () => { setChatModel(x.id); retryReply(idx, x.id); },
         }))} />);
@@ -1214,6 +1219,12 @@ export default function ChatDock({
       <SearchIcon size={16} />
     </button>
   );
+  // No AI connected: the setup card, alone in the empty transcript or after
+  // an earlier conversation.
+  const setupCard = aiOff ? (
+    <ChatSetupCard info={setupInfo} isAdmin={isAdmin} openSettings={openSettings}
+      onConnect={(service) => openAiKeysEditor({ service })} />
+  ) : null;
   const headerContent = aiOff ? null : (
     <>
       <div className="ctlBtnRow chatPanelHeaderBtns">
@@ -1366,19 +1377,17 @@ export default function ChatDock({
     <div className="chatPanel chatWindow">
       {!readOnly && aiHealth && !aiHealth.ok ? (
         // The login connection check found the active provider broken — say so
-        // here, where the failure would otherwise surface mid-conversation.
+        // here, where the failure would otherwise surface mid-conversation,
+        // in the error card's words. Only a probe with no model picked comes
+        // without a kind.
         <div className="chatHealthStrip" title={aiHealth.error || ""}>
           <span className="chatHealthText">
             {aiHealth.kind ? failureCopy(aiHealth.kind, { provider: aiHealth.provider_name, auth: aiHealth.provider_auth }).headline : <>
               {aiHealth.provider_name ? `${aiHealth.provider_name}: ` : ""}
-              {aiHealth.auth
-                ? t("authentication is broken — sign in again or update the key.")
-                : t("connection failed — {unreachable}", { unreachable: aiHealth.error || t("provider unreachable") })}
+              {t("connection failed — {unreachable}", { unreachable: aiHealth.error || t("provider unreachable") })}
             </>}
           </span>
-          {openAiKeysEditor ? (
-            <button className="uiBtn sm" onClick={() => (openAiEntry ? openAiEntry(aiHealth.provider_id) : openAiKeysEditor())}>{t("Fix…")}</button>
-          ) : null}
+          <button className="uiBtn sm" onClick={() => openAiKeysEditor({ entry: aiHealth.provider_id })}>{t("Fix…")}</button>
           <button className="uiClose" onClick={dismissAiHealth} title={t("Dismiss")} aria-label={t("Dismiss")}><XIcon size={14} /></button>
         </div>
       ) : null}
@@ -1428,10 +1437,7 @@ export default function ChatDock({
         }}
       >
         {chatTextScale.badge}
-        {aiOff && !visibleMessages.length && !loadError ? (
-          <ChatSetupCard info={setupInfo} isAdmin={isAdmin} openSettings={openSettings}
-            onConnect={(service) => openAiKeysEditor?.(service)} />
-        ) : visibleMessages.length === 0 ? (
+        {setupCard && !visibleMessages.length && !loadError ? setupCard : visibleMessages.length === 0 ? (
           <div className="chatEmpty">
             {loadError || (readOnly ? t("No saved conversation for this page.")
               : focusedBlockId ? t("Ask AI about this page…") : agentIntro || t("Ask AI anything, or generate a report from your pages…"))}
@@ -1442,6 +1448,7 @@ export default function ChatDock({
             const isResponding = busyHere && !isUser && m.partial && i === visibleMessages.length - 1;
             const isFindHit = chatFindOpen && chatFind.trim() && chatFindMatches[chatFindIdx] === i;
             if (editingMsg?.idx === i) {
+              const resend = () => { const text = editingMsg.text; setEditingMsg(null); resendFrom(i, text); };
               return (
                 <div key={i} className="chatBubbleRow user" data-msg-idx={i}>
                   <div className="chatMsgCol">
@@ -1454,10 +1461,7 @@ export default function ChatDock({
                         onKeyDown={(e) => {
                           if (e.key === "Enter" && !e.shiftKey) {
                             e.preventDefault();
-                            const base = chatMessages.slice(0, i);
-                            const text = editingMsg.text;
-                            setEditingMsg(null);
-                            sendChat(text, { baseMessages: base, referenceMessage: m });
+                            resend();
                           } else if (e.key === "Escape") { e.preventDefault(); setEditingMsg(null); }
                         }}
                       />
@@ -1465,12 +1469,7 @@ export default function ChatDock({
                         <button type="button" className="uiBtn sm" onClick={() => setEditingMsg(null)}>{t("Cancel")}</button>
                         <button type="button" className="uiBtn sm chatEditSend"
                           disabled={!editingMsg.text.trim() || busyHere}
-                          onClick={() => {
-                            const base = chatMessages.slice(0, i);
-                            const text = editingMsg.text;
-                            setEditingMsg(null);
-                            sendChat(text, { baseMessages: base, referenceMessage: m });
-                          }}
+                          onClick={resend}
                           title={t("Re-send — replaces this message and everything after it")}>{t("Send")}</button>
                       </div>
                     </div>
@@ -1576,14 +1575,11 @@ export default function ChatDock({
           })
         )}
         {/* An earlier conversation stays readable; the card follows it. */}
-        {aiOff && visibleMessages.length ? (
-          <ChatSetupCard info={setupInfo} isAdmin={isAdmin} openSettings={openSettings}
-            onConnect={(service) => openAiKeysEditor?.(service)} />
-        ) : null}
+        {visibleMessages.length ? setupCard : null}
       </div>
       </ChatCiteContext.Provider>
       {!readOnly ? (
-      // One box (CHAT-06): the context chips on top, the message at full
+      // One box: the context chips on top, the message at full
       // width, then a toolbar — [+], the Full PDF switch while a PDF is in
       // context, the model chip (with reasoning effort), the mic when a
       // connection can transcribe, send / stop. While recording the text
@@ -1773,10 +1769,7 @@ export default function ChatDock({
                 value={headerModel.id}
                 onChange={setChatModel}
                 display={chatEffort ? `${headerModel.model} · ${chatEffort}` : headerModel.model}
-                options={headerModels.map((m) => [
-                  m.id,
-                  new Set(headerModels.map((x) => x.provider)).size > 1 ? `${m.model} · ${m.provider_name || m.provider}` : m.model,
-                ])}
+                options={headerModels.map((m) => [m.id, modelLabel(m)])}
                 sections={[{
                   label: t("Reasoning effort"),
                   value: chatEffort,

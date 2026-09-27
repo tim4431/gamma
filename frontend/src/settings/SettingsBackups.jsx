@@ -17,9 +17,10 @@ import { PaneHead, Section, Empty } from "./SettingsKit";
 import { DatabaseIcon, DownloadIcon, HardDriveIcon, ImportIcon, PlusIcon, Trash2Icon } from "../shared/ui/Icons";
 import { T, t, tn } from "../shared/i18n/i18n.js";
 
-// The one date format of this pane: "Sep 23, 3:00 AM UTC" — the time zone
-// matters because tasks are scheduled in UTC. `fallback` when there is no
-// date yet (a snapshot named but undated, a task that has not run).
+// The one date format of this pane: "Sep 23, 3:00 AM PDT", in the browser's
+// time zone and naming it, since task schedules are stored in UTC.
+// `fallback` when there is no date yet (a snapshot named but undated, a
+// task that has not run).
 export function fmtWhen(iso, fallback = "") {
   return iso ? new Date(iso).toLocaleString(undefined, { month: "short", day: "numeric", hour: "numeric", minute: "2-digit", timeZoneName: "short" }) : fallback;
 }

@@ -133,7 +133,7 @@ export const SLASH_COMMANDS = [
 // The bare "/" list comes in these groups, in this order; a typed query is
 // one ranked list instead (below). The colours belong to Style but stay
 // hidden until typed.
-export const SLASH_GROUPS = [
+const SLASH_GROUPS = [
   { label: T("Text"), names: ["h1", "h2", "h3", "todo", "bullet", "number", "quote", "callout", "divider"] },
   { label: T("Math"), names: ["math", "equation"] },
   { label: T("Insert"), names: ["table", "code", "mermaid", "image", "date"] },

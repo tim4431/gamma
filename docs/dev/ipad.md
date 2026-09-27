@@ -41,15 +41,15 @@ screen, not the device (`PHONE_MQ` / `useIsPhone` in App.jsx):
 - **Upright** — a coarse pointer, portrait, at most 1024px wide (every iPad
   up to the 12.9" Pro, and Android tablets) — gets the compact shell the
   phone uses (`.phoneUI`): the PDF or the notes full width, Notes and Chat
-  as full-screen panels, one bottom bar (below). Two docks squeezed into
-  820px left ~200px columns that pushed the chat header's buttons off
-  screen. At this width the bar's items are roomier and its popovers keep
+  as full-screen panels, one bottom bar (below). Two docks in 820px would
+  leave ~200px columns, too narrow for the chat header's buttons. At this
+  width the bar's items are roomier and its popovers keep
   a menu's width at the right end instead of spanning the screen (the
   `min-width: 701px` block under the phone rules in `app.css`).
 - **Landscape** gets the desktop docks, as on a laptop. Turning the tablet
   swaps the shell live; the dock arrangement is kept for the way back.
-- A phone keeps the compact shell both ways: narrower than 700px, or a
-  coarse pointer on a screen under 500px tall.
+- A phone keeps the compact shell both ways: 700px wide or less, or a
+  coarse pointer on a screen at most 500px tall.
 
 ### The compact shell
 
@@ -57,8 +57,8 @@ screen, not the device (`PHONE_MQ` / `useIsPhone` in App.jsx):
   (home: the topbar has no Home button here, so it stays on a page's bar
   and carries the `header.home` anchor), the page's PDF and Notes, Chat —
   and the topbar's actions on the right: Add, Search, a page's Share (and
-  a clone's Sync pill), More. Every item is a 22px icon over its 10.5px word
-  (`.barLabel`, hidden on the desktop topbar), about 50px tall.
+  a clone's Sync pill), More. Every item is a 22px icon over its word
+  (`.barLabel`, `--fs-2xs`, hidden on the desktop topbar), about 50px tall.
 - **More** is the account button (`header.account`) under another name:
   its sheet is the account menu with the rest of the topbar on top —
   Background tasks, the open folder's Share this folder, and the View
@@ -95,21 +95,22 @@ rules the ink layer and the viewer already have.
 
 - `backend/tests/test_static.py`: the manifest's media type and cache
   header.
-- `tests/e2e/scenarios/ipad.mjs` (`npm run e2e -- --only ipad`): in a
-  tablet-sized touch context, the manifest parses with `standalone`
-  display and every icon it and the `apple-touch-icon` link name is a real
-  PNG; `theme-color` equals the topbar's computed background and follows a
-  theme change; the bundled stylesheet carries the standalone block (the
-  document overscroll rule and the home-indicator inset — Chromium cannot
-  emulate `display-mode`, CDP accepts the feature but `matchMedia` ignores
-  it); upright (834×1194) is the compact shell — the PDF full width, Notes
-  full screen from the bottom bar — and rotating to landscape brings the
-  docks back; theme-color matches what sits under the status bar (the
-  library with no tab open, the topbar once one is). On a 390px phone: no
-  topbar without tabs, the bar's words (Library Chat Add Search More, then
-  Library Notes Chat Add Search Share More on a page), the listing bar
-  inside the screen, a long title wrapping with its chips under it, More's
-  sheet opening Background tasks, the Library tab going home. Chromium,
-  not an iPad: the Add to Home Screen flow, the status-bar paint and the
-  home indicator need the device.
+- `tests/e2e/scenarios/ipad.mjs` (`npm run e2e -- --only ipad`), in
+  Chromium touch contexts:
+  - Tablet-sized: the manifest parses with `standalone` display, and every
+    icon it and the `apple-touch-icon` link name is a real PNG.
+    `theme-color` matches what sits under the status bar (the library with
+    no tab open, the topbar once one is) and follows a theme change. The
+    bundled stylesheet carries the standalone block (the document
+    overscroll rule and the home-indicator inset). Chromium cannot emulate
+    `display-mode`: CDP accepts the feature, but `matchMedia` ignores it.
+  - Upright (834×1194) is the compact shell: the PDF full width, Notes full
+    screen from the bottom bar. Rotating to landscape brings the docks back.
+  - A 390px phone: no topbar without tabs, the bar's words (Library Chat
+    Add Search More, then Library Notes Chat Add Search Share More on a
+    page), the listing bar inside the screen, a long title wrapping with its
+    chips under it, More's sheet opening Background tasks, and the Library
+    tab going home.
+  - Only the device can check the Add to Home Screen flow, the status-bar
+    paint and the home indicator.
 - `node tools/branding/build.mjs --check` pins the icons to the mark.

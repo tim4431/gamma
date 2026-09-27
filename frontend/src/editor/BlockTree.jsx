@@ -955,7 +955,7 @@ function BlockRow({
     if (!refPopup) return [];
     const labelOf = (id) => pages?.find((p) => p.id === id)?.content ?? allBlocks?.find((b) => b.id === id)?.content ?? refCache?.[id]?.content;
     const pageHits = rankRefPages(pages, refPopup.query, rootId);
-    const blockHits = searchResults.filter((b) => b.id !== block.id && b.page_root_id !== b.id);
+    const blockHits = searchResults.filter((b) => b.page_root_id !== b.id);
     const [np, nb] = pickerCounts(pageHits.length, blockHits.length);
     return [
       ...pageHits.slice(0, np).map((p) => ({
@@ -967,8 +967,9 @@ function BlockRow({
       })),
     ];
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [refPopup?.query, pages, searchResults, rootId, block.id]);
+  }, [refPopup?.query, pages, searchResults, rootId]);
   const refSearchShown = !!refPopup && refRows.length > 0;
+  const refSelected = Math.min(refSelectedIdx, refRows.length - 1);
   useEffect(() => { if (refSearchShown) guideEvents.emit("ref.search"); }, [refSearchShown]);
 
   // Resolve cross-note refs and Gamma link targets found in content
@@ -1590,7 +1591,7 @@ function BlockRow({
                 if (refSearchShown) {
                   if (e.key === "ArrowDown") { e.preventDefault(); setRefSelectedIdx((i) => Math.min(i + 1, refRows.length - 1)); return; }
                   if (e.key === "ArrowUp") { e.preventDefault(); setRefSelectedIdx((i) => Math.max(i - 1, 0)); return; }
-                  if (e.key === "Enter") { e.preventDefault(); insertRef(refRows[Math.min(refSelectedIdx, refRows.length - 1)]); return; }
+                  if (e.key === "Enter") { e.preventDefault(); insertRef(refRows[refSelected]); return; }
                   if (e.key === "Escape") { e.preventDefault(); setRefPopup(null); return; }
                 }
                 if (slashMenu) {
@@ -1792,7 +1793,7 @@ function BlockRow({
         <SlashMenuPopup title={t("Paste as")} items={pasteMenu.items} selected={pasteIdx} anchor={pasteMenu.anchor} onPick={applyPasteAs} />
       ) : null}
       {refSearchShown ? (
-        <RefPickerPopup rows={refRows} selected={Math.min(refSelectedIdx, refRows.length - 1)} anchor={refPopup.anchor}
+        <RefPickerPopup rows={refRows} selected={refSelected} anchor={refPopup.anchor}
           query={refPopup.query} onPick={insertRef} />
       ) : null}
     </div>

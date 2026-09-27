@@ -15,7 +15,7 @@ import { API, apiJson, fmtBytes } from "../shared/lib/utils";
 import { PaneHead, Section, Row, SubDialog, Field, UnitInput, Empty, QuotaMeter, PasswordInput } from "./SettingsKit";
 import { CloudIdentityRow } from "./SettingsCloudSignIn";
 import { ManageWorkspaceDialog, useAccounts } from "./SettingsWorkspace";
-import { BookIcon, HardDriveIcon, PenIcon, PlusIcon, ShieldIcon, Trash2Icon, UserIcon, UsersIcon } from "../shared/ui/Icons";
+import { BookIcon, HardDriveIcon, PenIcon, ShieldIcon, Trash2Icon, UserIcon, UsersIcon } from "../shared/ui/Icons";
 import { T, t } from "../shared/i18n/i18n.js";
 
 export function UsersSettings({ value, selfOnly = false }) {

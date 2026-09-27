@@ -3,8 +3,8 @@
 // menu, attach-highlight menu), so they can't drift apart again. Rows
 // (MenuItem), section headings (MenuLabel), group separators (MenuDivider)
 // and nested flyouts (SubMenuItem) live here too, so every menu gets the
-// same iconed row and the same submenu-hover behaviour for free — the
-// topbar's popover menus (account, View, Add) included, through MenuScope.
+// same iconed row and the same submenu-hover behaviour for free — popover
+// menus included (the account menu hosts its flyout through MenuScope).
 import React, { createContext, useContext, useEffect, useLayoutEffect, useRef, useState } from "react";
 import { createPortal } from "react-dom";
 import { CheckIcon, ChevronDownIcon, ChevronRightIcon } from "./Icons";
@@ -151,8 +151,8 @@ function menuGroups(...groups) {
 // would dismiss itself before a click on a flyout row could land. `id` just
 // has to be unique within its menu. A click opens it and never toggles it
 // shut (the hover that led there has opened it already). The panel is a
-// menu named `menuLabel`, else `label`; other props go to the trigger row.
-function SubMenuItem({ id, icon: Icon, label, title, menuLabel, children, ...rest }) {
+// menu named after `label`; other props go to the trigger row.
+function SubMenuItem({ id, icon: Icon, label, title, children, ...rest }) {
   const { openSub, setOpenSub, aim } = useContext(MenuCtx) || {};
   const open = openSub === id;
   const panelRef = useRef(null);
@@ -202,7 +202,7 @@ function SubMenuItem({ id, icon: Icon, label, title, menuLabel, children, ...res
       </MenuItem>
       {open ? (
         <div ref={panelRef} className="ctxMenu ctxSubMenu" style={style} role="menu"
-          aria-label={menuLabel || (typeof label === "string" ? label : undefined)}>
+          aria-label={typeof label === "string" ? label : undefined}>
           {children}
         </div>
       ) : null}
@@ -242,9 +242,9 @@ function useDropdown(up = false) {
 // gives the main options a `heading` and lists the others as `sections`,
 // [{label, value, onChange, options}], each under its own heading — the chat
 // composer's model chip with its reasoning effort. `up` opens above the
-// trigger; `className` is added to the trigger.
+// trigger.
 function MenuSelect({ value, onChange, options, label, block, icon: TriggerIcon, iconOnly = false,
-  display, heading, sections = [], up = false, className = "" }) {
+  display, heading, sections = [], up = false }) {
   const [menu, close, triggerProps, triggerRef] = useDropdown(up);
   const current = options.find(([v]) => v === value) || options[0];
   const CurrentIcon = current?.[2];
@@ -259,7 +259,7 @@ function MenuSelect({ value, onChange, options, label, block, icon: TriggerIcon,
   );
   return (
     <>
-      <button type="button" className={`uiBtn sm uiSelectBtn ${block ? "block" : ""} ${TriggerIcon && iconOnly ? "iconSq" : ""} ${className}`}
+      <button type="button" className={`uiBtn sm uiSelectBtn ${block ? "block" : ""} ${TriggerIcon && iconOnly ? "iconSq" : ""}`}
         aria-label={title} title={title} {...triggerProps}>
         {TriggerIcon ? (
           <TriggerIcon size={16} />

@@ -23,8 +23,15 @@ export const DESKTOP_COPIES = [
   [path.join(INTER, "LICENSE"), path.join(UI, "fonts", "OFL.txt")],
 ];
 
+// Whether a copy matches its source. A checkout may turn LF into CRLF in
+// text files; the bytes that matter don't.
+export const sameCopy = (from, to) => fs.existsSync(to) && (/\.(css|txt)$/.test(to)
+  ? fs.readFileSync(from, "utf8").replace(/\r\n/g, "\n") === fs.readFileSync(to, "utf8").replace(/\r\n/g, "\n")
+  : fs.readFileSync(from).equals(fs.readFileSync(to)));
+
 if (process.argv[1] && path.resolve(process.argv[1]) === fileURLToPath(import.meta.url)) {
   for (const [from, to] of DESKTOP_COPIES) {
+    if (sameCopy(from, to)) continue;
     fs.mkdirSync(path.dirname(to), { recursive: true });
     fs.copyFileSync(from, to);
     console.log(`${path.relative(FRONTEND, from)} -> ${path.relative(FRONTEND, to)}`);

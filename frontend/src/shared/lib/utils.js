@@ -302,6 +302,9 @@ function metaSourceInfo(meta) {
 const isPdfFile = (f) => f.type === "application/pdf" || /\.pdf$/i.test(f.name || "");
 const isMarkdownFile = (f) => /\.(?:md|markdown)$/i.test(f.name || "")
   || /^(?:text\/markdown|text\/x-markdown)$/i.test(f.type || "");
+// The file pickers' filter for the files the library takes in as pages (the
+// Add menu's Upload files…, "Start your library").
+const PAGE_FILE_ACCEPT = ".pdf,.md,.markdown,application/pdf,text/markdown";
 
 // FastAPI errors come as {"detail": "..."} — show the human message, not raw JSON.
 // The thrown Error carries `status` and the parsed JSON body as `data`, so
@@ -403,4 +406,4 @@ async function readNdjson(res, onBatch) {
   }
 }
 
-export { API, makeId, fmtBytes, sha256, getDocIdForUrl, isPdfFile, isMarkdownFile, isUnverifiedPaperMeta, metaSourceInfo, apiJson, setShareView, getShareToken, withShare, withWorkspace, assetUrl, setCurrentWorkspace, getCurrentWorkspace, setLinkName, getLinkName, resolvePdfUrl, pdfProxyUrl, probePdfUrl, setExpectedUser, getExpectedUser, usePersistedState, usePersistedFlag, copyText, copyRich, readNdjson };
+export { API, makeId, fmtBytes, sha256, getDocIdForUrl, isPdfFile, isMarkdownFile, PAGE_FILE_ACCEPT, isUnverifiedPaperMeta, metaSourceInfo, apiJson, setShareView, getShareToken, withShare, withWorkspace, assetUrl, setCurrentWorkspace, getCurrentWorkspace, setLinkName, getLinkName, resolvePdfUrl, pdfProxyUrl, probePdfUrl, setExpectedUser, getExpectedUser, usePersistedState, usePersistedFlag, copyText, copyRich, readNdjson };

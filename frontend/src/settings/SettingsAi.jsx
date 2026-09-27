@@ -434,7 +434,7 @@ export function SharedAiProviderSettings({ setStatus, confirm }) {
   </>;
 }
 
-// The connect dialog (CHAT-03), for the account's list and Settings →
+// The connect dialog, for the account's list and Settings →
 // Server's shared one alike: 1 a service tile (Other opens the named
 // services, a custom endpoint and its API format); 2 the API key — the
 // provider's own placeholder and "Get a key at …" link (key_placeholder /

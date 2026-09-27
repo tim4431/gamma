@@ -1,6 +1,5 @@
 // Shared inline icons — 24×24 stroke glyphs sized via the `size` prop.
-// One definition per glyph, replacing the copy-pasted <svg> literals that
-// used to drift in stroke width between call sites.
+// One definition per glyph, so the stroke is the same at every call site.
 //
 // Three sizes (docs/dev/ui-design.md, "Icons"): 14 inline with text (chips,
 // menu rows), 16 in buttons and toolbars (the default), 20 in pane headers
@@ -10,8 +9,8 @@
 // An explicit `strokeWidth` (grid units) is for icons sized by CSS.
 import React from "react";
 
-export const ICON_WEIGHT = 1.6;
-export const iconStroke = (size, weight = ICON_WEIGHT) => (size ? (weight * 24) / size : 2);
+const ICON_WEIGHT = 1.6;
+const iconStroke = (size, weight = ICON_WEIGHT) => (size ? (weight * 24) / size : 2);
 
 function Icon({ size = 16, weight = ICON_WEIGHT, strokeWidth, children, ...rest }) {
   return (
@@ -376,16 +375,12 @@ export const StopIcon = ({ size = 16, ...rest }) => (
 
 // Pin glyph — outline when unpinned, filled when pinned. Shared by the list
 // rows, grid tiles, and the pinned strip so the affordance is identical.
-export function PinIcon({ filled = false, size = 14 }) {
-  return (
-    <svg width={size} height={size} viewBox="0 0 24 24"
-      fill={filled ? "currentColor" : "none"} stroke="currentColor"
-      strokeWidth={iconStroke(size)} strokeLinecap="round" strokeLinejoin="round">
-      <path d="M12 17v5" />
-      <path d="M9 10.76a2 2 0 0 1-1.11 1.79l-1.78.9A2 2 0 0 0 5 15.24V16a1 1 0 0 0 1 1h12a1 1 0 0 0 1-1v-.76a2 2 0 0 0-1.11-1.79l-1.78-.9A2 2 0 0 1 15 10.76V7a1 1 0 0 1 1-1 2 2 0 0 0 0-4H8a2 2 0 0 0 0 4 1 1 0 0 1 1 1z" />
-    </svg>
-  );
-}
+export const PinIcon = ({ filled = false, size = 14, ...p }) => (
+  <Icon size={size} fill={filled ? "currentColor" : "none"} {...p}>
+    <path d="M12 17v5" />
+    <path d="M9 10.76a2 2 0 0 1-1.11 1.79l-1.78.9A2 2 0 0 0 5 15.24V16a1 1 0 0 0 1 1h12a1 1 0 0 0 1-1v-.76a2 2 0 0 0-1.11-1.79l-1.78-.9A2 2 0 0 1 15 10.76V7a1 1 0 0 1 1-1 2 2 0 0 0 0-4H8a2 2 0 0 0 0 4 1 1 0 0 1 1 1z" />
+  </Icon>
+);
 
 // Big folder glyph for grid tiles (filled, accent-colored via CSS).
 export function FolderGlyph() {

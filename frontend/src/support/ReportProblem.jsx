@@ -188,7 +188,7 @@ export default function ReportProblem({ facts, onClose, setStatus }) {
   }
 
   return (
-    <SubDialog title={t("Report a problem")} onClose={onClose} className="reportProblem" closeButton
+    <SubDialog title={t("Report a problem")} onClose={onClose} className="reportProblem"
       draft={description || steps || recordingName}>
       <Field label={t("What happened")} hint={t("what you did, what you expected, what you saw")}>
         <textarea className="reportProblemText" rows={3} autoFocus value={description}

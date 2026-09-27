@@ -13,16 +13,16 @@ custom prompt too. A quote should fit on one page and identify one passage.
 Copy it verbatim, including parenthetical references. A shorter distinctive
 substring is also valid; do not add a period where the source continues.
 
-The link is plain Markdown, so it persists with the reply — and renders the
-same wherever it appears. `shared/model/gammaLinks.js` classifies one link
-into this library (`parseGammaLink` → `block` / `page` / `citation`), and
-`GammaLinkCard` (`shared/ui/Widgets.jsx`) draws it as a card in a note's
-rendered markdown and for page links in the chat. A citation inside a chat
-answer is a compact pill instead (`CitationPill`, only where the transcript
-provides `ChatCiteContext`): "p. 2" on the text's baseline, prefixed with the
-source ("Vaswani · p. 2") when the reply cites more than one paper.
-Hovering, focusing or long-pressing it previews the paper title, the PDF
-page and the quote. Clicking either one calls `openPage(id,
+The link is plain Markdown, so it persists with the reply.
+`shared/model/gammaLinks.js` classifies one link into this library
+(`parseGammaLink` → `block` / `page` / `citation`), and `GammaLinkCard`
+(`shared/ui/Widgets.jsx`) draws it as a card in a note's rendered markdown
+and for page links in the chat. A citation inside a chat answer is a compact
+pill instead (`CitationPill`, only where the transcript provides
+`ChatCiteContext`): "p. 2" on the text's baseline, prefixed with the source
+("Vaswani · p. 2") when the reply cites more than one paper. Hovering,
+focusing or long-pressing it previews the paper title, the PDF page and the
+quote. Clicking either one calls `openPage(id,
 citation)` from `GammaNavContext`, which App provides once: the library page
 opens in place, waits for that PDF and the cited page's text layer, then
 matches the quote in the browser. A pasted link on a cold load works the same

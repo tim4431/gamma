@@ -42,7 +42,7 @@
 
 /* Shared visual primitives. Components keep their layout and sizing rules,
    while these groups own the recurring surface, field, and hover language. */
-:is(.plainTip, .popover, .ctxMenu, .refPopup, .pdfNoteTip, .mathPreviewTip, .latexAcPopup, .slashMenu, .chatMentionPicker) {
+:is(.plainTip, .popover, .ctxMenu, .refPopup, .pdfNoteTip, .mathPreviewTip, .latexAcPopup, .slashMenu, .chatMentionPicker, .chatCitePreview) {
   background: var(--bg-elevated);
   border: 1px solid var(--border);
   border-radius: var(--radius-md);
@@ -102,7 +102,7 @@
 }
 /* Rows that fill their list draw the ring inside, where the list can't
    clip it and it doesn't overlap the next row. */
-:is(.ctxMenuItem, .popoverItem, .searchResult, .chatMentionOption, .settingsNavBtn):focus-visible {
+:is(.ctxMenuItem, .popoverItem, .searchResult, .chatMentionOption, .settingsNavBtn, .backlinkPage, .backlinkItem):focus-visible {
   outline-offset: -2px;
 }
 /* Fields: the accent as border plus a soft halo, on click and keyboard
@@ -154,7 +154,7 @@
    its own case, so only real acronyms are uppercase. Each class's own rule
    holds its layout (dock titles also a size step up). */
 :is(.dockGrip, .homeListLabel, .pinnedLabel, .carouselLabel, .popoverLabel, .popoverSection,
-  .searchSection, .ctxMenuLabel, .slashMenuTitle, .keyGroupLabel) {
+  .searchSection, .ctxMenuLabel, .slashMenuTitle, .keyGroupLabel, .quickOpenSection) {
   font-size: var(--fs-xs);
   font-weight: 600;
   letter-spacing: 0;
@@ -283,9 +283,9 @@ body {
 .topbar .iconBtn:disabled { opacity: 0.4; cursor: default; }
 
 /* --- unified close / dismiss control -------------------------------------
-   One look for every × in the app (an XIcon, 14; 16 in Lg), modeled on the tab close button:
-   a round, dim glyph that brightens with a soft circular fill on hover and
-   presses in on click. Sizes: Sm 20 (chips, tags, rows), the default 24
+   One look for every × in the app (an XIcon, 14; 16 in Lg), modeled on the
+   tab close button: a round, dim glyph that brightens with a soft circular
+   fill on hover and presses in on click. Sizes: Sm 20 (chips, tags, rows), the default 24
    (docks, cards, find bars), Lg 28 (dialogs, panes). Danger turns red on
    hover (delete). Apply `.uiClose` to any dismiss button instead of a
    bespoke class. */
@@ -2054,8 +2054,6 @@ button.pdfOutlineChevron:hover { background: rgba(128, 128, 128, 0.28); color: v
 }
 .backlinkPage:hover,
 .backlinkItem:hover { background: var(--bg-hover); }
-.backlinkPage:focus-visible,
-.backlinkItem:focus-visible { outline: 2px solid var(--accent); outline-offset: -2px; }
 .backlinkPage {
   display: flex;
   align-items: center;
@@ -2230,6 +2228,7 @@ button.pdfOutlineChevron:hover { background: rgba(128, 128, 128, 0.28); color: v
 }
 
 /* --- popovers --- */
+/* Wrapper that anchors a popover under its trigger button. */
 .popoverAnchor {
   position: relative;
   display: inline-flex;
@@ -2385,9 +2384,6 @@ mark.merge-del { background: color-mix(in srgb, var(--danger) 16%, transparent);
   padding: 4px 4px 0;
 }
 .popoverDivider { border-top: 1px solid var(--border-subtle); margin: 4px 0; }
-/* The View menu's rows vary with the view (a phone drops the window
-   toggles), so a divider can end up first; it separates nothing there. */
-.menuPopover > .popoverDivider:first-child { display: none; }
 .topbar .popover .popoverItem,
 .popover .popoverItem {
   background: none;
@@ -2404,9 +2400,6 @@ mark.merge-del { background: color-mix(in srgb, var(--danger) 16%, transparent);
   gap: 6px;
 }
 .popover .popoverItem:hover { background: var(--bg-hover); }
-.popover .popoverItem[aria-disabled="true"] { cursor: not-allowed; opacity: 0.6; }
-/* Wrapper that anchors a popover under its trigger button. */
-.popoverAnchor { position: relative; display: inline-flex; }
 .topbar .iconBtn.activeIcon { background: var(--bg-hover); color: var(--text-primary); }
 /* Fixed width: the BibTeX pre would otherwise stretch the popover to its
    longest line — it scrolls inside instead. */
@@ -2612,13 +2605,10 @@ mark.merge-del { background: color-mix(in srgb, var(--danger) 16%, transparent);
 .switch input:checked + .switchTrack { background: var(--accent-dark); }
 .switch input:checked + .switchTrack::after { transform: translateX(14px); }
 .switch input:focus-visible + .switchTrack {
-  outline: 2px solid var(--accent);
+  outline: 2px solid var(--focus-ring);
   outline-offset: 2px;
 }
 
-/* leading icon + danger variant for popover action rows */
-.popover .popoverItemIcon { flex-shrink: 0; color: var(--text-muted); }
-.popover .popoverItem:hover .popoverItemIcon { color: var(--text-primary); }
 /* search */
 .searchPopover { min-width: 380px; max-width: 70vw; }
 .searchInput {
@@ -2986,7 +2976,6 @@ mark.searchMark {
   max-height: 70vh;
   overflow-y: auto;
 }
-.popoverItem .transferSpin.inline { margin-left: 8px; flex-shrink: 0; }
 /* An upright tablet (or a landscape phone): roomier items, and a popover
    keeps a menu's width at the right end instead of stretching across the
    whole screen. */
@@ -3282,18 +3271,8 @@ html.appFocusFullscreen, html.appFocusFullscreen body { overflow: hidden; oversc
   cursor: pointer;
 }
 .chatSetupTile:hover { border-color: var(--border-hover); background: var(--bg-hover); }
-.chatSetupTile:focus-visible { outline: 2px solid var(--accent); outline-offset: 1px; }
 .chatSetupTileName { font-weight: 600; font-size: var(--fs-sm); }
 .chatSetupTileHint { font-size: var(--fs-2xs); color: var(--text-muted); line-height: 1.35; }
-.chatSetupLink {
-  background: none;
-  border: none;
-  padding: 0;
-  font-family: inherit; font-weight: inherit; line-height: inherit;
-  color: var(--accent);
-  cursor: pointer;
-  text-decoration: underline;
-}
 .chatSetupRetry { align-self: flex-start; }
 /* --- chat bubbles --- */
 .chatBubbleRow {
@@ -3506,14 +3485,13 @@ html.appFocusFullscreen, html.appFocusFullscreen body { overflow: hidden; oversc
 .loginCard .pwField { margin-bottom: 12px; }
 .aiKeysError { color: #e5534b; }
 .aiTestOk { color: #4caf50; }
-/* Uniform buttons for the settings modals (AI providers, prompt editor):
-   ghost by default, .primary for the main action, .danger for destructive,
-   .sm for inline row actions. */
 /* --- Interface size (Settings → Appearance) ----------------------------
    Text uses --ui-font-scale; controls zoom their box, text and icon together.
    Reset the text multiplier inside controls to scale exactly once. Include
    semantic controls such as summary (Tours), regardless of their styling.
-   Absolutely positioned controls need an unscaled anchor (pdfNoteAnchor). */
+   Absolutely positioned controls need an unscaled anchor (pdfNoteAnchor).
+   tokens.css declares the --fs-* sizes again on this same selector list
+   (tests/designTokens.test.mjs keeps the two lists equal). */
 :where(button, summary, [role="button"], .uiBtn, .ctlBtn, .uiClose, .switch) {
   --ui-font-scale: 1;
   zoom: var(--ui-scale, 1);
@@ -3615,17 +3593,18 @@ html.appFocusFullscreen, html.appFocusFullscreen body { overflow: hidden; oversc
    button fades as a whole. */
 .uiBtn:disabled { color: var(--text-dim); cursor: default; box-shadow: none; }
 .uiBtn.primary:disabled { color: var(--on-accent); opacity: 0.45; }
-/* inline link-style button inside the chat empty-state hint */
+/* A link-style button inside a sentence: the chat setup card's Settings
+   link, a provider row's "update the key". */
 .chatEmptyLink {
   background: none;
   border: none;
   padding: 0;
   font-family: inherit; font-weight: inherit; line-height: inherit;
-  color: #4a9eff;
+  color: var(--accent);
   cursor: pointer;
   text-decoration: underline;
 }
-.chatEmptyLink:hover { color: #6fb2ff; }
+.chatEmptyLink:hover { color: var(--accent-bright); }
 .aiProvRow {
   position: relative;
   display: flex;
@@ -3921,7 +3900,7 @@ a.shareBrand:hover { background: var(--bg-hover); }
 }
 @keyframes reportRecordPulse { 50% { opacity: 0.35; } }
 @media (prefers-reduced-motion: reduce) { .reportRecordDot { animation: none; } }
-/* The composer (CHAT-06): one rounded box holding the context chips, the
+/* The composer: one rounded box holding the context chips, the
    message at full width and a toolbar ([+], Full PDF, the model chip, mic,
    send). The box takes the field focus ring while anything inside has focus. */
 .chatComposer {
@@ -4451,7 +4430,7 @@ a.shareBrand:hover { background: var(--bg-hover); }
   border-radius: var(--radius-full);
   background: var(--bg-raised);
   color: var(--text-muted);
-  font: inherit;
+  font-family: inherit; font-weight: inherit;
   font-size: calc(var(--fs-xs) * var(--text-scale, 1));
   line-height: 1.5;
   cursor: pointer;
@@ -4476,8 +4455,6 @@ a.shareBrand:hover { background: var(--bg-hover); }
   color: var(--text-muted);
   font-size: calc(var(--fs-2xs) * var(--text-scale, 1));
   font-weight: 600;
-  letter-spacing: 0.03em;
-  text-transform: uppercase;
 }
 .chatChange { display: flex; align-items: flex-start; gap: 7px; min-width: 0; }
 .chatChange > svg { flex: none; margin-top: 0.2em; color: var(--text-muted); }
@@ -4493,7 +4470,6 @@ a.shareBrand:hover { background: var(--bg-hover); }
   cursor: pointer;
 }
 .chatChangeLink:hover { text-decoration: underline; }
-.chatChangeLink:focus-visible { outline: 2px solid var(--accent); outline-offset: 1px; }
 /* Agent tool calls (folder/paper chat): one row per call, click to expand the
    arguments and the output the model got back. */
 .chatToolActions { display: flex; flex-direction: column; gap: 3px; }
@@ -4574,19 +4550,15 @@ a.shareBrand:hover { background: var(--bg-hover); }
   cursor: pointer;
 }
 .chatCite:hover { background: color-mix(in srgb, var(--accent) 22%, transparent); }
-.chatCite:focus-visible { outline: 2px solid var(--accent); outline-offset: 1px; }
 .chatCiteSrc { font-weight: 500; }
-/* Its preview: the cited paper, the PDF page and the quote itself. */
+/* Its preview (a floating surface, see the shared primitives): the cited
+   paper, the PDF page and the quote itself. */
 .chatCitePreview {
   position: fixed;
   z-index: var(--z-overlay);
   width: max-content;
   max-width: 280px;
   padding: 8px 10px;
-  border: 1px solid var(--border);
-  border-radius: var(--radius-md);
-  background: var(--bg-raised);
-  box-shadow: var(--shadow-2);
   color: var(--text-primary);
   font-size: var(--fs-xs);
   line-height: 1.45;
@@ -4713,7 +4685,6 @@ a.shareBrand:hover { background: var(--bg-hover); }
 }
 .noticeDot.info { background: var(--accent); }
 .noticeDot.inline { position: static; display: inline-block; margin-left: auto; flex-shrink: 0; }
-.popoverItem .noticeDot.inline { margin-left: 8px; }
 .transferSpin {
   position: absolute;
   top: 3px;
@@ -5322,7 +5293,6 @@ a.shareBrand:hover { background: var(--bg-hover); }
 .popover .ctxMenuItem.danger { color: var(--danger); }
 .popover .ctxMenuItem.danger .ctxMenuIcon { color: var(--danger); }
 .popover .ctxMenuItem.danger:hover { background: var(--danger-bg); }
-.popover .ctxMenuItem[aria-disabled="true"] { cursor: not-allowed; opacity: 0.6; }
 .popover .ctxMenuDivider { margin: 2px 0; }
 .popover .ctxSubMenu { padding: 4px; }
 
@@ -5392,11 +5362,10 @@ a.shareBrand:hover { background: var(--bg-hover); }
 .refPopupText { font-size: var(--fs-md); }
 .refPopupText b { font-weight: 600; }
 .refPopupMeta { font-size: var(--fs-xs); color: var(--text-muted); }
-.refPopupFooter {
+/* The key hints pinned under a caret popup's scrolling list: the [[ picker's
+   and the "/" menu's. Each popup's own rule reaches over its padding. */
+:is(.refPopupFooter, .slashMenuFooter) {
   position: sticky;
-  bottom: -4px;
-  margin: 4px -4px -4px;
-  padding: 7px 14px 6px;
   border-top: 1px solid var(--border-subtle);
   border-radius: 0 0 var(--radius-md) var(--radius-md);
   background: var(--bg-surface);
@@ -5404,6 +5373,7 @@ a.shareBrand:hover { background: var(--bg-hover); }
   color: var(--text-dim);
   user-select: none;
 }
+.refPopupFooter { bottom: -4px; margin: 4px -4px -4px; padding: 7px 14px 6px; }
 
 /* --- LaTeX editing aids in the block editor (see editor/LatexEditor.jsx) --- */
 /* Caret-anchored live KaTeX preview of the math span being typed. */
@@ -5477,19 +5447,8 @@ a.shareBrand:hover { background: var(--bg-hover); }
   user-select: none;
 }
 .slashMenuTitle:first-child { padding-top: 4px; }
-/* The "/" menu's key hints, pinned under the scrolling list. */
-.slashMenuFooter {
-  position: sticky;
-  bottom: -3px;
-  margin: 4px -3px -3px;
-  padding: 6px 12px;
-  border-top: 1px solid var(--border-subtle);
-  border-radius: 0 0 var(--radius-md) var(--radius-md);
-  background: var(--bg-surface);
-  font-size: var(--fs-2xs);
-  color: var(--text-dim);
-  user-select: none;
-}
+/* The "/" menu's key hints (the recipe is the [[ picker's footer's, above). */
+.slashMenuFooter { bottom: -3px; margin: 4px -3px -3px; padding: 6px 12px; }
 .slashMenuItem {
   display: flex;
   align-items: center;
@@ -5771,7 +5730,6 @@ a.shareBrand:hover { background: var(--bg-hover); }
 .inkTransform-resize { transform: translate(0, 0); cursor: nwse-resize; }
 .inkTransform-rotate { transform: translate(0, -100%); cursor: grab; }
 .inkTransform-rotate:active { cursor: grabbing; }
-.inkTransformHandle:focus-visible { outline: 2px solid var(--accent); outline-offset: 2px; }
 .inkTooltip { position: fixed; z-index: var(--z-tip); pointer-events: none; width: max-content; max-width: min(280px, calc(100vw - 16px));
   padding: 6px 9px; border: 1px solid var(--border); border-radius: var(--radius-sm); background: var(--bg-elevated);
   color: var(--text-primary); font-size: var(--fs-xs); line-height: var(--lh-ui); box-shadow: var(--shadow-2); }

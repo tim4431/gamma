@@ -32,8 +32,7 @@ export function KeyboardSettings({ value }) {
     || effectiveKeys(cmd, bindings).some((k) => chordLabel(k).toLowerCase().includes(q));
   const fixed = fixedKeys(enterNewNote).filter(([chords, what]) => !q
     || what.toLowerCase().includes(q) || chords.some((c) => chordLabel(c).toLowerCase().includes(q)));
-  const enterLabel = t("Enter makes");
-  const enterRow = !!setEnterNewNote && (!q || `${enterLabel} ${t("New note")} ${t("New line")} enter`.toLowerCase().includes(q));
+  const enterRow = !q || `${t("Enter makes")} ${t("New note")} ${t("New line")} enter`.toLowerCase().includes(q);
 
   return (
     <div className="keyboardPane">

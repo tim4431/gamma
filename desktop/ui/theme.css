@@ -27,7 +27,7 @@ body {
   user-select: none;
 }
 
-/* --- the unified controls (same names/shape as Gamma's) ------------------ */
+/* --- the unified controls (Gamma's class names) -------------------------- */
 
 /* The unified controls set display themselves, which would beat the UA's
    [hidden] rule — keep the attribute meaningful for every control. */
@@ -54,7 +54,7 @@ body {
 .uiBtn:active:not(:disabled) { background: var(--bg-active); }
 .uiBtn:disabled { opacity: 0.45; cursor: default; }
 .uiBtn.primary { background: var(--accent); border-color: var(--accent); color: var(--on-accent); }
-.uiBtn.primary:hover:not(:disabled) { background: var(--accent-dark, var(--accent)); border-color: var(--accent-dark, var(--accent)); color: var(--on-accent); filter: brightness(1.05); }
+.uiBtn.primary:hover:not(:disabled) { background: var(--accent-dark); border-color: var(--accent-dark); color: var(--on-accent); filter: brightness(1.05); }
 .uiBtn.danger { color: var(--danger); border-color: var(--danger-border); background: transparent; }
 .uiBtn.danger:hover:not(:disabled) { background: var(--danger-bg); color: var(--danger); border-color: var(--danger); }
 .uiBtn.sm { min-height: 28px; font-size: 11.5px; padding: 4px 12px; border-radius: 8px; }

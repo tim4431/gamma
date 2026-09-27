@@ -53,16 +53,23 @@ def _welcome_text() -> str:
         return ""
 
 
-def welcome_source(text: str | None = None) -> tuple[dict, list]:
-    """``(front matter, [{content, children}])`` of welcome.md, parsed like
-    any imported markdown file. ``({}, [])`` when the file is missing (a
+def welcome_source(text: str) -> tuple[dict, list]:
+    """``(front matter, [{content, children}])`` of welcome.md's ``text``,
+    parsed like any imported markdown file. ``({}, [])`` for no text (a
     broken install seeds nothing rather than failing a login)."""
     from .markdown_import import md_to_blocks, parse_frontmatter
-    text = _welcome_text() if text is None else text
     if not text:
         return {}, []
     fields, body = parse_frontmatter(text)
     return fields, md_to_blocks(body)
+
+
+def _welcome_titles(fields: dict) -> tuple[str, str]:
+    """The page's title and the PDF's: front matter ``title`` and
+    ``document`` (which defaults to the title)."""
+    from .markdown_import import fm_text
+    title = fm_text(fields, "title") or "Welcome"
+    return title, fm_text(fields, "document") or title
 
 
 @functools.lru_cache(maxsize=2)
@@ -70,11 +77,10 @@ def welcome_pdf(text: str) -> bytes:
     """The sample PDF: welcome.md (``text``) typeset by the notes-as-PDF
     writer under its ``document`` title. The writer is deterministic, so
     every workspace stores the same file; one render per process and text."""
-    from .markdown_import import fm_text
     from .pdf_document import render_document
     fields, tree = welcome_source(text)
-    title = fm_text(fields, "document") or fm_text(fields, "title") or "Welcome"
-    return render_document([{"content": title, "properties": {}, "children": tree}])
+    _title, document = _welcome_titles(fields)
+    return render_document([{"content": document, "properties": {}, "children": tree}])
 
 
 def _insert_ops(page_id: str, tree: list) -> list[dict]:
@@ -103,7 +109,6 @@ def seed_welcome(ws: str, *, actor: str, guest: bool = False) -> str | None:
     storage limits refuse leaves the page without one."""
     from . import cloud_auth
     from .blocks_store import attachment_props, create_page
-    from .markdown_import import fm_text
     from .ops import after_commit, apply_ops
     from .storage import store_file
 
@@ -113,8 +118,7 @@ def seed_welcome(ws: str, *, actor: str, guest: bool = False) -> str | None:
     fields, tree = welcome_source(text)
     if not tree:
         return None
-    title = fm_text(fields, "title") or "Welcome"
-    document = fm_text(fields, "document") or title
+    title, document = _welcome_titles(fields)
     if guest:
         tree = [*tree, {"content": _guest_note(), "children": []}]
     try:

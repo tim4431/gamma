@@ -2643,7 +2643,6 @@
   "anyone with an account on this server": "此服务器上有账户的任何人",
   "as {name}": "以 {name} 身份",
   "asking…": "正在询问…",
-  "authentication is broken — sign in again or update the key.": "认证失效——请重新登录或更新密钥。",
   "backup": "备份",
   "blank keeps the current one": "留空则保持当前值",
   "block added": "新增块",

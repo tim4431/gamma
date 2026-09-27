@@ -6,9 +6,9 @@ import { t, T } from "../../shared/i18n/i18n.js";
 // user. Each step has a short title and one body sentence: a demo says
 // what Gamma is about to do, a practice step what to do (`bodyTouch` words
 // it for touch). `skippable: false` keeps "Skip this demo" off a demo the
-// rest of the tour depends on. `{demoUrl}` in typed text comes from `vars` (overridable through the
-// localStorage key gamma-guide-vars). Start it from the
-// account menu's Tours > Your first paper. It is also offered, as its
+// rest of the tour depends on. `{demoUrl}` in typed text comes from `vars`
+// (overridable through the localStorage key gamma-guide-vars). Start it from
+// the account menu's Tours > Your first paper. It is also offered, as its
 // welcome card, on the library of a demo server once the guest lands and on
 // a library with nothing in it yet but the seeded Welcome page: the
 // trigger's own `requires` / `anyOf` gate only that offer, so the tour stays

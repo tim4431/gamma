@@ -7,7 +7,7 @@ Where every setting lives, and how the Settings dialog is built.
 | Layer | Storage | Examples |
 |---|---|---|
 | Per browser | `localStorage`, one `gamma-*` key per preference, all declared in `PREFS` ([frontend/src/app/prefDefs.js](../../frontend/src/app/prefDefs.js)) with scope `browser` — except `gamma-link-name`, the share view's display name for a visitor without an account, owned by `src/collaboration/linkName.js` because the fetch wrapper reads it outside React | what describes this device: the interface size (`gamma-ui-scale`, applied pre-paint by `index.html`), the status bar, the handwriting input rules and the tool strip's presets, eraser and lasso choices (`gamma-ink-*`), the metadata and translation model picks and dictation (they name this server's provider entries, like the chat model `gamma-chat-model`), and whether a page's "Linked from" section is folded (`gamma-backlinks-collapsed`); outside `PREFS`, diagnostics tracing (`gamma-debug-log`) |
-| Per account, profile | the account-wide `profile` prefs key (`/api/prefs/profile`, one JSON object keyed by preference name), every `PREFS` entry with scope `account`; each also keeps its `gamma-*` localStorage key as the instant-paint cache | appearance (theme — the pre-paint script in `index.html` reads `gamma-theme`, resolves System to light or dark the way App.jsx's theme effect does and sets `data-theme` with its `data-scheme`, so the first frame has the right tokens ([ui-design.md](ui-design.md#tokens)) — flip page colors, and whether tours are suggested, `suggestTours`, [onboarding.md](onboarding.md)), the interface language (`gamma-language`, read by `main.jsx` before the first render, [i18n.md](i18n.md)), reading and editing (imported annotations, how search opens), translation (button and language, selection translation), the Enter key, library display and PDF fetching, the sync pill's scope (`syncPillScope`), chat behaviour (tools switch, per-kind tool permissions, reasoning effort, the login connection check, tool limits, snapshot clearing), translation effort and parallel requests, context budgets, prompts, keyboard shortcuts (`keybindings`: command id → chord or null, [hotkeys.md](hotkeys.md)) |
+| Per account, profile | the account-wide `profile` prefs key (`/api/prefs/profile`, one JSON object keyed by preference name), every `PREFS` entry with scope `account`; each also keeps its `gamma-*` localStorage key as the instant-paint cache | appearance (theme — the pre-paint script in `index.html` reads `gamma-theme`, resolves System to light or dark the way App.jsx's theme effect does and sets `data-theme` with its `data-scheme`, so the first frame has the right tokens ([ui-design.md](ui-design.md#tokens)) — flip page colors, and whether tours are suggested, `suggestTours`, [onboarding.md](onboarding.md)), the interface language (`gamma-language`, read by `main.jsx` before the first render, [i18n.md](i18n.md)), reading and editing (imported annotations, how search opens), translation (button and language, selection translation, effort, parallel requests), the Enter key, library display and PDF fetching, the sync pill's scope (`syncPillScope`), chat behaviour (tools switch, per-kind tool permissions, reasoning effort, the login connection check, tool limits, snapshot clearing), context budgets, prompts, keyboard shortcuts (`keybindings`: command id → chord or null, [hotkeys.md](hotkeys.md)) |
 | Session only | React state, nothing stored | the Ctrl+scroll text size of the notes list and the chat transcript (`useTextScale` in [Widgets.jsx](../../frontend/src/shared/ui/Widgets.jsx)) — resets on reload |
 | Per account, synced | `/api/prefs/{key}` (small JSON KV, `user_prefs` in `users.db`) | per account AND workspace: open tabs (`open-tabs`), the recently-viewed queue (`recent-views`), pinned folders (`pinned-folders`; pinned pages are a page property), reading positions (`read-pos`) — they name one workspace's pages; account-wide: active AI key (`ai-provider`) and the preference profile (`profile`, previous row). Server wins on load, localStorage (keyed `user@workspace`) is the instant-paint cache. The recents-card cover thumbnails are workspace data, through their own `/api/page-snaps` store (`page_snaps` in the workspace's `data.db` — over the prefs size cap) |
 | Per account, seen notices | the account-wide `notices-seen` prefs key (`db.NOTICES_SEEN_PREF_KEY`), `{notice id: fingerprint}`, written only by `POST /api/notices/{id}/seen` (below, "Notices") | which release and which log error the account has already looked at |
@@ -117,14 +117,14 @@ may cover one workspace.
 
 The editor (a `SubDialog`) offers Hourly, Daily, Weekly (chosen weekdays),
 Monthly (a day of the month) and a five-field cron expression. The stored
-cron is always UTC, so the server is unchanged, but Daily and Weekly times
+cron is always UTC, the time the server runs it in. Daily and Weekly times
 are entered in the browser's own time ("Time (your time, PDT)", with
-"= 10:00 UTC" under the box) and Hourly's minute likewise: hour and
-weekday convert together with the browser's current offset
+"= 10:00 UTC" under the box), and so is Hourly's minute. Hour and weekday
+convert together with the browser's current offset
 ([settings/backupSchedule.js](../../frontend/src/settings/backupSchedule.js),
-`tests/backupSchedule.test.mjs`), and a zone with daylight saving time is
-told the run moves an hour when the clocks change. Monthly schedules and
-cron expressions stay in UTC (a day of the month cannot cross a month's
+`tests/backupSchedule.test.mjs`). In a zone with daylight saving time the
+editor says the run moves an hour when the clocks change. Monthly schedules
+and cron expressions stay in UTC (a day of the month cannot cross a month's
 end). The next three runs are previewed in the browser's time zone.
 Retention is an age (days, weeks or 30-day months) or a snapshot count per
 workspace. Only that task's snapshots expire, after a successful run; the
@@ -200,17 +200,18 @@ with a faked feed and real acks.
 ## The Settings dialog
 
 One dialog, one sidebar
-([SettingsDialog.jsx](../../frontend/src/settings/SettingsDialog.jsx)): the
-account card on top (`NavAccountCard`: avatar initial, name, "Account ·
-4 KB used" and the storage bar, from `/api/quota` like the account menu; it
-opens the account pane, whose name "Account & sync" is its accessible name,
-and carries that pane's notice dot), then four captioned groups —
+([SettingsDialog.jsx](../../frontend/src/settings/SettingsDialog.jsx)). On
+top sits the account card (`NavAccountCard`: avatar initial, name, "Account
+· 4 KB used" and the storage bar, from `/api/quota` like the account menu).
+It opens the account pane, whose name "Account & sync" is its accessible
+name, and carries that pane's notice dot. Four captioned groups follow:
 `PREFERENCE_NAV` (Preferences), `AI_NAV` (AI), `LIBRARY_NAV` (Library) and
-`ADMIN_NAV` (Administration, with an `admin` tag, rendered only for admins:
-it changes the server for everyone) — and `HELP_NAV`, Help & diagnostics,
-pinned to the rail's bottom. Every pane is one click from any other;
-nothing opens a second dialog or a "back" link. Panes carry no explanatory subtitle: a section rule's right-hand
-tag (an icon plus "account" or "browser", `Section`'s `scope` prop, matching
+`ADMIN_NAV` (Administration). Administration carries an `admin` tag and
+renders only for admins, since it changes the server for everyone.
+`HELP_NAV`, Help & diagnostics, is pinned to the rail's bottom. Every pane
+is one click from any other; the one page below a pane is a workspace's
+Manage page, whose breadcrumb leads back. Panes carry no explanatory
+subtitle: a section rule's right-hand tag (an icon plus "account" or "browser", `Section`'s `scope` prop, matching
 the settings' scope in `PREFS`; an account tag's icon is the sync state of
 that section's own settings, above) says where a setting lives, a row's
 short hint what it does, and the hover `title` the rest.
@@ -303,9 +304,10 @@ AI:
   the same numbers under the storage meter. The check, models and usage
   sections appear only once a provider exists; a guest sees the usage too,
   without Reset. The chat's setup card (no AI connected, `ChatSetupCard` in
-  `chat/ChatDock.jsx`) opens this pane through `openAiKeysEditor(service)`,
+  `chat/ChatDock.jsx`) opens this pane through `openAiKeysEditor({service})`,
   and the add dialog comes up set to the tile's service once the key list
-  has loaded; the card's tiles and the dialog's service tiles are one list
+  has loaded (a chat error card's fix opens an entry's form the same way,
+  `openAiKeysEditor({entry})`); the card's tiles and the dialog's service tiles are one list
   (`aiServiceTiles` in `SettingsAi.jsx`). Once a connection made from the
   card is saved with a model, Settings closes, the status says "Connected —
   <model> ready" and the chat's message box takes the focus.
@@ -330,16 +332,16 @@ AI:
 
 Library:
 
-- **Workspaces**: storage meter, personal and shared workspaces (each row:
-  Open, a Data menu with export and import, Manage — an inline detail page
-  under one breadcrumb head, "Workspaces › <name>", whose first crumb goes
-  back and whose right end is Open workspace: General, Access, Members and
-  the Danger zone, every row saving at once, no footer; rename and invite
-  are small editor dialogs), New workspace, Export all. A row's on-disk
-  folder (`workspaces/<id>`) shows to admins only.
-  The empty Shared section offers admins "New shared workspace" (a jump to
-  Server). The account popover's "Workspaces…" opens this pane. Clones are
-  not listed here (they are under Account & sync).
+- **Workspaces**: storage meter, personal and shared workspaces, New
+  workspace, Export all. Each row has Open, a Data menu (export, import)
+  and Manage. Manage opens an inline page under one breadcrumb head,
+  "Workspaces › <name>", with Open workspace at its right end: General,
+  Access, Members and the Danger zone, every row saving at once, no footer.
+  Rename and invite are small editor dialogs. A row's on-disk folder
+  (`workspaces/<id>`) shows to admins only. The empty Shared section offers
+  admins "New shared workspace" (a jump to Server). The account popover's
+  "Workspaces…" opens this pane. Clones are listed under Account & sync,
+  not here.
 - **Backups** ([SettingsBackups.jsx](../../frontend/src/settings/SettingsBackups.jsx)):
   the task table first ([BackupTasks.jsx](../../frontend/src/settings/BackupTasks.jsx):
   Add task opens the editor `SubDialog`; each row has an Enabled switch and
@@ -358,11 +360,13 @@ Administration (admins only):
   check), the public server URL, storage defaults (each box saves on Enter
   or blur), **Guests**, the shared AI provider, shared workspaces, server
   backups and the log with its level filter ([user_db.md](user_db.md)).
+
 At the bottom of the rail:
 
 - **Help & diagnostics** (pane id `diagnostics`): browser tracing, the
-  browser session log and, under Help, the Report a problem button (the same dialog as the account menu's
-  entry; [debugging.md](debugging.md) "Report a problem").
+  browser session log and, under Help, the Report a problem button (the
+  same dialog as the account menu's entry; [debugging.md](debugging.md)
+  "Report a problem").
 
 **Shared AI provider** (Server, `SettingsAi.jsx` `SharedAiProviderSettings`)
 lists the server's shared connections with the same rows and the same
@@ -423,25 +427,25 @@ button, or a "Link Gamma Cloud account" button that round-trips through the
 account server ([cloud_accounts.md](cloud_accounts.md)).
 
 Search is backed by [settingsNavigation.js](../../frontend/src/settings/settingsNavigation.js).
-Each entry names its pane, the setting's label, the section it sits in, its
-one-line hint (the row's own words) and English synonyms; a setting one
-level down (in a workspace's Manage page, a row's menu) also names the
-`target` on the pane itself that the jump focuses. Every query word must
-appear in the label, synonyms, hint or section; entries whose label holds
-them all come first, and inaccessible management pages are filtered out.
-A result is a row-like button: the pane's icon, the label with the query
-marked, the hint, and "Pane › Section" on the right; past six results they
-group under one caption per pane. Picking one opens the pane and focuses
-the matching `data-setting` element. Add an entry when adding a new
-setting; `tests/settingsSearch.test.mjs` fails when an entry's target is
-no `data-setting` its pane renders. The search box and the Keyboard filter
+Each entry names its pane, the setting's label, its section, its one-line
+hint (the row's own words) and English synonyms. A setting one level down
+(in a workspace's Manage page, a row's menu) also names the `target` on the
+pane itself that the jump focuses. Every query word must appear in the
+label, synonyms, hint or section. Entries whose label holds them all come
+first; inaccessible management pages are filtered out. A result is a
+row-like button: the pane's icon, the label with the query marked, the
+hint, and "Pane › Section" on the right. Past six results they group under
+one caption per pane. Picking one opens the pane and focuses the matching
+`data-setting` element. Add an entry when adding a new setting:
+`tests/settingsSearch.test.mjs` fails when an entry's target is no
+`data-setting` its pane renders. The search box and the Keyboard filter
 carry their own × (the browser's is hidden).
 Legacy pane names resolve through `resolveSettingsPane`; old notes, search,
 viewer and context entry points also jump to their section.
 
 The desktop surface has a persistent search header and labeled sidebar. On
-phones the Back button opens a labeled category list, replacing the old strip
-of unlabeled icons. All controls remain reachable by keyboard and touch.
+phones the Back button opens a labeled category list. All controls remain
+reachable by keyboard and touch.
 
 Most preferences apply immediately, the server storage defaults included
 (each box saves when it commits). Prompts and the public server URL use a
@@ -473,26 +477,28 @@ the exact values without changing them.
 ## Settings primitives
 
 [SettingsKit.jsx](../../frontend/src/settings/SettingsKit.jsx) provides `PaneHead`,
-`Section`, `Row`, `Toggle`, `SubDialog` and the shared controls.
-Ordinary rows show a small icon, a label, a short hint and a control, with the
-shared hover background. A section holds one subject; its settings stay in
-it even when a few are stored differently (a row's own `scope` tag says so)
-rather than splitting into a second section of the same subject. Put consequences in the visible
-hint; supplementary `title` text appears on hover, without a Details toggle.
+`Section`, `Row`, `Toggle`, `SubDialog` and the shared controls. A page one
+level down names its way back in `PaneHead`'s `crumbs`, and `action` puts a
+control at the head's right end (the workspace Manage page's Open
+workspace). Ordinary rows show a small icon, a label, a short hint and a
+control, with the shared hover background. A section holds one subject;
+its settings stay in it even when a few are stored differently (a row's own
+`scope` tag says so) rather than splitting into a second section of the
+same subject. Put consequences in the visible hint; supplementary `title`
+text appears on hover, without a Details toggle.
 Use the existing shared controls: `PictureChoices` for illustrated choices,
 `IconChoices` for a small exclusive set pictured as icon tiles (the share
 popover's audience, handwriting's "Draws with"), `Segmented` for two or three
 short words, `ToggleGroup` for independent chips.
 An irreversible action sits in the pane's or dialog's Danger zone
-(`Section tone="danger"`, buttons `uiBtn sm danger`, a hint that says
-what is lost; [ui-design.md](ui-design.md) "Dialogs").
-Editor dialogs are one layout: a `SubDialog` (its title row always carries
-the × unless `closeButton={false}`), `Field`s — the label on its own line,
-one hint line under it, the control below — and a `DialogButtons` footer
-whose `footnote` says what a disabled primary button waits for ("Fill in
-the server and its token to continue."). Editor dialogs accept a `draft`
-value for dismissal protection. See [ui-design.md](ui-design.md) for shared
-control styling.
+(`Section tone="danger"`; the rules are in [ui-design.md](ui-design.md)
+"Dialogs"). Editor dialogs share one layout. A `SubDialog`'s title row
+carries the × unless `closeButton={false}`. Each `Field` puts the label on
+its own line, one hint line under it and the control below. A
+`DialogButtons` footer's `footnote` says what a disabled primary button
+waits for ("Fill in the server and its token to continue."). Editor dialogs
+accept a `draft` value for dismissal protection. See
+[ui-design.md](ui-design.md) for shared control styling.
 
 ## Verification
 

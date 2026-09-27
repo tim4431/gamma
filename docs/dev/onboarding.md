@@ -2,8 +2,8 @@
 
 **Status: the engine, the two manual tours (first paper, AI chat), six
 triggered tours, seven hints and the welcome page with its sample PDF are
-built.** The synced `onboarding` pref, first-sign-in invitation and
-checklist are still design.
+built. The first paper tour is also offered to every new library.** The
+synced `onboarding` pref and the checklist are still design.
 What exists: `frontend/src/guide/` (anchor registry, event bus, trigger rules
 in `triggers.js`, `useGuide`, `GuideOverlay`, one file per tour in `tours/`,
 the hints in `tours/hints.js`), the node test `tests/guide.test.mjs` and the
@@ -19,30 +19,34 @@ automatically; Finish can also close it. Either way the tour ends on its
 finish card (below).
 
 The welcome card (`welcome: true` on the tour, its first step `intro:
-true`) is centred, 440 px: a "2-minute tour" chip (`minutes`), the title
-("Welcome to the Gamma demo" on a demo server — two `intro` variants by
-`requires: {demo}`), one sentence saying Gamma shows each move once and then
-the user tries it, a three-line `outline` marking each line *watch* or *you
-try*, **Explore on my own** (`later`, dismisses) and **Start the tour**
-(`next`), and the footnote that the tour can be replayed from the account
-menu. It is not counted as a step (the add demo reads "Step 1 of 8"). It is
-also the tour's offer: every new account is invited on arrival (see the
-table below), without dimming anything; Start begins with the add demo, and
-Explore on my own settles the offer for the tour's version.
+true`) is a centred 440 px card. It holds a "2-minute tour" chip
+(`minutes`), the title, one sentence saying Gamma shows each move once and
+then the user tries it, and a three-line `outline` marking each line
+*watch* or *you try*. **Explore on my own** (`later`) dismisses it, **Start
+the tour** (`next`) starts it, and a footnote says the tour can be replayed
+from the account menu. A demo server gets its own title ("Welcome to the
+Gamma demo"): two `intro` variants, picked by `requires: {demo}`. The card
+is not counted as a step (the add demo reads "Step 1 of 8"). It is also the
+tour's offer, which every new account gets on arrival (see the table below)
+without anything dimmed. Start begins with the add demo; Explore on my own
+settles the offer for the tour's version.
 
-The finish card (`finishCard` on the tour; `guide/finish.js`) comes up when
-the last step completes: centred over a light scrim, with a beacon on the
-account button. "That's your first paper", then what the run made, each
-line shown only when it happened — the paper (the first `page.opened` of
-the run, whose payload carries its `title`), the number of highlights
-(`highlight.created`), the note and the `llm` label (their demos ran to the
-end; a skipped demo made nothing) — then two tiles: **Ask the paper**
-(the AI chat tour when an AI provider is connected, else Settings →
-Connections through App's `openSettings` service) and **More tours** (opens
-the account menu's Tours list), the footnote "Replay any tour from the
-account menu" and **Done**. "done" is recorded when the card opens;
-closing it (Done, ×, Esc, the scrim, a tile) keeps it. Only a tour with a
-`finishCard` ends this way; the others close after their last step.
+The finish card (`finishCard` on the tour, `guide/finish.js`) comes up when
+the last step completes. It is centred over a light scrim, with a beacon on
+the account button. Under "That's your first paper" it lists what the run
+made, each line only when it happened:
+
+- the paper: the run's first `page.opened`, whose payload carries its `title`;
+- the number of highlights (`highlight.created`);
+- the note and the `llm` label, when their demos ran to the end.
+
+Two tiles follow. **Ask the paper** starts the AI chat tour when an AI
+provider is connected, else opens Settings → Connections (App's
+`openSettings` service). **More tours** opens the account menu's Tours
+list. Then the footnote "Replay any tour from the account menu" and
+**Done**. "done" is recorded when the card opens, and closing it (Done, ×,
+Esc, the scrim, a tile) keeps it. Only a tour with a `finishCard` ends this
+way; the others close after their last step.
 
 Progress is a localStorage key per account (`gamma-guide:<account>:<tourId>`;
 the first tour keeps its older `gamma-guide:first-run`), not yet the synced
@@ -58,7 +62,9 @@ The account menu's **Tours** submenu lists the tours that can start where the
 user is (`guide.startable()`): a tour's `requires` hold and its first step's
 anchor, or the control that reveals it, is on screen. A tour with `show`
 brings up its own surface first (AI chat opens the chat). So **Your first
-paper** and **AI chat** are always listed. **Sharing a page** is listed on
+paper** is always listed, and so is **AI chat** once `/api/ai/models` has
+answered, except for a guest with no AI connected (no step applies there).
+**Sharing a page** is listed on
 any open page, **Editing tables** on any page you can edit and
 **Handwriting** on any PDF you can edit; each begins by having you make the
 thing it explains when there is none yet (see "Steps that have the user
@@ -120,14 +126,14 @@ show Done before advancing automatically.
 A tour with a `trigger` is also offered by itself, once per `version`, right
 **after** the thing it explains happened, never on mere contact with a
 control (focusing the chat composer offers nothing). The offer is a card
-beside the anchor: "Quick tour · N steps", then what just happened and why
-the tour is worth it — the tour's `offer: { title, line }` ("You made a
-table" / "Cells, rows and columns are edited in place."), else its name —
-and **Show me** / **Not now**; the Tours menu keeps the plain name. It does
-not dim the app or move focus: a beak on the card's edge points at the
-control and a beacon (an accent ring and halo that pulse twice, then stay,
-with clicks passing through) marks it. A **hint**
-(`hint: true`) is a one-step triggered guide: its card is the whole thing,
+beside the anchor. It reads "Quick tour · N steps", then what just happened
+and why the tour is worth it: the tour's `offer: { title, line }` ("You
+made a table" / "Cells, rows and columns are edited in place."), else its
+name. Its buttons are **Show me** and **Not now**; the Tours menu keeps the
+plain name. It does not dim the app or move focus. A beak on the card's
+edge points at the control, and a beacon marks it: an accent ring and halo
+that pulse twice, then stay, with clicks passing through. A **hint**
+(`hint: true`) is a one-step triggered guide whose card is the whole thing:
 an amber **Tip** chip over one plain sentence that says why it helps, with
 **Got it**.
 
@@ -157,10 +163,11 @@ Rules the engine keeps (`useGuide.js`, `triggers.js`):
   starts; the trigger's `requires` gates only the offer, which is how the
   first-run tour is offered on the library while staying startable from
   the Tours menu everywhere. `anyOf` is a list of fact sets of which at
-  least one must hold as well (a demo server, or an empty library). Step-level `requires` filters steps when the
-  tour starts, so two steps can be variants of one another (the sharing
-  tour's access step for `shareAudience: "anyone"` and for the rest). A
-  required value that is an array means one of its values.
+  least one must hold as well (a demo server, or an empty library).
+  Step-level `requires` filters steps when the tour starts, so two steps
+  can be variants of one another (the sharing tour's access step for
+  `shareAudience: "anyone"` and for the rest). A required value that is an
+  array means one of its values.
 - **After the render.** An event is judged after the render it came with,
   so the facts include what the same action changed (`share.created` sees
   the new link). Only events some trigger listens for are queued.
@@ -187,7 +194,6 @@ Engine abilities available to every step:
 - **Tour-end cleanups.** A demo action gets `services.onTourEnd(fn)` next to
   its step's `onCleanup`: what it leaves for the tour's later steps (the AI
   chat tour's snapshot) is taken back when the tour ends, however it ends.
-
 - **Reveal by `open` path.** A step whose anchor is registered with
   `open: [...]` is revealed by clicking through that path (skipping the
   parts already open) instead of tidying the app first; every other step
@@ -224,16 +230,18 @@ Engine abilities available to every step:
 - **`finish`** on a tour: what App restores once its last step is done
   (`services.finish("pen")`: the handwriting tour ends with the lasso or the
   eraser armed, so App re-arms the pen last drawn with). Leaving a tour
-  early restores nothing.
+  early restores nothing. It is unrelated to `finishCard`, the card above,
+  which `useGuide` hands the overlay as `finishCard` with `finishAction` for
+  its tiles.
 - **`Section guide="…"`** in the settings kit groups a section's header and
   rows under one anchor (the Share popover's Who has access and General
   access; its Link section carries `share.link` only once a link exists,
   which is what the tour's create step waits for).
 - **Keys in copy** (`guide/keys.js`). Titles and bodies render `**bold**`,
-  `*italic*`, `` `code` `` and key tokens: `{key:app.quickOpen}` names a
+  `*italic*`, `` `code` `` and key tokens. `{key:app.quickOpen}` names a
   command of the catalog ([hotkeys.md](hotkeys.md)) and shows the chord it
-  answers to for this account — rebound in Settings → Keyboard, ⌘ only on a
-  Mac — as the settings kit's key caps (`shared/ui/KeyCaps.jsx`); an unbound
+  answers to for this account (rebound in Settings → Keyboard, ⌘ only on a
+  Mac) as the settings kit's key caps (`shared/ui/KeyCaps.jsx`). An unbound
   command shows its palette name in quotes. `{key:Tab}` names a fixed key.
   Never type a chord into copy. App passes the `keybindings` preference to
   the overlay; the token stays literal in the i18n key
@@ -270,10 +278,10 @@ The next demo, `{previewArea: true}`, uses the PDF's real Ctrl+pointer-drag
 handler to draw a rectangle, with a Ctrl badge beside the animated cursor,
 around the attention formula App's `findEquation` service finds. It cancels
 the drag before release, so it creates no snapshot or annotation. With
-`context: true` (the AI chat tour) it aims at a figure instead — App's
+`context: true` (the AI chat tour) it aims at a figure instead: App's
 `findFigure` finds the first "Figure N:" caption, and the box is the gap in
-the running text above it, labels included — and releases, so the snapshot
-goes to the chat; `snapshotDemo` takes it back when the tour ends.
+the running text above it, labels included. That drag is released, so the
+snapshot goes to the chat; `snapshotDemo` takes it back when the tour ends.
 The user then draws their own rectangle and chooses a colour. The
 `highlight.created` event carries `kind: "text" | "area"`, so each practice
 step completes only for its matching type.
@@ -281,14 +289,14 @@ step completes only for its matching type.
 - Actions: `{click: anchor}`, `{type: anchor, text, speed?}`,
   `{press: "Enter", on?: anchor}`, `{waitFor: {event, match?}, timeout?,
   status?}`, `{wait: ms}`. Click and type move the spotlight and a drawn
-  pointer to the element first, pause a beat, then act; typing goes through
-  the native value setter plus an `input` event so React-controlled inputs
-  see it, with the pointer parked at the field's left edge just below it
-  (above it at the bottom of the window) and faded, so the typed text stays
-  readable; keys are dispatched as `KeyboardEvent`s (the engine's own
-  hotkeys ignore untrusted events), and a press `on` a field shows the key
-  as a cap beside the pointer for 600 ms. Events that fire during the step
-  are buffered, so a `waitFor` after a fast action still catches its result.
+  pointer to the element first, pause a beat, then act. Typing goes through
+  the native value setter plus an `input` event, so React-controlled inputs
+  see it. Meanwhile the pointer waits faded at the field's left edge, just
+  below it (above it at the bottom of the window), so the typed text stays
+  readable. Keys are dispatched as `KeyboardEvent`s (the engine's own
+  hotkeys ignore untrusted events); a press `on` a field shows the key as a
+  cap beside the pointer for 600 ms. Events that fire during the step are
+  buffered, so a `waitFor` after a fast action still catches its result.
   A `waitFor` with a `status` shows it on the card with a spinner while it
   waits ("Fetching the paper…" for the add demo's download); after 20 s the
   card adds "This can take a minute on a slow connection."
@@ -530,29 +538,32 @@ scope: you learn the app once, not once per workspace.
   editing markdown. It is English only; there is no per-language welcome.md.
 - The page carries a PDF so "select text to highlight" has a target. The PDF is
   **rendered from the same markdown by the notes-as-PDF writer**
-  (`pdf_document.render_document`, [import_export.md](import_export.md)) —
-  deterministic, rendered once per process (`seed.welcome_pdf`) — and stored
-  through the content-hash store like any upload (`store_file`, not
-  `store_pdf`: its background manifest walk could still hold `data.db` open
-  when a guest who just arrived logs out; `/api/pdf-info` makes the manifest
-  on first open). No binary asset in the repo, no licence question, always in
-  step with the text, and it demonstrates the export feature. Its last
-  section is a practice passage whose plain-text formula line is what the
-  first tour's box demo encircles (`findEquation` looks for `Attention(` and
-  `softmax`). The page's own `meta` record (`source: manual`) and `ppt_cite`
-  mean opening it looks nothing up and asks no AI for a citation. A PDF the
-  storage limits refuse leaves the page without one.
+  (`pdf_document.render_document`, [import_export.md](import_export.md)).
+  The writer is deterministic, so it runs once per process
+  (`seed.welcome_pdf`). No binary asset in the repo, no licence question,
+  always in step with the text, and it demonstrates the export feature.
+- The PDF goes through the content-hash store like any upload, with
+  `store_file`, not `store_pdf`: the latter's background manifest walk could
+  still hold `data.db` open when a guest who just arrived logs out.
+  `/api/pdf-info` makes the manifest on first open. A PDF the storage limits
+  refuse leaves the page without one.
+- Its last section is a practice passage. Its plain-text formula line is
+  what the first tour's box demo encircles (`findEquation` looks for
+  `Attention(` and `softmax`). The page's own `meta` record (`source:
+  manual`) and `ppt_cite` mean opening it looks nothing up and asks no AI
+  for a citation.
 - `seed.seed_welcome(ws, actor=, guest=)` seeds it into a workspace with no
-  pages yet. Every account-creating path asks for it:
-  `workspaces.ensure_personal(..., welcome=True)` from `seed.create_account`
+  pages yet. Every account-creating path asks for it through
+  `workspaces.ensure_personal(..., welcome=True)`: `seed.create_account`
   (the admin API, `manage.py create-user`), `seed.create_cloud_account`,
-  `seed.ensure_admin_seed` and `guests.new_guest`; `workspaces.create`
-  seeds once the workspace's rows exist. An existing workspace, a further
-  personal workspace, a shared one and an offline copy start empty,
-  `manage.py setup` seeds nothing (except a guest workspace whose files it
-  recreates), and neither does a share host, whose workspaces hold published
-  pages only, each counted against the plan's cap
-  ([cloud_accounts.md](cloud_accounts.md)). A guest's page ends with a callout naming the lifetime; a
+  `seed.ensure_admin_seed` and `guests.new_guest`. `workspaces.create`
+  seeds once the workspace's rows exist.
+- An existing workspace, a further personal workspace, a shared one and an
+  offline copy start empty. `manage.py setup` seeds nothing, except a guest
+  workspace whose files it recreates. A share host seeds nothing either: its
+  workspaces hold published pages only, each counted against the plan's cap
+  ([cloud_accounts.md](cloud_accounts.md)).
+- A guest's page ends with a callout naming the lifetime; a
   `GAMMA_GUEST_SEED` zip replaces the whole workspace ([guests.md](guests.md)).
 - The page has `properties.seeded: "welcome"`, so the first tour finds its
   PDF and the library can tell a fresh one (no pages but seeded ones) from a

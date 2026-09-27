@@ -15,17 +15,15 @@
 import fs from "node:fs";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
+import { THEMES, themeScheme } from "../src/app/prefDefs.js";
 
 const FRONTEND = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "..");
 export const TOKENS_CSS = path.join(FRONTEND, "src", "shared", "styles", "tokens.css");
 export const BASELINE = path.join(FRONTEND, "tests", "theme-contrast-baseline.json");
 
-// The pinned themes and the scheme each one sets as data-scheme — the same
-// split as DARK_THEMES in src/app/prefDefs.js (the test keeps them equal).
-export const THEME_SCHEMES = {
-  light: "light", dark: "dark", "gamma-light": "light", "gamma-dark": "dark",
-  sepia: "light", solarized: "light", gray: "light",
-};
+// The pinned themes and the scheme each one sets as data-scheme.
+export const THEME_SCHEMES = Object.fromEntries(
+  THEMES.filter((t) => t !== "system").map((t) => [t, themeScheme(t)]));
 
 // What the ratchet measures: text on the surfaces it sits on (WCAG AA 4.5:1),
 // faint text 3:1, and the primary button's label on its fill.

@@ -488,9 +488,10 @@ def _probe_model(entry: dict, fallback: str = "") -> str:
 def _probe_entry(user: str, entry: dict, fallback_model: str = "", retry: bool = True) -> dict:
     """One tiny live completion through a saved entry — answers "does this
     credential still work" without waiting for a real chat to 502. The result
-    is in-body ({ok, model, latency_ms} / {ok: False, error, auth}); `auth`
-    marks a broken credential (expired sign-in / rejected key) so the UI can
-    say "reconnect" instead of dumping the upstream body."""
+    is in-body ({ok, model, latency_ms} / {ok: False, error, auth, kind});
+    `auth` marks a broken credential (expired sign-in / rejected key) so the
+    UI can say "reconnect" instead of dumping the upstream body, and `kind`
+    is ai_client.failure_kind (absent when no model is picked)."""
     provider_id = entry.get("id")
     # An explicit probe is an explicit retry: drop the refresh backoff so a
     # ChatGPT entry re-attempts its token refresh now instead of reusing a
@@ -673,9 +674,9 @@ def ai_health(payload: AIHealthRequest, request: Request):
              or (entries[0] if entries else None))
     if not entry:
         return {"configured": False, "ok": True}
-    proto = ai_protocols.PROTOCOLS.get(entry.get("protocol"))
     result = {"configured": True, "provider_id": entry.get("id"), "mode": payload.mode,
-              "provider_name": provider_label(entry), "provider_auth": proto.auth if proto else "key"}
+              "provider_name": provider_label(entry),
+              "provider_auth": "oauth" if _is_oauth_protocol(entry.get("protocol")) else "key"}
     # A shared sign-in's refresh backoff is the admin's to reset: every
     # account's login runs this check, and a dead shared grant must not be
     # retried once per login.

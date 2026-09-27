@@ -48,6 +48,15 @@ const COARSE = () => typeof matchMedia === "function" && matchMedia("(pointer: c
 const PlayGlyph = () => <svg width="8" height="9" viewBox="0 0 8 9" aria-hidden="true"><path d="M0 0.5 L8 4.5 L0 8.5 Z" fill="currentColor" /></svg>;
 // The copy as one plain line, for an aria-label.
 const plainText = (text, bindings) => keyText(text, bindings).replace(/\*\*|\*|`/g, "");
+// The ring that marks a control without dimming anything (an offer, a hint,
+// the finish card's account button), a little inside the spotlight rect.
+const Beacon = ({ rect }) => (
+  <div className="guideBeacon" aria-hidden="true"
+    style={{ top: rect.top + BEACON_INSET, left: rect.left + BEACON_INSET, width: rect.width - 2 * BEACON_INSET, height: rect.height - 2 * BEACON_INSET }} />
+);
+// Keep the caret where the user is typing, and keep a popover the card
+// points into open (outside-click checks listen on the document).
+const keepFocus = (e) => { e.preventDefault(); e.stopPropagation(); };
 
 // Where the card goes relative to the spotlight: the step's preferred side
 // when it fits, else below, above, right, left; clamped to the viewport.
@@ -181,8 +190,8 @@ export default function GuideOverlay({ guide, keybindings }) {
   const visible = running || inviting;
   // Past the last step: the finish card, with a beacon on the account
   // button (where tours are replayed).
-  const finishing = running && !!guide.finish;
-  const step = inviting ? offer : finishing ? guide.finish : guide.step;
+  const finishing = !!guide.finishCard;
+  const step = inviting ? offer : finishing ? guide.finishCard : guide.step;
   const next = inviting ? guide.acceptOffer : guide.next;
   const dismiss = inviting ? guide.dismissOffer : guide.dismiss;
   const [rect, setRect] = useState(null);   // spotlight rect (padded) or null
@@ -267,14 +276,11 @@ export default function GuideOverlay({ guide, keybindings }) {
   if (!visible || !step) return null;
   if (finishing) {
     return (
-      <div className="guideRoot guideFinishing" data-guide-finish={step.id}>
+      <div className="guideRoot" data-guide-finish={step.id}>
         <div className="guideScrim" onClick={guide.dismiss} aria-hidden="true" />
-        {rect ? (
-          <div className="guideBeacon" aria-hidden="true"
-            style={{ top: rect.top + BEACON_INSET, left: rect.left + BEACON_INSET, width: rect.width - 2 * BEACON_INSET, height: rect.height - 2 * BEACON_INSET }} />
-        ) : null}
+        {rect ? <Beacon rect={rect} /> : null}
         <div className="guideCard guideCardCentered guideCardWelcome guideCardFinish" role="dialog" aria-live="polite" aria-label={t(step.title)}
-          onMouseDown={(e) => { e.preventDefault(); e.stopPropagation(); }} onPointerDown={(e) => e.stopPropagation()}>
+          onMouseDown={keepFocus} onPointerDown={(e) => e.stopPropagation()}>
           <FinishContent finish={step} onAction={guide.finishAction} onDone={guide.dismiss} />
         </div>
       </div>
@@ -300,9 +306,6 @@ export default function GuideOverlay({ guide, keybindings }) {
   const link = busy ? (step.skippable !== false ? t("Skip this demo") : null)
     : yourTurn ? (step.next ? t(step.next) : t("Skip step")) : null;
   const body = !inviting && COARSE() && step.bodyTouch ? step.bodyTouch : step.body;
-  // Keep the caret where the user is typing, and keep a popover the card
-  // points into open (outside-click checks listen on the document).
-  const keepFocus = (e) => { e.preventDefault(); e.stopPropagation(); };
 
   return (
     <div className={`guideRoot ${inviting ? "guideInvitation" : ""} ${inviting && offer.hint ? "guideHint" : ""} ${done ? "done" : ""} ${busy ? "busy" : ""}`} data-guide-overlay={inviting ? undefined : step.id} data-guide-offer={inviting ? offer.id : undefined} data-guide-busy={busy ? "1" : undefined}>
@@ -316,11 +319,7 @@ export default function GuideOverlay({ guide, keybindings }) {
         {rect ? <path d={hole} className="guideRing" /> : null}
       </svg> : null}
       {busy && rect ? <div className="guideShield" aria-hidden="true" /> : null}
-      {/* An offer or hint marks its control without dimming anything. */}
-      {inviting && rect ? (
-        <div className="guideBeacon" aria-hidden="true"
-          style={{ top: rect.top + BEACON_INSET, left: rect.left + BEACON_INSET, width: rect.width - 2 * BEACON_INSET, height: rect.height - 2 * BEACON_INSET }} />
-      ) : null}
+      {inviting && rect ? <Beacon rect={rect} /> : null}
       {!inviting && live?.cursor ? (
         <div
           className={`guideCursor ${live.cursor.pressed ? "pressed" : ""} ${live.cursor.dragging ? "dragging" : ""} ${live.cursor.faded ? "faded" : ""}`}

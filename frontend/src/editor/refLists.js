@@ -5,7 +5,7 @@
 import { createLibraryMatcher } from "../library/librarySearch.js";
 import { plainSnippet } from "../search/snippets.js";
 
-export const PICKER_ROWS = 8;
+const PICKER_ROWS = 8;
 const RECENT_PAGES = 4; // offered before anything is typed
 
 // App's page list ([{id, content, _attachment, _folders, _labels,
@@ -28,9 +28,9 @@ export function rankRefPages(pages, query, excludeId) {
 
 // How many of each fit in the popup's rows: pages first, up to five while
 // blocks wait, and either list takes the room the other leaves.
-export function pickerCounts(pageCount, blockCount, rows = PICKER_ROWS) {
-  const pages = Math.min(pageCount, Math.max(5, rows - blockCount));
-  return [pages, Math.min(blockCount, rows - pages)];
+export function pickerCounts(pageCount, blockCount) {
+  const pages = Math.min(pageCount, Math.max(5, PICKER_ROWS - blockCount));
+  return [pages, Math.min(blockCount, PICKER_ROWS - pages)];
 }
 
 // A block's markdown as the picker shows it: one plain line (search's
