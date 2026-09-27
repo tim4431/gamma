@@ -14,7 +14,7 @@ from urllib.request import Request as URLRequest, urlopen
 
 from .. import chatgpt_oauth
 from ..logbuf import log
-from .base import listed_window
+from .base import listed_efforts, listed_window
 from .responses import ResponsesWire, responses_body
 
 # GET {base}/models gates its answer on the caller's version, so the listing
@@ -120,9 +120,10 @@ class ChatGPT(ResponsesWire):
                 continue
             # "hide" marks picker-hidden but usable slugs — offered after the
             # listed ones rather than dropped.
-            (hidden if visibility == "hide" else listed).setdefault(slug, listed_window(m))
+            (hidden if visibility == "hide" else listed).setdefault(slug, m)
         found = {**listed, **{k: v for k, v in hidden.items() if k not in listed}}
-        return [{"id": slug, "context_window": window} for slug, window in found.items()]
+        return [{"id": slug, "context_window": listed_window(m), "efforts": listed_efforts(m)}
+                for slug, m in found.items()]
 
     def account_usage_request(self, conf):
         # Codex's account client's .../backend-api/wham/usage, sibling of the

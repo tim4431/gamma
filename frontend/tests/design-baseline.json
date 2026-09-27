@@ -7,8 +7,8 @@
     "color": 4
   },
   "shared/styles/app.css": {
-    "color": 112,
-    "shadow": 4
+    "color": 111,
+    "shadow": 3
   },
   "transfers/importReview.css": {
     "color": 1

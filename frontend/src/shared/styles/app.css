@@ -2173,22 +2173,9 @@ button.pdfOutlineChevron:hover { background: rgba(128, 128, 128, 0.28); color: v
 .tabClose { flex-shrink: 0; cursor: pointer; line-height: 1; }
 /* The page's kind before the title: a tinted PDF glyph or a plain page. */
 .tabKind { flex-shrink: 0; display: inline-flex; align-items: center; }
-/* Pinned tabs: 36px icons (no title, no close button — close via right-click)
-   that stick to the left edge while the rest scroll under them; their
-   `left` is set inline, one step per pinned tab. */
-.tab.pinned {
-  position: sticky;
-  z-index: 1;
-  flex: 0 0 36px;
-  width: 36px;
-  min-width: 36px;
-  padding: 0;
-  justify-content: center;
-  background: var(--bg-page);
-}
-.tab.pinned:hover { background: var(--bg-hover); }
-.tabStrip.scrolled .tab.pinned { box-shadow: 6px 0 6px -6px rgba(0, 0, 0, 0.3); }
-.tab.pinned.active { background: var(--bg-surface); }
+/* Pinned tabs keep their width and title; a pin (click to unpin) takes the
+   close button's place — close one from the right-click menu. */
+.tabPin { color: var(--text-dim); }
 /* The "⌄ n" button after an overflowing strip, and its list of every tab. */
 .topbar .iconBtn.tabsMenuBtn { width: auto; min-width: 32px; padding: 0 6px; gap: 2px; flex-shrink: 0; }
 .tabsMenuCount { font-size: var(--fs-xs); font-variant-numeric: tabular-nums; }
@@ -3770,7 +3757,9 @@ a.shareBrand:hover { background: var(--bg-hover); }
   align-items: center;
   gap: 3px;
   font-size: var(--fs-2xs);
+  font-family: inherit;
   color: var(--text-muted);
+  background: transparent;
   border: 1px solid var(--border-subtle);
   border-radius: var(--radius-xs);
   padding: 4px 7px;
@@ -3910,9 +3899,9 @@ a.shareBrand:hover { background: var(--bg-hover); }
   gap: 2px;
   margin: 4px 2px 2px;
   padding: 6px 6px 5px;
-  border: 1px solid var(--border);
+  border: 1px solid var(--border-light);
   border-radius: var(--radius-lg);
-  background: var(--bg-surface);
+  background: var(--bg-field);
   box-shadow: var(--shadow-1);
   flex-shrink: 0;
   min-width: 0;
@@ -3946,6 +3935,7 @@ a.shareBrand:hover { background: var(--bg-hover); }
 .chatModelChip .uiSelectBtn {
   border-color: transparent;
   background: transparent;
+  box-shadow: none;
   color: var(--text-muted);
   max-width: 180px;
   min-width: 0;
@@ -4253,6 +4243,19 @@ a.shareBrand:hover { background: var(--bg-hover); }
 /* Under a reply: the token line (always visible, dim) and the hover actions. */
 .chatMsgFoot { display: flex; align-items: center; gap: 8px; min-height: 22px; }
 .chatBubbleRow.user .chatMsgFoot { justify-content: flex-end; }
+/* Which model answered, at what effort: first in a reply's foot, before the
+   token line, in its type. */
+.chatMsgModel {
+  min-width: 0;
+  padding: 2px 0 0 4px;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  font-size: calc(var(--fs-2xs) * var(--text-scale, 1));
+  color: var(--text-dim);
+  cursor: default;
+}
+.chatMsgModel + .chatMsgUsage { padding-left: 0; }
 .chatMsgUsage {
   display: inline-flex;
   align-items: center;
@@ -4414,16 +4417,13 @@ a.shareBrand:hover { background: var(--bg-hover); }
   max-width: 100%;
   overflow: hidden;
 }
-.chatBubble.ai .chatPdfChip { background: var(--bg-raised); color: var(--text-muted); }
-/* The agent's work in a reply (AgentSteps / AgentChanges in ChatDock): one
-   pill summing up the steps, expanding to every call's chip below; then the
-   changes it made, each old → new, under an accent rule. */
-.chatStepsWrap { display: flex; flex-direction: column; gap: 6px; margin-bottom: 8px; min-width: 0; }
-.chatSteps {
+/* A reply's status pills, one look — both buttons, so they scale alike with
+   the interface size: what the model was given (ContextCoverage in
+   ChatDock, a click unfolds why) and the agent's steps (AgentSteps). */
+.chatPill {
   display: inline-flex;
   align-items: center;
   gap: 6px;
-  align-self: flex-start;
   max-width: 100%;
   padding: 3px 10px;
   border: 1px solid var(--border-subtle);
@@ -4435,9 +4435,22 @@ a.shareBrand:hover { background: var(--bg-hover); }
   line-height: 1.5;
   cursor: pointer;
 }
-.chatSteps:hover { color: var(--text-primary); }
-.chatSteps svg { flex: none; }
-.chatStepsText { min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.chatPill:hover { color: var(--text-primary); }
+.chatPill svg { flex: none; }
+.chatPillText { min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.chatCoverage { display: flex; flex-wrap: wrap; gap: 6px; margin-bottom: 6px; min-width: 0; }
+.chatCoverageNote {
+  flex-basis: 100%;
+  margin: 0;
+  color: var(--text-muted);
+  font-size: calc(var(--fs-xs) * var(--text-scale, 1));
+  line-height: var(--lh-ui);
+}
+/* The agent's work in a reply (AgentSteps / AgentChanges in ChatDock): one
+   pill summing up the steps, expanding to every call's chip below; then the
+   changes it made, each old → new, under an accent rule. */
+.chatStepsWrap { display: flex; flex-direction: column; gap: 6px; margin-bottom: 8px; min-width: 0; }
+.chatSteps { align-self: flex-start; }
 .chatStepsFailed { flex: none; color: var(--danger); }
 .chatStepsFailed::before { content: "·"; margin-right: 6px; color: var(--text-muted); }
 .chatSteps .transferSpin.inline { flex: none; }
@@ -4615,13 +4628,13 @@ a.shareBrand:hover { background: var(--bg-hover); }
   border-radius: var(--radius-full);
   min-width: 26px;
   height: 26px;
-  padding: 0 6px;
+  padding: 0 4px;
   justify-content: center;
-  font-size: var(--fs-lg);
   line-height: 1;
   align-self: center;
 }
-.chatPlusCount { font-size: var(--fs-2xs); font-weight: 600; margin-left: 1px; }
+.chatPlusBtn svg { flex: none; }
+.chatPlusCount { font-size: var(--fs-2xs); font-weight: 600; margin-right: 2px; }
 .chatAttachToggle.chatPlusBtn:disabled { opacity: 0.4; cursor: default; }
 .chatInput:disabled { cursor: not-allowed; }
 /* Round send/stop variant of .uiBtn (chat composer). */

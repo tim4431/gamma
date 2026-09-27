@@ -311,8 +311,9 @@ AI:
   (`aiServiceTiles` in `SettingsAi.jsx`). Once a connection made from the
   card is saved with a model, Settings closes, the status says "Connected —
   <model> ready" and the chat's message box takes the focus.
-- **Chat**: **Chat** (the default reasoning effort and the
-  snapshot-clearing switch), then **Tools**: the master switch and, per chat
+- **Chat**: **Chat** (the default reasoning effort — every level, since
+  each model gets the nearest one it takes, [ai.md](ai.md#reasoning-effort) —
+  and the snapshot-clearing switch), then **Tools**: the master switch and, per chat
   kind (folder / PDF / notes), the tool chips (`AgentToolPicker`, the same
   `ToggleGroup` the chat header's settings popover shows for the open chat).
   No presets.
@@ -458,7 +459,7 @@ guard.
 
 The chat's shortcuts edit the **same shared preferences** as Settings: the
 composer's model chip (model and reasoning effort, a `MenuSelect` with a
-second section) and the header's ⚙ popover (single-paper context budget,
+second section listing only the picked model's levels) and the header's ⚙ popover (single-paper context budget,
 tool permissions, the token counts).
 The Tools button and checkbox also edit the global `agentEnabled` preference;
 there is no conversation-local tools override or reset on New chat.

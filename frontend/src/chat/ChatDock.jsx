@@ -23,6 +23,7 @@ import { AgentToolPicker, CHAT_KIND_ROWS } from "../settings/SettingsDialog";
 import { aiServiceTiles } from "../settings/SettingsAi";
 import { renderKatex } from "../editor/LatexEditor";
 import { chipSegments } from "./chipText";
+import { effortFor } from "./effort";
 import { AlertCircleIcon, ArrowDownIcon, ArrowUpIcon, BookIcon, CheckIcon, ChevronDownIcon, ChevronUpIcon, CloudDownloadIcon, CopyIcon, EyeIcon, FileIcon, FolderIcon, GlobeIcon, HighlightIcon, HistoryIcon, InfoIcon, ListIcon, MicIcon, OutlineIcon, PaperclipIcon, PencilIcon, PlusIcon, QuoteIcon, SearchIcon, SettingsIcon, SlidersIcon, SparklesIcon, StopIcon, TextCursorIcon, TrashIcon, XIcon } from "../shared/ui/Icons";
 import { T, getLocale, t } from "../shared/i18n/i18n.js";
 
@@ -72,6 +73,7 @@ function selectionPlace(selection) {
 }
 
 function ContextCoverage({ items }) {
+  const [open, setOpen] = useState(-1); // the pill whose explanation is unfolded
   const notes = items.flatMap((c) => {
     const out = [];
     const refused = c.native_requested && !c.native;
@@ -103,14 +105,18 @@ function ContextCoverage({ items }) {
     return out;
   });
   if (!notes.length) return null;
+  // Pills like the agent's steps: a click unfolds the explanation under them.
   return (
-    <div className="chatMsgPdfs">
+    <div className="chatCoverage">
       {notes.map((n, i) => (
-        <span key={i} className="chatPdfChip" title={n.long}>
+        <button key={i} type="button" className="chatPill" aria-expanded={open === i}
+          title={open === i ? undefined : n.long} onClick={() => setOpen(open === i ? -1 : i)}>
           {n.refused ? <AlertCircleIcon size={14} /> : <InfoIcon size={14} />}
-          {n.short}
-        </span>
+          <span className="chatPillText">{n.short}</span>
+          {open === i ? <ChevronUpIcon size={14} /> : <ChevronDownIcon size={14} />}
+        </button>
       ))}
+      {notes[open] ? <p className="chatCoverageNote">{notes[open].long}</p> : null}
     </div>
   );
 }
@@ -148,10 +154,10 @@ function AgentSteps({ actions, running, open, onToggle, titleOf, children }) {
   const live = !!running;
   return (
     <div className="chatStepsWrap">
-      <button type="button" className={`chatSteps${live ? " live" : ""}`} onClick={onToggle} aria-expanded={open}
+      <button type="button" className={`chatPill chatSteps${live ? " live" : ""}`} onClick={onToggle} aria-expanded={open}
         title={open ? t("Hide the steps") : t("Show every step with its arguments and output")}>
         {live ? <span className="transferSpin inline" aria-hidden="true" /> : <CheckIcon size={14} />}
-        <span className="chatStepsText">{live ? runningLabel(running, titleOf) : stepsSummary(actions)}</span>
+        <span className="chatPillText">{live ? runningLabel(running, titleOf) : stepsSummary(actions)}</span>
         {failed && !live ? <span className="chatStepsFailed">{t("{n} failed", { n: failed })}</span> : null}
         {actions.length ? (open ? <ChevronUpIcon size={14} /> : <ChevronDownIcon size={14} />) : null}
       </button>
@@ -221,25 +227,25 @@ function UsageLine({ usage, className = "chatMsgUsage" }) {
   );
 }
 
-// A chat model's context window in tokens, asked once per model per page
-// load: the server reads it from the provider's own model listing, else the
-// public models.dev catalog (GET /api/ai/context-window). Null while
-// unknown — nothing is guessed from the name.
-const contextWindows = new Map(); // model id -> Promise<number | null>
-function useContextWindow(modelId) {
-  const [known, setKnown] = useState({ id: "", size: null });
+// What the server knows about a chat model, asked once per model per page
+// load (GET /api/ai/model-info): its context window in tokens and the
+// reasoning-effort levels it takes, read from the provider's own model
+// listing, else the public models.dev catalog. Null while unknown, and so
+// is either field when no source knows it — nothing is guessed from the name.
+const modelInfos = new Map(); // model id -> Promise<{context_window, efforts} | null>
+function useModelInfo(modelId) {
+  const [known, setKnown] = useState({ id: "", info: null });
   useEffect(() => {
     if (!modelId) return undefined;
-    if (!contextWindows.has(modelId)) {
-      contextWindows.set(modelId, apiJson(`${API}/ai/context-window?model=${encodeURIComponent(modelId)}`)
-        .then((r) => r.context_window || null)
-        .catch(() => { contextWindows.delete(modelId); return null; }));
+    if (!modelInfos.has(modelId)) {
+      modelInfos.set(modelId, apiJson(`${API}/ai/model-info?model=${encodeURIComponent(modelId)}`)
+        .catch(() => { modelInfos.delete(modelId); return null; }));
     }
     let live = true;
-    contextWindows.get(modelId).then((size) => { if (live) setKnown({ id: modelId, size }); });
+    modelInfos.get(modelId).then((info) => { if (live) setKnown({ id: modelId, info }); });
     return () => { live = false; };
   }, [modelId]);
-  return known.id === modelId ? known.size : null;
+  return known.id === modelId ? known.info : null;
 }
 
 // Claude Code's context ring: the share of the model's window the
@@ -495,10 +501,16 @@ export default function ChatDock({
   // A model's name in the pickers, with its connection's when there are several.
   const multiProvider = new Set(headerModels.map((m) => m.provider)).size > 1;
   const modelLabel = (m) => (multiProvider ? `${m.model} · ${m.provider_name || m.provider}` : m.model);
-  // The context ring: the latest reply's size against the model's window,
-  // which is asked only once there is something to show.
+  const modelInfo = useModelInfo(!aiOff && aiInfo ? headerModel?.id : "");
+  // The context ring: the latest reply's size against the model's window.
   const ctxUsed = contextUsed(chatMessages);
-  const ctxWindow = useContextWindow(ctxUsed ? headerModel?.id : "");
+  const ctxWindow = ctxUsed ? modelInfo?.context_window || null : null;
+  // The reasoning efforts the picked model takes ([] = none); a model no
+  // source knows gets the generic ones. The preference stays as chosen and
+  // is sent as the nearest level this model takes (chat/effort.js), so a
+  // switch to a model without "xhigh" and back keeps it.
+  const effortLevels = Array.isArray(modelInfo?.efforts) ? modelInfo.efforts : (aiInfo?.efforts || ["low", "medium", "high"]);
+  const effort = effortFor(chatEffort, effortLevels);
   const nativePdf = activeModel ? activeModel.native_pdf !== false : true;
   // The mic shows only when a connection can transcribe (an OpenAI-protocol
   // key — /api/ai/models `transcribe`); without one dictation can only fail.
@@ -879,6 +891,7 @@ export default function ChatDock({
     let acc = ""; // streamed reply so far — kept on Stop
     const actions = []; // organizer mutations streamed for this reply
     let coverage = null; // {"context": [...]} — what the model was given, per document
+    let answered = null; // {"model": {id, name, effort}} — which model answers, at what effort
     let usage = null; // the provider's token report, summed over the reply's rounds
     let lastRound = null; // the latest round's report alone — the context ring's figure
     let liveChars = 0; // characters received since the last report — the running estimate
@@ -888,6 +901,7 @@ export default function ChatDock({
       role: "ai", text: acc,
       ...(actions.length ? { actions: [...actions] } : {}),
       ...(coverage ? { context: coverage } : {}),
+      ...(answered ? { model: answered.name, ...(answered.effort ? { effort: answered.effort } : {}) } : {}),
       ...(usage ? { usage } : {}),
       ...(lastRound ? { context_tokens: (lastRound.input || 0) + (lastRound.output || 0) } : {}),
       ...extra,
@@ -908,7 +922,7 @@ export default function ChatDock({
           context_blocks: contextBlocks,
           note_selections: noteSelections,
           attach_pdf: sendingPdf,
-          effort: chatEffort || "",
+          effort,
           system: chatSystem || "",
           pages: selectedDocs.length ? contextIds : [],
           include_notes: includeNotes,
@@ -947,6 +961,8 @@ export default function ChatDock({
             if (now > seen) { liveChars += now - seen; liveArgs.set(ev.progress.id, now); }
           } else if (ev.context) {
             coverage = ev.context;
+          } else if (ev.model) {
+            answered = ev.model;
           } else if (ev.usage) {
             // The round is counted for real now; the estimate starts over.
             usage = addUsage(usage, ev.usage);
@@ -1553,6 +1569,11 @@ export default function ChatDock({
                     ) : null}
                   </div>
                   {!isResponding ? <div className="chatMsgFoot">
+                    {!isUser && m.model ? (
+                      <span className="chatMsgModel" title={t("Model and reasoning effort")}>
+                        {m.effort ? `${m.model} · ${m.effort}` : m.model}
+                      </span>
+                    ) : null}
                     {!isUser ? <UsageLine usage={m.usage} /> : null}
                     <div className="chatMsgActions">
                     <button type="button" className="chatMsgActionBtn" title={t("Copy message")}
@@ -1708,7 +1729,7 @@ export default function ChatDock({
               title={t("Add photos & files, or pages from your library")}
               aria-label={t("Add attachments or chat context")}
             >
-              +{chatDocs.length ? <span className="chatPlusCount">{chatDocs.length}</span> : null}
+              <PlusIcon size={16} />{chatDocs.length ? <span className="chatPlusCount">{chatDocs.length}</span> : null}
             </button>
             {openPopover === "chatdocs" ? (
               <div className="popover popUp chatPlusMenu">
@@ -1768,14 +1789,14 @@ export default function ChatDock({
                 heading={t("Model")}
                 value={headerModel.id}
                 onChange={setChatModel}
-                display={chatEffort ? `${headerModel.model} · ${chatEffort}` : headerModel.model}
+                display={effort ? `${headerModel.model} · ${effort}` : headerModel.model}
                 options={headerModels.map((m) => [m.id, modelLabel(m)])}
-                sections={[{
+                sections={effortLevels.length ? [{
                   label: t("Reasoning effort"),
-                  value: chatEffort,
+                  value: effort,
                   onChange: setChatEffort,
-                  options: [["", t("Default")], ...(aiInfo.efforts || ["low", "medium", "high"]).map((ef) => [ef, ef])],
-                }]}
+                  options: [["", t("Default")], ...effortLevels.map((ef) => [ef, ef])],
+                }] : []}
               />
             </span>
           ) : null}

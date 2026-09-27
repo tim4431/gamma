@@ -214,7 +214,8 @@ export async function quickOpenScenarios(env) {
         const tab = document.querySelector(".tabStrip .tab.active").getBoundingClientRect();
         return tab.left >= strip.left && tab.right <= strip.right;
       }), { what: "the active tab is scrolled into view" });
-      assertEq(await page.locator(".tabStrip .tab.pinned .tabTitle").count(), 0, "a pinned tab is an icon");
+      assertEq(await page.locator(".tabStrip .tab.pinned .tabTitle").count(), 1, "a pinned tab keeps its title");
+      assertEq(await page.locator(".tabStrip .tab.pinned").getByRole("button", { name: "Unpin tab" }).count(), 1, "a pin takes the close button's place");
       // The overflow button lists every tab; a filter and Enter open one.
       await page.getByRole("button", { name: "All open tabs", exact: true }).click();
       const menu = page.getByRole("dialog", { name: "All open tabs" });

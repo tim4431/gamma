@@ -166,12 +166,12 @@ def test_chat_agent_streams_edit_preview(notes, monkeypatch):
     assert order.index("progress") < order.index("action", 1)
     assert actions[1]["kind"] == "edit" and actions[1]["block_id"] == ids["top"]
     assert props(c, ids["top"])["content"] == "## Idea\nfirst half"
-    # Non-stream callers get text + actions only.
+    # Non-stream callers get text + actions (and which model answered) only.
     opened.clear()
     r = c.post("/api/ai/chat", json={
         "prompt": "again", "agent_scope": "page", "page_id": ids["page"]})
     assert r.status_code == 200, r.text
-    assert set(r.json()) == {"response", "actions", "context"}
+    assert set(r.json()) == {"response", "actions", "context", "model"}
     assert [a["tool"] for a in r.json()["actions"]] == ["read_block", "edit_block"]
     assert "progress" not in r.text
 

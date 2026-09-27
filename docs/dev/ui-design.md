@@ -50,11 +50,12 @@ one app inside one frame:
 | Role | Token | Where |
 |---|---|---|
 | Chrome | `--bg-page` | the topbar and its tab strip, the Settings rail, collapsed dock bars, the phone's bottom bar, the desktop shell's bar |
-| Content | `--bg-surface` | the library, the notes page, every dock (notes and chat alike), dialogs — in a light theme the lightest thing on screen |
+| Content | `--bg-surface` | the library, the notes page, every dock (notes and chat alike), dialogs — in a light theme the lightest thing on screen but the chat composer's field |
 | Quiet fill | `--bg-block` | row hover, code, table heads, a chat bubble |
 | Selected | `--bg-selected` | the focused block: the accent at 6 % over the content (11 % in the dark scheme) |
 | Sunken | `--bg-deeper` | wells; the PDF surround in the tinted themes |
 | Floating | `--bg-elevated` + `--shadow-2` | popovers, menus, tips, the guide card |
+| Field | `--bg-field` + `--border-light` | a text box that must stand out on the content — the chat composer: toward white in a light theme, toward the ink in a dark one |
 
 The active tab is the content surface cut out of the chrome: no shadow, and
 a band under it (`.tab.active::after`, over the topbar's padding and bottom
@@ -452,7 +453,7 @@ box, and a refused password also takes the focus and a red border.
 | `editor/codeHighlight.js` | the highlight.js (`lib/common`) wrapper and the code card's copy button, shared by editor + renderer; token colors are theme-aware `.hljs-*` rules in app.css. The fence scanner is `editor/fences.js`: `scanFences` (used by mdPreprocess's exclusions and BlockTree's Enter/Tab-in-fence handling) and `fenceInnerAt` |
 | `editor/LatexEditor.jsx` | LaTeX aids while editing: the live preview docked to the editor column with a caret marker, the `\command` popup, `renderKatex`/`useCaretAnchored` shared helpers; `editor/latexCompletion.js` is the pure catalog (prefix/abbreviation/fuzzy tiers, snippets, Tab-out navigation) it re-exports; `editor/latexInput.js` supplies scalable delimiter pairing. See [LaTeX editing](latex_editing.md) for shortcuts and browser checks |
 | `library/libraryUtils.js` | folder-tag semantics (mirrored by `backend/gamma/foldertags.py`) |
-| `shared/ui/Widgets.jsx`, `shared/ui/Menus.jsx`, `shared/ui/Icons.jsx` | shared components; `OpenTabs` in Widgets is the topbar's tab strip (a kind icon per tab, pinned tabs as 36px icons sticky at the left, the active tab kept in view clear of the right-edge fade, and on overflow a "⌄ n" popover listing every tab with a filter) |
+| `shared/ui/Widgets.jsx`, `shared/ui/Menus.jsx`, `shared/ui/Icons.jsx` | shared components; `OpenTabs` in Widgets is the topbar's tab strip (a kind icon per tab, pinned tabs first, full width with a pin in place of the close button, the active tab kept in view clear of the right-edge fade, and on overflow a "⌄ n" popover listing every tab with a filter) |
 | `shared/ui/wheelPan.js` | `useWheelPan`: a plain mouse wheel pans a sideways strip (the card strips, the tab strip) |
 | `shared/ui/listKeys.js` | `stepList`: ↑/↓ between a search box and the results listed under it (Settings search, the move-to-page filter, the chat's page picker) |
 | `shared/ui/MermaidDiagram.jsx`, `shared/ui/ResizeGrip.jsx` | the Mermaid figure with its hover toolbar of `ctlBtn`s ([mermaid.md](mermaid.md)); the two-sided drag grips (`ResizeGrips`) + `useDragResize` hook that size centred note images and diagrams alike |

@@ -112,7 +112,9 @@
    the content (library, notes, every dock, dialogs) and the lightest thing
    on screen in a light theme, --bg-block a quiet fill, --bg-selected the
    focused block, --bg-deeper a sunken well, --bg-elevated what floats
-   (popovers, menus, tips). */
+   (popovers, menus, tips), --bg-field a text box that must stand out on
+   the content (the chat composer): toward white in a light theme, toward
+   the ink in a dark one. */
 :where(:root) {
   /* Seed defaults. */
   --accent-fill: var(--accent);
@@ -146,6 +148,7 @@
   --bg-block: color-mix(in oklab, var(--ground) 96.5%, var(--ink));
   --bg-input: color-mix(in oklab, var(--ground) 95.5%, var(--ink));
   --bg-elevated: color-mix(in oklab, var(--ground) 94.5%, var(--ink));
+  --bg-field: color-mix(in oklab, var(--ground) 93%, var(--ink));
   --bg-raised: color-mix(in oklab, var(--ground) 91%, var(--ink));
   --bg-hover: color-mix(in oklab, var(--ground) 86%, var(--ink));
   --bg-active: color-mix(in oklab, var(--ground) 82%, var(--ink));
@@ -193,6 +196,7 @@
   --bg-card: var(--ground);
   --bg-input: var(--ground);
   --bg-elevated: var(--ground);
+  --bg-field: color-mix(in oklab, var(--ground) 30%, white);
   --bg-block: color-mix(in oklab, var(--ground) 98%, var(--ink));
   --bg-page: color-mix(in oklab, var(--ground) 96%, var(--ink));
   --bg-deeper: color-mix(in oklab, var(--ground) 93.5%, var(--ink));
