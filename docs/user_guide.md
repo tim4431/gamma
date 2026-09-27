@@ -24,7 +24,7 @@ On open, each paper's title, authors and venue are filled in automatically (arXi
 - **Area highlight / screenshot**: **hold Ctrl and drag a rectangle** on the page. Two things happen at once: the region is cropped as an image and attached to the AI chat (ready to ask about a figure or table), and the color popup appears — pick a color to also keep it as a rectangular highlight whose note card shows a thumbnail of the region. On a phone there is no Ctrl — use the text/rectangle mode toggle in the zoom column.
 - **Click a highlight** to jump to its note (and quote it into the chat). **Right-click** it to recolor, link it to a paper, copy it as a reference point (also copies a deep link to the exact passage), or delete it. Highlights with a comment carry a small **speech-bubble badge** — hover it to read the note in place.
 - **Highlights already in the file** (made in Acrobat, Preview, SumatraPDF…) are imported as blocks when the paper is added; Settings → Reading & editing decides whether the embedded copies are kept or stripped from the stored PDF so nothing renders twice.
-- **Zoom**: Ctrl+wheel (anchored at the cursor), pinch on touch, or the +/−/fit buttons on the right edge. Zoom and reading position are remembered per paper and synced across your devices.
+- **Zoom**: Ctrl+wheel (anchored at the cursor), pinch on touch, or the zoom buttons in the viewer's controls on its left edge (−, +, fit width). Zoom and reading position are remembered per paper and synced across your devices.
 - **Dark pages**: Settings → Appearance → *Flip page colors* inverts the page for night reading (display only; the PDF is untouched).
 
 ### Draw with a pen
@@ -76,7 +76,7 @@ Notes live in the **Notes panel** as a nested outline. Highlights and free notes
 
 ## AI chat
 
-Open the chat from the **⋮ menu → AI Chat**. Configure providers in Settings → AI → Connections: Anthropic or OpenAI keys, any OpenAI-compatible gateway, or sign in with your **ChatGPT subscription** (no API key). Keys are stored per account on the server and never shown to the browser again.
+Open the chat from the **View menu (≡, top right) → AI Chat**. Configure providers in Settings → AI → Connections: Anthropic or OpenAI keys, any OpenAI-compatible gateway, or sign in with your **ChatGPT subscription** (no API key). Keys are stored per account on the server and never shown to the browser again.
 
 - **Enter sends**, Shift+Enter is a newline. The **model and effort switchers** are in the panel header. A mic button dictates into the input.
 - **Context**: in a paper the chat reads that paper's text automatically. The **PDF toggle** attaches the actual file (so the model sees figures and tables); it turns itself off once the file has been sent in a conversation, to avoid re-billing it every message.
@@ -192,7 +192,7 @@ The panel lists every connected assistant with how it signed in and lets you dis
 
 ## Import and export
 
-Both live in the **⋮ menu**, on a page or on the home library (with a folder open, Export takes the whole folder).
+Both live in the **View menu** (≡, top right), on a page or on the home library (with a folder open, Export takes the whole folder).
 
 **Import…**
 
@@ -229,7 +229,7 @@ The installed web app still needs the server to be reachable. For a library that
 
 ## Panels, tabs and navigation
 
-- The Notes and Chat windows are dockable: **drag the ⠿ grip** to dock them left, right or bottom (the drop position decides the order); **double-click the grip to collapse** a window to its header bar and back; **×** closes it (reopen from the ⋮ menu). Drag the dividers to resize. Each paper remembers its own layout.
+- The Notes and Chat windows are dockable: **drag the ⠿ grip** to dock them left, right or bottom (the drop position decides the order); **double-click the grip to collapse** a window to its header bar and back; **×** closes it (reopen from the View menu — ≡, top right). Drag the dividers to resize. Each paper remembers its own layout.
 - **Tabs** sync to your account across devices. Middle-click closes a tab; right-click pins it (pinned tabs stay left and can't be middle-closed); drag to reorder.
 - **Background tasks** (uploads, fetches, exports) show in the top bar's tasks popover with progress.
 - On a phone everything becomes full-screen views behind a bottom tab bar (Library/PDF · Notes · Chat).

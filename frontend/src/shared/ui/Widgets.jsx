@@ -30,7 +30,7 @@ function DockWindow({ title, onGrip, onGripDoubleClick, onClose, headerContent, 
           title={t("Drag to move this window · double-click to collapse/expand")}
         >⠿ {title}</span>
         {onClose ? (
-          <button className="uiClose" onClick={onClose} title={t("Close window (reopen from the ⋮ menu)")} aria-label={t("Close {title}", { title: title })}>×</button>
+          <button className="uiClose" onClick={onClose} title={t("Close window (reopen from the View menu)")} aria-label={t("Close {title}", { title: title })}>×</button>
         ) : null}
         <span className="dockHeaderSpacer" />
         {collapsed ? null : headerContent}

@@ -6268,7 +6268,7 @@ function LibraryApp({ publicPage = null, initialServerConfig = null }) {
     }
     const s = clampZoom(next);
     setPdfScale(String(Math.round(s * 10000) / 10000));
-    postPill("pdf-zoom", { msg: `Zoom ${Math.round(s * 100)}%`, final: true });
+    postPill("pdf-zoom", { msg: t("Zoom {n}%", { n: Math.round(s * 100) }), final: true });
   }
 
   function jumpToHighlightId(highlightId, additive) {
@@ -8576,7 +8576,7 @@ function LibraryApp({ publicPage = null, initialServerConfig = null }) {
     );
   }
 
-  // The "⋮" overflow menu, shared by the editing and read-only topbars.
+  // The "≡" View menu, shared by the editing and read-only topbars.
   // Read-only share views omit AI chat and the import actions.
   const renderOverflowMenu = (menuReadOnly) => (
     <PopoverAnchor name="menu">
