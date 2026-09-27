@@ -632,6 +632,13 @@ function LibraryApp({ publicPage = null, initialServerConfig = null }) {
     setLoginUser(""); setLoginPass(""); setLoginError("");
     setShareGate("login");
   }
+  // A dead link's "Sign in to your library": sign in right here, then open
+  // the library instead of the link.
+  const doLibraryLogin = (e) => doLogin(e, async () => { window.location.assign("/"); });
+  function librarySignIn() {
+    setLoginError("");
+    setShareGate("signin");
+  }
 
   // Download an /api/export backup zip. Fetched by hand (not a plain link
   // navigation) so the user sees the two slow parts: the server zipping a big
@@ -4807,8 +4814,9 @@ function LibraryApp({ publicPage = null, initialServerConfig = null }) {
       // (401 → login gate, 403 → not on the list, 404 → gone).
       const res = await fetch(`${API}/share/${encodeURIComponent(token)}`, { credentials: "include" });
       if (!res.ok) {
-        if (res.status === 403) {
-          // Name the account that was refused so the message makes sense.
+        if (res.status !== 401) {
+          // Name the account that was refused so the message makes sense;
+          // a dead link offers sign-in only to a visitor who isn't.
           try {
             const sess = await (await fetch(`${API}/session`, { credentials: "include" })).json();
             setShareInfo({ viewer: sess?.user || "" });
@@ -6982,34 +6990,40 @@ function LibraryApp({ publicPage = null, initialServerConfig = null }) {
     return () => document.removeEventListener('scroll', onScroll, { capture: true });
   }, [pdfUrl, pdfHidden]);
 
-  // A share link that can't open yet: sign in (signed-in / specific-people
-  // shares), or explain why not.
-  if (shareMode && shareGate) {
-    return shareGate === "login" ? (
-      <LoginPage
-        username={loginUser}
-        password={loginPass}
-        error={loginError}
-        onUsernameChange={setLoginUser}
-        onPasswordChange={setLoginPass}
-        onSubmit={doShareLogin}
-        cloudLogin={serverConfig?.cloud}
-        subtitle={t("Sign in to open this shared page")}
-      />
-    ) : (
-      <ShareBlockedPage reason={shareGate} viewer={shareInfo?.viewer || ""} onSwitchAccount={shareSwitchAccount} />
-    );
-  }
-
-  // Login page state
   // One navigation for every Gamma link card on screen (chat, notes, embeds).
-  // Declared above the loading/unavailable returns below — it is a hook.
+  // Declared above every early return below — it is a hook, and the share
+  // gate appears only after the first render.
   // Rebuilt when what the handlers close over changes; a click reads the
   // current value, so the cards themselves never re-render for navigation.
   const gammaNav = useMemo(
     () => ({ openPage: openPageLink, openBlock: openBlockLink }),
     [focusedBlockId, blocks, refCache, shareMode],
   );
+
+  // A share link that can't open yet: sign in (signed-in / specific-people
+  // shares), or explain why not. "signin" is the blocked page's own sign-in,
+  // which lands in the visitor's library rather than retrying the link.
+  if (shareMode && shareGate) {
+    return shareGate === "login" || shareGate === "signin" ? (
+      <LoginPage
+        username={loginUser}
+        password={loginPass}
+        error={loginError}
+        onUsernameChange={setLoginUser}
+        onPasswordChange={setLoginPass}
+        onSubmit={shareGate === "login" ? doShareLogin : doLibraryLogin}
+        cloudLogin={serverConfig?.cloud}
+        next={shareGate === "login" ? undefined : "/"}
+        subtitle={shareGate === "login" ? t("Sign in to open this shared page") : t("Sign in to your library")}
+      />
+    ) : (
+      <ShareBlockedPage
+        reason={shareGate} viewer={shareInfo?.viewer || ""} onSwitchAccount={shareSwitchAccount}
+        // a page host serves published pages only: nowhere else to go from there
+        onSignIn={publicPage ? undefined : librarySignIn} offerHome={!publicPage}
+      />
+    );
+  }
 
   if (workspaceUnavailable) return <WorkspaceUnavailablePage />;
   if (authUser === null) return <AuthLoading />;

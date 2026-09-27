@@ -120,6 +120,51 @@ export async function shareScenarios({ server, browser, alice, bob, step, until,
     await alice.api("/api/share-settings/folder?name=sharedlab", { method: "DELETE" });
   });
 
+  await step("share gate: a dead link, a signed-in-only link opened anonymously and an invite-only link each show their page", async () => {
+    const gated = await alice.api("/api/blocks", { method: "POST", body: { parent_id: "root", content: "Gated share page" } });
+    await alice.api("/api/blocks", { method: "POST", body: { parent_id: gated.id, content: "a note behind the gate" } });
+    const { token: gateToken } = await alice.api(`/api/share/${gated.id}`, { method: "POST" });
+    const refusals = [/GET \/api\/share\/[^ ]+ -> (401|403|404)/];
+
+    // an unknown token: the explanation and the two ways on; signing in lands in the library
+    let ctx = await browser.newContext({ viewport: { width: 1280, height: 860 } });
+    let page = await openPage(ctx, `${server.base}/?share=no-such-token`);
+    await page.getByText("This link doesn't work", { exact: true }).waitFor({ timeout: 15000 });
+    assert((await page.textContent(".loginCard")).includes("Ask the person who sent it for a new link."), "the dead link's explanation");
+    await page.getByRole("button", { name: "Go to Gamma", exact: true }).waitFor();
+    await page.getByRole("button", { name: "Sign in to your library", exact: true }).click();
+    await page.fill(".loginInput >> nth=0", bob.name);
+    await page.fill("input[type=password]", bob.password);
+    await page.click("button.loginBtn[type=submit]");
+    await page.waitForSelector(".folderNewBtn", { timeout: 15000 });
+    assert(!page.url().includes("share="), "the library, not the dead link again");
+    assertNoProblems(page, refusals);
+    await ctx.close();
+
+    // signed-in users only, opened anonymously: the login gate, then the page
+    await alice.api(`/api/share-settings/${gated.id}`, { method: "PUT", body: { audience: "users", role: "view" } });
+    ctx = await browser.newContext({ viewport: { width: 1280, height: 860 } });
+    page = await openPage(ctx, `${server.base}/?share=${gateToken}`);
+    await page.getByText("Sign in to open this shared page", { exact: true }).waitFor({ timeout: 15000 });
+    await page.fill(".loginInput >> nth=0", bob.name);
+    await page.fill("input[type=password]", bob.password);
+    await page.click("button.loginBtn[type=submit]");
+    await until(async () => (await page.textContent(".readOnlyTitle").catch(() => "")).includes("Gated share page"), { what: "the page after signing in" });
+    assertNoProblems(page, refusals);
+    await ctx.close();
+
+    // specific people only, opened by bob who isn't one of them
+    await alice.api(`/api/share-settings/${gated.id}`, { method: "PUT", body: { audience: "list", role: "view", users: [] } });
+    ctx = await bob.context(browser);
+    page = await openPage(ctx, `${server.base}/?share=${gateToken}`);
+    await page.getByText("Not shared with you", { exact: true }).waitFor({ timeout: 15000 });
+    assert((await page.textContent(".loginCard")).includes(`${bob.name} isn't one of them`), "names the refused account");
+    await page.getByRole("button", { name: "Sign in as someone else", exact: true }).waitFor();
+    assertNoProblems(page, refusals);
+    await ctx.close();
+    await alice.api(`/api/share-settings/${gated.id}`, { method: "DELETE" });
+  });
+
   const account = alice2;
   let token;
   if (!pdfPageId) { console.log("  skip  share: needs the pdf steps (drop --only)"); return; }

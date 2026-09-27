@@ -85,11 +85,11 @@ export function LoginPage({
   subtitle,
   demo = false,
   guestTtlHours,
+  next = window.location.pathname + window.location.search,
 }) {
   const [cloudError] = React.useState(takeCloudError);
   const leadsWithDemo = demo && !!onGuestLogin;
   const [signInOpen, setSignInOpen] = React.useState(false);
-  const next = window.location.pathname + window.location.search;
   const signIn = <>
     {cloudLogin?.enabled ? (
       <a className="loginBtn loginCloudBtn" href={`/api/auth/cloud/start?next=${encodeURIComponent(next)}`}
@@ -158,17 +158,25 @@ export function LoginPage({
 }
 
 // A share link this visitor can't open: unknown/turned off, or shared with
-// specific people that don't include the signed-in account.
-export function ShareBlockedPage({ reason, viewer, onSwitchAccount }) {
+// specific people that don't include the signed-in account. A dead link
+// points on: to this server's front door (`offerHome`) and, for a visitor
+// who isn't signed in, to signing in (`onSignIn`); a page host offers neither.
+export function ShareBlockedPage({ reason, viewer, onSwitchAccount, onSignIn, offerHome = false }) {
   const missing = reason !== "forbidden";
   return (
     <AuthShell>
       <p className="loginSubtitle">{missing ? t("This link doesn't work") : t("Not shared with you")}</p>
       <p className="loginConflictText">
         {missing
-          ? t("The share link doesn't exist or its owner turned sharing off.")
+          ? t("The page it pointed to was unshared, or the link was copied incompletely. Ask the person who sent it for a new link.")
           : t("This page is shared with specific people only{them}. Ask the owner to add your username.", { them: viewer ? t(", and {viewer} isn't one of them", { viewer }) : "" })}
       </p>
+      {missing && offerHome ? (
+        <button type="button" className="loginBtn" onClick={() => window.location.assign("/")}>{t("Go to Gamma")}</button>
+      ) : null}
+      {missing && onSignIn && !viewer ? (
+        <button type="button" className="loginGuestBtn" onClick={onSignIn}>{t("Sign in to your library")}</button>
+      ) : null}
       {!missing && onSwitchAccount ? (
         <button type="button" className="loginBtn" onClick={onSwitchAccount}>{t("Sign in as someone else")}</button>
       ) : null}
