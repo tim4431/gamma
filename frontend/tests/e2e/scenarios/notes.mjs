@@ -474,6 +474,41 @@ export async function noteScenarios({ server, browser, alice, step, until, sleep
     }
   });
 
+  await step("notes: 'Linked from' under the notes opens the linking block; folding it is remembered", async () => {
+    const target = await alice2.api("/api/pages", { method: "POST", body: { title: "Link target" } });
+    await alice2.api(`/api/pages/${target.id}/ops`, { method: "POST", body: { client: "e2e", ops: [
+      { op: "insert", id: "blown", parent: target.id, position: "a0", content: "the target's own note" }] } });
+    const source = await alice2.api("/api/pages", { method: "POST", body: { title: "Link source" } });
+    await alice2.api(`/api/pages/${source.id}/ops`, { method: "POST", body: { client: "e2e", ops: [
+      { op: "insert", id: "blfiller", parent: source.id, position: "a0", content: "filler" },
+      { op: "insert", id: "blsource", parent: source.id, position: "a1", content: `See [[${target.id}]] for more` }] } });
+    const p2 = await openPage(ctx, `${server.base}/?ws=${second.id}&page=${target.id}`);
+    try {
+      const panel = p2.locator(".backlinksPanel");
+      await panel.waitFor();
+      assert((await panel.locator(".backlinksHead").innerText()).includes("Linked from 1 page"), "the head counts pages");
+      const [own, box] = [await row(p2, "the target's own note").boundingBox(), await panel.boundingBox()];
+      assert(box.y > own.y + own.height - 1, "the section sits under the notes");
+      assertEq(await panel.locator(".backlinkPageTitle").innerText(), "Link source");
+      assertEq(await panel.locator(".backlinkSnippet .blockRefChip").innerText(), "Link target", "the [[ref]] renders as a chip");
+      await panel.locator(".backlinkItem").click();
+      await until(async () => (await p2.locator('.blockRowWrap[data-block-id="blsource"] > .blockRow.focused').count()) === 1,
+        { what: "the linking page opens with its block focused" });
+      // Folded here, still folded after a reload.
+      await p2.goto(`${server.base}/?ws=${second.id}&page=${target.id}`);
+      await panel.waitFor();
+      await panel.locator(".backlinksHead").click();
+      assertEq(await panel.locator(".backlinkItem").count(), 0, "folding hides the entries");
+      await p2.reload();
+      await panel.waitFor();
+      assertEq(await panel.locator(".backlinksHead").getAttribute("aria-expanded"), "false", "the fold is remembered");
+      await panel.locator(".backlinksHead").click();
+      assertNoProblems(p2);
+    } finally {
+      await p2.close();
+    }
+  });
+
   await step("notes: Export… as an Obsidian vault downloads a zip", async () => {
     await page.click("button[aria-label='View']");
     await page.locator(".popoverItem", { hasText: "Export…" }).click();

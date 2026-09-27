@@ -21,6 +21,7 @@ import {
   useTextScale,
 } from "../shared/ui/Widgets";
 import { BlockTree, _dragState } from "../editor/BlockTree";
+import { BacklinksPanel } from "../editor/BacklinksPanel";
 import { dropGapAtPoint, findObject } from "../editor/MdObject";
 import { cutObject, moveObjectInTree } from "../editor/mdObjects";
 import { scanMathSpans } from "../editor/mdScan";
@@ -7250,6 +7251,19 @@ function LibraryApp({ publicPage = null, initialServerConfig = null }) {
     setBlocks(next);
     setFocusedId(newId);
   }
+  // Who links here (editor/BacklinksPanel.jsx), under the notes and above
+  // the tail; an entry opens its page at the linking block.
+  function openBacklink(bl) {
+    if (bl.page_root_id && bl.page_root_id !== focusedBlockId) {
+      pendingBlockScrollRef.current = bl.id;
+      openBlock(bl.page_root_id, { pushNav: true });
+    } else openBlockLink(bl.id);
+  }
+  const backlinksPanel = !homeMode && focusedBlockId && backlinks.length ? (
+    <BacklinksPanel backlinks={backlinks} pageId={focusedBlockId} pageTitle={pageTitle} pages={pageBlocks}
+      refCache={refCache} onFetchRefs={onFetchRefs} onOpen={openBacklink}
+      collapsed={appPrefs.backlinksCollapsed} onCollapsedChange={appPrefs.setBacklinksCollapsed} />
+  ) : null;
   const notesTail = !homeMode && !readOnly && focusedBlockId ? (
     <div className={"notesTail" + (blocks.length ? "" : " isEmpty")}
       onMouseDown={(e) => { e.preventDefault(); editTail(); }}>
@@ -7770,45 +7784,6 @@ function LibraryApp({ publicPage = null, initialServerConfig = null }) {
 
           <div className={`blockList${aiScan ? " aiPageRead" : ""}`} ref={notesTextScale.ref} style={notesTextScale.style}>
             {notesTextScale.badge}
-            {!homeMode && backlinks.length > 0 ? (
-              <div className="backlinksPanel">
-                <div className="backlinksLabel">{t("Backlinks ({n})", { n: backlinks.length })}</div>
-                <div className="backlinksList">
-                  {backlinks.map((bl) => {
-                    const isPrivate = bl.page_root_id && bl.page_root_id !== focusedBlockId;
-                    return isPrivate ? (
-                      <div key={bl.id} className="backlinkItem private">
-                        <div className="backlinkContent private">{t("private block")}</div>
-                      </div>
-                    ) : (
-                      <button
-                        key={bl.id}
-                        className="backlinkItem"
-                        title={bl.page_title ? t("From: {page_title}", { page_title: bl.page_title }) : undefined}
-                        onClick={() => {
-                          const row = document.querySelector(`[data-block-id="${bl.id}"]`);
-                          if (row) {
-                            row.scrollIntoView({ block: "center", behavior: "smooth" });
-                            setFocusedId(bl.id);
-                          } else if (bl.page_root_id && bl.page_root_id !== focusedBlockId) {
-                            pendingBlockScrollRef.current = bl.id;
-                            openBlock(bl.page_root_id);
-                          } else {
-                            pendingBlockScrollRef.current = bl.id;
-                            setBlocks((prev) => expandToBlock(prev, bl.id));
-                          }
-                        }}
-                      >
-                        <div className="backlinkContent">{bl.content || "(empty)"}</div>
-                        {bl.page_title && bl.page_title !== bl.content ? (
-                          <div className="backlinkPage">{bl.page_title}</div>
-                        ) : null}
-                      </button>
-                    );
-                  })}
-                </div>
-              </div>
-            ) : null}
             {/* Recently-viewed shortcut strip. Labels are browsed like folders
                 (the kind toggle's Labels mode) and shown as chips on each row,
                 so this is the only carousel left. */}
@@ -8266,7 +8241,7 @@ function LibraryApp({ publicPage = null, initialServerConfig = null }) {
                 </>
             ) : (
             visibleBlocks.length === 0 ? (
-              notesTail || <div className="empty">{t("No blocks yet.")}</div>
+              <>{notesTail ? null : <div className="empty">{t("No blocks yet.")}</div>}{backlinksPanel}{notesTail}</>
             ) : (
               (() => {
                 const rowProps = {
@@ -8565,6 +8540,7 @@ function LibraryApp({ publicPage = null, initialServerConfig = null }) {
                     <FileChipContext.Provider value={fileChipCtx}>
                       <BlockTree blocks={blocks} readOnly={readOnly} rowProps={rowProps} />
                     </FileChipContext.Provider>
+                    {backlinksPanel}
                     {notesTail}
                     <BlockDropIndicator target={dropTarget} />
                   </>

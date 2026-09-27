@@ -182,6 +182,9 @@ export const PREFS = {
   // Enter key in the note editor: off (default) = Enter types a line break and
   // Shift+Enter starts a new note; on = the Logseq-style swap of the two.
   enterNewNote: flag("gamma-enter-new-note", ACCOUNT, false),
+  // The "Linked from N pages" section under a page's notes, folded or open
+  // (editor/BacklinksPanel.jsx): a view state of this browser.
+  backlinksCollapsed: flag("gamma-backlinks-collapsed", BROWSER, false),
   // Keyboard shortcuts (Settings → Keyboard, docs/dev/hotkeys.md): command
   // id → chord ("Mod-Shift-k") or null for unbound; a command not named
   // keeps its default. Unknown shapes are dropped, the ids are not checked
