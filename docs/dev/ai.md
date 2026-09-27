@@ -560,9 +560,9 @@ answers. Each adapter's `request` maps the tool defs and the
 `parallel_tool_calls` when tools ride along, so bulk renames batch per round.
 
 Every tool call is announced by a `{"step": {id, tool, args}}` line before
-it runs. Its `args` are only the short ones a label needs (`page_id`,
-`query`, `title`, `folder`, `source`, `pdf_page`, …), never a note's
-content. Once it ran, the call streams back as an
+it runs. Its `args` are only the short ones the running label reads
+(`_STEP_ARGS`: `page_id`, `block_id`, `query`, `title`, `folder`, `label`,
+`source`, `pdf_page`, `mode`), never a note's content. Once it ran, the call streams back as an
 `{"action": {kind, summary, tool, args, result}}` NDJSON line (kinds
 list/read/view/search/rename/move/edit/create, plus `error` with `error: true` for
 failed/blocked calls) that the chat saves in the message. A change also says
@@ -580,8 +580,11 @@ notes". Each entry is a link that opens the page or the block
 (`openBlock(blockId, pageId)` of `GammaNavContext`). Actions saved before
 the structured fields fall back to their summary. While the reply streams,
 the pill names the step running now ("Searching library for “…”…") in
-place of the "Thinking" pill. Only applied mutations count against
-`MAX_TOOL_ACTIONS` and trigger the home-feed refresh (`onLibraryChange`), and
+place of the "Thinking" pill, from those arguments (`runningLabel`):
+"Renaming “A” to “B”…", "Moving “A” to ML/Generative…", "Appending to a
+note…", "Reading notes of “A”…" when `read_block` names a page. Only
+applied mutations count against `MAX_TOOL_ACTIONS` and trigger the
+home-feed refresh (`onLibraryChange`), and
 the note-block tools' actions carry `page_id`/`src_page_id` so the frontend
 reloads the open page's block tree when the AI touched it (`onNotesChange`;
 with the page's live socket up the tools' ops already arrived through it and

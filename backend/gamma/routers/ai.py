@@ -198,10 +198,12 @@ def _failure_info(error: Exception, rt: dict | None = None, entry: dict | None =
     return info
 
 
-# The arguments a {"step"} line repeats: the short ones a "now running"
-# label needs (never a note's content).
-_STEP_ARGS = ("page_id", "block_id", "query", "title", "folder", "label", "title_contains",
-              "source", "pdf_page", "mode")
+# The arguments a {"step"} line repeats: the short ones the chat's "now
+# running" label reads (chat/agentSteps.js runningLabel), never a note's
+# content — the page a call reads, views, renames or moves; read_block's
+# block (a page id names the page); the query or source; the PDF page; the
+# new title or folder; list_pages' label filter; edit_block's mode.
+_STEP_ARGS = ("page_id", "block_id", "query", "title", "folder", "label", "source", "pdf_page", "mode")
 
 
 def _step_event(name: str, call: dict) -> dict:

@@ -35,4 +35,16 @@ test("the running step reads as what the agent is doing", () => {
   assert.equal(runningLabel({ tool: "read_page", args: { page_id: "a" } }, titleOf), "Reading “Attention”…");
   assert.equal(runningLabel({ tool: "read_page", args: { page_id: "zz" } }, titleOf), "Reading a page…");
   assert.equal(runningLabel({ tool: "something_new", args: {} }), "Working…");
+  // The arguments a change is about: the new title, the folder, the edit's mode.
+  assert.equal(runningLabel({ tool: "rename_page", args: { page_id: "a", title: "Ada2019" } }, titleOf), "Renaming “Attention” to “Ada2019”…");
+  assert.equal(runningLabel({ tool: "rename_page", args: { page_id: "zz", title: "Ada2019" } }, titleOf), "Renaming to “Ada2019”…");
+  assert.equal(runningLabel({ tool: "move_page", args: { page_id: "a", folder: "ML/Generative" } }, titleOf), "Moving “Attention” to ML/Generative…");
+  assert.equal(runningLabel({ tool: "move_page", args: { page_id: "a", folder: "" } }, titleOf), "Moving “Attention”…");
+  assert.equal(runningLabel({ tool: "edit_block", args: { mode: "append" } }), "Appending to a note…");
+  assert.equal(runningLabel({ tool: "edit_block", args: {} }), "Editing a note…");
+  // read_block names the page when its block id is one; list_pages its filter.
+  assert.equal(runningLabel({ tool: "read_block", args: { block_id: "a" } }, titleOf), "Reading notes of “Attention”…");
+  assert.equal(runningLabel({ tool: "read_block", args: { block_id: "b7" } }, titleOf), "Reading notes…");
+  assert.equal(runningLabel({ tool: "list_pages", args: { folder: "ML" } }), "Listing pages in ML…");
+  assert.equal(runningLabel({ tool: "list_pages", args: { label: "to-read", folder: "ML" } }), "Listing pages labelled “to-read”…");
 });
