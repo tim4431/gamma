@@ -35,7 +35,7 @@
     background: var(--scrollbar-thumb);
     background-clip: content-box;
     border: 2px solid transparent;
-    border-radius: 8px;
+    border-radius: var(--radius-md);
   }
   ::-webkit-scrollbar-thumb:hover { background: var(--scrollbar-thumb-hover); background-clip: content-box; }
 }
@@ -45,8 +45,8 @@
 :is(.plainTip, .popover, .ctxMenu, .refPopup, .pdfNoteTip, .mathPreviewTip, .latexAcPopup, .slashMenu, .chatMentionPicker) {
   background: var(--bg-elevated);
   border: 1px solid var(--border);
-  border-radius: var(--radius-surface);
-  box-shadow: var(--shadow-surface);
+  border-radius: var(--radius-md);
+  box-shadow: var(--shadow-2);
 }
 
 :is(.reportModal, .settingsModal) {
@@ -68,7 +68,7 @@
   box-sizing: border-box;
   background: var(--bg-input);
   border: 1px solid var(--border);
-  border-radius: var(--radius-control);
+  border-radius: var(--radius-md);
   color: var(--text-primary);
   font-family: inherit;
   outline: none;
@@ -130,6 +130,25 @@
 }
 :is(.searchInputWrap .searchInput, .chatComposer .chatInput):focus-visible { box-shadow: none; }
 
+/* Reduced motion (the OS setting): every transition and animation ends at
+   once, so nothing slides, fades, pulses or blinks. Spinners keep turning,
+   slowly, because a frozen one reads as a hang. */
+@media (prefers-reduced-motion: reduce) {
+  *, *::before, *::after {
+    transition-duration: 1ms !important;
+    transition-delay: 0s !important;
+    animation-duration: 1ms !important;
+    animation-delay: 0s !important;
+    animation-iteration-count: 1 !important;
+    scroll-behavior: auto !important;
+  }
+  :is(.guideSpinner, .pillSpin, .transferSpin, .mirrorPill.busy svg, .mirrorSpin svg,
+    .mirrorState.busy > svg, .mirrorAvatar.busy svg) {
+    animation-duration: 2400ms !important;
+    animation-iteration-count: infinite !important;
+  }
+}
+
 /* Section and panel labels (docs/dev/ui-design.md): sentence case at a
    readable size in --text-secondary, like the Settings rail. The text keeps
    its own case, so only real acronyms are uppercase. Each class's own rule
@@ -172,7 +191,7 @@
 html, body, .app, .topbar, .sidebar, .blockRowWrap, .blockRow,
 .blockEditor, .carouselTrack, .pageCard, .categoryFrontmatter,
 .backlinksPanel {
-  transition: background-color 0.15s ease, color 0.15s ease, border-color 0.15s ease;
+  transition: background-color var(--dur-base) ease, color var(--dur-base) ease, border-color var(--dur-base) ease;
 }
 
 html, body, #root {
@@ -236,7 +255,7 @@ body {
   background: var(--bg-input);
   color: var(--text-primary);
   border: 1px solid var(--border-light);
-  border-radius: 8px;
+  border-radius: var(--radius-md);
   font-size: calc(14px * var(--ui-font-scale, 1));
 }
 
@@ -245,7 +264,7 @@ body {
   background: var(--bg-raised);
   color: var(--text-primary);
   border: 1px solid var(--border-hover);
-  border-radius: 6px;
+  border-radius: var(--radius-sm);
   cursor: pointer;
   font: inherit;
   font-size: calc(13px * var(--ui-font-scale, 1));
@@ -262,14 +281,14 @@ body {
   height: 32px;
   background: none;
   border: none;
-  border-radius: 6px;
+  border-radius: var(--radius-sm);
   display: inline-flex;
   align-items: center;
   justify-content: center;
   color: var(--text-muted);
   font-size: calc(16px * var(--ui-font-scale, 1));
   flex-shrink: 0;
-  transition: background 0.12s ease, color 0.12s ease;
+  transition: background var(--dur-fast) ease, color var(--dur-fast) ease;
 }
 .topbar .iconBtn:disabled { opacity: 0.4; cursor: default; }
 
@@ -293,7 +312,7 @@ body {
   display: inline-flex;
   align-items: center;
   justify-content: center;
-  transition: background 0.12s ease, color 0.12s ease, transform 0.08s ease;
+  transition: background var(--dur-fast) ease, color var(--dur-fast) ease, transform var(--dur-fast) ease;
 }
 .uiClose:hover { background: var(--bg-subtle); color: var(--text-bright); }
 .uiClose:active { transform: scale(0.82); }
@@ -328,7 +347,7 @@ body {
   overflow-y: auto;
   overscroll-behavior: contain;
   border: 1px solid var(--border-subtle);
-  border-radius: 8px;
+  border-radius: var(--radius-md);
   padding: 6px 10px;
   font-size: calc(12px * var(--ui-font-scale, 1));
   user-select: text;
@@ -428,7 +447,7 @@ body {
   align-items: flex-start;
   gap: 2px;
   padding: 2px 6px 2px 2px;
-  border-radius: 8px;
+  border-radius: var(--radius-md);
 }
 
 .blockRow:hover {
@@ -452,7 +471,7 @@ body {
   align-self: flex-start;
   margin-top: 2px;
   opacity: 0;
-  transition: opacity 0.1s, background 0.12s ease, color 0.12s ease, transform 0.08s ease;
+  transition: opacity var(--dur-fast), background var(--dur-fast) ease, color var(--dur-fast) ease, transform var(--dur-fast) ease;
 }
 
 .blockRow:hover .blockDeleteBtn,
@@ -525,7 +544,7 @@ body {
   display: inline-block;
   max-width: 100%;
   padding: 0 1px;
-  border-radius: 4px;
+  border-radius: var(--radius-xs);
   cursor: pointer;
 }
 .cmMathWidget:hover { background: var(--accent-bg-light); box-shadow: 0 0 0 1px var(--border-subtle); }
@@ -553,7 +572,7 @@ body {
 }
 .cmEmbedChip {
   border-left: 2px solid var(--accent);
-  border-radius: 2px 4px 4px 2px;
+  border-radius: 2px var(--radius-xs) var(--radius-xs) 2px;
 }
 
 /* Live markdown in the editor: line/mark classes applied by blockCmEditor's
@@ -572,7 +591,7 @@ body {
 .blockEditorCm .cmStrike { text-decoration: line-through; }
 .blockEditorCm .cmInlineCode {
   background: var(--bg-input);
-  border-radius: 4px;
+  border-radius: var(--radius-xs);
   padding: 1px 3px;
   font-family: var(--font-mono);
   font-size: 0.9em;
@@ -592,8 +611,8 @@ body {
 .blockEditorCm .cm-line.cmCallout-danger { --co-color: var(--callout-danger); }
 .blockEditorCm .cm-line.cmCallout-important { --co-color: var(--callout-important); }
 .blockEditorCm .cm-line.cmCallout-quote { --co-color: var(--callout-quote); }
-.blockEditorCm .cm-line.cmCalloutFirst { border-top-left-radius: 6px; border-top-right-radius: 6px; }
-.blockEditorCm .cm-line.cmCalloutLast { border-bottom-left-radius: 6px; border-bottom-right-radius: 6px; }
+.blockEditorCm .cm-line.cmCalloutFirst { border-top-left-radius: var(--radius-sm); border-top-right-radius: var(--radius-sm); }
+.blockEditorCm .cm-line.cmCalloutLast { border-bottom-left-radius: var(--radius-sm); border-bottom-right-radius: var(--radius-sm); }
 .blockEditorCm .cmCalloutTitle { color: var(--co-color); font-weight: 650; }
 /* Live task/bullet/rule markers in the editor. */
 .blockEditorCm .cm-line.cmTaskDone { color: var(--text-muted); }
@@ -610,7 +629,7 @@ body {
   display: block;
   max-width: 100%;
   height: auto;
-  border-radius: 6px;
+  border-radius: var(--radius-sm);
 }
 .blockEditorCm .cmImgWidget:hover img { box-shadow: 0 0 0 2px var(--accent-bg-light); }
 .blockEditorCm .cm-line.cmImgLine { text-align: center; }
@@ -618,7 +637,7 @@ body {
 /* The editor's table widget: the rendered table's look, read-only (cells are
    edited in the rendered view); a click puts the caret after it, right-click
    shows the source, and it drags like the picture. */
-.blockEditorCm .cmTableWidget { display: inline-block; max-width: 100%; overflow-x: auto; margin: 4px 0; border-radius: 6px; cursor: grab; vertical-align: top; }
+.blockEditorCm .cmTableWidget { display: inline-block; max-width: 100%; overflow-x: auto; margin: 4px 0; border-radius: var(--radius-sm); cursor: grab; vertical-align: top; }
 .blockEditorCm .cmTableWidget table { border-collapse: collapse; font-size: 0.95em; }
 .blockEditorCm .cmTableWidget :is(th, td) { border: 1px solid var(--border); padding: 3px 8px; text-align: left; min-width: 36px; white-space: nowrap; }
 .blockEditorCm .cmTableWidget :is(th, td):empty::after { content: "\00a0"; }
@@ -666,8 +685,8 @@ body {
   padding: 0 8px;
 }
 .blockEditorCm .cm-line.cmCodeFenceLine { color: var(--text-muted); }
-.blockEditorCm .cm-line.cmCodeTop { border-top-left-radius: 6px; border-top-right-radius: 6px; }
-.blockEditorCm .cm-line.cmCodeBot { border-bottom-left-radius: 6px; border-bottom-right-radius: 6px; }
+.blockEditorCm .cm-line.cmCodeTop { border-top-left-radius: var(--radius-sm); border-top-right-radius: var(--radius-sm); }
+.blockEditorCm .cm-line.cmCodeBot { border-bottom-left-radius: var(--radius-sm); border-bottom-right-radius: var(--radius-sm); }
 /* Closed fence rendered in place (same idiom as the math widget), with the
    rendered pre.codeBlock's metrics so opening the editor doesn't move the
    card (vertical-align: no baseline gap under it). */
@@ -676,7 +695,7 @@ body {
   margin: 4px 0;
   background: var(--bg-input);
   border: 1px solid var(--border-subtle);
-  border-radius: 6px;
+  border-radius: var(--radius-sm);
   overflow-x: auto;
 }
 .cmCodeWidget code {
@@ -696,7 +715,7 @@ body {
   color: var(--text-muted);
   user-select: none;
   pointer-events: none;
-  transition: opacity 0.12s ease;
+  transition: opacity var(--dur-fast) ease;
 }
 /* Hover crossfade: the language badge yields its corner to the copy button.
    Look comes from .uiClose; this only positions it. */
@@ -704,7 +723,7 @@ body {
   position: absolute;
   top: 3px;
   right: 5px;
-  border-radius: 5px;
+  border-radius: var(--radius-sm);
   opacity: 0;
   z-index: 1;
 }
@@ -751,7 +770,7 @@ body {
 .blockRowWrap.fileDragOver > .blockRow {
   outline: 2px dashed var(--drag-accent);
   outline-offset: -2px;
-  border-radius: 8px;
+  border-radius: var(--radius-md);
 }
 
 .blockRendered {
@@ -806,13 +825,13 @@ body {
 .blockRendered img {
   max-width: 100%;
   height: auto;
-  border-radius: 6px;
+  border-radius: var(--radius-sm);
 }
 
 .blockRendered code {
   background: var(--bg-input);
   padding: 1px 4px;
-  border-radius: 4px;
+  border-radius: var(--radius-xs);
 }
 
 .blockRendered pre code {
@@ -827,7 +846,7 @@ body {
   margin: 4px 0;
   background: var(--bg-input);
   border: 1px solid var(--border-subtle);
-  border-radius: 6px;
+  border-radius: var(--radius-sm);
 }
 .blockRendered pre.codeBlock code {
   background: none;
@@ -864,7 +883,7 @@ body {
 .blockRendered :is(blockquote, details).callout {
   --co-color: var(--callout-note);
   border-left: 3px solid var(--co-color);
-  border-radius: 6px;
+  border-radius: var(--radius-sm);
   padding: 6px 12px;
   background: color-mix(in srgb, var(--co-color) 8%, transparent);
   color: var(--text-primary);
@@ -884,7 +903,7 @@ body {
   border-right: 2px solid var(--co-color);
   border-bottom: 2px solid var(--co-color);
   transform: rotate(-45deg);
-  transition: transform 0.12s;
+  transition: transform var(--dur-fast);
 }
 .blockRendered details.callout[open] > summary.calloutTitle::before { transform: rotate(45deg); }
 .blockRendered details.callout[open] > summary.calloutTitle { margin-bottom: 4px; }
@@ -935,12 +954,12 @@ body {
   border: 1px dashed var(--border);
   background: var(--bg-input);
   color: var(--text-dim);
-  border-radius: 6px;
+  border-radius: var(--radius-sm);
   font-size: calc(12px * var(--ui-font-scale, 1));
   line-height: 1;
   cursor: pointer;
   opacity: 0;
-  transition: opacity 0.12s;
+  transition: opacity var(--dur-fast);
 }
 /* Also while a tour points at the table ([data-guide-active], guide/). */
 .mdTableWrap:hover .mdTableAdd, .mdTableWrap[data-guide-active] .mdTableAdd, .mdTableAdd[data-guide-active], .mdTableAdd:focus-visible { opacity: 1; }
@@ -954,12 +973,12 @@ body {
   border: 1px solid var(--border);
   background: var(--bg-elevated);
   color: var(--text-secondary);
-  border-radius: 6px;
+  border-radius: var(--radius-sm);
   line-height: 1;
   font-size: calc(11px * var(--ui-font-scale, 1));
   cursor: grab;
   touch-action: none;
-  box-shadow: 0 1px 4px rgba(0, 0, 0, 0.15);
+  box-shadow: var(--shadow-1);
 }
 .mdTableHandle:active { cursor: grabbing; }
 /* Drop indicator while a handle pill is being dragged. */
@@ -981,7 +1000,7 @@ body {
 .mdTableCorner {
   top: -8px; left: -9px; width: 15px; height: 15px;
   display: flex; align-items: center; justify-content: center;
-  cursor: pointer; opacity: 0; transition: opacity 0.12s;
+  cursor: pointer; opacity: 0; transition: opacity var(--dur-fast);
 }
 .mdTableWrap:hover .mdTableCorner, .mdObjectSelected .mdTableCorner, .mdTableCorner[data-guide-active], .mdTableCorner:focus-visible { opacity: 1; }
 
@@ -990,7 +1009,7 @@ body {
    opening the editor, a ring while selected, the drag source. It keeps the
    construct's own placement — a centred picture, a left-aligned table, a
    full-width diagram. */
-.mdObject { position: relative; display: block; box-sizing: border-box; max-width: 100%; padding: 3px; margin: -3px 0; border-radius: 6px; }
+.mdObject { position: relative; display: block; box-sizing: border-box; max-width: 100%; padding: 3px; margin: -3px 0; border-radius: var(--radius-sm); }
 .mdObject-image { width: fit-content; margin-left: auto; margin-right: auto; }
 .mdObject-table { width: fit-content; }
 .mdObject[draggable="true"] { cursor: grab; }
@@ -1010,7 +1029,7 @@ body {
   color: var(--text-primary);
   background: var(--bg-input);
   border: 1.5px solid var(--accent);
-  border-radius: 3px;
+  border-radius: var(--radius-xs);
   outline: none;
 }
 
@@ -1041,11 +1060,11 @@ body {
   padding: 3px;
   background: var(--bg-elevated);
   border: 1px solid var(--border);
-  border-radius: 8px;
-  box-shadow: 0 2px 8px rgba(0, 0, 0, 0.15);
+  border-radius: var(--radius-md);
+  box-shadow: var(--shadow-2);
   opacity: 0;
   pointer-events: none;
-  transition: opacity 0.12s;
+  transition: opacity var(--dur-fast);
 }
 .mdImgFrame:is(:hover, :has(.mdImgTools :focus-visible)) .mdImgTools { opacity: 1; pointer-events: auto; }
 .mdImgTools a.ctlBtn { text-decoration: none; }
@@ -1061,12 +1080,12 @@ body {
   width: 6px;
   height: 42px;
   max-height: 70%;
-  border-radius: 4px;
+  border-radius: var(--radius-xs);
   background: var(--accent);
   opacity: 0;
   cursor: ew-resize;
   touch-action: none;
-  transition: opacity 0.12s;
+  transition: opacity var(--dur-fast);
 }
 .mdResizeGrip.left { right: auto; left: -3px; }
 .mdImgFrame:hover .mdResizeGrip { opacity: 0.55; }
@@ -1089,13 +1108,13 @@ body {
   color: var(--text-primary);
   background: var(--bg-input);
   border: 1px solid var(--border);
-  border-radius: 6px;
+  border-radius: var(--radius-sm);
   outline: none;
 }
 .mdLightbox {
   position: fixed;
   inset: 0;
-  z-index: 1500;
+  z-index: var(--z-lightbox);
   display: flex;
   flex-direction: column;
   align-items: center;
@@ -1106,8 +1125,8 @@ body {
 .mdLightbox img {
   max-width: 94vw;
   max-height: 90vh;
-  border-radius: 8px;
-  box-shadow: 0 8px 40px rgba(0, 0, 0, 0.5);
+  border-radius: var(--radius-md);
+  box-shadow: var(--shadow-3);
 }
 .mdLightboxCaption { margin-top: 10px; font-size: calc(13px * var(--ui-font-scale, 1)); color: #ddd; }
 .blockRendered .katex-display { margin: 6px 0; overflow-x: auto; overflow-y: hidden; }
@@ -1156,7 +1175,7 @@ body {
   background: var(--accent-bg-light);
   color: var(--accent-bright);
   border: none;
-  border-radius: 4px;
+  border-radius: var(--radius-xs);
   padding: 0 4px;
   margin: 0 1px;
   font-size: 0.95em;
@@ -1181,7 +1200,7 @@ body {
   padding: 0 4px;
   margin: 0 1px;
   border: 1px dashed var(--border);
-  border-radius: 4px;
+  border-radius: var(--radius-xs);
   color: var(--text-muted);
   font-size: 0.95em;
   vertical-align: -1px;
@@ -1195,14 +1214,14 @@ body {
   gap: 5px;
   max-width: 360px;
   padding: 0 3px;
-  border-radius: 4px;
+  border-radius: var(--radius-xs);
   color: var(--text-primary);
   text-decoration: none;
   border-bottom: 1px solid var(--border);
   vertical-align: -2px;
 }
 .linkChip:hover { background: var(--bg-hover); }
-.linkChipIcon { width: 13px; height: 13px; border-radius: 3px; flex: none; }
+.linkChipIcon { width: 13px; height: 13px; border-radius: var(--radius-xs); flex: none; }
 .linkChip svg { flex: none; color: var(--text-muted); }
 .linkChipText {
   overflow: hidden;
@@ -1216,7 +1235,7 @@ body {
   margin: 4px 0;
   padding: 6px 10px;
   border-left: 3px solid var(--accent);
-  border-radius: 6px;
+  border-radius: var(--radius-sm);
   background: var(--bg-block);
   cursor: pointer;
 }
@@ -1259,7 +1278,7 @@ body {
   height: auto;
   border-left: 3px solid var(--border);
   background: var(--bg-block);
-  border-radius: 0 4px 4px 0;
+  border-radius: 0 var(--radius-xs) var(--radius-xs) 0;
 }
 .blockAreaSnapPending {
   width: min(100%, 340px);
@@ -1288,7 +1307,7 @@ body {
 .colorBtn {
   width: 22px;
   height: 22px;
-  border-radius: 999px;
+  border-radius: var(--radius-full);
   border: 2px solid var(--border-hover);
   cursor: pointer;
   padding: 0;
@@ -1307,12 +1326,12 @@ body {
 .selTransToggle {
   flex: 1; min-width: 0;
   display: inline-flex; align-items: center; gap: 6px;
-  padding: 3px 4px; border: none; border-radius: 6px; background: none;
+  padding: 3px 4px; border: none; border-radius: var(--radius-sm); background: none;
   font: inherit; font-size: 12px; font-weight: 600; color: var(--text-secondary);
   cursor: pointer; text-align: left;
 }
 .selTransToggle:hover { background: var(--bg-hover); }
-.selTransChev { transition: transform 0.12s ease; flex-shrink: 0; }
+.selTransChev { transition: transform var(--dur-fast) ease; flex-shrink: 0; }
 .selTransChev.open { transform: rotate(90deg); }
 .selTransLang { font-weight: 400; color: var(--text-tertiary); }
 .selTransCopy { flex-shrink: 0; }
@@ -1426,7 +1445,7 @@ body {
   display: inline-block;
   width: 10px;
   height: 10px;
-  border-radius: 999px;
+  border-radius: var(--radius-full);
 }
 
 .collapseSpacer {
@@ -1474,7 +1493,7 @@ body {
   align-items: center;
   justify-content: center;
   pointer-events: none;
-  z-index: 9999;
+  z-index: var(--z-drop);
 }
 
 .app.dragOver[data-drop="files"]::after {
@@ -1485,7 +1504,7 @@ body {
 .titleText { margin: 0; }
 .titleText.editable {
   cursor: text;
-  border-radius: 4px;
+  border-radius: var(--radius-xs);
   padding: 2px 6px;
   margin-left: -6px;
 }
@@ -1497,7 +1516,7 @@ body {
   color: var(--text-primary);
   background: var(--bg-page);
   border: 1px solid var(--border-light);
-  border-radius: 4px;
+  border-radius: var(--radius-xs);
   padding: 2px 6px;
   margin-left: -6px;
   width: 100%;
@@ -1546,7 +1565,7 @@ body {
 .rowHandles > .dragHandle {
   width: 18px;
   padding: 0;
-  border-radius: 4px;
+  border-radius: var(--radius-xs);
   display: flex;
   align-items: center;
   justify-content: center;
@@ -1554,7 +1573,7 @@ body {
   border: none;
   color: var(--text-muted);
   opacity: 0;
-  transition: opacity 120ms ease, color 120ms ease, background 120ms ease;
+  transition: opacity var(--dur-fast) ease, color var(--dur-fast) ease, background var(--dur-fast) ease;
   user-select: none;
 }
 .rowHandles > .addHandle {
@@ -1597,7 +1616,7 @@ body {
   display: inline-block;
   width: 5px;
   height: 5px;
-  border-radius: 999px;
+  border-radius: var(--radius-full);
   background: var(--text-dim);
   opacity: 0.6;
 }
@@ -1643,7 +1662,7 @@ body {
    (sizing, touch targets, theming) lands on all three at once. */
 .pdfCtlBox {
   position: absolute;
-  z-index: 20;
+  z-index: var(--z-dock);
   display: flex;
   flex-direction: column;
   align-items: center;
@@ -1651,7 +1670,7 @@ body {
   width: 28px;
   background: var(--bg-elevated);
   border: 1px solid var(--border);
-  border-radius: 8px;
+  border-radius: var(--radius-md);
   padding: 3px 0;
 }
 /* .ctlBtn is the same button outside a box — .ctlBtnRow lays them flat
@@ -1663,7 +1682,7 @@ body {
   width: 22px;
   height: 22px;
   padding: 0;
-  border-radius: 6px;
+  border-radius: var(--radius-sm);
   display: flex;
   align-items: center;
   justify-content: center;
@@ -1677,7 +1696,7 @@ body {
 :is(.pdfCtlBox button, .ctlBtn):disabled { opacity: 0.4; cursor: default; }
 .ctlBtnRow { display: flex; align-items: center; gap: 2px; }
 [data-scheme="light"] .pdfCtlBox {
-  box-shadow: 0 2px 8px rgba(0,0,0,0.12);
+  box-shadow: var(--shadow-2);
 }
 .pdfZoomOverlay {
   left: 14px;
@@ -1693,14 +1712,14 @@ body {
   position: absolute;
   top: 8px;
   right: 14px;
-  z-index: 20;
+  z-index: var(--z-dock);
   display: flex;
   align-items: center;
   height: 28px;
   padding: 0 9px;
   background: var(--bg-elevated);
   border: 1px solid var(--border);
-  border-radius: 8px;
+  border-radius: var(--radius-md);
   color: var(--text-tertiary);
   font-size: calc(12px * var(--ui-font-scale, 1));
 }
@@ -1716,7 +1735,7 @@ body {
 }
 .pdfPageWidget input:focus { color: var(--accent); }
 .pdfPageTotal { margin-left: 3px; white-space: nowrap; }
-[data-scheme="light"] .pdfPageWidget { box-shadow: 0 2px 8px rgba(0,0,0,0.12); }
+[data-scheme="light"] .pdfPageWidget { box-shadow: var(--shadow-2); }
 
 /* The floating status pill — the app's single transient-message surface
    (status messages, PDF load progress, load errors), anchored top-center of
@@ -1727,7 +1746,7 @@ body {
   top: 10px;
   left: 50%;
   transform: translateX(-50%);
-  z-index: 30;
+  z-index: var(--z-float);
   display: flex;
   align-items: center;
   gap: 8px;
@@ -1735,13 +1754,13 @@ body {
   padding: 6px 12px;
   background: var(--bg-elevated);
   border: 1px solid var(--border);
-  border-radius: 999px;
+  border-radius: var(--radius-full);
   color: var(--text-muted);
   font-size: calc(12px * var(--ui-font-scale, 1));
-  box-shadow: 0 3px 12px rgba(0,0,0,0.25);
+  box-shadow: var(--shadow-2);
   pointer-events: none;
   opacity: 1;
-  transition: opacity 0.4s;
+  transition: opacity var(--dur-slow);
 }
 .statusPill.fading { opacity: 0; }
 .statusPill.error { color: #e07a6a; border-color: rgba(224, 122, 106, 0.5); }
@@ -1768,7 +1787,7 @@ body {
   padding: 2px 10px;
   background: var(--bg-raised);
   border: 1px solid var(--border-light);
-  border-radius: 999px;
+  border-radius: var(--radius-full);
   color: var(--text-primary);
   font-size: calc(12px * var(--ui-font-scale, 1));
   cursor: pointer;
@@ -1781,24 +1800,24 @@ body {
   top: 42px; /* below the top-left TOC box */
   left: 14px;
   bottom: 52px; /* stops above the bottom-left fullscreen box */
-  z-index: 25; /* above the zoom column, which sits mid-left under it */
+  z-index: calc(var(--z-dock) + 5); /* above the zoom column, which sits mid-left under it */
   width: 280px;
   max-width: 70%;
   overflow-y: auto;
   overflow-x: hidden;
   background: var(--bg-elevated);
   border: 1px solid var(--border);
-  border-radius: 8px;
+  border-radius: var(--radius-md);
   padding: 6px 4px;
 }
-[data-scheme="light"] .pdfOutlinePanel { box-shadow: 0 2px 8px rgba(0,0,0,0.12); }
+[data-scheme="light"] .pdfOutlinePanel { box-shadow: var(--shadow-2); }
 
 .pdfOutlineRow {
   display: flex;
   align-items: flex-start;
   gap: 2px;
   padding: 2px 6px 2px 0;
-  border-radius: 4px;
+  border-radius: var(--radius-xs);
 }
 .pdfOutlineRow:hover { background: var(--bg-active); }
 .pdfOutlineNode { display: flex; flex-direction: column; }
@@ -1820,14 +1839,14 @@ body {
   justify-content: center;
   background: none;
   border: none;
-  border-radius: 4px;
+  border-radius: var(--radius-xs);
   padding: 0;
   color: var(--text-tertiary);
   cursor: pointer;
 }
 /* translucent gray so it stays visible on top of the row's own hover tint */
 button.pdfOutlineChevron:hover { background: rgba(128, 128, 128, 0.28); color: var(--text-primary); }
-.pdfOutlineChevron svg { transition: transform 0.12s; }
+.pdfOutlineChevron svg { transition: transform var(--dur-fast); }
 .pdfOutlineChevron.open svg { transform: rotate(90deg); }
 .pdfOutlineTitle {
   flex: 1 1 auto;
@@ -1875,7 +1894,7 @@ button.pdfOutlineChevron:hover { background: rgba(128, 128, 128, 0.28); color: v
   background: var(--bg-raised);
   color: var(--accent);
   padding: 1px 8px;
-  border-radius: 4px;
+  border-radius: var(--radius-xs);
   font-size: calc(11px * var(--ui-font-scale, 1));
   font-weight: 500;
   letter-spacing: 0.02em;
@@ -1913,7 +1932,7 @@ button.pdfOutlineChevron:hover { background: rgba(128, 128, 128, 0.28); color: v
   background: var(--bg-raised);
   color: var(--accent);
   padding: 1px 4px 1px 8px;
-  border-radius: 4px;
+  border-radius: var(--radius-xs);
   font-size: calc(11px * var(--ui-font-scale, 1));
   font-weight: 500;
   letter-spacing: 0.02em;
@@ -1939,13 +1958,13 @@ button.pdfOutlineChevron:hover { background: rgba(128, 128, 128, 0.28); color: v
   top: 100%;
   left: 0;
   right: 0;
-  z-index: 100;
+  z-index: var(--z-dropdown);
   background: var(--bg-elevated);
   border: 1px solid var(--border-subtle);
-  border-radius: 6px;
+  border-radius: var(--radius-sm);
   margin-top: 4px;
   overflow: hidden;
-  box-shadow: 0 4px 12px rgba(0,0,0,0.3);
+  box-shadow: var(--shadow-2);
 }
 .categorySuggestionItem {
   display: block;
@@ -1974,7 +1993,7 @@ button.pdfOutlineChevron:hover { background: rgba(128, 128, 128, 0.28); color: v
   color: var(--accent);
   padding: 0 3px;
   opacity: 0;
-  transition: opacity 0.15s;
+  transition: opacity var(--dur-base);
 }
 .blockRow:hover .attachModeBtn, .attachModeBtn:focus-visible { opacity: 1; }
 /* A link named a page that isn't in this workspace (App's missingPage): a
@@ -1986,7 +2005,7 @@ button.pdfOutlineChevron:hover { background: rgba(128, 128, 128, 0.28); color: v
   margin: 8px 10px 0;
   padding: 8px 10px 8px 12px;
   border: 1px solid color-mix(in srgb, var(--callout-warning) 45%, transparent);
-  border-radius: 8px;
+  border-radius: var(--radius-md);
   background: color-mix(in srgb, var(--callout-warning) 12%, var(--bg-surface));
   color: var(--text-secondary);
   font-size: calc(13px * var(--ui-font-scale, 1));
@@ -2003,7 +2022,7 @@ button.pdfOutlineChevron:hover { background: rgba(128, 128, 128, 0.28); color: v
 .attachModeBanner {
   position: fixed;
   top: 0; left: 0; right: 0;
-  z-index: 1000;
+  z-index: var(--z-overlay);
   background: #2a4a6b;
   color: #cde;
   text-align: center;
@@ -2018,7 +2037,7 @@ button.pdfOutlineChevron:hover { background: rgba(128, 128, 128, 0.28); color: v
   background: rgba(255,255,255,0.15);
   border: 1px solid rgba(255,255,255,0.3);
   color: inherit;
-  border-radius: 4px;
+  border-radius: var(--radius-xs);
   padding: 2px 8px;
   cursor: pointer;
 }
@@ -2036,7 +2055,7 @@ button.pdfOutlineChevron:hover { background: rgba(128, 128, 128, 0.28); color: v
   margin: 0 0 4px;
   padding: 2px 6px;
   border: none;
-  border-radius: var(--radius-control);
+  border-radius: var(--radius-md);
   background: none;
   color: var(--text-muted);
   font: inherit;
@@ -2049,7 +2068,7 @@ button.pdfOutlineChevron:hover { background: rgba(128, 128, 128, 0.28); color: v
 .backlinkGroup { margin-bottom: 6px; }
 .backlinkPage,
 .backlinkItem {
-  border-radius: 6px;
+  border-radius: var(--radius-sm);
   cursor: pointer;
 }
 .backlinkPage:hover,
@@ -2115,7 +2134,7 @@ button.pdfOutlineChevron:hover { background: rgba(128, 128, 128, 0.28); color: v
   min-width: 128px;
   padding: 0 6px 0 10px;
   height: 100%;
-  border-radius: 8px 8px 0 0;
+  border-radius: var(--radius-md) var(--radius-md) 0 0;
   color: var(--text-muted);
   font-size: calc(12px * var(--ui-font-scale, 1));
   cursor: pointer;
@@ -2123,8 +2142,8 @@ button.pdfOutlineChevron:hover { background: rgba(128, 128, 128, 0.28); color: v
   border: 1px solid transparent;
   border-bottom: none;
   min-height: 30px;
-  transition: background 0.12s ease, color 0.12s ease;
-  animation: tabIn 0.15s ease-out;
+  transition: background var(--dur-fast) ease, color var(--dur-fast) ease;
+  animation: tabIn var(--dur-base) ease-out;
   will-change: transform;
   position: relative;
 }
@@ -2201,7 +2220,7 @@ button.pdfOutlineChevron:hover { background: rgba(128, 128, 128, 0.28); color: v
   align-items: center;
   gap: 8px;
   padding: 6px 8px;
-  border-radius: 6px;
+  border-radius: var(--radius-sm);
   font-size: calc(13px * var(--ui-font-scale, 1));
   color: var(--text-primary);
   cursor: pointer;
@@ -2263,7 +2282,7 @@ button.pdfOutlineChevron:hover { background: rgba(128, 128, 128, 0.28); color: v
 .mirrorPillDot.pending { background: var(--accent); }
 .mirrorPillDot.warn { background: #d9822b; }
 .mirrorPillDot.error { background: var(--danger); }
-.mirrorPillBadge { position: absolute; top: -3px; right: -4px; min-width: 15px; height: 15px; padding: 0 4px; border-radius: 8px; font-size: calc(9.5px * var(--ui-font-scale, 1)); font-weight: 700; line-height: 1; color: #fff; background: #d9822b; display: inline-flex; align-items: center; justify-content: center; box-shadow: 0 0 0 2px var(--bg-elevated); pointer-events: none; }
+.mirrorPillBadge { position: absolute; top: -3px; right: -4px; min-width: 15px; height: 15px; padding: 0 4px; border-radius: var(--radius-full); font-size: calc(9.5px * var(--ui-font-scale, 1)); font-weight: 700; line-height: 1; color: #fff; background: #d9822b; display: inline-flex; align-items: center; justify-content: center; box-shadow: 0 0 0 2px var(--bg-elevated); pointer-events: none; }
 .mirrorPopBtns { display: inline-flex; gap: 2px; flex-shrink: 0; }
 .mirrorState.pending > svg { color: var(--accent); }
 .mirrorState.error > svg { color: var(--danger); }
@@ -2282,7 +2301,7 @@ button.pdfOutlineChevron:hover { background: rgba(128, 128, 128, 0.28); color: v
 .mirrorChange.add .mirrorChangeGlyph { color: var(--ok); }
 .mirrorChange.del .mirrorChangeGlyph { color: var(--danger); }
 .mirrorChange.mod .mirrorChangeGlyph { color: #d9822b; }
-.mirrorChangeText { white-space: pre-wrap; word-break: break-word; min-width: 0; border-radius: 3px; padding: 0 3px; max-height: 96px; overflow: auto; }
+.mirrorChangeText { white-space: pre-wrap; word-break: break-word; min-width: 0; border-radius: var(--radius-xs); padding: 0 3px; max-height: 96px; overflow: auto; }
 .mirrorChange.add .mirrorChangeText { background: color-mix(in srgb, var(--ok) 12%, transparent); }
 .mirrorChange.del .mirrorChangeText { background: color-mix(in srgb, var(--danger) 10%, transparent); text-decoration: line-through; color: var(--text-muted); }
 .mirrorPopover { width: 380px; max-width: calc(100vw - 24px); max-height: min(80vh, calc(100dvh - 80px)); overflow-y: auto; }
@@ -2293,7 +2312,7 @@ button.pdfOutlineChevron:hover { background: rgba(128, 128, 128, 0.28); color: v
 .popoverLabel { display: flex; align-items: center; gap: 5px; padding: 6px 4px 2px; }
 .mirrorPopHead { display: flex; align-items: center; gap: 8px; padding: 2px 4px 8px; }
 .mirrorPopHead .popoverTitle { padding: 0; }
-.mirrorPopIcon { display: inline-flex; align-items: center; justify-content: center; width: 28px; height: 28px; border-radius: 8px; background: var(--accent-bg-light); color: var(--accent); flex-shrink: 0; }
+.mirrorPopIcon { display: inline-flex; align-items: center; justify-content: center; width: 28px; height: 28px; border-radius: var(--radius-md); background: var(--accent-bg-light); color: var(--accent); flex-shrink: 0; }
 .mirrorPopTitle { display: flex; flex-direction: column; gap: 1px; min-width: 0; flex: 1; }
 .mirrorPopTitle .popoverHint { padding: 0; }
 .mirrorEllipsis { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; max-width: 100%; display: block; }
@@ -2306,9 +2325,9 @@ button.pdfOutlineChevron:hover { background: rgba(128, 128, 128, 0.28); color: v
 .mirrorStateBody { display: flex; flex-direction: column; gap: 4px; min-width: 0; flex: 1; }
 .mirrorStateLine { display: flex; align-items: baseline; gap: 8px; min-width: 0; }
 .mirrorStateLine .popoverHint { padding: 0; flex: 1; }
-.mirrorBar { height: 5px; border-radius: 3px; background: var(--bg-hover); overflow: hidden; }
+.mirrorBar { height: 5px; border-radius: var(--radius-xs); background: var(--bg-hover); overflow: hidden; }
 .mirrorBar.thin { height: 3px; flex-basis: 100%; }
-.mirrorBar span { display: block; height: 100%; background: var(--accent); transition: width 0.3s ease; }
+.mirrorBar span { display: block; height: 100%; background: var(--accent); transition: width var(--dur-slow) ease; }
 .mirrorFile { display: flex; flex-wrap: wrap; align-items: center; gap: 4px 6px; font-size: calc(11px * var(--ui-font-scale, 1)); color: var(--text-muted); min-width: 0; }
 .mirrorFile > svg { flex-shrink: 0; }
 .mirrorFile .mirrorEllipsis { flex: 1; min-width: 0; }
@@ -2326,10 +2345,10 @@ button.pdfOutlineChevron:hover { background: rgba(128, 128, 128, 0.28); color: v
 .mergeChipWrap { position: absolute; right: 4px; top: 2px; z-index: 4; }
 .mergeChip { display: inline-flex; align-items: center; justify-content: center; width: 18px; height: 18px; border-radius: 50%; border: 1px solid #d9822b; background: var(--bg-elevated); color: #d9822b; cursor: pointer; padding: 0; }
 .mergeChip:hover, .mergeChip.on { background: #d9822b; color: #fff; }
-.mergePopover { position: absolute; right: 0; top: 22px; width: 480px; max-width: calc(100vw - 24px); z-index: 30; cursor: default; text-align: left; font-weight: normal; }
+.mergePopover { position: absolute; right: 0; top: 22px; width: 480px; max-width: calc(100vw - 24px); z-index: var(--z-float); cursor: default; text-align: left; font-weight: normal; }
 .mergeCard { display: flex; flex-direction: column; gap: 6px; min-width: 0; }
 .mergeHead { display: flex; align-items: flex-start; gap: 8px; padding: 2px 4px 4px; }
-.mergeKindIcon { display: inline-flex; align-items: center; justify-content: center; width: 26px; height: 26px; border-radius: 8px; background: color-mix(in srgb, #d9822b 14%, transparent); color: #d9822b; flex-shrink: 0; }
+.mergeKindIcon { display: inline-flex; align-items: center; justify-content: center; width: 26px; height: 26px; border-radius: var(--radius-md); background: color-mix(in srgb, #d9822b 14%, transparent); color: #d9822b; flex-shrink: 0; }
 .mergeHeadText { display: flex; flex-direction: column; gap: 1px; min-width: 0; flex: 1; }
 .mergeHeadText .popoverTitle, .mergeHeadText .popoverHint { padding: 0; }
 .mergePage { font-weight: 500; color: var(--text-muted); }
@@ -2339,17 +2358,17 @@ button.pdfOutlineChevron:hover { background: rgba(128, 128, 128, 0.28); color: v
 .mergeVersions.one, .mirrorPopover .mergeVersions { grid-template-columns: 1fr; }
 .mergeVersions .mergeVersion.result { grid-column: 1 / -1; }
 @media (max-width: 560px) { .mergeVersions { grid-template-columns: 1fr; } }
-.mergeVersion { display: flex; flex-direction: column; gap: 4px; min-width: 0; border: 1px solid var(--border-subtle); border-radius: 8px; padding: 6px; background: var(--bg-block); cursor: pointer; }
+.mergeVersion { display: flex; flex-direction: column; gap: 4px; min-width: 0; border: 1px solid var(--border-subtle); border-radius: var(--radius-md); padding: 6px; background: var(--bg-block); cursor: pointer; }
 .mergeVersion.current { border-color: color-mix(in srgb, var(--accent) 45%, transparent); }
 .mergeVersionHead { display: flex; align-items: center; gap: 6px; min-width: 0; }
 .mergeVersionHead .uiTag { margin-left: auto; }
-.mergeSide { display: inline-flex; align-items: center; gap: 4px; font-size: calc(11px * var(--ui-font-scale, 1)); font-weight: 600; padding: 1px 6px; border-radius: 999px; color: var(--text-primary); flex-shrink: 0; }
+.mergeSide { display: inline-flex; align-items: center; gap: 4px; font-size: calc(11px * var(--ui-font-scale, 1)); font-weight: 600; padding: 1px 6px; border-radius: var(--radius-full); color: var(--text-primary); flex-shrink: 0; }
 .mergeSide.mine { background: color-mix(in srgb, var(--accent) 22%, transparent); }
 .mergeSide.theirs { background: color-mix(in srgb, #d9822b 24%, transparent); }
 .mergeSide.result { background: var(--bg-hover); }
 .mergeSideHint { padding: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; min-width: 0; }
 .mergeText { font-size: calc(13px * var(--ui-font-scale, 1)); line-height: 1.5; white-space: pre-wrap; word-break: break-word; color: var(--text-primary); max-height: 180px; overflow: auto; }
-.mergeText mark { border-radius: 3px; padding: 0 1px; color: inherit; }
+.mergeText mark { border-radius: var(--radius-xs); padding: 0 1px; color: inherit; }
 mark.merge-mine { background: color-mix(in srgb, var(--accent) 28%, transparent); }
 mark.merge-theirs { background: color-mix(in srgb, #d9822b 30%, transparent); }
 mark.merge-both { background: var(--bg-hover); text-decoration: underline dotted; }
@@ -2361,7 +2380,7 @@ mark.merge-del { background: color-mix(in srgb, var(--danger) 16%, transparent);
 .mergePick { margin: 0 2px 0 0; accent-color: var(--accent); flex-shrink: 0; cursor: pointer; }
 /* Lists of cards (the pill's conflicts view, Settings' conflicts). */
 .mirrorCards { display: flex; flex-direction: column; gap: 10px; }
-.mirrorCards .mergeCard { padding: 8px; border-radius: 10px; border: 1px solid var(--border-subtle); }
+.mirrorCards .mergeCard { padding: 8px; border-radius: var(--radius-lg); border: 1px solid var(--border-subtle); }
 /* A clone row's avatar in Settings carries its state. */
 .mirrorAvatar.ok { color: var(--ok); }
 .mirrorAvatar.warn { color: #d9822b; }
@@ -2392,7 +2411,7 @@ mark.merge-del { background: color-mix(in srgb, var(--danger) 16%, transparent);
 .popover .popoverItem {
   background: none;
   border: none;
-  border-radius: 6px;
+  border-radius: var(--radius-sm);
   padding: 8px 10px;
   text-align: left;
   width: 100%;
@@ -2449,7 +2468,7 @@ mark.merge-del { background: color-mix(in srgb, var(--danger) 16%, transparent);
 /* ...its field and match rows keep the settings kit's look, not the
    topbar's own input and pill button. */
 .topbar .sharePopover .shareInvite .aiKeyInput { padding: 7px 10px; font-size: calc(12px * var(--ui-font-scale, 1)); }
-.topbar .sharePopover .setPickItem { padding: 5px 7px; border: 0; border-radius: 7px; background: transparent; font-size: calc(12px * var(--ui-font-scale, 1)); }
+.topbar .sharePopover .setPickItem { padding: 5px 7px; border: 0; border-radius: var(--radius-sm); background: transparent; font-size: calc(12px * var(--ui-font-scale, 1)); }
 .topbar .sharePopover .setPickItem:is(.cursor, :hover) { background: var(--bg-hover); }
 .topbar .sharePopover .setPickItem.picked { background: var(--accent-bg); }
 /* Stop sharing: the button at the end of the link's sections, or its
@@ -2463,7 +2482,7 @@ mark.merge-del { background: color-mix(in srgb, var(--danger) 16%, transparent);
   position: relative;
   background: var(--bg-block);
   border: 1px solid var(--border-subtle);
-  border-radius: 8px;
+  border-radius: var(--radius-md);
   padding: 8px 44px 8px 10px;
 }
 .copyBoxBody { min-width: 0; }
@@ -2480,7 +2499,7 @@ mark.merge-del { background: color-mix(in srgb, var(--danger) 16%, transparent);
   max-width: 300px;
   padding: 7px 10px;
   border: 1px solid color-mix(in srgb, var(--notice-tone) 45%, transparent);
-  border-radius: 8px;
+  border-radius: var(--radius-md);
   background: color-mix(in srgb, var(--notice-tone) 12%, transparent);
   font-size: calc(12.5px * var(--ui-font-scale, 1));
   line-height: 1.4;
@@ -2509,7 +2528,7 @@ mark.merge-del { background: color-mix(in srgb, var(--danger) 16%, transparent);
 .wsItemBadge {
   width: 20px;
   height: 20px;
-  border-radius: 6px;
+  border-radius: var(--radius-sm);
   flex-shrink: 0;
   display: inline-flex;
   align-items: center;
@@ -2561,7 +2580,7 @@ mark.merge-del { background: color-mix(in srgb, var(--danger) 16%, transparent);
   justify-content: space-between;
   gap: 12px;
   padding: 7px 6px;
-  border-radius: 8px;
+  border-radius: var(--radius-md);
   cursor: pointer;
 }
 .settingRow:hover { background: var(--bg-hover); }
@@ -2596,9 +2615,9 @@ mark.merge-del { background: color-mix(in srgb, var(--danger) 16%, transparent);
   position: relative;
   width: 34px;
   height: 20px;
-  border-radius: 999px;
+  border-radius: var(--radius-full);
   background: var(--bg-subtle);
-  transition: background 0.15s ease;
+  transition: background var(--dur-base) ease;
   pointer-events: none;
 }
 .switchTrack::after {
@@ -2611,7 +2630,7 @@ mark.merge-del { background: color-mix(in srgb, var(--danger) 16%, transparent);
   border-radius: 50%;
   background: #fff;
   box-shadow: 0 1px 2px rgba(0, 0, 0, 0.35);
-  transition: transform 0.15s ease;
+  transition: transform var(--dur-base) ease;
 }
 .switch input:checked + .switchTrack { background: var(--accent-dark); }
 .switch input:checked + .switchTrack::after { transform: translateX(14px); }
@@ -2636,7 +2655,7 @@ mark.merge-del { background: color-mix(in srgb, var(--danger) 16%, transparent);
 .searchResult {
   background: none;
   border: none;
-  border-radius: 6px;
+  border-radius: var(--radius-sm);
   padding: 6px 8px;
   text-align: left;
   cursor: pointer;
@@ -2666,7 +2685,7 @@ mark.merge-del { background: color-mix(in srgb, var(--danger) 16%, transparent);
   font-weight: 500;
   color: var(--text-muted);
   border: 1px solid var(--border);
-  border-radius: 4px;
+  border-radius: var(--radius-xs);
 }
 /* The query inside result text (search/snippets.js). */
 mark.searchMark {
@@ -2683,7 +2702,7 @@ mark.searchMark {
   font-weight: 500;
   color: var(--text-dim);
   border: 1px solid var(--border);
-  border-radius: 7px;
+  border-radius: var(--radius-sm);
   vertical-align: 1px;
 }
 .searchRow { display: flex; gap: 4px; align-items: center; }
@@ -2700,7 +2719,7 @@ mark.searchMark {
   padding: 3px 6px;
   background: var(--bg-input);
   border: 1px solid var(--border);
-  border-radius: 6px;
+  border-radius: var(--radius-sm);
 }
 .searchInputWrap .searchInput {
   flex: 1;
@@ -2726,7 +2745,7 @@ mark.searchMark {
   font-size: calc(10px * var(--ui-font-scale, 1));
   color: var(--text-dim);
   border: 1px solid var(--border-subtle);
-  border-radius: 4px;
+  border-radius: var(--radius-xs);
   padding: 0 4px;
 }
 .searchSuggestName { display: inline-flex; align-items: center; gap: 5px; }
@@ -2735,7 +2754,7 @@ mark.searchMark {
 .searchToggle {
   background: none;
   border: 1px solid transparent;
-  border-radius: 4px;
+  border-radius: var(--radius-xs);
   color: var(--text-muted);
   font-size: calc(11px * var(--ui-font-scale, 1));
   width: 26px;
@@ -2776,7 +2795,7 @@ mark.searchMark {
   width: 22px;
   height: 22px;
   border: none;
-  border-radius: 4px;
+  border-radius: var(--radius-xs);
 }
 .searchToggle.searchNavBtn:disabled { opacity: 0.4; cursor: default; background: none; }
 .searchResultText {
@@ -2798,7 +2817,7 @@ mark.searchMark {
 .sash {
   background: var(--border);
   flex-shrink: 0;
-  transition: background 0.15s ease 0.1s;
+  transition: background var(--dur-base) ease var(--dur-fast);
 }
 .sash-horizontal { width: 5px; cursor: col-resize; }
 .sash-vertical { height: 5px; cursor: row-resize; }
@@ -3022,7 +3041,7 @@ html.appFocusFullscreen, html.appFocusFullscreen body { overflow: hidden; oversc
   width: 100%;
   background: none;
   border: none;
-  border-radius: 6px;
+  border-radius: var(--radius-sm);
   padding: 7px 8px;
   cursor: pointer;
   color: var(--text-primary);
@@ -3054,7 +3073,7 @@ html.appFocusFullscreen, html.appFocusFullscreen body { overflow: hidden; oversc
   gap: 5px;
   font-size: calc(11px * var(--ui-font-scale, 1));
   padding: 3px 6px 3px 8px;
-  border-radius: 6px;
+  border-radius: var(--radius-sm);
   border: 1px solid var(--border-subtle);
   background: var(--bg-hover);
   color: var(--text-secondary);
@@ -3078,7 +3097,7 @@ html.appFocusFullscreen, html.appFocusFullscreen body { overflow: hidden; oversc
   align-items: center;
   gap: 8px;
   padding: 5px 8px;
-  border-radius: 6px;
+  border-radius: var(--radius-sm);
   cursor: pointer;
   font-size: calc(12px * var(--ui-font-scale, 1));
   color: var(--text-primary);
@@ -3094,7 +3113,7 @@ html.appFocusFullscreen, html.appFocusFullscreen body { overflow: hidden; oversc
   margin-left: auto;
   font-size: calc(10px * var(--ui-font-scale, 1));
   padding: 0 6px;
-  border-radius: 999px;
+  border-radius: var(--radius-full);
   border: 1px solid var(--border-subtle);
   color: var(--text-dim);
 }
@@ -3117,7 +3136,7 @@ html.appFocusFullscreen, html.appFocusFullscreen body { overflow: hidden; oversc
 .pageActionBtn {
   background: none;
   border: none;
-  border-radius: 6px;
+  border-radius: var(--radius-sm);
   color: var(--text-muted);
   cursor: pointer;
   width: 26px;
@@ -3140,7 +3159,7 @@ html.appFocusFullscreen, html.appFocusFullscreen body { overflow: hidden; oversc
   min-width: 12px;
   height: 12px;
   padding: 0 2px;
-  border-radius: 6px;
+  border-radius: var(--radius-sm);
   background: var(--danger);
   color: #fff;
   font-size: calc(9px * var(--ui-font-scale, 1));
@@ -3171,12 +3190,12 @@ html.appFocusFullscreen, html.appFocusFullscreen body { overflow: hidden; oversc
 
 .dockPreview {
   position: fixed;
-  z-index: 2000;
+  z-index: var(--z-refpopup);
   background: color-mix(in srgb, var(--accent-dark) 25%, transparent);
   border: 2px solid var(--accent-dark);
-  border-radius: 8px;
+  border-radius: var(--radius-md);
   pointer-events: none;
-  transition: left 0.1s ease, top 0.1s ease, width 0.1s ease, height 0.1s ease;
+  transition: left var(--dur-fast) ease, top var(--dur-fast) ease, width var(--dur-fast) ease, height var(--dur-fast) ease;
 }
 .chatPanel {
   display: flex;
@@ -3201,7 +3220,7 @@ html.appFocusFullscreen, html.appFocusFullscreen body { overflow: hidden; oversc
   gap: 6px;
   min-height: 30px;
   padding: 3px 4px 3px 8px;
-  border-radius: 6px;
+  border-radius: var(--radius-sm);
   font-size: calc(12px * var(--ui-font-scale, 1));
   color: var(--text-primary);
   cursor: pointer;
@@ -3223,7 +3242,7 @@ html.appFocusFullscreen, html.appFocusFullscreen body { overflow: hidden; oversc
   padding: 3px 6px;
   font-size: calc(12px * var(--ui-font-scale, 1));
   cursor: pointer;
-  border-radius: 6px;
+  border-radius: var(--radius-sm);
   user-select: none;
 }
 .chatToolPermRow:hover { background: color-mix(in srgb, var(--accent-dark) 8%, transparent); }
@@ -3248,7 +3267,7 @@ html.appFocusFullscreen, html.appFocusFullscreen body { overflow: hidden; oversc
   margin: auto 4px;
   padding: 16px;
   border: 1px solid var(--border);
-  border-radius: 14px;
+  border-radius: var(--radius-lg);
   background: var(--bg-surface);
   display: flex;
   flex-direction: column;
@@ -3261,7 +3280,7 @@ html.appFocusFullscreen, html.appFocusFullscreen body { overflow: hidden; oversc
 .chatSetupIcon {
   width: 32px;
   height: 32px;
-  border-radius: 8px;
+  border-radius: var(--radius-md);
   display: grid;
   place-items: center;
   background: var(--accent-bg);
@@ -3278,7 +3297,7 @@ html.appFocusFullscreen, html.appFocusFullscreen body { overflow: hidden; oversc
   gap: 2px;
   padding: 9px 12px;
   border: 1px solid var(--border);
-  border-radius: var(--radius-surface);
+  border-radius: var(--radius-lg);
   background: var(--bg-surface);
   color: var(--text-primary);
   font: inherit;
@@ -3309,7 +3328,7 @@ html.appFocusFullscreen, html.appFocusFullscreen body { overflow: hidden; oversc
 .chatBubbleRow.ai { justify-content: flex-start; margin-bottom: 12px; }
 .chatBubble {
   max-width: 88%;
-  border-radius: calc(16px * var(--text-scale, 1));
+  border-radius: calc(var(--radius-lg) * var(--text-scale, 1));
   padding: 7px 12px;
   font-size: calc(14px * var(--ui-font-scale, 1) * var(--text-scale, 1));
   line-height: 1.5;
@@ -3336,7 +3355,7 @@ html.appFocusFullscreen, html.appFocusFullscreen body { overflow: hidden; oversc
 .chatBubble.ai.error {
   background: var(--danger-bg);
   border: 1px solid var(--danger-border);
-  border-radius: calc(12px * var(--text-scale, 1));
+  border-radius: calc(var(--radius-lg) * var(--text-scale, 1));
   padding: 6px 10px;
   color: var(--danger);
   font-size: calc(13px * var(--ui-font-scale, 1) * var(--text-scale, 1));
@@ -3348,7 +3367,7 @@ html.appFocusFullscreen, html.appFocusFullscreen body { overflow: hidden; oversc
   margin-top: 8px;
   padding: 10px 12px;
   border: 1px solid var(--danger-border);
-  border-radius: 10px;
+  border-radius: var(--radius-lg);
   background: var(--danger-bg);
   color: var(--text-primary);
   font-size: calc(13px * var(--ui-font-scale, 1) * var(--text-scale, 1));
@@ -3387,14 +3406,14 @@ html.appFocusFullscreen, html.appFocusFullscreen body { overflow: hidden; oversc
 .chatBubble.ai li > p { margin-bottom: 3px; }
 .chatBubble.ai code {
   background: var(--bg-raised);
-  border-radius: 4px;
+  border-radius: var(--radius-xs);
   padding: 1px 4px;
   font-size: calc(12.5px * var(--ui-font-scale, 1) * var(--text-scale, 1));
 }
 .chatBubble.ai pre {
   background: var(--bg-input);
   border: 1px solid var(--border-subtle);
-  border-radius: 6px;
+  border-radius: var(--radius-sm);
   padding: 8px 10px;
   overflow-x: auto;
   margin: 4px 0 10px;
@@ -3411,7 +3430,7 @@ html.appFocusFullscreen, html.appFocusFullscreen body { overflow: hidden; oversc
   z-index: 1;
   user-select: none;
   opacity: 0;
-  transition: opacity 0.12s;
+  transition: opacity var(--dur-fast);
 }
 .chatCopyBlock:hover .chatCopyTools,
 .chatCopyBlock:focus-within .chatCopyTools { opacity: 1; }
@@ -3422,7 +3441,7 @@ html.appFocusFullscreen, html.appFocusFullscreen body { overflow: hidden; oversc
   gap: 4px;
   padding: 2px 5px;
   border: 1px solid var(--border-subtle);
-  border-radius: 5px;
+  border-radius: var(--radius-sm);
   background: var(--bg-raised);
   color: var(--text-muted);
   font: inherit;
@@ -3458,7 +3477,7 @@ html.appFocusFullscreen, html.appFocusFullscreen body { overflow: hidden; oversc
   margin-top: 6px;
   padding: 0.3em 0.7em;
   border: 1px solid var(--border-subtle);
-  border-radius: 999px;
+  border-radius: var(--radius-full);
   background: var(--bg-raised);
   color: var(--text-muted);
   font-size: calc(11px * var(--ui-font-scale, 1) * var(--text-scale, 1));
@@ -3548,11 +3567,11 @@ html.appFocusFullscreen, html.appFocusFullscreen body { overflow: hidden; oversc
   background: var(--bg-elevated);
   border: 1px solid var(--border);
   color: var(--text-secondary);
-  border-radius: 999px;
+  border-radius: var(--radius-full);
   padding: 3px 10px;
   font-size: calc(12px * var(--ui-font-scale, 1));
   font-variant-numeric: tabular-nums;
-  box-shadow: 0 2px 8px rgba(0, 0, 0, 0.15);
+  box-shadow: var(--shadow-2);
 }
 
 /* Buttons: VS-Code-settings-style rounded rects — soft radius, quiet border,
@@ -3564,7 +3583,7 @@ html.appFocusFullscreen, html.appFocusFullscreen body { overflow: hidden; oversc
   gap: 5px;
   background: var(--bg-elevated);
   border: 1px solid var(--border);
-  border-radius: 9px;
+  border-radius: var(--radius-md);
   color: var(--text-secondary);
   font-size: calc(12px * var(--ui-font-scale, 1));
   font-weight: 500;
@@ -3573,12 +3592,12 @@ html.appFocusFullscreen, html.appFocusFullscreen body { overflow: hidden; oversc
   font-family: inherit;
   line-height: 1.4;
   white-space: nowrap;
-  box-shadow: 0 1px 2px rgba(0, 0, 0, 0.05);
-  transition: background 0.12s ease, color 0.12s ease, border-color 0.12s ease, box-shadow 0.12s ease;
+  box-shadow: var(--shadow-1);
+  transition: background var(--dur-fast) ease, color var(--dur-fast) ease, border-color var(--dur-fast) ease, box-shadow var(--dur-fast) ease;
 }
 .uiBtn:active:not(:disabled) { background: var(--bg-active); box-shadow: none; }
 .uiBtn:disabled { opacity: 0.45; cursor: default; box-shadow: none; }
-.uiBtn.sm { min-height: 28px; font-size: calc(11.5px * var(--ui-font-scale, 1)); padding: 4px 12px; border-radius: 8px; }
+.uiBtn.sm { min-height: 28px; font-size: calc(11.5px * var(--ui-font-scale, 1)); padding: 4px 12px; border-radius: var(--radius-md); }
 /* Icon-only square variant (delete/edit row actions). */
 .uiBtn.iconSq { width: 27px; height: 25px; padding: 0; flex-shrink: 0; }
 .uiBtn.sm.iconSq { width: 28px; height: 28px; }
@@ -3631,8 +3650,8 @@ html.appFocusFullscreen, html.appFocusFullscreen body { overflow: hidden; oversc
   justify-content: space-between;
   gap: 10px;
   padding: 8px 8px;
-  border-radius: 10px;
-  transition: background 0.12s ease;
+  border-radius: var(--radius-lg);
+  transition: background var(--dur-fast) ease;
 }
 /* Flat at rest: rows are separated by a straight inset hairline (a border
    would curve around the radius and read as a card edge), and only hover
@@ -3660,7 +3679,7 @@ html.appFocusFullscreen, html.appFocusFullscreen body { overflow: hidden; oversc
 }
 .quotaBarFill {
   display: block; height: 100%; border-radius: 2px;
-  background: var(--accent-dark); transition: width 0.3s ease;
+  background: var(--accent-dark); transition: width var(--dur-slow) ease;
 }
 .quotaBarFill.warn { background: #d9822b; }
 .quotaBarFill.full { background: #e5534b; }
@@ -3686,7 +3705,7 @@ html.appFocusFullscreen, html.appFocusFullscreen body { overflow: hidden; oversc
   margin-left: 6px;
   padding: 1px 7px;
   border: 1px solid var(--border-subtle);
-  border-radius: 999px;
+  border-radius: var(--radius-full);
   background: var(--bg-block);
   color: var(--text-muted);
   font-size: calc(10px * var(--ui-font-scale, 1));
@@ -3700,7 +3719,7 @@ html.appFocusFullscreen, html.appFocusFullscreen body { overflow: hidden; oversc
    its rename field. The tag is a button, so it out-specifies the topbar's
    generic pill and keeps the tag's own size; it never squeezes the title. */
 .topbar button.linkNameTag {
-  padding: 1px 7px; font-size: calc(10px * var(--ui-font-scale, 1)); line-height: inherit; border-radius: 999px;
+  padding: 1px 7px; font-size: calc(10px * var(--ui-font-scale, 1)); line-height: inherit; border-radius: var(--radius-full);
   border: 1px solid var(--border-subtle); background: var(--bg-block); color: var(--text-muted);
   flex-shrink: 1; min-width: 0; max-width: 38%; overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
   cursor: pointer;
@@ -3710,11 +3729,11 @@ html.appFocusFullscreen, html.appFocusFullscreen body { overflow: hidden; oversc
 /* The share view's brand mark (a page share's way to this server's front
    door) and its access pill (sharing/ShareAccess.jsx): the role in bold with
    its icon, then who shared it; phones keep the icon and the role. */
-.shareBrand { display: inline-flex; flex-shrink: 0; padding: 4px; border-radius: 6px; }
+.shareBrand { display: inline-flex; flex-shrink: 0; padding: 4px; border-radius: var(--radius-sm); }
 a.shareBrand:hover { background: var(--bg-hover); }
 .shareAccess {
   display: inline-flex; align-items: center; gap: 6px; flex-shrink: 0;
-  padding: 3px 10px 3px 8px; border: 1px solid var(--border); border-radius: 999px;
+  padding: 3px 10px 3px 8px; border: 1px solid var(--border); border-radius: var(--radius-full);
   background: var(--bg-block); color: var(--text-secondary);
   font-size: calc(13px * var(--ui-font-scale, 1)); white-space: nowrap;
 }
@@ -3744,7 +3763,7 @@ a.shareBrand:hover { background: var(--bg-hover); }
   margin: 0 2px 2px;
   padding: 3px 4px 4px 8px;
   border: 1px solid var(--border-subtle);
-  border-radius: 8px;
+  border-radius: var(--radius-md);
   background: var(--bg-block);
   flex-shrink: 0;
   min-width: 0;
@@ -3789,7 +3808,7 @@ a.shareBrand:hover { background: var(--bg-hover); }
   font-size: calc(11px * var(--ui-font-scale, 1));
   color: var(--text-muted);
   border: 1px solid var(--border-subtle);
-  border-radius: 4px;
+  border-radius: var(--radius-xs);
   padding: 4px 7px;
   cursor: pointer;
   user-select: none;
@@ -3801,7 +3820,7 @@ a.shareBrand:hover { background: var(--bg-hover); }
   position: fixed;
   inset: 0;
   background: rgba(0, 0, 0, 0.45);
-  z-index: 1200;
+  z-index: var(--z-modal);
   display: flex;
   align-items: center;
   justify-content: center;
@@ -3809,12 +3828,12 @@ a.shareBrand:hover { background: var(--bg-hover); }
 /* The confirm dialog can be triggered FROM another modal (e.g. deleting a
    user from the Users manager) — it must always stack above sibling overlays
    regardless of DOM order. */
-.reportOverlay[data-popover="confirm"] { z-index: 1300; }
+.reportOverlay[data-popover="confirm"] { z-index: var(--z-confirm); }
 /* Sub-dialogs opened from inside the settings modal (edit key, edit account,
    add user): above the settings overlay, still below the confirm box. */
-.reportOverlay.subDialog { z-index: 1290; }
+.reportOverlay.subDialog { z-index: var(--z-subdialog); }
 .reportModal {
-  border-radius: var(--radius-surface);
+  border-radius: var(--radius-lg);
   padding: 16px;
   width: min(440px, calc(100vw - 32px));
   max-height: 80vh;
@@ -3835,7 +3854,7 @@ a.shareBrand:hover { background: var(--bg-hover); }
 .reportPageList {
   overflow-y: auto;
   border: 1px solid var(--border-subtle);
-  border-radius: 6px;
+  border-radius: var(--radius-sm);
   padding: 6px;
   min-height: 60px;
   max-height: 40vh;
@@ -3845,7 +3864,7 @@ a.shareBrand:hover { background: var(--bg-hover); }
   align-items: center;
   gap: 8px;
   padding: 4px 6px;
-  border-radius: 4px;
+  border-radius: var(--radius-xs);
   cursor: pointer;
   font-size: calc(12px * var(--ui-font-scale, 1));
   color: var(--text-secondary);
@@ -3879,7 +3898,7 @@ a.shareBrand:hover { background: var(--bg-hover); }
   overflow: auto;
   overscroll-behavior: contain;
   border: 1px solid var(--border-subtle);
-  border-radius: 8px;
+  border-radius: var(--radius-md);
   padding: 8px 10px;
   font-size: calc(11px * var(--ui-font-scale, 1));
   line-height: 1.45;
@@ -3898,10 +3917,10 @@ a.shareBrand:hover { background: var(--bg-hover); }
   align-items: center;
   gap: 8px;
   padding: 6px 8px 6px 12px;
-  border-radius: 999px;
+  border-radius: var(--radius-full);
   background: var(--bg-surface);
   border: 1px solid var(--border);
-  box-shadow: var(--shadow-surface);
+  box-shadow: var(--shadow-2);
   color: var(--text-primary);
   font-size: calc(12.5px * var(--ui-font-scale, 1));
   max-width: calc(100vw - 32px);
@@ -3928,9 +3947,9 @@ a.shareBrand:hover { background: var(--bg-hover); }
   margin: 4px 2px 2px;
   padding: 6px 6px 5px;
   border: 1px solid var(--border);
-  border-radius: 14px;
+  border-radius: var(--radius-lg);
   background: var(--bg-surface);
-  box-shadow: 0 1px 3px rgba(0, 0, 0, 0.06);
+  box-shadow: var(--shadow-1);
   flex-shrink: 0;
   min-width: 0;
 }
@@ -3972,7 +3991,7 @@ a.shareBrand:hover { background: var(--bg-hover); }
 .chatMentionInput { flex: 1; min-width: 0; display: flex; }
 .chatMentionInput textarea { width: 100%; min-width: 0; }
 .chatMentionPicker {
-  position: absolute; bottom: calc(100% + 6px); left: 0; right: 0; z-index: 20;
+  position: absolute; bottom: calc(100% + 6px); left: 0; right: 0; z-index: var(--z-dock);
   color: var(--text-secondary); overflow: hidden;
 }
 .chatMentionHeading, .chatMentionHint { padding: 8px 10px; font-size: calc(11px * var(--ui-font-scale, 1)); }
@@ -4010,7 +4029,7 @@ a.shareBrand:hover { background: var(--bg-hover); }
 .loginCard {
   background: var(--bg-surface);
   border: 1px solid var(--border);
-  border-radius: 12px;
+  border-radius: var(--radius-lg);
   padding: 32px 36px 28px;
   width: 100%;
   max-width: 380px;
@@ -4061,7 +4080,7 @@ a.shareBrand:hover { background: var(--bg-hover); }
   padding: 8px 10px;
   margin-bottom: 12px;
   border: 1px solid var(--danger-border);
-  border-radius: 6px;
+  border-radius: var(--radius-sm);
   background: var(--danger-bg);
   color: var(--danger);
   font-size: calc(13px * var(--ui-font-scale, 1));
@@ -4074,7 +4093,7 @@ a.shareBrand:hover { background: var(--bg-hover); }
   padding: 10px;
   margin-bottom: 8px;
   border: none;
-  border-radius: 6px;
+  border-radius: var(--radius-sm);
   background: var(--accent);
   color: var(--on-accent);
   font-size: calc(14px * var(--ui-font-scale, 1));
@@ -4094,7 +4113,7 @@ a.shareBrand:hover { background: var(--bg-hover); }
   padding: 9px 10px;
   margin-bottom: 14px;
   border: 1px solid var(--border-light);
-  border-radius: 6px;
+  border-radius: var(--radius-sm);
   background: var(--bg-surface);
   color: var(--text-primary);
   font-size: calc(14px * var(--ui-font-scale, 1));
@@ -4117,7 +4136,7 @@ a.shareBrand:hover { background: var(--bg-hover); }
   width: 100%;
   padding: 10px;
   border: 1px solid var(--border);
-  border-radius: 6px;
+  border-radius: var(--radius-sm);
   background: transparent;
   color: var(--text-secondary);
   font-size: calc(14px * var(--ui-font-scale, 1));
@@ -4159,7 +4178,7 @@ a.shareBrand:hover { background: var(--bg-hover); }
   cursor: pointer;
 }
 .loginDisclosure:hover { color: var(--text-primary); }
-.loginDisclosureChev { transition: transform 0.15s; }
+.loginDisclosureChev { transition: transform var(--dur-base); }
 .loginDisclosureChev.open { transform: rotate(90deg); }
 .loginDisclosureBody { margin-top: 12px; }
 /* a demo server's landing (LoginPage's `scene`): the product pictured on the
@@ -4172,7 +4191,7 @@ a.shareBrand:hover { background: var(--bg-hover); }
   max-width: 900px;
   padding: 0;
   overflow: hidden;
-  border-radius: 16px;
+  border-radius: var(--radius-lg);
 }
 .loginScene { background: #f6f4ef; border-right: 1px solid var(--border); min-height: 420px; }
 .loginScene img { display: block; width: 100%; height: 100%; object-fit: cover; object-position: 20% 45%; }
@@ -4282,7 +4301,7 @@ a.shareBrand:hover { background: var(--bg-hover); }
 .chatContextRing { display: block; flex: none; }
 .chatContextRing circle { fill: none; stroke: currentColor; stroke-width: 2.5; }
 .chatContextRingTrack { opacity: 0.22; }
-.chatContextRingFill { stroke-linecap: round; transition: stroke-dasharray 0.3s; }
+.chatContextRingFill { stroke-linecap: round; transition: stroke-dasharray var(--dur-slow); }
 .chatContextRing.full .chatContextRingFill { stroke: var(--danger); }
 .chatUsageTotal .popoverHint { padding: 0; }
 .chatMsgActions {
@@ -4290,14 +4309,14 @@ a.shareBrand:hover { background: var(--bg-hover); }
   gap: 2px;
   padding: 2px 2px 0;
   opacity: 0;
-  transition: opacity 0.12s;
+  transition: opacity var(--dur-fast);
 }
 .chatBubbleRow:hover .chatMsgActions,
 .chatBubbleRow:focus-within .chatMsgActions { opacity: 1; }
 .chatMsgActionBtn {
   background: none;
   border: none;
-  border-radius: 4px;
+  border-radius: var(--radius-xs);
   color: var(--text-muted);
   cursor: pointer;
   width: 22px;
@@ -4385,7 +4404,7 @@ a.shareBrand:hover { background: var(--bg-hover); }
   width: 52px;
   height: 52px;
   object-fit: cover;
-  border-radius: 8px;
+  border-radius: var(--radius-md);
   border: 1px solid var(--border-subtle);
 }
 /* Floating delete badge over an image thumbnail: .uiClose gives the shape,
@@ -4405,7 +4424,7 @@ a.shareBrand:hover { background: var(--bg-hover); }
   max-width: 100%;
   max-height: 260px;
   object-fit: contain;
-  border-radius: 8px;
+  border-radius: var(--radius-md);
   background: var(--bg-surface);
 }
 .chatMsgPdfs { display: flex; flex-wrap: wrap; gap: 4px; margin-bottom: 4px; font-size: calc(10px * var(--ui-font-scale, 1) * var(--text-scale, 1)); }
@@ -4416,7 +4435,7 @@ a.shareBrand:hover { background: var(--bg-hover); }
   gap: 4px;
   font-size: calc(10px * var(--ui-font-scale, 1) * var(--text-scale, 1));
   padding: 1px 8px;
-  border-radius: 999px;
+  border-radius: var(--radius-full);
   background: color-mix(in srgb, var(--text-primary) 9%, transparent);
   color: inherit;
   white-space: nowrap;
@@ -4436,7 +4455,7 @@ a.shareBrand:hover { background: var(--bg-hover); }
   max-width: 100%;
   padding: 3px 10px;
   border: 1px solid var(--border-subtle);
-  border-radius: 999px;
+  border-radius: var(--radius-full);
   background: var(--bg-raised);
   color: var(--text-muted);
   font: inherit;
@@ -4513,7 +4532,7 @@ a.shareBrand:hover { background: var(--bg-hover); }
   padding: 3px 7px;
   margin: 2px 0;
   border: 1px solid var(--border);
-  border-radius: 6px;
+  border-radius: var(--radius-sm);
   background: var(--bg-raised);
   color: var(--accent);
   font-size: 0.92em;
@@ -4548,7 +4567,7 @@ a.shareBrand:hover { background: var(--bg-hover); }
   max-width: 100%;
   height: calc(17px * var(--ui-font-scale, 1) * var(--text-scale, 1));
   padding: 0 6px;
-  border-radius: 999px;
+  border-radius: var(--radius-full);
   background: var(--accent-bg);
   color: var(--accent);
   font-size: calc(11px * var(--ui-font-scale, 1) * var(--text-scale, 1));
@@ -4567,14 +4586,14 @@ a.shareBrand:hover { background: var(--bg-hover); }
 /* Its preview: the cited paper, the PDF page and the quote itself. */
 .chatCitePreview {
   position: fixed;
-  z-index: 1000;
+  z-index: var(--z-overlay);
   width: max-content;
   max-width: 280px;
   padding: 8px 10px;
   border: 1px solid var(--border);
-  border-radius: 8px;
+  border-radius: var(--radius-md);
   background: var(--bg-raised);
-  box-shadow: 0 6px 20px rgba(0, 0, 0, 0.18);
+  box-shadow: var(--shadow-2);
   color: var(--text-primary);
   font-size: calc(12px * var(--ui-font-scale, 1));
   line-height: 1.45;
@@ -4611,7 +4630,7 @@ a.shareBrand:hover { background: var(--bg-hover); }
   color: var(--text-muted);
   background: var(--bg-raised);
   border: 1px solid var(--border);
-  border-radius: 6px;
+  border-radius: var(--radius-sm);
   white-space: pre-wrap;
   overflow-wrap: anywhere;
 }
@@ -4619,7 +4638,7 @@ a.shareBrand:hover { background: var(--bg-hover); }
   gap: 3px;
   font-size: calc(11px * var(--ui-font-scale, 1));
   align-self: center;
-  border-radius: 999px;
+  border-radius: var(--radius-full);
   height: 26px;
   padding: 0 8px;
 }
@@ -4628,7 +4647,7 @@ a.shareBrand:hover { background: var(--bg-hover); }
 
 /* "+" context button and round send/stop */
 .chatAttachToggle.chatPlusBtn {
-  border-radius: 999px;
+  border-radius: var(--radius-full);
   min-width: 26px;
   height: 26px;
   padding: 0 6px;
@@ -4642,7 +4661,7 @@ a.shareBrand:hover { background: var(--bg-hover); }
 .chatInput:disabled { cursor: not-allowed; }
 /* Round send/stop variant of .uiBtn (chat composer). */
 .uiBtn.chatCircleBtn {
-  border-radius: 999px;
+  border-radius: var(--radius-full);
   width: 27px;
   height: 27px;
   padding: 0;
@@ -4735,7 +4754,7 @@ a.shareBrand:hover { background: var(--bg-hover); }
   align-items: center;
   gap: 8px;
   padding: 5px 6px;
-  border-radius: 6px;
+  border-radius: var(--radius-sm);
   font-size: calc(12px * var(--ui-font-scale, 1));
 }
 .transferRow:hover { background: var(--bg-block); }
@@ -4747,7 +4766,7 @@ a.shareBrand:hover { background: var(--bg-hover); }
 /* name over an optional progress bar */
 .transferMain { flex: 1; min-width: 0; display: flex; flex-direction: column; gap: 3px; }
 .transferBar { display: block; height: 3px; border-radius: 2px; background: var(--border-subtle); overflow: hidden; }
-.transferBar > span { display: block; height: 100%; background: var(--accent); border-radius: 2px; transition: width 0.2s ease; }
+.transferBar > span { display: block; height: 100%; background: var(--accent); border-radius: 2px; transition: width var(--dur-base) ease; }
 /* the stop button keeps its slot when absent, so info texts line up */
 .transferStop, .transferStopSlot { flex-shrink: 0; width: 18px; }
 .transferStop { visibility: hidden; }
@@ -4784,9 +4803,9 @@ a.shareBrand:hover { background: var(--bg-hover); }
   border: 1px solid var(--border);
   background: var(--bg-elevated);
   color: var(--accent);
-  box-shadow: 0 1px 4px rgba(0, 0, 0, 0.18);
-  animation: navBackIn 0.16s ease-out;
-  transition: background 0.12s, border-color 0.12s, transform 0.12s;
+  box-shadow: var(--shadow-1);
+  animation: navBackIn var(--dur-base) ease-out;
+  transition: background var(--dur-fast), border-color var(--dur-fast), transform var(--dur-fast);
 }
 .topbar .navBackBtn:hover {
   background: var(--accent-bg);
@@ -4802,7 +4821,7 @@ a.shareBrand:hover { background: var(--bg-hover); }
   min-width: 15px;
   height: 15px;
   padding: 0 3px;
-  border-radius: 999px;
+  border-radius: var(--radius-full);
   background: var(--accent-dark);
   color: var(--on-accent);
   font-size: calc(9px * var(--ui-font-scale, 1));
@@ -5025,7 +5044,7 @@ a.shareBrand:hover { background: var(--bg-hover); }
 .pdfCitationMark { z-index: 4; pointer-events: none; }
 .pdfCitationNotice {
   position: absolute; top: 8px; left: 8px; right: 8px; z-index: 5;
-  padding: 8px 12px; border: 1px solid var(--border); border-radius: 6px;
+  padding: 8px 12px; border: 1px solid var(--border); border-radius: var(--radius-sm);
   background: var(--bg-elevated); color: var(--text-primary);
 }
 .pdfTransPara.streaming .pdfTransText > span::after {
@@ -5140,7 +5159,7 @@ a.shareBrand:hover { background: var(--bg-hover); }
   color: var(--text-secondary);
   background: transparent;
   border: 1px solid transparent;
-  border-radius: 4px;
+  border-radius: var(--radius-xs);
   padding: 1px 4px;
   /* Pull the input left by its border+padding so its text starts flush at the
      value column, aligned with the read-only rows below. */
@@ -5176,7 +5195,7 @@ a.shareBrand:hover { background: var(--bg-hover); }
   color: var(--accent);
   background: var(--accent-bg-light);
   border: 1px solid var(--accent-dark);
-  border-radius: 999px;
+  border-radius: var(--radius-full);
   padding: 0 7px;
   margin-left: 8px;
 }
@@ -5189,7 +5208,7 @@ a.shareBrand:hover { background: var(--bg-hover); }
   background: #1e3a5a;
   color: #7ec8f0;
   border: 1px solid #2a5a8a;
-  border-radius: 999px;
+  border-radius: var(--radius-full);
   font-size: calc(11px * var(--ui-font-scale, 1));
   cursor: pointer;
   max-width: 100%;
@@ -5297,7 +5316,7 @@ a.shareBrand:hover { background: var(--bg-hover); }
 .popover .ctxMenuItem {
   background: none;
   border: none;
-  border-radius: 6px;
+  border-radius: var(--radius-sm);
   padding: 8px 10px;
   font-size: calc(13px * var(--ui-font-scale, 1));
   color: var(--text-primary);
@@ -5358,7 +5377,7 @@ a.shareBrand:hover { background: var(--bg-hover); }
   background: transparent;
   color: var(--text-primary);
   border: none;
-  border-radius: 6px;
+  border-radius: var(--radius-sm);
   text-align: left;
   cursor: pointer;
   font: inherit;
@@ -5383,7 +5402,7 @@ a.shareBrand:hover { background: var(--bg-hover); }
   margin: 4px -4px -4px;
   padding: 7px 14px 6px;
   border-top: 1px solid var(--border-subtle);
-  border-radius: 0 0 var(--radius-surface) var(--radius-surface);
+  border-radius: 0 0 var(--radius-md) var(--radius-md);
   background: var(--bg-surface);
   font-size: calc(11px * var(--ui-font-scale, 1));
   color: var(--text-dim);
@@ -5426,7 +5445,7 @@ a.shareBrand:hover { background: var(--bg-hover); }
   padding: 3px 8px;
   background: transparent;
   border: none;
-  border-radius: 4px;
+  border-radius: var(--radius-xs);
   text-align: left;
   cursor: pointer;
   color: var(--text-primary);
@@ -5469,7 +5488,7 @@ a.shareBrand:hover { background: var(--bg-hover); }
   margin: 4px -3px -3px;
   padding: 6px 12px;
   border-top: 1px solid var(--border-subtle);
-  border-radius: 0 0 var(--radius-surface) var(--radius-surface);
+  border-radius: 0 0 var(--radius-md) var(--radius-md);
   background: var(--bg-surface);
   font-size: calc(11px * var(--ui-font-scale, 1));
   color: var(--text-dim);
@@ -5483,7 +5502,7 @@ a.shareBrand:hover { background: var(--bg-hover); }
   padding: 5px 8px;
   background: transparent;
   border: none;
-  border-radius: 4px;
+  border-radius: var(--radius-xs);
   text-align: left;
   cursor: pointer;
   color: var(--text-primary);
@@ -5500,7 +5519,7 @@ a.shareBrand:hover { background: var(--bg-hover); }
   color: var(--text-secondary);
   background: var(--bg-input);
   border: 1px solid var(--border-subtle);
-  border-radius: 4px;
+  border-radius: var(--radius-xs);
 }
 .slashMenuLabel { font-size: calc(13px * var(--ui-font-scale, 1)); }
 .slashMenuHint {
@@ -5523,7 +5542,7 @@ a.shareBrand:hover { background: var(--bg-hover); }
   flex: 0 0 auto;
   width: 30px;
   height: 30px;
-  border-radius: 9px;
+  border-radius: var(--radius-md);
   background: var(--accent-bg-light);
   color: var(--accent);
 }
@@ -5553,7 +5572,7 @@ a.shareBrand:hover { background: var(--bg-hover); }
 .transferFormatRowWide .setPictureChoice.uiBtn { flex-direction: row; align-items: center; min-height: 106px; gap: 12px; }
 .transferFormatRowWide .formatIllustration { width: 68px; }
 .transferFormatRowWide .setPictureCaption { flex: 1; min-width: 0; padding-right: 16px; }
-.transferReview { display: grid; grid-template-columns: minmax(0, 260px) minmax(0, 1fr); gap: 22px; align-items: center; margin: 14px 0; padding: 16px; border: 1px solid var(--border-subtle); border-radius: var(--radius-surface); }
+.transferReview { display: grid; grid-template-columns: minmax(0, 260px) minmax(0, 1fr); gap: 22px; align-items: center; margin: 14px 0; padding: 16px; border: 1px solid var(--border-subtle); border-radius: var(--radius-lg); }
 .transferControls { min-width: 0; }
 .transferControls .setRow { grid-template-columns: 28px minmax(0, 1fr) auto; margin: 5px 0; }
 .transferControls .setRow > .settingText { grid-column: 2; grid-row: 1; padding-right: 0; }
@@ -5583,7 +5602,7 @@ a.shareBrand:hover { background: var(--bg-hover); }
 .confirmMessage { font-size: calc(12px * var(--ui-font-scale, 1)); color: var(--text-secondary); line-height: 1.5; }
 /* Move-block dialog: the page list scrolls; rows are the shared ctxMenuItem. */
 .moveBlockList { display: flex; flex-direction: column; max-height: 300px; overflow-y: auto; margin-top: 2px; }
-.moveBlockList .ctxMenuItem { border-radius: 6px; }
+.moveBlockList .ctxMenuItem { border-radius: var(--radius-sm); }
 /* Three actions (Cancel / Fetch / Open in browser) don't fit the 420px confirm
    width — they wrapped onto two rows. */
 .linkPromptModal { width: min(520px, calc(100vw - 32px)); }
@@ -5595,7 +5614,7 @@ a.shareBrand:hover { background: var(--bg-hover); }
   color: var(--text-secondary);
   background: var(--bg-block);
   border: 1px solid var(--border-subtle);
-  border-radius: var(--radius-control);
+  border-radius: var(--radius-md);
   padding: 8px 10px;
   max-height: 6.5em;
   overflow-y: auto;
@@ -5621,14 +5640,14 @@ a.shareBrand:hover { background: var(--bg-hover); }
   max-width: 100%;
   margin: 1px 0;
   border: 1px solid var(--border-light);
-  border-radius: 7px;
+  border-radius: var(--radius-sm);
   background: var(--bg-surface);
-  box-shadow: 0 1px 2px rgba(0, 0, 0, 0.08);
+  box-shadow: var(--shadow-1);
   vertical-align: -6px;
   line-height: 1.4;
   font-size: 0.95em;
 }
-.fileChip:hover { border-color: var(--border-hover); box-shadow: 0 1px 3px rgba(0, 0, 0, 0.14); }
+.fileChip:hover { border-color: var(--border-hover); box-shadow: var(--shadow-1); }
 .fileChipMain {
   display: inline-flex;
   align-items: center;
@@ -5640,14 +5659,14 @@ a.shareBrand:hover { background: var(--bg-hover); }
   font-weight: 500;
   text-decoration: none;
 }
-.fileChipMain:hover { background: var(--bg-hover); border-radius: 6px 0 0 6px; }
+.fileChipMain:hover { background: var(--bg-hover); border-radius: var(--radius-sm) 0 0 var(--radius-sm); }
 .fileChipIcon {
   display: inline-flex;
   align-items: center;
   justify-content: center;
   width: 22px;
   height: 22px;
-  border-radius: 5px;
+  border-radius: var(--radius-sm);
   flex: none;
   background: var(--accent-bg-light);
   color: var(--accent);
@@ -5666,7 +5685,7 @@ a.shareBrand:hover { background: var(--bg-hover); }
   cursor: pointer;
 }
 .fileChipBtn:hover { background: var(--bg-hover); color: var(--text-primary); }
-.fileChipBtn:last-child { border-radius: 0 6px 6px 0; }
+.fileChipBtn:last-child { border-radius: 0 var(--radius-sm) var(--radius-sm) 0; }
 .fileChipOpen { color: var(--accent); }
 
 /* --- presence (collaboration/usePageCollab.js): who is on the page, and where ------------------ */
@@ -5686,7 +5705,7 @@ a.shareBrand:hover { background: var(--bg-hover); }
   border: 1.5px solid var(--bg-surface); user-select: none;
 }
 .presenceBar { display: inline-flex; align-items: center; margin-left: 10px; vertical-align: middle; }
-.presenceBar .peerAvatar { margin-left: -6px; cursor: pointer; transition: transform 0.12s; }
+.presenceBar .peerAvatar { margin-left: -6px; cursor: pointer; transition: transform var(--dur-fast); }
 .presenceBar .peerAvatar:first-child { margin-left: 0; }
 .presenceBar .peerAvatar:hover { transform: translateY(-1px); z-index: 1; }
 .presenceBar .peerAvatar.viewing { opacity: 0.6; }
@@ -5697,7 +5716,7 @@ a.shareBrand:hover { background: var(--bg-hover); }
    the pointer. Several chips stack leftwards from that anchor. */
 .peerChips {
   position: absolute; right: calc(100% + 1px); top: 3px; display: flex; z-index: 3;
-  pointer-events: none; transition: opacity 120ms ease;
+  pointer-events: none; transition: opacity var(--dur-fast) ease;
 }
 .sortableBlockWrap:is(:hover, :focus-within) > .blockRowWrap > .peerChips { opacity: 0.25; }
 .peerChips .peerAvatar { width: 16px; height: 16px; font-size: calc(9px * var(--ui-font-scale, 1)); margin-left: -4px; }
@@ -5718,7 +5737,7 @@ a.shareBrand:hover { background: var(--bg-hover); }
 .cmRemoteCaret::after, .peerCaret::after {
   content: attr(data-name); position: absolute; top: -1.35em; left: -2px;
   background: var(--peer); color: #fff; font-size: calc(9px * var(--ui-font-scale, 1)); line-height: 1.2;
-  padding: 1px 4px; border-radius: 3px; white-space: nowrap; pointer-events: none;
+  padding: 1px 4px; border-radius: var(--radius-xs); white-space: nowrap; pointer-events: none;
   opacity: 0.95;
 }
 
@@ -5761,8 +5780,8 @@ a.shareBrand:hover { background: var(--bg-hover); }
 .inkTransform-rotate:active { cursor: grabbing; }
 .inkTransformHandle:focus-visible { outline: 2px solid var(--accent); outline-offset: 2px; }
 .inkTooltip { position: fixed; z-index: var(--z-tip); pointer-events: none; width: max-content; max-width: min(280px, calc(100vw - 16px));
-  padding: 6px 9px; border: 1px solid var(--border); border-radius: 6px; background: var(--bg-elevated);
-  color: var(--text-primary); font-size: calc(12px * var(--ui-font-scale, 1)); line-height: 1.4; box-shadow: var(--shadow-surface); }
+  padding: 6px 9px; border: 1px solid var(--border); border-radius: var(--radius-sm); background: var(--bg-elevated);
+  color: var(--text-primary); font-size: calc(12px * var(--ui-font-scale, 1)); line-height: 1.4; box-shadow: var(--shadow-2); }
 .inkSelectionHit { position: absolute; z-index: 4; touch-action: none; cursor: move; }
 .inkEditMenu { width: 310px; max-width: calc(100vw - 16px); max-height: calc(100vh - 16px); overflow-y: auto; }
 .inkEditRow, .inkEditOptions { display: flex; flex-wrap: wrap; gap: 6px; padding: 4px; }
@@ -5788,7 +5807,7 @@ a.shareBrand:hover { background: var(--bg-hover); }
    undo/redo); the options row of the armed tool opens under it. */
 .pdfInkBar {
   position: absolute;
-  z-index: 21;
+  z-index: calc(var(--z-dock) + 1);
   top: 8px;
   left: 50%;
   transform: translateX(-50%);
@@ -5797,12 +5816,12 @@ a.shareBrand:hover { background: var(--bg-hover); }
   align-items: stretch;
   background: var(--bg-elevated);
   border: 1px solid var(--border);
-  border-radius: 8px;
+  border-radius: var(--radius-md);
   width: max-content;              /* not shrink-to-fit: left: 50% would clamp it to half the viewer */
   max-width: calc(100% - 120px);
 }
 [data-scheme="light"] .pdfInkBar {
-  box-shadow: 0 2px 8px rgba(0,0,0,0.12);
+  box-shadow: var(--shadow-2);
 }
 .pdfInkRow, .pdfInkSub {
   display: flex;
@@ -5836,10 +5855,10 @@ a.shareBrand:hover { background: var(--bg-hover); }
 .inkCustomColor input { position: absolute; inset: 0; opacity: 0; cursor: pointer; width: 100%; height: 100%; }
 /* A width choice: a dot of the tool's colour; an eraser size: a hollow ring. */
 .pdfInkBar .inkSizeBtn { width: 24px; }
-.inkSizeDot { display: block; border-radius: 999px; margin: 0 auto; }
+.inkSizeDot { display: block; border-radius: var(--radius-full); margin: 0 auto; }
 .inkEraserDot { border: 1.5px solid currentColor; box-sizing: border-box; }
 /* Eraser / lasso mode choices: icon + word, a pill when active. */
-.pdfInkBar .inkSegBtn { width: auto; padding: 0 8px; gap: 5px; font-size: calc(12px * var(--ui-font-scale, 1)); border-radius: 999px; }
+.pdfInkBar .inkSegBtn { width: auto; padding: 0 8px; gap: 5px; font-size: calc(12px * var(--ui-font-scale, 1)); border-radius: var(--radius-full); }
 
 /* The notes: a rounded-square pen marker in the dot slot, the strokes as a
    picture above the caption (on white: the card is a piece of the page,
@@ -5850,7 +5869,7 @@ a.shareBrand:hover { background: var(--bg-hover); }
   justify-content: center;
   width: 12px;
   height: 12px;
-  border-radius: 3px;
+  border-radius: var(--radius-xs);
   background: var(--bg-active);
   color: var(--text-tertiary);
 }
@@ -5861,7 +5880,7 @@ a.shareBrand:hover { background: var(--bg-hover); }
   height: auto;
   margin: 4px 0 2px;
   border: 1px solid var(--border-subtle);
-  border-radius: 6px;
+  border-radius: var(--radius-sm);
   background: #fff;
   cursor: pointer;
 }
@@ -5880,7 +5899,7 @@ a.shareBrand:hover { background: var(--bg-hover); }
 .mcpConsentPage { overflow: auto; }
 .mcpConsent p { line-height: 1.5; }
 .mcpCallback { overflow-wrap: anywhere; }
-.mcpPermissions { margin: 8px 0 16px; padding: 16px; border: 1px solid var(--border-subtle); border-radius: 8px; }
+.mcpPermissions { margin: 8px 0 16px; padding: 16px; border: 1px solid var(--border-subtle); border-radius: var(--radius-md); }
 .mcpPermissions ul { padding-left: 18px; margin: 10px 0; line-height: 1.6; font-size: calc(13px * var(--ui-font-scale, 1)); }
 .mcpPermissions p { margin-bottom: 0; }
 .mcpConnectionDetails { margin: 16px 0; font-size: calc(13px * var(--ui-font-scale, 1)); }
@@ -5899,5 +5918,5 @@ a.shareBrand:hover { background: var(--bg-hover); }
   background: var(--bg-block);
   border: 1px solid var(--border-hover);
   border-bottom-width: 2px;
-  border-radius: 4px;
+  border-radius: var(--radius-xs);
 }

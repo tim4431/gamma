@@ -39,12 +39,12 @@
   user-select: none;
   background: var(--bg-card);
   border: 1px solid var(--border-subtle);
-  border-radius: 10px;
+  border-radius: var(--radius-lg);
   cursor: pointer;
   text-align: left;
   color: var(--text-primary);
   font: inherit;
-  transition: background 120ms ease, border-color 120ms ease, box-shadow 120ms ease;
+  transition: background var(--dur-fast) ease, border-color var(--dur-fast) ease, box-shadow var(--dur-fast) ease;
 }
 /* One width for every fixed-width strip card, and the grid's minimum track —
    so a card is the same card wherever it is shown. */
@@ -58,17 +58,14 @@
 .pageCard:hover {
   background: var(--bg-elevated);
   border-color: var(--border);
-  box-shadow: 0 2px 8px rgba(0, 0, 0, 0.08);
+  box-shadow: var(--shadow-2);
 }
 /* Keep the gray Gamma cards distinct without bringing back white surfaces. */
 [data-theme="gamma-light"] .pageCard {
   border-color: var(--border);
-  box-shadow: 0 1px 3px rgba(45, 40, 28, 0.12);
+  box-shadow: var(--shadow-1);
 }
-[data-theme="gamma-light"] .pageCard:hover {
-  border-color: var(--border-hover);
-  box-shadow: 0 3px 9px rgba(45, 40, 28, 0.16);
-}
+[data-theme="gamma-light"] .pageCard:hover { border-color: var(--border-hover); box-shadow: var(--shadow-2); }
 /* .selected / .dragOver are shared with the list rows — see the :is() rules
    next to .fileRow / .folderRow below (they must sit after those :hover
    rules to win when both apply). */
@@ -141,7 +138,7 @@
   font-size: calc(10px * var(--ui-font-scale, 1));
   color: var(--text-muted);
   background: var(--bg-raised);
-  border-radius: 999px;
+  border-radius: var(--radius-full);
   padding: 0 7px;
 }
 /* Label + folder chips (both rendered by CardLabels): one clipped line that
@@ -170,7 +167,7 @@
   top: 4px;
   right: 4px;
   opacity: 0;
-  transition: opacity 0.12s;
+  transition: opacity var(--dur-fast);
   background: var(--bg-card);
 }
 .pageCard:hover .pageCardClose, .pageCardClose:focus-visible { opacity: 1; }
@@ -191,7 +188,7 @@
   align-items: center;
   gap: 10px;
   padding: 7px 10px;
-  border-radius: 8px;
+  border-radius: var(--radius-md);
   cursor: pointer;
   color: var(--text-secondary);
   border: 1px dashed transparent;
@@ -263,7 +260,7 @@
   margin: 8px auto 16px;
   background: none;
   border: 1px solid var(--border);
-  border-radius: 999px;
+  border-radius: var(--radius-full);
   color: var(--text-muted);
   font: inherit;
   font-size: calc(12px * var(--ui-font-scale, 1));
@@ -281,10 +278,10 @@
   height: 28px;
   padding: 0 6px 0 8px;
   border: 1px solid var(--border);
-  border-radius: 8px;
+  border-radius: var(--radius-md);
   /* same surface as the sort pill / toggle buttons next to it */
   background: var(--bg-elevated);
-  box-shadow: 0 1px 2px rgba(0, 0, 0, 0.05);
+  box-shadow: var(--shadow-1);
   color: var(--text-dim);
 }
 .homeFindBox.active { color: var(--accent); }
@@ -310,7 +307,7 @@
   margin: 2px 4px 8px;
   padding: 10px 12px;
   border: 1px solid var(--border);
-  border-radius: 10px;
+  border-radius: var(--radius-lg);
   background: var(--bg-elevated);
   font-size: calc(13px * var(--ui-font-scale, 1));
   color: var(--text-secondary);
@@ -331,7 +328,7 @@
   width: 100%;
   padding: 6px 10px;
   border: 1px dashed var(--border);
-  border-radius: 8px;
+  border-radius: var(--radius-md);
   background: none;
   color: var(--text-muted);
   font: inherit;
@@ -353,7 +350,7 @@
   gap: 2px;
   background: var(--bg-raised);
   border: 1px solid var(--border);
-  border-radius: 8px;
+  border-radius: var(--radius-md);
   padding: 2px;
 }
 .homeViewBtn {
@@ -364,12 +361,12 @@
   height: 22px;
   border: none;
   background: none;
-  border-radius: 6px;
+  border-radius: var(--radius-sm);
   color: var(--text-muted);
   cursor: pointer;
 }
 .homeViewBtn:hover { color: var(--text-primary); }
-.homeViewBtn.active { background: var(--bg-input); color: var(--accent); box-shadow: 0 1px 2px rgba(0,0,0,0.15); }
+.homeViewBtn.active { background: var(--bg-input); color: var(--accent); box-shadow: var(--shadow-1); }
 
 /* selected state — a solid border (not outline) so it never clips at the
    scroll-container edge */
@@ -392,7 +389,7 @@
   align-items: center;
   gap: 10px;
   padding: 7px 10px;
-  border-radius: 8px;
+  border-radius: var(--radius-md);
   border: 1px solid transparent;
   background: none;
   color: var(--text-secondary);
@@ -456,7 +453,7 @@
   text-overflow: ellipsis;
 }
 .fileRowPin, .fileRowPinSlot { flex: 0 0 22px; width: 22px; }
-.fileRowPin { opacity: 0; transition: opacity 0.12s; }
+.fileRowPin { opacity: 0; transition: opacity var(--dur-fast); }
 /* The thin column header above the rows (not a .fileRow: callers count those). */
 .fileListHead {
   display: flex;
@@ -494,7 +491,7 @@
   gap: 3px;
   color: var(--text-secondary);
   background: var(--bg-raised);
-  border-radius: 4px;
+  border-radius: var(--radius-xs);
   padding: 0 6px;
   font-size: calc(11px * var(--ui-font-scale, 1));
   white-space: nowrap;
@@ -555,7 +552,7 @@
   color: var(--text-dim);
   cursor: pointer;
   padding: 2px;
-  border-radius: 6px;
+  border-radius: var(--radius-sm);
 }
 .pinBtn:hover { color: var(--accent); background: var(--bg-raised); }
 .pinBtn.pinned { color: var(--accent); }
@@ -571,7 +568,7 @@
   margin-left: 8px;
   color: var(--accent);
   background: var(--bg-raised);
-  border-radius: 4px;
+  border-radius: var(--radius-xs);
   padding: 0 6px;
   font-size: calc(11px * var(--ui-font-scale, 1));
 }
@@ -582,7 +579,7 @@
 .quickOpenInput { display: flex; align-items: center; gap: 8px; padding: 0 4px 6px; color: var(--text-muted); }
 .quickOpenInput .searchInput { flex: 1; }
 .quickOpenList { max-height: min(420px, 55vh); overflow-y: auto; }
-.quickOpenRow { border-radius: 4px; }
+.quickOpenRow { border-radius: var(--radius-xs); }
 /* the chip line keeps its file-row cap; the option style would stretch it */
 .quickOpenRow .fileRowLabels { flex: 0 1 auto; }
 .quickOpenTag { flex-shrink: 0; font-style: normal; font-size: calc(10px * var(--ui-font-scale, 1)); color: var(--text-dim); }
@@ -620,7 +617,7 @@
   color: var(--text-primary);
 }
 .phoneUI .homeListSpacer { display: none; }
-.phoneUI .homeFindBox { flex: 1 0 100%; height: 38px; padding: 0 8px 0 12px; border-radius: 10px; }
+.phoneUI .homeFindBox { flex: 1 0 100%; height: 38px; padding: 0 8px 0 12px; border-radius: var(--radius-lg); }
 .phoneUI .homeFindInput { flex: 1; width: auto; min-width: 0; font-size: calc(15px * var(--ui-font-scale, 1)); }
 .phoneUI .fileRow {
   display: grid;
@@ -658,7 +655,7 @@
   margin: 4px 4px 10px;
   padding: 20px 22px 16px;
   border: 1px dashed var(--border-light);
-  border-radius: var(--radius-surface);
+  border-radius: var(--radius-lg);
   background: var(--bg-surface);
 }
 .libEmptyHead {
@@ -671,7 +668,7 @@
   flex: 0 0 auto;
   width: 40px;
   height: 40px;
-  border-radius: 9px;
+  border-radius: var(--radius-md);
 }
 .libEmptyTitle {
   margin: 0;
@@ -698,13 +695,13 @@
   gap: 12px;
   padding: 14px;
   border: 1px solid var(--border-subtle);
-  border-radius: var(--radius-surface);
+  border-radius: var(--radius-lg);
   background: var(--bg-card);
   color: var(--text-primary);
   font: inherit;
   text-align: left;
   cursor: pointer;
-  transition: background 120ms ease, border-color 120ms ease;
+  transition: background var(--dur-fast) ease, border-color var(--dur-fast) ease;
 }
 .libEmptyCard:hover { background: var(--bg-block); border-color: var(--border-hover); }
 .libEmptyCard.primary { border-color: var(--accent-dark); }
@@ -716,7 +713,7 @@
   justify-content: center;
   width: 34px;
   height: 34px;
-  border-radius: 8px;
+  border-radius: var(--radius-md);
   background: var(--accent-bg-light);
   color: var(--accent);
 }

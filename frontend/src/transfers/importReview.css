@@ -4,7 +4,7 @@
 .importReviewHeader strong { overflow-wrap: anywhere; }
 .importReviewHeader p, .importDestination { color: var(--text-muted); font-size: calc(13px * var(--ui-font-scale, 1)); margin: 6px 0; }
 .importReviewColumns { display: grid; grid-template-columns: minmax(0, 1fr) minmax(0, 1fr); gap: 16px; }
-.importReviewColumns section { border: 1px solid var(--border); border-radius: 10px; min-width: 0; display: flex; flex-direction: column; }
+.importReviewColumns section { border: 1px solid var(--border); border-radius: var(--radius-lg); min-width: 0; display: flex; flex-direction: column; }
 .importReviewColumns h3 { font-size: calc(14px * var(--ui-font-scale, 1)); margin: 14px 14px 8px; }
 .importDestination { margin: 0 14px 8px; overflow-wrap: anywhere; }
 .importTreeScroll { overflow: auto; height: min(34vh, 360px); padding: 0 10px 12px; }
@@ -20,7 +20,7 @@
 .importEmpty { display: block; margin: 0 0 8px 22px; color: var(--text-muted); font-size: calc(11px * var(--ui-font-scale, 1)); }
 .importWarning, .importFileText .importWarning { color: var(--text-primary); }
 .importFileText .importWarning { border-left: 2px solid #d9822b; padding-left: 6px; }
-.importWarnings { margin: 14px 0; border: 1px solid var(--border); border-radius: 8px; padding: 10px 12px; font-size: calc(13px * var(--ui-font-scale, 1)); }
+.importWarnings { margin: 14px 0; border: 1px solid var(--border); border-radius: var(--radius-md); padding: 10px 12px; font-size: calc(13px * var(--ui-font-scale, 1)); }
 .importWarnings summary { cursor: pointer; font-weight: 600; }
 .importWarnings ul { max-height: 160px; overflow: auto; padding-left: 20px; margin-bottom: 0; }
 .importWarnings li { padding: 5px 0; overflow-wrap: anywhere; }

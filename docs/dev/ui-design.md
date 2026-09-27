@@ -7,10 +7,9 @@ follow them instead of inventing new patterns.
 
 [`shared/styles/tokens.css`](../../frontend/src/shared/styles/tokens.css)
 is the one place a design value is defined: every theme's colours and
-`color-scheme`, the type stacks (`--font-sans`, `--font-mono`), the corner
-radii (`--radius-control`, `--radius-surface`), the surface shadow and the
-stacking layers (`--z-*`). It holds custom properties only, no component
-rules. `index.html` links it as the first stylesheet (Vite bundles it into
+`color-scheme`, the type stacks (`--font-sans`, `--font-mono`) and the scales
+below (radius, shadow, spacing, motion, stacking). It holds custom
+properties only, no component rules. `index.html` links it as the first stylesheet (Vite bundles it into
 the render-blocking entry CSS), so the first frame, splash included, paints
 from the same values as the app; the pre-paint script only sets the theme
 attributes. Component rules read tokens and never declare a colour token
@@ -49,6 +48,25 @@ fails when a change lowers any ratio or makes a passing pair fail; after a
 deliberate improvement, `node tools/themes.mjs --baseline` records the new
 floor.
 
+### Scales
+
+A component takes its corner, depth, spacing, timing and layer from these
+scales instead of a number of its own:
+
+| Scale | Tokens | Use |
+|---|---|---|
+| Radius | `--radius-xs` 4 · `-sm` 6 · `-md` 8 · `-lg` 12 · `-full` | xs: tags, inline code, key caps, small marks; sm: icon buttons, menu and list rows, chips; md: buttons, fields, popovers, menus, floating toolbars; lg: cards, panels, dialogs, the settings modal; full: pills. A circle stays `50%`, a hairline bar 1–2 px |
+| Shadow | `--shadow-1` · `-2` · `-3` | 1: raised controls (buttons, chips, the find box, the composer); 2: what floats (popovers, menus, tips, the guide card, floating toolbars and pills, a hovered card); 3: dialogs and the lightbox. Each scheme defines its own: the dark one shades with black, the light one with a little of the theme's ink. Rings (`0 0 0 Npx`) and inset accent bars are borders, not depth, and stay with their component |
+| Spacing | `--space-1`…`-8` = 2 · 4 · 6 · 8 · 12 · 16 · 24 · 32 | the shared controls and new rules; older layout rules move over as they are touched |
+| Motion | `--dur-fast` 100 ms · `--dur-base` 160 ms · `--dur-slow` 240 ms, `--ease-out` | fast: hover and press; base: enter, fade, small moves; slow: bars and larger moves. Loops and attention effects of half a second or more (spinners, pulses, the landed flash) keep their own period |
+| Layers | `--z-dock` 20 · `--z-float` 30 · `--z-phone-overlay` 80 · `--z-dropdown` 100 · `--z-overlay` 1000 · `--z-popover` 1100 · `--z-modal` 1200 · `--z-subdialog` 1290 · `--z-confirm` 1300 · `--z-lightbox` 1500 · `--z-ctxmenu` 1600 · `--z-refpopup` 2000 · `--z-drop` 9999 · `--z-tip` 30000 | every z-index above 9 is a layer token (one step above a layer is `calc(var(--z-dock) + 1)`); 1–9 only orders siblings inside one component |
+
+**Reduced motion.** One rule in app.css's primitives layer honours the OS
+setting: under `prefers-reduced-motion: reduce` every transition and
+animation ends at once (1 ms, one iteration), except the spinners, which keep
+turning slowly (2.4 s) so a wait never looks like a hang. A component needs
+no reduced-motion rule of its own unless it wants a different still state.
+
 The desktop shell's chrome loads a committed copy,
 `desktop/ui/tokens.css`, and the Latin subset of Inter in
 `desktop/ui/fonts/` (its pages load from disk and can't reach the frontend
@@ -67,7 +85,7 @@ one app inside one frame:
 | Quiet fill | `--bg-block` | row hover, code, table heads, a chat bubble |
 | Selected | `--bg-selected` | the focused block: the accent at 6 % over the content (11 % in the dark scheme) |
 | Sunken | `--bg-deeper` | wells; the PDF surround in the tinted themes |
-| Floating | `--bg-elevated` + `--shadow-surface` | popovers, menus, tips, the guide card |
+| Floating | `--bg-elevated` + `--shadow-2` | popovers, menus, tips, the guide card |
 
 The active tab is the content surface cut out of the chrome: no shadow, and
 a band under it (`.tab.active::after`, over the topbar's padding and bottom

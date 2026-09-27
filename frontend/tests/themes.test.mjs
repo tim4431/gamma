@@ -47,7 +47,7 @@ test("every colour token resolves in every theme", () => {
   for (const theme of PINNED) {
     const { values, colors } = resolveTheme(theme, TOKENS);
     for (const name of names) {
-      if (/^--(radius|font|z-|shadow)/.test(name)) assert.ok(values[name], `${theme}: ${name}`);
+      if (/^--(radius|font|z-|shadow|space|dur|ease|fs|lh)/.test(name)) assert.ok(values[name], `${theme}: ${name}`);
       else assert.ok(colors[name], `${theme}: ${name} is ${values[name]}`);
     }
   }

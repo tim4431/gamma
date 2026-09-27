@@ -15,7 +15,7 @@
    pointer events fall through to the real control beneath it. */
 .guideDimFill {
   fill: rgba(0, 0, 0, 0.42);
-  transition: d 180ms ease;
+  transition: d var(--dur-base) ease;
 }
 .guideRing {
   fill: none;
@@ -35,13 +35,13 @@
   background: var(--bg-elevated);
   color: var(--text-primary);
   border: 1px solid var(--border);
-  border-radius: 12px;
-  box-shadow: var(--shadow-surface);
+  border-radius: var(--radius-lg);
+  box-shadow: var(--shadow-2);
   padding: 14px 16px 12px;
   display: flex;
   flex-direction: column;
   gap: 8px;
-  animation: guideIn 160ms ease-out;
+  animation: guideIn var(--dur-base) ease-out;
 }
 @keyframes guideIn {
   from { opacity: 0; transform: translateY(4px); }
@@ -113,7 +113,7 @@
 @keyframes guideSpin { to { transform: rotate(360deg); } }
 /* Progress: a thin line for a demo's actions, then one segment per step. */
 .guideDemoBar { height: 3px; border-radius: 2px; background: var(--border); overflow: hidden; }
-.guideDemoBar i { display: block; height: 100%; background: var(--text-muted); border-radius: 2px; transition: width 300ms ease; }
+.guideDemoBar i { display: block; height: 100%; background: var(--text-muted); border-radius: 2px; transition: width var(--dur-slow) ease; }
 .guideSegments { display: flex; gap: 3px; margin-top: 2px; }
 .guideSegments i { flex: 1; height: 3px; border-radius: 2px; background: var(--border); }
 .guideSegments i.done { background: color-mix(in srgb, var(--accent) 45%, transparent); }
@@ -159,7 +159,7 @@
 .guideBeacon {
   position: fixed;
   border: 2px solid var(--accent);
-  border-radius: 10px;
+  border-radius: var(--radius-lg);
   box-shadow: 0 0 0 5px color-mix(in srgb, var(--accent) 20%, transparent);
   pointer-events: none;
   animation: guideBeacon 1s ease-in-out 2;
@@ -174,13 +174,13 @@
   top: -4px;
   left: -3px;
   pointer-events: none;
-  transition: transform 520ms cubic-bezier(0.22, 0.61, 0.36, 1), opacity 200ms ease;
+  transition: transform 520ms cubic-bezier(0.22, 0.61, 0.36, 1), opacity var(--dur-base) ease;
   filter: drop-shadow(0 1px 2px rgba(0, 0, 0, 0.45));
   z-index: 1;
 }
 /* While the demo types, the pointer waits below the field, faded. */
 .guideCursor.faded { opacity: 0.4; }
-.guideCursor.pressed svg { transform: scale(0.85); transform-origin: 4px 4px; transition: transform 90ms; }
+.guideCursor.pressed svg { transform: scale(0.85); transform-origin: 4px 4px; transition: transform var(--dur-fast); }
 .guideCursor.dragging { transition: transform 40ms linear; }
 .guideModifier {
   position: absolute;
@@ -188,7 +188,7 @@
   left: 10px;
   padding: 3px 6px;
   border: 1px solid var(--border);
-  border-radius: 5px;
+  border-radius: var(--radius-sm);
   background: var(--bg-elevated);
   color: var(--text-primary);
   font: 600 calc(11px * var(--ui-font-scale, 1)) system-ui;
@@ -196,7 +196,6 @@
 @media (prefers-reduced-motion: reduce) {
   .guideCursor, .guideCursor.dragging, .guideDimFill { transition: none; }
   .guideRing, .guideCard, .guideBeacon { animation: none; }
-  .guideSpinner { animation-duration: 2400ms; }
 }
 /* One type scale for every card: tour and offer titles 15/600, a hint's
    sentence 14/500, bodies 13/1.5, meta 11. */
@@ -216,7 +215,7 @@
 .guideTitle code, .guideBody code {
   font-size: calc(11.5px * var(--ui-font-scale, 1));
   padding: 1px 5px;
-  border-radius: 4px;
+  border-radius: var(--radius-xs);
   background: var(--bg-raised);
   border: 1px solid var(--border);
 }
@@ -238,7 +237,7 @@
   align-items: center;
   gap: 6px;
   padding: 1px 9px 1px 8px;
-  border-radius: 999px;
+  border-radius: var(--radius-full);
   font-size: calc(11px * var(--ui-font-scale, 1));
   font-weight: 600;
   letter-spacing: 0.01em;
@@ -313,7 +312,7 @@
   flex-direction: column;
   gap: 7px;
   border: 1px solid var(--border);
-  border-radius: 10px;
+  border-radius: var(--radius-lg);
   background: color-mix(in srgb, var(--bg-raised) 35%, var(--bg-elevated));
 }
 .guideMade li { display: flex; align-items: center; gap: 9px; font-size: calc(13px * var(--ui-font-scale, 1)); }
@@ -333,7 +332,7 @@
   color: var(--text-primary);
   background: var(--bg-elevated);
   border: 1px solid var(--border);
-  border-radius: 9px;
+  border-radius: var(--radius-md);
   cursor: pointer;
 }
 .guideNext button:hover { border-color: var(--border-hover); background: var(--bg-hover); }

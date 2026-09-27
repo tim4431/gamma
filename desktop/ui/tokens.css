@@ -10,21 +10,51 @@
 
 /* ---- Scales: the same in every theme ------------------------------------ */
 :root {
-  --radius-control: 6px;
-  --radius-surface: 10px;
+  /* Corner radius: tags and inline code; icon buttons, menu rows and chips;
+     buttons, fields, popovers and menus; cards and dialogs; pills. */
+  --radius-xs: 4px;
+  --radius-sm: 6px;
+  --radius-md: 8px;
+  --radius-lg: 12px;
+  --radius-full: 999px;
+  /* Spacing on a 2/4 px grid: the shared controls and new rules use it;
+     older layout rules move over as they are touched. */
+  --space-1: 2px;
+  --space-2: 4px;
+  --space-3: 6px;
+  --space-4: 8px;
+  --space-5: 12px;
+  --space-6: 16px;
+  --space-7: 24px;
+  --space-8: 32px;
+  /* Motion: hover and press; enter and fade; larger moves. The global
+     prefers-reduced-motion rule in app.css shortens every one of them. */
+  --dur-fast: 100ms;
+  --dur-base: 160ms;
+  --dur-slow: 240ms;
+  --ease-out: cubic-bezier(0.2, 0.8, 0.2, 1);
   /* Type: one interface face (Inter, bundled in main.jsx) with system and
      CJK fallbacks, and one monospace stack for code, raw math and key caps. */
   --font-sans: "Inter Variable", Inter, -apple-system, BlinkMacSystemFont, "Segoe UI Variable Text", "Segoe UI", system-ui, Roboto, "Helvetica Neue", Arial, "PingFang SC", "Hiragino Sans GB", "Microsoft YaHei", "Noto Sans CJK SC", sans-serif;
   --font-mono: ui-monospace, "SF Mono", SFMono-Regular, "Cascadia Mono", Menlo, Consolas, "Liberation Mono", monospace;
   /* The keyboard focus ring: the theme's accent. */
   --focus-ring: var(--accent);
-  /* Floating-layer stacking scale — keep menus/tips ordered consistently. */
-  --z-dock: 20;
-  --z-phone-overlay: 80;
-  --z-popover: 1100;
-  --z-ctxmenu: 1600;
-  --z-refpopup: 2000;
-  --z-tip: 30000;
+  /* Stacking layers, bottom to top. Every z-index above 9 is one of these;
+     1-9 only orders siblings inside one component. */
+  --z-dock: 20;            /* controls floating over a pane: zoom column, page widget, dock close */
+  --z-float: 30;           /* status pills and small popovers over those controls */
+  --z-phone-overlay: 80;   /* the phone layout's full-screen panels */
+  --z-dropdown: 100;       /* a suggestion list under its field */
+  --z-overlay: 1000;       /* banners and hover previews over the app */
+  --z-popover: 1100;       /* topbar popovers, drop indicators */
+  --z-modal: 1200;         /* dialogs (.reportOverlay) */
+  --z-subdialog: 1290;     /* an editor dialog over the settings modal */
+  --z-confirm: 1300;       /* a confirm over any dialog */
+  --z-lightbox: 1500;      /* a zoomed picture */
+  --z-ctxmenu: 1600;       /* context menus, above dialogs */
+  --z-refpopup: 2000;      /* the editor's inline popups, a dock's drop preview */
+  --z-drop: 9999;          /* the file-drop veil over the whole window */
+  --z-tip: 30000;          /* tips and the guide, above everything */
   /* The dark scrollbar thumb keeps its own names so .pdfViewer.pdfDark can
      re-pin it while a light theme is active. */
   --scrollbar-thumb-dark: #3f3f3f;
@@ -76,7 +106,6 @@
      the Gamma pair). Not a --bg-* token: it is the paper, not a surface,
      and the canvas multiplies onto it. */
   --pdf-paper: var(--ground);
-  --shadow-surface: 0 8px 24px rgba(0, 0, 0, 0.28);
 
   /* The dark recipe, also the default before a scheme is set: chrome and
      wells go darker than the content (toward black), raised surfaces,
@@ -112,6 +141,12 @@
   --danger-border: color-mix(in srgb, var(--danger) 45%, transparent);
   --scrollbar-thumb: color-mix(in oklab, var(--ground) 79.5%, var(--ink));
   --scrollbar-thumb-hover: color-mix(in oklab, var(--ground) 68%, var(--ink));
+  /* Depth: raised controls (buttons, chips, the find box); what floats
+     (popovers, menus, tips, floating toolbars, a hovered card); dialogs.
+     The dark scheme shades with black, the light one with the ink. */
+  --shadow-1: 0 1px 2px rgba(0, 0, 0, 0.3);
+  --shadow-2: 0 8px 24px rgba(0, 0, 0, 0.28);
+  --shadow-3: 0 12px 40px rgba(0, 0, 0, 0.35);
   /* Scheme constants: a PDF page's file glyph (FileGlyph .pdf), and the
      bracket-pair colours of raw $math$ (VSCode's). */
   --kind-pdf: #e0776b;
@@ -154,6 +189,9 @@
   --danger-border: color-mix(in srgb, var(--danger) 38%, transparent);
   --scrollbar-thumb: color-mix(in oklab, var(--ground) 79.75%, var(--ink));
   --scrollbar-thumb-hover: color-mix(in oklab, var(--ground) 65.5%, var(--ink));
+  --shadow-1: 0 1px 2px color-mix(in srgb, var(--ink) 8%, transparent);
+  --shadow-2: 0 6px 20px -6px color-mix(in srgb, var(--ink) 18%, transparent), 0 1px 3px color-mix(in srgb, var(--ink) 7%, transparent);
+  --shadow-3: 0 24px 64px -12px color-mix(in srgb, var(--ink) 30%, transparent);
   --kind-pdf: #c8483b;
   --bracket-1: #0431fa;
   --bracket-2: #319331;
@@ -340,7 +378,6 @@
   --danger-border: #d89a94;
   --scrollbar-thumb: #d8d4ca;
   --scrollbar-thumb-hover: #a5a197;
-  --shadow-surface: 0 8px 24px rgba(30, 30, 28, 0.12);
 }
 
 [data-theme="gamma-dark"] {

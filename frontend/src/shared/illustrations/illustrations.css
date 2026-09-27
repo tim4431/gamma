@@ -5,7 +5,7 @@
 .formatAppImage { width: 48px; height: 48px; object-fit: contain; filter: grayscale(1); }
 .transferPreview { margin: 0; min-width: 0; }
 .transferPreview figcaption { font-size: 11px; color: var(--text-muted); margin-bottom: 8px; }
-.transferPaper { position: relative; min-height: 310px; padding: 22px 18px 32px; border: 1px solid #ddd; border-radius: 3px; background: #fff; color: #39444b; font-size: 11px; line-height: 1.55; }
+.transferPaper { position: relative; min-height: 310px; padding: 22px 18px 32px; border: 1px solid #ddd; border-radius: var(--radius-xs); background: #fff; color: #39444b; font-size: 11px; line-height: 1.55; }
 .transferPaperTitle { font-size: 15px; font-weight: 600; line-height: 1.3; }
 .transferPaperByline { margin: 6px 0 22px; color: #77818a; font-size: 9px; }
 .transferPaperLines { display: flex; flex-direction: column; gap: 6px; margin: 12px 0; }
