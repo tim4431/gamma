@@ -11,18 +11,20 @@ import os
 import secrets
 import sqlite3
 from contextlib import closing
+from pathlib import Path
 
 import bcrypt
 
-from fractional_indexing import generate_key_between
+from fractional_indexing import generate_n_keys_between
 
 from .config import WORKSPACES_DIR
 from .db import DATA_SCHEMA, PAGES_SCHEMA, connect_users_db, page_now, safe_ws_id
 from .logbuf import log
 from .server_settings import guest_ttl_hours
 
-# GitHub raw base for screenshots embedded in the guest welcome page.
-_SCREENSHOTS = "https://raw.githubusercontent.com/tim4431/Gamma/main/docs/assets/screenshots"
+# The seeded Welcome page: a normal markdown outline, imported through the
+# .md parser (docs/dev/onboarding.md "The welcome page and its sample PDF").
+WELCOME_MD = Path(__file__).resolve().parent / "onboarding" / "welcome.md"
 
 
 def _guest_lifetime() -> str:
@@ -31,34 +33,45 @@ def _guest_lifetime() -> str:
     return f"{hours} hour" if hours == 1 else f"{hours} hours"
 
 
+def _guest_note() -> str:
+    """The callout a guest's Welcome page ends with: when the workspace goes."""
+    return ("> [!note] Guest workspace\n"
+            f"> It stays for {_guest_lifetime()} or until you log out, then it is deleted "
+            "with everything in it. To keep your work, ask the admin for an account.")
+
+
+def welcome_tree() -> tuple[str, list]:
+    """``(title, [{content, children}])`` of the Welcome page, parsed from
+    welcome.md like any imported markdown file. ``("", [])`` when the file is
+    missing (a broken install seeds nothing rather than failing a login)."""
+    from .markdown_import import fm_text, md_to_blocks, parse_frontmatter
+    try:
+        text = WELCOME_MD.read_text(encoding="utf-8")
+    except OSError as e:
+        log.warning(f"[seed] welcome page skipped: {e}")
+        return "", []
+    fields, body = parse_frontmatter(text)
+    return fm_text(fields, "title") or "Welcome", md_to_blocks(body)
+
+
 def _welcome_blocks():
-    """Nested welcome page seeded into fresh guest workspaces."""
+    """The guest Welcome page as ``(id, parent, position, content, props)``
+    rows, parents before children."""
+    title, tree = welcome_tree()
+    if not title:
+        return []
+    tree = [*tree, {"content": _guest_note(), "children": []}]
     wid = secrets.token_urlsafe(9)
-    started_id = secrets.token_urlsafe(9)
-    figures_id = secrets.token_urlsafe(9)
-    guest_id = secrets.token_urlsafe(9)
-    md_id = secrets.token_urlsafe(9)
-    return [
-        (wid, "root", "a0V", "Welcome", '{"summary":"A quick-start guide to Gamma PDF Annotator"}'),
-        (secrets.token_urlsafe(9), wid, "a0", "Gamma is a self-hosted, Logseq-inspired PDF annotation tool. You can highlight PDFs, organize notes as nested outliner blocks, and share read-only annotated copies via link.", '{}'),
-        (started_id, wid, generate_key_between("a0", None), "## Getting started", '{}'),
-        (secrets.token_urlsafe(9), started_id, "a0", "**Open a PDF**: paste a URL in the topbar and click Open, or drag a PDF file onto this page.", '{}'),
-        (secrets.token_urlsafe(9), started_id, generate_key_between("a0", None), "**Highlight text**: select text in the PDF to create a highlight with optional comment and color.", '{}'),
-        (secrets.token_urlsafe(9), started_id, generate_key_between("a0V", None), "**Add notes**: type in any block. Press Enter for a new sibling, Tab to indent, Shift+Tab to outdent.", '{}'),
-        (secrets.token_urlsafe(9), started_id, generate_key_between("a1", None), "**Reorder blocks**: hover over a block's left edge, grab the ⋮⋮ handle, and drag to reorder.", '{}'),
-        (secrets.token_urlsafe(9), started_id, generate_key_between("a1V", None), "**Drag images**: drag an image file from your computer onto any block to insert it. You can also paste images from the clipboard.", '{}'),
-        (secrets.token_urlsafe(9), started_id, generate_key_between("a2", None), "**AI chat**: click \"Show AI Chat\" at the bottom of the sidebar to ask questions about the open PDF.", '{}'),
-        (secrets.token_urlsafe(9), started_id, generate_key_between("a2V", None), "**Share**: click \"Share link\" in the ⋮ menu to generate a public read-only link for any annotated PDF.", '{}'),
-        (secrets.token_urlsafe(9), started_id, generate_key_between("a3", None), "**Category tags**: add a `category::` tag below the summary to organize pages. The home page groups them into carousels.", '{}'),
-        (figures_id, wid, generate_key_between("a0V", None), "## Insert figures", '{}'),
-        (secrets.token_urlsafe(9), figures_id, "a0", "Drag any image file into a block to embed it. Gamma uploads it and inserts `![]()` markdown. Here is what the app looks like:", '{}'),
-        (secrets.token_urlsafe(9), figures_id, generate_key_between("a0", None), f"![]({_SCREENSHOTS}/01-annotated-pdf.png)", '{}'),
-        (secrets.token_urlsafe(9), figures_id, generate_key_between("a0V", None), f"![]({_SCREENSHOTS}/02-home.png)", '{}'),
-        (guest_id, wid, generate_key_between("a1", None), "## Guest account", '{}'),
-        (secrets.token_urlsafe(9), guest_id, "a0", f"You are signed in as a **guest**. This workspace is yours alone. It stays for {_guest_lifetime()} after you started, or until you log out, and is then deleted with everything in it. To keep your work, ask the admin for an account.", '{}'),
-        (md_id, wid, generate_key_between("a1V", None), "## Markdown formatting", '{}'),
-        (secrets.token_urlsafe(9), md_id, "a0", "Blocks support **bold**, *italic*, `code`, [links](https://example.com), and inline $\\KaTeX$ math like $E = mc^2$.", '{}'),
-    ]
+    rows = [(wid, "root", "a0V", title, "{}")]
+    pending = [(wid, tree)]
+    while pending:
+        parent, nodes = pending.pop(0)
+        for node, pos in zip(nodes, generate_n_keys_between(None, None, n=len(nodes))):
+            bid = secrets.token_urlsafe(9)
+            rows.append((bid, parent, pos, node["content"], "{}"))
+            if node.get("children"):
+                pending.append((bid, node["children"]))
+    return rows
 
 
 def create_workspace_files(ws_id: str, welcome: bool = False):

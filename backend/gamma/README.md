@@ -11,6 +11,7 @@ normalize.py       content normalization of a workspace's files (migration + res
 workspaces.py      workspaces + memberships (roles, billing, personal workspace)
 auth.py            session middleware → request.state.user; request → workspace / share
 seed.py            workspace file creation, guest welcome page, first admin
+onboarding/        welcome.md, the seeded Welcome page (docs/dev/onboarding.md)
 blocks_store.py    recursive-CTE tree helpers
 storage.py         uploads (content-addressed) + orphan cleanup
 ai_protocols/      one adapter per AI wire protocol (request, stream, usage, models, quota)

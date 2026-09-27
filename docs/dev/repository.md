@@ -37,7 +37,8 @@ App.jsx decomposition.
 |---|---|
 | `docs/assets/branding/` | Generated Gamma PDF logo, hero SVG/PNG pairs and README illustrations; edit sources in `design/brand/` and `tools/branding/` |
 | `docs/assets/demos/` | README demos as small animated WebP images |
-| `docs/assets/screenshots/` | Documentation stills; guest welcome blocks reference their GitHub raw URLs |
+| `docs/assets/screenshots/` | Documentation stills |
+| `backend/gamma/onboarding/welcome.md` | The seeded Welcome page ([onboarding.md](onboarding.md)); Docker copies it with `gamma/`, the desktop freeze adds it with `--add-data` |
 | `frontend/public/media/icons/` | Favicon, served at `/media/icons/favicon.svg` |
 | `desktop/assets/icon.png` | Electron window and installer icon |
 | `desktop/assets/entitlements.mac.plist` | macOS signing entitlements |
@@ -91,8 +92,5 @@ The recording instructions and helpers live in [tools/readme-media/](../../tools
 Published assets live in `docs/assets/demos/` and `docs/assets/screenshots/`;
 raw captures, workspace exports and QA frames stay in ignored `artifacts/readme-media/`.
 Keep the README's
-relative image links and `backend/gamma/seed.py` screenshot URLs in sync when
-renaming media. New guest pages use the seed URLs; existing guest pages pick
-up changes on their next reset. Existing user-authored links are not rewritten.
-GitHub raw URLs reflect the published repository, so moved screenshots become
-available there once the asset changes reach `main`.
+relative image links in sync when renaming media. Existing user-authored links
+are not rewritten.

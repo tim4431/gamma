@@ -20,8 +20,9 @@ the first tour keeps its older `gamma-guide:first-run`), not yet the synced
 pref. On a demo server (`facts.demo`, from `GET /api/server-config`'s
 `demo`) the same keys live in sessionStorage (`guideStorage(demo)` in
 `triggers.js`), so every visit starts fresh ([guests.md](guests.md) "Demo
-mode"). `gamma/seed.py` seeds the welcome page from hard-coded block
-tuples, in guest workspaces only.
+mode"). `gamma/seed.py` seeds the welcome page in guest workspaces only,
+parsed from `backend/gamma/onboarding/welcome.md` by the `.md` importer's
+`md_to_blocks`; a guest's page ends with a callout naming the lifetime.
 
 ## Manual tours (implemented)
 

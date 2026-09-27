@@ -14,8 +14,9 @@ Every guest login is a throwaway account of its own. `POST /api/login-guest`
 - the account: username `guest-<8 url-safe chars>`, `is_guest = 1`, an
   empty `password_hash`;
 - its personal workspace, through `workspaces.ensure_personal(name,
-  welcome=True)`, with the welcome page from `gamma/seed.py`, which names
-  the lifetime ("It stays for 24 hours after you started"). When
+  welcome=True)`, with the welcome page from `gamma/seed.py`
+  (`gamma/onboarding/welcome.md` plus a callout naming the lifetime: "It
+  stays for 24 hours or until you log out"). When
   `GAMMA_GUEST_SEED` names a workspace zip (the one backup format,
   [workspaces.md](workspaces.md) "Export and backups"), that zip is
   restored into it (`ws_backup.restore_zip(ws, path, "replace")`), so every
