@@ -38,8 +38,19 @@ make something"). **Shared workspaces** is listed once you belong to one.
 **Working together**, **Citations in answers** and **Resolving a conflict**
 are listed only while their subject is on screen: someone else on the page,
 a cited reply, a conflict's versions. Hints are never listed. `?guide=` URLs
-never start a tour, and the chat header has no guide button. Cards use
-short titles, without body paragraphs. In Chinese a tour is 教程.
+never start a tour, and the chat header has no guide button. In Chinese a
+tour is 教程.
+
+Every card has a short title and at most one short body sentence: a demo
+says what Gamma is about to do, a practice step what to do (`bodyTouch`
+words it for a touch screen: "Long-press a word…"). Its head says what kind
+of step it is — **▶ Watch** (a demo), **Your turn** (a step waiting for the
+user's action), **✓ Done** (the acknowledgement) or nothing (a step that
+explains) — with "Step n of m" on the right, and a segmented bar shows the
+progress. The primary button is the call to action only where the step
+itself is the action (Next, Done): a demo has **Skip this demo**, the user's
+turn has Back and a quiet **Skip step**, so the task, not skipping it, is
+the loudest thing on the card.
 
 AI chat starts in the message box and types `summarize the paper for me`, then
 points to voice input. Existing drafts are restored after the example; an
@@ -209,7 +220,10 @@ step completes only for its matching type.
   localStorage key `gamma-guide-vars` overrides — how the browser suite points
   the demo at an uploaded PDF instead of the network.
 - From the demo's initial pause through its final action, the sheet swallows
-  clicks, the card shows "watch", and Back/Next are hidden. Arrow and Enter
+  clicks, the card shows ▶ Watch and a thin line of the actions done so far,
+  and Back/Next are hidden. **Skip this demo** stops the actions (their
+  cleanups run) and moves on, except on a step marked `skippable: false`
+  (the add-a-paper demo, which every later step depends on). Arrow and Enter
   navigation is paused too; the close button and Esc still leave the tour.
   After the actions, a step without `advanceOn` advances by itself, one with
   it hands over to the user. A failed action (anchor never appeared, event
@@ -394,8 +408,9 @@ State machine: `idle` → `offered` (the small invitation card) → `running
   on scroll and resize via `ResizeObserver` + `requestAnimationFrame`; the
   anchor is scrolled into view first.
 - **Card**: the app's popover look (same tokens as the account menu and the
-  Share popover, per [ui-design.md](ui-design.md)): title, body, `step n of
-  m`, Back / Next / Skip tour. On phone and iPad widths the card becomes a
+  Share popover, per [ui-design.md](ui-design.md)), 320 px: status chip and
+  "Step n of m", title, body, progress, then Back / Next or the step's skip
+  link (see Manual tours). On phone and iPad widths the card becomes a
   bottom sheet and the spotlight stays; touch targets follow [ipad.md](ipad.md).
   Esc dismisses. Focus stays where the user is working; the card is
   `aria-live="polite"`, never a focus trap.

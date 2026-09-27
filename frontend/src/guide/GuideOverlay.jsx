@@ -19,7 +19,7 @@ const PAD = 6;          // spotlight padding around the anchor
 const BEACON_INSET = 3; // an offer's beacon sits closer to its anchor than the spotlight
 const GAP = 12;         // card distance from the spotlight
 const MARGIN = 12;      // card distance from the viewport edge
-const CARD_W = 300;
+const CARD_W = 320;
 const BEAK_INSET = 23; // the beak's centre stays 16 px (plus its half) from a card corner
 const WAIT_MS = 3000;   // how long a missing anchor may take to mount
 
@@ -41,6 +41,9 @@ function renderInline(text, bindings) {
 function renderBody(text, bindings) {
   return String(text || "").split(/\n\s*\n/).map((para, i) => <p key={i}>{renderInline(para, bindings)}</p>);
 }
+// A practice step may word its body for touch ("Long-press a word…").
+const COARSE = () => typeof matchMedia === "function" && matchMedia("(pointer: coarse)").matches;
+const PlayGlyph = () => <svg width="8" height="9" viewBox="0 0 8 9" aria-hidden="true"><path d="M0 0.5 L8 4.5 L0 8.5 Z" fill="currentColor" /></svg>;
 // The copy as one plain line, for an aria-label.
 const plainText = (text, bindings) => keyText(text, bindings).replace(/\*\*|\*|`/g, "");
 
@@ -175,8 +178,17 @@ export default function GuideOverlay({ guide, keybindings }) {
   const hole = rect
     ? `M${rect.left},${rect.top} h${rect.width} a8,8 0 0 1 8,8 v${rect.height - 16} a8,8 0 0 1 -8,8 h${-rect.width} a8,8 0 0 1 -8,-8 v${-(rect.height - 16)} a8,8 0 0 1 8,-8 z`
     : "";
-  const primaryLabel = inviting ? (offer.hint ? t("Got it") : t("Show me")) : step.next ? t(step.next)
-    : index + 1 >= count ? t("Done") : live?.failed || (step.advanceOn && !done) ? t("Skip") : t("Next");
+  // What the card is: a demo to watch, the user's turn (a step that waits
+  // for their action), the acknowledgement of it, or a step that explains.
+  const failed = !inviting && !!live?.failed;
+  const yourTurn = !inviting && !busy && !failed && !done && !!step.advanceOn;
+  const primaryLabel = inviting ? (offer.hint ? t("Got it") : t("Show me")) : failed ? t("Skip") : step.next ? t(step.next)
+    : index + 1 >= count ? t("Done") : t("Next");
+  const showPrimary = inviting || (!busy && !done && !yourTurn);
+  const showBack = !inviting && index > 0 && !busy && !failed && !done;
+  const link = busy ? (step.skippable !== false ? t("Skip this demo") : null)
+    : yourTurn ? (step.next ? t(step.next) : t("Skip step")) : null;
+  const body = !inviting && COARSE() && step.bodyTouch ? step.bodyTouch : step.body;
   // Keep the caret where the user is typing, and keep a popover the card
   // points into open (outside-click checks listen on the document).
   const keepFocus = (e) => { e.preventDefault(); e.stopPropagation(); };
@@ -226,25 +238,45 @@ export default function GuideOverlay({ guide, keybindings }) {
               style={cardPos.beak.x != null ? { left: cardPos.beak.x - 7 } : { top: cardPos.beak.y - 7 }} />
           ) : null}
           <div className="guideHead">
-            <span className="guideStep">
-              {inviting ? (offer.hint ? <span className="guideChip tip">{t("Tip")}</span> : tn("Quick tour · {n} step", "Quick tour · {n} steps", offer.count)) : `${index + 1} / ${count}`}
-              {!inviting && done ? <span className="guideDone">{t("✓ Done")}</span> : null}
-              {busy ? <span className="guideBusy">{t("watch")}</span> : null}
-              {live?.failed ? <span className="guideFailed">{t("couldn't finish")}</span> : null}
-            </span>
+            {inviting ? (
+              <span className="guideStep">
+                {offer.hint ? <span className="guideChip tip">{t("Tip")}</span> : tn("Quick tour · {n} step", "Quick tour · {n} steps", offer.count)}
+              </span>
+            ) : (
+              <>
+                {failed ? <span className="guideChip failed">{t("couldn't finish")}</span>
+                  : done ? <span className="guideChip done guideDone">{t("✓ Done")}</span>
+                  : busy ? <span className="guideChip watch"><PlayGlyph />{t("Watch")}</span>
+                  : yourTurn ? <span className="guideChip turn">{t("Your turn")}</span> : null}
+                <span className="guideCount">{t("Step {n} of {count}", { n: index + 1, count })}</span>
+              </>
+            )}
             <button className="uiClose uiCloseSm guideClose" onClick={dismiss} title={inviting ? t("Dismiss guide (Esc)") : t("Leave the tour (Esc)")} aria-label={inviting ? t("Dismiss guide") : t("Leave the tour")}>×</button>
           </div>
           <div className="guideTitle">{renderInline(t(step.title), keybindings)}</div>
-          {t(step.body) ? <div className="guideBody">{renderBody(t(step.body), keybindings)}</div> : null}
-          <div className="guideFoot">
-            {!inviting ? <span className="guideDots" aria-hidden="true">
+          {t(body) ? <div className="guideBody">{renderBody(t(body), keybindings)}</div> : null}
+          {busy && live?.progress ? (
+            <div className="guideDemoBar" aria-hidden="true"><i style={{ width: `${(100 * live.progress[0]) / Math.max(1, live.progress[1])}%` }} /></div>
+          ) : null}
+          {!inviting ? (
+            <div className="guideSegments" aria-hidden="true">
               {Array.from({ length: count }, (_, i) => <i key={i} className={i === index ? "on" : i < index ? "done" : ""} />)}
-            </span> : offer.hint ? <span /> : <button className="uiBtn sm" onClick={dismiss}>{t("Not now")}</button>}
-            <span className="guideBtns">
-              {!inviting && index > 0 && !busy && !done ? <button className="uiBtn" onClick={back}>{t("Back")}</button> : null}
-              {!busy && (!done || inviting) ? <button className="uiBtn primary" onClick={next}>{primaryLabel}</button> : null}
-            </span>
-          </div>
+            </div>
+          ) : null}
+          {/* The primary button is the call to action only where the step
+              itself is the action (Next, Done); a demo can be skipped, and on
+              the user's turn the task is the call, not skipping it. The row
+              stays (empty) through the Done moment, so the card does not jump. */}
+          {showPrimary || showBack || link || done ? (
+            <div className="guideFoot">
+              {inviting && !offer.hint ? <button className="uiBtn sm" onClick={dismiss}>{t("Not now")}</button> : null}
+              {showBack ? <button className="uiBtn" onClick={back}>{t("Back")}</button> : null}
+              {link ? <button className="guideLink" onClick={next}>{link}</button> : null}
+              <span className="guideBtns">
+                {showPrimary ? <button className="uiBtn primary" onClick={next}>{primaryLabel}</button> : null}
+              </span>
+            </div>
+          ) : null}
         </div>
       ) : null}
     </div>

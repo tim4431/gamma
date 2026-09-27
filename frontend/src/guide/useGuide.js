@@ -335,14 +335,21 @@ export function useGuide({ enabled = true, suggest = true, scope = "", facts = {
     const vars = { ...(run.tour.vars || {}), ...readVars() };
     const seen = [];
     const unsubscribe = guideEvents.subscribe((name, payload) => { seen.push([name, payload]); });
+    // progress: [actions done, actions in all], the card's demo line.
+    const total = step.do.length;
+    let doneActions = 0;
+    let last = { anchor: null, cursor: null };
+    const show = (l) => { last = l; if (!cancelled) setLive({ ...l, busy: true, stepId: step.id, progress: [doneActions, total] }); };
     (async () => {
       await sleep(step.delay ?? 900);
       if (cancelled) return;
-      setLive({ anchor: null, cursor: null, busy: true, stepId: step.id });
+      show(last);
       try {
         for (const action of step.do) {
           if (cancelled) return;
-          await runAction(action, vars, (l) => { if (!cancelled) setLive({ ...l, busy: true, stepId: step.id }); }, () => cancelled, seen, (cleanup) => cleanups.push(cleanup), servicesRef.current);
+          await runAction(action, vars, show, () => cancelled, seen, (cleanup) => cleanups.push(cleanup), servicesRef.current);
+          doneActions++;
+          show(last);
         }
         if (cancelled) return;
         setLive({ anchor: null, cursor: null, busy: false, finished: true, stepId: step.id });
@@ -438,6 +445,7 @@ export function useGuide({ enabled = true, suggest = true, scope = "", facts = {
     done: !!run?.done,
     count: steps.length,
     live: { ...live, busy },
+    // next() also skips: a demo's actions stop when its step is left.
     start, next, back, dismiss,
     // The tours the Tours menu lists here, in registry order.
     startable: () => Object.values(TOURS).filter((tour) => canStart(tour.id)).map(({ id, title }) => ({ id, title })),

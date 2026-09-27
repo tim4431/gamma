@@ -35,11 +35,14 @@ export async function guideScenarios(env) {
       // The demo: Add opens, the link is typed, Enter opens the paper.
       await page.waitForSelector('[data-guide-overlay="add-demo"][data-guide-busy]');
       assertEq(await page.locator('.guideCard .guideBtns button').count(), 0, "automatic step has no navigation buttons, including during its initial pause");
+      assertEq(await page.locator('.guideCard .guideChip.watch').count(), 1, "a demo says to watch");
+      assertEq(await page.locator('.guideCard .guideLink').count(), 0, "the add demo cannot be skipped: every later step needs its paper");
       await page.keyboard.press("ArrowRight");
       assertEq(await page.locator('[data-guide-overlay="add-demo"]').count(), 1, "keyboard cannot skip the automatic step");
       await page.waitForSelector(".guideCursor");
       await until(async () => (await page.inputValue('[data-guide="add.urlInput"]')).endsWith(".pdf"), { what: "the demo typed the link" });
       await page.waitForSelector('[data-guide-overlay="highlight-demo"] .guideCursor.dragging', { timeout: 30000 });
+      assertEq(await page.locator('.guideCard .guideLink').textContent(), "Skip this demo", "other demos can be skipped one by one");
       const firstPointer = await page.locator(".guideCursor").getAttribute("style");
       await until(async () => (await page.locator(".guideCursor").getAttribute("style")) !== firstPointer, { what: "the example pointer moves across the text" });
       await page.waitForSelector('[data-guide="pdf.highlightColor"]');
@@ -47,6 +50,9 @@ export async function guideScenarios(env) {
       if (flags.keep) await page.screenshot({ path: `${server.dir}/highlight-demo.png` });
       await page.waitForSelector('[data-guide-overlay="highlight"] .guideCard', { timeout: 30000 });
       assertEq(await page.evaluate(() => window.getSelection().toString()), "", "example selection clears before handing over");
+      assertEq(await page.locator('.guideCard .guideChip.turn').count(), 1, "the practice step says it is the user's turn");
+      assertEq(await page.locator('.guideCard .uiBtn.primary').count(), 0, "on the user's turn the task, not a button, is the call to action");
+      assertEq(await page.locator('.guideCard .guideLink').textContent(), "Skip step");
       assertEq(await page.locator("[data-hl-id]").count(), 0, "the example creates no saved highlight");
       assert(/[?&]block=/.test(page.url()), "the paper opened");
       await waitForPdf(page, 1);
@@ -140,7 +146,10 @@ export async function guideScenarios(env) {
       };
       page.on("request", track);
       await page.click(".guideCard .uiBtn.primary");
-      await page.waitForSelector('[data-guide-overlay="highlight"] .guideCard', { timeout: 30000 });
+      await page.waitForSelector('[data-guide-overlay="highlight-demo"] .guideCursor.dragging', { timeout: 30000 });
+      await page.locator(".guideCard .guideLink", { hasText: "Skip this demo" }).click();
+      await page.waitForSelector('[data-guide-overlay="highlight"] .guideCard');
+      assertEq(await page.evaluate(() => window.getSelection().toString()), "", "skipping a demo clears its temporary selection");
       assertEq(new URL(page.url()).searchParams.get("block"), paperId, "arXiv demo opens the saved library copy");
       assertEq(unexpected.length, 0, "known paper needs no resolver or page creation");
       await page.waitForSelector('[data-guide="pdf.textLayer"] span:visible');
