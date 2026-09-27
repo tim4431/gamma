@@ -30,6 +30,10 @@ export const FilePlusIcon = (p) => (
 export const FolderOpenIcon = (p) => (
   <Icon {...p}><path d="m6 14 1.5-2.9A2 2 0 0 1 9.24 10H20a2 2 0 0 1 1.94 2.5l-1.54 6a2 2 0 0 1-1.95 1.5H4a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h3.9a2 2 0 0 1 1.69.9l.81 1.2a2 2 0 0 0 1.67.9H18a2 2 0 0 1 2 2v2" /></Icon>
 );
+// Two stacked folders — workspaces (Settings → Workspaces).
+export const FoldersIcon = (p) => (
+  <Icon {...p}><path d="M20 17a2 2 0 0 0 2-2V9a2 2 0 0 0-2-2h-3.9a2 2 0 0 1-1.69-.9l-.81-1.2a2 2 0 0 0-1.67-.9H8a2 2 0 0 0-2 2v9a2 2 0 0 0 2 2Z" /><path d="M2 8v11a2 2 0 0 0 2 2h14" /></Icon>
+);
 // Small folder + file pair — the home library's "everything" filter state.
 export const FolderFilesIcon = (p) => (
   <Icon {...p}>

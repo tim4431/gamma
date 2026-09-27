@@ -25,14 +25,27 @@ export function useSettingsDraft(key, dirty, discard) {
   }, [drafts, key, dirty, discard]);
 }
 
-export function PaneHead({ icon: Icon, title, children }) {
+// A pane's header: icon, title, one line of context (children). A page one
+// level down names its way back as breadcrumbs before the title — `crumbs`
+// are [{label, onClick, ariaLabel}] — and `action` is a control at the
+// head's right end (the workspace page's Open workspace).
+export function PaneHead({ icon: Icon, title, crumbs, action, children }) {
   return (
     <div className="setHead" data-setting={title}>
       <span className="setHeadIcon"><Icon size={17} /></span>
       <span className="settingText">
-        <span className="settingsPaneTitle">{title}</span>
+        <span className="settingsPaneTitle">
+          {(crumbs || []).map(({ label, onClick, ariaLabel }) => (
+            <React.Fragment key={label}>
+              <button type="button" className="crumbBtn setCrumb" aria-label={ariaLabel} title={ariaLabel} onClick={onClick}>{label}</button>
+              <span className="crumbSep" aria-hidden="true">›</span>
+            </React.Fragment>
+          ))}
+          {title}
+        </span>
         {children ? <span className="settingsPaneHint">{children}</span> : null}
       </span>
+      {action ? <span className="setHeadAction">{action}</span> : null}
     </div>
   );
 }

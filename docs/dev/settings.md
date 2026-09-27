@@ -280,8 +280,12 @@ AI:
 Manage:
 
 - **Workspaces**: storage meter, personal and shared workspaces (each row:
-  Open, a Data menu with export and import, Manage — an inline detail page;
-  rename and invite are small editor dialogs), New workspace, Export all.
+  Open, a Data menu with export and import, Manage — an inline detail page
+  under one breadcrumb head, "Workspaces › <name>", whose first crumb goes
+  back and whose right end is Open workspace: General, Access, Members and
+  the Danger zone, every row saving at once, no footer; rename and invite
+  are small editor dialogs), New workspace, Export all. A row's on-disk
+  folder (`workspaces/<id>`) shows to admins only.
   The empty Shared section offers admins "New shared workspace" (a jump to
   Server). The account popover's "Workspaces…" opens this pane. Clones are
   not listed here (they are under Account & sync).

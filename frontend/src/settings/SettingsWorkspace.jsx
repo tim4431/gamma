@@ -18,7 +18,7 @@ import { API, apiJson, fmtBytes } from "../shared/lib/utils";
 import { ActionMenu, MenuSelect } from "../shared/ui/Menus";
 import { PaneHead, Section, Row, SubDialog, Field, DialogButtons, Empty, QuotaMeter, UnitInput, AccountPicker, Segmented, WorkspaceFolder } from "./SettingsKit";
 import {
-  CheckIcon, DatabaseIcon, ExportIcon, GlobeIcon, HardDriveIcon, ImportIcon, LogOutIcon, PenIcon,
+  CheckIcon, DatabaseIcon, ExportIcon, FoldersIcon, GlobeIcon, HardDriveIcon, ImportIcon, LogOutIcon, PenIcon,
   PlusIcon, ShieldIcon, Trash2Icon, UserIcon, UsersIcon,
 } from "../shared/ui/Icons";
 import { T, t, tn } from "../shared/i18n/i18n.js";
@@ -27,7 +27,7 @@ import { T, t, tn } from "../shared/i18n/i18n.js";
 // menu's switcher in App.jsx reads the same table.
 export const ROLE_OPTIONS = [["owner", t("Owner")], ["editor", t("Can edit")], ["viewer", t("View only")]];
 export const ROLE_LABEL = { owner: t("owner"), editor: t("can edit"), viewer: t("view only") };
-const ROLE_TEXT = { owner: t("own it"), editor: t("can edit"), viewer: t("can view") };
+const ROLE_TEXT = { owner: t("you own it"), editor: t("you can edit"), viewer: t("you can view") };
 // One line under a switcher entry / workspace row: what kind it is and, for
 // a shared one, your role.
 export function workspaceMeta(w) {
@@ -322,10 +322,13 @@ export function NameDialog({ title, label, hint, initial, submitLabel, busy, err
 // `canOpen` / `onOpen` wire the Open button; `onLeft` fires after the
 // caller leaves or deletes it (the pane switches away if it was the open
 // one). `personalCount` hides Delete on an account's last personal workspace.
-function WorkspacePage({ title, onClose, children }) {
+// `inline` (Settings → Workspaces) makes it a page of the pane: one
+// breadcrumb head "Workspaces › <name>" with Open workspace at its right,
+// and no footer — every row saves at once. Elsewhere it is a SubDialog.
+function WorkspacePage({ title, subtitle, action, onClose, children }) {
   return <>
-    <button className="uiBtn sm settingsInlineLink" onClick={onClose}>{t("Back to workspaces")}</button>
-    <PaneHead icon={UsersIcon} title={title}>{t("Workspace settings")}</PaneHead>
+    <PaneHead icon={FoldersIcon} title={title} action={action}
+      crumbs={[{ label: t("Workspaces"), ariaLabel: t("Back to workspaces"), onClick: onClose }]}>{subtitle}</PaneHead>
     {children}
   </>;
 }
@@ -425,15 +428,21 @@ export function ManageWorkspaceDialog({ wsId, me, admin, accounts, confirm, setS
   const title = info?.name || t("Workspace");
   const subtitle = !info ? "" : isPersonal
     ? (mine ? t("Your personal workspace{default}", { default: info.default ? t(" · your default") : "" }) : t("{personal_of}'s personal workspace{default}", { personal_of: info.personal_of, default: info.default ? t(" · their default") : "" }))
-    : `${info.access === "public" ? "Public" : "Shared"} workspace · ${info.role ? `you ${ROLE_TEXT[info.role]}` : "you manage it as an admin"}`;
+    : [info.access === "public" ? t("Public workspace") : t("Shared workspace"),
+      info.role ? ROLE_TEXT[info.role] : t("you manage it as an admin"),
+      tn("{n} member", "{n} members", members.length)].join(" · ");
   const canDelete = manages && (!isPersonal || personalCount == null || personalCount > 1);
   const canLeave = !isPersonal && explicitMember && !soleOwner;
 
   const Surface = inline ? WorkspacePage : SubDialog;
+  const surface = inline ? {
+    subtitle,
+    action: canOpen ? <button className="uiBtn sm" onClick={onOpen}>{t("Open workspace")}</button> : null,
+  } : {};
   return (
-    <Surface title={title} onClose={onClose}>
+    <Surface title={title} onClose={onClose} {...surface}>
       <div className="settingsForm">
-        {subtitle ? <div className="settingsPaneHint">{subtitle}</div> : null}
+        {!inline && subtitle ? <div className="settingsPaneHint">{subtitle}</div> : null}
         {!info && !ws.error ? <Empty icon={UsersIcon}>{t("Loading…")}</Empty> : null}
         {info ? (
           <>
@@ -497,7 +506,7 @@ export function ManageWorkspaceDialog({ wsId, me, admin, accounts, confirm, setS
                 {info.access === "public" && !explicitMember ? (
                   <div className="settingsPaneHint">{t("You are in because the workspace is public — everyone on this server is.")}</div>
                 ) : manages ? (
-                  <div className="settingsPaneHint">{t("Naming someone Owner hands the workspace on; the role menu is how ownership moves.")}</div>
+                  <div className="settingsPaneHint">{t("To hand this workspace over, make someone else Owner.")}</div>
                 ) : null}
               </Section>
             ) : null}
@@ -521,10 +530,12 @@ export function ManageWorkspaceDialog({ wsId, me, admin, accounts, confirm, setS
           </>
         ) : null}
         {ws.error && !inviting && !renaming ? <div className="settingsPaneHint aiKeysError">{ws.error}</div> : null}
-        <div className="reportModalBtns">
-          {canOpen || explicitMember ? <button className="uiBtn" onClick={onOpen}>{t("Open")}</button> : null}
-          <button className="uiBtn primary" onClick={onClose}>{t("Done")}</button>
-        </div>
+        {!inline ? (
+          <div className="reportModalBtns">
+            {canOpen || explicitMember ? <button className="uiBtn" onClick={onOpen}>{t("Open")}</button> : null}
+            <button className="uiBtn primary" onClick={onClose}>{t("Done")}</button>
+          </div>
+        ) : null}
       </div>
       {renaming ? (
         <NameDialog title={t("Rename workspace")} label={t("Name")} initial={info?.name} submitLabel={t("Save")}
@@ -628,9 +639,9 @@ export function WorkspacesSettings({ value, onServer }) {
             {current ? <span className="uiTag">{t("open")}</span> : null}
           </span>
           <span className="aiProvDesc">
-            {w.personal ? t("just you") : `${ROLE_LABEL[w.role] || w.role} · ${w.members} member${w.members === 1 ? "" : "s"}`}
-            {` · ${fmtBytes(w.used_bytes)} · `}
-            <WorkspaceFolder id={w.id} />
+            {w.personal ? t("just you") : `${ROLE_LABEL[w.role] || w.role} · ${tn("{n} member", "{n} members", w.members)}`}
+            {` · ${fmtBytes(w.used_bytes)}`}
+            {isAdmin ? <>{" · "}<WorkspaceFolder id={w.id} /></> : null}
           </span>
         </span>
         <span className="aiProvActions">
@@ -656,7 +667,7 @@ export function WorkspacesSettings({ value, onServer }) {
 
   return (
     <>
-      <PaneHead icon={UsersIcon} title={t("Workspaces")} />
+      <PaneHead icon={FoldersIcon} title={t("Workspaces")} />
       {!data && !error ? <Empty icon={UsersIcon}>{t("Loading…")}</Empty> : null}
       {error ? <Empty icon={UsersIcon}>{t("Workspaces unavailable — {error}", { error: error })}</Empty> : null}
       {data ? (
