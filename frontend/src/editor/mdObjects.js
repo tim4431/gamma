@@ -91,7 +91,7 @@ export function moveObjectInTree(blocks, { sourceId, obj, target }) {
     return setBlockText(out, target.id, insertObject(dst.content || "", target.offset, cut.md));
   }
   const cut = cutObject(content, obj);
-  const block = { id: makeBlockId(), content: cut.md, properties: {}, collapsed: false, editMode: false, children: [] };
+  const block = { id: makeBlockId(), content: cut.md, properties: {}, children: [] };
   const out = setBlockText(blocks, sourceId, cut.content);
   if (target.type === "child") return insertChild(out, target.id, block, false);
   return insertSibling(out, target.id, block, !target.above);

@@ -257,10 +257,15 @@ known id under another parent, or out of order — the longest increasing run
 of existing keys stays, the rest are re-keyed), sets (content / property
 patches), and deletes of the top-most removed subtrees last (a block that
 escaped a deleted parent is moved out first). `applyOps` is idempotent and
-keeps siblings sorted by key. UI-only fields (`editMode`, the `collapsed`
-flag) never travel; a remote `collapsed` *property* updates the stored value
-but not the viewer's own folding — folding stays personal, the stored value
-is the default for the next open.
+keeps siblings sorted by key. The tree is the document only: the block
+whose editor is open and the viewer's own folding live beside it in App's
+`view` (`{editingId, folds}`, `shared/model/blockModel.js` — `withEditing`,
+`toggleFold`, `revealBlock`), so opening an editor or unfolding to reveal a
+block changes no tree and produces no op, and the tree's every transition
+is a document change. Folding a block writes its stored `collapsed`
+property too (the default every viewer opens the page with) and the
+viewer's own fold; a block the viewer never touched follows the stored
+value, a remote change included.
 
 Ops on the page root (a rename, page properties) update the title / page
 state in App instead of the tree.

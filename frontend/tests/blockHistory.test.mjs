@@ -1,12 +1,12 @@
 // The undo stack's classifier: what a tree transition counts as. null —
-// nothing undoable (a load, an editor opening, a fold); true — a structural
+// nothing undoable (a load, a fold's stored default); true — a structural
 // or property edit; a block id — only that block's content changed (the
 // candidate for merging with the previous keystroke).
 import assert from "node:assert/strict";
 import { test } from "node:test";
 import { classifyTransition, describeTransition } from "../src/editor/blockHistory.js";
 
-const N = (id, content = id, children = [], extra = {}) => ({ id, content, properties: {}, collapsed: false, editMode: false, children, ...extra });
+const N = (id, content = id, children = [], extra = {}) => ({ id, content, properties: {}, children, ...extra });
 const tree = () => [N("a", "a", [N("a1")]), N("b")];
 
 test("undo descriptions name creations, deletions, text, moves, and properties", () => {
@@ -20,11 +20,10 @@ test("undo descriptions name creations, deletions, text, moves, and properties",
   assert.equal(describeTransition([N("a"), N("b")], []), "deletion of 2 notes");
 });
 
-test("identity, editor toggles and folding are not edits", () => {
+test("identity and a fold's stored default are not edits", () => {
   const t = tree();
   assert.equal(classifyTransition(t, t), null);
-  assert.equal(classifyTransition(t, [{ ...t[0], editMode: true }, t[1]]), null);
-  assert.equal(classifyTransition(t, [{ ...t[0], collapsed: true, properties: { collapsed: true } }, t[1]]), null);
+  assert.equal(classifyTransition(t, [{ ...t[0], properties: { collapsed: true } }, t[1]]), null);
 });
 
 test("one block's content names that block, nested or not", () => {
