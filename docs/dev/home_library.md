@@ -222,7 +222,18 @@ non-passive listener in `CardCarousel`), touch swipes natively.
 ## The context menu
 
 The home right-click menu (page/folder/label) is built from the `shared/ui/Menus.jsx`
-primitives: a "Move to folder" flyout lists every folder path ordered by the
+primitives, in groups split by dividers (`menuGroups`). A page's menu is the
+same whatever surface it was opened on: Open (Enter) · Rename (F2) | Pin ·
+Add label ▸ · Move to folder ▸ · Duplicate | Copy link · Share… · Export… ·
+Ask AI about this page | Delete (Del), the shortcuts shown as each row's
+`keys` (the effective chords of `app.renameTitle` and `app.deletePages`,
+which act on the single / all selected pages of the listing). "Add label"
+lists every label in the library, checked when all the acted-on pages
+carry it (a click then removes it), and ends with "New label…", a name
+typed in place. Share…, Export… and Ask AI act on the page itself, so they
+open it first and run once it is on screen (`openPageThen`). A folder's
+menu: Open | New page here · New subfolder | Rename · Pin · Share… ·
+Export… | Delete. A "Move to folder" flyout lists every folder path ordered by the
 *active home sort* (`folderMenuPaths`, via the library-wide `folderMeta`
 rollup), checks the ones the selection already carries, and ends with the
 per-tag "remove from" rows; adding still uses the soft-link `addPagesToFolder`

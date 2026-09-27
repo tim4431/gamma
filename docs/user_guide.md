@@ -103,7 +103,7 @@ The home page is a recents feed of all your pages, with a **Recently viewed** st
 
 - **Folders** are paths: drop a paper into `qc/neutral-atom` and the hierarchy builds itself — a **qc** folder with a **neutral-atom** subfolder; add `qc/superconducting` and the sibling appears. A paper can live in several folders at once (dragging onto a folder *adds* it there). Drop a paper on the **back row** inside a folder to take it out; drag a folder onto another folder to move its whole subtree.
 - **Labels** are flat tags for cross-cutting facets (an author, a keyword); a paper can carry several, and each is one click to filter by. Edit both from the label row under a paper's title: type `name/` for a folder, anything else for a label.
-- **Selection works like a file manager**: click selects, Ctrl+click toggles, Shift+click extends, **double-click opens** (on a phone or tablet a single tap opens), Escape clears. Right-click for Open / Rename / Pin / Duplicate / **Move to folder** (a flyout with checkmarks) / Delete — acting on a multi-selection applies to all of it. A folder's menu adds **Export…** for everything inside it.
+- **Selection works like a file manager**: click selects, Ctrl+click toggles, Shift+click extends, **double-click opens** (on a phone or tablet a single tap opens), Escape clears. Right-click a page for Open / Rename · Pin / **Add label** / **Move to folder** (flyouts with checkmarks) / Duplicate · Copy link / Share… / Export… / Ask AI about this page · Delete — acting on a multi-selection applies to all of it. A folder's menu has **New page here** and **New subfolder**, Share… and **Export…** for everything inside it.
 - **Sort** (modified / added / viewed / title) is remembered per folder; toggles switch grid/list and folders/files. The list view reads as a table: each row's kind (PDF, Page, or a folder's page count) and the date the sort uses (modified, viewed or added — the column header says which). Pin papers to keep them in a strip at the top. Card strips scroll sideways with a plain mouse wheel.
 - **Files inside notes**: any upload (a PDF, a markdown file, a dataset) dropped on a block becomes a small file card. Right-click a PDF or markdown card → *Add to library* turns it into a page of its own.
 
@@ -281,7 +281,8 @@ Preferences apply immediately; browser-only ones (theme, layout) are marked *Thi
 | Ctrl+, | Open settings |
 | Ctrl+P | Quick open: pick a page, folder or label (recent pages first); in it, Ctrl+Enter searches everywhere, Shift+Enter creates the page |
 | Ctrl+Shift+P | Command palette: every command by name, with its keys (also `>` typed into Ctrl+P) |
-| F2 | Rename the page |
+| F2 | Rename the page (on the home page, the selected one) |
+| Del | On the home page: delete the selected pages (asks first) |
 | Ctrl+Z / Ctrl+Y (or Ctrl+Shift+Z) | Undo / redo, one history per page |
 | Alt+← | Back through link jumps |
 | Enter / Shift+Enter | In search: next / previous match. In notes: line break / new note (swappable). In chat: send / newline |

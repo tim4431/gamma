@@ -150,4 +150,49 @@ export async function quickOpenScenarios(env) {
       assertNoProblems(page, [/find-page\/[^ ]+ -> 404/, /\/subtree -> 404/]);
     } finally { await ctx.close(); }
   });
+
+  await step("library: the page menu adds a label in place, a folder's makes a page in it; F2 renames and Delete asks first", async () => {
+    const ctx = await user.context(browser);
+    const page = await openPage(ctx, `${server.base}/?ws=${user.ws}`);
+    try {
+      const row = page.locator(".fileRow", { hasText: "Quantum correction" });
+      await row.waitFor();
+      // Add label ▸ New label… takes a name typed in the flyout.
+      await row.click({ button: "right" });
+      await page.locator(".ctxMenuItem", { hasText: "Add label" }).click();
+      await page.locator(".ctxMenuItem", { hasText: "New label…" }).click();
+      await page.keyboard.type("urgent");
+      await page.keyboard.press("Enter");
+      await row.locator(".labelTagBadge", { hasText: "urgent" }).waitFor();
+      // A label every picked page carries is checked; picking it takes it off.
+      await row.click({ button: "right" });
+      assertEq(await page.locator(".ctxMenuItem", { hasText: "Delete" }).locator(".ctxMenuKey").textContent(), "Del", "Delete shows its key");
+      await page.locator(".ctxMenuItem", { hasText: "Add label" }).click();
+      const urgent = page.locator(".ctxSubMenu .ctxMenuItem", { hasText: "urgent" });
+      await urgent.locator(".ctxMenuCheck").waitFor();
+      await urgent.click();
+      await row.locator(".labelTagBadge", { hasText: "urgent" }).waitFor({ state: "detached" });
+
+      // F2 renames the selected row in place; Delete asks before it deletes.
+      await row.click();
+      await page.keyboard.press("F2");
+      await page.locator(".fileRowRename").waitFor();
+      await page.keyboard.press("Escape");
+      await row.click();
+      await page.keyboard.press("Delete");
+      const confirm = page.locator(".confirmModal", { hasText: "Delete this page and all its notes?" });
+      await confirm.waitFor();
+      await confirm.getByRole("button", { name: "Cancel", exact: true }).click();
+      await row.waitFor();
+
+      // A folder's menu starts a page filed in it.
+      await page.locator(".folderRow", { hasText: "optics" }).first().click({ button: "right" });
+      await page.locator(".ctxMenuItem", { hasText: "New page here" }).click();
+      await until(() => new URL(page.url()).searchParams.get("block"), { what: "the new page opens" });
+      const id = new URL(page.url()).searchParams.get("block");
+      await until(async () => (await user.api("/api/blocks/root/children")).children.some((b) => b.id === id && b.properties?.folder === "optics"),
+        { what: "the page is filed in the folder" });
+      assertNoProblems(page);
+    } finally { await ctx.close(); }
+  });
 }

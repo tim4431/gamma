@@ -21,7 +21,7 @@ already exists. Bespoke CSS classes are for **layout only**.
 | `aiKeyInput` | every text/number/password input in dialogs and settings |
 | `switch` / `switchTrack` | every on/off toggle |
 | `MenuSelect` / `ActionMenu` ([Menus.jsx](../../frontend/src/shared/ui/Menus.jsx)) | every dropdown: Codex-style pill trigger + checkmarked `ContextMenu`. No native `<select>` anywhere |
-| `MenuItem` / `MenuLabel` / `SubMenuItem` ([Menus.jsx](../../frontend/src/shared/ui/Menus.jsx)) | every row inside a menu: icon column + ellipsizing label (+ `danger`, `trailing`). `SubMenuItem` is the nested flyout — hover-opened, safe-triangle guarded |
+| `MenuItem` / `MenuLabel` / `MenuDivider` / `SubMenuItem` ([Menus.jsx](../../frontend/src/shared/ui/Menus.jsx)) | every row inside a menu, context or popover: icon column + ellipsizing label (+ `danger`, `trailing`, `keys`); `MenuDivider` between groups. `SubMenuItem` is the nested flyout — hover-opened, safe-triangle guarded; a popover menu hosts one through `MenuScope` |
 | `categoryTag`, `uiTag` | chips and small badges |
 | `KeyCaps` / `KeyBinding` ([SettingsKit.jsx](../../frontend/src/settings/SettingsKit.jsx); `KeyCaps` lives in [shared/ui/KeyCaps.jsx](../../frontend/src/shared/ui/KeyCaps.jsx), shared with the guide) | a keyboard chord as `.keyCap` key caps; `KeyBinding` is the rebindable version (click, press the new keys; reset button when changed) — [hotkeys.md](hotkeys.md) |
 | `popoverAnchor` | the `position: relative; inline-flex` wrapper every popover trigger sits in (`data-popover="…"` on the same element) — never inline that style |
@@ -124,8 +124,16 @@ so one tap cannot toggle twice. Mouse and keyboard keep the plain click path.
 ### Menus and submenus
 
 Every cursor-anchored menu is a `ContextMenu`; every row inside one is a
-`MenuItem` (icon column, ellipsizing label, optional `trailing` node,
-`danger` for destructive actions). A row that opens a nested list is a
+`MenuItem` (icon column, ellipsizing label, optional `trailing` node or
+`keys` — the row's shortcut, e.g. the page menu's Enter / F2 / Del —
+`danger` for destructive actions). Groups of rows are separated by
+`MenuDivider`; `menuGroups(...groups)` drops empty groups and puts one
+divider between the rest, so a menu a viewer sees half of has no doubled
+rule. The topbar's popover menus (account, View, Add) use the same rows: the
+popover panel is a `MenuScope` (the flyout state a `ContextMenu` carries),
+so the account menu's **Tours** is a `SubMenuItem` like any other flyout
+(`data-guide="account.tour"` on its trigger, `data-tour` on its rows). A
+click on a flyout's trigger opens it and never toggles it shut. A row that opens a nested list is a
 `SubMenuItem` — it renders its panel *inside* the parent menu's DOM (a
 portalled panel would sit outside the parent's outside-pointerdown test, and
 the parent would dismiss itself before a click on a flyout row could land),

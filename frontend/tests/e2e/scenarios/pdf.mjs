@@ -137,7 +137,7 @@ export async function pdfScenarios({ server, browser, alice, makePdf, step, unti
       }, { what: `badge keeps its place and size when the PDF zooms (interface scale ${scale})` });
       await page.getByRole("button", { name: "Account & settings", exact: true }).click();
       const settings = page.getByRole("button", { name: "Settings…", exact: true });
-      const tours = page.locator('summary[data-guide="account.tour"]');
+      const tours = page.locator('[data-guide="account.tour"]');
       const settingsBox = await settings.boundingBox();
       const toursBox = await tours.boundingBox();
       assert(Math.abs(settingsBox.height - toursBox.height) < 1, "Tours matches adjacent menu controls");

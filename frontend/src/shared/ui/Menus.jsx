@@ -1,9 +1,10 @@
 // Shared menu primitives. One dismissal + positioning story for every
 // cursor-anchored menu in the app (right-click page/folder menu, highlight
 // menu, attach-highlight menu), so they can't drift apart again. Rows
-// (MenuItem), section headings (MenuLabel) and nested flyouts (SubMenuItem)
-// live here too, so every menu gets the same iconed row and the same
-// submenu-hover behaviour for free.
+// (MenuItem), section headings (MenuLabel), group separators (MenuDivider)
+// and nested flyouts (SubMenuItem) live here too, so every menu gets the
+// same iconed row and the same submenu-hover behaviour for free — the
+// topbar's popover menus (account, View, Add) included, through MenuScope.
 import React, { createContext, useContext, useEffect, useLayoutEffect, useRef, useState } from "react";
 import { createPortal } from "react-dom";
 import { CheckIcon, ChevronDownIcon, ChevronRightIcon } from "./Icons";
@@ -33,10 +34,6 @@ const SUB_TOP_NUDGE = -4;
 function ContextMenu({ x, y, onClose, className = "", anchorRight = false, anchorBottom = false, ignoreRef, children }) {
   const ref = useRef(null);
   const [pos, setPos] = useState({ left: x, top: y });
-  // Open flyout (SubMenuItem id) + the pointer-intent guard that keeps a
-  // diagonal move into it from being read as "hovered the row below".
-  const [openSub, setOpenSub] = useState(null);
-  const aim = useMenuAim();
 
   // Clamp inside the viewport once we know the menu's size.
   useLayoutEffect(() => {
@@ -75,6 +72,27 @@ function ContextMenu({ x, y, onClose, className = "", anchorRight = false, ancho
     };
   }, [onClose]);
 
+  return createPortal(
+    <MenuScope
+      ref={ref}
+      className={`ctxMenu ${className}`}
+      style={{ left: pos.left, top: pos.top }}
+      onContextMenu={(e) => e.preventDefault()}
+    >
+      {children}
+    </MenuScope>,
+    document.body,
+  );
+}
+
+// The element a menu's rows live in, with the flyout state they share: the
+// open flyout (SubMenuItem id) and the pointer-intent guard that keeps a
+// diagonal move into it from being read as "hovered the row below". The
+// ContextMenu is one; a popover menu under a topbar button (the account
+// menu) renders its panel as one so its rows can open flyouts too.
+const MenuScope = React.forwardRef(function MenuScope({ children, ...rest }, ref) {
+  const [openSub, setOpenSub] = useState(null);
+  const aim = useMenuAim();
   // Hovering anywhere in the menu that is NOT the open flyout (or its own
   // trigger) closes it — but only once the cursor stops aiming at it, so the
   // rows the diagonal path crosses don't snatch the hover.
@@ -84,25 +102,18 @@ function ContextMenu({ x, y, onClose, className = "", anchorRight = false, ancho
     if (e.target.closest(`[data-submenu="${CSS.escape(openSub)}"]`)) { aim.keep(); return; }
     aim.guard(() => setOpenSub(null));
   }
-
-  return createPortal(
-    <div
-      ref={ref}
-      className={`ctxMenu ${className}`}
-      style={{ left: pos.left, top: pos.top }}
-      onContextMenu={(e) => e.preventDefault()}
-      onPointerOver={onPointerOver}
-    >
+  return (
+    <div ref={ref} {...rest} onPointerOver={onPointerOver}>
       <MenuCtx.Provider value={{ openSub, setOpenSub, aim }}>{children}</MenuCtx.Provider>
-    </div>,
-    document.body,
+    </div>
   );
-}
+});
 
 // One menu row: optional leading glyph, label, optional trailing node.
-// `danger` tints destructive actions. Everything that isn't a row prop is
+// `danger` tints destructive actions; `keys` shows the row's shortcut on the
+// right (a chord label, e.g. "F2"). Everything that isn't a row prop is
 // forwarded, so callers keep their own title/disabled/onClick.
-function MenuItem({ icon: Icon, children, trailing, danger = false, className = "", ...rest }) {
+function MenuItem({ icon: Icon, children, trailing, keys, danger = false, className = "", ...rest }) {
   return (
     <button
       type="button"
@@ -111,7 +122,7 @@ function MenuItem({ icon: Icon, children, trailing, danger = false, className = 
     >
       <span className="ctxMenuIcon">{Icon ? <Icon size={14} /> : null}</span>
       <span className="ctxMenuText">{children}</span>
-      {trailing}
+      {trailing ?? (keys ? <span className="ctxMenuKey">{keys}</span> : null)}
     </button>
   );
 }
@@ -121,12 +132,27 @@ function MenuLabel({ children }) {
   return <div className="ctxMenuLabel">{children}</div>;
 }
 
+// A thin rule between a menu's groups of rows.
+function MenuDivider() {
+  return <div className="ctxMenuDivider" role="separator" />;
+}
+
+// A menu's groups — arrays of rows; falsy rows and empty groups dropped —
+// with a MenuDivider between each two, so a group a viewer cannot use
+// leaves no doubled rule behind.
+function menuGroups(...groups) {
+  const kept = groups.map((g) => g.filter(Boolean)).filter((g) => g.length);
+  return kept.flatMap((g, i) => (i ? [<MenuDivider key={`divider-${i}`} />, ...g] : g));
+}
+
 // A row that opens a nested flyout on hover (or click/Enter/→ for keyboard
 // and touch). The panel renders INSIDE the parent menu's DOM — portalling it
 // would put it outside the parent's outside-pointerdown test, and the parent
 // would dismiss itself before a click on a flyout row could land. `id` just
-// has to be unique within its menu.
-function SubMenuItem({ id, icon: Icon, label, title, children }) {
+// has to be unique within its menu. A click opens it and never toggles it
+// shut (the hover that led there has opened it already). The panel is a
+// menu named `menuLabel`, else `label`; other props go to the trigger row.
+function SubMenuItem({ id, icon: Icon, label, title, menuLabel, children, ...rest }) {
   const { openSub, setOpenSub, aim } = useContext(MenuCtx) || {};
   const open = openSub === id;
   const panelRef = useRef(null);
@@ -167,14 +193,16 @@ function SubMenuItem({ id, icon: Icon, label, title, children }) {
         aria-haspopup="menu"
         aria-expanded={open}
         onPointerEnter={() => aim?.guard(() => setOpenSub(id))}
-        onClick={(e) => { e.stopPropagation(); aim?.keep(); setOpenSub(open ? null : id); }}
+        onClick={(e) => { e.stopPropagation(); aim?.keep(); setOpenSub(id); }}
         onKeyDown={(e) => { if (e.key === "ArrowRight") { e.preventDefault(); setOpenSub(id); } }}
         trailing={<ChevronRightIcon size={13} className="ctxSubChev" />}
+        {...rest}
       >
         {label}
       </MenuItem>
       {open ? (
-        <div ref={panelRef} className="ctxMenu ctxSubMenu" style={style} role="menu">
+        <div ref={panelRef} className="ctxMenu ctxSubMenu" style={style} role="menu"
+          aria-label={menuLabel || (typeof label === "string" ? label : undefined)}>
           {children}
         </div>
       ) : null}
@@ -286,4 +314,4 @@ function ActionMenu({ label, icon: Icon, items, disabled, iconOnly = false }) {
   );
 }
 
-export { ContextMenu, MenuItem, MenuLabel, SubMenuItem, MenuSelect, ActionMenu };
+export { ContextMenu, MenuScope, MenuItem, MenuLabel, MenuDivider, menuGroups, SubMenuItem, MenuSelect, ActionMenu };

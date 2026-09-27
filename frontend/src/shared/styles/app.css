@@ -2706,7 +2706,6 @@ mark.merge-del { background: color-mix(in srgb, var(--danger) 16%, transparent);
 .popover .popoverItem[aria-disabled="true"] { cursor: not-allowed; opacity: 0.6; }
 /* Wrapper that anchors a popover under its trigger button. */
 .popoverAnchor { position: relative; display: inline-flex; }
-.popover .check { display: inline-block; width: 14px; color: var(--accent-dark); font-weight: 700; }
 .topbar .iconBtn.activeIcon { background: var(--bg-hover); color: var(--text-primary); }
 /* Fixed width: the BibTeX pre would otherwise stretch the popover to its
    longest line — it scrolls inside instead. */
@@ -2801,14 +2800,11 @@ mark.merge-del { background: color-mix(in srgb, var(--danger) 16%, transparent);
   cursor: pointer;
 }
 .accountNoticeAction:hover { text-decoration: underline; }
-.accountTours > summary { list-style: none; cursor: pointer; }
-.accountTours > summary::-webkit-details-marker { display: none; }
-.accountToursArrow { margin-left: auto; transition: transform 120ms; }
-.accountTours[open] .accountToursArrow { transform: rotate(90deg); }
-.accountToursMenu { margin: 2px 8px 6px 23px; padding-left: 8px; border-left: 1px solid var(--border); }
 
 /* workspace switcher rows in the account popover */
-.popover .popoverItem.wsItem { gap: 9px; }
+/* A workspace row is a menu row whose icon is the workspace's initial. */
+.ctxMenuItem.wsItem .ctxMenuIcon { width: 20px; }
+.ctxMenuItem.wsItem .wsItemMeta { margin-left: 8px; }
 .wsItemBadge {
   width: 20px;
   height: 20px;
@@ -2926,9 +2922,6 @@ mark.merge-del { background: color-mix(in srgb, var(--danger) 16%, transparent);
 /* leading icon + danger variant for popover action rows */
 .popover .popoverItemIcon { flex-shrink: 0; color: var(--text-muted); }
 .popover .popoverItem:hover .popoverItemIcon { color: var(--text-primary); }
-.popover .popoverItemDanger { color: #e05c5c; }
-.popover .popoverItemDanger .popoverItemIcon { color: #e05c5c; }
-.popover .popoverItemDanger:hover { background: rgba(224, 92, 92, 0.12); }
 /* search */
 .searchPopover { min-width: 380px; max-width: 70vw; }
 .searchInput {
@@ -5409,6 +5402,44 @@ a.shareBrand:hover { background: var(--bg-hover); }
    renders at zero width (i.e. invisibly). */
 :is(.ctxMenuCheck, .ctxSubChev) { margin-left: auto; flex-shrink: 0; }
 .ctxMenuCheck { color: var(--text-primary); }
+/* A row's shortcut (MenuItem `keys`), and the rule between groups
+   (MenuDivider). */
+.ctxMenuKey {
+  margin-left: auto;
+  padding-left: 16px;
+  flex-shrink: 0;
+  font-size: calc(11.5px * var(--ui-font-scale, 1));
+  color: var(--text-dim);
+  white-space: nowrap;
+}
+.ctxMenuDivider { height: 1px; margin: 4px 0; background: var(--border-subtle); }
+/* A name typed inside a menu (the page menu's "New label…"). */
+.ctxMenuInput {
+  display: block;
+  width: calc(100% - 16px);
+  margin: 4px 8px;
+  padding: 5px 8px;
+  font-size: calc(13px * var(--ui-font-scale, 1));
+}
+/* The same rows in a popover menu under a topbar button (account, View,
+   Add): the generic topbar button look must not reach them. */
+.topbar .popover .ctxMenuItem,
+.popover .ctxMenuItem {
+  background: none;
+  border: none;
+  border-radius: 6px;
+  padding: 8px 10px;
+  font-size: calc(13px * var(--ui-font-scale, 1));
+  color: var(--text-primary);
+}
+.topbar .popover .ctxMenuItem:hover,
+.popover .ctxMenuItem:hover { background: var(--bg-hover); }
+.popover .ctxMenuItem.danger { color: var(--danger); }
+.popover .ctxMenuItem.danger .ctxMenuIcon { color: var(--danger); }
+.popover .ctxMenuItem.danger:hover { background: var(--danger-bg); }
+.popover .ctxMenuItem[aria-disabled="true"] { cursor: not-allowed; opacity: 0.6; }
+.popover .ctxMenuDivider { margin: 2px 0; }
+.popover .ctxSubMenu { padding: 4px; }
 
 /* --- nested flyout (SubMenuItem) --- */
 .ctxSubWrap { position: relative; }

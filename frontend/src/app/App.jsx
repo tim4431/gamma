@@ -32,14 +32,14 @@ import ChatDock from "../chat/ChatDock";
 import { createChatSession } from "../chat/chatSession";
 import SearchPanel from "../search/SearchPanel";
 import QuickOpen from "../library/QuickOpen";
-import { ContextMenu, MenuItem, MenuLabel, MenuSelect, SubMenuItem } from "../shared/ui/Menus";
+import { ContextMenu, MenuDivider, MenuItem, MenuLabel, MenuScope, MenuSelect, SubMenuItem, menuGroups } from "../shared/ui/Menus";
 import {
   ActivityIcon, AlertCircleIcon, ArrowLeftIcon, ArrowUpDownIcon, BookIcon, BugIcon, CheckIcon, CopyIcon, DownloadIcon, ExportIcon,
   ExternalLinkIcon, EyeIcon, EyeOffIcon, FileGlyph, FileIcon, FileTextIcon, FitWidthIcon, FolderGlyph,
   FilePlusIcon, PaperclipIcon, FolderIcon, FolderOpenIcon, FolderPlusIcon, HelpCircleIcon, HomeIcon, ImportIcon, InfoIcon, LabelGlyph, LabelIcon,
   LanguagesIcon, LanguagesOffIcon, LinkIcon, LogOutIcon, MaximizeIcon, MenuIcon, MinimizeIcon, PenIcon, PinIcon, PlusIcon,
   RectSelectIcon, RefreshIcon, SearchIcon, SettingsIcon, SparklesIcon, TextCursorIcon, TrashIcon, TypeIcon, UploadIcon,
-  ScissorsIcon, UserIcon, UsersIcon, XIcon, ZoomInIcon, ZoomOutIcon,
+  ScissorsIcon, ShareIcon, UserIcon, UsersIcon, XIcon, ZoomInIcon, ZoomOutIcon,
 } from "../shared/ui/Icons";
 
 
@@ -874,6 +874,9 @@ function LibraryApp({ publicPage = null, initialServerConfig = null }) {
 
   const [inputUrl, setInputUrl] = useState(initialUrl); // current page's source URL (shown in page properties)
   const [addUrl, setAddUrl] = useState(""); // "+" popover: URL to open
+  // The "+" menu's file pickers: hidden inputs its Upload rows click.
+  const addFilesRef = useRef(null);
+  const addFolderRef = useRef(null);
   const [pdfUrl, setPdfUrl] = useState("");
   // A pasted citation URL on a cold load opens the paper at the passage.
   const [pdfCitation, setPdfCitation] = useState(() => {
@@ -1063,6 +1066,9 @@ function LibraryApp({ publicPage = null, initialServerConfig = null }) {
   const [selectedLabels, setSelectedLabels] = useState(() => new Set());
   const lastPageClickRef = useRef(null); // anchor for shift-range selection
   const [homeMenu, setHomeMenu] = useState(null); // {kind:"page"|"folder", id?, name, x, y}
+  // The page menu's "New label…" name while it is typed (null: not typing).
+  const [homeMenuLabelDraft, setHomeMenuLabelDraft] = useState(null);
+  useEffect(() => { setHomeMenuLabelDraft(null); }, [homeMenu]);
   const [folderRenaming, setFolderRenaming] = useState(null); // {name, draft}
   const [labelRenaming, setLabelRenaming] = useState(null); // {name, draft}
 
@@ -5597,6 +5603,39 @@ function LibraryApp({ publicPage = null, initialServerConfig = null }) {
       setStatus(t("Stop sharing failed: {message}", { message: err.message }));
     }
   }
+  // The home page menu's Copy link / Share… / Export… / Ask AI. The last
+  // three act on the open page, so the page is opened first and the action
+  // runs once it is the one on screen (the effect below).
+  function copyPageLink(id) {
+    copyText(withWorkspace(`${window.location.origin}/?page=${encodeURIComponent(id)}`))
+      .then((ok) => setStatus(ok ? t("Link copied.") : t("Couldn't copy the link.")));
+  }
+  const pendingPageActionRef = useRef(null); // {id, action}
+  function openPageThen(id, action) {
+    setHomeMenu(null);
+    clearSelection();
+    pendingPageActionRef.current = { id, action };
+    openBlock(id, { restoreScroll: true });
+  }
+  useEffect(() => {
+    const pending = pendingPageActionRef.current;
+    if (!pending || pending.id !== focusedBlockId) return;
+    pendingPageActionRef.current = null;
+    if (pending.action === "share") {
+      loadShareSettings({ kind: "page", id: pending.id });
+      setShareError("");
+      loadPublishState();
+      setOpenPopover("share");
+    } else if (pending.action === "export") {
+      setExportFolder(null);
+      setExportOpen(true);
+    } else if (pending.action === "ask") {
+      setChatHidden(false);
+      setCollapsedWins((prev) => ({ ...prev, chat: false }));
+      if (isPhone) setPhonePanel("chat");
+      setTimeout(() => document.querySelector(".chatInputArea")?.focus(), 200);
+    }
+  }, [focusedBlockId]); // eslint-disable-line react-hooks/exhaustive-deps
   // Share a folder: the same popover under the topbar's link button, which
   // the folder view shows — so from the context menu the folder is opened first.
   function openFolderShare(name) {
@@ -6462,6 +6501,9 @@ function LibraryApp({ publicPage = null, initialServerConfig = null }) {
   // affordances (docs/dev/block_centric.md). pdfUrl is only the viewer's input.
   const pageAttach = useMemo(() => pageAttachment(focusedBlock), [focusedBlock]);
   const homeMode = !focusedBlockId && lib.browse;
+  // The one page selected on the home library (F2 renames it), or "".
+  const homePick = homeMode && lib.organize && selectedPages.size === 1 && !selectedFolders.size && !selectedLabels.size
+    ? [...selectedPages][0] : "";
   bindingsRef.current = keybindings;
   appCmdRef.current = {
     shareMode, homeMode, readOnly, hasPage: !!focusedBlockId, hasPdf: !!pdfUrl && !homeMode,
@@ -6490,7 +6532,15 @@ function LibraryApp({ publicPage = null, initialServerConfig = null }) {
       // undo would otherwise mutate CodeMirror's DOM behind its back.
       return inEditor || !!applied;
     },
-    renameTitle: () => { setTitleDraft(pageTitle || t("Untitled")); setTitleEditing(true); },
+    // On the home library F2 renames the one selected page in place.
+    renameTitle: () => {
+      if (homeMode) { if (homePick) setHomeEditingId(homePick); return; }
+      setTitleDraft(pageTitle || t("Untitled"));
+      setTitleEditing(true);
+    },
+    homePick,
+    homePicks: homeMode && lib.organize ? selectedPages.size : 0,
+    deletePages: () => deletePages([...selectedPages]),
     toggleChat: () => setChatHidden((v) => !v),
     togglePdf: () => setPdfHidden((v) => !v),
     toggleNotes: () => setNotesVisible((v) => !v),
@@ -6798,6 +6848,11 @@ function LibraryApp({ publicPage = null, initialServerConfig = null }) {
     }
     return m;
   }, [scopePages, viewedAtById]);
+  // Every label in the library, for the page menu's "Add label" flyout.
+  const allLabelNames = useMemo(
+    () => [...new Set(pageBlocks.flatMap((b) => b._labels))].sort((a, b) => a.localeCompare(b)),
+    [pageBlocks]
+  );
   const scopeLabels = useMemo(
     () => Object.keys(labelMeta).filter((l) => l !== NO_LABEL).sort((a, b) => a.localeCompare(b)),
     [labelMeta]
@@ -8767,71 +8822,50 @@ function LibraryApp({ publicPage = null, initialServerConfig = null }) {
   // on a phone the More sheet lists them instead of a View button. Read-only
   // share views omit AI chat and the import actions. A phone's bottom tabs
   // already switch Notes and Chat, so there only the PDF toggle is a window.
+  // The View menu's rows (also the phone's More sheet), as menu rows
+  // (shared/ui/Menus.jsx): a window toggle carries a check while shown.
   const viewMenuItems = (menuReadOnly) => {
     const pdfRow = !homeMode && !!pageAttach;
+    const shown = (on) => (on ? <CheckIcon size={14} className="ctxMenuCheck" /> : null);
+    const exportable = (focusedBlock && !homeMode) || (homeMode && folderFilter);
     return (
       <>
         {!isPhone || pdfRow ? <div className="popoverSection">{t("Windows")}</div> : null}
         {pdfRow ? (
-          <button className="popoverItem" onClick={() => setPdfHidden((v) => !v)}>
-            <span className="check">{!pdfHidden ? "✓" : ""}</span>
-            <FileIcon className="popoverItemIcon" size={15} /> PDF
-          </button>
+          <MenuItem icon={FileIcon} trailing={shown(!pdfHidden)} onClick={() => setPdfHidden((v) => !v)}>PDF</MenuItem>
         ) : null}
         {!homeMode && !isPhone ? (
-          <button className="popoverItem" onClick={() => setNotesVisible((v) => !v)}>
-            <span className="check">{notesVisible ? "✓" : ""}</span>
-            <FileTextIcon className="popoverItemIcon" size={15} /> {t("Notes")}
-          </button>
+          <MenuItem icon={FileTextIcon} trailing={shown(notesVisible)} onClick={() => setNotesVisible((v) => !v)}>{t("Notes")}</MenuItem>
         ) : null}
         {(!menuReadOnly || focusedBlockId) && !isPhone ? (
-          <button className="popoverItem" onClick={() => setChatHidden((v) => !v)}>
-            <span className="check">{!chatHidden ? "✓" : ""}</span>
-            <SparklesIcon className="popoverItemIcon" size={15} /> {t("AI Chat")}
-          </button>
+          <MenuItem icon={SparklesIcon} trailing={shown(!chatHidden)} onClick={() => setChatHidden((v) => !v)}>{t("AI Chat")}</MenuItem>
         ) : null}
-        {!menuReadOnly && (!isPhone || pdfRow) ? <div className="popoverDivider" /> : null}
+        {!menuReadOnly && (!isPhone || pdfRow) ? <MenuDivider /> : null}
         {!menuReadOnly ? (
-          <button
-            className="popoverItem"
+          <MenuItem
+            icon={ImportIcon}
             onClick={() => { setOpenPopover(null); setImportOpen(true); }}
             title={t("Bring in highlights — the ones saved inside this PDF file, a Logseq export, or a whole Zotero library")}
-          >
-            <ImportIcon className="popoverItemIcon" size={15} />
-            {t("Import…")}
-          </button>
+          >{t("Import…")}</MenuItem>
         ) : null}
-        {(focusedBlock && !homeMode) || (homeMode && folderFilter) ? (
-          <>
-            <div className="popoverDivider" />
-            <button
-              className="popoverItem"
-              onClick={() => {
-                setOpenPopover(null);
-                setExportFolder(homeMode ? folderFilter : null);
-                setExportOpen(true);
-              }}
-              title={homeMode
-                ? t("Download the “{folderFilter}” folder — every page in it as Markdown, a Logseq graph, a Zotero library, or a Gamma export", { folderFilter })
-                : t("Download this page — the PDF with highlights and notes, Markdown, a Logseq graph, a Zotero library, or a Gamma export")}
-            >
-              <ExportIcon className="popoverItemIcon" size={15} />
-              {t("Export…")}
-            </button>
-          </>
+        {exportable ? <MenuDivider /> : null}
+        {exportable ? (
+          <MenuItem
+            icon={ExportIcon}
+            onClick={() => {
+              setOpenPopover(null);
+              setExportFolder(homeMode ? folderFilter : null);
+              setExportOpen(true);
+            }}
+            title={homeMode
+              ? t("Download the “{folderFilter}” folder — every page in it as Markdown, a Logseq graph, a Zotero library, or a Gamma export", { folderFilter })
+              : t("Download this page — the PDF with highlights and notes, Markdown, a Logseq graph, a Zotero library, or a Gamma export")}
+          >{t("Export…")}</MenuItem>
         ) : null}
+        {!homeMode && pdfUrl ? <MenuDivider /> : null}
         {!homeMode && pdfUrl ? (
-          <>
-            <div className="popoverDivider" />
-            <button
-              className="popoverItem"
-              onClick={exportRawPdf}
-              title={t("Download the PDF file exactly as stored — no highlights or notes")}
-            >
-              <DownloadIcon className="popoverItemIcon" size={15} />
-              {t("Download PDF")}
-            </button>
-          </>
+          <MenuItem icon={DownloadIcon} onClick={exportRawPdf}
+            title={t("Download the PDF file exactly as stored — no highlights or notes")}>{t("Download PDF")}</MenuItem>
         ) : null}
       </>
     );
@@ -8864,21 +8898,17 @@ function LibraryApp({ publicPage = null, initialServerConfig = null }) {
   const phoneMainActive = phonePanel === null || (phonePanel === "notes" && centerNotes);
   const phoneMoreRows = () => (
     <>
-      <div className="popoverDivider" />
-      <button className="popoverItem" onClick={() => setOpenPopover("downloads")}
-        title={t("Background tasks — downloads, uploads, indexing, metadata/AI jobs")}>
-        <ActivityIcon className="popoverItemIcon" size={15} />
+      <MenuDivider />
+      <MenuItem icon={ActivityIcon} onClick={() => setOpenPopover("downloads")}
+        title={t("Background tasks — downloads, uploads, indexing, metadata/AI jobs")}
+        trailing={tasksRunning ? <span className="transferSpin inline" aria-hidden="true" />
+          : tasksFailed ? <span className="noticeDot inline" aria-hidden="true" /> : null}>
         {t("Background tasks")}
-        {tasksRunning ? <span className="transferSpin inline" aria-hidden="true" />
-          : tasksFailed ? <span className="noticeDot inline" aria-hidden="true" /> : null}
-      </button>
+      </MenuItem>
       {folderShareable ? (
-        <button className="popoverItem" onClick={() => openFolderShare(folderFilter)}>
-          <LinkIcon className="popoverItemIcon" size={15} />
-          {t("Share this folder")}
-        </button>
+        <MenuItem icon={LinkIcon} onClick={() => openFolderShare(folderFilter)}>{t("Share this folder")}</MenuItem>
       ) : null}
-      <div className="popoverDivider" />
+      <MenuDivider />
       {viewMenuItems(false)}
     </>
   );
@@ -8925,37 +8955,25 @@ function LibraryApp({ publicPage = null, initialServerConfig = null }) {
                 {t("A Gamma share link — Enter copies that page, with its blocks, highlights and PDF, into your library.")}
               </div>
             ) : null}
-            <label className="popoverItem" style={{ cursor: loading ? "not-allowed" : "pointer" }}>
-              <UploadIcon className="popoverItemIcon" size={15} />
-              {t("Upload files…")}
-              <input
-                type="file"
-                accept=".pdf,.md,.markdown,application/pdf,text/markdown"
-                multiple
-                style={{ display: "none" }}
-                disabled={loading}
-                onChange={(e) => { const files = Array.from(e.target.files || []); e.target.value = ""; setOpenPopover(null); if (files.length) uploadFiles(files); }}
-              />
-            </label>
-            <label
-              className="popoverItem"
-              style={{ cursor: loading ? "not-allowed" : "pointer" }}
-              title={t("Import every PDF and Markdown note in a folder — subfolders become folder labels")}
-            >
-              <FolderIcon className="popoverItemIcon" size={15} />
-              {t("Upload folder…")}
-              <input
-                type="file"
-                webkitdirectory=""
-                style={{ display: "none" }}
-                disabled={loading}
-                onChange={(e) => { const files = Array.from(e.target.files || []); e.target.value = ""; setOpenPopover(null); if (files.length) uploadFiles(files); }}
-              />
-            </label>
-            <button className="popoverItem" onClick={() => createPage()}>
-              <FilePlusIcon className="popoverItemIcon" size={15} />
-              {t("New page")}
-            </button>
+            <MenuItem icon={UploadIcon} disabled={loading} onClick={() => addFilesRef.current?.click()}>{t("Upload files…")}</MenuItem>
+            <MenuItem icon={FolderIcon} disabled={loading} onClick={() => addFolderRef.current?.click()}
+              title={t("Import every PDF and Markdown note in a folder — subfolders become folder labels")}>{t("Upload folder…")}</MenuItem>
+            <MenuItem icon={FilePlusIcon} onClick={() => createPage()}>{t("New page")}</MenuItem>
+            <input
+              ref={addFilesRef}
+              type="file"
+              accept=".pdf,.md,.markdown,application/pdf,text/markdown"
+              multiple
+              hidden
+              onChange={(e) => { const files = Array.from(e.target.files || []); e.target.value = ""; setOpenPopover(null); if (files.length) uploadFiles(files); }}
+            />
+            <input
+              ref={addFolderRef}
+              type="file"
+              webkitdirectory=""
+              hidden
+              onChange={(e) => { const files = Array.from(e.target.files || []); e.target.value = ""; setOpenPopover(null); if (files.length) uploadFiles(files); }}
+            />
           </div>
         ) : null}
       </span>
@@ -9116,7 +9134,7 @@ function LibraryApp({ publicPage = null, initialServerConfig = null }) {
               : notices.tone ? <span className={`noticeDot ${dotTone(notices.tone)}`} data-tone={notices.tone} aria-hidden="true" /> : null}
           </button>
           {openPopover === "user" ? (
-            <div className="popover userPopover">
+            <MenuScope className="popover userPopover">
               <div className="userCard" data-guide="account.card">
                 <span className="userAvatar" aria-hidden="true">
                   {authUser.is_guest
@@ -9171,67 +9189,53 @@ function LibraryApp({ publicPage = null, initialServerConfig = null }) {
                 </div>
               ) : null}
               {isPhone ? phoneMoreRows() : null}
-              <div className="popoverDivider" />
+              <MenuDivider />
               {/* The workspace switcher: every library this account belongs
                   to; switching reloads the tab on that workspace's URL. */}
               <div data-guide="account.workspaces">
               {workspaces.length ? <div className="popoverSection">{t("Workspaces")}</div> : null}
               {workspaces.map((w) => (
-                <button
+                <MenuItem
                   key={w.id}
-                  className={`popoverItem wsItem ${w.id === wsId ? "active" : ""}`}
+                  className={`wsItem ${w.id === wsId ? "active" : ""}`}
+                  icon={() => <span className="wsItemBadge" aria-hidden="true">{(w.name || "?").charAt(0).toUpperCase()}</span>}
                   onClick={() => { setOpenPopover(null); switchWorkspace(w.id); }}
                   title={w.personal ? t("Your personal workspace{default}", { default: w.default ? t(" (default)") : "" }) : t("{Shared} workspace · {members} member{_s} · you {role}", { Shared: w.access === "public" ? t("Public") : t("Shared"), members: w.members, _s: w.members === 1 ? "" : "s", role: ROLE_LABEL[w.role] || w.role })}
-                >
-                  <span className="wsItemBadge" aria-hidden="true">{(w.name || "?").charAt(0).toUpperCase()}</span>
-                  <span className="wsItemName">{w.name}</span>
-                  <span className="wsItemMeta">{workspaceMeta(w)}</span>
-                  {w.id === wsId ? <CheckIcon size={14} className="wsItemCheck" /> : null}
-                </button>
+                  trailing={<>
+                    <span className="wsItemMeta">{workspaceMeta(w)}</span>
+                    {w.id === wsId ? <CheckIcon size={14} className="wsItemCheck" /> : null}
+                  </>}
+                ><span className="wsItemName">{w.name}</span></MenuItem>
               ))}
               </div>
               {!authUser.is_guest ? (
-                <button
-                  className="popoverItem"
+                <MenuItem
+                  icon={UsersIcon}
                   onClick={() => { setSettingsOpen("workspaces"); setOpenPopover(null); }}
                   title={t("All your workspaces: rename, members, export and import, create another")}
-                >
-                  <UsersIcon className="popoverItemIcon" size={15} />
-                  {t("Workspaces…")}
-                </button>
+                >{t("Workspaces…")}</MenuItem>
               ) : null}
-              <div className="popoverDivider" />
-              <button className="popoverItem" onClick={() => { setSettingsOpen(notices.firstPane || "general"); setOpenPopover(null); }}>
-                <SettingsIcon className="popoverItemIcon" size={15} />
+              <MenuDivider />
+              <MenuItem icon={SettingsIcon} onClick={() => { setSettingsOpen(notices.firstPane || "general"); setOpenPopover(null); }}
+                trailing={notices.tone ? <span className={`noticeDot inline ${dotTone(notices.tone)}`} aria-hidden="true" /> : null}>
                 {t("Settings…")}
-                {notices.tone ? <span className={`noticeDot inline ${dotTone(notices.tone)}`} aria-hidden="true" /> : null}
-              </button>
-              <div className="popoverDivider" />
-              <details className="accountTours">
-                <summary className="popoverItem" data-guide="account.tour">
-                  <HelpCircleIcon className="popoverItemIcon" size={15} />
-                  {t("Tours")} <span className="accountToursArrow" aria-hidden="true">›</span>
-                </summary>
-                {/* The tours that can start here (guide.startable); a tour
-                    whose first step needs no open popover closes this menu. */}
-                <div className="accountToursMenu" role="menu" aria-label={t("Tours")}>
-                  {guide.startable().map((tour) => (
-                    <button key={tour.id} className="popoverItem" role="menuitem" data-tour={tour.id}
-                      onClick={() => guide.start(tour.id)}>{t(tour.title)}</button>
-                  ))}
-                </div>
-              </details>
-              <button className="popoverItem" onClick={() => { setOpenPopover(null); setReportOpen(true); }}
+              </MenuItem>
+              <MenuDivider />
+              {/* The tours that can start here (guide.startable); a tour
+                  whose first step needs no open popover closes this menu. */}
+              <SubMenuItem id="tours" icon={HelpCircleIcon} label={t("Tours")} data-guide="account.tour">
+                {guide.startable().map((tour) => (
+                  <MenuItem key={tour.id} role="menuitem" data-tour={tour.id}
+                    onClick={() => guide.start(tour.id)}>{t(tour.title)}</MenuItem>
+                ))}
+              </SubMenuItem>
+              <MenuItem icon={BugIcon} onClick={() => { setOpenPopover(null); setReportOpen(true); }}
                 title={t("Describe what went wrong; Gamma adds its build, your browser and its recent log lines and opens a GitHub issue for you to review")}>
-                <BugIcon className="popoverItemIcon" size={15} />
                 {t("Report a problem…")}
-              </button>
-              <div className="popoverDivider" />
-              <button className="popoverItem popoverItemDanger" onClick={authUser.is_guest ? confirmGuestLogout : doLogout}>
-                <LogOutIcon className="popoverItemIcon" size={15} />
-                {t("Log out")}
-              </button>
-            </div>
+              </MenuItem>
+              <MenuDivider />
+              <MenuItem icon={LogOutIcon} danger onClick={authUser.is_guest ? confirmGuestLogout : doLogout}>{t("Log out")}</MenuItem>
+            </MenuScope>
           ) : null}
         </span>
       )}
@@ -10285,100 +10289,188 @@ function LibraryApp({ publicPage = null, initialServerConfig = null }) {
               // Acting on a selected card acts on the whole selection
               const ids = selectedPages.size > 1 && selectedPages.has(homeMenu.id) ? [...selectedPages] : [homeMenu.id];
               const many = ids.length > 1;
-              const allPinned = ids.every((id) => pageBlocks.find((b) => b._pageId === id)?._pinned);
+              const acted = ids.map((id) => pageBlocks.find((b) => b._pageId === id));
+              const allPinned = acted.every((b) => b?._pinned);
               // Folder tags the acted-on pages already carry — offered for
               // removal alongside the current folder view.
-              const ownTags = [...new Set(ids.flatMap((id) => pageBlocks.find((b) => b._pageId === id)?._folders || []))];
-              return (
-                <>
-                  {!many ? (
-                    <MenuItem icon={ExternalLinkIcon} onClick={() => { setHomeMenu(null); clearSelection(); openBlock(homeMenu.id, { restoreScroll: true }); }}>{t("Open")}</MenuItem>
-                  ) : null}
-                  {!many && lib.organize ? (
-                    <MenuItem icon={PenIcon} onClick={() => { setHomeMenu(null); clearSelection(); setHomeEditingId(homeMenu.id); }}>{t("Rename")}</MenuItem>
-                  ) : null}
-                  {lib.pin ? (
-                    <MenuItem icon={PinIcon} onClick={() => { setHomeMenu(null); setPagesPinned(ids, !allPinned); }}>
+              const ownTags = [...new Set(acted.flatMap((b) => b?._folders || []))];
+              const allLabelled = (l) => acted.every((b) => b?._labels?.includes(l));
+              const close = () => setHomeMenu(null);
+              const commitNewLabel = () => {
+                const name = (homeMenuLabelDraft || "").replace(/,/g, " ").trim();
+                close();
+                if (name) addPagesToLabel(ids, name);
+              };
+              // Open · Rename | Pin · Add label · Move to folder · Duplicate |
+              // Copy link · Share… · Export… · Ask AI | Delete — the same rows
+              // wherever the page was right-clicked.
+              return menuGroups(
+                [
+                  !many && (
+                    <MenuItem key="open" icon={ExternalLinkIcon} keys={chordLabel("Enter")}
+                      onClick={() => { close(); clearSelection(); openBlock(homeMenu.id, { restoreScroll: true }); }}>{t("Open")}</MenuItem>
+                  ),
+                  !many && lib.organize && (
+                    <MenuItem key="rename" icon={PenIcon} keys={commandKeyLabel("app.renameTitle")}
+                      onClick={() => { close(); clearSelection(); setHomeEditingId(homeMenu.id); }}>{t("Rename")}</MenuItem>
+                  ),
+                ],
+                [
+                  lib.pin && (
+                    <MenuItem key="pin" icon={PinIcon} onClick={() => { close(); setPagesPinned(ids, !allPinned); }}>
                       {allPinned ? t("Unpin") : many ? t("Pin {n} pages", { n: ids.length }) : t("Pin")}
                     </MenuItem>
-                  ) : null}
-                  {lib.organize ? (
-                    <>
-                      <MenuItem icon={CopyIcon} onClick={() => { setHomeMenu(null); duplicatePages(ids); }}>{many ? t("Duplicate {n} pages", { n: ids.length }) : t("Duplicate")}</MenuItem>
-                      <SubMenuItem
-                        id="folders"
-                        icon={FolderIcon}
-                        label={t("Move to folder")}
-                        title={t("A page can sit in several folders — this adds it to the one you pick (same as dragging it onto the folder).")}
-                      >
-                        {folderMenuPaths.length ? folderMenuPaths.map((f) => (
-                          <MenuItem
-                            key={f}
-                            icon={FolderIcon}
-                            title={ownTags.includes(f) ? t("Already in {f}", { f: f }) : f}
-                            trailing={ownTags.includes(f) ? <CheckIcon size={14} className="ctxMenuCheck" /> : null}
-                            onClick={() => { setHomeMenu(null); addPagesToFolder(ids, f); }}
-                          >{f}</MenuItem>
-                        )) : (
-                          <MenuItem disabled>{t("No folders yet")}</MenuItem>
-                        )}
-                        {folderFilter || ownTags.length ? <MenuLabel>{t("Remove from")}</MenuLabel> : null}
-                        {folderFilter ? (
-                          <MenuItem icon={FolderOpenIcon} onClick={() => { setHomeMenu(null); removePagesFromFolder(ids, folderFilter); }}>{`“${folderFilter}”`}</MenuItem>
-                        ) : null}
-                        {ownTags.filter((f) => f !== folderFilter).map((f) => (
-                          <MenuItem key={`rm:${f}`} icon={FolderOpenIcon} title={f} onClick={() => { setHomeMenu(null); removePagesFromFolder(ids, f); }}>{`“${f}”`}</MenuItem>
-                        ))}
-                        {folderFilter || ownTags.length ? (
-                          <MenuItem icon={XIcon} onClick={() => { setHomeMenu(null); removePagesFromFolder(ids, ""); }}>{t("All folders")}</MenuItem>
-                        ) : null}
-                      </SubMenuItem>
-                      <MenuItem icon={TrashIcon} danger onClick={() => { setHomeMenu(null); deletePages(ids); }}>{many ? t("Delete {n} pages", { n: ids.length }) : t("Delete")}</MenuItem>
-                    </>
-                  ) : null}
-                </>
+                  ),
+                  lib.organize && (
+                    <SubMenuItem key="labels" id="labels" icon={LabelIcon} label={t("Add label")}
+                      title={t("Labels are flat tags a page can carry several of; a checked one is removed")}>
+                      {allLabelNames.map((l) => (
+                        <MenuItem
+                          key={l}
+                          icon={LabelIcon}
+                          title={allLabelled(l) ? t("Remove the label “{l}”", { l }) : l}
+                          trailing={allLabelled(l) ? <CheckIcon size={14} className="ctxMenuCheck" /> : null}
+                          onClick={() => { close(); if (allLabelled(l)) removePagesFromLabel(ids, l); else addPagesToLabel(ids, l); }}
+                        >{l}</MenuItem>
+                      ))}
+                      {allLabelNames.length ? <MenuDivider /> : null}
+                      {homeMenuLabelDraft === null ? (
+                        <MenuItem icon={PlusIcon} onClick={() => setHomeMenuLabelDraft("")}>{t("New label…")}</MenuItem>
+                      ) : (
+                        <input
+                          autoFocus
+                          className="ctxMenuInput"
+                          value={homeMenuLabelDraft}
+                          placeholder={t("Label name")}
+                          aria-label={t("New label")}
+                          onChange={(e) => setHomeMenuLabelDraft(e.target.value)}
+                          onKeyDown={(e) => {
+                            if (e.nativeEvent.isComposing) return;
+                            if (e.key === "Enter") { e.preventDefault(); commitNewLabel(); }
+                            else if (e.key === "Escape") { e.preventDefault(); e.stopPropagation(); setHomeMenuLabelDraft(null); }
+                          }}
+                        />
+                      )}
+                    </SubMenuItem>
+                  ),
+                  lib.organize && (
+                    <SubMenuItem
+                      key="folders"
+                      id="folders"
+                      icon={FolderIcon}
+                      label={t("Move to folder")}
+                      title={t("A page can sit in several folders — this adds it to the one you pick (same as dragging it onto the folder).")}
+                    >
+                      {folderMenuPaths.length ? folderMenuPaths.map((f) => (
+                        <MenuItem
+                          key={f}
+                          icon={FolderIcon}
+                          title={ownTags.includes(f) ? t("Already in {f}", { f: f }) : f}
+                          trailing={ownTags.includes(f) ? <CheckIcon size={14} className="ctxMenuCheck" /> : null}
+                          onClick={() => { close(); addPagesToFolder(ids, f); }}
+                        >{f}</MenuItem>
+                      )) : (
+                        <MenuItem disabled>{t("No folders yet")}</MenuItem>
+                      )}
+                      {folderFilter || ownTags.length ? <MenuLabel>{t("Remove from")}</MenuLabel> : null}
+                      {folderFilter ? (
+                        <MenuItem icon={FolderOpenIcon} onClick={() => { close(); removePagesFromFolder(ids, folderFilter); }}>{`“${folderFilter}”`}</MenuItem>
+                      ) : null}
+                      {ownTags.filter((f) => f !== folderFilter).map((f) => (
+                        <MenuItem key={`rm:${f}`} icon={FolderOpenIcon} title={f} onClick={() => { close(); removePagesFromFolder(ids, f); }}>{`“${f}”`}</MenuItem>
+                      ))}
+                      {folderFilter || ownTags.length ? (
+                        <MenuItem icon={XIcon} onClick={() => { close(); removePagesFromFolder(ids, ""); }}>{t("All folders")}</MenuItem>
+                      ) : null}
+                    </SubMenuItem>
+                  ),
+                  lib.organize && (
+                    <MenuItem key="duplicate" icon={CopyIcon} onClick={() => { close(); duplicatePages(ids); }}>{many ? t("Duplicate {n} pages", { n: ids.length }) : t("Duplicate")}</MenuItem>
+                  ),
+                ],
+                [
+                  !many && !shareMode && (
+                    <MenuItem key="link" icon={LinkIcon} onClick={() => { close(); copyPageLink(homeMenu.id); }}>{t("Copy link")}</MenuItem>
+                  ),
+                  !many && lib.organize && (
+                    <MenuItem key="share" icon={ShareIcon} title={t("Share this page — a link, and who may view or edit it")}
+                      onClick={() => openPageThen(homeMenu.id, "share")}>{t("Share…")}</MenuItem>
+                  ),
+                  !many && (
+                    <MenuItem key="export" icon={ExportIcon} title={t("Download this page — the PDF with highlights and notes, Markdown, a Logseq graph, a Zotero library, or a Gamma export")}
+                      onClick={() => openPageThen(homeMenu.id, "export")}>{t("Export…")}</MenuItem>
+                  ),
+                  !many && !shareMode && (
+                    <MenuItem key="ask" icon={SparklesIcon} onClick={() => openPageThen(homeMenu.id, "ask")}>{t("Ask AI about this page")}</MenuItem>
+                  ),
+                ],
+                [
+                  lib.organize && (
+                    <MenuItem key="delete" icon={TrashIcon} danger keys={commandKeyLabel("app.deletePages")}
+                      onClick={() => { close(); deletePages(ids); }}>{many ? t("Delete {n} pages", { n: ids.length }) : t("Delete")}</MenuItem>
+                  ),
+                ],
               );
-            })() : homeMenu.kind === "label" ? (
-              <>
-                <MenuItem icon={LabelIcon} onClick={() => { const name = homeMenu.name; setHomeMenu(null); if (!homeMode) goHome(); openLabel(name, homeMode ? folderFilter : ""); }}>{t("Open")}</MenuItem>
-                {lib.organize ? (
-                  <>
-                    <MenuItem icon={PenIcon} onClick={() => { setHomeMenu(null); setLabelRenaming({ name: homeMenu.name, draft: homeMenu.name }); }}>{t("Rename")}</MenuItem>
-                    <MenuItem icon={TrashIcon} danger onClick={() => { setHomeMenu(null); deleteLabelByName(homeMenu.name); }}>{t("Delete")}</MenuItem>
-                  </>
-                ) : null}
-              </>
-            ) : (
-              <>
-                <MenuItem icon={FolderOpenIcon} onClick={() => { const name = homeMenu.name; setHomeMenu(null); if (!homeMode) goHome(); openFolder(name); }}>{t("Open")}</MenuItem>
-                {lib.organize ? (
-                  <>
-                    <MenuItem icon={PenIcon} onClick={() => { setHomeMenu(null); setFolderRenaming({ name: homeMenu.name, draft: homeMenu.name }); }}>{t("Rename")}</MenuItem>
-                    <MenuItem icon={LinkIcon} title={t("A link that opens every page filed in this folder, now and later")}
-                      onClick={() => { const name = homeMenu.name; setHomeMenu(null); openFolderShare(name); }}>{t("Share…")}</MenuItem>
-                  </>
-                ) : null}
-                {lib.pin ? (() => {
-                  // Like pages: acting on a selected folder acts on the whole selection
-                  const paths = selectedFolders.size > 1 && selectedFolders.has(homeMenu.name) ? [...selectedFolders] : [homeMenu.name];
-                  const allPinned = paths.every((p) => pinnedFolders.some((q) => q.path === p));
-                  return (
-                    <MenuItem icon={PinIcon} title={t("Pinned folders sit in the Pinned strip at the top of the library, on every device")}
+            })() : homeMenu.kind === "label" ? menuGroups(
+              [
+                <MenuItem key="open" icon={LabelIcon} onClick={() => { const name = homeMenu.name; setHomeMenu(null); if (!homeMode) goHome(); openLabel(name, homeMode ? folderFilter : ""); }}>{t("Open")}</MenuItem>,
+                lib.organize && <MenuItem key="rename" icon={PenIcon} onClick={() => { setHomeMenu(null); setLabelRenaming({ name: homeMenu.name, draft: homeMenu.name }); }}>{t("Rename")}</MenuItem>,
+              ],
+              [lib.organize && <MenuItem key="delete" icon={TrashIcon} danger onClick={() => { setHomeMenu(null); deleteLabelByName(homeMenu.name); }}>{t("Delete")}</MenuItem>],
+            ) : (() => {
+              // Like pages: acting on a selected folder acts on the whole selection
+              const paths = selectedFolders.size > 1 && selectedFolders.has(homeMenu.name) ? [...selectedFolders] : [homeMenu.name];
+              const allPinned = paths.every((p) => pinnedFolders.some((q) => q.path === p));
+              const name = homeMenu.name;
+              return menuGroups(
+                [
+                  <MenuItem key="open" icon={FolderOpenIcon} keys={chordLabel("Enter")}
+                    onClick={() => { setHomeMenu(null); if (!homeMode) goHome(); openFolder(name); }}>{t("Open")}</MenuItem>,
+                ],
+                [
+                  lib.organize && (
+                    <MenuItem key="newpage" icon={FilePlusIcon} title={t("A blank page filed in this folder")}
+                      onClick={() => { setHomeMenu(null); createPage(name); }}>{t("New page here")}</MenuItem>
+                  ),
+                  lib.organize && (
+                    <MenuItem key="newfolder" icon={FolderPlusIcon}
+                      onClick={() => {
+                        setHomeMenu(null);
+                        if (!homeMode) goHome();
+                        openFolder(name);
+                        setNewFolderName("");
+                        setNewFolderOpen(true);
+                      }}>{t("New subfolder")}</MenuItem>
+                  ),
+                ],
+                [
+                  lib.organize && (
+                    <MenuItem key="rename" icon={PenIcon} onClick={() => { setHomeMenu(null); setFolderRenaming({ name, draft: name }); }}>{t("Rename")}</MenuItem>
+                  ),
+                  lib.pin && (
+                    <MenuItem key="pin" icon={PinIcon} title={t("Pinned folders sit in the Pinned strip at the top of the library, on every device")}
                       onClick={() => { setHomeMenu(null); setFoldersPinned(paths, !allPinned); }}>
                       {allPinned ? t("Unpin") : paths.length > 1 ? t("Pin {n} folders", { n: paths.length }) : t("Pin")}
                     </MenuItem>
-                  );
-                })() : null}
-                <MenuItem
-                  icon={ExportIcon}
-                  title={t("Download every page in this folder — Markdown, a Logseq graph, a Zotero library, or a Gamma export")}
-                  onClick={() => { const name = homeMenu.name; setHomeMenu(null); setExportFolder(name); setExportOpen(true); }}
-                >{t("Export…")}</MenuItem>
-                {lib.organize ? (
-                <MenuItem icon={TrashIcon} danger onClick={() => { setHomeMenu(null); deleteFolderByName(homeMenu.name); }}>{t("Delete")}</MenuItem>
-                ) : null}
-              </>
-            )}
+                  ),
+                  lib.organize && (
+                    <MenuItem key="share" icon={ShareIcon} title={t("A link that opens every page filed in this folder, now and later")}
+                      onClick={() => { setHomeMenu(null); openFolderShare(name); }}>{t("Share…")}</MenuItem>
+                  ),
+                  <MenuItem
+                    key="export"
+                    icon={ExportIcon}
+                    title={t("Download every page in this folder — Markdown, a Logseq graph, a Zotero library, or a Gamma export")}
+                    onClick={() => { setHomeMenu(null); setExportFolder(name); setExportOpen(true); }}
+                  >{t("Export…")}</MenuItem>,
+                ],
+                [
+                  lib.organize && (
+                    <MenuItem key="delete" icon={TrashIcon} danger onClick={() => { setHomeMenu(null); deleteFolderByName(name); }}>{t("Delete")}</MenuItem>
+                  ),
+                ],
+              );
+            })()}
         </ContextMenu>
       ) : null}
       {highlightMenu ? (
