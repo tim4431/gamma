@@ -113,8 +113,17 @@ export async function guideScenarios(env) {
       await page.click('[data-guide="header.home"]');
       await page.locator('.guideCard .guideDone').waitFor();
       assert(!new URL(page.url()).searchParams.has("block"), "final step returns to the homepage");
-      await until(async () => await page.locator(".guideCard").count() === 0);
-      assertEq(await page.evaluate(() => JSON.parse(localStorage.getItem("gamma-guide:first-run")).state), "done");
+      // The finish card: what the tour made, and what to try next.
+      await page.waitForSelector('[data-guide-finish="first-run"] .guideCardFinish');
+      assertEq(await page.evaluate(() => JSON.parse(localStorage.getItem("gamma-guide:first-run")).state), "done", "done is recorded when the finish card shows");
+      const made = await page.locator(".guideMade li").allTextContents();
+      assertEq(made.length, 4, `the paper, the highlights, the note and the label: ${made.join(" | ")}`);
+      assert(made[1].includes("2 highlights"), `both highlights are counted: ${made[1]}`);
+      if (flags.keep) await page.screenshot({ path: `${server.dir}/finish.png` });
+      await page.locator('.guideNext [data-finish="tours"]').click();
+      await page.waitForSelector('.userPopover [data-tour="ai-chat"]');
+      assertEq(await page.locator(".guideCard").count(), 0, "a tile closes the finish card");
+      assertEq(await page.evaluate(() => JSON.parse(localStorage.getItem("gamma-guide:first-run")).state), "done", "closing it keeps done");
       await page.goto(`${server.base}/?ws=${alice.ws}&block=${paperId}`);
       await page.waitForSelector('[data-guide="pdf.textLayer"] span:visible');
       // Manual re-entry through the Tours submenu.

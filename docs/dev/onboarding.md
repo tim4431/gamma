@@ -14,7 +14,8 @@ own highlight on that paper, a typed note demonstration, an `llm` label
 demonstration, and a final spotlight on the Home button (on a phone, the
 bottom bar's Library tab, which carries `header.home` there). Returning to the
 library emits `home.opened`, shows Done, and completes the tour
-automatically; Finish can also close it.
+automatically; Finish can also close it. Either way the tour ends on its
+finish card (below).
 
 The welcome card (`welcome: true` on the tour, its first step `intro:
 true`) is centred, 440 px: a "2-minute tour" chip (`minutes`), the title
@@ -27,6 +28,20 @@ menu. It is not counted as a step (the add demo reads "Step 1 of 8"). It is
 also the tour's offer: every new account is invited on arrival (see the
 table below), without dimming anything; Start begins with the add demo, and
 Explore on my own settles the offer for the tour's version.
+
+The finish card (`finishCard` on the tour; `guide/finish.js`) comes up when
+the last step completes: centred over a light scrim, with a beacon on the
+account button. "That's your first paper", then what the run made, each
+line shown only when it happened — the paper (the first `page.opened` of
+the run, whose payload carries its `title`), the number of highlights
+(`highlight.created`), the note and the `llm` label (their demos ran to the
+end; a skipped demo made nothing) — then two tiles: **Ask the paper**
+(the AI chat tour when an AI provider is connected, else Settings →
+Connections through App's `openSettings` service) and **More tours** (opens
+the account menu's Tours list), the footnote "Replay any tour from the
+account menu" and **Done**. "done" is recorded when the card opens;
+closing it (Done, ×, Esc, the scrim, a tile) keeps it. Only a tour with a
+`finishCard` ends this way; the others close after their last step.
 
 Progress is a localStorage key per account (`gamma-guide:<account>:<tourId>`;
 the first tour keeps its older `gamma-guide:first-run`), not yet the synced
@@ -383,7 +398,7 @@ where the thing happens:
 | Event | Emitted by |
 |---|---|
 | `popover.opened` `{name}` | App, when a topbar popover opens |
-| `page.opened` `{id}`, `home.opened` | App's page open and `goHome` |
+| `page.opened` `{id, title}`, `home.opened` | App's page open and `goHome` |
 | `nav.pushed`, `nav.back` | App's `pushNav` (a link jump recorded where you were) and `goBackNav` (the Back button or Alt+←) |
 | `palette.opened` | App, when the Ctrl+P palette opens |
 | `highlight.created` `{id, kind}` | App's highlight creation path |
@@ -504,6 +519,8 @@ frontend/src/guide/
   anchors.js        registry: id → {description, view, open?, pick?}
   events.js         guideEvents bus + the catalog
   triggers.js       when a tour is offered; per-account progress
+  keys.js           {key:…} in copy: a command's chord for this account
+  finish.js         a tour's finish card: what the run made
   useGuide.js       state machine, offers, reveal, demo actions
   GuideOverlay.jsx  spotlight + card + bottom sheet, offer and hint cards
   checklist.js      items and their events (design)

@@ -4,7 +4,7 @@
 
 export const EVENTS = [
   "popover.opened",   // {name} — a topbar popover opened: add, search, user, share, downloads
-  "page.opened",      // {id}
+  "page.opened",      // {id, title}
   "home.opened",      // returned to the library
   "nav.pushed",       // a link jump recorded a place for Back to return to
   "nav.back",         // Back (the button or Alt+←) returned to that place

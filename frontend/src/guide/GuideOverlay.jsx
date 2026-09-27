@@ -12,6 +12,7 @@ import { useEffect, useLayoutEffect, useRef, useState } from "react";
 import { anchorElement } from "./anchors.js";
 import { keyText, resolveKey } from "./keys.js";
 import { KeyCaps } from "../shared/ui/KeyCaps.jsx";
+import { CheckIcon, HighlightIcon, LabelIcon, PaperIcon, PencilIcon } from "../shared/ui/Icons";
 import "./guide.css";
 import { t, tn } from "../shared/i18n/i18n.js";
 
@@ -122,13 +123,65 @@ function WelcomeContent({ step, minutes, onStart, onLater, bindings }) {
   );
 }
 
+// A tour's finish card: what the run made (real, and the user's to keep),
+// two tiles for what to try next, and Done.
+const MADE_ICONS = { page: PaperIcon, highlight: HighlightIcon, note: PencilIcon, label: LabelIcon };
+function FinishContent({ finish, onAction, onDone }) {
+  // Names from the run (the paper's title, the label) stand out.
+  const strong = (args) => Object.fromEntries(Object.entries(args).map(([k, v]) => [k, typeof v === "string" ? <strong>{v}</strong> : v]));
+  return (
+    <>
+      <div className="guideHead">
+        <span className="guideFinishBadge" aria-hidden="true"><CheckIcon size={20} /></span>
+        <button className="uiClose uiCloseSm guideClose" onClick={onDone} title={t("Close (Esc)")} aria-label={t("Close")}>×</button>
+      </div>
+      <div className="guideTitle">{t(finish.title)}</div>
+      {finish.lead ? <div className="guideBody"><p>{t(finish.lead)}</p></div> : null}
+      {finish.made.length ? (
+        <ul className="guideMade">
+          {finish.made.map((item, i) => {
+            const Icon = MADE_ICONS[item.icon];
+            const args = strong(item.args);
+            return (
+              <li key={i}>
+                <span className="guideMadeIcon" aria-hidden="true">{Icon ? <Icon size={14} /> : null}</span>
+                <span>{item.plural ? tn(item.text, item.plural, item.args.n, args) : t(item.text, args)}</span>
+              </li>
+            );
+          })}
+        </ul>
+      ) : null}
+      {finish.next.length ? (
+        <>
+          <div className="guideNextLabel">{t("Next")}</div>
+          <div className="guideNext">
+            {finish.next.map((tile) => (
+              <button key={tile.id} type="button" data-finish={tile.id} onClick={() => onAction(tile.id)}>
+                <b>{t(tile.title)}</b>
+                <small>{t(tile.sub)}</small>
+              </button>
+            ))}
+          </div>
+        </>
+      ) : null}
+      <div className="guideFoot">
+        {finish.footnote ? <span className="guideFootnote">{t(finish.footnote)}</span> : null}
+        <span className="guideBtns"><button className="uiBtn primary" onClick={onDone}>{t("Done")}</button></span>
+      </div>
+    </>
+  );
+}
+
 // keybindings: the account's Settings → Keyboard overrides, so a `{key:…}`
 // in the copy shows the chord that actually fires.
 export default function GuideOverlay({ guide, keybindings }) {
   const { running, offer, index, count, done, live, back } = guide;
   const inviting = !running && !!offer;
   const visible = running || inviting;
-  const step = inviting ? offer : guide.step;
+  // Past the last step: the finish card, with a beacon on the account
+  // button (where tours are replayed).
+  const finishing = running && !!guide.finish;
+  const step = inviting ? offer : finishing ? guide.finish : guide.step;
   const next = inviting ? guide.acceptOffer : guide.next;
   const dismiss = inviting ? guide.dismissOffer : guide.dismiss;
   const [rect, setRect] = useState(null);   // spotlight rect (padded) or null
@@ -159,7 +212,7 @@ export default function GuideOverlay({ guide, keybindings }) {
       const b = el?.getBoundingClientRect();
       if (!b?.width || !b?.height) {
         setRect(null);
-        if (performance.now() - started > WAIT_MS && !gone && !step.do) {
+        if (performance.now() - started > WAIT_MS && !gone && !step.do && !finishing) {
           gone = true;
           if (!inviting && !step.optional) console.warn(`guide: anchor "${anchor}" not found, skipping step "${step.id}"`);
           setMissing(true);
@@ -171,7 +224,7 @@ export default function GuideOverlay({ guide, keybindings }) {
     };
     const schedule = () => { if (!raf) raf = requestAnimationFrame(measure); };
     measure();
-    if (!inviting) anchorElement(anchor)?.scrollIntoView?.({ block: "nearest", inline: "nearest" });
+    if (!inviting && !finishing) anchorElement(anchor)?.scrollIntoView?.({ block: "nearest", inline: "nearest" });
     const mo = new MutationObserver(schedule);
     mo.observe(document.body, { childList: true, subtree: true, attributes: true });
     window.addEventListener("resize", schedule);
@@ -185,7 +238,7 @@ export default function GuideOverlay({ guide, keybindings }) {
       if (raf) cancelAnimationFrame(raf);
       marked?.removeAttribute("data-guide-active");
     };
-  }, [visible, inviting, step, anchor]);
+  }, [visible, inviting, finishing, step, anchor]);
 
   // A missing anchor skips the step.
   useEffect(() => {
@@ -203,6 +256,21 @@ export default function GuideOverlay({ guide, keybindings }) {
   }, [visible, rect, step]);
 
   if (!visible || !step) return null;
+  if (finishing) {
+    return (
+      <div className="guideRoot guideFinishing" data-guide-finish={step.id}>
+        <div className="guideScrim" onClick={guide.dismiss} aria-hidden="true" />
+        {rect ? (
+          <div className="guideBeacon" aria-hidden="true"
+            style={{ top: rect.top + BEACON_INSET, left: rect.left + BEACON_INSET, width: rect.width - 2 * BEACON_INSET, height: rect.height - 2 * BEACON_INSET }} />
+        ) : null}
+        <div className="guideCard guideCardCentered guideCardWelcome guideCardFinish" role="dialog" aria-live="polite" aria-label={t(step.title)}
+          onMouseDown={(e) => { e.preventDefault(); e.stopPropagation(); }} onPointerDown={(e) => e.stopPropagation()}>
+          <FinishContent finish={step} onAction={guide.finishAction} onDone={guide.dismiss} />
+        </div>
+      </div>
+    );
+  }
   const waiting = anchor && !rect;
   // The welcome card: a welcome tour's intro step, or its offer.
   const welcome = inviting ? !!offer.welcome : !!step.intro && !anchor;

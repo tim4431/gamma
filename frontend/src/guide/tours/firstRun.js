@@ -38,6 +38,20 @@ export default {
   welcome: true,
   minutes: 2,
   trigger: { requires: { view: "home", editable: true }, anyOf: [{ demo: true }, { emptyLibrary: true }] },
+  // The finish card (guide/finish.js): what the run made, from its events
+  // and the demos that ran to the end, then what to try next.
+  finishCard: {
+    title: T("That's your first paper"),
+    lead: T("Everything the tour made is real and yours to keep:"),
+    made: [
+      { icon: "page", event: "page.opened", text: T("{title} is in your library") },
+      { icon: "highlight", event: "highlight.created", text: T("{n} highlight on it"), plural: T("{n} highlights on it") },
+      { icon: "note", step: "notes", text: T("a note under your highlights") },
+      { icon: "label", step: "label", text: T("the {label} label, to find it again"), args: { label: "llm" } },
+    ],
+    next: ["ai", "tours"],
+    footnote: T("Replay any tour from the account menu"),
+  },
   vars: {
     demoUrl: "https://arxiv.org/abs/1706.03762", // Attention Is All You Need
   },

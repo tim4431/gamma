@@ -269,6 +269,54 @@
 .guideOutlineKind { margin-left: auto; font-size: calc(12px * var(--ui-font-scale, 1)); color: var(--text-muted); white-space: nowrap; }
 .guideFootnote { font-size: calc(11.5px * var(--ui-font-scale, 1)); color: var(--text-muted); }
 
+/* The finish card, over a light scrim (clicking it closes the card). */
+.guideScrim { position: absolute; inset: 0; background: rgba(0, 0, 0, 0.22); pointer-events: auto; }
+.guideFinishBadge {
+  width: 40px;
+  height: 40px;
+  border-radius: 50%;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  background: var(--accent-bg);
+  color: var(--accent);
+}
+.guideFinishBadge + .guideClose { margin-left: auto; align-self: flex-start; }
+.guideMade {
+  list-style: none;
+  margin: 0;
+  padding: 10px 12px;
+  display: flex;
+  flex-direction: column;
+  gap: 7px;
+  border: 1px solid var(--border);
+  border-radius: 10px;
+  background: color-mix(in srgb, var(--bg-raised) 35%, var(--bg-elevated));
+}
+.guideMade li { display: flex; align-items: center; gap: 9px; font-size: calc(13px * var(--ui-font-scale, 1)); }
+.guideMade strong { font-weight: 600; }
+.guideMadeIcon { flex: none; width: 16px; display: inline-flex; justify-content: center; color: var(--accent); }
+.guideNextLabel { font-size: calc(11.5px * var(--ui-font-scale, 1)); color: var(--text-muted); margin-bottom: -4px; }
+.guideNext { display: flex; gap: 8px; }
+.guideNext button {
+  flex: 1;
+  display: flex;
+  flex-direction: column;
+  align-items: flex-start;
+  gap: 2px;
+  padding: 9px 11px;
+  text-align: left;
+  font: inherit;
+  color: var(--text-primary);
+  background: var(--bg-elevated);
+  border: 1px solid var(--border);
+  border-radius: 9px;
+  cursor: pointer;
+}
+.guideNext button:hover { border-color: var(--border-hover); background: var(--bg-hover); }
+.guideNext b { font-size: calc(13px * var(--ui-font-scale, 1)); font-weight: 600; }
+.guideNext small { font-size: calc(11.5px * var(--ui-font-scale, 1)); color: var(--text-muted); }
+
 /* Narrow screens: the card becomes a bottom sheet; the spotlight stays.
    On the phone layout it sits above the bottom tab bar. */
 @media (max-width: 640px) {

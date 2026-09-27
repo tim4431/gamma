@@ -5128,7 +5128,7 @@ function LibraryApp({ publicPage = null, initialServerConfig = null }) {
       if (opts?.restoreScroll) restorePdfScroll(tabScrollRef.current[blockId], blockId, openedPdfUrl);
       setStatus(t("Ready."));
       // Emit for every successful open, including reopening the same paper.
-      guideEvents.emit("page.opened", { id: blockId });
+      guideEvents.emit("page.opened", { id: blockId, title: block.content || t("Untitled") });
       return openedPdfUrl;
     } catch (err) {
       if (err.status === 404 && opts?.link) {
@@ -6515,6 +6515,8 @@ function LibraryApp({ publicPage = null, initialServerConfig = null }) {
         if (what !== "pen") return;
         setInkUi((s) => (s.open && s.pen && (s.tool === "eraser" || s.tool === "select") ? { ...s, tool: s.pen, options: false } : s));
       },
+      // the first tour's finish card: "Connect an AI provider"
+      openSettings: (pane) => { setSettingsOpen(pane); setOpenPopover(null); },
       show: (surface) => {
         if (surface !== "chat") return;
         setChatHidden(false);

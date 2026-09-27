@@ -10,6 +10,7 @@ import { EVENTS, eventMatches } from "../src/guide/events.js";
 import { TOURS } from "../src/guide/tours/index.js";
 import { canOffer, createGuideProgress, factsMatch, guideProgressKey, guideStorage, retiresOffer } from "../src/guide/triggers.js";
 import { keyNames, keyText, resolveKey } from "../src/guide/keys.js";
+import { createRunLog, madeItems, recordEvent } from "../src/guide/finish.js";
 
 function walk(dir, out = []) {
   for (const name of readdirSync(dir)) {
@@ -238,4 +239,23 @@ test("a welcome tour opens on an uncounted intro card, one per situation", () =>
     assert.ok(s.next && s.later && s.footnote);
   }
   assert.ok(firstRun.steps.slice(2).every((s) => !s.intro), "intro steps come first");
+});
+
+// A finish card lists what the run made, read from what happened during it.
+test("the finish card lists only what the run made", () => {
+  const finish = TOURS["first-run"].finishCard;
+  const log = createRunLog();
+  assert.deepEqual(madeItems(finish, log), [], "nothing happened, nothing listed");
+  recordEvent(log, "page.opened", { id: "p1", title: "Attention" });
+  recordEvent(log, "page.opened", { id: "p2", title: "Elsewhere" });
+  recordEvent(log, "highlight.created", { kind: "text" });
+  recordEvent(log, "highlight.created", { kind: "area" });
+  log.completed.add("label");
+  const made = madeItems(finish, log);
+  assert.deepEqual(made.map((m) => m.icon), ["page", "highlight", "label"], "the skipped note demo made no note");
+  assert.equal(made[0].args.title, "Attention", "the paper the tour opened first");
+  assert.equal(made[1].args.n, 2);
+  assert.equal(made[2].args.label, "llm");
+  for (const item of finish.made) assert.ok(!item.event || EVENTS.includes(item.event), `finish event ${item.event}`);
+  for (const item of finish.made) assert.ok(!item.step || TOURS["first-run"].steps.some((s) => s.id === item.step), `finish step ${item.step}`);
 });
