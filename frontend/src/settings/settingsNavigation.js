@@ -55,7 +55,7 @@ const entries = [
   e("ai", t("Dictation language"), t("Models"), t("Naming the language improves accuracy"), "speech voice mic"),
   e("ai", t("Token usage"), null, t("Tokens in and out, per model"), "tokens statistics consumption cost input output cached reset"),
   e("ai", t("Shared allowance"), t("Token usage"), t("What the server's shared keys still allow you today"), "shared AI tokens daily limit quota used up"),
-  e("assistant", t("Default reasoning effort"), t("Chat"), t("Leave Default unless your model supports it"), "chat thinking effort"),
+  e("assistant", t("Default reasoning effort"), t("Chat"), t("Each model gets the nearest level it takes"), "chat thinking effort reasoning level"),
   e("assistant", t("Clear snapshots on click"), t("Chat"), t("A plain click in the PDF also drops pending snapshots"), "chat images selections"),
   e("assistant", t("Assistant tools"), t("Tools"), t("Let chats read, search and edit your library"), "allow master switch permissions agent"),
   e("assistant", t("Folder chat"), t("Tools"), t("Home and folder views"), "permissions tools read search edit rename move"),

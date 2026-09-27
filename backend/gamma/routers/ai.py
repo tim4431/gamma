@@ -92,10 +92,14 @@ _PREVIEW_TOOLS = {"edit_block", "create_block"}
 
 router = APIRouter(prefix="/api", tags=["ai"])
 
-# Reasoning-depth values accepted by both wire protocols (Anthropic
-# output_config.effort / OpenAI reasoning_effort). Only sent when the user
-# picks one — many models reject the parameter outright.
-EFFORT_LEVELS = {"minimal", "low", "medium", "high", "xhigh", "max"}
+# Reasoning-depth values the wire protocols take (Anthropic
+# output_config.effort / OpenAI reasoning_effort), lowest first — the order
+# chat/effort.js mirrors. Only sent when the user picks one, and the chat
+# offers each model just the levels it takes (GET /ai/model-info).
+EFFORT_ORDER = ("none", "minimal", "low", "medium", "high", "xhigh", "max")
+EFFORT_LEVELS = set(EFFORT_ORDER)
+# Offered for a model whose levels no source knows.
+FALLBACK_EFFORTS = ["low", "medium", "high"]
 
 
 class AIChatRequest(BaseModel):
@@ -339,7 +343,9 @@ def ai_models(request: Request):
         # Set-up machine-translation engines [{id: "engine:<id>", label}] —
         # the translation picker offers them next to the models.
         "translate_engines": translate_engines.configured(user),
-        "efforts": ["low", "medium", "high"],  # offered in the UI; omitted unless picked
+        # Offered for a model whose own levels are unknown (/ai/model-info);
+        # omitted from a request unless picked.
+        "efforts": FALLBACK_EFFORTS,
         # Whether some connection takes dictation (Protocol.transcription —
         # an OpenAI-protocol key; the chat's mic shows only then). The same
         # entries /ai/transcribe picks from, models picked or not.
@@ -637,19 +643,25 @@ def ai_model_catalog(payload: ModelCatalogRequest, request: Request):
 
 
 # Sync def: the listing / catalog fetches run in the threadpool.
-@router.get("/ai/context-window")
-def ai_context_window(request: Request, model: str = ""):
-    """The context window of a chat model ("<provider id>:<model>"; "" = the
-    default one), for the chat's context ring: {model, context_window,
-    source: "provider" | "models.dev"} — ai_catalog.context_window;
-    context_window null when neither source knows the model."""
+@router.get("/ai/model-info")
+def ai_model_info(request: Request, model: str = ""):
+    """What the chat needs to know about a chat model ("<provider id>:<model>";
+    "" = the default one), asked live (ai_catalog): {model, context_window,
+    source, efforts, efforts_source}. context_window (the context ring) is
+    null when neither the provider's listing nor models.dev knows it;
+    efforts are the reasoning-effort levels it takes, lowest first ([] = no
+    effort control, null = unknown — the chat offers /ai/models' efforts)."""
     rt = ai_runtime(require_user(request))
     m = next((x for x in rt["models"] if x["id"] == model), None) or rt["default"]
     conf = rt["providers"].get(m["provider"]) if m else None
     if not conf:
-        return {"model": "", "context_window": None, "source": ""}
+        return {"model": "", "context_window": None, "source": "", "efforts": None, "efforts_source": ""}
     window, source = ai_catalog.context_window(m["provider"], conf, m["model"])
-    return {"model": m["model"], "context_window": window or None, "source": source}
+    efforts, efforts_source = ai_catalog.reasoning_efforts(m["provider"], conf, m["model"])
+    if efforts is not None:
+        efforts = [e for e in EFFORT_ORDER if e in efforts]
+    return {"model": m["model"], "context_window": window or None, "source": source,
+            "efforts": efforts, "efforts_source": efforts_source}
 
 
 class AIHealthRequest(BaseModel):
@@ -1290,6 +1302,8 @@ def ai_chat(payload: AIChatRequest, request: Request):
 
     entry = _resolve_model(rt, payload.model)
     effort = _resolve_effort(payload.effort)
+    # Which model answers, at what effort — the reply's footer names them.
+    answered = {"id": entry["id"], "name": entry["model"], "effort": effort}
     images = _parse_images(payload.images)
     custom_system = (payload.system or "").strip()[:8000]
     # The scope decides which tools exist; the permission toggles pick the
@@ -1470,10 +1484,12 @@ def ai_chat(payload: AIChatRequest, request: Request):
             # proper HTTP error instead of dying inside a committed stream.
             resp = open_with_fallback(True)
 
-            # First line: what the model was given (per-document coverage,
+            # First lines: what the model was given (per-document coverage,
             # native file vs text) so the UI can show "pages 1–9 of 22" and
-            # "provider refused the PDF file" instead of leaving it implicit.
+            # "provider refused the PDF file" instead of leaving it implicit;
+            # then which model answers, at what effort.
             head = (json.dumps({"context": state["coverage"]}) + "\n") if state.get("coverage") else ""
+            head += json.dumps({"model": answered}) + "\n"
 
             if tools:
                 def agent_ndjson():
@@ -1520,7 +1536,7 @@ def ai_chat(payload: AIChatRequest, request: Request):
                 elif kind == "usage":
                     usage = _add_usage(usage, data)
                 # "progress" previews only matter to a live UI
-            return {"response": "".join(parts), "actions": actions,
+            return {"response": "".join(parts), "actions": actions, "model": answered,
                     "context": state.get("coverage") or [],
                     **({"usage": usage} if usage else {})}
         usage = []
@@ -1528,7 +1544,7 @@ def ai_chat(payload: AIChatRequest, request: Request):
             text = _read_reply(resp2, _protocol(rt, entry), usage.append)
         for u in usage:
             count_usage(u)
-        return {"response": text, "context": state.get("coverage") or [],
+        return {"response": text, "model": answered, "context": state.get("coverage") or [],
                 **({"usage": usage[0]} if usage else {})}
     except AllowanceExhausted as e:
         return _failure_response(e.status_code, e.detail, _failure_info(e, rt, entry))

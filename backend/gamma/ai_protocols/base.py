@@ -94,6 +94,27 @@ def listed_window(row) -> int:
     return 0
 
 
+def listed_efforts(row) -> list | None:
+    """A model listing row's reasoning-effort levels, in order: Anthropic's
+    ``capabilities.effort`` ({level: {supported}}) or the Codex backend's
+    ``supported_reasoning_levels`` ([{effort}]). ``[]`` when the row says
+    the model takes none, None when it doesn't say."""
+    if not isinstance(row, dict):
+        return None
+    caps = row.get("capabilities")
+    effort = caps.get("effort") if isinstance(caps, dict) else None
+    if isinstance(effort, dict):
+        if not effort.get("supported", True):
+            return []
+        return [str(level) for level, v in effort.items()
+                if level != "supported" and isinstance(v, dict) and v.get("supported")]
+    levels = row.get("supported_reasoning_levels")
+    if isinstance(levels, list):
+        names = [(x.get("effort") if isinstance(x, dict) else x) for x in levels]
+        return [str(n) for n in names if isinstance(n, str) and n]
+    return None
+
+
 def sse_json(response):
     """The JSON events of a server-sent-events response, up to ``[DONE]``."""
     for raw in response:
@@ -220,13 +241,15 @@ class Protocol:
         return bearer_json_request(f"{conf['base_url']}/v1/models", conf["api_key"])
 
     def models(self, data, conf) -> list:
-        """The chat models of a listing body as ``[{id, context_window}]``
-        (0 = the listing names no window), in the order to offer them."""
+        """The chat models of a listing body as ``[{id, context_window,
+        efforts}]`` (0 = the listing names no window, efforts None = it names
+        no effort levels — listed_efforts), in the order to offer them."""
         rows = [r for r in (data.get("data") or []) if isinstance(r, dict) and r.get("id")]
         found = {}
         for row in rows:
-            found.setdefault(str(row["id"]), listed_window(row))
-        return [{"id": mid, "context_window": found[mid]} for mid in sorted(found)]
+            found.setdefault(str(row["id"]), row)
+        return [{"id": mid, "context_window": listed_window(found[mid]), "efforts": listed_efforts(found[mid])}
+                for mid in sorted(found)]
 
     def ping_request(self, conf) -> URLRequest:
         """The free credential check behind the login connection check."""

@@ -323,4 +323,83 @@ export async function chatNavigationScenarios(env) {
       assertNoProblems(page);
     } finally { await ctx.close(); }
   });
+
+  await step("chat navigation: the effort menu offers the model's own levels, the nearest one is sent, and a reply names its model and effort", async () => {
+    await alice.api("/api/chats/home", { method: "PUT", body: { messages: [] } });
+    // One page load per model: its levels (the provider's listing or
+    // models.dev, pinned by the backend tests) are stubbed here.
+    const load = async (efforts) => {
+      const ctx = await alice.context(browser);
+      await fakeAiModels(ctx);
+      await ctx.route("**/api/ai/model-info?**", (route) => route.fulfill({
+        json: { model: "model", context_window: null, source: "", efforts, efforts_source: "provider" } }));
+      await ctx.addInitScript(() => {
+        localStorage.setItem("gamma-ai-login-check", "off");
+        window.chatBodies = [];
+        const fetch = window.fetch.bind(window);
+        window.fetch = (input, init) => {
+          if (!String(input).endsWith("/api/ai/chat")) return fetch(input, init);
+          const body = JSON.parse(init.body);
+          window.chatBodies.push(body);
+          const lines = [{ model: { id: body.model, name: "model", effort: body.effort } }, { delta: "ok" }];
+          return Promise.resolve(new Response(lines.map((l) => JSON.stringify(l)).join("\n") + "\n",
+            { headers: { "Content-Type": "application/x-ndjson" } }));
+        };
+      });
+      const page = await openPage(ctx, `${server.base}/?ws=${alice.ws}`);
+      await page.getByRole("combobox", { name: "Message AI" }).waitFor();
+      return { ctx, page };
+    };
+    const chip = (page) => page.getByRole("button", { name: "Model and reasoning effort", exact: true });
+    const menuItems = (page) => page.locator(".uiSelectMenu .ctxMenuItem").allInnerTexts();
+    // The pick is an account preference: wait for it to reach the profile
+    // before the next page load reads it.
+    const saved = (effort) => until(async () => ((await alice.api("/api/prefs/profile")).value?.chatEffort || "") === effort,
+      { what: `the profile holds effort "${effort}"` });
+    const send = async (page) => {
+      const input = page.getByRole("combobox", { name: "Message AI" });
+      await input.fill("Which effort?");
+      await input.press("Enter");
+      await until(() => page.evaluate(() => window.chatBodies.length === 1), { what: "the message is sent" });
+      return page.evaluate(() => window.chatBodies[0].effort);
+    };
+
+    let { ctx, page } = await load(["low", "medium", "high", "xhigh"]);
+    try {
+      await chip(page).click();
+      assertEq((await menuItems(page)).join(), "model,Default,low,medium,high,xhigh", "the model's own levels");
+      await page.locator(".uiSelectMenu .ctxMenuItem", { hasText: "xhigh" }).click();
+      await until(async () => (await chip(page).innerText()) === "model · xhigh", { what: "the chip names the effort" });
+      assertEq(await send(page), "xhigh");
+      await page.locator(".chatMsgModel", { hasText: "model · xhigh" }).waitFor();
+      await saved("xhigh");
+      assertNoProblems(page);
+    } finally { await ctx.close(); }
+
+    // A model without xhigh gets the nearest level it takes; the preference stays.
+    await alice.api("/api/chats/home", { method: "PUT", body: { messages: [] } });
+    ({ ctx, page } = await load(["low", "medium", "high"]));
+    try {
+      await until(async () => (await chip(page).innerText()) === "model · high", { what: "the nearest level" });
+      assertEq(await send(page), "high");
+      await page.locator(".chatMsgModel", { hasText: "model · high" }).waitFor();
+      await chip(page).click();
+      await page.locator(".uiSelectMenu .ctxMenuItem", { hasText: "Default" }).click();
+      await until(async () => (await chip(page).innerText()) === "model", { what: "Default leaves the effort out" });
+      await saved("");
+      assertNoProblems(page);
+    } finally { await ctx.close(); }
+
+    // A model with no effort control: no effort section at all.
+    ({ ctx, page } = await load([]));
+    try {
+      await chip(page).click();
+      assertEq((await menuItems(page)).join(), "model", "no effort levels to offer");
+      assertEq(await page.locator(".uiSelectMenu", { hasText: "Reasoning effort" }).count(), 0);
+      assertNoProblems(page);
+    } finally {
+      await ctx.close();
+      await alice.api("/api/chats/home", { method: "PUT", body: { messages: [] } });
+    }
+  });
 }

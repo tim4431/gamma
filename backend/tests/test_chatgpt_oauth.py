@@ -462,18 +462,24 @@ def test_chatgpt_sse_deltas_join_and_fail():
         list(_sse_deltas(empty, "chatgpt"))
 
 
-def test_context_window_comes_from_the_listing_then_models_dev(erin, monkeypatch):
+def test_model_facts_come_from_the_listing_then_models_dev(erin, monkeypatch):
     monkeypatch.setattr(ai_catalog, "_listings", {})
-    monkeypatch.setattr(ai_catalog, "_models_dev", {"windows": None, "until": 0.0})
+    monkeypatch.setattr(ai_catalog, "_models_dev", {"index": None, "until": 0.0})
     monkeypatch.setattr(chatgpt_proto, "codex_client_version", lambda: "9.9.9")
     entry = next(p for p in erin.get("/api/ai/settings").json()["providers"]
                  if p["protocol"] == "chatgpt")
     model = next(m for m in erin.get("/api/ai/models").json()["models"] if m["provider"] == entry["id"])
     calls = []
-    listing = {"models": [{"slug": model["model"], "context_window": 272_000}]}
+    listing = {"models": [{"slug": model["model"], "context_window": 272_000,
+                           "supported_reasoning_levels": [{"effort": "low"}, {"effort": "medium"},
+                                                          {"effort": "high"}, {"effort": "xhigh"}]}]}
     catalog = {
-        "openai": {"models": {model["model"]: {"id": model["model"], "limit": {"context": 400_000}}}},
-        "gateway": {"models": {f"openai/{model['model']}": {"limit": {"context": 128_000}}}},
+        "openai": {"models": {model["model"]: {
+            "id": model["model"], "limit": {"context": 400_000}, "reasoning": True,
+            "reasoning_options": [{"type": "effort", "values": ["none", "low", "medium", "high"]}]}}},
+        "gateway": {"models": {f"openai/{model['model']}": {
+            "limit": {"context": 128_000}, "reasoning": True,
+            "reasoning_options": [{"type": "budget_tokens", "min": 1024}]}}},
     }
 
     def fake_urlopen(req, timeout=0):
@@ -481,28 +487,32 @@ def test_context_window_comes_from_the_listing_then_models_dev(erin, monkeypatch
         return _FakeResp(catalog if "models.dev" in req.full_url else listing)
 
     monkeypatch.setattr(ai_catalog, "urlopen", fake_urlopen)
-    ask = lambda: erin.get("/api/ai/context-window", params={"model": model["id"]}).json()
+    ask = lambda: erin.get("/api/ai/model-info", params={"model": model["id"]}).json()
 
     # The provider's own listing says it; asked once, then cached.
-    assert ask() == {"model": model["model"], "context_window": 272_000, "source": "provider"}
+    assert ask() == {"model": model["model"], "context_window": 272_000, "source": "provider",
+                     "efforts": ["low", "medium", "high", "xhigh"], "efforts_source": "provider"}
     assert ask()["context_window"] == 272_000
     assert len(calls) == 1 and "/models?client_version=9.9.9" in calls[0]
 
-    # A listing without sizes: models.dev, the vendor behind the protocol winning.
+    # A listing without sizes or levels: models.dev, the vendor behind the
+    # protocol winning over a gateway that only takes a token budget.
     listing = {"models": [{"slug": model["model"]}]}
     ai_catalog._listings.clear()
-    assert ask() == {"model": model["model"], "context_window": 400_000, "source": "models.dev"}
+    assert ask() == {"model": model["model"], "context_window": 400_000, "source": "models.dev",
+                     "efforts": ["none", "low", "medium", "high"], "efforts_source": "models.dev"}
 
     # Nobody knows it: null, never a guess.
     catalog = {"openai": {"models": {}}}
     ai_catalog._listings.clear()
-    ai_catalog._models_dev.update(windows=None, until=0.0)
-    assert ask() == {"model": model["model"], "context_window": None, "source": ""}
+    ai_catalog._models_dev.update(index=None, until=0.0)
+    assert ask() == {"model": model["model"], "context_window": None, "source": "",
+                     "efforts": None, "efforts_source": ""}
 
 
 def test_context_window_lookups_keep_the_last_good_answer(monkeypatch):
     monkeypatch.setattr(ai_catalog, "_listings", {})
-    monkeypatch.setattr(ai_catalog, "_models_dev", {"windows": None, "until": 0.0})
+    monkeypatch.setattr(ai_catalog, "_models_dev", {"index": None, "until": 0.0})
     conf = {"protocol": "openai", "api_key": "k", "base_url": "https://api.deepseek.com", "name": "DeepSeek"}
     monkeypatch.setattr(ai_catalog, "urlopen", lambda req, timeout=0: _FakeResp(
         {"data": [{"id": "llama", "max_model_len": 32_768}, {"id": "bare"}]} if "/v1/models" in req.full_url else {
@@ -526,3 +536,34 @@ def test_context_window_lookups_keep_the_last_good_answer(monkeypatch):
     ai_catalog._models_dev["until"] = 0.0
     assert ai_catalog._listed_windows("p", conf) == {"llama": 32_768}
     assert ai_catalog._catalog_window("deepseek-chat", conf) == 131_072
+
+
+def test_reasoning_efforts_from_an_anthropic_listing_then_models_dev(monkeypatch):
+    monkeypatch.setattr(ai_catalog, "_listings", {})
+    monkeypatch.setattr(ai_catalog, "_models_dev", {"index": None, "until": 0.0})
+    conf = {"protocol": "anthropic", "api_key": "k", "base_url": "https://api.anthropic.com", "name": "Anthropic"}
+
+    def effort(*on):
+        return {"supported": bool(on), **{level: {"supported": level in on}
+                                          for level in ("low", "medium", "high", "xhigh", "max")}}
+
+    monkeypatch.setattr(ai_catalog, "urlopen", lambda req, timeout=0: _FakeResp(
+        {"data": [{"id": "claude-a", "capabilities": {"effort": effort("low", "medium", "high", "max")}},
+                  {"id": "claude-b", "capabilities": {"effort": effort()}},
+                  {"id": "claude-c"}]} if "/v1/models" in req.full_url else {
+            "x": {"models": {
+                "claude-c": {"reasoning": True, "reasoning_options": [{"type": "effort", "values": ["low", "high"]}]},
+                "budget-only": {"reasoning": True, "reasoning_options": [{"type": "budget_tokens", "min": 1024}]},
+                "no-reasoning": {"reasoning": False},
+                "older-entry": {"reasoning": True, "limit": {"context": 8000}}}},
+        }))
+    # The listing's capabilities say it, level by level; a model it lists
+    # without them is looked up in models.dev.
+    assert ai_catalog.reasoning_efforts("p", conf, "claude-a") == (["low", "medium", "high", "max"], "provider")
+    assert ai_catalog.reasoning_efforts("p", conf, "claude-b") == ([], "provider")
+    assert ai_catalog.reasoning_efforts("p", conf, "claude-c") == (["low", "high"], "models.dev")
+    # No effort control at all is [], an entry that doesn't say is unknown.
+    assert ai_catalog.reasoning_efforts("p", conf, "budget-only") == ([], "models.dev")
+    assert ai_catalog.reasoning_efforts("p", conf, "no-reasoning") == ([], "models.dev")
+    assert ai_catalog.reasoning_efforts("p", conf, "older-entry") == (None, "")
+    assert ai_catalog.context_window("p", conf, "older-entry") == (8000, "models.dev")

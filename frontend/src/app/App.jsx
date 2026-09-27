@@ -2220,15 +2220,14 @@ function LibraryApp({ publicPage = null, initialServerConfig = null }) {
   // FLIP animation: when tab order changes, slide each tab from its old
   // position to the new one (Chrome-style), instead of snapping. Positions
   // are the tab's place in the strip's content (offsetLeft; the strip is its
-  // offset parent), so the strip scrolling to the active tab moves nothing;
-  // pinned tabs stick to the edge while it scrolls and are left out.
+  // offset parent), so the strip scrolling to the active tab moves nothing.
   const tabElsRef = useRef(new Map());
   const tabLeftsRef = useRef(new Map());
   useLayoutEffect(() => {
     const prev = tabLeftsRef.current;
     const next = new Map();
     for (const [id, el] of tabElsRef.current) {
-      if (!el || el.classList.contains("pinned")) continue;
+      if (!el) continue;
       const left = el.offsetLeft;
       next.set(id, left);
       const old = prev.get(id);
@@ -9390,6 +9389,7 @@ function LibraryApp({ publicPage = null, initialServerConfig = null }) {
               })}
               onOpen={(id) => openBlock(id, { restoreScroll: true })}
               onClose={closeTab}
+              onTogglePin={toggleTabPinned}
               onContext={(tab, x, y) => setTabMenu({ id: tab.id, pinned: !!tab.pinned, x, y })}
             />
             {isPhone ? null : topbarActions}

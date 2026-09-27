@@ -797,8 +797,8 @@ export async function settingsScenarios(env) {
     ] } });
     // The window lookup (provider listing, then models.dev) is pinned by the
     // backend tests; here the server's answer is stubbed to stay offline.
-    const { ctx, page } = await setup(undefined, (c) => c.route("**/api/ai/context-window?**", (route) => route.fulfill({
-      json: { model: "test-model-a", context_window: 128000, source: "provider" } })));
+    const { ctx, page } = await setup(undefined, (c) => c.route("**/api/ai/model-info?**", (route) => route.fulfill({
+      json: { model: "test-model-a", context_window: 128000, source: "provider", efforts: null, efforts_source: "" } })));
     try {
       const ring = page.getByRole("button", { name: "Context: 64k of 128k tokens (50%)", exact: true });
       await ring.waitFor();

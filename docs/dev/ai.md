@@ -114,7 +114,7 @@ branches on a protocol id. Routes, the chat loop, `ai_settings` and
 | the chat call | `wire(conf, tools)` (a sibling wire for some calls), `request(...)`, `reply_text`, `read_reply`, `streams_only` |
 | the stream | `events` (one loop in the base) over `stream_event` / `stream_end`; a stream without a single event raises `NotAnAIStream` |
 | token counts | `usage(raw)` → `{input, output, cache_read, cache_write}` |
-| models | `models_request`, `models(data, conf)` → `[{id, context_window}]`, `catalog_hints` |
+| models | `models_request`, `models(data, conf)` → `[{id, context_window, efforts}]` (`listed_window` / `listed_efforts` read whatever the listing carries), `catalog_hints` |
 | credential check | `ping_request` (default: the model listing) |
 | quota | `has_account_usage`, `account_usage_request`, `account_usage` |
 | attachments, dictation | `native_pdf`, `transcription` (a rank), `transcription_request`, `transcript` |
@@ -211,7 +211,8 @@ deltas), and PDF attachments go as native `input_file` parts with an automatic
 retry as extracted text if the backend rejects them. That retry applies to
 any provider that answers a native-PDF request with a 4xx other than
 401/403/429 (compatible servers may refuse `file` parts too). Anthropic has
-no `minimal` effort; its adapter sends `low` for it.
+no `minimal` or `none` effort; its adapter sends `low` for `minimal` and
+leaves the parameter out for `none`.
 
 Its model list (`POST /api/ai/model-catalog`) is Codex CLI's own listing call,
 `GET {base}/models?client_version=…`, made with the entry's token. The backend
@@ -231,7 +232,7 @@ tokens over the fresh ones.
 `/api/ai/chat` speaks both the Anthropic Messages API and the OpenAI Chat
 Completions API. Requests carry a model-registry id, optional `effort`
 (→ Anthropic `output_config.effort` / OpenAI `reasoning_effort`; omitted unless
-set — some models reject it), optional `system` override, pasted `images`
+set — some models reject it; see "Reasoning effort" below), optional `system` override, pasted `images`
 (data URLs → native image content parts), and the context PAGES: `pages`
 (several — a report across pages) or, when empty, the one page of `page_id`
 (the open page). A page's PDF attachment is derived server-side
@@ -313,7 +314,7 @@ page — `title`, `doc_id` (`""` for a page without a PDF), `native` (the file
 itself was sent), `native_requested`, `partial`, `chars`, `pages`,
 `pages_shown` (uploaded `files` are reported the same way, and get the
 single-page budget when they fall back to text). The chat saves it on the
-reply and shows a chip only when
+reply and shows a pill (`.chatPill`, the agent-steps pill's look) only when
 it matters: "Model saw pages 1–9 of 22" for a truncated paper, "PDF file not
 accepted — sent as text" when the file was requested but the provider took
 text instead. `/api/ai/models` marks each model `native_pdf` (false for
@@ -330,6 +331,33 @@ PDF extraction (`gamma/pdf_text.py`) is serialized behind a lock — pdfium is
 not thread-safe and overlapping extractions fail both — and reads up to
 `MAX_PAGES` (5000, a runaway guard that logs when it bites; pages past it are
 invisible to search AND read_page, so keep it far above real documents).
+
+### Reasoning effort
+
+The chat keeps ONE preferred effort (the account pref `chatEffort`, set from
+the composer's model chip or Settings → Assistant → Chat) and sends each
+model the level it takes. `GET /api/ai/model-info` names a model's levels,
+lowest first, looked up live like its context window
+(`ai_catalog.reasoning_efforts`): the entry's own listing first
+(Anthropic's `capabilities.effort.<level>.supported`, the Codex backend's
+`supported_reasoning_levels`), else models.dev's `reasoning_options`
+(`{type: "effort", values}`; a model that doesn't reason or only takes a
+token budget has none). `[]` means the model has no effort control: the
+chip's menu drops its effort section and nothing is sent. A model no source
+knows gets `/api/ai/models`' generic `efforts` (low / medium / high). The
+preference itself never changes with the model: `effortFor` in
+`chat/effort.js` sends it as it is when the model takes it, else the
+nearest level the model does (a tie goes to the lower), so `xhigh` becomes
+`high` on a model that stops there and comes back on the next model that
+has it. The chip shows that effective level beside the model's name. The
+server accepts `EFFORT_ORDER` (none … max) and drops anything else.
+
+Every reply names what answered it: the stream's `{"model": {id, name,
+effort}}` line (after `{context}`) is saved on the reply as `model` and
+`effort`, and the reply's foot shows "gpt-5.5 · high" before the token line.
+`GAMMA_MODEL_CATALOG=off` keeps the server from asking models.dev at all (an
+offline server; the browser suite sets it); model facts then come from the
+providers' listings alone.
 
 ### Selected PDF passages
 
@@ -831,7 +859,7 @@ show what a week cost. Code: `gamma/ai_usage.py`, `ai_client.normalize_usage`,
   the reply as `context_tokens`; the summed `usage` would overcount an
   agent reply. A reply saved before that field counts only when it had no
   tool rounds. The window is looked up live, never tabled in the code:
-  `GET /api/ai/context-window?model=<pid>:<model>`
+  `GET /api/ai/model-info?model=<pid>:<model>`
   (`ai_catalog.context_window`, the same for every protocol). It reads the
   entry's own model listing first (`Protocol.models`: Anthropic's
   `max_input_tokens`, the Codex backend's `context_window`, the
@@ -843,7 +871,7 @@ show what a week cost. Code: `gamma/ai_usage.py`, `ai_client.normalize_usage`,
   are cached like the Codex version (6 h; a failed lookup retried after
   10 min, the last good answer kept). A model neither knows gets `null`: no
   ring, and the popover shows the token count alone. The client asks once
-  per model per page load (`useContextWindow` in `ChatDock.jsx`). The ring
+  per model per page load (`useModelInfo` in `ChatDock.jsx`). The ring
   turns red past 80%; clicking it opens the chat-settings popover, whose
   Tokens section spells the figure out (`contextUsed`).
 - **Stored.** `ai_usage.record` writes one row per call to `ai_usage` in

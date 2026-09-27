@@ -414,11 +414,11 @@ function PopoverAnchor({ name, children, className = "" }) {
 }
 
 // The topbar's tab strip (Chrome-style). Each tab leads with its page's kind
-// icon (`kindOf(id)` → "pdf" | "page"); pinned tabs are 36px icons stuck to
-// the left edge. The strip keeps the active tab in view, pans with a plain
-// mouse wheel, and when it overflows fades its right edge and shows a
-// "⌄ n" button whose popover lists every open tab with a filter.
-const PINNED_STEP = 38; // a pinned tab's width + the strip's gap: where the next one sticks
+// icon (`kindOf(id)` → "pdf" | "page"); pinned tabs come first, keep their
+// title and carry a pin (click to unpin) where the close button would be.
+// The strip keeps the active tab in view, pans with a plain mouse wheel, and
+// when it overflows fades its right edge and shows a "⌄ n" button whose
+// popover lists every open tab with a filter.
 const TAB_FADE = 40; // the right-edge fade the active tab keeps clear of
 
 function OpenTabs({
@@ -431,6 +431,7 @@ function OpenTabs({
   onReorder,
   onOpen,
   onClose,
+  onTogglePin,
   onContext,
 }) {
   // Drag-reorder bookkeeping is private to the strip: the dragged tab id as a
@@ -440,17 +441,15 @@ function OpenTabs({
   const stripRef = useRef(null);
   const wheelPan = useWheelPan();
   const setStrip = useCallback((el) => { stripRef.current = el; wheelPan(el); }, [wheelPan]);
-  // Whether the tabs overflow the strip, whether it is scrolled off its
-  // start (tabs pass under the pinned ones: those get an edge) and to its
+  // Whether the tabs overflow the strip, and whether it is scrolled to its
   // end (nothing hidden on the right: the fade goes).
-  const [overflow, setOverflow] = useState({ over: false, atStart: true, atEnd: true });
+  const [overflow, setOverflow] = useState({ over: false, atEnd: true });
   const measure = useCallback(() => {
     const el = stripRef.current;
     if (!el) return;
     const over = el.scrollWidth > el.clientWidth + 1;
-    const atStart = el.scrollLeft <= 1;
     const atEnd = el.scrollLeft + el.clientWidth >= el.scrollWidth - 1;
-    setOverflow((o) => (o.over === over && o.atStart === atStart && o.atEnd === atEnd ? o : { over, atStart, atEnd }));
+    setOverflow((o) => (o.over === over && o.atEnd === atEnd ? o : { over, atEnd }));
   }, []);
   useEffect(() => {
     const el = stripRef.current;
@@ -460,21 +459,19 @@ function OpenTabs({
     el.addEventListener("scroll", measure, { passive: true });
     return () => { observer.disconnect(); el.removeEventListener("scroll", measure); };
   }, [measure]);
-  const pinnedCount = tabs.filter((tab) => tab.pinned).length;
-  // Keep the active tab in view: clear of the pinned tabs stuck at the left
-  // and of the fade on the right. Positions are in the strip's content
-  // (offsetLeft; the strip is the offset parent).
+  // Keep the active tab in view, clear of the fade on the right. Positions
+  // are in the strip's content (offsetLeft; the strip is the offset parent).
   useLayoutEffect(() => {
     const strip = stripRef.current;
     const tab = activeId ? tabElements.current.get(activeId) : null;
-    if (strip && tab && !tab.classList.contains("pinned")) {
-      const left = tab.offsetLeft - pinnedCount * PINNED_STEP;
+    if (strip && tab) {
+      const left = tab.offsetLeft;
       const right = tab.offsetLeft + tab.offsetWidth + TAB_FADE - strip.clientWidth;
       if (strip.scrollLeft > left) strip.scrollLeft = Math.max(0, left);
       else if (strip.scrollLeft < right) strip.scrollLeft = right;
     }
     measure();
-  }, [activeId, tabs, pinnedCount, tabElements, measure]);
+  }, [activeId, tabs, tabElements, measure]);
   // The strip stops overflowing (tabs closed): the menu has nothing to add.
   useEffect(() => { if (!overflow.over && menuOpen) onMenuOpenChange?.(false); }, [overflow.over, menuOpen, onMenuOpenChange]);
 
@@ -498,19 +495,17 @@ function OpenTabs({
   return (
     <>
       <div ref={setStrip} role="tablist"
-        className={`tabStrip${overflow.over && !overflow.atEnd ? " fadeEnd" : ""}${overflow.atStart ? "" : " scrolled"}`}>
-        {tabs.map((tab, index) => (
+        className={`tabStrip${overflow.over && !overflow.atEnd ? " fadeEnd" : ""}`}>
+        {tabs.map((tab) => (
           <div
             key={tab.id}
             role="tab"
             aria-selected={tab.id === activeId}
-            aria-label={tab.pinned ? tab.title : undefined}
             ref={(element) => {
               if (element) tabElements.current.set(tab.id, element);
               else tabElements.current.delete(tab.id);
             }}
             className={`tab ${tab.id === activeId ? "active" : ""} ${draggingId === tab.id ? "dragging" : ""} ${tab.pinned ? "pinned" : ""}`}
-            style={tab.pinned ? { left: index * PINNED_STEP } : undefined}
             title={tab.title}
             draggable
             onDragStart={(event) => {
@@ -546,8 +541,20 @@ function OpenTabs({
             }}
           >
             <span className="tabKind">{kindIcon(tab, 14)}</span>
-            {tab.pinned ? null : <span className="tabTitle">{tab.title}</span>}
-            {tab.pinned ? null : (
+            <span className="tabTitle">{tab.title}</span>
+            {tab.pinned ? (
+              <button
+                className="uiClose tabClose tabPin"
+                onClick={(event) => {
+                  event.stopPropagation();
+                  onTogglePin?.(tab.id);
+                }}
+                title={t("Unpin tab")}
+                aria-label={t("Unpin tab")}
+              >
+                <PinIcon filled size={14} />
+              </button>
+            ) : (
               <button
                 className="uiClose tabClose"
                 onClick={(event) => {

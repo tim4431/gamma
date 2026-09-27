@@ -8,6 +8,7 @@ import {
   Stat, Empty, QuotaMeter, LogBox, NavAccountCard, SettingsDraftContext, SettingsSyncContext, useSettingsDraft,
 } from "./SettingsKit";
 import { SECTION_PREFS } from "./sectionPrefs.js";
+import { EFFORT_ORDER } from "../chat/effort.js";
 import { AppearanceSettings } from "./SettingsAppearance";
 import { KeyboardSettings } from "./SettingsKeyboard";
 import { AiSettings } from "./SettingsAi";
@@ -691,9 +692,9 @@ function AssistantSettings({ value, ai }) {
   return (
     <>
       <Section title={t("Chat")} scope="account" prefs={SECTION_PREFS.assistant["Chat"]}>
-        <Row icon={ActivityIcon} label={t("Default reasoning effort")} hint={t("Leave Default unless your model supports it")}>
+        <Row icon={ActivityIcon} label={t("Default reasoning effort")} hint={t("Each model gets the nearest level it takes")}>
           <MenuSelect label={t("Default reasoning effort")} value={ai.chatEffort} onChange={ai.setChatEffort}
-            options={[["", t("Default")], ...(ai.aiInfo?.efforts || ["low", "medium", "high"]).map((v) => [v, v])]} />
+            options={[["", t("Default")], ...EFFORT_ORDER.map((v) => [v, v])]} />
         </Row>
         <Toggle
           icon={RectSelectIcon}

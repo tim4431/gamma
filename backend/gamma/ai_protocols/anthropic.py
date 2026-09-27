@@ -73,8 +73,9 @@ class Anthropic(Protocol):
         if tools:
             body["tools"] = [{"name": t["name"], "description": t["description"],
                               "input_schema": t["parameters"]} for t in tools]
-        if effort:
-            # "minimal" is OpenAI's lowest level; Anthropic's is "low".
+        if effort and effort != "none":
+            # "none"/"minimal" are OpenAI's lowest levels; Anthropic's is
+            # "low" ("none" means no preference here: the parameter goes).
             body["output_config"] = {"effort": "low" if effort == "minimal" else effort}
         if stream:
             body["stream"] = True
