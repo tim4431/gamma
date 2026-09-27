@@ -437,13 +437,17 @@ export async function noteScenarios({ server, browser, alice, step, until, sleep
     assertNoProblems(page);
   });
 
-  await step("notes: opening a block's editor keeps its height (paragraph, list, $$ math, code fence)", async () => {
+  await step("notes: opening a block's editor keeps its height (paragraph, list, $$ math, code fence, callout, quote, table)", async () => {
     const src = await alice2.api("/api/pages", { method: "POST", body: { title: "Heights" } });
     const blocks = {
       hpara: "A paragraph of prose long enough to wrap onto a second line in the notes panel, so a trailing margin under it would show as a jump.",
       hlist: "- [ ] one\n- [x] two\n- three",
       hmath: "Energy:\n$$\nE = \\sum_i n_i\n$$",
       hcode: "Code:\n```python\nprint(1)\n```",
+      hcallout: "> [!tip] A callout\n> with a body line",
+      hboxed: "Before the box:\n> [!warning]+ Careful\n> - a listed point",
+      hquote: "Quoted:\n> a quoted line",
+      htable: "Table:\n| a | b |\n| --- | --- |\n| 1 | 2 |",
     };
     await alice2.api(`/api/pages/${src.id}/ops`, { method: "POST", body: { client: "e2e", ops: Object.entries(blocks).map(([id, content], i) => (
       { op: "insert", id, parent: src.id, position: `a${i}`, content })) } });
@@ -452,10 +456,11 @@ export async function noteScenarios({ server, browser, alice, step, until, sleep
       for (const id of Object.keys(blocks)) {
         const sel = `.blockRowWrap[data-block-id="${id}"] > .blockRow`;
         await p2.waitForSelector(`${sel} .blockRendered`);
+        await p2.locator(sel).scrollIntoViewIfNeeded();
         const height = () => p2.locator(sel).evaluate((el) => el.getBoundingClientRect().height);
         const before = await height();
-        // Click the first character, so the formula and the fence below it
-        // stay rendered widgets in the editor.
+        // Click the first character, so the formula, the fence and the table
+        // below it stay rendered widgets in the editor.
         const pt = await p2.locator(`${sel} .blockRendered`).evaluate((el) => {
           const n = document.createTreeWalker(el, NodeFilter.SHOW_TEXT, { acceptNode: (t) => (t.textContent.trim() ? 1 : 3) }).nextNode();
           const r = document.createRange(); r.setStart(n, 0); r.setEnd(n, 1);

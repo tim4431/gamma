@@ -583,7 +583,7 @@ body {
   --co-color: var(--callout-note);
   border-left: 3px solid var(--co-color);
   background: color-mix(in srgb, var(--co-color) 8%, transparent);
-  padding-left: 10px;
+  padding: 0 12px;
   color: var(--text-primary);
 }
 .blockEditorCm .cm-line.cmCallout-tip { --co-color: var(--callout-tip); }
@@ -593,6 +593,13 @@ body {
 .blockEditorCm .cm-line.cmCallout-quote { --co-color: var(--callout-quote); }
 .blockEditorCm .cm-line.cmCalloutFirst { border-top-left-radius: var(--radius-sm); border-top-right-radius: var(--radius-sm); }
 .blockEditorCm .cm-line.cmCalloutLast { border-bottom-left-radius: var(--radius-sm); border-bottom-right-radius: var(--radius-sm); }
+/* The rendered box's metrics (no jump when the block opens): its 6px
+   padding above the title line and below the last line, and the title's
+   2px under it (4px for a foldable one's <summary>). Padding, not margins:
+   CodeMirror measures a line by its box. */
+.blockEditorCm .cm-line.cmCalloutFirst { padding-top: 6px; padding-bottom: 2px; }
+.blockEditorCm .cm-line.cmCalloutFirst.cmCalloutFold:not(.cmCalloutLast) { padding-bottom: 4px; }
+.blockEditorCm .cm-line.cmCalloutLast { padding-bottom: 6px; }
 .blockEditorCm .cmCalloutTitle { color: var(--co-color); font-weight: 600; }
 /* Live task/bullet/rule markers in the editor. */
 .blockEditorCm .cm-line.cmTaskDone { color: var(--text-muted); }
@@ -616,8 +623,12 @@ body {
 .blockEditorCm .cmImgWidget[draggable="true"] { cursor: grab; }
 /* The editor's table widget: the rendered table's look, read-only (cells are
    edited in the rendered view); a click puts the caret after it, right-click
-   shows the source, and it drags like the picture. */
-.blockEditorCm .cmTableWidget { display: inline-block; max-width: 100%; overflow-x: auto; margin: 4px 0; border-radius: var(--radius-sm); cursor: grab; vertical-align: top; }
+   shows the source, and it drags like the picture. It sits where the
+   rendered table does: the object frame's 3px halo as padding, 6px under the
+   line above (3px here plus the padding; none on the first line) and the
+   14px the rendered table keeps under it for its + row. */
+.blockEditorCm .cmTableWidget { display: inline-block; box-sizing: border-box; max-width: 100%; overflow-x: auto; padding: 3px; margin: 3px 0 14px; border-radius: var(--radius-sm); cursor: grab; vertical-align: top; }
+.blockEditorCm .cm-line:first-child .cmTableWidget { margin-top: 0; }
 .blockEditorCm .cmTableWidget table { border-collapse: collapse; font-size: 0.95em; }
 .blockEditorCm .cmTableWidget :is(th, td) { border: 1px solid var(--border); padding: 3px 8px; text-align: left; min-width: 36px; white-space: nowrap; }
 .blockEditorCm .cmTableWidget :is(th, td):empty::after { content: "\00a0"; }
@@ -791,11 +802,13 @@ body {
 
 /* The rendered view keeps the editor's height (no jump when a block opens):
    its outer margins stop at the block's edges (the hover line and peer
-   carets are overlays, not content), and a list hugs the line above it as
-   its source lines do. */
+   carets are overlays, not content), and a list, a quote or callout and a
+   table hug the line above them as their source lines do (:where keeps a
+   callout's title, a <p>, at its own 2px). */
 .blockRendered > :first-child { margin-top: 0; }
 .blockRendered > :nth-last-child(1 of :not(.mdGapLine, .peerCaret)) { margin-bottom: 0; }
-.blockRendered p:has(+ :is(ul, ol, pre)) { margin-bottom: 0; }
+.blockRendered p:has(+ :where(ul, ol, pre, blockquote, details, .mdObject-table)) { margin-bottom: 0; }
+.blockRendered p + blockquote { margin-top: 0; }
 
 .blockRendered ul,
 .blockRendered ol {
@@ -888,19 +901,19 @@ body {
   transition: transform var(--dur-fast);
 }
 .blockRendered details.callout[open] > summary.calloutTitle::before { transform: rotate(45deg); }
-.blockRendered details.callout[open] > summary.calloutTitle { margin-bottom: 4px; }
-.blockRendered .callout-tip { --co-color: var(--callout-tip); }
-.blockRendered .callout-warning { --co-color: var(--callout-warning); }
-.blockRendered .callout-danger { --co-color: var(--callout-danger); }
-.blockRendered .callout-important { --co-color: var(--callout-important); }
-.blockRendered .callout-quote { --co-color: var(--callout-quote); }
+.blockRendered details.callout[open] > summary.calloutTitle:not(:last-child) { margin-bottom: 4px; }
+.blockRendered .callout.callout-tip { --co-color: var(--callout-tip); }
+.blockRendered .callout.callout-warning { --co-color: var(--callout-warning); }
+.blockRendered .callout.callout-danger { --co-color: var(--callout-danger); }
+.blockRendered .callout.callout-important { --co-color: var(--callout-important); }
+.blockRendered .callout.callout-quote { --co-color: var(--callout-quote); }
 .blockRendered .calloutTitle {
   font-weight: 600;
   color: var(--co-color);
   margin: 0 0 2px;
 }
 .blockRendered :is(blockquote, details).callout p:last-child,
-.blockRendered blockquote > p:last-child { margin-bottom: 0; }
+.blockRendered :is(blockquote, details) > :last-child { margin-bottom: 0; }
 /* Every note table renders inside MdTableWrap (editor/MdTools.jsx): the wrapper owns
    scrolling and, when editable, hosts the hover controls — "+" strips on the
    right/bottom edges and the column/row handle pills. */
@@ -925,6 +938,9 @@ body {
   margin: 6px 0;
 }
 .mdTableScroll { overflow-x: auto; }
+/* At the block's top edge a table starts there, inside its frame's halo, as
+   the editor's first line does. */
+.blockRendered > .mdObject-table:first-child > .mdTableWrap { margin-top: 0; }
 /* Reserve the gutters the strips live in so they don't overlap neighbors. */
 .mdTableEditable { margin-right: 14px; margin-bottom: 14px; }
 .mdTableAdd {
