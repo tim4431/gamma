@@ -76,4 +76,33 @@ export async function quickOpenScenarios(env) {
       assertNoProblems(page);
     } finally { await ctx.close(); }
   });
+
+  await step("quickopen: a link to a page that isn't here says so, and Search the library opens the palette", async () => {
+    const gone = await user.api("/api/blocks", { method: "POST", body: { parent_id: "root", content: "Soon deleted" } });
+    await user.api(`/api/blocks/${gone.id}`, { method: "DELETE" });
+    const holder = await user.api("/api/blocks", { method: "POST", body: { parent_id: "root", content: "Links to a gone page" } });
+    await user.api("/api/blocks", { method: "POST", body: { parent_id: holder.id, content: `see [the old page](/?page=${gone.id})` } });
+    const ctx = await user.context(browser);
+    const page = await openPage(ctx, `${server.base}/?page=${gone.id}&ws=${user.ws}`);
+    try {
+      // a dead deep link: the library, the notice above it, the id out of the address bar
+      const notice = page.locator(".missingPageNotice");
+      await notice.waitFor({ timeout: 15000 });
+      assert((await notice.textContent()).includes("That page isn't here."), "the notice");
+      await page.locator(".homeListBar").waitFor();
+      assert(!new URL(page.url()).searchParams.has("page"), "the dead id leaves the address bar");
+      await notice.getByRole("button", { name: "Search the library", exact: true }).click();
+      await page.getByRole("dialog", { name: "Open a page" }).waitFor();
+      assertEq(await notice.count(), 0, "the notice goes when the palette opens");
+      await page.keyboard.press("Escape");
+      // a dead link clicked on a page: the notice in place, the page stays open
+      await page.goto(`${server.base}/?page=${holder.id}&ws=${user.ws}`);
+      await page.locator(".gammaLinkCard", { hasText: "the old page" }).click();
+      await notice.waitFor();
+      assertEq(new URL(page.url()).searchParams.get("block"), holder.id, "still on the page");
+      await notice.getByRole("button", { name: "Dismiss", exact: true }).click();
+      await notice.waitFor({ state: "detached" });
+      assertNoProblems(page, [/find-page\/[^ ]+ -> 404/, /\/subtree -> 404/]);
+    } finally { await ctx.close(); }
+  });
 }

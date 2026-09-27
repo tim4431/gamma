@@ -2264,6 +2264,29 @@ button.pdfOutlineChevron:hover { background: rgba(128, 128, 128, 0.28); color: v
   transition: opacity 0.15s;
 }
 .blockRow:hover .attachModeBtn { opacity: 1; }
+/* A link named a page that isn't in this workspace (App's missingPage): a
+   dismissible amber notice under the topbar, over the library or the page. */
+.missingPageNotice {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  margin: 8px 10px 0;
+  padding: 8px 10px 8px 12px;
+  border: 1px solid color-mix(in srgb, var(--callout-warning) 45%, transparent);
+  border-radius: 8px;
+  background: color-mix(in srgb, var(--callout-warning) 12%, var(--bg-surface));
+  color: var(--text-secondary);
+  font-size: calc(13px * var(--ui-font-scale, 1));
+  line-height: 1.4;
+}
+.missingPageNotice > svg { flex: none; color: var(--callout-warning); }
+.missingPageText { flex: 1; min-width: 0; }
+.missingPageText b { color: var(--text-primary); }
+.missingPageNotice .uiBtn { flex-shrink: 0; }
+@media (max-width: 640px) {
+  .missingPageNotice { flex-wrap: wrap; }
+  .missingPageText { flex-basis: calc(100% - 30px); }
+}
 .attachModeBanner {
   position: fixed;
   top: 0; left: 0; right: 0;

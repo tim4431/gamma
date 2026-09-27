@@ -2375,6 +2375,10 @@ function LibraryApp({ publicPage = null, initialServerConfig = null }) {
   // The Ctrl+P palette (library/QuickOpen.jsx): null, or {prefix} — "" lists
   // pages, ">" the commands (Ctrl+Shift+P).
   const [quickOpen, setQuickOpen] = useState(null);
+  // A link (the boot deep link, a page or block link clicked in the app)
+  // named a page that isn't in this workspace: its id, while the notice under
+  // the topbar says so. Cleared by Dismiss, Search the library or the next open.
+  const [missingPage, setMissingPage] = useState("");
   // A query handed to the workspace search as it opens (the listing's
   // "Search inside notes and PDFs"); cleared whenever the search is closed,
   // so a later plain open keeps whatever was typed in it.
@@ -4067,7 +4071,7 @@ function LibraryApp({ publicPage = null, initialServerConfig = null }) {
     if (shareMode && id !== focusedBlockId) return;
     if (citation && id === focusedBlockId) pushNav();
     setPdfCitation(citation ? { ...citation } : null);
-    if (id !== focusedBlockId) await openBlock(id, { pushNav: true });
+    if (id !== focusedBlockId) await openBlock(id, { pushNav: true, link: true });
     if (citation) { setPdfHidden(false); setPhonePanel(null); }
   }
 
@@ -4090,7 +4094,7 @@ function LibraryApp({ publicPage = null, initialServerConfig = null }) {
       pushNav(); // block-ref click = link jump to another page
       pendingBlockScrollRef.current = id;
       const rootId = refCache[id]?.page_root_id;
-      await openBlock(rootId && rootId !== id ? rootId : id);
+      await openBlock(rootId && rootId !== id ? rootId : id, { link: true });
     }
   }
 
@@ -4144,12 +4148,12 @@ function LibraryApp({ publicPage = null, initialServerConfig = null }) {
           if (rootId && rootId !== initialBlockId) {
             pendingBlockScrollRef.current = initialBlockId;
             pendingJumpRef.current = initialBlockId; // highlight blocks also jump the PDF
-            openBlock(rootId);
+            openBlock(rootId, { link: true });
           } else {
-            openBlock(initialBlockId);
+            openBlock(initialBlockId, { link: true });
           }
         } catch {
-          openBlock(initialBlockId);
+          openBlock(initialBlockId, { link: true });
         }
       })();
     }
@@ -5019,6 +5023,7 @@ function LibraryApp({ publicPage = null, initialServerConfig = null }) {
       loadedSeqRef.current = subtreeData.seq ?? null;
 
       suppressAutosaveRef.current = true;
+      setMissingPage("");
       setFocusedBlockId(blockId);
       setFocusedBlock(block);
       setPageTitle(block.content || t("Untitled"));
@@ -5100,6 +5105,20 @@ function LibraryApp({ publicPage = null, initialServerConfig = null }) {
       guideEvents.emit("page.opened", { id: blockId });
       return openedPdfUrl;
     } catch (err) {
+      if (err.status === 404 && opts?.link) {
+        // Not a failure to report as one: the page is gone, or lives in
+        // another workspace. The notice says so; a dead deep link leaves the
+        // address bar (a tab restore, which has no `link`, just clears it).
+        setMissingPage(blockId);
+        postPill("status", null); // take down "Opening..."
+        const url = new URL(window.location.href);
+        if (url.searchParams.get("block") === blockId || url.searchParams.get("page") === blockId) {
+          url.searchParams.delete("block");
+          url.searchParams.delete("page");
+          window.history.replaceState(window.history.state, "", url.pathname + url.search + url.hash);
+        }
+        return undefined;
+      }
       setStatus(t("Open failed: {message}", { message: err.message }));
       // If this was a session restore attempt that failed, clear it
       if (!window.location.search.includes("block=")) clearSession();
@@ -9236,6 +9255,19 @@ function LibraryApp({ publicPage = null, initialServerConfig = null }) {
         </div>
       )}
 
+      {missingPage ? (
+        <div className="missingPageNotice" role="status">
+          <AlertCircleIcon size={17} aria-hidden="true" />
+          <span className="missingPageText">
+            <b>{t("That page isn't here.")}</b> {t("It may have been deleted, or it lives in another workspace.")}
+          </span>
+          <button type="button" className="uiBtn sm"
+            onClick={() => { setMissingPage(""); setOpenPopover(null); setQuickOpen({ prefix: "" }); }}>
+            {t("Search the library")}
+          </button>
+          <button type="button" className="uiBtn sm" onClick={() => setMissingPage("")}>{t("Dismiss")}</button>
+        </div>
+      ) : null}
       {attachModeBlockId && (
         <div className="attachModeBanner">
           {t("Click a PDF highlight to link it")}

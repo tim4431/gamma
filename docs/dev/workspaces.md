@@ -224,6 +224,13 @@ viewer role, then releases the `wsReady` startup gate. It never invents an
 owner role for an unknown workspace. Viewer layout restoration also waits
 for this scope.
 
+A page or block link that still finds nothing (the page was deleted, or lives
+in a workspace this account can't reach) lands on the library with a notice
+under the topbar, "That page isn't here", offering Search the library (quick
+open) and Dismiss; the dead id is dropped from the address bar. A link clicked
+inside the app that answers 404 shows the same notice and leaves the open page
+as it was. Other failures (a 500, the network) stay in the status pill.
+
 Switching navigates to `/?ws=<id>` and reloads the app. Tabs, the current page
 and the live editing session belong to the library being left. Within a
 library, each page retains its queued saves when navigation starts before a
