@@ -3989,6 +3989,14 @@ a.shareBrand:hover { background: var(--bg-hover); }
 .chatMentionOption strong { display: block; font-size: var(--fs-xs); font-weight: 500; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .chatMentionOption small { display: block; font-size: var(--fs-2xs); color: var(--text-dim); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .chatMentionHint { border-top: 1px solid var(--border); }
+/* The key hints under a picker ("↑↓ choose · Enter …": Quick Open, the chat's
+   page picker, the [[ picker, the slash menu) draw their arrows as text:
+   never an emoji font's coloured arrows, with a symbol font behind Inter in
+   case a platform lacks them. */
+:is(.chatMentionHeading span, .chatMentionHint, .refPopupFooter, .slashMenuFooter) {
+  font-family: var(--font-sans), "Segoe UI Symbol", "Apple Symbols", "Noto Sans Symbols";
+  font-variant-emoji: text;
+}
 .chatReferenceStrip { display: flex; flex-wrap: wrap; align-items: center; gap: 4px; padding: 4px 2px; max-height: 100px; overflow-y: auto; flex-shrink: 0; }
 .chatReferenceLabel { font-size: var(--fs-2xs); color: var(--text-dim); margin-right: 3px; }
 .chatReferenceChip { display: inline-flex; align-items: center; min-width: 0; max-width: 100%; font-size: var(--fs-2xs); }
