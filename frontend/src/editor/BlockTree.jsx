@@ -38,7 +38,7 @@ import { pageByTitle, pickerCounts, rankRefPages, refBlockPath, refBlockText } f
 import { remarkCallouts } from "./callouts";
 import { PeerChips, RenderedCarets } from "../collaboration/Presence";
 import { ContextMenu, MenuItem } from "../shared/ui/Menus";
-import { API, apiJson, assetUrl, copyText, withWorkspace } from "../shared/lib/utils";
+import { API, apiJson, assetUrl, copyText, withShare, withWorkspace } from "../shared/lib/utils";
 import { CopyIcon, ExportIcon, MessageSquareIcon, PlusIcon, Trash2Icon } from "../shared/ui/Icons";
 import { T, t } from "../shared/i18n/i18n.js";
 import { guideEvents } from "../guide/events.js";
@@ -943,7 +943,7 @@ function BlockRow({
     const q = refPopup.query;
     const timer = setTimeout(async () => {
       try {
-        const res = await fetch(`/api/block-search?q=${encodeURIComponent(q)}&limit=12`);
+        const res = await fetch(withShare(`${API}/block-search?q=${encodeURIComponent(q)}&limit=12`));
         const data = await res.json();
         setSearchResults((data.blocks || []).filter((b) => b.id !== block.id));
       } catch (_) { setSearchResults([]); }
@@ -1246,7 +1246,7 @@ function BlockRow({
       const url = relativeGammaLink(pm.url, window.location.origin);
       const pageId = gammaLinkId(pm.link);
       const fallback = pm.link.kind === "citation" ? `p. ${pm.link.page}` : "page";
-      fetch(`/api/block-search?ids=${encodeURIComponent(pageId)}`)
+      fetch(withShare(`${API}/block-search?ids=${encodeURIComponent(pageId)}`))
         .then((r) => (r.ok ? r.json() : null))
         .then((d) => {
           const b = d?.blocks?.[0];

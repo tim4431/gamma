@@ -81,7 +81,12 @@ def _block_kind(parent_id: str, properties: str) -> str:
 async def block_search(request: Request, q: str = "", ids: str = "", limit: int = 10,
                        case: int = 0, whole: int = 0, regex: int = 0):
     results = []
-    with connect_pages_db(require_ws(request)) as conn:
+    # Through a share token: the blocks it reaches, silently — a ref chip or
+    # link title in the share view resolves when its target is shared, and
+    # nothing reveals whether anything else exists.
+    scope = share_scope(request)
+    with connect_pages_db(resolve_ws(request)) as conn:
+        reach = scope.block_ids(conn) if scope is not None else None
         if ids:
             id_list = [i.strip() for i in ids.split(",") if i.strip()]
             if not id_list:
@@ -97,8 +102,9 @@ async def block_search(request: Request, q: str = "", ids: str = "", limit: int 
             # user types a filter.
             rows = conn.execute(
                 "SELECT id, content, parent_id, properties FROM unified_blocks "
-                "WHERE content != '' AND id != 'root' ORDER BY updated_at DESC LIMIT ?",
-                (limit,),
+                "WHERE content != '' AND id != 'root' ORDER BY updated_at DESC"
+                + (" LIMIT ?" if reach is None else ""),
+                (limit,) if reach is None else (),
             ).fetchall()
         else:
             # Scan in Python: separator-tolerant matching ("3000" hits
@@ -110,7 +116,11 @@ async def block_search(request: Request, q: str = "", ids: str = "", limit: int 
             rows = [r for r in conn.execute(
                 "SELECT id, content, parent_id, properties FROM unified_blocks "
                 "WHERE content != '' ORDER BY updated_at DESC",
-            ) if pattern.search(r[1] or "")][:limit]
+            ) if pattern.search(r[1] or "")]
+        if reach is not None:
+            rows = [r for r in rows if r[0] in reach]
+        if not ids:
+            rows = rows[:limit]
         if not rows:
             return {"blocks": []}
 

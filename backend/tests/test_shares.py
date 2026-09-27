@@ -677,3 +677,31 @@ def test_folder_share_follows_renames_and_dies_with_the_folder(bob, anon):
         assert anon.get(f"/api/share/{token}").status_code == 404
     assert anon.get(f"/api/share/{page_token}").status_code == 200
     assert anon.post("/api/folders/rename", params={"share": page_token}, json={"src": "a", "dst": "b"}).status_code == 403
+
+
+def test_block_search_through_a_share_sees_only_what_it_opens(bob, anon):
+    # The share view resolves [[ref]] chips and Gamma-link titles through
+    # /block-search?ids=; a hit outside the share is dropped, never refused,
+    # so nothing tells a visitor whether it exists.
+    page = make_page(bob, "Searchable shared")
+    note = _child(bob, page["id"], "a shared quokkaneedle")
+    other = make_page(bob, "Private elsewhere", {"folder": "vault"})
+    secret = _child(bob, other["id"], "a private quokkaneedle")
+    q = {"share": bob.post(f"/api/share/{page['id']}").json()["token"]}
+
+    r = anon.get("/api/block-search", params={**q, "ids": f"{page['id']},{note['id']},{secret['id']}"})
+    assert r.status_code == 200, r.text
+    assert {b["id"] for b in r.json()["blocks"]} == {page["id"], note["id"]}
+    assert r.json()["blocks"][0]["page_title"] == "Searchable shared"
+    assert [b["id"] for b in anon.get("/api/block-search", params={**q, "q": "quokkaneedle"}).json()["blocks"]] == [note["id"]]
+    assert {b["id"] for b in anon.get("/api/block-search", params=q).json()["blocks"]} == {page["id"], note["id"]}
+    assert anon.get("/api/block-search", params={"ids": note["id"]}).status_code == 401
+    # the owner's own search still reaches everything
+    assert {b["id"] for b in bob.get("/api/block-search", params={"q": "quokkaneedle"}).json()["blocks"]} == {
+        note["id"], secret["id"]}
+
+    # a folder share: the pages filed in the folder, and nothing beside them
+    fq = {"share": _folder_share(bob, "vault")["token"]}
+    hits = anon.get("/api/block-search", params={**fq, "q": "quokkaneedle"}).json()["blocks"]
+    assert [b["id"] for b in hits] == [secret["id"]]
+    assert anon.get("/api/block-search", params={**fq, "ids": note["id"]}).json()["blocks"] == []

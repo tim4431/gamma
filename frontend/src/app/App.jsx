@@ -4026,7 +4026,7 @@ function LibraryApp({ publicPage = null, initialServerConfig = null }) {
 
   async function onFetchRefs(ids) {
     try {
-      const res = await fetch(`/api/block-search?ids=${ids.join(",")}`);
+      const res = await fetch(withShare(`${API}/block-search?ids=${ids.join(",")}`));
       const data = await res.json();
       if (data.blocks?.length) {
         setRefCache((prev) => {

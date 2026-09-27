@@ -23,7 +23,8 @@ else; in dev, Vite proxies `/api` → `127.0.0.1:9001`.
   path: the pages filed there or below it, read live, so pages filed later
   join and pages moved out leave). `auth.share_scope()` hands every
   share-enabled endpoint a `ShareScope`, and the endpoint asks it what is in
-  reach (`allows_page`, `allows_block`, `allows_folder`, `lists_library`;
+  reach (`allows_page`, `allows_block`, `allows_folder`, `lists_library`,
+  `block_ids` for a read that scans the workspace;
   `blocks_store.assert_block_in_scope()` for block reads) instead of
   branching on the share's kind. A token reaches only its own pages'
   subtrees and assets: their PDFs, the uploads their blocks reference, their
@@ -171,7 +172,7 @@ never returned by the generic endpoint.
 | POST/PUT/DELETE | `/blocks`, `/blocks/{id}` | CRUD — inside a page these are thin wrappers over the op path (`gamma/ops.py`): logged, fanned out to the page's room; `PUT` takes `content` and/or a properties PATCH (a null value deletes the key). A new page (`parent_id: "root"`) is a plain insert (`blocks_store.create_page`); deleting a page is `ops.delete_page`: subtree + its op log gone, a `deleted_pages` tombstone left |
 | PUT | `/blocks/{id}/children` | replace the whole subtree (delete + reinsert; triggers orphan-upload cleanup) — bulk paths only (imports, tests); the page's room gets a `reload`. The editor itself sends ops |
 | POST | `/blocks/{id}/reorder` | move within the page (an op) or, with `parent_id` on another page, across pages (the source room sees a `delete`, the target reloads) |
-| GET | `/block-search` | fuzzy note/page/highlight search; empty `q` returns recently edited blocks (feeds the `[[ref]]` popup's initial suggestions) |
+| GET | `/block-search` | fuzzy note/page/highlight search; empty `q` returns recently edited blocks (feeds the `[[ref]]` popup's initial suggestions); `ids=a,b` looks blocks up (ref chips, Gamma-link titles). Through a share token every mode sees only the blocks the share reaches — others are dropped from the answer, never refused |
 
 Route order matters: the static-prefix routes (`by-doc`, `children`,
 `subtree`) must stay registered before `/blocks/{block_id}`.
