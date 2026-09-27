@@ -25,7 +25,7 @@ import { buildSearchRegex, normalizeQuery } from "../shared/lib/textnorm";
 import { createTitleScorer } from "../library/librarySearch";
 import { pageAttachment } from "../library/libraryUtils";
 import { markedParts, plainSnippet } from "./snippets";
-import { t } from "../shared/i18n/i18n.js";
+import { t, tn } from "../shared/i18n/i18n.js";
 
 export { buildSearchRegex, normalizeQuery };
 
@@ -455,7 +455,7 @@ export default function SearchPanel({
                 {linkHits.map(noteRow)}
                 {libElsewhere.length || libIndexing ? section(libLabel, libElsewhere.length) : null}
                 {libIndexing ? (
-                  <div className="searchHint">{t("Indexing")} {libIndexing} {t("PDF")}{libIndexing === 1 ? "" : "s"} {t("in the background — results will fill in shortly.")}</div>
+                  <div className="searchHint">{tn("Indexing {n} PDF in the background — results will fill in shortly.", "Indexing {n} PDFs in the background — results will fill in shortly.", libIndexing)}</div>
                 ) : null}
                 {libElsewhere.map((r, i) => (
                   <button
