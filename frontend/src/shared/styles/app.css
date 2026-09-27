@@ -1466,7 +1466,7 @@ body {
   position: fixed;
   inset: 0;
   background: rgba(40, 80, 160, 0.2);
-  border: 3px dashed var(--accent-dark);
+  border: 3px dashed var(--accent-fill);
   color: var(--text-bright);
   font-size: var(--fs-2xl);
   font-weight: 600;
@@ -2206,7 +2206,7 @@ button.pdfOutlineChevron:hover { background: rgba(128, 128, 128, 0.28); color: v
 }
 .tabsMenuRow.picked { background: var(--bg-hover); }
 .tabsMenuRow.current { font-weight: 600; }
-.tabsMenuRow.current .tabsMenuTitle { color: var(--accent-dark); }
+.tabsMenuRow.current .tabsMenuTitle { color: var(--accent-fill); }
 .tabsMenuTitle { flex: 1; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .tabsMenuPin { display: inline-flex; color: var(--text-dim); flex-shrink: 0; }
 .tabsMenuRow .kindGlyph { flex-shrink: 0; }
@@ -2253,21 +2253,21 @@ button.pdfOutlineChevron:hover { background: rgba(128, 128, 128, 0.28); color: v
    for conflicts, a dot (accent: local edits not pushed, green: up to
    date, red: a problem); the words are its tooltip. */
 .topbar .iconBtn.mirrorPill { position: relative; }
-.mirrorPill.warn svg { color: #d9822b; }
+.mirrorPill.warn svg { color: var(--warn); }
 .mirrorPill.error svg { color: var(--danger); }
 .mirrorPill.busy svg, .mirrorSpin svg { animation: mirrorSpin 1.2s linear infinite; }
 @keyframes mirrorSpin { to { transform: rotate(360deg); } }
 .mirrorPillDot { position: absolute; right: 5px; bottom: 5px; width: 7px; height: 7px; border-radius: 50%; background: var(--text-dim); box-shadow: 0 0 0 2px var(--bg-elevated); pointer-events: none; }
 .mirrorPillDot.ok { background: var(--ok); }
 .mirrorPillDot.pending { background: var(--accent); }
-.mirrorPillDot.warn { background: #d9822b; }
+.mirrorPillDot.warn { background: var(--warn); }
 .mirrorPillDot.error { background: var(--danger); }
-.mirrorPillBadge { position: absolute; top: -3px; right: -4px; min-width: 15px; height: 15px; padding: 0 4px; border-radius: var(--radius-full); font-size: var(--fs-2xs); font-weight: 600; line-height: 1; color: #fff; background: #d9822b; display: inline-flex; align-items: center; justify-content: center; box-shadow: 0 0 0 2px var(--bg-elevated); pointer-events: none; }
+.mirrorPillBadge { position: absolute; top: -3px; right: -4px; min-width: 15px; height: 15px; padding: 0 4px; border-radius: var(--radius-full); font-size: var(--fs-2xs); font-weight: 600; line-height: 1; color: #fff; background: var(--warn); display: inline-flex; align-items: center; justify-content: center; box-shadow: 0 0 0 2px var(--bg-elevated); pointer-events: none; }
 .mirrorPopBtns { display: inline-flex; gap: 2px; flex-shrink: 0; }
 .mirrorState.pending > svg { color: var(--accent); }
 .mirrorState.error > svg { color: var(--danger); }
 .mirrorStateLine .uiBtn { margin-left: auto; }
-.mirrorConflictBtn { color: #d9822b; }
+.mirrorConflictBtn { color: var(--warn); }
 /* A log row: the row itself opens its changes, the arrow opens the page. */
 .mirrorPopItemRow { display: flex; align-items: center; gap: 2px; }
 .mirrorPopItemRow .popoverItem { flex: 1; min-width: 0; }
@@ -2280,7 +2280,7 @@ button.pdfOutlineChevron:hover { background: rgba(128, 128, 128, 0.28); color: v
 .mirrorChangeGlyph { font-family: var(--font-mono); width: 10px; flex-shrink: 0; font-weight: 600; }
 .mirrorChange.add .mirrorChangeGlyph { color: var(--ok); }
 .mirrorChange.del .mirrorChangeGlyph { color: var(--danger); }
-.mirrorChange.mod .mirrorChangeGlyph { color: #d9822b; }
+.mirrorChange.mod .mirrorChangeGlyph { color: var(--warn); }
 .mirrorChangeText { white-space: pre-wrap; word-break: break-word; min-width: 0; border-radius: var(--radius-xs); padding: 0 3px; max-height: 96px; overflow: auto; }
 .mirrorChange.add .mirrorChangeText { background: color-mix(in srgb, var(--ok) 12%, transparent); }
 .mirrorChange.del .mirrorChangeText { background: color-mix(in srgb, var(--danger) 10%, transparent); text-decoration: line-through; color: var(--text-muted); }
@@ -2299,8 +2299,8 @@ button.pdfOutlineChevron:hover { background: rgba(128, 128, 128, 0.28); color: v
 /* The state block: one icon, one short line, bars while a round runs. */
 .mirrorState { display: flex; align-items: flex-start; gap: 7px; padding: 4px 4px 8px; font-size: var(--fs-sm); color: var(--text-primary); min-width: 0; }
 .mirrorState > svg { flex-shrink: 0; margin-top: 2px; }
-.mirrorState.ok > svg { color: var(--accent-dark); }
-.mirrorState.warn > svg { color: #d9822b; }
+.mirrorState.ok > svg { color: var(--accent-fill); }
+.mirrorState.warn > svg { color: var(--warn); }
 .mirrorState.busy > svg { animation: mirrorSpin 1.2s linear infinite; }
 .mirrorStateBody { display: flex; flex-direction: column; gap: 4px; min-width: 0; flex: 1; }
 .mirrorStateLine { display: flex; align-items: baseline; gap: 8px; min-width: 0; }
@@ -2315,19 +2315,19 @@ button.pdfOutlineChevron:hover { background: rgba(128, 128, 128, 0.28); color: v
 /* The settings view: icon + control rows, a confirm strip, the action chips. */
 .mirrorSetActions { display: flex; gap: 6px; flex-wrap: wrap; padding: 6px 4px; }
 .mirrorConfirm { display: flex; flex-wrap: wrap; align-items: center; gap: 6px; padding: 6px 4px; font-size: var(--fs-xs); color: var(--text-secondary); }
-.mirrorConfirm > svg { color: #d9822b; flex-shrink: 0; }
+.mirrorConfirm > svg { color: var(--warn); flex-shrink: 0; }
 .mirrorConfirmBtns { display: inline-flex; gap: 6px; margin-left: auto; }
 /* The merge chip on a block row and the conflict card (MergeResolver.jsx):
    one card for the chip's popover, the sync pill's list and Settings — the
    kind line (with ‹ n / N › on a row chip), the versions (ours · theirs
    side by side, the merged text under them), each with its Use / Keep. */
 .mergeChipWrap { position: absolute; right: 4px; top: 2px; z-index: 4; }
-.mergeChip { display: inline-flex; align-items: center; justify-content: center; width: 18px; height: 18px; border-radius: 50%; border: 1px solid #d9822b; background: var(--bg-elevated); color: #d9822b; cursor: pointer; padding: 0; }
-.mergeChip:hover, .mergeChip.on { background: #d9822b; color: #fff; }
+.mergeChip { display: inline-flex; align-items: center; justify-content: center; width: 18px; height: 18px; border-radius: 50%; border: 1px solid var(--warn); background: var(--bg-elevated); color: var(--warn); cursor: pointer; padding: 0; }
+.mergeChip:hover, .mergeChip.on { background: var(--warn); color: #fff; }
 .mergePopover { position: absolute; right: 0; top: 22px; width: 480px; max-width: calc(100vw - 24px); z-index: var(--z-float); cursor: default; text-align: left; font-weight: normal; }
 .mergeCard { display: flex; flex-direction: column; gap: 6px; min-width: 0; }
 .mergeHead { display: flex; align-items: flex-start; gap: 8px; padding: 2px 4px 4px; }
-.mergeKindIcon { display: inline-flex; align-items: center; justify-content: center; width: 26px; height: 26px; border-radius: var(--radius-md); background: color-mix(in srgb, #d9822b 14%, transparent); color: #d9822b; flex-shrink: 0; }
+.mergeKindIcon { display: inline-flex; align-items: center; justify-content: center; width: 26px; height: 26px; border-radius: var(--radius-md); background: var(--warn-bg); color: var(--warn); flex-shrink: 0; }
 .mergeHeadText { display: flex; flex-direction: column; gap: 1px; min-width: 0; flex: 1; }
 .mergeHeadText .popoverTitle, .mergeHeadText .popoverHint { padding: 0; }
 .mergePage { font-weight: 500; color: var(--text-muted); }
@@ -2343,13 +2343,13 @@ button.pdfOutlineChevron:hover { background: rgba(128, 128, 128, 0.28); color: v
 .mergeVersionHead .uiTag { margin-left: auto; }
 .mergeSide { display: inline-flex; align-items: center; gap: 4px; font-size: var(--fs-2xs); font-weight: 600; padding: 1px 6px; border-radius: var(--radius-full); color: var(--text-primary); flex-shrink: 0; }
 .mergeSide.mine { background: color-mix(in srgb, var(--accent) 22%, transparent); }
-.mergeSide.theirs { background: color-mix(in srgb, #d9822b 24%, transparent); }
+.mergeSide.theirs { background: color-mix(in srgb, var(--warn) 24%, transparent); }
 .mergeSide.result { background: var(--bg-hover); }
 .mergeSideHint { padding: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; min-width: 0; }
 .mergeText { font-size: var(--fs-sm); line-height: 1.5; white-space: pre-wrap; word-break: break-word; color: var(--text-primary); max-height: 180px; overflow: auto; }
 .mergeText mark { border-radius: var(--radius-xs); padding: 0 1px; color: inherit; }
 mark.merge-mine { background: color-mix(in srgb, var(--accent) 28%, transparent); }
-mark.merge-theirs { background: color-mix(in srgb, #d9822b 30%, transparent); }
+mark.merge-theirs { background: color-mix(in srgb, var(--warn) 30%, transparent); }
 mark.merge-both { background: var(--bg-hover); text-decoration: underline dotted; }
 mark.merge-add { background: color-mix(in srgb, var(--ok) 25%, transparent); }
 mark.merge-del { background: color-mix(in srgb, var(--danger) 16%, transparent); text-decoration: line-through; color: var(--text-muted); }
@@ -2362,9 +2362,9 @@ mark.merge-del { background: color-mix(in srgb, var(--danger) 16%, transparent);
 .mirrorCards .mergeCard { padding: 8px; border-radius: var(--radius-lg); border: 1px solid var(--border-subtle); }
 /* A clone row's avatar in Settings carries its state. */
 .mirrorAvatar.ok { color: var(--ok); }
-.mirrorAvatar.warn { color: #d9822b; }
+.mirrorAvatar.warn { color: var(--warn); }
 .mirrorAvatar.busy svg { animation: mirrorSpin 1.2s linear infinite; }
-.uiTag.warn { color: #d9822b; border-color: color-mix(in srgb, #d9822b 45%, transparent); }
+.uiTag.warn { color: var(--warn); border-color: color-mix(in srgb, var(--warn) 45%, transparent); }
 .uiTag.ok { color: var(--ok); border-color: color-mix(in srgb, var(--ok) 45%, transparent); }
 .uiTag.failed { color: var(--danger); border-color: currentColor; }
 .uiTag.pending { color: var(--accent); border-color: color-mix(in srgb, var(--accent) 45%, transparent); }
@@ -2377,7 +2377,7 @@ mark.merge-del { background: color-mix(in srgb, var(--danger) 16%, transparent);
 .mirrorDiff { font-family: var(--font-mono); font-size: var(--fs-2xs); display: inline-flex; gap: 5px; white-space: nowrap; }
 .mirrorDiff .add { color: var(--ok); }
 .mirrorDiff .del { color: var(--danger); }
-.mirrorDiff .mod { color: #d9822b; }
+.mirrorDiff .mod { color: var(--warn); }
 .popoverHint { font-size: var(--fs-2xs); color: var(--text-muted); line-height: 1.45; padding: 0 4px; }
 .popoverSection {
   padding: 4px 4px 0;
@@ -2426,7 +2426,7 @@ mark.merge-del { background: color-mix(in srgb, var(--danger) 16%, transparent);
 .publishState .mirrorStateLine .iconBtn { margin-left: auto; }
 .uiBtn .mirrorSpin { display: inline-flex; }
 .settingsPaneHint.shareSummary { display: flex; align-items: flex-start; gap: 6px; padding: 0 8px 2px; }
-.settingsPaneHint.shareWarn { color: #d9822b; }
+.settingsPaneHint.shareWarn { color: var(--warn); }
 .shareWarn svg { flex-shrink: 0; margin-top: 2px; }
 .sharePopover .aiProvActions { display: inline-flex; align-items: center; gap: 6px; }
 /* The invite box on top of who has access: the picker (its matches open
@@ -2461,7 +2461,7 @@ mark.merge-del { background: color-mix(in srgb, var(--danger) 16%, transparent);
    notice, its sentence and a link to the pane that resolves it. */
 .accountNotices { display: flex; flex-direction: column; gap: 4px; margin-top: 2px; }
 .accountNotice {
-  --notice-tone: #d9822b;
+  --notice-tone: var(--warn);
   display: flex;
   align-items: flex-start;
   gap: 8px;
@@ -2485,7 +2485,7 @@ mark.merge-del { background: color-mix(in srgb, var(--danger) 16%, transparent);
   border: none;
   background: none;
   font-family: inherit; font-weight: inherit; line-height: inherit;
-  color: var(--accent-dark);
+  color: var(--accent-fill);
   cursor: pointer;
 }
 .accountNoticeAction:hover { text-decoration: underline; }
@@ -2601,7 +2601,7 @@ mark.merge-del { background: color-mix(in srgb, var(--danger) 16%, transparent);
   box-shadow: 0 1px 2px rgba(0, 0, 0, 0.35);
   transition: transform var(--dur-base) ease;
 }
-.switch input:checked + .switchTrack { background: var(--accent-dark); }
+.switch input:checked + .switchTrack { background: var(--accent-fill); }
 .switch input:checked + .switchTrack::after { transform: translateX(14px); }
 .switch input:focus-visible + .switchTrack {
   outline: 2px solid var(--focus-ring);
@@ -2734,8 +2734,8 @@ mark.searchMark {
   font-family: inherit;
 }
 .searchToggle.on {
-  background: color-mix(in srgb, var(--accent-dark) 18%, transparent);
-  border-color: var(--accent-dark);
+  background: color-mix(in srgb, var(--accent-fill) 18%, transparent);
+  border-color: var(--accent-fill);
   color: var(--text-primary);
 }
 .searchSection {
@@ -2789,7 +2789,7 @@ mark.searchMark {
 .sash-vertical { height: 5px; cursor: row-resize; }
 .sash:hover,
 .sash[data-resize-handle-state="hover"],
-.sash[data-resize-handle-state="drag"] { background: var(--accent-dark); transition: none; }
+.sash[data-resize-handle-state="drag"] { background: var(--accent-fill); transition: none; }
 
 /* uniform window chrome */
 .dockWindow {
@@ -3151,13 +3151,13 @@ html.appFocusFullscreen, html.appFocusFullscreen body { overflow: hidden; oversc
 .citeWarnHint { color: var(--danger); padding: 0 8px 4px; }
 .sourcePopover { min-width: 300px; right: 0; }
 
-.searchResult.active { background: color-mix(in srgb, var(--accent-dark) 14%, transparent); }
+.searchResult.active { background: color-mix(in srgb, var(--accent-fill) 14%, transparent); }
 
 .dockPreview {
   position: fixed;
   z-index: var(--z-refpopup);
-  background: color-mix(in srgb, var(--accent-dark) 25%, transparent);
-  border: 2px solid var(--accent-dark);
+  background: color-mix(in srgb, var(--accent-fill) 25%, transparent);
+  border: 2px solid var(--accent-fill);
   border-radius: var(--radius-md);
   pointer-events: none;
   transition: left var(--dur-fast) ease, top var(--dur-fast) ease, width var(--dur-fast) ease, height var(--dur-fast) ease;
@@ -3210,7 +3210,7 @@ html.appFocusFullscreen, html.appFocusFullscreen body { overflow: hidden; oversc
   border-radius: var(--radius-sm);
   user-select: none;
 }
-.chatToolPermRow:hover { background: color-mix(in srgb, var(--accent-dark) 8%, transparent); }
+.chatToolPermRow:hover { background: color-mix(in srgb, var(--accent-fill) 8%, transparent); }
 .chatToolPermRow input { margin: 0; }
 .chatToolPermRow svg { flex: none; opacity: 0.75; }
 .chatMessages {
@@ -3581,7 +3581,7 @@ html.appFocusFullscreen, html.appFocusFullscreen body { overflow: hidden; oversc
 }
 .uiBtn.on:hover:not(:disabled) { background: var(--bg-selected); color: var(--text-primary); }
 .uiBtn.ghost { background: transparent; border-color: transparent; box-shadow: none; }
-.uiBtn.primary { background: var(--accent-dark); border-color: transparent; color: var(--on-accent); }
+.uiBtn.primary { background: var(--accent-fill); border-color: transparent; color: var(--on-accent); }
 .uiBtn.primary:hover:not(:disabled) { background: var(--accent-hover); color: var(--on-accent); }
 .uiBtn.danger { color: var(--danger); border-color: var(--danger-border); }
 .uiBtn.danger:hover:not(:disabled) { background: var(--danger-bg); border-color: var(--danger); color: var(--danger); }
@@ -3643,9 +3643,9 @@ html.appFocusFullscreen, html.appFocusFullscreen body { overflow: hidden; oversc
 }
 .quotaBarFill {
   display: block; height: 100%; border-radius: 2px;
-  background: var(--accent-dark); transition: width var(--dur-slow) ease;
+  background: var(--accent-fill); transition: width var(--dur-slow) ease;
 }
-.quotaBarFill.warn { background: #d9822b; }
+.quotaBarFill.warn { background: var(--warn); }
 .quotaBarFill.full { background: #e5534b; }
 /* meters inside user-list rows stay compact */
 .aiProvMeta .quotaMeter { max-width: 260px; }
@@ -3687,7 +3687,7 @@ html.appFocusFullscreen, html.appFocusFullscreen body { overflow: hidden; oversc
   flex-shrink: 1; min-width: 0; max-width: 38%; overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
   cursor: pointer;
 }
-.topbar button.linkNameTag:hover { border-color: var(--accent-dark); color: var(--text-primary); }
+.topbar button.linkNameTag:hover { border-color: var(--accent-fill); color: var(--text-primary); }
 .topbar .linkNameInput { margin-left: 6px; width: 11em; max-width: 38%; padding: 1px 7px; font-size: var(--fs-xs); }
 /* The share view's brand mark (a page share's way to this server's front
    door) and its access pill (sharing/ShareAccess.jsx): the role in bold with
@@ -4299,7 +4299,7 @@ a.shareBrand:hover { background: var(--bg-hover); }
 }
 .chatMsgActionBtn:disabled { opacity: 0.4; cursor: default; }
 .chatBubbleRow.findHit .chatBubble {
-  outline: 2px solid var(--accent-dark);
+  outline: 2px solid var(--accent-fill);
   outline-offset: 3px;
 }
 /* edit-in-place bubble */
@@ -4358,7 +4358,7 @@ a.shareBrand:hover { background: var(--bg-hover); }
   flex-shrink: 0;
 }
 .chatFindRow .searchToggle:disabled { opacity: 0.35; cursor: default; }
-.chatClearBtn.on { color: var(--text-primary); border-color: var(--accent-dark); background: color-mix(in srgb, var(--accent-dark) 15%, transparent); }
+.chatClearBtn.on { color: var(--text-primary); border-color: var(--accent-fill); background: color-mix(in srgb, var(--accent-fill) 15%, transparent); }
 /* pasted figures: pending previews + in-bubble display */
 .chatImgPreviewRow {
   display: flex;
@@ -4690,7 +4690,7 @@ a.shareBrand:hover { background: var(--bg-hover); }
   right: 3px;
   width: 8px;
   height: 8px;
-  border: 2px solid var(--accent-dark);
+  border: 2px solid var(--accent-fill);
   border-top-color: transparent;
   border-radius: 50%;
   animation: transferSpin 0.8s linear infinite;
@@ -4773,7 +4773,7 @@ a.shareBrand:hover { background: var(--bg-hover); }
 }
 .topbar .navBackBtn:hover {
   background: var(--accent-bg);
-  border-color: var(--accent-dark);
+  border-color: var(--accent-fill);
   color: var(--accent-bright);
   transform: translateX(-1px);
 }
@@ -4786,7 +4786,7 @@ a.shareBrand:hover { background: var(--bg-hover); }
   height: 15px;
   padding: 0 3px;
   border-radius: var(--radius-full);
-  background: var(--accent-dark);
+  background: var(--accent-fill);
   color: var(--on-accent);
   font-size: var(--fs-2xs);
   font-weight: 600;
@@ -5160,7 +5160,7 @@ a.shareBrand:hover { background: var(--bg-hover); }
   font-weight: 600;
   color: var(--accent);
   background: var(--accent-bg-light);
-  border: 1px solid var(--accent-dark);
+  border: 1px solid var(--accent-fill);
   border-radius: var(--radius-full);
   padding: 0 7px;
   margin-left: 8px;
@@ -5182,7 +5182,7 @@ a.shareBrand:hover { background: var(--bg-hover); }
   text-overflow: ellipsis;
   white-space: nowrap;
 }
-.blockLinkChip:hover { background: var(--accent-dark); border-color: #4a8abf; color: var(--on-accent); }
+.blockLinkChip:hover { background: var(--accent-fill); border-color: #4a8abf; color: var(--on-accent); }
 [data-scheme="light"] .blockLinkChip { background: #e3effa; color: #2b6bcb; border-color: #b5d2ee; }
 [data-scheme="light"] .blockLinkChip:hover { background: #cfe3f7; color: #1d5ab3; }
 :is([data-theme="gamma-light"], [data-theme="gamma-dark"]) .blockLinkChip { background: var(--accent-bg); color: var(--accent); border-color: var(--border-light); }

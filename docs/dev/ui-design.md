@@ -22,7 +22,8 @@ A theme's block names a handful of seeds: `--ground` (the content surface),
 `--ink` (body text), `--accent`, `--danger`, `--ok`, and optionally
 `--accent-fill` (the primary button), `--on-accent` and the callout colours.
 Every other colour comes from one of two recipes, `color-mix()` in oklab of
-the seeds. The light recipe steps each surface, border and quieter text from
+the seeds. `--warn`, the amber of warnings and conflicts, is one value in
+every theme, with its tint `--warn-bg`. The light recipe steps each surface, border and quieter text from
 the ground toward the ink. The dark one takes chrome and wells toward black,
 and raised surfaces toward the ink.
 
@@ -137,8 +138,8 @@ Two node tests hold the tokens in place. Each may only get better.
   colour literal, a pixel font size, a corner radius over 2 px, an
   elevation shadow, a z-index above 9, a transition under half a second. It
   fails when a file holds more of one kind than `tests/design-baseline.json`
-  records, and lists the new offenders. What is left is mostly the amber
-  warning colour and the PDF page's own colours. After a cleanup,
+  records, and lists the new offenders. What is left is mostly the PDF
+  page's own colours. After a cleanup,
   `node tools/designTokens.mjs --baseline` records the lower floor.
 
 A value that is raw on purpose says why in a comment the scanner reads:

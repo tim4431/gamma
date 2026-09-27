@@ -129,7 +129,6 @@
   /* Straight from the seeds, in either scheme. */
   --bg-surface: var(--ground);
   --text-primary: var(--ink);
-  --accent-dark: var(--accent-fill);
   --drag-accent: var(--accent);
   /* The PDF page ground where a theme tints pages (sepia, solarized, gray,
      the Gamma pair). Not a --bg-* token: it is the paper, not a surface,
@@ -168,6 +167,10 @@
      and the tinted hover/backdrop behind it. */
   --danger-bg: color-mix(in srgb, var(--danger) 14%, transparent);
   --danger-border: color-mix(in srgb, var(--danger) 45%, transparent);
+  /* The warning amber (a conflict to resolve, a warning tag or log level, a
+     nearly full quota): one value in every theme, and its tint. */
+  --warn: #d9822b;
+  --warn-bg: color-mix(in srgb, var(--warn) 14%, transparent);
   --scrollbar-thumb: color-mix(in oklab, var(--ground) 79.5%, var(--ink));
   --scrollbar-thumb-hover: color-mix(in oklab, var(--ground) 68%, var(--ink));
   /* Depth: raised controls (buttons, chips, the find box); what floats

@@ -214,19 +214,19 @@
 .setStatLabel { display: flex; align-items: center; gap: 5px; font-size: var(--fs-2xs); color: var(--text-muted); }
 .setStatLabel svg { flex-shrink: 0; }
 .setStatBar { display: block; height: 3px; border-radius: 2px; background: var(--bg-active); overflow: hidden; }
-.setStatBar > i { display: block; height: 100%; border-radius: 2px; background: var(--accent-dark); transition: width var(--dur-slow) ease; }
+.setStatBar > i { display: block; height: 100%; border-radius: 2px; background: var(--accent-fill); transition: width var(--dur-slow) ease; }
 .setStatBar > i.ok { background: var(--ok); }
-.setStatBar > i.warn { background: #d9822b; }
+.setStatBar > i.warn { background: var(--warn); }
 /* Text tiles (StatText): version, uptime, counts — a smaller value, a hint line, a toned frame. */
 .setStatText .setStatNum { font-size: var(--fs-body); line-height: 1.2; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .setStatHint { font-size: var(--fs-2xs); color: var(--text-dim); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
-.setStat.warn { border-color: rgba(217, 130, 43, 0.55); }
+.setStat.warn { border-color: color-mix(in srgb, var(--warn) 55%, transparent); }
 .setStat.error { border-color: color-mix(in srgb, var(--danger) 55%, transparent); }
 /* Several controls at the end of one settings row (a filter + Copy on the log row). */
 .setRowControls { display: flex; align-items: center; gap: 6px; flex-shrink: 0; flex-wrap: wrap; justify-content: flex-end; }
 /* Level badge in a log row (LogBox entries with a tone). */
 .sysLogLevel { flex: none; align-self: flex-start; font-size: var(--fs-2xs); font-weight: 600; letter-spacing: 0.04em; padding: 1px 4px; border-radius: var(--radius-xs); }
-.sysLogLevel.warn { color: #d9822b; background: rgba(217, 130, 43, 0.14); }
+.sysLogLevel.warn { color: var(--warn); background: var(--warn-bg); }
 .sysLogLevel.error { color: var(--danger); background: color-mix(in srgb, var(--danger) 14%, transparent); }
 .sysLogRow:has(.sysLogLevel) .sysLogMsg { color: var(--text-secondary); }
 
@@ -469,7 +469,7 @@
   font-size: var(--fs-2xs);
   font-weight: 600;
   color: var(--accent);
-  border: 1px solid var(--accent-dark);
+  border: 1px solid var(--accent-fill);
   border-radius: var(--radius-full);
   padding: 0 6px;
   margin-left: 6px;
@@ -567,7 +567,7 @@
   font-family: inherit; font-weight: inherit; line-height: inherit; text-align: left; cursor: pointer;
 }
 .setNavAccount:hover { border-color: var(--border-hover); }
-.setNavAccount.active { border-color: var(--accent-dark); background: var(--accent-bg); }
+.setNavAccount.active { border-color: var(--accent-fill); background: var(--accent-bg); }
 .setNavAvatar {
   width: 30px; height: 30px; flex-shrink: 0; border-radius: 50%;
   display: inline-flex; align-items: center; justify-content: center;
