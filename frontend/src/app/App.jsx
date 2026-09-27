@@ -392,7 +392,15 @@ function PageHostGate() {
     })();
     return () => { active = false; };
   }, [boot]);
-  if (!boot) return <div id="splash"><div className="spin" /><div>{t("Loading Gamma…")}</div></div>;
+  // The same splash index.html paints before the bundle, so the hand-over
+  // doesn't jump (BrandMark is the cached favicon).
+  if (!boot) return (
+    <div id="splash" role="status" aria-label={t("Loading Gamma…")}>
+      <BrandMark className="mark" size={56} />
+      <div className="name">{t("Gamma")}</div>
+      <div className="spin" />
+    </div>
+  );
   return <LibraryApp publicPage={boot.publicPage || null} initialServerConfig={boot.serverConfig || null} />;
 }
 
