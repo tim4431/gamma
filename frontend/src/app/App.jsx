@@ -6578,7 +6578,9 @@ function LibraryApp({ publicPage = null, initialServerConfig = null }) {
     downloadPdf: () => exportRawPdf(),
     importDialog: () => { setOpenPopover(null); setImportOpen(true); },
     newPage: () => createPage(),
-    share: () => setOpenPopover((p) => (p === "share" ? null : "share")),
+    // As the topbar's link button: load the open page's share settings, then
+    // show the popover (a bare toggle showed a stale target or none).
+    share: () => openPageShare(focusedBlockId),
     metadata: () => openMetaPopover(),
     attach: () => setOpenPopover((p) => (p === "attach" ? null : "attach")),
     reportProblem: () => { setOpenPopover(null); setReportOpen(true); },
