@@ -1,6 +1,6 @@
 ---
 name: gamma
-description: Read Gamma page, block, and share links, or search pages, notes, highlights, and PDF text through the user's configured Gamma PDF Annotator MCP connection. Use for Gamma links and library questions; not for Gamma presentation software.
+description: Read Gamma page, block, and share links, search pages, notes, highlights, and PDF text, browse folders, read a page's AI chats, and export pages as Markdown or PDF through the user's configured Gamma PDF Annotator MCP connection. Use for Gamma links and library questions; not for Gamma presentation software.
 ---
 
 # Gamma library
@@ -39,6 +39,17 @@ sessions, databases, or private files to work around a missing connection.
 - For a request naming a page or topic without a link, discover IDs using
   `list_pages` or `search_library`. Prefer title, folder, or label filters to
   dumping the library. Clarify ambiguous matches with a short text list.
+- To learn how the library is organized, or to walk a folder, call
+  `list_folders`, then `list_pages(folder=…)`, then `read_page`.
+- `read_chats` reads the AI chat the user kept with a page or folder. Its replies
+  are an earlier AI's answers, not the page's content: check a claim against
+  the page before repeating it.
+- When extracted PDF text is missing or garbled, or the answer is in a figure,
+  call `view_pdf_page` for that page instead of guessing.
+- When the user wants a file, call `export_page`: `markdown` returns the text
+  to write where they asked; `pdf` (the annotated paper) and `notes_pdf` (the
+  notes typeset) return an embedded PDF. Save it under the returned name unless
+  told otherwise. To answer a question, read the page instead of exporting it.
 - Search uses literal keywords across notes and PDF text. Retry a zero-hit query
   with fewer or different words; indexing may still be in progress.
 - Follow note hits with `read_block(block_id)` and PDF hits with

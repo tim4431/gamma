@@ -226,8 +226,39 @@ def test_list_pages_filters_and_labels_mode(org):
                                   {"list_labels": True})
     assert "labels" in action["summary"]
     assert '- label "Jeff": 1 page' in text and '- label "jeff": 1 page' in text
-    assert '- label "qec": 1 page' in text and '- folder "labtest": 2 pages' in text
+    assert '- label "qec": 1 page' in text and "folder" not in text  # folders: list_folders
     assert jeff1 not in text
+
+
+def test_list_folders_shows_the_tree_with_counts(org):
+    """list_folders: every tagged path plus its implied parents, subfolders
+    indented under their folder, direct and total page counts, the loose
+    pages at the root — and a folder chat or `folder` sees only its subtree."""
+    c, ids = org
+    for title, where in (("tree top", "tree"), ("deep one", "tree/a/b"), ("deep two", "tree/a/b, tree/c")):
+        r = c.post("/api/blocks", json={"parent_id": "root", "content": title, "properties": {"folder": where}})
+        assert r.status_code == 200, r.text
+    text, action = run_agent_tool(ids["ws"], folder(""), "list_folders", {})
+    assert action["kind"] == "list" and "folders in the library" in action["summary"]
+    lines = text.splitlines()
+    # "tree/a" is only implied by "tree/a/b"; a page in two subfolders counts once above them.
+    assert '- "tree" (1 here, 3 with subfolders)' in lines
+    assert '  - "tree/a" (0 here, 2 with subfolders)' in lines
+    assert '    - "tree/a/b" (2 pages)' in lines
+    assert '  - "tree/c" (1 page)' in lines
+    assert "in no folder." in text.splitlines()[-2]  # the fixture's loose note
+    assert 'list_pages(folder="<path>")' in text
+    # Scoped to a folder: only its subtree, relative `folder` resolved inside it.
+    text, _ = run_agent_tool(ids["ws"], folder("tree"), "list_folders", {"folder": "a"})
+    assert '- "tree/a" (0 here, 2 with subfolders)' in text.splitlines()
+    assert '"tree/c"' not in text and '"readout"' not in text and "no folder" not in text
+    text, _ = run_agent_tool(ids["ws"], folder("tree/c"), "list_folders", {})
+    assert '- "tree/c" (1 page)' in text.splitlines()
+    text, _ = run_agent_tool(ids["ws"], folder(""), "list_folders", {"folder": "nowhere"})
+    assert text.startswith("No folders in “nowhere”")
+    # Paper chats have no folder tools.
+    text, action = run_agent_tool(ids["ws"], {"type": "page", "page_id": ids["a"]}, "list_folders", {})
+    assert action["error"] and "unknown tool" in text
 
 
 def _blank_pdf(path, pages=2):

@@ -116,8 +116,8 @@ def test_chat_page_scope_arms_read_tools(org, monkeypatch):
                                      "agent_scope": "page", "page_id": ids["a"], "stream": True})
     assert r.status_code == 200
     assert [t["name"] for t in seen["tools"]] == [
-        "read_page", "read_block", "view_pdf_page", "search_library", "search_papers", "fetch_paper",
-        "edit_block", "create_block", "move_block"]
+        "read_page", "read_block", "read_chats", "view_pdf_page", "search_library", "search_papers",
+        "fetch_paper", "edit_block", "create_block", "move_block"]
     assert f'page_id "{ids["a"]}"' in seen["system"]
     lines = [json.loads(l) for l in r.text.splitlines() if l.strip()]
     reads = [l["action"] for l in lines if "action" in l]
@@ -332,7 +332,8 @@ def test_chat_permissions_gate_tools_and_execution(org, monkeypatch):
                                                      "block_edit": False}})
     assert r.status_code == 200
     assert [t["name"] for t in seen["tools"]] == [
-        "list_pages", "read_page", "read_block", "view_pdf_page", "search_library", "search_papers", "fetch_paper"]
+        "list_pages", "list_folders", "read_page", "read_block", "read_chats", "view_pdf_page",
+        "search_library", "search_papers", "fetch_paper"]
     assert seen["blocked"].startswith("error: tool not enabled")
     assert props(c, ids["a"])["content"] == before  # nothing was renamed
 

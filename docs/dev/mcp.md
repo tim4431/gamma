@@ -8,9 +8,10 @@ servers, and connecting Codex does not invoke Gamma's AI provider.
 
 | File | Owns |
 |---|---|
-| `gamma/mcp_server.py` | the `/mcp` transport (official Python MCP SDK), the four library read tools plus link reading |
+| `gamma/mcp_server.py` | the `/mcp` transport (official Python MCP SDK): the chat registry's read tools (`READ_TOOLS`), link reading, page export |
 | `gamma/mcp_oauth.py` | discovery, dynamic registration, PKCE authorization and token exchange, the consent API (`/api/integrations/oauth/*`), `public_base` |
 | `gamma/mcp_links.py` | local page/block/share link resolution within the connected workspace |
+| `gamma/mcp_export.py` | `export_page`: a page as Markdown text or an embedded PDF, over `routers/export.py` |
 | `gamma/integrations.py` | integration tokens (`integration_tokens` table, hashes only) and their resolution |
 | `gamma/server_settings.py` | the admin-confirmed public URL and the MCP host allowlist |
 | `gamma/routers/integrations.py` | the session-only token management API |
@@ -158,11 +159,50 @@ Ask Codex to find a page, search a topic, or summarize notes. Tools available:
 
 | Tool | Content |
 | --- | --- |
-| `list_pages` | Page IDs/titles, folders, labels, attachment metadata |
+| `list_folders` | The folder tree, each folder with its direct and total page counts; pages in no folder |
+| `list_pages` | Page IDs/titles, folders, labels, attachment metadata; filters by folder, label, title |
 | `search_library` | Full-text note and PDF matches, with source locations |
 | `read_page` | Notes, highlights, properties, and windowed PDF text |
 | `read_block` | One block/subtree or a page's nested note outline |
+| `read_chats` | The AI chat kept with a page or folder: the current conversation as a transcript, earlier ones by `chat_id` |
+| `view_pdf_page` | One PDF page as an image (a scan, a figure, a table's layout) |
 | `read_gamma_link` | Resolve and read a page, block, or share URL, including PDF page context; a folder-share URL lists the folder's pages |
+| `export_page` | One page as Markdown text, or as a PDF file: the annotated paper or the notes typeset |
+
+The first seven are the Gamma chat's own tools (`gamma/ai_tools.py`, described
+in [ai_tools.md](ai_tools.md)), run through the same dispatcher with a
+workspace-wide, non-writable scope; `READ_TOOLS` in `mcp_server.py` is the
+allowlist. The chat's other tools stay off: the web tools (`search_papers`,
+`fetch_paper`), because the assistant has its own web access, and every write
+tool, because the connection is read-only. `read_gamma_link` and
+`export_page` exist only here. `view_pdf_page`'s picture goes out as an MCP
+`image` item, which the client shows the model as an image.
+
+### Export a page
+
+`export_page` (`gamma/mcp_export.py`) gives an assistant the files the Export
+dialog makes, without a download link. It renders through the same functions
+as the HTTP export routes (`page_markdown`, `annotated_pdf`, `page_notes_pdf`
+in `routers/export.py`), with the dialog's two switches, `highlights` and
+`notes`, both on by default:
+
+- `markdown`: the readable Markdown export as the result's text. The file is
+  not bundled: image and file links become absolute URLs on this server with
+  `?ws=`, which open in a signed-in browser. Handwriting links name an SVG that
+  only the zip export writes.
+- `pdf`: the page's PDF with the highlights as annotations and the notes
+  painted beside them, the same file `/api/pages/{id}/export-pdf` returns.
+  Both switches off gives the stored PDF. A page without a PDF is refused.
+- `notes_pdf`: the notes typeset as their own PDF, for any page.
+
+A PDF is returned as an embedded resource (`application/pdf`, base64 blob)
+after a text line naming the file. Its `uri` is the HTTP export that gives the
+same file to a signed-in browser. Claude Code writes the blob to a file and
+hands the model the path (checked in Claude Code 2.1.283, which does this for
+blobs up to 100 MB). A client that cannot handle embedded resources gets only
+the text line. Files over `EXPORT_MAX_BYTES` (50 MB) are refused with a
+pointer to the Export dialog, rather than inflated into one JSON response.
+Nothing is stored.
 
 ### Send a page to either assistant
 
@@ -190,8 +230,8 @@ without disclosing the target. URLs are never fetched; foreign origins are
 rejected. Localhost, 127.0.0.1 and ::1 are equivalent only at the same scheme and
 port. A new server address requires the corresponding connection and link.
 
-`read_page`, `read_block`, `list_pages`, and `search_library` remain available for
-follow-up reading and requests naming a page or topic without a URL.
+The other tools remain available for follow-up reading and for requests naming
+a page, folder or topic without a URL.
 
 ## Self-hosted and remote connections
 
@@ -415,8 +455,10 @@ Official references: [Codex MCP configuration](https://learn.chatgpt.com/docs/ex
 
 ## Validation
 
-`backend/tests/test_mcp.py` exercises the SDK endpoint, real tool reads, input
-validation, workspace isolation, permissions, expiration, and revocation.
+`backend/tests/test_mcp.py` exercises the SDK endpoint, real tool reads (the
+folder tree, a page's chat, a PDF page as an image), the three export formats
+and their refusals, input validation, workspace isolation, permissions,
+expiration, and revocation.
 `test_mcp_oauth.py` covers discovery, approval, PKCE, resource/client/redirect
 binding, expiration, replay prevention, revocation, and streamed body limits.
 It also covers HTTPS proxy consent with saved and environment-configured public

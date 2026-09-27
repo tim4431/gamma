@@ -465,8 +465,9 @@ bound to the same map), so a change in either place is the same change.
 else `pageAttach` → pdf; else notes) and sends that kind's map as the
 request's `permissions`.
 
-One permission per capability: List pages, Read pages, Read note blocks,
-View PDF pages (`view` → `view_pdf_page`, a rendered page picture for a
+One permission per capability: List pages (`list_pages` and the folder tree
+`list_folders`), Read pages (`read_page` and the page and folder chats
+`read_chats`), Read note blocks, View PDF pages (`view` → `view_pdf_page`, a rendered page picture for a
 scan or a figure), Search library (`search_library` — notes and PDF text; the stored key is
 still `search`), Search papers online (`web_search` → `search_papers`), Fetch
 documents (`web_read` → `fetch_paper`; both web tools are read-only and

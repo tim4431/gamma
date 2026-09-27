@@ -33,14 +33,17 @@ before dispatching a mutation, so attachments do not grant editing access.
 The [MCP adapter](mcp.md) exposes a read-only subset of this same registry to
 external assistants. `agent_tools` filters definitions and `run_agent_tool`
 enforces the caller's allowlist at dispatch. Gamma chat passes its armed tool
-set; MCP passes its fixed four-tool allowlist and a non-writable workspace
-scope.
+set; MCP passes its fixed allowlist of the seven read tools below that stay
+inside the library (everything but the web and write tools) and a
+non-writable workspace scope.
 
 | Tool | Permission | Scope | What it does |
 |---|---|---|---|
 | `list_pages` | List pages | folder | List the folder's pages: id, title, attachments (`[pdf]` when the page carries a PDF, `[]` for text-only), folder paths, labels, cached metadata (first author, year, venue), last-update date |
+| `list_folders` | List pages | folder | The folder tree below the chat's folder: every path with its implied parents, subfolders indented, pages filed directly and in total; the pages in no folder at the root |
 | `read_page` | Read pages | folder + page | Read one page: title, properties, the user's highlights and notes, and — when it carries a PDF — a windowed excerpt of the attachment's extracted text |
 | `read_block` | Read note blocks | folder + page | Read a page's notes as an id-prefixed outline — the ids the editing tools take |
+| `read_chats` | Read pages | folder + page | Read the AI chat kept with a page or folder: the current conversation as a numbered transcript, the earlier ones by `chat_id` |
 | `view_pdf_page` | View PDF pages | folder + page | Look at one page of the page's PDF as a picture — a scan with no usable text layer, a figure, a table's layout |
 | `search_library` | Search library | folder + page | Full-text search over the reachable pages' notes AND PDF text; hits carry a `source` (note hits: block id + page, PDF hits: page number). `search_pdfs` is its deprecated alias (replay only) |
 | `search_papers` | Search papers online | folder + page | Scholarly search outside the library — Crossref + arXiv (keyless), or a direct DOI / arXiv-id lookup — returning registry records with the `doi:` / `arXiv:` string `fetch_paper` takes |
@@ -54,8 +57,22 @@ scope.
 ### list_pages (folder only)
 
 Optional `label` / `folder` / `title_contains` filters narrow the listing, or
-`list_labels: true` returns just the label/folder vocabulary with counts —
-the cheap way to learn how a library is organized before acting on it.
+`list_labels: true` returns just the label vocabulary with counts. A `folder`
+filter lists that folder's pages and its subfolders'; a relative path resolves
+inside the chat's folder (`_in_scope_folder`, the rule `list_folders`,
+`read_chats` and `move_page` share).
+
+### list_folders (folder only)
+
+How the library is organized, before acting on it or walking it: one line per
+folder under the chat's folder (or under `folder`), as a full path indented by
+depth, with the pages filed directly in it and, when different, the pages
+anywhere below it. Parents that only exist through a deeper path (`a` for a
+page filed in `a/b`) are shown, and a page in two subfolders counts once in
+their parent. At the library root a last line counts the pages in no folder.
+The result ends by pointing at `list_pages(folder=…)` and `read_page`, which
+is how an assistant traverses the tree. Shares the "List pages" permission
+with `list_pages`.
 
 ### read_page (both scopes)
 
@@ -104,6 +121,28 @@ contents are snipped per line with an explicit "read_block this id for the
 full text" marker, and the listing stops at the read-window budget naming how
 many blocks were left out. (`read_page` shows the same notes without ids —
 context for answering; `read_block` is the editing view.)
+
+### read_chats (both scopes)
+
+The AI chat kept with a page or folder, read from the rows the chat panel
+keeps (`chats` / `chat_history` in data.db, bucket keys as in
+[ai.md](ai.md) "Chat history buckets"). `page_id` names a page's chat; without
+it, `folder` names a folder's (a path resolved inside the chat's folder, the
+library root when empty). In a paper chat the page is the default and folder
+chats are out of scope. Pages and folders go through the same scope checks as
+every other read.
+
+The current conversation comes back as a numbered transcript. Each entry says
+who spoke, what rode along (attached PDFs and files by name, context pages by
+title, a count of images; never their data), the text, and for a reply the
+summaries of the tools it used. A failed reply is marked. After it comes the
+index of the bucket's earlier conversations: `chat_id`, title (the user's,
+else `derive_title`), message count, last update. `chat_id` reads one of
+those, and only within the bucket it belongs to. Long conversations are
+windowed by whole messages within the read budget (the "Read window"
+preference); the transcript ends by naming the `start` to continue from. The
+spec tells the model that replies in it are an AI's earlier answers, not the
+page's content. Shares the "Read pages" permission with `read_page`.
 
 ### view_pdf_page (both scopes)
 
