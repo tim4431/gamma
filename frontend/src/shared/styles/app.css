@@ -3880,44 +3880,54 @@ a.shareBrand:hover { background: var(--bg-hover); }
   margin: 2px 0 6px;
   cursor: pointer;
 }
-/* selection chips (multiple via Ctrl+select) */
-.chatSelChips { display: flex; flex-direction: column; gap: 2px; flex-shrink: 0; }
+/* Context chips (chat/ChatDock.jsx SelChip): a label line saying what the
+   chip is, over a one-line plain preview with its math typeset. A dashed
+   border marks what rode along by itself (the cursor block, its selection). */
+.chatSelChips { display: flex; flex-direction: column; gap: 3px; flex-shrink: 0; }
 .chatSelChip {
   display: flex;
-  align-items: center;
-  gap: 6px;
+  flex-direction: column;
+  gap: 1px;
   margin: 0 2px 2px;
-  padding: 3px 8px;
+  padding: 3px 4px 4px 8px;
   border: 1px solid var(--border-subtle);
-  border-radius: 6px;
+  border-radius: 8px;
   background: var(--bg-block);
-  font-size: calc(11px * var(--ui-font-scale, 1));
-  color: var(--text-muted);
   flex-shrink: 0;
   min-width: 0;
+}
+.chatSelChip.auto { border-style: dashed; border-color: var(--border-hover); background: transparent; }
+.chatSelChipHead {
+  display: flex;
+  align-items: center;
+  gap: 5px;
+  min-width: 0;
+  font-size: calc(10.5px * var(--ui-font-scale, 1));
+  line-height: 1.4;
 }
 .chatSelChipLabel {
   display: inline-flex;
   align-items: center;
-  gap: 1px;
-  color: #8ab4f8;
+  gap: 4px;
+  color: var(--accent);
   font-weight: 600;
   flex-shrink: 0;
 }
-.chatSelChipNum { font-size: 0.9em; line-height: 1; }
+.chatSelChipNote { color: var(--text-dim); min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .chatSelChipText {
   overflow: hidden;
   text-overflow: ellipsis;
   white-space: nowrap;
-  font-style: italic;
+  font-size: calc(12px * var(--ui-font-scale, 1));
+  line-height: 1.45;
+  color: var(--text-secondary);
+  padding-right: 4px;
 }
+.chatSelChipMath .katex { font-size: 1.05em; }
 /* Look comes from .uiClose.uiCloseSm; keep it pinned to the right of the chip. */
 .chatSelChipClose { margin-left: auto; }
-/* Note chips (attached blocks / selected note text) share the passage chip;
-   only the label colour tells them apart from PDF passages. */
-.chatSelChip.isBlock .chatSelChipLabel, .chatSelChip.isCursor .chatSelChipLabel { color: var(--accent); }
+/* Selected note text a user attached reads in the muted label colour. */
 .chatSelChip.isNote .chatSelChipLabel { color: var(--text-muted); }
-.chatSelChip.isBlock .chatSelChipText, .chatSelChip.isCursor .chatSelChipText { font-style: normal; }
 /* attach-PDF toggle */
 .chatAttachToggle {
   display: inline-flex;

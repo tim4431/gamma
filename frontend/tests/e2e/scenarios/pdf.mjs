@@ -307,7 +307,8 @@ export async function pdfScenarios({ server, browser, alice, makePdf, step, unti
         window.getSelection().addRange(range);
         span.dispatchEvent(new MouseEvent("mouseup", { bubbles: true }));
       });
-      await page.locator(".chatSelChips").getByRole("img", { name: "Selection", exact: true }).waitFor();
+      await page.locator(".chatSelChips").getByText("PDF passage", { exact: true }).waitFor();
+      await page.locator(".chatSelChips").getByText("· p. 2", { exact: true }).waitFor();
       await page.locator("textarea.chatInputArea").fill("What does this say?");
       await page.getByRole("button", { name: "Send", exact: true }).click();
       await until(() => requests.length === 1, { what: "the chat request" });

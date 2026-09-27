@@ -19,6 +19,8 @@ import { gammaLinksIn } from "../shared/model/gammaLinks.js";
 import { CharSlider, approxPages } from "../settings/SettingsKit";
 import { AgentToolPicker, CHAT_KIND_ROWS } from "../settings/SettingsDialog";
 import { aiServiceTiles } from "../settings/SettingsAi";
+import { renderKatex } from "../editor/LatexEditor";
+import { chipSegments } from "./chipText";
 import { AlertCircleIcon, ArrowDownIcon, ArrowUpIcon, BookIcon, CheckIcon, ChevronDownIcon, ChevronUpIcon, CloudDownloadIcon, CopyIcon, EyeIcon, FileIcon, FolderIcon, GlobeIcon, HighlightIcon, HistoryIcon, InfoIcon, ListIcon, MicIcon, OutlineIcon, PaperclipIcon, PencilIcon, PlusIcon, QuoteIcon, SearchIcon, SettingsIcon, SlidersIcon, SparklesIcon, StopIcon, TextCursorIcon, TrashIcon, XIcon } from "../shared/ui/Icons";
 import { T, getLocale, t } from "../shared/i18n/i18n.js";
 
@@ -177,22 +179,39 @@ const toolCallText = (a) => {
 };
 
 // One chip in the composer's strip: a PDF passage, the cursor block, an
-// attached block or selected note text. `icon` names what it is (`label` is
-// the icon's accessible name and tooltip heading; `n` numbers one of several
-// PDF passages); `kind` is the modifier class that colours it (isCursor /
-// isBlock / isNote; none for a PDF passage).
+// attached block or selected note text. Two lines: what it is, in words
+// (`label`, plus a muted `note` — the PDF page, or how to leave an automatic
+// one out), over a plain-text preview of the text (chat/chipText.js: the
+// markdown dropped, inline math typeset). `auto` marks context nobody
+// attached — it rides along because of where the cursor is — with a dashed
+// border; `kind` is the modifier class (isCursor / isBlock / isNote; none
+// for a PDF passage).
 const SEL_CHIP_ICONS = { cursor: TextCursorIcon, selection: HighlightIcon, passage: QuoteIcon, block: OutlineIcon };
 
-function SelChip({ kind, icon, label, n, labelTitle, text, title, onRemove, removeTitle }) {
+function ChipPreview({ text }) {
+  const segments = useMemo(() => chipSegments((text || "").slice(0, 600)), [text]);
+  return (
+    <span className="chatSelChipText">
+      {segments.map((seg, i) => {
+        if (seg.text) return <React.Fragment key={i}>{seg.text}</React.Fragment>;
+        const html = renderKatex(seg.math, false);
+        return html ? <span key={i} className="chatSelChipMath" dangerouslySetInnerHTML={{ __html: html }} />
+          : <code key={i}>{seg.math}</code>;
+      })}
+    </span>
+  );
+}
+
+function SelChip({ kind, icon, label, note, auto = false, text, title, onRemove, removeTitle }) {
   const Glyph = SEL_CHIP_ICONS[icon];
   return (
-    <div className={`chatSelChip${kind ? ` ${kind}` : ""}`} title={title ?? text}>
-      <span className="chatSelChipLabel" role="img" aria-label={label}
-        title={labelTitle ? t("{label} — {labelTitle}", { label: label, labelTitle: labelTitle }) : label}>
-        <Glyph size={13} />{n ? <span className="chatSelChipNum">{n}</span> : null}
-      </span>
-      <span className="chatSelChipText">{text.slice(0, 140)}{text.length > 140 ? "…" : ""}</span>
-      <button type="button" className="uiClose uiCloseSm chatSelChipClose" onClick={onRemove} title={removeTitle}>×</button>
+    <div className={`chatSelChip${kind ? ` ${kind}` : ""}${auto ? " auto" : ""}`} title={title ?? text}>
+      <div className="chatSelChipHead">
+        <span className="chatSelChipLabel"><Glyph size={12} aria-hidden="true" />{label}</span>
+        {note ? <span className="chatSelChipNote">· {note}</span> : null}
+        <button type="button" className="uiClose uiCloseSm chatSelChipClose" onClick={onRemove} title={removeTitle} aria-label={removeTitle}>×</button>
+      </div>
+      <ChipPreview text={text} />
     </div>
   );
 }
@@ -1413,30 +1432,31 @@ export default function ChatDock({
         <div className="chatSelChips">
           {cursorChip ? (
             cursorChip.sel ? (
-              <SelChip kind="isCursor" icon="selection" label={t("Selection")} text={cursorChip.sel.text}
-                title={t("The text you selected in this note — the assistant changes only this part.\
-{text}", { text: cursorChip.sel.text })}
+              <SelChip kind="isCursor" icon="selection" auto label={t("Selection in this note")} text={cursorChip.sel.text}
+                title={`${t("The text you selected in this note — the assistant changes only this part.")}\n\n${cursorChip.sel.text}`}
                 onRemove={() => setCursorOff(cursorChip.id)}
                 removeTitle={t("Don't send the selection with this message")} />
             ) : (
-              <SelChip kind="isCursor" icon="cursor" label={t("Cursor")} text={cursorChip.text}
-                title={t("Your cursor is on this block — it rides with the message, so \"this block\" means it.\
-{text}", { text: cursorChip.text })}
+              <SelChip kind="isCursor" icon="cursor" auto label={t("Block at your cursor")}
+                note={t("added automatically, × to leave out")} text={cursorChip.text}
+                title={`${t("Your cursor is on this block — it rides with the message, so \"this block\" means it.")}\n\n${cursorChip.text}`}
                 onRemove={() => setCursorOff(cursorChip.id)}
                 removeTitle={t("Don't send the cursor block with this message")} />
             )
           ) : null}
           {pdfSelections.map((s, i) => (
             <SelChip key={`p${i}`} text={s.text} icon="passage"
-              label={pdfSelections.length > 1 ? t("Passage {i}", { i: i + 1 }) : t("Selection")} n={pdfSelections.length > 1 ? i + 1 : null}
-              labelTitle={t("{page}Hold Ctrl while selecting in the PDF to add more passages", { page: s.page ? t("From PDF page {page}. ", { page: s.page }) : "" })}
+              label={pdfSelections.length > 1 ? t("PDF passage {i}", { i: i + 1 }) : t("PDF passage")}
+              note={s.page ? t("p. {page}", { page: s.page }) : ""}
+              title={`${s.text}\n\n${t("Hold Ctrl while selecting in the PDF to add more passages")}`}
               onRemove={() => setPdfSelections((prev) => prev.filter((_, j) => j !== i))}
               removeTitle={t("Remove this passage")} />
           ))}
           {(chatNotes || []).map((n, i) => (
             <SelChip key={`n${i}`} kind={n.kind === "block" ? "isBlock" : "isNote"} text={n.text}
-              icon={n.kind === "block" ? "block" : "selection"} label={n.kind === "block" ? t("Block") : t("Note selection")}
-              labelTitle={n.kind === "block" ? t("A note block attached with Ctrl+click or the ⋮⋮ menu — the assistant gets its text and id") : t("Note text selected with Ctrl held — the assistant changes only this part")}
+              icon={n.kind === "block" ? "block" : "selection"}
+              label={n.kind === "block" ? t("Attached block") : t("Selected note text")}
+              title={`${n.kind === "block" ? t("A note block attached with Ctrl+click or the ⋮⋮ menu — the assistant gets its text and id") : t("Note text selected with Ctrl held — the assistant changes only this part")}\n\n${n.text}`}
               onRemove={() => setChatNotes?.((prev) => prev.filter((_, j) => j !== i))}
               removeTitle={n.kind === "block" ? t("Detach this block") : t("Remove this passage")} />
           ))}

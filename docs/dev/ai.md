@@ -366,8 +366,8 @@ Three optional request fields say what the message is about inside the
 notes. The server resolves all three against the request's context pages.
 
 - `focus_block_id` — the block row the cursor is on (`focusedId` in
-  `app/App.jsx` → `focusedNote`). The chat shows it as a "Cursor" chip, like a
-  PDF selection, and sends it with every message; the chip's × leaves it out
+  `app/App.jsx` → `focusedNote`). The chat shows it as a "Block at your
+  cursor" chip, like a PDF selection, and sends it with every message; the chip's × leaves it out
   until the cursor moves to another block. Opening a page focuses no row (it
   lands where the reader left off, else at the top, and only flashes that
   row), so the chip first appears after a real click or caret move; explicit
@@ -388,8 +388,8 @@ notes. The server resolves all three against the request's context pages.
   Two sources feed it:
   - The open editor's selection. A plain drag on a rendered note opens the
     editor and keeps selecting in the raw source. App's `noteSel` (settled
-    120 ms after the last change) turns the Cursor chip into a Selection
-    chip. It survives the editor closing when the chat input is clicked, and
+    120 ms after the last change) turns the cursor chip into a "Selection
+    in this note" chip. It survives the editor closing when the chat input is clicked, and
     is dropped once sent.
   - A Ctrl+drag across rendered text. `sourceRangeOfSelection`
     (`editor/clickToSource.js`) maps both ends back to source offsets and
@@ -405,10 +405,15 @@ notes. The server resolves all three against the request's context pages.
   rule a small model answered "translate this" with the translation in its
   reply.
 
-Chips render in the composer's chip strip next to PDF passages, each kind
-an icon (text cursor = cursor block, highlighter = selected note text,
-outline = attached block, quote = PDF passage). They clear on send and on a
-page switch, since the ids belong to the page. Ctrl+click on a highlight card sends the quote as a PDF
+Chips render in the composer's chip strip next to PDF passages
+(`SelChip` in `chat/ChatDock.jsx`). Each is two lines: a label saying what
+it is in words, with its icon ("Block at your cursor · added automatically,
+× to leave out", "Selection in this note", "PDF passage · p. 7", "Attached
+block", "Selected note text"), over a one-line preview of the text with the
+markdown dropped and inline math typeset (`chat/chipText.js`, KaTeX). A
+dashed border marks what rode along by itself (the cursor block and the
+editor's selection in it); what the user attached keeps a solid one. They
+clear on send and on a page switch, since the ids belong to the page. Ctrl+click on a highlight card sends the quote as a PDF
 passage, not a block chip.
 
 Reasoning models burn invisible tokens — keep `max_tokens` generous (empty
