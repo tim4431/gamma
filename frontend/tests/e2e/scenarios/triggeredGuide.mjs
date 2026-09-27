@@ -215,18 +215,40 @@ export async function triggeredGuideScenarios(env) {
     } finally { await ctx.close(); }
   });
 
-  await step("triggered guide: someone else on the page offers the presence tour", async () => {
-    const pg = await user.api("/api/pages", { method: "POST", body: { title: "Busy page" } });
-    await user.api("/api/blocks", { method: "POST", body: { parent_id: pg.id, content: "together" } });
-    const a = await open(`&page=${pg.id}`);
-    const b = await open(`&page=${pg.id}`, { suggestTours: false });
+  await step("triggered guide: another person on the page offers the presence tour; your own second tab does not", async () => {
+    // A shared workspace the tourist owns and a second account edits.
+    server.manage("create-user", "visitor", "visitor-pw");
+    const out = server.manage("create-workspace", "Presence lab", "tourist", "shared");
+    const labId = (out.match(/workspace (\S+)/) || [])[1];
+    assert(labId, `shared workspace id from: ${out}`);
+    server.manage("set-member", labId, "visitor", "editor");
+    const visitor = await new Account(server, "visitor", "visitor-pw").login();
+    visitor.ws = labId;
+    const inLab = Object.assign(Object.create(Object.getPrototypeOf(user)), user, { ws: labId });
+    const pg = await inLab.api("/api/pages", { method: "POST", body: { title: "Busy page" } });
+    await inLab.api("/api/blocks", { method: "POST", body: { parent_id: pg.id, content: "together" } });
+    const url = `${server.base}/?ws=${labId}&page=${pg.id}`;
+    // Being in shared workspaces offers their tour once the page settles;
+    // keep it out of the way so only presence can be offered.
+    const tab = async (account, opts = {}) => {
+      const ctx = await account.context(browser, opts);
+      await ctx.addInitScript(() => localStorage.setItem("gamma-guide:tourist:workspaces", JSON.stringify({ state: "done", version: 999 })));
+      return { ctx, page: await openPage(ctx, url) };
+    };
+    const a = await tab(user, { suggestTours: true });
+    const own = await tab(user, { suggestTours: true });
+    let v = null;
     try {
+      await a.page.locator(".blockRendered", { hasText: "together" }).first().waitFor();
+      // The same account in another tab shows in the stack, but is nobody else.
+      await until(async () => (await a.page.$$(".presenceBar .peerAvatar")).length >= 1, { what: "the own second tab shows in the stack" });
+      await a.page.waitForTimeout(1500);
+      assertEq(await a.page.locator("[data-guide-offer]").count(), 0, "your own second tab offers nothing");
+      assertEq(await own.page.locator("[data-guide-offer]").count(), 0, "nor does the first tab, seen from the second");
+      await own.ctx.close();
+      v = await tab(visitor);
       await a.page.waitForSelector('[data-guide-offer="presence"] .guideCard');
-      // The same account in the other tab sees A arrive, and its synced
-      // profile says to suggest tours: it gets the offer too. Esc passes it up.
-      await b.page.waitForSelector('[data-guide-offer="presence"] .guideCard');
-      await b.page.keyboard.press("Escape");
-      await editRow(b.page, "together");
+      await editRow(v.page, "together");
       await a.page.getByRole("button", { name: "Show me" }).click();
       await a.page.waitForSelector('[data-guide-overlay="presence-who"] .guideCard');
       await primary(a.page).click();
@@ -235,13 +257,13 @@ export async function triggeredGuideScenarios(env) {
       // has nothing left to point at and passes by without a warning.
       const warnings = [];
       a.page.on("console", (m) => { if (m.type() === "warning" && m.text().startsWith("guide:")) warnings.push(m.text()); });
-      await b.ctx.close();
+      await v.ctx.close();
       await a.page.waitForSelector('[data-guide-overlay="presence-undo"] .guideCard');
       assertEq(warnings.length, 0, `no anchor warning: ${warnings.join("; ")}`);
       await primary(a.page).click();
       await until(async () => await a.page.locator(".guideCard").count() === 0);
       assertNoProblems(a.page);
-    } finally { await a.ctx.close(); await b.ctx.close(); }
+    } finally { await a.ctx.close(); await own.ctx.close(); await v?.ctx.close(); }
   });
 
   await step("triggered guide: the handwriting tour has the user draw first, then covers style, eraser and undo", async () => {

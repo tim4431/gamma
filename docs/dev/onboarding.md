@@ -70,7 +70,7 @@ an amber **Tip** chip over one plain sentence that says why it helps, with
 | Sharing a page | the page gets its first share link (`share.created`) | (create the link,) access, people, the link — inside the Share popover |
 | Editing tables | an editable table renders in the notes (`table.shown`) | (add one with /table,) the + strips, row/column handles, cells, the corner handle (copy or delete the whole table) |
 | Handwriting | the first stroke (`ink.stroke`) | (draw something,) tap the pen again for colour, width and pen vs monoline, erase part of it, undo, the lasso, the ink block in the notes |
-| Working together | someone else comes onto the page (`peer.joined`) | the avatar stack, their block, undo |
+| Working together | another account or a link visitor comes onto the page (`peer.joined`; your own second tab or the desktop app beside the browser is nobody else) | the avatar stack, their block, undo |
 | Resolving a conflict | a clone conflict's versions show (`conflict.shown`) | the versions, Apply |
 | Shared workspaces | the account belongs to a shared workspace (state) | the account menu's switcher and card |
 | hint: math keys | the live formula preview comes up (`math.previewed`) | the preview: Tab and `\` |
@@ -344,7 +344,7 @@ where the thing happens:
 | `chat.sent`, `chat.cited` | ChatDock's send, and the end of a reply holding a citation (`gammaLinksIn`) |
 | `citation.shown` | PdfCitationOverlay, once a quote is found and marked |
 | `share.created` | App's `createShareLink` |
-| `peer.joined` | App, when someone else appears on the open page |
+| `peer.joined` | App, when another account or a link visitor appears on the open page (a peer whose `user` is not this account) |
 | `ink.stroke` | App's `handleInkStroke` |
 | `ink.options`, `ink.erased`, `ink.undone` | App, when the armed tool's options row opens; `handleInkErase` / `handleInkErasePartial`; `inkUndo` (not redo) |
 | `table.shown` | MdTableWrap, when an editable table mounts |

@@ -6449,7 +6449,9 @@ function LibraryApp({ publicPage = null, initialServerConfig = null }) {
   useEffect(() => { if (openPopover) guideEvents.emit("popover.opened", { name: openPopover }); }, [openPopover]);
   useEffect(() => { if (quickOpen) guideEvents.emit("palette.opened"); }, [quickOpen]);
   useEffect(() => { if (inkUi.options) guideEvents.emit("ink.options"); }, [inkUi.options]);
-  const othersHere = !!focusedBlockId && collab.peers.length > 0;
+  // Someone ELSE: another account or a link visitor, not this account's own
+  // second tab or the desktop app beside the browser.
+  const othersHere = !!focusedBlockId && collab.peers.some((p) => !p.user || p.user !== authUser?.user);
   useEffect(() => { if (othersHere) guideEvents.emit("peer.joined"); }, [othersHere]);
   // The props a folder card shares between the pinned strip and the library
   // grid: glyph, title, count, selection/drag/drop behaviour and the context
