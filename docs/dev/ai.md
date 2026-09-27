@@ -467,7 +467,8 @@ saying what it is in words, with its icon: "Block at your cursor · added
 automatically, × to leave out", "Selection in this note", "PDF passage ·
 p. 7", "Attached block", "Selected note text". The second previews the text
 with the markdown dropped and inline math typeset (`chat/chipText.js`,
-KaTeX). A dashed border marks what rode along by itself (the cursor block
+KaTeX; the words between formulas go through search's `plainSnippet`, the
+same rule as the search rows and the `[[` picker). A dashed border marks what rode along by itself (the cursor block
 and the editor's selection in it); what the user attached keeps a solid
 one. They clear on send and on a page switch, since the ids belong to the
 page. Ctrl+click on a highlight card sends the quote as a PDF passage, not
