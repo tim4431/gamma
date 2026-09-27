@@ -369,8 +369,6 @@
 .aiKeyLink { display: inline-flex; align-items: center; gap: 4px; align-self: flex-start; font-size: var(--fs-xs); color: var(--accent); text-decoration: none; }
 .aiKeyLink:hover { text-decoration: underline; }
 .aiKeyCheck { display: flex; align-items: center; gap: 5px; font-size: var(--fs-xs); color: var(--text-muted); }
-.aiKeyCheck.aiTestOk { color: var(--ok); }
-.aiKeyCheck.aiKeysError { color: var(--danger); }
 .aiMoreOptions { margin-top: 6px; }
 .aiMoreOptions > summary { cursor: pointer; font-size: var(--fs-xs); color: var(--text-muted); }
 .aiMoreOptions[open] > summary { margin-bottom: 6px; }

@@ -1050,7 +1050,7 @@ body {
 }
 .mdImgFrame:is(:hover, :has(.mdImgTools :focus-visible)) .mdImgTools { opacity: 1; pointer-events: auto; }
 .mdImgTools a.ctlBtn { text-decoration: none; }
-.mdImgTools .ctlBtn.danger:hover { background: rgba(224, 92, 92, 0.15); color: #e05c5c; }
+.mdImgTools .ctlBtn.danger:hover { background: var(--danger-bg); color: var(--danger); }
 /* The edge drag grips shared by sized figures (note images, Mermaid
    diagrams — shared/ui/ResizeGrip.jsx), one per side; each frame reveals
    them on hover. */
@@ -3482,8 +3482,11 @@ html.appFocusFullscreen, html.appFocusFullscreen body { overflow: hidden; oversc
 .pwField:has(> .aiKeyInput) { margin-bottom: 6px; }
 .setField .pwField { margin-bottom: 0; }
 .loginCard .pwField { margin-bottom: 12px; }
-.aiKeysError { color: #e5534b; }
-.aiTestOk { color: #4caf50; }
+/* Status text: an error, a passed check. The line often also carries a
+   muted hint class that is declared later (.settingsPaneHint, .aiProvDesc,
+   .aiKeyCheck), so the pair outranks it. */
+.aiKeysError, :is(.settingsPaneHint, .aiProvDesc, .aiKeyCheck).aiKeysError { color: var(--danger); }
+.aiTestOk, :is(.settingsPaneHint, .aiProvDesc, .aiKeyCheck).aiTestOk { color: var(--ok); }
 /* --- Interface size (Settings → Appearance) ----------------------------
    Text uses --ui-font-scale; controls zoom their box, text and icon together.
    Reset the text multiplier inside controls to scale exactly once. Include
@@ -3676,7 +3679,7 @@ html.appFocusFullscreen, html.appFocusFullscreen body { overflow: hidden; oversc
   font-weight: 500;
   vertical-align: 1px;
 }
-.uiTag.admin { color: #4a9eff; border-color: rgba(74, 158, 255, 0.4); }
+.uiTag.admin { color: var(--accent); border-color: color-mix(in srgb, var(--accent) 40%, transparent); }
 /* Text for screen readers only: the sentence behind an icon, a table header without a visible word. */
 .srOnly { position: absolute; width: 1px; height: 1px; overflow: hidden; clip: rect(0 0 0 0); white-space: nowrap; }
 /* The share view's "as <name>" tag (an editing visitor without an account) and
