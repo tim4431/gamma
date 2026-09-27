@@ -5,6 +5,7 @@ import {
   DEFAULT_TOOLS, HIGHLIGHTER_OPACITY, MAX_TOOLS, appendStroke, boundsOf, decodeStroke, encodeStroke, eraseAt, hitStrokes,
   inkBounds, newInk, normalizeTools, pdfPositionOf, removeStrokes, strokePath, strokeWidth, strokesInLasso, toolStyle,
   translateStrokes, transformStrokes, nearestInkStroke, restyleStrokes, duplicateStrokes, MAX_STROKES,
+  nearestInkColor, PEN_COLORS, HIGHLIGHTER_COLORS,
 } from "../src/ink/ink.js";
 
 const samples = (n = 5, x0 = 100, y0 = 200) =>
@@ -213,4 +214,14 @@ test("tool presets: a stored list is validated, bad entries dropped, nothing lef
   assert.equal(normalizeTools(Array(30).fill({ kind: "pen", color: "#000000", size: 2 })).length, MAX_TOOLS);
   assert.deepEqual(toolStyle(tools[0]), { tool: "pen", color: "#dc2626", size: 4, opacity: 1 });
   assert.deepEqual(toolStyle(tools[1]), { tool: "highlighter", color: "#fde047", size: 14, opacity: HIGHLIGHTER_OPACITY });
+});
+
+test("a custom colour takes the nearest palette colour's name; palette colours are themselves", () => {
+  for (const c of [...PEN_COLORS, ...HIGHLIGHTER_COLORS]) assert.equal(nearestInkColor(c), c);
+  assert.equal(nearestInkColor("#DC2626"), "#dc2626");
+  assert.equal(nearestInkColor("#e11d48"), "#dc2626");  // rose reads as red
+  assert.equal(nearestInkColor("#000"), "#1f1f1f");
+  assert.equal(nearestInkColor("#fef08a"), "#fde047");  // a paler yellow
+  assert.equal(nearestInkColor("rgb(1, 2, 3)"), null);
+  assert.equal(nearestInkColor(""), null);
 });
