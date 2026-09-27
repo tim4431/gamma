@@ -1044,6 +1044,7 @@
   "Keep pages": "保留页面",
   "Keep the .rdf and the files/ folder together.": "请将 .rdf 和 files/ 文件夹放在一起。",
   "Keep this page reachable while this computer is off.": "此电脑关机时仍能访问此页面。",
+  "Keep this page reachable while this computer is off: publishing copies it to the Gamma Cloud share host and shares it there; edits keep syncing both ways.": "此电脑关机时仍能访问此页面：发布会把页面复制到 Gamma Cloud 分享主机并在那里分享；编辑会双向持续同步。",
   "Keeps the text as it is and marks the conflict resolved": "保持文本原样并将冲突标记为已解决",
   "Kept in this browser only.": "仅保存在此浏览器中。",
   "Kept local": "已保留本地",

@@ -206,8 +206,7 @@ function PublishSection({ state, busy, error, copied, onCopy, canEdit, onPublish
       <Section title={t("Gamma Cloud")}>
         <Row icon={CloudIcon} label={t("Publish")} className="publishRow"
           hint={!state.can_publish ? state.reason : counted || t("Keep this page reachable while this computer is off.")}
-          title={"Keep this page reachable while this computer is off: publishing copies it to the Gamma Cloud share host "
-            + "and shares it there; edits keep syncing both ways."}>
+          title={t("Keep this page reachable while this computer is off: publishing copies it to the Gamma Cloud share host and shares it there; edits keep syncing both ways.")}>
           {state.can_publish && canEdit ? (
             <button type="button" className="uiBtn sm primary" disabled={!!busy} onClick={() => onPublish()}>
               {spinning("publish") || <CloudUploadIcon size={13} />}{t("Publish")}
