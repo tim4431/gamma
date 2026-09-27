@@ -51,12 +51,15 @@ from ..ai_context import (
     build_messages as _build_messages,
     canonical_tool as _canonical_tool,
     MAX_CONTEXT_BLOCKS,
+    elide_live_results,
     gather_inputs as _gather_inputs,
     parse_images as _parse_images,
     pdf_path as _pdf_path,
+    prompt_tokens,
     render_selection_crop,
     request_note_selections,
 )
+from ..ai_protocols.base import truncated_stop
 from ..ai_settings import (
     MAX_MODELS_LEN,
     MAX_NAME_LEN,
@@ -116,6 +119,10 @@ class AIChatRequest(BaseModel):
     doc_id: str = ""
     history: list = Field(default_factory=list)  # [{role: "user"|"ai", text: str}, ...]
     model: str = ""       # model registry id ("provider:model") from /ai/models
+    # The conversation's key (the chat bucket: a page id, "home" or
+    # "home:<folder>"), hashed with the account and workspace into the
+    # provider's prompt-cache routing hint — never sent as it is.
+    chat_key: str = ""
     # PDF passages the user selected — focus the answer on them:
     # `selections` = [{text, page (1-based, where the viewer saw it start),
     # box ([x0, y0, x1, y1] fractions of that page, top-left origin)}]; the
@@ -1327,6 +1334,24 @@ def chatgpt_auth_complete(payload: ChatGPTAuthComplete, request: Request):
 # upload on later requests. In-memory: a restart retries native once.
 _NATIVE_PDF_REJECTED: set = set()
 
+# Room left for the reply (and the estimate's error) when a conversation is
+# fitted to the model's window before it is sent.
+_WINDOW_RESERVE = 8192 + 2048
+
+
+def _cache_key(user: str, ws: str, payload) -> str:
+    """One opaque id per conversation for the providers' prompt caches: the
+    chat bucket under the account and workspace, hashed so neither reaches
+    the provider."""
+    bucket = payload.chat_key or payload.page_id or "home"
+    return hashlib.sha256(f"{user}\0{ws}\0{bucket}".encode()).hexdigest()[:32]
+
+
+def _next_drop(drop: int, history: int) -> int:
+    """The next larger number of oldest turns to leave out: two more, then
+    doubling, never past the history's length."""
+    return min(history, max(drop + 2, drop * 2))
+
 
 # Sync endpoint on purpose: the AI call can take minutes; FastAPI's threadpool
 # keeps the event loop free for other requests meanwhile.
@@ -1343,8 +1368,6 @@ def ai_chat(payload: AIChatRequest, request: Request):
 
     entry = _resolve_model(rt, payload.model)
     effort = _resolve_effort(payload.effort)
-    # Which model answers, at what effort — the reply's footer names them.
-    answered = {"id": entry["id"], "name": entry["model"], "effort": effort}
     images = _parse_images(payload.images)
     custom_system = (payload.system or "").strip()[:8000]
     # The scope decides which tools exist; the permission toggles pick the
@@ -1363,21 +1386,38 @@ def ai_chat(payload: AIChatRequest, request: Request):
         payload.agent_scope != "page" or payload.page_id)
     tools = (agent_tools(payload.agent_scope, payload.permissions,
                          payload.read_char_limit) or None) if valid_scope else None
+    # Which model answers, at what effort, with tools or not — the reply's
+    # footer names them, and the coverage chip's advice depends on the tools.
+    answered = {"id": entry["id"], "name": entry["model"], "effort": effort, "tools": bool(tools)}
     # The conversation the agent loop grows across tool rounds (agent mode).
-    state = {}
+    state = {"drop": 0}
     count_usage = ai_usage.recorder("chat", entry, rt)
+    cache_key = _cache_key(user, ws, payload)
+    history_len = len([h for h in payload.history if isinstance(h, dict) and not h.get("error")])
+    conf = rt["providers"].get(entry["provider"]) or {}
+    window = ai_catalog.context_window(entry["provider"], conf, entry["model"])[0] if conf else 0
 
-    def prepared(allow_native):
+    def open_upstream(messages, system, pdf_b64s, stream):
+        return _open_ai(messages, system, entry, rt, pdf_b64s, effort=effort, timeout=180,
+                        images=state["images"], stream=stream, tools=tools, cache_key=cache_key)
+
+    def prepared(allow_native, drop=0):
+        """The request's turns, system prompt and native files, with the
+        ``drop`` oldest history items left out."""
         # Pictures of selected regions whose text is unreliable ride with
         # the user's own images.
         crops = []
-        pdf_b64s, context, coverage = _gather_inputs(ws, payload, allow_native, crops=crops)
+        pdf_b64s, context, coverage, message_context = _gather_inputs(ws, payload, allow_native, crops=crops)
         state["coverage"] = coverage
         state["images"] = images + crops
+        # The tools and the agent prompt know what the context already holds
+        # (read_page never repeats it; the prompt names the pages to read).
+        scope["coverage"] = coverage
         located = next((c["selection"]["passages"] for c in coverage if c.get("selection")), None)
         # Agent chats replay each saved reply's tool calls/results so the
         # model keeps what it already listed/read/changed across turns.
-        messages = _build_messages(payload, context, with_tools=bool(tools), located=located)
+        messages = _build_messages(payload, context, with_tools=bool(tools), located=located,
+                                   message_context=message_context, drop_turns=drop)
         # A custom prompt always applies; the built-in one only when there's a document
         system = custom_system or (_SYSTEM_PROMPT if (context or pdf_b64s) else "")
         if context or pdf_b64s:
@@ -1388,30 +1428,55 @@ def ai_chat(payload: AIChatRequest, request: Request):
                                      (payload.agent_system or "").strip()[:8000]))
         return pdf_b64s, messages, system
 
+    def fitted(allow_native):
+        """prepared(), with the oldest turns left out until the estimate fits
+        the model's window (when a source knows it) — before the provider
+        has to refuse the request."""
+        drop = state["drop"]
+        pdf_b64s, messages, system = prepared(allow_native, drop)
+        while (window and drop < history_len
+               and prompt_tokens(messages, system, tools, state["images"]) > window - _WINDOW_RESERVE):
+            drop = _next_drop(drop, history_len)
+            pdf_b64s, messages, system = prepared(allow_native, drop)
+        if drop != state["drop"]:
+            log.info(f"[ai_chat] {drop} oldest turns left out to fit the {window}-token window")
+            state["drop"] = drop
+        return pdf_b64s, messages, system
+
     def open_with_fallback(stream):
         """Open the upstream call; if the provider refuses native PDF parts
         (a 4xx before any bytes — the ChatGPT backend always does, compatible
         servers may), retry with extracted text. Auth and rate-limit failures
         aren't about the PDF and are raised as they are. A provider that
         rejected native parts and then succeeded as text is remembered, so
-        later requests skip the wasted multi-MB upload."""
+        later requests skip the wasted multi-MB upload. A prompt the
+        provider calls too long is retried with more of the oldest turns
+        left out (a window no source knew, or an estimate that fell short)."""
         attempts = (False,) if entry["provider"] in _NATIVE_PDF_REJECTED else (True, False)
         for native in attempts:
-            pdf_b64s, messages, system = prepared(native)
-            try:
-                resp = _open_ai(messages, system, entry, rt, pdf_b64s,
-                                effort=effort, timeout=180, images=state["images"], stream=stream,
-                                tools=tools)
-                if not native and True in attempts:
-                    _NATIVE_PDF_REJECTED.add(entry["provider"])
-                state.update(messages=messages, system=system, pdf_b64s=pdf_b64s)
-                return resp
-            except UpstreamError as e:
-                if not (native and pdf_b64s and 400 <= e.status < 500
-                        and e.status not in (401, 403, 429)):
-                    raise
-                log.warning(f"[ai_chat] {_protocol(rt, entry)} provider rejected native PDF parts, "
-                            f"retrying as text: {e}")
+            too_long = False
+            while True:
+                pdf_b64s, messages, system = fitted(native)
+                try:
+                    resp = open_upstream(messages, system, pdf_b64s, stream)
+                    if not native and True in attempts and not too_long:
+                        _NATIVE_PDF_REJECTED.add(entry["provider"])
+                    state.update(messages=messages, system=system, pdf_b64s=pdf_b64s)
+                    return resp
+                except UpstreamError as e:
+                    if failure_kind(e) == "too_long" and state["drop"] < history_len:
+                        too_long = True
+                        state["drop"] = _next_drop(state["drop"], history_len)
+                        log.info(f"[ai_chat] prompt too long for the provider, retrying with "
+                                 f"{state['drop']} oldest turns left out")
+                        continue
+                    if not (native and pdf_b64s and 400 <= e.status < 500
+                            and e.status not in (401, 403, 429)):
+                        raise
+                    too_long = failure_kind(e) == "too_long"
+                    log.warning(f"[ai_chat] {_protocol(rt, entry)} provider rejected native PDF parts, "
+                                f"retrying as text: {e}")
+                    break
 
     def agent_events(first_resp):
         """Organizer tool loop: yield ("delta", text) / ("action", dict) /
@@ -1431,11 +1496,14 @@ def ai_chat(payload: AIChatRequest, request: Request):
         for round_no in range(max_rounds):
             calls, text_parts = [], []
             last_preview = {}  # call id -> content previewed so far (dedup)
+            stop = ""
             try:
                 for kind, data in _sse_events(resp, proto):
                     if kind == "text":
                         text_parts.append(data)
                         yield ("delta", data)
+                    elif kind == "stop":
+                        stop = data
                     elif kind == "tool_delta":
                         name = _canonical_tool(data.get("name") or "")
                         if name not in _PREVIEW_TOOLS or name not in armed:
@@ -1483,6 +1551,11 @@ def ai_chat(payload: AIChatRequest, request: Request):
                         yield ("usage", data)
             finally:
                 resp.close()
+            if truncated_stop(stop):
+                # The output cap ended the round: say so rather than pass a
+                # cut-off reply (or a half-written tool call) as finished.
+                yield ("truncated", True)
+                return
             if not calls:
                 return
             messages.append({"role": "assistant", "content": "".join(text_parts),
@@ -1516,8 +1589,19 @@ def ai_chat(payload: AIChatRequest, request: Request):
                 yield ("delta", "\n\n*(stopped: tool-round limit reached — "
                                 "raise it in Settings → Assistant)*")
                 return
-            resp = _open_ai(messages, system, entry, rt, pdf_b64s, effort=effort,
-                            timeout=180, images=state["images"], stream=True, tools=tools)
+            # The valve on a long reply: once the rounds' results outgrow
+            # their budget, the oldest become stubs (the last rounds stay).
+            elide_live_results(messages)
+            try:
+                resp = open_upstream(messages, system, pdf_b64s, True)
+            except UpstreamError as e:
+                if failure_kind(e) != "too_long":
+                    raise
+                # Over the window mid-reply: keep only the last round's
+                # results and try once more.
+                elide_live_results(messages, keep_rounds=1, budget=0)
+                log.info("[ai_chat] tool round too long for the provider, retrying with earlier results elided")
+                resp = open_upstream(messages, system, pdf_b64s, True)
 
     try:
         if payload.stream:
@@ -1531,6 +1615,9 @@ def ai_chat(payload: AIChatRequest, request: Request):
             # then which model answers, at what effort.
             head = (json.dumps({"context": state["coverage"]}) + "\n") if state.get("coverage") else ""
             head += json.dumps({"model": answered}) + "\n"
+            if state["drop"]:
+                # Oldest turns left out to fit the window — the chat says so.
+                head += json.dumps({"trimmed": {"turns": state["drop"]}}) + "\n"
 
             if tools:
                 def agent_ndjson():
@@ -1551,8 +1638,13 @@ def ai_chat(payload: AIChatRequest, request: Request):
                 try:
                     if head:
                         yield head
-                    for text in _sse_deltas(resp, _protocol(rt, entry), usage.append):
-                        yield json.dumps({"delta": text}) + "\n"
+                    for kind, data in _sse_events(resp, _protocol(rt, entry)):
+                        if kind == "text":
+                            yield json.dumps({"delta": data}) + "\n"
+                        elif kind == "usage":
+                            usage.append(data)
+                        elif kind == "stop" and truncated_stop(data):
+                            yield json.dumps({"truncated": True}) + "\n"
                     # The provider's token report closes the stream.
                     for u in usage:
                         count_usage(u)
@@ -1568,7 +1660,7 @@ def ai_chat(payload: AIChatRequest, request: Request):
         if tools:
             # The tool loop is SSE-based on every protocol; join it for
             # non-stream callers and return the actions alongside the text.
-            parts, actions, usage = [], [], None
+            parts, actions, usage, truncated = [], [], None, False
             for kind, data in agent_events(open_with_fallback(True)):
                 if kind == "delta":
                     parts.append(data)
@@ -1576,17 +1668,22 @@ def ai_chat(payload: AIChatRequest, request: Request):
                     actions.append(data)
                 elif kind == "usage":
                     usage = _add_usage(usage, data)
+                elif kind == "truncated":
+                    truncated = True
                 # "progress" previews only matter to a live UI
             return {"response": "".join(parts), "actions": actions, "model": answered,
                     "context": state.get("coverage") or [],
-                    **({"usage": usage} if usage else {})}
+                    **({"usage": usage} if usage else {}),
+                    **({"truncated": True} if truncated else {}),
+                    **({"trimmed": {"turns": state["drop"]}} if state["drop"] else {})}
         usage = []
         with open_with_fallback(False) as resp2:
             text = _read_reply(resp2, _protocol(rt, entry), usage.append)
         for u in usage:
             count_usage(u)
         return {"response": text, "model": answered, "context": state.get("coverage") or [],
-                **({"usage": usage[0]} if usage else {})}
+                **({"usage": usage[0]} if usage else {}),
+                **({"trimmed": {"turns": state["drop"]}} if state["drop"] else {})}
     except AllowanceExhausted as e:
         return _failure_response(e.status_code, e.detail, _failure_info(e, rt, entry))
     except HTTPException:

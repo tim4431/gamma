@@ -35,7 +35,7 @@ class OpenAIChat(Protocol):
         return OPENAI_RESPONSES if tools and is_openai_platform(conf["base_url"]) else self
 
     def request(self, conf, messages, system, model, pdf_b64s=None, effort="",
-                max_tokens=8192, images=None, stream=False, tools=None):
+                max_tokens=8192, images=None, stream=False, tools=None, cache_key=""):
         messages = [dict(m) for m in messages]
         if pdf_b64s or images:
             last = messages[attach_index(messages)]
@@ -79,6 +79,10 @@ class OpenAIChat(Protocol):
                                            "parameters": t["parameters"]}} for t in tools]
         if effort:
             body["reasoning_effort"] = effort
+        if cache_key and is_openai_platform(conf["base_url"]):
+            # Routes every turn of one conversation to the same cache; a
+            # compatible server may reject fields it doesn't know.
+            body["prompt_cache_key"] = cache_key
         if stream:
             body["stream"] = True
             # The final chunk then carries the token counts (OpenAI and the

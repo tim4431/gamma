@@ -13,12 +13,23 @@ Context is framed as *pages from the user's knowledge base*
 (`page_report_section`) is: `### title`, a properties line (folders, labels,
 cached metadata, web source, attachment), and the user's notes tree with
 highlights; a page that carries a PDF adds the document's text — for the
-chat, the labelled head excerpt below, or windows around the passages the
-user selected (placed by page and section, with a picture of a formula —
-"Selected PDF passages" in [ai.md](ai.md)); for `read_page`,
-a `pdf_chars` window. A page without an attachment is its notes, always
-included; `include_notes` only decides whether PDF pages also show theirs.
-Everything below is about the PDF part of a page and applies unchanged.
+chat, the labelled head excerpt below; for `read_page`, a `pdf_chars`
+window. A page without an attachment is its notes, always included;
+`include_notes` only decides whether PDF pages also show theirs.
+
+The head excerpt is the *document part* of the context: it goes on the
+oldest user turn and reads the same on every turn of a conversation,
+which is what the providers' prompt caches key on ("Prompt caching" in
+[ai.md](ai.md)). What a message selects is the *message part*: windows
+around the selected passages (placed by page and section, with a picture
+of a formula — "Selected PDF passages" in [ai.md](ai.md)) go in front of
+that question alone, `SELECTION_WINDOW_CHARS` (10,000) per passage within
+the page budget and without the head slice the excerpt already gives
+(`selection_context(with_head=False)`), and not at all when the excerpt
+holds the whole document. Before, a selection swapped the head excerpt for
+its windows, so the conversation's opening changed with every selection
+and nothing could cache. Everything below is about the PDF part of a page
+and applies unchanged.
 
 ## The problem
 
@@ -69,10 +80,16 @@ message, and it doesn't stop fabrication — the tools are the better lever.
   off, this converts fabricated answers into honest "the excerpt doesn't say"
   (recall drops to 17% — those were memory, not reading).
 - **Excerpt label** (`head_context` / `extract_pdf_context`): the injected
-  head is prefixed with `[EXCERPT — the first 8,000 characters of this
-  51-page PDF …]` whenever the document didn't fit; `CONTEXT_INTRO` likewise
+  head is prefixed with `[EXCERPT — the first 60,000 characters of this
+  51-page PDF: PDF pages 1–9, page 9 cut short. Pages 10–51 are NOT shown
+  below …]` whenever the document didn't fit; `CONTEXT_INTRO` likewise
   says a page's document text "is often an excerpt (see its label)".
-  Unlabelled, "here is the text" reads as the whole paper.
+  Unlabelled, "here is the text" reads as the whole paper. The same
+  coverage reaches the agent prompt (`ai_tools.coverage_lines`: which
+  pages are in context, read from the cut-short page on) and `read_page`,
+  which never sends a page the excerpt shows in full — before, the prompt
+  told the model to look everything up "even if you think you know it",
+  and it re-read page 1 of a paper whose first nine pages it had.
 - **Page labels** (`extract_text(..., label_pages=True)` in `pdf_text.py`):
   every non-empty physical page is prefixed `[PDF page N]`, counted from
   `start_page` with blank pages included; a `read_page` continuation that
@@ -80,11 +97,14 @@ message, and it doesn't stop fabrication — the tools are the better lever.
   window (`pdf_excerpt`), and each context section carries
   `Gamma page ID: <id>`. Both feed the clickable citations
   ([pdf_citations.md](pdf_citations.md)).
-- **Document map** (`document_map`): for page/folder agent chats, a ~2.4k-char
-  outline — one line per PDF page (sampled for big documents), taken from the
-  FTS index so it costs a query, not a re-parse. Each attached paper gets its
-  own map labelled with its Gamma page ID. The model jumps to the right
-  page instead of guessing; on one question this cut 6 tool calls to 1.
+- **Document map** (`document_map`): for page/folder agent chats, a
+  `MAP_BUDGET` (2.4k-char) outline — one line per PDF page (sampled for big
+  documents, the step rounded up so the budget holds), taken from the FTS
+  index so it costs a query, not a re-parse — starting at the page the
+  excerpt cut short (`from_page`; no map when the excerpt holds the whole
+  document). Each attached paper gets its own map labelled with its Gamma
+  page ID. The model jumps to the right page instead of guessing; on one
+  question this cut 6 tool calls to 1.
 - **Search relaxation** (`_run_search_library`): the FTS query ANDs every
   term, and agents write 6–9-word natural queries — one word the page doesn't
   use meant zero hits and a wrong "the paper doesn't discuss this". A miss now
@@ -113,21 +133,26 @@ message, and it doesn't stop fabrication — the tools are the better lever.
   does this review report for X?") can still elicit the remembered number,
   now hedged rather than asserted — the model searches, finds nothing, and
   names the value while admitting it didn't find it in the text.
-- The map and index only exist once the paper is indexed. Every single-page
-  chat request on a page with a PDF (`gather_inputs` → `ensure_indexed`)
-  kicks background indexing for an un-indexed or stale paper, so the first
-  message on a fresh paper works without map/search and the next one has
-  both. (Before, only a search call kicked it — a chat that only ever used
-  `read_page`, or ran with tools off, never got its paper indexed.)
+- The map and index only exist once the paper is indexed. Every chat
+  request names a page with a PDF (`gather_inputs` → `ensure_indexed`, for
+  each PDF page in context) kicks background indexing for an un-indexed or
+  stale paper, so the first message on a fresh paper works without
+  map/search and the next one has both. (Before, only a search call kicked
+  it — a chat that only ever used `read_page`, or ran with tools off, never
+  got its paper indexed.)
 - With tools off the model sees only the labelled head excerpt; nothing else
   in a plain chat can reach the rest of the paper (native PDF attachment is
   refused by the ChatGPT-OAuth backend and falls back to that same excerpt).
   Paper chats default to tools off, so the head budget is what most paper
   chats live on — hence the 60,000 default (a typical ~20-page paper fits
-  whole; the multi-paper total is 120,000, split evenly across papers). The
+  whole; the multi-paper total is 120,000, split evenly across the context
+  pages, note pages included). The budgets are characters: 60,000 of
+  English prose is ~15k tokens, of dense notation ~20k, of Chinese ~50k
+  (`ai_context.estimate_tokens` counts that way for the window fit). The
   truncation is also shown to the user: `head_context` returns the coverage
   (`pages_shown` from `pdf_text.extract_text_pages`, total from
   `page_count`) that the chat streams back as its `context` line and renders
-  as a "Model saw pages 1–9 of 22" chip on the reply ([ai.md](ai.md)).
+  as a "Model saw pages 1–9 of 22" chip on the reply — with the pages the
+  reply's tools read folded in ([ai.md](ai.md)).
 - Grading is substring matching on de-markdowned/de-LaTeXed answers; the
   harness lives outside the repo (session scratchpad, `eval/`).

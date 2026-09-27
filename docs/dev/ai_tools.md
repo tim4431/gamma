@@ -91,6 +91,22 @@ remains, the excerpt names the next offset, so long documents are read in
 successive windows. The `pdf_*` names stay for compatibility; they mean
 "attachment text".
 
+What the conversation context already holds is never sent again. The
+chat's coverage report rides in the scope (`scope["coverage"]`,
+`context_cover`): for a page whose head excerpt is in context, a read with
+no offset of a PDF page the excerpt shows in full continues from the page
+the excerpt cut short and says so; a document the excerpt holds whole
+answers "nothing more to read" (notes only); and the notes and highlights
+come once — with the first window of a read (`pdf_offset` 0, `pdf_page`
+1) or on `notes: true` — capped at the read window (a hint points at
+`read_block` for the rest), and not at all when the context carries them
+(`include_notes`, or a page without a PDF). The chip carries `pdf_pages`
+(`[first, last]`, from `page_report_section`'s `report`) — what the chat's
+coverage pill folds in as "read 3–5 with tools" — and its summary names
+the span. The agent prompt says the same from the other side
+(`coverage_lines`): which pages of which document are in context, and to
+read from the cut-short page on.
+
 ### search_library (both scopes)
 
 One query over both FTS indexes for the in-scope pages: the notes index
@@ -298,7 +314,9 @@ Deliberately not offered under any permission:
 
 Disarmed tools are not offered to the model, and the server additionally
 refuses to execute them if called. Output/argument sizes are capped
-(`_LIST_CAP`, `_DETAIL_CAP`, `_ARG_CAP`), and the loop itself is bounded —
+(`_LIST_CAP` on listings; `_DETAIL_CAP` and `_ARG_CAP` cap the saved chip
+only — the model gets the full result, under the live budget
+`ai_context.LIVE_RESULT_BUDGET`), and the loop itself is bounded —
 rounds and a ≤200-mutation guard, detailed in [ai.md](ai.md).
 
 **Every tool call is shown in the reply**, reads included, so there is

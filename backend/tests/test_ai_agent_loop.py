@@ -238,6 +238,117 @@ def test_chat_reports_context_coverage(org, monkeypatch):
     assert r.status_code == 200 and r.json()["context"][0]["partial"] is True
 
 
+def test_chat_fits_the_conversation_to_the_window_and_says_so(org, monkeypatch):
+    """A conversation the model's window can't hold loses its oldest turns
+    before the call (the estimate against the catalog's window), the stream
+    says how many, and every turn of one conversation carries the same
+    cache key — hashed from the account, workspace and chat bucket."""
+    c, ids = org
+    import gamma.routers.ai as ai_mod
+
+    seen = []
+
+    def fake_open(messages, system, entry, rt, pdf_b64s=None, **kw):
+        seen.append(([dict(m) for m in messages], kw.get("cache_key")))
+        return FakeResp([{"type": "content_block_delta", "delta": {"type": "text_delta", "text": "ok"}}])
+
+    monkeypatch.setattr(ai_mod, "_open_ai", fake_open)
+    monkeypatch.setattr(ai_mod.ai_catalog, "context_window", lambda *a: (20_000, "test"))
+    turn = [{"role": "user", "text": "q" * 4000}, {"role": "ai", "text": "a" * 4000}]  # ~1k tokens each
+    history = turn * 6
+    r = c.post("/api/ai/chat", json={"prompt": "hi", "history": history, "stream": True, "chat_key": "home"})
+    assert r.status_code == 200, r.text
+    lines = [json.loads(l) for l in r.text.splitlines() if l.strip()]
+    # 12k tokens of history + the reserve over a 20k window: four turns go.
+    assert next(l["trimmed"] for l in lines if "trimmed" in l) == {"turns": 4}
+    assert next(l["model"] for l in lines if "model" in l)["tools"] is False
+    messages, key = seen[-1]
+    assert len(messages) == 9 and messages[0]["role"] == "user" and messages[0]["content"] == "q" * 4000
+    assert key and len(key) == 32
+    # A short conversation goes whole, under the same key; another bucket
+    # (and another account) gets another key.
+    r = c.post("/api/ai/chat", json={"prompt": "hi", "history": turn, "stream": True, "chat_key": "home"})
+    lines = [json.loads(l) for l in r.text.splitlines() if l.strip()]
+    assert not [l for l in lines if "trimmed" in l] and seen[-1][1] == key
+    c.post("/api/ai/chat", json={"prompt": "hi", "stream": True, "chat_key": "home:papers"})
+    assert seen[-1][1] != key
+    # No known window: the provider's refusal is what trims, then a retry.
+    monkeypatch.setattr(ai_mod.ai_catalog, "context_window", lambda *a: (0, ""))
+    calls = []
+
+    def refuse_once(messages, system, entry, rt, pdf_b64s=None, **kw):
+        calls.append(len(messages))
+        if len(calls) == 1:
+            raise ai_mod.UpstreamError(400, "upstream 400: prompt is too long: 250000 tokens > 200000 maximum")
+        return FakeResp([{"type": "content_block_delta", "delta": {"type": "text_delta", "text": "ok"}}])
+
+    monkeypatch.setattr(ai_mod, "_open_ai", refuse_once)
+    r = c.post("/api/ai/chat", json={"prompt": "hi", "history": history, "stream": True})
+    assert r.status_code == 200 and '"delta": "ok"' in r.text
+    assert calls == [13, 11]
+    assert next(json.loads(l)["trimmed"] for l in r.text.splitlines() if "trimmed" in l) == {"turns": 2}
+
+
+def test_agent_round_too_long_retries_with_earlier_results_elided(org, monkeypatch):
+    """A tool round the provider refuses as too long is retried once with
+    every result but the last round's turned into the replay's stub."""
+    c, ids = org
+    import gamma.routers.ai as ai_mod
+    from gamma.ai_context import _ELIDED_RESULT
+
+    opened = []
+
+    def fake_open(messages, system, entry, rt, pdf_b64s=None, **kw):
+        opened.append([dict(m) for m in messages])
+        n = len(opened)
+        if n <= 2:  # two rounds of list_pages
+            return FakeResp([
+                {"type": "content_block_start", "content_block": {"type": "tool_use", "id": f"t{n}", "name": "list_pages"}},
+                {"type": "content_block_delta", "delta": {"type": "input_json_delta", "partial_json": "{}"}},
+                {"type": "content_block_stop"}])
+        if n == 3:
+            raise ai_mod.UpstreamError(400, "upstream 400: input is too long for the model")
+        return FakeResp([{"type": "content_block_delta", "delta": {"type": "text_delta", "text": "done"}}])
+
+    monkeypatch.setattr(ai_mod, "_open_ai", fake_open)
+    r = c.post("/api/ai/chat", json={"prompt": "tidy", "agent_scope": "folder", "folder": "readout", "stream": True})
+    assert r.status_code == 200, r.text
+    assert "".join(json.loads(l).get("delta", "") for l in r.text.splitlines() if l.strip()) == "done"
+    assert len(opened) == 4
+    results = [m for m in opened[3] if m["role"] == "tool"]
+    assert len(results) == 2
+    assert results[0]["content"] == _ELIDED_RESULT and results[1]["content"].startswith("Pages")
+
+
+def test_chat_reports_a_reply_cut_off_at_the_output_cap(org, monkeypatch):
+    c, ids = org
+    import gamma.routers.ai as ai_mod
+
+    monkeypatch.setattr(ai_mod, "_open_ai", lambda *a, **kw: FakeResp([
+        {"type": "content_block_delta", "delta": {"type": "text_delta", "text": "half a thou"}},
+        {"type": "message_delta", "delta": {"stop_reason": "max_tokens"}, "usage": {"output_tokens": 9}}]))
+    r = c.post("/api/ai/chat", json={"prompt": "hi", "stream": True})
+    lines = [json.loads(l) for l in r.text.splitlines() if l.strip()]
+    assert {"truncated": True} in lines and {"delta": "half a thou"} in lines
+    # An agent reply too — and the loop stops rather than run a half-written call.
+    opened = []
+
+    def fake_open(*a, **kw):
+        opened.append(1)
+        return FakeResp([
+            {"type": "content_block_delta", "delta": {"type": "text_delta", "text": "let me"}},
+            {"type": "content_block_start", "content_block": {"type": "tool_use", "id": "t1", "name": "list_pages"}},
+            {"type": "content_block_delta", "delta": {"type": "input_json_delta", "partial_json": '{"fol'}},
+            {"type": "message_delta", "delta": {"stop_reason": "max_tokens"}, "usage": {"output_tokens": 9}}])
+
+    monkeypatch.setattr(ai_mod, "_open_ai", fake_open)
+    r = c.post("/api/ai/chat", json={"prompt": "tidy", "agent_scope": "folder", "folder": "readout", "stream": True})
+    lines = [json.loads(l) for l in r.text.splitlines() if l.strip()]
+    assert {"truncated": True} in lines and len(opened) == 1
+    assert not [l for l in lines if "action" in l]
+    assert next(l["model"] for l in lines if "model" in l)["tools"] is True
+
+
 def test_chat_context_from_text_only_page(org, monkeypatch):
     """A page without a PDF is its notes: naming it by page_id (no doc_id)
     puts its title, properties and note tree into the context — even with

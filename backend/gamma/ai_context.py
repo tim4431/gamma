@@ -40,6 +40,19 @@ CONTEXT_INTRO = (
     "Context — pages from the user's knowledge base. Each page gives its title, "
     "properties and the user's notes; a page that carries a PDF attachment also "
     "gives the document's text, which is often an excerpt (see its label).")
+# What precedes the per-message part: the text around a PDF selection, the
+# cursor block, attached blocks. It rides with the question it belongs to,
+# so the document context above it stays the same from turn to turn (that
+# stable prefix is what the providers' prompt caches key on).
+MESSAGE_CONTEXT_INTRO = (
+    "Context for this message — what the user is pointing at right now (the text "
+    "around their PDF selection, the note block their cursor is on, blocks they "
+    "attached). The pages above stay as they were.")
+# Chars of document text around one selected passage (2,500 of them before
+# it — the set-up and definitions a passage leans on sit ahead of it). The
+# head excerpt is in the document context already, so a selection adds only
+# its windows, not a second copy of the start of the paper.
+SELECTION_WINDOW_CHARS = 10_000
 
 
 def canonical_tool(name: str) -> str:
@@ -340,8 +353,86 @@ def _elide_old_results(history: list) -> dict[int, set]:
     return elided
 
 
+# The tool results of ONE reply's rounds share this budget (chars; a picture
+# counts as _IMAGE_CHARS). It is a valve, not a per-round trim: the loop
+# re-sends every round's results with the next call, and rewriting an
+# earlier turn costs the provider's prompt cache the rest of the prefix, so
+# nothing is touched until the results outgrow the budget — then the oldest
+# rounds' results become the same stub the cross-turn replay uses, the last
+# rounds always kept whole.
+LIVE_RESULT_BUDGET = 60_000
+LIVE_KEEP_ROUNDS = 2
+_IMAGE_CHARS = 6000  # a rendered PDF page (1568 px) is ~1.5k tokens
+
+
+def _result_size(message: dict) -> int:
+    return len(message.get("content") or "") + _IMAGE_CHARS * len(message.get("images") or ())
+
+
+def elide_live_results(messages: list, keep_rounds: int = LIVE_KEEP_ROUNDS,
+                       budget: int = LIVE_RESULT_BUDGET) -> int:
+    """Cut the oldest tool results of ``messages`` (the common turn list of
+    a running reply, edited in place) down to ``budget`` chars, never the
+    last ``keep_rounds`` rounds; a round is one run of consecutive tool
+    results. Returns how many results were elided (0 = nothing changed)."""
+    rounds: list[list[dict]] = []
+    previous_was_tool = False
+    for message in messages:
+        is_tool = message.get("role") == "tool"
+        if is_tool and previous_was_tool:
+            rounds[-1].append(message)
+        elif is_tool:
+            rounds.append([message])
+        previous_was_tool = is_tool
+    total = sum(_result_size(m) for r in rounds for m in r)
+    if total <= budget:
+        return 0
+    elided = 0
+    for round_ in rounds[:max(0, len(rounds) - keep_rounds)]:
+        for message in round_:
+            if total <= budget:
+                return elided
+            if message.get("content") == _ELIDED_RESULT and not message.get("images"):
+                continue
+            total -= _result_size(message)
+            message["content"] = _ELIDED_RESULT
+            message.pop("images", None)
+            elided += 1
+    return elided
+
+
+def estimate_tokens(text: str) -> int:
+    """A rough token count of ``text`` without a tokenizer: four ASCII
+    characters or one other character (CJK, Greek, math symbols) per token
+    — close enough to keep a prompt under a window, never a bill."""
+    if not text:
+        return 0
+    ascii_chars = len(text.encode("ascii", "ignore"))
+    return ascii_chars // 4 + (len(text) - ascii_chars)
+
+
+_IMAGE_TOKENS = 1600  # a picture at the viewer's render size
+
+
+def prompt_tokens(messages: list, system: str = "", tools: list | None = None,
+                  images: list | None = None) -> int:
+    """estimate_tokens over everything a request carries but its native
+    PDF files (their token cost is the provider's; a chat that attaches one
+    is already the user's explicit choice)."""
+    total = estimate_tokens(system) + estimate_tokens(json.dumps(tools or [])) if (system or tools) else 0
+    for message in messages:
+        content = message.get("content")
+        if isinstance(content, str):
+            total += estimate_tokens(content)
+        if message.get("tool_calls"):
+            total += estimate_tokens(json.dumps(message["tool_calls"], ensure_ascii=False))
+        total += _IMAGE_TOKENS * len(message.get("images") or ())
+    return total + _IMAGE_TOKENS * len(images or ())
+
+
 def build_messages(payload, context: str, with_tools: bool = False,
-                   located: list | None = None) -> list[dict]:
+                   located: list | None = None, message_context: str = "",
+                   drop_turns: int = 0) -> list[dict]:
     """Build common chat messages, injecting context once before a user turn.
 
     With ``with_tools`` (an agent chat), each saved reply's tool calls are
@@ -350,17 +441,24 @@ def build_messages(payload, context: str, with_tools: bool = False,
     model remembers what it already listed/read/changed instead of repeating
     the calls each turn. Plain chats must not replay them: providers reject
     tool blocks without tool definitions in the request. ``located`` labels
-    the selected passages in the question (see ``final_prompt``).
+    the selected passages in the question (see ``final_prompt``);
+    ``message_context`` (the per-message part of gather_inputs) goes in
+    front of the question itself, so the document ``context`` — glued to
+    the oldest user turn — reads the same on every turn of a conversation.
+    ``drop_turns`` leaves out that many of the oldest history items (a
+    conversation the model's window can't hold any more).
     """
-    history = payload.history or []
+    history = [h for h in (payload.history or []) if not h.get("error")]
+    if drop_turns > 0:
+        # The kept history opens on a question, never on a reply to one
+        # the model can't see (providers want the first turn to be the user's).
+        history = history[drop_turns:]
+        while history and history[0].get("role") == "ai":
+            history = history[1:]
     elided = _elide_old_results(history) if with_tools else {}
     messages = []
     context_used = False
     for i, history_item in enumerate(history):
-        if history_item.get("error"):
-            # A reply that failed before it started (the client's error
-            # bubble) — not an answer the model gave, so never replayed.
-            continue
         role = "assistant" if history_item.get("role") == "ai" else "user"
         content = history_item.get("text", "")
         if with_tools:
@@ -387,8 +485,11 @@ def build_messages(payload, context: str, with_tools: bool = False,
             context_used = True
         messages.append({"role": role, "content": content})
     content = final_prompt(payload, located)
-    if context and not context_used:
-        content = f"{CONTEXT_INTRO}\n\n{context}\n\nUser question: {content}"
+    head = f"{CONTEXT_INTRO}\n\n{context}" if context and not context_used else ""
+    if message_context:
+        head = (f"{head}\n\n---\n\n" if head else "") + f"{MESSAGE_CONTEXT_INTRO}\n\n{message_context}"
+    if head:
+        content = f"{head}\n\nUser question: {content}"
     messages.append({"role": "user", "content": content})
     return messages
 
@@ -454,18 +555,25 @@ def head_context(ws: str, doc_id: str, limit: int) -> tuple[str, dict]:
     """extract_pdf_context plus its coverage: ``{"partial", "chars",
     "pages", "pages_shown"}`` — what the chat reports back to the user so a
     truncated paper is visible in the UI, not only in the prompt label."""
-    text, next_offset, _, pages_shown = pdf_excerpt(ws, doc_id, limit, with_pages=True)
+    text, next_offset, _, span = pdf_excerpt(ws, doc_id, limit, with_pages=True)
+    pages_shown = span[1]
     cover = {"partial": next_offset is not None, "chars": len(text),
              "pages": pages_shown, "pages_shown": pages_shown}
     if next_offset is None:
         return text, cover  # the whole document fits (or nothing extracted) — no caveat needed
     path = pdf_path(ws, doc_id)
     pages = cover["pages"] = page_count(str(path)) if path else 0
+    # The label names the pages the excerpt reaches, so the model (and the
+    # agent prompt, from the same coverage) knows which pages to read for
+    # the rest instead of reading page 1 again.
     where = f" of this {pages}-page PDF" if pages else ""
-    return (f"[EXCERPT — the first {limit:,} characters{where}. The rest of the "
-            f"document is NOT shown below. Anything outside this excerpt has to "
-            f"be looked up before you can answer about it.]\n\n"
-            f"{text}\n…[truncated]"), cover
+    span_note = (f": PDF pages 1–{pages_shown}, page {pages_shown} cut short" if pages_shown > 1
+                 else ": part of PDF page 1") if pages_shown else ""
+    rest = (f"Pages {pages_shown + 1}–{pages} are NOT shown below" if pages and pages_shown < pages
+            else "The rest of the document is NOT shown below")
+    return (f"[EXCERPT — the first {limit:,} characters{where}{span_note}. {rest}. "
+            f"Anything outside this excerpt has to be looked up before you can "
+            f"answer about it.]\n\n{text}\n…[truncated]"), cover
 
 
 # One line per PDF page, read from the search index (which already holds the
@@ -500,12 +608,13 @@ def ensure_indexed(ws: str, doc_id: str) -> bool:
     return False
 
 
-def document_map(ws: str, doc_id: str, budget: int = MAP_BUDGET) -> str:
+def document_map(ws: str, doc_id: str, budget: int = MAP_BUDGET, from_page: int = 1) -> str:
     """How each PDF page starts, as a compact outline. "" when the document
     isn't indexed yet (search is unavailable then too; ensure_indexed kicks
     the indexer so the next turn has both). Reads whichever index version is
     stored — a page-start outline barely depends on normalization, and stale
-    docs re-index lazily through the search paths anyway."""
+    docs re-index lazily through the search paths anyway. ``from_page``
+    starts the map after the pages the excerpt already shows in full."""
     try:
         with sqlite3.connect(ws_db_path(ws, "data.db")) as connection:
             rows = connection.execute(
@@ -515,13 +624,18 @@ def document_map(ws: str, doc_id: str, budget: int = MAP_BUDGET) -> str:
         return ""  # index tables don't exist yet
     if len(rows) < 3:
         return ""  # too short to need a map
-    step = max(1, len(rows) * (_MAP_LINE_CHARS + 20) // budget)
+    total = rows[-1][0]
+    rows = [r for r in rows if r[0] >= from_page]
+    if not rows:
+        return ""
+    step = max(1, -(-len(rows) * (_MAP_LINE_CHARS + 20) // budget))
     lines = [f"  p.{page}: {' '.join((head or '').split())[:_MAP_LINE_CHARS]}"
              for page, head in rows[::step] if (head or "").strip()]
     if not lines:
         return ""
     every = "" if step == 1 else f", every {step}th page"
-    return (f"[DOCUMENT MAP — how each page of this {rows[-1][0]}-page PDF starts"
+    start = f", from page {from_page} (the pages before it are in the excerpt above)" if from_page > 1 else ""
+    return (f"[DOCUMENT MAP — how each page of this {total}-page PDF starts{start}"
             f"{every}. Use it to pick the page to read: "
             f"read_page(pdf_page=N).]\n" + "\n".join(lines))
 
@@ -535,12 +649,14 @@ def pdf_excerpt(ws: str, doc_id: str, limit: int, offset: int = 0,
     is where a follow-up read should continue (None = the extraction ended
     inside this window), seen is how many chars were extracted in total — when
     offset points past the end, that's the full extracted length (from
-    start_page on). with_pages=True appends how many PDF pages the
-    extraction spanned (from start_page) as a fourth value."""
+    start_page on). with_pages=True appends the PDF pages the window spans
+    as a fourth value, ``(first, last)`` (``(0, 0)`` when there is no
+    text): last is the page the window ends on, first the page it starts
+    in — after start_page when an offset skips whole pages."""
     path = pdf_path(ws, doc_id)
     if not path:
         log.warning("[ai_chat] PDF still not found after download attempt")
-        return ("", None, 0, 0) if with_pages else ("", None, 0)
+        return ("", None, 0, (0, 0)) if with_pages else ("", None, 0)
     try:
         # extract_text stops after the page that crosses the limit, so a
         # longer-than-requested result means more pages remain.
@@ -550,9 +666,10 @@ def pdf_excerpt(ws: str, doc_id: str, limit: int, offset: int = 0,
             full, pages = extract_text(str(path), offset + limit, start_page=start_page, label_pages=True), 0
     except Exception as error:
         log.warning(f"[ai_chat] extraction error: {error}")
-        return (PDF_EXTRACT_FAILED, None, 0, 0) if with_pages else (PDF_EXTRACT_FAILED, None, 0)
+        return (PDF_EXTRACT_FAILED, None, 0, (0, 0)) if with_pages else (PDF_EXTRACT_FAILED, None, 0)
     text = full[offset:offset + limit]
     next_offset = offset + limit if len(full) > offset + limit else None
+    first = start_page
     # A continuation may start halfway through a physical page. Repeat its
     # label outside the window; offsets still count only the extracted text.
     if offset and text:
@@ -560,7 +677,11 @@ def pdf_excerpt(ws: str, doc_id: str, limit: int, offset: int = 0,
         if labels:
             text = text[max(0, labels[-1].end() - offset):]
             text = page_label(labels[-1].group(1), continued=True) + text
-    return (text, next_offset, len(full), pages) if with_pages else (text, next_offset, len(full))
+            first = int(labels[-1].group(1))
+    if not with_pages:
+        return text, next_offset, len(full)
+    span = (first, start_page + pages - 1) if text and pages else (0, 0)
+    return text, next_offset, len(full), span
 
 
 def load_pdf_b64(ws: str, doc_id: str) -> str | None:
@@ -804,12 +925,14 @@ def text_unreliable(text: str) -> bool:
 
 
 def selection_context(ws: str, doc_id: str, passages: list[dict],
-                      budget: int) -> tuple[str | None, list[dict]]:
+                      budget: int, with_head: bool = True) -> tuple[str | None, list[dict]]:
     """Chat context for selected passages (``request_selections``): a small
     head slice (title/abstract grounding) plus a window around each passage —
     starting a little before it, where its set-up and definitions are —
     instead of spending the whole budget on the start of the paper, which
-    rarely covers what the selection is about.
+    rarely covers what the selection is about. ``with_head=False`` leaves
+    the head slice out (the chat sends the head excerpt separately, as the
+    document context every turn shares).
 
     Returns ``(text, located)``: text is None when nothing could be placed
     (the caller falls back to the head-of-document context); located has one
@@ -841,7 +964,7 @@ def selection_context(ws: str, doc_id: str, passages: list[dict],
     if not spots:
         return None, located
     sections = []
-    head = min(_HEAD_GROUNDING_CHARS, budget // 4)
+    head = min(_HEAD_GROUNDING_CHARS, budget // 4) if with_head else 0
     starts, total = [], 0
     for page in pages:
         starts.append(total)
@@ -864,7 +987,7 @@ def selection_context(ws: str, doc_id: str, passages: list[dict],
                             f"before it:\n{window}")
     if not windows:
         return None, located
-    head_text = _join_upto(pages, 0, head).strip() if windows[0][0] else ""
+    head_text = _join_upto(pages, 0, head).strip() if head and windows[0][0] else ""
     if head_text:
         sections.insert(0, f"Start of the document (for grounding):\n{head_text}")
     return "\n\n".join(sections), located
@@ -951,14 +1074,20 @@ def page_properties_line(properties: dict) -> str:
 def page_report_section(connection, ws: str, page_id: str, pdf_budget: int,
                         pdf_offset: int = 0, pdf_page: int = 1,
                         document_text: str | None = None,
-                        include_notes: bool = True) -> str | None:
+                        include_notes: bool = True, notes_budget: int = 0,
+                        report: dict | None = None) -> str | None:
     """Render one page as context: title, properties, the attachment's text
     (a windowed excerpt of ``pdf_budget`` chars from ``pdf_offset`` /
     ``pdf_page`` — read_page's shape — or ``document_text`` when the caller
-    already built it), then the user's highlights and nested notes. A page
-    without an attachment is its notes: they are always included; for a
-    page with a PDF, ``include_notes=False`` leaves them out (the chat's
-    "include my notes" switch). None when the page doesn't exist."""
+    already built it), then the user's highlights and nested notes when
+    ``include_notes`` (the chat sends a page's notes with the chat's
+    "include my notes" switch, and always for a page without an
+    attachment, which IS its notes; read_page shows them once per page). A
+    ``notes_budget`` > 0 caps the highlights and notes at that many chars
+    (read_page's window) and says how much was left out. ``report``, when
+    given, receives ``pdf_pages`` — the ``(first, last)`` PDF pages the
+    window spans, (0, 0) for none — and ``next_offset``. None when the page
+    doesn't exist."""
     rows = fetch_subtree(connection, page_id)
     if not rows:
         return None
@@ -992,7 +1121,7 @@ def page_report_section(connection, ws: str, page_id: str, pdf_budget: int,
                 notes.append("  " * depth + f"- {content}")
             walk(row[0], depth + 1)
 
-    if include_notes or not doc_id:
+    if include_notes:
         walk(page_id, 0)
     sections = [f"### {root[3] or 'Untitled'}"]
     sections.append(f"Gamma page ID: {page_id}")
@@ -1001,11 +1130,16 @@ def page_report_section(connection, ws: str, page_id: str, pdf_budget: int,
         sections.append(props_line)
     if properties.get("summary"):
         sections.append(f"Summary: {properties['summary']}")
+    if report is not None:
+        report.update(pdf_pages=(0, 0), next_offset=None)
     if document_text is not None:
         if document_text:
             sections.append(f"Document text:\n{document_text}")
     elif doc_id and pdf_budget > 0:
-        excerpt, next_offset, seen = pdf_excerpt(ws, doc_id, pdf_budget, pdf_offset, pdf_page)
+        excerpt, next_offset, seen, span = pdf_excerpt(ws, doc_id, pdf_budget, pdf_offset, pdf_page,
+                                                       with_pages=True)
+        if report is not None:
+            report.update(pdf_pages=span, next_offset=next_offset)
         at_page = f"pdf_page={pdf_page}, " if pdf_page > 1 else ""
         if excerpt:
             where = ([f"from PDF page {pdf_page}"] if pdf_page > 1 else []) + \
@@ -1023,17 +1157,24 @@ def page_report_section(connection, ws: str, page_id: str, pdf_budget: int,
                             f"end — {source} is ~{seen} chars long.")
         elif pdf_page > 1:
             sections.append(f"Document text: no text at or after PDF page {pdf_page}.")
+    shown = []
     if highlights:
-        sections.append("User's highlighted passages:\n" + "\n".join(highlights))
+        shown.append("User's highlighted passages:\n" + "\n".join(highlights))
     if notes:
-        sections.append("User's notes:\n" + "\n".join(notes))
-    elif not doc_id and not highlights:
-        sections.append("User's notes: (this page has no notes yet)")
+        shown.append("User's notes:\n" + "\n".join(notes))
+    elif include_notes and not doc_id and not highlights:
+        shown.append("User's notes: (this page has no notes yet)")
+    text = "\n\n".join(shown)
+    if notes_budget > 0 and len(text) > notes_budget:
+        text = (text[:notes_budget] + f"\n… (+{len(text) - notes_budget:,} more chars of notes not "
+                "shown — read_block(block_id=<page id>) lists them with ids)")
+    if text:
+        sections.append(text)
     return "\n\n".join(sections)
 
 
 def gather_inputs(ws: str, payload, allow_native: bool,
-                  crops: list | None = None) -> tuple[list[str], str, list[dict]]:
+                  crops: list | None = None) -> tuple[list[str], str, list[dict], str]:
     """Collect the chat's context: native PDF attachments and the text
     sections for the request's pages.
 
@@ -1048,27 +1189,38 @@ def gather_inputs(ws: str, payload, allow_native: bool,
     takes it) and hides the notes unless ``include_notes`` — a page without
     one IS its notes, so they always go.
 
-    The third value is the coverage report the chat streams back as its
-    first `{"context": [...]}` line — one entry per page: ``{"title",
+    Returns ``(pdf_b64s, context, coverage, message_context)``. ``context``
+    is the document part — the same text on every turn of a conversation
+    while its pages and settings stand (the head excerpt, the notes, the
+    map); ``message_context`` is what belongs to this message alone: the
+    text around the passages it selected and the notes the user is
+    pointing at (build_messages puts it in front of the question).
+
+    ``coverage`` is the report the chat streams back as its first
+    `{"context": [...]}` line — one entry per page: ``{"title", "page_id",
     "doc_id" ("" for a page without a PDF), "native" (the file itself went),
     "native_requested" (the user asked for that; requested but not native =
     the provider refused it and text went instead), "partial", "chars",
-    "pages", "pages_shown"}`` — so the UI can say "the model saw pages 1–9
-    of 22" instead of leaving the user to guess. The open paper's entry
-    also carries ``"selection": {"passages": [...]}`` when the message
-    selected passages in it (``selection_context``'s located entries).
+    "pages", "pages_shown", "notes" (the page's notes are in the context)}``
+    — so the UI can say "the model saw pages 1–9 of 22" instead of leaving
+    the user to guess, and the agent prompt and read_page can name the pages
+    already in context. The open paper's entry also carries ``"selection":
+    {"passages": [...]}`` when the message selected passages in it
+    (``selection_context``'s located entries).
 
     ``crops``, when given, receives pictures of selected regions whose text
     is unreliable (``selection_crops``) for the caller to send as images."""
     pdf_b64s = []
     context_sections = []
+    message_sections = []
     coverage = []
     attach = payload.attach_pdf and allow_native
     none = {"partial": False, "chars": 0, "pages": 0, "pages_shown": 0}
 
-    def report(title, doc_id, native, cover=None):
-        coverage.append({"title": title, "doc_id": doc_id, "native": native,
-                         "native_requested": bool(payload.attach_pdf), **(cover or none)})
+    def report(title, page_id, doc_id, native, cover=None, notes=False):
+        coverage.append({"title": title, "page_id": page_id, "doc_id": doc_id, "native": native,
+                         "native_requested": bool(payload.attach_pdf), "notes": notes,
+                         **(cover or none)})
 
     page_ids = list(payload.pages or [])
     single = not page_ids
@@ -1099,6 +1251,7 @@ def gather_inputs(ws: str, payload, allow_native: bool,
             doc_id = attachment["id"] if attachment else ""
             document_text = ""
             attached = False
+            cover = dict(none)
             if doc_id and attach:
                 data = load_pdf_b64(ws, doc_id)
                 if data and total_b64 + len(data) < 20_000_000:
@@ -1111,38 +1264,50 @@ def gather_inputs(ws: str, payload, allow_native: bool,
                 # otherwise runs without them for as long as the model never
                 # calls search.
                 ensure_indexed(ws, doc_id)
+            with_notes = bool(payload.include_notes) or not doc_id
             if doc_id and attached:
-                report(title, doc_id, True)
+                report(title, page_id, doc_id, True, notes=with_notes)
             elif doc_id:
+                # The head excerpt is the document part: the same text on
+                # every turn, whatever this message selects.
+                document_text, cover = head_context(ws, doc_id, limit=text_budget)
+                # The excerpt holds the whole document (nothing to add or
+                # map) — never taken for granted from the failure sentinel.
+                whole = (not cover["partial"] and bool(document_text)
+                         and document_text != PDF_EXTRACT_FAILED)
                 passages = (request_selections(payload)
                             if single or page_id == payload.page_id else [])
-                # With a selection, center the budget on the selected
-                # passages instead of the start of the paper; fall back to
-                # the plain head excerpt when nothing could be placed.
-                document_text, located = (selection_context(ws, doc_id, passages, text_budget)
-                                          if passages else (None, []))
-                if passages and crops is not None:
-                    crops.extend(selection_crops(ws, doc_id, passages, located))
-                selected = {"selection": {"passages": located}} if located else {}
-                if document_text:
-                    # Selection-centred context: the budget went to windows
-                    # around the passages, so there is no head page span.
-                    report(title, doc_id, False,
-                           {**none, "partial": True, "chars": len(document_text), **selected})
-                else:
-                    document_text, cover = head_context(ws, doc_id, limit=text_budget)
-                    report(title, doc_id, False, {**cover, **selected})
+                selected = {}
+                if passages:
+                    # A selection adds windows around the passages to THIS
+                    # message — only when the excerpt doesn't already hold
+                    # the whole document; the passages are located either
+                    # way (their page and section label the question).
+                    windows, located = selection_context(
+                        ws, doc_id, passages, min(text_budget, SELECTION_WINDOW_CHARS * len(passages)),
+                        with_head=False)
+                    if crops is not None:
+                        crops.extend(selection_crops(ws, doc_id, passages, located))
+                    selected = {"selection": {"passages": located}}
+                    if windows and not whole:
+                        message_sections.append(
+                            f'Text around the selected passage{"s" if len(passages) > 1 else ""} of '
+                            f'"{title}" (Gamma page ID: {page_id}):\n{windows}')
+                report(title, page_id, doc_id, False, {**cover, **selected}, notes=with_notes)
             section = page_report_section(connection, ws, page_id, 0,
                                           document_text=document_text or "",
-                                          include_notes=bool(payload.include_notes))
+                                          include_notes=with_notes)
             if section:
                 context_sections.append(section)
                 if not doc_id:
-                    report(title, "", False, {**none, "chars": len(section)})
-            # Only for a chat with tools: the map is worth its tokens
-            # when the model can act on it (read_page), not in plain chat.
-            if doc_id and getattr(payload, "agent_scope", "") in ("page", "folder"):
-                outline = document_map(ws, doc_id)
+                    report(title, page_id, "", False, {**none, "chars": len(section)}, notes=True)
+            # Only for a chat with tools: the map is worth its tokens when
+            # the model can act on it (read_page), not in plain chat — and
+            # only for the pages the excerpt doesn't show in full.
+            if doc_id and getattr(payload, "agent_scope", "") in ("page", "folder") and not (
+                    not attached and whole):
+                from_page = cover["pages_shown"] if cover["partial"] and cover["pages_shown"] else 1
+                outline = document_map(ws, doc_id, from_page=from_page)
                 if outline:
                     context_sections.append(f"Document map for Gamma page ID: {page_id}\n{outline}")
 
@@ -1151,20 +1316,21 @@ def gather_inputs(ws: str, payload, allow_native: bool,
         title = (names[index] if index < len(names) else "") or f"Attached PDF {index + 1}"
         if allow_native:
             pdf_b64s.append(data)
-            coverage.append({"title": title, "doc_id": "", "native": True,
-                             "native_requested": True, **none})
+            coverage.append({"title": title, "page_id": "", "doc_id": "", "native": True,
+                             "native_requested": True, "notes": False, **none})
         else:
             # Uploaded files get the single-paper budget, like the open paper.
             text, cover = pdf_text_cover_from_b64(data, payload.context_char_limit)
-            coverage.append({"title": title, "doc_id": "", "native": False,
-                             "native_requested": True, **cover})
+            coverage.append({"title": title, "page_id": "", "doc_id": "", "native": False,
+                             "native_requested": True, "notes": False, **cover})
             if text:
                 context_sections.append(f"### {title}\n{text}")
 
     # Where the user is pointing inside the notes (cursor block, attached
-    # block chips) — last, right before the question it belongs to.
+    # block chips) belongs to this message, right before the question.
     focus_section = notes_focus_section(ws, payload)
     if focus_section:
-        context_sections.append(focus_section)
+        message_sections.append(focus_section)
 
-    return pdf_b64s, "\n\n---\n\n".join(context_sections), coverage
+    return (pdf_b64s, "\n\n---\n\n".join(context_sections), coverage,
+            "\n\n---\n\n".join(message_sections))

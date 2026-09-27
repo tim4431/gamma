@@ -81,6 +81,50 @@ def test_openai_responses_wire_shape():
     assert kinds == ["message", "message", "function_call", "function_call_output"]
 
 
+def test_anthropic_cache_breakpoints_on_anthropic_itself_only():
+    """Anthropic's prompt cache is opt-in: the last tool spec, the system
+    prompt and the last two user turns get breakpoints — on api.anthropic.com
+    only; another host speaking the API may not take the field."""
+    conf = {**CONF, "base_url": "https://api.anthropic.com"}
+    turns = [{"role": "user", "content": "context + q1"}, {"role": "assistant", "content": "a1"},
+             {"role": "user", "content": "q2"}, {"role": "assistant", "content": "a2"},
+             {"role": "user", "content": "q3"}]
+    body = json.loads(anthropic_request(conf, turns, "sys", "m", tools=ALL_TOOLS, cache_key="k").data)
+    mark = {"type": "ephemeral"}
+    assert body["system"] == [{"type": "text", "text": "sys", "cache_control": mark}]
+    assert body["tools"][-1]["cache_control"] == mark and "cache_control" not in body["tools"][0]
+    marked = [i for i, m in enumerate(body["messages"])
+              if isinstance(m["content"], list) and m["content"][-1].get("cache_control")]
+    assert marked == [2, 4]  # the previous user turn and the current one
+    assert body["messages"][0]["content"] == "context + q1" and body["messages"][1]["content"] == "a1"
+    # A tool-result turn is a user turn too: its last result block carries the mark.
+    body = json.loads(anthropic_request(conf, [dict(m) for m in TURNS], "sys", "m", tools=ALL_TOOLS).data)
+    assert body["messages"][2]["content"][-1]["type"] == "tool_result"
+    assert body["messages"][2]["content"][-1]["cache_control"] == mark
+    assert body["messages"][0]["content"][-1] == {"type": "text", "text": "tidy up", "cache_control": mark}
+    # Another host: the plain shapes, no markers anywhere.
+    body = json.loads(anthropic_request(CONF, turns, "sys", "m", tools=ALL_TOOLS, cache_key="k").data)
+    assert body["system"] == "sys" and "cache_control" not in json.dumps(body)
+
+
+def test_openai_wires_send_the_conversation_cache_key():
+    """One opaque id per conversation routes every turn to the same prompt
+    cache: prompt_cache_key on OpenAI's own endpoints (never on a compatible
+    server, which may reject the field), and the Codex backend's session id
+    — stable per conversation, a fresh uuid only without one."""
+    msgs = [{"role": "user", "content": "hi"}]
+    official = json.loads(openai_request({**CONF, "base_url": "https://api.openai.com"},
+                                         msgs, "", "m", cache_key="k1").data)
+    assert official["prompt_cache_key"] == "k1"
+    assert "prompt_cache_key" not in json.loads(openai_request(CONF, msgs, "", "m", cache_key="k1").data)
+    body = json.loads(openai_responses_request(CONF, msgs, "", "m", cache_key="k1").data)
+    assert body["prompt_cache_key"] == "k1" and body["store"] is False
+    req = chatgpt_request(CONF, msgs, "", "m", cache_key="k1")
+    assert req.get_header("Session_id") == "k1" and json.loads(req.data)["prompt_cache_key"] == "k1"
+    req = chatgpt_request(CONF, msgs, "", "m")
+    assert len(req.get_header("Session_id")) == 36 and "prompt_cache_key" not in json.loads(req.data)
+
+
 def test_wire_protocol_reroutes_official_openai_tools_only():
     def rt(base):
         return {"providers": {"p": {"protocol": "openai", "base_url": base}}}
@@ -153,7 +197,8 @@ def test_sse_events_openai_tool_calls_accumulate():
                       ("tool_delta", {"id": "c9", "name": "move_page",
                                       "json": '{"page_id": "p2", "folder": "x"}'}),
                       ("tool", {"id": "c9", "name": "move_page",
-                                "arguments": {"page_id": "p2", "folder": "x"}})]
+                                "arguments": {"page_id": "p2", "folder": "x"}}),
+                      ("stop", "tool_calls")]  # the provider's stop reason closes every stream
 
 
 def test_sse_events_responses_argument_deltas():
@@ -172,7 +217,8 @@ def test_sse_events_responses_argument_deltas():
                       ("tool_delta", {"id": "f3", "name": "edit_block",
                                       "json": '{"block_id": "b", "content": "x"}'}),
                       ("tool", {"id": "f3", "name": "edit_block",
-                                "arguments": {"block_id": "b", "content": "x"}})]
+                                "arguments": {"block_id": "b", "content": "x"}}),
+                      ("stop", "completed")]
 
 
 def test_sse_events_chatgpt_function_call_item():
@@ -183,7 +229,8 @@ def test_sse_events_chatgpt_function_call_item():
         {"type": "response.completed", "response": {"status": "completed"}},
     )
     events = list(sse_events(stream, "chatgpt"))
-    assert events == [("text", "hi"), ("tool", {"id": "f1", "name": "list_pages", "arguments": {}})]
+    assert events == [("text", "hi"), ("tool", {"id": "f1", "name": "list_pages", "arguments": {}}),
+                      ("stop", "completed")]
 
 
 def test_sse_events_openai_responses_dialect():
@@ -196,7 +243,29 @@ def test_sse_events_openai_responses_dialect():
     )
     events = list(sse_events(stream, "openai-responses"))
     assert events == [("text", "hi"), ("tool", {"id": "f2", "name": "move_page",
-                                                "arguments": {"page_id": "p", "folder": "x"}})]
+                                                "arguments": {"page_id": "p", "folder": "x"}}),
+                      ("stop", "completed")]
+
+
+def test_sse_events_report_a_cut_off_reply():
+    """The stop reason tells the chat a reply hit the output cap: Anthropic's
+    max_tokens, Chat Completions' length, the Responses API's incomplete
+    status — whose usage still counts."""
+    from gamma.ai_protocols.base import truncated_stop
+
+    stream = sse({"type": "message_start", "message": {"usage": {"input_tokens": 5}}},
+                 {"type": "content_block_delta", "delta": {"type": "text_delta", "text": "cut"}},
+                 {"type": "message_delta", "delta": {"stop_reason": "max_tokens"},
+                  "usage": {"output_tokens": 8}})
+    events = list(sse_events(stream, "anthropic"))
+    assert events[-1] == ("stop", "max_tokens") and truncated_stop("max_tokens")
+    stream = sse({"type": "response.output_text.delta", "delta": "cut"},
+                 {"type": "response.incomplete", "response": {
+                     "status": "incomplete", "usage": {"input_tokens": 5, "output_tokens": 8}}})
+    events = list(sse_events(stream, "openai-responses"))
+    assert ("usage", {"input": 5, "output": 8, "cache_read": 0, "cache_write": 0}) in events
+    assert events[-1] == ("stop", "incomplete") and truncated_stop("incomplete")
+    assert not truncated_stop("end_turn") and not truncated_stop("tool_calls") and not truncated_stop("")
 
 
 def test_build_messages_replays_tool_history():
@@ -266,6 +335,83 @@ def test_build_messages_elides_old_results_over_budget():
     assert len(tool_turns) == 2
     assert "elided" in tool_turns[0]["content"]  # older result dropped…
     assert tool_turns[1]["content"].endswith(big)  # …newest kept in full (after the snapshot note)
+
+
+def test_build_messages_keeps_the_document_context_stable_across_turns():
+    """The document part rides on the oldest user turn (the same text every
+    turn — the prefix the prompt caches key on); what belongs to this message
+    alone (the text around a selection, the cursor block) goes with the
+    question, after a "Context for this message" line."""
+    history = [{"role": "user", "text": "q1"}, {"role": "ai", "text": "a1"}]
+    messages = build_messages(payload(history), "DOC", message_context="AROUND")
+    assert messages[0]["content"].startswith("Context — pages from the user's knowledge base")
+    assert "DOC" in messages[0]["content"] and "AROUND" not in messages[0]["content"]
+    assert messages[0]["content"].endswith("User question: q1")
+    last = messages[-1]["content"]
+    assert "Context for this message" in last and "AROUND" in last and "DOC" not in last
+    assert last.endswith("User question: now do it")
+    # Without history both parts share the one turn, the document part first.
+    (only,) = build_messages(payload([]), "DOC", message_context="AROUND")
+    assert only["content"].index("DOC") < only["content"].index("AROUND")
+    assert only["content"].endswith("User question: now do it")
+    # Nothing to point at: the question stands alone after the history.
+    assert build_messages(payload(history), "")[-1]["content"] == "now do it"
+
+
+def test_build_messages_leaves_out_the_oldest_turns():
+    """drop_turns fits a long conversation to the window: the oldest items
+    go, the document context moves to the oldest kept question, and the
+    kept history never opens on a reply."""
+    history = [{"role": "user", "text": "q1"}, {"role": "ai", "text": "a1"},
+               {"role": "user", "text": "q2"}, {"role": "ai", "text": "a2"}]
+    messages = build_messages(payload(history), "DOC", drop_turns=2)
+    assert [m["content"] for m in messages[1:]] == ["a2", "now do it"]
+    assert "DOC" in messages[0]["content"] and messages[0]["content"].endswith("User question: q2")
+    messages = build_messages(payload(history), "", drop_turns=1)
+    assert [m["content"] for m in messages] == ["q2", "a2", "now do it"]
+    assert [m["content"] for m in build_messages(payload(history), "", drop_turns=9)] == ["now do it"]
+
+
+def test_elide_live_results_is_a_valve_that_keeps_the_last_rounds():
+    """Within one reply the rounds' results stay whole until they outgrow
+    the budget; then the oldest become the replay's stub (pictures dropped),
+    the last rounds untouched — and a retry after a too-long round keeps
+    only the last one."""
+    from gamma.ai_context import _ELIDED_RESULT, _IMAGE_CHARS, elide_live_results
+
+    def round_(i, size):
+        return [{"role": "assistant", "content": "", "tool_calls": [
+                    {"id": f"c{i}", "name": "read_page", "arguments": {}}]},
+                {"role": "tool", "call_id": f"c{i}", "content": "x" * size,
+                 **({"images": [("image/png", "AA")]} if i == 1 else {})}]
+    messages = [{"role": "user", "content": "q"}] + sum((round_(i, 1000) for i in range(4)), [])
+    assert elide_live_results(messages, keep_rounds=2, budget=100_000) == 0
+    assert all(m["content"] == "x" * 1000 for m in messages if m["role"] == "tool")
+    # 1000 + (1000 + a picture) + 1000 + 1000 over a 2500 budget: the first
+    # two rounds go (the picture with them), the last two stay.
+    assert _IMAGE_CHARS > 2500
+    assert elide_live_results(messages, keep_rounds=2, budget=2500) == 2
+    results = [m for m in messages if m["role"] == "tool"]
+    assert [r["content"] == _ELIDED_RESULT for r in results] == [True, True, False, False]
+    assert "images" not in results[1]
+    assert elide_live_results(messages, keep_rounds=2, budget=2500) == 0  # already there
+    assert elide_live_results(messages, keep_rounds=1, budget=0) == 1
+    assert results[2]["content"] == _ELIDED_RESULT and results[3]["content"] == "x" * 1000
+
+
+def test_prompt_token_estimate():
+    from gamma.ai_context import estimate_tokens, prompt_tokens
+
+    assert estimate_tokens("") == 0
+    assert estimate_tokens("a" * 400) == 100          # four ASCII chars per token
+    assert estimate_tokens("量" * 100) == 100          # one per CJK character
+    assert estimate_tokens("ab" * 200 + "量" * 10) == 110
+    messages = [{"role": "user", "content": "a" * 400},
+                {"role": "assistant", "content": "", "tool_calls": [{"id": "c", "name": "n", "arguments": {}}]},
+                {"role": "tool", "call_id": "c", "content": "b" * 400, "images": [("image/png", "AA")]}]
+    plain = prompt_tokens(messages)
+    assert 100 + 100 + 1600 < plain < 100 + 100 + 1600 + 40  # + the call's JSON
+    assert prompt_tokens(messages, system="s" * 400, images=[("image/png", "AA")]) == plain + 100 + 1600
 
 
 def test_anthropic_folds_user_turn_after_tool_only_reply():

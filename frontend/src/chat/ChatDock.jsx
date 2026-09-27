@@ -11,6 +11,7 @@ import PaperMentionInput from "./PaperMentionInput";
 import { MAX_CHAT_REFERENCES } from "./paperMentions";
 import { READ_TOOLS, WRITE_TOOLS, toolsForKind } from "./chatSettings";
 import { addUsage, cachedPercent, contextUsed, conversationUsage, fmtTokens, liveUsage, usageDetail } from "./tokenUsage";
+import { coverageNote, trimmedNote, truncatedNote } from "./coverage.js";
 import { createTitleScorer } from "../library/librarySearch";
 import { pageAttachment } from "../library/libraryUtils";
 import { ActionMenu, MenuSelect } from "../shared/ui/Menus";
@@ -60,41 +61,19 @@ const ACTION_ICONS = { rename: PencilIcon, move: FolderIcon, search: SearchIcon,
 // /api/ai/chat as its first line and saved on the message. Shown only when
 // it matters: the paper was truncated, or the PDF file was requested but the
 // provider refused it (text went instead). A full native attachment or a
-// paper that fit whole stays silent. A selection says where the server
-// placed it ("p. 7 · Methods › Noise model") and whether a picture of it
-// went along (its text layer looked like a formula or table).
-function selectionPlace(selection) {
-  const placed = (selection?.passages || []).filter((p) => p.page);
-  if (!placed.length) return "";
-  const pages = [...new Set(placed.map((p) => p.page))];
-  const section = placed.find((p) => p.section)?.section || "";
-  const short = section.length > 40 ? `${section.slice(0, 40)}…` : section;
-  return `${pages.length > 1 ? "pp." : "p."} ${pages.join(", ")}${short ? ` · ${short}` : ""}`;
-}
-
-function ContextCoverage({ items }) {
+// paper that fit whole stays silent. The pill folds in what the reply's
+// tools read on their own ("pages 1–2 of 7 · read 3–5 with tools") and
+// which pages nobody saw; a selection says where the server placed it
+// ("p. 7 · Methods › Noise model") and whether a picture of it went along
+// (its text layer looked like a formula or table). Two more pills, per
+// reply: the oldest messages left out of a conversation the model can't
+// hold any more, and a reply cut off at the output limit (chat/coverage.js).
+function ContextCoverage({ items, actions, tools, trimmed, truncated }) {
   const [open, setOpen] = useState(-1); // the pill whose explanation is unfolded
-  const notes = items.flatMap((c) => {
+  const notes = (items || []).flatMap((c) => {
     const out = [];
-    const refused = c.native_requested && !c.native;
-    const place = selectionPlace(c.selection);
-    const what = c.title ? `“${c.title.slice(0, 48)}${c.title.length > 48 ? "…" : ""}”` : t("the PDF");
-    if (refused || c.partial) {
-      const around = c.selection && !c.pages_shown;
-      const span = c.pages_shown && c.pages
-        ? t("pages 1–{pages} of {pages2}", { pages: Math.min(c.pages_shown, c.pages), pages2: c.pages })
-        : around ? (place ? t("text around {place}", { place }) : t("selected passages + head")) : `${(c.chars || 0).toLocaleString()} characters`;
-      const short = refused && !c.partial
-        ? t("PDF file not accepted — sent as text")
-        : refused
-          ? t("PDF file not accepted — text only, {span}", { span })
-          : t("Model saw {span}", { span });
-      const long = (refused ? t("This provider does not accept PDF files, so the document went as extracted text. ") : "")
-        + (!c.partial ? `${what} was sent as extracted text.`
-          : around ? `The model got the text around your selection${place ? ` (${place})` : ""} and the start of ${what}, not the whole document. Turn on Tools so it can read and search the rest.`
-          : `Only ${span} of ${what} fit the context budget — the rest was not visible to the model. Raise the budget in Settings / AI / Advanced AI settings / Context size, or turn on Tools so it can read and search the whole paper.`);
-      out.push({ short, long, refused });
-    }
+    const note = coverageNote(c, { actions, tools });
+    if (note) out.push(note);
     const cropped = (c.selection?.passages || []).filter((p) => p.crop);
     if (cropped.length) {
       out.push({
@@ -110,6 +89,7 @@ function ContextCoverage({ items }) {
     }
     return out;
   });
+  for (const extra of [trimmedNote(trimmed), truncatedNote(truncated)]) if (extra) notes.push(extra);
   if (!notes.length) return null;
   // Pills like the agent's steps: a click unfolds the explanation under them.
   return (
@@ -905,14 +885,19 @@ export default function ChatDock({
     let lastRound = null; // the latest round's report alone — the context ring's figure
     let liveChars = 0; // characters received since the last report — the running estimate
     let running = null; // the tool call running now ({"step"} line), until its action lands
+    let trimmed = null; // {"trimmed": {turns}} — oldest messages left out to fit the window
+    let truncated = false; // {"truncated": true} — the reply hit the output limit
     const liveArgs = new Map(); // tool call id -> argument chars previewed so far (cumulative)
     const aiMsg = (extra = {}) => ({
       role: "ai", text: acc,
       ...(actions.length ? { actions: [...actions] } : {}),
       ...(coverage ? { context: coverage } : {}),
-      ...(answered ? { model: answered.name, ...(answered.effort ? { effort: answered.effort } : {}) } : {}),
+      ...(answered ? { model: answered.name, ...(answered.effort ? { effort: answered.effort } : {}),
+        ...(answered.tools ? { tools: true } : {}) } : {}),
       ...(usage ? { usage } : {}),
       ...(lastRound ? { context_tokens: (lastRound.input || 0) + (lastRound.output || 0) } : {}),
+      ...(trimmed ? { trimmed } : {}),
+      ...(truncated ? { truncated: true } : {}),
       ...extra,
     });
     try {
@@ -924,7 +909,12 @@ export default function ChatDock({
         body: JSON.stringify({
           prompt: text,
           page_id: focusedBlockId || "",
-          history: prevMessages.filter((m) => !m.error), // failed replies aren't answers
+          // Only what the server replays: the text and the tool calls of
+          // each turn — never the pictures, reports and counts saved with
+          // them (failed replies aren't answers).
+          history: prevMessages.filter((m) => !m.error).map(({ role, text: turnText, actions: turnActions }) => ({
+            role, text: turnText, ...(turnActions?.length ? { actions: turnActions } : {}) })),
+          chat_key: sendKey, // the conversation, for the provider's prompt cache
           model: model || chatModel || "",
           selections,
           focus_block_id: cursorChip ? cursorChip.id : "",
@@ -972,6 +962,10 @@ export default function ChatDock({
             coverage = ev.context;
           } else if (ev.model) {
             answered = ev.model;
+          } else if (ev.trimmed) {
+            trimmed = ev.trimmed;
+          } else if (ev.truncated) {
+            truncated = true;
           } else if (ev.usage) {
             // The round is counted for real now; the estimate starts over.
             usage = addUsage(usage, ev.usage);
@@ -1517,8 +1511,9 @@ export default function ChatDock({
                         ))}
                       </div>
                     ) : null}
-                    {!isUser && m.context?.length ? (
-                      <ContextCoverage items={m.context} />
+                    {!isUser && (m.context?.length || m.trimmed || m.truncated) ? (
+                      <ContextCoverage items={m.context} actions={m.actions} tools={!!m.tools}
+                        trimmed={m.trimmed} truncated={m.truncated} />
                     ) : null}
                     {!isUser && (m.actions?.length || (isResponding && m.step)) ? (
                       <AgentSteps actions={m.actions || []} running={isResponding ? m.step : null}

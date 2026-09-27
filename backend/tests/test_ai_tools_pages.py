@@ -112,9 +112,9 @@ def test_read_page_pdf_offset_pages_through_long_documents(org, monkeypatch):
     def fake_extract(src, char_limit, empty_page_cap=50, start_page=1, label_pages=False):
         # Like the real extractor: stops after the "page" that crosses the
         # limit, so the result can overshoot char_limit a little.
-        return doc if len(doc) <= char_limit else doc[:char_limit + 7]
+        return (doc if len(doc) <= char_limit else doc[:char_limit + 7]), 1
 
-    monkeypatch.setattr("gamma.ai_context.extract_text", fake_extract)
+    monkeypatch.setattr("gamma.ai_context.extract_text_pages", fake_extract)
     monkeypatch.setattr("gamma.ai_context.pdf_path", lambda u, d: "fake.pdf")
     scope = folder("readout")
 
@@ -173,13 +173,117 @@ def test_read_page_pdf_page_jumps_to_a_search_hit(org, monkeypatch):
     assert "no text at or after PDF page 40" in text
 
 
+def test_read_page_never_repeats_what_the_context_holds(org, monkeypatch):
+    """The chat's coverage report rides in the scope: PDF pages the head
+    excerpt shows in full are skipped (a read continues from the page it
+    cut short), a document the excerpt holds whole is not re-read, and the
+    notes come once — with the first window, or on notes: true — never
+    when the context already carries them."""
+    from gamma.ai_tools import agent_system, coverage_lines
+    from gamma.pdf_text import extract_text_pages
+
+    c, ids = org
+    c.post("/api/blocks", json={"parent_id": ids["a"], "content": "margin remark"})
+    pages = [f"(page {i}) " + f"p{i}-body " * 10 for i in range(1, 6)]
+    monkeypatch.setattr("gamma.pdf_text.iter_page_texts",
+                        lambda src, max_pages=None, start_page=1: iter(pages[start_page - 1:]))
+    monkeypatch.setattr("gamma.ai_context.extract_text_pages", extract_text_pages)
+    monkeypatch.setattr("gamma.ai_context.pdf_path", lambda u, d: "fake.pdf")
+    cover = {"page_id": ids["a"], "doc_id": "d" * 24, "title": "cavity paper", "native": False,
+             "partial": True, "pages": 5, "pages_shown": 3, "notes": False}
+    scope = {**folder("readout"), "coverage": [cover]}
+
+    # A plain read starts where the excerpt stopped, with the notes (first window).
+    text, chip = run_agent_tool(ids["ws"], scope, "read_page", {"page_id": ids["a"]})
+    assert "pages 1–2" in text and "not repeated" in text and "continues from page 3" in text
+    assert "(page 3)" in text and "(page 5)" in text and "(page 1)" not in text
+    assert "margin remark" in text
+    assert chip["pdf_pages"] == [3, 5] and chip["summary"].endswith("p. 3–5")
+    # So does an explicit read of a page the excerpt holds.
+    text, _ = run_agent_tool(ids["ws"], scope, "read_page", {"page_id": ids["a"], "pdf_page": 2})
+    assert "continues from page 3" in text and "(page 2)" not in text
+    # A page past the excerpt reads as asked — without the notes again…
+    text, chip = run_agent_tool(ids["ws"], scope, "read_page",
+                                {"page_id": ids["a"], "pdf_page": 4, "pdf_chars": 60})
+    assert "(page 4)" in text and "not repeated" not in text
+    assert "margin remark" not in text and "first window of a read" in text
+    assert chip["pdf_pages"] == [4, 4] and chip["summary"].endswith("p. 4")
+    # …unless asked for.
+    text, _ = run_agent_tool(ids["ws"], scope, "read_page",
+                             {"page_id": ids["a"], "pdf_page": 4, "pdf_chars": 60, "notes": True})
+    assert "margin remark" in text
+    # Notes already in the context: named, not repeated.
+    text, _ = run_agent_tool(ids["ws"], {**scope, "coverage": [{**cover, "notes": True}]},
+                             "read_page", {"page_id": ids["a"]})
+    assert "margin remark" not in text and "notes and highlights are in the conversation context" in text
+    # The whole document in context: nothing to read.
+    text, chip = run_agent_tool(ids["ws"], {**scope, "coverage": [{**cover, "partial": False, "pages_shown": 5}]},
+                                "read_page", {"page_id": ids["a"]})
+    assert "whole PDF text" in text and "Document text" not in text and "pdf_pages" not in chip
+    # A page the context doesn't hold reads as before.
+    text, _ = run_agent_tool(ids["ws"], folder("readout"), "read_page", {"page_id": ids["a"]})
+    assert "(page 1)" in text and "margin remark" in text and "not repeated" not in text
+    # A page whose file went natively: the text reads as before, the notes are skipped.
+    text, _ = run_agent_tool(ids["ws"], {**scope, "coverage": [{**cover, "native": True, "notes": True}]},
+                             "read_page", {"page_id": ids["a"]})
+    assert "(page 1)" in text and "margin remark" not in text
+    # A note page in the context (its notes always go) is not repeated either.
+    c.post("/api/blocks", json={"parent_id": ids["note"], "content": "loose thought"})
+    text, _ = run_agent_tool(ids["ws"], {"type": "page", "page_id": ids["note"], "coverage": [
+        {"page_id": ids["note"], "doc_id": "", "title": "loose note", "native": False,
+         "partial": False, "pages": 0, "pages_shown": 0, "notes": True}]},
+        "read_page", {"page_id": ids["note"]})
+    assert "loose thought" not in text and "notes and highlights are in the conversation context" in text
+    text, _ = run_agent_tool(ids["ws"], {"type": "page", "page_id": ids["note"]},
+                             "read_page", {"page_id": ids["note"]})
+    assert "loose thought" in text
+
+    # The agent prompt names what the context holds and where to read on.
+    lines = coverage_lines([cover], True)
+    assert 'PDF pages 1–3 of 5 of "cavity paper"' in lines and "page 3 cut short" in lines
+    assert "read_page(page_id, pdf_page=N)" in lines
+    assert "read_page" not in coverage_lines([cover], False)
+    assert "whole PDF text" in coverage_lines([{**cover, "partial": False}], True)
+    assert coverage_lines([{**cover, "native": True}], True) == ""
+    system = agent_system({"type": "page", "page_id": ids["a"], "coverage": [cover]})
+    assert "page 3 cut short" in system and "answer from the text in the context when it is there" in system
+    assert "even if you think you know it" not in system
+
+
+def test_document_map_starts_after_the_excerpt(org):
+    """The map lists the pages the excerpt doesn't show in full — the
+    model picks the next page to read from it, not one it already has."""
+    import sqlite3
+    from gamma.ai_context import document_map
+    from gamma.db import page_now, ws_db_path
+    from gamma.pdf_index import ensure_schema
+    from gamma.textnorm import INDEX_VERSION
+
+    _, ids = org
+    doc = "f" * 24
+    with sqlite3.connect(ws_db_path(ids["ws"], "data.db")) as db:
+        ensure_schema(db)
+        db.executemany("INSERT INTO pdf_fts (doc_id, page, content) VALUES (?, ?, ?)",
+                       [(doc, n, f"Section {n} opens here with words") for n in range(1, 31)])
+        db.execute("INSERT OR REPLACE INTO pdf_fts_docs (doc_id, indexed_at, pages, ver) "
+                   "VALUES (?, ?, 30, ?)", (doc, page_now(), INDEX_VERSION))
+    whole = document_map(ids["ws"], doc)
+    assert "30-page PDF" in whole and "  p.1: Section 1" in whole and "from page" not in whole
+    later = document_map(ids["ws"], doc, from_page=10)
+    assert "from page 10" in later and "  p.10: Section 10" in later and "p.9:" not in later
+    assert document_map(ids["ws"], doc, from_page=31) == ""
+    # A tight budget samples every nth page (rounded up, so it stays under).
+    sampled = document_map(ids["ws"], doc, budget=600)
+    assert len(sampled) < 600 + 200 and "every " in sampled
+
+
 def test_read_window_cap_is_user_tunable(org, monkeypatch):
     """The scope's read_chars (the Settings "Read window" preference) caps
     pdf_chars per call, and the armed spec advertises the effective cap."""
     c, ids = org
     doc = "".join(f"[{i:04d}]" for i in range(200))
-    monkeypatch.setattr("gamma.ai_context.extract_text",
-                        lambda src, char_limit, empty_page_cap=50, start_page=1, label_pages=False: doc[:char_limit + 7])
+    monkeypatch.setattr("gamma.ai_context.extract_text_pages",
+                        lambda src, char_limit, empty_page_cap=50, start_page=1, label_pages=False: (doc[:char_limit + 7], 1))
     monkeypatch.setattr("gamma.ai_context.pdf_path", lambda u, d: "fake.pdf")
 
     scope = {**folder("readout"), "read_chars": 150}

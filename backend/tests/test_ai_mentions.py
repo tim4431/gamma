@@ -122,7 +122,7 @@ def test_context_deduplicates_and_rejects_non_pages(org):
     c, ids = org
     child = c.post("/api/blocks", json={"parent_id": ids["note"], "content": "not a page"}).json()["id"]
     payload = AIChatRequest(prompt="read", pages=[ids["note"], ids["note"], child, "missing"])
-    _, context, coverage = gather_inputs(ids["ws"], payload, False)
+    _, context, coverage, _ = gather_inputs(ids["ws"], payload, False)
     assert context.count(f"Gamma page ID: {ids['note']}") == 1
     assert f"Gamma page ID: {child}" not in context
     assert len(coverage) == 1
@@ -135,30 +135,36 @@ def test_pdf_references_preserve_selection_metadata_and_budget(org, monkeypatch)
     c.post("/api/blocks", json={"parent_id": ids["a"], "content": "private annotation"})
     calls = []
     monkeypatch.setattr(ai_context, "ensure_indexed", lambda *args: None)
-    monkeypatch.setattr(ai_context, "document_map", lambda *args: "p.3: cavity results")
+    monkeypatch.setattr(ai_context, "document_map", lambda *args, **kw: "p.3: cavity results")
 
-    def selection(ws, doc, passages, budget):
-        calls.append(([p["text"] for p in passages], budget))
+    def selection(ws, doc, passages, budget, with_head=True):
+        calls.append(([p["text"] for p in passages], budget, with_head))
         return "[PDF page 3]\nSelected cavity results", [{"page": 3, "section": "", "found": True, "crop": False}]
 
     monkeypatch.setattr(ai_context, "selection_context", selection)
     payload = AIChatRequest(prompt="Compare", page_id=ids["a"],
         pages=[ids["a"], ids["note"], "missing"], selection="cavity results",
         multi_context_char_limit=6000, agent_scope="page")
-    _, context, coverage = ai_context.gather_inputs(ids["ws"], payload, False)
-    assert calls == [(["cavity results"], 3000)]
+    _, context, coverage, message_context = ai_context.gather_inputs(ids["ws"], payload, False)
+    # The windows around the selection skip the head slice (the document
+    # context carries the head) and ride with the message, not the pages.
+    assert calls == [(["cavity results"], 3000, False)]
     assert "Ada One" in context and "2019" in context and "Nature" in context
-    assert "[PDF page 3]" in context and "private annotation" not in context
+    assert "[PDF page 3]" in message_context and "[PDF page 3]" not in context
+    assert "private annotation" not in context
     assert f"Document map for Gamma page ID: {ids['a']}" in context
     assert len(coverage) == 2 and coverage[0]["selection"]
+    assert coverage[0]["page_id"] == ids["a"] and coverage[1]["page_id"] == ids["note"]
+    assert not coverage[0]["notes"] and coverage[1]["notes"]
     payload.include_notes = True
-    assert "private annotation" in ai_context.gather_inputs(ids["ws"], payload, False)[1]
+    _, context, coverage, _ = ai_context.gather_inputs(ids["ws"], payload, False)
+    assert "private annotation" in context and coverage[0]["notes"]
 
 
 def test_reference_pdf_is_readable_and_searchable(org, indexed_pdf, monkeypatch):
     from gamma import ai_context
-    monkeypatch.setattr(ai_context, "pdf_excerpt", lambda *args: (
-        "[PDF page 3]\nquantum error correction with cat qubits", 0, 50))
+    monkeypatch.setattr(ai_context, "pdf_excerpt", lambda *args, **kw: (
+        "[PDF page 3]\nquantum error correction with cat qubits", 0, 50, (3, 3)))
     _, ids = org
     scope = {"type": "page", "page_id": ids["note"], "context_pages": [ids["a"]]}
     for name, args in [("read_page", {"page_id": ids["a"], "pdf_page": 3}),

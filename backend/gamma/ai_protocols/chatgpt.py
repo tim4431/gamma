@@ -87,8 +87,8 @@ class ChatGPT(ResponsesWire):
     has_account_usage = True
 
     def request(self, conf, messages, system, model, pdf_b64s=None, effort="",
-                max_tokens=8192, images=None, stream=False, tools=None):
-        body = {**responses_body(messages, model, pdf_b64s, images, tools, effort),
+                max_tokens=8192, images=None, stream=False, tools=None, cache_key=""):
+        body = {**responses_body(messages, model, pdf_b64s, images, tools, effort, cache_key),
                 "instructions": system or "You are a helpful research assistant.",
                 "include": []}
         return URLRequest(f"{conf['base_url']}/responses", data=json.dumps(body).encode(), headers={
@@ -96,7 +96,9 @@ class ChatGPT(ResponsesWire):
             "chatgpt-account-id": conf.get("account_id", ""),
             "OpenAI-Beta": "responses=experimental",
             "originator": "codex_cli_rs",
-            "session_id": str(uuid.uuid4()),
+            # Codex CLI keeps one session id per conversation — the backend's
+            # prompt cache follows it; a fresh id per request misses every time.
+            "session_id": cache_key or str(uuid.uuid4()),
             "Accept": "text/event-stream",
             "Content-Type": "application/json",
         })
