@@ -1,6 +1,6 @@
 /* Shell chrome styling — the launcher and the shell bar. The tokens come
    from tokens.css, linked before this file: a copy of Gamma's own
-   frontend/src/shared/styles/tokens.css (`npm run desktop-tokens` in
+   frontend/src/shared/styles/tokens.css (`npm run copy-tokens` in
    frontend/ refreshes it, frontend/tests/themes.test.mjs checks it), so the
    chrome paints every theme exactly as Gamma does. The theme is the
    `data-theme` the Gamma page last reported (none = dark, like Gamma's

@@ -7,7 +7,7 @@ import assert from "node:assert/strict";
 import fs from "node:fs";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
-import { DESKTOP_COPIES, sameCopy } from "../tools/desktop-tokens.mjs";
+import { TOKEN_COPIES, sameCopy } from "../tools/copy-tokens.mjs";
 import { BASELINE, contrastTable, failures, parseColor, parseRules, resolveTheme } from "../tools/themes.mjs";
 import { DARK_THEMES, THEMES, UI_SCALE, themeScheme } from "../src/app/prefDefs.js";
 
@@ -81,15 +81,20 @@ test("no theme's text contrast gets worse than the baseline", () => {
   assert.deepEqual(worse, [], "contrast fell below the baseline (node tools/themes.mjs shows the table)");
 });
 
-test("the desktop shell carries the same tokens and font as the app", () => {
-  for (const [from, to] of DESKTOP_COPIES) {
+test("the desktop shell and the extension carry the same tokens and font as the app", () => {
+  for (const [from, to] of TOKEN_COPIES) {
     assert.ok(sameCopy(from, to),
-      `${path.relative(FRONTEND, to)} differs from ${path.relative(FRONTEND, from)}: run \`npm run desktop-tokens\` in frontend/`);
+      `${path.relative(FRONTEND, to)} differs from ${path.relative(FRONTEND, from)}: run \`npm run copy-tokens\` in frontend/`);
   }
-  for (const page of ["bar.html", "launcher.html"]) {
-    const html = read(`../desktop/ui/${page}`);
-    assert.ok(html.indexOf('href="tokens.css"') >= 0 && html.indexOf('href="tokens.css"') < html.indexOf('href="theme.css"'),
-      `desktop/ui/${page} links tokens.css before theme.css`);
+  const linksBefore = (file, first, then) => {
+    const html = read(file), a = html.indexOf(first), b = html.indexOf(then);
+    assert.ok(a >= 0 && b >= 0 && a < b, `${file} loads ${first} before ${then}`);
+  };
+  for (const page of ["bar.html", "launcher.html"]) linksBefore(`../desktop/ui/${page}`, 'href="tokens.css"', 'href="theme.css"');
+  // The extension sets the theme attributes before its stylesheets paint.
+  for (const page of ["popup.html", "options.html"]) {
+    linksBefore(`../extension/${page}`, 'src="theme.js"', 'href="tokens.css"');
+    linksBefore(`../extension/${page}`, 'href="tokens.css"', 'href="popup.css"');
   }
   // The window's title-bar overlay continues the shell bar: each theme's chrome.
   const main = read("../desktop/main.js");

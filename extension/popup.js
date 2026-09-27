@@ -39,11 +39,14 @@ const ICON_PATHS = {
 
   chevronDown: '<path d="m6 9 6 6 6-6"/>',
   cookie: '<path d="M12 2a10 10 0 1 0 10 10 4 4 0 0 1-5-5 4 4 0 0 1-5-5"/><path d="M8.5 8.5v.01"/><path d="M16 15.5v.01"/><path d="M12 12v.01"/><path d="M11 17v.01"/><path d="M7 14v.01"/>',
+  x: '<path d="M18 6 6 18"/><path d="m6 6 12 12"/>',
 };
 
-function icon(name, cls = "", size = 13, strokeWidth = 2) {
+// Gamma's icon sizes (14 inline with text, 16 in buttons) and its stroke:
+// 1.6 px at any size (a check mark 2 px), like Icons.jsx's iconStroke.
+function icon(name, cls = "", size = 14, weight = 1.6) {
   const span = document.createElement("span");
-  span.innerHTML = `<svg width="${size}" height="${size}" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="${strokeWidth}" stroke-linecap="round" stroke-linejoin="round"${cls ? ` class="${cls}"` : ""}>${ICON_PATHS[name]}</svg>`;
+  span.innerHTML = `<svg width="${size}" height="${size}" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="${(weight * 24) / size}" stroke-linecap="round" stroke-linejoin="round"${cls ? ` class="${cls}"` : ""}>${ICON_PATHS[name]}</svg>`;
   return span.firstChild;
 }
 
@@ -176,7 +179,7 @@ function renderDrawer(st) {
     const h = document.createElement("span"); h.className = "pubRowHost"; h.textContent = s.host;
     const m = document.createElement("span"); m.className = "pubRowMeta"; m.textContent = describeSession(s);
     text.append(h, m);
-    const x = document.createElement("button"); x.type = "button"; x.className = "uiClose"; x.textContent = "×"; x.title = `Disconnect ${s.host}`;
+    const x = document.createElement("button"); x.type = "button"; x.className = "uiClose uiCloseSm"; x.append(icon("x")); x.title = `Disconnect ${s.host}`;
     x.onclick = () => doDisconnectPublisher(st, s.host, x);
     row.append(ic, text, x);
     list.append(row);
@@ -218,7 +221,7 @@ async function doConnectPublisher(st, host, root, session) {
     pub = await send({ type: "publisher-status", force: true });
     cookieState("done", `${host}: session connected`);
     btn.classList.replace("busy", "done");
-    btn.innerHTML = ""; btn.append(icon("check", "", 13, 2.4), document.createTextNode(session ? " Refreshed" : " Connected"));
+    btn.innerHTML = ""; btn.append(icon("check", "", 16, 2), document.createTextNode(session ? " Refreshed" : " Connected"));
     pubMessage(session ? "Session refreshed. Gamma has this journal's current cookies." : "Session connected. Gamma can use it for this journal's PDF downloads.");
     cookieTimer = setTimeout(() => { btn.disabled = false; btn.classList.remove("done"); renderCookie(st); renderDrawer(st); }, 1600);
   } catch (err) {
@@ -307,7 +310,7 @@ function menuRow(text, iconName, selected, onPick) {
   const ic = document.createElement("span"); ic.className = "ctxMenuIcon"; ic.appendChild(icon(iconName));
   const t = document.createElement("span"); t.className = "ctxMenuText"; t.textContent = text; t.title = text;
   b.append(ic, t);
-  if (selected) b.appendChild(icon("check", "ctxMenuCheck", 13, 2.4));
+  if (selected) b.appendChild(icon("check", "ctxMenuCheck", 14, 2));
   // mousedown, not click: keeps focus where it is (the labels input relies on this).
   b.addEventListener("mousedown", (e) => e.preventDefault());
   b.addEventListener("click", onPick);
@@ -348,7 +351,7 @@ function renderLabelTags() {
     chip.className = "categoryTag";
     chip.appendChild(document.createTextNode(t));
     const x = document.createElement("button");
-    x.type = "button"; x.className = "uiClose"; x.tabIndex = -1; x.textContent = "×"; x.title = `Remove "${t}"`;
+    x.type = "button"; x.className = "uiClose uiCloseSm"; x.tabIndex = -1; x.append(icon("x")); x.title = `Remove "${t}"`;
     x.addEventListener("mousedown", (e) => e.preventDefault());
     x.addEventListener("click", () => { labelTags = labelTags.filter((l) => l !== t); renderLabelTags(); updateLabelMenu(); });
     chip.appendChild(x);
@@ -492,7 +495,7 @@ document.addEventListener("DOMContentLoaded", async () => {
   if (wanted) { try { tab = await chrome.tabs.get(Number(wanted)); } catch {} }
   if (!tab) [tab] = await chrome.tabs.query({ active: true, currentWindow: true });
   for (const g of document.querySelectorAll(".gearBtn")) {
-    g.innerHTML = '<svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><use href="#icon-gear"/></svg>';
+    g.innerHTML = '<svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.4" stroke-linecap="round" stroke-linejoin="round"><use href="#icon-gear"/></svg>';
     g.onclick = () => chrome.runtime.openOptionsPage();
   }
   $("setup-connect").onclick = doConnect;
@@ -543,9 +546,9 @@ document.addEventListener("DOMContentLoaded", async () => {
   $("open-existing").onclick = () => openPath(state.hit.open_url);
   $("refile").onclick = () => { show("existing", false); show("found"); };
   $("clip").onclick = doClip;
-  $("clip").append(icon("scissors", "", 12, 2), document.createTextNode("Clip selected text"));
-  $("cookie-glyph").appendChild(icon("cookie", "", 16, 2));
-  $("drawer-icon").appendChild(icon("cookie", "", 15, 2));
+  $("clip").append(icon("scissors"), document.createTextNode("Clip selected text"));
+  $("cookie-glyph").appendChild(icon("cookie", "", 16));
+  $("drawer-icon").appendChild(icon("cookie"));
   $("cookie-btn").onclick = () => { $("cookie-drawer").classList.contains("hidden") ? openDrawer(state) : closeDrawer(); };
   $("cookie-close").onclick = closeDrawer;
   $("pub-auto").addEventListener("change", () => setSettings({ autoRefreshSessions: $("pub-auto").checked }));

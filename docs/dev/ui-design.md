@@ -153,16 +153,19 @@ A value that is raw on purpose says why in a comment the scanner reads:
 the collaborator colours, the transfer illustration, a transition that
 follows the pointer.
 
-### The desktop shell
+### The desktop shell and the extension
 
-The desktop shell's chrome loads a committed copy, `desktop/ui/tokens.css`,
-and the Latin subset of Inter in `desktop/ui/fonts/`: its pages load from
-disk and can't reach the frontend bundle. `npm run desktop-tokens` in
-`frontend/` refreshes both, and `tests/themes.test.mjs` fails while either
-copy differs from its source. `desktop/ui/theme.css` repeats this page's
-control recipes (buttons, icon buttons, fields, the switch, the focus
-ring), and the shell's pages follow the same type, radius, icon and label
-rules.
+The desktop shell's chrome and the browser extension's popup and options
+page load their pages from disk and can't reach the frontend bundle. Each
+keeps a committed copy of tokens.css and the Latin subset of Inter
+(`desktop/ui/tokens.css` + `desktop/ui/fonts/`, `extension/tokens.css` +
+`extension/fonts/`). `npm run copy-tokens` in `frontend/` refreshes them,
+and `tests/themes.test.mjs` fails while a copy differs from its source.
+`desktop/ui/theme.css` and `extension/popup.css` repeat this page's control
+recipes (buttons, icon buttons, fields, the switch, the focus ring), and
+their pages follow the same type, radius, icon and label rules. The
+extension can't know the app's pinned theme, so `extension/theme.js` sets
+Light or Dark from the OS before the stylesheets paint.
 
 ## One control set, everywhere
 

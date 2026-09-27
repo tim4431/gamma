@@ -4,10 +4,10 @@
    index.html links this file as the first stylesheet, so its values paint
    the very first frame (the pre-paint script only sets data-theme and
    data-scheme); app.css and every other stylesheet read the custom
-   properties. The desktop shell loads an identical copy
-   (desktop/ui/tokens.css, `npm run desktop-tokens`; tests/themes.test.mjs
-   keeps the two equal). Only custom properties and color-scheme belong
-   here, no component rules. */
+   properties. The desktop shell and the browser extension load identical
+   copies (desktop/ui/tokens.css, extension/tokens.css; `npm run
+   copy-tokens`, and tests/themes.test.mjs keeps them equal). Only custom
+   properties and color-scheme belong here, no component rules. */
 
 /* ---- Scales: the same in every theme ------------------------------------ */
 :root {

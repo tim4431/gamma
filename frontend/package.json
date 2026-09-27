@@ -12,7 +12,7 @@
     "e2e:latex": "node tests/e2e/latexEditor.mjs",
     "i18n": "node tools/i18n.mjs",
     "i18n:audit": "node tools/i18n-audit.mjs",
-    "desktop-tokens": "node tools/desktop-tokens.mjs"
+    "copy-tokens": "node tools/copy-tokens.mjs"
   },
   "dependencies": {
     "@codemirror/commands": "^6.11.0",

@@ -142,7 +142,7 @@ theme is persisted so the chrome is right before any page has loaded.
 
 The tokens are Gamma's own. `ui/tokens.css` is a committed copy of
 `frontend/src/shared/styles/tokens.css`, and `ui/fonts/` holds the Latin
-subset of Inter. `npm run desktop-tokens` in `frontend/` refreshes both, and
+subset of Inter. `npm run copy-tokens` in `frontend/` refreshes both, and
 `frontend/tests/themes.test.mjs` fails while they differ. Gamma's tokens
 derive a theme's colours from its scheme, so the shell pages set
 `data-scheme` beside `data-theme`, from the same dark-theme list as Gamma's
