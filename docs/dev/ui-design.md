@@ -281,6 +281,11 @@ its text layer keep their own zoom.
 - A control that takes its parent's type writes `font-family: inherit` (and
   weight, line height), not `font: inherit`. The shorthand would copy the
   parent's already scaled size and zoom it a second time.
+- A box that holds controls (a popover, a menu) keeps its pixel widths
+  while its rows zoom. Where the rows have to fit, the width multiplies by
+  `--ui-scale` (the account menu's `min-width`), and a row gives up its
+  least important text first: the workspace row ellipsizes its meta, never
+  the name.
 - PDF-coordinate positioning stays on an unscaled wrapper with the control
   inside it (`pdfNoteAnchor` / `pdfNoteBadge`). Zooming the positioned
   element would scale its offsets too, and it would drift off the highlight.

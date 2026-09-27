@@ -2456,7 +2456,10 @@ mark.merge-del { background: color-mix(in srgb, var(--danger) 16%, transparent);
 }
 .copyBoxBody { min-width: 0; }
 .copyBoxBtn { position: absolute; top: 6px; right: 6px; }
-.userPopover { min-width: 268px; }
+/* The account menu grows with the interface size, like the rows in it
+   (controls zoom, docs/dev/ui-design.md); it never gets narrower than at
+   100 %, where the unscaled avatar would wrap the card's line. */
+.userPopover { min-width: max(268px, calc(268px * var(--ui-scale, 1))); }
 /* The account menu's notices (what the red dot is about): a tinted row per
    notice, its sentence and a link to the pane that resolves it. */
 .accountNotices { display: flex; flex-direction: column; gap: 4px; margin-top: 2px; }
@@ -2491,9 +2494,20 @@ mark.merge-del { background: color-mix(in srgb, var(--danger) 16%, transparent);
 .accountNoticeAction:hover { text-decoration: underline; }
 
 /* workspace switcher rows in the account popover */
-/* A workspace row is a menu row whose icon is the workspace's initial. */
+/* A workspace row is a menu row whose icon is the workspace's initial. The
+   name keeps its width and the meta ("personal · default") takes what is
+   left, ellipsized: a narrow menu never shows a row without its name. */
 .ctxMenuItem.wsItem .ctxMenuIcon { width: 20px; }
-.ctxMenuItem.wsItem .wsItemMeta { margin-left: 8px; }
+.ctxMenuItem.wsItem .ctxMenuText { flex: 0 1 auto; }
+.ctxMenuItem.wsItem .wsItemMeta {
+  flex: 1 1 0;
+  min-width: 0;
+  margin-left: 8px;
+  overflow: hidden;
+  text-align: right;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
 .wsItemBadge {
   width: 20px;
   height: 20px;
@@ -2508,8 +2522,7 @@ mark.merge-del { background: color-mix(in srgb, var(--danger) 16%, transparent);
   color: var(--accent-bright);
   border: 1px solid var(--border);
 }
-.wsItemName { flex: 1; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
-.wsItemMeta { font-size: var(--fs-2xs); color: var(--text-muted); flex-shrink: 0; }
+.wsItemMeta { font-size: var(--fs-2xs); color: var(--text-muted); }
 .wsItemCheck { color: var(--accent-bright); flex-shrink: 0; }
 
 /* account card header inside the popover */
