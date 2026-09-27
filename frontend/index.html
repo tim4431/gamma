@@ -17,43 +17,40 @@
     <meta name="apple-mobile-web-app-status-bar-style" content="default" />
     <meta name="theme-color" content="#1b1b1a" />
     <title>Gamma — Annotate PDFs, Share Your Thinking</title>
-    <!-- A pinned theme (Settings → General) must win before the bundle loads,
-         or the splash flashes the OS color; the control size likewise, or the
-         buttons jump once the bundle applies it. App.jsx keeps both in sync
-         (and handles "system") once React is up. -->
+    <!-- The theme and its scheme must be set before the first frame:
+         otherwise tokens.css (linked below, render-blocking) paints its dark
+         defaults, a dark flash on a light OS. Same rule as App.jsx's theme
+         effect, which takes over once React is up: a pinned theme as stored,
+         anything else ("system", none) follows the OS scheme. The control
+         size likewise, or the buttons jump once the bundle applies it. -->
     <script>
-      try {
-        var t = localStorage.getItem("gamma-theme");
-        if (["light", "dark", "gamma-light", "gamma-dark", "sepia", "solarized", "gray"].includes(t)) document.documentElement.setAttribute("data-theme", t);
-        var s = parseFloat(localStorage.getItem("gamma-ui-scale"));
-        if (s >= 0.7 && s <= 1.6) document.documentElement.style.setProperty("--ui-scale", s); // UI_SCALE in app/prefDefs.js
-      } catch (e) {}
+      (function () {
+        var root = document.documentElement, t = null, s = NaN;
+        try {
+          t = localStorage.getItem("gamma-theme");
+          s = parseFloat(localStorage.getItem("gamma-ui-scale"));
+        } catch (e) {}
+        // THEMES in app/prefDefs.js, less "system" (tests/themes.test.mjs)
+        if (!["light", "dark", "gamma-light", "gamma-dark", "sepia", "solarized", "gray"].includes(t)) {
+          t = window.matchMedia && window.matchMedia("(prefers-color-scheme: dark)").matches ? "dark" : "light";
+        }
+        // DARK_THEMES in app/prefDefs.js: the scheme picks tokens.css's recipe
+        root.setAttribute("data-scheme", ["dark", "gamma-dark"].includes(t) ? "dark" : "light");
+        root.setAttribute("data-theme", t);
+        if (s >= 0.7 && s <= 1.6) root.style.setProperty("--ui-scale", s); // UI_SCALE in app/prefDefs.js
+      })();
     </script>
+    <!-- The design tokens (every theme's colours and color-scheme, the type
+         stacks), first and render-blocking: the page and the splash below
+         paint from them on the first frame, in dev and in the build alike. -->
+    <link rel="stylesheet" href="/src/shared/styles/tokens.css" />
     <style>
-      html, body, #root { margin: 0; height: 100%; background: #111; }
-      html { color-scheme: dark; }
-      @media (prefers-color-scheme: light) {
-        html, body, #root { background: #f6f6f4; }
-        html { color-scheme: light; }
-      }
-      html[data-theme="light"], html[data-theme="light"] body, html[data-theme="light"] #root { background: #f6f6f4; }
-      html[data-theme="light"] { color-scheme: light; }
-      html[data-theme="dark"], html[data-theme="dark"] body, html[data-theme="dark"] #root { background: #111; }
-      html[data-theme="dark"] { color-scheme: dark; }
-      html[data-theme="gamma-light"], html[data-theme="gamma-light"] body, html[data-theme="gamma-light"] #root { background: #e7e5de; }
-      html[data-theme="gamma-light"] { color-scheme: light; }
-      html[data-theme="gamma-dark"], html[data-theme="gamma-dark"] body, html[data-theme="gamma-dark"] #root { background: #1b1b1a; }
-      html[data-theme="gamma-dark"] { color-scheme: dark; }
-      html[data-theme="sepia"], html[data-theme="sepia"] body, html[data-theme="sepia"] #root { background: #f0e9d6; }
-      html[data-theme="sepia"] { color-scheme: light; }
-      html[data-theme="solarized"], html[data-theme="solarized"] body, html[data-theme="solarized"] #root { background: #eee8d5; }
-      html[data-theme="solarized"] { color-scheme: light; }
-      html[data-theme="gray"], html[data-theme="gray"] body, html[data-theme="gray"] #root { background: #e9e9e9; }
-      html[data-theme="gray"] { color-scheme: light; }
+      html, body, #root { margin: 0; height: 100%; background: var(--bg-page); }
       /* First-load splash: index.html is tiny and paints immediately, while
-         the app bundle (~450 kB gzipped) downloads and parses — without this
-         that window is a pure blank page. Lives inside #root, so React's
-         first render commit replaces it automatically. */
+         the app bundle downloads and parses. The brand mark, the name and a
+         spinner say "Gamma is on its way"; after 8 s one quiet line says a
+         slow connection is the reason. Lives inside #root, so React's first
+         render commit replaces it. */
       #splash {
         position: fixed;
         inset: 0;
@@ -61,13 +58,20 @@
         flex-direction: column;
         align-items: center;
         justify-content: center;
-        gap: 14px;
-        color: #8a8a8a;
-        font: 13px system-ui, -apple-system, sans-serif;
+        gap: 12px;
+        color: var(--text-muted);
+        font: 13px var(--font-sans);
+      }
+      #splash .mark { display: block; filter: drop-shadow(0 2px 6px rgba(0, 0, 0, 0.18)); }
+      #splash .name {
+        margin-bottom: 6px;
+        color: var(--text-primary);
+        font-size: 18px;
+        font-weight: 600;
       }
       #splash .spin {
-        width: 22px;
-        height: 22px;
+        width: 20px;
+        height: 20px;
         border: 2.5px solid rgba(138, 138, 138, 0.25);
         border-top-color: #8a8a8a;
         border-radius: 50%;
@@ -78,11 +82,46 @@
   </head>
   <body>
     <div id="root">
-      <div id="splash">
+      <div id="splash" role="status" aria-label="Loading Gamma…">
+        <!-- design/brand/marks/favicon.svg at 56 px, inline so it is on the first frame -->
+        <svg class="mark" width="56" height="56" viewBox="0 0 32 32" fill="none" xmlns="http://www.w3.org/2000/svg" aria-hidden="true">
+          <rect width="32" height="32" rx="7" fill="#1e1e1c"/>
+          <path d="M 6 16 C 9 10.5 13 10.5 16 16 C 19 21.5 23 21.5 26 16" stroke="#e8a020" stroke-width="1.2" fill="none" opacity="0.6" stroke-linecap="round"/>
+          <path d="M 6 16 C 9 21.5 13 21.5 16 16 C 19 10.5 23 10.5 26 16" stroke="#e8a020" stroke-width="1.2" fill="none" opacity="0.6" stroke-linecap="round"/>
+          <path d="M 6 4  Q 2 16 6 28" stroke="#e8a020" stroke-width="1.8" fill="none" stroke-linecap="round" opacity="0.9"/>
+          <path d="M 26 4 Q 30 16 26 28" stroke="#e8a020" stroke-width="1.8" fill="none" stroke-linecap="round" opacity="0.9"/>
+          <rect x="9" y="8" width="13" height="3" rx="0.8" fill="#eeebe4"/>
+          <rect x="9" y="8" width="3" height="15" rx="0.8" fill="#eeebe4"/>
+        </svg>
+        <div class="name">Gamma</div>
         <div class="spin"></div>
-        <div>Loading Gamma…</div>
+        <div class="slow" id="splashSlow" hidden></div>
       </div>
     </div>
+    <script>
+      // The one sentence outside the i18n catalogs (t() isn't loaded yet):
+      // the language as main.jsx resolves it (resolveLocale in
+      // shared/i18n/locales.js) — the stored choice, else the browser's first
+      // language with a catalog, else English.
+      setTimeout(function () {
+        var el = document.getElementById("splashSlow");
+        if (!el) return; // the app is up
+        var lang = null;
+        try { lang = localStorage.getItem("gamma-language"); } catch (e) {}
+        if (lang !== "en" && lang !== "zh") {
+          lang = "en";
+          var tags = navigator.languages || [];
+          for (var i = 0; i < tags.length; i++) {
+            var base = String(tags[i]).toLowerCase().split("-")[0];
+            if (base === "en" || base === "zh") { lang = base; break; }
+          }
+        }
+        el.textContent = lang === "zh"
+          ? "仍在加载——网络较慢时可能需要一点时间。"
+          : "Still loading — a slow connection can take a moment.";
+        el.hidden = false;
+      }, 8000);
+    </script>
     <script type="module" src="/src/main.jsx"></script>
   </body>
 </html>

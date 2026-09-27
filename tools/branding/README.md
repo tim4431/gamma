@@ -18,9 +18,17 @@ Set `PYTHON` if the interpreter has a different name. Rendering is offline;
 The logo uses the same Inter/Segoe UI system font stack as the hero.
 
 `build.mjs` distributes canonical artwork, generates README scenes, renders
-Store art and hero PNGs, and records provenance. `store-layouts.mjs` owns Store
-dimensions and layouts while loading geometry from the canonical sources.
-The desktop's `npm run store-art` remains an alias for the unified generation.
+Store art and hero PNGs, and records provenance. `store-layouts.mjs` owns
+Store dimensions and layouts while loading geometry from the canonical
+sources. The desktop's `npm run store-art` remains an alias for the unified
+generation.
+
+An `outputs.json` entry of kind `crop` publishes a window onto a
+composition. Its `box` (x, y, width, height in the composition's units)
+becomes the root's size and viewBox, and the element ids in `hide` are left
+out. The demo server's landing picture
+(`frontend/public/media/gamma-scene-light.svg`) is the hero's paper and notes
+cropped this way, without the hero's left-hand promise (`#hero-promise`).
 
 Edit hero templates in `design/brand/compositions/`. The other scenes are
 the `build-*.py` scripts, one per README illustration: `build-connections.py`,
@@ -46,7 +54,7 @@ reuse `design/brand/compositions/logo.svg`. Run the full build after modifying a
 
 Consumer copies stay committed at existing paths. The generator does not alter
 recordings, screenshots, third-party logos, or frontend theme CSS. The Gamma
-Light/Dark app themes remain in `frontend/src/shared/styles/app.css`.
+Light/Dark app themes live in `frontend/src/shared/styles/tokens.css`.
 
 README feature illustrations share the logo placement, warm paper background, amber
 curves and card shadow defined in `branding.py`, with 72 px headings and 28 px

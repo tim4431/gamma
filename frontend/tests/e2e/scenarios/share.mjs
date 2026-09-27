@@ -1,7 +1,9 @@
-// Share links: creating one from the dialog, the anonymous share view (title,
-// PDF, highlight overlay, an image served through the share token, no
-// editing), an edit share letting another account type into the page, and a
-// folder share (the folder view's link button; the listing a visitor browses).
+// Share links: creating one from the popover (an audience tile, or the first
+// invitation as Invited only; Stop sharing confirmed inline), the anonymous
+// share view (title, PDF, highlight overlay, an image served through the
+// share token, no editing), an edit share letting another account type into
+// the page, and a folder share (the folder view's link button; the listing a
+// visitor browses).
 import { tree, same, editRow, closeEditor, PNG_1PX } from "./notes.mjs";
 import { waitForPdf } from "./pdf.mjs";
 
@@ -19,7 +21,7 @@ export async function shareScenarios({ server, browser, alice, bob, step, until,
       await page.waitForSelector(".readOnlyTitle");
       if (phone) await page.getByRole("button", { name: "AI chat", exact: true }).click();
       await page.locator(".chatMessages strong", { hasText: "saved answer" }).waitFor();
-      assertEq(await page.locator(".chatInputRow, .chatMsgActionBtn[title^='Edit']").count(), 0, "no chat editing controls");
+      assertEq(await page.locator(".chatComposer, .chatMsgActionBtn[title^='Edit']").count(), 0, "no chat editing controls");
       assertEq(await page.getByRole("button", { name: "New chat", exact: true }).count(), 0, "no new chat action");
       await page.getByRole("button", { name: "Find in this conversation" }).click();
       await page.getByPlaceholder("Find in chat…").fill("saved answer");
@@ -29,7 +31,7 @@ export async function shareScenarios({ server, browser, alice, bob, step, until,
         await page.getByRole("button", { name: "AI chat", exact: true }).click();
       } else {
         await page.getByRole("button", { name: "View", exact: true }).click();
-        await page.locator(".popoverItem", { hasText: "AI Chat" }).click();
+        await page.locator(".menuPopover .ctxMenuItem", { hasText: "AI Chat" }).click();
       }
       await page.locator(".chatMessages strong", { hasText: "saved answer" }).waitFor();
       await sleep(650); // wait beyond the autosave debounce
@@ -41,7 +43,7 @@ export async function shareScenarios({ server, browser, alice, bob, step, until,
     const ctx = await bob.context(browser);
     const page = await openPage(ctx, `${server.base}/?share=${chatToken}`);
     await page.locator(".chatMessages strong", { hasText: "saved answer" }).waitFor();
-    assertEq(await page.locator(".chatInputRow").count(), 0, "page editors also get read-only chat");
+    assertEq(await page.locator(".chatComposer").count(), 0, "page editors also get read-only chat");
     assertNoProblems(page);
     await ctx.close();
     assertEq(JSON.stringify((await alice.api(`/api/chats/${shared.id}`)).messages), JSON.stringify(saved.messages), "owner's conversation is unchanged");
@@ -62,8 +64,9 @@ export async function shareScenarios({ server, browser, alice, bob, step, until,
     const page = await openPage(ctx, `${server.base}/?folder=sharedlab&ws=${alice.ws}`);
     await page.click("button[aria-label='Share this folder']");
     await page.waitForSelector(".sharePopover");
-    assert((await page.textContent(".sharePopover")).includes("Share this folder"), "the popover is about the folder");
-    await page.locator(".sharePopover button", { hasText: "Create link" }).click();
+    assert((await page.textContent(".sharePopover")).includes("Share folder “sharedlab”"), "the popover is about the folder");
+    await page.locator(".sharePopover").getByText("Choosing who can open this folder creates its link.").waitFor();
+    await page.locator(".sharePopover").getByRole("button", { name: "Anyone", exact: true }).click();
     const copyBtn = page.locator(".sharePopover button", { hasText: /Copy link|Copied/ }).first();
     await copyBtn.waitFor({ timeout: 10000 });
     const folderToken = new URL(await copyBtn.getAttribute("title")).searchParams.get("share");
@@ -120,6 +123,111 @@ export async function shareScenarios({ server, browser, alice, bob, step, until,
     await alice.api("/api/share-settings/folder?name=sharedlab", { method: "DELETE" });
   });
 
+  await step("share view: the topbar says who shared it and what a visitor may do; Sign in keeps the page", async () => {
+    const shown = await alice.api("/api/blocks", { method: "POST", body: { parent_id: "root", content: "Visitor bar page" } });
+    await alice.api("/api/blocks", { method: "POST", body: { parent_id: shown.id, content: "a note for visitors" } });
+    const { token: barToken } = await alice.api(`/api/share/${shown.id}`, { method: "POST" });
+    const ctx = await browser.newContext({ viewport: { width: 1280, height: 860 } });
+    const page = await openPage(ctx, `${server.base}/?share=${barToken}`);
+    await page.locator(".blockRow", { hasText: "a note for visitors" }).waitFor({ timeout: 15000 });
+    const pill = page.locator(".shareAccess");
+    const text = await pill.textContent();
+    assert(text.includes("View only") && text.includes(`shared by`) && text.includes(alice.name), `the role and who shared it (${text})`);
+    assertEq(await pill.getAttribute("title"), `You can read this page. Only ${alice.name} can change it.`, "the sentence behind it");
+    assertEq(await page.locator("a.shareBrand").getAttribute("href"), "/", "the mark leads to the server's front door");
+    // Sign in opens the share's own sign-in, and Back returns to the page
+    await page.getByRole("button", { name: "Sign in", exact: true }).click();
+    await page.getByText("Sign in to open this shared page", { exact: true }).waitFor();
+    await page.getByRole("button", { name: "Back to the shared page", exact: true }).click();
+    await page.locator(".blockRow", { hasText: "a note for visitors" }).waitFor();
+    // signing in keeps the page and offers to copy it
+    await page.getByRole("button", { name: "Sign in", exact: true }).click();
+    await page.fill(".loginInput >> nth=0", bob.name);
+    await page.fill("input[type=password]", bob.password);
+    await page.click("button.loginBtn[type=submit]");
+    await page.getByRole("button", { name: "Add to my library", exact: true }).waitFor({ timeout: 15000 });
+    assertEq(await page.getByRole("button", { name: "Sign in", exact: true }).count(), 0, "no Sign in once signed in");
+    assertNoProblems(page);
+    await ctx.close();
+    await alice.api(`/api/share-settings/${shown.id}`, { method: "DELETE" });
+  });
+
+  await step("share gate: a dead link, a signed-in-only link opened anonymously and an invite-only link each show their page", async () => {
+    const gated = await alice.api("/api/blocks", { method: "POST", body: { parent_id: "root", content: "Gated share page" } });
+    await alice.api("/api/blocks", { method: "POST", body: { parent_id: gated.id, content: "a note behind the gate" } });
+    const { token: gateToken } = await alice.api(`/api/share/${gated.id}`, { method: "POST" });
+    const refusals = [/GET \/api\/share\/[^ ]+ -> (401|403|404)/];
+
+    // an unknown token: the explanation and the two ways on; signing in lands in the library
+    let ctx = await browser.newContext({ viewport: { width: 1280, height: 860 } });
+    let page = await openPage(ctx, `${server.base}/?share=no-such-token`);
+    await page.getByText("This link doesn't work", { exact: true }).waitFor({ timeout: 15000 });
+    assert((await page.textContent(".loginCard")).includes("Ask the person who sent it for a new link."), "the dead link's explanation");
+    await page.getByRole("button", { name: "Go to Gamma", exact: true }).waitFor();
+    await page.getByRole("button", { name: "Sign in to your library", exact: true }).click();
+    await page.fill(".loginInput >> nth=0", bob.name);
+    await page.fill("input[type=password]", bob.password);
+    await page.click("button.loginBtn[type=submit]");
+    await page.waitForSelector(".folderNewBtn", { timeout: 15000 });
+    assert(!page.url().includes("share="), "the library, not the dead link again");
+    assertNoProblems(page, refusals);
+    await ctx.close();
+
+    // signed-in users only, opened anonymously: the login gate, then the page
+    await alice.api(`/api/share-settings/${gated.id}`, { method: "PUT", body: { audience: "users", role: "view" } });
+    ctx = await browser.newContext({ viewport: { width: 1280, height: 860 } });
+    page = await openPage(ctx, `${server.base}/?share=${gateToken}`);
+    await page.getByText("Sign in to open this shared page", { exact: true }).waitFor({ timeout: 15000 });
+    await page.fill(".loginInput >> nth=0", bob.name);
+    await page.fill("input[type=password]", bob.password);
+    await page.click("button.loginBtn[type=submit]");
+    await until(async () => (await page.textContent(".readOnlyTitle").catch(() => "")).includes("Gated share page"), { what: "the page after signing in" });
+    assertNoProblems(page, refusals);
+    await ctx.close();
+
+    // specific people only, opened by bob who isn't one of them
+    await alice.api(`/api/share-settings/${gated.id}`, { method: "PUT", body: { audience: "list", role: "view", users: [] } });
+    ctx = await bob.context(browser);
+    page = await openPage(ctx, `${server.base}/?share=${gateToken}`);
+    await page.getByText("Not shared with you", { exact: true }).waitFor({ timeout: 15000 });
+    assert((await page.textContent(".loginCard")).includes(`${bob.name} isn't one of them`), "names the refused account");
+    await page.getByRole("button", { name: "Sign in as someone else", exact: true }).waitFor();
+    assertNoProblems(page, refusals);
+    await ctx.close();
+    await alice.api(`/api/share-settings/${gated.id}`, { method: "DELETE" });
+  });
+
+  await step("share: opening the popover shares nothing; the first invitation makes an invite-only link; Stop sharing asks first", async () => {
+    const pg = await alice.api("/api/pages", { method: "POST", body: { title: "Invite first" } });
+    const ctx = await alice.context(browser);
+    const page = await openPage(ctx, `${server.base}/?page=${pg.id}&ws=${alice.ws}`);
+    await page.click("button[aria-label='Share']");
+    const pop = page.locator(".sharePopover");
+    await pop.getByText("Choosing who can open this page creates its link.").waitFor();
+    await until(async () => (await pop.textContent()).includes("Share “Invite first”"), { what: "the page's name in the title" });
+    assertEq((await alice.api(`/api/share-settings/${pg.id}`)).token, null, "opening the popover shares nothing");
+    assertEq(await pop.locator(".setPictureChoice.on").count(), 0, "no audience is picked before there is a link");
+    await pop.getByRole("textbox", { name: "Invite people by name…" }).fill("bob");
+    await pop.getByRole("option", { name: "bob", exact: true }).click();
+    await pop.getByRole("button", { name: "Invite", exact: true }).click();
+    await pop.locator(".aiProvRow", { hasText: "bob" }).waitFor();
+    const settings = await alice.api(`/api/share-settings/${pg.id}`);
+    assertEq(settings.audience, "list", "the first invitation shares Invited only");
+    assertEq(JSON.stringify(settings.users), JSON.stringify([{ name: "bob", role: "view" }]), "bob is invited to view");
+    await pop.getByText("Only the people above can open this page; the link does nothing for anyone else.").waitFor();
+    assert(await pop.locator(".setSection", { hasText: "General access" }).getByRole("button", { name: "Edit", exact: true }).isDisabled(),
+      "the View / Edit toggle stays, disabled, under Invited only");
+    await pop.getByRole("button", { name: "Copy link" }).waitFor();
+    await pop.locator(".shareStop").getByRole("button", { name: "Stop sharing", exact: true }).click();
+    await pop.getByText("Stop sharing? The link stops working and the 1 invited person loses access.").waitFor();
+    assert((await alice.api(`/api/share-settings/${pg.id}`)).token, "nothing stops before the confirm");
+    await pop.locator(".mirrorConfirm").getByRole("button", { name: "Stop sharing", exact: true }).click();
+    await pop.getByText("Choosing who can open this page creates its link.").waitFor();
+    assertEq((await alice.api(`/api/share-settings/${pg.id}`)).token, null, "the share stopped");
+    assertNoProblems(page);
+    await ctx.close();
+  });
+
   const account = alice2;
   let token;
   if (!pdfPageId) { console.log("  skip  share: needs the pdf steps (drop --only)"); return; }
@@ -128,13 +236,13 @@ export async function shareScenarios({ server, browser, alice, bob, step, until,
   const up = await account.upload("/api/upload-image", PNG_1PX, "dot.png", "image/png");
   await account.api("/api/blocks", { method: "POST", body: { parent_id: pdfPageId, content: `figure ![](${up.url})` } });
 
-  await step("share: the popover creates a link and shows it on the copy button", async () => {
+  await step("share: picking Anyone creates the link and shows it on the copy button", async () => {
     const ctx = await account.context(browser);
     const page = await openPage(ctx, `${server.base}/?page=${pdfPageId}&ws=${account.ws}`);
     await waitForPdf(page, 1);
     await page.click("button[aria-label='Share']");
     await page.waitForSelector(".sharePopover");
-    await page.locator(".sharePopover button", { hasText: "Create link" }).click();
+    await page.locator(".sharePopover").getByRole("button", { name: "Anyone", exact: true }).click();
     const copyBtn = page.locator(".sharePopover button", { hasText: /Copy link|Copied/ }).first();
     await copyBtn.waitFor({ timeout: 10000 });
     token = new URL(await copyBtn.getAttribute("title")).searchParams.get("share");

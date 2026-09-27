@@ -20,7 +20,8 @@
   </g>
 
   <!-- left: mark, name, promise -->
-  <g transform="translate(140 300)"><g transform="scale(2)"><svg xmlns="http://www.w3.org/2000/svg" width="48" height="48" viewBox="0 0 32 32" fill="none"><rect id="gamma-background" width="32" height="32" rx="7" fill="#1e1e1c"/>
+  <g id="hero-promise">
+    <g transform="translate(140 300)"><g transform="scale(2)"><svg xmlns="http://www.w3.org/2000/svg" width="48" height="48" viewBox="0 0 32 32" fill="none"><rect id="gamma-background" width="32" height="32" rx="7" fill="#1e1e1c"/>
         <!-- both branches of standing wave -->
         <path d="M 6 16 C 9 10.5 13 10.5 16 16 C 19 21.5 23 21.5 26 16" stroke="#e8a020" stroke-width="1.2" fill="none" opacity="0.6" stroke-linecap="round"/>
         <path d="M 6 16 C 9 21.5 13 21.5 16 16 C 19 10.5 23 10.5 26 16" stroke="#e8a020" stroke-width="1.2" fill="none" opacity="0.6" stroke-linecap="round"/>
@@ -29,20 +30,21 @@
         <rect x="9" y="8" width="13" height="3" rx="0.8" fill="#eeebe4"/>
         <rect x="9" y="8" width="3" height="15" rx="0.8" fill="#eeebe4"/></svg></g>
   <text x="122" y="83" font-family="Inter, 'Segoe UI', Roboto, Helvetica, Arial, sans-serif" font-size="100" font-weight="700" letter-spacing="-2.7" fill="#1a1a18">Gamma<tspan font-weight="400" fill="#e8a020" dx="23">PDF</tspan></text></g>
-  <text x="142" y="500" font-family="Inter, 'Segoe UI', Roboto, Helvetica, Arial, sans-serif" font-size="52" font-weight="600" letter-spacing="-1" fill="#1a1a18">Read papers. Keep what you learn.</text>
-  <text x="142" y="562" font-family="Inter, 'Segoe UI', Roboto, Helvetica, Arial, sans-serif" font-size="27" fill="#6b6a65">Highlight PDFs, take outliner notes with live math,</text>
-  <text x="142" y="600" font-family="Inter, 'Segoe UI', Roboto, Helvetica, Arial, sans-serif" font-size="27" fill="#6b6a65">and search your whole library — on your own machine.</text>
-  <g>
-    <rect x="142" y="660" width="178.6" height="44" rx="22" fill="#ecdfc4"/>
-    <text x="231.3" y="689" text-anchor="middle" font-family="Inter, 'Segoe UI', Roboto, Helvetica, Arial, sans-serif" font-size="22" font-weight="500" fill="#5a4a24">Self-hosted</text>
-  </g>
-  <g>
-    <rect x="336.6" y="660" width="241.6" height="44" rx="22" fill="#ecdfc4"/>
-    <text x="457.40000000000003" y="689" text-anchor="middle" font-family="Inter, 'Segoe UI', Roboto, Helvetica, Arial, sans-serif" font-size="22" font-weight="500" fill="#5a4a24">Markdown + LaTeX</text>
-  </g>
-  <g>
-    <rect x="594.2" y="660" width="380.2" height="44" rx="22" fill="#ecdfc4"/>
-    <text x="784.3000000000001" y="689" text-anchor="middle" font-family="Inter, 'Segoe UI', Roboto, Helvetica, Arial, sans-serif" font-size="22" font-weight="500" fill="#5a4a24">Ask an AI about your papers</text>
+    <text x="142" y="500" font-family="Inter, 'Segoe UI', Roboto, Helvetica, Arial, sans-serif" font-size="52" font-weight="600" letter-spacing="-1" fill="#1a1a18">Read papers. Keep what you learn.</text>
+    <text x="142" y="562" font-family="Inter, 'Segoe UI', Roboto, Helvetica, Arial, sans-serif" font-size="27" fill="#6b6a65">Highlight PDFs, take outliner notes with live math,</text>
+    <text x="142" y="600" font-family="Inter, 'Segoe UI', Roboto, Helvetica, Arial, sans-serif" font-size="27" fill="#6b6a65">and search your whole library — on your own machine.</text>
+    <g>
+      <rect x="142" y="660" width="178.6" height="44" rx="22" fill="#ecdfc4"/>
+      <text x="231.3" y="689" text-anchor="middle" font-family="Inter, 'Segoe UI', Roboto, Helvetica, Arial, sans-serif" font-size="22" font-weight="500" fill="#5a4a24">Self-hosted</text>
+    </g>
+    <g>
+      <rect x="336.6" y="660" width="241.6" height="44" rx="22" fill="#ecdfc4"/>
+      <text x="457.40000000000003" y="689" text-anchor="middle" font-family="Inter, 'Segoe UI', Roboto, Helvetica, Arial, sans-serif" font-size="22" font-weight="500" fill="#5a4a24">Markdown + LaTeX</text>
+    </g>
+    <g>
+      <rect x="594.2" y="660" width="380.2" height="44" rx="22" fill="#ecdfc4"/>
+      <text x="784.3000000000001" y="689" text-anchor="middle" font-family="Inter, 'Segoe UI', Roboto, Helvetica, Arial, sans-serif" font-size="22" font-weight="500" fill="#5a4a24">Ask an AI about your papers</text>
+    </g>
   </g>
 
   <!-- right: a paper, its notes, and the link between a highlight and its block -->

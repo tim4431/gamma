@@ -104,5 +104,13 @@
     "destination": "docs/assets/branding/gamma-logo.svg",
     "kind": "logo",
     "theme": "light"
+  },
+  {
+    "source": "compositions/hero-light.svg",
+    "destination": "frontend/public/media/gamma-scene-light.svg",
+    "kind": "crop",
+    "theme": "light",
+    "box": [900, 80, 1020, 950],
+    "hide": ["hero-promise"]
   }
 ]

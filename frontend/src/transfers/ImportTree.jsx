@@ -16,14 +16,14 @@ export default function ImportTree({ node, library = false, selected, onSelect, 
     {[...node.folders].sort(([a], [b]) => a.localeCompare(b)).map(([name, child]) =>
       <li key={name}><details open>
         <summary>{onSelect ? <SelectionBox ids={treeItemIds(child)} selected={selected} onSelect={onSelect} label={t("Select folder {name}", { name: name })} /> : null}
-          <FolderIcon size={15} /><span>{name}</span></summary>
+          <FolderIcon size={16} /><span>{name}</span></summary>
         <ImportTree node={child} library={library} selected={selected} onSelect={onSelect} complete={complete} />
         {!child.folders.size && !child.files.length ? <span className="importEmpty">{t("Empty folder")}</span> : null}
       </details></li>)}
     {node.files.map((file, index) => <li key={`${file.id || file.key || file.path}-${index}`}>
       <div className="importTreeFile" title={file.source_path || file.path}>
         {onSelect ? <SelectionBox ids={itemIds(file)} selected={selected} onSelect={onSelect} label={t("Import {name}", { name: file.name })} /> : null}
-        <FileIcon size={15} />
+        <FileIcon size={16} />
         <div className="importFileText"><span>{file.name}</span>
           {library ? <small>{file.action === "skip" ? t("Already in library") : file.action === "merge" ? (complete ? t("Updated") : t("Update existing page")) : (complete ? t("Imported") : t("New page"))}
             {file.notes ? t(" · {notes} exported note{_s}", { notes: file.notes, _s: file.notes === 1 ? "" : "s" }) : ""}</small>

@@ -3,13 +3,13 @@ import { Panel, PanelGroup, PanelResizeHandle } from "react-resizable-panels";
 import PdfViewer, { clampZoom } from "../pdf/PdfViewer";
 import { highlightSpot, rangeSpot } from "../pdf/pdfSelectionSpot";
 import { COLORS } from "../shared/model/highlightColors.js";
-import { fmtDate, getLocale, resolveLocale, t, T } from "../shared/i18n/i18n.js";
+import { fmtDate, getLocale, resolveLocale, t, T, tn } from "../shared/i18n/i18n.js";
 import { REOPEN_SETTINGS_KEY } from "../settings/settingsNavigation.js";
 import { ExportDialog, ImportDialog } from "../transfers/ImportExport";
 import ImportReviewDialog from "../transfers/ImportReviewDialog";
 import { parseGammaLink } from "../shared/model/gammaLinks.js";
 import { pageHostUser, publicPath } from "../shared/lib/slug.js";
-import { API, apiJson, getShareToken, setShareView, withShare, withWorkspace, setCurrentWorkspace, getCurrentWorkspace, setLinkName, makeId, fmtBytes, getDocIdForUrl, isPdfFile, isMarkdownFile, metaSourceInfo, resolvePdfUrl, pdfProxyUrl, probePdfUrl, setExpectedUser, getExpectedUser, usePersistedState, usePersistedFlag, copyText, copyRich, readNdjson } from "../shared/lib/utils";
+import { API, apiJson, getShareToken, setShareView, withShare, withWorkspace, setCurrentWorkspace, getCurrentWorkspace, setLinkName, makeId, fmtBytes, getDocIdForUrl, isPdfFile, isMarkdownFile, PAGE_FILE_ACCEPT, metaSourceInfo, resolvePdfUrl, pdfProxyUrl, probePdfUrl, setExpectedUser, getExpectedUser, usePersistedState, usePersistedFlag, copyText, copyRich, readNdjson } from "../shared/lib/utils";
 import {
   BlockDropIndicator,
   ChatMarkdown,
@@ -21,24 +21,27 @@ import {
   useTextScale,
 } from "../shared/ui/Widgets";
 import { BlockTree, _dragState } from "../editor/BlockTree";
+import { BacklinksPanel } from "../editor/BacklinksPanel";
 import { dropGapAtPoint, findObject } from "../editor/MdObject";
 import { cutObject, moveObjectInTree } from "../editor/mdObjects";
 import { scanMathSpans } from "../editor/mdScan";
 import { sourceRangeOfSelection } from "../editor/clickToSource";
 import { FileChipContext, forgetDocPages, rememberDocPage, setUploadReporter, uploadFilesAsLines, xhrUpload } from "../transfers/FileChip";
-import { CardLabels, KindToggle, ListFindBox, PageCard, ViewToggle } from "../library/FileBrowser";
+import { CardLabels, KindToggle, ListFindBox, ListSearchElsewhere, PageCard, ViewToggle } from "../library/FileBrowser";
 import ChatDock from "../chat/ChatDock";
 import { createChatSession } from "../chat/chatSession";
 import SearchPanel from "../search/SearchPanel";
 import QuickOpen from "../library/QuickOpen";
-import { ContextMenu, MenuItem, MenuLabel, MenuSelect, SubMenuItem } from "../shared/ui/Menus";
+import LibraryEmpty from "../library/LibraryEmpty";
+import { ContextMenu, MenuDivider, MenuItem, MenuLabel, MenuScope, MenuSelect, SubMenuItem, menuGroups } from "../shared/ui/Menus";
+import { useWheelPan } from "../shared/ui/wheelPan";
 import {
   ActivityIcon, AlertCircleIcon, ArrowLeftIcon, ArrowUpDownIcon, BookIcon, BugIcon, CheckIcon, CopyIcon, DownloadIcon, ExportIcon,
   ExternalLinkIcon, EyeIcon, EyeOffIcon, FileGlyph, FileIcon, FileTextIcon, FitWidthIcon, FolderGlyph,
   FilePlusIcon, PaperclipIcon, FolderIcon, FolderOpenIcon, FolderPlusIcon, HelpCircleIcon, HomeIcon, ImportIcon, InfoIcon, LabelGlyph, LabelIcon,
   LanguagesIcon, LanguagesOffIcon, LinkIcon, LogOutIcon, MaximizeIcon, MenuIcon, MinimizeIcon, PenIcon, PinIcon, PlusIcon,
   RectSelectIcon, RefreshIcon, SearchIcon, SettingsIcon, SparklesIcon, TextCursorIcon, TrashIcon, TypeIcon, UploadIcon,
-  ScissorsIcon, UserIcon, UsersIcon, XIcon, ZoomInIcon, ZoomOutIcon,
+  ScissorsIcon, ShareIcon, UserIcon, UsersIcon, XIcon, ZoomInIcon, ZoomOutIcon,
 } from "../shared/ui/Icons";
 
 
@@ -78,9 +81,9 @@ import { ROLE_LABEL, workspaceMeta } from "../settings/SettingsWorkspace";
 import { AuthLoading, LoginPage, SessionConflictPage, ShareBlockedPage, WorkspaceUnavailablePage } from "../auth/LoginPage";
 import { guestExpiryLabel } from "../auth/guestExpiry";
 import { McpAuthorization } from "../auth/McpConsent";
-import { TRANSLATE_LANGS, translateModelFor, useAppPrefs, useProfileSync } from "./prefs";
+import { TRANSLATE_LANGS, themeScheme, translateModelFor, useAppPrefs, useProfileSync } from "./prefs";
 import { useNotices } from "./useNotices";
-import { dotTone } from "./notices";
+import { dotTone, noticeAction, noticeText } from "./notices";
 import { useBlockHistory } from "../editor/blockHistory.js";
 import { InkToolbar } from "../ink/InkLayer";
 import { MAX_STROKES, appendStroke, duplicateStrokes, eraseAt, newInk, removeStrokes, restyleStrokes, toolStyle, transformStrokes, translateStrokes } from "../ink/ink";
@@ -88,6 +91,8 @@ import * as inkStore from "../ink/inkStore";
 import { usePageCollab } from "../collaboration/usePageCollab";
 import { applyOps, applyPatch, keepUiFlags } from "../shared/model/blockOps";
 import { PresenceBar } from "../collaboration/Presence";
+import { ShareAccessPill } from "../sharing/ShareAccess";
+import { BrandMark } from "../shared/ui/BrandMark";
 import { cleanLinkName, loadLinkName, saveLinkName, LINK_NAME_MAX } from "../collaboration/linkName";
 import SettingsDialog from "../settings/SettingsDialog";
 import ReportProblem from "../support/ReportProblem";
@@ -103,7 +108,10 @@ import {
   cleanFolderPath,
   cleanFolderSegment,
   findPageForUrl,
+  formatFullDate,
   formatRelativeTime,
+  formatShortDate,
+  isFreshLibrary,
   friendlyApiError,
   pageAttachment,
   attachmentSource,
@@ -125,16 +133,21 @@ import { createLibraryMatcher } from "../library/librarySearch";
 // fail closed (ignored) rather than show a spurious error row.
 const TRANSFER_PHASES = new Set(["start", "progress", "done", "cached", "error", "cancelled"]);
 
-// Phone detection: below 700px the desktop dock system is unusable, so the
-// workspace switches to a single full-width panel with a bottom tab bar. The
-// second clause keeps a rotated (landscape) phone in the phone layout — the
-// width crosses 700px but a touch device that short is still a phone, and
-// flipping to the desktop docks mid-rotation is jarring.
-const PHONE_MQ = "(max-width: 700px), (pointer: coarse) and (max-height: 500px)";
+// The compact layout ("phone" in the code): below 700px the desktop dock
+// system is unusable, so the workspace switches to a single full-width panel
+// with a bottom tab bar. The second clause keeps a rotated (landscape) phone
+// in it — the width crosses 700px but a touch device that short is still a
+// phone, and flipping to the desktop docks mid-rotation is jarring. The third
+// gives a tablet held upright the same shell: two docks squeezed into 820px
+// leave ~200px columns, while a full-width reader with full-screen Notes and
+// Chat fits; turning it to landscape brings the docks back (docs/dev/ipad.md).
+const PHONE_MQ = "(max-width: 700px), (pointer: coarse) and (max-height: 500px), "
+  + "(pointer: coarse) and (orientation: portrait) and (max-width: 1024px)";
 // A browser that declares itself mobile gets the phone layout regardless of
 // the viewport numbers. "Request desktop site" flips this flag along with the
 // UA, so it stays the escape hatch back to the desktop docks. Android tablets
-// ("Android" without "Mobile") and iPads (desktop-class UA) are not phones.
+// ("Android" without "Mobile") and iPads (desktop-class UA) are not phones:
+// they get the compact layout only while upright, from PHONE_MQ.
 const UA_MOBILE = navigator.userAgentData?.mobile
   ?? /iPhone|iPod|Android.+Mobile|Mobile.+Android/i.test(navigator.userAgent);
 function useIsPhone() {
@@ -152,6 +165,33 @@ function useIsPhone() {
 const HOME_SCREEN_INSTALLABLE = (/iPad|iPhone/.test(navigator.userAgent)
   || (/Macintosh/.test(navigator.userAgent) && navigator.maxTouchPoints > 1))
   && !(window.matchMedia?.("(display-mode: standalone)").matches || navigator.standalone);
+// The installed app paints the status bar with theme-color, so it continues
+// what sits under it: the topbar (chrome, --bg-page), or — on a phone's
+// library with no tab open, where the compact layout drops the topbar — the
+// library itself (content, --bg-surface). Read from the theme variables, not
+// the elements: the topbar's background transitions, and a mid-transition
+// read would lag a theme change.
+function paintStatusBar(bareTop) {
+  const meta = document.querySelector('meta[name="theme-color"]');
+  if (meta) meta.setAttribute("content", tokenHex(bareTop ? "--bg-surface" : "--bg-page"));
+}
+// A colour token as #rrggbb. Most tokens are color-mix() expressions
+// (tokens.css), which the theme-color meta can't take: the colour is
+// resolved on a probe element and read back from one canvas pixel.
+let tokenCanvas = null;
+function tokenHex(name) {
+  const probe = document.createElement("span");
+  probe.style.color = `var(${name})`;
+  document.body.append(probe);
+  const color = getComputedStyle(probe).color;
+  probe.remove();
+  tokenCanvas ||= document.createElement("canvas").getContext("2d", { willReadFrequently: true });
+  tokenCanvas.clearRect(0, 0, 1, 1);
+  tokenCanvas.fillStyle = color;
+  tokenCanvas.fillRect(0, 0, 1, 1);
+  const [r, g, b] = tokenCanvas.getImageData(0, 0, 1, 1).data;
+  return `#${[r, g, b].map((v) => v.toString(16).padStart(2, "0")).join("")}`;
+}
 
 // Drag payload prefix marking a folder drag (page cards drag their bare id).
 const FOLDER_DRAG = "gamma-folder:";
@@ -237,6 +277,9 @@ const RECENTS_CAP = 24;
 // Agent tools whose applied action changes the open page's block tree
 // (handleAgentEvent reloads it and lights the block up).
 const AI_BLOCK_TOOLS = ["edit_block", "create_block", "move_block"];
+// The Settings panes of the AI group ("context" is an old name of
+// ai-advanced): entering one loads the masked key list and the prompt drafts.
+const AI_SETTINGS_PANES = ["ai", "assistant", "ai-advanced", "context", "prompts"];
 // A block's text for a chat chip (cursor block, attached block): its note,
 // else its highlight quote.
 const blockChipText = (b) => (b.content || "").trim() || blockQuote(b).trim() || t("(empty block)");
@@ -278,28 +321,6 @@ function captureViewerSnapshot() {
   try { return out.toDataURL("image/jpeg", SNAP_QUALITY); } catch { return null; }
 }
 
-// Wheel-to-horizontal-pan for a card strip (native non-passive listener —
-// React's synthetic onWheel can't preventDefault); touch swipes pan natively
-// via overflow-x. Returns a callback ref (not a plain one) so the listener
-// follows the element through conditional mounts.
-function useWheelPan() {
-  const cleanupRef = useRef(null);
-  return useCallback((el) => {
-    if (cleanupRef.current) { cleanupRef.current(); cleanupRef.current = null; }
-    if (!el) return;
-    function onWheel(e) {
-      // Real horizontal input (trackpads, tilt wheels) already works; pinch
-      // gestures (ctrlKey) belong to the browser zoom.
-      if (e.ctrlKey || Math.abs(e.deltaX) >= Math.abs(e.deltaY)) return;
-      if (el.scrollWidth <= el.clientWidth) return; // nothing to pan → page scrolls
-      el.scrollLeft += e.deltaMode === 1 ? e.deltaY * 33 : e.deltaY; // LINE mode (Firefox) → ~px
-      e.preventDefault();
-    }
-    el.addEventListener("wheel", onWheel, { passive: false });
-    cleanupRef.current = () => el.removeEventListener("wheel", onWheel);
-  }, []);
-}
-
 // Horizontal card strip. No arrow chrome: the wheel pans it sideways.
 function CardCarousel({ label, children, className }) {
   const trackRef = useWheelPan();
@@ -323,9 +344,9 @@ function TransferRow({ status, icon, name, info, progress, onStop }) {
     <div className={`transferRow ${status}`} title={info ? `${name} — ${info}` : name}>
       <span className={`transferStatus ${status}`}>
         {status === "active" ? <span className="transferSpin inline" />
-          : status === "done" ? <CheckIcon size={12} strokeWidth={2.6} />
-            : status === "cancelled" ? <XIcon size={12} strokeWidth={2.4} />
-              : <AlertCircleIcon size={12} strokeWidth={2.4} />}
+          : status === "done" ? <CheckIcon size={14} />
+            : status === "cancelled" ? <XIcon size={14} />
+              : <AlertCircleIcon size={14} />}
       </span>
       <span className="transferKind">{icon}</span>
       <span className="transferMain">
@@ -340,7 +361,7 @@ function TransferRow({ status, icon, name, info, progress, onStop }) {
       <span className="transferInfo">{info || ""}</span>
       {onStop ? (
         <button type="button" className="uiClose uiCloseSm transferStop" title={t("Stop")} aria-label={t("Stop {name}", { name: name })}
-          onClick={(e) => { e.stopPropagation(); onStop(); }}>×</button>
+          onClick={(e) => { e.stopPropagation(); onStop(); }}><XIcon size={14} /></button>
       ) : <span className="transferStopSlot" />}
     </div>
   );
@@ -382,7 +403,15 @@ function PageHostGate() {
     })();
     return () => { active = false; };
   }, [boot]);
-  if (!boot) return <div id="splash"><div className="spin" /><div>{t("Loading Gamma…")}</div></div>;
+  // The same splash index.html paints before the bundle, so the hand-over
+  // doesn't jump (BrandMark is the cached favicon).
+  if (!boot) return (
+    <div id="splash" role="status" aria-label={t("Loading Gamma…")}>
+      <BrandMark className="mark" size={56} />
+      <div className="name">{t("Gamma")}</div>
+      <div className="spin" />
+    </div>
+  );
   return <LibraryApp publicPage={boot.publicPage || null} initialServerConfig={boot.serverConfig || null} />;
 }
 
@@ -446,7 +475,7 @@ function LibraryApp({ publicPage = null, initialServerConfig = null }) {
   }), [authUser?.user, wsId]);
   const [loginUser, setLoginUser] = useState("");
   const [loginPass, setLoginPass] = useState("");
-  const [loginError, setLoginError] = useState("");
+  const [loginError, setLoginError] = useState(""); // a message, or {text, field} (LoginPage)
   // Username that now owns the browser session when it's no longer this tab's
   // user (someone logged into another account from a second tab) — freezes the
   // tab behind SessionConflictPage until reload.
@@ -593,16 +622,22 @@ function LibraryApp({ publicPage = null, initialServerConfig = null }) {
   async function doLogin(e, then = checkSession) {
     e?.preventDefault();
     setLoginError("");
+    let res;
     try {
-      const res = await fetch(`${API}/login`, {
+      res = await fetch(`${API}/login`, {
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({ username: loginUser, password: loginPass }),
         credentials: "include",
       });
-      if (!res.ok) { setLoginError(t("Invalid credentials")); return; }
-      await then();
-    } catch { setLoginError(t("Login failed")); }
+    } catch { setLoginError(t("Can't reach the server.")); return; }
+    if (!res.ok) {
+      setLoginError(res.status === 401
+        ? { text: t("That username and password don't match. Check both, or ask your server's admin to reset the password."), field: "password" }
+        : res.status === 429 ? t("Too many attempts. Wait a few minutes, then try again.") : t("Login failed"));
+      return;
+    }
+    try { await then(); } catch { setLoginError(t("Login failed")); }
   }
 
   async function doGuestLogin() {
@@ -631,6 +666,13 @@ function LibraryApp({ publicPage = null, initialServerConfig = null }) {
     try { await fetch(`${API}/logout`, { method: "POST", credentials: "include" }); } catch {}
     setLoginUser(""); setLoginPass(""); setLoginError("");
     setShareGate("login");
+  }
+  // A dead link's "Sign in to your library": sign in right here, then open
+  // the library instead of the link.
+  const doLibraryLogin = (e) => doLogin(e, async () => { window.location.assign("/"); });
+  function librarySignIn() {
+    setLoginError("");
+    setShareGate("signin");
   }
 
   // Download an /api/export backup zip. Fetched by hand (not a plain link
@@ -833,6 +875,9 @@ function LibraryApp({ publicPage = null, initialServerConfig = null }) {
 
   const [inputUrl, setInputUrl] = useState(initialUrl); // current page's source URL (shown in page properties)
   const [addUrl, setAddUrl] = useState(""); // "+" popover: URL to open
+  // The "+" menu's file pickers: hidden inputs its Upload rows click.
+  const addFilesRef = useRef(null);
+  const addFolderRef = useRef(null);
   const [pdfUrl, setPdfUrl] = useState("");
   // A pasted citation URL on a cold load opens the paper at the passage.
   const [pdfCitation, setPdfCitation] = useState(() => {
@@ -1022,6 +1067,9 @@ function LibraryApp({ publicPage = null, initialServerConfig = null }) {
   const [selectedLabels, setSelectedLabels] = useState(() => new Set());
   const lastPageClickRef = useRef(null); // anchor for shift-range selection
   const [homeMenu, setHomeMenu] = useState(null); // {kind:"page"|"folder", id?, name, x, y}
+  // The page menu's "New label…" name while it is typed (null: not typing).
+  const [homeMenuLabelDraft, setHomeMenuLabelDraft] = useState(null);
+  useEffect(() => { setHomeMenuLabelDraft(null); }, [homeMenu]);
   const [folderRenaming, setFolderRenaming] = useState(null); // {name, draft}
   const [labelRenaming, setLabelRenaming] = useState(null); // {name, draft}
 
@@ -1633,6 +1681,7 @@ function LibraryApp({ publicPage = null, initialServerConfig = null }) {
   const cancelCoarseRestoreRef = useRef(() => {});
   const [blocks, setBlocks] = useState([]);
   const [homeBlocks, setHomeBlocks] = useState([]);
+  const [homeLoaded, setHomeLoaded] = useState(false); // the library listing has come back once
   const [refCache, setRefCache] = useState({}); // { [blockId]: { content, page_title } }
   const [backlinks, setBacklinks] = useState([]);
   const [chatHidden, setChatHidden] = useState(false);
@@ -2164,16 +2213,23 @@ function LibraryApp({ publicPage = null, initialServerConfig = null }) {
     setSnapsState(next);
   }, [recentViews, pageSnaps]);
   const [tabMenu, setTabMenu] = useState(null); // {id, pinned, x, y} — tab right-click menu
+  // What each open tab's page carries, for its kind icon (tabs store only
+  // id, title and pinned).
+  const tabKinds = useMemo(() => new Map(homeBlocks.map((b) => [b.id, pageAttachment(b) ? "pdf" : "page"])), [homeBlocks]);
+  const tabKindOf = useCallback((id) => tabKinds.get(id) || "page", [tabKinds]);
   // FLIP animation: when tab order changes, slide each tab from its old
-  // position to the new one (Chrome-style), instead of snapping.
+  // position to the new one (Chrome-style), instead of snapping. Positions
+  // are the tab's place in the strip's content (offsetLeft; the strip is its
+  // offset parent), so the strip scrolling to the active tab moves nothing;
+  // pinned tabs stick to the edge while it scrolls and are left out.
   const tabElsRef = useRef(new Map());
   const tabLeftsRef = useRef(new Map());
   useLayoutEffect(() => {
     const prev = tabLeftsRef.current;
     const next = new Map();
     for (const [id, el] of tabElsRef.current) {
-      if (!el) continue;
-      const left = el.getBoundingClientRect().left;
+      if (!el || el.classList.contains("pinned")) continue;
+      const left = el.offsetLeft;
       next.set(id, left);
       const old = prev.get(id);
       if (old != null && Math.abs(old - left) > 2) {
@@ -2354,6 +2410,16 @@ function LibraryApp({ publicPage = null, initialServerConfig = null }) {
   // The Ctrl+P palette (library/QuickOpen.jsx): null, or {prefix} — "" lists
   // pages, ">" the commands (Ctrl+Shift+P).
   const [quickOpen, setQuickOpen] = useState(null);
+  // A link (the boot deep link, a page or block link clicked in the app)
+  // named a page that isn't in this workspace: its id, while the notice under
+  // the topbar says so. Cleared by Dismiss, Search the library or the next open.
+  const [missingPage, setMissingPage] = useState("");
+  // A query handed to the workspace search as it opens (the listing's
+  // "Search inside notes and PDFs"); cleared whenever the search is closed,
+  // so a later plain open keeps whatever was typed in it.
+  const [searchSeed, setSearchSeed] = useState("");
+  useEffect(() => { if (openPopover !== "search") setSearchSeed(""); }, [openPopover]);
+  const openSearchWith = (query) => { setQuickOpen(null); setSearchSeed(query); setOpenPopover("search"); };
   // The app commands' context (app/appCommands.js) and the account's
   // keybindings, refreshed every render for the once-mounted key listener.
   const appCmdRef = useRef(null);
@@ -2561,6 +2627,9 @@ function LibraryApp({ publicPage = null, initialServerConfig = null }) {
     } catch {}
     return null;
   });
+  // Settings on one pane, closing the popover that led there (the account
+  // menu, a notice, the sync pill, the Share popover's cloud row, the chat).
+  const openSettingsPane = (pane) => { setOpenPopover(null); setSettingsOpen(pane); };
   // The first settings sync with Gamma Cloud found two different copies:
   // Settings → Account & sync asks which to keep, opened once per page load.
   const askedCloudChoice = useRef(false);
@@ -2679,6 +2748,9 @@ function LibraryApp({ publicPage = null, initialServerConfig = null }) {
     try {
       const info = await apiJson(`${API}/ai/settings`);
       setAiKeysInfo(info);
+      // Opened by the chat on a service or an entry (openAiKeysEditor).
+      openAiForm(pendingAiFormRef.current, info);
+      pendingAiFormRef.current = null;
       // The server's shared entries may have changed (Settings → Server).
       refreshAiModels();
       // Usage is account status, not an edit action: fetch it as soon as the
@@ -2753,15 +2825,29 @@ function LibraryApp({ publicPage = null, initialServerConfig = null }) {
   // moving between them keeps it (their edits refresh it themselves).
   const prevSettingsPaneRef = useRef(null);
   useEffect(() => {
-    const aiPanes = ["ai", "assistant", "ai-advanced", "context", "prompts"];
     const cameFrom = prevSettingsPaneRef.current;
     prevSettingsPaneRef.current = settingsOpen;
-    if (aiPanes.includes(settingsOpen) && !aiPanes.includes(cameFrom) && authUser?.user && !shareMode) loadAiKeys();
+    if (AI_SETTINGS_PANES.includes(settingsOpen) && !AI_SETTINGS_PANES.includes(cameFrom) && authUser?.user && !shareMode) loadAiKeys();
   }, [settingsOpen]);
 
-  function openAiKeysEditor() {
+  // Settings → Connections. `service` (a protocol id or "other", from the
+  // chat's setup card) also opens the connect dialog set to that service;
+  // `entry` (a chat error card's "Update key" / "Edit connection", the login
+  // check's Fix…) opens that entry's form. A shared entry is the admin's to
+  // edit (Settings → Server), so it gets the pane alone. The form opens at
+  // once when the pane has the key list, else when loadAiKeys lands.
+  const pendingAiFormRef = useRef(null); // {service} | {entry} | null
+  function openAiKeysEditor({ service = "", entry = "" } = {}) {
+    const target = service ? { service } : entry ? { entry } : null;
+    if (AI_SETTINGS_PANES.includes(settingsOpen) && aiKeysInfo) openAiForm(target, aiKeysInfo);
+    else pendingAiFormRef.current = target;
     setSettingsOpen("ai");
     setOpenPopover(null);
+  }
+  function openAiForm(target, info) {
+    if (target?.service) startAddAiProvider(target.service, info, { fromChat: true });
+    const own = target?.entry && info.providers?.find((p) => p.id === target.entry && !p.shared);
+    if (own) startEditAiProvider(own);
   }
 
   const aiProtocolOf = (id) => aiKeysInfo?.protocols?.find((p) => p.id === id);
@@ -2771,9 +2857,38 @@ function LibraryApp({ publicPage = null, initialServerConfig = null }) {
   // The model switchers everywhere feed off /ai/models — refresh after edits.
   const refreshAiModels = () => apiJson(`${API}/ai/models`).then(setAiInfo).catch(() => {});
 
-  function startAddAiProvider() {
+  // A new connection's form, set to `service`: a protocol id, or "other"
+  // (the first named service, else a custom endpoint). Without one it starts
+  // on the first tile, the subscription sign-in.
+  // `fromChat`: opened from the chat's setup card — once connected, Settings
+  // closes and the chat's message box takes the focus.
+  function startAddAiProvider(service, info = aiKeysInfo, { fromChat = false } = {}) {
     setAiKeysError("");
-    setAiKeysForm({ id: "", protocol: "chatgpt", name: "", api_key: "", base_url: "", models: "", test_model: "" });
+    const protocols = info?.protocols || [];
+    const preset = service === "other" ? info?.services?.[0] : null;
+    const protocol = preset?.protocol
+      || (service === "other" ? protocols.find((p) => p.auth !== "oauth")?.id : service)
+      || "";
+    setAiKeysForm({
+      id: "", protocol: protocols.some((p) => p.id === protocol) ? protocol : (protocols.find((p) => p.auth === "oauth") || protocols[0])?.id || "chatgpt",
+      name: "", api_key: "", base_url: preset?.base_url || "", models: "", test_model: "",
+      ...(service === "other" && !preset ? { custom: true } : {}),
+      ...(fromChat ? { fromChat: true } : {}),
+    });
+  }
+
+  // A connection the dialog just made: test it right away, and when the
+  // dialog came from the chat's setup card go back to the chat, ready to ask.
+  const [chatFocusSignal, setChatFocusSignal] = useState(0);
+  function finishNewConnection(entry, fromChat) {
+    testAiProvider(entry);
+    if (!fromChat) return;
+    const model = parseFolderTags(entry.models)[0];
+    setAiKeysForm(null);
+    setSettingsOpen(null);
+    setStatus(model ? t("Connected — {model} ready", { model }) : t("Connected"));
+    setChatHidden(false);
+    setChatFocusSignal((n) => n + 1);
   }
 
   function startEditAiProvider(p) {
@@ -2874,21 +2989,29 @@ function LibraryApp({ publicPage = null, initialServerConfig = null }) {
           body: { protocol: f.protocol, name: f.name.trim(), base_url: f.base_url.trim(), models: f.models.trim(),
                   test_model: (f.test_model || "").trim(),
                   ...(f.api_key.trim() ? { api_key: f.api_key.trim() } : {}) } };
+    // A connection made in this dialog (`fresh` survives the sign-in step,
+    // which keeps the form open on the new entry) is tested once saved.
+    let made = null;
     await runAiKeysRequest(async () => {
       const info = await apiJson(req.url, {
         method: req.method,
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify(req.body),
       });
+      const fresh = info.providers.find((p) => !aiKeysInfo.providers.some((old) => old.id === p.id));
       if (oauthCb) {
-        const connected = info.providers.find((p) => f.id ? p.id === f.id : !aiKeysInfo.providers.some((old) => old.id === p.id));
-        if (connected) {
+        const connected = f.id ? info.providers.find((p) => p.id === f.id) : fresh;
+        if (connected && f.fromChat && parseFolderTags(connected.models).length) made = connected;
+        else if (connected) {
           setAiKeysForm((current) => current?.oauthState === f.oauthState
-            ? { ...current, id: connected.id, models: connected.models || "", oauthState: "", oauthCallback: "", oauthConnectedAt: Date.now() } : current);
+            ? { ...current, id: connected.id, models: connected.models || "", oauthState: "", oauthCallback: "", oauthConnectedAt: Date.now(), fresh: current.fresh || !f.id } : current);
         }
+      } else {
+        made = f.id ? (f.fresh ? info.providers.find((p) => p.id === f.id) : null) : fresh;
       }
       return info;
     }, !oauthCb);
+    if (made) finishNewConnection(made, !!f.fromChat);
   }
 
   function deleteAiProvider(p) {
@@ -3559,6 +3682,7 @@ function LibraryApp({ publicPage = null, initialServerConfig = null }) {
       .then((data) => {
         const children = Array.isArray(data.children) ? data.children : [];
         setHomeBlocks(children);
+        setHomeLoaded(true);
         return children;
       })
       .catch(() => { setHomeBlocks([]); return []; });
@@ -3853,6 +3977,24 @@ function LibraryApp({ publicPage = null, initialServerConfig = null }) {
     }
   }, [blocks, readOnly]);
 
+  // A page's passive landing (openBlock): the notes scroll to where the
+  // reader left off, else to the top, and that row flashes once — but no
+  // row is focused, so the chat's Cursor chip waits for a real click or
+  // caret. Explicit jumps (deep links, highlights, backlinks, search hits,
+  // citations) go through pendingBlockScrollRef above and do focus.
+  const landingRef = useRef(null); // {id} ("" = the top) until the page's rows render
+  useEffect(() => {
+    const land = landingRef.current;
+    if (!land) return;
+    landingRef.current = null;
+    const list = document.querySelector(".sidebar .blockList");
+    if (!list) return;
+    const row = land.id ? list.querySelector(`.blockRowWrap[data-block-id="${land.id}"]`) : null;
+    if (!row) { list.scrollTop = 0; return; }
+    list.scrollTop += row.getBoundingClientRect().top - list.getBoundingClientRect().top;
+    triggerFlash(land.id);
+  }, [blocks]);
+
   // Fetch backlinks for the focused block. Not in the share view: backlinks
   // span the library, so the server refuses share tokens (403) by design.
   useEffect(() => {
@@ -3998,13 +4140,14 @@ function LibraryApp({ publicPage = null, initialServerConfig = null }) {
     if (shareMode && id !== focusedBlockId) return;
     if (citation && id === focusedBlockId) pushNav();
     setPdfCitation(citation ? { ...citation } : null);
-    if (id !== focusedBlockId) await openBlock(id, { pushNav: true });
+    if (id !== focusedBlockId) await openBlock(id, { pushNav: true, link: true });
     if (citation) { setPdfHidden(false); setPhonePanel(null); }
   }
 
   // A [[ref]] chip or a copied block link: scroll to it on this page, else
-  // open the page that holds it.
-  async function openBlockLink(id) {
+  // open the page that holds it (`pageId` when the caller knows it — the
+  // chat's list of the agent's note changes, a backlink).
+  async function openBlockLink(id, pageId) {
     function findBlock(list) {
       for (const b of list || []) {
         if (b.id === id) return b;
@@ -4020,8 +4163,8 @@ function LibraryApp({ publicPage = null, initialServerConfig = null }) {
     } else {
       pushNav(); // block-ref click = link jump to another page
       pendingBlockScrollRef.current = id;
-      const rootId = refCache[id]?.page_root_id;
-      await openBlock(rootId && rootId !== id ? rootId : id);
+      const rootId = pageId || refCache[id]?.page_root_id;
+      await openBlock(rootId && rootId !== id ? rootId : id, { link: true });
     }
   }
 
@@ -4052,7 +4195,7 @@ function LibraryApp({ publicPage = null, initialServerConfig = null }) {
     requestAnimationFrame(() => {
       requestAnimationFrame(() => {
         setFlashingId(highlightId);
-        flashTimerRef.current = setTimeout(() => setFlashingId(null), 1000);
+        flashTimerRef.current = setTimeout(() => setFlashingId(null), 1200);
       });
     });
   }
@@ -4075,12 +4218,12 @@ function LibraryApp({ publicPage = null, initialServerConfig = null }) {
           if (rootId && rootId !== initialBlockId) {
             pendingBlockScrollRef.current = initialBlockId;
             pendingJumpRef.current = initialBlockId; // highlight blocks also jump the PDF
-            openBlock(rootId);
+            openBlock(rootId, { link: true });
           } else {
-            openBlock(initialBlockId);
+            openBlock(initialBlockId, { link: true });
           }
         } catch {
-          openBlock(initialBlockId);
+          openBlock(initialBlockId, { link: true });
         }
       })();
     }
@@ -4116,15 +4259,15 @@ function LibraryApp({ publicPage = null, initialServerConfig = null }) {
 
   // Theme: System tracks the OS preference live; Light/Dark pin it. The
   // theme-color meta follows: installed as a home-screen app, the status bar
-  // is painted with it, so it matches the topbar under it (docs/dev/ipad.md).
+  // is painted with it, so it matches what sits under it (docs/dev/ipad.md).
+  const phoneBareTopRef = useRef(false);
   useEffect(() => {
     const mq = window.matchMedia("(prefers-color-scheme: dark)");
     const apply = () => {
-      document.documentElement.setAttribute(
-        "data-theme", theme === "system" ? (mq.matches ? "dark" : "light") : theme);
-      const bar = getComputedStyle(document.documentElement).getPropertyValue("--bg-surface").trim();
-      const meta = document.querySelector('meta[name="theme-color"]');
-      if (bar && meta) meta.setAttribute("content", bar);
+      const resolved = theme === "system" ? (mq.matches ? "dark" : "light") : theme;
+      document.documentElement.setAttribute("data-scheme", themeScheme(resolved));
+      document.documentElement.setAttribute("data-theme", resolved);
+      paintStatusBar(phoneBareTopRef.current);
     };
     apply();
     mq.addEventListener("change", apply);
@@ -4599,18 +4742,23 @@ function LibraryApp({ publicPage = null, initialServerConfig = null }) {
   }
 
   // "New page": a blank page in the open folder (if any), opened with its
-  // title ready to type. What the page carries (a PDF…) is attached on the
-  // page itself afterwards — creation never needs a file.
-  async function createPage(folder = folderFilter) {
+  // title ready to type — or, given a title (Ctrl+P's "Create page"), opened
+  // under it. What the page carries (a PDF…) is attached on the page itself
+  // afterwards — creation never needs a file.
+  async function createPage(folder = folderFilter, title = "") {
     if (shareMode) return;
     setOpenPopover(null);
     try {
       const created = await apiJson(`${API}/pages`, {
         method: "POST",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ title: "", ...(folder ? { folder } : {}) }),
+        body: JSON.stringify({ title, ...(folder ? { folder } : {}) }),
       });
       await fetchHomeBlocks();
+      if (title) {
+        await openBlock(created.id, { pushNav: true });
+        return;
+      }
       await openBlock(created.id, { pushNav: true, focusTitle: true });
       setTitleDraft("");
       setTitleEditing(true);
@@ -4623,6 +4771,7 @@ function LibraryApp({ publicPage = null, initialServerConfig = null }) {
   // as opening a new PDF, then bound to THIS page via POST
   // /pages/{id}/attachment — no new page is created.
   const [attachUrl, setAttachUrl] = useState("");
+  const attachFileRef = useRef(null); // its "Upload a PDF…" row's hidden picker
   // The metadata popover under its header button. Fixed positioning so it
   // floats above the window stack instead of being clipped by the notes
   // window / drawn under the chat below it.
@@ -4807,8 +4956,9 @@ function LibraryApp({ publicPage = null, initialServerConfig = null }) {
       // (401 → login gate, 403 → not on the list, 404 → gone).
       const res = await fetch(`${API}/share/${encodeURIComponent(token)}`, { credentials: "include" });
       if (!res.ok) {
-        if (res.status === 403) {
-          // Name the account that was refused so the message makes sense.
+        if (res.status !== 401) {
+          // Name the account that was refused so the message makes sense;
+          // a dead link offers sign-in only to a visitor who isn't.
           try {
             const sess = await (await fetch(`${API}/session`, { credentials: "include" })).json();
             setShareInfo({ viewer: sess?.user || "" });
@@ -4949,6 +5099,7 @@ function LibraryApp({ publicPage = null, initialServerConfig = null }) {
       loadedSeqRef.current = subtreeData.seq ?? null;
 
       suppressAutosaveRef.current = true;
+      setMissingPage("");
       setFocusedBlockId(blockId);
       setFocusedBlock(block);
       setPageTitle(block.content || t("Untitled"));
@@ -4981,21 +5132,13 @@ function LibraryApp({ publicPage = null, initialServerConfig = null }) {
         }
       }
 
-      // Scroll notes panel to where the reader left off (text-only pages,
-      // "" = the top) or else to the most recently updated block, unless a
-      // specific target was already queued (e.g. ?block=... deep link).
+      // The notes land where the reader left off (text-only pages) or at the
+      // top — a passive landing that focuses no row (see landingRef) —
+      // unless an explicit target was already queued (a ?block= deep link).
       const notePos = !attachment ? readPosRef.current[blockId] : null;
-      if (!pendingBlockScrollRef.current && notePos && notePos.page === 0) {
-        if (notePos.block && flattenBlocks(childBlocks).some((b) => b.id === notePos.block)) {
-          pendingBlockScrollRef.current = notePos.block;
-        }
-      } else if (!pendingBlockScrollRef.current && childBlocks.length > 0) {
-        let latest = null;
-        for (const b of flattenBlocks(childBlocks)) {
-          if (!latest || (b.updated_at || "") > (latest.updated_at || "")) latest = b;
-        }
-        if (latest) pendingBlockScrollRef.current = latest.id;
-      }
+      landingRef.current = pendingBlockScrollRef.current ? null : {
+        id: notePos?.page === 0 && notePos.block && flattenBlocks(childBlocks).some((b) => b.id === notePos.block) ? notePos.block : "",
+      };
 
       const newUrl = withWorkspace(`${window.location.pathname}?block=${encodeURIComponent(blockId)}`);
       window.history.replaceState({}, "", newUrl);
@@ -5035,9 +5178,23 @@ function LibraryApp({ publicPage = null, initialServerConfig = null }) {
       if (opts?.restoreScroll) restorePdfScroll(tabScrollRef.current[blockId], blockId, openedPdfUrl);
       setStatus(t("Ready."));
       // Emit for every successful open, including reopening the same paper.
-      guideEvents.emit("page.opened", { id: blockId });
+      guideEvents.emit("page.opened", { id: blockId, title: block.content || t("Untitled") });
       return openedPdfUrl;
     } catch (err) {
+      if (err.status === 404 && opts?.link) {
+        // Not a failure to report as one: the page is gone, or lives in
+        // another workspace. The notice says so; a dead deep link leaves the
+        // address bar (a tab restore, which has no `link`, just clears it).
+        setMissingPage(blockId);
+        postPill("status", null); // take down "Opening..."
+        const url = new URL(window.location.href);
+        if (url.searchParams.get("block") === blockId || url.searchParams.get("page") === blockId) {
+          url.searchParams.delete("block");
+          url.searchParams.delete("page");
+          window.history.replaceState(window.history.state, "", url.pathname + url.search + url.hash);
+        }
+        return undefined;
+      }
       setStatus(t("Open failed: {message}", { message: err.message }));
       // If this was a session restore attempt that failed, clear it
       if (!window.location.search.includes("block=")) clearSession();
@@ -5181,12 +5338,14 @@ function LibraryApp({ publicPage = null, initialServerConfig = null }) {
       scale: pdfEffScale,
     };
     setNavStack((prev) => [...prev.slice(-29), entry]);
+    guideEvents.emit("nav.pushed");
   }
 
   async function goBackNav() {
     const entry = navStack[navStack.length - 1];
     if (!entry) return;
     setNavStack((prev) => prev.slice(0, -1));
+    guideEvents.emit("nav.back");
     if (entry.blockId && entry.blockId === focusedBlockId) {
       restorePdfScroll(entry, entry.blockId, pdfUrl); // same document — just return to the reading position
     } else if (entry.blockId) {
@@ -5200,6 +5359,13 @@ function LibraryApp({ publicPage = null, initialServerConfig = null }) {
   const goBackNavRef = useRef(null);
   goBackNavRef.current = goBackNav;
   const navStackLen = navStack.length;
+  // Phone: the topbar holds only tabs and Back (the Library tab is home),
+  // so with neither it goes, and the status bar takes the library's colour.
+  const phoneBareTop = isPhone && !shareMode && !openTabs.length && !navStackLen;
+  useEffect(() => {
+    phoneBareTopRef.current = phoneBareTop;
+    paintStatusBar(phoneBareTop);
+  }, [phoneBareTop]);
 
   function goHome(refreshHome = true, keepFilters = false) {
     leaveCurrentPage();
@@ -5376,9 +5542,9 @@ function LibraryApp({ publicPage = null, initialServerConfig = null }) {
   }
 
   // Share popover (owner; sharing/SharePopover.jsx). Opening it only LOADS the
-  // state — a page is not published until "Create link"; settings changes
-  // save immediately and the token only changes on "Stop
-  // sharing".
+  // state — nothing is shared until the first audience tile is picked or the
+  // first person invited, which creates the share with that access; settings
+  // changes save immediately and the token only changes on "Stop sharing".
   function applyShareSettings(data) {
     setShareSettings(data);
     setShareError("");
@@ -5399,14 +5565,22 @@ function LibraryApp({ publicPage = null, initialServerConfig = null }) {
       setStatus(t("Share failed: {message}", { message: err.message }));
     }
   }
-  async function createShareLink() {
-    if (!shareTarget || shareMode) return;
+  // `settings` ({audience, role, users}) is the new share's access — the
+  // tile picked, or Invited only with the first person invited.
+  async function createShareLink(settings) {
+    if (!shareTarget || shareMode) return false;
     try {
-      applyShareSettings(await apiJson(shareApi(shareTarget, "share"), { method: "POST" }));
+      applyShareSettings(await apiJson(shareApi(shareTarget, "share"), {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify(settings || {}),
+      }));
       resetShareCopied();
       guideEvents.emit("share.created");
+      return true;
     } catch (err) {
-      setStatus(t("Share failed: {message}", { message: err.message }));
+      setShareError(err.message); // e.g. "unknown user(s): …" — shown in the popover
+      return false;
     }
   }
   async function updateShareSettings(patch) {
@@ -5424,9 +5598,11 @@ function LibraryApp({ publicPage = null, initialServerConfig = null }) {
     }
   }
   // People: invitations are additive to general access (Notion-style) —
-  // each invited account carries its own view/edit.
+  // each invited account carries its own view/edit. The first invitation on
+  // an unshared page or folder creates its share, Invited only.
   function inviteShareUser(name, role) {
-    const current = shareSettings?.users || [];
+    if (!shareSettings?.token) return createShareLink({ audience: "list", users: [{ name, role }] });
+    const current = shareSettings.users || [];
     if (current.some((u) => u.name === name)) return true;
     return updateShareSettings({ users: [...current, { name, role }] });
   }
@@ -5446,6 +5622,47 @@ function LibraryApp({ publicPage = null, initialServerConfig = null }) {
       setStatus(t("Stop sharing failed: {message}", { message: err.message }));
     }
   }
+  // The home page menu's Copy link / Share… / Export… / Ask AI. The last
+  // three act on the open page, so the page is opened first and the action
+  // runs once it is the one on screen (the effect below).
+  function copyPageLink(id) {
+    copyText(withWorkspace(`${window.location.origin}/?page=${encodeURIComponent(id)}`))
+      .then((ok) => setStatus(ok ? t("Link copied.") : t("Couldn't copy the link.")));
+  }
+  const pendingPageActionRef = useRef(null); // {id, action}
+  function openPageThen(id, action) {
+    setHomeMenu(null);
+    clearSelection();
+    pendingPageActionRef.current = { id, action };
+    openBlock(id, { restoreScroll: true });
+  }
+  // The open page's Share popover (the topbar's link button, the page menu).
+  function openPageShare(id) {
+    loadShareSettings({ kind: "page", id });
+    setShareError("");
+    loadPublishState();
+    setOpenPopover("share");
+  }
+  // The chat window shown and expanded (on a phone, its panel).
+  function showChat() {
+    setChatHidden(false);
+    setCollapsedWins((prev) => ({ ...prev, chat: false }));
+    if (isPhone) setPhonePanel("chat");
+  }
+  useEffect(() => {
+    const pending = pendingPageActionRef.current;
+    if (!pending || pending.id !== focusedBlockId) return;
+    pendingPageActionRef.current = null;
+    if (pending.action === "share") {
+      openPageShare(pending.id);
+    } else if (pending.action === "export") {
+      setExportFolder(null);
+      setExportOpen(true);
+    } else if (pending.action === "ask") {
+      showChat();
+      setTimeout(() => document.querySelector(".chatInputArea")?.focus(), 200);
+    }
+  }, [focusedBlockId]); // eslint-disable-line react-hooks/exhaustive-deps
   // Share a folder: the same popover under the topbar's link button, which
   // the folder view shows — so from the context menu the folder is opened first.
   function openFolderShare(name) {
@@ -6188,7 +6405,7 @@ function LibraryApp({ publicPage = null, initialServerConfig = null }) {
   // Entering AI settings initializes prompt drafts; navigation guards protect
   // any subsequent edits until Save or Cancel.
   useEffect(() => {
-    if (!["ai", "prompts", "assistant", "ai-advanced", "context"].includes(settingsOpen)) return;
+    if (!AI_SETTINGS_PANES.includes(settingsOpen)) return;
     setPromptDraft(chatSystem || aiInfo?.default_prompt || "");
     setMetaPromptDraft(metaPrompt || aiInfo?.metadata_prompt || "");
     setCitePromptDraft(citePrompt || aiInfo?.cite_prompt || "");
@@ -6260,7 +6477,7 @@ function LibraryApp({ publicPage = null, initialServerConfig = null }) {
     }
     const s = clampZoom(next);
     setPdfScale(String(Math.round(s * 10000) / 10000));
-    postPill("pdf-zoom", { msg: `Zoom ${Math.round(s * 100)}%`, final: true });
+    postPill("pdf-zoom", { msg: t("Zoom {n}%", { n: Math.round(s * 100) }), final: true });
   }
 
   function jumpToHighlightId(highlightId, additive) {
@@ -6311,6 +6528,9 @@ function LibraryApp({ publicPage = null, initialServerConfig = null }) {
   // affordances (docs/dev/block_centric.md). pdfUrl is only the viewer's input.
   const pageAttach = useMemo(() => pageAttachment(focusedBlock), [focusedBlock]);
   const homeMode = !focusedBlockId && lib.browse;
+  // The one page selected on the home library (F2 renames it), or "".
+  const homePick = homeMode && lib.organize && selectedPages.size === 1 && !selectedFolders.size && !selectedLabels.size
+    ? [...selectedPages][0] : "";
   bindingsRef.current = keybindings;
   appCmdRef.current = {
     shareMode, homeMode, readOnly, hasPage: !!focusedBlockId, hasPdf: !!pdfUrl && !homeMode,
@@ -6339,7 +6559,15 @@ function LibraryApp({ publicPage = null, initialServerConfig = null }) {
       // undo would otherwise mutate CodeMirror's DOM behind its back.
       return inEditor || !!applied;
     },
-    renameTitle: () => { setTitleDraft(pageTitle || t("Untitled")); setTitleEditing(true); },
+    // On the home library F2 renames the one selected page in place.
+    renameTitle: () => {
+      if (homeMode) { if (homePick) setHomeEditingId(homePick); return; }
+      setTitleDraft(pageTitle || t("Untitled"));
+      setTitleEditing(true);
+    },
+    homePick,
+    homePicks: homeMode && lib.organize ? selectedPages.size : 0,
+    deletePages: () => deletePages([...selectedPages]),
     toggleChat: () => setChatHidden((v) => !v),
     togglePdf: () => setPdfHidden((v) => !v),
     toggleNotes: () => setNotesVisible((v) => !v),
@@ -6381,17 +6609,39 @@ function LibraryApp({ publicPage = null, initialServerConfig = null }) {
   // events (guide/triggers.js); never in the share view.
   const unfiledLibrary = useMemo(() => homeBlocks.length >= 10
     && homeBlocks.every((b) => !b.properties?.folder && !b.properties?.category), [homeBlocks]);
+  // The seeded Welcome page's PDF (gamma/seed.py), the first tour's demo
+  // paper while the library still has it: no arXiv download, works offline.
+  const welcomePdf = useMemo(() => {
+    const page = homeBlocks.find((b) => b.properties?.seeded === "welcome" && b.properties?.doc_id);
+    return page ? `${API}/uploads/${page.properties.doc_id}.pdf` : "";
+  }, [homeBlocks]);
   const guide = useGuide({
     services: {
-      show: (surface) => {
-        if (surface !== "chat") return;
-        setChatHidden(false);
-        setCollapsedWins((prev) => ({ ...prev, chat: false }));
-        if (isPhone) setPhonePanel("chat");
+      // A finished tour's `finish`: "pen" re-arms the pen last drawn with
+      // when the handwriting tour leaves the eraser or the lasso armed.
+      finish: (what) => {
+        if (what !== "pen") return;
+        setInkUi((s) => (s.open && s.pen && (s.tool === "eraser" || s.tool === "select") ? { ...s, tool: s.pen, options: false } : s));
       },
+      // the first tour's finish card: "Connect an AI provider"
+      openSettings: (pane) => appCmdRef.current.openSettings(pane),
+      show: (surface) => { if (surface === "chat") showChat(); },
       findEquation: async () => {
         const hits = await pdfSearchRef.current?.(/Attention\s*\(/i);
         return hits?.[0] || null;
+      },
+      // The AI chat tour's figure: the first figure caption, whose figure
+      // the demo frames (guide/previewArea.js).
+      findFigure: async () => {
+        const hits = await pdfSearchRef.current?.(/\b(?:Figure|Fig\.)\s*\d+\s*[:.]/);
+        return hits?.[0] ? { ...hits[0], figure: true } : null;
+      },
+      // That demo's snapshot stays in the chat for the tour's next step;
+      // when the tour ends, the PDF snapshots added since go again (a sent
+      // one is gone already, a pasted image is never touched).
+      snapshotDemo: () => {
+        const before = new Set(chatImages);
+        return () => setChatImages((prev) => prev.filter((src) => before.has(src) || !pdfImagesRef.current.has(src)));
       },
       prepareNote: (text) => {
         const flat = flattenBlocks(blocks);
@@ -6413,24 +6663,40 @@ function LibraryApp({ publicPage = null, initialServerConfig = null }) {
     scope: authUser?.user || "",
     facts: {
       view: homeMode ? "home" : pageAttach ? "pdf" : "page", hasPdf: !!pageAttach,
-      aiConfigured: !!aiInfo?.enabled && !!aiInfo?.models?.length,
+      // unknown (undefined) until /api/ai/models answers, so the AI chat
+      // tour picks neither its setup step nor its chat steps too early
+      aiConfigured: aiInfo ? !!aiInfo.enabled && !!aiInfo.models?.length : undefined,
+      aiEditable: !authUser?.is_guest, // a guest can't store keys
       chatVisible: isPhone ? phonePanel === "chat" : !chatHidden && !collapsedWins.chat,
       pdfChatVisible: !!pageAttach && !pdfHidden && !collapsedWins.pdf && !isPhone,
       guideAvailable: !settingsOpen,
+      // the phone (compact) layout: Home is the bottom bar's Library tab
+      phone: !!isPhone,
       sharedWorkspace: workspaces.some((w) => !w.personal),
+      // the open page's share audience ("" unshared or not loaded): the
+      // sharing tour words its access step for an anyone-with-the-link share
+      shareAudience: shareTarget?.kind === "page" && shareTarget.id === focusedBlockId && shareSettings?.token
+        ? shareSettings.audience : "",
       onPage: !!focusedBlockId,
       editable: !readOnly,
       unfiledLibrary,
+      // nothing in the library yet but the seeded Welcome page: the first
+      // tour is offered on it
+      emptyLibrary: homeLoaded && isFreshLibrary(homeBlocks),
       installable: HOME_SCREEN_INSTALLABLE,
       // a demo server: progress per visit, the first-run tour offered on arrival
       demo: !!serverConfig?.demo,
+      welcomePdf,
     },
     tidy: () => setOpenPopover(null),
   });
   useEffect(() => { if (openPopover) guideEvents.emit("popover.opened", { name: openPopover }); }, [openPopover]);
   useEffect(() => { if (quickOpen) guideEvents.emit("palette.opened"); }, [quickOpen]);
+  useEffect(() => { if (settingsOpen) guideEvents.emit("settings.opened", { pane: settingsOpen }); }, [settingsOpen]);
   useEffect(() => { if (inkUi.options) guideEvents.emit("ink.options"); }, [inkUi.options]);
-  const othersHere = !!focusedBlockId && collab.peers.length > 0;
+  // Someone ELSE: another account or a link visitor, not this account's own
+  // second tab or the desktop app beside the browser.
+  const othersHere = !!focusedBlockId && collab.peers.some((p) => !p.user || p.user !== authUser?.user);
   useEffect(() => { if (othersHere) guideEvents.emit("peer.joined"); }, [othersHere]);
   // The props a folder card shares between the pinned strip and the library
   // grid: glyph, title, count, selection/drag/drop behaviour and the context
@@ -6630,6 +6896,11 @@ function LibraryApp({ publicPage = null, initialServerConfig = null }) {
     }
     return m;
   }, [scopePages, viewedAtById]);
+  // Every label in the library, for the page menu's "Add label" flyout.
+  const allLabelNames = useMemo(
+    () => [...new Set(pageBlocks.flatMap((b) => b._labels))].sort((a, b) => a.localeCompare(b)),
+    [pageBlocks]
+  );
   const scopeLabels = useMemo(
     () => Object.keys(labelMeta).filter((l) => l !== NO_LABEL).sort((a, b) => a.localeCompare(b)),
     [labelMeta]
@@ -6692,6 +6963,24 @@ function LibraryApp({ publicPage = null, initialServerConfig = null }) {
     return [...items.filter((it) => it._match), ...items.filter((it) => !it._match)];
   }, [scopePages, categoryFilter, childFolders, folderMeta, scopeLabels, labelMeta, viewedAtById, homeSort, homeKinds, homeQuery]);
   const homeVisibleItems = useMemo(() => homeItems.slice(0, homeShowCount), [homeItems, homeShowCount]);
+  // The filter box matches titles and chips only; past it, the workspace
+  // search reads notes and PDF text. With nothing matched a banner hands the
+  // query over (Enter in the box does the same); with matches a quiet row
+  // follows the last of them. homeMatchCount is null without a query.
+  const homeQueryText = homeQuery.trim();
+  const homeMatchCount = homeQueryText ? homeItems.filter((it) => it._match).length : null;
+  const commandKeyLabel = (id) => {
+    const cmd = APP_COMMANDS.find((c) => c.id === id);
+    const keys = cmd ? effectiveKeys(cmd, keybindings) : [];
+    return keys.length ? chordLabel(keys[0]) : "";
+  };
+  // The quiet row goes right after the matches (they lead the listing).
+  const withSearchMore = (nodes) => (homeMatchCount > 0 && homeMatchCount <= nodes.length
+    ? [...nodes.slice(0, homeMatchCount), searchElsewhere(false), ...nodes.slice(homeMatchCount)] : nodes);
+  const searchElsewhere = (none) => (
+    <ListSearchElsewhere key="search-elsewhere" query={homeQueryText} none={none}
+      keyLabel={commandKeyLabel("app.searchAll")} onSearch={() => openSearchWith(homeQueryText)} />
+  );
   // "New folder" leads the listing wherever folders are listed — not inside a
   // label view or with the listing filtered to files or labels.
   const newFolderAllowed = lib.organize && !categoryFilter && homeKinds !== "files" && homeKinds !== "labels";
@@ -6699,6 +6988,19 @@ function LibraryApp({ publicPage = null, initialServerConfig = null }) {
   // Notion-style: creating a page needs no file. Not inside a label view
   // (pages are created plain, then labelled) nor when only folders show.
   const newPageAllowed = lib.organize && !categoryFilter && homeKinds !== "folders" && homeKinds !== "labels";
+  // A library with nothing of the user's in it yet (only the seeded Welcome
+  // page, or nothing) shows "Start your library" at its root instead of the
+  // empty line; a folder or label view keeps its own message.
+  const libraryStart = homeLoaded && lib.organize && !folderFilter && !categoryFilter
+    && isFreshLibrary(homeBlocks) ? (
+    <LibraryEmpty
+      onOpenLink={() => setOpenPopover("add")}
+      onUpload={uploadFiles}
+      onNewPage={() => createPage()}
+      onImport={() => { setOpenPopover(null); setImportOpen(true); }}
+      onTour={guide.startable().some((tour) => tour.id === "first-run") ? () => guide.start("first-run") : null}
+    />
+  ) : null;
   // What an empty listing says — the view it is empty for, not the library.
   const homeEmptyText = categoryFilter === NO_LABEL
     ? t("Every page here carries a label.")
@@ -6708,14 +7010,30 @@ function LibraryApp({ publicPage = null, initialServerConfig = null }) {
       ? (folderFilter ? t("No labels on the pages in this folder yet.") : t("No labels yet — add one from a page’s label field."))
       : folderFilter ? (lib.organize ? t("This folder is empty — start a page here or drag pages onto it from the library.") : t("This folder is empty."))
       : t("No pages yet — start with “New page”, or open a PDF from the + button above.");
-  // Timestamp shown on a library card follows the active sort: sorted by view
-  // time → viewed (falling back to modified, same as the sort), by added →
-  // created; modified otherwise (incl. Title A–Z).
-  const cardTime = (item) => formatRelativeTime(
+  // Timestamp shown on a library card and in the list's date column follows
+  // the active sort: sorted by view time → viewed (falling back to modified,
+  // same as the sort), by added → created; modified otherwise (incl. Title
+  // A–Z). The column's header names it.
+  const sortStamp = (item) => (
     homeSort === "viewed" ? (item._viewedAt || item._updatedAt)
       : homeSort === "created" ? item._createdAt
       : item._updatedAt
   );
+  const cardTime = (item) => formatRelativeTime(sortStamp(item));
+  const dateColumnTitle = homeSort === "viewed" ? t("Viewed") : homeSort === "created" ? t("Added") : t("Modified");
+  // A list row's trailing columns, the same on every row: kind ("PDF",
+  // "Page", or a folder's / label's page count), the date, and the pin slot
+  // (kept empty where there is nothing to pin, so the columns line up).
+  const rowColumns = (item, kind, pin = null) => {
+    const stamp = sortStamp(item);
+    return (
+      <>
+        <span className="fileRowKind">{kind}</span>
+        <span className="fileRowDate" title={formatFullDate(stamp) || undefined}>{formatShortDate(stamp)}</span>
+        {pin || <span className="fileRowPinSlot" aria-hidden="true" />}
+      </>
+    );
+  };
   // Page-shaped view of the visible slice (shift-range selection, BlockTree).
   const homeVisiblePages = useMemo(
     () => homeVisibleItems.filter((it) => it.kind === "page").map((it) => it.block),
@@ -6982,34 +7300,42 @@ function LibraryApp({ publicPage = null, initialServerConfig = null }) {
     return () => document.removeEventListener('scroll', onScroll, { capture: true });
   }, [pdfUrl, pdfHidden]);
 
-  // A share link that can't open yet: sign in (signed-in / specific-people
-  // shares), or explain why not.
-  if (shareMode && shareGate) {
-    return shareGate === "login" ? (
-      <LoginPage
-        username={loginUser}
-        password={loginPass}
-        error={loginError}
-        onUsernameChange={setLoginUser}
-        onPasswordChange={setLoginPass}
-        onSubmit={doShareLogin}
-        cloudLogin={serverConfig?.cloud}
-        subtitle={t("Sign in to open this shared page")}
-      />
-    ) : (
-      <ShareBlockedPage reason={shareGate} viewer={shareInfo?.viewer || ""} onSwitchAccount={shareSwitchAccount} />
-    );
-  }
-
-  // Login page state
   // One navigation for every Gamma link card on screen (chat, notes, embeds).
-  // Declared above the loading/unavailable returns below — it is a hook.
+  // Declared above every early return below — it is a hook, and the share
+  // gate appears only after the first render.
   // Rebuilt when what the handlers close over changes; a click reads the
   // current value, so the cards themselves never re-render for navigation.
   const gammaNav = useMemo(
     () => ({ openPage: openPageLink, openBlock: openBlockLink }),
     [focusedBlockId, blocks, refCache, shareMode],
   );
+
+  // A share link that can't open yet: sign in (signed-in / specific-people
+  // shares), or explain why not. "signin" is the blocked page's own sign-in,
+  // which lands in the visitor's library rather than retrying the link.
+  if (shareMode && shareGate) {
+    return shareGate === "login" || shareGate === "signin" ? (
+      <LoginPage
+        username={loginUser}
+        password={loginPass}
+        error={loginError}
+        onUsernameChange={setLoginUser}
+        onPasswordChange={setLoginPass}
+        onSubmit={shareGate === "login" ? doShareLogin : doLibraryLogin}
+        cloudLogin={serverConfig?.cloud}
+        next={shareGate === "login" ? undefined : "/"}
+        subtitle={shareGate === "login" ? t("Sign in to open this shared page") : t("Sign in to your library")}
+        // the share view's own Sign in (the link had opened): back to reading
+        onBack={shareGate === "login" && shareInfo?.owner ? () => setShareGate(null) : undefined}
+      />
+    ) : (
+      <ShareBlockedPage
+        reason={shareGate} viewer={shareInfo?.viewer || ""} onSwitchAccount={shareSwitchAccount}
+        // a page host serves published pages only: nowhere else to go from there
+        onSignIn={publicPage ? undefined : librarySignIn} offerHome={!publicPage}
+      />
+    );
+  }
 
   if (workspaceUnavailable) return <WorkspaceUnavailablePage />;
   if (authUser === null) return <AuthLoading />;
@@ -7026,6 +7352,7 @@ function LibraryApp({ publicPage = null, initialServerConfig = null }) {
         onGuestLogin={serverConfig?.guest === false ? undefined : doGuestLogin}
         cloudLogin={serverConfig?.cloud}
         demo={!!serverConfig?.demo && serverConfig?.guest !== false}
+        guestSeeded={!!serverConfig?.guest_seeded}
         guestTtlHours={serverConfig?.guest_ttl_hours}
       />
     );
@@ -7047,11 +7374,12 @@ function LibraryApp({ publicPage = null, initialServerConfig = null }) {
   // section is App's (metadata + copy state).
   const sharePopover = (
     <SharePopover
-      target={shareTarget}
+      target={shareTarget?.kind === "page" ? { ...shareTarget, title: pageTitle } : shareTarget}
       settings={shareSettings}
       error={shareError}
       me={authUser?.user || ""}
       meIsGuest={!!authUser?.is_guest}
+      workspace={workspace}
       shareUrl={shareUrl}
       copied={!!shareCopied}
       onCopy={copyShareLink}
@@ -7072,7 +7400,7 @@ function LibraryApp({ publicPage = null, initialServerConfig = null }) {
         onPublish: publishPage,
         onUnpublish: unpublishPage,
         onSync: syncPublication,
-        onLink: () => { setOpenPopover(null); setSettingsOpen("account"); },
+        onLink: () => openSettingsPane("account"),
         accountUrl: serverConfig?.cloud?.issuer ? `${serverConfig.cloud.issuer}/` : "",
       } : null}
       citation={shareTarget?.kind !== "folder" && (pageMeta || pageBibtex) ? (
@@ -7084,7 +7412,7 @@ function LibraryApp({ publicPage = null, initialServerConfig = null }) {
               title={t("Regenerate the citation")} aria-label={t("Regenerate the citation")}
               disabled={pptCiteBusy}
               onClick={() => makePptCitation(true)}
-            >{pptCiteBusy ? "…" : <RefreshIcon size={13} />}</button>
+            >{pptCiteBusy ? "…" : <RefreshIcon size={16} />}</button>
           }
         >
           <div className="citeHead">
@@ -7144,6 +7472,14 @@ function LibraryApp({ publicPage = null, initialServerConfig = null }) {
     setBlocks(next);
     setFocusedId(newId);
   }
+  // Who links here (editor/BacklinksPanel.jsx), under the notes and above
+  // the tail; an entry opens its page at the linking block, a link jump
+  // like a [[ref]] chip's.
+  const backlinksPanel = !homeMode && focusedBlockId && backlinks.length ? (
+    <BacklinksPanel backlinks={backlinks} pageId={focusedBlockId} pageTitle={pageTitle} pages={pageBlocks}
+      refCache={refCache} onFetchRefs={onFetchRefs} onOpen={(bl) => openBlockLink(bl.id, bl.page_root_id)}
+      collapsed={appPrefs.backlinksCollapsed} onCollapsedChange={appPrefs.setBacklinksCollapsed} />
+  ) : null;
   const notesTail = !homeMode && !readOnly && focusedBlockId ? (
     <div className={"notesTail" + (blocks.length ? "" : " isEmpty")}
       onMouseDown={(e) => { e.preventDefault(); editTail(); }}>
@@ -7205,7 +7541,7 @@ function LibraryApp({ publicPage = null, initialServerConfig = null }) {
             {focusedBlockId && !shareMode ? (
               <div className="categoryFrontmatter">
                 <span className="categoryIcon" title={t("Labels")}>
-                  <LabelIcon size={13} />
+                  <LabelIcon size={14} />
                 </span>
                 {categoryEditing ? (() => {
                     const currentTags = category.split(",").map(t => t.trim()).filter(Boolean);
@@ -7236,13 +7572,13 @@ function LibraryApp({ publicPage = null, initialServerConfig = null }) {
                           <span key={`f:${f}`} className="categoryTag folderChip" title={`Folder: ${f}`}>
                             <FolderIcon size={10} />
                             {f}
-                            <button className="uiClose uiCloseSm categoryTagRemove" tabIndex={-1} onMouseDown={(e) => { e.preventDefault(); e.stopPropagation(); removePageFolderTag(f); }}>×</button>
+                            <button className="uiClose uiCloseSm categoryTagRemove" tabIndex={-1} onMouseDown={(e) => { e.preventDefault(); e.stopPropagation(); removePageFolderTag(f); }}><XIcon size={14} /></button>
                           </span>
                         ))}
                         {category.split(",").map((t, i) => t.trim() ? (
                           <span key={i} className="categoryTag">
                             {t.trim()}
-                            <button className="uiClose uiCloseSm categoryTagRemove" tabIndex={-1} onMouseDown={(e) => { e.preventDefault(); e.stopPropagation(); removeCategoryTag(i); }}>×</button>
+                            <button className="uiClose uiCloseSm categoryTagRemove" tabIndex={-1} onMouseDown={(e) => { e.preventDefault(); e.stopPropagation(); removeCategoryTag(i); }}><XIcon size={14} /></button>
                           </span>
                         ) : null)}
                         <input
@@ -7296,7 +7632,7 @@ function LibraryApp({ publicPage = null, initialServerConfig = null }) {
                             <button key={`${s.kind}:${s.value}`} className={`categorySuggestionItem${s.kind === "folder" ? " categorySuggestionFolder" : ""}${i === categorySuggestionIdx ? " selected" : ""}`}
                               onMouseDown={(e) => { e.preventDefault(); e.stopPropagation(); pickSuggestion(s); }}
                               onMouseEnter={() => setCategorySuggestionIdx(i)}
-                            >{s.kind === "folder" ? <><FolderIcon size={11} />{s.value}/</> : s.value}</button>
+                            >{s.kind === "folder" ? <><FolderIcon size={14} />{s.value}/</> : s.value}</button>
                           ))}
                         </div>
                       ) : null}
@@ -7346,28 +7682,23 @@ function LibraryApp({ publicPage = null, initialServerConfig = null }) {
                       aria-label={pageAttach ? t("Document") : t("Attach document")}
                       disabled={loading}
                       onClick={() => setOpenPopover((p) => (p === "attach" ? null : "attach"))}
-                    ><PaperclipIcon size={15} /></button>
+                    ><PaperclipIcon size={16} /></button>
                     {openPopover === "attach" && pageAttach ? (
                       <div className="popover addPopover attachPopover">
                         <div className="popoverTitle">{t("Document")}</div>
                         <div className="popoverHint attachFileName" title={attachmentSource(pageAttach)}>
-                          <PaperclipIcon size={13} /> {pageAttach.name || defaultPageTitle(pageAttach)}
+                          <PaperclipIcon size={14} /> {pageAttach.name || defaultPageTitle(pageAttach)}
                         </div>
-                        <button className="popoverItem" onClick={() => { setPdfHidden((h) => !h); setOpenPopover(null); }}>
-                          {pdfHidden ? <EyeIcon className="popoverItemIcon" size={15} /> : <EyeOffIcon className="popoverItemIcon" size={15} />}
+                        <MenuItem icon={pdfHidden ? EyeIcon : EyeOffIcon} onClick={() => { setPdfHidden((h) => !h); setOpenPopover(null); }}>
                           {pdfHidden ? t("Show the PDF") : t("Hide the PDF")}
-                        </button>
+                        </MenuItem>
                         {pdfUrl ? (
-                          <button className="popoverItem" onClick={exportRawPdf} title={t("Download the PDF file exactly as stored — no highlights or notes")}>
-                            <DownloadIcon className="popoverItemIcon" size={15} />
+                          <MenuItem icon={DownloadIcon} onClick={exportRawPdf} title={t("Download the PDF file exactly as stored — no highlights or notes")}>
                             {t("Download the PDF")}
-                          </button>
+                          </MenuItem>
                         ) : null}
                         {!readOnly ? (
-                          <button className="popoverItem" onClick={detachPdfFromPage}>
-                            <ScissorsIcon className="popoverItemIcon" size={15} />
-                            {t("Detach the PDF…")}
-                          </button>
+                          <MenuItem icon={ScissorsIcon} onClick={detachPdfFromPage}>{t("Detach the PDF…")}</MenuItem>
                         ) : null}
                       </div>
                     ) : openPopover === "attach" ? (
@@ -7384,16 +7715,14 @@ function LibraryApp({ publicPage = null, initialServerConfig = null }) {
                             else if (e.key === "Escape") setOpenPopover(null);
                           }}
                         />
-                        <label className="popoverItem" aria-disabled={loading || undefined}>
-                          {t("Upload a PDF…")}
-                          <input
-                            type="file"
-                            accept=".pdf,application/pdf"
-                            style={{ display: "none" }}
-                            disabled={loading}
-                            onChange={(e) => { const f = e.target.files?.[0]; e.target.value = ""; if (f) attachPdfToPage({ file: f }); }}
-                          />
-                        </label>
+                        <MenuItem icon={UploadIcon} disabled={loading} onClick={() => attachFileRef.current?.click()}>{t("Upload a PDF…")}</MenuItem>
+                        <input
+                          ref={attachFileRef}
+                          type="file"
+                          accept=".pdf,application/pdf"
+                          hidden
+                          onChange={(e) => { const f = e.target.files?.[0]; e.target.value = ""; if (f) attachPdfToPage({ file: f }); }}
+                        />
                       </div>
                     ) : null}
                   </span>
@@ -7413,7 +7742,7 @@ function LibraryApp({ publicPage = null, initialServerConfig = null }) {
                     >
                       {/* Same busy affordance as the translate button: the
                           icon becomes a spinner while a fetch is running. */}
-                      {metaBusy ? <span className="pillSpin" aria-hidden="true" /> : <InfoIcon size={15} />}
+                      {metaBusy ? <span className="pillSpin" aria-hidden="true" /> : <InfoIcon size={16} />}
                     </button>
                     {/* Metadata nothing ties to this document (AI-extracted,
                         or an identifier resolved but unconfirmed) — flag it
@@ -7486,7 +7815,7 @@ function LibraryApp({ publicPage = null, initialServerConfig = null }) {
                                   return (
                                     <>
                                       <a className="metaLink" href={url} target="_blank" rel="noreferrer" title={t("Open on {site}", { site: site })}>
-                                        <ExternalLinkIcon size={11} />
+                                        <ExternalLinkIcon size={14} />
                                       </a>
                                       <button
                                         className="chatMsgActionBtn metaRowBtn"
@@ -7494,7 +7823,7 @@ function LibraryApp({ publicPage = null, initialServerConfig = null }) {
                                         aria-label={t("Copy {site} link", { site: site })}
                                         onClick={() => copyFlash(key, url)}
                                       >
-                                        {copiedKey === key ? <CheckIcon size={12} /> : <CopyIcon size={12} />}
+                                        {copiedKey === key ? <CheckIcon size={14} /> : <CopyIcon size={14} />}
                                       </button>
                                     </>
                                   );
@@ -7506,7 +7835,7 @@ function LibraryApp({ publicPage = null, initialServerConfig = null }) {
                                     aria-label={t("Fill in title with AI")}
                                     disabled={aiTitleBusy}
                                     onClick={aiFillTitle}
-                                  >{aiTitleBusy ? "…" : <SparklesIcon size={13} />}</button>
+                                  >{aiTitleBusy ? "…" : <SparklesIcon size={14} />}</button>
                                 ) : null}
                               </span>
                             </div>
@@ -7538,7 +7867,7 @@ function LibraryApp({ publicPage = null, initialServerConfig = null }) {
                               {pdfTextInfo?.ok ? (
                                 <button className="searchToggle metaRowBtn" style={{ marginLeft: "auto" }}
                                   title={t("Preview the extracted text (what the AI reads)")}
-                                  onClick={openPdfTextPreview}><EyeIcon size={13} /></button>
+                                  onClick={openPdfTextPreview}><EyeIcon size={14} /></button>
                               ) : null}
                               {pdfTextInfo && !pdfTextInfo.checking && !pdfTextInfo.ok ? (
                                 <button
@@ -7593,7 +7922,7 @@ function LibraryApp({ publicPage = null, initialServerConfig = null }) {
                             disabled={!sourceDraft.trim()}
                             onClick={() => copyFlash("source", sourceDraft.trim())}
                           >
-                            {copiedKey === "source" ? <CheckIcon size={13} /> : <CopyIcon size={13} />}
+                            {copiedKey === "source" ? <CheckIcon size={14} /> : <CopyIcon size={14} />}
                           </button>
                         </div>
                         {sourceDraft.trim() && sourceDraft.trim() !== inputUrl ? (
@@ -7655,7 +7984,7 @@ function LibraryApp({ publicPage = null, initialServerConfig = null }) {
                     },
                   })}
                 >
-                  <TrashIcon size={15} />
+                  <TrashIcon size={16} />
                 </button>
               </div>
             ) : null}
@@ -7664,45 +7993,6 @@ function LibraryApp({ publicPage = null, initialServerConfig = null }) {
 
           <div className={`blockList${aiScan ? " aiPageRead" : ""}`} ref={notesTextScale.ref} style={notesTextScale.style}>
             {notesTextScale.badge}
-            {!homeMode && backlinks.length > 0 ? (
-              <div className="backlinksPanel">
-                <div className="backlinksLabel">{t("Backlinks ({n})", { n: backlinks.length })}</div>
-                <div className="backlinksList">
-                  {backlinks.map((bl) => {
-                    const isPrivate = bl.page_root_id && bl.page_root_id !== focusedBlockId;
-                    return isPrivate ? (
-                      <div key={bl.id} className="backlinkItem private">
-                        <div className="backlinkContent private">{t("private block")}</div>
-                      </div>
-                    ) : (
-                      <button
-                        key={bl.id}
-                        className="backlinkItem"
-                        title={bl.page_title ? t("From: {page_title}", { page_title: bl.page_title }) : undefined}
-                        onClick={() => {
-                          const row = document.querySelector(`[data-block-id="${bl.id}"]`);
-                          if (row) {
-                            row.scrollIntoView({ block: "center", behavior: "smooth" });
-                            setFocusedId(bl.id);
-                          } else if (bl.page_root_id && bl.page_root_id !== focusedBlockId) {
-                            pendingBlockScrollRef.current = bl.id;
-                            openBlock(bl.page_root_id);
-                          } else {
-                            pendingBlockScrollRef.current = bl.id;
-                            setBlocks((prev) => expandToBlock(prev, bl.id));
-                          }
-                        }}
-                      >
-                        <div className="backlinkContent">{bl.content || "(empty)"}</div>
-                        {bl.page_title && bl.page_title !== bl.content ? (
-                          <div className="backlinkPage">{bl.page_title}</div>
-                        ) : null}
-                      </button>
-                    );
-                  })}
-                </div>
-              </div>
-            ) : null}
             {/* Recently-viewed shortcut strip. Labels are browsed like folders
                 (the kind toggle's Labels mode) and shown as chips on each row,
                 so this is the only carousel left. */}
@@ -7721,14 +8011,14 @@ function LibraryApp({ publicPage = null, initialServerConfig = null }) {
                       title={t("Remove from Recently viewed")}
                       aria-label={t("Remove from Recently viewed")}
                       onClick={(e) => { e.stopPropagation(); removeRecentView(b._pageId); }}
-                    >×</button>
+                    ><XIcon size={14} /></button>
                   </PageCard>
                 ))}
               </CardCarousel>
             ) : null}
             {homeMode && lib.pin && !categoryFilter && !folderFilter && pinnedItems.length > 0 ? (
               <div className="pinnedSection">
-                <div className="pinnedLabel"><PinIcon filled size={12} /> {t("Pinned")}</div>
+                <div className="pinnedLabel"><PinIcon filled size={14} /> {t("Pinned")}</div>
                 <div className="pinnedStrip" ref={pinnedStripRef}>
                   {pinnedItems.map((item) => item.kind === "folder" ? (() => { const f = item.path; return (
                     <PageCard
@@ -7744,7 +8034,7 @@ function LibraryApp({ publicPage = null, initialServerConfig = null }) {
                         className="pinBtn tilePinBtn pinned"
                         title={t("Unpin")}
                         onClick={(e) => { e.stopPropagation(); setFoldersPinned([f], false); }}
-                      ><PinIcon filled size={12} /></button>
+                      ><PinIcon filled size={14} /></button>
                     </PageCard>
                   ); })() : (() => { const b = item.block; return (
                     <PageCard
@@ -7767,7 +8057,7 @@ function LibraryApp({ publicPage = null, initialServerConfig = null }) {
                         className="pinBtn tilePinBtn pinned"
                         title={t("Unpin")}
                         onClick={(e) => { e.stopPropagation(); setPagesPinned([b._pageId], false); }}
-                      ><PinIcon filled size={12} /></button>
+                      ><PinIcon filled size={14} /></button>
                     </PageCard>
                   ); })())}
                 </div>
@@ -7817,7 +8107,7 @@ function LibraryApp({ publicPage = null, initialServerConfig = null }) {
                     </div>
                     ) : null}
                     <div className="folderCurrent">
-                      {categoryFilter ? <LabelIcon size={15} strokeDasharray={categoryFilter === NO_LABEL ? "2 1.5" : undefined} /> : <FolderOpenIcon size={15} />}
+                      {categoryFilter ? <LabelIcon size={16} strokeDasharray={categoryFilter === NO_LABEL ? "2 1.5" : undefined} /> : <FolderOpenIcon size={16} />}
                       {/* Breadcrumb: every path segment navigates to its level —
                           from the library's root on (a folder share starts at its folder) */}
                       {folderCrumbs(folderFilter).map(({ seg, prefix, sep }) => (
@@ -7845,9 +8135,10 @@ function LibraryApp({ publicPage = null, initialServerConfig = null }) {
             ) : null}
             {homeMode ? (
               <div className="homeListBar" data-guide="home.listing">
-                <span className="homeListLabel">{categoryFilter === NO_LABEL ? t("Unlabelled") : categoryFilter ? t("Labelled") : folderFilter ? t("Contents") : t("Library")}</span>
+                <span className={`homeListLabel ${categoryFilter || folderFilter ? "" : "homeListRoot"}`}>{categoryFilter === NO_LABEL ? t("Unlabelled") : categoryFilter ? t("Labelled") : folderFilter ? t("Contents") : t("Library")}</span>
                 <span className="homeListSpacer" />
-                <ListFindBox value={homeQuery} onChange={setHomeQuery} />
+                <ListFindBox value={homeQuery} onChange={setHomeQuery} keyLabel={commandKeyLabel("app.search")}
+                  onEnter={homeMatchCount === 0 ? () => openSearchWith(homeQueryText) : undefined} />
                 <MenuSelect
                   icon={ArrowUpDownIcon}
                   label={categoryFilter ? t("Sort this label") : folderFilter ? t("Sort this folder — subfolders inherit it") : t("Sort the library — folders inherit it")}
@@ -7871,11 +8162,12 @@ function LibraryApp({ publicPage = null, initialServerConfig = null }) {
                 <ViewToggle view={homeView} onChange={changeHomeView} />
               </div>
             ) : null}
+            {homeMode && homeMatchCount === 0 ? searchElsewhere(true) : null}
             {homeMode && homeView === "grid" ? (
                 <>
-                  {homeItems.length === 0 && !newFolderOpen ? (
+                  {libraryStart || (homeItems.length === 0 && !newFolderOpen ? (
                     <div className="empty">{homeEmptyText}</div>
-                  ) : null}
+                  ) : null)}
                   <div className="fileGrid" onClick={(e) => { if (e.target.classList.contains("fileGrid")) clearSelection(); }}>
                     {newPageAllowed ? (
                       <PageCard
@@ -7918,7 +8210,7 @@ function LibraryApp({ publicPage = null, initialServerConfig = null }) {
                         onClick={() => { setNewFolderName(""); setNewFolderOpen(true); }}
                       />
                     )}
-                    {homeVisibleItems.map((item) => {
+                    {withSearchMore(homeVisibleItems.map((item) => {
                       const dim = homeQuery && !item._match ? "homeDim" : "";
                       if (item.kind === "label") { const l = item.label; return (
                       <PageCard
@@ -8004,11 +8296,11 @@ function LibraryApp({ publicPage = null, initialServerConfig = null }) {
                               className={`pinBtn tilePinBtn ${isPinned ? "pinned" : ""}`}
                               title={isPinned ? t("Unpin") : t("Pin to top")}
                               onClick={(e) => { e.stopPropagation(); setPagesPinned([id], !isPinned); }}
-                            ><PinIcon filled={isPinned} size={12} /></button>
+                            ><PinIcon filled={isPinned} size={14} /></button>
                           ) : null}
                         </PageCard>
                       );
-                    })}
+                    }))}
                   </div>
                   {homeItems.length > homeVisibleItems.length ? (
                     <button ref={loadMoreRef} className="loadMoreBtn" onClick={() => setHomeShowCount((c) => c + HOME_PAGE_CHUNK)}>
@@ -8018,19 +8310,19 @@ function LibraryApp({ publicPage = null, initialServerConfig = null }) {
                 </>
             ) : homeMode ? (
                 <>
-                  {homeItems.length === 0 && !newFolderOpen ? (
+                  {libraryStart || (homeItems.length === 0 && !newFolderOpen ? (
                     <div className="empty">{homeEmptyText}</div>
-                  ) : null}
+                  ) : null)}
                   <div className="fileList" onClick={(e) => { if (e.target.classList.contains("fileList")) clearSelection(); }}>
                     {newPageAllowed ? (
                       <button className="folderRow folderNewBtn" onClick={() => createPage()} title={t("Start a blank page here")}>
-                        <FilePlusIcon size={15} />
+                        <FilePlusIcon size={16} />
                         <span className="folderName">{t("New page")}</span>
                       </button>
                     ) : null}
                     {!newFolderAllowed ? null : newFolderOpen ? (
                       <div className="folderRow folderNewRow">
-                        <FolderPlusIcon size={15} />
+                        <FolderPlusIcon size={16} />
                         <input
                           autoFocus
                           className="folderNewInput"
@@ -8046,11 +8338,19 @@ function LibraryApp({ publicPage = null, initialServerConfig = null }) {
                       </div>
                     ) : (
                       <button className="folderRow folderNewBtn" onClick={() => { setNewFolderName(""); setNewFolderOpen(true); }}>
-                        <FolderPlusIcon size={15} />
+                        <FolderPlusIcon size={16} />
                         <span className="folderName">{t("New folder")}</span>
                       </button>
                     )}
-                    {homeVisibleItems.map((item) => {
+                    {homeVisibleItems.length ? (
+                      <div className="fileListHead" aria-hidden="true">
+                        <span className="fileListHeadName">{t("Name")}</span>
+                        <span className="fileRowKind">{t("Kind")}</span>
+                        <span className="fileRowDate">{dateColumnTitle}</span>
+                        <span className="fileRowPinSlot" />
+                      </div>
+                    ) : null}
+                    {withSearchMore(homeVisibleItems.map((item) => {
                       const dim = homeQuery && !item._match ? "homeDim" : "";
                       if (item.kind === "label") { const l = item.label; return (
                       <div
@@ -8066,9 +8366,9 @@ function LibraryApp({ publicPage = null, initialServerConfig = null }) {
                           ? t("Pages without any label · double-click to open · drop a page to clear its labels")
                           : lib.organize ? t("Click to select · double-click to open · right-click to rename or delete · drop a page to label it") : t("Click to select · double-click to open")}
                       >
-                        <LabelIcon size={15} strokeDasharray={l === NO_LABEL ? "2 1.5" : undefined} />
+                        <LabelIcon size={16} strokeDasharray={l === NO_LABEL ? "2 1.5" : undefined} />
                         <span className="folderName">{labelTitle(l)}</span>
-                        <span className="folderCount">{labelMeta[l]?.count || 0}</span>
+                        {rowColumns(item, tn("{n} page", "{n} pages", labelMeta[l]?.count || 0))}
                       </div>
                       ); }
                       if (item.kind === "folder") { const f = item.folder; return (
@@ -8085,7 +8385,7 @@ function LibraryApp({ publicPage = null, initialServerConfig = null }) {
                         onDrop={(e) => dropOnFolder(e, f)}
                         title={lib.organize ? t("Click to select · double-click to open · right-click to rename or delete · drop a page or folder to move it in") : t("Click to select · double-click to open")}
                       >
-                        <FolderIcon size={15} />
+                        <FolderIcon size={16} />
                         {folderRenaming?.name === f ? (
                           <input
                             autoFocus
@@ -8102,7 +8402,7 @@ function LibraryApp({ publicPage = null, initialServerConfig = null }) {
                         ) : (
                           <span className="folderName">{f.slice(f.lastIndexOf("/") + 1)}</span>
                         )}
-                        <span className="folderCount">{folderMeta[f]?.count || 0}</span>
+                        {rowColumns(item, tn("{n} page", "{n} pages", folderMeta[f]?.count || 0))}
                       </div>
                       ); }
                       const b = item.block;
@@ -8138,17 +8438,16 @@ function LibraryApp({ publicPage = null, initialServerConfig = null }) {
                           )}
                           <CardLabels className="fileRowLabels" folders={b._folders} labels={b._labels}
                             mode={fileLabels} onLabelMenu={(l) => openTagMenu("label", l)} />
-                          <span className="fileRowKind">{pageKindLabel(b._attachment)}</span>
-                          {lib.pin ? (
+                          {rowColumns(item, pageKindLabel(b._attachment), lib.pin ? (
                             <button
                               className={`pinBtn fileRowPin ${isPinned ? "pinned" : ""}`}
                               title={isPinned ? t("Unpin") : t("Pin to top")}
                               onClick={(e) => { e.stopPropagation(); setPagesPinned([id], !isPinned); }}
-                            ><PinIcon filled={isPinned} size={12} /></button>
-                          ) : null}
+                            ><PinIcon filled={isPinned} size={14} /></button>
+                          ) : null)}
                         </div>
                       );
-                    })}
+                    }))}
                   </div>
                   {homeItems.length > homeVisibleItems.length ? (
                     <button ref={loadMoreRef} className="loadMoreBtn" onClick={() => setHomeShowCount((c) => c + HOME_PAGE_CHUNK)}>
@@ -8158,18 +8457,20 @@ function LibraryApp({ publicPage = null, initialServerConfig = null }) {
                 </>
             ) : (
             visibleBlocks.length === 0 ? (
-              notesTail || <div className="empty">{t("No blocks yet.")}</div>
+              <>{notesTail ? null : <div className="empty">{t("No blocks yet.")}</div>}{backlinksPanel}{notesTail}</>
             ) : (
               (() => {
                 const rowProps = {
                   focusedId,
                   setFocusedId,
+                  flashingId, // a page's landing row flashes once (landingRef)
                   // The AI agent's live footprint (handleAgentEvent); rootId
                   // places a ghost row for a block being created at top level.
                   aiMarks,
                   aiLive,
                   aiScan,
                   rootId: focusedBlockId,
+                  pages: pageBlocks, // the [[ link picker's page list
                   onJump: jumpToHighlightId,
                   onInkJump: showInkOnPage,
                   onEnterAttachMode: readOnly ? null : setAttachModeBlockId,
@@ -8456,6 +8757,7 @@ function LibraryApp({ publicPage = null, initialServerConfig = null }) {
                     <FileChipContext.Provider value={fileChipCtx}>
                       <BlockTree blocks={blocks} readOnly={readOnly} rowProps={rowProps} />
                     </FileChipContext.Provider>
+                    {backlinksPanel}
                     {notesTail}
                     <BlockDropIndicator target={dropTarget} />
                   </>
@@ -8508,6 +8810,9 @@ function LibraryApp({ publicPage = null, initialServerConfig = null }) {
           chatSystem={chatSystem} aiInfo={aiInfo} aiProvider={aiProvider}
           chatContextChars={chatContextChars} setChatContextChars={setChatContextChars} multiContextChars={multiContextChars}
           openAiKeysEditor={openAiKeysEditor}
+          focusSignal={chatFocusSignal}
+          openSettings={openSettingsPane}
+          isAdmin={!!authUser?.is_admin}
           aiHealth={aiHealth} dismissAiHealth={() => setAiHealth(null)}
           openPopover={openPopover} setOpenPopover={setOpenPopover}
           setStatus={setStatus} askConfirm={setConfirmBox}
@@ -8562,8 +8867,62 @@ function LibraryApp({ publicPage = null, initialServerConfig = null }) {
     );
   }
 
-  // The "⋮" overflow menu, shared by the editing and read-only topbars.
-  // Read-only share views omit AI chat and the import actions.
+  // The "≡" View menu's rows (shared/ui/Menus.jsx), shared by the editing
+  // and read-only topbars; on a phone the More sheet lists them instead of a
+  // View button. A window toggle carries a check while shown. Read-only
+  // share views omit AI chat and the import actions. A phone's bottom tabs
+  // already switch Notes and Chat, so there only the PDF toggle is a window.
+  const viewMenuItems = (menuReadOnly) => {
+    const pdfRow = !homeMode && !!pageAttach;
+    const shown = (on) => (on ? <CheckIcon size={14} className="ctxMenuCheck" /> : null);
+    const exportable = (focusedBlock && !homeMode) || (homeMode && folderFilter);
+    return menuGroups(
+      [
+        (!isPhone || pdfRow) && <div key="windows" className="popoverSection">{t("Windows")}</div>,
+        pdfRow && (
+          <MenuItem key="pdf" icon={FileIcon} trailing={shown(!pdfHidden)} onClick={() => setPdfHidden((v) => !v)}>PDF</MenuItem>
+        ),
+        !homeMode && !isPhone && (
+          <MenuItem key="notes" icon={FileTextIcon} trailing={shown(notesVisible)} onClick={() => setNotesVisible((v) => !v)}>{t("Notes")}</MenuItem>
+        ),
+        (!menuReadOnly || focusedBlockId) && !isPhone && (
+          <MenuItem key="chat" icon={SparklesIcon} trailing={shown(!chatHidden)} onClick={() => setChatHidden((v) => !v)}>{t("AI Chat")}</MenuItem>
+        ),
+      ],
+      [
+        !menuReadOnly && (
+          <MenuItem
+            key="import"
+            icon={ImportIcon}
+            onClick={() => { setOpenPopover(null); setImportOpen(true); }}
+            title={t("Bring in highlights — the ones saved inside this PDF file, a Logseq export, or a whole Zotero library")}
+          >{t("Import…")}</MenuItem>
+        ),
+      ],
+      [
+        exportable && (
+          <MenuItem
+            key="export"
+            icon={ExportIcon}
+            onClick={() => {
+              setOpenPopover(null);
+              setExportFolder(homeMode ? folderFilter : null);
+              setExportOpen(true);
+            }}
+            title={homeMode
+              ? t("Download the “{folderFilter}” folder — every page in it as Markdown, a Logseq graph, a Zotero library, or a Gamma export", { folderFilter })
+              : t("Download this page — the PDF with highlights and notes, Markdown, a Logseq graph, a Zotero library, or a Gamma export")}
+          >{t("Export…")}</MenuItem>
+        ),
+      ],
+      [
+        !homeMode && pdfUrl && (
+          <MenuItem key="download" icon={DownloadIcon} onClick={exportRawPdf}
+            title={t("Download the PDF file exactly as stored — no highlights or notes")}>{t("Download PDF")}</MenuItem>
+        ),
+      ],
+    );
+  };
   const renderOverflowMenu = (menuReadOnly) => (
     <PopoverAnchor name="menu">
       <button
@@ -8572,79 +8931,44 @@ function LibraryApp({ publicPage = null, initialServerConfig = null }) {
         title={t("View — windows, import, export")}
         aria-label={t("View")}
       >
-        <MenuIcon size={17} />
+        <MenuIcon size={16} />
       </button>
       {openPopover === "menu" ? (
-        <div className="popover menuPopover">
-          <div className="popoverSection">{t("Windows")}</div>
-          {!homeMode && pageAttach ? (
-            <button className="popoverItem" onClick={() => setPdfHidden((v) => !v)}>
-              <span className="check">{!pdfHidden ? "✓" : ""}</span>
-              <FileIcon className="popoverItemIcon" size={15} /> PDF
-            </button>
-          ) : null}
-          {!homeMode ? (
-            <button className="popoverItem" onClick={() => setNotesVisible((v) => !v)}>
-              <span className="check">{notesVisible ? "✓" : ""}</span>
-              <FileTextIcon className="popoverItemIcon" size={15} /> {t("Notes")}
-            </button>
-          ) : null}
-          {(!menuReadOnly || focusedBlockId) ? (
-            <button className="popoverItem" onClick={() => setChatHidden((v) => !v)}>
-              <span className="check">{!chatHidden ? "✓" : ""}</span>
-              <SparklesIcon className="popoverItemIcon" size={15} /> {t("AI Chat")}
-            </button>
-          ) : null}
-          {!menuReadOnly ? <div className="popoverDivider" /> : null}
-          {!menuReadOnly ? (
-            <button
-              className="popoverItem"
-              onClick={() => { setOpenPopover(null); setImportOpen(true); }}
-              title={t("Bring in highlights — the ones saved inside this PDF file, a Logseq export, or a whole Zotero library")}
-            >
-              <ImportIcon className="popoverItemIcon" size={15} />
-              {t("Import…")}
-            </button>
-          ) : null}
-          {(focusedBlock && !homeMode) || (homeMode && folderFilter) ? (
-            <>
-              <div className="popoverDivider" />
-              <button
-                className="popoverItem"
-                onClick={() => {
-                  setOpenPopover(null);
-                  setExportFolder(homeMode ? folderFilter : null);
-                  setExportOpen(true);
-                }}
-                title={homeMode
-                  ? t("Download the “{folderFilter}” folder — every page in it as Markdown, a Logseq graph, a Zotero library, or a Gamma export", { folderFilter })
-                  : t("Download this page — the PDF with highlights and notes, Markdown, a Logseq graph, a Zotero library, or a Gamma export")}
-              >
-                <ExportIcon className="popoverItemIcon" size={15} />
-                {t("Export…")}
-              </button>
-            </>
-          ) : null}
-          {!homeMode && pdfUrl ? (
-            <>
-              <div className="popoverDivider" />
-              <button
-                className="popoverItem"
-                onClick={exportRawPdf}
-                title={t("Download the PDF file exactly as stored — no highlights or notes")}
-              >
-                <DownloadIcon className="popoverItemIcon" size={15} />
-                {t("Download PDF")}
-              </button>
-            </>
-          ) : null}
-        </div>
+        <div className="popover menuPopover">{viewMenuItems(menuReadOnly)}</div>
       ) : null}
     </PopoverAnchor>
   );
 
+  // Phone (the compact layout): the bottom bar keeps Add, Search and a
+  // page's Share; the account button becomes More, whose sheet is the
+  // account menu with the rest of the topbar on top — background tasks (a
+  // spinner on More while something runs), the open folder's share link
+  // and the View menu's rows. Their own buttons are not rendered, but their
+  // popovers still open from these rows, spanning the bar like the others.
+  const tasksRunning = transfers.some((tr) => tr.status === "active") || !!indexTask?.active;
+  const tasksFailed = transfers.some((tr) => tr.status === "error" && tr.kind !== "ai");
+  const folderShareable = homeMode && lib.organize && !!folderFilter && !categoryFilter;
+  const phoneMainActive = phonePanel === null || (phonePanel === "notes" && centerNotes);
+  const phoneMoreRows = () => (
+    <>
+      <MenuDivider />
+      <MenuItem icon={ActivityIcon} onClick={() => setOpenPopover("downloads")}
+        title={t("Background tasks — downloads, uploads, indexing, metadata/AI jobs")}
+        trailing={tasksRunning ? <span className="transferSpin inline" aria-hidden="true" />
+          : tasksFailed ? <span className="noticeDot inline" aria-hidden="true" /> : null}>
+        {t("Background tasks")}
+      </MenuItem>
+      {folderShareable ? (
+        <MenuItem icon={LinkIcon} onClick={() => openFolderShare(folderFilter)}>{t("Share this folder")}</MenuItem>
+      ) : null}
+      <MenuDivider />
+      {viewMenuItems(false)}
+    </>
+  );
+
   // The topbar action buttons. On a phone these move to the bottom bar:
   // the tab row is too narrow to hold both, and thumbs reach the bottom.
+  // There each carries its word under the icon (.barLabel, hidden elsewhere).
   const topbarActions = (
     <>
       <span data-popover="add" className="popoverAnchor">
@@ -8655,7 +8979,8 @@ function LibraryApp({ publicPage = null, initialServerConfig = null }) {
           title={t("Add — a new page, a PDF by URL, arXiv id or DOI, or uploaded files")}
           aria-label={t("Add")}
         >
-          <PlusIcon size={17} strokeWidth={2.2} />
+          <PlusIcon size={16} />
+          <span className="barLabel">{t("Add")}</span>
         </button>
         {openPopover === "add" ? (
           <div className="popover addPopover">
@@ -8683,41 +9008,30 @@ function LibraryApp({ publicPage = null, initialServerConfig = null }) {
                 {t("A Gamma share link — Enter copies that page, with its blocks, highlights and PDF, into your library.")}
               </div>
             ) : null}
-            <label className="popoverItem" style={{ cursor: loading ? "not-allowed" : "pointer" }}>
-              <UploadIcon className="popoverItemIcon" size={15} />
-              {t("Upload files…")}
-              <input
-                type="file"
-                accept=".pdf,.md,.markdown,application/pdf,text/markdown"
-                multiple
-                style={{ display: "none" }}
-                disabled={loading}
-                onChange={(e) => { const files = Array.from(e.target.files || []); e.target.value = ""; setOpenPopover(null); if (files.length) uploadFiles(files); }}
-              />
-            </label>
-            <label
-              className="popoverItem"
-              style={{ cursor: loading ? "not-allowed" : "pointer" }}
-              title={t("Import every PDF and Markdown note in a folder — subfolders become folder labels")}
-            >
-              <FolderIcon className="popoverItemIcon" size={15} />
-              {t("Upload folder…")}
-              <input
-                type="file"
-                webkitdirectory=""
-                style={{ display: "none" }}
-                disabled={loading}
-                onChange={(e) => { const files = Array.from(e.target.files || []); e.target.value = ""; setOpenPopover(null); if (files.length) uploadFiles(files); }}
-              />
-            </label>
-            <button className="popoverItem" onClick={() => createPage()}>
-              <FilePlusIcon className="popoverItemIcon" size={15} />
-              {t("New page")}
-            </button>
+            <MenuItem icon={UploadIcon} disabled={loading} onClick={() => addFilesRef.current?.click()}>{t("Upload files…")}</MenuItem>
+            <MenuItem icon={FolderIcon} disabled={loading} onClick={() => addFolderRef.current?.click()}
+              title={t("Import every PDF and Markdown note in a folder — subfolders become folder labels")}>{t("Upload folder…")}</MenuItem>
+            <MenuItem icon={FilePlusIcon} onClick={() => createPage()}>{t("New page")}</MenuItem>
+            <input
+              ref={addFilesRef}
+              type="file"
+              accept={PAGE_FILE_ACCEPT}
+              multiple
+              hidden
+              onChange={(e) => { const files = Array.from(e.target.files || []); e.target.value = ""; setOpenPopover(null); if (files.length) uploadFiles(files); }}
+            />
+            <input
+              ref={addFolderRef}
+              type="file"
+              webkitdirectory=""
+              hidden
+              onChange={(e) => { const files = Array.from(e.target.files || []); e.target.value = ""; setOpenPopover(null); if (files.length) uploadFiles(files); }}
+            />
           </div>
         ) : null}
       </span>
-      <span data-popover="downloads" className="popoverAnchor">
+      <span data-popover="downloads" className={`popoverAnchor ${isPhone ? "sheetOnly" : ""}`}>
+          {isPhone ? null : (
           <button
             className={`iconBtn transferBtn ${openPopover === "downloads" ? "activeIcon" : ""}`}
             onClick={() => setOpenPopover((p) => (p === "downloads" ? null : "downloads"))}
@@ -8731,10 +9045,9 @@ function LibraryApp({ publicPage = null, initialServerConfig = null }) {
                 behind, so this is the only sign it happened. "ai" jobs are
                 excluded: a paper with no findable metadata is routine, and
                 the metadata popover says so itself. */}
-            {(transfers.some((t) => t.status === "active") || indexTask?.active)
-              ? <span className="transferSpin" />
-              : transfers.some((t) => t.status === "error" && t.kind !== "ai") ? <span className="transferDot" /> : null}
+            {tasksRunning ? <span className="transferSpin" /> : tasksFailed ? <span className="transferDot" /> : null}
           </button>
+          )}
           {openPopover === "downloads" ? (
             <div className="popover downloadsPopover">
               <div className="popoverTitle citeSectionRow">
@@ -8761,7 +9074,7 @@ function LibraryApp({ publicPage = null, initialServerConfig = null }) {
               {indexTask && (indexTask.active || (!indexTaskCleared && indexTask.total > 0)) ? (
                 <TransferRow
                   status={indexTask.active ? "active" : indexTask.done < indexTask.total ? "cancelled" : "done"}
-                  icon={<SearchIcon size={12} />} name="Indexing PDFs for search"
+                  icon={<SearchIcon size={14} />} name="Indexing PDFs for search"
                   info={`${indexTask.done}/${indexTask.total}`}
                   progress={indexTask.active && indexTask.total ? indexTask.done / indexTask.total : undefined}
                   onStop={indexTask.active ? cancelIndexing : null}
@@ -8771,12 +9084,12 @@ function LibraryApp({ publicPage = null, initialServerConfig = null }) {
                 <TransferRow
                   key={tr.id} status={tr.status} name={t(tr.name)} info={tr.info} progress={tr.progress}
                   icon={tr.kind === "upload"
-                    ? <UploadIcon size={12} />
+                    ? <UploadIcon size={14} />
                     : tr.kind === "ai"
-                      ? <SparklesIcon size={12} />
+                      ? <SparklesIcon size={14} />
                       : tr.kind === "import"
-                        ? <FileIcon size={12} />
-                        : <DownloadIcon size={12} />}
+                        ? <FileIcon size={14} />
+                        : <DownloadIcon size={14} />}
                   onStop={tr.status === "active" && tr.cancel ? () => cancelTransfer(tr.id) : null}
                 />
               ))}
@@ -8799,28 +9112,28 @@ function LibraryApp({ publicPage = null, initialServerConfig = null }) {
         setPdfHidden={setPdfHidden}
         docNonce={pdfDocNonce}
         onFindMarks={setFindMarks}
+        initialQuery={searchSeed}
       />
       {focusedBlockId && !homeMode ? (
         <span data-popover="share" className="popoverAnchor">
           <button
             className={`iconBtn ${openPopover === "share" ? "activeIcon" : ""}`}
-            onClick={() => {
-              const opening = openPopover !== "share";
-              if (opening) { loadShareSettings({ kind: "page", id: focusedBlockId }); setShareError(""); loadPublishState(); }
-              setOpenPopover(opening ? "share" : null);
-            }}
+            onClick={() => { if (openPopover === "share") setOpenPopover(null); else openPageShare(focusedBlockId); }}
             disabled={loading}
             data-guide="header.share"
             title={t("Share")}
             aria-label={t("Share")}
           >
             <LinkIcon size={16} />
+            <span className="barLabel">{t("Share")}</span>
           </button>
           {openPopover === "share" && shareTarget?.kind === "page" ? sharePopover : null}
         </span>
-      ) : homeMode && lib.organize && folderFilter && !categoryFilter ? (
-        // The same button for the open folder: one link for every page filed in it.
-        <span data-popover="share" className="popoverAnchor">
+      ) : folderShareable ? (
+        // The same button for the open folder: one link for every page filed
+        // in it. On a phone the More sheet offers it instead.
+        <span data-popover="share" className={`popoverAnchor ${isPhone ? "sheetOnly" : ""}`}>
+          {isPhone ? null : (
           <button
             className={`iconBtn ${openPopover === "share" ? "activeIcon" : ""}`}
             onClick={() => { if (openPopover === "share") setOpenPopover(null); else openFolderShare(folderFilter); }}
@@ -8829,6 +9142,7 @@ function LibraryApp({ publicPage = null, initialServerConfig = null }) {
           >
             <LinkIcon size={16} />
           </button>
+          )}
           {openPopover === "share" && shareTarget?.kind === "folder" ? sharePopover : null}
         </span>
       ) : null}
@@ -8843,7 +9157,7 @@ function LibraryApp({ publicPage = null, initialServerConfig = null }) {
           open={openPopover === "mirror"}
           onToggle={() => setOpenPopover(openPopover === "mirror" ? null : "mirror")}
           jumpTo={(pageId, blockId) => jumpToRef.current?.(pageId, blockId)}
-          onOpenSettings={() => { setSettingsOpen("account"); setOpenPopover(null); }}
+          onOpenSettings={() => openSettingsPane("account")}
         />
       ) : null}
       {authUser?.user && (
@@ -8856,14 +9170,20 @@ function LibraryApp({ publicPage = null, initialServerConfig = null }) {
               setOpenPopover(opening ? "user" : null);
             }}
             data-guide="header.account"
-            title={t("Account & settings")}
-            aria-label={t("Account & settings")}
+            // The name stays put (every script finds the button by it); the
+            // hover title counts what wants a look.
+            title={isPhone ? t("More — account, settings, background tasks, import and export")
+              : notices.list.length ? tn("Account & settings — {n} notice", "Account & settings — {n} notices", notices.list.length)
+              : t("Account & settings")}
+            aria-label={isPhone ? t("More") : t("Account & settings")}
           >
-            <UserIcon size={18} />
-            {notices.tone ? <span className={`noticeDot ${dotTone(notices.tone)}`} data-tone={notices.tone} aria-hidden="true" /> : null}
+            {isPhone ? <MenuIcon size={20} /> : <UserIcon size={20} />}
+            {isPhone ? <span className="barLabel">{t("More")}</span> : null}
+            {isPhone && tasksRunning ? <span className="transferSpin" aria-hidden="true" />
+              : notices.tone ? <span className={`noticeDot ${dotTone(notices.tone)}`} data-tone={notices.tone} aria-hidden="true" /> : null}
           </button>
           {openPopover === "user" ? (
-            <div className="popover userPopover">
+            <MenuScope className="popover userPopover">
               <div className="userCard" data-guide="account.card">
                 <span className="userAvatar" aria-hidden="true">
                   {authUser.is_guest
@@ -8899,71 +9219,76 @@ function LibraryApp({ publicPage = null, initialServerConfig = null }) {
                   <AllowanceMeter allowance={aiInfo.allowance} />
                 </div>
               ) : null}
-              <div className="popoverDivider" />
+              {/* What the red dot is about: one row per notice, its sentence
+                  and a link to the Settings pane that resolves it. */}
+              {notices.list.length ? (
+                <div className="accountNotices" data-testid="account-notices">
+                  {notices.list.map((notice) => (
+                    <div key={notice.id} className={`accountNotice ${notice.tone}`} role="status">
+                      {notice.tone === "info" ? <InfoIcon size={14} /> : <AlertCircleIcon size={14} />}
+                      <span className="accountNoticeBody">
+                        <span className="accountNoticeText">{noticeText(notice)}</span>
+                        <button type="button" className="accountNoticeAction"
+                          onClick={() => openSettingsPane(notice.pane)}>
+                          {noticeAction(notice)} →
+                        </button>
+                      </span>
+                    </div>
+                  ))}
+                </div>
+              ) : null}
+              {isPhone ? phoneMoreRows() : null}
+              <MenuDivider />
               {/* The workspace switcher: every library this account belongs
                   to; switching reloads the tab on that workspace's URL. */}
               <div data-guide="account.workspaces">
               {workspaces.length ? <div className="popoverSection">{t("Workspaces")}</div> : null}
               {workspaces.map((w) => (
-                <button
+                <MenuItem
                   key={w.id}
-                  className={`popoverItem wsItem ${w.id === wsId ? "active" : ""}`}
+                  className={`wsItem ${w.id === wsId ? "active" : ""}`}
+                  icon={() => <span className="wsItemBadge" aria-hidden="true">{(w.name || "?").charAt(0).toUpperCase()}</span>}
                   onClick={() => { setOpenPopover(null); switchWorkspace(w.id); }}
                   title={w.personal ? t("Your personal workspace{default}", { default: w.default ? t(" (default)") : "" }) : t("{Shared} workspace · {members} member{_s} · you {role}", { Shared: w.access === "public" ? t("Public") : t("Shared"), members: w.members, _s: w.members === 1 ? "" : "s", role: ROLE_LABEL[w.role] || w.role })}
-                >
-                  <span className="wsItemBadge" aria-hidden="true">{(w.name || "?").charAt(0).toUpperCase()}</span>
-                  <span className="wsItemName">{w.name}</span>
-                  <span className="wsItemMeta">{workspaceMeta(w)}</span>
-                  {w.id === wsId ? <CheckIcon size={14} className="wsItemCheck" /> : null}
-                </button>
+                  trailing={<>
+                    <span className="wsItemMeta">{workspaceMeta(w)}</span>
+                    {w.id === wsId ? <CheckIcon size={14} className="wsItemCheck" /> : null}
+                  </>}
+                ><span className="wsItemName">{w.name}</span></MenuItem>
               ))}
               </div>
               {!authUser.is_guest ? (
-                <button
-                  className="popoverItem"
-                  onClick={() => { setSettingsOpen("workspaces"); setOpenPopover(null); }}
+                <MenuItem
+                  icon={UsersIcon}
+                  onClick={() => openSettingsPane("workspaces")}
                   title={t("All your workspaces: rename, members, export and import, create another")}
-                >
-                  <UsersIcon className="popoverItemIcon" size={15} />
-                  {t("Workspaces…")}
-                </button>
+                >{t("Workspaces…")}</MenuItem>
               ) : null}
-              <div className="popoverDivider" />
-              <button className="popoverItem" onClick={() => { setSettingsOpen(notices.firstPane || "general"); setOpenPopover(null); }}>
-                <SettingsIcon className="popoverItemIcon" size={15} />
+              <MenuDivider />
+              <MenuItem icon={SettingsIcon} onClick={() => openSettingsPane(notices.firstPane || "general")}
+                trailing={notices.tone ? <span className={`noticeDot inline ${dotTone(notices.tone)}`} aria-hidden="true" /> : null}>
                 {t("Settings…")}
-                {notices.tone ? <span className={`noticeDot inline ${dotTone(notices.tone)}`} aria-hidden="true" /> : null}
-              </button>
-              <div className="popoverDivider" />
-              <details className="accountTours">
-                <summary className="popoverItem" data-guide="account.tour">
-                  <HelpCircleIcon className="popoverItemIcon" size={15} />
-                  {t("Tours")} <span className="accountToursArrow" aria-hidden="true">›</span>
-                </summary>
-                {/* The tours that can start here (guide.startable); a tour
-                    whose first step needs no open popover closes this menu. */}
-                <div className="accountToursMenu" role="menu" aria-label={t("Tours")}>
-                  {guide.startable().map((tour) => (
-                    <button key={tour.id} className="popoverItem" role="menuitem" data-tour={tour.id}
-                      onClick={() => guide.start(tour.id)}>{t(tour.title)}</button>
-                  ))}
-                </div>
-              </details>
-              <button className="popoverItem" onClick={() => { setOpenPopover(null); setReportOpen(true); }}
+              </MenuItem>
+              <MenuDivider />
+              {/* The tours that can start here (guide.startable); a tour
+                  whose first step needs no open popover closes this menu. */}
+              <SubMenuItem id="tours" icon={HelpCircleIcon} label={t("Tours")} data-guide="account.tour">
+                {guide.startable().map((tour) => (
+                  <MenuItem key={tour.id} role="menuitem" data-tour={tour.id}
+                    onClick={() => guide.start(tour.id)}>{t(tour.title)}</MenuItem>
+                ))}
+              </SubMenuItem>
+              <MenuItem icon={BugIcon} onClick={() => { setOpenPopover(null); setReportOpen(true); }}
                 title={t("Describe what went wrong; Gamma adds its build, your browser and its recent log lines and opens a GitHub issue for you to review")}>
-                <BugIcon className="popoverItemIcon" size={15} />
                 {t("Report a problem…")}
-              </button>
-              <div className="popoverDivider" />
-              <button className="popoverItem popoverItemDanger" onClick={authUser.is_guest ? confirmGuestLogout : doLogout}>
-                <LogOutIcon className="popoverItemIcon" size={15} />
-                {t("Log out")}
-              </button>
-            </div>
+              </MenuItem>
+              <MenuDivider />
+              <MenuItem icon={LogOutIcon} danger onClick={authUser.is_guest ? confirmGuestLogout : doLogout}>{t("Log out")}</MenuItem>
+            </MenuScope>
           ) : null}
         </span>
       )}
-      {renderOverflowMenu(false)}
+      {isPhone ? null : renderOverflowMenu(false)}
     </>
   );
 
@@ -9018,25 +9343,30 @@ function LibraryApp({ publicPage = null, initialServerConfig = null }) {
     >
       {!shareMode ? (
         <>
-          <div className="topbar">
-            <button
-              className={`iconBtn homeBtn ${homeMode ? "activeIcon" : ""}`}
-              onClick={goHome}
-              data-guide="header.home"
-              title={t("Home")}
-              aria-label={t("Home")}
-            >
-              <HomeIcon size={17} />
-            </button>
+          {/* On a phone the bottom bar's Library tab is home, and the bar
+              shows only while it has tabs (or Back) to hold. */}
+          <div className={`topbar ${phoneBareTop ? "phoneBare" : ""}`}>
+            {isPhone ? null : (
+              <button
+                className={`iconBtn homeBtn ${homeMode ? "activeIcon" : ""}`}
+                onClick={goHome}
+                data-guide="header.home"
+                title={t("Home")}
+                aria-label={t("Home")}
+              >
+                <HomeIcon size={16} />
+              </button>
+            )}
             {navStackLen > 0 ? (
               <button
                 className="iconBtn navBackBtn"
+                data-guide="header.back"
                 onClick={goBackNav}
                 onContextMenu={(e) => { e.preventDefault(); setNavStack([]); }}
                 title={t("Back to where you were{steps} — Alt+← · right-click to clear", { steps: navStackLen > 1 ? ` (${navStackLen} steps)` : "" })}
                 aria-label={t("Back")}
               >
-                <ArrowLeftIcon size={17} strokeWidth={2.2} />
+                <ArrowLeftIcon size={16} />
                 <span className="navBackBadge">{Math.min(navStackLen, 30)}</span>
               </button>
             ) : null}
@@ -9044,6 +9374,9 @@ function LibraryApp({ publicPage = null, initialServerConfig = null }) {
               tabs={openTabs}
               activeId={focusedBlockId}
               tabElements={tabElsRef}
+              kindOf={tabKindOf}
+              menuOpen={openPopover === "tabs"}
+              onMenuOpenChange={(open) => setOpenPopover(open ? "tabs" : null)}
               onReorder={(dragged, target) => updateTabs((prev) => {
                 const from = prev.findIndex((tab) => tab.id === dragged);
                 const to = prev.findIndex((tab) => tab.id === target);
@@ -9065,14 +9398,20 @@ function LibraryApp({ publicPage = null, initialServerConfig = null }) {
         </>
       ) : (
         <div className="topbar">
-          <button
-            className="iconBtn homeBtn" disabled={!sharedFolder || !focusedBlockId}
-            title={sharedFolder ? t("Back to the shared folder") : t("Home")}
-            aria-label={sharedFolder ? t("Back to the shared folder") : t("Home")}
-            onClick={() => goSharedPage("")}
-          >
-            <HomeIcon size={17} />
-          </button>
+          {sharedFolder ? (
+            <button
+              className="iconBtn homeBtn" disabled={!focusedBlockId}
+              title={t("Back to the shared folder")} aria-label={t("Back to the shared folder")}
+              onClick={() => goSharedPage("")}
+            >
+              <HomeIcon size={16} />
+            </button>
+          ) : publicPage ? (
+            // a page host has no front door of its own
+            <BrandMark className="shareBrand" size={24} />
+          ) : (
+            <a className="shareBrand" href="/" title={t("Gamma")} aria-label={t("Gamma")}><BrandMark size={24} /></a>
+          )}
           {sharedFolder ? (
             // A folder share: the folder path from the shared folder down,
             // each crumb returning to that folder's listing, then the page.
@@ -9091,12 +9430,7 @@ function LibraryApp({ publicPage = null, initialServerConfig = null }) {
           ) : (
             <span className="readOnlyTitle">{pageTitle}</span>
           )}
-          {shareInfo ? (
-            <span className="uiTag"
-              title={shareInfo.canEdit ? t("Your edits save to the owner's page") : t("Read-only share link")}>
-              {shareInfo.canEdit ? t("Can edit") : t("View only")}{shareInfo.owner ? t(" · shared by {owner}", { owner: shareInfo.owner }) : ""}
-            </span>
-          ) : null}
+          {shareInfo ? <ShareAccessPill info={shareInfo} folder={!!sharedFolder && !focusedBlockId} /> : null}
           {shareInfo?.canEdit && linkName ? (renamingLink ? (
             <input
               className="linkNameInput"
@@ -9138,11 +9472,27 @@ function LibraryApp({ publicPage = null, initialServerConfig = null }) {
               title={t("Copy this page — blocks, highlights, its PDF and files — into your own library")}
               onClick={() => importSharedPage(publicPage ? `${window.location.origin}/?share=${encodeURIComponent(initialShare)}` : window.location.href)}
             >{t("Add to my library")}</button>
+          ) : shareInfo && !shareInfo.viewer && !publicPage ? (
+            // no account behind this visitor: the share's own sign-in gate
+            <button className="uiBtn sm primary" onClick={() => { setLoginError(""); setShareGate("login"); }}>{t("Sign in")}</button>
           ) : null}
           {renderOverflowMenu(true)}
         </div>
       )}
 
+      {missingPage ? (
+        <div className="missingPageNotice" role="status">
+          <AlertCircleIcon size={16} aria-hidden="true" />
+          <span className="missingPageText">
+            <b>{t("That page isn't here.")}</b> {t("It may have been deleted, or it lives in another workspace.")}
+          </span>
+          <button type="button" className="uiBtn sm"
+            onClick={() => { setMissingPage(""); setOpenPopover(null); setQuickOpen({ prefix: "" }); }}>
+            {t("Search the library")}
+          </button>
+          <button type="button" className="uiBtn sm" onClick={() => setMissingPage("")}>{t("Dismiss")}</button>
+        </div>
+      ) : null}
       {attachModeBlockId && (
         <div className="attachModeBanner">
           {t("Click a PDF highlight to link it")}
@@ -9214,18 +9564,18 @@ function LibraryApp({ publicPage = null, initialServerConfig = null }) {
               onClick={() => setPdfHidden(true)}
               title={t("Close PDF")}
               aria-label={t("Close PDF")}
-            >×</button>
+            ><XIcon size={16} /></button>
           ) : null}
           {pdfUrl && !pdfHidden ? (
             <div className="pdfCtlBox pdfZoomOverlay">
               <button onClick={() => zoomStep(-1)} title={t("Zoom out")} aria-label={t("Zoom out")}>
-                <ZoomOutIcon size={15} />
+                <ZoomOutIcon size={16} />
               </button>
               <button onClick={() => zoomStep(1)} title={t("Zoom in")} aria-label={t("Zoom in")}>
-                <ZoomInIcon size={15} />
+                <ZoomInIcon size={16} />
               </button>
               <button className="pdfFitWidthBtn" onClick={() => zoomTo("page-width")} title={t("Fit to width")} aria-label={t("Fit to width")}>
-                <FitWidthIcon size={15} />
+                <FitWidthIcon size={16} />
               </button>
               {translateEnabled && !shareMode ? (
                 <button
@@ -9261,8 +9611,8 @@ function LibraryApp({ publicPage = null, initialServerConfig = null }) {
                   {pdfTransState.running
                     ? <span className="pillSpin" aria-hidden="true" />
                     : pdfTransState.pages > 0 && !pdfTransState.shown
-                      ? <LanguagesOffIcon size={15} />
-                      : <LanguagesIcon size={15} />}
+                      ? <LanguagesOffIcon size={16} />
+                      : <LanguagesIcon size={16} />}
                 </button>
               ) : null}
               {translateEnabled && !shareMode && pdfTransState.running ? (
@@ -9276,7 +9626,7 @@ function LibraryApp({ publicPage = null, initialServerConfig = null }) {
                   title={inkUi.open ? t("Close the handwriting tools (Esc)") : t("Handwriting: draw on the page with a pen, highlighter or eraser")}
                   aria-label={t("Handwriting tools")}
                 >
-                  <PenIcon size={15} />
+                  <PenIcon size={16} />
                 </button>
               ) : null}
               {isPhone && !shareMode ? (
@@ -9286,7 +9636,7 @@ function LibraryApp({ publicPage = null, initialServerConfig = null }) {
                   title={areaSelectMode ? t("Rectangle mode — drag draws an area note (tap to switch to text selection)") : t("Text mode — drag selects text (tap to switch to rectangle drawing)")}
                   aria-label={t("Toggle selection mode")}
                 >
-                  {areaSelectMode ? <RectSelectIcon size={15} /> : <TextCursorIcon size={15} />}
+                  {areaSelectMode ? <RectSelectIcon size={16} /> : <TextCursorIcon size={16} />}
                 </button>
               ) : null}
             </div>
@@ -9319,9 +9669,9 @@ function LibraryApp({ publicPage = null, initialServerConfig = null }) {
                 aria-label={isFullscreen || pseudoFullscreen ? t("Exit full screen") : t("Full screen")}
               >
                 {isFullscreen || pseudoFullscreen ? (
-                  <MinimizeIcon size={15} />
+                  <MinimizeIcon size={16} />
                 ) : (
-                  <MaximizeIcon size={15} />
+                  <MaximizeIcon size={16} />
                 )}
               </button>
             </div>
@@ -9436,18 +9786,36 @@ function LibraryApp({ publicPage = null, initialServerConfig = null }) {
       </div>
       {isPhone ? (
         // Phone: one bottom bar — view tabs on the left, the topbar's action
-        // buttons on the right. Icon-only, because both groups share the row.
+        // buttons on the right, each an icon over its word. The Library tab
+        // is home (the topbar has no Home button here), so it stays on a
+        // page's bar beside the page's own PDF / Notes / Chat.
         <div className="phoneBottomBar">
           <div className={`phoneTabBar ${shareMode ? "" : "hasActions"}`}>
-            <button
-              className={`phoneTab ${phonePanel === null || (phonePanel === "notes" && centerNotes) ? "active" : ""}`}
-              onClick={() => setPhonePanel(null)}
-              title={homeMode ? t("Library") : centerNotes ? t("Notes") : "PDF"}
-              aria-label={homeMode ? t("Library") : centerNotes ? t("Notes") : "PDF"}
-            >
-              {homeMode ? <HomeIcon size={16} /> : centerNotes ? <FileTextIcon size={16} /> : <FileIcon size={16} />}
-              <span>{homeMode ? t("Library") : centerNotes ? t("Notes") : "PDF"}</span>
-            </button>
+            {!shareMode ? (
+              <button
+                className={`phoneTab ${homeMode && phoneMainActive ? "active" : ""}`}
+                // Over the library, a covering panel just closes; otherwise
+                // this is the Home button: back to the library's root.
+                onClick={() => { if (!homeMode || phoneMainActive) goHome(); setPhonePanel(null); }}
+                data-guide="header.home"
+                title={t("Library")}
+                aria-label={t("Library")}
+              >
+                <HomeIcon size={16} />
+                <span>{t("Library")}</span>
+              </button>
+            ) : null}
+            {shareMode || !homeMode ? (
+              <button
+                className={`phoneTab ${phoneMainActive ? "active" : ""}`}
+                onClick={() => setPhonePanel(null)}
+                title={homeMode ? t("Library") : centerNotes ? t("Notes") : "PDF"}
+                aria-label={homeMode ? t("Library") : centerNotes ? t("Notes") : "PDF"}
+              >
+                {homeMode ? <HomeIcon size={16} /> : centerNotes ? <FileTextIcon size={16} /> : <FileIcon size={16} />}
+                <span>{homeMode ? t("Library") : centerNotes ? t("Notes") : "PDF"}</span>
+              </button>
+            ) : null}
             {!centerNotes ? (
               <button
                 className={`phoneTab ${phonePanel === "notes" ? "active" : ""}`}
@@ -9520,12 +9888,12 @@ function LibraryApp({ publicPage = null, initialServerConfig = null }) {
               <button className="uiBtn" onClick={() => setConfirmBox(null)} autoFocus>{t("Cancel")}</button>
               {confirmBox.altLabel ? (
                 <button
-                  className={`uiBtn ${confirmBox.altDanger ? "dangerBtn" : ""}`}
+                  className={`uiBtn ${confirmBox.altDanger ? "danger" : ""}`}
                   onClick={() => { const fn = confirmBox.onAlt; setConfirmBox(null); fn?.(); }}
                 >{confirmBox.altLabel}</button>
               ) : null}
               <button
-                className={`uiBtn primary ${confirmBox.danger ? "dangerBtn" : ""}`}
+                className={`uiBtn primary ${confirmBox.danger ? "danger" : ""}`}
                 onClick={() => { const fn = confirmBox.onConfirm; setConfirmBox(null); fn?.(); }}
               >{confirmBox.confirmLabel ? t(confirmBox.confirmLabel) : t("OK")}</button>
             </div>
@@ -9615,19 +9983,19 @@ function LibraryApp({ publicPage = null, initialServerConfig = null }) {
                     className="uiBtn"
                     onClick={() => { setLinkPrompt(null); openBlock(pid, { pushNav: true }); }}
                     title={t("This paper is already in your library")}
-                  ><FileTextIcon size={13} />{t("Open in Gamma")}</button>
+                  ><FileTextIcon size={14} />{t("Open in Gamma")}</button>
                 ) : (
                   <button
                     className="uiBtn"
                     onClick={() => { const url = linkPrompt; setLinkPrompt(null); pushNav(); openPdf(url); }}
                     title={t("Resolve this link as a PDF and open it as a new paper in Gamma")}
-                  ><DownloadIcon size={13} />{t("Fetch into Gamma")}</button>
+                  ><DownloadIcon size={14} />{t("Fetch into Gamma")}</button>
                 );
               })()}
               <button
                 className="uiBtn primary"
                 onClick={() => { window.open(linkPrompt, "_blank", "noopener"); setLinkPrompt(null); }}
-              ><ExternalLinkIcon size={13} />{t("Open in browser")}</button>
+              ><ExternalLinkIcon size={14} />{t("Open in browser")}</button>
             </div>
           </div>
         </div>
@@ -9708,8 +10076,14 @@ function LibraryApp({ publicPage = null, initialServerConfig = null }) {
         openTabs={openTabs}
         currentPageId={focusedBlockId}
         onOpen={openPage}
+        folders={allFolderPaths}
+        folderMeta={folderMeta}
+        onOpenFolder={(path) => { if (!homeMode) goHome(); openFolder(path); }}
+        onOpenLabel={(name) => { if (!homeMode) goHome(); openLabel(name, ""); }}
+        onSearch={openSearchWith}
+        onCreate={lib.organize ? (title) => createPage(homeMode ? folderFilter : "", title) : null}
       />
-      <GuideOverlay guide={guide} />
+      <GuideOverlay guide={guide} keybindings={keybindings} />
       <SettingsDialog
         activePane={settingsOpen}
         profileSync={profileSync}
@@ -9768,11 +10142,7 @@ function LibraryApp({ publicPage = null, initialServerConfig = null }) {
           setStatus,
           refreshQuota, // keep the client-side pre-upload size check in sync without a re-login
         }}
-        notes={{
-          enterNewNote,
-          setEnterNewNote,
-        }}
-        keyboard={{ keybindings, setKeybindings, enterNewNote }}
+        keyboard={{ keybindings, setKeybindings, enterNewNote, setEnterNewNote }}
         library={{
           // batch metadata retry uses the same prompt/model/context prefs as
           // the per-paper fetch in the metadata popover
@@ -9967,100 +10337,188 @@ function LibraryApp({ publicPage = null, initialServerConfig = null }) {
               // Acting on a selected card acts on the whole selection
               const ids = selectedPages.size > 1 && selectedPages.has(homeMenu.id) ? [...selectedPages] : [homeMenu.id];
               const many = ids.length > 1;
-              const allPinned = ids.every((id) => pageBlocks.find((b) => b._pageId === id)?._pinned);
+              const acted = ids.map((id) => pageBlocks.find((b) => b._pageId === id));
+              const allPinned = acted.every((b) => b?._pinned);
               // Folder tags the acted-on pages already carry — offered for
               // removal alongside the current folder view.
-              const ownTags = [...new Set(ids.flatMap((id) => pageBlocks.find((b) => b._pageId === id)?._folders || []))];
-              return (
-                <>
-                  {!many ? (
-                    <MenuItem icon={ExternalLinkIcon} onClick={() => { setHomeMenu(null); clearSelection(); openBlock(homeMenu.id, { restoreScroll: true }); }}>{t("Open")}</MenuItem>
-                  ) : null}
-                  {!many && lib.organize ? (
-                    <MenuItem icon={PenIcon} onClick={() => { setHomeMenu(null); clearSelection(); setHomeEditingId(homeMenu.id); }}>{t("Rename")}</MenuItem>
-                  ) : null}
-                  {lib.pin ? (
-                    <MenuItem icon={PinIcon} onClick={() => { setHomeMenu(null); setPagesPinned(ids, !allPinned); }}>
+              const ownTags = [...new Set(acted.flatMap((b) => b?._folders || []))];
+              const allLabelled = (l) => acted.every((b) => b?._labels?.includes(l));
+              const close = () => setHomeMenu(null);
+              const commitNewLabel = () => {
+                const name = (homeMenuLabelDraft || "").replace(/,/g, " ").trim();
+                close();
+                if (name) addPagesToLabel(ids, name);
+              };
+              // Open · Rename | Pin · Add label · Move to folder · Duplicate |
+              // Copy link · Share… · Export… · Ask AI | Delete — the same rows
+              // wherever the page was right-clicked.
+              return menuGroups(
+                [
+                  !many && (
+                    <MenuItem key="open" icon={ExternalLinkIcon} keys={chordLabel("Enter")}
+                      onClick={() => { close(); clearSelection(); openBlock(homeMenu.id, { restoreScroll: true }); }}>{t("Open")}</MenuItem>
+                  ),
+                  !many && lib.organize && (
+                    <MenuItem key="rename" icon={PenIcon} keys={commandKeyLabel("app.renameTitle")}
+                      onClick={() => { close(); clearSelection(); setHomeEditingId(homeMenu.id); }}>{t("Rename")}</MenuItem>
+                  ),
+                ],
+                [
+                  lib.pin && (
+                    <MenuItem key="pin" icon={PinIcon} onClick={() => { close(); setPagesPinned(ids, !allPinned); }}>
                       {allPinned ? t("Unpin") : many ? t("Pin {n} pages", { n: ids.length }) : t("Pin")}
                     </MenuItem>
-                  ) : null}
-                  {lib.organize ? (
-                    <>
-                      <MenuItem icon={CopyIcon} onClick={() => { setHomeMenu(null); duplicatePages(ids); }}>{many ? t("Duplicate {n} pages", { n: ids.length }) : t("Duplicate")}</MenuItem>
-                      <SubMenuItem
-                        id="folders"
-                        icon={FolderIcon}
-                        label={t("Move to folder")}
-                        title={t("A page can sit in several folders — this adds it to the one you pick (same as dragging it onto the folder).")}
-                      >
-                        {folderMenuPaths.length ? folderMenuPaths.map((f) => (
-                          <MenuItem
-                            key={f}
-                            icon={FolderIcon}
-                            title={ownTags.includes(f) ? t("Already in {f}", { f: f }) : f}
-                            trailing={ownTags.includes(f) ? <CheckIcon size={14} className="ctxMenuCheck" /> : null}
-                            onClick={() => { setHomeMenu(null); addPagesToFolder(ids, f); }}
-                          >{f}</MenuItem>
-                        )) : (
-                          <MenuItem disabled>{t("No folders yet")}</MenuItem>
-                        )}
-                        {folderFilter || ownTags.length ? <MenuLabel>{t("Remove from")}</MenuLabel> : null}
-                        {folderFilter ? (
-                          <MenuItem icon={FolderOpenIcon} onClick={() => { setHomeMenu(null); removePagesFromFolder(ids, folderFilter); }}>{`“${folderFilter}”`}</MenuItem>
-                        ) : null}
-                        {ownTags.filter((f) => f !== folderFilter).map((f) => (
-                          <MenuItem key={`rm:${f}`} icon={FolderOpenIcon} title={f} onClick={() => { setHomeMenu(null); removePagesFromFolder(ids, f); }}>{`“${f}”`}</MenuItem>
-                        ))}
-                        {folderFilter || ownTags.length ? (
-                          <MenuItem icon={XIcon} onClick={() => { setHomeMenu(null); removePagesFromFolder(ids, ""); }}>{t("All folders")}</MenuItem>
-                        ) : null}
-                      </SubMenuItem>
-                      <MenuItem icon={TrashIcon} danger onClick={() => { setHomeMenu(null); deletePages(ids); }}>{many ? t("Delete {n} pages", { n: ids.length }) : t("Delete")}</MenuItem>
-                    </>
-                  ) : null}
-                </>
+                  ),
+                  lib.organize && (
+                    <SubMenuItem key="labels" id="labels" icon={LabelIcon} label={t("Add label")}
+                      title={t("Labels are flat tags a page can carry several of; a checked one is removed")}>
+                      {allLabelNames.map((l) => (
+                        <MenuItem
+                          key={l}
+                          icon={LabelIcon}
+                          title={allLabelled(l) ? t("Remove the label “{l}”", { l }) : l}
+                          trailing={allLabelled(l) ? <CheckIcon size={14} className="ctxMenuCheck" /> : null}
+                          onClick={() => { close(); if (allLabelled(l)) removePagesFromLabel(ids, l); else addPagesToLabel(ids, l); }}
+                        >{l}</MenuItem>
+                      ))}
+                      {allLabelNames.length ? <MenuDivider /> : null}
+                      {homeMenuLabelDraft === null ? (
+                        <MenuItem icon={PlusIcon} onClick={() => setHomeMenuLabelDraft("")}>{t("New label…")}</MenuItem>
+                      ) : (
+                        <input
+                          autoFocus
+                          className="ctxMenuInput"
+                          value={homeMenuLabelDraft}
+                          placeholder={t("Label name")}
+                          aria-label={t("New label")}
+                          onChange={(e) => setHomeMenuLabelDraft(e.target.value)}
+                          onKeyDown={(e) => {
+                            if (e.nativeEvent.isComposing) return;
+                            if (e.key === "Enter") { e.preventDefault(); commitNewLabel(); }
+                            else if (e.key === "Escape") { e.preventDefault(); e.stopPropagation(); setHomeMenuLabelDraft(null); }
+                          }}
+                        />
+                      )}
+                    </SubMenuItem>
+                  ),
+                  lib.organize && (
+                    <SubMenuItem
+                      key="folders"
+                      id="folders"
+                      icon={FolderIcon}
+                      label={t("Move to folder")}
+                      title={t("A page can sit in several folders — this adds it to the one you pick (same as dragging it onto the folder).")}
+                    >
+                      {folderMenuPaths.length ? folderMenuPaths.map((f) => (
+                        <MenuItem
+                          key={f}
+                          icon={FolderIcon}
+                          title={ownTags.includes(f) ? t("Already in {f}", { f: f }) : f}
+                          trailing={ownTags.includes(f) ? <CheckIcon size={14} className="ctxMenuCheck" /> : null}
+                          onClick={() => { close(); addPagesToFolder(ids, f); }}
+                        >{f}</MenuItem>
+                      )) : (
+                        <MenuItem disabled>{t("No folders yet")}</MenuItem>
+                      )}
+                      {folderFilter || ownTags.length ? <MenuLabel>{t("Remove from")}</MenuLabel> : null}
+                      {folderFilter ? (
+                        <MenuItem icon={FolderOpenIcon} onClick={() => { close(); removePagesFromFolder(ids, folderFilter); }}>{`“${folderFilter}”`}</MenuItem>
+                      ) : null}
+                      {ownTags.filter((f) => f !== folderFilter).map((f) => (
+                        <MenuItem key={`rm:${f}`} icon={FolderOpenIcon} title={f} onClick={() => { close(); removePagesFromFolder(ids, f); }}>{`“${f}”`}</MenuItem>
+                      ))}
+                      {folderFilter || ownTags.length ? (
+                        <MenuItem icon={XIcon} onClick={() => { close(); removePagesFromFolder(ids, ""); }}>{t("All folders")}</MenuItem>
+                      ) : null}
+                    </SubMenuItem>
+                  ),
+                  lib.organize && (
+                    <MenuItem key="duplicate" icon={CopyIcon} onClick={() => { close(); duplicatePages(ids); }}>{many ? t("Duplicate {n} pages", { n: ids.length }) : t("Duplicate")}</MenuItem>
+                  ),
+                ],
+                [
+                  !many && !shareMode && (
+                    <MenuItem key="link" icon={LinkIcon} onClick={() => { close(); copyPageLink(homeMenu.id); }}>{t("Copy link")}</MenuItem>
+                  ),
+                  !many && lib.organize && (
+                    <MenuItem key="share" icon={ShareIcon} title={t("Share this page — a link, and who may view or edit it")}
+                      onClick={() => openPageThen(homeMenu.id, "share")}>{t("Share…")}</MenuItem>
+                  ),
+                  !many && (
+                    <MenuItem key="export" icon={ExportIcon} title={t("Download this page — the PDF with highlights and notes, Markdown, a Logseq graph, a Zotero library, or a Gamma export")}
+                      onClick={() => openPageThen(homeMenu.id, "export")}>{t("Export…")}</MenuItem>
+                  ),
+                  !many && !shareMode && (
+                    <MenuItem key="ask" icon={SparklesIcon} onClick={() => openPageThen(homeMenu.id, "ask")}>{t("Ask AI about this page")}</MenuItem>
+                  ),
+                ],
+                [
+                  lib.organize && (
+                    <MenuItem key="delete" icon={TrashIcon} danger keys={commandKeyLabel("app.deletePages")}
+                      onClick={() => { close(); deletePages(ids); }}>{many ? t("Delete {n} pages", { n: ids.length }) : t("Delete")}</MenuItem>
+                  ),
+                ],
               );
-            })() : homeMenu.kind === "label" ? (
-              <>
-                <MenuItem icon={LabelIcon} onClick={() => { const name = homeMenu.name; setHomeMenu(null); if (!homeMode) goHome(); openLabel(name, homeMode ? folderFilter : ""); }}>{t("Open")}</MenuItem>
-                {lib.organize ? (
-                  <>
-                    <MenuItem icon={PenIcon} onClick={() => { setHomeMenu(null); setLabelRenaming({ name: homeMenu.name, draft: homeMenu.name }); }}>{t("Rename")}</MenuItem>
-                    <MenuItem icon={TrashIcon} danger onClick={() => { setHomeMenu(null); deleteLabelByName(homeMenu.name); }}>{t("Delete")}</MenuItem>
-                  </>
-                ) : null}
-              </>
-            ) : (
-              <>
-                <MenuItem icon={FolderOpenIcon} onClick={() => { const name = homeMenu.name; setHomeMenu(null); if (!homeMode) goHome(); openFolder(name); }}>{t("Open")}</MenuItem>
-                {lib.organize ? (
-                  <>
-                    <MenuItem icon={PenIcon} onClick={() => { setHomeMenu(null); setFolderRenaming({ name: homeMenu.name, draft: homeMenu.name }); }}>{t("Rename")}</MenuItem>
-                    <MenuItem icon={LinkIcon} title={t("A link that opens every page filed in this folder, now and later")}
-                      onClick={() => { const name = homeMenu.name; setHomeMenu(null); openFolderShare(name); }}>{t("Share…")}</MenuItem>
-                  </>
-                ) : null}
-                {lib.pin ? (() => {
-                  // Like pages: acting on a selected folder acts on the whole selection
-                  const paths = selectedFolders.size > 1 && selectedFolders.has(homeMenu.name) ? [...selectedFolders] : [homeMenu.name];
-                  const allPinned = paths.every((p) => pinnedFolders.some((q) => q.path === p));
-                  return (
-                    <MenuItem icon={PinIcon} title={t("Pinned folders sit in the Pinned strip at the top of the library, on every device")}
+            })() : homeMenu.kind === "label" ? menuGroups(
+              [
+                <MenuItem key="open" icon={LabelIcon} onClick={() => { const name = homeMenu.name; setHomeMenu(null); if (!homeMode) goHome(); openLabel(name, homeMode ? folderFilter : ""); }}>{t("Open")}</MenuItem>,
+                lib.organize && <MenuItem key="rename" icon={PenIcon} onClick={() => { setHomeMenu(null); setLabelRenaming({ name: homeMenu.name, draft: homeMenu.name }); }}>{t("Rename")}</MenuItem>,
+              ],
+              [lib.organize && <MenuItem key="delete" icon={TrashIcon} danger onClick={() => { setHomeMenu(null); deleteLabelByName(homeMenu.name); }}>{t("Delete")}</MenuItem>],
+            ) : (() => {
+              // Like pages: acting on a selected folder acts on the whole selection
+              const paths = selectedFolders.size > 1 && selectedFolders.has(homeMenu.name) ? [...selectedFolders] : [homeMenu.name];
+              const allPinned = paths.every((p) => pinnedFolders.some((q) => q.path === p));
+              const name = homeMenu.name;
+              return menuGroups(
+                [
+                  <MenuItem key="open" icon={FolderOpenIcon} keys={chordLabel("Enter")}
+                    onClick={() => { setHomeMenu(null); if (!homeMode) goHome(); openFolder(name); }}>{t("Open")}</MenuItem>,
+                ],
+                [
+                  lib.organize && (
+                    <MenuItem key="newpage" icon={FilePlusIcon} title={t("A blank page filed in this folder")}
+                      onClick={() => { setHomeMenu(null); createPage(name); }}>{t("New page here")}</MenuItem>
+                  ),
+                  lib.organize && (
+                    <MenuItem key="newfolder" icon={FolderPlusIcon}
+                      onClick={() => {
+                        setHomeMenu(null);
+                        if (!homeMode) goHome();
+                        openFolder(name);
+                        setNewFolderName("");
+                        setNewFolderOpen(true);
+                      }}>{t("New subfolder")}</MenuItem>
+                  ),
+                ],
+                [
+                  lib.organize && (
+                    <MenuItem key="rename" icon={PenIcon} onClick={() => { setHomeMenu(null); setFolderRenaming({ name, draft: name }); }}>{t("Rename")}</MenuItem>
+                  ),
+                  lib.pin && (
+                    <MenuItem key="pin" icon={PinIcon} title={t("Pinned folders sit in the Pinned strip at the top of the library, on every device")}
                       onClick={() => { setHomeMenu(null); setFoldersPinned(paths, !allPinned); }}>
                       {allPinned ? t("Unpin") : paths.length > 1 ? t("Pin {n} folders", { n: paths.length }) : t("Pin")}
                     </MenuItem>
-                  );
-                })() : null}
-                <MenuItem
-                  icon={ExportIcon}
-                  title={t("Download every page in this folder — Markdown, a Logseq graph, a Zotero library, or a Gamma export")}
-                  onClick={() => { const name = homeMenu.name; setHomeMenu(null); setExportFolder(name); setExportOpen(true); }}
-                >{t("Export…")}</MenuItem>
-                {lib.organize ? (
-                <MenuItem icon={TrashIcon} danger onClick={() => { setHomeMenu(null); deleteFolderByName(homeMenu.name); }}>{t("Delete")}</MenuItem>
-                ) : null}
-              </>
-            )}
+                  ),
+                  lib.organize && (
+                    <MenuItem key="share" icon={ShareIcon} title={t("A link that opens every page filed in this folder, now and later")}
+                      onClick={() => { setHomeMenu(null); openFolderShare(name); }}>{t("Share…")}</MenuItem>
+                  ),
+                  <MenuItem
+                    key="export"
+                    icon={ExportIcon}
+                    title={t("Download every page in this folder — Markdown, a Logseq graph, a Zotero library, or a Gamma export")}
+                    onClick={() => { setHomeMenu(null); setExportFolder(name); setExportOpen(true); }}
+                  >{t("Export…")}</MenuItem>,
+                ],
+                [
+                  lib.organize && (
+                    <MenuItem key="delete" icon={TrashIcon} danger onClick={() => { setHomeMenu(null); deleteFolderByName(name); }}>{t("Delete")}</MenuItem>
+                  ),
+                ],
+              );
+            })()}
         </ContextMenu>
       ) : null}
       {highlightMenu ? (

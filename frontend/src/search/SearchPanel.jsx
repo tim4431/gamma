@@ -17,22 +17,32 @@
 // with pdf.js and the match is highlighted and scrolled into view — positions
 // come from the same engine that draws the page, so they are always exact.
 
-import React, { useEffect, useMemo, useRef, useState } from "react";
+import React, { useEffect, useLayoutEffect, useMemo, useRef, useState } from "react";
 import { API, apiJson } from "../shared/lib/utils";
-import { ChevronDownIcon, ChevronRightIcon, ChevronUpIcon, FolderIcon, LabelIcon, SearchIcon } from "../shared/ui/Icons";
+import { ChevronDownIcon, ChevronRightIcon, ChevronUpIcon, FileGlyph, FolderIcon, LabelIcon, SearchIcon, XIcon } from "../shared/ui/Icons";
 
 import { buildSearchRegex, normalizeQuery } from "../shared/lib/textnorm";
 import { createTitleScorer } from "../library/librarySearch";
+import { pageAttachment } from "../library/libraryUtils";
+import { markedParts, plainSnippet } from "./snippets";
 import { t } from "../shared/i18n/i18n.js";
 
 export { buildSearchRegex, normalizeQuery };
+
+// `text` with the query's matches marked (search/snippets.js markedParts):
+// a result row here, a row of the Ctrl+P palette (library/QuickOpen.jsx).
+export function MarkedText({ text, query, opts, lead = 0 }) {
+  return markedParts(text, query, opts, lead).map((p, i) => (
+    p.mark ? <mark key={i} className="searchMark">{p.text}</mark> : <React.Fragment key={i}>{p.text}</React.Fragment>
+  ));
+}
 
 export default function SearchPanel({
   open, onOpenChange,
   focusedBlockId, homeBlocks, allFolderPaths,
   openBlock, pendingBlockScrollRef,
   pdfSearchRef, scrollToRef, cancelCoarseRestoreRef, setPdfHidden, docNonce,
-  onFindMarks, detailsDefault, wakeTasks,
+  onFindMarks, detailsDefault, wakeTasks, initialQuery = "",
 }) {
   const [query, setQuery] = useState("");
   const [labels, setLabels] = useState([]); // confirmed filter chips
@@ -54,6 +64,15 @@ export default function SearchPanel({
   const q = query.trim();
 
   useEffect(() => { if (open) setPinned(false); }, [open]);
+  // Opened with a query from elsewhere (the home listing's filter box,
+  // Ctrl+P): it replaces whatever was typed last, filters included — before
+  // the first paint, so the box never shows the old text.
+  useLayoutEffect(() => {
+    if (!open || !initialQuery) return;
+    setQuery(initialQuery);
+    setLabels([]);
+    pendingFindRef.current = null;
+  }, [open, initialQuery]);
   useEffect(() => { setSugIdx(0); }, [query]);
   useEffect(() => { setFindIndex(0); }, [pdfMatches]);
 
@@ -263,14 +282,34 @@ export default function SearchPanel({
   const [showDetails, setShowDetails] = useState(detailsDefault);
   useEffect(() => { if (open) setShowDetails(detailsDefault); }, [open]);
 
+  // Result rows: the page's kind glyph and title, then one line of text,
+  // the query marked in both (search/snippets.js maps each match back
+  // through the normalized text, and marks nothing it cannot place). Notes
+  // show as plain text, not markdown. The library's PDF index ignores the
+  // Aa / ab toggles, so its rows are marked without them.
+  const pagesById = useMemo(() => new Map(homeBlocks.map((b) => [b.id, b])), [homeBlocks]);
+  const isPdfPage = (id) => !!pageAttachment(pagesById.get(id));
+  const markOpts = { caseSensitive, wholeWord };
+  const marked = (text, opts = markOpts, lead = 0) => <MarkedText text={text} query={q} opts={opts} lead={lead} />;
+  const section = (label, count) => (
+    <div className="searchSection">{label}{count ? <span className="searchSectionCount">{count}</span> : null}</div>
+  );
+  const pageTag = (page) => <span className="searchPageTag">{t("p. {page}", { page })}</span>;
+  const resultHead = (title, isPdf, extra, opts) => (
+    <span className="searchResultPage">
+      <FileGlyph isPdf={isPdf} size={14} />
+      <span className="searchResultTitle">{marked(title || t("Untitled"), opts)}</span>
+      {extra}
+    </span>
+  );
   const kindBadge = (r) => (
     r.kind === "highlight" ? <span className="searchKindBadge">{t("highlight")}</span>
       : r.kind === "link" ? <span className="searchKindBadge">{t("link")}</span> : null
   );
   const noteRow = (r) => (
     <button key={r.id} className="searchResult" onClick={() => openNoteHit(r)}>
-      <span className="searchResultPage">{r.page_title || t("Untitled")}{kindBadge(r)}</span>
-      <span className="searchResultText">{r.content}</span>
+      {resultHead(r.page_title, isPdfPage(r.page_root_id || r.id), kindBadge(r))}
+      <span className="searchResultText">{marked(plainSnippet(r.content), markOpts, 50)}</span>
     </button>
   );
   const titleRow = (b, subtitle) => (
@@ -279,10 +318,12 @@ export default function SearchPanel({
       className="searchResult"
       onClick={() => { onOpenChange(false); openBlock(b.id, { restoreScroll: true }); }}
     >
-      <span className="searchResultPage">{b.content || t("Untitled")}</span>
-      <span className="searchResultText">{subtitle || ""}</span>
+      {resultHead(b.content, !!pageAttachment(b))}
+      {subtitle ? <span className="searchResultText">{subtitle}</span> : null}
     </button>
   );
+  const notesElsewhereLabel = focusedBlockId ? t("Other notes") : t("Notes");
+  const libLabel = focusedBlockId ? t("Other PDFs") : t("Library PDFs");
 
   return (
     <span data-popover="search" className="popoverAnchor">
@@ -294,6 +335,7 @@ export default function SearchPanel({
         aria-label={t("Search")}
       >
         <SearchIcon size={16} />
+        <span className="barLabel">{t("Search")}</span>
       </button>
       {open ? (
         <div className="popover searchPopover">
@@ -306,19 +348,19 @@ export default function SearchPanel({
               aria-label={t("Toggle result details")}
             >
               {showDetails
-                ? <ChevronDownIcon size={12} strokeWidth={2.4} />
-                : <ChevronRightIcon size={12} strokeWidth={2.4} />}
+                ? <ChevronDownIcon size={14} />
+                : <ChevronRightIcon size={14} />}
             </button>
             <div className="searchInputWrap">
               {labels.map((l) => (
                 <span key={`${l.kind}:${l.name}`} className="categoryBadge searchChip">
-                  {l.kind === "folder" ? <FolderIcon size={11} /> : <LabelIcon size={11} />}
+                  {l.kind === "folder" ? <FolderIcon size={14} /> : <LabelIcon size={14} />}
                   {l.name}
                   <button
                     className="uiClose uiCloseSm searchChipX"
                     title={t("Remove {label} filter \"{name}\"", { label: l.kind === "folder" ? t("folder") : t("label"), name: l.name })}
                     onClick={() => setLabels((prev) => prev.filter((x) => x !== l))}
-                  >×</button>
+                  ><XIcon size={14} /></button>
                 </span>
               ))}
               <input
@@ -355,7 +397,7 @@ export default function SearchPanel({
                       onMouseEnter={() => setSugIdx(i)}
                     >
                       <span className="searchSuggestName">
-                        {s.kind === "folder" ? <FolderIcon size={12} /> : <LabelIcon size={12} />}
+                        {s.kind === "folder" ? <FolderIcon size={14} /> : <LabelIcon size={14} />}
                         {s.name}
                       </span>
                       <span className="searchSuggestHint">{t("Tab")}</span>
@@ -391,29 +433,27 @@ export default function SearchPanel({
                     ) : labelMatches.map((b) => titleRow(b, b.properties?.category || b.properties?.folder || ""))}
                   </>
                 ) : null}
-                {titleMatches.length || titlesExtra.length ? <div className="searchSection">{t("Titles")}</div> : null}
+                {titleMatches.length || titlesExtra.length ? section(t("Titles"), titleMatches.length + titlesExtra.length) : null}
                 {titleMatches.map((b) => titleRow(b, [b.properties?.category, b.properties?.folder].filter(Boolean).join(", ")))}
                 {titlesExtra.map(noteRow)}
-                {notesHere.length ? <div className="searchSection">{t("Notes on this page")}</div> : null}
+                {notesHere.length ? section(t("Notes on this page"), notesHere.length) : null}
                 {notesHere.map(noteRow)}
-                {showPdfMatches && pdfMatches.length ? <div className="searchSection">{t("This PDF")}</div> : null}
+                {showPdfMatches && pdfMatches.length ? section(t("This PDF"), pdfMatches.length) : null}
                 {(showPdfMatches ? pdfMatches : []).map((m, i) => (
                   <button
                     key={`pdf-${i}`}
                     className={`searchResult ${i === findIndex ? "active" : ""}`}
                     onClick={() => gotoFind(i)}
                   >
-                    <span className="searchResultPage">p. {m.page}</span>
-                    <span className="searchResultText">…{m.snippet}…</span>
+                    <span className="searchResultPage">{pageTag(m.page)}</span>
+                    <span className="searchResultText">…{marked(m.snippet)}…</span>
                   </button>
                 ))}
-                {notesElsewhere.length ? <div className="searchSection">{focusedBlockId ? t("Other notes") : t("Notes")}</div> : null}
+                {notesElsewhere.length ? section(notesElsewhereLabel, notesElsewhere.length) : null}
                 {notesElsewhere.map(noteRow)}
-                {linkHits.length ? <div className="searchSection">{t("Reference links")}</div> : null}
+                {linkHits.length ? section(t("Reference links"), linkHits.length) : null}
                 {linkHits.map(noteRow)}
-                {libElsewhere.length || libIndexing ? (
-                  <div className="searchSection">{focusedBlockId ? t("Other PDFs") : t("Library PDFs")}</div>
-                ) : null}
+                {libElsewhere.length || libIndexing ? section(libLabel, libElsewhere.length) : null}
                 {libIndexing ? (
                   <div className="searchHint">{t("Indexing")} {libIndexing} {t("PDF")}{libIndexing === 1 ? "" : "s"} {t("in the background — results will fill in shortly.")}</div>
                 ) : null}
@@ -424,8 +464,9 @@ export default function SearchPanel({
                     onClick={() => openLibHit(r)}
                     title={t("Open \"{title}\" at page {page} — the match will be highlighted", { title: r.title, page: r.page })}
                   >
-                    <span className="searchResultPage">{r.title.slice(0, 60)} · p. {r.page}</span>
-                    <span className="searchResultText">…{r.snippet}…</span>
+                    {resultHead(r.title.slice(0, 60), true, pageTag(r.page), {})}
+                    {/* the index's snippet() already marks a cut with "…" */}
+                    <span className="searchResultText">{marked(r.snippet, {})}</span>
                   </button>
                 ))}
               </>

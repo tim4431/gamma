@@ -130,10 +130,12 @@ export async function inkScenarios({ server, browser, alice, makePdf, step, unti
     await page.keyboard.press("1");
     await page.click(".pdfInkBar .inkToolBtn.modeActive");             // tap the armed preset again
     await page.waitForSelector(".pdfInkSub[data-ink-options='tool']");
-    await page.click(".pdfInkSub button[aria-label='Colour #dc2626']");
+    await page.click(".pdfInkSub button[aria-label='Red']");
     await page.click(".pdfInkSub button[aria-label='Width 4 pt']");
     await page.getByRole("button", { name: "Monoline", exact: true }).click();
     assertEq(await page.getByRole("button", { name: "Monoline", exact: true }).getAttribute("aria-pressed"), "true");
+    assertEq(await page.locator(".pdfInkBar .inkToolBtn.modeActive").getAttribute("aria-label"),
+      "Red monoline pen · 4 pt · key 1 — tap again for options", "a preset is named in words, not a hex code");
     await page.click(".pdfInkSub button[aria-label='Duplicate tool']");
     await until(async () => (await page.$$(".pdfInkBar .inkToolInk")).length === 8, { what: "a duplicated preset" });
     assert(await page.$(".pdfInkSub[data-ink-options='tool']"), "the copy stays open for editing");

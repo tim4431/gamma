@@ -1,16 +1,18 @@
 // The building blocks every settings pane is composed from — and nothing
 // else: PaneHead › Section › Row/Toggle for the panes themselves, SubDialog ›
-// Step/Field for the editor dialogs they open, plus the small shared controls
-// (Segmented, PictureChoices/IconChoices, ToggleGroup, Stepper, UnitInput,
-// CharSlider, PasswordInput, AccountPicker, LogBox, Stat/StatText, Empty,
+// Step/Field/DialogButtons for the editor dialogs they open, NavAccountCard
+// on the rail, plus the small shared controls (Segmented,
+// PictureChoices/IconChoices, ToggleGroup, Stepper, UnitInput, CharSlider,
+// PasswordInput, AccountPicker, LogBox, Stat/StatText, Empty,
 // WorkspaceFolder, QuotaMeter/PercentMeter/AllowanceMeter, KeyCaps/KeyBinding).
 // New settings UI should reuse these; bespoke classes are for layout only.
 import React from "react";
 import { API, apiJson, copyText, fmtBytes } from "../shared/lib/utils";
-import { AlertCircleIcon, CheckIcon, CloudCheckIcon, EyeIcon, EyeOffIcon, MonitorIcon, RefreshIcon, ShieldIcon, UndoIcon, UserIcon } from "../shared/ui/Icons";
-import { bindable, chordFromEvent, chordParts } from "../shared/lib/hotkeys.js";
+import { AlertCircleIcon, CheckIcon, CloudCheckIcon, EyeIcon, EyeOffIcon, MonitorIcon, RefreshIcon, ShieldIcon, UndoIcon, UserIcon, XIcon } from "../shared/ui/Icons";
+import { bindable, chordFromEvent } from "../shared/lib/hotkeys.js";
+import { KeyCaps } from "../shared/ui/KeyCaps.jsx";
 import { BROWSER_TAG, profileSyncState } from "./syncState.js";
-import { t } from "../shared/i18n/i18n.js";
+import { t, tn } from "../shared/i18n/i18n.js";
 import { fmtTokens } from "../chat/tokenUsage";
 
 export const SettingsDraftContext = React.createContext(null);
@@ -24,14 +26,27 @@ export function useSettingsDraft(key, dirty, discard) {
   }, [drafts, key, dirty, discard]);
 }
 
-export function PaneHead({ icon: Icon, title, children }) {
+// A pane's header: icon, title, one line of context (children). A page one
+// level down names its way back as breadcrumbs before the title — `crumbs`
+// are [{label, onClick, ariaLabel}] — and `action` is a control at the
+// head's right end (the workspace page's Open workspace).
+export function PaneHead({ icon: Icon, title, crumbs, action, children }) {
   return (
     <div className="setHead" data-setting={title}>
-      <span className="setHeadIcon"><Icon size={17} /></span>
+      <span className="setHeadIcon"><Icon size={16} /></span>
       <span className="settingText">
-        <span className="settingsPaneTitle">{title}</span>
+        <span className="settingsPaneTitle">
+          {(crumbs || []).map(({ label, onClick, ariaLabel }) => (
+            <React.Fragment key={label}>
+              <button type="button" className="crumbBtn setCrumb" aria-label={ariaLabel} title={ariaLabel} onClick={onClick}>{label}</button>
+              <span className="crumbSep" aria-hidden="true">›</span>
+            </React.Fragment>
+          ))}
+          {title}
+        </span>
         {children ? <span className="settingsPaneHint">{children}</span> : null}
       </span>
+      {action ? <span className="setHeadAction">{action}</span> : null}
     </div>
   );
 }
@@ -80,16 +95,20 @@ function ScopeTag({ scope, prefs }) {
 
 // `guide`: a data-guide anchor id (guide/anchors.js) for the whole section,
 // header and rows, which then sit in one box a tour can point at.
-export function Section({ title, scope, prefs, action, guide, children }) {
+// `tone="danger"`: the "Danger zone" of a pane or dialog — a red label and
+// rule over its rows in a red-edged box. Its buttons are `uiBtn sm
+// danger` (red at rest) and each row's hint says what is lost.
+export function Section({ title, scope, prefs, action, guide, tone, children }) {
+  const danger = tone === "danger";
   const body = (
     <>
-      <div className="setSection" data-setting={title}>
+      <div className={`setSection${danger ? " danger" : ""}`} data-setting={title}>
         <span className="setSectionLabel">{title}</span>
         <span className="setSectionRule" />
         {scope ? <ScopeTag scope={scope} prefs={prefs} /> : null}
         {action}
       </div>
-      {children}
+      {danger ? <div className="setDangerBox">{children}</div> : children}
     </>
   );
   return guide ? <div className="setSectionGroup" data-guide={guide}>{body}</div> : body;
@@ -101,7 +120,7 @@ export function Section({ title, scope, prefs, action, guide, children }) {
 export function Row({ icon: Icon, label, hint, title, scope, className = "", children }) {
   return (
     <div className={`settingRow setRow ${className}`} data-setting={label} title={title}>
-      <span className="setIcon">{Icon ? <Icon size={15} /> : null}</span>
+      <span className="setIcon">{Icon ? <Icon size={16} /> : null}</span>
       <div className="settingText">
         <span className="settingLabel">{label}{scope ? <ScopeTag scope={scope} /> : null}</span>
         {hint ? <span className="settingDesc">{hint}</span> : null}
@@ -137,7 +156,7 @@ export function Segmented({ value, onChange, options, disabled }) {
           className={`uiBtn sm ${value === val ? "on" : ""}`}
           onClick={() => onChange(val)}
         >
-          {Icon ? <Icon size={13} /> : null}{t(label)}
+          {Icon ? <Icon size={14} /> : null}{t(label)}
         </button>
       ))}
     </span>
@@ -156,7 +175,7 @@ export function PictureChoices({ label, value, onChange, onConfirm, options, col
         <span className="setPictureCaption">
           <span className="setPictureName">{t(name)}</span>
           {hint ? <span className="setPictureHint">{t(hint)}</span> : null}
-          <span className="setPictureCheck" aria-hidden="true">{value === id ? <CheckIcon size={12} /> : null}</span>
+          <span className="setPictureCheck" aria-hidden="true">{value === id ? <CheckIcon size={14} /> : null}</span>
         </span>
       </button>
     ))}
@@ -172,7 +191,7 @@ export function IconChoices({ label, value, onChange, options, columns }) {
     <PictureChoices label={label} value={value} onChange={onChange} columns={columns || options.length}
       options={options.map(({ value: id, label: name, hint, Icon }) => ({
         value: id, label: name, hint,
-        preview: <span className="setTileIcon" aria-hidden="true"><Icon size={18} /></span>,
+        preview: <span className="setTileIcon" aria-hidden="true"><Icon size={20} /></span>,
       }))} />
   </div>;
 }
@@ -194,7 +213,7 @@ export function ToggleGroup({ selected, onToggle, options, disabled }) {
           aria-pressed={on.has(val)}
           onClick={() => onToggle(val, !on.has(val))}
         >
-          {Icon ? <Icon size={13} /> : null}{t(label)}
+          {Icon ? <Icon size={14} /> : null}{t(label)}
         </button>
       ))}
     </span>
@@ -203,10 +222,11 @@ export function ToggleGroup({ selected, onToggle, options, disabled }) {
 
 // Draft-aware editor dialog opened from inside the settings surface — same shape as
 // the PDF export dialog (reportModal), stacked above the settings overlay.
-// Every editor dialog is composed the same way: SubDialog › .settingsForm ›
-// Step (numbered stages, for flows) or Field (label + hint + one control),
-// closed by a .reportModalBtns footer.
-export function SubDialog({ title, onClose, children, draft, className = "", closeButton = false }) {
+// Every editor dialog is composed the same way: a title row with its ×,
+// then SubDialog › .settingsForm › Step (numbered stages, for flows) or
+// Field (label, hint, one control), closed by a DialogButtons footer.
+// `closeButton={false}` drops the × (while a step must not be interrupted).
+export function SubDialog({ title, onClose, children, draft, className = "", closeButton = true }) {
   const key = React.useId();
   const [initial] = React.useState(() => JSON.stringify(draft));
   const dirty = draft !== undefined && JSON.stringify(draft) !== initial;
@@ -244,7 +264,7 @@ export function SubDialog({ title, onClose, children, draft, className = "", clo
         }}>
         {closeButton ? <div className="settingsDialogHeader" inert={confirmClose ? "" : undefined}>
           <div className="reportModalTitle">{title}</div>
-          <button type="button" className="uiClose uiCloseLg" onClick={close} aria-label={t("Close {title}", { title: title })} title={t("Close")}>×</button>
+          <button type="button" className="uiClose uiCloseLg" onClick={close} aria-label={t("Close {title}", { title: title })} title={t("Close")}><XIcon size={16} /></button>
         </div> : <div className="reportModalTitle">{title}</div>}
         <div className="settingsDialogContent" inert={confirmClose ? "" : undefined}>{children}</div>
         {confirmClose ? <div className="settingsUnsaved" role="alertdialog" aria-label={t("Unsaved changes")}>
@@ -273,16 +293,27 @@ export function Step({ n, title, hint, children }) {
   );
 }
 
-// One labeled control: bold-ish caption, muted hint after it, control below.
+// One labeled control: the label on its own line, one muted hint line under
+// it, the control below.
 export function Field({ label, hint, children }) {
   return (
     <label className="setField">
-      <span className="setFieldLabel">
-        {label}
-        {hint ? <span className="settingDesc"> — {hint}</span> : null}
-      </span>
+      <span className="setFieldLabel">{label}</span>
+      {hint ? <span className="settingDesc setFieldHint">{hint}</span> : null}
       {children}
     </label>
+  );
+}
+
+// An editor dialog's footer: its buttons on the right and, while the
+// primary one is disabled for want of input, a `footnote` on the left
+// saying what is missing ("Fill in the server and its token to continue.").
+export function DialogButtons({ footnote, children }) {
+  return (
+    <div className="reportModalBtns">
+      {footnote ? <span className="setFootnote" role="status">{footnote}</span> : null}
+      {children}
+    </div>
   );
 }
 
@@ -290,11 +321,12 @@ export function Field({ label, hint, children }) {
 // input's own class (aiKeyInput in settings forms, loginInput on the login
 // page); everything else is passed through to the <input>. The eye is kept
 // out of the Tab order so Enter/Tab flow stays input → next control.
-export function PasswordInput({ className = "aiKeyInput", ...props }) {
+// `inputRef` reaches the <input> itself (the login page focuses it).
+export function PasswordInput({ className = "aiKeyInput", inputRef, ...props }) {
   const [shown, setShown] = React.useState(false);
   return (
     <span className="pwField">
-      <input {...props} className={className} type={shown ? "text" : "password"} />
+      <input {...props} ref={inputRef} className={className} type={shown ? "text" : "password"} />
       <button
         type="button" className="ctlBtn pwToggle" tabIndex={-1}
         title={shown ? t("Hide password") : t("Show password")}
@@ -303,7 +335,7 @@ export function PasswordInput({ className = "aiKeyInput", ...props }) {
         onMouseDown={(event) => event.preventDefault()} // keep the input's focus + caret
         onClick={() => setShown((v) => !v)}
       >
-        {shown ? <EyeOffIcon size={14} /> : <EyeIcon size={14} />}
+        {shown ? <EyeOffIcon size={16} /> : <EyeIcon size={16} />}
       </button>
     </span>
   );
@@ -406,7 +438,7 @@ export function CharSlider({ value, onChange }) {
 
 // ~1800 characters is about one dense page of a paper — enough to make an
 // abstract character budget mean something.
-export const approxPages = (chars) => `≈ ${Math.max(1, Math.round(chars / 1800))} page${chars >= 2700 ? "s" : ""}`;
+export const approxPages = (chars) => { const n = Math.max(1, Math.round(chars / 1800)); return tn("≈ {n} page", "≈ {n} pages", n); };
 
 // Coverage tile: big count, what it counts, and how far along it is.
 export function Stat({ icon: Icon, label, value, total, title }) {
@@ -418,7 +450,7 @@ export function Stat({ icon: Icon, label, value, total, title }) {
         <span className="setStatNum">{value}</span>
         <span className="setStatOf">/ {total}</span>
       </span>
-      <span className="setStatLabel"><Icon size={12} />{label}</span>
+      <span className="setStatLabel"><Icon size={14} />{label}</span>
       <span className="setStatBar"><i className={tone} style={{ width: `${Math.max(pct, 2)}%` }} /></span>
     </div>
   );
@@ -430,7 +462,7 @@ export function StatText({ icon: Icon, label, value, hint, tone = "", title }) {
   return (
     <div className={`setStat setStatText ${tone}`} title={title}>
       <span className="setStatTop"><span className="setStatNum">{value}</span></span>
-      <span className="setStatLabel"><Icon size={12} />{label}</span>
+      <span className="setStatLabel"><Icon size={14} />{label}</span>
       {hint ? <span className="setStatHint">{hint}</span> : null}
     </div>
   );
@@ -470,7 +502,7 @@ export function LogBox({ icon, label, description, entries, emptyText, copyStatu
 }
 
 export function Empty({ icon: Icon, children }) {
-  return <div className="setEmpty"><Icon size={26} />{children}</div>;
+  return <div className="setEmpty"><Icon size={20} />{children}</div>;
 }
 
 // A workspace's folder in the server's data directory (workspaces/<id>/),
@@ -566,10 +598,10 @@ export function AccountPicker({ accounts, exclude = [], value, onChange, placeho
               onClick={() => pick(a.username)}
               onMouseEnter={() => setCursor(i)}
             >
-              <span className="setPickAvatar">{a.is_admin ? <ShieldIcon size={13} /> : <UserIcon size={13} />}</span>
+              <span className="setPickAvatar">{a.is_admin ? <ShieldIcon size={14} /> : <UserIcon size={14} />}</span>
               <span className="setPickName">{a.username}</span>
               {a.is_admin ? <span className="uiTag admin">{t("admin")}</span> : null}
-              {a.username === value ? <CheckIcon size={13} className="setPickCheck" /> : null}
+              {a.username === value ? <CheckIcon size={14} className="setPickCheck" /> : null}
             </button>
           ))}
           {matches.length > shown.length ? (
@@ -608,6 +640,24 @@ export function QuotaMeter({ usedBytes, quotaMb, barOnly }) {
   );
 }
 
+// The account at the top of the Settings rail, where every app puts it:
+// avatar initial, name, "Account · 4 KB used" and the storage bar (with a
+// quota). It opens the account pane, whose name (`label`) is its accessible
+// name; `dot` is that pane's notice dot.
+export function NavAccountCard({ name, usedBytes, quotaMb, label, active, dot, onClick }) {
+  return (
+    <button type="button" className={`setNavAccount${active ? " active" : ""}`} aria-label={label}
+      aria-current={active ? "page" : undefined} onClick={onClick}>
+      <span className="setNavAvatar" aria-hidden="true">{(name || "?").slice(0, 1).toUpperCase()}</span>
+      <span className="setNavAccountText">
+        <span className="setNavAccountName"><span>{name}</span>{dot}</span>
+        <span className="settingDesc">{usedBytes != null ? t("Account · {used} used", { used: fmtBytes(usedBytes) }) : t("Account")}</span>
+        <QuotaMeter usedBytes={usedBytes} quotaMb={quotaMb} barOnly />
+      </span>
+    </button>
+  );
+}
+
 // Percentage-only variant of QuotaMeter. It deliberately shares the exact
 // quotaMeter/quotaBar markup and warning thresholds so provider allowance and
 // storage quota read as the same kind of capacity indicator.
@@ -621,7 +671,7 @@ export function PercentMeter({ percent, barOnly, caption = "" }) {
       <span className="quotaBar">
         <span className={`quotaBarFill${state}`} style={{ width: `${pct ? Math.max(pct, 2) : 0}%` }} />
       </span>
-      {barOnly ? null : <span className="settingDesc">{caption || `${Math.round(pct)}% used`}</span>}
+      {barOnly ? null : <span className="settingDesc">{caption || t("{pct}% used", { pct: Math.round(pct) })}</span>}
     </span>
   );
 }
@@ -647,10 +697,9 @@ export function AllowanceMeter({ allowance }) {
       : t("Server AI: {used} of {limit} tokens in the last 24 h", { used: fmtTokens(used), limit: fmtTokens(limit) })} />;
 }
 
-// The keys of a chord as <kbd> caps: "Ctrl" "Shift" "K", or ⇧⌘K on a Mac.
-export function KeyCaps({ chord }) {
-  return <span className="keyCaps">{chordParts(chord).map((part, i) => <kbd key={i} className="keyCap">{part}</kbd>)}</span>;
-}
+// The keys of a chord as <kbd> caps (shared/ui/KeyCaps.jsx, which the
+// guide's copy draws too).
+export { KeyCaps };
 
 // One shortcut, VSCode-style: the chord as key caps; click, then press the
 // new chord (recorded with the same reader the dispatcher matches with).
@@ -695,7 +744,7 @@ export function KeyBinding({ chord, label, fixed, modified, conflict, onChange, 
       </button>
       {modified && !fixed ? (
         <button type="button" className="uiBtn sm iconSq" title={t("Reset to default")} aria-label={t("Reset {name} to its default shortcut", { name: label })} onClick={onReset}>
-          <UndoIcon size={13} />
+          <UndoIcon size={16} />
         </button>
       ) : null}
     </span>

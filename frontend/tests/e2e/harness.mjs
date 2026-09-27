@@ -221,6 +221,21 @@ export async function openPage(ctx, url) {
   return page;
 }
 
+// A chat model the browser can see, so the chat's composer is enabled without
+// a real provider (with no AI connected it shows the setup card and refuses
+// to send). Scenarios that drive the chat route /api/ai/models here on their
+// context or page before loading, and fake /api/ai/chat themselves. The slide
+// citation a page with metadata asks for by itself once AI looks connected
+// gets an empty answer, since no provider is there to write it.
+export const FAKE_AI_MODELS = {
+  enabled: true, default: "demo:model", efforts: ["low", "medium", "high"],
+  models: [{ id: "demo:model", provider: "demo", provider_name: "Demo", model: "model" }],
+};
+export async function fakeAiModels(target, models = FAKE_AI_MODELS) {
+  await target.route("**/api/ai/models*", (route) => route.fulfill({ json: models }));
+  await target.route("**/api/metadata/cite", (route) => route.fulfill({ json: { citation: "" } }));
+}
+
 export function assertNoProblems(page, allow = []) {
   const bad = page.problems.filter((p) => !allow.some((a) => (a instanceof RegExp ? a.test(p) : p.includes(a))));
   page.problems = [];

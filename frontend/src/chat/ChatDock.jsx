@@ -3,22 +3,27 @@
 // pasted figures, the "+" context picker, and the per-message PDF attach.
 // App provides context (open paper, library, selections) and the model/effort/
 // prompt preferences it also needs elsewhere.
-import React, { useCallback, useEffect, useMemo, useRef, useState, useSyncExternalStore } from "react";
+import React, { useCallback, useContext, useEffect, useMemo, useRef, useState, useSyncExternalStore } from "react";
 import { API, apiJson, copyText, isPdfFile, readNdjson } from "../shared/lib/utils";
 import { stepList } from "../shared/ui/listKeys.js";
-import { DockWindow, ChatMarkdown, AutoGrowTextarea, useCopied, useTextScale } from "../shared/ui/Widgets";
+import { DockWindow, ChatCiteContext, ChatMarkdown, AutoGrowTextarea, GammaNavContext, useCopied, useTextScale } from "../shared/ui/Widgets";
 import PaperMentionInput from "./PaperMentionInput";
 import { MAX_CHAT_REFERENCES } from "./paperMentions";
 import { READ_TOOLS, WRITE_TOOLS, toolsForKind } from "./chatSettings";
 import { addUsage, cachedPercent, contextUsed, conversationUsage, fmtTokens, liveUsage, usageDetail } from "./tokenUsage";
 import { createTitleScorer } from "../library/librarySearch";
 import { pageAttachment } from "../library/libraryUtils";
-import { MenuSelect } from "../shared/ui/Menus";
+import { ActionMenu, MenuSelect } from "../shared/ui/Menus";
+import { chatFailure, failureCopy, failureFields, fixLabel } from "./chatErrors";
+import { changePlace, isChange, noteChangeText, runningLabel, splitActions, stepsSummary } from "./agentSteps";
 import { guideEvents } from "../guide/events.js";
 import { gammaLinksIn } from "../shared/model/gammaLinks.js";
 import { CharSlider, approxPages } from "../settings/SettingsKit";
 import { AgentToolPicker, CHAT_KIND_ROWS } from "../settings/SettingsDialog";
-import { AlertCircleIcon, ArrowDownIcon, ArrowUpIcon, BookIcon, CheckIcon, ChevronDownIcon, ChevronUpIcon, CloudDownloadIcon, CopyIcon, EyeIcon, FileIcon, FolderIcon, GlobeIcon, HighlightIcon, HistoryIcon, InfoIcon, ListIcon, MicIcon, OutlineIcon, PaperclipIcon, PencilIcon, PlusIcon, QuoteIcon, SearchIcon, SettingsIcon, SlidersIcon, StopIcon, TextCursorIcon, TrashIcon, XIcon } from "../shared/ui/Icons";
+import { aiServiceTiles } from "../settings/SettingsAi";
+import { renderKatex } from "../editor/LatexEditor";
+import { chipSegments } from "./chipText";
+import { AlertCircleIcon, ArrowDownIcon, ArrowUpIcon, BookIcon, CheckIcon, ChevronDownIcon, ChevronUpIcon, CloudDownloadIcon, CopyIcon, EyeIcon, FileIcon, FolderIcon, GlobeIcon, HighlightIcon, HistoryIcon, InfoIcon, ListIcon, MicIcon, OutlineIcon, PaperclipIcon, PencilIcon, PlusIcon, QuoteIcon, SearchIcon, SettingsIcon, SlidersIcon, SparklesIcon, StopIcon, TextCursorIcon, TrashIcon, XIcon } from "../shared/ui/Icons";
 import { T, getLocale, t } from "../shared/i18n/i18n.js";
 
 const JSON_HEADERS = { "Content-Type": "application/json" };
@@ -102,12 +107,98 @@ function ContextCoverage({ items }) {
     <div className="chatMsgPdfs">
       {notes.map((n, i) => (
         <span key={i} className="chatPdfChip" title={n.long}>
-          {n.refused ? <AlertCircleIcon size={11} /> : <InfoIcon size={11} />}
+          {n.refused ? <AlertCircleIcon size={14} /> : <InfoIcon size={14} />}
           {n.short}
         </span>
       ))}
     </div>
   );
+}
+
+// A failed request as a card (message.errorKind, chat/chatErrors.js): a
+// headline saying what went wrong, one plain sentence, the buttons that fix
+// it, and the provider's own words folded under "Details". A reply that
+// broke off partway keeps its text and gets the compact card (no sentence)
+// under it.
+function ChatErrorCard({ message, compact, actions }) {
+  const copy = failureCopy(message.errorKind, { provider: message.errorProvider, auth: message.errorAuth });
+  const fromProvider = !["network", "not_configured"].includes(message.errorKind);
+  return (
+    <div className={`chatErrorCard${compact ? " compact" : ""}`}>
+      <div className="chatErrorHead"><AlertCircleIcon size={16} /><span>{copy.headline}</span></div>
+      {!compact ? <div className="chatErrorText">{copy.text}</div> : null}
+      {actions.length ? <div className="chatErrorActions">{actions}</div> : null}
+      {message.errorDetail ? (
+        <details className="chatErrorDetails">
+          <summary>{fromProvider ? t("Details from the provider") : t("Details")}</summary>
+          <pre>{message.errorDetail}</pre>
+        </details>
+      ) : null}
+    </div>
+  );
+}
+
+// The agent's work in a reply (chat/agentSteps.js): one pill summing up its
+// steps, which expands to every call's chip (arguments and output), and
+// under it the changes — renamed or filed pages, edited or added notes —
+// each old → new with a link to what changed. While the reply streams, the
+// pill names the step running now.
+function AgentSteps({ actions, running, open, onToggle, titleOf, children }) {
+  const { failed } = splitActions(actions);
+  const live = !!running;
+  return (
+    <div className="chatStepsWrap">
+      <button type="button" className={`chatSteps${live ? " live" : ""}`} onClick={onToggle} aria-expanded={open}
+        title={open ? t("Hide the steps") : t("Show every step with its arguments and output")}>
+        {live ? <span className="transferSpin inline" aria-hidden="true" /> : <CheckIcon size={14} />}
+        <span className="chatStepsText">{live ? runningLabel(running, titleOf) : stepsSummary(actions)}</span>
+        {failed && !live ? <span className="chatStepsFailed">{t("{n} failed", { n: failed })}</span> : null}
+        {actions.length ? (open ? <ChevronUpIcon size={14} /> : <ChevronDownIcon size={14} />) : null}
+      </button>
+      {open ? children : null}
+    </div>
+  );
+}
+
+function AgentChanges({ actions, onOpenPage }) {
+  const nav = useContext(GammaNavContext);
+  const { library, notes } = splitActions(actions);
+  if (!library.length && !notes.length) return null;
+  const pageLink = (id, label) => id
+    ? <button type="button" className="chatChangeLink" onClick={() => onOpenPage?.(id)}>{label}</button>
+    : <span>{label}</span>;
+  const blockLink = (a, label) => a.block_id && nav?.openBlock
+    ? <button type="button" className="chatChangeLink" onClick={() => nav.openBlock(a.block_id, a.page_id)}>{label}</button>
+    : pageLink(a.page_id, label);
+  const libraryRow = (a) => {
+    if (a.kind === "rename" && a.to) {
+      return <><s className="chatChangeOld">{a.from}</s> → {pageLink(a.page_id, a.to)}</>;
+    }
+    if (a.kind === "move" && a.title) {
+      return <span title={a.from ? t("Was in: {folders}", { folders: a.from }) : undefined}>
+        {t("{page} moved to {folder}", { page: pageLink(a.page_id, a.title), folder: <strong>{a.to || t("the library root")}</strong> })}
+      </span>;
+    }
+    return pageLink(a.page_id, a.summary); // saved before the structured fields
+  };
+  const noteRow = (a) => (a.title ? noteChangeText(a, blockLink(a, `“${a.title}”`)) : blockLink(a, a.summary));
+  const group = (rows, place) => rows.length ? (
+    <div className="chatChanges" key={place}>
+      <div className="chatChangesHead">
+        {place === "library" ? t("Changed in your library · {n}", { n: rows.length }) : t("Changed in your notes · {n}", { n: rows.length })}
+      </div>
+      {rows.map((a, j) => {
+        const Icon = ACTION_ICONS[a.kind] || PencilIcon;
+        return (
+          <div key={j} className="chatChange">
+            <Icon size={14} />
+            <span className="chatChangeText">{changePlace(a) === "library" ? libraryRow(a) : noteRow(a)}</span>
+          </div>
+        );
+      })}
+    </div>
+  ) : null;
+  return <>{group(library, "library")}{group(notes, "notes")}</>;
 }
 
 // The token line under a reply, Claude Code style: prompt in, reply out,
@@ -165,7 +256,6 @@ function ContextRing({ fraction }) {
   );
 }
 
-const MUTATING_KINDS = new Set(["rename", "move", "edit", "create"]);
 // The note-block mutators: their actions carry the page id(s) they touched,
 // so the open page's block tree can reload and show the change.
 const BLOCK_TOOLS = new Set(["edit_block", "create_block", "move_block"]);
@@ -176,22 +266,81 @@ const toolCallText = (a) => {
 };
 
 // One chip in the composer's strip: a PDF passage, the cursor block, an
-// attached block or selected note text. `icon` names what it is (`label` is
-// the icon's accessible name and tooltip heading; `n` numbers one of several
-// PDF passages); `kind` is the modifier class that colours it (isCursor /
-// isBlock / isNote; none for a PDF passage).
+// attached block or selected note text. Two lines: what it is, in words
+// (`label`, plus a muted `note` — the PDF page, or how to leave an automatic
+// one out), over a plain-text preview of the text (chat/chipText.js: the
+// markdown dropped, inline math typeset). `auto` marks context nobody
+// attached — it rides along because of where the cursor is — with a dashed
+// border; `kind` is the modifier class (isCursor / isBlock / isNote; none
+// for a PDF passage).
 const SEL_CHIP_ICONS = { cursor: TextCursorIcon, selection: HighlightIcon, passage: QuoteIcon, block: OutlineIcon };
 
-function SelChip({ kind, icon, label, n, labelTitle, text, title, onRemove, removeTitle }) {
+function ChipPreview({ text }) {
+  const segments = useMemo(() => chipSegments((text || "").slice(0, 600)), [text]);
+  return (
+    <span className="chatSelChipText">
+      {segments.map((seg, i) => {
+        if (seg.text) return <React.Fragment key={i}>{seg.text}</React.Fragment>;
+        const html = renderKatex(seg.math, false);
+        return html ? <span key={i} className="chatSelChipMath" dangerouslySetInnerHTML={{ __html: html }} />
+          : <code key={i}>{seg.math}</code>;
+      })}
+    </span>
+  );
+}
+
+function SelChip({ kind, icon, label, note, auto = false, text, title, onRemove, removeTitle }) {
   const Glyph = SEL_CHIP_ICONS[icon];
   return (
-    <div className={`chatSelChip${kind ? ` ${kind}` : ""}`} title={title ?? text}>
-      <span className="chatSelChipLabel" role="img" aria-label={label}
-        title={labelTitle ? t("{label} — {labelTitle}", { label: label, labelTitle: labelTitle }) : label}>
-        <Glyph size={13} />{n ? <span className="chatSelChipNum">{n}</span> : null}
-      </span>
-      <span className="chatSelChipText">{text.slice(0, 140)}{text.length > 140 ? "…" : ""}</span>
-      <button type="button" className="uiClose uiCloseSm chatSelChipClose" onClick={onRemove} title={removeTitle}>×</button>
+    <div className={`chatSelChip${kind ? ` ${kind}` : ""}${auto ? " auto" : ""}`} title={title ?? text}>
+      <div className="chatSelChipHead">
+        <span className="chatSelChipLabel"><Glyph size={14} aria-hidden="true" />{label}</span>
+        {note ? <span className="chatSelChipNote">· {note}</span> : null}
+        <button type="button" className="uiClose uiCloseSm chatSelChipClose" onClick={onRemove} title={removeTitle} aria-label={removeTitle}><XIcon size={14} /></button>
+      </div>
+      <ChipPreview text={text} />
+    </div>
+  );
+}
+
+// No AI connected: what the chat is for, then one tile per way to connect
+// (settings/SettingsAi.jsx aiServiceTiles over GET /api/ai/settings). A tile
+// opens Settings → Connections with the connect dialog set to that service.
+// An account that can't store keys (a guest) can only ask for a shared one;
+// an admin may also share one with the whole server.
+function ChatSetupCard({ info, isAdmin, onConnect, openSettings }) {
+  const tiles = info && !info.failed ? aiServiceTiles(info, { long: true }) : [];
+  return (
+    <div className="chatSetup" data-guide="chat.setup">
+      <span className="chatSetupIcon" aria-hidden="true"><SparklesIcon size={16} /></span>
+      <div className="chatSetupTitle">{t("Chat with your papers")}</div>
+      <p className="chatSetupText">
+        {t("Ask about the paper you are reading and get answers that cite the page they come from. The assistant can also search, summarize and organize your library.")}
+      </p>
+      {info?.failed ? (
+        <button type="button" className="uiBtn primary chatSetupRetry" onClick={() => onConnect()}>{t("Set up AI…")}</button>
+      ) : info && !info.can_edit ? (
+        <p className="chatSetupText">{t("No AI service is shared on this server — ask your administrator.")}</p>
+      ) : info ? (
+        <>
+          <div className="chatSetupTiles" role="group" aria-label={t("Connect an AI service")}>
+            {tiles.map((tile) => (
+              <button key={tile.value} type="button" className="chatSetupTile" onClick={() => onConnect(tile.value)}>
+                <span className="chatSetupTileName">{tile.label}</span>
+                <span className="chatSetupTileHint">{tile.hint}</span>
+              </button>
+            ))}
+          </div>
+          <p className="chatSetupNote">{t("Keys are stored on this server and never shown again. Pick one to connect — it takes about a minute.")}</p>
+        </>
+      ) : null}
+      {isAdmin && openSettings ? (
+        <p className="chatSetupNote">
+          {t("Or share one with everyone on this server: {link}", {
+            link: <button type="button" className="chatEmptyLink" onClick={() => openSettings("server")}>{t("Settings › Server › Shared AI provider")}</button>,
+          })}
+        </p>
+      ) : null}
     </div>
   );
 }
@@ -211,7 +360,12 @@ export default function ChatDock({
   chatModel, setChatModel, chatEffort, setChatEffort, chatSystem,
   dictationModel, dictationLang,
   chatContextChars, setChatContextChars, multiContextChars,
-  aiInfo, aiProvider, openAiKeysEditor,
+  // openAiKeysEditor({service, entry}?) opens Settings → Connections: with
+  // `service` the connect dialog set to it (the setup card), with `entry`
+  // that connection's form (an error card's "Update key", the login check's
+  // Fix…). focusSignal: bumped by App when a connection made from the setup
+  // card is ready — the message box takes the focus once the chat is enabled.
+  aiInfo, aiProvider, openAiKeysEditor, openSettings, isAdmin = false, focusSignal = 0,
   aiHealth, dismissAiHealth,
   openPopover, setOpenPopover,
   setStatus, askConfirm,
@@ -241,6 +395,28 @@ export default function ChatDock({
   // A reply is streaming into THIS conversation. Other buckets stream on
   // their own — asking one paper never waits for another's answer.
   const busyHere = session.isActive(chatKey);
+  // No AI connected (known once /api/ai/models answered): the setup card
+  // takes the empty state, the composer is disabled and the header's tools
+  // go — a send could only fail. The card's tiles come from the settings
+  // payload, fetched only then.
+  const aiOff = !readOnly && !!aiInfo && !aiInfo.enabled;
+  const [setupInfo, setSetupInfo] = useState(null);
+  useEffect(() => {
+    if (!aiOff) return undefined;
+    let live = true;
+    apiJson(`${API}/ai/settings`)
+      .then((info) => { if (live) setSetupInfo(info); })
+      .catch(() => { if (live) setSetupInfo({ failed: true }); });
+    return () => { live = false; };
+  }, [aiOff]);
+  const composerRef = useRef(null);
+  const focusPendingRef = useRef(false);
+  useEffect(() => { if (focusSignal) focusPendingRef.current = true; }, [focusSignal]);
+  useEffect(() => {
+    if (!focusPendingRef.current || aiOff || !aiInfo) return;
+    focusPendingRef.current = false;
+    composerRef.current?.querySelector("textarea")?.focus();
+  }, [focusSignal, aiOff, aiInfo]);
   const folderChat = organizeFolder != null;
   // Which of the three chat kinds this is — each has its own tool permission
   // map in Settings → AI → Chat (app/prefDefs.js CHAT_KINDS): the folder chat, a
@@ -316,11 +492,17 @@ export default function ChatDock({
       ? aiInfo.models.filter((m) => m.provider === aiProvider) : aiInfo.models)
     : [];
   const headerModel = headerModels.find((m) => m.id === chatModel) || headerModels[0] || null;
+  // A model's name in the pickers, with its connection's when there are several.
+  const multiProvider = new Set(headerModels.map((m) => m.provider)).size > 1;
+  const modelLabel = (m) => (multiProvider ? `${m.model} · ${m.provider_name || m.provider}` : m.model);
   // The context ring: the latest reply's size against the model's window,
   // which is asked only once there is something to show.
   const ctxUsed = contextUsed(chatMessages);
   const ctxWindow = useContextWindow(ctxUsed ? headerModel?.id : "");
   const nativePdf = activeModel ? activeModel.native_pdf !== false : true;
+  // The mic shows only when a connection can transcribe (an OpenAI-protocol
+  // key — /api/ai/models `transcribe`); without one dictation can only fail.
+  const canDictate = !aiOff && !!aiInfo?.transcribe;
   const nativePdfNote = nativePdf ? "" :
     t("{provider} does not accept PDF files — the PDF is sent as extracted text instead (first {chatContextChars} characters; Settings / AI / Advanced AI settings / Context size).", { provider: activeModel?.provider_name || t("This provider"), chatContextChars: (chatContextChars || 0).toLocaleString() });
   const attachPdfManualRef = useRef(false); // the user toggled the PDF button themselves
@@ -331,6 +513,9 @@ export default function ChatDock({
   }, [nativePdf]);
   // Extra chat context: selected PDF pages + whether to include notes/highlights.
   const [chatDocs, setChatDocs] = useState([]);
+  // The Full PDF switch shows only while a PDF is in context: the open
+  // page's, or an attached page's.
+  const pdfInContext = !!pageAttach || chatDocs.some((id) => pageAttachment(homeBlocks.find((b) => b.id === id)));
   const [chatIncludeNotes, setChatIncludeNotes] = useState(false);
   const [chatFiles, setChatFiles] = useState([]); // uploaded PDFs ({name, data}) pending send
   const [docPicker, setDocPicker] = useState(false); // "Add pages" modal
@@ -427,6 +612,19 @@ export default function ChatDock({
     return () => { cancelled = true; };
   }, [historyOpen, history, chatKey, readOnly]);
   const activeTitle = chatTitle || deriveTitle(chatMessages) || t("Untitled");
+  // Names the paper a reply's citation pill points at: the page title for
+  // its preview, and a short form (first author's surname, else the title
+  // cut short) for replies that cite several papers.
+  const citeTitles = useMemo(() => ({
+    titleOf(id) {
+      const page = homeBlocks.find((b) => b.id === id);
+      const title = page?.content || (id === focusedBlockId ? pageTitle : "") || "";
+      if (!title) return null;
+      const first = page?.properties?.meta?.authors?.[0];
+      const surname = first ? String(first).trim().split(/\s+/).pop() : "";
+      return { title, short: surname || (title.length > 24 ? `${title.slice(0, 24).replace(/\s+\S*$/, "")}…` : title) };
+    },
+  }), [homeBlocks, focusedBlockId, pageTitle]);
   // Reserve the reply's bubble before the first stream event. This placeholder
   // is display-only; tool activity and answer text replace it in the same row.
   const visibleMessages = busyHere && (!chatMessages.length || chatMessages.at(-1).role === "user")
@@ -613,8 +811,8 @@ export default function ChatDock({
   // Core chat send. baseMessages overrides the history (used when re-sending
   // an edited message: everything after the edited message is discarded,
   // ChatGPT-style).
-  async function sendChat(rawText, { baseMessages, referenceMessage } = {}) {
-    if (readOnly) return;
+  async function sendChat(rawText, { baseMessages, referenceMessage, model } = {}) {
+    if (readOnly || aiOff) return;
     const text = (rawText || "").trim();
     if (!text || busyHere) return;
     guideEvents.emit("chat.sent");
@@ -684,6 +882,7 @@ export default function ChatDock({
     let usage = null; // the provider's token report, summed over the reply's rounds
     let lastRound = null; // the latest round's report alone — the context ring's figure
     let liveChars = 0; // characters received since the last report — the running estimate
+    let running = null; // the tool call running now ({"step"} line), until its action lands
     const liveArgs = new Map(); // tool call id -> argument chars previewed so far (cumulative)
     const aiMsg = (extra = {}) => ({
       role: "ai", text: acc,
@@ -703,7 +902,7 @@ export default function ChatDock({
           prompt: text,
           page_id: focusedBlockId || "",
           history: prevMessages.filter((m) => !m.error), // failed replies aren't answers
-          model: chatModel || "",
+          model: model || chatModel || "",
           selections,
           focus_block_id: cursorChip ? cursorChip.id : "",
           context_blocks: contextBlocks,
@@ -722,15 +921,20 @@ export default function ChatDock({
         }),
       });
       if (!res.ok) {
-        let detail = `${res.status} ${res.statusText}`;
-        try { detail = (await res.json()).detail || detail; } catch {}
-        throw new Error(detail);
+        // The body names the failure's kind beside its detail (the server's
+        // failure_kind) — the error card's headline and fix come from it.
+        let body = {};
+        try { body = await res.json(); } catch {}
+        throw chatFailure(body.detail || `${res.status} ${res.statusText}`, body);
       }
       // NDJSON stream: {"delta": "…"} per chunk, {"error": "…"} on failure.
       await readNdjson(res, (events) => {
         for (const ev of events) {
-          if (ev.error) throw new Error(ev.error);
-          if (ev.action) {
+          if (ev.error) throw chatFailure(ev.error, ev);
+          if (ev.step) {
+            running = ev.step;
+          } else if (ev.action) {
+            running = null;
             actions.push(ev.action);
             // Live: the notes panel lights up the block the agent just
             // read/edited (and reloads the tree for an applied edit).
@@ -754,7 +958,9 @@ export default function ChatDock({
             liveChars += (ev.delta || "").length;
           }
         }
-        if (acc || actions.length || usage) showReply(aiMsg({ partial: true, live: liveChars }));
+        if (acc || actions.length || usage || running) {
+          showReply(aiMsg({ partial: true, live: liveChars, ...(running ? { step: running } : {}) }));
+        }
       });
       showReply(aiMsg({ text: acc || (actions.length ? "" : t("(no response)")) }), true);
       if (gammaLinksIn(acc).some((link) => link.kind === "citation")) guideEvents.emit("chat.cited");
@@ -765,22 +971,20 @@ export default function ChatDock({
       // that the provider failed — the server says that in-band.
       const reason = err?.name === "TypeError"
         ? t("lost the connection to the server ({message})", { message: err.message }) : err.message;
-      // A reply that never started is an error bubble (`error: true`): shown
-      // and saved so the failure is visible after a reload, but rendered
-      // apart from answers and never replayed to the model as one. A reply
-      // cut off mid-stream keeps its text and just notes the failure.
-      showReply(aiMsg({
-        text: stopped
-          ? (acc ? `${acc}\n\n*(stopped)*` : "*(stopped)*")
-          : (acc ? `${acc}\n\n**Error:** ${reason}` : `Error: ${reason}`),
-        ...(!stopped && !acc ? { error: true } : {}),
-      }), true);
+      // A reply that never started is an error (`error: true`): shown as a
+      // card and saved so the failure is visible after a reload, but never
+      // replayed to the model as an answer. A reply cut off mid-stream keeps
+      // its text and gets the compact card under it. errorKind & co. carry
+      // what the card says (chat/chatErrors.js).
+      showReply(aiMsg(stopped
+        ? { text: acc ? `${acc}\n\n*(stopped)*` : "*(stopped)*" }
+        : { text: acc || `Error: ${reason}`, ...(acc ? {} : { error: true }), ...failureFields(err) }), true);
     } finally {
       session.finish(sendKey);
       onAgentEvent?.({ type: "done", key: sendKey });
       // Agent tools changed the library — reload the home feed. Read-only
       // tool calls (list/read/search) render as chips but change nothing.
-      if (actions.some((a) => MUTATING_KINDS.has(a.kind))) onLibraryChange?.();
+      if (actions.some(isChange)) onLibraryChange?.();
       // Note-block edits carry the page(s) they touched, so the open page's
       // block tree can reload and show the change.
       const notePages = [...new Set(actions
@@ -954,33 +1158,77 @@ export default function ChatDock({
     }
   }, []);
 
+  // Edit-and-resend (ChatGPT-style): user message `idx` goes again as
+  // `text`, and it and everything after it are replaced; `model` overrides
+  // the chat's pick.
+  function resendFrom(idx, text, model) {
+    sendChat(text, { baseMessages: chatMessages.slice(0, idx), referenceMessage: chatMessages[idx], model });
+  }
+
+  // Re-send the user message a failed reply answered; `model` retries with
+  // another model.
+  function retryReply(idx, model) {
+    const asked = chatMessages[idx - 1];
+    if (asked?.role !== "user" || busyHere) return;
+    resendFrom(idx - 1, asked.text, model);
+  }
+
+  // An error card's buttons: the fix for its kind (open the failing
+  // connection's form, connect a service, start over), and on the latest
+  // reply Retry and a model switch that retries with the model picked.
+  function errorActions(m, idx) {
+    const copy = failureCopy(m.errorKind, { provider: m.errorProvider, auth: m.errorAuth });
+    const latest = idx === chatMessages.length - 1 && !busyHere && !readOnly;
+    const out = [];
+    const openEntry = () => openAiKeysEditor({ entry: m.errorProviderId });
+    const fix = {
+      connect: openAiKeysEditor, own_key: openAiKeysEditor, key: openEntry, signin: openEntry,
+      connection: openEntry, new_chat: latest ? newChat : null,
+    }[copy.fix];
+    if (fix && !readOnly) {
+      out.push(<button key="fix" type="button" className="uiBtn sm primary" onClick={() => fix()}>{fixLabel(copy.fix)}</button>);
+    }
+    if (latest) {
+      out.push(<button key="retry" type="button" className="uiBtn sm" onClick={() => retryReply(idx)}>{t("Retry")}</button>);
+      const others = copy.switchModel ? headerModels.filter((x) => x.id !== chatModel) : [];
+      if (others.length) {
+        out.push(<ActionMenu key="switch" label={t("Switch model")} items={others.map((x) => ({
+          label: modelLabel(x),
+          title: t("Switch to this model and retry"),
+          onClick: () => { setChatModel(x.id); retryReply(idx, x.id); },
+        }))} />);
+      }
+    }
+    return out;
+  }
+
   async function copyChatMessage(idx, text) {
     if (await copyText(text || "")) flashCopiedMsg(idx);
   }
 
   // Header: one icon strip (the PDF zoom column's buttons, laid flat) —
   // the context ring (opens the settings popover, whose Tokens section
-  // spells it out), ⚙ chat settings (model, reasoning effort, context size — the same prefs
-  // Settings / AI edits, in a popover), Tools, Find, New chat.
+  // spells it out), ⚙ chat settings (context size, tools and tokens — the
+  // same prefs Settings / AI edits, in a popover; the model and effort are
+  // the composer's model chip), Tools, Find, New chat.
   const settingsOpen = openPopover === "chatsettings";
   const findBtn = (
     <button type="button" className={`ctlBtn ${chatFindOpen ? "modeActive" : ""}`}
       onClick={() => { setChatFindOpen((v) => !v); setChatFind(""); }}
       title={t("Find in this conversation")} aria-label={t("Find in this conversation")}>
-      <SearchIcon size={15} />
+      <SearchIcon size={16} />
     </button>
   );
-  const headerContent = (
+  // No AI connected: the setup card, alone in the empty transcript or after
+  // an earlier conversation.
+  const setupCard = aiOff ? (
+    <ChatSetupCard info={setupInfo} isAdmin={isAdmin} openSettings={openSettings}
+      onConnect={(service) => openAiKeysEditor({ service })} />
+  ) : null;
+  const headerContent = aiOff ? null : (
     <>
-      {aiInfo && !aiInfo.enabled && openAiKeysEditor ? (
-        <button className="uiBtn sm" onClick={openAiKeysEditor}
-          title={t("AI needs an API key — add a provider to enable chat")}>
-          {t("Set up AI…")}
-        </button>
-      ) : null}
       <div className="ctlBtnRow chatPanelHeaderBtns">
         {headerModels.length > 0 ? (() => {
-          const multiProvider = new Set(headerModels.map((m) => m.provider)).size > 1;
           const totalUsage = conversationUsage(chatMessages);
           const usageTitle = totalUsage ? t("; this conversation: {input} tokens in, {output} out", { input: fmtTokens(totalUsage.input), output: fmtTokens(totalUsage.output) }) : "";
           const ctxText = !ctxUsed ? ""
@@ -998,35 +1246,13 @@ export default function ChatDock({
               ) : null}
               <button type="button" data-guide="chat.settings" className={`ctlBtn ${settingsOpen ? "modeActive" : ""}`}
                 onClick={toggleSettings}
-                title={t("Chat settings — {model}{chatEffort}, context {chatContextChars} chars{usageTitle}", { model: headerModel.model || "model", chatEffort: chatEffort ? `, effort: ${chatEffort}` : "", chatContextChars: chatContextChars.toLocaleString(), usageTitle })}
+                title={t("Chat settings — context {chatContextChars} chars, tools, tokens{usageTitle}", { chatContextChars: chatContextChars.toLocaleString(), usageTitle })}
                 aria-label={t("Chat settings")} aria-expanded={settingsOpen}>
-                <SettingsIcon size={15} />
+                <SettingsIcon size={16} />
               </button>
               {settingsOpen ? (
                 <div className="popover chatSettingsPop">
-                  <div className="popoverHint">{t("Global settings for all chats in this browser. Changes also appear in Settings.")}</div>
-                  <div className="popoverSection">{t("Model")}</div>
-                  <MenuSelect
-                    block
-                    label={t("Switch model")}
-                    value={headerModel.id}
-                    onChange={setChatModel}
-                    options={headerModels.map((m) => [
-                      m.id,
-                      multiProvider ? `${m.model} · ${m.provider_name || m.provider}` : m.model,
-                    ])}
-                  />
-                  <div className="popoverSection">{t("Reasoning effort")}</div>
-                  <MenuSelect
-                    block
-                    label={t("Reasoning effort — leave on 'default' unless the model supports it")}
-                    value={chatEffort}
-                    onChange={setChatEffort}
-                    options={[
-                      ["", "default"],
-                      ...(aiInfo.efforts || ["low", "medium", "high"]).map((ef) => [ef, ef]),
-                    ]}
-                  />
+                  <div className="popoverHint">{t("Global settings for all chats in this browser. Changes also appear in Settings. The model and reasoning effort are on the message box.")}</div>
                   <div className="popoverSection">{t("Context per page · {pages}", { pages: approxPages(chatContextChars) })}</div>
                   <CharSlider value={chatContextChars} onChange={setChatContextChars} />
                   <div className="popoverHint">
@@ -1035,7 +1261,7 @@ export default function ChatDock({
                   <div className="popoverSection">{t("Tools")}</div>
                   <label className="chatToolPermRow" title={t("Allow assistant tools in all chats")}>
                     <input type="checkbox" checked={toolsEnabled} onChange={toggleTools} />
-                    <SlidersIcon size={13} />
+                    <SlidersIcon size={14} />
                     <span>{t("Allow tools in all chats")}</span>
                   </label>
                   <div className="chatToolPicker">
@@ -1068,7 +1294,7 @@ export default function ChatDock({
           onClick={() => { setOpenPopover(null); toggleTools(); }}
           title={t("Tools {off} for all chats - click to change the global setting", { off: toolsEnabled ? t("on") : t("off") })}
         >
-          <SlidersIcon size={15} />
+          <SlidersIcon size={16} />
         </button>
         {findBtn}
         <span data-popover="chathistory" className="popoverAnchor">
@@ -1076,7 +1302,7 @@ export default function ChatDock({
             onClick={() => setOpenPopover((p) => (p === "chathistory" ? null : "chathistory"))}
             title={t("Chat history — earlier conversations of {scope}", { scope: folderChat ? t("this folder") : t("this page") })}
             aria-label={t("Chat history")} aria-expanded={historyOpen}>
-            <HistoryIcon size={15} />
+            <HistoryIcon size={16} />
           </button>
           {historyOpen ? (
             <div className="popover chatHistoryPop">
@@ -1115,12 +1341,12 @@ export default function ChatDock({
                     <span className="ctlBtnRow chatHistActs" onClick={(e) => e.stopPropagation()}>
                       <button type="button" className="ctlBtn" title={t("Rename")} aria-label={t("Rename conversation")}
                         onClick={() => { renameCancelRef.current = false; setRenaming({ id: s.id, text: s.active ? chatTitle : s.title || "" }); }}>
-                        <PencilIcon size={13} />
+                        <PencilIcon size={16} />
                       </button>
                       {!s.active ? (
                         <button type="button" className="ctlBtn" title={t("Delete")} aria-label={t("Delete conversation")}
                           onClick={() => deleteHistory(s)}>
-                          <TrashIcon size={13} />
+                          <TrashIcon size={16} />
                         </button>
                       ) : null}
                     </span>
@@ -1151,18 +1377,18 @@ export default function ChatDock({
     <div className="chatPanel chatWindow">
       {!readOnly && aiHealth && !aiHealth.ok ? (
         // The login connection check found the active provider broken — say so
-        // here, where the failure would otherwise surface mid-conversation.
+        // here, where the failure would otherwise surface mid-conversation,
+        // in the error card's words. Only a probe with no model picked comes
+        // without a kind.
         <div className="chatHealthStrip" title={aiHealth.error || ""}>
           <span className="chatHealthText">
-            {aiHealth.provider_name ? `${aiHealth.provider_name}: ` : ""}
-            {aiHealth.auth
-              ? t("authentication is broken — sign in again or update the key.")
-              : t("connection failed — {unreachable}", { unreachable: aiHealth.error || t("provider unreachable") })}
+            {aiHealth.kind ? failureCopy(aiHealth.kind, { provider: aiHealth.provider_name, auth: aiHealth.provider_auth }).headline : <>
+              {aiHealth.provider_name ? `${aiHealth.provider_name}: ` : ""}
+              {t("connection failed — {unreachable}", { unreachable: aiHealth.error || t("provider unreachable") })}
+            </>}
           </span>
-          {openAiKeysEditor ? (
-            <button className="uiBtn sm" onClick={openAiKeysEditor}>{t("Fix…")}</button>
-          ) : null}
-          <button className="uiClose" onClick={dismissAiHealth} title={t("Dismiss")} aria-label={t("Dismiss")}>×</button>
+          <button className="uiBtn sm" onClick={() => openAiKeysEditor({ entry: aiHealth.provider_id })}>{t("Fix…")}</button>
+          <button className="uiClose" onClick={dismissAiHealth} title={t("Dismiss")} aria-label={t("Dismiss")}><XIcon size={14} /></button>
         </div>
       ) : null}
       {chatFindOpen ? (
@@ -1185,9 +1411,10 @@ export default function ChatDock({
           <button className="searchToggle searchNavBtn" onClick={() => gotoChatFind(chatFindIdx + 1)} disabled={!chatFindMatches.length} title={t("Next match")}>
             <ChevronDownIcon size={14} />
           </button>
-          <button className="uiClose" onClick={() => { setChatFindOpen(false); setChatFind(""); }} title={t("Close find")} aria-label={t("Close find")}>×</button>
+          <button className="uiClose" onClick={() => { setChatFindOpen(false); setChatFind(""); }} title={t("Close find")} aria-label={t("Close find")}><XIcon size={14} /></button>
         </div>
       ) : null}
+      <ChatCiteContext.Provider value={citeTitles}>
       <div
         className="chatMessages"
         ref={chatScrollRefCb}
@@ -1210,13 +1437,10 @@ export default function ChatDock({
         }}
       >
         {chatTextScale.badge}
-        {visibleMessages.length === 0 ? (
+        {setupCard && !visibleMessages.length && !loadError ? setupCard : visibleMessages.length === 0 ? (
           <div className="chatEmpty">
-            {loadError || (readOnly ? t("No saved conversation for this page.") : aiInfo && !aiInfo.enabled ? (
-              openAiKeysEditor ? (
-                <>{t("Connect an AI provider to start — {setup}.", { setup: <button className="chatEmptyLink" onClick={openAiKeysEditor}>{t("Set up AI")}</button> })}</>
-              ) : t("AI is not configured.")
-            ) : focusedBlockId ? t("Ask AI about this page…") : agentIntro || t("Ask AI anything, or generate a report from your pages…"))}
+            {loadError || (readOnly ? t("No saved conversation for this page.")
+              : focusedBlockId ? t("Ask AI about this page…") : agentIntro || t("Ask AI anything, or generate a report from your pages…"))}
           </div>
         ) : (
           visibleMessages.map((m, i) => {
@@ -1224,6 +1448,7 @@ export default function ChatDock({
             const isResponding = busyHere && !isUser && m.partial && i === visibleMessages.length - 1;
             const isFindHit = chatFindOpen && chatFind.trim() && chatFindMatches[chatFindIdx] === i;
             if (editingMsg?.idx === i) {
+              const resend = () => { const text = editingMsg.text; setEditingMsg(null); resendFrom(i, text); };
               return (
                 <div key={i} className="chatBubbleRow user" data-msg-idx={i}>
                   <div className="chatMsgCol">
@@ -1236,10 +1461,7 @@ export default function ChatDock({
                         onKeyDown={(e) => {
                           if (e.key === "Enter" && !e.shiftKey) {
                             e.preventDefault();
-                            const base = chatMessages.slice(0, i);
-                            const text = editingMsg.text;
-                            setEditingMsg(null);
-                            sendChat(text, { baseMessages: base, referenceMessage: m });
+                            resend();
                           } else if (e.key === "Escape") { e.preventDefault(); setEditingMsg(null); }
                         }}
                       />
@@ -1247,12 +1469,7 @@ export default function ChatDock({
                         <button type="button" className="uiBtn sm" onClick={() => setEditingMsg(null)}>{t("Cancel")}</button>
                         <button type="button" className="uiBtn sm chatEditSend"
                           disabled={!editingMsg.text.trim() || busyHere}
-                          onClick={() => {
-                            const base = chatMessages.slice(0, i);
-                            const text = editingMsg.text;
-                            setEditingMsg(null);
-                            sendChat(text, { baseMessages: base, referenceMessage: m });
-                          }}
+                          onClick={resend}
                           title={t("Re-send — replaces this message and everything after it")}>{t("Send")}</button>
                       </div>
                     </div>
@@ -1263,7 +1480,7 @@ export default function ChatDock({
             return (
               <div key={i} className={`chatBubbleRow ${isUser ? "user" : "ai"}${isFindHit ? " findHit" : ""}`} data-msg-idx={i}>
                 <div className="chatMsgCol">
-                  <div className={`chatBubble ${isUser ? "user" : "ai"}${m.error ? " error" : ""}`}>
+                  <div className={`chatBubble ${isUser ? "user" : "ai"}${m.error && !m.errorKind ? " error" : ""}`}>
                     {m.images?.length ? (
                       <div className="chatMsgImages">
                         {m.images.map((src, j) => <img key={j} src={src} className="chatMsgImage" alt={t("pasted figure")} />)}
@@ -1273,7 +1490,7 @@ export default function ChatDock({
                       <div className="chatMsgPdfs">
                         {m.pdfs.map((n, j) => (
                           <span key={j} className="chatPdfChip" title={n}>
-                            <FileIcon size={11} />
+                            <FileIcon size={14} />
                             {n.slice(0, 40)}{n.length > 40 ? "…" : ""}
                           </span>
                         ))}
@@ -1282,9 +1499,12 @@ export default function ChatDock({
                     {!isUser && m.context?.length ? (
                       <ContextCoverage items={m.context} />
                     ) : null}
-                    {!isUser && m.actions?.length ? (
+                    {!isUser && (m.actions?.length || (isResponding && m.step)) ? (
+                      <AgentSteps actions={m.actions || []} running={isResponding ? m.step : null}
+                        open={openActions.has(`${i}:steps`)} onToggle={() => toggleAction(`${i}:steps`)}
+                        titleOf={(id) => citeTitles.titleOf(id)?.title || ""}>
                       <div className="chatToolActions">
-                        {m.actions.map((a, j) => {
+                        {(m.actions || []).map((a, j) => {
                           const Icon = ACTION_ICONS[a.kind] || FolderIcon;
                           // Chats saved before tool output was recorded have
                           // no raw call — those chips stay plain text.
@@ -1297,13 +1517,13 @@ export default function ChatDock({
                                 <button type="button" className="chatToolActionHead"
                                   onClick={() => toggleAction(key)}
                                   title={open ? t("Hide tool output") : t("Show tool output")}>
-                                  <Icon size={11} />
+                                  <Icon size={14} />
                                   <span>{a.summary}</span>
                                   {open ? <ChevronUpIcon size={10} /> : <ChevronDownIcon size={10} />}
                                 </button>
                               ) : (
                                 <div className="chatToolActionHead plain" title={a.summary}>
-                                  <Icon size={11} />
+                                  <Icon size={14} />
                                   <span>{a.summary}</span>
                                 </div>
                               )}
@@ -1312,14 +1532,19 @@ export default function ChatDock({
                           );
                         })}
                       </div>
+                      </AgentSteps>
                     ) : null}
+                    {!isUser && m.actions?.length ? <AgentChanges actions={m.actions} onOpenPage={onOpenPage} /> : null}
                     {isUser && m.contextPages?.length ? <div className="chatMsgPdfs">
-                      {m.contextPages.map((p) => <button type="button" key={p.id} className="crumbBtn" title={p.title} onClick={() => onOpenPage?.(p.id)}><BookIcon size={11} /><span className="linkChipText">{p.title}</span></button>)}
+                      {m.contextPages.map((p) => <button type="button" key={p.id} className="crumbBtn" title={p.title} onClick={() => onOpenPage?.(p.id)}><BookIcon size={14} /><span className="linkChipText">{p.title}</span></button>)}
                     </div> : null}
                     {isUser
                       ? <div className="chatUserText">{m.text}</div>
-                      : m.text ? <ChatMarkdown text={m.text} copyBlocks /> : null}
-                    {isResponding ? (
+                      : m.text && !(m.error && m.errorKind) ? <ChatMarkdown text={m.text} copyBlocks /> : null}
+                    {!isUser && m.errorKind && !isResponding ? (
+                      <ChatErrorCard message={m} compact={!m.error} actions={errorActions(m, i)} />
+                    ) : null}
+                    {isResponding && !m.step ? (
                       <div className="chatThinking" role="status" aria-label={m.text ? t("AI is responding") : t("AI is thinking")}>
                         <span aria-hidden="true">{m.text ? t("Responding") : t("Thinking")}</span>
                         <span className="chatTyping" aria-hidden="true"><span /><span /><span /></span>
@@ -1333,13 +1558,13 @@ export default function ChatDock({
                     <button type="button" className="chatMsgActionBtn" title={t("Copy message")}
                       onClick={() => copyChatMessage(i, m.text)}>
                       {copiedMsgIdx === i
-                        ? <CheckIcon size={13} />
-                        : <CopyIcon size={13} />}
+                        ? <CheckIcon size={14} />
+                        : <CopyIcon size={14} />}
                     </button>
                     {!readOnly && isUser && !busyHere ? (
                       <button type="button" className="chatMsgActionBtn" title={t("Edit and re-send (removes later messages)")}
                         onClick={() => setEditingMsg({ idx: i, text: m.text })}>
-                        <PencilIcon size={13} />
+                        <PencilIcon size={14} />
                       </button>
                     ) : null}
                     </div>
@@ -1349,82 +1574,92 @@ export default function ChatDock({
             );
           })
         )}
+        {/* An earlier conversation stays readable; the card follows it. */}
+        {visibleMessages.length ? setupCard : null}
       </div>
-      {!readOnly ? <>
-      {pdfSelections.length || chatNotes?.length || cursorChip ? (
-        <div className="chatSelChips">
-          {cursorChip ? (
-            cursorChip.sel ? (
-              <SelChip kind="isCursor" icon="selection" label={t("Selection")} text={cursorChip.sel.text}
-                title={t("The text you selected in this note — the assistant changes only this part.\
-{text}", { text: cursorChip.sel.text })}
-                onRemove={() => setCursorOff(cursorChip.id)}
-                removeTitle={t("Don't send the selection with this message")} />
-            ) : (
-              <SelChip kind="isCursor" icon="cursor" label={t("Cursor")} text={cursorChip.text}
-                title={t("Your cursor is on this block — it rides with the message, so \"this block\" means it.\
-{text}", { text: cursorChip.text })}
-                onRemove={() => setCursorOff(cursorChip.id)}
-                removeTitle={t("Don't send the cursor block with this message")} />
-            )
-          ) : null}
-          {pdfSelections.map((s, i) => (
-            <SelChip key={`p${i}`} text={s.text} icon="passage"
-              label={pdfSelections.length > 1 ? t("Passage {i}", { i: i + 1 }) : t("Selection")} n={pdfSelections.length > 1 ? i + 1 : null}
-              labelTitle={t("{page}Hold Ctrl while selecting in the PDF to add more passages", { page: s.page ? t("From PDF page {page}. ", { page: s.page }) : "" })}
-              onRemove={() => setPdfSelections((prev) => prev.filter((_, j) => j !== i))}
-              removeTitle={t("Remove this passage")} />
-          ))}
-          {(chatNotes || []).map((n, i) => (
-            <SelChip key={`n${i}`} kind={n.kind === "block" ? "isBlock" : "isNote"} text={n.text}
-              icon={n.kind === "block" ? "block" : "selection"} label={n.kind === "block" ? t("Block") : t("Note selection")}
-              labelTitle={n.kind === "block" ? t("A note block attached with Ctrl+click or the ⋮⋮ menu — the assistant gets its text and id") : t("Note text selected with Ctrl held — the assistant changes only this part")}
-              onRemove={() => setChatNotes?.((prev) => prev.filter((_, j) => j !== i))}
-              removeTitle={n.kind === "block" ? t("Detach this block") : t("Remove this passage")} />
-          ))}
-        </div>
-      ) : null}
-      {chatDocs.length ? (
-        <div className="chatReferenceStrip" aria-label={t("Attached library pages")}>
-          <span className="chatReferenceLabel" title={t("Paper details and text stay in context for follow-up questions. Notes are optional in the library picker.")}>{t("Context")}</span>
-          {chatDocs.map((id) => <span className="chatReferenceChip" key={id}>
-            <button type="button" className="crumbBtn" title={homeBlocks.find((b) => b.id === id)?.content || t("Unavailable page")} onClick={() => onOpenPage?.(id)}><BookIcon size={12} /><span className="linkChipText">{homeBlocks.find((b) => b.id === id)?.content || t("Unavailable page")}</span></button>
-            <button type="button" className="uiClose uiCloseSm" aria-label={t("Remove {page} from context", { page: homeBlocks.find((b) => b.id === id)?.content || t("page") })} onClick={() => setChatDocs((prev) => prev.filter((p) => p !== id))}><XIcon size={11} /></button>
-          </span>)}
-        </div>
-      ) : null}
-      {chatFiles.length ? (
-        <div className="chatImgPreviewRow">
-          {chatFiles.map((f, i) => (
-            <span key={i} className="chatFileChip" title={nativePdf ? t("{name} — sent with your next message", { name: f.name }) : t("{name} — {nativePdfNote}", { name: f.name, nativePdfNote: nativePdfNote })}>
-              {nativePdf ? <FileIcon size={12} /> : <AlertCircleIcon size={12} />}
-              <span className="chatFileChipName">{f.name}</span>
-              <button type="button" className="uiClose uiCloseSm chatFileChipRemove" title={t("Remove file")}
-                onClick={() => setChatFiles((prev) => prev.filter((_, j) => j !== i))}>×</button>
-            </span>
-          ))}
-        </div>
-      ) : null}
-      {chatImages.length ? (
-        <div className="chatImgPreviewRow" data-guide="chat.imageContext">
-          {chatImages.map((src, i) => (
-            <span key={i} className="chatImgPreview">
-              <img src={src} alt={t("pasted figure")} />
-              <button type="button" className="uiClose uiCloseSm uiCloseDanger chatImgRemove" title={t("Remove image")}
-                onClick={() => setChatImages((prev) => prev.filter((_, j) => j !== i))}>×</button>
-            </span>
-          ))}
-        </div>
-      ) : null}
+      </ChatCiteContext.Provider>
+      {!readOnly ? (
+      // One box: the context chips on top, the message at full
+      // width, then a toolbar — [+], the Full PDF switch while a PDF is in
+      // context, the model chip (with reasoning effort), the mic when a
+      // connection can transcribe, send / stop. While recording the text
+      // and the toolbar give way to the waveform row.
       <form
-        className="chatInputRow"
+        ref={composerRef}
+        className={`chatComposer${aiOff ? " off" : ""}`}
         data-guide="chat.composer"
         onSubmit={(e) => { e.preventDefault(); sendChatMessage(); }}
       >
+        {pdfSelections.length || chatNotes?.length || cursorChip ? (
+          <div className="chatSelChips">
+            {cursorChip ? (
+              cursorChip.sel ? (
+                <SelChip kind="isCursor" icon="selection" auto label={t("Selection in this note")} text={cursorChip.sel.text}
+                  title={`${t("The text you selected in this note — the assistant changes only this part.")}\n\n${cursorChip.sel.text}`}
+                  onRemove={() => setCursorOff(cursorChip.id)}
+                  removeTitle={t("Don't send the selection with this message")} />
+              ) : (
+                <SelChip kind="isCursor" icon="cursor" auto label={t("Block at your cursor")}
+                  note={t("added automatically, × to leave out")} text={cursorChip.text}
+                  title={`${t("Your cursor is on this block — it rides with the message, so \"this block\" means it.")}\n\n${cursorChip.text}`}
+                  onRemove={() => setCursorOff(cursorChip.id)}
+                  removeTitle={t("Don't send the cursor block with this message")} />
+              )
+            ) : null}
+            {pdfSelections.map((s, i) => (
+              <SelChip key={`p${i}`} text={s.text} icon="passage"
+                label={pdfSelections.length > 1 ? t("PDF passage {i}", { i: i + 1 }) : t("PDF passage")}
+                note={s.page ? t("p. {page}", { page: s.page }) : ""}
+                title={`${s.text}\n\n${t("Hold Ctrl while selecting in the PDF to add more passages")}`}
+                onRemove={() => setPdfSelections((prev) => prev.filter((_, j) => j !== i))}
+                removeTitle={t("Remove this passage")} />
+            ))}
+            {(chatNotes || []).map((n, i) => (
+              <SelChip key={`n${i}`} kind={n.kind === "block" ? "isBlock" : "isNote"} text={n.text}
+                icon={n.kind === "block" ? "block" : "selection"}
+                label={n.kind === "block" ? t("Attached block") : t("Selected note text")}
+                title={`${n.kind === "block" ? t("A note block attached with Ctrl+click or the ⋮⋮ menu — the assistant gets its text and id") : t("Note text selected with Ctrl held — the assistant changes only this part")}\n\n${n.text}`}
+                onRemove={() => setChatNotes?.((prev) => prev.filter((_, j) => j !== i))}
+                removeTitle={n.kind === "block" ? t("Detach this block") : t("Remove this passage")} />
+            ))}
+          </div>
+        ) : null}
+        {chatDocs.length ? (
+          <div className="chatReferenceStrip" aria-label={t("Attached library pages")}>
+            <span className="chatReferenceLabel" title={t("Paper details and text stay in context for follow-up questions. Notes are optional in the library picker.")}>{t("Context")}</span>
+            {chatDocs.map((id) => <span className="chatReferenceChip" key={id}>
+              <button type="button" className="crumbBtn" title={homeBlocks.find((b) => b.id === id)?.content || t("Unavailable page")} onClick={() => onOpenPage?.(id)}><BookIcon size={14} /><span className="linkChipText">{homeBlocks.find((b) => b.id === id)?.content || t("Unavailable page")}</span></button>
+              <button type="button" className="uiClose uiCloseSm" aria-label={t("Remove {page} from context", { page: homeBlocks.find((b) => b.id === id)?.content || t("page") })} onClick={() => setChatDocs((prev) => prev.filter((p) => p !== id))}><XIcon size={14} /></button>
+            </span>)}
+          </div>
+        ) : null}
+        {chatFiles.length ? (
+          <div className="chatImgPreviewRow">
+            {chatFiles.map((f, i) => (
+              <span key={i} className="chatFileChip" title={nativePdf ? t("{name} — sent with your next message", { name: f.name }) : t("{name} — {nativePdfNote}", { name: f.name, nativePdfNote: nativePdfNote })}>
+                {nativePdf ? <FileIcon size={14} /> : <AlertCircleIcon size={14} />}
+                <span className="chatFileChipName">{f.name}</span>
+                <button type="button" className="uiClose uiCloseSm chatFileChipRemove" title={t("Remove file")}
+                  onClick={() => setChatFiles((prev) => prev.filter((_, j) => j !== i))}><XIcon size={14} /></button>
+              </span>
+            ))}
+          </div>
+        ) : null}
+        {chatImages.length ? (
+          <div className="chatImgPreviewRow" data-guide="chat.imageContext">
+            {chatImages.map((src, i) => (
+              <span key={i} className="chatImgPreview">
+                <img src={src} alt={t("pasted figure")} />
+                <button type="button" className="uiClose uiCloseSm uiCloseDanger chatImgRemove" title={t("Remove image")}
+                  onClick={() => setChatImages((prev) => prev.filter((_, j) => j !== i))}><XIcon size={14} /></button>
+              </span>
+            ))}
+          </div>
+        ) : null}
         {dictation === "rec" ? (
-          <>
+          <div className="chatComposerBar chatRecBar">
             <button className="uiBtn chatCircleBtn chatMicBtn" type="button" onClick={() => finishDictation("cancel")} title={t("Cancel recording")} aria-label={t("Cancel recording")}>
-              <XIcon size={13} />
+              <XIcon size={14} />
             </button>
             <canvas ref={waveCanvasRef} className="chatWaveCanvas" />
             <span className="chatRecTimer" aria-live="polite">
@@ -1432,74 +1667,14 @@ export default function ChatDock({
               {Math.floor(recSecs / 60)}:{String(recSecs % 60).padStart(2, "0")}
             </span>
             <button className="uiBtn chatCircleBtn chatMicBtn" type="button" onClick={() => finishDictation("insert")} title={t("Stop — put the transcript in the input")} aria-label={t("Stop and transcribe")}>
-              <StopIcon size={11} />
+              <StopIcon size={14} />
             </button>
             <button className="uiBtn primary chatCircleBtn" type="button" onClick={() => finishDictation("send")} title={t("Stop and send")} aria-label={t("Stop, transcribe and send")}>
-              <ArrowUpIcon size={14} strokeWidth={2.4} />
+              <ArrowUpIcon size={14} />
             </button>
-          </>
+          </div>
         ) : (
         <>
-        <span data-popover="chatdocs" className="popoverAnchor">
-          <button
-            type="button"
-            className={`chatAttachToggle chatPlusBtn ${(chatDocs.length || chatIncludeNotes) ? "on" : ""}`}
-            data-guide="chat.context"
-            onClick={() => setOpenPopover((p) => (p === "chatdocs" ? null : "chatdocs"))}
-            title={t("Add photos & files, or pages from your library")}
-            aria-label={t("Add attachments or chat context")}
-          >
-            +{chatDocs.length ? <span className="chatPlusCount">{chatDocs.length}</span> : null}
-          </button>
-          {openPopover === "chatdocs" ? (
-            <div className="popover popUp chatPlusMenu">
-              <button type="button" className="chatPlusMenuItem"
-                onClick={() => { setOpenPopover(null); fileInputRef.current?.click(); }}>
-                <span className="chatPlusMenuIcon">
-                  <PaperclipIcon size={15} />
-                </span>
-                <span className="chatPlusMenuLabel">{t("Add photos & files")}</span>
-                <span className="chatPlusMenuHint">{t("Images or PDFs from your computer")}</span>
-              </button>
-              <button type="button" className="chatPlusMenuItem"
-                onClick={() => { setOpenPopover(null); setDocPickerQuery(""); setDocPicker(true); }}>
-                <span className="chatPlusMenuIcon">
-                  <BookIcon size={15} />
-                </span>
-                <span className="chatPlusMenuLabel">{t("Add pages from library")}</span>
-                <span className="chatPlusMenuHint">{chatDocs.length ? `${chatDocs.length} selected` : t("Search your pages")}</span>
-              </button>
-            </div>
-          ) : null}
-        </span>
-        <input
-          ref={fileInputRef}
-          type="file"
-          multiple
-          accept="image/*,application/pdf"
-          style={{ display: "none" }}
-          onChange={(e) => { addChatFiles(Array.from(e.target.files || [])); e.target.value = ""; }}
-        />
-        <button
-          type="button"
-          className={`chatAttachToggle chatPdfToggle ${attachPdf ? "on" : ""}`}
-          disabled={!pageAttach && !chatDocs.length}
-          onClick={() => { attachPdfManualRef.current = true; setAttachPdf((v) => !v); }}
-          title={!nativePdf
-            ? `${attachPdf ? "On, but: " : ""}${nativePdfNote}`
-            : attachPdf
-              ? t("Full PDF file is sent with each message (model sees figures & tables). Click to switch to extracted text only.") : t("Send the full PDF file with your messages so the model sees figures & tables (uses more tokens). Click to enable.")}
-        >
-          <FileIcon size={12} />
-          PDF
-        </button>
-        {attachPdf && !nativePdf ? (
-          <button type="button" className="chatAttachToggle chatPdfToggle chatPdfWarn"
-            onClick={() => setStatus(nativePdfNote)} title={nativePdfNote}
-            aria-label={t("This provider cannot accept PDF files")}>
-            <AlertCircleIcon size={12} />
-          </button>
-        ) : null}
         <PaperMentionInput
           key={chatKey}
           pages={homeBlocks} openTabs={openTabs} selected={chatDocs}
@@ -1511,7 +1686,8 @@ export default function ChatDock({
           value={chatInput}
           onChange={setChatInput}
           onPaste={handleChatPaste}
-          placeholder={(
+          disabled={aiOff}
+          placeholder={aiOff ? t("Connect an AI service to start chatting") : (
             // Names what the message will be about, most specific attachment first.
             chatFiles.length ? `Ask about the attached file${chatFiles.length > 1 ? "s" : ""}…`
             : chatImages.length ? t("Ask about the pasted figure…") : pdfSelections.length > 1 ? `Ask about the ${pdfSelections.length} selected passages…`
@@ -1521,28 +1697,111 @@ export default function ChatDock({
             : agentAsk || t("Ask…")
           ) + t(" (@ paper)")}
         />
-        {busyHere ? (
-          <button className="uiBtn chatCircleBtn chatStopBtn" type="button" onClick={stopChat} title={t("Stop generating")} aria-label={t("Stop generating")}>
-            <StopIcon size={11} />
-          </button>
-        ) : dictation === "busy" ? (
-          <button className="uiBtn chatCircleBtn chatMicBtn" type="button" disabled title={t("Transcribing…")} aria-label={t("Transcribing")}>
-            <span className="transferSpin inline" />
-          </button>
-        ) : (
-          <>
-            <button className="uiBtn chatCircleBtn chatMicBtn" data-guide="chat.voice" type="button" onClick={startDictation} title={t("Dictate — transcribed with your OpenAI key")} aria-label={t("Start dictation")}>
-              <MicIcon size={13} />
+        <div className="chatComposerBar">
+          <span data-popover="chatdocs" className="popoverAnchor">
+            <button
+              type="button"
+              className={`chatAttachToggle chatPlusBtn ${(chatDocs.length || chatIncludeNotes) ? "on" : ""}`}
+              data-guide="chat.context"
+              disabled={aiOff}
+              onClick={() => setOpenPopover((p) => (p === "chatdocs" ? null : "chatdocs"))}
+              title={t("Add photos & files, or pages from your library")}
+              aria-label={t("Add attachments or chat context")}
+            >
+              +{chatDocs.length ? <span className="chatPlusCount">{chatDocs.length}</span> : null}
             </button>
-            <button className="uiBtn primary chatCircleBtn" type="submit" disabled={!chatInput.trim()} title={t("Send")} aria-label={t("Send")}>
-              <ArrowUpIcon size={14} strokeWidth={2.4} />
+            {openPopover === "chatdocs" ? (
+              <div className="popover popUp chatPlusMenu">
+                <button type="button" className="chatPlusMenuItem"
+                  onClick={() => { setOpenPopover(null); fileInputRef.current?.click(); }}>
+                  <span className="chatPlusMenuIcon">
+                    <PaperclipIcon size={16} />
+                  </span>
+                  <span className="chatPlusMenuLabel">{t("Add photos & files")}</span>
+                  <span className="chatPlusMenuHint">{t("Images or PDFs from your computer")}</span>
+                </button>
+                <button type="button" className="chatPlusMenuItem"
+                  onClick={() => { setOpenPopover(null); setDocPickerQuery(""); setDocPicker(true); }}>
+                  <span className="chatPlusMenuIcon">
+                    <BookIcon size={16} />
+                  </span>
+                  <span className="chatPlusMenuLabel">{t("Add pages from library")}</span>
+                  <span className="chatPlusMenuHint">{chatDocs.length ? `${chatDocs.length} selected` : t("Search your pages")}</span>
+                </button>
+              </div>
+            ) : null}
+          </span>
+          <input
+            ref={fileInputRef}
+            type="file"
+            multiple
+            accept="image/*,application/pdf"
+            style={{ display: "none" }}
+            onChange={(e) => { addChatFiles(Array.from(e.target.files || [])); e.target.value = ""; }}
+          />
+          {pdfInContext && !aiOff ? <button
+            type="button"
+            className={`chatAttachToggle chatPdfToggle ${attachPdf ? "on" : ""}`}
+            aria-pressed={attachPdf}
+            onClick={() => { attachPdfManualRef.current = true; setAttachPdf((v) => !v); }}
+            title={!nativePdf
+              ? `${attachPdf ? t("On, but: ") : ""}${nativePdfNote}`
+              : attachPdf
+                ? t("Full PDF file is sent with each message (model sees figures & tables). Click to switch to extracted text only.") : t("Send the full PDF file with your messages so the model sees figures & tables (uses more tokens). Click to enable.")}
+          >
+            <FileIcon size={14} />
+            {t("Full PDF")}
+          </button> : null}
+          {attachPdf && pdfInContext && !nativePdf && !aiOff ? (
+            <button type="button" className="chatAttachToggle chatPdfToggle chatPdfWarn"
+              onClick={() => setStatus(nativePdfNote)} title={nativePdfNote}
+              aria-label={t("This provider cannot accept PDF files")}>
+              <AlertCircleIcon size={14} />
             </button>
-          </>
-        )}
+          ) : null}
+          <span className="chatComposerSpacer" />
+          {!aiOff && headerModels.length ? (
+            <span className="chatModelChip">
+              <MenuSelect
+                up
+                label={t("Model and reasoning effort")}
+                heading={t("Model")}
+                value={headerModel.id}
+                onChange={setChatModel}
+                display={chatEffort ? `${headerModel.model} · ${chatEffort}` : headerModel.model}
+                options={headerModels.map((m) => [m.id, modelLabel(m)])}
+                sections={[{
+                  label: t("Reasoning effort"),
+                  value: chatEffort,
+                  onChange: setChatEffort,
+                  options: [["", t("Default")], ...(aiInfo.efforts || ["low", "medium", "high"]).map((ef) => [ef, ef])],
+                }]}
+              />
+            </span>
+          ) : null}
+          {busyHere ? (
+            <button className="uiBtn chatCircleBtn chatStopBtn" type="button" onClick={stopChat} title={t("Stop generating")} aria-label={t("Stop generating")}>
+              <StopIcon size={14} />
+            </button>
+          ) : dictation === "busy" ? (
+            <button className="uiBtn chatCircleBtn chatMicBtn" type="button" disabled title={t("Transcribing…")} aria-label={t("Transcribing")}>
+              <span className="transferSpin inline" />
+            </button>
+          ) : (
+            <>
+              {canDictate ? <button className="uiBtn chatCircleBtn chatMicBtn" data-guide="chat.voice" type="button" onClick={startDictation} title={t("Dictate — transcribed with your OpenAI key")} aria-label={t("Start dictation")}>
+                <MicIcon size={14} />
+              </button> : null}
+              <button className="uiBtn primary chatCircleBtn" type="submit" disabled={aiOff || !chatInput.trim()} title={t("Send")} aria-label={t("Send")}>
+                <ArrowUpIcon size={14} />
+              </button>
+            </>
+          )}
+        </div>
         </>
         )}
       </form>
-      </> : null}
+      ) : null}
       {docPicker ? (
         <div className="reportOverlay" onClick={() => setDocPicker(false)}>
           <div className="reportModal docPickerModal" onClick={(e) => e.stopPropagation()}

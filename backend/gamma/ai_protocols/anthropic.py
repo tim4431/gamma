@@ -52,6 +52,8 @@ def _messages(messages) -> list:
 class Anthropic(Protocol):
     id = "anthropic"
     label = "Anthropic Messages API"
+    key_placeholder = "sk-ant-…"
+    key_url = "https://console.anthropic.com/settings/keys"
 
     def request(self, conf, messages, system, model, pdf_b64s=None, effort="",
                 max_tokens=8192, images=None, stream=False, tools=None):

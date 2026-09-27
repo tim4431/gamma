@@ -99,6 +99,9 @@ export async function noteScenarios({ server, browser, alice, step, until, sleep
     await page.waitForSelector(".blockRow", { timeout: 15000 });
     await until(async () => (await page.textContent("body")).includes("first"), { what: "content after reload" });
     assert((await page.textContent("body")).includes("Reading list"), "title after reload");
+    // Opening a page is a passive landing: no row is focused (so the chat
+    // gets no Cursor block) until the reader clicks one.
+    assertEq(await page.locator(".blockRow.focused").count(), 0, "opening a page focuses no row");
     assertNoProblems(page);
   });
 
@@ -331,7 +334,16 @@ export async function noteScenarios({ server, browser, alice, step, until, sleep
     await editRow(page, "after gap");
     await page.keyboard.press("Control+End");
     await page.keyboard.press("Enter");
-    await page.keyboard.type("/red");
+    // The bare "/" list comes in groups, the footer hints at the colours;
+    // a typed query is one ranked list.
+    await page.keyboard.type("/");
+    const groups = page.locator(".slashMenu .slashMenuTitle");
+    await groups.first().waitFor();
+    assertEq(JSON.stringify(await groups.allTextContents()), JSON.stringify(["Text", "Math", "Insert", "Link", "Style"]), "the / menu's groups");
+    assertEq(await page.locator(".slashMenu .slashMenuItem.selected .slashMenuLabel").innerText(), "Heading 1", "Text comes first");
+    assert((await page.locator(".slashMenuFooter").innerText()).includes("red"), "the footer names the colours");
+    await page.keyboard.type("red");
+    assertEq(await groups.count(), 0, "a typed query shows no groups");
     await page.getByRole("button", { name: /Red text/ }).click();
     // The command lands through a React round trip that sets the content
     // first and the caret a beat later; type once the caret sits inside the
@@ -425,9 +437,112 @@ export async function noteScenarios({ server, browser, alice, step, until, sleep
     assertNoProblems(page);
   });
 
+  await step("notes: opening a block's editor keeps its height (paragraph, list, $$ math, code fence)", async () => {
+    const src = await alice2.api("/api/pages", { method: "POST", body: { title: "Heights" } });
+    const blocks = {
+      hpara: "A paragraph of prose long enough to wrap onto a second line in the notes panel, so a trailing margin under it would show as a jump.",
+      hlist: "- [ ] one\n- [x] two\n- three",
+      hmath: "Energy:\n$$\nE = \\sum_i n_i\n$$",
+      hcode: "Code:\n```python\nprint(1)\n```",
+    };
+    await alice2.api(`/api/pages/${src.id}/ops`, { method: "POST", body: { client: "e2e", ops: Object.entries(blocks).map(([id, content], i) => (
+      { op: "insert", id, parent: src.id, position: `a${i}`, content })) } });
+    const p2 = await openPage(ctx, `${server.base}/?ws=${second.id}&page=${src.id}`);
+    try {
+      for (const id of Object.keys(blocks)) {
+        const sel = `.blockRowWrap[data-block-id="${id}"] > .blockRow`;
+        await p2.waitForSelector(`${sel} .blockRendered`);
+        const height = () => p2.locator(sel).evaluate((el) => el.getBoundingClientRect().height);
+        const before = await height();
+        // Click the first character, so the formula and the fence below it
+        // stay rendered widgets in the editor.
+        const pt = await p2.locator(`${sel} .blockRendered`).evaluate((el) => {
+          const n = document.createTreeWalker(el, NodeFilter.SHOW_TEXT, { acceptNode: (t) => (t.textContent.trim() ? 1 : 3) }).nextNode();
+          const r = document.createRange(); r.setStart(n, 0); r.setEnd(n, 1);
+          const b = r.getBoundingClientRect();
+          return { x: b.left + 1, y: b.top + b.height / 2 };
+        });
+        await p2.mouse.click(pt.x, pt.y);
+        await p2.waitForSelector(`${sel} .blockEditorCm .cm-content`, { timeout: 5000 });
+        const during = await height();
+        assert(Math.abs(during - before) <= 1, `${id}: ${before}px rendered, ${during}px while editing`);
+        await closeEditor(p2);
+      }
+      assertNoProblems(p2);
+    } finally {
+      await p2.close();
+    }
+  });
+
+  await step("notes: the [[ picker lists pages by title first; a typed [[exact title]] links, an unknown one is an unlinked chip", async () => {
+    const target = await alice2.api("/api/pages", { method: "POST", body: { title: "Quantum Linkable Target" } });
+    const other = await alice2.api("/api/pages", { method: "POST", body: { title: "Quantum Scratch" } });
+    const src = await alice2.api("/api/pages", { method: "POST", body: { title: "Picker source" } });
+    await alice2.api(`/api/pages/${src.id}/ops`, { method: "POST", body: { client: "e2e", ops: [
+      { op: "insert", id: "pkblock", parent: src.id, position: "a0", content: "start" }] } });
+    const p2 = await openPage(ctx, `${server.base}/?ws=${second.id}&page=${src.id}`);
+    try {
+      await editRow(p2, "start");
+      await p2.keyboard.type(" [[linkable");
+      const picker = p2.locator('.refPopup[data-guide="editor.refSearch"]');
+      await picker.waitFor();
+      assertEq(await picker.locator(".refPopupHead").first().textContent(), "Pages", "pages come first");
+      assertEq(await picker.locator(".refPopupItem.selected .refPopupText").innerText(), "Quantum Linkable Target");
+      assertEq(await picker.locator(".refPopupItem.selected .refPopupText b").innerText(), "Linkable", "the typed text is marked");
+      await p2.keyboard.press("Enter");
+      await until(async () => (await tree(alice2, src.id))[0]?.content === `start [[${target.id}]]`, { what: "Enter links the page" });
+      // "]]" typed after the exact title of one page links it; an unknown title stays text.
+      await p2.keyboard.type(" [[quantum scratch]] and [[Nothing By This Name]]");
+      await until(async () => (await tree(alice2, src.id))[0]?.content === `start [[${target.id}]] [[${other.id}]] and [[Nothing By This Name]]`,
+        { what: "the typed title resolved to its page" });
+      await closeEditor(p2);
+      const r = row(p2, "start");
+      assertEq(JSON.stringify(await r.locator(".blockRefChip").allInnerTexts()), JSON.stringify(["Quantum Linkable Target", "Quantum Scratch"]));
+      assertEq(await r.locator(".unlinkedRef").innerText(), "Nothing By This Name", "the unknown title is an unlinked chip");
+      assertNoProblems(p2);
+    } finally {
+      await p2.close();
+    }
+  });
+
+  await step("notes: 'Linked from' under the notes opens the linking block; folding it is remembered", async () => {
+    const target = await alice2.api("/api/pages", { method: "POST", body: { title: "Link target" } });
+    await alice2.api(`/api/pages/${target.id}/ops`, { method: "POST", body: { client: "e2e", ops: [
+      { op: "insert", id: "blown", parent: target.id, position: "a0", content: "the target's own note" }] } });
+    const source = await alice2.api("/api/pages", { method: "POST", body: { title: "Link source" } });
+    await alice2.api(`/api/pages/${source.id}/ops`, { method: "POST", body: { client: "e2e", ops: [
+      { op: "insert", id: "blfiller", parent: source.id, position: "a0", content: "filler" },
+      { op: "insert", id: "blsource", parent: source.id, position: "a1", content: `See [[${target.id}]] for more` }] } });
+    const p2 = await openPage(ctx, `${server.base}/?ws=${second.id}&page=${target.id}`);
+    try {
+      const panel = p2.locator(".backlinksPanel");
+      await panel.waitFor();
+      assert((await panel.locator(".backlinksHead").innerText()).includes("Linked from 1 page"), "the head counts pages");
+      const [own, box] = [await row(p2, "the target's own note").boundingBox(), await panel.boundingBox()];
+      assert(box.y > own.y + own.height - 1, "the section sits under the notes");
+      assertEq(await panel.locator(".backlinkPageTitle").innerText(), "Link source");
+      assertEq(await panel.locator(".backlinkSnippet .blockRefChip").innerText(), "Link target", "the [[ref]] renders as a chip");
+      await panel.locator(".backlinkItem").click();
+      await until(async () => (await p2.locator('.blockRowWrap[data-block-id="blsource"] > .blockRow.focused').count()) === 1,
+        { what: "the linking page opens with its block focused" });
+      // Folded here, still folded after a reload.
+      await p2.goto(`${server.base}/?ws=${second.id}&page=${target.id}`);
+      await panel.waitFor();
+      await panel.locator(".backlinksHead").click();
+      assertEq(await panel.locator(".backlinkItem").count(), 0, "folding hides the entries");
+      await p2.reload();
+      await panel.waitFor();
+      assertEq(await panel.locator(".backlinksHead").getAttribute("aria-expanded"), "false", "the fold is remembered");
+      await panel.locator(".backlinksHead").click();
+      assertNoProblems(p2);
+    } finally {
+      await p2.close();
+    }
+  });
+
   await step("notes: Export… as an Obsidian vault downloads a zip", async () => {
     await page.click("button[aria-label='View']");
-    await page.locator(".popoverItem", { hasText: "Export…" }).click();
+    await page.locator(".menuPopover .ctxMenuItem", { hasText: "Export…" }).click();
     const dialog = page.getByRole("dialog", { name: "Export", exact: true });
     await dialog.waitFor();
     await dialog.getByRole("button", { name: "Obsidian", exact: true }).click();

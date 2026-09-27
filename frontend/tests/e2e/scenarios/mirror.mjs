@@ -70,7 +70,9 @@ export async function mirrorScenarios(env) {
       await pop.getByText("Log", { exact: true }).waitFor();
       await pop.getByText("Mirrored paper", { exact: true }).waitFor();
       // the row carries its git-style counts: the page came whole with one block
-      assertEq(await pop.locator(".mirrorDiff .add").first().textContent(), "+1", "the log row shows +1 block");
+      // (the account's Welcome page came along too, on a row of its own)
+      const logRow = pop.locator(".mirrorPopItemRow", { hasText: "Mirrored paper" });
+      assertEq(await logRow.locator(".mirrorDiff .add").first().textContent(), "+1", "the log row shows +1 block");
       // and opens to the changes themselves: the block that was added
       await pop.getByText("Mirrored paper", { exact: true }).click();
       await pop.locator(".mirrorChange.add", { hasText: "a note to copy" }).waitFor();

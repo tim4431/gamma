@@ -5,7 +5,7 @@
 // icons. All interaction (selection, drag, rename, context menus) stays wired
 // in App.jsx alongside the shared handlers.
 import React from "react";
-import { FileIcon, FolderFilesIcon, FolderIcon, GridIcon, ListIcon, LabelIcon, SearchIcon } from "../shared/ui/Icons";
+import { FileIcon, FolderFilesIcon, FolderIcon, GridIcon, ListIcon, LabelIcon, SearchIcon, XIcon } from "../shared/ui/Icons";
 import { t } from "../shared/i18n/i18n.js";
 
 // Folder + label chips for a page, filtered by the Settings → General "File
@@ -87,7 +87,7 @@ function ViewToggle({ view, onChange }) {
         title={t("List view")}
         aria-pressed={view === "list"}
       >
-        <ListIcon size={15} />
+        <ListIcon size={16} />
       </button>
       <button
         className={`homeViewBtn ${view === "grid" ? "active" : ""}`}
@@ -95,7 +95,7 @@ function ViewToggle({ view, onChange }) {
         title={t("Grid view")}
         aria-pressed={view === "grid"}
       >
-        <GridIcon size={15} />
+        <GridIcon size={16} />
       </button>
     </div>
   );
@@ -121,33 +121,69 @@ function KindToggle({ value, onChange, scopeLabel }) {
           title={label}
           aria-pressed={value === val}
         >
-          <Icon size={15} />
+          <Icon size={16} />
         </button>
       ))}
     </div>
   );
 }
 
-// Listing search box: matching items float to the top of the current sort,
+// Listing filter box: matching items float to the top of the current sort,
 // the rest stay put but dimmed. Live as you type — the caller debounces
-// nothing, the listing is already memoized.
-function ListFindBox({ value, onChange, placeholder = t("Search…") }) {
+// nothing, the listing is already memoized. It matches titles and folder /
+// label chips only, and says so; `onEnter` (Enter with nothing matched)
+// hands the query to the full search. `keyLabel` is its shortcut, shown in
+// the hover title.
+function ListFindBox({ value, onChange, onEnter, keyLabel }) {
+  const label = t("Filter by title or label");
   return (
     <div className={`homeFindBox ${value ? "active" : ""}`}>
-      <SearchIcon size={13} />
+      <SearchIcon size={14} />
       <input
         className="homeFindInput"
         value={value}
-        placeholder={placeholder}
-        aria-label={t("Search this listing")}
+        placeholder={label}
+        title={keyLabel ? `${label} (${keyLabel})` : label}
+        aria-label={t("Filter this listing by title or label")}
         onChange={(e) => onChange(e.target.value)}
-        onKeyDown={(e) => { if (e.key === "Escape" && value) { e.stopPropagation(); onChange(""); } }}
+        onKeyDown={(e) => {
+          if (e.key === "Escape" && value) { e.stopPropagation(); onChange(""); }
+          else if (e.key === "Enter" && value.trim() && onEnter && !e.nativeEvent.isComposing) { e.preventDefault(); onEnter(); }
+        }}
       />
       {value ? (
-        <button className="uiClose uiCloseSm homeFindClear" title={t("Clear search")} aria-label={t("Clear search")} onClick={() => onChange("")}>×</button>
+        <button className="uiClose uiCloseSm homeFindClear" title={t("Clear search")} aria-label={t("Clear search")} onClick={() => onChange("")}><XIcon size={14} /></button>
       ) : null}
     </div>
   );
 }
 
-export { ViewToggle, KindToggle, ListFindBox, CardLabels, PageCard };
+// Where the filter box points past itself, to the workspace search over
+// notes and PDF text: a banner when nothing in the listing matched (the
+// query is filled into the search), else a quiet row under the matches.
+// Neither is a .fileRow / .folderRow, which callers count.
+function ListSearchElsewhere({ query, none, keyLabel, onSearch }) {
+  if (none) {
+    return (
+      <div className="homeSearchBanner" role="status">
+        <span className="homeSearchBannerText">
+          {t("No title or label matches “{q}”.", { q: <strong key="q">{query}</strong> })}
+        </span>
+        <button type="button" className="uiBtn primary sm homeSearchBannerBtn" onClick={onSearch}>
+          <SearchIcon size={14} />
+          {t("Search inside notes and PDFs")}
+          {keyLabel ? <kbd className="homeSearchKey">{keyLabel}</kbd> : null}
+        </button>
+      </div>
+    );
+  }
+  return (
+    <button type="button" className="homeSearchMore" onClick={onSearch}
+      title={keyLabel ? t("Search inside notes and PDFs") + ` (${keyLabel})` : undefined}>
+      <SearchIcon size={14} />
+      <span>{t("Also search inside notes and PDFs for “{q}”", { q: query })}</span>
+    </button>
+  );
+}
+
+export { ViewToggle, KindToggle, ListFindBox, ListSearchElsewhere, CardLabels, PageCard };

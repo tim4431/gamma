@@ -109,13 +109,17 @@ def test_backup_failed_until_seen_and_again_on_the_next_failure(nuser, monkeypat
     assert _only(nuser, "backup-failed") is None
     tasks[0].update(state="failed", last_run="2026-09-21T01:00:00", last_error="disk full")
     notice = _only(nuser, "backup-failed")
-    assert notice["tone"] == "error" and notice["pane"] == "backups" and 'task "Nightly" failed' in notice["title"]
+    assert notice["tone"] == "error" and notice["pane"] == "backups" and "task “Nightly” failed" in notice["title"]
+    # the sentence travels as a catalog key plus its values, for the browser to translate
+    assert notice["message"] == "The backup task “{name}” failed" and notice["params"] == {"name": "Nightly"}
     nuser.post("/api/notices/backup-failed/seen", json={"fingerprint": notice["fingerprint"]})
     assert _only(nuser, "backup-failed") is None
     tasks[0]["last_run"] = "2026-09-22T01:00:00"  # failed again
     assert _only(nuser, "backup-failed")["fingerprint"] != notice["fingerprint"]
     tasks.append({"id": "b" * 32, "name": "Weekly", "state": "failed", "last_run": "2026-09-22T02:00:00"})
-    assert _only(nuser, "backup-failed")["title"] == "2 backup tasks failed"
+    both = _only(nuser, "backup-failed")
+    assert both["title"] == "2 backup tasks failed"
+    assert both["message"] == "{n} backup tasks failed" and both["params"] == {"n": 2}
 
 
 def test_mirror_conflicts_count_new_ones_only(nuser, monkeypatch):
@@ -142,7 +146,8 @@ def test_publication_conflicts_point_at_the_sync_pane(nuser, monkeypatch):
     notice = _only(nuser, "publish-conflicts")
     assert notice["pane"] == "account" and notice["title"].startswith("2 sync conflicts")
     marks["ws-clone"] = (1, 9)
-    assert _only(nuser, "mirror-conflicts")["title"].startswith("1 sync conflict ")
+    one = _only(nuser, "mirror-conflicts")
+    assert one["title"].startswith("1 sync conflict ") and one["message"] == "{n} sync conflict to look at in your clones"
 
 
 def test_cloud_sync_error_names_the_reason(nuser, monkeypatch):
@@ -178,6 +183,8 @@ def test_storage_thresholds_and_the_remembered_walk(nuser, monkeypatch):
     used[0] = 95 * notices.MB
     notice = _only(nuser, "storage")
     assert notice["tone"] == "warn" and notice["fingerprint"] == "90" and "95 of 100 MB" in notice["title"]
+    assert notice["message"] == "Your storage is nearly full ({used} of {quota} MB used)"
+    assert notice["params"] == {"used": 95, "quota": 100}
     nuser.post("/api/notices/storage/seen", json={"fingerprint": "90"})
     assert _only(nuser, "storage") is None
     notices.forget_usage()

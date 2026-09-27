@@ -11,7 +11,9 @@ import { previewHighlight } from "./previewHighlight.js";
 import { previewArea } from "./previewArea.js";
 import { typeDemoNote } from "./typeDemoNote.js";
 import { canOffer, createGuideProgress, factsMatch, guideStorage, retiresOffer, triggerMatches } from "./triggers.js";
-import { t } from "../shared/i18n/i18n.js";
+import { createRunLog, madeItems, recordEvent } from "./finish.js";
+import { t, T } from "../shared/i18n/i18n.js";
+import { chordLabel } from "../shared/lib/hotkeys.js";
 
 const VARS_KEY = "gamma-guide-vars"; // {name: value} overriding a tour's vars (tests, demos)
 const ANCHOR_WAIT_MS = 4000;
@@ -57,13 +59,21 @@ function setInputValue(el, value) {
 }
 
 const centerOf = (el) => { const b = el.getBoundingClientRect(); return { x: b.left + b.width / 2, y: b.top + b.height / 2 }; };
+// Where the pointer waits while it types into a field: off the text, at the
+// field's left edge just below it — or above it when the field is at the
+// bottom of the window (the chat composer).
+const belowField = (el) => {
+  const b = el.getBoundingClientRect();
+  return { x: b.left + 4, y: b.bottom + 36 > innerHeight ? b.top - 32 : b.bottom + 6 };
+};
 
 // The demo vocabulary. Each action moves the spotlight (and the pointer) to
 // the element it acts on, waits a beat so the eye can follow, then acts.
 async function runAction(action, vars, live, cancelled, seen, onCleanup, services) {
   const check = () => { if (cancelled()) throw new Error("cancelled"); };
   if (action.previewHighlight) return previewHighlight(live, cancelled, onCleanup);
-  if (action.previewArea) return previewArea(live, cancelled, onCleanup, action.context ? null : services.findEquation, action.context);
+  if (action.previewArea) return previewArea(live, cancelled, onCleanup,
+    { find: action.context ? services.findFigure : services.findEquation, context: action.context, services });
   if (action.note) return typeDemoNote(action.note, services.prepareNote, live, cancelled);
   if (action.wait) { await sleep(action.wait); return; }
   if (action.waitFor) { await waitEvent(action.waitFor, seen, action.timeout); return; }
@@ -83,9 +93,10 @@ async function runAction(action, vars, live, cancelled, seen, onCleanup, service
     if (action.preserveDraft) onCleanup(() => {
       if (el.isConnected && text.startsWith(el.value) && (original || el.value !== text)) setInputValue(el, original);
     });
-    live({ anchor: action.type, cursor: centerOf(el) });
+    live({ anchor: action.type, cursor: belowField(el) });
     await sleep(450); check();
     el.focus();
+    live({ anchor: action.type, cursor: { ...belowField(el), faded: true } }); // the typed text stays readable
     let value = "";
     for (const ch of text) {
       check();
@@ -94,17 +105,30 @@ async function runAction(action, vars, live, cancelled, seen, onCleanup, service
       await sleep(action.speed ?? 28);
     }
     await sleep(300);
+    live({ anchor: action.type, cursor: belowField(el) });
     return;
   }
   if (action.press) {
     const el = action.on ? await waitAnchor(action.on) : document.activeElement;
+    // The key shows as a cap beside the pointer while it is pressed.
+    const at = action.on ? belowField(el) : null;
+    if (at) live({ anchor: action.on, cursor: { ...at, modifier: chordLabel(action.press) } });
     const init = { key: action.press, code: action.press, bubbles: true, cancelable: true };
     el.dispatchEvent(new KeyboardEvent("keydown", init));
     el.dispatchEvent(new KeyboardEvent("keyup", init));
-    await sleep(200);
+    await sleep(at ? 600 : 200);
+    if (at) live({ anchor: action.on, cursor: at });
     return;
   }
   throw new Error(`unknown action ${JSON.stringify(action)}`);
+}
+
+// The account menu's Tours list, opened as if clicked: the menu first, then
+// the Tours entry unless it is open already.
+async function showToursMenu() {
+  await revealAnchor("account.tour", () => false);
+  const el = await waitAnchor("account.tour").catch(() => null);
+  if (el && el.getAttribute("aria-expanded") !== "true") el.click();
 }
 
 // Reveal an anchor inside a closed surface: click through its registered
@@ -133,13 +157,18 @@ const CREATES_GRACE_MS = 1500; // what turns up this soon was there already
 // the account's "Suggest tours" preference — off, nothing is offered by
 // itself; the Tours menu still works. facts: what App knows (view, hasPdf,
 // demo…), matched against `requires`. services: App's hands — show(surface) brings
-// up a tour's `show` surface, plus the demo helpers. tidy: closes App's
-// transient popovers when a step needs none of them.
+// up a tour's `show` surface, finish(what) restores what a tour's `finish`
+// names once its last step is done, openSettings(pane) serves the finish
+// card's AI tile, plus the demo helpers. tidy: closes App's transient
+// popovers when a step needs none of them.
 export function useGuide({ enabled = true, suggest = true, scope = "", facts = {}, services = {}, tidy } = {}) {
   const servicesRef = useRef(services);
   servicesRef.current = services;
   // done: acknowledge the user's action before automatically advancing.
-  const [run, setRun] = useState(null); // { tour, scope, steps, index, done } | null
+  // finishing: past the last step, the tour's finish card is up.
+  const [run, setRun] = useState(null); // { tour, scope, steps, index, done, finishing? } | null
+  // What the running tour made, for its finish card (guide/finish.js).
+  const log = useRef(null);
   const [offer, setOffer] = useState(null); // { tour, scope } | null
   // Progress lives in localStorage, or in sessionStorage on a demo server
   // (facts.demo): every visit there starts fresh.
@@ -177,6 +206,7 @@ export function useGuide({ enabled = true, suggest = true, scope = "", facts = {
     if (!steps.length || at < 0 || at >= steps.length) return false;
     if (tour.show) servicesRef.current.show?.(tour.show);
     activity.current = "running";
+    log.current = createRunLog();
     setOffer(null);
     setRun({ tour, scope, steps, index: at, done: false });
     progress.current.write(tour, scope, { state: "running", step: at });
@@ -197,25 +227,41 @@ export function useGuide({ enabled = true, suggest = true, scope = "", facts = {
 
   const stop = useCallback((state) => {
     setRun((r) => {
-      if (r) progress.current.write(r.tour, r.scope, { state, step: r.index });
+      // Closing the finish card keeps the "done" recorded when it opened.
+      if (r && !r.finishing) progress.current.write(r.tour, r.scope, { state, step: r.index });
       return null;
     });
     activity.current = null;
   }, []);
 
+  const finished = useRef(null); // the tour whose last step just completed
   // Moves on from step `from`, or from wherever the run is (null): a pass-over
   // the engine scheduled for one step never moves a later one.
+  // Past the last step the tour is done; one with a `finishCard` shows it
+  // (still "running", so nothing else is offered meanwhile).
   const advance = useCallback((from = null) => {
     setRun((r) => {
       if (!r || (from !== null && r.index !== from)) return r;
+      if (r.finishing) { activity.current = null; return null; }
       if (r.index + 1 >= r.steps.length) {
         progress.current.write(r.tour, r.scope, { state: "done" });
+        finished.current = r.tour;
+        if (r.tour.finishCard) return { ...r, finishing: true, done: false };
         activity.current = null;
         return null;
       }
       return { ...r, index: r.index + 1, done: false };
     });
   }, []);
+  // A tour that ran to its end hands App its `finish` (the handwriting tour
+  // ends with the eraser or lasso armed: "pen" re-arms the pen). Leaving a
+  // tour early restores nothing.
+  useEffect(() => {
+    const tour = finished.current;
+    if (run || !tour) return;
+    finished.current = null;
+    if (tour.finish) servicesRef.current.finish?.(tour.finish);
+  }, [run]);
   const next = useCallback(() => advance(), [advance]);
 
   const back = useCallback(() => {
@@ -232,11 +278,12 @@ export function useGuide({ enabled = true, suggest = true, scope = "", facts = {
     activity.current = null;
   }, []);
   const dismissOffer = useCallback(() => closeOffer("dismissed"), [closeOffer]);
-  // A hint's card is the whole guide: accepting it is finishing it.
+  // A hint's card is the whole guide: accepting it is finishing it. A
+  // welcome offer was the tour's intro card, so the tour starts after it.
   const acceptOffer = useCallback(() => {
     if (!offer) return;
     if (offer.tour.hint) closeOffer("done");
-    else start(offer.tour.id);
+    else start(offer.tour.id, offer.tour.welcome ? Math.max(0, stepsFor(offer.tour).findIndex((s) => !s.intro)) : 0);
   }, [offer, start, closeOffer]);
 
   useEffect(() => {
@@ -305,15 +352,21 @@ export function useGuide({ enabled = true, suggest = true, scope = "", facts = {
     return () => window.removeEventListener("keydown", onKey, true);
   }, [offerAvailable, dismissOffer]);
 
+  // What happened during the run, for its finish card.
+  useEffect(() => guideEvents.subscribe((name, payload) => recordEvent(log.current, name, payload)), []);
+
   // Task-driven completion: the current step's event fires → the step is done.
-  const step = run ? steps[run.index] : null;
+  const step = run && !run.finishing ? steps[run.index] : null;
+  const intros = steps.filter((s) => s.intro).length;
   // Include the introductory pause: the demo owns navigation from its very
   // first frame, before its first action has started.
   const busy = !!step?.do && (live.stepId !== step.id || (!live.failed && !live.finished));
   useEffect(() => {
     if (!step?.advanceOn) return undefined;
     return guideEvents.subscribe((name, payload) => {
-      if (eventMatches(step.advanceOn, name, payload)) setRun((r) => (r ? { ...r, done: true } : r));
+      if (!eventMatches(step.advanceOn, name, payload)) return;
+      log.current?.completed.add(step.id);
+      setRun((r) => (r ? { ...r, done: true } : r));
     });
   }, [step]);
 
@@ -328,23 +381,43 @@ export function useGuide({ enabled = true, suggest = true, scope = "", facts = {
     const timer = setTimeout(() => advance(at), 1100);
     return () => clearTimeout(timer);
   }, [run?.done, step]);
+  // What a demo leaves for the rest of its tour (the AI chat tour's
+  // snapshot, pointed at by the next step) is taken back when the tour ends,
+  // however it ends; a step's own cleanups run when the step does.
+  const tourEnd = useRef([]);
+  const runningTour = run?.tour || null;
+  useEffect(() => () => { tourEnd.current.splice(0).forEach((fn) => fn()); }, [runningTour]);
   useEffect(() => {
     if (!step?.do) return undefined;
     let cancelled = false;
     const cleanups = [];
-    const vars = { ...(run.tour.vars || {}), ...readVars() };
+    // A tour's vars may depend on the facts (the first tour's demo paper).
+    const tourVars = typeof run.tour.vars === "function" ? run.tour.vars(factsRef.current) : run.tour.vars;
+    const vars = { ...(tourVars || {}), ...readVars() };
     const seen = [];
     const unsubscribe = guideEvents.subscribe((name, payload) => { seen.push([name, payload]); });
+    // progress: [actions done, actions in all], the card's demo line.
+    const total = step.do.length;
+    let doneActions = 0;
+    let last = { anchor: null, cursor: null };
+    const show = (l) => { last = l; if (!cancelled) setLive({ ...l, busy: true, stepId: step.id, progress: [doneActions, total] }); };
     (async () => {
       await sleep(step.delay ?? 900);
       if (cancelled) return;
-      setLive({ anchor: null, cursor: null, busy: true, stepId: step.id });
+      show(last);
       try {
         for (const action of step.do) {
           if (cancelled) return;
-          await runAction(action, vars, (l) => { if (!cancelled) setLive({ ...l, busy: true, stepId: step.id }); }, () => cancelled, seen, (cleanup) => cleanups.push(cleanup), servicesRef.current);
+          // A wait that may be long says what it waits for ("Fetching the
+          // paper…"), the card back beside the step's own anchor.
+          if (action.status) show({ anchor: null, cursor: null, status: action.status });
+          await runAction(action, vars, show, () => cancelled, seen, (cleanup) => cleanups.push(cleanup),
+            { ...servicesRef.current, onTourEnd: (fn) => tourEnd.current.push(fn) });
+          doneActions++;
+          show({ ...last, status: null });
         }
         if (cancelled) return;
+        log.current?.completed.add(step.id);
         setLive({ anchor: null, cursor: null, busy: false, finished: true, stepId: step.id });
         if (!step.advanceOn) nextRef.current();
       } catch (err) {
@@ -410,32 +483,63 @@ export function useGuide({ enabled = true, suggest = true, scope = "", facts = {
     return () => window.removeEventListener("keydown", onKey, true);
   }, [run, busy, next, back, dismiss]);
 
-  // What the overlay shows for an offer: a tour's name and length, or a
-  // hint's one card. Stable while it stays up, so the overlay keeps its
-  // anchor tracking.
+  // What the overlay shows for an offer: a tour's length under what just
+  // happened and why the tour is worth it (its `offer: {title, line}`, else
+  // its name), or a hint's one card. Stable while it stays up, so the
+  // overlay keeps its anchor tracking.
   const offerTour = offerAvailable ? offer.tour : null;
   const offerCard = useMemo(() => {
     if (!offerTour) return null;
     const steps = stepsFor(offerTour);
+    const intro = offerTour.welcome && steps[0]?.intro ? steps[0] : null;
+    if (intro) return { ...intro, id: offerTour.id, welcome: true, minutes: offerTour.minutes, anchor: null };
     return {
       id: offerTour.id,
       hint: !!offerTour.hint,
-      title: offerTour.hint ? steps[0]?.title : offerTour.title,
+      title: offerTour.hint ? steps[0]?.title : offerTour.offer?.title || offerTour.title,
+      body: offerTour.hint ? steps[0]?.body : offerTour.offer?.line,
       anchor: offerTour.hint ? steps[0]?.anchor || null : offerAnchor(offerTour),
       placement: offerTour.hint ? steps[0]?.placement : offerTour.offerPlacement,
       count: steps.length,
     };
   }, [offerTour, factsKey]);
+  // The finish card: what the run made, and where to go next — "ai" asks
+  // the paper (the AI chat tour, or connecting a provider first), "tours"
+  // opens the account menu's Tours list.
+  const finishing = !!run?.finishing && runAvailable;
+  const finishCard = useMemo(() => {
+    if (!finishing) return null;
+    const spec = run.tour.finishCard;
+    const ai = !!factsRef.current.aiConfigured;
+    const tiles = {
+      ai: { id: "ai", title: T("Ask the paper"), sub: ai ? T("Take the AI chat tour") : T("Connect an AI provider") },
+      tours: { id: "tours", title: T("More tours"), sub: T("Sharing, tables, handwriting") },
+    };
+    return { ...spec, id: run.tour.id, anchor: "header.account",
+      made: madeItems(spec, log.current), next: (spec.next || []).map((id) => tiles[id]).filter(Boolean) };
+  }, [finishing, run?.tour, factsKey]);
+  const finishAction = useCallback((id) => {
+    stop("done");
+    if (id === "ai") {
+      if (factsRef.current.aiConfigured) start("ai-chat");
+      else servicesRef.current.openSettings?.("ai");
+    } else if (id === "tours") showToursMenu();
+  }, [stop, start]);
   return {
     running: !!run && runAvailable,
+    // Past the last step: the finish card (null otherwise) and its tiles' action.
+    finishCard, finishAction,
     offer: offerCard,
     acceptOffer, dismissOffer,
     tour: run?.tour || null,
     step,
-    index: run?.index ?? 0,
+    // The welcome card (an `intro` step) is not counted: the first real
+    // step reads "Step 1 of n".
+    index: (run?.index ?? 0) - intros,
     done: !!run?.done,
-    count: steps.length,
+    count: steps.length - intros,
     live: { ...live, busy },
+    // next() also skips: a demo's actions stop when its step is left.
     start, next, back, dismiss,
     // The tours the Tours menu lists here, in registry order.
     startable: () => Object.values(TOURS).filter((tour) => canStart(tour.id)).map(({ id, title }) => ({ id, title })),

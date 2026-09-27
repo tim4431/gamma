@@ -299,6 +299,13 @@ export function MdImage({ src, alt, width, idx, onEdit }) {
 // map, keyed by block id + table index, and the mount effect reopens there.
 const _tableEditSession = new Map(); // editKey → {row, col}
 
+// Blocks that just got a table from /table or a paste: the first time a
+// table renders there as an editable one, the guide hears "table.created" —
+// the tables tour is offered beside the table the user made, never merely
+// for opening a page that has one.
+const _madeTables = new Set(); // block ids
+export function noteTableMade(blockId) { _madeTables.add(blockId); }
+
 export function MdTableWrap({ idx, onEdit, model, editKey, children }) {
   const wrapRef = useRef(null);
   const [hover, setHover] = useState(null); // {col,row,colX,rowY}
@@ -311,7 +318,12 @@ export function MdTableWrap({ idx, onEdit, model, editKey, children }) {
   // embed card) a small copy / delete menu of its own.
   const objectMenu = useObjectMenu();
   const editable = !!onEdit;
-  useEffect(() => { if (editable) guideEvents.emit("table.shown"); }, [editable]);
+  useEffect(() => {
+    if (!editable) return;
+    guideEvents.emit("table.shown");
+    if (editKey && _madeTables.delete(editKey.slice(0, editKey.lastIndexOf(":")))) guideEvents.emit("table.created");
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [editable]);
   const dragRef = useRef(null); // {kind, at, from, startX, startY, moved, to}
 
   const stop = (e) => e.stopPropagation();
@@ -347,6 +359,7 @@ export function MdTableWrap({ idx, onEdit, model, editKey, children }) {
   const commitCell = (next) => {
     const ce = cellEdit;
     if (!ce) return;
+    guideEvents.emit("table.edited");
     setCellEdit(null);
     if (next) _tableEditSession.set(editKey, next);
     else _tableEditSession.delete(editKey);

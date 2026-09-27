@@ -4,8 +4,10 @@
 
 export const EVENTS = [
   "popover.opened",   // {name} — a topbar popover opened: add, search, user, share, downloads
-  "page.opened",      // {id}
+  "page.opened",      // {id, title}
   "home.opened",      // returned to the library
+  "nav.pushed",       // a link jump recorded a place for Back to return to
+  "nav.back",         // Back (the button or Alt+←) returned to that place
   "palette.opened",   // the Ctrl+P page palette opened
   "highlight.created", // {id, kind: "text" | "area"}
   "block.created",
@@ -20,6 +22,8 @@ export const EVENTS = [
   "ink.erased",       // handwriting was erased
   "ink.undone",       // a handwriting change was undone
   "table.shown",      // an editable table rendered in the notes
+  "table.created",    // a table made with /table or a paste first rendered as one
+  "table.edited",     // a table cell's in-place editor committed
   "conflict.shown",   // a clone conflict's versions were shown
   "ref.search",       // the [[ block search opened with results
   "math.previewed",   // the live formula preview came up while typing math

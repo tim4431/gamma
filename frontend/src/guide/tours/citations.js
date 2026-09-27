@@ -7,6 +7,7 @@ export default {
   title: T("Citations in answers"),
   trigger: { event: "chat.cited" },
   offerPlacement: "top",
+  offer: { title: T("Answers cite their sources"), line: T("See how a citation opens the exact passage.") },
   steps: [
     { id: "citation-open", anchor: "chat.citation", placement: "top", title: T("A citation opens the passage it quotes"),
       do: [{ click: "chat.citation" }, { waitFor: { event: "citation.shown" }, timeout: 15000 }, { wait: 400 }] },

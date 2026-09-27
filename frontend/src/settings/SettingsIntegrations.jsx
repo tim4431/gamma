@@ -30,7 +30,7 @@ function CopyField({ label, value, action, rows = 2 }) {
       <textarea className="aiKeyInput" aria-label={label} readOnly rows={rows} value={value}
         onFocus={(event) => event.target.select()} />
       <button type="button" className={`uiBtn sm iconSq integrationCopy${copied ? " on" : ""}`} aria-label={action} title={action} onClick={copy}>
-        {copied ? <CheckIcon size={13} /> : <CopyIcon size={13} />}
+        {copied ? <CheckIcon size={16} /> : <CopyIcon size={16} />}
       </button>
     </div>
     <span className={`settingDesc integrationCopyStatus${copied ? " srOnly" : ""}`} role="status">{status}</span>
@@ -54,7 +54,7 @@ function ConnectionRow({ item, busy, onRevoke }) {
     hint={<>{parts.join(" · ")}{daysLeft <= 0 ? <span className="uiTag warn">{t("Expired")}</span> : null}</>}>
     <button type="button" className="uiBtn sm iconSq danger" disabled={busy} aria-label={t("Disconnect")}
       title={t("Disconnect {name}: the assistant loses access to this workspace", { name: name })} onClick={() => onRevoke(item)}>
-      <UnlinkIcon size={13} />
+      <UnlinkIcon size={16} />
     </button>
   </Row>;
 }
@@ -219,7 +219,7 @@ export function IntegrationSettings({ workspaceId }) {
     </Section>
     <Section title={t("Workspace access")} action={
       <button type="button" className="uiBtn sm iconSq" aria-label={t("Refresh connections")} title={t("Refresh connections")} onClick={() => refresh()}>
-        <RefreshIcon size={13} />
+        <RefreshIcon size={16} />
       </button>}>
       {data ? data.tokens.length ? data.tokens.map((item) => <ConnectionRow key={item.id} item={item} busy={busy} onRevoke={revoke} />)
         : <div className="integrationDetails"><p>{t("No assistants have access to this workspace yet.")}</p></div> : null}

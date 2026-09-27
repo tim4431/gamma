@@ -1,28 +1,35 @@
 """Workspace file creation and seeding: the empty pages.db / data.db /
-uploads/ of a new workspace, the guest welcome page, the first admin.
+uploads/ of a new workspace, the Welcome page every new account starts
+with, the first admin.
 
-Shared by the app (guest logins, first run) and manage.py (user CRUD)
-so the welcome page and schemas never drift between the two. Account and
-membership rows are gamma/workspaces.py's job; this module only writes
-files.
+Shared by the app (guest logins, first run, cloud sign-ups, the admin API)
+and manage.py (user CRUD) so the welcome page and schemas never drift
+between the two. Account and membership rows are gamma/workspaces.py's job;
+this module writes files and the Welcome page's blocks.
 """
 
+import functools
 import os
 import secrets
 import sqlite3
 from contextlib import closing
+from pathlib import Path
 
 import bcrypt
 
-from fractional_indexing import generate_key_between
+from fractional_indexing import generate_n_keys_between
 
 from .config import WORKSPACES_DIR
-from .db import DATA_SCHEMA, PAGES_SCHEMA, connect_users_db, page_now, safe_ws_id
+from .db import DATA_SCHEMA, PAGES_SCHEMA, connect_pages_db, connect_users_db, page_now, safe_ws_id
 from .logbuf import log
 from .server_settings import guest_ttl_hours
 
-# GitHub raw base for screenshots embedded in the guest welcome page.
-_SCREENSHOTS = "https://raw.githubusercontent.com/tim4431/Gamma/main/docs/assets/screenshots"
+# The seeded Welcome page: a normal markdown outline, imported through the
+# .md parser, plus a sample PDF the notes-as-PDF writer renders from the same
+# text (docs/dev/onboarding.md "The welcome page and its sample PDF").
+WELCOME_MD = Path(__file__).resolve().parent / "onboarding" / "welcome.md"
+SEEDED_WELCOME = "welcome"  # the page's properties.seeded: tours and the library find it by this
+_WELCOME_PDF_NAME = "Welcome to Gamma.pdf"
 
 
 def _guest_lifetime() -> str:
@@ -31,39 +38,122 @@ def _guest_lifetime() -> str:
     return f"{hours} hour" if hours == 1 else f"{hours} hours"
 
 
-def _welcome_blocks():
-    """Nested welcome page seeded into fresh guest workspaces."""
-    wid = secrets.token_urlsafe(9)
-    started_id = secrets.token_urlsafe(9)
-    figures_id = secrets.token_urlsafe(9)
-    guest_id = secrets.token_urlsafe(9)
-    md_id = secrets.token_urlsafe(9)
-    return [
-        (wid, "root", "a0V", "Welcome", '{"summary":"A quick-start guide to Gamma PDF Annotator"}'),
-        (secrets.token_urlsafe(9), wid, "a0", "Gamma is a self-hosted, Logseq-inspired PDF annotation tool. You can highlight PDFs, organize notes as nested outliner blocks, and share read-only annotated copies via link.", '{}'),
-        (started_id, wid, generate_key_between("a0", None), "## Getting started", '{}'),
-        (secrets.token_urlsafe(9), started_id, "a0", "**Open a PDF**: paste a URL in the topbar and click Open, or drag a PDF file onto this page.", '{}'),
-        (secrets.token_urlsafe(9), started_id, generate_key_between("a0", None), "**Highlight text**: select text in the PDF to create a highlight with optional comment and color.", '{}'),
-        (secrets.token_urlsafe(9), started_id, generate_key_between("a0V", None), "**Add notes**: type in any block. Press Enter for a new sibling, Tab to indent, Shift+Tab to outdent.", '{}'),
-        (secrets.token_urlsafe(9), started_id, generate_key_between("a1", None), "**Reorder blocks**: hover over a block's left edge, grab the ⋮⋮ handle, and drag to reorder.", '{}'),
-        (secrets.token_urlsafe(9), started_id, generate_key_between("a1V", None), "**Drag images**: drag an image file from your computer onto any block to insert it. You can also paste images from the clipboard.", '{}'),
-        (secrets.token_urlsafe(9), started_id, generate_key_between("a2", None), "**AI chat**: click \"Show AI Chat\" at the bottom of the sidebar to ask questions about the open PDF.", '{}'),
-        (secrets.token_urlsafe(9), started_id, generate_key_between("a2V", None), "**Share**: click \"Share link\" in the ⋮ menu to generate a public read-only link for any annotated PDF.", '{}'),
-        (secrets.token_urlsafe(9), started_id, generate_key_between("a3", None), "**Category tags**: add a `category::` tag below the summary to organize pages. The home page groups them into carousels.", '{}'),
-        (figures_id, wid, generate_key_between("a0V", None), "## Insert figures", '{}'),
-        (secrets.token_urlsafe(9), figures_id, "a0", "Drag any image file into a block to embed it. Gamma uploads it and inserts `![]()` markdown. Here is what the app looks like:", '{}'),
-        (secrets.token_urlsafe(9), figures_id, generate_key_between("a0", None), f"![]({_SCREENSHOTS}/01-annotated-pdf.png)", '{}'),
-        (secrets.token_urlsafe(9), figures_id, generate_key_between("a0V", None), f"![]({_SCREENSHOTS}/02-home.png)", '{}'),
-        (guest_id, wid, generate_key_between("a1", None), "## Guest account", '{}'),
-        (secrets.token_urlsafe(9), guest_id, "a0", f"You are signed in as a **guest**. This workspace is yours alone. It stays for {_guest_lifetime()} after you started, or until you log out, and is then deleted with everything in it. To keep your work, ask the admin for an account.", '{}'),
-        (md_id, wid, generate_key_between("a1V", None), "## Markdown formatting", '{}'),
-        (secrets.token_urlsafe(9), md_id, "a0", "Blocks support **bold**, *italic*, `code`, [links](https://example.com), and inline $\\KaTeX$ math like $E = mc^2$.", '{}'),
-    ]
+def _guest_note() -> str:
+    """The callout a guest's Welcome page ends with: when the workspace goes."""
+    return ("> [!note] Guest workspace\n"
+            f"> It stays for {_guest_lifetime()} or until you log out, then it is deleted "
+            "with everything in it. To keep your work, ask the admin for an account.")
 
 
-def create_workspace_files(ws_id: str, welcome: bool = False):
+def _welcome_text() -> str:
+    try:
+        return WELCOME_MD.read_text(encoding="utf-8")
+    except OSError as e:
+        log.warning(f"[seed] welcome page skipped: {e}")
+        return ""
+
+
+def welcome_source(text: str) -> tuple[dict, list]:
+    """``(front matter, [{content, children}])`` of welcome.md's ``text``,
+    parsed like any imported markdown file. ``({}, [])`` for no text (a
+    broken install seeds nothing rather than failing a login)."""
+    from .markdown_import import md_to_blocks, parse_frontmatter
+    if not text:
+        return {}, []
+    fields, body = parse_frontmatter(text)
+    return fields, md_to_blocks(body)
+
+
+def _welcome_titles(fields: dict) -> tuple[str, str]:
+    """The page's title and the PDF's: front matter ``title`` and
+    ``document`` (which defaults to the title)."""
+    from .markdown_import import fm_text
+    title = fm_text(fields, "title") or "Welcome"
+    return title, fm_text(fields, "document") or title
+
+
+@functools.lru_cache(maxsize=2)
+def welcome_pdf(text: str) -> bytes:
+    """The sample PDF: welcome.md (``text``) typeset by the notes-as-PDF
+    writer under its ``document`` title. The writer is deterministic, so
+    every workspace stores the same file; one render per process and text."""
+    from .pdf_document import render_document
+    fields, tree = welcome_source(text)
+    _title, document = _welcome_titles(fields)
+    return render_document([{"content": document, "properties": {}, "children": tree}])
+
+
+def _insert_ops(page_id: str, tree: list) -> list[dict]:
+    """``insert`` ops for a ``{content, children}`` tree under the page,
+    parents before children, positions minted per sibling run."""
+    ops, pending = [], [(page_id, tree)]
+    while pending:
+        parent, nodes = pending.pop(0)
+        for node, pos in zip(nodes, generate_n_keys_between(None, None, n=len(nodes))):
+            bid = secrets.token_urlsafe(9)
+            ops.append({"op": "insert", "id": bid, "parent": parent, "position": pos,
+                        "content": node.get("content", ""), "props": {}})
+            if node.get("children"):
+                pending.append((bid, node["children"]))
+    return ops
+
+
+def seed_welcome(ws: str, *, actor: str, guest: bool = False) -> str | None:
+    """Seed the Welcome page into a workspace that has no pages yet: a page
+    marked ``properties.seeded = "welcome"`` carrying the sample PDF, its
+    notes inserted as one op batch like every other block writer's. A
+    guest's page ends with a callout naming the lifetime. Returns the page
+    id, or None when skipped (the workspace already has pages, welcome.md is
+    missing, or this server is a share host, whose workspaces hold published
+    pages only — each counts against the plan's cap). A PDF the writer or the
+    storage limits refuse leaves the page without one."""
+    from . import cloud_auth
+    from .blocks_store import attachment_props, create_page
+    from .ops import after_commit, apply_ops
+    from .storage import store_file
+
+    if cloud_auth.settings()["share_host"]:
+        return None
+    text = _welcome_text()
+    fields, tree = welcome_source(text)
+    if not tree:
+        return None
+    title, document = _welcome_titles(fields)
+    if guest:
+        tree = [*tree, {"content": _guest_note(), "children": []}]
+    try:
+        with closing(connect_pages_db(ws)) as conn:
+            if conn.execute("SELECT 1 FROM unified_blocks WHERE parent_id = 'root' LIMIT 1").fetchone():
+                return None
+            props = {"seeded": SEEDED_WELCOME}
+            try:
+                # The content-hash store, like any upload — but not
+                # store_pdf, whose background manifest walk could still hold
+                # data.db open when a guest who just arrived logs out (which
+                # deletes the workspace); /api/pdf-info makes it on first open.
+                filename, _existed = store_file(ws, welcome_pdf(text), ".pdf")
+                doc_id = filename[:-len(".pdf")]
+                attachment, _auto = attachment_props(doc_id, f"/api/uploads/{filename}", _WELCOME_PDF_NAME)
+                # A record of its own, so opening the page looks nothing up
+                # (the tour works offline) and asks no AI for a citation.
+                props.update(attachment, meta={"title": document, "kind": "notes", "source": "manual"},
+                             ppt_cite=f"Gamma, *{document}*")
+            except Exception as e:  # noqa: BLE001 — the notes still make a Welcome page
+                log.warning(f"[seed] welcome PDF skipped: {e}")
+            page = create_page(conn, title, props)
+            # commit_ops on a connection closed here (a handle left for the
+            # GC would keep the directory from being deleted on Windows)
+            after_commit(ws, conn, apply_ops(conn, page["id"], _insert_ops(page["id"], tree), actor=actor))
+    except Exception as e:  # noqa: BLE001 — never fail the account being created
+        log.warning(f"[seed] welcome page failed: {e}")
+        return None
+    return page["id"]
+
+
+def create_workspace_files(ws_id: str):
     """Create fresh pages.db, data.db and uploads/ under workspaces/<id>/
-    (existing files are kept). ``welcome`` seeds the guest welcome page."""
+    (existing files are kept). The Welcome page is ``seed_welcome``'s, once
+    the workspace's rows exist (gamma/workspaces.py)."""
     target = WORKSPACES_DIR / safe_ws_id(ws_id)
     target.mkdir(parents=True, exist_ok=True)
     nw = page_now()
@@ -83,14 +173,6 @@ def create_workspace_files(ws_id: str, welcome: bool = False):
                 "VALUES ('root', NULL, 'a0', '', '{}', ?, ?)",
                 (nw, nw),
             )
-        if welcome and not pages_db.execute(
-                "SELECT 1 FROM unified_blocks WHERE parent_id = 'root' LIMIT 1").fetchone():
-            for bid, pid, pos, content, props in _welcome_blocks():
-                pages_db.execute(
-                    "INSERT INTO unified_blocks (id, parent_id, position, content, properties, created_at, updated_at) "
-                    "VALUES (?, ?, ?, ?, ?, ?, ?)",
-                    (bid, pid, pos, content, props or "{}", nw, nw),
-                )
         pages_db.commit()
 
     with closing(sqlite3.connect(str(target / "data.db"))) as data_db:
@@ -131,7 +213,7 @@ def ensure_admin_seed():
             (username, pwhash, page_now()),
         )
         conn.commit()
-    workspaces.ensure_personal(username)
+    workspaces.ensure_personal(username, welcome=True)
     # ASCII only: this prints during startup, and a redirected Windows console
     # (GBK) raises UnicodeEncodeError on characters it can't encode.
     # Raw print()s on purpose — the one-time password must go to the console
@@ -156,7 +238,7 @@ def create_cloud_account(username: str, is_admin: bool = False) -> str:
             (username, 1 if is_admin else 0, page_now()),
         )
         conn.commit()
-    return workspaces.ensure_personal(username)
+    return workspaces.ensure_personal(username, welcome=True)
 
 
 def create_account(username: str, password: str | None, is_admin: bool = False) -> str:
@@ -174,4 +256,4 @@ def create_account(username: str, password: str | None, is_admin: bool = False) 
             (username, pwhash, 1 if is_admin else 0, page_now()),
         )
         conn.commit()
-    return workspaces.ensure_personal(username)
+    return workspaces.ensure_personal(username, welcome=True)

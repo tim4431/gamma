@@ -1,4 +1,4 @@
-import { wanted } from "../harness.mjs";
+import { fakeAiModels, wanted } from "../harness.mjs";
 export async function chatNavigationScenarios(env) {
   const { server, browser, alice, makePdf, step, until, assert, assertEq, assertNoProblems, openPage, flags } = env;
   if (!wanted("chat navigation")) return;
@@ -13,6 +13,7 @@ export async function chatNavigationScenarios(env) {
       await step(`chat navigation: ${source.name} reply survives returning ${finishAway ? "after" : "before"} completion`, async () => {
         await alice.api(`/api/chats/${source.key}`, { method: "PUT", body: { messages: [] } });
         const ctx = await alice.context(browser);
+        await fakeAiModels(ctx);
         await ctx.addInitScript(() => {
           localStorage.setItem("gamma-ai-login-check", "off");
           const fetch = window.fetch.bind(window);
@@ -101,6 +102,7 @@ export async function chatNavigationScenarios(env) {
     await alice.api(`/api/chats/${pdf.id}`, { method: "PUT", body: { messages: [] } });
     await alice.api(`/api/chats/${target.id}`, { method: "PUT", body: { messages: [] } });
     const ctx = await alice.context(browser);
+    await fakeAiModels(ctx);
     await ctx.addInitScript(() => {
       localStorage.setItem("gamma-ai-login-check", "off");
       window.chatStreams = []; // one fake stream per /api/ai/chat call, in send order
@@ -167,9 +169,12 @@ export async function chatNavigationScenarios(env) {
 
   await step("chat navigation: the page picker's keys — Enter ticks the best match, arrows walk, Ctrl+F stays in the picker", async () => {
     const ctx = await alice.context(browser);
+    await fakeAiModels(ctx);
     await ctx.addInitScript(() => localStorage.setItem("gamma-ai-login-check", "off"));
     const page = await openPage(ctx, `${server.base}/?ws=${alice.ws}`);
     try {
+      // The conversation's load resets the picked pages: pick after it settled.
+      await page.waitForLoadState("networkidle");
       await page.getByRole("button", { name: "Add attachments or chat context" }).click();
       await page.locator(".chatPlusMenuItem", { hasText: "Add pages from library" }).click();
       const picker = page.locator(".docPickerModal");
@@ -196,6 +201,125 @@ export async function chatNavigationScenarios(env) {
       await box.fill("");
       await box.press("Enter");
       await until(async () => !(await picker.count()));
+      assertNoProblems(page);
+    } finally { await ctx.close(); }
+  });
+
+  await step("chat navigation: a failed request is a card with its fix; Retry asks again; a broken-off reply keeps its text", async () => {
+    await alice.api(`/api/chats/${pdf.id}`, { method: "PUT", body: { messages: [] } });
+    const ctx = await alice.context(browser);
+    await fakeAiModels(ctx);
+    await ctx.addInitScript(() => {
+      localStorage.setItem("gamma-ai-login-check", "off");
+      window.chatCalls = 0;
+      const fetch = window.fetch.bind(window);
+      const lines = (events) => new Response(events.map((e) => JSON.stringify(e) + "\n").join(""),
+        { headers: { "Content-Type": "application/x-ndjson" } });
+      window.fetch = (input, init) => {
+        if (String(input).endsWith("/api/ai/chat")) {
+          window.chatCalls += 1;
+          // 1st: the provider refused the key (the server's classified 502);
+          // 2nd (Retry): an answer that breaks off with an overloaded error.
+          if (window.chatCalls === 1) {
+            return Promise.resolve(new Response(JSON.stringify({
+              detail: "AI call failed: upstream 401: Incorrect API key provided: sk-t***123",
+              kind: "auth", status: 401, provider_name: "OpenAI", provider_id: "nope", provider_auth: "key",
+            }), { status: 502, headers: { "Content-Type": "application/json" } }));
+          }
+          return Promise.resolve(lines([{ delta: "Half an answer" },
+            { error: "AI call failed: upstream 529: Overloaded", kind: "overloaded", status: 529, provider_name: "OpenAI" }]));
+        }
+        return fetch(input, init);
+      };
+    });
+    const page = await openPage(ctx, `${server.base}/?ws=${alice.ws}&page=${pdf.id}`);
+    try {
+      const input = page.getByRole("combobox", { name: "Message AI" });
+      await input.waitFor();
+      await page.waitForLoadState("networkidle");
+      await input.fill("Summarize this");
+      await input.press("Enter");
+      const card = page.locator(".chatErrorCard");
+      await card.filter({ hasText: "OpenAI rejected the API key" }).waitFor();
+      await card.getByRole("button", { name: "Update key", exact: true }).waitFor();
+      // The provider's own words are folded away under Details.
+      assertEq(await card.locator("details:not([open]) summary", { hasText: "Details from the provider" }).count(), 1);
+      // Retry re-sends the question: the card is replaced by the new reply,
+      // which broke off — its text stays, with the compact card under it.
+      await card.getByRole("button", { name: "Retry", exact: true }).click();
+      await page.locator(".chatErrorCard.compact", { hasText: "OpenAI is overloaded" }).waitFor();
+      assert((await page.locator(".chatBubble.ai").innerText()).includes("Half an answer"), "the partial answer stays");
+      assertEq(await page.locator(".chatErrorCard").count(), 1, "the refused request was replaced, not kept");
+      let saved;
+      await until(async () => {
+        saved = await alice.api(`/api/chats/${pdf.id}`);
+        return saved.messages?.length === 2 && saved.messages.at(-1).errorKind && !saved.messages.at(-1).partial;
+      });
+      assertEq(saved.messages.at(-1).text, "Half an answer");
+      assertEq(saved.messages.at(-1).errorKind, "overloaded");
+      assertEq(saved.messages.at(-1).error, undefined, "a broken-off answer is still an answer");
+      // The saved card survives a reload.
+      await page.reload();
+      await page.locator(".chatErrorCard.compact", { hasText: "OpenAI is overloaded" }).waitFor();
+      assertNoProblems(page);
+    } finally { await ctx.close(); }
+  });
+
+  await step("chat navigation: the agent's steps sum up in one pill that names the running step; its changes link to what changed", async () => {
+    await alice.api("/api/chats/home", { method: "PUT", body: { messages: [] } });
+    const ctx = await alice.context(browser);
+    await fakeAiModels(ctx);
+    await ctx.addInitScript(() => {
+      localStorage.setItem("gamma-ai-login-check", "off");
+      const fetch = window.fetch.bind(window);
+      window.fetch = (input, init) => {
+        if (String(input).endsWith("/api/ai/chat")) {
+          return Promise.resolve(new Response(new ReadableStream({
+            start(controller) {
+              window.chatStream = {
+                push: (event) => controller.enqueue(new TextEncoder().encode(JSON.stringify(event) + "\n")),
+                finish: () => controller.close(),
+              };
+            },
+          }), { headers: { "Content-Type": "application/x-ndjson" } }));
+        }
+        return fetch(input, init);
+      };
+    });
+    const page = await openPage(ctx, `${server.base}/?ws=${alice.ws}`);
+    try {
+      const input = page.getByRole("combobox", { name: "Message AI" });
+      await input.waitFor();
+      await page.waitForLoadState("networkidle");
+      await input.fill("Tidy up the library");
+      await input.press("Enter");
+      await page.waitForFunction(() => !!window.chatStream);
+      const pill = page.locator(".chatSteps");
+      // The step running now replaces "Thinking".
+      await page.evaluate(() => window.chatStream.push({ step: { id: "c1", tool: "search_library", args: { query: "cavity" } } }));
+      await pill.filter({ hasText: "Searching library for “cavity”…" }).waitFor();
+      assertEq(await page.locator(".chatThinking").count(), 0, "the running step stands in for the Thinking pill");
+      await page.evaluate(({ id, title }) => {
+        const s = window.chatStream;
+        s.push({ action: { kind: "search", tool: "search_library", summary: "Searched library for “cavity” — 1 hit", args: { query: "cavity" }, result: "…" } });
+        s.push({ action: { kind: "rename", tool: "rename_page", summary: `Renamed “${title}” → “Kimble 2008”`, args: { page_id: id, title: "Kimble 2008" }, result: "ok",
+          page_id: id, title, from: title, to: "Kimble 2008" } });
+        s.push({ action: { kind: "error", tool: "rename_page", summary: "error: no such page", args: {}, result: "error: no such page", error: true } });
+        s.push({ delta: "Renamed one paper." });
+        s.finish();
+      }, { id: pdf.id, title: "Chat navigation paper" });
+      await pill.filter({ hasText: "3 steps · searched" }).waitFor();
+      assert((await pill.innerText()).includes("1 failed"), "failures are counted on the pill");
+      const changes = page.locator(".chatChanges");
+      await changes.filter({ hasText: "Changed in your library · 1" }).waitFor();
+      assertEq(await changes.locator(".chatChangeOld").innerText(), "Chat navigation paper");
+      // The chips are one click away.
+      assertEq(await page.locator(".chatToolAction").count(), 0);
+      await pill.click();
+      assertEq(await page.locator(".chatToolAction").count(), 3);
+      // The new title opens the renamed page.
+      await changes.getByRole("button", { name: "Kimble 2008", exact: true }).click();
+      await until(() => new URL(page.url()).searchParams.get("block") === pdf.id);
       assertNoProblems(page);
     } finally { await ctx.close(); }
   });

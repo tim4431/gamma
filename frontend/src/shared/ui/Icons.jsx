@@ -1,19 +1,29 @@
 // Shared inline icons — 24×24 stroke glyphs sized via the `size` prop.
-// One definition per glyph, replacing the copy-pasted <svg> literals that
-// used to drift in stroke width between call sites.
+// One definition per glyph, so the stroke is the same at every call site.
+//
+// Three sizes (docs/dev/ui-design.md, "Icons"): 14 inline with text (chips,
+// menu rows), 16 in buttons and toolbars (the default), 20 in pane headers
+// and empty states; 48 for illustrations. The stroke is set in screen
+// pixels, not in the 24-unit grid: `weight` (1.6 px) is drawn the same at
+// every size, so neighbouring icons of different sizes look equally heavy.
+// An explicit `strokeWidth` (grid units) is for icons sized by CSS.
 import React from "react";
 
-function Icon({ size = 15, strokeWidth = 2, children, ...rest }) {
+const ICON_WEIGHT = 1.6;
+const iconStroke = (size, weight = ICON_WEIGHT) => (size ? (weight * 24) / size : 2);
+
+function Icon({ size = 16, weight = ICON_WEIGHT, strokeWidth, children, ...rest }) {
   return (
     <svg width={size} height={size} viewBox="0 0 24 24" fill="none" stroke="currentColor"
-      strokeWidth={strokeWidth} strokeLinecap="round" strokeLinejoin="round" {...rest}>
+      strokeWidth={strokeWidth ?? iconStroke(size, weight)} strokeLinecap="round" strokeLinejoin="round" {...rest}>
       {children}
     </svg>
   );
 }
 
-export const CheckIcon = ({ strokeWidth = 2.4, ...p }) => (
-  <Icon strokeWidth={strokeWidth} {...p}><path d="M20 6 9 17l-5-5" /></Icon>
+// A check mark reads better a touch heavier than the outline icons.
+export const CheckIcon = ({ weight = 2, ...p }) => (
+  <Icon weight={weight} {...p}><path d="M20 6 9 17l-5-5" /></Icon>
 );
 export const CopyIcon = (p) => (
   <Icon {...p}><rect x="9" y="9" width="12" height="12" rx="2" /><path d="M5 15V5a2 2 0 0 1 2-2h10" /></Icon>
@@ -29,6 +39,10 @@ export const FilePlusIcon = (p) => (
 );
 export const FolderOpenIcon = (p) => (
   <Icon {...p}><path d="m6 14 1.5-2.9A2 2 0 0 1 9.24 10H20a2 2 0 0 1 1.94 2.5l-1.54 6a2 2 0 0 1-1.95 1.5H4a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h3.9a2 2 0 0 1 1.69.9l.81 1.2a2 2 0 0 0 1.67.9H18a2 2 0 0 1 2 2v2" /></Icon>
+);
+// Two stacked folders — workspaces (Settings → Workspaces).
+export const FoldersIcon = (p) => (
+  <Icon {...p}><path d="M20 17a2 2 0 0 0 2-2V9a2 2 0 0 0-2-2h-3.9a2 2 0 0 1-1.69-.9l-.81-1.2a2 2 0 0 0-1.67-.9H8a2 2 0 0 0-2 2v9a2 2 0 0 0 2 2Z" /><path d="M2 8v11a2 2 0 0 0 2 2h14" /></Icon>
 );
 // Small folder + file pair — the home library's "everything" filter state.
 export const FolderFilesIcon = (p) => (
@@ -81,6 +95,9 @@ export const AlignRightIcon = (p) => (
 );
 export const LinkIcon = (p) => (
   <Icon {...p}><path d="M10 13a5 5 0 0 0 7.54.54l3-3a5 5 0 0 0-7.07-7.07l-1.72 1.71" /><path d="M14 11a5 5 0 0 0-7.54-.54l-3 3a5 5 0 0 0 7.07 7.07l1.71-1.71" /></Icon>
+);
+export const ShareIcon = (p) => (
+  <Icon {...p}><circle cx="18" cy="5" r="3" /><circle cx="6" cy="12" r="3" /><circle cx="18" cy="19" r="3" /><path d="m8.59 13.51 6.83 3.98" /><path d="m15.41 6.51-6.82 3.98" /></Icon>
 );
 export const ExternalLinkIcon = (p) => (
   <Icon {...p}><path d="M15 3h6v6" /><path d="M10 14 21 3" /><path d="M18 13v6a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2V8a2 2 0 0 1 2-2h6" /></Icon>
@@ -349,25 +366,21 @@ export const LineWidthIcon = (p) => (
 );
 
 // Filled glyphs — bespoke markup, not the stroke wrapper.
-export const SparklesIcon = ({ size = 15, ...rest }) => (
+export const SparklesIcon = ({ size = 16, ...rest }) => (
   <svg width={size} height={size} viewBox="0 0 24 24" fill="currentColor" {...rest}><path d="M12 2l1.9 5.7 5.6 1.8-5.6 1.8L12 17l-1.9-5.7L4.5 9.5l5.6-1.8L12 2z" /><path d="M19 14l.9 2.6 2.6.9-2.6.9L19 21l-.9-2.6-2.6-.9 2.6-.9L19 14z" /></svg>
 );
-export const StopIcon = ({ size = 15, ...rest }) => (
+export const StopIcon = ({ size = 16, ...rest }) => (
   <svg width={size} height={size} viewBox="0 0 24 24" fill="currentColor" {...rest}><rect x="5" y="5" width="14" height="14" rx="2" /></svg>
 );
 
 // Pin glyph — outline when unpinned, filled when pinned. Shared by the list
 // rows, grid tiles, and the pinned strip so the affordance is identical.
-export function PinIcon({ filled = false, size = 13 }) {
-  return (
-    <svg width={size} height={size} viewBox="0 0 24 24"
-      fill={filled ? "currentColor" : "none"} stroke="currentColor"
-      strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
-      <path d="M12 17v5" />
-      <path d="M9 10.76a2 2 0 0 1-1.11 1.79l-1.78.9A2 2 0 0 0 5 15.24V16a1 1 0 0 0 1 1h12a1 1 0 0 0 1-1v-.76a2 2 0 0 0-1.11-1.79l-1.78-.9A2 2 0 0 1 15 10.76V7a1 1 0 0 1 1-1 2 2 0 0 0 0-4H8a2 2 0 0 0 0 4 1 1 0 0 1 1 1z" />
-    </svg>
-  );
-}
+export const PinIcon = ({ filled = false, size = 14, ...p }) => (
+  <Icon size={size} fill={filled ? "currentColor" : "none"} {...p}>
+    <path d="M12 17v5" />
+    <path d="M9 10.76a2 2 0 0 1-1.11 1.79l-1.78.9A2 2 0 0 0 5 15.24V16a1 1 0 0 0 1 1h12a1 1 0 0 0 1-1v-.76a2 2 0 0 0-1.11-1.79l-1.78-.9A2 2 0 0 1 15 10.76V7a1 1 0 0 1 1-1 2 2 0 0 0 0-4H8a2 2 0 0 0 0 4 1 1 0 0 1 1 1z" />
+  </Icon>
+);
 
 // Big folder glyph for grid tiles (filled, accent-colored via CSS).
 export function FolderGlyph() {
@@ -393,12 +406,20 @@ export function LabelGlyph({ dashed } = {}) {
 
 // Big file glyph — a document sheet with a folded corner. A PDF-backed page
 // gets a small "PDF" tab so it reads as an annotated paper at a glance.
-export function FileGlyph({ isPdf }) {
+// `size` draws it as a small kind icon (search results, tabs, Ctrl+P), the
+// "PDF" lettering a solid band there; without it the surface's CSS sizes
+// the tile. A PDF's glyph carries `.pdf`, tinted with --kind-pdf.
+export function FileGlyph({ isPdf, size }) {
+  const small = !!size && size < 24;
   return (
-    <svg className="tileGlyph fileGlyph" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round" strokeLinejoin="round">
+    <svg className={`tileGlyph fileGlyph${isPdf ? " pdf" : ""}${size ? " kindGlyph" : ""}`}
+      style={size ? { width: size, height: size } : undefined} aria-hidden="true"
+      viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth={small ? iconStroke(size) : 1.5} strokeLinecap="round" strokeLinejoin="round">
       <path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z" fill="var(--bg-raised)" />
       <path d="M14 2v6h6" />
-      {isPdf ? (
+      {isPdf && small ? (
+        <rect x="7.5" y="12.5" width="9" height="5" rx="1" fill="currentColor" stroke="none" />
+      ) : isPdf ? (
         <text x="12" y="17" textAnchor="middle" fontSize="5" fontWeight="700" fill="currentColor" stroke="none">PDF</text>
       ) : (
         <>

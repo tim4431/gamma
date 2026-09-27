@@ -6,10 +6,6 @@
   padding: 0 4px;
 }
 .carouselLabel {
-  font-size: calc(12px * var(--ui-font-scale, 1));
-  color: var(--text-muted);
-  text-transform: uppercase;
-  letter-spacing: 0.05em;
   margin-bottom: 8px;
 }
 /* No arrow chrome: the wheel pans it sideways (handler in CardCarousel),
@@ -43,12 +39,12 @@
   user-select: none;
   background: var(--bg-card);
   border: 1px solid var(--border-subtle);
-  border-radius: 10px;
+  border-radius: var(--radius-lg);
   cursor: pointer;
   text-align: left;
   color: var(--text-primary);
   font: inherit;
-  transition: background 120ms ease, border-color 120ms ease, box-shadow 120ms ease;
+  transition: background var(--dur-fast) ease, border-color var(--dur-fast) ease, box-shadow var(--dur-fast) ease;
 }
 /* One width for every fixed-width strip card, and the grid's minimum track —
    so a card is the same card wherever it is shown. */
@@ -62,17 +58,14 @@
 .pageCard:hover {
   background: var(--bg-elevated);
   border-color: var(--border);
-  box-shadow: 0 2px 8px rgba(0, 0, 0, 0.08);
+  box-shadow: var(--shadow-2);
 }
 /* Keep the gray Gamma cards distinct without bringing back white surfaces. */
 [data-theme="gamma-light"] .pageCard {
   border-color: var(--border);
-  box-shadow: 0 1px 3px rgba(45, 40, 28, 0.12);
+  box-shadow: var(--shadow-1);
 }
-[data-theme="gamma-light"] .pageCard:hover {
-  border-color: var(--border-hover);
-  box-shadow: 0 3px 9px rgba(45, 40, 28, 0.16);
-}
+[data-theme="gamma-light"] .pageCard:hover { border-color: var(--border-hover); box-shadow: var(--shadow-2); }
 /* .selected / .dragOver are shared with the list rows — see the :is() rules
    next to .fileRow / .folderRow below (they must sit after those :hover
    rules to win when both apply). */
@@ -103,8 +96,8 @@
   align-self: stretch;
   width: 100%;
   padding: 9px 11px;
-  font-size: calc(10.5px * var(--ui-font-scale, 1));
-  line-height: 1.4;
+  font-size: var(--fs-2xs);
+  line-height: var(--lh-ui);
   color: var(--text-muted);
   text-align: left;
   overflow: hidden;
@@ -114,7 +107,7 @@
   word-break: break-word;
   mask-image: linear-gradient(to bottom, #000 70%, transparent);
 }
-.pageCard:hover .fileGlyph, .pageCard.selected .fileGlyph { color: var(--accent); }
+.pageCard:hover .fileGlyph:not(.pdf), .pageCard.selected .fileGlyph:not(.pdf) { color: var(--accent); }
 .pageCardBody {
   display: flex;
   flex-direction: column;
@@ -123,7 +116,7 @@
 }
 .pageCardTitle {
   min-height: 2.6em;
-  font-size: calc(12.5px * var(--ui-font-scale, 1));
+  font-size: var(--fs-sm);
   line-height: 1.3;
   font-weight: 500;
   word-break: break-word;
@@ -136,15 +129,16 @@
   display: flex;
   align-items: baseline;
   gap: 6px;
-  font-size: calc(10.5px * var(--ui-font-scale, 1));
+  font-size: var(--fs-2xs);
 }
 .pageCardTime { margin-left: auto; color: var(--text-dim); white-space: nowrap; }
-:is(.pageCardKind, .fileRowKind) { font-size: calc(9.5px * var(--ui-font-scale, 1)); font-weight: 600; letter-spacing: 0.04em; text-transform: uppercase; color: var(--text-dim); }
+/* The card's kind label in sentence case like the section labels ("Page"; "PDF" is an acronym). */
+.pageCardKind { font-size: var(--fs-2xs); font-weight: 500; color: var(--text-muted); }
 .pageCardCount {
-  font-size: calc(10px * var(--ui-font-scale, 1));
+  font-size: var(--fs-2xs);
   color: var(--text-muted);
   background: var(--bg-raised);
-  border-radius: 999px;
+  border-radius: var(--radius-full);
   padding: 0 7px;
 }
 /* Label + folder chips (both rendered by CardLabels): one clipped line that
@@ -173,7 +167,7 @@
   top: 4px;
   right: 4px;
   opacity: 0;
-  transition: opacity 0.12s;
+  transition: opacity var(--dur-fast);
   background: var(--bg-card);
 }
 .pageCard:hover .pageCardClose, .pageCardClose:focus-visible { opacity: 1; }
@@ -194,13 +188,13 @@
   align-items: center;
   gap: 10px;
   padding: 7px 10px;
-  border-radius: 8px;
+  border-radius: var(--radius-md);
   cursor: pointer;
   color: var(--text-secondary);
   border: 1px dashed transparent;
   background: none;
   font: inherit;
-  font-size: calc(14px * var(--ui-font-scale, 1));
+  font-size: var(--fs-md);
   text-align: left;
   width: 100%;
   user-select: none;
@@ -221,21 +215,13 @@
   text-overflow: ellipsis;
   white-space: nowrap;
 }
-.folderCount {
-  font-size: calc(11px * var(--ui-font-scale, 1));
-  color: var(--text-muted);
-  background: var(--bg-raised);
-  border-radius: 999px;
-  padding: 1px 8px;
-  flex-shrink: 0;
-}
-.folderHint { font-size: calc(11px * var(--ui-font-scale, 1)); color: var(--text-dim); flex-shrink: 0; }
+.folderHint { font-size: var(--fs-2xs); color: var(--text-dim); flex-shrink: 0; }
 .folderBackRow svg { color: var(--text-muted); }
 .folderCurrent {
   display: flex;
   align-items: center;
   gap: 8px;
-  font-size: calc(16px * var(--ui-font-scale, 1));
+  font-size: var(--fs-lg);
   font-weight: 600;
   color: var(--text-primary);
   padding: 4px 10px 8px;
@@ -247,16 +233,15 @@
 .folderNewInput {
   flex: 1;
   min-width: 0;
-  font-size: calc(13px * var(--ui-font-scale, 1));
+  font-size: var(--fs-sm);
   padding: 3px 8px;
 }
-.folderNewInput:focus { border-color: var(--accent-dark); }
 /* breadcrumb segments in the folder header */
 .crumbBtn {
   background: none;
   border: none;
   padding: 0 2px;
-  font: inherit;
+  font-family: inherit; font-weight: inherit; line-height: inherit;
   color: var(--text-primary);
   cursor: pointer;
 }
@@ -270,22 +255,15 @@
   gap: 8px;
   padding: 2px 10px 6px;
 }
-.homeListLabel {
-  font-size: calc(10px * var(--ui-font-scale, 1));
-  font-weight: 600;
-  text-transform: uppercase;
-  letter-spacing: 0.06em;
-  color: var(--text-dim);
-}
 .loadMoreBtn {
   display: block;
   margin: 8px auto 16px;
   background: none;
   border: 1px solid var(--border);
-  border-radius: 999px;
+  border-radius: var(--radius-full);
   color: var(--text-muted);
   font: inherit;
-  font-size: calc(12px * var(--ui-font-scale, 1));
+  font-size: var(--fs-xs);
   padding: 5px 14px;
   cursor: pointer;
 }
@@ -300,37 +278,79 @@
   height: 28px;
   padding: 0 6px 0 8px;
   border: 1px solid var(--border);
-  border-radius: 8px;
+  border-radius: var(--radius-md);
   /* same surface as the sort pill / toggle buttons next to it */
   background: var(--bg-elevated);
-  box-shadow: 0 1px 2px rgba(0, 0, 0, 0.05);
+  box-shadow: var(--shadow-1);
   color: var(--text-dim);
 }
-.homeFindBox:focus-within { border-color: var(--text-dim); }
 .homeFindBox.active { color: var(--accent); }
 .homeFindInput {
-  width: 110px;
+  width: 170px;
   border: none;
   background: none;
   padding: 0;
   font: inherit;
-  font-size: calc(12px * var(--ui-font-scale, 1));
+  font-size: var(--fs-xs);
   color: var(--text-primary);
 }
 .homeFindInput:focus { outline: none; box-shadow: none; }
 .homeFindClear { flex-shrink: 0; }
+@media (max-width: 600px) { .homeFindInput { width: 110px; } }
+/* Past the filter box (ListSearchElsewhere): the banner when nothing in the
+   listing matched, and the quiet row that follows the matches. */
+.homeSearchBanner {
+  display: flex;
+  align-items: center;
+  flex-wrap: wrap;
+  gap: 8px 12px;
+  margin: 2px 4px 8px;
+  padding: 10px 12px;
+  border: 1px solid var(--border);
+  border-radius: var(--radius-lg);
+  background: var(--bg-elevated);
+  font-size: var(--fs-sm);
+  color: var(--text-secondary);
+}
+.homeSearchBannerText { flex: 1 1 220px; min-width: 0; }
+.homeSearchBannerText strong { color: var(--text-primary); }
+.homeSearchBannerBtn { display: inline-flex; align-items: center; gap: 6px; }
+.homeSearchKey {
+  font-family: var(--font-mono);
+  font-size: var(--fs-2xs);
+  opacity: 0.8;
+  margin-left: 4px;
+}
+.homeSearchMore {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  width: 100%;
+  padding: 6px 10px;
+  border: 1px dashed var(--border);
+  border-radius: var(--radius-md);
+  background: none;
+  color: var(--text-muted);
+  font: inherit;
+  font-size: var(--fs-sm);
+  text-align: left;
+  cursor: pointer;
+}
+.homeSearchMore span { min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.homeSearchMore:hover { color: var(--text-primary); border-color: var(--border-hover); background: var(--bg-block); }
+.fileGrid .homeSearchMore { grid-column: 1 / -1; }
 /* non-matching rows/cards stay in place, just out of the way */
 .homeDim { opacity: 0.34; }
 .homeDim:hover { opacity: 0.75; }
 /* the sort trigger (a uiBtn sm, ~26px from its padding) sits between the
    28px-tall toggle groups — pin its height so the toolbar reads as one row */
-.homeListBar .uiSelectBtn { height: 28px; padding-top: 0; padding-bottom: 0; }
+.homeListBar .uiSelectBtn { height: 28px; min-height: 28px; padding-top: 0; padding-bottom: 0; }
 .homeViewToggle {
   display: inline-flex;
   gap: 2px;
   background: var(--bg-raised);
   border: 1px solid var(--border);
-  border-radius: 8px;
+  border-radius: var(--radius-md);
   padding: 2px;
 }
 .homeViewBtn {
@@ -341,12 +361,12 @@
   height: 22px;
   border: none;
   background: none;
-  border-radius: 6px;
+  border-radius: var(--radius-sm);
   color: var(--text-muted);
   cursor: pointer;
 }
 .homeViewBtn:hover { color: var(--text-primary); }
-.homeViewBtn.active { background: var(--bg-input); color: var(--accent); box-shadow: 0 1px 2px rgba(0,0,0,0.15); }
+.homeViewBtn.active { background: var(--bg-input); color: var(--accent); box-shadow: var(--shadow-1); }
 
 /* selected state — a solid border (not outline) so it never clips at the
    scroll-container edge */
@@ -369,7 +389,7 @@
   align-items: center;
   gap: 10px;
   padding: 7px 10px;
-  border-radius: 8px;
+  border-radius: var(--radius-md);
   border: 1px solid transparent;
   background: none;
   color: var(--text-secondary);
@@ -395,28 +415,68 @@
   width: 20px;
   height: 20px;
 }
-.fileRow:hover .fileGlyph, .fileRow.selected .fileGlyph { color: var(--accent); }
+.fileRow:hover .fileGlyph:not(.pdf), .fileRow.selected .fileGlyph:not(.pdf) { color: var(--accent); }
 .fileRowName {
   flex: 1;
   min-width: 0;
   overflow: hidden;
   text-overflow: ellipsis;
   white-space: nowrap;
-  font-size: calc(14px * var(--ui-font-scale, 1));
+  font-size: var(--fs-md);
   color: var(--text-primary);
 }
 .fileRowRename {
   flex: 1;
   min-width: 0;
   border-color: var(--accent-dark);
-  font-size: calc(14px * var(--ui-font-scale, 1));
+  font-size: var(--fs-md);
   padding: 2px 6px;
 }
-/* type/size comes from the shared :is(.pageCardKind, .fileRowKind) rule */
-.fileRowKind { flex: 0 0 auto; }
-.fileRowPin { flex: 0 0 auto; opacity: 0; transition: opacity 0.12s; }
+/* The trailing columns every list row shares (rowColumns in App.jsx):
+   kind, the date the sort uses, and the pin slot — fixed widths, so they
+   line up down the list and under the header. */
+.fileRowKind {
+  flex: 0 0 64px;
+  font-size: var(--fs-xs);
+  color: var(--text-muted);
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+.fileRowDate {
+  flex: 0 0 110px;
+  text-align: right;
+  font-size: var(--fs-xs);
+  color: var(--text-muted);
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+.fileRowPin, .fileRowPinSlot { flex: 0 0 22px; width: 22px; }
+.fileRowPin { opacity: 0; transition: opacity var(--dur-fast); }
+/* The thin column header above the rows (not a .fileRow: callers count those). */
+.fileListHead {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  padding: 2px 11px 5px;
+  margin-bottom: 2px;
+  border-bottom: 1px solid var(--border-subtle);
+  font-size: var(--fs-xs);
+  color: var(--text-dim);
+  user-select: none;
+}
+.fileListHead .fileRowKind, .fileListHead .fileRowDate { font-size: inherit; color: inherit; }
+.fileListHeadName { flex: 1; min-width: 0; padding-left: 30px; }
+/* A narrow list keeps the name readable: no date column, a tighter kind
+   column and a shorter chip line. */
+@media (max-width: 600px) {
+  .fileRowDate { display: none; }
+  .fileRowKind { flex-basis: 52px; }
+  .fileList .fileRowLabels { max-width: 34%; }
+}
 .fileRow:hover .fileRowPin { opacity: 0.6; }
-.fileRowPin:hover, .fileRowPin.pinned { opacity: 1; }
+.fileRowPin:hover, .fileRowPin.pinned, .fileRowPin:focus-visible { opacity: 1; }
 /* Chip line on a file row (shared base above): capped so it never pushes the
    kind/pin off the row. Order in the row: name … [labels] PDF pin. */
 .fileRowLabels {
@@ -431,9 +491,9 @@
   gap: 3px;
   color: var(--text-secondary);
   background: var(--bg-raised);
-  border-radius: 4px;
+  border-radius: var(--radius-xs);
   padding: 0 6px;
-  font-size: calc(10px * var(--ui-font-scale, 1));
+  font-size: var(--fs-2xs);
   white-space: nowrap;
 }
 /* line the folder-row icon up with the file-row icon column */
@@ -444,15 +504,10 @@
   display: flex;
   align-items: center;
   gap: 5px;
-  font-size: calc(10px * var(--ui-font-scale, 1));
-  font-weight: 600;
-  text-transform: uppercase;
-  letter-spacing: 0.06em;
-  color: var(--text-dim);
   padding: 2px 6px 6px;
 }
 .pinnedLabel svg { color: var(--accent); }
-/* Scrolls like .carouselTrack: wheel pans it (useWheelPan in App.jsx),
+/* Scrolls like .carouselTrack: wheel pans it (shared/ui/wheelPan.js),
    touch swipes natively, no visible scrollbar. */
 .pinnedStrip {
   display: flex;
@@ -479,10 +534,11 @@
 .folderGlyph { color: var(--accent); }
 .labelGlyph { color: var(--text-secondary); }
 .fileGlyph { color: var(--text-muted); }
+.fileGlyph.pdf { color: var(--kind-pdf); }
 .tileRenameInput {
   width: 100%;
   border-color: var(--accent-dark);
-  font-size: calc(12px * var(--ui-font-scale, 1));
+  font-size: var(--fs-xs);
   padding: 2px 6px;
 }
 
@@ -496,13 +552,13 @@
   color: var(--text-dim);
   cursor: pointer;
   padding: 2px;
-  border-radius: 6px;
+  border-radius: var(--radius-sm);
 }
 .pinBtn:hover { color: var(--accent); background: var(--bg-raised); }
 .pinBtn.pinned { color: var(--accent); }
 /* placement/reveal comes from the shared :is(.pageCardClose, .tilePinBtn) rule */
 .pageCard:hover .tilePinBtn { opacity: 0.7; }
-.tilePinBtn:hover, .tilePinBtn.pinned { opacity: 1; }
+.tilePinBtn:hover, .tilePinBtn.pinned, .tilePinBtn:focus-visible { opacity: 1; }
 
 /* folder tags on file rows */
 .folderTagBadge {
@@ -512,9 +568,9 @@
   margin-left: 8px;
   color: var(--accent);
   background: var(--bg-raised);
-  border-radius: 4px;
+  border-radius: var(--radius-xs);
   padding: 0 6px;
-  font-size: calc(10px * var(--ui-font-scale, 1));
+  font-size: var(--fs-2xs);
 }
 
 /* Quick open (Ctrl+P): the page palette, docked near the top like VS Code's. */
@@ -523,9 +579,159 @@
 .quickOpenInput { display: flex; align-items: center; gap: 8px; padding: 0 4px 6px; color: var(--text-muted); }
 .quickOpenInput .searchInput { flex: 1; }
 .quickOpenList { max-height: min(420px, 55vh); overflow-y: auto; }
-.quickOpenRow { border-radius: 4px; }
+.quickOpenRow { border-radius: var(--radius-xs); }
 /* the chip line keeps its file-row cap; the option style would stretch it */
 .quickOpenRow .fileRowLabels { flex: 0 1 auto; }
-.quickOpenTag { flex-shrink: 0; font-style: normal; font-size: calc(10px * var(--ui-font-scale, 1)); color: var(--text-dim); }
+.quickOpenTag { flex-shrink: 0; font-style: normal; font-size: var(--fs-2xs); color: var(--text-dim); }
+/* Section headings (Recent / Open tabs / … or Pages / Folders / Labels /
+   Actions) and the time or count on a row's right. */
+.quickOpenSection { padding: 8px 8px 3px; } /* type: the shared label rule in app.css */
+.quickOpenSection:first-child { padding-top: 2px; }
+.quickOpenTime { flex-shrink: 0; font-style: normal; font-size: var(--fs-2xs); color: var(--text-dim); white-space: nowrap; }
+.quickOpenAction { font-size: var(--fs-xs); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.quickOpenRow .quickOpenFolderIcon { color: var(--accent); }
+.quickOpenRow .kindGlyph { flex-shrink: 0; }
 .quickOpen .chatMentionHint { padding: 6px 6px 0; }
-.quickOpenKey { font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace; }
+.quickOpenKey { font-family: var(--font-mono); }
+
+/* --- Phone (the compact layout, .phoneUI on .app) ------------------------
+   The listing bar wraps: the library's name as a heading (a folder or label
+   view keeps its small label; the breadcrumb above names it), the filter box
+   the full width, then sort, kinds and view on one row. A file row gives the
+   title its own line, wrapping, with the folder and label chips on a second
+   line under it; the trailing columns (kind, date, pin — rowColumns in
+   App.jsx) keep their widths, so they still line up with the folder rows and
+   the header, and a narrow screen drops the date as above. */
+.phoneUI .homeListBar { flex-wrap: wrap; row-gap: 8px; padding: 12px 12px 8px; }
+.phoneUI .homeListLabel { flex: 1 0 100%; }
+.phoneUI .homeListLabel.homeListRoot {
+  font-size: var(--fs-2xl);
+  color: var(--text-primary);
+}
+.phoneUI .homeListSpacer { display: none; }
+.phoneUI .homeFindBox { flex: 1 0 100%; height: 38px; padding: 0 8px 0 12px; border-radius: var(--radius-lg); }
+.phoneUI .homeFindInput { flex: 1; width: auto; min-width: 0; font-size: var(--fs-body); }
+.phoneUI .fileRow {
+  display: grid;
+  grid-template-columns: 20px minmax(0, 1fr) auto auto auto;
+  align-items: start;
+  column-gap: 10px;
+  row-gap: 4px;
+  padding: 9px 10px;
+}
+.phoneUI .fileRow .fileRowIcon { grid-area: 1 / 1; height: 20px; }
+.phoneUI .fileRow :is(.fileRowName, .fileRowRename) { grid-area: 1 / 2; }
+.phoneUI .fileRow .fileRowName {
+  white-space: normal;
+  overflow-wrap: anywhere;
+  font-size: var(--fs-body);
+  line-height: 20px;
+}
+.phoneUI .fileRow .fileRowLabels { grid-area: 2 / 2; flex-wrap: wrap; row-gap: 4px; max-width: none; margin-left: 0; }
+.phoneUI .fileRow .fileRowLabels:empty { display: none; }
+.phoneUI .fileRow .fileRowKind { grid-area: 1 / 3; width: 64px; line-height: 20px; }
+.phoneUI .fileRow .fileRowDate { grid-area: 1 / 4; width: 110px; line-height: 20px; }
+.phoneUI .fileRow :is(.fileRowPin, .fileRowPinSlot) { grid-area: 1 / 5; }
+@media (max-width: 600px) {
+  .phoneUI .fileRow { grid-template-columns: 20px minmax(0, 1fr) auto auto; }
+  .phoneUI .fileRow .fileRowKind { width: 52px; }
+  .phoneUI .fileRow :is(.fileRowPin, .fileRowPinSlot) { grid-column: 4; }
+}
+
+/* "Start your library" (library/LibraryEmpty.jsx): a fresh library's panel
+   above its listing — a dashed drop-zone card, the mark and a headline, four
+   action cards (two by two, one column where the listing is narrow) and a
+   footer with the tour and the drop tip. */
+.libEmpty {
+  container-type: inline-size;
+  margin: 4px 4px 10px;
+  padding: 20px 22px 16px;
+  border: 1px dashed var(--border-light);
+  border-radius: var(--radius-lg);
+  background: var(--bg-surface);
+}
+.libEmptyHead {
+  display: flex;
+  align-items: center;
+  gap: 14px;
+  margin-bottom: 16px;
+}
+.libEmptyMark {
+  flex: 0 0 auto;
+  width: 40px;
+  height: 40px;
+  border-radius: var(--radius-md);
+}
+.libEmptyTitle {
+  margin: 0;
+  font-size: var(--fs-lg);
+  font-weight: 600;
+  color: var(--text-primary);
+}
+.libEmptyLead {
+  margin: 2px 0 0;
+  font-size: var(--fs-sm);
+  color: var(--text-muted);
+}
+.libEmptyCards {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 10px;
+}
+@container (max-width: 560px) {
+  .libEmptyCards { grid-template-columns: minmax(0, 1fr); }
+}
+.libEmptyCard {
+  display: flex;
+  align-items: flex-start;
+  gap: 12px;
+  padding: 14px;
+  border: 1px solid var(--border-subtle);
+  border-radius: var(--radius-lg);
+  background: var(--bg-card);
+  color: var(--text-primary);
+  font-family: inherit; font-weight: inherit; line-height: inherit;
+  text-align: left;
+  cursor: pointer;
+  transition: background var(--dur-fast) ease, border-color var(--dur-fast) ease;
+}
+.libEmptyCard:hover { background: var(--bg-block); border-color: var(--border-hover); }
+.libEmptyCard.primary { border-color: var(--accent-dark); }
+.libEmptyCardIcon {
+  flex: 0 0 auto;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  width: 34px;
+  height: 34px;
+  border-radius: var(--radius-md);
+  background: var(--accent-bg-light);
+  color: var(--accent);
+}
+.libEmptyCardBody { display: flex; flex-direction: column; gap: 3px; min-width: 0; }
+.libEmptyCardTitle { font-size: var(--fs-md); font-weight: 600; }
+.libEmptyCardText {
+  font-size: var(--fs-sm);
+  line-height: 1.45;
+  color: var(--text-muted);
+}
+.libEmptyFoot {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  flex-wrap: wrap;
+  gap: 6px 16px;
+  margin-top: 14px;
+  font-size: var(--fs-sm);
+}
+.libEmptyTour {
+  padding: 0;
+  border: 0;
+  background: none;
+  color: var(--text-secondary);
+  font-family: inherit; font-weight: inherit; line-height: inherit;
+  cursor: pointer;
+}
+.libEmptyTour strong { color: var(--accent); font-weight: 600; }
+.libEmptyTour:hover strong { text-decoration: underline; }
+.libEmptyTip { color: var(--text-muted); }

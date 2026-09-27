@@ -45,7 +45,7 @@ import urllib.parse
 from .config import WORKSPACES_DIR
 from .db import connect_users_db, page_now, safe_ws_id, ws_dir, ws_uploads_dir
 from .logbuf import log
-from .seed import create_workspace_files
+from .seed import create_workspace_files, seed_welcome
 
 ROLES = ("owner", "editor", "viewer")
 RANK = {"viewer": 1, "editor": 2, "owner": 3}
@@ -234,9 +234,11 @@ def create(name: str, owner: str, *, kind: str = "personal", by: str | None = No
            welcome: bool = False, ws_id: str | None = None) -> dict:
     """A new workspace with its files, ``owner`` as its owner (``by`` — who
     created it, default the owner — is recorded as ``created_by``). A
-    personal workspace ignores access and quota. Raises ValueError on an
-    unknown owner or a bad setting (the guest may own only its personal
-    workspace — the API refuses it as an owner, see ``accounts``). Commits."""
+    personal workspace ignores access and quota. ``welcome`` seeds the
+    Welcome page (gamma/seed.py ``seed_welcome``) once the rows exist.
+    Raises ValueError on an unknown owner or a bad setting (the guest may
+    own only its personal workspace — the API refuses it as an owner, see
+    ``accounts``). Commits."""
     ws_id = ws_id or new_workspace_id()
     safe_ws_id(ws_id)
     name = clean_name(name) or "Workspace"
@@ -247,9 +249,10 @@ def create(name: str, owner: str, *, kind: str = "personal", by: str | None = No
     _check_access(access, public_role)
     now = page_now()
     with connect_users_db() as conn:
-        if not conn.execute("SELECT 1 FROM users WHERE username = ?", (owner,)).fetchone():
-            raise ValueError(f"unknown user: {owner}")
-    create_workspace_files(ws_id, welcome=welcome)
+        account = conn.execute("SELECT is_guest FROM users WHERE username = ?", (owner,)).fetchone()
+    if not account:
+        raise ValueError(f"unknown user: {owner}")
+    create_workspace_files(ws_id)
     with connect_users_db() as conn:
         conn.execute(
             "INSERT INTO workspaces (id, name, created_by, created_at, kind, access, public_role, quota_mb) "
@@ -257,20 +260,27 @@ def create(name: str, owner: str, *, kind: str = "personal", by: str | None = No
         conn.execute("INSERT INTO workspace_members (workspace_id, username, role, added_by, added_at) "
                      "VALUES (?, ?, 'owner', ?, ?)", (ws_id, owner, by or owner, now))
         conn.commit()
+    if welcome:
+        seed_welcome(ws_id, actor=owner, guest=bool(account[0]))
     return get(ws_id)
 
 
 def ensure_personal(username: str, *, welcome: bool = False) -> str:
     """The account's default workspace id, created (and recorded on the
-    users row) when it has none or its files are gone."""
+    users row) when it has none or its files are gone. ``welcome``: a
+    workspace created (or recreated) here starts with the Welcome page —
+    what every account-creating path asks for (gamma/seed.py, guests.py);
+    an existing workspace is never seeded."""
     with connect_users_db() as conn:
         row = conn.execute(
-            "SELECT default_workspace FROM users WHERE username = ?", (username,)).fetchone()
+            "SELECT default_workspace, is_guest FROM users WHERE username = ?", (username,)).fetchone()
     if not row:
         raise ValueError(f"no such user: {username}")
     ws_id = row[0]
     if ws_id and not (ws_dir(ws_id) / "pages.db").is_file():
-        create_workspace_files(ws_id, welcome=welcome)  # repair a missing directory
+        create_workspace_files(ws_id)  # repair a missing directory
+        if welcome:
+            seed_welcome(ws_id, actor=username, guest=bool(row[1]))
     if ws_id:
         return ws_id
     ws_id = (personal_workspaces(username) or [None])[0] or create(username, username, welcome=welcome)["id"]

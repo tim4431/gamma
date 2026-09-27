@@ -2,6 +2,7 @@
 <html>
 <head>
 <meta charset="utf-8" />
+<link rel="stylesheet" href="tokens.css" />
 <link rel="stylesheet" href="theme.css" />
 <style>
   /* The page is transparent: only the strip and the open menu paint. While
@@ -15,7 +16,7 @@
     align-items: center;
     gap: 6px;
     padding: 0 8px;
-    background: var(--bg-surface);
+    background: var(--bg-page); /* chrome, like Gamma's own topbar under it */
     border-bottom: 1px solid var(--border);
     -webkit-app-region: drag;
     /* Windows/Linux: stop where the overlaid window controls begin. */
@@ -55,7 +56,7 @@
   .menu {
     position: absolute; top: 36px; left: 34px; min-width: 280px; max-width: 380px;
     background: var(--bg-elevated); border: 1px solid var(--border);
-    border-radius: var(--radius-surface); box-shadow: var(--shadow-surface);
+    border-radius: var(--radius-md); box-shadow: var(--shadow-2);
     padding: 5px; z-index: 2;
   }
   body[data-platform="darwin"] .menu { left: 106px; }
@@ -126,6 +127,15 @@
 <div class="menu" id="menu" hidden></div>
 
 <script>
+  // Gamma's theme on the chrome: tokens.css derives each theme's colours
+  // with its scheme's recipe, so the scheme goes beside it (DARK_THEMES in
+  // Gamma's app/prefDefs.js; none = dark, like Gamma's :root).
+  const DARK_THEMES = ['dark', 'gamma-dark'];
+  function paintTheme(theme) {
+    const t = theme || 'dark';
+    document.documentElement.setAttribute('data-scheme', DARK_THEMES.includes(t) ? 'dark' : 'light');
+    document.documentElement.setAttribute('data-theme', t);
+  }
   const ICONS = {
     local: '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><ellipse cx="12" cy="5" rx="8" ry="3"/><path d="M4 5v6c0 1.66 3.58 3 8 3s8-1.34 8-3V5"/><path d="M4 11v6c0 1.66 3.58 3 8 3s8-1.34 8-3v-6"/></svg>',
     remote: '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="9"/><path d="M3 12h18"/><path d="M12 3a14 14 0 0 1 0 18a14 14 0 0 1 0-18"/></svg>',
@@ -149,7 +159,7 @@
   }
 
   function render() {
-    document.documentElement.setAttribute('data-theme', state.theme || 'dark');
+    paintTheme(state.theme);
     const cur = state.current;
     const ws = currentWorkspace();
     // The button names the server and, once known, the Gamma workspace open

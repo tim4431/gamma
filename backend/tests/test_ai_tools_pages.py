@@ -53,6 +53,9 @@ def test_move_page_keeps_out_of_scope_tags(org):
                                   {"page_id": ids["b"], "folder": "fast"})
     assert text.startswith("ok"), text
     assert action["kind"] == "move" and "readout/fast" in action["summary"]
+    # The chat lists the change from structured fields, not the summary.
+    assert action["title"] == "qec paper" and action["to"] == "readout/fast"
+    assert action["from"] == "readout/nondestructive, cooling"
     tags = [t.strip() for t in props(c, ids["b"])["properties"]["folder"].split(",")]
     assert sorted(tags) == ["cooling", "readout/fast"]
     # "" files the page at the scope itself.
@@ -66,8 +69,12 @@ def test_move_at_root_replaces_all_folders(org):
     run_agent_tool(ids["ws"], folder(""), "move_page", {"page_id": ids["b"], "folder": "archive/2019"})
     assert props(c, ids["b"])["properties"]["folder"] == "archive/2019"
     # Root + "" = out of every folder.
-    run_agent_tool(ids["ws"], folder(""), "move_page", {"page_id": ids["b"], "folder": ""})
+    _, action = run_agent_tool(ids["ws"], folder(""), "move_page", {"page_id": ids["b"], "folder": ""})
     assert props(c, ids["b"])["properties"]["folder"] == ""
+    assert action["from"] == "archive/2019" and action["to"] == ""
+    # Moving it where it already is changes nothing, and says so.
+    _, action = run_agent_tool(ids["ws"], folder(""), "move_page", {"page_id": ids["b"], "folder": ""})
+    assert action["noop"] is True and not action.get("error")
     # Restore for later tests.
     run_agent_tool(ids["ws"], folder(""), "move_page", {"page_id": ids["b"], "folder": "readout"})
 

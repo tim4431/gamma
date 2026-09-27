@@ -39,7 +39,7 @@ export function MermaidDiagram({ source, pending = false, width = null, idx, onR
   });
   useEffect(() => {
     const observer = new MutationObserver(() => setTheme(currentTheme()));
-    observer.observe(document.documentElement, { attributes: true, attributeFilter: ["data-theme"] });
+    observer.observe(document.documentElement, { attributes: true, attributeFilter: ["data-theme", "data-scheme"] });
     return () => observer.disconnect();
   }, []);
   useEffect(() => {

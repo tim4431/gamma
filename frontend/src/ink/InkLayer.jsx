@@ -17,13 +17,26 @@ import {
 } from "../shared/ui/Icons";
 import {
   HIGHLIGHTER_COLORS, HIGHLIGHTER_OPACITY, MAX_STROKE_SIZE, MAX_TOOLS, PEN_COLORS, boundsOf, encodeStroke, hitStrokes,
-  inkBounds, nearestInkStroke, outlineOptions, sizesFor, strokePath, strokesInLasso, svgPathFromPoints, toolId,
+  inkBounds, nearestInkColor, nearestInkStroke, outlineOptions, sizesFor, strokePath, strokesInLasso, svgPathFromPoints, toolId,
   transformPoint, unionBox,
 } from "./ink";
 import * as inkStore from "./inkStore";
 import { appendInkSample, predictedInkSamples } from "./inkInput.js";
 import { canvasSize } from "../shared/lib/canvasSize.js";
-import { t } from "../shared/i18n/i18n.js";
+import { t, T } from "../shared/i18n/i18n.js";
+
+// Words for the palette colours, so tooltips read "Pink highlighter", not
+// "#f9a8d4"; a custom colour borrows its nearest palette colour's name.
+const INK_COLOR_NAMES = {
+  "#1f1f1f": T("Black"), "#6b7280": T("Gray"), "#1d4ed8": T("Blue"), "#0284c7": T("Sky blue"),
+  "#0f766e": T("Teal"), "#15803d": T("Green"), "#65a30d": T("Lime"), "#ca8a04": T("Amber"),
+  "#ea580c": T("Orange"), "#dc2626": T("Red"), "#db2777": T("Pink"), "#7c3aed": T("Violet"),
+  "#92400e": T("Brown"), "#ffffff": T("White"),
+  "#fde047": T("Yellow"), "#86efac": T("Mint"), "#7dd3fc": T("Light blue"), "#f9a8d4": T("Pink"),
+  "#fdba74": T("Peach"), "#c4b5fd": T("Lavender"), "#67e8f9": T("Cyan"), "#d4d4d8": T("Light gray"),
+};
+const inkColorName = (hex) => t(INK_COLOR_NAMES[nearestInkColor(hex)] || T("Custom colour"));
+const inkKindName = (kind) => (kind === "highlighter" ? t("Highlighter") : t("Pen"));
 
 // Re-render when any draft or file changes.
 function useInkVersion() {
@@ -644,14 +657,14 @@ function InkSelectionMenu({ wrapRef, box, width, strokes, onAction, onClose }) {
       </div>
       {options === "color" ? <div className="inkEditOptions" aria-label={t("Selected ink color")}>
         {(kinds.every((k) => k === "highlighter") ? HIGHLIGHTER_COLORS : PEN_COLORS).map((color) =>
-          <button key={color} className="colorBtn inkSwatch" style={{ background: color }} aria-label={t("Ink color {color}", { color: color })}
+          <button key={color} className="colorBtn inkSwatch" style={{ background: color }} title={inkColorName(color)} aria-label={inkColorName(color)}
             aria-pressed={strokes.every((s) => s.color === color)} onClick={() => onAction("style", { color })} />)}
         <label className="colorBtn inkSwatch inkCustomColor" title={t("Custom color")}><input type="color" aria-label={t("Selected ink custom color")} value={strokes[0]?.color || PEN_COLORS[0]}
           onChange={(e) => onAction("style", { color: e.target.value })} /></label>
       </div> : null}
-      {options === "width" ? kinds.map((kind) => <div className="inkEditOptions" key={kind} aria-label={t("{kind} width", { kind: kind })}>
+      {options === "width" ? kinds.map((kind) => <div className="inkEditOptions" key={kind} aria-label={t("{kind} width", { kind: inkKindName(kind) })}>
         {kinds.length > 1 ? (kind === "highlighter" ? <HighlightIcon aria-label={t("Highlighter")} /> : <PenIcon aria-label={t("Pen")} />) : null}
-        {sizesFor(kind).map((size, i) => <button key={size} className={"ctlBtn inkSizeBtn" + (strokes.filter((s) => s.tool === kind).every((s) => s.size === size) ? " modeActive" : "")} aria-label={t("{kind} width {size} pt", { kind: kind, size: size })} title={t("{kind} width {size} pt", { kind: kind, size: size })}
+        {sizesFor(kind).map((size, i) => <button key={size} className={"ctlBtn inkSizeBtn" + (strokes.filter((s) => s.tool === kind).every((s) => s.size === size) ? " modeActive" : "")} aria-label={t("{kind} width {size} pt", { kind: inkKindName(kind), size: size })} title={t("{kind} width {size} pt", { kind: inkKindName(kind), size: size })}
           aria-pressed={strokes.filter((s) => s.tool === kind).every((s) => s.size === size)}
           onClick={() => onAction("style", { tool: kind, size })}><span className="inkSizeDot" aria-hidden="true" style={{ width: 4 + i * 2, height: 4 + i * 2, background: "currentColor" }} /></button>)}
       </div>) : null}
@@ -672,7 +685,7 @@ export function InkCard({ block, onJump }) {
   const pad = 6;
   const w = b[2] - b[0] + 2 * pad, h = b[3] - b[1] + 2 * pad;
   return (
-    <svg className="blockInkCard" data-guide="notes.ink" viewBox={`${b[0] - pad} ${b[1] - pad} ${w} ${h}`} width={w} height={h}
+    <svg className="blockInkCard" viewBox={`${b[0] - pad} ${b[1] - pad} ${w} ${h}`} width={w} height={h}
       role="img" aria-label={t("Handwriting")}
       onClick={onJump ? (e) => { e.stopPropagation(); onJump(block.id); } : undefined}>
       <Strokes ink={ink} />
@@ -720,19 +733,25 @@ export function InkToolbar({ tools, active, options, eraserMode, eraserSize, las
         {tools.map((tt, i) => {
           const hl = tt.kind === "highlighter";
           const sizes = sizesFor(tt.kind), k = Math.max(0, sizes.indexOf(tt.size));
-          const label = `${hl ? "Highlighter" : tt.brush === "monoline" ? "Monoline" : "Pen"} ${tt.color}, ${tt.size} pt (${i + 1})` + (active === tt.id ? t(" — tap again for options") : "");
-          return btn(tt.id, label, hl ? <HighlightIcon size={15} /> : <PenIcon size={15} />,
+          const color = inkColorName(tt.color), size = tt.size;
+          // "Pink highlighter · 14 pt · key 7": the digit keys 1–9 arm presets.
+          const label = (hl ? t("{color} highlighter · {size} pt", { color, size })
+            : tt.brush === "monoline" ? t("{color} monoline pen · {size} pt", { color, size })
+            : t("{color} pen · {size} pt", { color, size }))
+            + (i < 9 ? t(" · key {key}", { key: i + 1 }) : "")
+            + (active === tt.id ? t(" — tap again for options") : "");
+          return btn(tt.id, label, hl ? <HighlightIcon size={16} /> : <PenIcon size={16} />,
             <span className="inkToolInk" style={{ background: tt.color, height: hl ? 3 + Math.round(k / 2) : 2 + Math.round(k / 3),
               opacity: hl ? 0.85 : 1 }} />);
         })}
-        {btn("eraser", t("Eraser (E) — the pen's eraser end and barrel button erase too"), <EraserIcon size={15} />)}
-        {btn("select", t("Lasso (L): circle strokes to select them, then drag the box to move or press Delete"), <LassoIcon size={15} />)}
+        {btn("eraser", t("Eraser (E) — the pen's eraser end and barrel button erase too"), <EraserIcon size={16} />)}
+        {btn("select", t("Lasso (L): circle strokes to select them, then drag the box to move or press Delete"), <LassoIcon size={16} />)}
         <span className="pdfInkSep" />
         <button type="button" className={"ctlBtn inkToolBtn" + (active === null ? " modeActive" : "")}
           onClick={() => onPick(null)} title={t("Hand (V): scroll and select text; a stylus still writes")} aria-label={t("Hand")}
-          aria-pressed={active === null}><HandIcon size={15} /></button>
+          aria-pressed={active === null}><HandIcon size={16} /></button>
         <span className="pdfInkSep" />
-        <button type="button" className="ctlBtn" onClick={onClose} title={t("Close the handwriting tools (Esc)")}><XIcon size={15} /></button>
+        <button type="button" className="ctlBtn" onClick={onClose} title={t("Close the handwriting tools (Esc)")} aria-label={t("Close the handwriting tools")}><XIcon size={16} /></button>
         <span className="pdfInkHistory" data-guide="ink.history">
           <button type="button" className="ctlBtn" aria-label={t("Undo ink")} title={t("Undo handwriting")} disabled={!canUndo} onClick={onUndo}><UndoIcon aria-hidden="true" /></button>
           <button type="button" className="ctlBtn" aria-label={t("Redo ink")} title={t("Redo handwriting")} disabled={!canRedo} onClick={onRedo}><RedoIcon aria-hidden="true" /></button>
@@ -747,7 +766,7 @@ export function InkToolbar({ tools, active, options, eraserMode, eraserSize, las
           </> : null}
           {palette.map((c) => (
             <button key={c} type="button" className={"colorBtn inkSwatch" + (preset.color === c ? " selected" : "")}
-              style={{ background: c }} onClick={() => edit({ color: c })} title={c} aria-label={t("Colour {c}", { c: c })} />
+              style={{ background: c }} onClick={() => edit({ color: c })} title={inkColorName(c)} aria-label={inkColorName(c)} />
           ))}
           <label className={"colorBtn inkSwatch inkCustomColor" + (palette.includes(preset.color) ? "" : " selected")}
             title={t("Custom colour")} style={{ "--ink-custom": preset.color }}>
@@ -764,9 +783,9 @@ export function InkToolbar({ tools, active, options, eraserMode, eraserSize, las
           ))}
           <span className="pdfInkSep" />
           <button type="button" className="ctlBtn" onClick={duplicate} disabled={tools.length >= MAX_TOOLS}
-            title={t("Duplicate: a second copy of this tool to give its own colour and width")} aria-label={t("Duplicate tool")}><CopyIcon size={14} /></button>
+            title={t("Duplicate: a second copy of this tool to give its own colour and width")} aria-label={t("Duplicate tool")}><CopyIcon size={16} /></button>
           <button type="button" className="ctlBtn" onClick={remove} disabled={tools.length <= 1}
-            title={t("Remove this tool from the strip")} aria-label={t("Remove tool")}><TrashIcon size={14} /></button>
+            title={t("Remove this tool from the strip")} aria-label={t("Remove tool")}><TrashIcon size={16} /></button>
         </div>
       ) : null}
       {options && active === "eraser" ? (

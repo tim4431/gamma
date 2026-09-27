@@ -16,7 +16,7 @@
 // (DELETE /api/pages/{id}/publish for each page), never the clone actions.
 import React from "react";
 import { API, apiJson, fmtBytes } from "../shared/lib/utils";
-import { Section, SubDialog, Field, IconChoices, Segmented, Empty, WorkspaceFolder } from "./SettingsKit";
+import { Section, SubDialog, Field, DialogButtons, IconChoices, Segmented, Empty, WorkspaceFolder } from "./SettingsKit";
 import { ActionMenu, MenuSelect } from "../shared/ui/Menus";
 import {
   AlertCircleIcon, ArrowDownIcon, ArrowUpDownIcon, CheckIcon, CloudDownloadIcon, CloudIcon, CloudOffIcon, HardDriveIcon, LinkIcon,
@@ -127,13 +127,13 @@ export function MirrorDialog({ busy, error, onSubmit, onClose, candidates = [] }
         <IconChoices label={t("Direction")} value={mode} onChange={setMode} options={DIRECTION_TILES} />
       </Field>
       {error ? <div className="settingsPaneHint aiKeysError">{error}</div> : null}
-      <div className="reportModalBtns">
+      <DialogButtons footnote={ok ? null : t("Fill in the server and its token to continue.")}>
         <button className="uiBtn" onClick={onClose} disabled={busy}>{t("Cancel")}</button>
         <button className="uiBtn primary" disabled={!ok || busy}
           onClick={() => onSubmit({ remote_url: url.trim(), token: token.trim(), name: name.trim(), mode, workspace_id: into, adopt })}>
           {busy ? t("Connecting…") : t("Clone")}
         </button>
-      </div>
+      </DialogButtons>
       </div>
     </SubDialog>
   );
@@ -241,7 +241,7 @@ export function MirrorsSection({ mirrors, refresh, workspaces, currentId, switch
     return (
       <div key={m.workspace_id} className="aiProvRow">
         <span className={`aiProvAvatar mirrorAvatar ${st.tone} ${current ? "active" : ""}`} title={st.title}>
-          <st.Icon size={15} />
+          <st.Icon size={16} />
         </span>
         <span className="aiProvMeta">
           <span className="aiProvName">
@@ -264,17 +264,17 @@ export function MirrorsSection({ mirrors, refresh, workspaces, currentId, switch
           {detached ? (
             <button className="uiBtn sm primary" disabled={busy} title={t("Follow origin again; what both sides did meanwhile merges")}
               onClick={() => call(m, "/relink", json({}), t("Reattached — syncing in the background."))}>
-              <LinkIcon size={13} /> {t("Reattach")}
+              <LinkIcon size={14} /> {t("Reattach")}
             </button>
           ) : (
             <button className="uiBtn sm" disabled={busy || s.running} onClick={() => syncNow(m)}
               title={pullOnly ? t("Receive the remote's changes now") : t("Sync now")}>
-              <RefreshIcon size={13} /> {t("Sync")}
+              <RefreshIcon size={14} /> {t("Sync")}
             </button>
           )}
           <button className={`uiBtn sm ${m.conflicts_open ? "primary" : ""}`} disabled={busy} onClick={() => setConflictsOf({ ...m, name: nameOf(m) })}
             title={t("Blocks both sides changed: the sync merged them or took one side; they wait here for you to resolve")}>
-            <AlertCircleIcon size={13} /> {t("Conflicts")}{m.conflicts_open ? ` (${m.conflicts_open})` : ""}
+            <AlertCircleIcon size={14} /> {t("Conflicts")}{m.conflicts_open ? ` (${m.conflicts_open})` : ""}
           </button>
           <ActionMenu label={t("More")} icon={MoreIcon} iconOnly disabled={busy} items={more} />
         </span>
@@ -290,7 +290,7 @@ export function MirrorsSection({ mirrors, refresh, workspaces, currentId, switch
         title={t("Clones")}
         action={(
           <button className="uiBtn sm" disabled={busy} onClick={() => { setCreateError(""); setCreating(true); }}>
-            <PlusIcon size={13} /> {t("Clone a remote workspace")}
+            <PlusIcon size={14} /> {t("Clone a remote workspace")}
           </button>
         )}
       >
@@ -363,7 +363,7 @@ export function PublishingSection({ mirrors, refresh, currentId, closeSettings, 
     return (
       <div key={m.workspace_id} className="aiProvRow" data-publication={m.workspace_id}>
         <span className={`aiProvAvatar mirrorAvatar ${st.tone} ${current ? "active" : ""}`} title={st.title}>
-          <st.Icon size={15} />
+          <st.Icon size={16} />
         </span>
         <span className="aiProvMeta">
           <span className="aiProvName">
@@ -382,7 +382,7 @@ export function PublishingSection({ mirrors, refresh, currentId, closeSettings, 
           {m.conflicts_open ? (
             <button className="uiBtn sm primary" disabled={busy} onClick={() => setConflictsOf({ ...m, name: nameOf(m) })}
               title={t("Blocks edited both here and through a cloud link wait for you to resolve")}>
-              <AlertCircleIcon size={13} /> {t("Conflicts ({n})", { n: m.conflicts_open })}
+              <AlertCircleIcon size={14} /> {t("Conflicts ({n})", { n: m.conflicts_open })}
             </button>
           ) : null}
           <ActionMenu label={t("More")} icon={MoreIcon} iconOnly disabled={busy} items={more} />

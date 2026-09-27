@@ -197,7 +197,7 @@ export async function fileScenarios({ server, browser, alice, makePdf, step, unt
     const big = makePdf([["Slow upload"]], { padBytes: 3 * 1024 * 1024 });
     await page.click("button[aria-label='Add']");
     const chooser = page.waitForEvent("filechooser");
-    await page.locator(".addPopover .popoverItem", { hasText: "Upload files" }).click();
+    await page.locator(".addPopover .ctxMenuItem", { hasText: "Upload files" }).click();
     await (await chooser).setFiles([{ name: "slow-upload.pdf", mimeType: "application/pdf", buffer: Buffer.from(big) }]);
     await page.click("button[aria-label='Background tasks']");
     const row = page.locator(".transferRow", { hasText: "slow-upload.pdf" });

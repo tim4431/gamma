@@ -80,6 +80,7 @@ def test_move_block_rules(notes):
                                   {"block_id": ids["other"], "parent_id": ids["top"]})
     assert text.startswith("ok"), text
     assert action["kind"] == "move" and action["page_id"] == ids["page"]
+    assert action["title"] == "notes playground" and action["block_id"] == ids["other"]
     assert children(c, ids["top"])[-1] == ids["other"]
     # Into its own subtree → refused.
     text, _ = run_agent_tool(ids["ws"], scope, "move_block",
