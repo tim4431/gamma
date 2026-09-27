@@ -47,6 +47,28 @@ export async function pdfScenarios({ server, browser, alice, makePdf, step, unti
     assertNoProblems(page);
   });
 
+  // The spans must not inherit the interface language: pdf.js measures them
+  // in the PDF's language, and a Chinese <html lang> resolves the generic
+  // font families to CJK fonts — spans (and every highlight made from a
+  // selection) came out wider than the glyphs they cover.
+  await step("pdf: the text layer's geometry does not follow the interface language", async () => {
+    const line = "Quantum entanglement in Rydberg arrays";
+    const measure = (p) => p.evaluate((line) => {
+      const span = [...document.querySelectorAll('[data-page="1"] .textLayer span')].find((s) => s.textContent === line);
+      return span && span.getBoundingClientRect().width / span.closest("[data-page]").getBoundingClientRect().width;
+    }, line);
+    const english = await until(() => measure(page), { what: "the English span" });
+    const zhCtx = await account.context(browser, { locale: "zh-CN" });
+    try {
+      const zh = await openPage(zhCtx, `${server.base}/?page=${pageId}&ws=${account.ws}`);
+      await waitForPdf(zh, 1);
+      assertEq(await zh.evaluate(() => document.documentElement.lang), "zh-CN", "the interface is Chinese");
+      const chinese = await until(() => measure(zh), { what: "the Chinese-interface span" });
+      assert(Math.abs(chinese / english - 1) < 0.01, `span width ${chinese.toFixed(4)} under zh-CN vs ${english.toFixed(4)} under en`);
+      assertNoProblems(zh);
+    } finally { await zhCtx.close(); }
+  });
+
   await step("pdf: a text selection makes a highlight (overlay + note row), persisted with its position", async () => {
     await selectPdfText(page, 1, "entanglement in Rydberg");
     await page.waitForSelector(".plainTip .colorBtn", { timeout: 5000 });

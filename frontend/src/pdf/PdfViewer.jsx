@@ -1940,6 +1940,13 @@ const PdfPage = React.memo(function PdfPage({ citation, pageNumber, pdfDoc, scal
         textL.style.transform = `scale(${scale})`;
         const tc = await page.getTextContent();
         if (cancelled) return;
+        // pdf.js sizes each span (scaleX) from a canvas measure in the PDF's
+        // own language, but the spans would inherit <html lang> — the
+        // interface language. Under zh-CN a generic `serif` then renders as
+        // SimSun against a Times measure, every span ~25% too wide, and new
+        // highlights, selections and search marks with it. An empty lang
+        // resolves differently on a canvas and on an element, so "en".
+        textL.lang = tc.lang || "en";
         textTask = new pdfjsLib.TextLayer({ textContentSource: tc, container: textL, viewport: vp });
         await textTask.render();
         if (cancelled) return;
