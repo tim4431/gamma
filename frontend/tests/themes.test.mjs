@@ -88,6 +88,14 @@ test("the desktop shell carries the same tokens and font as the app", () => {
     assert.ok(html.indexOf('href="tokens.css"') >= 0 && html.indexOf('href="tokens.css"') < html.indexOf('href="theme.css"'),
       `desktop/ui/${page} links tokens.css before theme.css`);
   }
+  // The window's title-bar overlay continues the shell bar: each theme's chrome.
+  const main = read("../desktop/main.js");
+  const hex = (c) => `#${c.slice(0, 3).map((v) => Math.round(v).toString(16).padStart(2, "0")).join("")}`;
+  for (const theme of PINNED) {
+    const m = main.match(new RegExp(`'?${theme}'?: \\{ bg: '(#[0-9a-f]{6})'`));
+    assert.ok(m, `desktop/main.js has a title-bar colour for ${theme}`);
+    assert.equal(m[1], hex(resolveTheme(theme, TOKENS).colors["--bg-page"]), `desktop/main.js: ${theme}'s title bar is its --bg-page`);
+  }
 });
 
 test("index.html links the tokens first and keeps no colour of its own", () => {

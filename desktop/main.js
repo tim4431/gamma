@@ -39,17 +39,19 @@ const BAR_H = 38;
 // and sidecars are never touched.
 if (process.env.GAMMA_SHELL_USER_DATA) app.setPath('userData', process.env.GAMMA_SHELL_USER_DATA);
 
-// Title-bar palette per Gamma theme (mirrors app.css --bg-surface/--text-*).
-// '' = the page never reported a theme → Gamma's default, dark.
+// Title-bar palette per Gamma theme: the shell bar's chrome, Gamma's
+// --bg-page in ui/tokens.css (frontend/tests/themes.test.mjs checks it), and
+// a text colour for the window controls. '' = the page never reported a
+// theme → Gamma's default, dark.
 const THEMES = {
-  '': { bg: '#1a1a1a', symbol: '#dddddd' },
-  dark: { bg: '#1a1a1a', symbol: '#dddddd' },
-  light: { bg: '#ffffff', symbol: '#333333' },
-  'gamma-light': { bg: '#efeee9', symbol: '#44423c' },
-  'gamma-dark': { bg: '#272725', symbol: '#ded9cd' },
-  sepia: { bg: '#fdf6e3', symbol: '#073642' },
+  '': { bg: '#111111', symbol: '#dddddd' },
+  dark: { bg: '#111111', symbol: '#dddddd' },
+  light: { bg: '#f5f5f5', symbol: '#333333' },
+  'gamma-light': { bg: '#e6e5e0', symbol: '#44423c' },
+  'gamma-dark': { bg: '#1b1b19', symbol: '#ded9cd' },
+  sepia: { bg: '#f0e9d6', symbol: '#073642' },
   solarized: { bg: '#eee8d5', symbol: '#657b83' },
-  gray: { bg: '#f4f4f4', symbol: '#2d2d2d' },
+  gray: { bg: '#e9e9e9', symbol: '#2d2d2d' },
 };
 
 let win = null;

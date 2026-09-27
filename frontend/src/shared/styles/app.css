@@ -43,7 +43,7 @@
 /* Shared visual primitives. Components keep their layout and sizing rules,
    while these groups own the recurring surface, field, and hover language. */
 :is(.plainTip, .popover, .ctxMenu, .refPopup, .pdfNoteTip, .mathPreviewTip, .latexAcPopup, .slashMenu, .chatMentionPicker) {
-  background: var(--bg-surface);
+  background: var(--bg-elevated);
   border: 1px solid var(--border);
   border-radius: var(--radius-surface);
   box-shadow: var(--shadow-surface);
@@ -225,7 +225,7 @@ body {
   gap: 6px;
   padding: 6px 10px;
   border-bottom: 1px solid var(--border);
-  background: var(--bg-surface);
+  background: var(--bg-page);
   position: relative;
 }
 
@@ -385,7 +385,7 @@ body {
   flex-direction: column !important;
   overflow: hidden !important;
   border-left: 1px solid var(--border) !important;
-  background: var(--bg-deeper) !important;
+  background: var(--bg-surface);
   padding: 12px !important;
   position: relative !important;
 }
@@ -436,7 +436,7 @@ body {
 }
 
 .blockRow.focused {
-  background: var(--bg-elevated);
+  background: var(--bg-selected);
 }
 
 /* The row a page opened at (where the reader left off): one accent tint
@@ -2089,6 +2089,11 @@ button.pdfOutlineChevron:hover { background: rgba(128, 128, 128, 0.28); color: v
   scrollbar-width: none;
   align-self: stretch;
   padding-top: 4px;
+  /* The strip's box reaches down over the topbar's padding and bottom
+     border (its content box, and so the tabs, stay where they were): the
+     active tab's ::after fills that band, joining the page below. */
+  padding-bottom: 7px;
+  margin-bottom: -7px;
   position: relative; /* the tabs' offset parent: FLIP and scroll-into-view read offsetLeft */
 }
 .tabStrip::-webkit-scrollbar { display: none; }
@@ -2141,13 +2146,24 @@ button.pdfOutlineChevron:hover { background: rgba(128, 128, 128, 0.28); color: v
 .tab:hover + .tab::before { background: transparent; }
 .tab:hover { background: var(--bg-hover); }
 .tab.dragging { opacity: 0.45; }
+/* The active tab is the page's own surface, cut out of the chrome: no
+   shadow, and a band below it (over the topbar's padding and border) in the
+   same colour, so tab and page read as one piece. */
 .tab.active {
   background: var(--bg-surface);
   border-color: var(--border);
   color: var(--text-primary);
-  /* whisper of an upward shadow: enough depth to read as lifted, without a
-     smudge bleeding above the tab strip */
-  box-shadow: 0 -1px 2px rgba(0, 0, 0, 0.06);
+}
+.tab.active::after {
+  content: "";
+  position: absolute;
+  top: 100%;
+  left: -1px;
+  right: -1px;
+  height: 7px;
+  background: var(--bg-surface);
+  border: 1px solid var(--border);
+  border-block: 0;
 }
 .tabTitle {
   overflow: hidden;
@@ -2170,7 +2186,7 @@ button.pdfOutlineChevron:hover { background: rgba(128, 128, 128, 0.28); color: v
   min-width: 36px;
   padding: 0;
   justify-content: center;
-  background: var(--bg-surface);
+  background: var(--bg-page);
 }
 .tab.pinned:hover { background: var(--bg-hover); }
 .tabStrip.scrolled .tab.pinned { box-shadow: 6px 0 6px -6px rgba(0, 0, 0, 0.3); }
@@ -2819,7 +2835,7 @@ mark.searchMark {
 }
 .dockGrip:hover { color: var(--text-primary); }
 .dockHeaderSpacer { flex: 1; min-width: 0; }
-.dockWindow.collapsed { flex: 0 0 auto; }
+.dockWindow.collapsed { flex: 0 0 auto; background: var(--bg-page); }
 /* slot layout: collapsed windows are fixed header bars above/beside the
    resizable group of expanded windows */
 .slotStack { display: flex; flex: 1; min-width: 0; min-height: 0; }
@@ -2887,7 +2903,7 @@ mark.searchMark {
   gap: 6px;
   flex-shrink: 0;
   border-top: 1px solid var(--border);
-  background: var(--bg-deeper);
+  background: var(--bg-page);
   padding: 0 4px env(safe-area-inset-bottom);
 }
 .phoneTabBar {

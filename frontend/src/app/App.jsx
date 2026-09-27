@@ -166,13 +166,14 @@ const HOME_SCREEN_INSTALLABLE = (/iPad|iPhone/.test(navigator.userAgent)
   || (/Macintosh/.test(navigator.userAgent) && navigator.maxTouchPoints > 1))
   && !(window.matchMedia?.("(display-mode: standalone)").matches || navigator.standalone);
 // The installed app paints the status bar with theme-color, so it continues
-// what sits under it: the topbar, or — on a phone's library with no tab
-// open, where the compact layout drops the topbar — the library itself.
-// Read from the theme variables, not the elements: the topbar's background
-// transitions, and a mid-transition read would lag a theme change.
+// what sits under it: the topbar (chrome, --bg-page), or — on a phone's
+// library with no tab open, where the compact layout drops the topbar — the
+// library itself (content, --bg-surface). Read from the theme variables, not
+// the elements: the topbar's background transitions, and a mid-transition
+// read would lag a theme change.
 function paintStatusBar(bareTop) {
   const meta = document.querySelector('meta[name="theme-color"]');
-  if (meta) meta.setAttribute("content", tokenHex(bareTop ? "--bg-deeper" : "--bg-surface"));
+  if (meta) meta.setAttribute("content", tokenHex(bareTop ? "--bg-surface" : "--bg-page"));
 }
 // A colour token as #rrggbb. Most tokens are color-mix() expressions
 // (tokens.css), which the theme-color meta can't take: the colour is

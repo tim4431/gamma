@@ -30,7 +30,7 @@ app counts as one browser, separate from Safari).
 | The manifest | `frontend/public/media/manifest.webmanifest` | `display: standalone`, `start_url` `/` (the app then picks the last used workspace), the three PNG icons. Unversioned, so under `/media/` (sent `no-cache`, [repository.md](repository.md)). The backend registers its media type, `application/manifest+json`, because Windows and slim images lack it (`gamma/app.py`; `tests/test_static.py`). |
 | The icons | `frontend/public/media/icons/apple-touch-icon.png` (180), `icon-192.png`, `icon-512.png`, `icon-maskable-512.png` | Rendered from the one brand mark by `tools/branding/build.mjs` like every other icon ([design/brand](../../design/brand/README.md)); never edited by hand. The `bleed` option of `mark.mjs` gives them a full-bleed square plate — the OS masks the corners itself, and iOS paints transparent corners black — and the maskable one keeps the mark inside the inner 80%. |
 | The head tags | `frontend/index.html` | `manifest`, `apple-touch-icon`, `apple-mobile-web-app-capable` / `mobile-web-app-capable`, the title, `apple-mobile-web-app-status-bar-style` **default** and `theme-color`. |
-| The status bar colour | `app/App.jsx`, `paintStatusBar` (the theme effect and the phone-topbar effect) | With the *default* status-bar style the bar sits above the viewport and is painted with `theme-color`; the meta is set to the topbar's background (`--bg-surface`) whenever the theme changes, so the bar continues the topbar for every theme — or to the library's (`--bg-deeper`) while the compact layout shows no topbar. `black-translucent` was rejected: it puts content under the bar with fixed light text, wrong on the light themes. |
+| The status bar colour | `app/App.jsx`, `paintStatusBar` (the theme effect and the phone-topbar effect) | With the *default* status-bar style the bar sits above the viewport and is painted with `theme-color`; the meta is set to the topbar's background (the chrome, `--bg-page`) whenever the theme changes, so the bar continues the topbar for every theme — or to the library's (the content surface, `--bg-surface`) while the compact layout shows no topbar. Both are resolved to a hex first (`tokenHex`): most tokens are `color-mix()` expressions. `black-translucent` was rejected: it puts content under the bar with fixed light text, wrong on the light themes. |
 | Standalone-mode CSS | `shared/styles/app.css`, `@media (display-mode: standalone)` | The document stops rubber-banding (`overscroll-behavior: none` on html/body; the panes still scroll) and `.app` pads `env(safe-area-inset-bottom)` for the home indicator. There is no top inset to absorb with the default status bar. |
 
 ## Layout by orientation
@@ -68,7 +68,7 @@ screen, not the device (`PHONE_MQ` / `useIsPhone` in App.jsx):
   While something runs, More shows the tasks spinner.
 - **The topbar** holds only tabs and Back, so with neither (a library with
   no tab open) it is not shown (`.topbar.phoneBare`), and theme-color
-  switches to the library's `--bg-deeper` so the status bar continues it
+  switches to the library's `--bg-surface` so the status bar continues it
   (`paintStatusBar` in App.jsx).
 
 Nothing else is tablet-specific: the viewport meta already disables

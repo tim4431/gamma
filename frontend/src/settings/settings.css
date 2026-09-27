@@ -19,7 +19,7 @@
   gap: 1px;
   padding: 14px 8px;
   overflow-y: auto;
-  background: var(--bg-elevated);
+  background: var(--bg-page); /* chrome, around the pane's content surface */
   border-right: 1px solid var(--border);
 }
 /* Rail group caption — same small-caps voice as the section rules in a pane. */

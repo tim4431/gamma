@@ -48,6 +48,12 @@
    `node tools/themes.mjs` prints every theme's text contrast;
    tests/themes.test.mjs fails when a change makes one worse. */
 
+/* Surface roles (docs/dev/ui-design.md, "Surfaces"): --bg-page is the
+   chrome (topbar, tab strip, settings rail, collapsed docks), --bg-surface
+   the content (library, notes, every dock, dialogs) and the lightest thing
+   on screen in a light theme, --bg-block a quiet fill, --bg-selected the
+   focused block, --bg-deeper a sunken well, --bg-elevated what floats
+   (popovers, menus, tips). */
 :where(:root) {
   /* Seed defaults. */
   --accent-fill: var(--accent);
@@ -86,6 +92,7 @@
   --bg-hover: color-mix(in oklab, var(--ground) 86%, var(--ink));
   --bg-active: color-mix(in oklab, var(--ground) 82%, var(--ink));
   --bg-subtle: color-mix(in oklab, var(--ground) 79.5%, var(--ink));
+  --bg-selected: color-mix(in oklab, var(--accent) 11%, var(--ground));
   --border: color-mix(in oklab, var(--ground) 86%, var(--ink));
   --border-subtle: color-mix(in oklab, var(--ground) 79.5%, var(--ink));
   --border-light: color-mix(in oklab, var(--ground) 77%, var(--ink));
@@ -129,6 +136,7 @@
   --bg-hover: color-mix(in oklab, var(--ground) 88%, var(--ink));
   --bg-subtle: color-mix(in oklab, var(--ground) 87%, var(--ink));
   --bg-active: color-mix(in oklab, var(--ground) 83.75%, var(--ink));
+  --bg-selected: color-mix(in oklab, var(--accent) 6%, var(--ground));
   --border: color-mix(in oklab, var(--ground) 87%, var(--ink));
   --border-subtle: color-mix(in oklab, var(--ground) 88%, var(--ink));
   --border-light: color-mix(in oklab, var(--ground) 80.25%, var(--ink));

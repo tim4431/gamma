@@ -55,6 +55,28 @@ The desktop shell's chrome loads a committed copy,
 bundle). `npm run desktop-tokens` in `frontend/` refreshes both, and
 `tests/themes.test.mjs` fails while either copy differs from its source.
 
+### Surfaces
+
+Each region paints one surface role, so notes, chat and the library read as
+one app inside one frame:
+
+| Role | Token | Where |
+|---|---|---|
+| Chrome | `--bg-page` | the topbar and its tab strip, the Settings rail, collapsed dock bars, the phone's bottom bar, the desktop shell's bar |
+| Content | `--bg-surface` | the library, the notes page, every dock (notes and chat alike), dialogs — in a light theme the lightest thing on screen |
+| Quiet fill | `--bg-block` | row hover, code, table heads, a chat bubble |
+| Selected | `--bg-selected` | the focused block: the accent at 6 % over the content (11 % in the dark scheme) |
+| Sunken | `--bg-deeper` | wells; the PDF surround in the tinted themes |
+| Floating | `--bg-elevated` + `--shadow-surface` | popovers, menus, tips, the guide card |
+
+The active tab is the content surface cut out of the chrome: no shadow, and
+a band under it (`.tab.active::after`, over the topbar's padding and bottom
+border) joins it to the page below. `--bg-elevated` is "what floats", not
+"lighter than the page": in a light theme it equals the content, so a
+control that has to stand out on content (a card, a field, a secondary
+button) carries a border, and a state that has to show on it (the focused
+block) uses `--bg-selected`.
+
 ## One control set, everywhere
 
 Mermaid diagram previews in notes and chat use the shared component and toolbar
