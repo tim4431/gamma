@@ -89,6 +89,25 @@ export async function pdfScenarios({ server, browser, alice, makePdf, step, unti
     assertNoProblems(page);
   });
 
+  await step("pdf: flipped pages draw palette highlights in a dark-tuned set; other colours keep screening", async () => {
+    const mark = page.locator('[data-page="1"] div[data-hl-id]').first();
+    const look = () => mark.evaluate((el) => { const s = getComputedStyle(el); return `${s.backgroundColor} ${s.mixBlendMode}`; });
+    assertEq(await mark.getAttribute("data-hl-color"), "0", "the first palette colour is tagged by its index");
+    assert((await look()).endsWith(" multiply"), "a light page multiplies");
+    const flip = (on) => page.locator(".pdfViewer").evaluate((el, on) => el.classList.toggle("pdfDark", on), on);
+    await flip(true);
+    try {
+      assertEq(await look(), "rgba(250, 204, 21, 0.3) normal", "the dark-tuned yellow, not screened");
+      assertEq(await page.locator(".pdfNoteBadge").first().evaluate((el) => getComputedStyle(el).backgroundColor), "rgb(42, 42, 42)", "a dark note badge");
+      // A colour from another app has no palette index and keeps the screen blend.
+      await mark.evaluate((el) => { el.removeAttribute("data-hl-color"); el.style.setProperty("--hl", "rgba(255, 0, 0, 0.4)"); });
+      assertEq(await look(), "rgba(255, 0, 0, 0.4) screen");
+    } finally { await flip(false); }
+    await page.reload();
+    await waitForPdf(page);
+    assertNoProblems(page);
+  });
+
   await step("pdf: interface scale keeps note badges anchored and Tours consistent", async () => {
     // Sizes are compared with interface size 100% (measured first), not pinned in pixels.
     let base;

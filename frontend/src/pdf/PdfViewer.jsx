@@ -26,7 +26,7 @@ import { ChatMarkdown, useCopied } from "../shared/ui/Widgets";
 import { PdfCitationOverlay } from "./PdfCitationOverlay";
 import { citationRuns, runChars } from "./pdfCitation.js";
 import { noteBadgeAnchor } from "./noteAnchor.js";
-import { COLORS } from "../shared/model/highlightColors.js";
+import { COLORS, paletteIndex } from "../shared/model/highlightColors.js";
 import { t } from "../shared/i18n/i18n.js";
 pdfjsLib.GlobalWorkerOptions.workerSrc = pdfWorkerUrl;
 // One worker for every document. pdf.js otherwise starts a fresh worker per
@@ -2208,20 +2208,26 @@ const PdfPage = React.memo(function PdfPage({ citation, pageNumber, pdfDoc, scal
         // Area notes (Ctrl+drag rectangles) draw as an outline with a faint
         // wash — a solid multiply fill would tint the figure underneath.
         const isArea = !!h.position?.area;
-        const color = h.color || "rgba(255,226,143,0.65)";
+        const color = h.color || COLORS[0];
+        // The colour rides in --hl (the border in --hl-line, defaulting to
+        // it), and a palette colour is tagged with its index: dark pages
+        // swap in a dark-tuned set by index (app.css, "Flip page colors").
+        const palette = paletteIndex(color);
         const elements = [];
         for (const r of rects) {
-          elements.push(<div key={h.id + "-" + r.x1 + "-" + r.y1} data-hl-id={h.id} style={{
+          elements.push(<div key={h.id + "-" + r.x1 + "-" + r.y1} data-hl-id={h.id}
+            data-hl-color={palette >= 0 ? palette : undefined} style={{
             position: "absolute", zIndex: 2, cursor: "pointer",
             left: r.x1 * curW / storedW, top: r.y1 * curH / storedH,
             width: Math.max(1, (r.x2 - r.x1) * curW / storedW),
             height: Math.max(1, (r.y2 - r.y1) * curH / storedH),
             mixBlendMode: "multiply",
+            "--hl": color,
             ...(isArea ? {
               boxSizing: "border-box", borderRadius: 3,
-              border: `2px solid ${color}`,
-              background: `color-mix(in srgb, ${color} 25%, transparent)`,
-            } : { background: color }),
+              border: "2px solid var(--hl-line, var(--hl))",
+              background: "color-mix(in srgb, var(--hl) 25%, transparent)",
+            } : { background: "var(--hl)" }),
             ...(isLink ? (isArea
               ? { border: "2px solid rgba(70, 130, 255, 0.9)" }
               : { borderBottom: "2px solid rgba(70, 130, 255, 0.9)", borderRadius: 1 }) : {}),

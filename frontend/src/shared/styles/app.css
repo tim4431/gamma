@@ -5035,6 +5035,25 @@ a.shareBrand:hover { background: var(--bg-hover); }
 .pdfViewer.pdfDark .pdfPageWrap { background: #0f0f0f !important; }
 .pdfViewer.pdfDark .pdfPageCanvas { filter: invert(0.94) hue-rotate(180deg); }
 :is(.pdfViewer.pdfDark, [data-theme="gamma-dark"] .pdfViewer) .pdfPageWrap :is([data-hl-id], .pdfFindMark) { mix-blend-mode: screen !important; }
+/* Screened, the palette's pastels turn into mid-tones the light text can't
+   be read on (about 2.4:1 on yellow). The four palette colours (data-hl-color,
+   the COLORS index) instead draw a dark-tuned set with normal blending,
+   about 7:1; an area outline keeps a stronger line of the same hue. Colours
+   from other apps are not remapped and keep the screen blend above. The
+   note badge turns dark with them. */
+:is(.pdfViewer.pdfDark, [data-theme="gamma-dark"] .pdfViewer) .pdfPageWrap [data-hl-color] { mix-blend-mode: normal !important; }
+:is(.pdfViewer.pdfDark, [data-theme="gamma-dark"] .pdfViewer) .pdfPageWrap [data-hl-color="0"] { --hl: rgba(250, 204, 21, 0.30) !important; --hl-line: rgba(250, 204, 21, 0.75); }
+:is(.pdfViewer.pdfDark, [data-theme="gamma-dark"] .pdfViewer) .pdfPageWrap [data-hl-color="1"] { --hl: rgba(74, 222, 128, 0.26) !important; --hl-line: rgba(74, 222, 128, 0.7); }
+:is(.pdfViewer.pdfDark, [data-theme="gamma-dark"] .pdfViewer) .pdfPageWrap [data-hl-color="2"] { --hl: rgba(96, 165, 250, 0.32) !important; --hl-line: rgba(96, 165, 250, 0.8); }
+:is(.pdfViewer.pdfDark, [data-theme="gamma-dark"] .pdfViewer) .pdfPageWrap [data-hl-color="3"] { --hl: rgba(192, 132, 252, 0.32) !important; --hl-line: rgba(192, 132, 252, 0.8); }
+:is(.pdfViewer.pdfDark, [data-theme="gamma-dark"] .pdfViewer) .pdfPageWrap .pdfNoteBadge {
+  mix-blend-mode: normal !important;
+  background: #2a2a2a;
+  border-color: rgba(255, 255, 255, 0.25);
+  color: rgba(255, 255, 255, 0.7);
+  box-shadow: 0 1px 2px rgba(0, 0, 0, 0.5);
+}
+:is(.pdfViewer.pdfDark, [data-theme="gamma-dark"] .pdfViewer) .pdfPageWrap .pdfNoteBadge:hover { color: #93c5fd; border-color: rgba(147, 197, 253, 0.6); }
 
 /* Gamma Dark uses its charcoal paper with either PDF color preference.
    Screen blending maps the inverted canvas's black paper to the surface;
