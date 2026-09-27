@@ -5531,7 +5531,6 @@ a.shareBrand:hover { background: var(--bg-hover); }
 .transferFooter { flex-shrink: 0; padding-top: 14px; margin-top: 14px; border-top: 1px solid var(--border-subtle); align-items: center; }
 .transferHelp { font-size: var(--fs-xs); color: var(--text-secondary); }
 .transferHelp summary { cursor: pointer; padding: 6px 0; }
-.transferModal :is(button, input):focus-visible { outline: 2px solid var(--accent); outline-offset: 2px; }
 @media (max-width: 620px) {
   .transferModal { padding: 14px; width: calc(100vw - 20px); max-height: calc(100dvh - 20px); }
   .transferFormatRow { grid-template-columns: minmax(0, 1fr); gap: 6px; }
