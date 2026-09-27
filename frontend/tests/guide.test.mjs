@@ -185,7 +185,7 @@ test("the sharing tour follows the popover and words access for an anyone-with-t
 
 test("hints are single cards kept out of the Tours menu", () => {
   const hints = Object.values(TOURS).filter((t) => t.hint).map((t) => t.id);
-  assert.deepEqual(hints, ["math-keys", "block-refs", "quick-open", "back", "folders", "install"]);
+  assert.deepEqual(hints, ["math-keys", "block-refs", "quick-open", "back", "conflicts", "folders", "install"]);
 });
 
 // Keys in guide copy: `{key:<command id>}` shows the account's chord for a

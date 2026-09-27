@@ -1,7 +1,7 @@
 # Onboarding: tours and contextual guides
 
-**Status: the engine, the two manual tours (first paper, AI chat), seven
-triggered tours and six hints are built.** The welcome page, synced
+**Status: the engine, the two manual tours (first paper, AI chat), six
+triggered tours and seven hints are built.** The welcome page, synced
 `onboarding` pref, first-sign-in invitation and checklist are still design.
 What exists: `frontend/src/guide/` (anchor registry, event bus, trigger rules
 in `triggers.js`, `useGuide`, `GuideOverlay`, one file per tour in `tours/`,
@@ -47,11 +47,10 @@ any open page, **Editing tables** on any page you can edit and
 **Handwriting** on any PDF you can edit; each begins by having you make the
 thing it explains when there is none yet (see "Steps that have the user
 make something"). **Shared workspaces** is listed once you belong to one.
-**Working together**, **Citations in answers** and **Resolving a conflict**
-are listed only while their subject is on screen: someone else on the page,
-a cited reply, a conflict's versions. Hints are never listed. `?guide=` URLs
-never start a tour, and the chat header has no guide button. In Chinese a
-tour is 教程.
+**Working together** and **Citations in answers** are listed only while
+their subject is on screen: someone else on the page, a cited reply. Hints
+are never listed. `?guide=` URLs never start a tour, and the chat header has
+no guide button. In Chinese a tour is 教程.
 
 Every card has a short title and at most one short body sentence: a demo
 says what Gamma is about to do, a practice step what to do (`bodyTouch`
@@ -99,12 +98,12 @@ an amber **Tip** chip over one plain sentence that says why it helps, with
 | Editing tables | an editable table renders in the notes (`table.shown`) | (add one with /table,) the + strips, row/column handles, cells, the corner handle (copy or delete the whole table) |
 | Handwriting | the first stroke (`ink.stroke`) | (draw something,) tap the pen again for colour, width and pen vs monoline, erase part of it, undo, the lasso, the ink block in the notes |
 | Working together | another account or a link visitor comes onto the page (`peer.joined`; your own second tab or the desktop app beside the browser is nobody else) | the avatar stack, their block, undo |
-| Resolving a conflict | a clone conflict's versions show (`conflict.shown`) | the versions, Apply |
 | Shared workspaces | the account belongs to a shared workspace (state) | the account menu's switcher and card |
 | hint: math keys | the live formula preview comes up (`math.previewed`) | the preview: Tab and `\` |
 | hint: block references | the `[[` search shows results (`ref.search`) | the search: mention vs `![[…]]` |
 | hint: Ctrl+P | the 4th return to the library in one load (`home.opened`, `count: 4`), unless the palette was used (`doneOn: palette.opened`) | Home |
 | hint: Back | the first link jump (`nav.pushed`), unless Back was already used (`doneOn: nav.back`) | the Back button: it returns to the same spot, or `{key:app.back}` |
+| hint: conflict | a clone conflict's versions show (`conflict.shown`) | the versions: nothing was lost, both are kept; pick one, then Apply |
 | hint: folders | the library has 10+ pages and no folder or label (state) | the listing bar |
 | hint: install | iPhone/iPad Safari, not yet the home-screen app (state) | no anchor: a bottom-left card |
 | Your first paper | on the library of a demo server once the guest lands, or of a library with nothing in it yet but the seeded Welcome page (`emptyLibrary`: the listing has loaded and every root page has `properties.seeded`) — state, `trigger: {requires: {view: "home", editable: true}, anyOf: [{demo: true}, {emptyLibrary: true}]}`; not once the tour has any progress | no anchor: the centred welcome card; Start the tour begins with the add demo |

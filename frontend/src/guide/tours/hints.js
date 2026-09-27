@@ -42,6 +42,17 @@ export const back = {
   steps: [{ id: "back", anchor: "header.back", placement: "bottom", title: T("Back takes you to where you were, at the same spot. Or press {key:app.back}.") }],
 };
 
+// A clone conflict's versions came up (the block chip's popover, the sync
+// pill's list): one calm sentence beside the choice — true for the merged
+// three-column case and the diverged two-column one alike.
+export const conflicts = {
+  id: "conflicts",
+  version: 1,
+  hint: true,
+  trigger: { event: "conflict.shown" },
+  steps: [{ id: "conflicts", anchor: "merge.versions", placement: "left", title: T("Nothing was lost: both versions are kept here. Pick the one to keep, then Apply.") }],
+};
+
 export const folders = {
   id: "folders",
   version: 1,
@@ -61,4 +72,4 @@ export const install = {
   steps: [{ id: "install", anchor: null, title: T("Install Gamma for full screen and a Home Screen icon: tap Share, then Add to Home Screen.") }],
 };
 
-export default [mathKeys, blockRefs, quickOpen, back, folders, install];
+export default [mathKeys, blockRefs, quickOpen, back, conflicts, folders, install];
