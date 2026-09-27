@@ -312,7 +312,7 @@ function ChatSetupCard({ info, isAdmin, onConnect, openSettings }) {
   const tiles = info && !info.failed ? aiServiceTiles(info, { long: true }) : [];
   return (
     <div className="chatSetup" data-guide="chat.setup">
-      <span className="chatSetupIcon" aria-hidden="true"><SparklesIcon size={16} /></span>
+      <span className="chatSetupIcon" aria-hidden="true"><SparklesIcon size={20} /></span>
       <div className="chatSetupTitle">{t("Chat with your papers")}</div>
       <p className="chatSetupText">
         {t("Ask about the paper you are reading and get answers that cite the page they come from. The assistant can also search, summarize and organize your library.")}
