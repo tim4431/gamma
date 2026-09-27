@@ -922,7 +922,7 @@
   "Gamma export saved — in the other Gamma: Import → Gamma export (.zip).": "Gamma 导出已保存——在另一个 Gamma 中：导入 → Gamma 导出（.zip）。",
   "Gamma holds Ctrl and drags a box around the equation. Your turn is next.": "Gamma 按住 Ctrl，把公式框起来。接下来轮到你。",
   "Gamma must be running. For a remote server, its administrator must allow the server's hostname for MCP.": "Gamma 必须处于运行状态。远程服务器需由其管理员允许该主机名用于 MCP。",
-  "Gamma pastes an arXiv link into Add and opens the paper. A DOI or a PDF's address works too.": "Gamma 把一个 arXiv 链接粘贴到“添加”里并打开论文。DOI 或 PDF 的网址也可以。",
+  "Gamma pastes a paper's address into Add and opens it. An arXiv link or a DOI works too.": "Gamma 把一篇论文的地址粘贴到“添加”里并打开它。arXiv 链接或 DOI 也可以。",
   "Gamma v{version} is available — this server runs v{current}": "Gamma v{version} 已发布——此服务器运行的是 v{current}",
   "Gamma writes a note under your highlights. Click any note to edit it.": "Gamma 在你的高亮下写一条笔记。点击任意笔记即可编辑。",
   "Gamma {label} · Python {python} · {platform} · data schema {schema_version}": "Gamma {label} · Python {python} · {platform} · 数据结构版本 {schema_version}",

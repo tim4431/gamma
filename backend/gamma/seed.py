@@ -1,12 +1,14 @@
 """Workspace file creation and seeding: the empty pages.db / data.db /
-uploads/ of a new workspace, the guest welcome page, the first admin.
+uploads/ of a new workspace, the Welcome page every new account starts
+with, the first admin.
 
-Shared by the app (guest logins, first run) and manage.py (user CRUD)
-so the welcome page and schemas never drift between the two. Account and
-membership rows are gamma/workspaces.py's job; this module only writes
-files.
+Shared by the app (guest logins, first run, cloud sign-ups, the admin API)
+and manage.py (user CRUD) so the welcome page and schemas never drift
+between the two. Account and membership rows are gamma/workspaces.py's job;
+this module writes files and the Welcome page's blocks.
 """
 
+import functools
 import os
 import secrets
 import sqlite3
@@ -18,13 +20,16 @@ import bcrypt
 from fractional_indexing import generate_n_keys_between
 
 from .config import WORKSPACES_DIR
-from .db import DATA_SCHEMA, PAGES_SCHEMA, connect_users_db, page_now, safe_ws_id
+from .db import DATA_SCHEMA, PAGES_SCHEMA, connect_pages_db, connect_users_db, page_now, safe_ws_id
 from .logbuf import log
 from .server_settings import guest_ttl_hours
 
 # The seeded Welcome page: a normal markdown outline, imported through the
-# .md parser (docs/dev/onboarding.md "The welcome page and its sample PDF").
+# .md parser, plus a sample PDF the notes-as-PDF writer renders from the same
+# text (docs/dev/onboarding.md "The welcome page and its sample PDF").
 WELCOME_MD = Path(__file__).resolve().parent / "onboarding" / "welcome.md"
+SEEDED_WELCOME = "welcome"  # the page's properties.seeded: tours and the library find it by this
+_WELCOME_PDF_NAME = "Welcome to Gamma.pdf"
 
 
 def _guest_lifetime() -> str:
@@ -40,43 +45,111 @@ def _guest_note() -> str:
             "with everything in it. To keep your work, ask the admin for an account.")
 
 
-def welcome_tree() -> tuple[str, list]:
-    """``(title, [{content, children}])`` of the Welcome page, parsed from
-    welcome.md like any imported markdown file. ``("", [])`` when the file is
-    missing (a broken install seeds nothing rather than failing a login)."""
-    from .markdown_import import fm_text, md_to_blocks, parse_frontmatter
+def _welcome_text() -> str:
     try:
-        text = WELCOME_MD.read_text(encoding="utf-8")
+        return WELCOME_MD.read_text(encoding="utf-8")
     except OSError as e:
         log.warning(f"[seed] welcome page skipped: {e}")
-        return "", []
+        return ""
+
+
+def welcome_source(text: str | None = None) -> tuple[dict, list]:
+    """``(front matter, [{content, children}])`` of welcome.md, parsed like
+    any imported markdown file. ``({}, [])`` when the file is missing (a
+    broken install seeds nothing rather than failing a login)."""
+    from .markdown_import import md_to_blocks, parse_frontmatter
+    text = _welcome_text() if text is None else text
+    if not text:
+        return {}, []
     fields, body = parse_frontmatter(text)
-    return fm_text(fields, "title") or "Welcome", md_to_blocks(body)
+    return fields, md_to_blocks(body)
 
 
-def _welcome_blocks():
-    """The guest Welcome page as ``(id, parent, position, content, props)``
-    rows, parents before children."""
-    title, tree = welcome_tree()
-    if not title:
-        return []
-    tree = [*tree, {"content": _guest_note(), "children": []}]
-    wid = secrets.token_urlsafe(9)
-    rows = [(wid, "root", "a0V", title, "{}")]
-    pending = [(wid, tree)]
+@functools.lru_cache(maxsize=2)
+def welcome_pdf(text: str) -> bytes:
+    """The sample PDF: welcome.md (``text``) typeset by the notes-as-PDF
+    writer under its ``document`` title. The writer is deterministic, so
+    every workspace stores the same file; one render per process and text."""
+    from .markdown_import import fm_text
+    from .pdf_document import render_document
+    fields, tree = welcome_source(text)
+    title = fm_text(fields, "document") or fm_text(fields, "title") or "Welcome"
+    return render_document([{"content": title, "properties": {}, "children": tree}])
+
+
+def _insert_ops(page_id: str, tree: list) -> list[dict]:
+    """``insert`` ops for a ``{content, children}`` tree under the page,
+    parents before children, positions minted per sibling run."""
+    ops, pending = [], [(page_id, tree)]
     while pending:
         parent, nodes = pending.pop(0)
         for node, pos in zip(nodes, generate_n_keys_between(None, None, n=len(nodes))):
             bid = secrets.token_urlsafe(9)
-            rows.append((bid, parent, pos, node["content"], "{}"))
+            ops.append({"op": "insert", "id": bid, "parent": parent, "position": pos,
+                        "content": node.get("content", ""), "props": {}})
             if node.get("children"):
                 pending.append((bid, node["children"]))
-    return rows
+    return ops
 
 
-def create_workspace_files(ws_id: str, welcome: bool = False):
+def seed_welcome(ws: str, *, actor: str, guest: bool = False) -> str | None:
+    """Seed the Welcome page into a workspace that has no pages yet: a page
+    marked ``properties.seeded = "welcome"`` carrying the sample PDF, its
+    notes inserted as one op batch like every other block writer's. A
+    guest's page ends with a callout naming the lifetime. Returns the page
+    id, or None when skipped (the workspace already has pages, welcome.md is
+    missing, or this server is a share host, whose workspaces hold published
+    pages only — each counts against the plan's cap). A PDF the writer or the
+    storage limits refuse leaves the page without one."""
+    from . import cloud_auth
+    from .blocks_store import attachment_props, create_page
+    from .markdown_import import fm_text
+    from .ops import after_commit, apply_ops
+    from .storage import store_file
+
+    if cloud_auth.settings()["share_host"]:
+        return None
+    text = _welcome_text()
+    fields, tree = welcome_source(text)
+    if not tree:
+        return None
+    title = fm_text(fields, "title") or "Welcome"
+    document = fm_text(fields, "document") or title
+    if guest:
+        tree = [*tree, {"content": _guest_note(), "children": []}]
+    try:
+        with closing(connect_pages_db(ws)) as conn:
+            if conn.execute("SELECT 1 FROM unified_blocks WHERE parent_id = 'root' LIMIT 1").fetchone():
+                return None
+            props = {"seeded": SEEDED_WELCOME}
+            try:
+                # The content-hash store, like any upload — but not
+                # store_pdf, whose background manifest walk could still hold
+                # data.db open when a guest who just arrived logs out (which
+                # deletes the workspace); /api/pdf-info makes it on first open.
+                filename, _existed = store_file(ws, welcome_pdf(text), ".pdf")
+                doc_id = filename[:-len(".pdf")]
+                attachment, _auto = attachment_props(doc_id, f"/api/uploads/{filename}", _WELCOME_PDF_NAME)
+                # A record of its own, so opening the page looks nothing up
+                # (the tour works offline) and asks no AI for a citation.
+                props.update(attachment, meta={"title": document, "kind": "notes", "source": "manual"},
+                             ppt_cite=f"Gamma, *{document}*")
+            except Exception as e:  # noqa: BLE001 — the notes still make a Welcome page
+                log.warning(f"[seed] welcome PDF skipped: {e}")
+            page = create_page(conn, title, props)
+            # commit_ops on a connection closed here (a handle left for the
+            # GC would keep the directory from being deleted on Windows)
+            after_commit(ws, conn, apply_ops(conn, page["id"], _insert_ops(page["id"], tree), actor=actor))
+    except Exception as e:  # noqa: BLE001 — never fail the account being created
+        log.warning(f"[seed] welcome page failed: {e}")
+        return None
+    return page["id"]
+
+
+def create_workspace_files(ws_id: str):
     """Create fresh pages.db, data.db and uploads/ under workspaces/<id>/
-    (existing files are kept). ``welcome`` seeds the guest welcome page."""
+    (existing files are kept). The Welcome page is ``seed_welcome``'s, once
+    the workspace's rows exist (gamma/workspaces.py)."""
     target = WORKSPACES_DIR / safe_ws_id(ws_id)
     target.mkdir(parents=True, exist_ok=True)
     nw = page_now()
@@ -96,14 +169,6 @@ def create_workspace_files(ws_id: str, welcome: bool = False):
                 "VALUES ('root', NULL, 'a0', '', '{}', ?, ?)",
                 (nw, nw),
             )
-        if welcome and not pages_db.execute(
-                "SELECT 1 FROM unified_blocks WHERE parent_id = 'root' LIMIT 1").fetchone():
-            for bid, pid, pos, content, props in _welcome_blocks():
-                pages_db.execute(
-                    "INSERT INTO unified_blocks (id, parent_id, position, content, properties, created_at, updated_at) "
-                    "VALUES (?, ?, ?, ?, ?, ?, ?)",
-                    (bid, pid, pos, content, props or "{}", nw, nw),
-                )
         pages_db.commit()
 
     with closing(sqlite3.connect(str(target / "data.db"))) as data_db:
@@ -144,7 +209,7 @@ def ensure_admin_seed():
             (username, pwhash, page_now()),
         )
         conn.commit()
-    workspaces.ensure_personal(username)
+    workspaces.ensure_personal(username, welcome=True)
     # ASCII only: this prints during startup, and a redirected Windows console
     # (GBK) raises UnicodeEncodeError on characters it can't encode.
     # Raw print()s on purpose — the one-time password must go to the console
@@ -169,7 +234,7 @@ def create_cloud_account(username: str, is_admin: bool = False) -> str:
             (username, 1 if is_admin else 0, page_now()),
         )
         conn.commit()
-    return workspaces.ensure_personal(username)
+    return workspaces.ensure_personal(username, welcome=True)
 
 
 def create_account(username: str, password: str | None, is_admin: bool = False) -> str:
@@ -187,4 +252,4 @@ def create_account(username: str, password: str | None, is_admin: bool = False) 
             (username, pwhash, 1 if is_admin else 0, page_now()),
         )
         conn.commit()
-    return workspaces.ensure_personal(username)
+    return workspaces.ensure_personal(username, welcome=True)

@@ -6568,6 +6568,12 @@ function LibraryApp({ publicPage = null, initialServerConfig = null }) {
   // events (guide/triggers.js); never in the share view.
   const unfiledLibrary = useMemo(() => homeBlocks.length >= 10
     && homeBlocks.every((b) => !b.properties?.folder && !b.properties?.category), [homeBlocks]);
+  // The seeded Welcome page's PDF (gamma/seed.py), the first tour's demo
+  // paper while the library still has it: no arXiv download, works offline.
+  const welcomePdf = useMemo(() => {
+    const page = homeBlocks.find((b) => b.properties?.seeded === "welcome" && b.properties?.doc_id);
+    return page ? `${API}/uploads/${page.properties.doc_id}.pdf` : "";
+  }, [homeBlocks]);
   const guide = useGuide({
     services: {
       // A finished tour's `finish`: "pen" re-arms the pen last drawn with
@@ -6628,6 +6634,7 @@ function LibraryApp({ publicPage = null, initialServerConfig = null }) {
       installable: HOME_SCREEN_INSTALLABLE,
       // a demo server: progress per visit, the first-run tour offered on arrival
       demo: !!serverConfig?.demo,
+      welcomePdf,
     },
     tidy: () => setOpenPopover(null),
   });

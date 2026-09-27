@@ -1,8 +1,9 @@
 # Onboarding: tours and contextual guides
 
 **Status: the engine, the two manual tours (first paper, AI chat), six
-triggered tours and seven hints are built.** The welcome page, synced
-`onboarding` pref, first-sign-in invitation and checklist are still design.
+triggered tours, seven hints and the welcome page with its sample PDF are
+built.** The synced `onboarding` pref, first-sign-in invitation and
+checklist are still design.
 What exists: `frontend/src/guide/` (anchor registry, event bus, trigger rules
 in `triggers.js`, `useGuide`, `GuideOverlay`, one file per tour in `tours/`,
 the hints in `tours/hints.js`), the node test `tests/guide.test.mjs` and the
@@ -48,9 +49,8 @@ the first tour keeps its older `gamma-guide:first-run`), not yet the synced
 pref. On a demo server (`facts.demo`, from `GET /api/server-config`'s
 `demo`) the same keys live in sessionStorage (`guideStorage(demo)` in
 `triggers.js`), so every visit starts fresh ([guests.md](guests.md) "Demo
-mode"). `gamma/seed.py` seeds the welcome page in guest workspaces only,
-parsed from `backend/gamma/onboarding/welcome.md` by the `.md` importer's
-`md_to_blocks`; a guest's page ends with a callout naming the lifetime.
+mode"). Every new account starts with the Welcome page and its sample PDF
+(see "The welcome page and its sample PDF").
 
 ## Manual tours (implemented)
 
@@ -215,9 +215,12 @@ Engine abilities available to every step:
 ## Demo steps
 
 A step with `do: [...]` acts on the UI itself instead of asking the user to.
-The first tour's second step clicks Add, types the arXiv link of *Attention
-Is All You Need*, presses Enter, waits for the page to open and moves on; the
-user's first task is then a highlight on a real paper rather than a menu.
+The first tour's second step clicks Add, types the address of the demo paper,
+presses Enter, waits for the page to open and moves on; the user's first task
+is then a highlight on a real paper rather than a menu. The demo paper is the
+seeded Welcome page's own PDF (`/api/uploads/<hash>.pdf`, App's `welcomePdf`
+fact) while the library has that page, so the tour needs no network; without
+it, the arXiv link of *Attention Is All You Need*.
 If the link identifies a paper with a PDF already in the library, Add opens
 that saved copy without resolving or downloading the source again. Reopening
 the current paper also emits `page.opened`, so replaying the tour completes.
@@ -256,9 +259,10 @@ step completes only for its matching type.
   A `waitFor` with a `status` shows it on the card with a spinner while it
   waits ("Fetching the paper…" for the add demo's download); after 20 s the
   card adds "This can take a minute on a slow connection."
-- `{name}` in typed text is filled from the tour's `vars`, which the
-  localStorage key `gamma-guide-vars` overrides — how the browser suite points
-  the demo at an uploaded PDF instead of the network.
+- `{name}` in typed text is filled from the tour's `vars` (an object, or a
+  function of the facts: the first tour's `demoUrl`), which the localStorage
+  key `gamma-guide-vars` overrides — how the browser suite points the demo at
+  an uploaded PDF of its own.
 - From the demo's initial pause through its final action, the sheet swallows
   clicks, the card shows ▶ Watch and a thin line of the actions done so far,
   and Back/Next are hidden. **Skip this demo** stops the actions (their
@@ -485,27 +489,43 @@ scope: you learn the app once, not once per workspace.
 
 ## The welcome page and its sample PDF
 
-- Content is `backend/gamma/onboarding/welcome.md`, a normal markdown outline,
-  imported at seed time with the same parser as `POST /pages/from-file`, so
-  what the importer supports the welcome page supports (callouts, math, images,
-  tables). Editing copy is editing markdown.
+- Content is `backend/gamma/onboarding/welcome.md`, a normal markdown outline
+  (front matter `title`, the page's, and `document`, the PDF's), parsed at
+  seed time with the importer's `md_to_blocks`, so what the importer supports
+  the welcome page supports (callouts, math, images, tables). Editing copy is
+  editing markdown. It is English only; there is no per-language welcome.md.
 - The page carries a PDF so "select text to highlight" has a target. The PDF is
   **rendered from the same markdown by the notes-as-PDF writer**
-  (`pdf_notes.py`, [import_export.md](import_export.md)) at seed time and
-  stored through the content-hash store like any upload. No binary asset in the
-  repo, no licence question, always in step with the text, and it demonstrates
-  the export feature. Images come from `frontend/public/media/` served by the
-  same origin, not GitHub raw.
-- Seeded into every new personal workspace's first creation
-  (`workspaces.ensure_personal(..., welcome=True)` for a new account, in
-  addition to the guest). Shared workspaces get nothing. The page has
-  `properties.seeded: "welcome"` so tours can find its card
-  (`home.card.welcome` is derived from that property) and so a re-seed can
-  tell it apart from user pages. Deleting it is fine; the tour's detour card
-  then says "Open any paper".
-- The seeded blocks go through `commit_ops` like every other writer
-  ([collab.md](collab.md)); the current raw-insert path in `seed.py` is
-  replaced, not extended.
+  (`pdf_document.render_document`, [import_export.md](import_export.md)) —
+  deterministic, rendered once per process (`seed.welcome_pdf`) — and stored
+  through the content-hash store like any upload (`store_file`, not
+  `store_pdf`: its background manifest walk could still hold `data.db` open
+  when a guest who just arrived logs out; `/api/pdf-info` makes the manifest
+  on first open). No binary asset in the repo, no licence question, always in
+  step with the text, and it demonstrates the export feature. Its last
+  section is a practice passage whose plain-text formula line is what the
+  first tour's box demo encircles (`findEquation` looks for `Attention(` and
+  `softmax`). The page's own `meta` record (`source: manual`) and `ppt_cite`
+  mean opening it looks nothing up and asks no AI for a citation. A PDF the
+  storage limits refuse leaves the page without one.
+- `seed.seed_welcome(ws, actor=, guest=)` seeds it into a workspace with no
+  pages yet. Every account-creating path asks for it:
+  `workspaces.ensure_personal(..., welcome=True)` from `seed.create_account`
+  (the admin API, `manage.py create-user`), `seed.create_cloud_account`,
+  `seed.ensure_admin_seed` and `guests.new_guest`; `workspaces.create`
+  seeds once the workspace's rows exist. An existing workspace, a further
+  personal workspace, a shared one and an offline copy start empty,
+  `manage.py setup` seeds nothing (except a guest workspace whose files it
+  recreates), and neither does a share host, whose workspaces hold published
+  pages only, each counted against the plan's cap
+  ([cloud_accounts.md](cloud_accounts.md)). A guest's page ends with a callout naming the lifetime; a
+  `GAMMA_GUEST_SEED` zip replaces the whole workspace ([guests.md](guests.md)).
+- The page has `properties.seeded: "welcome"`, so the first tour finds its
+  PDF and the library can tell a fresh one (no pages but seeded ones) from a
+  used one. Deleting it is fine; the tour then falls back to arXiv.
+- The notes go in as one op batch (`apply_ops` + `after_commit`, what
+  `commit_ops` does, on a connection closed right there) after
+  `blocks_store.create_page` made the page ([collab.md](collab.md)).
 
 ## Checklist and hints
 
@@ -537,7 +557,8 @@ frontend/src/guide/
   tours/hints.js    the hints
   guide.css
 backend/gamma/onboarding/welcome.md   the seeded page (and the sample PDF's source)
-backend/gamma/seed.py                 imports it; renders the PDF; commit_ops
+backend/gamma/seed.py                 seed_welcome: parses it, renders the PDF, one op batch
+backend/tests/test_welcome.py         who gets it, the PDF, the op batch, the fallbacks
 frontend/tests/guide.test.mjs         schema, anchor references, event names, unique ids
 frontend/tests/e2e/scenarios/guide.mjs            the first-run tour end to end, home anchors present
 frontend/tests/e2e/scenarios/contextualGuide.mjs  the AI chat tour on desktop and phone
@@ -569,9 +590,14 @@ frontend/tests/e2e/scenarios/triggeredGuide.mjs   offers and hints: tables (made
   step's action and asserting the card moved to the next anchor; the detour
   card shows when a step's requirement is unmet; `?guide=` starts a tour; the
   share view mounts nothing; any `guide.anchorMissing` warning fails the run.
-- Backend: seeding a personal workspace produces the welcome page with an
-  attached PDF and a `seeded` property; the tuple-free seed path goes through
-  `commit_ops`; a guest re-seed is idempotent.
+- Backend (`test_welcome.py`, `test_guests.py`): a new account's workspace
+  holds the welcome page with its PDF, `seeded` property and one op batch; a
+  guest's names the lifetime; existing, shared and non-empty workspaces are
+  never seeded; a refused PDF or a missing welcome.md never fails the
+  account.
+- `npm run e2e` (`guide.mjs`): without the vars override the first tour's
+  demo opens the Welcome page's PDF with no resolver call, and falls back to
+  arXiv once that page is deleted.
 
 ## Build order
 
@@ -581,7 +607,8 @@ frontend/tests/e2e/scenarios/triggeredGuide.mjs   offers and hints: tables (made
 3. Engine + overlay, driven by a hard-coded two-step tour behind `?guide=`.
 4. `firstRun.js` in full, the `onboarding` pref, the invitation card and the
    account-menu entry. E2e scenario.
-5. Welcome page as markdown + rendered sample PDF, seeded for new accounts.
+5. Welcome page as markdown + rendered sample PDF, seeded for new accounts
+   (built).
 6. Checklist popover, then hints.
 
 Steps 1 to 3 are invisible to users and safe to merge one at a time.

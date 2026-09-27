@@ -146,8 +146,31 @@ export async function guideScenarios(env) {
       await until(async () => await page.locator(".guideCard").count() === 0);
       assertEq(await page.evaluate(() => window.getSelection().toString()), "", "dismissing a drag clears its temporary selection");
       await until(async () => await page.locator(".plainTip").count() === 0);
-      // A known arXiv paper should open its local copy without contacting
-      // the resolver or creating a second page, even from the library.
+      // Without an override the demo paper is the seeded Welcome page's own
+      // PDF (a new account starts with it): no resolver, no network.
+      const welcome = (await alice.api("/api/blocks/root/children")).children.find((b) => b.properties?.seeded === "welcome");
+      assert(welcome?.properties?.doc_id, "a new account starts with the Welcome page and its PDF");
+      await page.goto(`${server.base}/?ws=${alice.ws}`);
+      await page.click('[data-guide="header.account"]');
+      await page.click('[data-guide="account.tour"]');
+      await page.click('[data-tour="first-run"]');
+      await page.waitForSelector('[data-guide-overlay="welcome"] .guideCard');
+      await page.evaluate(() => localStorage.removeItem("gamma-guide-vars"));
+      const resolves = [];
+      const trackResolve = (request) => { if (request.url().includes("/api/resolve")) resolves.push(request.url()); };
+      page.on("request", trackResolve);
+      await page.click(".guideCard .uiBtn.primary");
+      await page.waitForSelector('[data-guide-overlay="highlight"] .guideCard', { timeout: 30000 });
+      assertEq(new URL(page.url()).searchParams.get("block"), welcome.id, "the demo opens the Welcome page's PDF");
+      assertEq(resolves.length, 0, "the Welcome PDF needs no resolver");
+      page.off("request", trackResolve);
+      await page.keyboard.press("Escape");
+      await until(async () => await page.locator(".guideCard").count() === 0);
+      // Once the Welcome page is gone the demo paper is arXiv's again: a
+      // known arXiv paper opens its local copy without contacting the
+      // resolver or creating a second page, even from the library.
+      await page.goto(`${server.base}/?ws=${alice.ws}`); // off the page before it goes
+      await alice.api(`/api/blocks/${welcome.id}`, { method: "DELETE" });
       const { block } = await alice.api(`/api/blocks/${paperId}/subtree`);
       await alice.api(`/api/blocks/${paperId}`, { method: "PUT", body: {
         properties: { ...block.properties, meta: { ...block.properties.meta, arxiv_id: "1706.03762" } },
@@ -180,7 +203,8 @@ export async function guideScenarios(env) {
       await page.waitForSelector('[data-guide="add.urlInput"]:focus');
       await page.keyboard.press("Escape");
       await until(async () => await page.locator(".guideCard").count() === 0);
-      assertNoProblems(page);
+      // the Welcome page's tab outlived the page deleted behind the app's back
+      assertNoProblems(page, [new RegExp(`/api/blocks/${welcome.id}/subtree -> 404`)]);
     } finally { await ctx.close(); }
   });
 

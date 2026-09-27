@@ -11,8 +11,10 @@ each account's personal workspaces on its row under **Settings → Users**.
 
 ## Personal and shared libraries
 
-Every account starts with a personal workspace and can create more. Each
-personal workspace has exactly one member, its owner. Use page share links
+Every account starts with a personal workspace, holding the Welcome page
+and its sample PDF ([onboarding.md](onboarding.md)), and can create more
+(those start empty). Each personal workspace has exactly one member, its
+owner. Use page share links
 to give others access to individual pages; personal workspaces cannot invite
 additional workspace members.
 

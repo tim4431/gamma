@@ -10,7 +10,7 @@ backups.py         server backups: snapshots under backups/ (create, zip, delete
 normalize.py       content normalization of a workspace's files (migration + restore)
 workspaces.py      workspaces + memberships (roles, billing, personal workspace)
 auth.py            session middleware → request.state.user; request → workspace / share
-seed.py            workspace file creation, guest welcome page, first admin
+seed.py            workspace file creation, the Welcome page new accounts start with, first admin
 onboarding/        welcome.md, the seeded Welcome page (docs/dev/onboarding.md)
 blocks_store.py    recursive-CTE tree helpers
 storage.py         uploads (content-addressed) + orphan cleanup

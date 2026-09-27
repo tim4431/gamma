@@ -10,6 +10,8 @@ Everything you can do in Gamma, one section per part of the app. The [README](..
 2. **Add a paper.** Click **+** in the top bar and paste any link — an arXiv page, a DOI, or a publisher page; Gamma finds the PDF (and falls back to a legal open-access copy via Unpaywall when the DOI is paywalled). Or upload PDFs, or **drag files or whole folders into the window** — subfolders become library folders.
 3. **Read it.** The paper opens with a Notes panel beside it. Select text to highlight, type under the highlight to comment. That's a note; everything else builds on that.
 
+A new account starts with a **Welcome** page: the first steps in short, with a sample PDF of the same text to practise highlighting on. Delete it whenever you like.
+
 **New page** creates a page without a PDF (a plain notebook page). The paperclip on any page attaches a PDF later, or detaches it.
 
 On open, each paper's title, authors and venue are filled in automatically (arXiv → DOI → AI), see [Metadata and citations](#metadata-and-citations).

@@ -52,9 +52,9 @@ export default {
     next: ["ai", "tours"],
     footnote: T("Replay any tour from the account menu"),
   },
-  vars: {
-    demoUrl: "https://arxiv.org/abs/1706.03762", // Attention Is All You Need
-  },
+  // The demo paper: the seeded Welcome page's own PDF while the library has
+  // it (no network needed), else Attention Is All You Need from arXiv.
+  vars: (facts) => ({ demoUrl: facts.welcomePdf || "https://arxiv.org/abs/1706.03762" }),
   steps: [
     { ...WELCOME, id: "welcome", requires: { demo: false }, title: T("Welcome to Gamma") },
     { ...WELCOME, id: "welcome-demo", requires: { demo: true }, title: T("Welcome to the Gamma demo") },
@@ -63,7 +63,7 @@ export default {
       anchor: "header.add",
       placement: "left",
       title: T("Adding a paper"),
-      body: T("Gamma pastes an arXiv link into Add and opens the paper. A DOI or a PDF's address works too."),
+      body: T("Gamma pastes a paper's address into Add and opens it. An arXiv link or a DOI works too."), // the Welcome PDF or arXiv (vars)
       skippable: false, // every later step works on the paper it opens
       do: [
         { click: "header.add" },
