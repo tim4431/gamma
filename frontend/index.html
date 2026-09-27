@@ -17,9 +17,9 @@
     <meta name="apple-mobile-web-app-status-bar-style" content="default" />
     <meta name="theme-color" content="#1b1b1a" />
     <title>Gamma — Annotate PDFs, Share Your Thinking</title>
-    <!-- The theme must be set before the first frame: tokens.css (linked
-         below, render-blocking) paints its dark :root tokens otherwise, a dark
-         flash on a light OS. Same rule as App.jsx's theme effect, which takes
+    <!-- The theme and its scheme must be set before the first frame:
+         tokens.css (linked below, render-blocking) paints its dark defaults
+         otherwise, a dark flash on a light OS. Same rule as App.jsx's theme effect, which takes
          over once React is up: a pinned theme as stored, anything else
          ("system", none) follows the OS scheme. The control size likewise, or
          the buttons jump once the bundle applies it. -->
@@ -34,6 +34,8 @@
         if (!["light", "dark", "gamma-light", "gamma-dark", "sepia", "solarized", "gray"].includes(t)) {
           t = window.matchMedia && window.matchMedia("(prefers-color-scheme: dark)").matches ? "dark" : "light";
         }
+        // DARK_THEMES in app/prefDefs.js: the scheme picks tokens.css's recipe
+        root.setAttribute("data-scheme", ["dark", "gamma-dark"].includes(t) ? "dark" : "light");
         root.setAttribute("data-theme", t);
         if (s >= 0.7 && s <= 1.6) root.style.setProperty("--ui-scale", s); // UI_SCALE in app/prefDefs.js
       })();

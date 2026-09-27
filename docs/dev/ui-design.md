@@ -13,9 +13,41 @@ stacking layers (`--z-*`). It holds custom properties only, no component
 rules. `index.html` links it as the first stylesheet (Vite bundles it into
 the render-blocking entry CSS), so the first frame, splash included, paints
 from the same values as the app; the pre-paint script only sets the theme
-attribute. Component rules read tokens and never declare a colour token
+attributes. Component rules read tokens and never declare a colour token
 (`tests/themes.test.mjs`); a component-local custom property (`--co-color`,
 `--peer`, `--notice-tone`) stays with its component.
+
+**Themes are seeds.** A theme's block names a handful of seeds: `--ground`
+(the content surface), `--ink` (body text), `--accent`, `--danger`, `--ok`,
+and optionally `--accent-fill` (the primary button), `--on-accent` and the
+callout colours. Every other colour comes from one of two recipes,
+`color-mix()` in oklab of the seeds: the light recipe steps each surface,
+border and quieter text from the ground toward the ink; the dark one takes
+chrome and wells toward black and raised surfaces toward the ink. The root
+carries `data-scheme="light|dark"` beside `data-theme` (`DARK_THEMES` /
+`themeScheme` in `app/prefDefs.js`; set by `index.html`'s pre-paint, App.jsx's
+theme effect and the desktop shell), which picks the recipe; a rule that
+differs by scheme keys on `[data-scheme="light"]`, never on a list of themes.
+The recipes are `:where()` rules, so a value a theme names always wins. Their
+percentages are fitted so Light and Dark come out exactly as they were
+hand-tuned; the other five themes list, under their seeds, the hand-tuned values
+the recipe would change visibly (more than 0.006 in oklab, about two steps
+of 255), so every theme looks as it did. A new theme is its seeds and
+nothing else.
+
+Most tokens are therefore `color-mix()` expressions: read in JS, a token
+gives that expression (or, through `getComputedStyle`, an `oklab()` string).
+Code that needs a plain colour resolves it on a probe element and reads one
+canvas pixel back (`tokenHex` in App.jsx, for the theme-color meta).
+
+**Contrast is a ratchet.** `node tools/themes.mjs` resolves tokens.css per
+theme the way a browser does and prints text contrast for the pairs that
+matter (text on surface, page and hover; faint text; the accent; the primary
+button's label). `tests/theme-contrast-baseline.json` records the pairs that
+were below WCAG AA when the themes moved to seeds, and `tests/themes.test.mjs`
+fails when a change lowers any ratio or makes a passing pair fail; after a
+deliberate improvement, `node tools/themes.mjs --baseline` records the new
+floor.
 
 The desktop shell's chrome loads a committed copy,
 `desktop/ui/tokens.css`, and the Latin subset of Inter in

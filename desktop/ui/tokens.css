@@ -1,69 +1,17 @@
 /* Gamma's design tokens: the one place theme colours, type, corner radii,
    shadows and stacking layers are defined (docs/dev/ui-design.md, "Tokens").
    index.html links this file as the first stylesheet, so its values paint
-   the very first frame (the pre-paint script only sets data-theme); app.css
-   and every other stylesheet read the custom properties. The desktop shell
-   loads an identical copy (desktop/ui/tokens.css, `npm run desktop-tokens`;
-   tests/themes.test.mjs keeps the two equal). Only custom properties and
-   color-scheme belong here, no component rules. */
+   the very first frame (the pre-paint script only sets data-theme and
+   data-scheme); app.css and every other stylesheet read the custom
+   properties. The desktop shell loads an identical copy
+   (desktop/ui/tokens.css, `npm run desktop-tokens`; tests/themes.test.mjs
+   keeps the two equal). Only custom properties and color-scheme belong
+   here, no component rules. */
 
+/* ---- Scales: the same in every theme ------------------------------------ */
 :root {
-  --bg-page: #111;
-  --bg-surface: #1a1a1a;
-  --bg-elevated: #232323;
-  --bg-block: #202020;
-  --bg-card: #1d1d1d;
-  --bg-deeper: #181818;
-  --bg-input: #222;
-  --bg-raised: #2a2a2a;
-  --bg-hover: #333;
-  --bg-subtle: #3f3f3f;
-  --bg-active: #3a3a3a;
-  --text-primary: #eee;
-  --text-secondary: #ddd;
-  --text-tertiary: #bbb;
-  --text-muted: #888;
-  --text-dim: #666;
-  --text-bright: #fff;
-  --border: #333;
-  --border-light: #444;
-  --border-hover: #555;
-  --border-subtle: #3f3f3f;
-  --ok: #4caf7d;
-  /* One red for every destructive affordance — solid fill, outline, and the
-     tinted hover/backdrop behind it. */
-  --danger: #e05c5c;
-  --danger-bg: rgba(224, 92, 92, 0.14);
-  --danger-border: rgba(224, 92, 92, 0.45);
-  --on-accent: #fff;
-  --accent-hover: #3568a0;
-  --accent: #5b9bd5;
-  --accent-dark: #3a7bd5;
-  --accent-bright: #7ab8f5;
-  --accent-bg: rgba(42,79,122,0.3);
-  --accent-bg-light: rgba(90,155,213,0.1);
-  /* Callout type colors (callouts.js) — shared by the rendered view and the
-     editor's live preview; same values work on both themes. */
-  --callout-note: #4a90e2;
-  --callout-tip: #3fa66b;
-  --callout-warning: #d9931e;
-  --callout-danger: #d95757;
-  --callout-important: #8a63d2;
-  --callout-quote: #8d8d8d;
-  --drag-accent: #64b5f6;
-  /* A PDF page's file glyph (FileGlyph .pdf): papers part from notes at a glance. */
-  --kind-pdf: #e0776b;
-  /* The dark thumb pair keeps its own names so .pdfViewer.pdfDark can re-pin
-     it while the light theme is active. */
-  --scrollbar-thumb-dark: #3f3f3f;
-  --scrollbar-thumb-dark-hover: #565656;
-  --scrollbar-thumb: var(--scrollbar-thumb-dark);
-  --scrollbar-thumb-hover: var(--scrollbar-thumb-dark-hover);
-  /* Native chrome (scrollbars, form controls) follows the app theme. */
-  color-scheme: dark;
   --radius-control: 6px;
   --radius-surface: 10px;
-  --shadow-surface: 0 8px 24px rgba(0, 0, 0, 0.28);
   /* Type: one interface face (Inter, bundled in main.jsx) with system and
      CJK fallbacks, and one monospace stack for code, raw math and key caps. */
   --font-sans: "Inter Variable", Inter, -apple-system, BlinkMacSystemFont, "Segoe UI Variable Text", "Segoe UI", system-ui, Roboto, "Helvetica Neue", Arial, "PingFang SC", "Hiragino Sans GB", "Microsoft YaHei", "Noto Sans CJK SC", sans-serif;
@@ -77,274 +25,89 @@
   --z-ctxmenu: 1600;
   --z-refpopup: 2000;
   --z-tip: 30000;
+  /* The dark scrollbar thumb keeps its own names so .pdfViewer.pdfDark can
+     re-pin it while a light theme is active. */
+  --scrollbar-thumb-dark: #3f3f3f;
+  --scrollbar-thumb-dark-hover: #565656;
 }
 
-[data-theme="light"] {
-  --bg-page: #f5f5f5;
-  --bg-surface: #ffffff;
-  --bg-elevated: #ffffff;
-  --bg-block: #fafafa;
-  --bg-card: #ffffff;
-  --bg-deeper: #eeeeee;
-  --bg-input: #ffffff;
-  --bg-raised: #e8e8e8;
-  --bg-hover: #e0e0e0;
-  --bg-subtle: #dddddd;
-  --bg-active: #d5d5d5;
-  --text-primary: #1a1a1a;
-  --text-secondary: #333333;
-  --text-tertiary: #555555;
-  --text-muted: #888888;
-  --text-dim: #999999;
-  --text-bright: #111111;
-  --border: #dddddd;
-  --border-light: #cccccc;
-  --border-hover: #aaaaaa;
-  --border-subtle: #e0e0e0;
-  --ok: #2f8f57;
-  --danger: #c23b3b;
-  --danger-bg: rgba(194, 59, 59, 0.1);
-  --danger-border: rgba(194, 59, 59, 0.38);
-  --accent: var(--accent-dark);
-  --accent-dark: #3a7bd5;
-  --accent-bright: #2b6bcb;
-  --accent-bg: rgba(74,144,226,0.12);
-  --accent-bg-light: rgba(74,144,226,0.06);
-  --drag-accent: #1565c0;
-  --scrollbar-thumb: #cbcbcb;
-  --scrollbar-thumb-hover: #a8a8a8;
-  color-scheme: light;
-}
+/* ---- Colour: a theme is a few seeds, the rest is derived ----------------
+   A theme names its seeds: --ground (the content surface), --ink (body
+   text), --accent, --danger and --ok; optionally --accent-fill (the primary
+   button, default the accent), --on-accent (the label on it, default white)
+   and the six --callout-* colours. The two recipes below derive every other
+   colour from them with color-mix() in oklab, one recipe per scheme; the
+   root's data-scheme ("light" | "dark", set next to data-theme by
+   index.html, App.jsx and the desktop shell) picks it.
 
-[data-theme="sepia"] {
-  --bg-page: #f0e9d6;
-  --bg-surface: #fdf6e3;
-  --bg-elevated: #fdf6e3;
-  --bg-block: #f8f1de;
-  --bg-card: #fdf6e3;
-  --bg-deeper: #e9e1cb;
-  --bg-input: #fdf6e3;
-  --bg-raised: #eee8d5;
-  --bg-hover: #e7dfc9;
-  --bg-subtle: #ded5bd;
-  --bg-active: #d9cfb5;
-  /* base02 → base1: the same ladder as the light theme, one step darker than
-     Solarized's own editor defaults because UI chrome needs more contrast
-     than syntax highlighting does. */
-  --text-primary: #073642;
-  --text-secondary: #365b64;
-  --text-tertiary: #586e75;
-  --text-muted: #657b83;
-  --text-dim: #839496;
-  --text-bright: #002b36;
-  --border: #e0d8c0;
-  --border-light: #d3c9ad;
-  --border-hover: #bdb195;
-  --border-subtle: #e8e1cd;
-  --ok: #5f7519;
-  --danger: #c1382b;
-  --danger-bg: rgba(193, 56, 43, 0.1);
-  --danger-border: rgba(193, 56, 43, 0.38);
-  --accent: #1b6fa3;
-  --accent-dark: #14608f;
-  --accent-bright: #0f5c86;
-  --accent-bg: rgba(38, 139, 210, 0.14);
-  --accent-bg-light: rgba(38, 139, 210, 0.07);
-  --callout-note: #268bd2;
-  --callout-tip: #6f8000;
-  --callout-warning: #b58900;
-  --callout-danger: #dc322f;
-  --callout-important: #6c71c4;
-  --callout-quote: #93a1a1;
-  --drag-accent: #1b6fa3;
-  --scrollbar-thumb: #d3c9ad;
-  --scrollbar-thumb-hover: #b9ad91;
-  /* The PDF page ground (Solarized base3). Not a --bg-* token: it is the
-     paper, not a surface, and .pdfSepia multiplies the canvas onto it. */
-  --pdf-paper: #fdf6e3;
-  color-scheme: light;
-}
+   The percentages are fitted so Light and Dark come out exactly as they
+   were hand-tuned. The other themes keep their own hand-tuned values, listed
+   under the seeds, wherever the recipe would land visibly elsewhere (more
+   than 0.006 in oklab); drop one to take the derived shade instead. The
+   recipes have zero specificity (:where), so any value a theme names wins.
+   `node tools/themes.mjs` prints every theme's text contrast;
+   tests/themes.test.mjs fails when a change makes one worse. */
 
-/* Solarized Light follows VS Code's Solarized Light: cream editor surfaces, base2
-   chrome, muted blue-gray text, and the original Solarized accents.
-   Reference: microsoft/vscode, extensions/theme-solarized-light/themes/
-   solarized-light-color-theme.json. --pdf-paper also tints PDF canvases. */
-[data-theme="solarized"] {
-  --bg-page: #eee8d5;
-  --bg-surface: #fdf6e3;
-  --bg-elevated: #eee8d5;
-  --bg-block: #f7f0e0;
-  --bg-card: #fdf6e3;
-  --bg-deeper: #eee8d5;
-  --bg-input: #ddd6c1;
-  --bg-raised: #eee8d5;
-  --bg-hover: #dfca8844;
-  --bg-subtle: #ddd6c1;
-  --bg-active: #dfca88;
-  --text-primary: #657b83;
-  --text-secondary: #586e75;
-  --text-tertiary: #657b83;
-  --text-muted: #839496;
-  --text-dim: #93a1a1;
-  --text-bright: #586e75;
-  --border: #ddd6c1;
-  --border-light: #d3af86;
-  --border-hover: #b49471;
-  --border-subtle: #ddd6c1;
-  --ok: #859900;
-  --danger: #dc322f;
-  --danger-bg: rgba(220, 50, 47, 0.1);
-  --danger-border: rgba(220, 50, 47, 0.38);
-  --accent: #268bd2;
-  --accent-dark: #268bd2;
-  --accent-bright: #268bd2;
-  --accent-bg: rgba(38, 139, 210, 0.14);
-  --accent-bg-light: rgba(38, 139, 210, 0.07);
-  --callout-note: #268bd2;
-  --callout-tip: #859900;
-  --callout-warning: #b58900;
-  --callout-danger: #dc322f;
-  --callout-important: #6c71c4;
-  --callout-quote: #93a1a1;
-  --drag-accent: #268bd2;
-  --scrollbar-thumb: #586e754d;
-  --scrollbar-thumb-hover: #586e7580;
-  /* The PDF page ground (Solarized base3). Not a --bg-* token: it is the
-     paper, not a surface, and .pdfSepia multiplies the canvas onto it. */
-  --pdf-paper: #fdf6e3;
-  color-scheme: light;
-}
+:where(:root) {
+  /* Seed defaults. */
+  --accent-fill: var(--accent);
+  --on-accent: #fff;
+  /* Callout type colours (callouts.js), shared by the rendered view and the
+     editor's live preview. */
+  --callout-note: #4a90e2;
+  --callout-tip: #3fa66b;
+  --callout-warning: #d9931e;
+  --callout-danger: #d95757;
+  --callout-important: #8a63d2;
+  --callout-quote: #8d8d8d;
 
-/* Eye-comfort ("Gray") theme — the neutral counterpart to Sepia for anyone
-   who wants the glare cut without a color cast: the eye-strain guidance's
-   warm light gray (#f4f4f4 ground, the same articles that recommend sepia)
-   with charcoal #2d2d2d text instead of pure black. Only the ground and the
-   text ladder change; role colors are the Light theme's — on a ground just
-   4% dimmer than white they keep their contrast. --pdf-paper again tints
-   the PDF page via the shared multiply rules further down. */
-[data-theme="gray"] {
-  --bg-page: #e9e9e9;
-  --bg-surface: #f4f4f4;
-  --bg-elevated: #f4f4f4;
-  --bg-block: #efefef;
-  --bg-card: #f4f4f4;
-  --bg-deeper: #e3e3e3;
-  --bg-input: #f4f4f4;
-  --bg-raised: #e8e8e8;
-  --bg-hover: #e0e0e0;
-  --bg-subtle: #d7d7d7;
-  --bg-active: #d0d0d0;
-  --text-primary: #2d2d2d;
-  --text-secondary: #424242;
-  --text-tertiary: #5a5a5a;
-  --text-muted: #7d7d7d;
-  --text-dim: #949494;
-  --text-bright: #1a1a1a;
-  --border: #dcdcdc;
-  --border-light: #cecece;
-  --border-hover: #ababab;
-  --border-subtle: #e2e2e2;
-  --ok: #2f8f57;
-  --danger: #c23b3b;
-  --danger-bg: rgba(194, 59, 59, 0.1);
-  --danger-border: rgba(194, 59, 59, 0.38);
-  --accent: #3a7bd5;
-  --accent-dark: #3a7bd5;
-  --accent-bright: #2b6bcb;
-  --accent-bg: rgba(74,144,226,0.12);
-  --accent-bg-light: rgba(74,144,226,0.06);
-  --drag-accent: #1565c0;
-  --scrollbar-thumb: #c6c6c6;
-  --scrollbar-thumb-hover: #a3a3a3;
-  /* PDF page ground; the canvas multiplies onto it (shared sepia/gray rules). */
-  --pdf-paper: #f4f4f4;
-  color-scheme: light;
-}
+  /* Straight from the seeds, in either scheme. */
+  --bg-surface: var(--ground);
+  --text-primary: var(--ink);
+  --accent-dark: var(--accent-fill);
+  --drag-accent: var(--accent);
+  /* The PDF page ground where a theme tints pages (sepia, solarized, gray,
+     the Gamma pair). Not a --bg-* token: it is the paper, not a surface,
+     and the canvas multiplies onto it. */
+  --pdf-paper: var(--ground);
+  --shadow-surface: 0 8px 24px rgba(0, 0, 0, 0.28);
 
-/* Gamma branding: warm paper or charcoal with amber accents. */
-[data-theme="gamma-light"] {
-  color-scheme: light;
-  --pdf-paper: var(--bg-surface);
-  --bg-page: #e7e5de;
-  --bg-surface: #efeee9;
-  --bg-elevated: #f2f1ed;
-  --bg-block: #e8e5dc;
-  --bg-card: #efeee9;
-  --bg-deeper: #e1ded5;
-  --bg-input: #efeee9;
-  --bg-raised: #d2cec4;
-  --bg-hover: #e4e0d6;
-  --bg-subtle: #dcd7cb;
-  --bg-active: #ecdfc4;
-  --text-primary: #292822;
-  --text-secondary: #44423c;
-  --text-tertiary: #615e55;
-  --text-muted: #6b6a65;
-  --text-dim: #777268;
-  --text-bright: #292822;
-  --border: #c7c2b6;
-  --border-light: #b9b3a5;
-  --border-hover: #a5a197;
-  --border-subtle: #d3cec2;
-  --accent: #92620e;
-  --accent-dark: #80530a;
-  --accent-bright: #80530a;
-  --accent-bg: #f4e8cf;
-  --accent-bg-light: #faf4e8;
-  --on-accent: #ffffff;
-  --accent-hover: #80530a;
-  --shadow-surface: 0 8px 24px rgba(30, 30, 28, 0.12);
-  --drag-accent: #92620e;
-  --ok: #287956;
-  --danger: #b53d35;
-  --danger-bg: #f9e9e6;
-  --danger-border: #d89a94;
-  --scrollbar-thumb: #d8d4ca;
-  --scrollbar-thumb-hover: #a5a197;
-}
-
-[data-theme="gamma-dark"] {
+  /* The dark recipe, also the default before a scheme is set: chrome and
+     wells go darker than the content (toward black), raised surfaces,
+     borders and quieter text step toward the ink. */
   color-scheme: dark;
-  --pdf-paper: var(--bg-surface);
-  --bg-page: #1b1b1a;
-  --bg-surface: #272725;
-  --bg-elevated: #32312e;
-  --bg-block: #32312e;
-  --bg-card: #272725;
-  --bg-deeper: #181817;
-  --bg-input: #222220;
-  --bg-raised: #38362f;
-  --bg-hover: #3c3931;
-  --bg-subtle: #454139;
-  --bg-active: #493b23;
-  --text-primary: #f0ede6;
-  --text-secondary: #ded9cd;
-  --text-tertiary: #c2bdb1;
-  --text-muted: #a9a69e;
-  --text-dim: #9a958a;
-  --text-bright: #fffaf0;
-  --border: #45443f;
-  --border-light: #555248;
-  --border-hover: #787264;
-  --border-subtle: #3a3934;
-  --accent: #e8b451;
-  --accent-dark: #dba13b;
-  --accent-bright: #f1cf88;
-  --accent-bg: #493b23;
-  --accent-bg-light: #332d22;
-  --on-accent: #1b1b1a;
-  --accent-hover: #e8b451;
-  --drag-accent: #e8b451;
-  --ok: #6fc89f;
-  --danger: #f08b80;
-  --danger-bg: #442a26;
-  --danger-border: #8e5149;
-  --scrollbar-thumb: #555248;
-  --scrollbar-thumb-hover: #787264;
-}
-
-/* --- bracket pair colorization in raw $math$ (VSCode-style) --------------- */
-:root {
+  --bg-page: color-mix(in oklab, var(--ground) 81%, black);
+  --bg-deeper: color-mix(in oklab, var(--ground) 95%, black);
+  --bg-card: color-mix(in oklab, var(--ground) 98%, var(--ink));
+  --bg-block: color-mix(in oklab, var(--ground) 96.5%, var(--ink));
+  --bg-input: color-mix(in oklab, var(--ground) 95.5%, var(--ink));
+  --bg-elevated: color-mix(in oklab, var(--ground) 94.5%, var(--ink));
+  --bg-raised: color-mix(in oklab, var(--ground) 91%, var(--ink));
+  --bg-hover: color-mix(in oklab, var(--ground) 86%, var(--ink));
+  --bg-active: color-mix(in oklab, var(--ground) 82%, var(--ink));
+  --bg-subtle: color-mix(in oklab, var(--ground) 79.5%, var(--ink));
+  --border: color-mix(in oklab, var(--ground) 86%, var(--ink));
+  --border-subtle: color-mix(in oklab, var(--ground) 79.5%, var(--ink));
+  --border-light: color-mix(in oklab, var(--ground) 77%, var(--ink));
+  --border-hover: color-mix(in oklab, var(--ground) 68.5%, var(--ink));
+  --text-bright: white;
+  --text-secondary: color-mix(in oklab, var(--ink) 93%, var(--ground));
+  --text-tertiary: color-mix(in oklab, var(--ink) 78.5%, var(--ground));
+  --text-muted: color-mix(in oklab, var(--ink) 56%, var(--ground));
+  --text-dim: color-mix(in oklab, var(--ink) 40%, var(--ground));
+  --accent-bright: color-mix(in oklab, var(--accent) 75%, white);
+  --accent-hover: color-mix(in oklab, var(--accent-fill) 86%, black);
+  --accent-bg: color-mix(in srgb, var(--accent) 13%, transparent);
+  --accent-bg-light: color-mix(in srgb, var(--accent) 10%, transparent);
+  /* One red for every destructive affordance: the solid fill, the outline
+     and the tinted hover/backdrop behind it. */
+  --danger-bg: color-mix(in srgb, var(--danger) 14%, transparent);
+  --danger-border: color-mix(in srgb, var(--danger) 45%, transparent);
+  --scrollbar-thumb: color-mix(in oklab, var(--ground) 79.5%, var(--ink));
+  --scrollbar-thumb-hover: color-mix(in oklab, var(--ground) 68%, var(--ink));
+  /* Scheme constants: a PDF page's file glyph (FileGlyph .pdf), and the
+     bracket-pair colours of raw $math$ (VSCode's). */
+  --kind-pdf: #e0776b;
   --bracket-1: #ffd700;
   --bracket-2: #da70d6;
   --bracket-3: #66c7ff;
@@ -352,7 +115,37 @@
   --bracket-active-bg: rgba(90, 140, 255, 0.28);
   --bracket-active-ring: rgba(140, 170, 255, 0.65);
 }
-:is([data-theme="light"], [data-theme="gamma-light"], [data-theme="sepia"], [data-theme="solarized"], [data-theme="gray"]) {
+
+/* The light recipe: every surface steps from the ground toward the ink. */
+:where([data-scheme="light"]) {
+  color-scheme: light;
+  --bg-card: var(--ground);
+  --bg-input: var(--ground);
+  --bg-elevated: var(--ground);
+  --bg-block: color-mix(in oklab, var(--ground) 98%, var(--ink));
+  --bg-page: color-mix(in oklab, var(--ground) 96%, var(--ink));
+  --bg-deeper: color-mix(in oklab, var(--ground) 93.5%, var(--ink));
+  --bg-raised: color-mix(in oklab, var(--ground) 91%, var(--ink));
+  --bg-hover: color-mix(in oklab, var(--ground) 88%, var(--ink));
+  --bg-subtle: color-mix(in oklab, var(--ground) 87%, var(--ink));
+  --bg-active: color-mix(in oklab, var(--ground) 83.75%, var(--ink));
+  --border: color-mix(in oklab, var(--ground) 87%, var(--ink));
+  --border-subtle: color-mix(in oklab, var(--ground) 88%, var(--ink));
+  --border-light: color-mix(in oklab, var(--ground) 80.25%, var(--ink));
+  --border-hover: color-mix(in oklab, var(--ground) 66.5%, var(--ink));
+  --text-bright: color-mix(in oklab, var(--ink) 81.5%, black);
+  --text-secondary: color-mix(in oklab, var(--ink) 87%, var(--ground));
+  --text-tertiary: color-mix(in oklab, var(--ink) 70.5%, var(--ground));
+  --text-muted: color-mix(in oklab, var(--ink) 47.75%, var(--ground));
+  --text-dim: color-mix(in oklab, var(--ink) 40.5%, var(--ground));
+  --accent-bright: color-mix(in oklab, var(--accent) 93%, black);
+  --accent-hover: color-mix(in oklab, var(--accent-fill) 86%, black);
+  --accent-bg: color-mix(in srgb, var(--accent) 10.5%, transparent);
+  --accent-bg-light: color-mix(in srgb, var(--accent) 5.5%, transparent);
+  --danger-bg: color-mix(in srgb, var(--danger) 10%, transparent);
+  --danger-border: color-mix(in srgb, var(--danger) 38%, transparent);
+  --scrollbar-thumb: color-mix(in oklab, var(--ground) 79.75%, var(--ink));
+  --scrollbar-thumb-hover: color-mix(in oklab, var(--ground) 65.5%, var(--ink));
   --kind-pdf: #c8483b;
   --bracket-1: #0431fa;
   --bracket-2: #319331;
@@ -360,4 +153,220 @@
   --bracket-err: #e51400;
   --bracket-active-bg: rgba(11, 89, 214, 0.12);
   --bracket-active-ring: rgba(11, 89, 214, 0.45);
+}
+
+/* ---- The themes (THEMES in app/prefDefs.js; DARK_THEMES take the dark
+   scheme, the rest the light one) ---------------------------------------- */
+
+/* Dark: also what paints with no theme attribute at all. */
+:root:not([data-theme]),
+[data-theme="dark"] {
+  --ground: #1a1a1a;
+  --ink: #eeeeee;
+  --accent: #5b9bd5;
+  --accent-fill: #3a7bd5;
+  --danger: #e05c5c;
+  --ok: #4caf7d;
+  /* hand-tuned */
+  --accent-bright: #7ab8f5;
+  --accent-hover: #3568a0;
+  --accent-bg: rgba(42, 79, 122, 0.3);
+  --drag-accent: #64b5f6;
+}
+
+[data-theme="light"] {
+  --ground: #ffffff;
+  --ink: #1a1a1a;
+  --accent: #3a7bd5;
+  --danger: #c23b3b;
+  --ok: #2f8f57;
+  /* hand-tuned */
+  --accent-bright: #2b6bcb;
+  --accent-hover: #3568a0;
+  --drag-accent: #1565c0;
+}
+
+/* Eye-comfort ("Gray") theme — the neutral counterpart to Sepia for anyone
+   who wants the glare cut without a color cast: the eye-strain guidance's
+   warm light gray (#f4f4f4 ground, the same articles that recommend sepia)
+   with charcoal #2d2d2d text instead of pure black. Role colors are the
+   Light theme's — on a ground just 4% dimmer than white they keep their
+   contrast. --pdf-paper tints the PDF page via the shared multiply rules
+   in app.css. */
+[data-theme="gray"] {
+  --ground: #f4f4f4;
+  --ink: #2d2d2d;
+  --accent: #3a7bd5;
+  --danger: #c23b3b;
+  --ok: #2f8f57;
+  /* hand-tuned */
+  --bg-page: #e9e9e9;
+  --bg-deeper: #e3e3e3;
+  --bg-raised: #e8e8e8;
+  --bg-hover: #e0e0e0;
+  --border: #dcdcdc;
+  --border-subtle: #e2e2e2;
+  --border-light: #cecece;
+  --text-bright: #1a1a1a;
+  --text-tertiary: #5a5a5a;
+  --text-muted: #7d7d7d;
+  --text-dim: #949494;
+  --accent-bright: #2b6bcb;
+  --accent-hover: #3568a0;
+  --drag-accent: #1565c0;
+  --scrollbar-thumb-hover: #a3a3a3;
+}
+
+/* Sepia: Solarized's base3 paper and base02 → base1 ink, one step darker
+   than Solarized's own editor defaults because UI chrome needs more
+   contrast than syntax highlighting does. */
+[data-theme="sepia"] {
+  --ground: #fdf6e3;
+  --ink: #073642;
+  --accent: #1b6fa3;
+  --accent-fill: #14608f;
+  --danger: #c1382b;
+  --ok: #5f7519;
+  --callout-note: #268bd2;
+  --callout-tip: #6f8000;
+  --callout-warning: #b58900;
+  --callout-danger: #dc322f;
+  --callout-important: #6c71c4;
+  --callout-quote: #93a1a1;
+  /* hand-tuned */
+  --bg-page: #f0e9d6;
+  --bg-deeper: #e9e1cb;
+  --bg-raised: #eee8d5;
+  --bg-hover: #e7dfc9;
+  --bg-active: #d9cfb5;
+  --bg-subtle: #ded5bd;
+  --border: #e0d8c0;
+  --border-subtle: #e8e1cd;
+  --border-light: #d3c9ad;
+  --border-hover: #bdb195;
+  --text-bright: #002b36;
+  --text-secondary: #365b64;
+  --text-tertiary: #586e75;
+  --text-muted: #657b83;
+  --text-dim: #839496;
+  --accent-bright: #0f5c86;
+  --accent-hover: #3568a0;
+  --accent-bg: rgba(38, 139, 210, 0.14);
+  --scrollbar-thumb: #d3c9ad;
+  --scrollbar-thumb-hover: #b9ad91;
+}
+
+/* Solarized Light follows VS Code's Solarized Light: cream editor surfaces,
+   base2 chrome, muted blue-gray text, and the original Solarized accents.
+   Reference: microsoft/vscode, extensions/theme-solarized-light/themes/
+   solarized-light-color-theme.json. --pdf-paper also tints PDF canvases. */
+[data-theme="solarized"] {
+  --ground: #fdf6e3;
+  --ink: #657b83;
+  --accent: #268bd2;
+  --danger: #dc322f;
+  --ok: #859900;
+  --callout-note: #268bd2;
+  --callout-tip: #859900;
+  --callout-warning: #b58900;
+  --callout-danger: #dc322f;
+  --callout-important: #6c71c4;
+  --callout-quote: #93a1a1;
+  /* hand-tuned */
+  --bg-input: #ddd6c1;
+  --bg-elevated: #eee8d5;
+  --bg-block: #f7f0e0;
+  --bg-page: #eee8d5;
+  --bg-deeper: #eee8d5;
+  --bg-raised: #eee8d5;
+  --bg-hover: #dfca8844;
+  --bg-active: #dfca88;
+  --bg-subtle: #ddd6c1;
+  --border: #ddd6c1;
+  --border-subtle: #ddd6c1;
+  --border-light: #d3af86;
+  --border-hover: #b49471;
+  --text-bright: #586e75;
+  --text-secondary: #586e75;
+  --text-tertiary: #657b83;
+  --text-muted: #839496;
+  --text-dim: #93a1a1;
+  --accent-bright: #268bd2;
+  --accent-hover: #3568a0;
+  --accent-bg: rgba(38, 139, 210, 0.14);
+  --accent-bg-light: rgba(38, 139, 210, 0.07);
+  --scrollbar-thumb: #586e754d;
+  --scrollbar-thumb-hover: #586e7580;
+}
+
+/* Gamma branding: warm paper or charcoal with amber accents. */
+[data-theme="gamma-light"] {
+  --ground: #efeee9;
+  --ink: #292822;
+  --accent: #92620e;
+  --accent-fill: #80530a;
+  --danger: #b53d35;
+  --ok: #287956;
+  /* hand-tuned */
+  --bg-elevated: #f2f1ed;
+  --bg-block: #e8e5dc;
+  --bg-deeper: #e1ded5;
+  --bg-raised: #d2cec4;
+  --bg-hover: #e4e0d6;
+  --bg-active: #ecdfc4;
+  --bg-subtle: #dcd7cb;
+  --border: #c7c2b6;
+  --border-subtle: #d3cec2;
+  --border-light: #b9b3a5;
+  --border-hover: #a5a197;
+  --text-bright: #292822;
+  --text-secondary: #44423c;
+  --text-tertiary: #615e55;
+  --text-muted: #6b6a65;
+  --text-dim: #777268;
+  --accent-bright: #80530a;
+  --accent-hover: #80530a;
+  --accent-bg: #f4e8cf;
+  --accent-bg-light: #faf4e8;
+  --danger-bg: #f9e9e6;
+  --danger-border: #d89a94;
+  --scrollbar-thumb: #d8d4ca;
+  --scrollbar-thumb-hover: #a5a197;
+  --shadow-surface: 0 8px 24px rgba(30, 30, 28, 0.12);
+}
+
+[data-theme="gamma-dark"] {
+  --ground: #272725;
+  --ink: #f0ede6;
+  --accent: #e8b451;
+  --accent-fill: #dba13b;
+  --on-accent: #1b1b1a;
+  --danger: #f08b80;
+  --ok: #6fc89f;
+  /* hand-tuned */
+  --bg-deeper: #181817;
+  --bg-card: #272725;
+  --bg-block: #32312e;
+  --bg-input: #222220;
+  --bg-raised: #38362f;
+  --bg-hover: #3c3931;
+  --bg-active: #493b23;
+  --bg-subtle: #454139;
+  --border: #45443f;
+  --border-subtle: #3a3934;
+  --border-light: #555248;
+  --border-hover: #787264;
+  --text-bright: #fffaf0;
+  --text-secondary: #ded9cd;
+  --text-tertiary: #c2bdb1;
+  --text-muted: #a9a69e;
+  --text-dim: #9a958a;
+  --accent-bright: #f1cf88;
+  --accent-hover: #e8b451;
+  --accent-bg: #493b23;
+  --accent-bg-light: #332d22;
+  --danger-bg: #442a26;
+  --danger-border: #8e5149;
+  --scrollbar-thumb: #555248;
+  --scrollbar-thumb-hover: #787264;
 }

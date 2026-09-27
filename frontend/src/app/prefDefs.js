@@ -98,6 +98,13 @@ const AGENT_PERMS = json((value) => {
 });
 
 export const THEMES = ["system", "light", "dark", "gamma-light", "gamma-dark", "sepia", "solarized", "gray"];
+// The themes on the dark colour scheme; every other pinned theme is light.
+// The root carries the scheme as data-scheme beside data-theme: tokens.css
+// derives each theme's colours with that scheme's recipe, and the
+// scheme-wide rules in app.css key on it. index.html's pre-paint script and
+// the desktop shell repeat the list (tests/themes.test.mjs keeps them equal).
+export const DARK_THEMES = ["dark", "gamma-dark"];
+export const themeScheme = (theme) => (DARK_THEMES.includes(theme) ? "dark" : "light");
 
 // Interface size (Settings → Appearance): text and control boxes share
 // --ui-scale in app.css. Ctrl+scroll further resizes notes/chat text in place

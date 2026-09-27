@@ -725,15 +725,15 @@ body {
 .hljs-deletion { color: #f14c4c; }
 .hljs-emphasis { font-style: italic; }
 .hljs-strong { font-weight: 700; }
-:is([data-theme="light"], [data-theme="gamma-light"], [data-theme="sepia"], [data-theme="solarized"], [data-theme="gray"]) :is(.hljs-comment, .hljs-quote) { color: #6e7781; }
-:is([data-theme="light"], [data-theme="gamma-light"], [data-theme="sepia"], [data-theme="solarized"], [data-theme="gray"]) :is(.hljs-keyword, .hljs-selector-tag, .hljs-literal, .hljs-doctag) { color: #cf222e; }
-:is([data-theme="light"], [data-theme="gamma-light"], [data-theme="sepia"], [data-theme="solarized"], [data-theme="gray"]) :is(.hljs-string, .hljs-regexp, .hljs-addition, .hljs-char.escape_) { color: #0a3069; }
-:is([data-theme="light"], [data-theme="gamma-light"], [data-theme="sepia"], [data-theme="solarized"], [data-theme="gray"]) :is(.hljs-number, .hljs-symbol, .hljs-bullet) { color: #0550ae; }
-:is([data-theme="light"], [data-theme="gamma-light"], [data-theme="sepia"], [data-theme="solarized"], [data-theme="gray"]) :is(.hljs-title, .hljs-section) { color: #8250df; }
-:is([data-theme="light"], [data-theme="gamma-light"], [data-theme="sepia"], [data-theme="solarized"], [data-theme="gray"]) :is(.hljs-title.class_, .hljs-type, .hljs-built_in) { color: #953800; }
-:is([data-theme="light"], [data-theme="gamma-light"], [data-theme="sepia"], [data-theme="solarized"], [data-theme="gray"]) :is(.hljs-attr, .hljs-attribute, .hljs-variable, .hljs-template-variable, .hljs-property, .hljs-params) { color: #0550ae; }
-:is([data-theme="light"], [data-theme="gamma-light"], [data-theme="sepia"], [data-theme="solarized"], [data-theme="gray"]) :is(.hljs-meta, .hljs-selector-id, .hljs-selector-class, .hljs-name) { color: #116329; }
-:is([data-theme="light"], [data-theme="gamma-light"], [data-theme="sepia"], [data-theme="solarized"], [data-theme="gray"]) .hljs-deletion { color: #e51400; }
+[data-scheme="light"] :is(.hljs-comment, .hljs-quote) { color: #6e7781; }
+[data-scheme="light"] :is(.hljs-keyword, .hljs-selector-tag, .hljs-literal, .hljs-doctag) { color: #cf222e; }
+[data-scheme="light"] :is(.hljs-string, .hljs-regexp, .hljs-addition, .hljs-char.escape_) { color: #0a3069; }
+[data-scheme="light"] :is(.hljs-number, .hljs-symbol, .hljs-bullet) { color: #0550ae; }
+[data-scheme="light"] :is(.hljs-title, .hljs-section) { color: #8250df; }
+[data-scheme="light"] :is(.hljs-title.class_, .hljs-type, .hljs-built_in) { color: #953800; }
+[data-scheme="light"] :is(.hljs-attr, .hljs-attribute, .hljs-variable, .hljs-template-variable, .hljs-property, .hljs-params) { color: #0550ae; }
+[data-scheme="light"] :is(.hljs-meta, .hljs-selector-id, .hljs-selector-class, .hljs-name) { color: #116329; }
+[data-scheme="light"] .hljs-deletion { color: #e51400; }
 
 /* VS Code Solarized Light token colors, shared by notes and chat code. */
 [data-theme="solarized"] :is(.hljs-comment, .hljs-quote) { color: #93a1a1; }
@@ -1676,7 +1676,7 @@ body {
 }
 :is(.pdfCtlBox button, .ctlBtn):disabled { opacity: 0.4; cursor: default; }
 .ctlBtnRow { display: flex; align-items: center; gap: 2px; }
-:is([data-theme="light"], [data-theme="gamma-light"], [data-theme="sepia"], [data-theme="solarized"], [data-theme="gray"]) .pdfCtlBox {
+[data-scheme="light"] .pdfCtlBox {
   box-shadow: 0 2px 8px rgba(0,0,0,0.12);
 }
 .pdfZoomOverlay {
@@ -1716,7 +1716,7 @@ body {
 }
 .pdfPageWidget input:focus { color: var(--accent); }
 .pdfPageTotal { margin-left: 3px; white-space: nowrap; }
-:is([data-theme="light"], [data-theme="gamma-light"], [data-theme="sepia"], [data-theme="solarized"], [data-theme="gray"]) .pdfPageWidget { box-shadow: 0 2px 8px rgba(0,0,0,0.12); }
+[data-scheme="light"] .pdfPageWidget { box-shadow: 0 2px 8px rgba(0,0,0,0.12); }
 
 /* The floating status pill — the app's single transient-message surface
    (status messages, PDF load progress, load errors), anchored top-center of
@@ -1791,7 +1791,7 @@ body {
   border-radius: 8px;
   padding: 6px 4px;
 }
-:is([data-theme="light"], [data-theme="gamma-light"], [data-theme="sepia"], [data-theme="solarized"], [data-theme="gray"]) .pdfOutlinePanel { box-shadow: 0 2px 8px rgba(0,0,0,0.12); }
+[data-scheme="light"] .pdfOutlinePanel { box-shadow: 0 2px 8px rgba(0,0,0,0.12); }
 
 .pdfOutlineRow {
   display: flex;
@@ -5182,8 +5182,8 @@ a.shareBrand:hover { background: var(--bg-hover); }
   white-space: nowrap;
 }
 .blockLinkChip:hover { background: var(--accent-dark); border-color: #4a8abf; color: var(--on-accent); }
-:is([data-theme="light"], [data-theme="gamma-light"], [data-theme="sepia"], [data-theme="solarized"], [data-theme="gray"]) .blockLinkChip { background: #e3effa; color: #2b6bcb; border-color: #b5d2ee; }
-:is([data-theme="light"], [data-theme="gamma-light"], [data-theme="sepia"], [data-theme="solarized"], [data-theme="gray"]) .blockLinkChip:hover { background: #cfe3f7; color: #1d5ab3; }
+[data-scheme="light"] .blockLinkChip { background: #e3effa; color: #2b6bcb; border-color: #b5d2ee; }
+[data-scheme="light"] .blockLinkChip:hover { background: #cfe3f7; color: #1d5ab3; }
 :is([data-theme="gamma-light"], [data-theme="gamma-dark"]) .blockLinkChip { background: var(--accent-bg); color: var(--accent); border-color: var(--border-light); }
 :is([data-theme="gamma-light"], [data-theme="gamma-dark"]) .blockLinkChip:hover { background: var(--bg-active); color: var(--accent-bright); border-color: var(--accent); }
 
@@ -5785,7 +5785,7 @@ a.shareBrand:hover { background: var(--bg-hover); }
   width: max-content;              /* not shrink-to-fit: left: 50% would clamp it to half the viewer */
   max-width: calc(100% - 120px);
 }
-:is([data-theme="light"], [data-theme="gamma-light"], [data-theme="sepia"], [data-theme="solarized"], [data-theme="gray"]) .pdfInkBar {
+[data-scheme="light"] .pdfInkBar {
   box-shadow: 0 2px 8px rgba(0,0,0,0.12);
 }
 .pdfInkRow, .pdfInkSub {

@@ -44,7 +44,7 @@ export async function mermaidScenarios(env) {
       const initialTheme = await page.evaluate(() => document.documentElement.dataset.theme);
       for (const theme of initialTheme === "light" ? ["dark", "light"] : ["light", "dark"]) {
         const oldId = await first.locator(".mermaidSvg svg").getAttribute("id");
-        await page.evaluate((value) => { document.documentElement.dataset.theme = value; }, theme);
+        await page.evaluate((value) => { Object.assign(document.documentElement.dataset, { scheme: value, theme: value }); }, theme);
         await until(async () => {
           const id = await first.locator(".mermaidSvg svg").getAttribute("id").catch(() => null);
           return id && id !== oldId;

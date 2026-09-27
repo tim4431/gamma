@@ -81,7 +81,7 @@ import { ROLE_LABEL, workspaceMeta } from "../settings/SettingsWorkspace";
 import { AuthLoading, LoginPage, SessionConflictPage, ShareBlockedPage, WorkspaceUnavailablePage } from "../auth/LoginPage";
 import { guestExpiryLabel } from "../auth/guestExpiry";
 import { McpAuthorization } from "../auth/McpConsent";
-import { TRANSLATE_LANGS, translateModelFor, useAppPrefs, useProfileSync } from "./prefs";
+import { TRANSLATE_LANGS, themeScheme, translateModelFor, useAppPrefs, useProfileSync } from "./prefs";
 import { useNotices } from "./useNotices";
 import { dotTone, noticeAction, noticeText } from "./notices";
 import { useBlockHistory } from "../editor/blockHistory.js";
@@ -171,9 +171,25 @@ const HOME_SCREEN_INSTALLABLE = (/iPad|iPhone/.test(navigator.userAgent)
 // Read from the theme variables, not the elements: the topbar's background
 // transitions, and a mid-transition read would lag a theme change.
 function paintStatusBar(bareTop) {
-  const bar = getComputedStyle(document.documentElement).getPropertyValue(bareTop ? "--bg-deeper" : "--bg-surface").trim();
   const meta = document.querySelector('meta[name="theme-color"]');
-  if (bar && meta) meta.setAttribute("content", bar);
+  if (meta) meta.setAttribute("content", tokenHex(bareTop ? "--bg-deeper" : "--bg-surface"));
+}
+// A colour token as #rrggbb. Most tokens are color-mix() expressions
+// (tokens.css), which the theme-color meta can't take: the colour is
+// resolved on a probe element and read back from one canvas pixel.
+let tokenCanvas = null;
+function tokenHex(name) {
+  const probe = document.createElement("span");
+  probe.style.color = `var(${name})`;
+  document.body.append(probe);
+  const color = getComputedStyle(probe).color;
+  probe.remove();
+  tokenCanvas ||= document.createElement("canvas").getContext("2d", { willReadFrequently: true });
+  tokenCanvas.clearRect(0, 0, 1, 1);
+  tokenCanvas.fillStyle = color;
+  tokenCanvas.fillRect(0, 0, 1, 1);
+  const [r, g, b] = tokenCanvas.getImageData(0, 0, 1, 1).data;
+  return `#${[r, g, b].map((v) => v.toString(16).padStart(2, "0")).join("")}`;
 }
 
 // Drag payload prefix marking a folder drag (page cards drag their bare id).
@@ -4259,8 +4275,9 @@ function LibraryApp({ publicPage = null, initialServerConfig = null }) {
   useEffect(() => {
     const mq = window.matchMedia("(prefers-color-scheme: dark)");
     const apply = () => {
-      document.documentElement.setAttribute(
-        "data-theme", theme === "system" ? (mq.matches ? "dark" : "light") : theme);
+      const resolved = theme === "system" ? (mq.matches ? "dark" : "light") : theme;
+      document.documentElement.setAttribute("data-scheme", themeScheme(resolved));
+      document.documentElement.setAttribute("data-theme", resolved);
       paintStatusBar(phoneBareTopRef.current);
     };
     apply();

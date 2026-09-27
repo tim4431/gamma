@@ -36,16 +36,19 @@ export async function ipadScenarios({ server, browser, alice, makePdf, step, unt
       // theme-color is the paint under the status bar, for the current theme
       // and after a change: upright, the library has no tab open, so the
       // compact layout drops the topbar and the library itself is on top.
+      // Every colour is compared as one canvas pixel: a derived token
+      // computes to an oklab() or color() string, the meta holds a hex.
       const themeColor = () => page.evaluate(() => {
-        const hex = document.querySelector('meta[name="theme-color"]').content;
-        const probe = document.createElement("div");
-        probe.style.color = hex;
-        document.body.append(probe);
-        const rgb = getComputedStyle(probe).color;
-        probe.remove();
+        const ctx = document.createElement("canvas").getContext("2d");
+        const px = (color) => { ctx.clearRect(0, 0, 1, 1); ctx.fillStyle = color; ctx.fillRect(0, 0, 1, 1); return [...ctx.getImageData(0, 0, 1, 1).data].join(","); };
         let el = document.elementFromPoint(innerWidth / 2, 1);
         while (el && /rgba\(0, 0, 0, 0\)|transparent/.test(getComputedStyle(el).backgroundColor)) el = el.parentElement;
-        return { meta: rgb, topbar: el && getComputedStyle(el).backgroundColor };
+        const bar = document.querySelector(".app > .topbar");
+        return {
+          meta: px(document.querySelector('meta[name="theme-color"]').content),
+          topbar: el && px(getComputedStyle(el).backgroundColor),
+          bar: bar && px(getComputedStyle(bar).backgroundColor),
+        };
       });
       assertEq(await page.locator(".app > .topbar").isVisible(), false, "no topbar without tabs");
       let colors = await themeColor();
@@ -70,7 +73,7 @@ export async function ipadScenarios({ server, browser, alice, makePdf, step, unt
       await page.locator(".app > .topbar").waitFor();
       await until(async () => {
         const c = await themeColor();
-        return c.meta === c.topbar && c.topbar === await page.evaluate(() => getComputedStyle(document.querySelector(".app > .topbar")).backgroundColor);
+        return c.meta === c.topbar && c.topbar === c.bar;
       }, { what: "theme-color follows the topbar once a tab is open" });
 
       // Installed: the document does not rubber-band and the bottom edge keeps

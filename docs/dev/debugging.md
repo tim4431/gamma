@@ -142,8 +142,9 @@ page session's transport logic over fakes — ordering, reconciliation,
 retries, presence, the caret throttle), `sessionState`, `settings`
 (navigation, presets), `textnorm` and `libraryUtils` (the shared cases
 above), `mdMarks` (the formatting hotkeys' toggle), `logseqPdfModel` (tree
-ops), `blockHistory` (the undo classifier) and `menuAim` (the safe-triangle
-geometry). A module is testable there when its relative imports carry the
+ops), `blockHistory` (the undo classifier), `menuAim` (the safe-triangle
+geometry) and `themes` (the design tokens: the desktop copy, every theme
+resolving, the contrast ratchet). A module is testable there when its relative imports carry the
 `.js` extension (node resolves nothing else); modules that import React can
 still be imported for their pure exports. Actual React rendering and
 interactions are exercised by the browser suite below, plus one standalone

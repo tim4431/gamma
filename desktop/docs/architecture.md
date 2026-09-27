@@ -139,7 +139,9 @@ pages mirrors the page's `data-theme` attribute (`dark`/`light`/`gamma-light`/
 `gamma-dark`/`sepia`/`solarized`/`gray`; none = dark) to the main process, which restyles the bar, the
 launcher, the window background and the Windows title-bar overlay. The last
 theme is persisted so the chrome is right before any page has loaded. The
-tokens are Gamma's own: `ui/tokens.css` is a committed copy of
+shell pages set `data-scheme` beside `data-theme` from the same dark-theme
+list as Gamma's `app/prefDefs.js`, since Gamma's tokens derive a theme's
+colours from its scheme. The tokens are Gamma's own: `ui/tokens.css` is a committed copy of
 `frontend/src/shared/styles/tokens.css` and `ui/fonts/` holds the Latin
 subset of Inter (`npm run desktop-tokens` in `frontend/` refreshes both;
 `frontend/tests/themes.test.mjs` fails while they differ). The icons are the
