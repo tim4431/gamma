@@ -242,8 +242,8 @@ function Confirm({ what, busy, onYes, onNo }) {
       <AlertCircleIcon size={14} />
       <span>{text}</span>
       <span className="mirrorConfirmBtns">
-        <button className="uiBtn sm danger" disabled={busy} onClick={onYes}>{t("Yes")}</button>
-        <button className="uiBtn sm" disabled={busy} onClick={onNo}>{t("No")}</button>
+        <button type="button" className="uiBtn sm primary danger" disabled={busy} onClick={onYes}>{t("Yes")}</button>
+        <button type="button" className="uiBtn sm" disabled={busy} onClick={onNo}>{t("No")}</button>
       </span>
     </div>
   );
