@@ -59,6 +59,35 @@
      re-pin it while a light theme is active. */
   --scrollbar-thumb-dark: #3f3f3f;
   --scrollbar-thumb-dark-hover: #565656;
+  /* Line heights: headings and one-line controls; interface text; reading
+     text (notes, chat). */
+  --lh-tight: 1.25;
+  --lh-ui: 1.4;
+  --lh-read: 1.55;
+}
+
+/* Type sizes, each a job: captions, badges, kinds and key caps (2xs); meta,
+   hints, section labels and tabs (xs); buttons, menus and dialog fields,
+   the default (sm); list rows, the settings rail, text fields and chat
+   messages (md); the notes' reading text (body); pane and section titles
+   (lg); the page title (xl); the biggest headings (2xl). Text that follows
+   a panel's Ctrl+scroll size multiplies by --text-scale where it is used,
+   since the panel carries that. Every size follows the interface size
+   (--ui-font-scale, app.css). A custom property resolves its var()s
+   on the element that declares it, so the sizes are declared again on the
+   control-reset selector, where --ui-font-scale is 1 and CSS zoom does the
+   scaling; without that, a control's text would scale twice. The selector
+   list must match the control reset in app.css (tests/designTokens.test.mjs). */
+:root,
+:where(button, summary, [role="button"], .uiBtn, .ctlBtn, .uiClose, .switch) {
+  --fs-2xs: calc(11px * var(--ui-font-scale, 1));
+  --fs-xs: calc(12px * var(--ui-font-scale, 1));
+  --fs-sm: calc(13px * var(--ui-font-scale, 1));
+  --fs-md: calc(14px * var(--ui-font-scale, 1));
+  --fs-body: calc(15px * var(--ui-font-scale, 1));
+  --fs-lg: calc(17px * var(--ui-font-scale, 1));
+  --fs-xl: calc(20px * var(--ui-font-scale, 1));
+  --fs-2xl: calc(24px * var(--ui-font-scale, 1));
 }
 
 /* ---- Colour: a theme is a few seeds, the rest is derived ----------------

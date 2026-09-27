@@ -96,8 +96,8 @@
   align-self: stretch;
   width: 100%;
   padding: 9px 11px;
-  font-size: calc(10.5px * var(--ui-font-scale, 1));
-  line-height: 1.4;
+  font-size: var(--fs-2xs);
+  line-height: var(--lh-ui);
   color: var(--text-muted);
   text-align: left;
   overflow: hidden;
@@ -116,7 +116,7 @@
 }
 .pageCardTitle {
   min-height: 2.6em;
-  font-size: calc(12.5px * var(--ui-font-scale, 1));
+  font-size: var(--fs-sm);
   line-height: 1.3;
   font-weight: 500;
   word-break: break-word;
@@ -129,13 +129,13 @@
   display: flex;
   align-items: baseline;
   gap: 6px;
-  font-size: calc(10.5px * var(--ui-font-scale, 1));
+  font-size: var(--fs-2xs);
 }
 .pageCardTime { margin-left: auto; color: var(--text-dim); white-space: nowrap; }
 /* The card's kind label in sentence case like the section labels ("Page"; "PDF" is an acronym). */
-.pageCardKind { font-size: calc(11px * var(--ui-font-scale, 1)); font-weight: 500; color: var(--text-muted); }
+.pageCardKind { font-size: var(--fs-2xs); font-weight: 500; color: var(--text-muted); }
 .pageCardCount {
-  font-size: calc(10px * var(--ui-font-scale, 1));
+  font-size: var(--fs-2xs);
   color: var(--text-muted);
   background: var(--bg-raised);
   border-radius: var(--radius-full);
@@ -194,7 +194,7 @@
   border: 1px dashed transparent;
   background: none;
   font: inherit;
-  font-size: calc(14px * var(--ui-font-scale, 1));
+  font-size: var(--fs-md);
   text-align: left;
   width: 100%;
   user-select: none;
@@ -215,13 +215,13 @@
   text-overflow: ellipsis;
   white-space: nowrap;
 }
-.folderHint { font-size: calc(11px * var(--ui-font-scale, 1)); color: var(--text-dim); flex-shrink: 0; }
+.folderHint { font-size: var(--fs-2xs); color: var(--text-dim); flex-shrink: 0; }
 .folderBackRow svg { color: var(--text-muted); }
 .folderCurrent {
   display: flex;
   align-items: center;
   gap: 8px;
-  font-size: calc(16px * var(--ui-font-scale, 1));
+  font-size: var(--fs-lg);
   font-weight: 600;
   color: var(--text-primary);
   padding: 4px 10px 8px;
@@ -233,7 +233,7 @@
 .folderNewInput {
   flex: 1;
   min-width: 0;
-  font-size: calc(13px * var(--ui-font-scale, 1));
+  font-size: var(--fs-sm);
   padding: 3px 8px;
 }
 /* breadcrumb segments in the folder header */
@@ -241,7 +241,7 @@
   background: none;
   border: none;
   padding: 0 2px;
-  font: inherit;
+  font-family: inherit; font-weight: inherit; line-height: inherit;
   color: var(--text-primary);
   cursor: pointer;
 }
@@ -263,7 +263,7 @@
   border-radius: var(--radius-full);
   color: var(--text-muted);
   font: inherit;
-  font-size: calc(12px * var(--ui-font-scale, 1));
+  font-size: var(--fs-xs);
   padding: 5px 14px;
   cursor: pointer;
 }
@@ -291,7 +291,7 @@
   background: none;
   padding: 0;
   font: inherit;
-  font-size: calc(12px * var(--ui-font-scale, 1));
+  font-size: var(--fs-xs);
   color: var(--text-primary);
 }
 .homeFindInput:focus { outline: none; box-shadow: none; }
@@ -309,7 +309,7 @@
   border: 1px solid var(--border);
   border-radius: var(--radius-lg);
   background: var(--bg-elevated);
-  font-size: calc(13px * var(--ui-font-scale, 1));
+  font-size: var(--fs-sm);
   color: var(--text-secondary);
 }
 .homeSearchBannerText { flex: 1 1 220px; min-width: 0; }
@@ -317,7 +317,7 @@
 .homeSearchBannerBtn { display: inline-flex; align-items: center; gap: 6px; }
 .homeSearchKey {
   font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
-  font-size: calc(10.5px * var(--ui-font-scale, 1));
+  font-size: var(--fs-2xs);
   opacity: 0.8;
   margin-left: 4px;
 }
@@ -332,7 +332,7 @@
   background: none;
   color: var(--text-muted);
   font: inherit;
-  font-size: calc(12.5px * var(--ui-font-scale, 1));
+  font-size: var(--fs-sm);
   text-align: left;
   cursor: pointer;
 }
@@ -422,14 +422,14 @@
   overflow: hidden;
   text-overflow: ellipsis;
   white-space: nowrap;
-  font-size: calc(14px * var(--ui-font-scale, 1));
+  font-size: var(--fs-md);
   color: var(--text-primary);
 }
 .fileRowRename {
   flex: 1;
   min-width: 0;
   border-color: var(--accent-dark);
-  font-size: calc(14px * var(--ui-font-scale, 1));
+  font-size: var(--fs-md);
   padding: 2px 6px;
 }
 /* The trailing columns every list row shares (rowColumns in App.jsx):
@@ -437,7 +437,7 @@
    line up down the list and under the header. */
 .fileRowKind {
   flex: 0 0 64px;
-  font-size: calc(12px * var(--ui-font-scale, 1));
+  font-size: var(--fs-xs);
   color: var(--text-muted);
   white-space: nowrap;
   overflow: hidden;
@@ -446,7 +446,7 @@
 .fileRowDate {
   flex: 0 0 110px;
   text-align: right;
-  font-size: calc(12px * var(--ui-font-scale, 1));
+  font-size: var(--fs-xs);
   color: var(--text-muted);
   white-space: nowrap;
   overflow: hidden;
@@ -462,7 +462,7 @@
   padding: 2px 11px 5px;
   margin-bottom: 2px;
   border-bottom: 1px solid var(--border-subtle);
-  font-size: calc(11.5px * var(--ui-font-scale, 1));
+  font-size: var(--fs-xs);
   color: var(--text-dim);
   user-select: none;
 }
@@ -493,7 +493,7 @@
   background: var(--bg-raised);
   border-radius: var(--radius-xs);
   padding: 0 6px;
-  font-size: calc(11px * var(--ui-font-scale, 1));
+  font-size: var(--fs-2xs);
   white-space: nowrap;
 }
 /* line the folder-row icon up with the file-row icon column */
@@ -538,7 +538,7 @@
 .tileRenameInput {
   width: 100%;
   border-color: var(--accent-dark);
-  font-size: calc(12px * var(--ui-font-scale, 1));
+  font-size: var(--fs-xs);
   padding: 2px 6px;
 }
 
@@ -570,7 +570,7 @@
   background: var(--bg-raised);
   border-radius: var(--radius-xs);
   padding: 0 6px;
-  font-size: calc(11px * var(--ui-font-scale, 1));
+  font-size: var(--fs-2xs);
 }
 
 /* Quick open (Ctrl+P): the page palette, docked near the top like VS Code's. */
@@ -582,18 +582,18 @@
 .quickOpenRow { border-radius: var(--radius-xs); }
 /* the chip line keeps its file-row cap; the option style would stretch it */
 .quickOpenRow .fileRowLabels { flex: 0 1 auto; }
-.quickOpenTag { flex-shrink: 0; font-style: normal; font-size: calc(10px * var(--ui-font-scale, 1)); color: var(--text-dim); }
+.quickOpenTag { flex-shrink: 0; font-style: normal; font-size: var(--fs-2xs); color: var(--text-dim); }
 /* Section headings (Recent / Open tabs / … or Pages / Folders / Labels /
    Actions) and the time or count on a row's right. */
 .quickOpenSection {
   padding: 8px 8px 3px;
-  font-size: calc(10.5px * var(--ui-font-scale, 1));
+  font-size: var(--fs-2xs);
   font-weight: 600;
   color: var(--text-dim);
 }
 .quickOpenSection:first-child { padding-top: 2px; }
-.quickOpenTime { flex-shrink: 0; font-style: normal; font-size: calc(11px * var(--ui-font-scale, 1)); color: var(--text-dim); white-space: nowrap; }
-.quickOpenAction { font-size: calc(12px * var(--ui-font-scale, 1)); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.quickOpenTime { flex-shrink: 0; font-style: normal; font-size: var(--fs-2xs); color: var(--text-dim); white-space: nowrap; }
+.quickOpenAction { font-size: var(--fs-xs); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .quickOpenRow .quickOpenFolderIcon { color: var(--accent); }
 .quickOpenRow .kindGlyph { flex-shrink: 0; }
 .quickOpen .chatMentionHint { padding: 6px 6px 0; }
@@ -610,15 +610,15 @@
 .phoneUI .homeListBar { flex-wrap: wrap; row-gap: 8px; padding: 12px 12px 8px; }
 .phoneUI .homeListLabel { flex: 1 0 100%; }
 .phoneUI .homeListLabel.homeListRoot {
-  font-size: calc(24px * var(--ui-font-scale, 1));
-  font-weight: 700;
+  font-size: var(--fs-2xl);
+  font-weight: 600;
   letter-spacing: 0;
   text-transform: none;
   color: var(--text-primary);
 }
 .phoneUI .homeListSpacer { display: none; }
 .phoneUI .homeFindBox { flex: 1 0 100%; height: 38px; padding: 0 8px 0 12px; border-radius: var(--radius-lg); }
-.phoneUI .homeFindInput { flex: 1; width: auto; min-width: 0; font-size: calc(15px * var(--ui-font-scale, 1)); }
+.phoneUI .homeFindInput { flex: 1; width: auto; min-width: 0; font-size: var(--fs-body); }
 .phoneUI .fileRow {
   display: grid;
   grid-template-columns: 20px minmax(0, 1fr) auto auto auto;
@@ -632,7 +632,7 @@
 .phoneUI .fileRow .fileRowName {
   white-space: normal;
   overflow-wrap: anywhere;
-  font-size: calc(15px * var(--ui-font-scale, 1));
+  font-size: var(--fs-body);
   line-height: 20px;
 }
 .phoneUI .fileRow .fileRowLabels { grid-area: 2 / 2; flex-wrap: wrap; row-gap: 4px; max-width: none; margin-left: 0; }
@@ -672,13 +672,13 @@
 }
 .libEmptyTitle {
   margin: 0;
-  font-size: calc(17px * var(--ui-font-scale, 1));
+  font-size: var(--fs-lg);
   font-weight: 600;
   color: var(--text-primary);
 }
 .libEmptyLead {
   margin: 2px 0 0;
-  font-size: calc(13px * var(--ui-font-scale, 1));
+  font-size: var(--fs-sm);
   color: var(--text-muted);
 }
 .libEmptyCards {
@@ -698,7 +698,7 @@
   border-radius: var(--radius-lg);
   background: var(--bg-card);
   color: var(--text-primary);
-  font: inherit;
+  font-family: inherit; font-weight: inherit; line-height: inherit;
   text-align: left;
   cursor: pointer;
   transition: background var(--dur-fast) ease, border-color var(--dur-fast) ease;
@@ -718,9 +718,9 @@
   color: var(--accent);
 }
 .libEmptyCardBody { display: flex; flex-direction: column; gap: 3px; min-width: 0; }
-.libEmptyCardTitle { font-size: calc(14px * var(--ui-font-scale, 1)); font-weight: 600; }
+.libEmptyCardTitle { font-size: var(--fs-md); font-weight: 600; }
 .libEmptyCardText {
-  font-size: calc(12.5px * var(--ui-font-scale, 1));
+  font-size: var(--fs-sm);
   line-height: 1.45;
   color: var(--text-muted);
 }
@@ -731,14 +731,14 @@
   flex-wrap: wrap;
   gap: 6px 16px;
   margin-top: 14px;
-  font-size: calc(12.5px * var(--ui-font-scale, 1));
+  font-size: var(--fs-sm);
 }
 .libEmptyTour {
   padding: 0;
   border: 0;
   background: none;
   color: var(--text-secondary);
-  font: inherit;
+  font-family: inherit; font-weight: inherit; line-height: inherit;
   cursor: pointer;
 }
 .libEmptyTour strong { color: var(--accent); font-weight: 600; }

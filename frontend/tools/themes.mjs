@@ -7,7 +7,8 @@
 //
 // tokens.css is a flat list of rules on the root element, so a small
 // evaluator is enough: selectors made of :root, :where(), :not() and
-// [data-theme]/[data-scheme] attributes; the cascade by specificity, then
+// [data-theme]/[data-scheme] attributes (an element or class selector never
+// matches the root); the cascade by specificity, then
 // order; var() with fallbacks; hex, rgb() and color-mix() in oklab or srgb
 // with premultiplied alpha. tests/themes.test.mjs runs the contrast ratchet
 // on top of it.
@@ -92,7 +93,11 @@ function test(sel, attrs) {
       if (m[1] !== "where") spec += Math.max(...args.map((a) => a.spec));
       rest = rest.slice(i);
       continue;
-    } else if (!(m = rest.match(/^html/))) throw new Error(`tokens.css: unsupported selector "${sel}"`);
+    } else if ((m = rest.match(/^html/))) spec += 0;
+    // Another element or a class (the type sizes' control-reset list) is
+    // never the root: it can't match, whatever else the compound says.
+    else if ((m = rest.match(/^(?:[a-z][\w-]*|\.[\w-]+)/i))) { ok = false; spec++; }
+    else throw new Error(`tokens.css: unsupported selector "${sel}"`);
     rest = rest.slice(m[0].length);
   }
   return { ok, spec };

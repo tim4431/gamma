@@ -65,13 +65,13 @@
 }
 .guideCount {
   margin-left: auto;
-  font-size: calc(11px * var(--ui-font-scale, 1));
+  font-size: var(--fs-2xs);
   color: var(--text-muted);
   font-variant-numeric: tabular-nums;
 }
 .guideStep + .guideClose, .guideChip + .guideClose { margin-left: auto; }
 .guideStep {
-  font-size: calc(11px * var(--ui-font-scale, 1));
+  font-size: var(--fs-2xs);
   font-weight: 600;
   letter-spacing: 0.02em;
   color: var(--text-muted);
@@ -96,7 +96,7 @@
   display: flex;
   align-items: flex-start;
   gap: 8px;
-  font-size: calc(12px * var(--ui-font-scale, 1));
+  font-size: var(--fs-xs);
   color: var(--text-secondary);
 }
 .guideWaitSlow { display: block; margin-top: 2px; color: var(--text-muted); }
@@ -123,7 +123,7 @@
   background: none;
   padding: 4px 0;
   font: inherit;
-  font-size: calc(12px * var(--ui-font-scale, 1));
+  font-size: var(--fs-xs);
   color: var(--text-muted);
   cursor: pointer;
   text-decoration: underline;
@@ -191,7 +191,7 @@
   border-radius: var(--radius-sm);
   background: var(--bg-elevated);
   color: var(--text-primary);
-  font: 600 calc(11px * var(--ui-font-scale, 1)) system-ui;
+  font: 600 var(--fs-2xs) var(--font-sans);
 }
 @media (prefers-reduced-motion: reduce) {
   .guideCursor, .guideCursor.dragging, .guideDimFill { transition: none; }
@@ -200,20 +200,20 @@
 /* One type scale for every card: tour and offer titles 15/600, a hint's
    sentence 14/500, bodies 13/1.5, meta 11. */
 .guideTitle {
-  font-size: calc(15px * var(--ui-font-scale, 1));
+  font-size: var(--fs-body);
   font-weight: 600;
   line-height: 1.35;
 }
-.guideCardCentered .guideTitle { font-size: calc(17px * var(--ui-font-scale, 1)); }
+.guideCardCentered .guideTitle { font-size: var(--fs-lg); }
 .guideBody {
-  font-size: calc(13px * var(--ui-font-scale, 1));
+  font-size: var(--fs-sm);
   line-height: 1.5;
   color: var(--text-secondary);
 }
 .guideBody p { margin: 0; }
 .guideBody p + p { margin-top: 6px; }
 .guideTitle code, .guideBody code {
-  font-size: calc(11.5px * var(--ui-font-scale, 1));
+  font-size: var(--fs-xs);
   padding: 1px 5px;
   border-radius: var(--radius-xs);
   background: var(--bg-raised);
@@ -231,14 +231,14 @@
 .guideInvitation .guideStep { color: var(--accent); }
 /* A hint is a sentence with a Tip chip, not a heading under an accent rule. */
 .guideHint .guideCard { border-top-width: 1px; border-top-color: var(--border); }
-.guideHint .guideTitle { font-size: calc(14px * var(--ui-font-scale, 1)); font-weight: 500; line-height: 1.5; }
+.guideHint .guideTitle { font-size: var(--fs-md); font-weight: 500; line-height: 1.5; }
 .guideChip {
   display: inline-flex;
   align-items: center;
   gap: 6px;
   padding: 1px 9px 1px 8px;
   border-radius: var(--radius-full);
-  font-size: calc(11px * var(--ui-font-scale, 1));
+  font-size: var(--fs-2xs);
   font-weight: 600;
   letter-spacing: 0.01em;
   white-space: nowrap;
@@ -250,7 +250,7 @@
 /* Keys in the copy: the settings kit's key caps, a size up. */
 .guideCard .keyCaps { vertical-align: 1px; margin: 0 1px; }
 .guideCard .keyCap {
-  font-size: calc(12px * var(--ui-font-scale, 1));
+  font-size: var(--fs-xs);
   line-height: 18px;
   font-weight: 600;
   color: var(--text-primary);
@@ -266,14 +266,14 @@
   gap: 12px;
   border-top: 1px solid var(--border);
 }
-.guideCardWelcome .guideTitle { font-size: calc(21px * var(--ui-font-scale, 1)); letter-spacing: -0.01em; }
-.guideCardWelcome .guideBody { font-size: calc(13.5px * var(--ui-font-scale, 1)); }
+.guideCardWelcome .guideTitle { font-size: var(--fs-xl); letter-spacing: -0.01em; }
+.guideCardWelcome .guideBody { font-size: var(--fs-md); }
 .guideOutline { list-style: none; margin: 2px 0 4px; padding: 0; display: flex; flex-direction: column; gap: 9px; }
 .guideOutline li {
   display: flex;
   align-items: center;
   gap: 11px;
-  font-size: calc(13.5px * var(--ui-font-scale, 1));
+  font-size: var(--fs-md);
 }
 .guideOutlineNum {
   flex: none;
@@ -285,11 +285,11 @@
   justify-content: center;
   background: var(--accent-bg);
   color: var(--accent);
-  font-weight: 700;
-  font-size: calc(12px * var(--ui-font-scale, 1));
+  font-weight: 600;
+  font-size: var(--fs-xs);
 }
-.guideOutlineKind { margin-left: auto; font-size: calc(12px * var(--ui-font-scale, 1)); color: var(--text-muted); white-space: nowrap; }
-.guideFootnote { font-size: calc(11.5px * var(--ui-font-scale, 1)); color: var(--text-muted); }
+.guideOutlineKind { margin-left: auto; font-size: var(--fs-xs); color: var(--text-muted); white-space: nowrap; }
+.guideFootnote { font-size: var(--fs-xs); color: var(--text-muted); }
 
 /* The finish card, over a light scrim (clicking it closes the card). */
 .guideScrim { position: absolute; inset: 0; background: rgba(0, 0, 0, 0.22); pointer-events: auto; }
@@ -315,10 +315,10 @@
   border-radius: var(--radius-lg);
   background: color-mix(in srgb, var(--bg-raised) 35%, var(--bg-elevated));
 }
-.guideMade li { display: flex; align-items: center; gap: 9px; font-size: calc(13px * var(--ui-font-scale, 1)); }
+.guideMade li { display: flex; align-items: center; gap: 9px; font-size: var(--fs-sm); }
 .guideMade strong { font-weight: 600; }
 .guideMadeIcon { flex: none; width: 16px; display: inline-flex; justify-content: center; color: var(--accent); }
-.guideNextLabel { font-size: calc(11.5px * var(--ui-font-scale, 1)); color: var(--text-muted); margin-bottom: -4px; }
+.guideNextLabel { font-size: var(--fs-xs); color: var(--text-muted); margin-bottom: -4px; }
 .guideNext { display: flex; gap: 8px; }
 .guideNext button {
   flex: 1;
@@ -336,8 +336,8 @@
   cursor: pointer;
 }
 .guideNext button:hover { border-color: var(--border-hover); background: var(--bg-hover); }
-.guideNext b { font-size: calc(13px * var(--ui-font-scale, 1)); font-weight: 600; }
-.guideNext small { font-size: calc(11.5px * var(--ui-font-scale, 1)); color: var(--text-muted); }
+.guideNext b { font-size: var(--fs-sm); font-weight: 600; }
+.guideNext small { font-size: var(--fs-xs); color: var(--text-muted); }
 
 /* Narrow screens: the card becomes a bottom sheet; the spotlight stays.
    On the phone layout it sits above the bottom tab bar. */

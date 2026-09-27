@@ -137,17 +137,37 @@ already exists. Bespoke CSS classes are for **layout only**.
 - Counts, times and page numbers use `font-variant-numeric: tabular-nums`
   (the grouped rule under `body` in app.css), so they keep their width as
   the digits change.
+- **Eight sizes, each a job** (`--fs-*` in tokens.css). A font size is one of
+  them, never a pixel value; relative sizes (`em`, headings inside rendered
+  notes) and `inherit` are fine:
+
+  | Token | px | Job |
+  |---|---|---|
+  | `--fs-2xs` | 11 | captions, badges, kind labels, key caps — nothing smaller |
+  | `--fs-xs` | 12 | meta, hints, section labels, tabs, compact (`sm`) buttons |
+  | `--fs-sm` | 13 | the default: buttons, menus, dialog fields |
+  | `--fs-md` | 14 | list rows, the settings rail, text fields, chat messages (times `--text-scale`) |
+  | `--fs-body` | 15 | the notes' reading text (times `--text-scale`) |
+  | `--fs-lg` | 17 | pane and section titles |
+  | `--fs-xl` | 20 | the page title |
+  | `--fs-2xl` | 24 | the largest headings (sign-in, the phone library's title) |
+
+  Text that follows the panel's Ctrl+scroll size multiplies in place:
+  `calc(var(--fs-body) * var(--text-scale, 1))`. Weights: 400 for text, 500
+  for controls, 600 for headings, labels and active states; 700 only for
+  **bold** in notes. Line heights: `--lh-tight` 1.25 (headings, one-line
+  controls), `--lh-ui` 1.4, `--lh-read` 1.55 (reading text).
 
 ### Section labels
 
 Panel and section names (dock titles, Library, Recently viewed, Pinned, the
 popover, search and menu section captions, the Keyboard pane's groups) share
-one rule in app.css: sentence case, 12 px, weight 600, `--text-secondary`
-(dock titles a step up, 13 px), the Settings rail's look.
+one rule in app.css: sentence case, `--fs-xs`, weight 600, `--text-secondary`
+(dock titles a step up, `--fs-sm`), the Settings rail's look.
 Labels get no `text-transform: uppercase` or letter-spacing: the text keeps
 its own case, so only acronyms ("PDF") are capitals. A new label class joins
 that list and keeps only its layout in its own rule. The kind label on a card
-("Page", "PDF") is the small muted version: 11 px, weight 500,
+("Page", "PDF") is the small muted version: `--fs-2xs`, weight 500,
 `--text-muted`; in the list it is a plain muted column.
 
 ### Keyboard focus
@@ -179,11 +199,17 @@ that list and keeps only its layout in its own rule. The kind label on a card
 
 - **Interface size** (Settings / Appearance, `gamma-ui-scale`, a `Stepper` over
   the `UI_SCALE` range in `app/prefDefs.js`, 70–160 % in 10 % steps) scales both
-  interface text and controls. Fixed font sizes in the application stylesheets
-  multiply by `--ui-font-scale`, inherited from `--ui-scale`. Controls (buttons,
+  interface text and controls. The `--fs-*` sizes multiply by
+  `--ui-font-scale`, inherited from `--ui-scale`. Controls (buttons,
   summaries, button roles and the shared control classes) use CSS `zoom` for
   their box, text and icon, and reset `--ui-font-scale` to 1 to avoid doubling
-  the text scale. Nested controls reset `zoom` to 1 as well.
+  the text scale. A custom property resolves its `var()`s where it is
+  declared, so tokens.css declares the `--fs-*` sizes a second time on that
+  same control selector; a control's `var(--fs-sm)` is then 13 px before the
+  zoom. Nested controls reset `zoom` to 1 as well. A control that takes its
+  parent's type writes `font-family: inherit` (and weight, line height), not
+  `font: inherit`, which would copy the parent's already scaled size and
+  zoom it a second time.
   Keep PDF-coordinate positioning on an unscaled wrapper, with the control
   inside it (`pdfNoteAnchor` / `pdfNoteBadge`); zooming the positioned element
   also scales its offsets and makes it drift away from the highlight.

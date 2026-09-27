@@ -1,5 +1,5 @@
 .backupTaskTableWrap { margin: 16px 0; border: 1px solid var(--border); border-radius: var(--radius-lg); overflow: auto; }
-.backupTaskTable { width: 100%; min-width: 640px; border-collapse: collapse; font-size: calc(12px * var(--ui-font-scale, 1)); }
+.backupTaskTable { width: 100%; min-width: 640px; border-collapse: collapse; font-size: var(--fs-xs); }
 .backupTaskTable th { padding: 12px 9px; text-align: left; color: var(--text-muted); background: var(--bg-elevated); font-weight: 600; white-space: nowrap; }
 .backupTaskTable td { padding: 14px 9px; vertical-align: middle; border-top: 1px solid var(--border); line-height: 1.5; white-space: normal; }
 .backupTaskTable td:first-child { min-width: 150px; max-width: 230px; }
@@ -7,7 +7,7 @@
 .backupTaskTable td:nth-child(3), .backupTaskTable td:nth-child(4) { min-width: 84px; }
 .backupTaskTable .metaCell { white-space: nowrap; }
 .backupTaskTable .settingDesc { display: block; margin-top: 3px; overflow-wrap: anywhere; }
-.backupTaskTable td:first-child strong { display: block; font-weight: 650; color: var(--text-primary); overflow-wrap: anywhere; }
+.backupTaskTable td:first-child strong { display: block; font-weight: 600; color: var(--text-primary); overflow-wrap: anywhere; }
 .reportModal.backupTaskDialog { width: min(680px, calc(100vw - 24px)); max-height: calc(100dvh - 48px); }
 .backupTaskFields { border: 0; padding: 0; margin: 0; min-width: 0; }
 .backupTaskFields .setField { margin-bottom: 12px; }
@@ -17,7 +17,7 @@
 .backupTaskFields .toggleGroup { justify-content: flex-start; }
 .backupTaskPreview { border: 1px solid var(--border); border-left: 3px solid var(--accent); border-radius: var(--radius-md); padding: 12px 14px; margin: 14px 0; background: var(--bg-elevated); }
 .backupTaskPreview .settingLabel { display: flex; align-items: center; gap: 7px; margin-bottom: 8px; }
-.backupTaskPreview ol { padding-left: 20px; margin: 0; line-height: 1.8; color: var(--text-muted); font-size: calc(13px * var(--ui-font-scale, 1)); }
+.backupTaskPreview ol { padding-left: 20px; margin: 0; line-height: 1.8; color: var(--text-muted); font-size: var(--fs-sm); }
 .backupTaskUtc { margin-top: 2px; }
 .backupCron { font-family: var(--font-mono); }
 .backupTaskError { display: flex; gap: 10px; align-items: center; margin: 12px 0; }
