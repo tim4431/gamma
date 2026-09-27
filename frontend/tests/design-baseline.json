@@ -1,0 +1,16 @@
+{
+  "guide/guide.css": {
+    "color": 7,
+    "shadow": 4
+  },
+  "settings/settings.css": {
+    "color": 4
+  },
+  "shared/styles/app.css": {
+    "color": 114,
+    "shadow": 4
+  },
+  "transfers/importReview.css": {
+    "color": 1
+  }
+}

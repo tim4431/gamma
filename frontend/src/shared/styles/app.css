@@ -135,9 +135,9 @@
    slowly, because a frozen one reads as a hang. */
 @media (prefers-reduced-motion: reduce) {
   *, *::before, *::after {
-    transition-duration: 1ms !important;
+    transition-duration: 1ms !important; /* ds-allow: reduced motion ends at once */
     transition-delay: 0s !important;
-    animation-duration: 1ms !important;
+    animation-duration: 1ms !important; /* ds-allow: reduced motion ends at once */
     animation-delay: 0s !important;
     animation-iteration-count: 1 !important;
     scroll-behavior: auto !important;
@@ -207,7 +207,7 @@ html {
   /* Native checkboxes, radios, ranges and progress bars take the theme's accent. */
   accent-color: var(--accent);
   --ui-font-scale: var(--ui-scale, 1);
-  font-size: calc(16px * var(--ui-font-scale));
+  font-size: calc(16px * var(--ui-font-scale)); /* ds-allow: the rem base */
 }
 
 body {
@@ -711,7 +711,8 @@ body {
 :is(.codeBlock, .cmCodeWidget):is(:hover, :has(.codeCopyBtn:focus-visible)) .codeLangBadge { opacity: 0; }
 
 /* highlight.js token colors, theme-aware (dark: VSCode-ish, light: GitHub-ish).
-   Applies to both the editor's code widget and the rendered view. */
+   Applies to both the editor's code widget and the rendered view.
+   ds-allow-start: syntax palettes, the editors' own colours */
 .hljs { background: transparent; color: var(--text-primary); }
 .hljs-comment, .hljs-quote { color: #6a9955; font-style: italic; }
 .hljs-keyword, .hljs-selector-tag, .hljs-literal, .hljs-doctag { color: #569cd6; }
@@ -746,6 +747,7 @@ body {
 [data-theme="solarized"] :is(.hljs-attr, .hljs-attribute) { color: #93a1a1; }
 [data-theme="solarized"] .hljs-params { color: #657b83; }
 [data-theme="solarized"] :is(.hljs-regexp, .hljs-deletion) { color: #dc322f; }
+/* ds-allow-end */
 
 .blockRowWrap.fileDragOver > .blockRow {
   outline: 2px dashed var(--drag-accent);
@@ -1519,7 +1521,7 @@ body {
   pointer-events: none;
   z-index: var(--z-popover);
   transform: translateY(-1px);
-  transition: left 25ms ease-out;
+  transition: left 25ms ease-out; /* ds-allow: follows the pointer */
 }
 .sortableBlockWrap {
   display: flex;
@@ -3303,7 +3305,7 @@ html.appFocusFullscreen, html.appFocusFullscreen body { overflow: hidden; oversc
 .chatBubbleRow.ai { justify-content: flex-start; margin-bottom: 12px; }
 .chatBubble {
   max-width: 88%;
-  border-radius: calc(16px * var(--text-scale, 1));
+  border-radius: calc(16px * var(--text-scale, 1)); /* ds-allow: grows with the chat's text size */
   padding: 7px 12px;
   font-size: calc(var(--fs-md) * var(--text-scale, 1));
   line-height: 1.5;
@@ -4176,7 +4178,7 @@ a.shareBrand:hover { background: var(--bg-hover); }
    left, what it does and Try the demo on the right; stacked on narrow screens */
 .loginCard.loginLanding {
   /* the brand amber of the mark and the picture, for the check marks */
-  --brand-amber: #e8a020;
+  --brand-amber: #e8a020; /* ds-allow: the brand, as on gammapdf.com */
   display: grid;
   grid-template-columns: minmax(0, 1.1fr) minmax(0, 1fr);
   max-width: 900px;
@@ -4184,7 +4186,7 @@ a.shareBrand:hover { background: var(--bg-hover); }
   overflow: hidden;
   border-radius: var(--radius-lg);
 }
-.loginScene { background: #f6f4ef; border-right: 1px solid var(--border); min-height: 420px; }
+.loginScene { background: #f6f4ef; /* ds-allow: the brand paper behind the picture */ border-right: 1px solid var(--border); min-height: 420px; }
 .loginScene img { display: block; width: 100%; height: 100%; object-fit: cover; object-position: 20% 45%; }
 .loginLandingBody { display: flex; flex-direction: column; padding: 36px 36px 28px; }
 .loginBrand {
@@ -4914,12 +4916,14 @@ a.shareBrand:hover { background: var(--bg-hover); }
    the COLORS index) instead draw a dark-tuned set with normal blending,
    about 7:1; an area outline keeps a stronger line of the same hue. Colours
    from other apps are not remapped and keep the screen blend above. The
-   note badge turns dark with them. */
+   note badge turns dark with them.
+   ds-allow-start: the highlight palette's dark set */
 :is(.pdfViewer.pdfDark, [data-theme="gamma-dark"] .pdfViewer) .pdfPageWrap [data-hl-color] { mix-blend-mode: normal !important; }
 :is(.pdfViewer.pdfDark, [data-theme="gamma-dark"] .pdfViewer) .pdfPageWrap [data-hl-color="0"] { --hl: rgba(250, 204, 21, 0.30) !important; --hl-line: rgba(250, 204, 21, 0.75); }
 :is(.pdfViewer.pdfDark, [data-theme="gamma-dark"] .pdfViewer) .pdfPageWrap [data-hl-color="1"] { --hl: rgba(74, 222, 128, 0.26) !important; --hl-line: rgba(74, 222, 128, 0.7); }
 :is(.pdfViewer.pdfDark, [data-theme="gamma-dark"] .pdfViewer) .pdfPageWrap [data-hl-color="2"] { --hl: rgba(96, 165, 250, 0.32) !important; --hl-line: rgba(96, 165, 250, 0.8); }
 :is(.pdfViewer.pdfDark, [data-theme="gamma-dark"] .pdfViewer) .pdfPageWrap [data-hl-color="3"] { --hl: rgba(192, 132, 252, 0.32) !important; --hl-line: rgba(192, 132, 252, 0.8); }
+/* ds-allow-end */
 :is(.pdfViewer.pdfDark, [data-theme="gamma-dark"] .pdfViewer) .pdfPageWrap .pdfNoteBadge {
   mix-blend-mode: normal !important;
   background: #2a2a2a;
@@ -5677,8 +5681,10 @@ a.shareBrand:hover { background: var(--bg-hover); }
 
 /* --- presence (collaboration/usePageCollab.js): who is on the page, and where ------------------ */
 :root {
+  /* ds-allow-start: the collaborator colours, the same in every theme */
   --peer-0: #e0534f; --peer-1: #2f8f9d; --peer-2: #d98a1f; --peer-3: #7a5cc7;
   --peer-4: #2f9e5a; --peer-5: #c94c9a; --peer-6: #4e7be0; --peer-7: #8a7a2b;
+  /* ds-allow-end */
 }
 .peer-0 { --peer: var(--peer-0); } .peer-1 { --peer: var(--peer-1); }
 .peer-2 { --peer: var(--peer-2); } .peer-3 { --peer: var(--peer-3); }
@@ -5836,7 +5842,7 @@ a.shareBrand:hover { background: var(--bg-hover); }
 .inkCustomColor {
   position: relative;
   overflow: hidden;
-  background: conic-gradient(#f43f5e, #f59e0b, #84cc16, #06b6d4, #6366f1, #d946ef, #f43f5e);
+  background: conic-gradient(#f43f5e, #f59e0b, #84cc16, #06b6d4, #6366f1, #d946ef, #f43f5e); /* ds-allow: the "any colour" swatch's rainbow */
 }
 .inkCustomColor.selected { background: var(--ink-custom); }
 .inkCustomColor input { position: absolute; inset: 0; opacity: 0; cursor: pointer; width: 100%; height: 100%; }

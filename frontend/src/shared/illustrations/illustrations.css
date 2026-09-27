@@ -1,4 +1,5 @@
-/* Decorative illustration styles. Widget and dialog layouts stay with their owners. */
+/* Decorative illustration styles. Widget and dialog layouts stay with their owners.
+   ds-allow-start: a drawing of a paper and its notes, in its own fixed colours and sizes */
 .formatIllustration { color: var(--text-secondary); }
 .formatIllustration svg { width: 48px; height: 48px; }
 .formatAppIcon { width: 48px; height: 48px; background: currentColor; mask: var(--app-icon) center / contain no-repeat; -webkit-mask: var(--app-icon) center / contain no-repeat; }
@@ -32,3 +33,4 @@
 .appearancePdfPreview { color: #2e2c29; }
 .appearancePdfPreview.isDark { color: #efefef; }
 .appearancePdfPreview.isDark .appearancePdfPaper { fill: #101010; stroke: #383838; }
+/* ds-allow-end */

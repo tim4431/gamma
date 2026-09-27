@@ -181,7 +181,7 @@
 /* While the demo types, the pointer waits below the field, faded. */
 .guideCursor.faded { opacity: 0.4; }
 .guideCursor.pressed svg { transform: scale(0.85); transform-origin: 4px 4px; transition: transform var(--dur-fast); }
-.guideCursor.dragging { transition: transform 40ms linear; }
+.guideCursor.dragging { transition: transform 40ms linear; } /* ds-allow: follows the pointer */
 .guideModifier {
   position: absolute;
   top: 24px;

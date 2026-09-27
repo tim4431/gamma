@@ -61,6 +61,19 @@ scales instead of a number of its own:
 | Motion | `--dur-fast` 100 ms · `--dur-base` 160 ms · `--dur-slow` 240 ms, `--ease-out` | fast: hover and press; base: enter, fade, small moves; slow: bars and larger moves. Loops and attention effects of half a second or more (spinners, pulses, the landed flash) keep their own period |
 | Layers | `--z-dock` 20 · `--z-float` 30 · `--z-phone-overlay` 80 · `--z-dropdown` 100 · `--z-overlay` 1000 · `--z-popover` 1100 · `--z-modal` 1200 · `--z-subdialog` 1290 · `--z-confirm` 1300 · `--z-lightbox` 1500 · `--z-ctxmenu` 1600 · `--z-refpopup` 2000 · `--z-drop` 9999 · `--z-tip` 30000 | every z-index above 9 is a layer token (one step above a layer is `calc(var(--z-dock) + 1)`); 1–9 only orders siblings inside one component |
 
+**Raw values are a ratchet too.** `tests/designTokens.test.mjs` scans every
+stylesheet under `src/` (tokens.css aside) for values that should be tokens —
+a colour literal, a pixel font size, a corner radius over 2 px, an elevation
+shadow, a z-index above 9, a transition under half a second — and fails when a
+file holds more of one kind than `tests/design-baseline.json` records; the
+failure lists the new offenders. What is left is mostly the amber warning
+colour and the PDF page's own colours. A value that is raw on purpose says
+why in a comment the scanner reads: `/* ds-allow: why */` on its line, or
+`ds-allow-start: why` … `ds-allow-end` around a block (the syntax and
+highlight palettes, the collaborator colours, the transfer illustration, a
+transition that follows the pointer). After a cleanup,
+`node tools/designTokens.mjs --baseline` records the lower floor.
+
 **Reduced motion.** One rule in app.css's primitives layer honours the OS
 setting: under `prefers-reduced-motion: reduce` every transition and
 animation ends at once (1 ms, one iteration), except the spinners, which keep
