@@ -8,7 +8,7 @@
 import React from "react";
 import { API, apiJson, fmtBytes } from "../shared/lib/utils";
 import { MenuSelect } from "../shared/ui/Menus";
-import { Section, SubDialog, Field, Empty, UnitInput, AccountPicker } from "./SettingsKit";
+import { Section, SubDialog, Field, DialogButtons, Empty, UnitInput, AccountPicker } from "./SettingsKit";
 import { ManageWorkspaceDialog, useAccounts, ACCESS_OPTIONS, PUBLIC_ROLE_OPTIONS } from "./SettingsWorkspace";
 import { GlobeIcon, PenIcon, PlusIcon, UsersIcon } from "../shared/ui/Icons";
 import { t } from "../shared/i18n/i18n.js";
@@ -158,12 +158,12 @@ function NewWorkspaceDialog({ me, accounts, setStatus, onCreated, onClose }) {
           <UnitInput unit="MB" min={0} placeholder="unlimited" value={form.quota_mb} onChange={(quota_mb) => set({ quota_mb })} />
         </Field>
         {error ? <div className="settingsPaneHint aiKeysError">{error}</div> : null}
-        <div className="reportModalBtns">
+        <DialogButtons footnote={form.name.trim() && form.owner ? null : t("Give it a name and an owner to continue.")}>
           <button className="uiBtn" onClick={onClose}>{t("Cancel")}</button>
           <button className="uiBtn primary" disabled={busy || !form.name.trim() || !form.owner} onClick={submit}>
             {busy ? t("Creating…") : t("Create")}
           </button>
-        </div>
+        </DialogButtons>
       </div>
     </SubDialog>
   );

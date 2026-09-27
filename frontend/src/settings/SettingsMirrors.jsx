@@ -16,7 +16,7 @@
 // (DELETE /api/pages/{id}/publish for each page), never the clone actions.
 import React from "react";
 import { API, apiJson, fmtBytes } from "../shared/lib/utils";
-import { Section, SubDialog, Field, IconChoices, Segmented, Empty, WorkspaceFolder } from "./SettingsKit";
+import { Section, SubDialog, Field, DialogButtons, IconChoices, Segmented, Empty, WorkspaceFolder } from "./SettingsKit";
 import { ActionMenu, MenuSelect } from "../shared/ui/Menus";
 import {
   AlertCircleIcon, ArrowDownIcon, ArrowUpDownIcon, CheckIcon, CloudDownloadIcon, CloudIcon, CloudOffIcon, HardDriveIcon, LinkIcon,
@@ -127,13 +127,13 @@ export function MirrorDialog({ busy, error, onSubmit, onClose, candidates = [] }
         <IconChoices label={t("Direction")} value={mode} onChange={setMode} options={DIRECTION_TILES} />
       </Field>
       {error ? <div className="settingsPaneHint aiKeysError">{error}</div> : null}
-      <div className="reportModalBtns">
+      <DialogButtons footnote={ok ? null : t("Fill in the server and its token to continue.")}>
         <button className="uiBtn" onClick={onClose} disabled={busy}>{t("Cancel")}</button>
         <button className="uiBtn primary" disabled={!ok || busy}
           onClick={() => onSubmit({ remote_url: url.trim(), token: token.trim(), name: name.trim(), mode, workspace_id: into, adopt })}>
           {busy ? t("Connecting…") : t("Clone")}
         </button>
-      </div>
+      </DialogButtons>
       </div>
     </SubDialog>
   );

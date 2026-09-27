@@ -18,7 +18,7 @@
 .backupTaskFields .toggleGroup { justify-content: flex-start; }
 .backupTaskPreview { border: 1px solid var(--border); border-left: 3px solid var(--accent); border-radius: 8px; padding: 12px 14px; margin: 14px 0; background: var(--bg-elevated); }
 .backupTaskPreview .settingLabel { display: flex; align-items: center; gap: 7px; margin-bottom: 8px; }
-.backupTaskPreview ol { padding-left: 20px; margin: 0; line-height: 1.8; color: var(--text-muted); }
+.backupTaskPreview ol { padding-left: 20px; margin: 0; line-height: 1.8; color: var(--text-muted); font-size: calc(13px * var(--ui-font-scale, 1)); }
 .backupCron { font-family: var(--font-mono); }
 .backupTaskError { display: flex; gap: 10px; align-items: center; margin: 12px 0; }
 @media (max-width: 560px) { .backupTaskGrid { grid-template-columns: 1fr; gap: 0; } }

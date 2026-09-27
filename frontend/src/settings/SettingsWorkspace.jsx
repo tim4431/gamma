@@ -16,7 +16,7 @@
 import React from "react";
 import { API, apiJson, fmtBytes } from "../shared/lib/utils";
 import { ActionMenu, MenuSelect } from "../shared/ui/Menus";
-import { PaneHead, Section, Row, SubDialog, Field, Empty, QuotaMeter, UnitInput, AccountPicker, Segmented, WorkspaceFolder } from "./SettingsKit";
+import { PaneHead, Section, Row, SubDialog, Field, DialogButtons, Empty, QuotaMeter, UnitInput, AccountPicker, Segmented, WorkspaceFolder } from "./SettingsKit";
 import {
   CheckIcon, DatabaseIcon, ExportIcon, GlobeIcon, HardDriveIcon, ImportIcon, LogOutIcon, PenIcon,
   PlusIcon, ShieldIcon, Trash2Icon, UserIcon, UsersIcon,
@@ -283,10 +283,10 @@ export function InviteDialog({ name, accounts, exclude, cloud, busy, error, onSu
           <MenuSelect value={role} label={t("Role")} options={byCloud ? CLOUD_ROLE_OPTIONS : ROLE_OPTIONS} block onChange={setRole} />
         </Field>
         {error ? <div className="settingsPaneHint aiKeysError">{error}</div> : null}
-        <div className="reportModalBtns">
+        <DialogButtons footnote={who ? null : byCloud ? t("Type their Gamma Cloud username to continue.") : t("Pick an account to continue.")}>
           <button className="uiBtn" onClick={onClose}>{t("Cancel")}</button>
           <button className="uiBtn primary" disabled={busy || !who} onClick={submit}>{t("Invite")}</button>
-        </div>
+        </DialogButtons>
       </div>
     </SubDialog>
   );
@@ -306,10 +306,10 @@ export function NameDialog({ title, label, hint, initial, submitLabel, busy, err
           />
         </Field>
         {error ? <div className="settingsPaneHint aiKeysError">{error}</div> : null}
-        <div className="reportModalBtns">
+        <DialogButtons footnote={name.trim() ? null : t("Type a name to continue.")}>
           <button className="uiBtn" onClick={onClose}>{t("Cancel")}</button>
           <button className="uiBtn primary" disabled={busy || !name.trim()} onClick={() => onSubmit(name.trim())}>{submitLabel}</button>
-        </div>
+        </DialogButtons>
       </div>
     </SubDialog>
   );

@@ -408,8 +408,13 @@ Use the existing shared controls: `PictureChoices` for illustrated choices,
 `IconChoices` for a small exclusive set pictured as icon tiles (the share
 popover's audience, handwriting's "Draws with"), `Segmented` for two or three
 short words, `ToggleGroup` for independent chips.
-Editor dialogs accept a `draft` value for dismissal protection. See
-[ui-design.md](ui-design.md) for shared control styling.
+Editor dialogs are one layout: a `SubDialog` (its title row always carries
+the × unless `closeButton={false}`), `Field`s — the label on its own line,
+one hint line under it, the control below — and a `DialogButtons` footer
+whose `footnote` says what a disabled primary button waits for ("Fill in
+the server and its token to continue."). Editor dialogs accept a `draft`
+value for dismissal protection. See [ui-design.md](ui-design.md) for shared
+control styling.
 
 ## Verification
 

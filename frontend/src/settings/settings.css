@@ -291,11 +291,21 @@
 .setStepTitle { font-size: calc(14px * var(--ui-font-scale, 1)); font-weight: 600; color: var(--text-primary); }
 .setStepBody { display: flex; flex-direction: column; padding-left: 30px; }
 .setStepBody .oauthInstructions { margin-top: 0; }
-/* One labeled control: caption + hint above, the input below. */
-.setField { display: flex; flex-direction: column; gap: 3px; margin-bottom: 8px; }
+/* One labeled control: the label on its own line, one hint line, the input below. */
+.setField { display: flex; flex-direction: column; gap: 3px; margin-bottom: 10px; }
 .setField:last-child { margin-bottom: 0; }
-.setFieldLabel { font-size: calc(11.5px * var(--ui-font-scale, 1)); font-weight: 500; color: var(--text-secondary); }
+.setFieldLabel { font-size: calc(12.5px * var(--ui-font-scale, 1)); font-weight: 600; color: var(--text-primary); }
+.setFieldHint { display: block; margin: -1px 0 2px; font-weight: 400; }
+.setFieldHint::first-letter { text-transform: uppercase; }
 .setField .aiKeyInput { margin-bottom: 0; }
+/* DialogButtons' footnote: what the disabled primary button is waiting for. */
+.reportModalBtns .setFootnote {
+  flex: 1 1 160px;
+  align-self: center;
+  font-size: calc(11.5px * var(--ui-font-scale, 1));
+  color: var(--text-muted);
+  line-height: 1.4;
+}
 /* Number input with a fixed unit suffix (MB) hugging its right edge. */
 .unitInput { position: relative; display: block; }
 .unitInput .aiKeyInput { width: 100%; margin-bottom: 0; padding-right: 44px; }

@@ -1,6 +1,6 @@
 // The building blocks every settings pane is composed from — and nothing
 // else: PaneHead › Section › Row/Toggle for the panes themselves, SubDialog ›
-// Step/Field for the editor dialogs they open, plus the small shared controls
+// Step/Field/DialogButtons for the editor dialogs they open, plus the small shared controls
 // (Segmented, PictureChoices/IconChoices, ToggleGroup, Stepper, UnitInput,
 // CharSlider, PasswordInput, AccountPicker, LogBox, Stat/StatText, Empty,
 // WorkspaceFolder, QuotaMeter/PercentMeter/AllowanceMeter, KeyCaps/KeyBinding).
@@ -204,10 +204,11 @@ export function ToggleGroup({ selected, onToggle, options, disabled }) {
 
 // Draft-aware editor dialog opened from inside the settings surface — same shape as
 // the PDF export dialog (reportModal), stacked above the settings overlay.
-// Every editor dialog is composed the same way: SubDialog › .settingsForm ›
-// Step (numbered stages, for flows) or Field (label + hint + one control),
-// closed by a .reportModalBtns footer.
-export function SubDialog({ title, onClose, children, draft, className = "", closeButton = false }) {
+// Every editor dialog is composed the same way: a title row with its ×,
+// then SubDialog › .settingsForm › Step (numbered stages, for flows) or
+// Field (label, hint, one control), closed by a DialogButtons footer.
+// `closeButton={false}` drops the × (while a step must not be interrupted).
+export function SubDialog({ title, onClose, children, draft, className = "", closeButton = true }) {
   const key = React.useId();
   const [initial] = React.useState(() => JSON.stringify(draft));
   const dirty = draft !== undefined && JSON.stringify(draft) !== initial;
@@ -274,16 +275,27 @@ export function Step({ n, title, hint, children }) {
   );
 }
 
-// One labeled control: bold-ish caption, muted hint after it, control below.
+// One labeled control: the label on its own line, one muted hint line under
+// it, the control below.
 export function Field({ label, hint, children }) {
   return (
     <label className="setField">
-      <span className="setFieldLabel">
-        {label}
-        {hint ? <span className="settingDesc"> — {hint}</span> : null}
-      </span>
+      <span className="setFieldLabel">{label}</span>
+      {hint ? <span className="settingDesc setFieldHint">{hint}</span> : null}
       {children}
     </label>
+  );
+}
+
+// An editor dialog's footer: its buttons on the right and, while the
+// primary one is disabled for want of input, a `footnote` on the left
+// saying what is missing ("Fill in the server and its token to continue.").
+export function DialogButtons({ footnote, children }) {
+  return (
+    <div className="reportModalBtns">
+      {footnote ? <span className="setFootnote" role="status">{footnote}</span> : null}
+      {children}
+    </div>
   );
 }
 

@@ -2,7 +2,7 @@ import React from "react";
 import { API, apiJson } from "../shared/lib/utils";
 import { ActionMenu, MenuSelect } from "../shared/ui/Menus";
 import { ClockIcon, DatabaseIcon, HardDriveIcon, MoreIcon, PlusIcon, Trash2Icon } from "../shared/ui/Icons";
-import { Empty, Field, Section, Segmented, SubDialog, Toggle, ToggleGroup } from "./SettingsKit";
+import { DialogButtons, Empty, Field, Section, Segmented, SubDialog, Toggle, ToggleGroup } from "./SettingsKit";
 import { fmtWhen } from "./SettingsBackups";
 import "./backupTasks.css";
 import { T, t } from "../shared/i18n/i18n.js";
@@ -97,7 +97,7 @@ function TaskEditor({ initial, workspaces, onClose, onSaved }) {
   }
 
   return <SubDialog title={initial?.id ? t("Edit backup task") : t("Add backup task")} onClose={onClose}
-    draft={{ draft, preset, time, weekdays, monthday, unit, amount }} className="backupTaskDialog" closeButton>
+    draft={{ draft, preset, time, weekdays, monthday, unit, amount }} className="backupTaskDialog">
     <form onSubmit={submit}>
       <fieldset className="backupTaskFields" disabled={busy}>
         <Field label={t("Task name")}><input autoFocus className="aiKeyInput" required maxLength={80} value={draft.name}
@@ -150,12 +150,13 @@ function TaskEditor({ initial, workspaces, onClose, onSaved }) {
         <p className="settingsPaneHint">{t("Only this task’s snapshots expire, after a successful run. The newest snapshot is always kept. Deleting a task keeps its snapshots.")}</p>
         <Toggle icon={ClockIcon} label={t("Enable task")} checked={draft.enabled} onChange={(enabled) => patch({ enabled })} hint={t("Paused tasks can still be run manually.")} />
         {error ? <p className="aiKeysError" role="alert">{error}</p> : null}
-        <div className="reportModalBtns">
+        <DialogButtons footnote={!draft.name.trim() ? t("Name the task to continue.")
+          : draft.scope === "selected" && !draft.workspaces.length ? t("Pick at least one workspace to continue.") : null}>
           <button type="button" className="uiBtn" onClick={onClose}>{t("Cancel")}</button>
           <button type="submit" className="uiBtn primary" disabled={!preview || !draft.name.trim() || (draft.scope === "selected" && !draft.workspaces.length)}>
             {busy ? t("Saving…") : initial?.id ? t("Save changes") : t("Create task")}
           </button>
-        </div>
+        </DialogButtons>
       </fieldset>
     </form>
   </SubDialog>;
