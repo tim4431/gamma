@@ -544,11 +544,11 @@
 .settingsBody { display: flex; flex: 1; min-height: 0; }
 .settingsMobileBack { display: none; }
 .settingsSidebar { padding: 16px 10px; }
-.settingsNavBtn { flex-shrink: 0; }
-.settingsNavGroup { display: flex; align-items: center; margin-top: 12px; padding: 4px 12px; }
+.settingsNavBtn { flex-shrink: 0; line-height: 1.25; } /* one row height for Latin and CJK faces alike */
+.settingsNavGroup { display: flex; align-items: center; margin-top: 10px; padding: 4px 12px; line-height: 1.25; }
 .settingsNavGroup .uiTag { margin-left: 7px; }
 /* Help & diagnostics, pinned under the groups at the rail's bottom. */
-.settingsNavBottom { margin-top: auto; padding-top: 12px; display: flex; flex-direction: column; }
+.settingsNavBottom { margin-top: auto; padding-top: 8px; display: flex; flex-direction: column; }
 /* NavAccountCard: the account at the top of the rail. */
 .setNavAccount {
   display: flex; align-items: center; gap: 10px; flex-shrink: 0;
