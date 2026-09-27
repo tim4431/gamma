@@ -43,7 +43,13 @@ export async function guideScenarios(env) {
       await page.keyboard.press("ArrowRight");
       assertEq(await page.locator('[data-guide-overlay="add-demo"]').count(), 1, "keyboard cannot skip the automatic step");
       await page.waitForSelector(".guideCursor");
+      // The pointer waits below the field, faded, so the typed link stays
+      // readable; Enter shows as a key cap beside it.
+      await page.waitForSelector(".guideCursor.faded");
+      await until(async () => page.evaluate(() => new DOMMatrix(getComputedStyle(document.querySelector(".guideCursor")).transform).f
+        >= document.querySelector('[data-guide="add.urlInput"]').getBoundingClientRect().bottom), { what: "the typing pointer is off the text" });
       await until(async () => (await page.inputValue('[data-guide="add.urlInput"]')).endsWith(".pdf"), { what: "the demo typed the link" });
+      await page.locator(".guideModifier", { hasText: "Enter" }).waitFor();
       await page.waitForSelector('[data-guide-overlay="highlight-demo"] .guideCursor.dragging', { timeout: 30000 });
       assertEq(await page.locator('.guideCard .guideLink').textContent(), "Skip this demo", "other demos can be skipped one by one");
       const firstPointer = await page.locator(".guideCursor").getAttribute("style");

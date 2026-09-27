@@ -1,6 +1,9 @@
 import { anchorElement } from "./anchors.js";
 
 const sleep = (ms) => new Promise((resolve) => setTimeout(resolve, ms));
+// Once some text has rendered, how long the preferred passage may take to
+// turn up (its page still rendering) before any visible line will do.
+const PREFERRED_WAIT_MS = 2000;
 export const ABSTRACT_PASSAGE = "We propose a new simple network architecture, the Transformer, based solely on attention mechanisms, dispensing with recurrence and convolutions entirely";
 
 function abstractPassage() {
@@ -50,9 +53,17 @@ function visiblePassage() {
 export async function previewHighlight(live, cancelled, onCleanup) {
   const check = () => { if (cancelled()) throw new Error("cancelled"); };
   const deadline = performance.now() + 15000;
-  let passage;
-  while (!(passage = abstractPassage() || visiblePassage())) {
+  let passage = null;
+  let firstText = 0;
+  for (;;) {
     check();
+    passage = abstractPassage();
+    if (passage) break;
+    const fallback = visiblePassage();
+    if (fallback) {
+      firstText ||= performance.now();
+      if (performance.now() - firstText > PREFERRED_WAIT_MS) { passage = fallback; break; }
+    }
     // Scanned PDFs may have no selectable text. Hand over without blocking.
     if (performance.now() > deadline) return;
     await sleep(100);

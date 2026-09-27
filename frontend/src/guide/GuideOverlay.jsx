@@ -23,6 +23,7 @@ const MARGIN = 12;      // card distance from the viewport edge
 const CARD_W = 320;
 const BEAK_INSET = 23; // the beak's centre stays 16 px (plus its half) from a card corner
 const WAIT_MS = 3000;   // how long a missing anchor may take to mount
+const SLOW_MS = 20000;  // a demo's wait this long says it is still working
 
 // **bold**, *italic*, `code`, `{key:…}` key caps (guide/keys.js) and
 // blank-line paragraphs — enough for tour copy without pulling in the block
@@ -188,6 +189,14 @@ export default function GuideOverlay({ guide, keybindings }) {
   const [missing, setMissing] = useState(false);
   const cardRef = useRef(null);
   const [cardPos, setCardPos] = useState(null);
+  // A demo waiting on something slow (a paper downloading) says so.
+  const [slow, setSlow] = useState(false);
+  useEffect(() => {
+    setSlow(false);
+    if (!live?.status) return undefined;
+    const timer = setTimeout(() => setSlow(true), SLOW_MS);
+    return () => clearTimeout(timer);
+  }, [live?.status, live?.stepId]);
   // A demo step's spotlight follows what it acts on; otherwise the step's anchor.
   const anchor = (!inviting && live?.anchor) || step?.anchor || null;
 
@@ -314,7 +323,7 @@ export default function GuideOverlay({ guide, keybindings }) {
       ) : null}
       {!inviting && live?.cursor ? (
         <div
-          className={`guideCursor ${live.cursor.pressed ? "pressed" : ""} ${live.cursor.dragging ? "dragging" : ""}`}
+          className={`guideCursor ${live.cursor.pressed ? "pressed" : ""} ${live.cursor.dragging ? "dragging" : ""} ${live.cursor.faded ? "faded" : ""}`}
           style={{ transform: `translate(${live.cursor.x}px, ${live.cursor.y}px)` }}
           aria-hidden="true"
         >
@@ -362,6 +371,15 @@ export default function GuideOverlay({ guide, keybindings }) {
               </div>
               <div className="guideTitle">{renderInline(t(step.title), keybindings)}</div>
               {t(body) ? <div className="guideBody">{renderBody(t(body), keybindings)}</div> : null}
+              {busy && live?.status ? (
+                <div className="guideWait" role="status">
+                  <span className="guideSpinner" aria-hidden="true" />
+                  <span>
+                    {t(live.status)}
+                    {slow ? <span className="guideWaitSlow">{t("This can take a minute on a slow connection.")}</span> : null}
+                  </span>
+                </div>
+              ) : null}
               {busy && live?.progress ? (
                 <div className="guideDemoBar" aria-hidden="true"><i style={{ width: `${(100 * live.progress[0]) / Math.max(1, live.progress[1])}%` }} /></div>
               ) : null}

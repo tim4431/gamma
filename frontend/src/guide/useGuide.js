@@ -13,6 +13,7 @@ import { typeDemoNote } from "./typeDemoNote.js";
 import { canOffer, createGuideProgress, factsMatch, guideStorage, retiresOffer, triggerMatches } from "./triggers.js";
 import { createRunLog, madeItems, recordEvent } from "./finish.js";
 import { t, T } from "../shared/i18n/i18n.js";
+import { chordLabel } from "../shared/lib/hotkeys.js";
 
 const VARS_KEY = "gamma-guide-vars"; // {name: value} overriding a tour's vars (tests, demos)
 const ANCHOR_WAIT_MS = 4000;
@@ -58,6 +59,13 @@ function setInputValue(el, value) {
 }
 
 const centerOf = (el) => { const b = el.getBoundingClientRect(); return { x: b.left + b.width / 2, y: b.top + b.height / 2 }; };
+// Where the pointer waits while it types into a field: off the text, at the
+// field's left edge just below it — or above it when the field is at the
+// bottom of the window (the chat composer).
+const belowField = (el) => {
+  const b = el.getBoundingClientRect();
+  return { x: b.left + 4, y: b.bottom + 36 > innerHeight ? b.top - 32 : b.bottom + 6 };
+};
 
 // The demo vocabulary. Each action moves the spotlight (and the pointer) to
 // the element it acts on, waits a beat so the eye can follow, then acts.
@@ -84,9 +92,10 @@ async function runAction(action, vars, live, cancelled, seen, onCleanup, service
     if (action.preserveDraft) onCleanup(() => {
       if (el.isConnected && text.startsWith(el.value) && (original || el.value !== text)) setInputValue(el, original);
     });
-    live({ anchor: action.type, cursor: centerOf(el) });
+    live({ anchor: action.type, cursor: belowField(el) });
     await sleep(450); check();
     el.focus();
+    live({ anchor: action.type, cursor: { ...belowField(el), faded: true } }); // the typed text stays readable
     let value = "";
     for (const ch of text) {
       check();
@@ -95,14 +104,19 @@ async function runAction(action, vars, live, cancelled, seen, onCleanup, service
       await sleep(action.speed ?? 28);
     }
     await sleep(300);
+    live({ anchor: action.type, cursor: belowField(el) });
     return;
   }
   if (action.press) {
     const el = action.on ? await waitAnchor(action.on) : document.activeElement;
+    // The key shows as a cap beside the pointer while it is pressed.
+    const at = action.on ? belowField(el) : null;
+    if (at) live({ anchor: action.on, cursor: { ...at, modifier: chordLabel(action.press) } });
     const init = { key: action.press, code: action.press, bubbles: true, cancelable: true };
     el.dispatchEvent(new KeyboardEvent("keydown", init));
     el.dispatchEvent(new KeyboardEvent("keyup", init));
-    await sleep(200);
+    await sleep(at ? 600 : 200);
+    if (at) live({ anchor: action.on, cursor: at });
     return;
   }
   throw new Error(`unknown action ${JSON.stringify(action)}`);
@@ -384,9 +398,12 @@ export function useGuide({ enabled = true, suggest = true, scope = "", facts = {
       try {
         for (const action of step.do) {
           if (cancelled) return;
+          // A wait that may be long says what it waits for ("Fetching the
+          // paper…"), the card back beside the step's own anchor.
+          if (action.status) show({ anchor: null, cursor: null, status: action.status });
           await runAction(action, vars, show, () => cancelled, seen, (cleanup) => cleanups.push(cleanup), servicesRef.current);
           doneActions++;
-          show(last);
+          show({ ...last, status: null });
         }
         if (cancelled) return;
         log.current?.completed.add(step.id);

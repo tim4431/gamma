@@ -231,7 +231,9 @@ and colour anchors may repeat; the preview chooses a visible passage and the
 first colour. The user's own highlight is still what completes the next step.
 For the demo paper it prefers the abstract sentence beginning “We propose a
 new simple network architecture”, matching across text spans and line breaks
-and scrolling the passage into view. Other papers use a visible passage.
+and scrolling the passage into view; it keeps looking for it for 2 s after
+the first text renders (its page may still be rendering) before settling
+for any visible passage, as other papers do.
 
 The next demo, `{previewArea: true}`, uses the PDF's real Ctrl+pointer-drag
 handler to draw a rectangle, with a Ctrl badge beside the animated cursor.
@@ -241,13 +243,19 @@ The user then draws their own rectangle and chooses a colour. The
 step completes only for its matching type.
 
 - Actions: `{click: anchor}`, `{type: anchor, text, speed?}`,
-  `{press: "Enter", on?: anchor}`, `{waitFor: {event, match?}, timeout?}`,
-  `{wait: ms}`. Click and type move the spotlight and a drawn pointer to the
-  element first, pause a beat, then act; typing goes through the native value
-  setter plus an `input` event so React-controlled inputs see it; keys are
-  dispatched as `KeyboardEvent`s (the engine's own hotkeys ignore untrusted
-  events). Events that fire during the step are buffered, so a `waitFor` after
-  a fast action still catches its result.
+  `{press: "Enter", on?: anchor}`, `{waitFor: {event, match?}, timeout?,
+  status?}`, `{wait: ms}`. Click and type move the spotlight and a drawn
+  pointer to the element first, pause a beat, then act; typing goes through
+  the native value setter plus an `input` event so React-controlled inputs
+  see it, with the pointer parked at the field's left edge just below it
+  (above it at the bottom of the window) and faded, so the typed text stays
+  readable; keys are dispatched as `KeyboardEvent`s (the engine's own
+  hotkeys ignore untrusted events), and a press `on` a field shows the key
+  as a cap beside the pointer for 600 ms. Events that fire during the step
+  are buffered, so a `waitFor` after a fast action still catches its result.
+  A `waitFor` with a `status` shows it on the card with a spinner while it
+  waits ("Fetching the paper…" for the add demo's download); after 20 s the
+  card adds "This can take a minute on a slow connection."
 - `{name}` in typed text is filled from the tour's `vars`, which the
   localStorage key `gamma-guide-vars` overrides — how the browser suite points
   the demo at an uploaded PDF instead of the network.

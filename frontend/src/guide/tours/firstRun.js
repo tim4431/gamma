@@ -71,7 +71,7 @@ export default {
         { type: "add.urlInput", text: "{demoUrl}" },
         { wait: 500 },
         { press: "Enter", on: "add.urlInput" },
-        { waitFor: { event: "page.opened" } },
+        { waitFor: { event: "page.opened" }, status: T("Fetching the paper…") },
         { wait: 800 },
       ],
     },
