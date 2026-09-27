@@ -373,9 +373,9 @@ At the bottom of the rail:
 
 **Shared AI provider** (Server, `SettingsAi.jsx` `SharedAiProviderSettings`)
 lists the server's shared connections with the same rows and the same
-add/edit form as Connections (`ProviderRow`, `ProviderForm`; the form's
-state comes from `useProviderEditor` over `/api/admin/ai-providers`
-instead of App's aiKeys group). An entry is an API-key service or a ChatGPT
+add/edit form as Connections (`ProviderRow`, `ProviderForm`; both forms'
+state is `useProviderEditor`, here over `/api/admin/ai-providers`, for the
+account's list over `/api/ai/providers` in App). An entry is an API-key service or a ChatGPT
 subscription signed in with the account form's paste-the-callback steps
 (`/api/admin/ai-providers/chatgpt/*`); the dialog is titled "Connect a
 shared AI service" and tests a new entry once it is saved. Each row has

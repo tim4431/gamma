@@ -1,10 +1,11 @@
 // Settings → AI › Connections: the user's AI credential list (OpenAI-platform style)
-// and the add/edit-key wizard. All state and handlers of the account's own
-// list live in App.jsx (the aiKeys* group) — these components only render
-// it; the server's shared entries appear there as read-only rows.
+// and the add/edit-key wizard. The account's own list, its Test and Usage
+// results live in App.jsx (the aiKeys* group), its connect dialog in
+// useProviderEditor below — these components only render them; the
+// server's shared entries appear there as read-only rows.
 // SharedAiProviderSettings is Settings → Server's list of those shared
-// entries (/api/admin/ai-providers), the same rows and the same form over
-// its own state (useProviderEditor).
+// entries (/api/admin/ai-providers), the same rows and the same form through
+// the same hook over its own state.
 import React from "react";
 import { API, apiJson } from "../shared/lib/utils";
 import { friendlyApiError, parseFolderTags } from "../library/libraryUtils";
@@ -108,14 +109,17 @@ function ProviderUsage({ usage }) {
 // the usage windows, then the caller's buttons. `radio` is the active-key
 // picker of the account's own list; `onFix` opens the entry's editor from
 // a failed test. A failed test reads as the chat's error card does for its
-// kind (chat/chatErrors.js), the provider's own words on hover.
+// kind (chat/chatErrors.js), the provider's own words on hover. Only a row
+// with a radio is a <label>: without one, the label's control would be its
+// first button, and a click anywhere on the row would press it (Test).
 function ProviderRow({ provider, protocol, oauth, active = false, radio = null, test, usage, onFix, children }) {
+  const Frame = radio ? "label" : "div";
   const models = parseFolderTags(provider.models);
   const failed = test && !test.busy && !test.ok && test.kind
     ? failureCopy(test.kind, { provider: provider.label || provider.protocol, auth: oauth ? "oauth" : "key" }) : null;
   const fix = failed && onFix && ["key", "signin", "connection"].includes(failed.fix) ? failed.fix : "";
   return (
-    <label className={`aiProvRow ${radio ? "aiProvSelectable" : ""} ${active ? "active" : ""}`}>
+    <Frame className={`aiProvRow ${radio ? "aiProvSelectable" : ""} ${active ? "active" : ""}`}>
       {radio}
       <span className={`aiProvAvatar ${active ? "active" : ""}`}>
         {oauth ? <SparklesIcon size={16} /> : <KeyIcon size={16} />}
@@ -166,34 +170,44 @@ function ProviderRow({ provider, protocol, oauth, active = false, radio = null, 
         {usage ? <ProviderUsage usage={usage} /> : null}
       </span>
       {children ? <span className="aiProvActions">{children}</span> : null}
-    </label>
+    </Frame>
   );
 }
 
-// The add/edit-key form's state for a provider list App does not hold —
-// Settings → Server's shared entries: ProviderForm's `value` contract over
-// the REST collection `base` (POST adds, PUT/DELETE `${base}/<id>`, each
-// answering with the list; a ChatGPT sign-in goes through
-// `${base}/chatgpt/start` + `complete`, the account form's paste-the-callback
-// flow). The model picker lists live through /api/ai/model-catalog, which
-// takes a saved shared entry's id from an admin.
-// `onConnected(entry)` hears a connection this form just made, once it is
-// saved with its models — the Server section tests it right away.
-function useProviderEditor({ info, setInfo, base, onSaved, onConnected }) {
+// The connect dialog's state, one path for both provider lists: the
+// account's own (App: `base` /api/ai/providers, sign-in at
+// /api/ai/oauth/chatgpt) and Settings → Server's shared entries
+// (/api/admin/ai-providers, sign-in at `${base}/chatgpt`). ProviderForm's
+// `value` contract over the REST collection `base` (POST adds, PUT/DELETE
+// `${base}/<id>`, each answering with the list; a ChatGPT sign-in goes
+// through `${signIn}/start` + `complete`, the paste-the-callback flow). The
+// model picker lists live through /api/ai/model-catalog, which takes a saved
+// entry's id (a shared one from an admin).
+// `onSaved()` hears every change `run` saved (the account refreshes its
+// model list and login check, the Server section says so);
+// `onConnected(entry, form)` hears a connection this dialog just made, once
+// it is saved with its models — both lists test it right away.
+export function useProviderEditor({ info, setInfo, base, signIn = `${base}/chatgpt`, onSaved, onConnected }) {
   const [form, setForm] = React.useState(null);
   const [busy, setBusy] = React.useState(false);
   const [error, setError] = React.useState("");
   const [catalog, setCatalog] = React.useState(null); // null | {loading} | {models} | {error}
-  const [customModel, setCustomModel] = React.useState("");
+  const [customModel, setCustomModel] = React.useState(""); // free-form entry next to the picker
   const catalogRequest = React.useRef(0);
   const protocolOf = (id) => info?.protocols?.find((p) => p.id === id);
+  // Sign-in protocols (ChatGPT OAuth) have no key/base-URL fields — the
+  // server marks them with auth: "oauth" in the protocols payload.
   const isOauth = (id) => protocolOf(id)?.auth === "oauth";
   const stored = form?.id ? info?.providers?.find((p) => p.id === form.id) : null;
-  const target = JSON.stringify([form?.id, form?.protocol, form?.api_key, form?.base_url]);
+  // What the live list is for; `oauthConnectedAt` re-lists after a
+  // reconnect that keeps the entry's id.
+  const target = JSON.stringify([form?.id, form?.protocol, form?.api_key, form?.base_url, form?.oauthConnectedAt]);
   const targetRef = React.useRef(target);
   targetRef.current = target;
   const formModels = parseFolderTags(form?.models);
 
+  // API protocols list live from the provider (the typed key, or the stored
+  // one when editing); a ChatGPT sign-in lists through the entry's token.
   async function loadModelCatalog() {
     if (!form) return;
     const request = ++catalogRequest.current;
@@ -213,7 +227,7 @@ function useProviderEditor({ info, setInfo, base, onSaved, onConnected }) {
   // A sign-in that isn't connected yet can't list models: its list comes
   // from the signed-in account, so the fetch waits for Connect.
   const oauthPending = !!form && isOauth(form.protocol) && !stored?.oauth_connected;
-  // Debounced like the account's own form; a stale answer is dropped.
+  // Credential edits are debounced, and a stale answer is dropped.
   React.useEffect(() => {
     setCatalog(null);
     const ready = form && (isOauth(form.protocol) ? stored?.oauth_connected : form.api_key?.trim() || stored?.key_hint);
@@ -224,12 +238,12 @@ function useProviderEditor({ info, setInfo, base, onSaved, onConnected }) {
   React.useEffect(() => { setCustomModel(""); }, [form?.id, form?.protocol]);
 
   // "Open ChatGPT sign-in": the OAuth page in a new tab. Its redirect
-  // (localhost:1455) fails to load — the admin pastes that URL back into the
+  // (localhost:1455) fails to load — the user pastes that URL back into the
   // form, and Connect completes the exchange server-side.
   async function startChatGPTAuth() {
     setError("");
     try {
-      const d = await apiJson(`${base}/chatgpt/start`, { method: "POST" });
+      const d = await apiJson(`${signIn}/start`, { method: "POST" });
       setForm((f) => (f ? { ...f, oauthState: d.state } : f));
       window.open(d.auth_url, "_blank", "noopener");
     } catch (err) {
@@ -237,50 +251,84 @@ function useProviderEditor({ info, setInfo, base, onSaved, onConnected }) {
     }
   }
 
-  async function submit() {
-    if (!form) return;
-    const oauth = isOauth(form.protocol);
-    const callback = oauth ? (form.oauthCallback || "").trim() : "";
-    if (oauth && !callback && !form.id) { setError(t("Sign in with ChatGPT and paste the callback URL to connect.")); return; }
-    if (callback && !form.oauthState) { setError(t("Hit “Open ChatGPT sign-in” first, then paste the URL it ends on.")); return; }
-    if (!oauth && !form.id && !form.api_key.trim()) { setError(t("An API key is required.")); return; }
+  // One change to the list (a save here, a delete from the row): busy while
+  // it runs, the list it answers with kept, the form closed on request.
+  async function run(call, closeForm = false) {
     setBusy(true);
     setError("");
     try {
-      if (callback) {
-        // Connect (or reconnect): the form stays open on the entry so its
-        // models can be picked from the account's live list.
-        const next = await apiJson(`${base}/chatgpt/complete`, {
-          method: "POST", headers: { "Content-Type": "application/json" },
-          body: JSON.stringify({ state: form.oauthState, callback, provider_id: form.id || "",
-            name: form.name.trim(), models: form.models.trim() }),
-        });
-        setInfo(next);
-        const connected = next.providers.find((p) => form.id ? p.id === form.id
-          : !(info?.providers || []).some((old) => old.id === p.id));
-        setForm((current) => current?.oauthState === form.oauthState && connected
-          ? { ...current, id: connected.id, models: connected.models || "", oauthState: "", oauthCallback: "", fresh: current.fresh || !form.id } : current);
-        onSaved?.();
-        return;
-      }
-      const next = await apiJson(`${base}${form.id ? `/${encodeURIComponent(form.id)}` : ""}`, {
-        method: form.id ? "PUT" : "POST", headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ protocol: form.protocol, name: form.name.trim(), base_url: form.base_url.trim(),
-          models: form.models.trim(), test_model: (form.test_model || "").trim(),
-          ...(form.api_key.trim() ? { api_key: form.api_key.trim() } : {}) }),
-      });
-      setInfo(next);
-      setForm(null);
+      setInfo(await call());
+      if (closeForm) setForm(null);
       onSaved?.();
-      // Made in this dialog (added, or signed in and now saved): test it.
-      const made = form.id ? (form.fresh ? next.providers.find((p) => p.id === form.id) : null)
-        : next.providers.find((p) => !(info?.providers || []).some((old) => old.id === p.id));
-      if (made) onConnected?.(made);
     } catch (err) {
       setError(err.message);
     } finally {
       setBusy(false);
     }
+  }
+
+  async function submit() {
+    const f = form;
+    if (!f) return;
+    const oauth = isOauth(f.protocol);
+    const callback = oauth ? (f.oauthCallback || "").trim() : "";
+    if (oauth && !callback && !f.id) { setError(t("Sign in with ChatGPT and paste the callback URL to connect.")); return; }
+    if (callback && !f.oauthState) { setError(t("Hit “Open ChatGPT sign-in” first, then paste the URL it ends on.")); return; }
+    if (!oauth && !f.id && !f.api_key.trim()) { setError(t("An API key is required.")); return; }
+    // A pasted callback completes the sign-in (or a reconnect); otherwise a
+    // plain field edit (name/models — plus key/base URL for key entries).
+    const req = callback
+      ? { url: `${signIn}/complete`, method: "POST",
+          body: { state: f.oauthState, callback, provider_id: f.id || "", name: f.name.trim(), models: f.models.trim() } }
+      : { url: `${base}${f.id ? `/${encodeURIComponent(f.id)}` : ""}`, method: f.id ? "PUT" : "POST",
+          body: { protocol: f.protocol, name: f.name.trim(), base_url: f.base_url.trim(), models: f.models.trim(),
+            test_model: (f.test_model || "").trim(), ...(f.api_key.trim() ? { api_key: f.api_key.trim() } : {}) } };
+    // A connection made in this dialog (`fresh` survives the sign-in step,
+    // which keeps the form open on the new entry) is handed on once saved.
+    let made = null;
+    await run(async () => {
+      const next = await apiJson(req.url, {
+        method: req.method, headers: { "Content-Type": "application/json" }, body: JSON.stringify(req.body),
+      });
+      const fresh = next.providers.find((p) => !(info?.providers || []).some((old) => old.id === p.id));
+      if (callback) {
+        // Connected: the form stays open on the entry so its models can be
+        // picked from the account's live list — unless the chat's setup card
+        // opened it and the sign-in already brought models.
+        const connected = f.id ? next.providers.find((p) => p.id === f.id) : fresh;
+        if (connected && f.fromChat && parseFolderTags(connected.models).length) made = connected;
+        else if (connected) {
+          setForm((current) => current?.oauthState === f.oauthState
+            ? { ...current, id: connected.id, models: connected.models || "", oauthState: "", oauthCallback: "",
+                oauthConnectedAt: Date.now(), fresh: current.fresh || !f.id }
+            : current);
+        }
+      } else {
+        made = f.id ? (f.fresh ? next.providers.find((p) => p.id === f.id) : null) : fresh;
+      }
+      return next;
+    }, !callback);
+    if (made) onConnected?.(made, f);
+  }
+
+  // A new connection's form, set to `service`: a protocol id, or "other"
+  // (the first named service, else a custom endpoint). Without one it starts
+  // on the first tile, the subscription sign-in. `list` stands in for `info`
+  // when the form opens right as the list lands; `fromChat` marks the chat's
+  // setup card as the opener.
+  function startAdd(service = "", { list = info, fromChat = false } = {}) {
+    setError("");
+    const protocols = list?.protocols || [];
+    const preset = service === "other" ? list?.services?.[0] : null;
+    const protocol = preset?.protocol
+      || (service === "other" ? protocols.find((p) => p.auth !== "oauth")?.id : service)
+      || "";
+    setForm({
+      id: "", protocol: protocols.some((p) => p.id === protocol) ? protocol : (protocols.find((p) => p.auth === "oauth") || protocols[0])?.id || "chatgpt",
+      name: "", api_key: "", base_url: preset?.base_url || "", models: "", test_model: "",
+      ...(service === "other" && !preset ? { custom: true } : {}),
+      ...(fromChat ? { fromChat: true } : {}),
+    });
   }
 
   return {
@@ -307,7 +355,8 @@ function useProviderEditor({ info, setInfo, base, onSaved, onConnected }) {
     }),
     removeModel: (m) => setForm((f) => f ? { ...f, models: parseFolderTags(f.models).filter((x) => x !== m).join(", ") } : f),
     submitAiProvider: submit,
-    startAdd: () => { setError(""); setForm({ id: "", protocol: "openai", name: "", api_key: "", base_url: "", models: "", test_model: "" }); },
+    run,
+    startAdd,
     startEdit: (p) => { setError(""); setForm({ id: p.id, protocol: p.protocol, name: p.name || "", api_key: "", base_url: p.base_url || "", models: p.models || "", test_model: p.test_model || "" }); },
     close: () => { setForm(null); setError(""); },
   };
@@ -384,7 +433,7 @@ export function SharedAiProviderSettings({ setStatus, confirm }) {
   const providers = info?.providers || [];
   return <>
     <Section title={t("Shared AI provider")} action={info ? (
-      <button className="uiBtn sm" onClick={editor.startAdd}>{t("+ Add provider")}</button>
+      <button className="uiBtn sm" onClick={() => editor.startAdd("openai")}>{t("+ Add provider")}</button>
     ) : null}>
       {!info && !loadError ? <p className="setNotice">{t("Loading…")}</p> : null}
       {info && !providers.length ? <Empty icon={KeyIcon}>{t("No shared connection. Each account uses its own keys.")}</Empty> : null}
@@ -798,7 +847,6 @@ function AiUsageSection({ confirm, setStatus, canReset = true }) {
 }
 
 export function AiSettings({ value, confirm, setStatus }) {
-  const closeKeyForm = () => { value.setAiKeysForm(null); value.setAiKeysError(""); };
   const activeKeyId = value.aiKeysInfo?.providers.some((item) => item.id === value.aiProvider)
     ? value.aiProvider
     : value.aiKeysInfo?.providers[0]?.id;
@@ -815,7 +863,7 @@ export function AiSettings({ value, confirm, setStatus }) {
             <Empty icon={KeyIcon}>
               {canEdit ? <>
                 <span>{t("No AI connection yet.")}</span>
-                <button className="uiBtn primary" onClick={value.startAddAiProvider}>{t("+ Add provider")}</button>
+                <button className="uiBtn primary" onClick={() => value.startAdd()}>{t("+ Add provider")}</button>
               </> : t("Guest accounts cannot store API keys. Ask the admin for an account.")}
             </Empty>
           ) : null}
@@ -829,7 +877,7 @@ export function AiSettings({ value, confirm, setStatus }) {
             return (
               <ProviderRow key={provider.id} provider={provider} active={active}
                 protocol={value.aiProtocolOf(provider.protocol)} oauth={value.isOauthProto(provider.protocol)}
-                test={test} usage={usage} onFix={own ? () => value.startEditAiProvider(provider) : null}
+                test={test} usage={usage} onFix={own ? () => value.startEdit(provider) : null}
                 radio={providers.length > 1 ? (
                   <input
                     type="radio"
@@ -852,7 +900,7 @@ export function AiSettings({ value, confirm, setStatus }) {
                     {t("Usage")}
                   </button>
                   <button className="uiBtn sm" disabled={value.aiKeysBusy}
-                    title={t("Edit connection and available models")} onClick={() => value.startEditAiProvider(provider)}>{t("Manage")}</button>
+                    title={t("Edit connection and available models")} onClick={() => value.startEdit(provider)}>{t("Manage")}</button>
                   <button className="uiBtn sm iconSq danger" disabled={value.aiKeysBusy} title={t("Remove this key")}
                     aria-label={t("Remove key")} onClick={() => value.deleteAiProvider(provider)}>
                     <Trash2Icon size={16} />
@@ -863,7 +911,7 @@ export function AiSettings({ value, confirm, setStatus }) {
           })}
           {canEdit && providers.length ? (
             <div className="reportModalBtns settingsAlignStart">
-              <button className="uiBtn primary" onClick={value.startAddAiProvider}>{t("+ Add provider")}</button>
+              <button className="uiBtn primary" onClick={() => value.startAdd()}>{t("+ Add provider")}</button>
             </div>
           ) : null}
           {canEdit && providers.length ? (
@@ -887,9 +935,9 @@ export function AiSettings({ value, confirm, setStatus }) {
           {value.aiKeysForm ? (
             <SubDialog draft={value.aiKeysForm}
               title={value.aiKeysForm.id ? t("Edit key") : t("Connect an AI service")}
-              onClose={closeKeyForm}
+              onClose={value.close}
             >
-              <ProviderForm value={value} onCancel={closeKeyForm} />
+              <ProviderForm value={value} onCancel={value.close} />
             </SubDialog>
           ) : null}
         </>

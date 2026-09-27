@@ -254,6 +254,33 @@ export async function settingsScenarios(env) {
     }
   });
 
+  await step("settings: a failed Test says what failed in the chat error card's words, and its fix opens the connection", async () => {
+    const { ctx, page } = await setup();
+    try {
+      // The probe's answers are faked; their kinds are the backend's (test_ai_failures.py).
+      let probe = { ok: false, auth: true, kind: "auth", model: "test-model-a", error: "upstream 401: Incorrect API key provided" };
+      await page.route("**/api/ai/providers/*/test", (route) => route.fulfill({ json: probe }));
+      await openSettings(page);
+      await nav(page, "Connections").click();
+      const conn = page.locator(".settingsPane .aiProvRow").filter({ hasText: "Test connection" });
+      await conn.getByRole("button", { name: "Test", exact: true }).click();
+      const result = conn.locator(`[title="${probe.error}"]`);
+      await result.waitFor();
+      assertEq(await result.innerText(), "✗ Test connection rejected the API key — Update key");
+      await result.getByRole("button", { name: "Update key", exact: true }).click();
+      const edit = page.getByRole("dialog", { name: "Edit key", exact: true });
+      await edit.waitFor();
+      await edit.getByRole("button", { name: "Cancel", exact: true }).click();
+      await until(() => edit.count().then((n) => n === 0));
+      probe = { ok: false, auth: false, kind: "no_model", model: "", error: "no model picked — edit the connection and choose one" };
+      await conn.getByRole("button", { name: "Test", exact: true }).click();
+      const noModel = conn.locator(`[title="${probe.error}"]`);
+      await noModel.waitFor();
+      assertEq(await noModel.innerText(), "✗ No model picked for Test connection — Edit connection");
+      assertNoProblems(page);
+    } finally { await ctx.close(); }
+  });
+
   await step("settings: manual OAuth connection automatically fetches models", async () => {
     const { ctx, page } = await setup();
     try {

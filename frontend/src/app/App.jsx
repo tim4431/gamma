@@ -96,6 +96,7 @@ import { ShareAccessPill } from "../sharing/ShareAccess";
 import { BrandMark } from "../shared/ui/BrandMark";
 import { cleanLinkName, loadLinkName, saveLinkName, LINK_NAME_MAX } from "../collaboration/linkName";
 import SettingsDialog from "../settings/SettingsDialog";
+import { useProviderEditor } from "../settings/SettingsAi";
 import ReportProblem from "../support/ReportProblem";
 import { useGuide } from "../guide/useGuide";
 import GuideOverlay from "../guide/GuideOverlay";
@@ -2604,9 +2605,6 @@ function LibraryApp({ publicPage = null, initialServerConfig = null }) {
   // only ever returns a masked hint, so key fields here start empty and an
   // empty key on edit means "keep the stored one".
   const [aiKeysInfo, setAiKeysInfo] = useState(null); // masked GET /ai/settings: {providers: [], protocols: []}
-  const [aiKeysForm, setAiKeysForm] = useState(null); // null | {id: ""=add, protocol, name, api_key, base_url, models}
-  const [aiKeysBusy, setAiKeysBusy] = useState(false);
-  const [aiKeysError, setAiKeysError] = useState("");
   // Per-entry results of the list's Test button (a tiny live completion):
   // id -> {busy} | {ok, model, latency_ms} | {ok: false, error}
   const [aiKeyTests, setAiKeyTests] = useState({});
@@ -2618,6 +2616,17 @@ function LibraryApp({ publicPage = null, initialServerConfig = null }) {
   // warning strip (the chat error card's headline for the failure's kind)
   // until fixed or dismissed.
   const [aiHealth, setAiHealth] = useState(null);
+  // The connect dialog (settings/SettingsAi.jsx useProviderEditor, the path
+  // Settings → Server's shared entries take too). A saved change refreshes
+  // the model switchers and, while the chat shows the login check's warning
+  // strip, re-runs the check (the edit may have fixed or removed its
+  // credential); a connection the dialog made is tested at once.
+  const aiEditor = useProviderEditor({
+    info: aiKeysInfo, setInfo: setAiKeysInfo,
+    base: `${API}/ai/providers`, signIn: `${API}/ai/oauth/chatgpt`,
+    onSaved: () => { refreshAiModels(); if (aiHealth) checkAiHealth(); },
+    onConnected: (entry, form) => finishNewConnection(entry, !!form.fromChat),
+  });
 
   // The settings page (account popover → Settings…): two-column modal,
   // categories on the left, the selected pane on the right.
@@ -2742,9 +2751,8 @@ function LibraryApp({ publicPage = null, initialServerConfig = null }) {
     : chatModel;
 
   async function loadAiKeys() {
-    setAiKeysError("");
+    aiEditor.close();
     setAiKeysInfo(null);
-    setAiKeysForm(null);
     setAiKeyTests({});
     setAiKeyUsage({});
     try {
@@ -2765,7 +2773,7 @@ function LibraryApp({ publicPage = null, initialServerConfig = null }) {
         .filter((provider) => oauthProtocols.has(provider.protocol))
         .forEach((provider) => queryAiProviderUsage(provider));
     } catch (err) {
-      setAiKeysError(err.message);
+      aiEditor.setAiKeysError(err.message);
     }
   }
 
@@ -2843,41 +2851,16 @@ function LibraryApp({ publicPage = null, initialServerConfig = null }) {
     const target = service ? { service } : entry ? { entry } : null;
     if (AI_SETTINGS_PANES.includes(settingsOpen) && aiKeysInfo) openAiForm(target, aiKeysInfo);
     else pendingAiFormRef.current = target;
-    setSettingsOpen("ai");
-    setOpenPopover(null);
+    openSettingsPane("ai");
   }
   function openAiForm(target, info) {
-    if (target?.service) startAddAiProvider(target.service, info, { fromChat: true });
+    if (target?.service) aiEditor.startAdd(target.service, { list: info, fromChat: true });
     const own = target?.entry && info.providers?.find((p) => p.id === target.entry && !p.shared);
-    if (own) startEditAiProvider(own);
+    if (own) aiEditor.startEdit(own);
   }
 
-  const aiProtocolOf = (id) => aiKeysInfo?.protocols?.find((p) => p.id === id);
-  // Sign-in protocols (ChatGPT OAuth) have no key/base-URL fields — the
-  // backend marks them with auth: "oauth" in the protocols payload.
-  const isOauthProto = (id) => aiProtocolOf(id)?.auth === "oauth";
   // The model switchers everywhere feed off /ai/models — refresh after edits.
   const refreshAiModels = () => apiJson(`${API}/ai/models`).then(setAiInfo).catch(() => {});
-
-  // A new connection's form, set to `service`: a protocol id, or "other"
-  // (the first named service, else a custom endpoint). Without one it starts
-  // on the first tile, the subscription sign-in.
-  // `fromChat`: opened from the chat's setup card — once connected, Settings
-  // closes and the chat's message box takes the focus.
-  function startAddAiProvider(service, info = aiKeysInfo, { fromChat = false } = {}) {
-    setAiKeysError("");
-    const protocols = info?.protocols || [];
-    const preset = service === "other" ? info?.services?.[0] : null;
-    const protocol = preset?.protocol
-      || (service === "other" ? protocols.find((p) => p.auth !== "oauth")?.id : service)
-      || "";
-    setAiKeysForm({
-      id: "", protocol: protocols.some((p) => p.id === protocol) ? protocol : (protocols.find((p) => p.auth === "oauth") || protocols[0])?.id || "chatgpt",
-      name: "", api_key: "", base_url: preset?.base_url || "", models: "", test_model: "",
-      ...(service === "other" && !preset ? { custom: true } : {}),
-      ...(fromChat ? { fromChat: true } : {}),
-    });
-  }
 
   // A connection the dialog just made: test it right away, and when the
   // dialog came from the chat's setup card go back to the chat, ready to ask.
@@ -2886,134 +2869,11 @@ function LibraryApp({ publicPage = null, initialServerConfig = null }) {
     testAiProvider(entry);
     if (!fromChat) return;
     const model = parseFolderTags(entry.models)[0];
-    setAiKeysForm(null);
+    aiEditor.close();
     setSettingsOpen(null);
     setStatus(model ? t("Connected — {model} ready", { model }) : t("Connected"));
     setChatHidden(false);
     setChatFocusSignal((n) => n + 1);
-  }
-
-  function startEditAiProvider(p) {
-    setAiKeysError("");
-    setAiKeysForm({ id: p.id, protocol: p.protocol, name: p.name || "", api_key: "", base_url: p.base_url || "", models: p.models || "", test_model: p.test_model || "" });
-  }
-
-  // Model picker for the form: API protocols are listed live from the
-  // provider's /v1/models (typed key, or the stored one when editing);
-  // ChatGPT (OAuth) is listed live from the codex backend via the entry's
-  // sign-in token (nothing to list before connecting).
-  const [aiModelCatalog, setAiModelCatalog] = useState(null); // null | {loading} | {models} | {error}
-  const catalogRequest = useRef(0);
-  const catalogTarget = JSON.stringify([aiKeysForm?.id, aiKeysForm?.protocol, aiKeysForm?.api_key, aiKeysForm?.base_url, aiKeysForm?.oauthConnectedAt]);
-  const catalogTargetRef = useRef(catalogTarget);
-  catalogTargetRef.current = catalogTarget;
-  async function loadModelCatalog() {
-    const f = aiKeysForm;
-    if (!f) return;
-    const request = ++catalogRequest.current;
-    const target = catalogTarget;
-    setAiModelCatalog({ loading: true });
-    try {
-      const d = await apiJson(`${API}/ai/model-catalog`, {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({
-          provider_id: f.id || "", protocol: f.protocol,
-          api_key: f.api_key.trim(), base_url: f.base_url.trim(),
-        }),
-      });
-      if (request === catalogRequest.current && target === catalogTargetRef.current) setAiModelCatalog({ models: d.models || [] });
-    } catch (err) {
-      if (request === catalogRequest.current && target === catalogTargetRef.current) setAiModelCatalog({ error: friendlyApiError(err) });
-    }
-  }
-  function addCatalogModel(m) {
-    if (!m) return;
-    setAiKeysForm((f) => {
-      if (!f) return f;
-      const cur = parseFolderTags(f.models);
-      return cur.includes(m) ? f : { ...f, models: [...cur, m].join(", ") };
-    });
-  }
-  function removeModel(m) {
-    setAiKeysForm((f) => f ? { ...f, models: parseFolderTags(f.models).filter((x) => x !== m).join(", ") } : f);
-  }
-  const [customModel, setCustomModel] = useState(""); // free-form entry next to the picker
-  const formModels = parseFolderTags(aiKeysForm?.models);
-  const availModels = (aiModelCatalog?.models || []).filter((m) => !formModels.includes(m));
-  // A ChatGPT entry that isn't signed in yet can't list models — its list
-  // comes from the connected account, so the fetch waits for Connect.
-  const formStoredEntry = aiKeysForm?.id ? aiKeysInfo?.providers?.find((p) => p.id === aiKeysForm.id) : null;
-  const formOauthPending = !!aiKeysForm && isOauthProto(aiKeysForm.protocol) && !formStoredEntry?.oauth_connected;
-
-  // Debounce credential edits, and discard responses for an older endpoint/key.
-  useEffect(() => {
-    setAiModelCatalog(null);
-    const f = aiKeysForm;
-    if (!f) return;
-    const stored = f.id ? aiKeysInfo?.providers?.find((p) => p.id === f.id) : null;
-    const ready = isOauthProto(f.protocol) ? stored?.oauth_connected : f.api_key?.trim() || stored?.key_hint;
-    if (!ready) return;
-    const timer = setTimeout(loadModelCatalog, 500);
-    return () => { clearTimeout(timer); catalogRequest.current++; };
-  }, [catalogTarget, formStoredEntry?.oauth_connected]);
-  useEffect(() => { setCustomModel(""); }, [aiKeysForm?.id, aiKeysForm?.protocol]);
-
-  // "Sign in with ChatGPT": opens the OAuth page in a new tab. Its redirect
-  // (localhost:1455) fails to load — the user pastes that URL back into the
-  // form and submit completes the exchange server-side.
-  async function startChatGPTAuth() {
-    setAiKeysError("");
-    try {
-      const d = await apiJson(`${API}/ai/oauth/chatgpt/start`, { method: "POST" });
-      setAiKeysForm((f) => (f ? { ...f, oauthState: d.state } : f));
-      window.open(d.auth_url, "_blank", "noopener");
-    } catch (err) {
-      setAiKeysError(err.message);
-    }
-  }
-
-  async function submitAiProvider() {
-    const f = aiKeysForm;
-    if (!f) return;
-    const oauth = isOauthProto(f.protocol);
-    const oauthCb = oauth ? (f.oauthCallback || "").trim() : "";
-    if (oauth && !oauthCb && !f.id) { setAiKeysError(t("Sign in with ChatGPT and paste the callback URL to connect.")); return; }
-    if (oauthCb && !f.oauthState) { setAiKeysError(t("Hit “Open ChatGPT sign-in” first, then paste the URL it ends on.")); return; }
-    if (!oauth && !f.id && !f.api_key.trim()) { setAiKeysError(t("An API key is required.")); return; }
-    // Complete the OAuth exchange when a callback was pasted; otherwise a
-    // plain field edit (name/models — plus key/base URL for key entries).
-    const req = oauthCb
-      ? { url: `${API}/ai/oauth/chatgpt/complete`, method: "POST",
-          body: { state: f.oauthState, callback: oauthCb, provider_id: f.id || "",
-                  name: f.name.trim(), models: f.models.trim() } }
-      : { url: `${API}/ai/providers${f.id ? `/${f.id}` : ""}`, method: f.id ? "PUT" : "POST",
-          body: { protocol: f.protocol, name: f.name.trim(), base_url: f.base_url.trim(), models: f.models.trim(),
-                  test_model: (f.test_model || "").trim(),
-                  ...(f.api_key.trim() ? { api_key: f.api_key.trim() } : {}) } };
-    // A connection made in this dialog (`fresh` survives the sign-in step,
-    // which keeps the form open on the new entry) is tested once saved.
-    let made = null;
-    await runAiKeysRequest(async () => {
-      const info = await apiJson(req.url, {
-        method: req.method,
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify(req.body),
-      });
-      const fresh = info.providers.find((p) => !aiKeysInfo.providers.some((old) => old.id === p.id));
-      if (oauthCb) {
-        const connected = f.id ? info.providers.find((p) => p.id === f.id) : fresh;
-        if (connected && f.fromChat && parseFolderTags(connected.models).length) made = connected;
-        else if (connected) {
-          setAiKeysForm((current) => current?.oauthState === f.oauthState
-            ? { ...current, id: connected.id, models: connected.models || "", oauthState: "", oauthCallback: "", oauthConnectedAt: Date.now(), fresh: current.fresh || !f.id } : current);
-        }
-      } else {
-        made = f.id ? (f.fresh ? info.providers.find((p) => p.id === f.id) : null) : fresh;
-      }
-      return info;
-    }, !oauthCb);
-    if (made) finishNewConnection(made, !!f.fromChat);
   }
 
   function deleteAiProvider(p) {
@@ -3026,28 +2886,10 @@ function LibraryApp({ publicPage = null, initialServerConfig = null }) {
       onConfirm: async () => {
         // Close a form that edits this entry — saving it would 404 ("provider
         // not found") — and forget it as the active key.
-        await runAiKeysRequest(() => apiJson(`${API}/ai/providers/${p.id}`, { method: "DELETE" }), aiKeysForm?.id === p.id);
+        await aiEditor.run(() => apiJson(`${API}/ai/providers/${p.id}`, { method: "DELETE" }), aiEditor.aiKeysForm?.id === p.id);
         if (aiProvider === p.id) setAiProvider("");
       },
     });
-  }
-
-  // Shared busy/error/refresh protocol for provider-list mutations.
-  async function runAiKeysRequest(call, closeForm = false) {
-    setAiKeysBusy(true);
-    setAiKeysError("");
-    try {
-      setAiKeysInfo(await call());
-      if (closeForm) setAiKeysForm(null);
-      refreshAiModels();
-      // A provider edit may have fixed (or removed) the credential behind the
-      // chat panel's warning strip — re-run the check while one is showing.
-      if (aiHealth) checkAiHealth();
-    } catch (err) {
-      setAiKeysError(err.message);
-    } finally {
-      setAiKeysBusy(false);
-    }
   }
 
   // User management moved into Settings → Users (settings/SettingsDialog.jsx UsersSettings,
@@ -10160,28 +10002,13 @@ function LibraryApp({ publicPage = null, initialServerConfig = null }) {
           openPaper: (id) => { setSettingsOpen(null); openPage(id); },
         }}
         ai={{
+          ...aiEditor,
           chatModel: chatSendModel,
           setChatModel,
           chatEffort,
           setChatEffort,
-          aiKeysInfo,
-          aiKeysError,
-          setAiKeysError,
-          aiKeysBusy,
-          aiKeysForm,
-          setAiKeysForm,
           aiProvider,
           setAiProvider,
-          aiModelCatalog,
-          formOauthPending,
-          formModels,
-          availModels,
-          customModel,
-          setCustomModel,
-          aiProtocolOf,
-          isOauthProto,
-          startAddAiProvider,
-          startEditAiProvider,
           deleteAiProvider,
           aiKeyTests,
           testAiProvider,
@@ -10196,11 +10023,6 @@ function LibraryApp({ publicPage = null, initialServerConfig = null }) {
           setDictationModel,
           dictationLang,
           setDictationLang,
-          startChatGPTAuth,
-          loadModelCatalog,
-          addCatalogModel,
-          removeModel,
-          submitAiProvider,
         }}
         prompts={{
           aiInfo,

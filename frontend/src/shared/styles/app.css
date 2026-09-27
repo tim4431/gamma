@@ -3622,8 +3622,9 @@ html.appFocusFullscreen, html.appFocusFullscreen body { overflow: hidden; oversc
 }
 /* Flat at rest: rows are separated by a straight inset hairline (a border
    would curve around the radius and read as a card edge), and only hover
-   paints the rounded highlight. */
-.aiProvRow:not(:last-of-type)::after {
+   paints the rounded highlight. A row is a <label> or a <div> (only a row
+   with a radio is a label), so "not the last" is "followed by a row". */
+.aiProvRow:has(+ .aiProvRow)::after {
   content: "";
   position: absolute;
   left: 8px;
