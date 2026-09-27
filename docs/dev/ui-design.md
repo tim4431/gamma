@@ -41,7 +41,10 @@ about two steps of 255). A new theme is its seeds and nothing else.
 Most tokens are therefore `color-mix()` expressions. Read in JS, a token
 gives that expression (or, through `getComputedStyle`, an `oklab()` string).
 Code that needs a plain colour resolves it on a probe element and reads one
-canvas pixel back (`tokenHex` in App.jsx, for the theme-color meta).
+canvas pixel back (`tokenHex` in App.jsx, for the theme-color meta). The
+pre-paint script runs before tokens.css loads, so for the first theme-color
+it carries each theme's `--bg-page` as a hex, which `tests/themes.test.mjs`
+holds to the tokens (as it does the desktop title bar's colours).
 
 ### Surfaces
 
