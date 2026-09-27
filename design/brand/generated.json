@@ -1,9 +1,9 @@
 {
   "inputs": {
-    "design/brand/compositions/hero-light.svg": "79bfe8a876dc90d712aecf8801b0102c3e111b8a45826ef0122b1c6c5d1c578f",
+    "design/brand/compositions/hero-light.svg": "10ded132b2433a84fd12cc91dc2f7f4a2e550880f9738384a918b677e8212584",
     "design/brand/compositions/logo.svg": "14872e644f9397c2ef2468d9e170b0910833931b4df92c88a2115cfe2393379a",
     "design/brand/marks/favicon.svg": "aa87ab7a445627b7cb8ffa71b63b36ceb6848815549233a0c6f6d8bd48a2002b",
-    "design/brand/outputs.json": "4425bb552b190c549a96e91163a12c936a62e89ae9af521541fce7355847a2d6",
+    "design/brand/outputs.json": "a6f8e1c7965779b6f4d36eb7b5fb57644c75a53695487b420a72154d4e616dea",
     "design/brand/tokens.json": "8778598768aefb172e4dc17f43e060fff18f87717ffa00977b64494e341c397f",
     "frontend/package-lock.json": "ba3f51b43173f6bbb52dc12c0b23eec062a516791818caf26fd49b9315eae4a7",
     "frontend/src/shared/illustrations/brands/LICENSE.md": "9046848b63a5c92bff14e4accca80bd987e0623b74adf9226ce5198d312b79d5",
@@ -21,7 +21,7 @@
     "tools/branding/build-demos.py": "11ee38fd99d2c30bafbde6991f1d29d20deddce15b7583e825dc4e9ef8c24c91",
     "tools/branding/build-library.py": "a3a65d14cbb9763674632f3e05a6506017c3267857b3f96323d634c5a3818673",
     "tools/branding/build-workspaces.py": "36f319915fac8ebd446c6a8a6c37013320e1754beb5a472befa4d2750e85af9e",
-    "tools/branding/build.mjs": "54e56c72ce373a606bce99dad2cdeed1a38552fec8ec5477da2b3a4a41bde56a",
+    "tools/branding/build.mjs": "f3000414aa2a7481dde698f9be036fed1bc31d7784b563459629c8850e9ea3c2",
     "tools/branding/check.test.mjs": "ceeaf77e8f668d8bb5f9ef9efcd3b3adb68b6974e35c433443cd1ec23e175d9c",
     "tools/branding/logo.mjs": "43bf2a2afdcdc7723a48e65c60bb6f8ba1debb9a108565fd962952bda22195f4",
     "tools/branding/mark.mjs": "058db1f84fb4faa93e179f6b565eeb015b0598efe8dbd861c9e946317ef961e3",
@@ -57,7 +57,7 @@
         1920,
         1080
       ],
-      "sha256": "4e34a59241ed8348ab4581df51aa010c3a739b4c2f11902921ef3b8932cf4b4d"
+      "sha256": "d804370fe10b571a6207225128a936f95862da8abc1a3a9f0454c6e57de7e7d7"
     },
     "docs/assets/branding/gamma-logo.svg": {
       "source": "compositions/logo.svg",
@@ -67,6 +67,15 @@
         112
       ],
       "sha256": "7551405bf85fd44c561c3788c969373a33f6383033929471e7464f0127279df3"
+    },
+    "frontend/public/media/gamma-scene-light.svg": {
+      "source": "compositions/hero-light.svg",
+      "variant": "crop",
+      "size": [
+        1020,
+        950
+      ],
+      "sha256": "37bd24454fd6917fe44cc086d9343b4ce3090cd3eea814501adb2d146fdb5d72"
     },
     "docs/assets/branding/gamma-anywhere-light.svg": {
       "source": "tools/branding/build-anywhere.py",

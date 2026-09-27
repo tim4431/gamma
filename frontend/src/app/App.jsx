@@ -7209,6 +7209,7 @@ function LibraryApp({ publicPage = null, initialServerConfig = null }) {
         onGuestLogin={serverConfig?.guest === false ? undefined : doGuestLogin}
         cloudLogin={serverConfig?.cloud}
         demo={!!serverConfig?.demo && serverConfig?.guest !== false}
+        guestSeeded={!!serverConfig?.guest_seeded}
         guestTtlHours={serverConfig?.guest_ttl_hours}
       />
     );

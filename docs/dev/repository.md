@@ -40,6 +40,7 @@ App.jsx decomposition.
 | `docs/assets/screenshots/` | Documentation stills |
 | `backend/gamma/onboarding/welcome.md` | The seeded Welcome page ([onboarding.md](onboarding.md)); Docker copies it with `gamma/`, the desktop freeze adds it with `--add-data` |
 | `frontend/public/media/icons/` | Favicon, served at `/media/icons/favicon.svg` |
+| `frontend/public/media/gamma-scene-light.svg` | The demo server's landing picture: a generated crop of the hero composition |
 | `desktop/assets/icon.png` | Electron window and installer icon |
 | `desktop/assets/entitlements.mac.plist` | macOS signing entitlements |
 | `desktop/assets/appx/` | Microsoft Store package tiles, splash screens, and scale variants |

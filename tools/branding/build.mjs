@@ -27,6 +27,17 @@ function files(dir) {
     return entry.isDirectory() ? (entry.name === '__pycache__' ? [] : files(p)) : [p];
   });
 }
+function cropSvg(svg, [x, y, width, height], hide = []) {
+  const root = svg.match(/^<svg\b[^>]*>/);
+  if (!root) throw new Error('Expected an SVG document to crop');
+  for (const id of hide) if (!svg.includes(` id="${id}"`)) throw new Error(`No element #${id} to hide`);
+  const narrowed = root[0]
+    .replace(/\swidth="[^"]*"/, ` width="${width}"`)
+    .replace(/\sheight="[^"]*"/, ` height="${height}"`)
+    .replace(/\sviewBox="[^"]*"/, ` viewBox="${x} ${y} ${width} ${height}"`);
+  const hidden = hide.length ? `\n  <style>${hide.map(id => `#${id}`).join(', ')} { display: none; }</style>` : '';
+  return narrowed + hidden + svg.slice(root[0].length);
+}
 const scenes = () => files('tools/branding').filter(p => /\/build-[a-z-]+\.py$/.test(p)).sort();
 function inputs() {
   return Object.fromEntries([
@@ -80,10 +91,14 @@ if (check) {
     if (entry.kind === 'png') continue;
     let bytes = fs.readFileSync(path.join(BRAND, entry.source));
     if (entry.kind === 'monochrome') bytes = markSvg(32, { bare: true });
-    if (entry.kind === 'hero' || entry.kind === 'logo') {
+    if (entry.kind === 'hero' || entry.kind === 'logo' || entry.kind === 'crop') {
       const logo = logoSvg({ dark: entry.theme === 'dark' });
       bytes = entry.kind === 'logo' ? logo : bytes.toString().replace('{{gamma-logo}}', svgContent(logo));
     }
+    // A window onto a composition (`box`: x, y, width, height in its own
+    // units): the same artwork, the root element's size and viewBox narrowed,
+    // and the groups named in `hide` (element ids) left out.
+    if (entry.kind === 'crop') bytes = cropSvg(bytes, entry.box, entry.hide);
     emit(entry.destination, bytes, { source: entry.source, variant: entry.kind });
   }
   // Every README scene is a build-*.py script that prints the SVG paths it wrote.

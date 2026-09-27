@@ -1,24 +1,36 @@
 import React from "react";
 import { PasswordInput } from "../settings/SettingsKit";
-import { AlertCircleIcon, ArrowLeftIcon, ChevronRightIcon } from "../shared/ui/Icons";
+import { AlertCircleIcon, ArrowLeftIcon, CheckIcon, ChevronRightIcon } from "../shared/ui/Icons";
 import { BrandMark } from "../shared/ui/BrandMark";
 import { t, tn } from "../shared/i18n/i18n.js";
+
+// The demo landing's picture: the README hero's paper and notes, cropped by
+// tools/branding (design/brand/outputs.json) and served under /media/.
+const DEMO_SCENE_URL = "/media/gamma-scene-light.svg";
 
 // Every page shown before (or instead of) the app: login, loading, an
 // unavailable workspace, a session conflict, a blocked share link. A page
 // that reports a situation (`headline`) leads with it under the mark; the
-// others with the name.
-function AuthShell({ headline, children }) {
+// others with the name. `scene` (a demo server's landing) puts a picture
+// beside the content instead, which then brings its own heading.
+function AuthShell({ headline, scene, children }) {
   return (
     <div className="app">
       <div className="loginPage">
-        <div className="loginCard">
-          <BrandMark className="loginMark" size={48} />
-          {headline
-            ? <h1 className="loginTitle loginHeadline">{headline}</h1>
-            : <div className="loginTitle">{t("Gamma")}</div>}
-          {children}
-        </div>
+        {scene ? (
+          <div className="loginCard loginLanding">
+            <div className="loginScene"><img src={scene} alt="" /></div>
+            <div className="loginLandingBody">{children}</div>
+          </div>
+        ) : (
+          <div className="loginCard">
+            <BrandMark className="loginMark" size={48} />
+            {headline
+              ? <h1 className="loginTitle loginHeadline">{headline}</h1>
+              : <div className="loginTitle">{t("Gamma")}</div>}
+            {children}
+          </div>
+        )}
       </div>
     </div>
   );
@@ -84,10 +96,13 @@ function takeCloudError() {
   } catch { return ""; }
 }
 
-// `demo` (a demo server, GET /api/server-config): the page leads with Try
-// the demo — the guest login — and a line saying how long the workspace
-// lasts; the password form (and the cloud sign-in) fold behind an Admin
-// sign-in link, collapsed until asked for. docs/dev/guests.md "Demo mode".
+// `demo` (a demo server, GET /api/server-config): a small landing page — the
+// product pictured beside what it does — that leads with Try the demo (the
+// guest login) and a line saying how long the workspace lasts; the password
+// form (and the cloud sign-in) fold behind an Admin sign-in link, collapsed
+// until asked for. `guestSeeded`: guests start with a sample library
+// (GAMMA_GUEST_SEED), which the landing then promises. docs/dev/guests.md
+// "Demo mode".
 // `error`: a message, or {text, field: "password"} when the password was
 // refused — that field then takes the focus and a red border. `onBack`
 // returns to what the visitor was reading (a share view's own Sign in).
@@ -102,6 +117,7 @@ export function LoginPage({
   cloudLogin,
   subtitle,
   demo = false,
+  guestSeeded = false,
   guestTtlHours,
   next = window.location.pathname + window.location.search,
   onBack,
@@ -179,8 +195,17 @@ export function LoginPage({
     );
   }
   return (
-    <AuthShell>
-      <p className="loginSubtitle">{subtitleText}</p>
+    <AuthShell scene={DEMO_SCENE_URL}>
+      <div className="loginBrand"><BrandMark size={36} />{t("Gamma")}</div>
+      <h1 className="loginLandingTitle">{t("Read papers. Keep what you learn.")}</h1>
+      <p className="loginLandingLead">
+        {t("Highlight PDFs, take outliner notes with live math, and ask an AI about your papers — right in your browser.")}
+      </p>
+      <ul className="loginPoints">
+        {guestSeeded ? <li><CheckIcon size={16} aria-hidden="true" />{t("A sample library is ready for you")}</li> : null}
+        <li><CheckIcon size={16} aria-hidden="true" />{t("No sign-up, no install")}</li>
+        <li><CheckIcon size={16} aria-hidden="true" />{t("Self-host it for your lab when you like it")}</li>
+      </ul>
       <button type="button" className="loginBtn" onClick={onGuestLogin}>
         {t("Try the demo")}
       </button>

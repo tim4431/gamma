@@ -18,7 +18,12 @@ Set `PYTHON` if the interpreter has a different name. Rendering is offline;
 The logo uses the same Inter/Segoe UI system font stack as the hero.
 
 `build.mjs` distributes canonical artwork, generates README scenes, renders
-Store art and hero PNGs, and records provenance. `store-layouts.mjs` owns Store
+Store art and hero PNGs, and records provenance. An `outputs.json` entry of
+kind `crop` publishes a window onto a composition: its `box` (x, y, width,
+height in the composition's units) becomes the root's size and viewBox, and
+the element ids in `hide` are left out. The demo server's landing picture
+(`frontend/public/media/gamma-scene-light.svg`) is the hero's paper and notes
+this way, without the hero's left-hand promise (`#hero-promise`). `store-layouts.mjs` owns Store
 dimensions and layouts while loading geometry from the canonical sources.
 The desktop's `npm run store-art` remains an alias for the unified generation.
 

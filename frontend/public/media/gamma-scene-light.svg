@@ -1,4 +1,5 @@
-<svg xmlns="http://www.w3.org/2000/svg" width="1920" height="1080" viewBox="0 0 1920 1080" role="img" aria-label="Gamma PDF: read papers, keep what you learn">
+<svg xmlns="http://www.w3.org/2000/svg" width="1020" height="950" viewBox="900 80 1020 950" role="img" aria-label="Gamma PDF: read papers, keep what you learn">
+  <style>#hero-promise { display: none; }</style>
   <defs>
     <filter id="shadow" x="-10%" y="-10%" width="125%" height="125%">
       <feDropShadow dx="0" dy="18" stdDeviation="18" flood-color="rgba(30,30,28,0.14)"/>
@@ -21,7 +22,15 @@
 
   <!-- left: mark, name, promise -->
   <g id="hero-promise">
-    <g transform="translate(140 300)">{{gamma-logo}}</g>
+    <g transform="translate(140 300)"><g transform="scale(2)"><svg xmlns="http://www.w3.org/2000/svg" width="48" height="48" viewBox="0 0 32 32" fill="none"><rect id="gamma-background" width="32" height="32" rx="7" fill="#1e1e1c"/>
+        <!-- both branches of standing wave -->
+        <path d="M 6 16 C 9 10.5 13 10.5 16 16 C 19 21.5 23 21.5 26 16" stroke="#e8a020" stroke-width="1.2" fill="none" opacity="0.6" stroke-linecap="round"/>
+        <path d="M 6 16 C 9 21.5 13 21.5 16 16 C 19 10.5 23 10.5 26 16" stroke="#e8a020" stroke-width="1.2" fill="none" opacity="0.6" stroke-linecap="round"/>
+        <path d="M 6 4  Q 2 16 6 28" stroke="#e8a020" stroke-width="1.8" fill="none" stroke-linecap="round" opacity="0.9"/>
+        <path d="M 26 4 Q 30 16 26 28" stroke="#e8a020" stroke-width="1.8" fill="none" stroke-linecap="round" opacity="0.9"/>
+        <rect x="9" y="8" width="13" height="3" rx="0.8" fill="#eeebe4"/>
+        <rect x="9" y="8" width="3" height="15" rx="0.8" fill="#eeebe4"/></svg></g>
+  <text x="122" y="83" font-family="Inter, 'Segoe UI', Roboto, Helvetica, Arial, sans-serif" font-size="100" font-weight="700" letter-spacing="-2.7" fill="#1a1a18">Gamma<tspan font-weight="400" fill="#e8a020" dx="23">PDF</tspan></text></g>
     <text x="142" y="500" font-family="Inter, 'Segoe UI', Roboto, Helvetica, Arial, sans-serif" font-size="52" font-weight="600" letter-spacing="-1" fill="#1a1a18">Read papers. Keep what you learn.</text>
     <text x="142" y="562" font-family="Inter, 'Segoe UI', Roboto, Helvetica, Arial, sans-serif" font-size="27" fill="#6b6a65">Highlight PDFs, take outliner notes with live math,</text>
     <text x="142" y="600" font-family="Inter, 'Segoe UI', Roboto, Helvetica, Arial, sans-serif" font-size="27" fill="#6b6a65">and search your whole library — on your own machine.</text>

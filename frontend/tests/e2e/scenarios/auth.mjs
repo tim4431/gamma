@@ -76,7 +76,7 @@ export async function authScenarios({ server, browser, alice, step, until, asser
     } finally { await ctx.close(); }
   });
 
-  await step("auth: demo mode leads with Try the demo, folds the sign-in and offers the first tour", async () => {
+  await step("auth: demo mode is a small landing that leads with Try the demo, folds the sign-in and offers the first tour", async () => {
     server.manage("create-user", "auth-admin", "auth-admin-pw");
     server.manage("set-admin", "auth-admin", "on");
     const admin = await new Account(server, "auth-admin", "auth-admin-pw").login();
@@ -88,6 +88,10 @@ export async function authScenarios({ server, browser, alice, step, until, asser
       const demo = page.getByRole("button", { name: "Try the demo", exact: true });
       await demo.waitFor();
       await page.getByText(`Your own workspace for ${hours} hours, then it is deleted.`, { exact: true }).waitFor();
+      // a small landing: the product pictured, what it does; no sample library promised without a seed
+      await page.getByRole("heading", { name: "Read papers. Keep what you learn.", exact: true }).waitFor();
+      await until(() => page.locator(".loginScene img").evaluate((img) => img.complete && img.naturalWidth > 0), { what: "the picture loads" });
+      assertEq(await page.locator(".loginPoints li").count(), 2, "no sample-library promise without GAMMA_GUEST_SEED");
       assertEq(await page.locator(".loginInput").count(), 0, "the password form is folded");
       assertEq(await page.locator(".loginGuestBtn").count(), 0, "one guest button, the demo one");
       const disclosure = page.getByRole("button", { name: "Admin sign-in", exact: true });
