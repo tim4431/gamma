@@ -1526,6 +1526,19 @@ body {
   color: var(--accent-bright);
   text-decoration: none;
 }
+/* A hand-typed [[title]] no page answered: the chip's shape, dashed and
+   muted, with a tooltip on how to link it. */
+.unlinkedRef {
+  display: inline-block;
+  padding: 0 4px;
+  margin: 0 1px;
+  border: 1px dashed var(--border);
+  border-radius: 4px;
+  color: var(--text-muted);
+  font-size: 0.95em;
+  vertical-align: -1px;
+  line-height: 1.3;
+}
 
 /* External-link chip (LinkChip): favicon + label, quieter than a ref chip. */
 .linkChip {
@@ -5368,40 +5381,67 @@ a.shareBrand:hover { background: var(--bg-hover); }
 }
 
 /* --- block-ref autocomplete popup (shared surface recipe) --- */
+/* The [[ link picker (editor/RefPicker.jsx): caret-anchored, pages then
+   blocks under section titles, a key-hint footer pinned under the list. */
 .refPopup {
   position: fixed;
   z-index: var(--z-refpopup);
-  min-width: 280px;
-  max-height: 320px;
+  box-sizing: border-box;
+  width: 440px;
+  max-width: calc(100vw - 24px);
+  max-height: min(440px, var(--caret-max-height, calc(100vh - 16px)));
   overflow-y: auto;
+  padding: 4px;
 }
-.refPopupEntry { border-bottom: 1px solid var(--border-subtle); }
-.refPopupEntry:last-child { border-bottom: none; }
-.refPopupPath {
-  padding: 3px 12px 0;
-  font-size: calc(11px * var(--ui-font-scale, 1));
-  color: var(--text-muted);
-  line-height: 1.4;
+.refPopupHead {
+  padding: 8px 10px 3px;
+  font-size: calc(10.5px * var(--ui-font-scale, 1));
+  font-weight: 600;
+  letter-spacing: 0.04em;
+  text-transform: uppercase;
+  color: var(--text-dim);
+  user-select: none;
 }
-.refPopupSep { color: var(--text-dim); margin: 0 3px; }
+.refPopupHead:first-child { padding-top: 4px; }
 .refPopupItem {
-  display: block;
+  display: flex;
+  align-items: center;
+  gap: 9px;
   width: 100%;
-  padding: 6px 12px;
+  padding: 6px 10px;
   background: transparent;
-  color: var(--text-secondary);
+  color: var(--text-primary);
   border: none;
+  border-radius: 6px;
   text-align: left;
   cursor: pointer;
   font: inherit;
 }
 .refPopupItem:hover { background: var(--bg-hover); }
-.refPopupItem.selected { background: var(--accent-bg); color: var(--text-primary); }
-.refPopupText {
-  font-size: calc(13px * var(--ui-font-scale, 1));
+.refPopupItem.selected { background: var(--accent-bg); }
+.refPopupIcon { flex: none; display: inline-flex; justify-content: center; width: 18px; color: var(--text-muted); }
+.refPopupDot { width: 6px; height: 6px; border-radius: 50%; background: var(--text-muted); opacity: 0.6; }
+.refPopupBody { flex: 1; min-width: 0; display: flex; flex-direction: column; }
+.refPopupText,
+.refPopupMeta {
   white-space: nowrap;
   overflow: hidden;
   text-overflow: ellipsis;
+}
+.refPopupText { font-size: calc(13.5px * var(--ui-font-scale, 1)); }
+.refPopupText b { font-weight: 700; }
+.refPopupMeta { font-size: calc(11.5px * var(--ui-font-scale, 1)); color: var(--text-muted); }
+.refPopupFooter {
+  position: sticky;
+  bottom: -4px;
+  margin: 4px -4px -4px;
+  padding: 7px 14px 6px;
+  border-top: 1px solid var(--border-subtle);
+  border-radius: 0 0 var(--radius-surface) var(--radius-surface);
+  background: var(--bg-surface);
+  font-size: calc(11px * var(--ui-font-scale, 1));
+  color: var(--text-dim);
+  user-select: none;
 }
 
 /* --- LaTeX editing aids in the block editor (see editor/LatexEditor.jsx) --- */

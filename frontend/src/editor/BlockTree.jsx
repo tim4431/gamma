@@ -33,6 +33,8 @@ import { blockStartInSource, gapInSource, renderedGaps, sourceOffsetAtPoint } fr
 import { highlightCode, makeCopyButton } from "./codeHighlight";
 import { fenceInnerAt } from "./fences.js";
 import { filterSlashCommands, SlashMenuPopup } from "./SlashMenu";
+import { RefPickerPopup } from "./RefPicker";
+import { pageByTitle, pickerCounts, rankRefPages, refBlockPath, refBlockText } from "./refLists.js";
 import { remarkCallouts } from "./callouts";
 import { PeerChips, RenderedCarets } from "../collaboration/Presence";
 import { ContextMenu, MenuItem } from "../shared/ui/Menus";
@@ -103,6 +105,9 @@ function mdPreprocessProse(content, nested) {
     .replace(/!\[([^\]|]*)\|(\d+)(?:x\d+)?\]\(([^)]+)\)/g, '<img src="$3" alt="$1" width="$2" />')
     .replace(/!\[\[([a-zA-Z0-9_-]+)\]\]/g, nested ? "[$1](blockref:$1)" : "[$1](blockembed:$1)")
     .replace(/\[\[([a-zA-Z0-9_-]+)\]\]/g, "[$1](blockref:$1)")
+    // A hand-typed [[title]] no page answered (the editor links one that
+    // names exactly one page): a dashed "unlinked" chip.
+    .replace(/!?\[\[([^[\]\n]+)\]\]/g, "[$1](unlinked:)")
     .replace(/==([^=\n]+?)==/g, "<mark>$1</mark>"));
 }
 
@@ -519,7 +524,7 @@ export const BlockMarkdown = React.memo(function BlockMarkdown({ content, blockI
       rehypePlugins={[rehypeRaw, rehypeKatex]}
       // Upload URLs get the workspace / share token here (assetUrl): the
       // browser fetches <img> src and link hrefs without the API header.
-      urlTransform={(url) => url.startsWith("blockref:") || url.startsWith("blockembed:") ? url : assetUrl(defaultUrlTransform(url))}
+      urlTransform={(url) => /^(blockref|blockembed|unlinked):/.test(url) ? url : assetUrl(defaultUrlTransform(url))}
       components={{
         a: ({ href, children }) => {
           if (href?.startsWith("blockref:")) {
@@ -539,6 +544,13 @@ export const BlockMarkdown = React.memo(function BlockMarkdown({ content, blockI
               >
                 {ref?.content || String(children)}
               </a>
+            );
+          }
+          if (href?.startsWith("unlinked:")) {
+            return (
+              <span className="unlinkedRef" title={t("Not linked: no page has this title. Type [[ and pick a page from the list to link it.")}>
+                {children}
+              </span>
             );
           }
           if (href?.startsWith("blockembed:")) {
@@ -735,6 +747,8 @@ function BlockRow({
   onMoveToPage,
   onMoveObject,
   onStatus,
+  pages,
+  rootId,
 }) {
   const ref = useRef(null);
   const clickPosRef = useRef(null);
@@ -905,7 +919,8 @@ function BlockRow({
     for (const id of gammaLinkIds(block.content || "")) add(id);
     return out;
   }, [block.content, allBlocks, refCache]);
-  const [refPopup, setRefPopup] = useState(null); // { query, rect }
+  // The [[ link picker: { query, anchor } while a "[[" is being typed.
+  const [refPopup, setRefPopup] = useState(null);
   const [refSelectedIdx, setRefSelectedIdx] = useState(0);
   // Live LaTeX aids (preview + \command autocomplete) — the shared hook.
   const { mathUi, setMathUi, mathAcIdx, setMathAcIdx, updateMathUi, acceptCompletion } = useMathUi();
@@ -927,14 +942,33 @@ function BlockRow({
     const q = refPopup.query;
     const timer = setTimeout(async () => {
       try {
-        const res = await fetch(`/api/block-search?q=${encodeURIComponent(q)}&limit=8`);
+        const res = await fetch(`/api/block-search?q=${encodeURIComponent(q)}&limit=12`);
         const data = await res.json();
         setSearchResults((data.blocks || []).filter((b) => b.id !== block.id));
       } catch (_) { setSearchResults([]); }
     }, 120);
     return () => clearTimeout(timer);
   }, [refPopup?.query, block.id]);
-  const refSearchShown = !!refPopup && searchResults.length > 0;
+  // The picker's rows (editor/refLists.js): pages by title, then blocks
+  // other than pages (a page result is a page row) as plain text.
+  const refRows = useMemo(() => {
+    if (!refPopup) return [];
+    const labelOf = (id) => pages?.find((p) => p.id === id)?.content ?? allBlocks?.find((b) => b.id === id)?.content ?? refCache?.[id]?.content;
+    const pageHits = rankRefPages(pages, refPopup.query, rootId);
+    const blockHits = searchResults.filter((b) => b.id !== block.id && b.page_root_id !== b.id);
+    const [np, nb] = pickerCounts(pageHits.length, blockHits.length);
+    return [
+      ...pageHits.slice(0, np).map((p) => ({
+        kind: "page", id: p.id, title: p.content, isPdf: !!p._attachment,
+        meta: [p._attachment ? "PDF" : t("Notes page"), p._folders?.[0]].filter(Boolean).join(" · "),
+      })),
+      ...blockHits.slice(0, nb).map((b) => ({
+        kind: "block", id: b.id, title: refBlockText(b.content, labelOf) || t("(empty)"), meta: refBlockPath(b), block: b,
+      })),
+    ];
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [refPopup?.query, pages, searchResults, rootId, block.id]);
+  const refSearchShown = !!refPopup && refRows.length > 0;
   useEffect(() => { if (refSearchShown) guideEvents.emit("ref.search"); }, [refSearchShown]);
 
   // Resolve cross-note refs and Gamma link targets found in content
@@ -946,7 +980,9 @@ function BlockRow({
     if (unknown.length > 0) onFetchRefs(unknown);
   }, [block.content]);
 
-  function insertRef(b) {
+  // A picked row: the typed "[[query" becomes [[id]] (a "!" before it
+  // stays, making it an embed), and the chip's label is cached at once.
+  function insertRef(r) {
     const ta = ref.current;
     if (!ta) return;
     const val = ta.value;
@@ -955,14 +991,33 @@ function BlockRow({
     const match = before.match(/\[\[([^\]\n]*)$/);
     if (!match) return;
     const triggerStart = cursor - match[0].length;
-    const newVal = val.slice(0, triggerStart) + `[[${b.id}]]` + val.slice(cursor);
+    const newVal = val.slice(0, triggerStart) + `[[${r.id}]]` + val.slice(cursor);
     onChangeText(block.id, newVal);
-    if (b.content && onCacheRef) onCacheRef(b.id, b);
+    if (onCacheRef) onCacheRef(r.id, r.kind === "page" ? { content: r.title, page_title: r.title } : r.block);
     setRefPopup(null);
     requestAnimationFrame(() => {
-      const newCursor = triggerStart + `[[${b.id}]]`.length;
+      const newCursor = triggerStart + `[[${r.id}]]`.length;
       ta.setSelectionRange(newCursor, newCursor);
       ta.focus();
+    });
+  }
+
+  // "]]" typed by hand after a page's exact title: the text becomes that
+  // page's [[id]] (only when exactly one page has the title; otherwise it
+  // stays text and renders as an unlinked chip). After the keystroke's own
+  // update, and only if the text is still what was typed.
+  function linkTypedTitle(value, cursor) {
+    const m = value.slice(0, cursor).match(/\[\[([^[\]\n]+)\]\]$/);
+    const page = m && pageByTitle(pages, m[1]);
+    if (!page || page.id === m[1]) return;
+    const from = cursor - m[0].length, text = `[[${page.id}]]`;
+    requestAnimationFrame(() => {
+      const ta = ref.current;
+      if (!ta?.view || ta.value.slice(from, cursor) !== m[0]) return;
+      onCacheRef?.(page.id, { content: page.content, page_title: page.content });
+      // No selection given: the caret maps through the change, so text typed
+      // since the "]]" stays where it was typed.
+      ta.view.dispatch({ changes: { from, to: cursor, insert: text }, userEvent: "input" });
     });
   }
 
@@ -1008,7 +1063,7 @@ function BlockRow({
       },
       openRefPopup: () => {
         requestAnimationFrame(() => {
-          setRefPopup({ query: "", rect: ta.getBoundingClientRect() });
+          setRefPopup({ query: "", anchor: ta.caretCoords(Math.max(0, ta.selectionStart - 2)) });
           setRefSelectedIdx(0);
         });
       },
@@ -1497,10 +1552,13 @@ function BlockRow({
                 const before = e.target.value.slice(0, cursor);
                 const match = before.match(/\[\[([^\]\n]*)$/);
                 if (match) {
-                  setRefPopup({ query: match[1], rect: e.target.getBoundingClientRect() });
+                  setRefPopup({ query: match[1], anchor: e.target.caretCoords(cursor - match[0].length) });
                   setRefSelectedIdx(0);
                 } else {
                   setRefPopup(null);
+                  // One "]" typed, closing a [[title]]: link it if a page has exactly that title.
+                  const typed = e.selectionBefore?.from === cursor - 1 && e.selectionBefore?.to === cursor - 1;
+                  if (typed && before.endsWith("]]")) linkTypedTitle(e.target.value, cursor);
                 }
                 updateMathUi(e.target, true);
                 updateSlashMenu(e.target, true);
@@ -1526,10 +1584,10 @@ function BlockRow({
                   if (e.key === "Enter" || e.key === "Tab") { e.preventDefault(); applyPasteAs(pasteMenu.items[pasteIdx]); return; }
                   if (e.key === "Escape") { e.preventDefault(); setPasteMenu(null); return; }
                 }
-                if (refPopup && searchResults.length > 0) {
-                  if (e.key === "ArrowDown") { e.preventDefault(); setRefSelectedIdx((i) => Math.min(i + 1, searchResults.length - 1)); return; }
+                if (refSearchShown) {
+                  if (e.key === "ArrowDown") { e.preventDefault(); setRefSelectedIdx((i) => Math.min(i + 1, refRows.length - 1)); return; }
                   if (e.key === "ArrowUp") { e.preventDefault(); setRefSelectedIdx((i) => Math.max(i - 1, 0)); return; }
-                  if (e.key === "Enter") { e.preventDefault(); insertRef(searchResults[refSelectedIdx]); return; }
+                  if (e.key === "Enter") { e.preventDefault(); insertRef(refRows[Math.min(refSelectedIdx, refRows.length - 1)]); return; }
                   if (e.key === "Escape") { e.preventDefault(); setRefPopup(null); return; }
                 }
                 if (slashMenu) {
@@ -1730,35 +1788,10 @@ function BlockRow({
       {!readOnly && block.editMode && pasteMenu ? (
         <SlashMenuPopup title={t("Paste as")} items={pasteMenu.items} selected={pasteIdx} anchor={pasteMenu.anchor} onPick={applyPasteAs} />
       ) : null}
-      {refPopup && searchResults.length > 0 && (
-        <div
-          className="refPopup"
-          data-guide="editor.refSearch"
-          style={{ top: refPopup.rect.bottom + 4, left: refPopup.rect.left }}
-        >
-          {searchResults.map((b, i) => (
-            <div key={b.id} className="refPopupEntry">
-              {b.ancestors && b.ancestors.length > 0 && (
-                <div className="refPopupPath">
-                  {b.ancestors.map((a, j) => (
-                    <span key={a.id}>
-                      {j > 0 && <span className="refPopupSep">&rsaquo;</span>}
-                      <span>{a.content || "(untitled)"}</span>
-                    </span>
-                  ))}
-                </div>
-              )}
-              <button
-                className={`refPopupItem${i === refSelectedIdx ? " selected" : ""}`}
-                onMouseDown={(e) => e.preventDefault()}
-                onClick={() => insertRef(b)}
-              >
-                <div className="refPopupText">{b.content || "(empty)"}</div>
-              </button>
-            </div>
-          ))}
-        </div>
-      )}
+      {refSearchShown ? (
+        <RefPickerPopup rows={refRows} selected={Math.min(refSelectedIdx, refRows.length - 1)} anchor={refPopup.anchor}
+          query={refPopup.query} onPick={insertRef} />
+      ) : null}
     </div>
   );
 }

@@ -8339,6 +8339,7 @@ function LibraryApp({ publicPage = null, initialServerConfig = null }) {
                   aiLive,
                   aiScan,
                   rootId: focusedBlockId,
+                  pages: pageBlocks, // the [[ link picker's page list
                   onJump: jumpToHighlightId,
                   onInkJump: showInkOnPage,
                   onEnterAttachMode: readOnly ? null : setAttachModeBlockId,

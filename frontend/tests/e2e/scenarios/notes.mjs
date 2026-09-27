@@ -474,6 +474,37 @@ export async function noteScenarios({ server, browser, alice, step, until, sleep
     }
   });
 
+  await step("notes: the [[ picker lists pages by title first; a typed [[exact title]] links, an unknown one is an unlinked chip", async () => {
+    const target = await alice2.api("/api/pages", { method: "POST", body: { title: "Quantum Linkable Target" } });
+    const other = await alice2.api("/api/pages", { method: "POST", body: { title: "Quantum Scratch" } });
+    const src = await alice2.api("/api/pages", { method: "POST", body: { title: "Picker source" } });
+    await alice2.api(`/api/pages/${src.id}/ops`, { method: "POST", body: { client: "e2e", ops: [
+      { op: "insert", id: "pkblock", parent: src.id, position: "a0", content: "start" }] } });
+    const p2 = await openPage(ctx, `${server.base}/?ws=${second.id}&page=${src.id}`);
+    try {
+      await editRow(p2, "start");
+      await p2.keyboard.type(" [[linkable");
+      const picker = p2.locator('.refPopup[data-guide="editor.refSearch"]');
+      await picker.waitFor();
+      assertEq(await picker.locator(".refPopupHead").first().textContent(), "Pages", "pages come first");
+      assertEq(await picker.locator(".refPopupItem.selected .refPopupText").innerText(), "Quantum Linkable Target");
+      assertEq(await picker.locator(".refPopupItem.selected .refPopupText b").innerText(), "Linkable", "the typed text is marked");
+      await p2.keyboard.press("Enter");
+      await until(async () => (await tree(alice2, src.id))[0]?.content === `start [[${target.id}]]`, { what: "Enter links the page" });
+      // "]]" typed after the exact title of one page links it; an unknown title stays text.
+      await p2.keyboard.type(" [[quantum scratch]] and [[Nothing By This Name]]");
+      await until(async () => (await tree(alice2, src.id))[0]?.content === `start [[${target.id}]] [[${other.id}]] and [[Nothing By This Name]]`,
+        { what: "the typed title resolved to its page" });
+      await closeEditor(p2);
+      const r = row(p2, "start");
+      assertEq(JSON.stringify(await r.locator(".blockRefChip").allInnerTexts()), JSON.stringify(["Quantum Linkable Target", "Quantum Scratch"]));
+      assertEq(await r.locator(".unlinkedRef").innerText(), "Nothing By This Name", "the unknown title is an unlinked chip");
+      assertNoProblems(p2);
+    } finally {
+      await p2.close();
+    }
+  });
+
   await step("notes: 'Linked from' under the notes opens the linking block; folding it is remembered", async () => {
     const target = await alice2.api("/api/pages", { method: "POST", body: { title: "Link target" } });
     await alice2.api(`/api/pages/${target.id}/ops`, { method: "POST", body: { client: "e2e", ops: [
