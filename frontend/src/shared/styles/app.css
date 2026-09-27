@@ -154,7 +154,7 @@
    its own case, so only real acronyms are uppercase. Each class's own rule
    holds its layout (dock titles also a size step up). */
 :is(.dockGrip, .homeListLabel, .pinnedLabel, .carouselLabel, .popoverLabel, .popoverSection,
-  .searchSection, .ctxMenuLabel, .slashMenuTitle, .keyGroupLabel, .quickOpenSection) {
+  .searchSection, .ctxMenuLabel, .slashMenuTitle, .refPopupHead, .keyGroupLabel, .quickOpenSection) {
   font-size: var(--fs-xs);
   font-weight: 600;
   letter-spacing: 0;
@@ -5324,13 +5324,9 @@ a.shareBrand:hover { background: var(--bg-hover); }
   overflow-y: auto;
   padding: 4px;
 }
+/* Section title (the shared section-label look, like .slashMenuTitle). */
 .refPopupHead {
   padding: 8px 10px 3px;
-  font-size: var(--fs-2xs);
-  font-weight: 600;
-  letter-spacing: 0.04em;
-  text-transform: uppercase;
-  color: var(--text-dim);
   user-select: none;
 }
 .refPopupHead:first-child { padding-top: 4px; }
@@ -5368,7 +5364,7 @@ a.shareBrand:hover { background: var(--bg-hover); }
   position: sticky;
   border-top: 1px solid var(--border-subtle);
   border-radius: 0 0 var(--radius-md) var(--radius-md);
-  background: var(--bg-surface);
+  background: var(--bg-elevated);
   font-size: var(--fs-2xs);
   color: var(--text-dim);
   user-select: none;
