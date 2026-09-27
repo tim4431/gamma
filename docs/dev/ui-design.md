@@ -159,7 +159,10 @@ The desktop shell's chrome loads a committed copy, `desktop/ui/tokens.css`,
 and the Latin subset of Inter in `desktop/ui/fonts/`: its pages load from
 disk and can't reach the frontend bundle. `npm run desktop-tokens` in
 `frontend/` refreshes both, and `tests/themes.test.mjs` fails while either
-copy differs from its source.
+copy differs from its source. `desktop/ui/theme.css` repeats this page's
+control recipes (buttons, icon buttons, fields, the switch, the focus
+ring), and the shell's pages follow the same type, radius, icon and label
+rules.
 
 ## One control set, everywhere
 
