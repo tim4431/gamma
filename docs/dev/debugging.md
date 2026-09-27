@@ -184,7 +184,10 @@ page loads), creates the accounts `alice` / `bob`, and drives Playwright's
 Chromium (`playwright` is a devDependency; the browser is downloaded once on
 first launch). A failed step saves a screenshot of every open page plus the
 pages' recorded problems and the server log's tail under the temp dir's
-`failures/`, and the temp dir is kept (the summary prints its path). The
+`failures/`, and the temp dir is kept (the summary prints its path). A page
+the step closed on its way out (the usual `finally { await ctx.close() }`)
+is there too, as `-closed.jpg`: closing a context or a page during a step
+first keeps its last look. The
 `check` workflow runs the suite on every PR and uploads those folders as the
 `e2e-failures` artifact. `harness.mjs` holds the server lifecycle, `Account` (session
 cookie + `X-Gamma-Workspace` for API seeding, browser contexts logged in as

@@ -186,9 +186,25 @@ function english(browser) {
   browser.newContext = async ({ suggestTours = false, ...options } = {}) => {
     const ctx = await newContext({ locale: "en-US", ...options });
     await ctx.addInitScript((on) => { try { localStorage.setItem("gamma-suggest-tours", on ? "1" : "0"); } catch {} }, suggestTours);
+    const close = ctx.close.bind(ctx);
+    ctx.close = async (...args) => {
+      for (const page of ctx.pages()) await lastLook(page);
+      return close(...args);
+    };
     return ctx;
   };
   return browser;
+}
+
+// A scenario closes its context in `finally`, which runs before step()'s
+// catch: by then the page that shows the failure is gone. So a page closed
+// during a step leaves its last look (a screenshot and its recorded
+// problems), which step() writes out only if the step fails.
+async function lastLook(page) {
+  if (!running || page.isClosed()) return;
+  let shot = null;
+  try { shot = await page.screenshot({ type: "jpeg", quality: 80, timeout: 2000 }); } catch {}
+  running.closed.push({ shot, problems: page.problems || [] });
 }
 
 // API answers that are a designed "no" rather than a failure.
@@ -207,6 +223,8 @@ export async function openPage(ctx, url) {
   page.problems = [];
   openPages.add(page);
   page.on("close", () => openPages.delete(page));
+  const close = page.close.bind(page);
+  page.close = async (...args) => { await lastLook(page); return close(...args); };
   page.on("response", (r) => {
     const u = r.url();
     if (!u.includes("/api/") || r.status() < 400) return;
@@ -285,9 +303,14 @@ endstream`);
 
 export const results = [];
 
+// The step in progress: `closed` holds the last looks of the pages it closed.
+let running = null;
+
 export async function step(name, fn) {
   if (flags.only && !name.includes(flags.only)) return;
   const t0 = Date.now();
+  const outer = running;
+  const mine = running = { closed: [] };
   try {
     const note = await fn();
     results.push({ name, ok: true, note: note || "", ms: Date.now() - t0 });
@@ -295,15 +318,18 @@ export async function step(name, fn) {
   } catch (e) {
     results.push({ name, ok: false, note: String((e && e.message) || e), ms: Date.now() - t0 });
     console.log(`  FAIL  ${name}\n        ${String((e && e.stack) || e).split("\n").join("\n        ")}`);
-    await saveFailureArtifacts(name, e).catch(() => {});
+    await saveFailureArtifacts(name, e, mine.closed).catch(() => {});
     if (!flags.continueOnFail) throw e;
+  } finally {
+    running = outer;
   }
 }
 
-// On a failed step: a screenshot of every open page, the pages' recorded
+// On a failed step: a screenshot of every open page and of every page the
+// step closed (its last look, `-closed` in the name), the pages' recorded
 // problems and the tail of the server log, under <temp dir>/failures/ (the
 // temp dir is then kept) — what a CI log alone can't tell you.
-async function saveFailureArtifacts(name, err) {
+async function saveFailureArtifacts(name, err, closed = []) {
   const current = servers[0];
   if (!current) return;
   const dir = path.join(current.dir, "failures");
@@ -313,7 +339,11 @@ async function saveFailureArtifacts(name, err) {
   for (const [i, page] of pages.entries()) {
     try { await page.screenshot({ path: path.join(dir, `${slug}${pages.length > 1 ? `-${i + 1}` : ""}.png`) }); } catch {}
   }
-  const problems = pages.flatMap((p) => p.problems || []);
+  const shots = closed.filter((c) => c.shot);
+  for (const [i, c] of shots.entries()) {
+    fs.writeFileSync(path.join(dir, `${slug}-closed${shots.length > 1 ? `-${i + 1}` : ""}.jpg`), c.shot);
+  }
+  const problems = [...pages, ...closed].flatMap((p) => p.problems || []);
   fs.writeFileSync(path.join(dir, `${slug}.log`), [
     `# ${name}`, "", String((err && err.stack) || err), "", "## page problems", ...(problems.length ? problems : ["(none)"]),
     "", "## server log (tail)", current.log().slice(-8000),

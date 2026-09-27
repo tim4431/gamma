@@ -89,7 +89,8 @@ export async function mirrorScenarios(env) {
       await pop.getByRole("button", { name: "Reattach", exact: true }).click();
       await until(() => pill.getAttribute("data-state").then((t) => t === "ok"), { timeout: 20000, what: "reattached and synced" });
       await pop.getByRole("button", { name: "Back", exact: true }).click();
-      await pop.getByRole("button", { name: "Open the page", exact: true }).first().click();
+      // the paper's own row: the log lists the newest round first, and within a round the pages go in id order
+      await logRow.getByRole("button", { name: "Open the page", exact: true }).click();
       await page.getByRole("paragraph").filter({ hasText: "a note to copy" }).first().waitFor();
       assertNoProblems(page);
       // a same-block edit on both sides: the conflict chip on the row resolves it in place
