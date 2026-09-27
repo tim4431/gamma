@@ -10,6 +10,11 @@ Visiting the pane records it (the frontend's ``useNotices``); a new release
 or a fresh error changes the fingerprint and the notice is back on its own.
 Nothing is ever dismissed for good.
 
+Each notice's sentence travels as a stable ``message`` (the English
+template, also the key of the frontend's catalog, ``app/notices.js``) plus
+its ``params``, so the browser shows it in the interface language; ``title``
+is the same sentence filled in, for API readers and older frontends.
+
 Sources are plain functions ``fn(username) -> Notice | None`` registered
 with ``@source``; each must be cheap — a cached, in-memory or small
 database read — because ``for_user`` runs them on every poll of
@@ -24,7 +29,7 @@ import hashlib
 import re
 import threading
 import time
-from dataclasses import asdict, dataclass
+from dataclasses import asdict, dataclass, field
 
 from . import backup_schedule, cloud_sync, logbuf, server_settings, sync_engine, translate_engines, version
 from .db import NOTICES_SEEN_PREF_KEY, get_pref, set_pref
@@ -41,7 +46,16 @@ class Notice:
     fingerprint: str
     tone: str  # one of TONES; the dot takes the strongest
     pane: str  # the Settings pane that resolves it
-    title: str
+    title: str  # the sentence in English, `message` filled in
+    message: str = ""  # the sentence's template: a catalog key on the client
+    params: dict = field(default_factory=dict)
+
+
+def notice(notice_id: str, fingerprint: str, tone: str, pane: str, message: str, **params) -> Notice:
+    """A Notice whose sentence is `message` with `params` (``{name}``
+    placeholders). Every message must be listed in the frontend's
+    NOTICE_MESSAGES (tests/notices.test.mjs compares the two)."""
+    return Notice(notice_id, fingerprint, tone, pane, message.format(**params), message, params)
 
 
 _SOURCES: list[tuple[callable, bool]] = []
@@ -55,10 +69,6 @@ def source(*, admin_only=False):
     return wrap
 
 
-def _plural(n: int, word: str) -> str:
-    return f"{n} {word}" + ("" if n == 1 else "s")
-
-
 @source(admin_only=True)
 def update_available(_username):
     """A newer GitHub release than this build, or for a ``-dev`` build a
@@ -67,8 +77,9 @@ def update_available(_username):
     update = version.check()["update"]
     if not update:
         return None
-    return Notice("update", update["version"], "warn", "server",
-                  f"Gamma v{update['version']} is available — this server runs v{version.VERSION}")
+    return notice("update", update["version"], "warn", "server",
+                  "Gamma v{version} is available — this server runs v{current}",
+                  version=update["version"], current=version.VERSION)
 
 
 @source(admin_only=True)
@@ -80,7 +91,7 @@ def log_errors(_username):
     if not seq:
         return None
     started = version.STARTED_AT.isoformat()
-    return Notice("log-errors", f"{started}:{seq}", "error", "server", "New errors in the server log")
+    return notice("log-errors", f"{started}:{seq}", "error", "server", "New errors in the server log")
 
 
 @source()
@@ -92,9 +103,10 @@ def backup_failed(username):
     if not failed:
         return None
     mark = ",".join(f"{t['id'][:12]}:{t.get('last_run') or ''}" for t in sorted(failed, key=lambda t: t["id"]))
-    title = (f'The backup task "{failed[0]["name"]}" failed' if len(failed) == 1
-             else f"{_plural(len(failed), 'backup task')} failed")
-    return Notice("backup-failed", mark, "error", "backups", title)
+    if len(failed) == 1:
+        return notice("backup-failed", mark, "error", "backups", "The backup task “{name}” failed",
+                      name=failed[0]["name"])
+    return notice("backup-failed", mark, "error", "backups", "{n} backup tasks failed", n=len(failed))
 
 
 def _conflict_marks(username, publications):
@@ -122,8 +134,9 @@ def mirror_conflicts(username):
     mark, total = _conflict_marks(username, publications=False)
     if not total:
         return None
-    return Notice("mirror-conflicts", mark, "warn", "account",
-                  f"{_plural(total, 'sync conflict')} to look at in your clones")
+    return notice("mirror-conflicts", mark, "warn", "account",
+                  "{n} sync conflict to look at in your clones" if total == 1
+                  else "{n} sync conflicts to look at in your clones", n=total)
 
 
 @source()
@@ -133,8 +146,9 @@ def publish_conflicts(username):
     mark, total = _conflict_marks(username, publications=True)
     if not total:
         return None
-    return Notice("publish-conflicts", mark, "warn", "account",
-                  f"{_plural(total, 'sync conflict')} to look at in your published pages")
+    return notice("publish-conflicts", mark, "warn", "account",
+                  "{n} sync conflict to look at in your published pages" if total == 1
+                  else "{n} sync conflicts to look at in your published pages", n=total)
 
 
 @source()
@@ -145,8 +159,10 @@ def cloud_sync_failed(username):
     if status.get("state") != "error":
         return None
     error = (status.get("error") or "").strip().rstrip(".")
-    return Notice("cloud-sync", status.get("at") or "", "warn", "account",
-                  f"Gamma Cloud sync failed: {error}" if error else "Gamma Cloud sync failed")
+    if error:
+        return notice("cloud-sync", status.get("at") or "", "warn", "account",
+                      "Gamma Cloud sync failed: {error}", error=error)
+    return notice("cloud-sync", status.get("at") or "", "warn", "account", "Gamma Cloud sync failed")
 
 
 @source()
@@ -155,7 +171,7 @@ def cloud_sync_choice(username):
     and waits for the person to merge them or keep one (the Account pane)."""
     if cloud_sync.profile_status(username).get("state") != "choose":
         return None
-    return Notice("cloud-sync-choice", "choose", "warn", "account",
+    return notice("cloud-sync-choice", "choose", "warn", "account",
                   "Your settings here and on Gamma Cloud differ: choose which to keep")
 
 
@@ -166,7 +182,7 @@ def free_translate_failing(username):
     failing = translate_engines.free_failing(username)
     if not failing:
         return None
-    return Notice("free-translate", failing["since"], "warn", "translation",
+    return notice("free-translate", failing["since"], "warn", "translation",
                   "Microsoft's free translation keeps failing — set up Google or Youdao")
 
 
@@ -211,11 +227,11 @@ def storage_nearly_full(username):
     used = _usage_bytes(username)
     share = used / (quota_mb * MB)
     if share >= 1:
-        return Notice("storage", "full", "error", "account",
-                      f"Your storage is full ({used // MB} of {quota_mb} MB used)")
+        return notice("storage", "full", "error", "account",
+                      "Your storage is full ({used} of {quota} MB used)", used=used // MB, quota=quota_mb)
     if share >= 0.9:
-        return Notice("storage", "90", "warn", "account",
-                      f"Your storage is nearly full ({used // MB} of {quota_mb} MB used)")
+        return notice("storage", "90", "warn", "account",
+                      "Your storage is nearly full ({used} of {quota} MB used)", used=used // MB, quota=quota_mb)
     return None
 
 

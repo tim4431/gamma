@@ -132,9 +132,15 @@ Runtime and storage: [docs/dev/workspaces.md](workspaces.md#backups).
 
 Something that wants a look once — a newer Gamma release, errors in the
 server log — is a *notice* (`gamma/notices.py`): `{id, fingerprint, tone,
-pane, title}`, where `pane` is the Settings pane that shows it and
-`fingerprint` names what changed (the release version; the server start
-time plus the newest error's seq). "Resolved" means the account has seen
+pane, title, message, params}`, where `pane` is the Settings pane that shows
+it and `fingerprint` names what changed (the release version; the server
+start time plus the newest error's seq). The sentence travels as `message`,
+a stable English template that is also the key of the frontend's catalog,
+plus its `params`; `title` is the same sentence filled in, for API readers.
+A source builds its notice with `notice(id, fingerprint, tone, pane,
+message, **params)`, and every message is listed in `NOTICE_MESSAGES`
+(`app/notices.js`, whose node test reads notices.py to keep the two lists
+equal), so each one has its translation. "Resolved" means the account has seen
 that fingerprint, kept in the `notices-seen` pref; a new release or a fresh
 error changes the fingerprint and the notice is back by itself. Nothing is
 dismissed for good, and nothing is per browser.
@@ -164,8 +170,14 @@ five minutes and on window focus, and `app/notices.js` (pure,
 `tests/notices.test.mjs`) folds the list into the strongest `tone`, the
 strongest tone per `pane`, and `firstPane`. The `.noticeDot` (red; accent
 for an `info` notice) sits on the account button, after the account menu's
-"Settings…", and after each dotted pane's sidebar button. "Settings…" opens
-on `firstPane`; every other opener keeps its pane. Showing a pane calls
+"Settings…", and after each dotted pane's sidebar button. The account
+button's hover title counts the notices ("Account & settings — 1 notice";
+its accessible name stays "Account & settings"), and the account menu shows
+one tinted row per notice under the identity card: `noticeText` (the
+message translated with its params, or the server's title for a message
+this build does not know) and a link (`noticeAction`, "Review storage →")
+that opens the notice's pane. "Settings…" opens on `firstPane`; every other
+opener keeps its pane. Showing a pane calls
 `markSeen(pane)`: its notices leave the list at once and each ack is posted
 to `POST /api/notices/{id}/seen`, so other tabs and browsers agree on their
 next poll. The browser flow is the last step of `e2e/scenarios/settings.mjs`,

@@ -81,7 +81,7 @@ import { guestExpiryLabel } from "../auth/guestExpiry";
 import { McpAuthorization } from "../auth/McpConsent";
 import { TRANSLATE_LANGS, translateModelFor, useAppPrefs, useProfileSync } from "./prefs";
 import { useNotices } from "./useNotices";
-import { dotTone } from "./notices";
+import { dotTone, noticeAction, noticeText } from "./notices";
 import { useBlockHistory } from "../editor/blockHistory.js";
 import { InkToolbar } from "../ink/InkLayer";
 import { MAX_STROKES, appendStroke, duplicateStrokes, eraseAt, newInk, removeStrokes, restyleStrokes, toolStyle, transformStrokes, translateStrokes } from "../ink/ink";
@@ -9073,7 +9073,11 @@ function LibraryApp({ publicPage = null, initialServerConfig = null }) {
               setOpenPopover(opening ? "user" : null);
             }}
             data-guide="header.account"
-            title={isPhone ? t("More — account, settings, background tasks, import and export") : t("Account & settings")}
+            // The name stays put (every script finds the button by it); the
+            // hover title counts what wants a look.
+            title={isPhone ? t("More — account, settings, background tasks, import and export")
+              : notices.list.length ? tn("Account & settings — {n} notice", "Account & settings — {n} notices", notices.list.length)
+              : t("Account & settings")}
             aria-label={isPhone ? t("More") : t("Account & settings")}
           >
             {isPhone ? <MenuIcon size={18} /> : <UserIcon size={18} />}
@@ -9116,6 +9120,24 @@ function LibraryApp({ publicPage = null, initialServerConfig = null }) {
                 <div className="popoverQuota" data-testid="account-ai-usage"
                   title={t("Tokens your AI requests spent through this server's shared connections in the last 24 hours. Your own keys are not counted.")}>
                   <AllowanceMeter allowance={aiInfo.allowance} />
+                </div>
+              ) : null}
+              {/* What the red dot is about: one row per notice, its sentence
+                  and a link to the Settings pane that resolves it. */}
+              {notices.list.length ? (
+                <div className="accountNotices" data-testid="account-notices">
+                  {notices.list.map((notice) => (
+                    <div key={notice.id} className={`accountNotice ${notice.tone}`} role="status">
+                      {notice.tone === "info" ? <InfoIcon size={14} /> : <AlertCircleIcon size={14} />}
+                      <span className="accountNoticeBody">
+                        <span className="accountNoticeText">{noticeText(notice)}</span>
+                        <button type="button" className="accountNoticeAction"
+                          onClick={() => { setSettingsOpen(notice.pane); setOpenPopover(null); }}>
+                          {noticeAction(notice)} →
+                        </button>
+                      </span>
+                    </div>
+                  ))}
                 </div>
               ) : null}
               {isPhone ? phoneMoreRows() : null}

@@ -2756,6 +2756,38 @@ mark.merge-del { background: color-mix(in srgb, var(--danger) 16%, transparent);
 .copyBoxBody { min-width: 0; }
 .copyBoxBtn { position: absolute; top: 6px; right: 6px; }
 .userPopover { min-width: 268px; }
+/* The account menu's notices (what the red dot is about): a tinted row per
+   notice, its sentence and a link to the pane that resolves it. */
+.accountNotices { display: flex; flex-direction: column; gap: 4px; margin-top: 2px; }
+.accountNotice {
+  --notice-tone: #d9822b;
+  display: flex;
+  align-items: flex-start;
+  gap: 8px;
+  max-width: 300px;
+  padding: 7px 10px;
+  border: 1px solid color-mix(in srgb, var(--notice-tone) 45%, transparent);
+  border-radius: 8px;
+  background: color-mix(in srgb, var(--notice-tone) 12%, transparent);
+  font-size: calc(12.5px * var(--ui-font-scale, 1));
+  line-height: 1.4;
+  color: var(--text-primary);
+}
+.accountNotice.error { --notice-tone: var(--danger); }
+.accountNotice.info { --notice-tone: var(--accent); }
+.accountNotice > svg { flex-shrink: 0; margin-top: 2px; color: var(--notice-tone); }
+.accountNoticeBody { display: flex; flex-direction: column; align-items: flex-start; gap: 2px; min-width: 0; }
+.accountNoticeText { overflow-wrap: anywhere; }
+.topbar .popover .accountNoticeAction,
+.accountNoticeAction {
+  padding: 0;
+  border: none;
+  background: none;
+  font: inherit;
+  color: var(--accent-dark);
+  cursor: pointer;
+}
+.accountNoticeAction:hover { text-decoration: underline; }
 .accountTours > summary { list-style: none; cursor: pointer; }
 .accountTours > summary::-webkit-details-marker { display: none; }
 .accountToursArrow { margin-left: auto; transition: transform 120ms; }

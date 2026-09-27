@@ -245,6 +245,8 @@ Something broke? Open the account menu and choose **Report a problem…** (it is
 
 ## Settings at a glance
 
+A **red dot** on the account button means something wants a look: storage nearly full, a failed backup, sync conflicts in a clone, or (for an admin) a new release or errors in the server log. The account menu says what it is, one line each, with a link to the Settings pane that sorts it out; visiting that pane clears the dot.
+
 Settings (account menu → Settings) has one sidebar: your account card on top (it opens Account & sync), four groups under it, and Help & diagnostics at the bottom. The search box at the top (Ctrl+F) finds any setting by name and says what it does and where it lives — Enter opens the first match, ↑/↓ walk the list.
 
 | Group | Pane | What's there |

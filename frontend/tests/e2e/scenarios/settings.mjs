@@ -1068,14 +1068,16 @@ export async function settingsScenarios(env) {
 
   // The red dot (app/notices.js): the feed is faked so no real error or
   // release is needed; the acks go to the real server.
-  await step("settings: a notice dots the account button and Settings… lands on its pane", async () => {
+  await step("settings: a notice dots the account button, the menu says what it is, and Settings… lands on its pane", async () => {
     server.manage("set-admin", "settings-user", "on");
     const ctx = await user.context(browser);
     try {
       await ctx.addInitScript(() => localStorage.setItem("gamma-ai-login-check", "off"));
       const seen = [];
       let notices = [
-        { id: "update", fingerprint: "9.9.9", tone: "warn", pane: "server", title: "Gamma v9.9.9 is available" },
+        { id: "update", fingerprint: "9.9.9", tone: "warn", pane: "server", title: "Gamma v9.9.9 is available",
+          message: "Gamma v{version} is available — this server runs v{current}", params: { version: "9.9.9", current: "1.0.0" } },
+        // an older server sends no message: the title shows as it is
         { id: "backup-failed", fingerprint: "t1", tone: "error", pane: "backups", title: "A backup task failed" },
       ];
       await ctx.route("**/api/notices", (route) => route.fulfill({ json: { notices } }));
@@ -1090,7 +1092,14 @@ export async function settingsScenarios(env) {
       const account = page.getByRole("button", { name: "Account & settings", exact: true });
       await account.locator(".noticeDot").waitFor();
       assertEq(await account.locator(".noticeDot").getAttribute("data-tone"), "error", "the strongest notice colours the dot");
+      assertEq(await account.getAttribute("title"), "Account & settings — 2 notices", "the hover title counts them");
       await account.click();
+      // The menu names each notice, with a link to the pane that resolves it.
+      const rows = page.getByTestId("account-notices");
+      await rows.waitFor();
+      assert((await rows.textContent()).includes("Gamma v9.9.9 is available — this server runs v1.0.0"), "the message with its values");
+      assert((await rows.textContent()).includes("A backup task failed"), "a title-only notice");
+      await rows.getByRole("button", { name: /See the update/ }).waitFor();
       const item = page.getByRole("button", { name: "Settings…", exact: true });
       await item.locator(".noticeDot").waitFor();
       await item.click();
@@ -1112,6 +1121,19 @@ export async function settingsScenarios(env) {
       // so other browsers agree.
       await until(async () => (await user.api("/api/prefs/notices-seen")).value?.update === "9.9.9",
         { what: "the ack stored with the account" });
+      // A new notice arrives (the feed is polled on focus); its row's link
+      // opens its pane, as Settings… would.
+      await page.keyboard.press("Escape");
+      await page.getByRole("dialog", { name: "Settings", exact: true }).waitFor({ state: "detached" });
+      notices = [{ id: "storage", fingerprint: "90", tone: "warn", pane: "account", title: "Your storage is nearly full (95 of 100 MB used)",
+        message: "Your storage is nearly full ({used} of {quota} MB used)", params: { used: 95, quota: 100 } }];
+      await page.evaluate(() => window.dispatchEvent(new Event("focus")));
+      await account.locator(".noticeDot").waitFor();
+      await account.click();
+      await page.getByTestId("account-notices").getByRole("button", { name: /Review storage/ }).click();
+      await page.getByRole("dialog", { name: "Settings", exact: true }).waitFor();
+      assertEq(await nav(page, "Account & sync").getAttribute("aria-current"), "page", "the row's link opens its pane");
+      await until(() => seen.includes("storage:90"), { what: "visiting the pane resolves it" });
       assertNoProblems(page);
     } finally {
       await ctx.close();
