@@ -601,3 +601,50 @@
 .quickOpenRow .kindGlyph { flex-shrink: 0; }
 .quickOpen .chatMentionHint { padding: 6px 6px 0; }
 .quickOpenKey { font-family: var(--font-mono); }
+
+/* --- Phone (the compact layout, .phoneUI on .app) ------------------------
+   The listing bar wraps: the library's name as a heading (a folder or label
+   view keeps its small label; the breadcrumb above names it), the filter box
+   the full width, then sort, kinds and view on one row. A file row gives the
+   title its own line, wrapping, with the folder and label chips on a second
+   line under it; the trailing columns (kind, date, pin — rowColumns in
+   App.jsx) keep their widths, so they still line up with the folder rows and
+   the header, and a narrow screen drops the date as above. */
+.phoneUI .homeListBar { flex-wrap: wrap; row-gap: 8px; padding: 12px 12px 8px; }
+.phoneUI .homeListLabel { flex: 1 0 100%; }
+.phoneUI .homeListLabel.homeListRoot {
+  font-size: calc(24px * var(--ui-font-scale, 1));
+  font-weight: 700;
+  letter-spacing: 0;
+  text-transform: none;
+  color: var(--text-primary);
+}
+.phoneUI .homeListSpacer { display: none; }
+.phoneUI .homeFindBox { flex: 1 0 100%; height: 38px; padding: 0 8px 0 12px; border-radius: 10px; }
+.phoneUI .homeFindInput { flex: 1; width: auto; min-width: 0; font-size: calc(15px * var(--ui-font-scale, 1)); }
+.phoneUI .fileRow {
+  display: grid;
+  grid-template-columns: 20px minmax(0, 1fr) auto auto auto;
+  align-items: start;
+  column-gap: 10px;
+  row-gap: 4px;
+  padding: 9px 10px;
+}
+.phoneUI .fileRow .fileRowIcon { grid-area: 1 / 1; height: 20px; }
+.phoneUI .fileRow :is(.fileRowName, .fileRowRename) { grid-area: 1 / 2; }
+.phoneUI .fileRow .fileRowName {
+  white-space: normal;
+  overflow-wrap: anywhere;
+  font-size: calc(15px * var(--ui-font-scale, 1));
+  line-height: 20px;
+}
+.phoneUI .fileRow .fileRowLabels { grid-area: 2 / 2; flex-wrap: wrap; row-gap: 4px; max-width: none; margin-left: 0; }
+.phoneUI .fileRow .fileRowLabels:empty { display: none; }
+.phoneUI .fileRow .fileRowKind { grid-area: 1 / 3; width: 64px; line-height: 20px; }
+.phoneUI .fileRow .fileRowDate { grid-area: 1 / 4; width: 110px; line-height: 20px; }
+.phoneUI .fileRow :is(.fileRowPin, .fileRowPinSlot) { grid-area: 1 / 5; }
+@media (max-width: 600px) {
+  .phoneUI .fileRow { grid-template-columns: 20px minmax(0, 1fr) auto auto; }
+  .phoneUI .fileRow .fileRowKind { width: 52px; }
+  .phoneUI .fileRow :is(.fileRowPin, .fileRowPinSlot) { grid-column: 4; }
+}

@@ -2671,6 +2671,9 @@ mark.merge-del { background: color-mix(in srgb, var(--danger) 16%, transparent);
   padding: 4px 4px 0;
 }
 .popoverDivider { border-top: 1px solid var(--border-subtle); margin: 4px 0; }
+/* The View menu's rows vary with the view (a phone drops the window
+   toggles), so a divider can end up first; it separates nothing there. */
+.menuPopover > .popoverDivider:first-child { display: none; }
 .topbar .popover .popoverItem,
 .popover .popoverItem {
   background: none;
@@ -3149,69 +3152,91 @@ mark.searchMark {
 .phonePanel .dockGrip { cursor: default; }
 /* One bar along the bottom: view tabs on the left, the topbar's action
    buttons on the right (the tab row up top is too narrow for both, and the
-   bottom is where a thumb lands). The action group keeps the `.topbar`
-   class so every ".topbar X" rule — icon buttons, popover chrome — still
-   applies to it unchanged. */
+   bottom is where a thumb lands). Every item is a 22px icon over its word,
+   ~50px tall. The action group keeps the `.topbar` class so every
+   ".topbar X" rule — icon buttons, popover chrome — still applies to it. */
 .phoneBottomBar {
+  --bar-item: 60px;
   position: relative; /* containing block for the action popovers */
   display: flex;
-  align-items: center;
+  align-items: stretch;
+  justify-content: space-between;
+  gap: 6px;
   flex-shrink: 0;
   border-top: 1px solid var(--border);
   background: var(--bg-deeper);
-  padding-bottom: env(safe-area-inset-bottom);
+  padding: 0 4px env(safe-area-inset-bottom);
 }
 .phoneTabBar {
   display: flex;
-  flex: 1 1 auto;
+  flex: 0 1 auto;
   min-width: 0;
 }
-.phoneTab {
-  flex: 1;
+/* The share view has no actions: its tabs share the whole bar. */
+.phoneTabBar:not(.hasActions) { flex: 1 1 auto; }
+.phoneBottomBar .topbar.phoneActions {
+  position: static; /* let the popovers anchor to the whole bar */
   display: flex;
+  flex: 0 1 auto;
+  min-width: 0;
+  gap: 0;
+  padding: 0;
+  border-bottom: none;
+  background: none;
+}
+/* Items shrink evenly when a page's bar is full (Library, PDF, Notes, Chat,
+   Add, Search, Share, More). A width, not a flex-basis: the groups size to
+   their items' preferred widths. Buttons zoom with the interface size, so
+   the action slots (spans around them) scale theirs to match. */
+.phoneTab { flex: 0 1 auto; width: var(--bar-item); }
+.phoneTabBar:not(.hasActions) .phoneTab { flex: 1 1 0; width: auto; }
+.phoneBottomBar .phoneActions > * {
+  flex: 0 1 auto;
+  width: calc(var(--bar-item) * var(--ui-scale, 1));
+  min-width: 0;
+  display: flex;
+}
+/* Only a popover lives here (the More sheet opens it): no slot. */
+.phoneBottomBar .phoneActions > .sheetOnly { width: 0; }
+.phoneTab,
+.phoneBottomBar .topbar.phoneActions .iconBtn {
+  position: relative;
+  min-width: 0;
+  display: flex;
+  flex-direction: column;
   align-items: center;
   justify-content: center;
-  gap: 6px;
-  padding: 11px 0;
+  gap: 3px;
+  height: 50px;
+  padding: 4px 2px 3px;
   background: none;
   border: none;
   border-radius: 0;
   color: var(--text-muted);
-  font-size: calc(13px * var(--ui-font-scale, 1));
   font-weight: 500;
 }
-.phoneTab.active { color: var(--accent); }
-/* Sharing the row with the actions leaves no room for labels — the icon
-   carries it, with an accent underline marking the open view. */
-.phoneTabBar.hasActions .phoneTab {
-  flex: 0 0 auto;
-  position: relative;
-  padding: 11px 13px;
+.phoneBottomBar .topbar.phoneActions .iconBtn { width: 100%; }
+.phoneTab svg,
+.phoneBottomBar .topbar.phoneActions .iconBtn svg { width: 22px; height: 22px; flex-shrink: 0; }
+.phoneTab > span,
+.barLabel {
+  max-width: 100%;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  font-size: 10.5px;
+  line-height: 13px;
 }
-.phoneTabBar.hasActions .phoneTab > span { display: none; }
-.phoneTabBar.hasActions .phoneTab.active::after {
-  content: "";
-  position: absolute;
-  left: 6px;
-  right: 6px;
-  bottom: 3px;
-  height: 2px;
-  border-radius: 1px;
-  background: var(--accent);
-}
-.phoneBottomBar .topbar.phoneActions {
-  position: static; /* let the popovers anchor to the whole bar */
-  flex: 0 0 auto;
-  gap: 0;
-  padding: 0 4px;
-  border-bottom: none;
-  background: none;
-}
-/* thumb-sized targets, matching the tab buttons' height */
-.phoneBottomBar .topbar.phoneActions .iconBtn {
-  width: 38px;
-  height: 38px;
-}
+/* The words show only in the bottom bar; on the desktop topbar the icon
+   buttons keep their tooltips. */
+.barLabel { display: none; }
+.phoneBottomBar .barLabel { display: block; }
+.phoneTab.active,
+.phoneBottomBar .topbar.phoneActions .iconBtn.activeIcon { color: var(--accent); background: none; }
+/* Badges sit on the icon's corner, not the wide slot's. */
+.phoneBottomBar .iconBtn > :is(.noticeDot, .transferSpin, .transferDot) { top: 4px; right: auto; left: calc(50% + 6px); }
+.phoneBottomBar .mirrorPillBadge { top: 1px; right: auto; left: calc(50% + 3px); }
+.phoneBottomBar .mirrorPillDot { top: 21px; bottom: auto; right: auto; left: calc(50% + 5px); }
 /* Popovers open upward and span the bar instead of hanging off its right
    edge — their desktop min-widths are wider than a phone screen. */
 .phoneBottomBar [data-popover] { position: static !important; }
@@ -3226,14 +3251,16 @@ mark.searchMark {
   max-height: 70vh;
   overflow-y: auto;
 }
-/* An upright tablet (or a landscape phone): room for the tab labels and
-   44px targets, and a popover keeps a menu's width at the right end instead
-   of stretching across the whole screen. */
+.popoverItem .transferSpin.inline { margin-left: 8px; flex-shrink: 0; }
+/* An upright tablet (or a landscape phone): roomier items, and a popover
+   keeps a menu's width at the right end instead of stretching across the
+   whole screen. */
 @media (min-width: 701px) {
-  .phoneTabBar.hasActions .phoneTab > span { display: inline; }
-  .phoneBottomBar .topbar.phoneActions .iconBtn { width: 44px; height: 44px; }
+  .phoneBottomBar { --bar-item: 72px; }
   .phoneBottomBar .popover { left: auto; width: min(480px, calc(100% - 12px)); }
 }
+/* The phone topbar holds only tabs and Back; with neither, it goes. */
+.topbar.phoneBare { display: none; }
 
 /* App fullscreen is the fallback when native fullscreen is unavailable.
    Confine overscroll to the app; the viewer's fullscreen button or Esc exits. */

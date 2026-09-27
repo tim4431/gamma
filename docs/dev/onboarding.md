@@ -11,7 +11,8 @@ e2e scenarios `guide.mjs` (first paper), `contextualGuide.mjs` (AI chat) and
 
 The first tour is a welcome card, the add-a-paper demo, then the user's
 own highlight on that paper, a typed note demonstration, an `llm` label
-demonstration, and a final spotlight on the Home button. Returning to the
+demonstration, and a final spotlight on the Home button (on a phone, the
+bottom bar's Library tab, which carries `header.home` there). Returning to the
 library emits `home.opened`, shows Done, and completes the tour
 automatically; Finish can also close it.
 

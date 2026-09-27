@@ -143,6 +143,14 @@ into its own name input in place (Enter or blur commits, Escape cancels); it
 is hidden while the folder is filtered to files-only, to labels, or inside a
 label view. The toolbar is search box → sort → kind → list/grid.
 
+In the compact layout (`.phoneUI`: phones and upright tablets,
+[ipad.md](ipad.md)) the toolbar wraps: at the library's root its label
+becomes a large "Library" heading (`homeListRoot`; a folder or label view
+keeps the small label, the breadcrumb above names it), then the search box
+the full width, then sort, kind and list/grid on one row. A file row gives
+the title its own line, wrapping, with the folder and label chips on a
+second line under it (the Phone block at the end of `library.css`).
+
 Search chips (Tab autosuggest) cover both kinds: label chips match exactly,
 folder chips match by prefix.
 

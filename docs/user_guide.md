@@ -237,7 +237,7 @@ The installed web app still needs the server to be reachable. For a library that
 - **Tabs** sync to your account across devices. Middle-click closes a tab; right-click pins it (pinned tabs stay left and can't be middle-closed); drag to reorder.
 - **Background tasks** (uploads, fetches, exports) show in the top bar's tasks popover with progress.
 - A link to a page that isn't in this workspace (deleted, or in another workspace) shows a notice under the top bar with **Search the library**, instead of opening nothing.
-- On a phone, and on a tablet held upright, everything becomes full-screen views behind a bottom tab bar (Library/PDF · Notes · Chat); turn the tablet sideways for the docked windows.
+- On a phone, and on a tablet held upright, everything becomes full-screen views behind one bottom bar: **Library** (home), the page's **PDF** and **Notes**, **Chat**, then **Add**, **Search**, a page's **Share** and **More** — your account and settings, background tasks (a spinner on More while something runs), Import/Export and the PDF window toggle. The top bar shows only while tabs are open. Turn the tablet sideways for the docked windows.
 
 ## Report a problem
 

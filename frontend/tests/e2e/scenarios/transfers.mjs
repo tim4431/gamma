@@ -12,7 +12,9 @@ export async function transferScenarios({ server, browser, alice, bob, makePdf, 
     return { ctx, page: await openPage(ctx, server.base) };
   }
   async function openDialog(page, name) {
-    await page.locator('[data-popover="menu"] > button').click();
+    // The View menu — on a phone its rows are in the bottom bar's More sheet.
+    const view = page.locator('[data-popover="menu"] > button');
+    await (await view.count() ? view : page.locator('[data-guide="header.account"]')).click();
     await page.getByRole("button", { name: `${name}…`, exact: true }).click();
     return page.getByRole("dialog", { name, exact: true });
   }

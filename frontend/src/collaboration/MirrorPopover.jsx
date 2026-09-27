@@ -504,6 +504,7 @@ export function MirrorPopover({ wsId, mirrorOf, publication: listedAsPublication
         aria-label={t("Sync status")}
       >
         <st.Icon size={15} />
+        <span className="barLabel">{t("Sync")}</span>
         {st.badge ? <span className={`mirrorPillBadge ${st.tone}`}>{st.badge}</span>
           : st.dot ? <span className={`mirrorPillDot ${st.tone}`} /> : null}
       </button>

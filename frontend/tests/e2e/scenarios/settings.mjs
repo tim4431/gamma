@@ -21,7 +21,8 @@ export async function settingsScenarios(env) {
     return { ctx, page };
   }
   async function openSettings(page) {
-    await page.getByRole("button", { name: "Account & settings", exact: true }).click();
+    // The account button — on a phone, the bottom bar's More.
+    await page.locator('[data-guide="header.account"]').click();
     await page.getByRole("button", { name: "Settings…", exact: true }).click();
     await page.getByRole("dialog", { name: "Settings", exact: true }).waitFor();
   }

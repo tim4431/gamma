@@ -329,6 +329,7 @@ export default function SearchPanel({
         aria-label={t("Search")}
       >
         <SearchIcon size={16} />
+        <span className="barLabel">{t("Search")}</span>
       </button>
       {open ? (
         <div className="popover searchPopover">

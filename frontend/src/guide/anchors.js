@@ -13,13 +13,13 @@
 // one is meant (the latest chat reply); the first one otherwise.
 
 export const ANCHORS = {
-  "header.home": { view: "any", description: "The Home button in the topbar" },
+  "header.home": { view: "any", description: "The Home button in the topbar; on a phone, the bottom bar's Library tab" },
   "header.back": { view: "nav", description: "Back to where you were before a link jump; there only after one" },
   "header.add": { view: "any", description: "Add — new page, PDF by URL / arXiv / DOI, uploads" },
-  "header.tasks": { view: "any", description: "Background tasks (downloads, uploads, indexing)" },
+  "header.tasks": { view: "any", description: "Background tasks (downloads, uploads, indexing); a row of the More sheet on a phone, without the anchor" },
   "header.search": { view: "any", description: "Workspace search (Ctrl+F)" },
   "header.share": { view: "page", description: "The page's Share button" },
-  "header.account": { view: "any", description: "Account & settings menu" },
+  "header.account": { view: "any", description: "Account & settings menu; on a phone, the bottom bar's More, the same menu with the topbar's other actions on top" },
   "account.tour": { view: "any", open: ["header.account"], description: "Tours submenu in the account menu" },
   "account.card": { view: "any", open: ["header.account"], description: "The account menu's card: you, this workspace and your role" },
   "account.workspaces": { view: "any", open: ["header.account"], description: "The account menu's workspace switcher" },

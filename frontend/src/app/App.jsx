@@ -162,6 +162,16 @@ function useIsPhone() {
 const HOME_SCREEN_INSTALLABLE = (/iPad|iPhone/.test(navigator.userAgent)
   || (/Macintosh/.test(navigator.userAgent) && navigator.maxTouchPoints > 1))
   && !(window.matchMedia?.("(display-mode: standalone)").matches || navigator.standalone);
+// The installed app paints the status bar with theme-color, so it continues
+// what sits under it: the topbar, or — on a phone's library with no tab
+// open, where the compact layout drops the topbar — the library itself.
+// Read from the theme variables, not the elements: the topbar's background
+// transitions, and a mid-transition read would lag a theme change.
+function paintStatusBar(bareTop) {
+  const bar = getComputedStyle(document.documentElement).getPropertyValue(bareTop ? "--bg-deeper" : "--bg-surface").trim();
+  const meta = document.querySelector('meta[name="theme-color"]');
+  if (bar && meta) meta.setAttribute("content", bar);
+}
 
 // Drag payload prefix marking a folder drag (page cards drag their bare id).
 const FOLDER_DRAG = "gamma-folder:";
@@ -4201,15 +4211,14 @@ function LibraryApp({ publicPage = null, initialServerConfig = null }) {
 
   // Theme: System tracks the OS preference live; Light/Dark pin it. The
   // theme-color meta follows: installed as a home-screen app, the status bar
-  // is painted with it, so it matches the topbar under it (docs/dev/ipad.md).
+  // is painted with it, so it matches what sits under it (docs/dev/ipad.md).
+  const phoneBareTopRef = useRef(false);
   useEffect(() => {
     const mq = window.matchMedia("(prefers-color-scheme: dark)");
     const apply = () => {
       document.documentElement.setAttribute(
         "data-theme", theme === "system" ? (mq.matches ? "dark" : "light") : theme);
-      const bar = getComputedStyle(document.documentElement).getPropertyValue("--bg-surface").trim();
-      const meta = document.querySelector('meta[name="theme-color"]');
-      if (bar && meta) meta.setAttribute("content", bar);
+      paintStatusBar(phoneBareTopRef.current);
     };
     apply();
     mq.addEventListener("change", apply);
@@ -5300,6 +5309,13 @@ function LibraryApp({ publicPage = null, initialServerConfig = null }) {
   const goBackNavRef = useRef(null);
   goBackNavRef.current = goBackNav;
   const navStackLen = navStack.length;
+  // Phone: the topbar holds only tabs and Back (the Library tab is home),
+  // so with neither it goes, and the status bar takes the library's colour.
+  const phoneBareTop = isPhone && !shareMode && !openTabs.length && !navStackLen;
+  useEffect(() => {
+    phoneBareTopRef.current = phoneBareTop;
+    paintStatusBar(phoneBareTop);
+  }, [phoneBareTop]);
 
   function goHome(refreshHome = true, keepFilters = false) {
     leaveCurrentPage();
@@ -7987,7 +8003,7 @@ function LibraryApp({ publicPage = null, initialServerConfig = null }) {
             ) : null}
             {homeMode ? (
               <div className="homeListBar" data-guide="home.listing">
-                <span className="homeListLabel">{categoryFilter === NO_LABEL ? t("Unlabelled") : categoryFilter ? t("Labelled") : folderFilter ? t("Contents") : t("Library")}</span>
+                <span className={`homeListLabel ${categoryFilter || folderFilter ? "" : "homeListRoot"}`}>{categoryFilter === NO_LABEL ? t("Unlabelled") : categoryFilter ? t("Labelled") : folderFilter ? t("Contents") : t("Library")}</span>
                 <span className="homeListSpacer" />
                 <ListFindBox value={homeQuery} onChange={setHomeQuery} keyLabel={commandKeyLabel("app.search")}
                   onEnter={homeMatchCount === 0 ? () => openSearchWith(homeQueryText) : undefined} />
@@ -8717,8 +8733,79 @@ function LibraryApp({ publicPage = null, initialServerConfig = null }) {
     );
   }
 
-  // The "≡" View menu, shared by the editing and read-only topbars.
-  // Read-only share views omit AI chat and the import actions.
+  // The "≡" View menu's rows, shared by the editing and read-only topbars;
+  // on a phone the More sheet lists them instead of a View button. Read-only
+  // share views omit AI chat and the import actions. A phone's bottom tabs
+  // already switch Notes and Chat, so there only the PDF toggle is a window.
+  const viewMenuItems = (menuReadOnly) => {
+    const pdfRow = !homeMode && !!pageAttach;
+    return (
+      <>
+        {!isPhone || pdfRow ? <div className="popoverSection">{t("Windows")}</div> : null}
+        {pdfRow ? (
+          <button className="popoverItem" onClick={() => setPdfHidden((v) => !v)}>
+            <span className="check">{!pdfHidden ? "✓" : ""}</span>
+            <FileIcon className="popoverItemIcon" size={15} /> PDF
+          </button>
+        ) : null}
+        {!homeMode && !isPhone ? (
+          <button className="popoverItem" onClick={() => setNotesVisible((v) => !v)}>
+            <span className="check">{notesVisible ? "✓" : ""}</span>
+            <FileTextIcon className="popoverItemIcon" size={15} /> {t("Notes")}
+          </button>
+        ) : null}
+        {(!menuReadOnly || focusedBlockId) && !isPhone ? (
+          <button className="popoverItem" onClick={() => setChatHidden((v) => !v)}>
+            <span className="check">{!chatHidden ? "✓" : ""}</span>
+            <SparklesIcon className="popoverItemIcon" size={15} /> {t("AI Chat")}
+          </button>
+        ) : null}
+        {!menuReadOnly && (!isPhone || pdfRow) ? <div className="popoverDivider" /> : null}
+        {!menuReadOnly ? (
+          <button
+            className="popoverItem"
+            onClick={() => { setOpenPopover(null); setImportOpen(true); }}
+            title={t("Bring in highlights — the ones saved inside this PDF file, a Logseq export, or a whole Zotero library")}
+          >
+            <ImportIcon className="popoverItemIcon" size={15} />
+            {t("Import…")}
+          </button>
+        ) : null}
+        {(focusedBlock && !homeMode) || (homeMode && folderFilter) ? (
+          <>
+            <div className="popoverDivider" />
+            <button
+              className="popoverItem"
+              onClick={() => {
+                setOpenPopover(null);
+                setExportFolder(homeMode ? folderFilter : null);
+                setExportOpen(true);
+              }}
+              title={homeMode
+                ? t("Download the “{folderFilter}” folder — every page in it as Markdown, a Logseq graph, a Zotero library, or a Gamma export", { folderFilter })
+                : t("Download this page — the PDF with highlights and notes, Markdown, a Logseq graph, a Zotero library, or a Gamma export")}
+            >
+              <ExportIcon className="popoverItemIcon" size={15} />
+              {t("Export…")}
+            </button>
+          </>
+        ) : null}
+        {!homeMode && pdfUrl ? (
+          <>
+            <div className="popoverDivider" />
+            <button
+              className="popoverItem"
+              onClick={exportRawPdf}
+              title={t("Download the PDF file exactly as stored — no highlights or notes")}
+            >
+              <DownloadIcon className="popoverItemIcon" size={15} />
+              {t("Download PDF")}
+            </button>
+          </>
+        ) : null}
+      </>
+    );
+  };
   const renderOverflowMenu = (menuReadOnly) => (
     <PopoverAnchor name="menu">
       <button
@@ -8730,76 +8817,45 @@ function LibraryApp({ publicPage = null, initialServerConfig = null }) {
         <MenuIcon size={17} />
       </button>
       {openPopover === "menu" ? (
-        <div className="popover menuPopover">
-          <div className="popoverSection">{t("Windows")}</div>
-          {!homeMode && pageAttach ? (
-            <button className="popoverItem" onClick={() => setPdfHidden((v) => !v)}>
-              <span className="check">{!pdfHidden ? "✓" : ""}</span>
-              <FileIcon className="popoverItemIcon" size={15} /> PDF
-            </button>
-          ) : null}
-          {!homeMode ? (
-            <button className="popoverItem" onClick={() => setNotesVisible((v) => !v)}>
-              <span className="check">{notesVisible ? "✓" : ""}</span>
-              <FileTextIcon className="popoverItemIcon" size={15} /> {t("Notes")}
-            </button>
-          ) : null}
-          {(!menuReadOnly || focusedBlockId) ? (
-            <button className="popoverItem" onClick={() => setChatHidden((v) => !v)}>
-              <span className="check">{!chatHidden ? "✓" : ""}</span>
-              <SparklesIcon className="popoverItemIcon" size={15} /> {t("AI Chat")}
-            </button>
-          ) : null}
-          {!menuReadOnly ? <div className="popoverDivider" /> : null}
-          {!menuReadOnly ? (
-            <button
-              className="popoverItem"
-              onClick={() => { setOpenPopover(null); setImportOpen(true); }}
-              title={t("Bring in highlights — the ones saved inside this PDF file, a Logseq export, or a whole Zotero library")}
-            >
-              <ImportIcon className="popoverItemIcon" size={15} />
-              {t("Import…")}
-            </button>
-          ) : null}
-          {(focusedBlock && !homeMode) || (homeMode && folderFilter) ? (
-            <>
-              <div className="popoverDivider" />
-              <button
-                className="popoverItem"
-                onClick={() => {
-                  setOpenPopover(null);
-                  setExportFolder(homeMode ? folderFilter : null);
-                  setExportOpen(true);
-                }}
-                title={homeMode
-                  ? t("Download the “{folderFilter}” folder — every page in it as Markdown, a Logseq graph, a Zotero library, or a Gamma export", { folderFilter })
-                  : t("Download this page — the PDF with highlights and notes, Markdown, a Logseq graph, a Zotero library, or a Gamma export")}
-              >
-                <ExportIcon className="popoverItemIcon" size={15} />
-                {t("Export…")}
-              </button>
-            </>
-          ) : null}
-          {!homeMode && pdfUrl ? (
-            <>
-              <div className="popoverDivider" />
-              <button
-                className="popoverItem"
-                onClick={exportRawPdf}
-                title={t("Download the PDF file exactly as stored — no highlights or notes")}
-              >
-                <DownloadIcon className="popoverItemIcon" size={15} />
-                {t("Download PDF")}
-              </button>
-            </>
-          ) : null}
-        </div>
+        <div className="popover menuPopover">{viewMenuItems(menuReadOnly)}</div>
       ) : null}
     </PopoverAnchor>
   );
 
+  // Phone (the compact layout): the bottom bar keeps Add, Search and a
+  // page's Share; the account button becomes More, whose sheet is the
+  // account menu with the rest of the topbar on top — background tasks (a
+  // spinner on More while something runs), the open folder's share link
+  // and the View menu's rows. Their own buttons are not rendered, but their
+  // popovers still open from these rows, spanning the bar like the others.
+  const tasksRunning = transfers.some((tr) => tr.status === "active") || !!indexTask?.active;
+  const tasksFailed = transfers.some((tr) => tr.status === "error" && tr.kind !== "ai");
+  const folderShareable = homeMode && lib.organize && !!folderFilter && !categoryFilter;
+  const phoneMainActive = phonePanel === null || (phonePanel === "notes" && centerNotes);
+  const phoneMoreRows = () => (
+    <>
+      <div className="popoverDivider" />
+      <button className="popoverItem" onClick={() => setOpenPopover("downloads")}
+        title={t("Background tasks — downloads, uploads, indexing, metadata/AI jobs")}>
+        <ActivityIcon className="popoverItemIcon" size={15} />
+        {t("Background tasks")}
+        {tasksRunning ? <span className="transferSpin inline" aria-hidden="true" />
+          : tasksFailed ? <span className="noticeDot inline" aria-hidden="true" /> : null}
+      </button>
+      {folderShareable ? (
+        <button className="popoverItem" onClick={() => openFolderShare(folderFilter)}>
+          <LinkIcon className="popoverItemIcon" size={15} />
+          {t("Share this folder")}
+        </button>
+      ) : null}
+      <div className="popoverDivider" />
+      {viewMenuItems(false)}
+    </>
+  );
+
   // The topbar action buttons. On a phone these move to the bottom bar:
   // the tab row is too narrow to hold both, and thumbs reach the bottom.
+  // There each carries its word under the icon (.barLabel, hidden elsewhere).
   const topbarActions = (
     <>
       <span data-popover="add" className="popoverAnchor">
@@ -8811,6 +8867,7 @@ function LibraryApp({ publicPage = null, initialServerConfig = null }) {
           aria-label={t("Add")}
         >
           <PlusIcon size={17} strokeWidth={2.2} />
+          <span className="barLabel">{t("Add")}</span>
         </button>
         {openPopover === "add" ? (
           <div className="popover addPopover">
@@ -8872,7 +8929,8 @@ function LibraryApp({ publicPage = null, initialServerConfig = null }) {
           </div>
         ) : null}
       </span>
-      <span data-popover="downloads" className="popoverAnchor">
+      <span data-popover="downloads" className={`popoverAnchor ${isPhone ? "sheetOnly" : ""}`}>
+          {isPhone ? null : (
           <button
             className={`iconBtn transferBtn ${openPopover === "downloads" ? "activeIcon" : ""}`}
             onClick={() => setOpenPopover((p) => (p === "downloads" ? null : "downloads"))}
@@ -8886,10 +8944,9 @@ function LibraryApp({ publicPage = null, initialServerConfig = null }) {
                 behind, so this is the only sign it happened. "ai" jobs are
                 excluded: a paper with no findable metadata is routine, and
                 the metadata popover says so itself. */}
-            {(transfers.some((t) => t.status === "active") || indexTask?.active)
-              ? <span className="transferSpin" />
-              : transfers.some((t) => t.status === "error" && t.kind !== "ai") ? <span className="transferDot" /> : null}
+            {tasksRunning ? <span className="transferSpin" /> : tasksFailed ? <span className="transferDot" /> : null}
           </button>
+          )}
           {openPopover === "downloads" ? (
             <div className="popover downloadsPopover">
               <div className="popoverTitle citeSectionRow">
@@ -8971,12 +9028,15 @@ function LibraryApp({ publicPage = null, initialServerConfig = null }) {
             aria-label={t("Share")}
           >
             <LinkIcon size={16} />
+            <span className="barLabel">{t("Share")}</span>
           </button>
           {openPopover === "share" && shareTarget?.kind === "page" ? sharePopover : null}
         </span>
-      ) : homeMode && lib.organize && folderFilter && !categoryFilter ? (
-        // The same button for the open folder: one link for every page filed in it.
-        <span data-popover="share" className="popoverAnchor">
+      ) : folderShareable ? (
+        // The same button for the open folder: one link for every page filed
+        // in it. On a phone the More sheet offers it instead.
+        <span data-popover="share" className={`popoverAnchor ${isPhone ? "sheetOnly" : ""}`}>
+          {isPhone ? null : (
           <button
             className={`iconBtn ${openPopover === "share" ? "activeIcon" : ""}`}
             onClick={() => { if (openPopover === "share") setOpenPopover(null); else openFolderShare(folderFilter); }}
@@ -8985,6 +9045,7 @@ function LibraryApp({ publicPage = null, initialServerConfig = null }) {
           >
             <LinkIcon size={16} />
           </button>
+          )}
           {openPopover === "share" && shareTarget?.kind === "folder" ? sharePopover : null}
         </span>
       ) : null}
@@ -9012,11 +9073,13 @@ function LibraryApp({ publicPage = null, initialServerConfig = null }) {
               setOpenPopover(opening ? "user" : null);
             }}
             data-guide="header.account"
-            title={t("Account & settings")}
-            aria-label={t("Account & settings")}
+            title={isPhone ? t("More — account, settings, background tasks, import and export") : t("Account & settings")}
+            aria-label={isPhone ? t("More") : t("Account & settings")}
           >
-            <UserIcon size={18} />
-            {notices.tone ? <span className={`noticeDot ${dotTone(notices.tone)}`} data-tone={notices.tone} aria-hidden="true" /> : null}
+            {isPhone ? <MenuIcon size={18} /> : <UserIcon size={18} />}
+            {isPhone ? <span className="barLabel">{t("More")}</span> : null}
+            {isPhone && tasksRunning ? <span className="transferSpin" aria-hidden="true" />
+              : notices.tone ? <span className={`noticeDot ${dotTone(notices.tone)}`} data-tone={notices.tone} aria-hidden="true" /> : null}
           </button>
           {openPopover === "user" ? (
             <div className="popover userPopover">
@@ -9055,6 +9118,7 @@ function LibraryApp({ publicPage = null, initialServerConfig = null }) {
                   <AllowanceMeter allowance={aiInfo.allowance} />
                 </div>
               ) : null}
+              {isPhone ? phoneMoreRows() : null}
               <div className="popoverDivider" />
               {/* The workspace switcher: every library this account belongs
                   to; switching reloads the tab on that workspace's URL. */}
@@ -9119,7 +9183,7 @@ function LibraryApp({ publicPage = null, initialServerConfig = null }) {
           ) : null}
         </span>
       )}
-      {renderOverflowMenu(false)}
+      {isPhone ? null : renderOverflowMenu(false)}
     </>
   );
 
@@ -9174,16 +9238,20 @@ function LibraryApp({ publicPage = null, initialServerConfig = null }) {
     >
       {!shareMode ? (
         <>
-          <div className="topbar">
-            <button
-              className={`iconBtn homeBtn ${homeMode ? "activeIcon" : ""}`}
-              onClick={goHome}
-              data-guide="header.home"
-              title={t("Home")}
-              aria-label={t("Home")}
-            >
-              <HomeIcon size={17} />
-            </button>
+          {/* On a phone the bottom bar's Library tab is home, and the bar
+              shows only while it has tabs (or Back) to hold. */}
+          <div className={`topbar ${phoneBareTop ? "phoneBare" : ""}`}>
+            {isPhone ? null : (
+              <button
+                className={`iconBtn homeBtn ${homeMode ? "activeIcon" : ""}`}
+                onClick={goHome}
+                data-guide="header.home"
+                title={t("Home")}
+                aria-label={t("Home")}
+              >
+                <HomeIcon size={17} />
+              </button>
+            )}
             {navStackLen > 0 ? (
               <button
                 className="iconBtn navBackBtn"
@@ -9610,18 +9678,36 @@ function LibraryApp({ publicPage = null, initialServerConfig = null }) {
       </div>
       {isPhone ? (
         // Phone: one bottom bar — view tabs on the left, the topbar's action
-        // buttons on the right. Icon-only, because both groups share the row.
+        // buttons on the right, each an icon over its word. The Library tab
+        // is home (the topbar has no Home button here), so it stays on a
+        // page's bar beside the page's own PDF / Notes / Chat.
         <div className="phoneBottomBar">
           <div className={`phoneTabBar ${shareMode ? "" : "hasActions"}`}>
-            <button
-              className={`phoneTab ${phonePanel === null || (phonePanel === "notes" && centerNotes) ? "active" : ""}`}
-              onClick={() => setPhonePanel(null)}
-              title={homeMode ? t("Library") : centerNotes ? t("Notes") : "PDF"}
-              aria-label={homeMode ? t("Library") : centerNotes ? t("Notes") : "PDF"}
-            >
-              {homeMode ? <HomeIcon size={16} /> : centerNotes ? <FileTextIcon size={16} /> : <FileIcon size={16} />}
-              <span>{homeMode ? t("Library") : centerNotes ? t("Notes") : "PDF"}</span>
-            </button>
+            {!shareMode ? (
+              <button
+                className={`phoneTab ${homeMode && phoneMainActive ? "active" : ""}`}
+                // Over the library, a covering panel just closes; otherwise
+                // this is the Home button: back to the library's root.
+                onClick={() => { if (!homeMode || phoneMainActive) goHome(); setPhonePanel(null); }}
+                data-guide="header.home"
+                title={t("Library")}
+                aria-label={t("Library")}
+              >
+                <HomeIcon size={16} />
+                <span>{t("Library")}</span>
+              </button>
+            ) : null}
+            {shareMode || !homeMode ? (
+              <button
+                className={`phoneTab ${phoneMainActive ? "active" : ""}`}
+                onClick={() => setPhonePanel(null)}
+                title={homeMode ? t("Library") : centerNotes ? t("Notes") : "PDF"}
+                aria-label={homeMode ? t("Library") : centerNotes ? t("Notes") : "PDF"}
+              >
+                {homeMode ? <HomeIcon size={16} /> : centerNotes ? <FileTextIcon size={16} /> : <FileIcon size={16} />}
+                <span>{homeMode ? t("Library") : centerNotes ? t("Notes") : "PDF"}</span>
+              </button>
+            ) : null}
             {!centerNotes ? (
               <button
                 className={`phoneTab ${phonePanel === "notes" ? "active" : ""}`}

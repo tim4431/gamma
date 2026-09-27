@@ -30,7 +30,7 @@ app counts as one browser, separate from Safari).
 | The manifest | `frontend/public/media/manifest.webmanifest` | `display: standalone`, `start_url` `/` (the app then picks the last used workspace), the three PNG icons. Unversioned, so under `/media/` (sent `no-cache`, [repository.md](repository.md)). The backend registers its media type, `application/manifest+json`, because Windows and slim images lack it (`gamma/app.py`; `tests/test_static.py`). |
 | The icons | `frontend/public/media/icons/apple-touch-icon.png` (180), `icon-192.png`, `icon-512.png`, `icon-maskable-512.png` | Rendered from the one brand mark by `tools/branding/build.mjs` like every other icon ([design/brand](../../design/brand/README.md)); never edited by hand. The `bleed` option of `mark.mjs` gives them a full-bleed square plate — the OS masks the corners itself, and iOS paints transparent corners black — and the maskable one keeps the mark inside the inner 80%. |
 | The head tags | `frontend/index.html` | `manifest`, `apple-touch-icon`, `apple-mobile-web-app-capable` / `mobile-web-app-capable`, the title, `apple-mobile-web-app-status-bar-style` **default** and `theme-color`. |
-| The status bar colour | `app/App.jsx`, the theme effect | With the *default* status-bar style the bar sits above the viewport and is painted with `theme-color`; the effect sets that meta to the topbar's background (`--bg-surface`) whenever the theme changes, so the bar continues the topbar for every theme. `black-translucent` was rejected: it puts content under the bar with fixed light text, wrong on the light themes. |
+| The status bar colour | `app/App.jsx`, `paintStatusBar` (the theme effect and the phone-topbar effect) | With the *default* status-bar style the bar sits above the viewport and is painted with `theme-color`; the meta is set to the topbar's background (`--bg-surface`) whenever the theme changes, so the bar continues the topbar for every theme — or to the library's (`--bg-deeper`) while the compact layout shows no topbar. `black-translucent` was rejected: it puts content under the bar with fixed light text, wrong on the light themes. |
 | Standalone-mode CSS | `shared/styles/app.css`, `@media (display-mode: standalone)` | The document stops rubber-banding (`overscroll-behavior: none` on html/body; the panes still scroll) and `.app` pads `env(safe-area-inset-bottom)` for the home indicator. There is no top inset to absorb with the default status bar. |
 
 ## Layout by orientation
@@ -41,15 +41,35 @@ screen, not the device (`PHONE_MQ` / `useIsPhone` in App.jsx):
 - **Upright** — a coarse pointer, portrait, at most 1024px wide (every iPad
   up to the 12.9" Pro, and Android tablets) — gets the compact shell the
   phone uses (`.phoneUI`): the PDF or the notes full width, Notes and Chat
-  as full-screen panels, one bottom bar. Two docks squeezed into 820px left
-  ~200px columns that pushed the chat header's buttons off screen. The bar
-  has room for its labels, and its popovers keep a menu's width at the
-  right end instead of spanning the screen (the `min-width: 701px` block
-  under the phone rules in `app.css`).
+  as full-screen panels, one bottom bar (below). Two docks squeezed into
+  820px left ~200px columns that pushed the chat header's buttons off
+  screen. At this width the bar's items are roomier and its popovers keep
+  a menu's width at the right end instead of spanning the screen (the
+  `min-width: 701px` block under the phone rules in `app.css`).
 - **Landscape** gets the desktop docks, as on a laptop. Turning the tablet
   swaps the shell live; the dock arrangement is kept for the way back.
 - A phone keeps the compact shell both ways: narrower than 700px, or a
   coarse pointer on a screen under 500px tall.
+
+### The compact shell
+
+- **The bottom bar** (`.phoneBottomBar`): view tabs on the left — Library
+  (home: the topbar has no Home button here, so it stays on a page's bar
+  and carries the `header.home` anchor), the page's PDF and Notes, Chat —
+  and the topbar's actions on the right: Add, Search, a page's Share (and
+  a clone's Sync pill), More. Every item is a 22px icon over its 10.5px word
+  (`.barLabel`, hidden on the desktop topbar), about 50px tall.
+- **More** is the account button (`header.account`) under another name:
+  its sheet is the account menu with the rest of the topbar on top —
+  Background tasks, the open folder's Share this folder, and the View
+  menu's rows (`viewMenuItems`; of the window toggles only PDF, since the
+  tabs switch Notes and Chat). The tasks, folder-share and View buttons are
+  not rendered; their popovers open from those rows in the sheet's place.
+  While something runs, More shows the tasks spinner.
+- **The topbar** holds only tabs and Back, so with neither (a library with
+  no tab open) it is not shown (`.topbar.phoneBare`), and theme-color
+  switches to the library's `--bg-deeper` so the status bar continues it
+  (`paintStatusBar` in App.jsx).
 
 Nothing else is tablet-specific: the viewport meta already disables
 browser zoom in favour of the viewer's own pinch-zoom, `touch-action:
@@ -84,6 +104,12 @@ rules the ink layer and the viewer already have.
   emulate `display-mode`, CDP accepts the feature but `matchMedia` ignores
   it); upright (834×1194) is the compact shell — the PDF full width, Notes
   full screen from the bottom bar — and rotating to landscape brings the
-  docks back. Chromium, not an iPad: the Add to Home Screen flow, the
-  status-bar paint and the home indicator need the device.
+  docks back; theme-color matches what sits under the status bar (the
+  library with no tab open, the topbar once one is). On a 390px phone: no
+  topbar without tabs, the bar's words (Library Chat Add Search More, then
+  Library Notes Chat Add Search Share More on a page), the listing bar
+  inside the screen, a long title wrapping with its chips under it, More's
+  sheet opening Background tasks, the Library tab going home. Chromium,
+  not an iPad: the Add to Home Screen flow, the status-bar paint and the
+  home indicator need the device.
 - `node tools/branding/build.mjs --check` pins the icons to the mark.
