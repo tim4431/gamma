@@ -8,25 +8,42 @@ import { t, T } from "../../shared/i18n/i18n.js";
 // it for touch). `skippable: false` keeps "Skip this demo" off a demo the
 // rest of the tour depends on. `{demoUrl}` in typed text comes from `vars` (overridable through the
 // localStorage key gamma-guide-vars). Start it from the
-// account menu's Tours > Your first paper. On a demo server it is also
-// offered on the library once the guest lands: the trigger's own `requires`
-// gates only that offer, so the tour stays startable everywhere.
+// account menu's Tours > Your first paper. It is also offered, as its
+// welcome card, on the library of a demo server once the guest lands and on
+// a library with nothing in it yet but the seeded Welcome page: the
+// trigger's own `requires` / `anyOf` gate only that offer, so the tour stays
+// startable everywhere.
+//
+// `welcome: true`: the first (`intro`) step is a centred welcome card — what
+// the tour does, how long it takes, an outline — and so is the tour's offer;
+// Start from the offer begins after it. The intro is not counted as a step.
+const WELCOME = {
+  anchor: null,
+  intro: true,
+  body: T("Learn it on a real paper. Gamma shows each move once, then you try it yourself."),
+  outline: [
+    { text: T("Add a paper from a link"), kind: "watch" },
+    { text: T("Highlight a sentence and an equation"), kind: "try" },
+    { text: T("Turn highlights into notes and labels"), kind: "watch" },
+  ],
+  next: T("Start the tour"),
+  later: T("Explore on my own"),
+  footnote: T("You can replay it any time from the account menu."),
+};
 
 export default {
   id: "first-run",
   version: 2,
   title: T("Your first paper"),
-  trigger: { requires: { demo: true, view: "home" } },
+  welcome: true,
+  minutes: 2,
+  trigger: { requires: { view: "home", editable: true }, anyOf: [{ demo: true }, { emptyLibrary: true }] },
   vars: {
     demoUrl: "https://arxiv.org/abs/1706.03762", // Attention Is All You Need
   },
   steps: [
-    {
-      id: "welcome",
-      anchor: null,
-      title: T("Welcome to Gamma"),
-      next: T("Start"),
-    },
+    { ...WELCOME, id: "welcome", requires: { demo: false }, title: T("Welcome to Gamma") },
+    { ...WELCOME, id: "welcome-demo", requires: { demo: true }, title: T("Welcome to the Gamma demo") },
     {
       id: "add-demo",
       anchor: "header.add",

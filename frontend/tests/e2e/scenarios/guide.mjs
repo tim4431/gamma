@@ -8,6 +8,7 @@ import { ANCHORS, anchorsForView } from "../../../src/guide/anchors.js";
 import { selectPdfText, waitForPdf } from "./pdf.mjs";
 import { ABSTRACT_PASSAGE } from "../../../src/guide/previewHighlight.js";
 import { readFileSync } from "node:fs";
+import { Account } from "../harness.mjs";
 
 export async function guideScenarios(env) {
   const { server, browser, alice, step, until, assert, assertEq, assertNoProblems, openPage, makePdf, flags } = env;
@@ -27,13 +28,15 @@ export async function guideScenarios(env) {
       await page.click('[data-guide="header.account"]');
       await page.click('[data-guide="account.tour"]');
       await page.click('[data-tour="first-run"]');
-      await page.waitForSelector('[data-guide-overlay="welcome"] .guideCard');
+      await page.waitForSelector('[data-guide-overlay="welcome"] .guideCard.guideCardWelcome');
+      assertEq(await page.locator(".guideCard .guideOutline li").count(), 3, "the welcome card outlines the tour");
       for (const id of anchorsForView("home").filter((id) => !ANCHORS[id].open)) {
         assertEq(await page.locator(`[data-guide="${id}"]`).count(), 1, `anchor ${id} (${ANCHORS[id].description}) present once`);
       }
       await page.click(".guideCard .uiBtn.primary");
       // The demo: Add opens, the link is typed, Enter opens the paper.
       await page.waitForSelector('[data-guide-overlay="add-demo"][data-guide-busy]');
+      assertEq(await page.locator(".guideCard .guideCount").textContent(), "Step 1 of 8", "the welcome card is not counted as a step");
       assertEq(await page.locator('.guideCard .guideBtns button').count(), 0, "automatic step has no navigation buttons, including during its initial pause");
       assertEq(await page.locator('.guideCard .guideChip.watch').count(), 1, "a demo says to watch");
       assertEq(await page.locator('.guideCard .guideLink').count(), 0, "the add demo cannot be skipped: every later step needs its paper");
@@ -162,6 +165,26 @@ export async function guideScenarios(env) {
       await page.waitForSelector('[data-guide="add.urlInput"]:focus');
       await page.keyboard.press("Escape");
       await until(async () => await page.locator(".guideCard").count() === 0);
+      assertNoProblems(page);
+    } finally { await ctx.close(); }
+  });
+
+  await step("guide: a new account's empty library is offered the first tour as its welcome card", async () => {
+    server.manage("create-user", "newcomer", "newcomer-pw");
+    const newcomer = await new Account(server, "newcomer", "newcomer-pw").login();
+    const ctx = await newcomer.context(browser, { suggestTours: true });
+    const page = await openPage(ctx, `${server.base}/?ws=${newcomer.ws}`);
+    try {
+      await page.waitForSelector('[data-guide-offer="first-run"] .guideCard.guideCardWelcome', { timeout: 15000 });
+      assertEq(await page.locator(".guideDim").count(), 0, "the arrival offer dims nothing");
+      assertEq(await page.locator(".guideCard .guideTitle").textContent(), "Welcome to Gamma");
+      await page.getByRole("button", { name: "Explore on my own", exact: true }).click();
+      await until(async () => await page.locator(".guideCard").count() === 0);
+      assertEq(await page.evaluate(() => JSON.parse(localStorage.getItem("gamma-guide:first-run")).state), "dismissed");
+      await page.reload();
+      await page.waitForSelector('[data-guide="header.home"]');
+      await page.waitForTimeout(4000);
+      assertEq(await page.locator("[data-guide-offer]").count(), 0, "offered once per version");
       assertNoProblems(page);
     } finally { await ctx.close(); }
   });

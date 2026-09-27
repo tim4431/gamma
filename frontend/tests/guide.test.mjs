@@ -54,7 +54,7 @@ test("tours reference registered anchors and catalogued events", () => {
 const aiTour = TOURS["ai-chat"];
 test("the first tours are manual and AI chat uses compact, conditional steps", () => {
   assert.deepEqual(TOURS["first-run"].requires || {}, {}, "the first-run tour starts from the Tours menu everywhere");
-  assert.equal(TOURS["first-run"].trigger.event, undefined, "offered by state, on a demo server only");
+  assert.equal(TOURS["first-run"].trigger.event, undefined, "offered by state, on a demo server or an empty library");
   assert.equal(aiTour.trigger, undefined);
   assert.equal(aiTour.show, "chat");
   assert.deepEqual(aiTour.steps.map((s) => s.id), ["chat-question", "chat-voice", "chat-box", "chat-box-context"]);
@@ -134,11 +134,16 @@ test("the Back hint comes with the first link jump and retires once Back is used
   assert.equal(retiresOffer(back, at("nav.pushed")), false);
 });
 
-test("the first-run tour is offered on a demo server's library only, and stays manual elsewhere", () => {
+test("the first-run tour is offered on a demo server's library or an empty one, and stays manual elsewhere", () => {
   const firstRun = TOURS["first-run"];
-  const home = { ...facts, view: "home", onPage: false };
+  const home = { ...facts, view: "home", onPage: false, emptyLibrary: false };
   assert.equal(canOffer(firstRun, { facts: { ...home, demo: true }, progress: null }), true);
-  assert.equal(canOffer(firstRun, { facts: { ...home, demo: false }, progress: null }), false, "never offered off a demo server");
+  assert.equal(canOffer(firstRun, { facts: { ...home, demo: false }, progress: null }), false, "not on a library with pages in it");
+  assert.equal(canOffer(firstRun, { facts: { ...home, demo: false, emptyLibrary: true }, progress: null }), true, "every new account is invited");
+  assert.equal(canOffer(firstRun, { facts: { ...home, emptyLibrary: true, editable: false }, progress: null }), false,
+    "not where the tour could not add its paper");
+  assert.equal(canOffer(firstRun, { facts: { ...home, emptyLibrary: true }, progress: { state: "running", step: 3, version: firstRun.version } }), false,
+    "not once the tour has been started from the menu");
   assert.equal(canOffer(firstRun, { facts: { ...facts, demo: true }, progress: null }), false, "offered on the library, not on a page");
   assert.equal(canOffer(firstRun, { facts: { ...home, demo: true }, progress: null, event: at("home.opened") }), false,
     "a state trigger is not an event trigger");
@@ -212,4 +217,25 @@ test("offer copy is catalogued", () => {
       assert.ok(tour.offer[key] && tour.offer[key] in zh, `${tour.id}: offer.${key} must be a T()-marked string`);
     }
   }
+});
+
+test("anyOf: at least one of the trigger's fact sets must hold", () => {
+  const tour = { id: "t", version: 1, trigger: { requires: { view: "home" }, anyOf: [{ a: true }, { b: true }] }, steps: [{ id: "s" }] };
+  assert.equal(canOffer(tour, { facts: { view: "home", a: true }, progress: null }), true);
+  assert.equal(canOffer(tour, { facts: { view: "home", b: true }, progress: null }), true);
+  assert.equal(canOffer(tour, { facts: { view: "home" }, progress: null }), false);
+  assert.equal(canOffer(tour, { facts: { view: "page", a: true }, progress: null }), false, "requires still holds");
+});
+
+test("a welcome tour opens on an uncounted intro card, one per situation", () => {
+  const firstRun = TOURS["first-run"];
+  assert.equal(firstRun.welcome, true);
+  const intros = firstRun.steps.filter((s) => s.intro);
+  assert.deepEqual(intros.map((s) => s.id), ["welcome", "welcome-demo"]);
+  for (const s of intros) {
+    assert.equal(s.anchor, null, "the welcome card is centred");
+    assert.equal(s.outline.length, 3);
+    assert.ok(s.next && s.later && s.footnote);
+  }
+  assert.ok(firstRun.steps.slice(2).every((s) => !s.intro), "intro steps come first");
 });

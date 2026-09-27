@@ -69,7 +69,7 @@
   color: var(--text-muted);
   font-variant-numeric: tabular-nums;
 }
-.guideStep + .guideClose { margin-left: auto; }
+.guideStep + .guideClose, .guideChip + .guideClose { margin-left: auto; }
 .guideStep {
   font-size: calc(11px * var(--ui-font-scale, 1));
   font-weight: 600;
@@ -80,8 +80,8 @@
 .guideClose { margin-right: -6px; }
 .guideRoot.done .guideRing { animation: none; stroke-opacity: 1; }
 .guideChip.watch { background: color-mix(in srgb, var(--bg-raised) 70%, transparent); color: var(--text-secondary); }
-.guideChip.turn { background: var(--accent-bg); color: var(--accent); }
-.guideChip.turn::before {
+.guideChip.turn, .guideChip.accent { background: var(--accent-bg); color: var(--accent); }
+.guideChip.turn::before, .guideChip.accent::before {
   content: "";
   width: 6px;
   height: 6px;
@@ -236,6 +236,39 @@
   border-color: var(--border-light);
 }
 
+/* The welcome card: a tour's intro and its arrival offer, centred. As an
+   offer it dims nothing; the dimming starts with the tour. */
+.guideCard.guideCardWelcome {
+  width: 440px;
+  padding: 24px 26px 18px;
+  gap: 12px;
+  border-top: 1px solid var(--border);
+}
+.guideCardWelcome .guideTitle { font-size: calc(21px * var(--ui-font-scale, 1)); letter-spacing: -0.01em; }
+.guideCardWelcome .guideBody { font-size: calc(13.5px * var(--ui-font-scale, 1)); }
+.guideOutline { list-style: none; margin: 2px 0 4px; padding: 0; display: flex; flex-direction: column; gap: 9px; }
+.guideOutline li {
+  display: flex;
+  align-items: center;
+  gap: 11px;
+  font-size: calc(13.5px * var(--ui-font-scale, 1));
+}
+.guideOutlineNum {
+  flex: none;
+  width: 24px;
+  height: 24px;
+  border-radius: 50%;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  background: var(--accent-bg);
+  color: var(--accent);
+  font-weight: 700;
+  font-size: calc(12px * var(--ui-font-scale, 1));
+}
+.guideOutlineKind { margin-left: auto; font-size: calc(12px * var(--ui-font-scale, 1)); color: var(--text-muted); white-space: nowrap; }
+.guideFootnote { font-size: calc(11.5px * var(--ui-font-scale, 1)); color: var(--text-muted); }
+
 /* Narrow screens: the card becomes a bottom sheet; the spotlight stays.
    On the phone layout it sits above the bottom tab bar. */
 @media (max-width: 640px) {
@@ -250,6 +283,7 @@
     bottom: calc(56px + env(safe-area-inset-bottom));
   }
   .guideCardCentered { width: min(340px, calc(100vw - 32px)); }
+  .guideCard.guideCardWelcome { width: min(440px, calc(100vw - 32px)); padding: 20px 18px 16px; }
   /* A sheet is not beside its anchor. */
   .guideBeak { display: none; }
   /* Keep lower controls, especially the composer, usable during practice. */

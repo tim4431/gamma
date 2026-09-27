@@ -1654,6 +1654,7 @@ function LibraryApp({ publicPage = null, initialServerConfig = null }) {
   const cancelCoarseRestoreRef = useRef(() => {});
   const [blocks, setBlocks] = useState([]);
   const [homeBlocks, setHomeBlocks] = useState([]);
+  const [homeLoaded, setHomeLoaded] = useState(false); // the library listing has come back once
   const [refCache, setRefCache] = useState({}); // { [blockId]: { content, page_title } }
   const [backlinks, setBacklinks] = useState([]);
   const [chatHidden, setChatHidden] = useState(false);
@@ -3614,6 +3615,7 @@ function LibraryApp({ publicPage = null, initialServerConfig = null }) {
       .then((data) => {
         const children = Array.isArray(data.children) ? data.children : [];
         setHomeBlocks(children);
+        setHomeLoaded(true);
         return children;
       })
       .catch(() => { setHomeBlocks([]); return []; });
@@ -6518,6 +6520,9 @@ function LibraryApp({ publicPage = null, initialServerConfig = null }) {
       onPage: !!focusedBlockId,
       editable: !readOnly,
       unfiledLibrary,
+      // nothing in the library yet but the seeded Welcome page: the first
+      // tour is offered on it
+      emptyLibrary: homeLoaded && homeBlocks.every((b) => b.properties?.seeded),
       installable: HOME_SCREEN_INSTALLABLE,
       // a demo server: progress per visit, the first-run tour offered on arrival
       demo: !!serverConfig?.demo,

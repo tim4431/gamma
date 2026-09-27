@@ -106,8 +106,11 @@ export async function authScenarios({ server, browser, alice, step, until, asser
       }));
       assertEq(JSON.parse(kept.session)?.state, "offered");
       assertEq(kept.local, null, "nothing kept in localStorage");
-      await page.getByRole("button", { name: "Show me", exact: true }).click();
-      await page.locator('[data-guide-overlay="welcome"] .guideCard').waitFor();
+      // The offer is the tour's welcome card; Start begins with the first
+      // demo, not a second welcome.
+      assertEq(await page.locator('[data-guide-offer="first-run"] .guideTitle').textContent(), "Welcome to the Gamma demo");
+      await page.getByRole("button", { name: "Start the tour", exact: true }).click();
+      await page.locator('[data-guide-overlay="add-demo"] .guideCard').waitFor();
       await page.keyboard.press("Escape");
       await page.locator('[data-guide-overlay]').waitFor({ state: "detached" });
       assertNoProblems(page);

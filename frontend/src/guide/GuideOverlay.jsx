@@ -90,6 +90,38 @@ function beakAt(side, r, top, left, cardH) {
   return { y: clamp(r.top + r.height / 2 - top, cardH) };
 }
 
+// A welcome tour's intro (and its offer): what the tour does and how long
+// it takes, an outline marking what Gamma shows and what the user tries,
+// Start, and a way out that says the tour stays available.
+function WelcomeContent({ step, minutes, onStart, onLater, bindings }) {
+  return (
+    <>
+      <div className="guideHead">
+        {minutes ? <span className="guideChip accent">{tn("{n}-minute tour", "{n}-minute tour", minutes)}</span> : null}
+        <button className="uiClose uiCloseSm guideClose" onClick={onLater} title={t("Dismiss guide (Esc)")} aria-label={t("Dismiss guide")}>×</button>
+      </div>
+      <div className="guideTitle">{renderInline(t(step.title), bindings)}</div>
+      {step.body ? <div className="guideBody">{renderBody(t(step.body), bindings)}</div> : null}
+      {step.outline?.length ? (
+        <ol className="guideOutline">
+          {step.outline.map((item, i) => (
+            <li key={i}>
+              <span className="guideOutlineNum" aria-hidden="true">{i + 1}</span>
+              <span>{t(item.text)}</span>
+              <span className="guideOutlineKind">{item.kind === "try" ? t("you try") : t("watch")}</span>
+            </li>
+          ))}
+        </ol>
+      ) : null}
+      <div className="guideFoot">
+        <button className="uiBtn" onClick={onLater}>{step.later ? t(step.later) : t("Not now")}</button>
+        <span className="guideBtns"><button className="uiBtn primary" onClick={onStart}>{step.next ? t(step.next) : t("Start")}</button></span>
+      </div>
+      {step.footnote ? <div className="guideFootnote">{t(step.footnote)}</div> : null}
+    </>
+  );
+}
+
 // keybindings: the account's Settings → Keyboard overrides, so a `{key:…}`
 // in the copy shows the chord that actually fires.
 export default function GuideOverlay({ guide, keybindings }) {
@@ -172,7 +204,9 @@ export default function GuideOverlay({ guide, keybindings }) {
 
   if (!visible || !step) return null;
   const waiting = anchor && !rect;
-  const centered = !anchor && !inviting;
+  // The welcome card: a welcome tour's intro step, or its offer.
+  const welcome = inviting ? !!offer.welcome : !!step.intro && !anchor;
+  const centered = !anchor && (!inviting || welcome);
   const busy = !inviting && !!live?.busy;
   const vw = window.innerWidth, vh = window.innerHeight;
   const hole = rect
@@ -225,7 +259,7 @@ export default function GuideOverlay({ guide, keybindings }) {
       {!waiting || busy ? (
         <div
           ref={cardRef}
-          className={`guideCard ${rect && rect.top > vh / 2 ? "guideCardAbove" : ""} ${centered && !busy ? "guideCardCentered" : ""} ${cardPos ? `side-${cardPos.side}` : ""} ${(busy || inviting) && !cardPos ? "guideCardCorner" : ""}`}
+          className={`guideCard ${rect && rect.top > vh / 2 ? "guideCardAbove" : ""} ${centered && !busy ? "guideCardCentered" : ""} ${welcome ? "guideCardWelcome" : ""} ${cardPos ? `side-${cardPos.side}` : ""} ${(busy || inviting) && !cardPos && !centered ? "guideCardCorner" : ""}`}
           style={cardPos ? { top: cardPos.top, left: cardPos.left, width: CARD_W } : undefined}
           onMouseDown={keepFocus}
           onPointerDown={(e) => e.stopPropagation()}
@@ -237,46 +271,53 @@ export default function GuideOverlay({ guide, keybindings }) {
             <span className={`guideBeak beak-${cardPos.side}`} aria-hidden="true"
               style={cardPos.beak.x != null ? { left: cardPos.beak.x - 7 } : { top: cardPos.beak.y - 7 }} />
           ) : null}
-          <div className="guideHead">
-            {inviting ? (
-              <span className="guideStep">
-                {offer.hint ? <span className="guideChip tip">{t("Tip")}</span> : tn("Quick tour · {n} step", "Quick tour · {n} steps", offer.count)}
-              </span>
-            ) : (
-              <>
-                {failed ? <span className="guideChip failed">{t("couldn't finish")}</span>
-                  : done ? <span className="guideChip done guideDone">{t("✓ Done")}</span>
-                  : busy ? <span className="guideChip watch"><PlayGlyph />{t("Watch")}</span>
-                  : yourTurn ? <span className="guideChip turn">{t("Your turn")}</span> : null}
-                <span className="guideCount">{t("Step {n} of {count}", { n: index + 1, count })}</span>
-              </>
-            )}
-            <button className="uiClose uiCloseSm guideClose" onClick={dismiss} title={inviting ? t("Dismiss guide (Esc)") : t("Leave the tour (Esc)")} aria-label={inviting ? t("Dismiss guide") : t("Leave the tour")}>×</button>
-          </div>
-          <div className="guideTitle">{renderInline(t(step.title), keybindings)}</div>
-          {t(body) ? <div className="guideBody">{renderBody(t(body), keybindings)}</div> : null}
-          {busy && live?.progress ? (
-            <div className="guideDemoBar" aria-hidden="true"><i style={{ width: `${(100 * live.progress[0]) / Math.max(1, live.progress[1])}%` }} /></div>
-          ) : null}
-          {!inviting ? (
-            <div className="guideSegments" aria-hidden="true">
-              {Array.from({ length: count }, (_, i) => <i key={i} className={i === index ? "on" : i < index ? "done" : ""} />)}
-            </div>
-          ) : null}
-          {/* The primary button is the call to action only where the step
-              itself is the action (Next, Done); a demo can be skipped, and on
-              the user's turn the task is the call, not skipping it. The row
-              stays (empty) through the Done moment, so the card does not jump. */}
-          {showPrimary || showBack || link || done ? (
-            <div className="guideFoot">
-              {inviting && !offer.hint ? <button className="uiBtn sm" onClick={dismiss}>{t("Not now")}</button> : null}
-              {showBack ? <button className="uiBtn" onClick={back}>{t("Back")}</button> : null}
-              {link ? <button className="guideLink" onClick={next}>{link}</button> : null}
-              <span className="guideBtns">
-                {showPrimary ? <button className="uiBtn primary" onClick={next}>{primaryLabel}</button> : null}
-              </span>
-            </div>
-          ) : null}
+          {welcome ? (
+            <WelcomeContent step={step} minutes={inviting ? offer.minutes : guide.tour?.minutes} bindings={keybindings}
+              onStart={next} onLater={dismiss} />
+          ) : (
+            <>
+              <div className="guideHead">
+                {inviting ? (
+                  <span className="guideStep">
+                    {offer.hint ? <span className="guideChip tip">{t("Tip")}</span> : tn("Quick tour · {n} step", "Quick tour · {n} steps", offer.count)}
+                  </span>
+                ) : (
+                  <>
+                    {failed ? <span className="guideChip failed">{t("couldn't finish")}</span>
+                      : done ? <span className="guideChip done guideDone">{t("✓ Done")}</span>
+                      : busy ? <span className="guideChip watch"><PlayGlyph />{t("Watch")}</span>
+                      : yourTurn ? <span className="guideChip turn">{t("Your turn")}</span> : null}
+                    <span className="guideCount">{t("Step {n} of {count}", { n: index + 1, count })}</span>
+                  </>
+                )}
+                <button className="uiClose uiCloseSm guideClose" onClick={dismiss} title={inviting ? t("Dismiss guide (Esc)") : t("Leave the tour (Esc)")} aria-label={inviting ? t("Dismiss guide") : t("Leave the tour")}>×</button>
+              </div>
+              <div className="guideTitle">{renderInline(t(step.title), keybindings)}</div>
+              {t(body) ? <div className="guideBody">{renderBody(t(body), keybindings)}</div> : null}
+              {busy && live?.progress ? (
+                <div className="guideDemoBar" aria-hidden="true"><i style={{ width: `${(100 * live.progress[0]) / Math.max(1, live.progress[1])}%` }} /></div>
+              ) : null}
+              {!inviting ? (
+                <div className="guideSegments" aria-hidden="true">
+                  {Array.from({ length: count }, (_, i) => <i key={i} className={i === index ? "on" : i < index ? "done" : ""} />)}
+                </div>
+              ) : null}
+              {/* The primary button is the call to action only where the step
+                  itself is the action (Next, Done); a demo can be skipped, and on
+                  the user's turn the task is the call, not skipping it. The row
+                  stays (empty) through the Done moment, so the card does not jump. */}
+              {showPrimary || showBack || link || done ? (
+                <div className="guideFoot">
+                  {inviting && !offer.hint ? <button className="uiBtn sm" onClick={dismiss}>{t("Not now")}</button> : null}
+                  {showBack ? <button className="uiBtn" onClick={back}>{t("Back")}</button> : null}
+                  {link ? <button className="guideLink" onClick={next}>{link}</button> : null}
+                  <span className="guideBtns">
+                    {showPrimary ? <button className="uiBtn primary" onClick={next}>{primaryLabel}</button> : null}
+                  </span>
+                </div>
+              ) : null}
+            </>
+          )}
         </div>
       ) : null}
     </div>

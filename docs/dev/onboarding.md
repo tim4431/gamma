@@ -15,6 +15,18 @@ demonstration, and a final spotlight on the Home button. Returning to the
 library emits `home.opened`, shows Done, and completes the tour
 automatically; Finish can also close it.
 
+The welcome card (`welcome: true` on the tour, its first step `intro:
+true`) is centred, 440 px: a "2-minute tour" chip (`minutes`), the title
+("Welcome to the Gamma demo" on a demo server — two `intro` variants by
+`requires: {demo}`), one sentence saying Gamma shows each move once and then
+the user tries it, a three-line `outline` marking each line *watch* or *you
+try*, **Explore on my own** (`later`, dismisses) and **Start the tour**
+(`next`), and the footnote that the tour can be replayed from the account
+menu. It is not counted as a step (the add demo reads "Step 1 of 8"). It is
+also the tour's offer: every new account is invited on arrival (see the
+table below), without dimming anything; Start begins with the add demo, and
+Explore on my own settles the offer for the tour's version.
+
 Progress is a localStorage key per account (`gamma-guide:<account>:<tourId>`;
 the first tour keeps its older `gamma-guide:first-run`), not yet the synced
 pref. On a demo server (`facts.demo`, from `GET /api/server-config`'s
@@ -95,17 +107,18 @@ an amber **Tip** chip over one plain sentence that says why it helps, with
 | hint: Back | the first link jump (`nav.pushed`), unless Back was already used (`doneOn: nav.back`) | the Back button: it returns to the same spot, or `{key:app.back}` |
 | hint: folders | the library has 10+ pages and no folder or label (state) | the listing bar |
 | hint: install | iPhone/iPad Safari, not yet the home-screen app (state) | no anchor: a bottom-left card |
-| Your first paper | on a demo server only, on the library once the guest lands (state, `trigger.requires: {demo: true, view: "home"}`) | no anchor: a corner card; Show me starts the tour |
+| Your first paper | on the library of a demo server once the guest lands, or of a library with nothing in it yet but the seeded Welcome page (`emptyLibrary`: the listing has loaded and every root page has `properties.seeded`) — state, `trigger: {requires: {view: "home", editable: true}, anyOf: [{demo: true}, {emptyLibrary: true}]}`; not once the tour has any progress | no anchor: the centred welcome card; Start the tour begins with the add demo |
 
 Rules the engine keeps (`useGuide.js`, `triggers.js`):
 
-- **Trigger shape.** `trigger: { event, match?, count?, doneOn?, requires? }`.
-  Without `event` it is a state trigger: offered once the tour's `requires`
-  (and the trigger's) hold, checked when the facts change, never in the
-  first 3 s after load. The tour-level `requires` also gates manual starts;
-  the trigger's `requires` gates only the offer, which is how the first-run
-  tour is offered on a demo server's library while staying startable from
-  the Tours menu everywhere. Step-level `requires` filters steps when the
+- **Trigger shape.** `trigger: { event, match?, count?, doneOn?, requires?,
+  anyOf? }`. Without `event` it is a state trigger: offered once the tour's
+  `requires` (and the trigger's) hold, checked when the facts change, never
+  in the first 3 s after load. The tour-level `requires` also gates manual
+  starts; the trigger's `requires` gates only the offer, which is how the
+  first-run tour is offered on the library while staying startable from
+  the Tours menu everywhere. `anyOf` is a list of fact sets of which at
+  least one must hold as well (a demo server, or an empty library). Step-level `requires` filters steps when the
   tour starts, so two steps can be variants of one another (the sharing
   tour's access step for `shareAudience: "anyone"` and for the rest). A
   required value that is an array means one of its values.

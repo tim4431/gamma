@@ -2,14 +2,15 @@
 // Pure, so node tests it (tests/guide.test.mjs).
 //
 // A tour with a `trigger` is offered at most once per version:
-//   trigger: { event, match?, count?, doneOn?, requires? }
+//   trigger: { event, match?, count?, doneOn?, requires?, anyOf? }
 // - event (+ match): the moment to offer — right after the thing happened,
 //   never on mere contact with a control. Without an event, the tour is
 //   offered once the tour's `requires` hold (something that happened to the
 //   user, e.g. being added to a shared workspace).
 // - requires: facts that gate the OFFER only, never a manual start (the
-//   first-run tour is offered on the library of a demo server, and stays
-//   startable from the Tours menu everywhere).
+//   first-run tour is offered on the library, and stays startable from the
+//   Tours menu everywhere). anyOf: a list of such fact sets, at least one of
+//   which must hold too (a demo server's library, or an empty one).
 // - count: offer on the count-th matching event of this page load.
 // - doneOn: an event ({event, match?}) showing the user already knows the
 //   feature; it retires the tour's offer without showing anything.
@@ -33,6 +34,7 @@ export function canOffer(tour, { facts, progress, event = null, seen = 0 }) {
   const trigger = tour.trigger;
   if (!trigger || progress?.version >= tour.version) return false;
   if (!factsMatch(tour.requires, facts) || !factsMatch(trigger.requires, facts)) return false;
+  if (trigger.anyOf && !trigger.anyOf.some((requires) => factsMatch(requires, facts))) return false;
   if (!trigger.event) return !event;
   return triggerMatches(tour, event) && seen >= (trigger.count || 1);
 }

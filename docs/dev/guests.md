@@ -139,10 +139,11 @@ allowance work the same on every server.
 - The guide keeps its progress in `sessionStorage` instead of
   `localStorage` (`guideStorage(demo)` in `guide/triggers.js`), so every
   visit starts fresh. **Your first paper** is offered on the library right
-  after the guest lands: a state trigger whose own
-  `requires: {demo: true, view: "home"}` gates only the offer, so the tour
-  stays manually startable everywhere. Like every offer it waits for
-  Suggest tours ([onboarding.md](onboarding.md)).
+  after the guest lands, as its welcome card ("Welcome to the Gamma demo"):
+  a state trigger whose own `requires` / `anyOf` (`demo: true`, or an empty
+  library — which is how any new account is invited) gate only the offer,
+  so the tour stays manually startable everywhere. Like every offer it
+  waits for Suggest tours ([onboarding.md](onboarding.md)).
 - The account card names when the workspace goes ("Temporary workspace ·
   deleted in 5 hours", from `guest_expires_at`, `auth/guestExpiry.js`),
   with the hint that it stays until then or until log-out. Every guest

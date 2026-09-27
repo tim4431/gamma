@@ -232,11 +232,12 @@ export function useGuide({ enabled = true, suggest = true, scope = "", facts = {
     activity.current = null;
   }, []);
   const dismissOffer = useCallback(() => closeOffer("dismissed"), [closeOffer]);
-  // A hint's card is the whole guide: accepting it is finishing it.
+  // A hint's card is the whole guide: accepting it is finishing it. A
+  // welcome offer was the tour's intro card, so the tour starts after it.
   const acceptOffer = useCallback(() => {
     if (!offer) return;
     if (offer.tour.hint) closeOffer("done");
-    else start(offer.tour.id);
+    else start(offer.tour.id, offer.tour.welcome ? Math.max(0, stepsFor(offer.tour).findIndex((s) => !s.intro)) : 0);
   }, [offer, start, closeOffer]);
 
   useEffect(() => {
@@ -307,6 +308,7 @@ export function useGuide({ enabled = true, suggest = true, scope = "", facts = {
 
   // Task-driven completion: the current step's event fires → the step is done.
   const step = run ? steps[run.index] : null;
+  const intros = steps.filter((s) => s.intro).length;
   // Include the introductory pause: the demo owns navigation from its very
   // first frame, before its first action has started.
   const busy = !!step?.do && (live.stepId !== step.id || (!live.failed && !live.finished));
@@ -425,6 +427,8 @@ export function useGuide({ enabled = true, suggest = true, scope = "", facts = {
   const offerCard = useMemo(() => {
     if (!offerTour) return null;
     const steps = stepsFor(offerTour);
+    const intro = offerTour.welcome && steps[0]?.intro ? steps[0] : null;
+    if (intro) return { ...intro, id: offerTour.id, welcome: true, minutes: offerTour.minutes, anchor: null };
     return {
       id: offerTour.id,
       hint: !!offerTour.hint,
@@ -441,9 +445,11 @@ export function useGuide({ enabled = true, suggest = true, scope = "", facts = {
     acceptOffer, dismissOffer,
     tour: run?.tour || null,
     step,
-    index: run?.index ?? 0,
+    // The welcome card (an `intro` step) is not counted: the first real
+    // step reads "Step 1 of n".
+    index: (run?.index ?? 0) - intros,
     done: !!run?.done,
-    count: steps.length,
+    count: steps.length - intros,
     live: { ...live, busy },
     // next() also skips: a demo's actions stop when its step is left.
     start, next, back, dismiss,
