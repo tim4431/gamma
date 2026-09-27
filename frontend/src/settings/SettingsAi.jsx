@@ -24,6 +24,46 @@ const DICTATION_LANGS = [
   ["it", t("Italiano")], ["ru", "Русский"], ["hi", "हिन्दी"], ["ar", "العربية"],
 ];
 
+// The ways to connect an AI service, as tiles: each protocol the server
+// offers (sign-in first, then the API-key ones in the server's order), then
+// "Other" for the named services and a custom endpoint. The chat's setup
+// card and the connect dialog both draw from it; `long` gives the card's
+// fuller hints. A tile's value is a protocol id or "other".
+const SERVICE_TILES = {
+  chatgpt: { label: t("ChatGPT"), hint: t("Subscription sign-in"), long: t("Sign in with your subscription. No API key.") },
+  anthropic: { label: t("Anthropic"), hint: t("API key"), long: t("Claude models, with an API key") },
+  openai: { label: t("OpenAI API"), hint: t("API key"), long: t("GPT models, with an API key") },
+};
+
+export function aiServiceTiles(info, { long = false, only = null } = {}) {
+  const protocols = [...(info?.protocols || [])]
+    .sort((a, b) => Number(b.auth === "oauth") - Number(a.auth === "oauth"))
+    .filter((p) => !only || only(p));
+  const tiles = protocols.map((p) => {
+    const known = SERVICE_TILES[p.id];
+    const oauth = p.auth === "oauth";
+    return {
+      value: p.id,
+      label: known?.label || p.label,
+      hint: known ? (long ? known.long : known.hint) : oauth ? t("Subscription sign-in") : t("API key"),
+      Icon: oauth ? UserIcon : KeyIcon,
+    };
+  });
+  const keyProtocol = (info?.protocols || []).find((p) => p.auth !== "oauth");
+  if (keyProtocol && (!only || only(keyProtocol))) {
+    const names = (info?.services || []).map((s) => s.label).join(", ");
+    tiles.push({
+      value: "other",
+      label: long ? t("Other service") : t("Other"),
+      hint: long
+        ? (names ? t("{services} or any OpenAI-compatible endpoint", { services: names }) : t("Any OpenAI-compatible endpoint"))
+        : (names ? t("{services}, custom URL", { services: names }) : t("Custom URL")),
+      Icon: GlobeIcon,
+    });
+  }
+  return tiles;
+}
+
 function formatPercent(value) {
   const n = Number(value);
   if (!Number.isFinite(n)) return "0";
@@ -412,6 +452,7 @@ function ProviderForm({ value, onCancel }) {
   // recognized by that pair.
   const services = aiKeysInfo.services || [];
   const [service, setService] = React.useState(() => {
+    if (aiKeysForm.custom) return "custom";
     const base = (aiKeysForm.base_url || "").replace(/\/$/, "");
     const preset = services.find((item) => item.protocol === aiKeysForm.protocol && item.base_url === base);
     if (preset) return preset.id;

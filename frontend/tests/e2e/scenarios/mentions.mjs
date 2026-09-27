@@ -1,4 +1,4 @@
-import { Account, wanted } from "../harness.mjs";
+import { Account, fakeAiModels, wanted } from "../harness.mjs";
 
 export async function mentionScenarios(env) {
   const { server, browser, step, openPage, assert, assertEq, assertNoProblems, until, flags, makePdf } = env;
@@ -13,6 +13,7 @@ export async function mentionScenarios(env) {
   }
   const setup = async (opts, pageId = papers[2].id) => {
     const ctx = await user.context(browser, opts);
+    await fakeAiModels(ctx);
     await ctx.addInitScript(() => localStorage.setItem("gamma-ai-login-check", "off"));
     const page = await openPage(ctx, `${server.base}/?page=${pageId}&ws=${user.ws}`);
     const requests = [];

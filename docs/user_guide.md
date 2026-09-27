@@ -76,7 +76,7 @@ Notes live in the **Notes panel** as a nested outline. Highlights and free notes
 
 ## AI chat
 
-Open the chat from the **View menu (≡, top right) → AI Chat**. Configure providers in Settings → AI → Connections: Anthropic or OpenAI keys, any OpenAI-compatible gateway, or sign in with your **ChatGPT subscription** (no API key). Keys are stored per account on the server and never shown to the browser again.
+Open the chat from the **View menu (≡, top right) → AI Chat**. Configure providers in Settings → AI → Connections: Anthropic or OpenAI keys, any OpenAI-compatible gateway, or sign in with your **ChatGPT subscription** (no API key). Keys are stored per account on the server and never shown to the browser again. Until something is connected, the chat shows a setup card instead of a message box: pick a service there and the connect dialog opens on it. A guest account can't store keys; it gets AI only when the administrator shares a connection.
 
 - **Enter sends**, Shift+Enter is a newline. The **model and effort switchers** are in the panel header. A mic button dictates into the input.
 - **Context**: in a paper the chat reads that paper's text automatically. The **PDF toggle** attaches the actual file (so the model sees figures and tables); it turns itself off once the file has been sent in a conversation, to avoid re-billing it every message.

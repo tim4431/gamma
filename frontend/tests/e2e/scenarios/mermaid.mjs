@@ -1,5 +1,6 @@
 import { readFile } from "node:fs/promises";
 import { closeEditor, newPageViaUi } from "./notes.mjs";
+import { fakeAiModels } from "../harness.mjs";
 
 const flow = 'flowchart LR\n  A["Start $a|b$ \\(x\\)"] --> B[Finish]';
 const sequence = "sequenceDiagram\n  Alice->>Bob: Hello\n  Bob-->>Alice: Hi";
@@ -121,6 +122,7 @@ export async function mermaidScenarios(env) {
 
   await step("mermaid: chat waits for closing fence and recovers from invalid diagrams", async () => {
     const ctx = await alice.context(browser);
+    await fakeAiModels(ctx);
     await alice.api("/api/chats/home", { method: "PUT", body: { messages: [] } });
     await ctx.addInitScript(() => {
       localStorage.setItem("gamma-ai-login-check", "off");
@@ -140,6 +142,8 @@ export async function mermaidScenarios(env) {
     const page = await openPage(ctx, `${server.base}/?ws=${alice.ws}`);
     try {
       const input = page.getByRole("combobox", { name: "Message AI" });
+      // The conversation's load clears the composer: type after it settled.
+      await page.waitForLoadState("networkidle");
       await input.fill("Draw a diagram"); await input.press("Enter");
       await page.waitForFunction(() => !!window.mermaidStream);
       await page.evaluate((source) => window.mermaidStream.push("```mermaid\n" + source), flow);

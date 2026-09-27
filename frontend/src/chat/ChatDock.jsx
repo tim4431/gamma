@@ -18,7 +18,8 @@ import { guideEvents } from "../guide/events.js";
 import { gammaLinksIn } from "../shared/model/gammaLinks.js";
 import { CharSlider, approxPages } from "../settings/SettingsKit";
 import { AgentToolPicker, CHAT_KIND_ROWS } from "../settings/SettingsDialog";
-import { AlertCircleIcon, ArrowDownIcon, ArrowUpIcon, BookIcon, CheckIcon, ChevronDownIcon, ChevronUpIcon, CloudDownloadIcon, CopyIcon, EyeIcon, FileIcon, FolderIcon, GlobeIcon, HighlightIcon, HistoryIcon, InfoIcon, ListIcon, MicIcon, OutlineIcon, PaperclipIcon, PencilIcon, PlusIcon, QuoteIcon, SearchIcon, SettingsIcon, SlidersIcon, StopIcon, TextCursorIcon, TrashIcon, XIcon } from "../shared/ui/Icons";
+import { aiServiceTiles } from "../settings/SettingsAi";
+import { AlertCircleIcon, ArrowDownIcon, ArrowUpIcon, BookIcon, CheckIcon, ChevronDownIcon, ChevronUpIcon, CloudDownloadIcon, CopyIcon, EyeIcon, FileIcon, FolderIcon, GlobeIcon, HighlightIcon, HistoryIcon, InfoIcon, ListIcon, MicIcon, OutlineIcon, PaperclipIcon, PencilIcon, PlusIcon, QuoteIcon, SearchIcon, SettingsIcon, SlidersIcon, SparklesIcon, StopIcon, TextCursorIcon, TrashIcon, XIcon } from "../shared/ui/Icons";
 import { T, getLocale, t } from "../shared/i18n/i18n.js";
 
 const JSON_HEADERS = { "Content-Type": "application/json" };
@@ -196,6 +197,48 @@ function SelChip({ kind, icon, label, n, labelTitle, text, title, onRemove, remo
   );
 }
 
+// No AI connected: what the chat is for, then one tile per way to connect
+// (settings/SettingsAi.jsx aiServiceTiles over GET /api/ai/settings). A tile
+// opens Settings → Connections with the connect dialog set to that service.
+// An account that can't store keys (a guest) can only ask for a shared one;
+// an admin may also share one with the whole server.
+function ChatSetupCard({ info, isAdmin, onConnect, openSettings }) {
+  const tiles = info && !info.failed ? aiServiceTiles(info, { long: true }) : [];
+  return (
+    <div className="chatSetup" data-guide="chat.setup">
+      <span className="chatSetupIcon" aria-hidden="true"><SparklesIcon size={16} /></span>
+      <div className="chatSetupTitle">{t("Chat with your papers")}</div>
+      <p className="chatSetupText">
+        {t("Ask about the paper you are reading and get answers that cite the page they come from. The assistant can also search, summarize and organize your library.")}
+      </p>
+      {info?.failed ? (
+        <button type="button" className="uiBtn primary chatSetupRetry" onClick={() => onConnect()}>{t("Set up AI…")}</button>
+      ) : info && !info.can_edit ? (
+        <p className="chatSetupText">{t("No AI service is shared on this server — ask your administrator.")}</p>
+      ) : info ? (
+        <>
+          <div className="chatSetupTiles" role="group" aria-label={t("Connect an AI service")}>
+            {tiles.map((tile) => (
+              <button key={tile.value} type="button" className="chatSetupTile" onClick={() => onConnect(tile.value)}>
+                <span className="chatSetupTileName">{tile.label}</span>
+                <span className="chatSetupTileHint">{tile.hint}</span>
+              </button>
+            ))}
+          </div>
+          <p className="chatSetupNote">{t("Keys are stored on this server and never shown again. Pick one to connect — it takes about a minute.")}</p>
+        </>
+      ) : null}
+      {isAdmin && openSettings ? (
+        <p className="chatSetupNote">
+          {t("Or share one with everyone on this server: {link}", {
+            link: <button type="button" className="chatSetupLink" onClick={() => openSettings("server")}>{t("Settings › Server › Shared AI provider")}</button>,
+          })}
+        </p>
+      ) : null}
+    </div>
+  );
+}
+
 export default function ChatDock({
   session,
   readOnly = false,
@@ -211,7 +254,9 @@ export default function ChatDock({
   chatModel, setChatModel, chatEffort, setChatEffort, chatSystem,
   dictationModel, dictationLang,
   chatContextChars, setChatContextChars, multiContextChars,
-  aiInfo, aiProvider, openAiKeysEditor,
+  // openAiKeysEditor(service?) opens Settings → Connections, with the
+  // connect dialog set to `service` when one is named (the setup card).
+  aiInfo, aiProvider, openAiKeysEditor, openSettings, isAdmin = false,
   aiHealth, dismissAiHealth,
   openPopover, setOpenPopover,
   setStatus, askConfirm,
@@ -241,6 +286,20 @@ export default function ChatDock({
   // A reply is streaming into THIS conversation. Other buckets stream on
   // their own — asking one paper never waits for another's answer.
   const busyHere = session.isActive(chatKey);
+  // No AI connected (known once /api/ai/models answered): the setup card
+  // takes the empty state, the composer is disabled and the header's tools
+  // go — a send could only fail. The card's tiles come from the settings
+  // payload, fetched only then.
+  const aiOff = !readOnly && !!aiInfo && !aiInfo.enabled;
+  const [setupInfo, setSetupInfo] = useState(null);
+  useEffect(() => {
+    if (!aiOff) return undefined;
+    let live = true;
+    apiJson(`${API}/ai/settings`)
+      .then((info) => { if (live) setSetupInfo(info); })
+      .catch(() => { if (live) setSetupInfo({ failed: true }); });
+    return () => { live = false; };
+  }, [aiOff]);
   const folderChat = organizeFolder != null;
   // Which of the three chat kinds this is — each has its own tool permission
   // map in Settings → AI → Chat (app/prefDefs.js CHAT_KINDS): the folder chat, a
@@ -614,7 +673,7 @@ export default function ChatDock({
   // an edited message: everything after the edited message is discarded,
   // ChatGPT-style).
   async function sendChat(rawText, { baseMessages, referenceMessage } = {}) {
-    if (readOnly) return;
+    if (readOnly || aiOff) return;
     const text = (rawText || "").trim();
     if (!text || busyHere) return;
     guideEvents.emit("chat.sent");
@@ -970,14 +1029,8 @@ export default function ChatDock({
       <SearchIcon size={15} />
     </button>
   );
-  const headerContent = (
+  const headerContent = aiOff ? null : (
     <>
-      {aiInfo && !aiInfo.enabled && openAiKeysEditor ? (
-        <button className="uiBtn sm" onClick={openAiKeysEditor}
-          title={t("AI needs an API key — add a provider to enable chat")}>
-          {t("Set up AI…")}
-        </button>
-      ) : null}
       <div className="ctlBtnRow chatPanelHeaderBtns">
         {headerModels.length > 0 ? (() => {
           const multiProvider = new Set(headerModels.map((m) => m.provider)).size > 1;
@@ -1210,13 +1263,13 @@ export default function ChatDock({
         }}
       >
         {chatTextScale.badge}
-        {visibleMessages.length === 0 ? (
+        {aiOff && !visibleMessages.length && !loadError ? (
+          <ChatSetupCard info={setupInfo} isAdmin={isAdmin} openSettings={openSettings}
+            onConnect={(service) => openAiKeysEditor?.(service)} />
+        ) : visibleMessages.length === 0 ? (
           <div className="chatEmpty">
-            {loadError || (readOnly ? t("No saved conversation for this page.") : aiInfo && !aiInfo.enabled ? (
-              openAiKeysEditor ? (
-                <>{t("Connect an AI provider to start — {setup}.", { setup: <button className="chatEmptyLink" onClick={openAiKeysEditor}>{t("Set up AI")}</button> })}</>
-              ) : t("AI is not configured.")
-            ) : focusedBlockId ? t("Ask AI about this page…") : agentIntro || t("Ask AI anything, or generate a report from your pages…"))}
+            {loadError || (readOnly ? t("No saved conversation for this page.")
+              : focusedBlockId ? t("Ask AI about this page…") : agentIntro || t("Ask AI anything, or generate a report from your pages…"))}
           </div>
         ) : (
           visibleMessages.map((m, i) => {
@@ -1349,6 +1402,11 @@ export default function ChatDock({
             );
           })
         )}
+        {/* An earlier conversation stays readable; the card follows it. */}
+        {aiOff && visibleMessages.length ? (
+          <ChatSetupCard info={setupInfo} isAdmin={isAdmin} openSettings={openSettings}
+            onConnect={(service) => openAiKeysEditor?.(service)} />
+        ) : null}
       </div>
       {!readOnly ? <>
       {pdfSelections.length || chatNotes?.length || cursorChip ? (
@@ -1445,6 +1503,7 @@ export default function ChatDock({
             type="button"
             className={`chatAttachToggle chatPlusBtn ${(chatDocs.length || chatIncludeNotes) ? "on" : ""}`}
             data-guide="chat.context"
+            disabled={aiOff}
             onClick={() => setOpenPopover((p) => (p === "chatdocs" ? null : "chatdocs"))}
             title={t("Add photos & files, or pages from your library")}
             aria-label={t("Add attachments or chat context")}
@@ -1480,7 +1539,7 @@ export default function ChatDock({
           style={{ display: "none" }}
           onChange={(e) => { addChatFiles(Array.from(e.target.files || [])); e.target.value = ""; }}
         />
-        <button
+        {!aiOff ? <button
           type="button"
           className={`chatAttachToggle chatPdfToggle ${attachPdf ? "on" : ""}`}
           disabled={!pageAttach && !chatDocs.length}
@@ -1492,8 +1551,8 @@ export default function ChatDock({
         >
           <FileIcon size={12} />
           PDF
-        </button>
-        {attachPdf && !nativePdf ? (
+        </button> : null}
+        {attachPdf && !nativePdf && !aiOff ? (
           <button type="button" className="chatAttachToggle chatPdfToggle chatPdfWarn"
             onClick={() => setStatus(nativePdfNote)} title={nativePdfNote}
             aria-label={t("This provider cannot accept PDF files")}>
@@ -1511,7 +1570,8 @@ export default function ChatDock({
           value={chatInput}
           onChange={setChatInput}
           onPaste={handleChatPaste}
-          placeholder={(
+          disabled={aiOff}
+          placeholder={aiOff ? t("Connect an AI service to start chatting") : (
             // Names what the message will be about, most specific attachment first.
             chatFiles.length ? `Ask about the attached file${chatFiles.length > 1 ? "s" : ""}…`
             : chatImages.length ? t("Ask about the pasted figure…") : pdfSelections.length > 1 ? `Ask about the ${pdfSelections.length} selected passages…`
@@ -1531,10 +1591,10 @@ export default function ChatDock({
           </button>
         ) : (
           <>
-            <button className="uiBtn chatCircleBtn chatMicBtn" data-guide="chat.voice" type="button" onClick={startDictation} title={t("Dictate — transcribed with your OpenAI key")} aria-label={t("Start dictation")}>
+            {!aiOff ? <button className="uiBtn chatCircleBtn chatMicBtn" data-guide="chat.voice" type="button" onClick={startDictation} title={t("Dictate — transcribed with your OpenAI key")} aria-label={t("Start dictation")}>
               <MicIcon size={13} />
-            </button>
-            <button className="uiBtn primary chatCircleBtn" type="submit" disabled={!chatInput.trim()} title={t("Send")} aria-label={t("Send")}>
+            </button> : null}
+            <button className="uiBtn primary chatCircleBtn" type="submit" disabled={aiOff || !chatInput.trim()} title={t("Send")} aria-label={t("Send")}>
               <ArrowUpIcon size={14} strokeWidth={2.4} />
             </button>
           </>

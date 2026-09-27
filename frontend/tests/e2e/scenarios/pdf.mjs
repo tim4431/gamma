@@ -3,6 +3,7 @@
 // row + persisted position), the library card, and the search panel hitting
 // PDF text on another page.
 import { tree, same } from "./notes.mjs";
+import { fakeAiModels } from "../harness.mjs";
 
 // Select `needle` inside one text-layer span of `pageNo` and release the
 // mouse the way the viewer listens for it (document-level mouseup).
@@ -39,6 +40,7 @@ export async function pdfScenarios({ server, browser, alice, makePdf, step, unti
     const created = await account.api(`/api/blocks/by-doc/${docId}`, { method: "POST", body: { default_title: "Rydberg paper", source_url: up.source_url } });
     pageId = created.id;
     ctx = await account.context(browser);
+    await fakeAiModels(ctx); // the chat steps below send (their /api/ai/chat is faked)
     page = await openPage(ctx, `${server.base}/?page=${pageId}&ws=${account.ws}`);
     await waitForPdf(page, 1);
     await until(async () => (await page.$$("[data-page]")).length >= 2, { what: "two page wrappers" });

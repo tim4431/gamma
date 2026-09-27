@@ -455,7 +455,7 @@ scope: you learn the app once, not once per workspace.
   account button until done or dismissed.
 - Hints are built: one-step triggered guides in `tours/hints.js` (see
   Triggered tours and hints). The chat with no AI provider gets no hint: its
-  empty state already says "Connect an AI provider to start". Empty states in
+  empty state is the setup card with a tile per service. Empty states in
   the library and the notes column stay where they are; hints point at
   controls, empty states explain areas.
 

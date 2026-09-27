@@ -3407,6 +3407,64 @@ html.appFocusFullscreen, html.appFocusFullscreen body { overflow: hidden; oversc
   padding: 8px 4px;
   font-style: italic;
 }
+/* No AI connected: the setup card, centred in the empty transcript (below an
+   earlier conversation when there is one). Tiles are plain two-line buttons. */
+.chatMessages:has(> .chatSetup) { display: flex; flex-direction: column; }
+.chatSetup {
+  margin: auto 4px;
+  padding: 16px;
+  border: 1px solid var(--border);
+  border-radius: 14px;
+  background: var(--bg-surface);
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  flex-shrink: 0;
+  font-size: calc(12.5px * var(--ui-font-scale, 1));
+  line-height: 1.5;
+  color: var(--text-secondary);
+}
+.chatSetupIcon {
+  width: 32px;
+  height: 32px;
+  border-radius: 8px;
+  display: grid;
+  place-items: center;
+  background: var(--accent-bg);
+  color: var(--accent);
+}
+.chatSetupTitle { font-size: calc(15px * var(--ui-font-scale, 1)); font-weight: 600; color: var(--text-primary); }
+.chatSetupText { margin: 0; }
+.chatSetupNote { margin: 0; font-size: calc(11px * var(--ui-font-scale, 1)); color: var(--text-muted); }
+.chatSetupTiles { display: grid; grid-template-columns: repeat(auto-fill, minmax(140px, 1fr)); gap: 8px; margin: 4px 0; }
+.chatSetupTile {
+  display: flex;
+  flex-direction: column;
+  align-items: flex-start;
+  gap: 2px;
+  padding: 9px 12px;
+  border: 1px solid var(--border);
+  border-radius: var(--radius-surface);
+  background: var(--bg-surface);
+  color: var(--text-primary);
+  font: inherit;
+  text-align: left;
+  cursor: pointer;
+}
+.chatSetupTile:hover { border-color: var(--border-hover); background: var(--bg-hover); }
+.chatSetupTile:focus-visible { outline: 2px solid var(--accent); outline-offset: 1px; }
+.chatSetupTileName { font-weight: 600; font-size: calc(13px * var(--ui-font-scale, 1)); }
+.chatSetupTileHint { font-size: calc(11px * var(--ui-font-scale, 1)); color: var(--text-muted); line-height: 1.35; }
+.chatSetupLink {
+  background: none;
+  border: none;
+  padding: 0;
+  font: inherit;
+  color: var(--accent);
+  cursor: pointer;
+  text-decoration: underline;
+}
+.chatSetupRetry { align-self: flex-start; }
 /* --- chat bubbles --- */
 .chatBubbleRow {
   display: flex;
@@ -4484,6 +4542,8 @@ html.appFocusFullscreen, html.appFocusFullscreen body { overflow: hidden; oversc
   align-self: center;
 }
 .chatPlusCount { font-size: calc(10px * var(--ui-font-scale, 1)); font-weight: 600; margin-left: 1px; }
+.chatAttachToggle.chatPlusBtn:disabled { opacity: 0.4; cursor: default; }
+.chatInput:disabled { cursor: not-allowed; }
 /* Round send/stop variant of .uiBtn (chat composer). */
 .uiBtn.chatCircleBtn {
   border-radius: 999px;

@@ -1,4 +1,4 @@
-import { wanted } from "../harness.mjs";
+import { fakeAiModels, wanted } from "../harness.mjs";
 export async function chatNavigationScenarios(env) {
   const { server, browser, alice, makePdf, step, until, assert, assertEq, assertNoProblems, openPage, flags } = env;
   if (!wanted("chat navigation")) return;
@@ -13,6 +13,7 @@ export async function chatNavigationScenarios(env) {
       await step(`chat navigation: ${source.name} reply survives returning ${finishAway ? "after" : "before"} completion`, async () => {
         await alice.api(`/api/chats/${source.key}`, { method: "PUT", body: { messages: [] } });
         const ctx = await alice.context(browser);
+        await fakeAiModels(ctx);
         await ctx.addInitScript(() => {
           localStorage.setItem("gamma-ai-login-check", "off");
           const fetch = window.fetch.bind(window);
@@ -101,6 +102,7 @@ export async function chatNavigationScenarios(env) {
     await alice.api(`/api/chats/${pdf.id}`, { method: "PUT", body: { messages: [] } });
     await alice.api(`/api/chats/${target.id}`, { method: "PUT", body: { messages: [] } });
     const ctx = await alice.context(browser);
+    await fakeAiModels(ctx);
     await ctx.addInitScript(() => {
       localStorage.setItem("gamma-ai-login-check", "off");
       window.chatStreams = []; // one fake stream per /api/ai/chat call, in send order
@@ -167,9 +169,12 @@ export async function chatNavigationScenarios(env) {
 
   await step("chat navigation: the page picker's keys — Enter ticks the best match, arrows walk, Ctrl+F stays in the picker", async () => {
     const ctx = await alice.context(browser);
+    await fakeAiModels(ctx);
     await ctx.addInitScript(() => localStorage.setItem("gamma-ai-login-check", "off"));
     const page = await openPage(ctx, `${server.base}/?ws=${alice.ws}`);
     try {
+      // The conversation's load resets the picked pages: pick after it settled.
+      await page.waitForLoadState("networkidle");
       await page.getByRole("button", { name: "Add attachments or chat context" }).click();
       await page.locator(".chatPlusMenuItem", { hasText: "Add pages from library" }).click();
       const picker = page.locator(".docPickerModal");

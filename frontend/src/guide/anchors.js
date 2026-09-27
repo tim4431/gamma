@@ -56,6 +56,7 @@ export const ANCHORS = {
   "home.listing": { view: "home", description: "The library listing's bar: sort, kinds and view" },
   "chat.composer": { view: "chat", description: "The message composer and Send button" },
   "chat.input": { view: "chat", description: "Chat message text box" },
+  "chat.setup": { view: "chat", description: "The setup card the chat shows while no AI is connected" },
   "chat.voice": { view: "chat", description: "Voice input button" },
   "chat.imageContext": { view: "chat", description: "PDF selections attached to the message" },
   "chat.context": { view: "chat", description: "Add attachments or library pages" },

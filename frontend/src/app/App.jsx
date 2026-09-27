@@ -2703,6 +2703,12 @@ function LibraryApp({ publicPage = null, initialServerConfig = null }) {
     try {
       const info = await apiJson(`${API}/ai/settings`);
       setAiKeysInfo(info);
+      // Opened from the chat's setup card: the connect dialog comes up set
+      // to the service whose tile was clicked.
+      if (pendingAddRef.current) {
+        startAddAiProvider(pendingAddRef.current, info);
+        pendingAddRef.current = null;
+      }
       // The server's shared entries may have changed (Settings → Server).
       refreshAiModels();
       // Usage is account status, not an edit action: fetch it as soon as the
@@ -2783,7 +2789,13 @@ function LibraryApp({ publicPage = null, initialServerConfig = null }) {
     if (aiPanes.includes(settingsOpen) && !aiPanes.includes(cameFrom) && authUser?.user && !shareMode) loadAiKeys();
   }, [settingsOpen]);
 
-  function openAiKeysEditor() {
+  // Settings → Connections; `service` (a protocol id or "other", from the
+  // chat's setup card) also opens the connect dialog on that service once
+  // the pane has loaded the key list. Buttons pass their click event, which
+  // names nothing.
+  const pendingAddRef = useRef(null);
+  function openAiKeysEditor(service) {
+    if (typeof service === "string") pendingAddRef.current = service;
     setSettingsOpen("ai");
     setOpenPopover(null);
   }
@@ -2795,9 +2807,21 @@ function LibraryApp({ publicPage = null, initialServerConfig = null }) {
   // The model switchers everywhere feed off /ai/models — refresh after edits.
   const refreshAiModels = () => apiJson(`${API}/ai/models`).then(setAiInfo).catch(() => {});
 
-  function startAddAiProvider() {
+  // A new connection's form, set to `service`: a protocol id, or "other"
+  // (the first named service, else a custom endpoint). Without one it starts
+  // on the first tile, the subscription sign-in.
+  function startAddAiProvider(service, info = aiKeysInfo) {
     setAiKeysError("");
-    setAiKeysForm({ id: "", protocol: "chatgpt", name: "", api_key: "", base_url: "", models: "", test_model: "" });
+    const protocols = info?.protocols || [];
+    const preset = service === "other" ? info?.services?.[0] : null;
+    const protocol = preset?.protocol
+      || (service === "other" ? protocols.find((p) => p.auth !== "oauth")?.id : service)
+      || "";
+    setAiKeysForm({
+      id: "", protocol: protocols.some((p) => p.id === protocol) ? protocol : (protocols.find((p) => p.auth === "oauth") || protocols[0])?.id || "chatgpt",
+      name: "", api_key: "", base_url: preset?.base_url || "", models: "", test_model: "",
+      ...(service === "other" && !preset ? { custom: true } : {}),
+    });
   }
 
   function startEditAiProvider(p) {
@@ -8574,6 +8598,8 @@ function LibraryApp({ publicPage = null, initialServerConfig = null }) {
           chatSystem={chatSystem} aiInfo={aiInfo} aiProvider={aiProvider}
           chatContextChars={chatContextChars} setChatContextChars={setChatContextChars} multiContextChars={multiContextChars}
           openAiKeysEditor={openAiKeysEditor}
+          openSettings={(pane) => { setOpenPopover(null); setSettingsOpen(pane); }}
+          isAdmin={!!authUser?.is_admin}
           aiHealth={aiHealth} dismissAiHealth={() => setAiHealth(null)}
           openPopover={openPopover} setOpenPopover={setOpenPopover}
           setStatus={setStatus} askConfirm={setConfirmBox}

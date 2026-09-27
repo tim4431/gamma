@@ -714,6 +714,26 @@ export async function settingsScenarios(env) {
     } finally { await ctx.close(); }
   });
 
+  await step("settings: with no AI connected the chat is a setup card whose tiles open the connect dialog", async () => {
+    const { ctx, page } = await setup(undefined, (c) => c.route("**/api/ai/models*", (route) => route.fulfill({
+      json: { enabled: false, models: [], default: "", efforts: ["low", "medium", "high"] } })));
+    try {
+      const tiles = page.locator(".chatSetup").getByRole("group", { name: "Connect an AI service" });
+      await tiles.getByRole("button", { name: /^Anthropic/ }).waitFor();
+      assertEq(await tiles.getByRole("button").count(), 4, "ChatGPT, Anthropic, OpenAI API, Other service");
+      const input = page.getByRole("combobox", { name: "Message AI" });
+      assert(await input.isDisabled(), "a send could only fail");
+      assertEq(await input.getAttribute("placeholder"), "Connect an AI service to start chatting");
+      assertEq(await page.getByRole("button", { name: "Find in this conversation" }).count(), 0, "no header tools without AI");
+      assertEq(await page.getByRole("button", { name: "Start dictation" }).count(), 0, "no mic without AI");
+      await tiles.getByRole("button", { name: /^Anthropic/ }).click();
+      const dialog = page.getByRole("dialog", { name: "Add key", exact: true });
+      await dialog.waitFor();
+      assert((await dialog.getByRole("button", { name: "AI service", exact: true }).innerText()).includes("Anthropic"), "the dialog is on the tile's service");
+      assertNoProblems(page);
+    } finally { await ctx.close(); }
+  });
+
   await step("settings: the chat header's context ring shows the last reply's size", async () => {
     // An agent reply: usage sums its rounds, context_tokens is the last round alone.
     await user.api("/api/chats/home", { method: "PUT", body: { messages: [

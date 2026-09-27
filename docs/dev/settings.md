@@ -257,7 +257,11 @@ AI:
   limit" without one, [guests.md](guests.md)). The account menu's card shows
   the same numbers under the storage meter. The check, models and usage
   sections appear only once a provider exists; a guest sees the usage too,
-  without Reset.
+  without Reset. The chat's setup card (no AI connected, `ChatSetupCard` in
+  `chat/ChatDock.jsx`) opens this pane through `openAiKeysEditor(service)`,
+  and the add dialog comes up set to the tile's service once the key list
+  has loaded; the card's tiles and the dialog's service tiles are one list
+  (`aiServiceTiles` in `SettingsAi.jsx`).
 - **Chat**: **Chat** (the default reasoning effort and the
   snapshot-clearing switch), then **Tools**: the master switch and, per chat
   kind (folder / PDF / notes), the tool chips (`AgentToolPicker`, the same
