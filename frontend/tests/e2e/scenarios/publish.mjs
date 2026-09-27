@@ -123,7 +123,8 @@ export async function publishScenarios(env) {
 
     await step("publish: the cloud share's access, Sync now, the header pill and Settings' Publishing row", async () => {
       const token = new URL(url).searchParams.get("share");
-      await popover().getByRole("button", { name: /Signed in/ }).click();
+      // the cloud share's tiles, not the page's own General access above them
+      await popover().getByRole("group", { name: "Who can open the cloud link" }).getByRole("button", { name: /Signed in/ }).click();
       await until(() => user.api(`/api/pages/${paper.id}/publish`).then((s) => s.share?.audience === "users"),
         { timeout: 20000, what: "the audience changed on the share host" });
       assertEq((await fetch(`${host.base}/api/share/${token}`)).status, 401, "signed-in only: an anonymous visitor is asked to sign in");
