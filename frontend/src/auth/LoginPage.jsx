@@ -182,7 +182,7 @@ export function LoginPage({
         {signIn}
         {onBack ? (
           <button type="button" className="loginDisclosure" onClick={onBack}>
-            <ArrowLeftIcon size={13} />{t("Back to the shared page")}
+            <ArrowLeftIcon size={14} />{t("Back to the shared page")}
           </button>
         ) : null}
         {/* No self-service sign-up on a Gamma server (server-config's
@@ -218,7 +218,7 @@ export function LoginPage({
       {cloudError && !signInOpen ? <LoginError>{cloudError}</LoginError> : null}
       <button type="button" className="loginDisclosure" aria-expanded={signInOpen}
         onClick={() => setSignInOpen((open) => !open)}>
-        <ChevronRightIcon size={13} className={`loginDisclosureChev ${signInOpen ? "open" : ""}`} />
+        <ChevronRightIcon size={14} className={`loginDisclosureChev ${signInOpen ? "open" : ""}`} />
         {t("Admin sign-in")}
       </button>
       {signInOpen ? <div className="loginDisclosureBody">{signIn}</div> : null}

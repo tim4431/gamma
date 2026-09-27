@@ -195,7 +195,7 @@ function SubMenuItem({ id, icon: Icon, label, title, menuLabel, children, ...res
         onPointerEnter={() => aim?.guard(() => setOpenSub(id))}
         onClick={(e) => { e.stopPropagation(); aim?.keep(); setOpenSub(id); }}
         onKeyDown={(e) => { if (e.key === "ArrowRight") { e.preventDefault(); setOpenSub(id); } }}
-        trailing={<ChevronRightIcon size={13} className="ctxSubChev" />}
+        trailing={<ChevronRightIcon size={14} className="ctxSubChev" />}
         {...rest}
       >
         {label}
@@ -262,14 +262,14 @@ function MenuSelect({ value, onChange, options, label, block, icon: TriggerIcon,
       <button type="button" className={`uiBtn sm uiSelectBtn ${block ? "block" : ""} ${TriggerIcon && iconOnly ? "iconSq" : ""} ${className}`}
         aria-label={title} title={title} {...triggerProps}>
         {TriggerIcon ? (
-          <TriggerIcon size={13} />
+          <TriggerIcon size={16} />
         ) : (
           <>
-            {CurrentIcon ? <CurrentIcon size={13} /> : null}
+            {CurrentIcon ? <CurrentIcon size={14} /> : null}
             <span className="uiSelectLabel">{display ?? t(current?.[1])}</span>
           </>
         )}
-        {!iconOnly ? <ChevronDownIcon size={13} className="uiSelectChev" /> : null}
+        {!iconOnly ? <ChevronDownIcon size={14} className="uiSelectChev" /> : null}
       </button>
       {menu ? (
         <ContextMenu x={menu.x} y={menu.y} anchorRight anchorBottom={up} onClose={close} ignoreRef={triggerRef} className="uiSelectMenu">
@@ -297,8 +297,8 @@ function ActionMenu({ label, icon: Icon, items, disabled, iconOnly = false }) {
     <>
       <button type="button" className={`uiBtn sm uiSelectBtn ${iconOnly ? "iconSq" : ""}`} disabled={disabled}
         aria-label={t(label)} title={iconOnly ? t(label) : undefined} {...triggerProps}>
-        {Icon ? <Icon size={13} /> : null}{iconOnly ? null : t(label)}
-        {iconOnly ? null : <ChevronDownIcon size={13} className="uiSelectChev" />}
+        {Icon ? <Icon size={iconOnly ? 16 : 14} /> : null}{iconOnly ? null : t(label)}
+        {iconOnly ? null : <ChevronDownIcon size={14} className="uiSelectChev" />}
       </button>
       {menu ? (
         <ContextMenu x={menu.x} y={menu.y} anchorRight onClose={close} ignoreRef={triggerRef}>

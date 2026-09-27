@@ -195,7 +195,7 @@ export function Progress({ progress: p }) {
       {p.total ? <div className="mirrorBar"><span style={{ width: `${Math.round((100 * p.done) / p.total)}%` }} /></div> : null}
       {f ? (
         <div className="mirrorFile" title={f.dir === "up" ? t("Pushing to the remote") : t("Pulling from the remote")}>
-          {f.dir === "up" ? <ArrowUpIcon size={12} /> : <ArrowDownIcon size={12} />}
+          {f.dir === "up" ? <ArrowUpIcon size={14} /> : <ArrowDownIcon size={14} />}
           <span className="mirrorEllipsis">{f.name}</span>
           <span className="mirrorFileBytes">{fmtBytes(f.done)}{f.total ? ` / ${fmtBytes(f.total)}` : ""}</span>
           {f.total ? <div className="mirrorBar thin"><span style={{ width: `${Math.round((100 * f.done) / f.total)}%` }} /></div> : null}
@@ -220,7 +220,7 @@ function StateBlock({ info, busy, pending, onConflicts }) {
           {st.stats ? <DiffStat stats={st.stats} title={t("Last round: blocks added · removed · changed")} /> : null}
           {info?.conflicts_open && st.state !== "conflicts" ? (
             <button className="uiBtn sm mirrorConflictBtn" onClick={onConflicts} title={t("Blocks both sides changed: resolve them here, or open each on its block")}>
-              <AlertCircleIcon size={13} /> {n(info.conflicts_open, "conflict")}
+              <AlertCircleIcon size={14} /> {n(info.conflicts_open, "conflict")}
             </button>
           ) : null}
           {st.state === "conflicts" ? (
@@ -289,7 +289,7 @@ function SettingsView({ info, wsId, publication, onBack, reload, onOpenSettings 
       {publication ? (detached ? (
         <div className="mirrorSetActions">
           <button className="uiBtn sm primary" disabled={busy} onClick={() => call("/relink", "POST", {})} title={t("Publish again; what both sides did meanwhile merges")}>
-            <LinkIcon size={13} /> {t("Reattach")}
+            <LinkIcon size={14} /> {t("Reattach")}
           </button>
         </div>
       ) : null) : confirm ? (
@@ -299,26 +299,26 @@ function SettingsView({ info, wsId, publication, onBack, reload, onOpenSettings 
         <div className="mirrorSetActions">
           {!detached ? <>
             <button className="uiBtn sm" disabled={busy} onClick={() => setConfirm("pull")} title={t("Make this clone identical to the remote (only differing pages are written)")}>
-              <CloudDownloadIcon size={13} /> {t("Force pull")}
+              <CloudDownloadIcon size={14} /> {t("Force pull")}
             </button>
             <button className="uiBtn sm" disabled={busy || pull} onClick={() => setConfirm("push")} title={pull ? t("A receive-only clone cannot force push") : t("Make the remote identical to this clone (only differing pages are written)")}>
-              <UploadIcon size={13} /> {t("Force push")}
+              <UploadIcon size={14} /> {t("Force push")}
             </button>
             <button className="uiBtn sm" disabled={busy} onClick={() => call("/detach", "POST")} title={t("Stop pulling and pushing for now; reattach later and both sides merge")}>
-              <UnlinkIcon size={13} /> {t("Detach")}
+              <UnlinkIcon size={14} /> {t("Detach")}
             </button>
           </> : (
             <button className="uiBtn sm primary" disabled={busy} onClick={() => call("/relink", "POST", {})} title={t("Follow the remote again; what both sides did meanwhile merges")}>
-              <LinkIcon size={13} /> {t("Reattach")}
+              <LinkIcon size={14} /> {t("Reattach")}
             </button>
           )}
           <button className="uiBtn sm danger" disabled={busy} onClick={() => setConfirm("forget")} title={t("Forget the origin for good; the workspace stays as an ordinary one")}>
-            <TrashIcon size={13} /> {t("Remove origin")}
+            <TrashIcon size={14} /> {t("Remove origin")}
           </button>
         </div>
       )}
       <button className="popoverItem mirrorMore" onClick={onOpenSettings}>
-        <SettingsIcon size={13} /> {publication ? t("Publishing in Settings") : t("All clones in Settings")}
+        <SettingsIcon size={14} /> {publication ? t("Publishing in Settings") : t("All clones in Settings")}
       </button>
     </>
   );
@@ -382,12 +382,12 @@ function LogList({ log, jumpTo }) {
             <div className="mirrorPopItemRow">
               <button className="popoverItem mirrorPopItem" aria-expanded={open} onClick={() => setOpenId(open ? null : c.id)}
                 title={t("{action} — click for the changes", { action: ACTION_TEXT[c.action] || c.action })}>
-                <span className="mirrorPopItemTitle"><Icon size={12} /> {c.title || c.page_id}</span>
+                <span className="mirrorPopItemTitle"><Icon size={14} /> {c.title || c.page_id}</span>
                 <span className="mirrorPopItemMeta">{clock(c.at)}<DiffStat stats={c.stats} /></span>
               </button>
               <button className="ctlBtn mirrorPopOpen" disabled={!c.exists} onClick={() => jumpTo(c.page_id)}
                 aria-label={t("Open the page")} title={c.exists ? t("Open the page") : t("The page is gone")}>
-                <ExternalLinkIcon size={13} />
+                <ExternalLinkIcon size={16} />
               </button>
             </div>
             {open ? (c.changes?.length ? <ChangeList changes={c.changes} /> : <div className="popoverHint mirrorChangesNone">{t("No block-level detail for this row.")}</div>) : null}
@@ -503,7 +503,7 @@ export function MirrorPopover({ wsId, mirrorOf, publication: listedAsPublication
         title={[publication ? name : t("Clone of {name}", { name: mirrorOf }), host ? t("on {host}", { host }) : "", "—", t(st.text)].filter(Boolean).join(" ")}
         aria-label={t("Sync status")}
       >
-        <st.Icon size={15} />
+        <st.Icon size={16} />
         <span className="barLabel">{t("Sync")}</span>
         {st.badge ? <span className={`mirrorPillBadge ${st.tone}`}>{st.badge}</span>
           : st.dot ? <span className={`mirrorPillDot ${st.tone}`} /> : null}
@@ -516,7 +516,7 @@ export function MirrorPopover({ wsId, mirrorOf, publication: listedAsPublication
               <>
                 <div className="mirrorPopHead">
                   <span className="mirrorPopIcon" title={pull ? t("Receive only: the remote's changes arrive here, yours stay here") : t("Two-way: your changes go to the remote, the remote's arrive here")}>
-                    {pull ? <ArrowDownIcon size={15} /> : <ArrowUpDownIcon size={15} />}
+                    {pull ? <ArrowDownIcon size={16} /> : <ArrowUpDownIcon size={16} />}
                   </span>
                   <span className="mirrorPopTitle">
                     <span className="popoverTitle mirrorEllipsis">{name}</span>
@@ -533,7 +533,7 @@ export function MirrorPopover({ wsId, mirrorOf, publication: listedAsPublication
                   </span>
                 </div>
                 <StateBlock info={info} busy={busy} pending={Boolean(editAt)} onConflicts={() => setView("review")} />
-                <div className="popoverLabel"><HistoryIcon size={12} /><span>{t("Log")}</span></div>
+                <div className="popoverLabel"><HistoryIcon size={14} /><span>{t("Log")}</span></div>
                 {log === null ? <div className="popoverHint">{t("Loading…")}</div>
                   : log.length ? <LogList log={log} jumpTo={jumpTo} />
                   : <div className="popoverHint">{running ? t("Pages show up here as they are pulled.") : s.last_sync ? t("Nothing pulled or pushed yet.") : t("Nothing cloned yet.")}</div>}

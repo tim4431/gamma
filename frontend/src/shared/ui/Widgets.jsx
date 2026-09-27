@@ -8,7 +8,7 @@ import remarkGfm from "remark-gfm";
 import remarkMath from "remark-math";
 import rehypeKatex from "rehype-katex";
 import "katex/dist/katex.min.css";
-import { CheckIcon, ChevronDownIcon, CopyIcon, ExternalLinkIcon, FileGlyph, FileTextIcon, PinIcon, QuoteIcon } from "./Icons";
+import { CheckIcon, ChevronDownIcon, CopyIcon, ExternalLinkIcon, FileGlyph, FileTextIcon, PinIcon, QuoteIcon, XIcon } from "./Icons";
 import { useWheelPan } from "./wheelPan";
 import { assetUrl, copyText } from "../lib/utils";
 import { gammaLinksIn, parseGammaLink } from "../model/gammaLinks.js";
@@ -33,7 +33,7 @@ function DockWindow({ title, onGrip, onGripDoubleClick, onClose, headerContent, 
           title={t("Drag to move this window · double-click to collapse/expand")}
         >⠿ {title}</span>
         {onClose ? (
-          <button className="uiClose" onClick={onClose} title={t("Close window (reopen from the View menu)")} aria-label={t("Close {title}", { title: title })}>×</button>
+          <button className="uiClose" onClick={onClose} title={t("Close window (reopen from the View menu)")} aria-label={t("Close {title}", { title: title })}><XIcon size={14} /></button>
         ) : null}
         <span className="dockHeaderSpacer" />
         {collapsed ? null : headerContent}
@@ -163,7 +163,7 @@ function ChatCopyBlock({ as: Tag, children }) {
         <button type="button" className="chatCopyButton" onClick={copyContent}
           aria-label={isCode ? t("Copy code") : t("Copy quoted text")}
           title={failed ? t("Copy failed — select the text and press Ctrl+C") : t("Copy only this block's content")}>
-          {copied ? <CheckIcon size={12} /> : <CopyIcon size={12} />}
+          {copied ? <CheckIcon size={14} /> : <CopyIcon size={14} />}
           <span aria-live="polite">{failed ? t("Try again") : copied ? t("Copied") : t("Copy")}</span>
         </button>
       </div>
@@ -545,7 +545,7 @@ function OpenTabs({
               onContext(tab, event.clientX, event.clientY);
             }}
           >
-            <span className="tabKind">{kindIcon(tab, 13)}</span>
+            <span className="tabKind">{kindIcon(tab, 14)}</span>
             {tab.pinned ? null : <span className="tabTitle">{tab.title}</span>}
             {tab.pinned ? null : (
               <button
@@ -557,7 +557,7 @@ function OpenTabs({
                 title={t("Close tab")}
                 aria-label={t("Close {title}", { title: tab.title })}
               >
-                ×
+                <XIcon size={14} />
               </button>
             )}
           </div>
@@ -612,13 +612,13 @@ function OpenTabs({
                   >
                     {kindIcon(tab, 14)}
                     <span className="tabsMenuTitle">{tab.title}</span>
-                    {tab.pinned ? <span className="tabsMenuPin"><PinIcon filled size={11} /></span> : (
+                    {tab.pinned ? <span className="tabsMenuPin"><PinIcon filled size={14} /></span> : (
                       <button
                         className="uiClose uiCloseSm"
                         onClick={(event) => { event.stopPropagation(); onClose(tab.id); }}
                         title={t("Close tab")}
                         aria-label={t("Close {title}", { title: tab.title })}
-                      >×</button>
+                      ><XIcon size={14} /></button>
                     )}
                   </div>
                 ))}

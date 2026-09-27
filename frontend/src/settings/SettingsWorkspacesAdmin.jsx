@@ -35,7 +35,7 @@ export function WorkspacesAdmin({ value }) {
     return (
       <div key={w.id} className="aiProvRow">
         <span className={`aiProvAvatar ${isPublic ? "active" : ""}`}>
-          {isPublic ? <GlobeIcon size={15} /> : <UsersIcon size={15} />}
+          {isPublic ? <GlobeIcon size={16} /> : <UsersIcon size={16} />}
         </span>
         <span className="aiProvMeta">
           <span className="aiProvName">
@@ -53,7 +53,7 @@ export function WorkspacesAdmin({ value }) {
             <button className="uiBtn sm" onClick={() => { closeSettings?.(); switchWorkspace(w.id); }}>{t("Open")}</button>
           ) : null}
           <button className="uiBtn sm" onClick={() => setManage(w.id)} title={t("Manage {name}", { name: w.name })}>
-            <PenIcon size={13} /> {t("Manage")}
+            <PenIcon size={14} /> {t("Manage")}
           </button>
         </span>
       </div>
@@ -70,7 +70,7 @@ export function WorkspacesAdmin({ value }) {
             title={t("Shared workspaces")}
             action={(
               <button className="uiBtn sm" onClick={() => setCreating(true)}>
-                <PlusIcon size={13} /> {t("New workspace")}
+                <PlusIcon size={14} /> {t("New workspace")}
               </button>
             )}
           >

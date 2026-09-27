@@ -175,7 +175,7 @@ function Version({ side, parts, current, hint, group, selected, onSelect, busy }
           <input type="radio" className="mergePick" name={group} value={side} checked={selected === side} disabled={busy}
             onChange={() => onSelect(side)} aria-label={t(s.label)} title={t("Put the {side} text into the block", { side: t(s.label).toLowerCase() })} />
         ) : null}
-        <span className={`mergeSide ${side}`} title={hint || t(s.hint)}><s.Icon size={12} />{t(s.label)}</span>
+        <span className={`mergeSide ${side}`} title={hint || t(s.hint)}><s.Icon size={14} />{t(s.label)}</span>
         <span className="popoverHint mergeSideHint">{hint || t(s.hint)}</span>
         {current ? <span className="uiTag">{t("in the block")}</span> : null}
       </header>
@@ -218,7 +218,7 @@ function Versions({ conflict, busy, onUse }) {
         </span>
         <button type="button" className="uiBtn sm primary" data-guide="merge.apply" disabled={busy} onClick={() => onUse(keeps ? "keep" : selected)}
           title={keeps ? t("Mark resolved as it is") : t("Write the chosen text; the next round pushes it")}>
-          <CheckIcon size={13} /> {t("Apply")}
+          <CheckIcon size={14} /> {t("Apply")}
         </button>
       </div>
     </>
@@ -287,14 +287,14 @@ export function ConflictCard({ conflict, busy, onResolve, nav, onOpen, showPage 
         </span>
         {many ? (
           <span className="mergeNav" title={t("The page's conflicts, one by one")}>
-            <button type="button" className="ctlBtn" onClick={() => nav.onStep(-1)} aria-label={t("Previous conflict")}><ChevronLeftIcon size={14} /></button>
+            <button type="button" className="ctlBtn" onClick={() => nav.onStep(-1)} aria-label={t("Previous conflict")}><ChevronLeftIcon size={16} /></button>
             <span className="mergeNavCount">{nav.index} / {nav.total}</span>
-            <button type="button" className="ctlBtn" onClick={() => nav.onStep(1)} aria-label={t("Next conflict")}><ChevronRightIcon size={14} /></button>
+            <button type="button" className="ctlBtn" onClick={() => nav.onStep(1)} aria-label={t("Next conflict")}><ChevronRightIcon size={16} /></button>
           </span>
         ) : null}
         {onOpen ? (
           <button type="button" className="uiBtn sm iconSq" onClick={() => onOpen(conflict)} aria-label={t("Open the block")} title={t("Open the page on this block")}>
-            <ExternalLinkIcon size={13} />
+            <ExternalLinkIcon size={16} />
           </button>
         ) : null}
       </div>
@@ -302,7 +302,7 @@ export function ConflictCard({ conflict, busy, onResolve, nav, onOpen, showPage 
       {textual ? null : (
         <div className="mergeActions">
           <button type="button" className="uiBtn sm primary" disabled={busy} onClick={() => onResolve(conflict, "keep")} title={t("Mark it seen")}>
-            <CheckIcon size={13} /> {t("OK")}
+            <CheckIcon size={14} /> {t("OK")}
           </button>
         </div>
       )}
@@ -337,7 +337,7 @@ export function MergeChip({ conflict, onResolve, open: openProp, onOpenChange, n
     <span className="mergeChipWrap" ref={ref} onMouseDown={(e) => e.stopPropagation()}>
       <button type="button" className={`mergeChip ${open ? "on" : ""}`} title={t("{short} — click to resolve", { short: t(kind.short) })}
         aria-label={t("Conflict to resolve")} onClick={(e) => { e.stopPropagation(); setOpen(!open); }}>
-        <kind.Icon size={12} />
+        <kind.Icon size={14} />
       </button>
       {open ? (
         <div className="popover mergePopover" role="dialog" aria-label={t("Merge")}>

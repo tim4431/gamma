@@ -12,7 +12,7 @@ import { useEffect, useLayoutEffect, useRef, useState } from "react";
 import { anchorElement } from "./anchors.js";
 import { keyText, resolveKey } from "./keys.js";
 import { KeyCaps } from "../shared/ui/KeyCaps.jsx";
-import { CheckIcon, HighlightIcon, LabelIcon, PaperIcon, PencilIcon } from "../shared/ui/Icons";
+import { CheckIcon, HighlightIcon, LabelIcon, PaperIcon, PencilIcon, XIcon } from "../shared/ui/Icons";
 import "./guide.css";
 import { t, tn } from "../shared/i18n/i18n.js";
 
@@ -100,7 +100,7 @@ function WelcomeContent({ step, minutes, onStart, onLater, bindings }) {
     <>
       <div className="guideHead">
         {minutes ? <span className="guideChip accent">{tn("{n}-minute tour", "{n}-minute tour", minutes)}</span> : null}
-        <button className="uiClose uiCloseSm guideClose" onClick={onLater} title={t("Dismiss guide (Esc)")} aria-label={t("Dismiss guide")}>×</button>
+        <button className="uiClose uiCloseSm guideClose" onClick={onLater} title={t("Dismiss guide (Esc)")} aria-label={t("Dismiss guide")}><XIcon size={14} /></button>
       </div>
       <div className="guideTitle">{renderInline(t(step.title), bindings)}</div>
       {step.body ? <div className="guideBody">{renderBody(t(step.body), bindings)}</div> : null}
@@ -134,7 +134,7 @@ function FinishContent({ finish, onAction, onDone }) {
     <>
       <div className="guideHead">
         <span className="guideFinishBadge" aria-hidden="true"><CheckIcon size={20} /></span>
-        <button className="uiClose uiCloseSm guideClose" onClick={onDone} title={t("Close (Esc)")} aria-label={t("Close")}>×</button>
+        <button className="uiClose uiCloseSm guideClose" onClick={onDone} title={t("Close (Esc)")} aria-label={t("Close")}><XIcon size={14} /></button>
       </div>
       <div className="guideTitle">{t(finish.title)}</div>
       {finish.lead ? <div className="guideBody"><p>{t(finish.lead)}</p></div> : null}
@@ -367,7 +367,7 @@ export default function GuideOverlay({ guide, keybindings }) {
                     <span className="guideCount">{t("Step {n} of {count}", { n: index + 1, count })}</span>
                   </>
                 )}
-                <button className="uiClose uiCloseSm guideClose" onClick={dismiss} title={inviting ? t("Dismiss guide (Esc)") : t("Leave the tour (Esc)")} aria-label={inviting ? t("Dismiss guide") : t("Leave the tour")}>×</button>
+                <button className="uiClose uiCloseSm guideClose" onClick={dismiss} title={inviting ? t("Dismiss guide (Esc)") : t("Leave the tour (Esc)")} aria-label={inviting ? t("Dismiss guide") : t("Leave the tour")}><XIcon size={14} /></button>
               </div>
               <div className="guideTitle">{renderInline(t(step.title), keybindings)}</div>
               {t(body) ? <div className="guideBody">{renderBody(t(body), keybindings)}</div> : null}

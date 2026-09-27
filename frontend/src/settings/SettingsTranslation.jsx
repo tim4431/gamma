@@ -237,7 +237,7 @@ function TranslationServices({ value }) {
               <button className="uiBtn sm" disabled={busy} onClick={() => edit(engine)}>{t("Edit")}</button>
               <button className="uiBtn sm iconSq danger" disabled={busy} title={t("Remove this key")}
                 aria-label={t("Remove key")} onClick={() => remove(engine)}>
-                <Trash2Icon size={13} />
+                <Trash2Icon size={16} />
               </button>
             </span> : <button className="uiBtn sm" disabled={busy} onClick={() => edit(engine)}>{t("Set up")}</button>) : null}
           </Row>

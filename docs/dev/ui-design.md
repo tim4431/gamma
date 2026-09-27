@@ -140,6 +140,21 @@ with an accent border, disabled the faint text colour with no lift (a filled
 button fades as a whole). Native checkboxes, radios and ranges take the
 accent from one `accent-color` on the root.
 
+### Icons
+
+Icons are the one stroke set in `shared/ui/Icons.jsx` (lucide-style, a 24
+grid). Three sizes: **14** inline with text (chips, menu rows, a label's
+glyph), **16** in buttons and toolbars (the default; an `iconSq` or `ctlBtn`
+button's icon), **20** in pane headers, empty states and card tiles; 48 is
+for illustrations. A few 9–10 px glyphs stay where they sit inside a badge
+or a chip smaller than the text (a token count's arrows, a chip's folder).
+The stroke is drawn at 1.6 px whatever the size: `Icon` sets `strokeWidth`
+to `1.6 × 24 / size` (`iconStroke`), so a 14 and a 20 beside each other look
+equally heavy; a check mark is a touch heavier (`weight` 2). Pass
+`strokeWidth` only for an icon sized by CSS (`size={null}`). A close button
+is `uiClose` with an `XIcon` inside (14, inline with the title it closes;
+16 in `uiCloseLg`), never a text ×.
+
 ### Type
 
 - **One interface face**: Inter, bundled (`@fontsource-variable/inter`,

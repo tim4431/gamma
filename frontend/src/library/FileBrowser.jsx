@@ -5,7 +5,7 @@
 // icons. All interaction (selection, drag, rename, context menus) stays wired
 // in App.jsx alongside the shared handlers.
 import React from "react";
-import { FileIcon, FolderFilesIcon, FolderIcon, GridIcon, ListIcon, LabelIcon, SearchIcon } from "../shared/ui/Icons";
+import { FileIcon, FolderFilesIcon, FolderIcon, GridIcon, ListIcon, LabelIcon, SearchIcon, XIcon } from "../shared/ui/Icons";
 import { t } from "../shared/i18n/i18n.js";
 
 // Folder + label chips for a page, filtered by the Settings → General "File
@@ -87,7 +87,7 @@ function ViewToggle({ view, onChange }) {
         title={t("List view")}
         aria-pressed={view === "list"}
       >
-        <ListIcon size={15} />
+        <ListIcon size={16} />
       </button>
       <button
         className={`homeViewBtn ${view === "grid" ? "active" : ""}`}
@@ -95,7 +95,7 @@ function ViewToggle({ view, onChange }) {
         title={t("Grid view")}
         aria-pressed={view === "grid"}
       >
-        <GridIcon size={15} />
+        <GridIcon size={16} />
       </button>
     </div>
   );
@@ -121,7 +121,7 @@ function KindToggle({ value, onChange, scopeLabel }) {
           title={label}
           aria-pressed={value === val}
         >
-          <Icon size={15} />
+          <Icon size={16} />
         </button>
       ))}
     </div>
@@ -138,7 +138,7 @@ function ListFindBox({ value, onChange, onEnter, keyLabel }) {
   const label = t("Filter by title or label");
   return (
     <div className={`homeFindBox ${value ? "active" : ""}`}>
-      <SearchIcon size={13} />
+      <SearchIcon size={14} />
       <input
         className="homeFindInput"
         value={value}
@@ -152,7 +152,7 @@ function ListFindBox({ value, onChange, onEnter, keyLabel }) {
         }}
       />
       {value ? (
-        <button className="uiClose uiCloseSm homeFindClear" title={t("Clear search")} aria-label={t("Clear search")} onClick={() => onChange("")}>×</button>
+        <button className="uiClose uiCloseSm homeFindClear" title={t("Clear search")} aria-label={t("Clear search")} onClick={() => onChange("")}><XIcon size={14} /></button>
       ) : null}
     </div>
   );
@@ -170,7 +170,7 @@ function ListSearchElsewhere({ query, none, keyLabel, onSearch }) {
           {t("No title or label matches “{q}”.", { q: <strong key="q">{query}</strong> })}
         </span>
         <button type="button" className="uiBtn primary sm homeSearchBannerBtn" onClick={onSearch}>
-          <SearchIcon size={13} />
+          <SearchIcon size={14} />
           {t("Search inside notes and PDFs")}
           {keyLabel ? <kbd className="homeSearchKey">{keyLabel}</kbd> : null}
         </button>
@@ -180,7 +180,7 @@ function ListSearchElsewhere({ query, none, keyLabel, onSearch }) {
   return (
     <button type="button" className="homeSearchMore" onClick={onSearch}
       title={keyLabel ? t("Search inside notes and PDFs") + ` (${keyLabel})` : undefined}>
-      <SearchIcon size={13} />
+      <SearchIcon size={14} />
       <span>{t("Also search inside notes and PDFs for “{q}”", { q: query })}</span>
     </button>
   );

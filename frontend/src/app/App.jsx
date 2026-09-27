@@ -341,9 +341,9 @@ function TransferRow({ status, icon, name, info, progress, onStop }) {
     <div className={`transferRow ${status}`} title={info ? `${name} — ${info}` : name}>
       <span className={`transferStatus ${status}`}>
         {status === "active" ? <span className="transferSpin inline" />
-          : status === "done" ? <CheckIcon size={12} strokeWidth={2.6} />
-            : status === "cancelled" ? <XIcon size={12} strokeWidth={2.4} />
-              : <AlertCircleIcon size={12} strokeWidth={2.4} />}
+          : status === "done" ? <CheckIcon size={14} />
+            : status === "cancelled" ? <XIcon size={14} />
+              : <AlertCircleIcon size={14} />}
       </span>
       <span className="transferKind">{icon}</span>
       <span className="transferMain">
@@ -358,7 +358,7 @@ function TransferRow({ status, icon, name, info, progress, onStop }) {
       <span className="transferInfo">{info || ""}</span>
       {onStop ? (
         <button type="button" className="uiClose uiCloseSm transferStop" title={t("Stop")} aria-label={t("Stop {name}", { name: name })}
-          onClick={(e) => { e.stopPropagation(); onStop(); }}>×</button>
+          onClick={(e) => { e.stopPropagation(); onStop(); }}><XIcon size={14} /></button>
       ) : <span className="transferStopSlot" />}
     </div>
   );
@@ -7421,7 +7421,7 @@ function LibraryApp({ publicPage = null, initialServerConfig = null }) {
               title={t("Regenerate the citation")} aria-label={t("Regenerate the citation")}
               disabled={pptCiteBusy}
               onClick={() => makePptCitation(true)}
-            >{pptCiteBusy ? "…" : <RefreshIcon size={13} />}</button>
+            >{pptCiteBusy ? "…" : <RefreshIcon size={16} />}</button>
           }
         >
           <div className="citeHead">
@@ -7555,7 +7555,7 @@ function LibraryApp({ publicPage = null, initialServerConfig = null }) {
             {focusedBlockId && !shareMode ? (
               <div className="categoryFrontmatter">
                 <span className="categoryIcon" title={t("Labels")}>
-                  <LabelIcon size={13} />
+                  <LabelIcon size={14} />
                 </span>
                 {categoryEditing ? (() => {
                     const currentTags = category.split(",").map(t => t.trim()).filter(Boolean);
@@ -7586,13 +7586,13 @@ function LibraryApp({ publicPage = null, initialServerConfig = null }) {
                           <span key={`f:${f}`} className="categoryTag folderChip" title={`Folder: ${f}`}>
                             <FolderIcon size={10} />
                             {f}
-                            <button className="uiClose uiCloseSm categoryTagRemove" tabIndex={-1} onMouseDown={(e) => { e.preventDefault(); e.stopPropagation(); removePageFolderTag(f); }}>×</button>
+                            <button className="uiClose uiCloseSm categoryTagRemove" tabIndex={-1} onMouseDown={(e) => { e.preventDefault(); e.stopPropagation(); removePageFolderTag(f); }}><XIcon size={14} /></button>
                           </span>
                         ))}
                         {category.split(",").map((t, i) => t.trim() ? (
                           <span key={i} className="categoryTag">
                             {t.trim()}
-                            <button className="uiClose uiCloseSm categoryTagRemove" tabIndex={-1} onMouseDown={(e) => { e.preventDefault(); e.stopPropagation(); removeCategoryTag(i); }}>×</button>
+                            <button className="uiClose uiCloseSm categoryTagRemove" tabIndex={-1} onMouseDown={(e) => { e.preventDefault(); e.stopPropagation(); removeCategoryTag(i); }}><XIcon size={14} /></button>
                           </span>
                         ) : null)}
                         <input
@@ -7646,7 +7646,7 @@ function LibraryApp({ publicPage = null, initialServerConfig = null }) {
                             <button key={`${s.kind}:${s.value}`} className={`categorySuggestionItem${s.kind === "folder" ? " categorySuggestionFolder" : ""}${i === categorySuggestionIdx ? " selected" : ""}`}
                               onMouseDown={(e) => { e.preventDefault(); e.stopPropagation(); pickSuggestion(s); }}
                               onMouseEnter={() => setCategorySuggestionIdx(i)}
-                            >{s.kind === "folder" ? <><FolderIcon size={11} />{s.value}/</> : s.value}</button>
+                            >{s.kind === "folder" ? <><FolderIcon size={14} />{s.value}/</> : s.value}</button>
                           ))}
                         </div>
                       ) : null}
@@ -7696,26 +7696,26 @@ function LibraryApp({ publicPage = null, initialServerConfig = null }) {
                       aria-label={pageAttach ? t("Document") : t("Attach document")}
                       disabled={loading}
                       onClick={() => setOpenPopover((p) => (p === "attach" ? null : "attach"))}
-                    ><PaperclipIcon size={15} /></button>
+                    ><PaperclipIcon size={16} /></button>
                     {openPopover === "attach" && pageAttach ? (
                       <div className="popover addPopover attachPopover">
                         <div className="popoverTitle">{t("Document")}</div>
                         <div className="popoverHint attachFileName" title={attachmentSource(pageAttach)}>
-                          <PaperclipIcon size={13} /> {pageAttach.name || defaultPageTitle(pageAttach)}
+                          <PaperclipIcon size={14} /> {pageAttach.name || defaultPageTitle(pageAttach)}
                         </div>
                         <button className="popoverItem" onClick={() => { setPdfHidden((h) => !h); setOpenPopover(null); }}>
-                          {pdfHidden ? <EyeIcon className="popoverItemIcon" size={15} /> : <EyeOffIcon className="popoverItemIcon" size={15} />}
+                          {pdfHidden ? <EyeIcon className="popoverItemIcon" size={16} /> : <EyeOffIcon className="popoverItemIcon" size={16} />}
                           {pdfHidden ? t("Show the PDF") : t("Hide the PDF")}
                         </button>
                         {pdfUrl ? (
                           <button className="popoverItem" onClick={exportRawPdf} title={t("Download the PDF file exactly as stored — no highlights or notes")}>
-                            <DownloadIcon className="popoverItemIcon" size={15} />
+                            <DownloadIcon className="popoverItemIcon" size={16} />
                             {t("Download the PDF")}
                           </button>
                         ) : null}
                         {!readOnly ? (
                           <button className="popoverItem" onClick={detachPdfFromPage}>
-                            <ScissorsIcon className="popoverItemIcon" size={15} />
+                            <ScissorsIcon className="popoverItemIcon" size={16} />
                             {t("Detach the PDF…")}
                           </button>
                         ) : null}
@@ -7763,7 +7763,7 @@ function LibraryApp({ publicPage = null, initialServerConfig = null }) {
                     >
                       {/* Same busy affordance as the translate button: the
                           icon becomes a spinner while a fetch is running. */}
-                      {metaBusy ? <span className="pillSpin" aria-hidden="true" /> : <InfoIcon size={15} />}
+                      {metaBusy ? <span className="pillSpin" aria-hidden="true" /> : <InfoIcon size={16} />}
                     </button>
                     {/* Metadata nothing ties to this document (AI-extracted,
                         or an identifier resolved but unconfirmed) — flag it
@@ -7836,7 +7836,7 @@ function LibraryApp({ publicPage = null, initialServerConfig = null }) {
                                   return (
                                     <>
                                       <a className="metaLink" href={url} target="_blank" rel="noreferrer" title={t("Open on {site}", { site: site })}>
-                                        <ExternalLinkIcon size={11} />
+                                        <ExternalLinkIcon size={14} />
                                       </a>
                                       <button
                                         className="chatMsgActionBtn metaRowBtn"
@@ -7844,7 +7844,7 @@ function LibraryApp({ publicPage = null, initialServerConfig = null }) {
                                         aria-label={t("Copy {site} link", { site: site })}
                                         onClick={() => copyFlash(key, url)}
                                       >
-                                        {copiedKey === key ? <CheckIcon size={12} /> : <CopyIcon size={12} />}
+                                        {copiedKey === key ? <CheckIcon size={14} /> : <CopyIcon size={14} />}
                                       </button>
                                     </>
                                   );
@@ -7856,7 +7856,7 @@ function LibraryApp({ publicPage = null, initialServerConfig = null }) {
                                     aria-label={t("Fill in title with AI")}
                                     disabled={aiTitleBusy}
                                     onClick={aiFillTitle}
-                                  >{aiTitleBusy ? "…" : <SparklesIcon size={13} />}</button>
+                                  >{aiTitleBusy ? "…" : <SparklesIcon size={14} />}</button>
                                 ) : null}
                               </span>
                             </div>
@@ -7888,7 +7888,7 @@ function LibraryApp({ publicPage = null, initialServerConfig = null }) {
                               {pdfTextInfo?.ok ? (
                                 <button className="searchToggle metaRowBtn" style={{ marginLeft: "auto" }}
                                   title={t("Preview the extracted text (what the AI reads)")}
-                                  onClick={openPdfTextPreview}><EyeIcon size={13} /></button>
+                                  onClick={openPdfTextPreview}><EyeIcon size={14} /></button>
                               ) : null}
                               {pdfTextInfo && !pdfTextInfo.checking && !pdfTextInfo.ok ? (
                                 <button
@@ -7943,7 +7943,7 @@ function LibraryApp({ publicPage = null, initialServerConfig = null }) {
                             disabled={!sourceDraft.trim()}
                             onClick={() => copyFlash("source", sourceDraft.trim())}
                           >
-                            {copiedKey === "source" ? <CheckIcon size={13} /> : <CopyIcon size={13} />}
+                            {copiedKey === "source" ? <CheckIcon size={14} /> : <CopyIcon size={14} />}
                           </button>
                         </div>
                         {sourceDraft.trim() && sourceDraft.trim() !== inputUrl ? (
@@ -8005,7 +8005,7 @@ function LibraryApp({ publicPage = null, initialServerConfig = null }) {
                     },
                   })}
                 >
-                  <TrashIcon size={15} />
+                  <TrashIcon size={16} />
                 </button>
               </div>
             ) : null}
@@ -8032,14 +8032,14 @@ function LibraryApp({ publicPage = null, initialServerConfig = null }) {
                       title={t("Remove from Recently viewed")}
                       aria-label={t("Remove from Recently viewed")}
                       onClick={(e) => { e.stopPropagation(); removeRecentView(b._pageId); }}
-                    >×</button>
+                    ><XIcon size={14} /></button>
                   </PageCard>
                 ))}
               </CardCarousel>
             ) : null}
             {homeMode && lib.pin && !categoryFilter && !folderFilter && pinnedItems.length > 0 ? (
               <div className="pinnedSection">
-                <div className="pinnedLabel"><PinIcon filled size={12} /> {t("Pinned")}</div>
+                <div className="pinnedLabel"><PinIcon filled size={14} /> {t("Pinned")}</div>
                 <div className="pinnedStrip" ref={pinnedStripRef}>
                   {pinnedItems.map((item) => item.kind === "folder" ? (() => { const f = item.path; return (
                     <PageCard
@@ -8055,7 +8055,7 @@ function LibraryApp({ publicPage = null, initialServerConfig = null }) {
                         className="pinBtn tilePinBtn pinned"
                         title={t("Unpin")}
                         onClick={(e) => { e.stopPropagation(); setFoldersPinned([f], false); }}
-                      ><PinIcon filled size={12} /></button>
+                      ><PinIcon filled size={14} /></button>
                     </PageCard>
                   ); })() : (() => { const b = item.block; return (
                     <PageCard
@@ -8078,7 +8078,7 @@ function LibraryApp({ publicPage = null, initialServerConfig = null }) {
                         className="pinBtn tilePinBtn pinned"
                         title={t("Unpin")}
                         onClick={(e) => { e.stopPropagation(); setPagesPinned([b._pageId], false); }}
-                      ><PinIcon filled size={12} /></button>
+                      ><PinIcon filled size={14} /></button>
                     </PageCard>
                   ); })())}
                 </div>
@@ -8128,7 +8128,7 @@ function LibraryApp({ publicPage = null, initialServerConfig = null }) {
                     </div>
                     ) : null}
                     <div className="folderCurrent">
-                      {categoryFilter ? <LabelIcon size={15} strokeDasharray={categoryFilter === NO_LABEL ? "2 1.5" : undefined} /> : <FolderOpenIcon size={15} />}
+                      {categoryFilter ? <LabelIcon size={16} strokeDasharray={categoryFilter === NO_LABEL ? "2 1.5" : undefined} /> : <FolderOpenIcon size={16} />}
                       {/* Breadcrumb: every path segment navigates to its level —
                           from the library's root on (a folder share starts at its folder) */}
                       {folderCrumbs(folderFilter).map(({ seg, prefix, sep }) => (
@@ -8317,7 +8317,7 @@ function LibraryApp({ publicPage = null, initialServerConfig = null }) {
                               className={`pinBtn tilePinBtn ${isPinned ? "pinned" : ""}`}
                               title={isPinned ? t("Unpin") : t("Pin to top")}
                               onClick={(e) => { e.stopPropagation(); setPagesPinned([id], !isPinned); }}
-                            ><PinIcon filled={isPinned} size={12} /></button>
+                            ><PinIcon filled={isPinned} size={14} /></button>
                           ) : null}
                         </PageCard>
                       );
@@ -8337,13 +8337,13 @@ function LibraryApp({ publicPage = null, initialServerConfig = null }) {
                   <div className="fileList" onClick={(e) => { if (e.target.classList.contains("fileList")) clearSelection(); }}>
                     {newPageAllowed ? (
                       <button className="folderRow folderNewBtn" onClick={() => createPage()} title={t("Start a blank page here")}>
-                        <FilePlusIcon size={15} />
+                        <FilePlusIcon size={16} />
                         <span className="folderName">{t("New page")}</span>
                       </button>
                     ) : null}
                     {!newFolderAllowed ? null : newFolderOpen ? (
                       <div className="folderRow folderNewRow">
-                        <FolderPlusIcon size={15} />
+                        <FolderPlusIcon size={16} />
                         <input
                           autoFocus
                           className="folderNewInput"
@@ -8359,7 +8359,7 @@ function LibraryApp({ publicPage = null, initialServerConfig = null }) {
                       </div>
                     ) : (
                       <button className="folderRow folderNewBtn" onClick={() => { setNewFolderName(""); setNewFolderOpen(true); }}>
-                        <FolderPlusIcon size={15} />
+                        <FolderPlusIcon size={16} />
                         <span className="folderName">{t("New folder")}</span>
                       </button>
                     )}
@@ -8387,7 +8387,7 @@ function LibraryApp({ publicPage = null, initialServerConfig = null }) {
                           ? t("Pages without any label · double-click to open · drop a page to clear its labels")
                           : lib.organize ? t("Click to select · double-click to open · right-click to rename or delete · drop a page to label it") : t("Click to select · double-click to open")}
                       >
-                        <LabelIcon size={15} strokeDasharray={l === NO_LABEL ? "2 1.5" : undefined} />
+                        <LabelIcon size={16} strokeDasharray={l === NO_LABEL ? "2 1.5" : undefined} />
                         <span className="folderName">{labelTitle(l)}</span>
                         {rowColumns(item, tn("{n} page", "{n} pages", labelMeta[l]?.count || 0))}
                       </div>
@@ -8406,7 +8406,7 @@ function LibraryApp({ publicPage = null, initialServerConfig = null }) {
                         onDrop={(e) => dropOnFolder(e, f)}
                         title={lib.organize ? t("Click to select · double-click to open · right-click to rename or delete · drop a page or folder to move it in") : t("Click to select · double-click to open")}
                       >
-                        <FolderIcon size={15} />
+                        <FolderIcon size={16} />
                         {folderRenaming?.name === f ? (
                           <input
                             autoFocus
@@ -8464,7 +8464,7 @@ function LibraryApp({ publicPage = null, initialServerConfig = null }) {
                               className={`pinBtn fileRowPin ${isPinned ? "pinned" : ""}`}
                               title={isPinned ? t("Unpin") : t("Pin to top")}
                               onClick={(e) => { e.stopPropagation(); setPagesPinned([id], !isPinned); }}
-                            ><PinIcon filled={isPinned} size={12} /></button>
+                            ><PinIcon filled={isPinned} size={14} /></button>
                           ) : null)}
                         </div>
                       );
@@ -8948,7 +8948,7 @@ function LibraryApp({ publicPage = null, initialServerConfig = null }) {
         title={t("View — windows, import, export")}
         aria-label={t("View")}
       >
-        <MenuIcon size={17} />
+        <MenuIcon size={16} />
       </button>
       {openPopover === "menu" ? (
         <div className="popover menuPopover">{viewMenuItems(menuReadOnly)}</div>
@@ -8996,7 +8996,7 @@ function LibraryApp({ publicPage = null, initialServerConfig = null }) {
           title={t("Add — a new page, a PDF by URL, arXiv id or DOI, or uploaded files")}
           aria-label={t("Add")}
         >
-          <PlusIcon size={17} strokeWidth={2.2} />
+          <PlusIcon size={16} />
           <span className="barLabel">{t("Add")}</span>
         </button>
         {openPopover === "add" ? (
@@ -9091,7 +9091,7 @@ function LibraryApp({ publicPage = null, initialServerConfig = null }) {
               {indexTask && (indexTask.active || (!indexTaskCleared && indexTask.total > 0)) ? (
                 <TransferRow
                   status={indexTask.active ? "active" : indexTask.done < indexTask.total ? "cancelled" : "done"}
-                  icon={<SearchIcon size={12} />} name="Indexing PDFs for search"
+                  icon={<SearchIcon size={14} />} name="Indexing PDFs for search"
                   info={`${indexTask.done}/${indexTask.total}`}
                   progress={indexTask.active && indexTask.total ? indexTask.done / indexTask.total : undefined}
                   onStop={indexTask.active ? cancelIndexing : null}
@@ -9101,12 +9101,12 @@ function LibraryApp({ publicPage = null, initialServerConfig = null }) {
                 <TransferRow
                   key={tr.id} status={tr.status} name={t(tr.name)} info={tr.info} progress={tr.progress}
                   icon={tr.kind === "upload"
-                    ? <UploadIcon size={12} />
+                    ? <UploadIcon size={14} />
                     : tr.kind === "ai"
-                      ? <SparklesIcon size={12} />
+                      ? <SparklesIcon size={14} />
                       : tr.kind === "import"
-                        ? <FileIcon size={12} />
-                        : <DownloadIcon size={12} />}
+                        ? <FileIcon size={14} />
+                        : <DownloadIcon size={14} />}
                   onStop={tr.status === "active" && tr.cancel ? () => cancelTransfer(tr.id) : null}
                 />
               ))}
@@ -9198,7 +9198,7 @@ function LibraryApp({ publicPage = null, initialServerConfig = null }) {
               : t("Account & settings")}
             aria-label={isPhone ? t("More") : t("Account & settings")}
           >
-            {isPhone ? <MenuIcon size={18} /> : <UserIcon size={18} />}
+            {isPhone ? <MenuIcon size={20} /> : <UserIcon size={20} />}
             {isPhone ? <span className="barLabel">{t("More")}</span> : null}
             {isPhone && tasksRunning ? <span className="transferSpin" aria-hidden="true" />
               : notices.tone ? <span className={`noticeDot ${dotTone(notices.tone)}`} data-tone={notices.tone} aria-hidden="true" /> : null}
@@ -9375,7 +9375,7 @@ function LibraryApp({ publicPage = null, initialServerConfig = null }) {
                 title={t("Home")}
                 aria-label={t("Home")}
               >
-                <HomeIcon size={17} />
+                <HomeIcon size={16} />
               </button>
             )}
             {navStackLen > 0 ? (
@@ -9387,7 +9387,7 @@ function LibraryApp({ publicPage = null, initialServerConfig = null }) {
                 title={t("Back to where you were{steps} — Alt+← · right-click to clear", { steps: navStackLen > 1 ? ` (${navStackLen} steps)` : "" })}
                 aria-label={t("Back")}
               >
-                <ArrowLeftIcon size={17} strokeWidth={2.2} />
+                <ArrowLeftIcon size={16} />
                 <span className="navBackBadge">{Math.min(navStackLen, 30)}</span>
               </button>
             ) : null}
@@ -9425,7 +9425,7 @@ function LibraryApp({ publicPage = null, initialServerConfig = null }) {
               title={t("Back to the shared folder")} aria-label={t("Back to the shared folder")}
               onClick={() => goSharedPage("")}
             >
-              <HomeIcon size={17} />
+              <HomeIcon size={16} />
             </button>
           ) : publicPage ? (
             // a page host has no front door of its own
@@ -9503,7 +9503,7 @@ function LibraryApp({ publicPage = null, initialServerConfig = null }) {
 
       {missingPage ? (
         <div className="missingPageNotice" role="status">
-          <AlertCircleIcon size={17} aria-hidden="true" />
+          <AlertCircleIcon size={16} aria-hidden="true" />
           <span className="missingPageText">
             <b>{t("That page isn't here.")}</b> {t("It may have been deleted, or it lives in another workspace.")}
           </span>
@@ -9585,18 +9585,18 @@ function LibraryApp({ publicPage = null, initialServerConfig = null }) {
               onClick={() => setPdfHidden(true)}
               title={t("Close PDF")}
               aria-label={t("Close PDF")}
-            >×</button>
+            ><XIcon size={16} /></button>
           ) : null}
           {pdfUrl && !pdfHidden ? (
             <div className="pdfCtlBox pdfZoomOverlay">
               <button onClick={() => zoomStep(-1)} title={t("Zoom out")} aria-label={t("Zoom out")}>
-                <ZoomOutIcon size={15} />
+                <ZoomOutIcon size={16} />
               </button>
               <button onClick={() => zoomStep(1)} title={t("Zoom in")} aria-label={t("Zoom in")}>
-                <ZoomInIcon size={15} />
+                <ZoomInIcon size={16} />
               </button>
               <button className="pdfFitWidthBtn" onClick={() => zoomTo("page-width")} title={t("Fit to width")} aria-label={t("Fit to width")}>
-                <FitWidthIcon size={15} />
+                <FitWidthIcon size={16} />
               </button>
               {translateEnabled && !shareMode ? (
                 <button
@@ -9632,8 +9632,8 @@ function LibraryApp({ publicPage = null, initialServerConfig = null }) {
                   {pdfTransState.running
                     ? <span className="pillSpin" aria-hidden="true" />
                     : pdfTransState.pages > 0 && !pdfTransState.shown
-                      ? <LanguagesOffIcon size={15} />
-                      : <LanguagesIcon size={15} />}
+                      ? <LanguagesOffIcon size={16} />
+                      : <LanguagesIcon size={16} />}
                 </button>
               ) : null}
               {translateEnabled && !shareMode && pdfTransState.running ? (
@@ -9647,7 +9647,7 @@ function LibraryApp({ publicPage = null, initialServerConfig = null }) {
                   title={inkUi.open ? t("Close the handwriting tools (Esc)") : t("Handwriting: draw on the page with a pen, highlighter or eraser")}
                   aria-label={t("Handwriting tools")}
                 >
-                  <PenIcon size={15} />
+                  <PenIcon size={16} />
                 </button>
               ) : null}
               {isPhone && !shareMode ? (
@@ -9657,7 +9657,7 @@ function LibraryApp({ publicPage = null, initialServerConfig = null }) {
                   title={areaSelectMode ? t("Rectangle mode — drag draws an area note (tap to switch to text selection)") : t("Text mode — drag selects text (tap to switch to rectangle drawing)")}
                   aria-label={t("Toggle selection mode")}
                 >
-                  {areaSelectMode ? <RectSelectIcon size={15} /> : <TextCursorIcon size={15} />}
+                  {areaSelectMode ? <RectSelectIcon size={16} /> : <TextCursorIcon size={16} />}
                 </button>
               ) : null}
             </div>
@@ -9690,9 +9690,9 @@ function LibraryApp({ publicPage = null, initialServerConfig = null }) {
                 aria-label={isFullscreen || pseudoFullscreen ? t("Exit full screen") : t("Full screen")}
               >
                 {isFullscreen || pseudoFullscreen ? (
-                  <MinimizeIcon size={15} />
+                  <MinimizeIcon size={16} />
                 ) : (
-                  <MaximizeIcon size={15} />
+                  <MaximizeIcon size={16} />
                 )}
               </button>
             </div>
@@ -10004,19 +10004,19 @@ function LibraryApp({ publicPage = null, initialServerConfig = null }) {
                     className="uiBtn"
                     onClick={() => { setLinkPrompt(null); openBlock(pid, { pushNav: true }); }}
                     title={t("This paper is already in your library")}
-                  ><FileTextIcon size={13} />{t("Open in Gamma")}</button>
+                  ><FileTextIcon size={14} />{t("Open in Gamma")}</button>
                 ) : (
                   <button
                     className="uiBtn"
                     onClick={() => { const url = linkPrompt; setLinkPrompt(null); pushNav(); openPdf(url); }}
                     title={t("Resolve this link as a PDF and open it as a new paper in Gamma")}
-                  ><DownloadIcon size={13} />{t("Fetch into Gamma")}</button>
+                  ><DownloadIcon size={14} />{t("Fetch into Gamma")}</button>
                 );
               })()}
               <button
                 className="uiBtn primary"
                 onClick={() => { window.open(linkPrompt, "_blank", "noopener"); setLinkPrompt(null); }}
-              ><ExternalLinkIcon size={13} />{t("Open in browser")}</button>
+              ><ExternalLinkIcon size={14} />{t("Open in browser")}</button>
             </div>
           </div>
         </div>

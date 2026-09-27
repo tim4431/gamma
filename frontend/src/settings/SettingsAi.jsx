@@ -113,7 +113,7 @@ function ProviderRow({ provider, protocol, oauth, active = false, radio = null, 
     <label className={`aiProvRow ${radio ? "aiProvSelectable" : ""} ${active ? "active" : ""}`}>
       {radio}
       <span className={`aiProvAvatar ${active ? "active" : ""}`}>
-        {oauth ? <SparklesIcon size={15} /> : <KeyIcon size={15} />}
+        {oauth ? <SparklesIcon size={16} /> : <KeyIcon size={16} />}
       </span>
       <span className="aiProvMeta">
         <span className="aiProvName">
@@ -401,7 +401,7 @@ export function SharedAiProviderSettings({ setStatus, confirm }) {
               onClick={() => editor.startEdit(provider)}>{t("Manage")}</button>
             <button className="uiBtn sm iconSq danger" title={t("Remove this shared key")} aria-label={t("Remove shared key")}
               onClick={() => remove(provider)}>
-              <Trash2Icon size={13} />
+              <Trash2Icon size={16} />
             </button>
           </ProviderRow>
         );
@@ -573,7 +573,7 @@ function ProviderForm({ value, onCancel }) {
             </Field>
             {keyUrl ? (
               <a className="aiKeyLink" href={keyUrl} target="_blank" rel="noopener noreferrer">
-                {t("Get a key at {where}", { where: keyWhere })}<ExternalLinkIcon size={12} />
+                {t("Get a key at {where}", { where: keyWhere })}<ExternalLinkIcon size={14} />
               </a>
             ) : null}
             {service === "custom" ? <Field label={t("Base URL")} hint={t("optional — default {default_base_url}", { default_base_url: protocol?.default_base_url || "" })}>
@@ -587,8 +587,8 @@ function ProviderForm({ value, onCancel }) {
             {keyChecked && aiModelCatalog ? (
               <div className={`aiKeyCheck ${aiModelCatalog.error ? "aiKeysError" : aiModelCatalog.models ? "aiTestOk" : ""}`} role="status">
                 {aiModelCatalog.loading ? <><span className="transferSpin inline" /> {t("Checking the key…")}</>
-                  : aiModelCatalog.models ? <><CheckIcon size={12} /> {tn("Key works · {n} model available", "Key works · {n} models available", aiModelCatalog.models.length)}</>
-                  : <><XIcon size={12} /> {aiModelCatalog.error}</>}
+                  : aiModelCatalog.models ? <><CheckIcon size={14} /> {tn("Key works · {n} model available", "Key works · {n} models available", aiModelCatalog.models.length)}</>
+                  : <><XIcon size={14} /> {aiModelCatalog.error}</>}
               </div>
             ) : null}
           </>
@@ -608,7 +608,7 @@ function ProviderForm({ value, onCancel }) {
             {formModels.map((model) => (
               <span className="categoryTag" key={model}>
                 {model}
-                <button className="uiClose uiCloseSm" title={t("Remove model")} aria-label={t("Remove {model}", { model: model })} onClick={() => removeModel(model)}>×</button>
+                <button className="uiClose uiCloseSm" title={t("Remove model")} aria-label={t("Remove {model}", { model: model })} onClick={() => removeModel(model)}><XIcon size={14} /></button>
               </span>
             ))}
           </div>
@@ -625,14 +625,14 @@ function ProviderForm({ value, onCancel }) {
             {aiModelCatalog?.loading
               ? <><span className="transferSpin inline" /> {t("fetching…")}</>
               : aiModelCatalog?.models
-                ? <><RefreshIcon size={12} /> {aiModelCatalog.models.length} {t("usable")}</>
-                : <><RefreshIcon size={12} /> {t("Fetch")}</>}
+                ? <><RefreshIcon size={14} /> {aiModelCatalog.models.length} {t("usable")}</>
+                : <><RefreshIcon size={14} /> {t("Fetch")}</>}
           </button>
         </div>
         {aiModelCatalog?.error ? (
           <div className="reportModalHint settingsNoMargin">
             {keyChecked ? t("No model list without a working key.") : aiModelCatalog.error}{" "}
-            <button className="searchToggle" title={t("Retry loading the model list")} onClick={loadModelCatalog}><RefreshIcon size={12} /></button>
+            <button className="searchToggle" title={t("Retry loading the model list")} onClick={loadModelCatalog}><RefreshIcon size={14} /></button>
           </div>
         ) : null}
         <details className="aiMoreOptions" open={moreOpen} onToggle={(event) => setMoreOpen(event.currentTarget.open)}>
@@ -743,7 +743,7 @@ function AiUsageSection({ confirm, setStatus, canReset = true }) {
     <>
       <Section title={t("Token usage")} action={
         <button className="uiBtn sm" disabled={busy} title={t("Fetch the latest counts")} onClick={load}>
-          <RefreshIcon size={12} /> {t("Refresh")}
+          <RefreshIcon size={14} /> {t("Refresh")}
         </button>} />
       {error ? <p className="settingsPaneHint aiKeysError" role="alert">{t("Usage unavailable: {error}", { error: error })}</p> : null}
       {!data && !error ? <p className="setNotice">{t("Loading…")}</p> : null}
@@ -849,7 +849,7 @@ export function AiSettings({ value, confirm, setStatus }) {
                     title={t("Edit connection and available models")} onClick={() => value.startEditAiProvider(provider)}>{t("Manage")}</button>
                   <button className="uiBtn sm iconSq danger" disabled={value.aiKeysBusy} title={t("Remove this key")}
                     aria-label={t("Remove key")} onClick={() => value.deleteAiProvider(provider)}>
-                    <Trash2Icon size={13} />
+                    <Trash2Icon size={16} />
                   </button>
                 </> : null}
               </ProviderRow>

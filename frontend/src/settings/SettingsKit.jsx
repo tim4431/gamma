@@ -7,7 +7,7 @@
 // New settings UI should reuse these; bespoke classes are for layout only.
 import React from "react";
 import { API, apiJson, copyText, fmtBytes } from "../shared/lib/utils";
-import { AlertCircleIcon, CheckIcon, CloudCheckIcon, EyeIcon, EyeOffIcon, MonitorIcon, RefreshIcon, ShieldIcon, UndoIcon, UserIcon } from "../shared/ui/Icons";
+import { AlertCircleIcon, CheckIcon, CloudCheckIcon, EyeIcon, EyeOffIcon, MonitorIcon, RefreshIcon, ShieldIcon, UndoIcon, UserIcon, XIcon } from "../shared/ui/Icons";
 import { bindable, chordFromEvent } from "../shared/lib/hotkeys.js";
 import { KeyCaps } from "../shared/ui/KeyCaps.jsx";
 import { BROWSER_TAG, profileSyncState } from "./syncState.js";
@@ -32,7 +32,7 @@ export function useSettingsDraft(key, dirty, discard) {
 export function PaneHead({ icon: Icon, title, crumbs, action, children }) {
   return (
     <div className="setHead" data-setting={title}>
-      <span className="setHeadIcon"><Icon size={17} /></span>
+      <span className="setHeadIcon"><Icon size={16} /></span>
       <span className="settingText">
         <span className="settingsPaneTitle">
           {(crumbs || []).map(({ label, onClick, ariaLabel }) => (
@@ -119,7 +119,7 @@ export function Section({ title, scope, prefs, action, guide, tone, children }) 
 export function Row({ icon: Icon, label, hint, title, scope, className = "", children }) {
   return (
     <div className={`settingRow setRow ${className}`} data-setting={label} title={title}>
-      <span className="setIcon">{Icon ? <Icon size={15} /> : null}</span>
+      <span className="setIcon">{Icon ? <Icon size={16} /> : null}</span>
       <div className="settingText">
         <span className="settingLabel">{label}{scope ? <ScopeTag scope={scope} /> : null}</span>
         {hint ? <span className="settingDesc">{hint}</span> : null}
@@ -155,7 +155,7 @@ export function Segmented({ value, onChange, options, disabled }) {
           className={`uiBtn sm ${value === val ? "on" : ""}`}
           onClick={() => onChange(val)}
         >
-          {Icon ? <Icon size={13} /> : null}{t(label)}
+          {Icon ? <Icon size={14} /> : null}{t(label)}
         </button>
       ))}
     </span>
@@ -174,7 +174,7 @@ export function PictureChoices({ label, value, onChange, onConfirm, options, col
         <span className="setPictureCaption">
           <span className="setPictureName">{t(name)}</span>
           {hint ? <span className="setPictureHint">{t(hint)}</span> : null}
-          <span className="setPictureCheck" aria-hidden="true">{value === id ? <CheckIcon size={12} /> : null}</span>
+          <span className="setPictureCheck" aria-hidden="true">{value === id ? <CheckIcon size={14} /> : null}</span>
         </span>
       </button>
     ))}
@@ -190,7 +190,7 @@ export function IconChoices({ label, value, onChange, options, columns }) {
     <PictureChoices label={label} value={value} onChange={onChange} columns={columns || options.length}
       options={options.map(({ value: id, label: name, hint, Icon }) => ({
         value: id, label: name, hint,
-        preview: <span className="setTileIcon" aria-hidden="true"><Icon size={18} /></span>,
+        preview: <span className="setTileIcon" aria-hidden="true"><Icon size={20} /></span>,
       }))} />
   </div>;
 }
@@ -212,7 +212,7 @@ export function ToggleGroup({ selected, onToggle, options, disabled }) {
           aria-pressed={on.has(val)}
           onClick={() => onToggle(val, !on.has(val))}
         >
-          {Icon ? <Icon size={13} /> : null}{t(label)}
+          {Icon ? <Icon size={14} /> : null}{t(label)}
         </button>
       ))}
     </span>
@@ -263,7 +263,7 @@ export function SubDialog({ title, onClose, children, draft, className = "", clo
         }}>
         {closeButton ? <div className="settingsDialogHeader" inert={confirmClose ? "" : undefined}>
           <div className="reportModalTitle">{title}</div>
-          <button type="button" className="uiClose uiCloseLg" onClick={close} aria-label={t("Close {title}", { title: title })} title={t("Close")}>×</button>
+          <button type="button" className="uiClose uiCloseLg" onClick={close} aria-label={t("Close {title}", { title: title })} title={t("Close")}><XIcon size={16} /></button>
         </div> : <div className="reportModalTitle">{title}</div>}
         <div className="settingsDialogContent" inert={confirmClose ? "" : undefined}>{children}</div>
         {confirmClose ? <div className="settingsUnsaved" role="alertdialog" aria-label={t("Unsaved changes")}>
@@ -334,7 +334,7 @@ export function PasswordInput({ className = "aiKeyInput", inputRef, ...props }) 
         onMouseDown={(event) => event.preventDefault()} // keep the input's focus + caret
         onClick={() => setShown((v) => !v)}
       >
-        {shown ? <EyeOffIcon size={14} /> : <EyeIcon size={14} />}
+        {shown ? <EyeOffIcon size={16} /> : <EyeIcon size={16} />}
       </button>
     </span>
   );
@@ -449,7 +449,7 @@ export function Stat({ icon: Icon, label, value, total, title }) {
         <span className="setStatNum">{value}</span>
         <span className="setStatOf">/ {total}</span>
       </span>
-      <span className="setStatLabel"><Icon size={12} />{label}</span>
+      <span className="setStatLabel"><Icon size={14} />{label}</span>
       <span className="setStatBar"><i className={tone} style={{ width: `${Math.max(pct, 2)}%` }} /></span>
     </div>
   );
@@ -461,7 +461,7 @@ export function StatText({ icon: Icon, label, value, hint, tone = "", title }) {
   return (
     <div className={`setStat setStatText ${tone}`} title={title}>
       <span className="setStatTop"><span className="setStatNum">{value}</span></span>
-      <span className="setStatLabel"><Icon size={12} />{label}</span>
+      <span className="setStatLabel"><Icon size={14} />{label}</span>
       {hint ? <span className="setStatHint">{hint}</span> : null}
     </div>
   );
@@ -501,7 +501,7 @@ export function LogBox({ icon, label, description, entries, emptyText, copyStatu
 }
 
 export function Empty({ icon: Icon, children }) {
-  return <div className="setEmpty"><Icon size={26} />{children}</div>;
+  return <div className="setEmpty"><Icon size={20} />{children}</div>;
 }
 
 // A workspace's folder in the server's data directory (workspaces/<id>/),
@@ -597,10 +597,10 @@ export function AccountPicker({ accounts, exclude = [], value, onChange, placeho
               onClick={() => pick(a.username)}
               onMouseEnter={() => setCursor(i)}
             >
-              <span className="setPickAvatar">{a.is_admin ? <ShieldIcon size={13} /> : <UserIcon size={13} />}</span>
+              <span className="setPickAvatar">{a.is_admin ? <ShieldIcon size={14} /> : <UserIcon size={14} />}</span>
               <span className="setPickName">{a.username}</span>
               {a.is_admin ? <span className="uiTag admin">{t("admin")}</span> : null}
-              {a.username === value ? <CheckIcon size={13} className="setPickCheck" /> : null}
+              {a.username === value ? <CheckIcon size={14} className="setPickCheck" /> : null}
             </button>
           ))}
           {matches.length > shown.length ? (
@@ -743,7 +743,7 @@ export function KeyBinding({ chord, label, fixed, modified, conflict, onChange, 
       </button>
       {modified && !fixed ? (
         <button type="button" className="uiBtn sm iconSq" title={t("Reset to default")} aria-label={t("Reset {name} to its default shortcut", { name: label })} onClick={onReset}>
-          <UndoIcon size={13} />
+          <UndoIcon size={16} />
         </button>
       ) : null}
     </span>

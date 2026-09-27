@@ -107,7 +107,7 @@ function ContextCoverage({ items }) {
     <div className="chatMsgPdfs">
       {notes.map((n, i) => (
         <span key={i} className="chatPdfChip" title={n.long}>
-          {n.refused ? <AlertCircleIcon size={11} /> : <InfoIcon size={11} />}
+          {n.refused ? <AlertCircleIcon size={14} /> : <InfoIcon size={14} />}
           {n.short}
         </span>
       ))}
@@ -125,7 +125,7 @@ function ChatErrorCard({ message, compact, actions }) {
   const fromProvider = !["network", "not_configured"].includes(message.errorKind);
   return (
     <div className={`chatErrorCard${compact ? " compact" : ""}`}>
-      <div className="chatErrorHead"><AlertCircleIcon size={15} /><span>{copy.headline}</span></div>
+      <div className="chatErrorHead"><AlertCircleIcon size={16} /><span>{copy.headline}</span></div>
       {!compact ? <div className="chatErrorText">{copy.text}</div> : null}
       {actions.length ? <div className="chatErrorActions">{actions}</div> : null}
       {message.errorDetail ? (
@@ -150,10 +150,10 @@ function AgentSteps({ actions, running, open, onToggle, titleOf, children }) {
     <div className="chatStepsWrap">
       <button type="button" className={`chatSteps${live ? " live" : ""}`} onClick={onToggle} aria-expanded={open}
         title={open ? t("Hide the steps") : t("Show every step with its arguments and output")}>
-        {live ? <span className="transferSpin inline" aria-hidden="true" /> : <CheckIcon size={12} />}
+        {live ? <span className="transferSpin inline" aria-hidden="true" /> : <CheckIcon size={14} />}
         <span className="chatStepsText">{live ? runningLabel(running, titleOf) : stepsSummary(actions)}</span>
         {failed && !live ? <span className="chatStepsFailed">{t("{n} failed", { n: failed })}</span> : null}
-        {actions.length ? (open ? <ChevronUpIcon size={11} /> : <ChevronDownIcon size={11} />) : null}
+        {actions.length ? (open ? <ChevronUpIcon size={14} /> : <ChevronDownIcon size={14} />) : null}
       </button>
       {open ? children : null}
     </div>
@@ -191,7 +191,7 @@ function AgentChanges({ actions, onOpenPage }) {
         const Icon = ACTION_ICONS[a.kind] || PencilIcon;
         return (
           <div key={j} className="chatChange">
-            <Icon size={12} />
+            <Icon size={14} />
             <span className="chatChangeText">{changePlace(a) === "library" ? libraryRow(a) : noteRow(a)}</span>
           </div>
         );
@@ -295,9 +295,9 @@ function SelChip({ kind, icon, label, note, auto = false, text, title, onRemove,
   return (
     <div className={`chatSelChip${kind ? ` ${kind}` : ""}${auto ? " auto" : ""}`} title={title ?? text}>
       <div className="chatSelChipHead">
-        <span className="chatSelChipLabel"><Glyph size={12} aria-hidden="true" />{label}</span>
+        <span className="chatSelChipLabel"><Glyph size={14} aria-hidden="true" />{label}</span>
         {note ? <span className="chatSelChipNote">· {note}</span> : null}
-        <button type="button" className="uiClose uiCloseSm chatSelChipClose" onClick={onRemove} title={removeTitle} aria-label={removeTitle}>×</button>
+        <button type="button" className="uiClose uiCloseSm chatSelChipClose" onClick={onRemove} title={removeTitle} aria-label={removeTitle}><XIcon size={14} /></button>
       </div>
       <ChipPreview text={text} />
     </div>
@@ -1211,7 +1211,7 @@ export default function ChatDock({
     <button type="button" className={`ctlBtn ${chatFindOpen ? "modeActive" : ""}`}
       onClick={() => { setChatFindOpen((v) => !v); setChatFind(""); }}
       title={t("Find in this conversation")} aria-label={t("Find in this conversation")}>
-      <SearchIcon size={15} />
+      <SearchIcon size={16} />
     </button>
   );
   const headerContent = aiOff ? null : (
@@ -1237,7 +1237,7 @@ export default function ChatDock({
                 onClick={toggleSettings}
                 title={t("Chat settings — context {chatContextChars} chars, tools, tokens{usageTitle}", { chatContextChars: chatContextChars.toLocaleString(), usageTitle })}
                 aria-label={t("Chat settings")} aria-expanded={settingsOpen}>
-                <SettingsIcon size={15} />
+                <SettingsIcon size={16} />
               </button>
               {settingsOpen ? (
                 <div className="popover chatSettingsPop">
@@ -1250,7 +1250,7 @@ export default function ChatDock({
                   <div className="popoverSection">{t("Tools")}</div>
                   <label className="chatToolPermRow" title={t("Allow assistant tools in all chats")}>
                     <input type="checkbox" checked={toolsEnabled} onChange={toggleTools} />
-                    <SlidersIcon size={13} />
+                    <SlidersIcon size={14} />
                     <span>{t("Allow tools in all chats")}</span>
                   </label>
                   <div className="chatToolPicker">
@@ -1283,7 +1283,7 @@ export default function ChatDock({
           onClick={() => { setOpenPopover(null); toggleTools(); }}
           title={t("Tools {off} for all chats - click to change the global setting", { off: toolsEnabled ? t("on") : t("off") })}
         >
-          <SlidersIcon size={15} />
+          <SlidersIcon size={16} />
         </button>
         {findBtn}
         <span data-popover="chathistory" className="popoverAnchor">
@@ -1291,7 +1291,7 @@ export default function ChatDock({
             onClick={() => setOpenPopover((p) => (p === "chathistory" ? null : "chathistory"))}
             title={t("Chat history — earlier conversations of {scope}", { scope: folderChat ? t("this folder") : t("this page") })}
             aria-label={t("Chat history")} aria-expanded={historyOpen}>
-            <HistoryIcon size={15} />
+            <HistoryIcon size={16} />
           </button>
           {historyOpen ? (
             <div className="popover chatHistoryPop">
@@ -1330,12 +1330,12 @@ export default function ChatDock({
                     <span className="ctlBtnRow chatHistActs" onClick={(e) => e.stopPropagation()}>
                       <button type="button" className="ctlBtn" title={t("Rename")} aria-label={t("Rename conversation")}
                         onClick={() => { renameCancelRef.current = false; setRenaming({ id: s.id, text: s.active ? chatTitle : s.title || "" }); }}>
-                        <PencilIcon size={13} />
+                        <PencilIcon size={16} />
                       </button>
                       {!s.active ? (
                         <button type="button" className="ctlBtn" title={t("Delete")} aria-label={t("Delete conversation")}
                           onClick={() => deleteHistory(s)}>
-                          <TrashIcon size={13} />
+                          <TrashIcon size={16} />
                         </button>
                       ) : null}
                     </span>
@@ -1379,7 +1379,7 @@ export default function ChatDock({
           {openAiKeysEditor ? (
             <button className="uiBtn sm" onClick={() => (openAiEntry ? openAiEntry(aiHealth.provider_id) : openAiKeysEditor())}>{t("Fix…")}</button>
           ) : null}
-          <button className="uiClose" onClick={dismissAiHealth} title={t("Dismiss")} aria-label={t("Dismiss")}>×</button>
+          <button className="uiClose" onClick={dismissAiHealth} title={t("Dismiss")} aria-label={t("Dismiss")}><XIcon size={14} /></button>
         </div>
       ) : null}
       {chatFindOpen ? (
@@ -1402,7 +1402,7 @@ export default function ChatDock({
           <button className="searchToggle searchNavBtn" onClick={() => gotoChatFind(chatFindIdx + 1)} disabled={!chatFindMatches.length} title={t("Next match")}>
             <ChevronDownIcon size={14} />
           </button>
-          <button className="uiClose" onClick={() => { setChatFindOpen(false); setChatFind(""); }} title={t("Close find")} aria-label={t("Close find")}>×</button>
+          <button className="uiClose" onClick={() => { setChatFindOpen(false); setChatFind(""); }} title={t("Close find")} aria-label={t("Close find")}><XIcon size={14} /></button>
         </div>
       ) : null}
       <ChatCiteContext.Provider value={citeTitles}>
@@ -1491,7 +1491,7 @@ export default function ChatDock({
                       <div className="chatMsgPdfs">
                         {m.pdfs.map((n, j) => (
                           <span key={j} className="chatPdfChip" title={n}>
-                            <FileIcon size={11} />
+                            <FileIcon size={14} />
                             {n.slice(0, 40)}{n.length > 40 ? "…" : ""}
                           </span>
                         ))}
@@ -1518,13 +1518,13 @@ export default function ChatDock({
                                 <button type="button" className="chatToolActionHead"
                                   onClick={() => toggleAction(key)}
                                   title={open ? t("Hide tool output") : t("Show tool output")}>
-                                  <Icon size={11} />
+                                  <Icon size={14} />
                                   <span>{a.summary}</span>
                                   {open ? <ChevronUpIcon size={10} /> : <ChevronDownIcon size={10} />}
                                 </button>
                               ) : (
                                 <div className="chatToolActionHead plain" title={a.summary}>
-                                  <Icon size={11} />
+                                  <Icon size={14} />
                                   <span>{a.summary}</span>
                                 </div>
                               )}
@@ -1537,7 +1537,7 @@ export default function ChatDock({
                     ) : null}
                     {!isUser && m.actions?.length ? <AgentChanges actions={m.actions} onOpenPage={onOpenPage} /> : null}
                     {isUser && m.contextPages?.length ? <div className="chatMsgPdfs">
-                      {m.contextPages.map((p) => <button type="button" key={p.id} className="crumbBtn" title={p.title} onClick={() => onOpenPage?.(p.id)}><BookIcon size={11} /><span className="linkChipText">{p.title}</span></button>)}
+                      {m.contextPages.map((p) => <button type="button" key={p.id} className="crumbBtn" title={p.title} onClick={() => onOpenPage?.(p.id)}><BookIcon size={14} /><span className="linkChipText">{p.title}</span></button>)}
                     </div> : null}
                     {isUser
                       ? <div className="chatUserText">{m.text}</div>
@@ -1559,13 +1559,13 @@ export default function ChatDock({
                     <button type="button" className="chatMsgActionBtn" title={t("Copy message")}
                       onClick={() => copyChatMessage(i, m.text)}>
                       {copiedMsgIdx === i
-                        ? <CheckIcon size={13} />
-                        : <CopyIcon size={13} />}
+                        ? <CheckIcon size={14} />
+                        : <CopyIcon size={14} />}
                     </button>
                     {!readOnly && isUser && !busyHere ? (
                       <button type="button" className="chatMsgActionBtn" title={t("Edit and re-send (removes later messages)")}
                         onClick={() => setEditingMsg({ idx: i, text: m.text })}>
-                        <PencilIcon size={13} />
+                        <PencilIcon size={14} />
                       </button>
                     ) : null}
                     </div>
@@ -1632,8 +1632,8 @@ export default function ChatDock({
           <div className="chatReferenceStrip" aria-label={t("Attached library pages")}>
             <span className="chatReferenceLabel" title={t("Paper details and text stay in context for follow-up questions. Notes are optional in the library picker.")}>{t("Context")}</span>
             {chatDocs.map((id) => <span className="chatReferenceChip" key={id}>
-              <button type="button" className="crumbBtn" title={homeBlocks.find((b) => b.id === id)?.content || t("Unavailable page")} onClick={() => onOpenPage?.(id)}><BookIcon size={12} /><span className="linkChipText">{homeBlocks.find((b) => b.id === id)?.content || t("Unavailable page")}</span></button>
-              <button type="button" className="uiClose uiCloseSm" aria-label={t("Remove {page} from context", { page: homeBlocks.find((b) => b.id === id)?.content || t("page") })} onClick={() => setChatDocs((prev) => prev.filter((p) => p !== id))}><XIcon size={11} /></button>
+              <button type="button" className="crumbBtn" title={homeBlocks.find((b) => b.id === id)?.content || t("Unavailable page")} onClick={() => onOpenPage?.(id)}><BookIcon size={14} /><span className="linkChipText">{homeBlocks.find((b) => b.id === id)?.content || t("Unavailable page")}</span></button>
+              <button type="button" className="uiClose uiCloseSm" aria-label={t("Remove {page} from context", { page: homeBlocks.find((b) => b.id === id)?.content || t("page") })} onClick={() => setChatDocs((prev) => prev.filter((p) => p !== id))}><XIcon size={14} /></button>
             </span>)}
           </div>
         ) : null}
@@ -1641,10 +1641,10 @@ export default function ChatDock({
           <div className="chatImgPreviewRow">
             {chatFiles.map((f, i) => (
               <span key={i} className="chatFileChip" title={nativePdf ? t("{name} — sent with your next message", { name: f.name }) : t("{name} — {nativePdfNote}", { name: f.name, nativePdfNote: nativePdfNote })}>
-                {nativePdf ? <FileIcon size={12} /> : <AlertCircleIcon size={12} />}
+                {nativePdf ? <FileIcon size={14} /> : <AlertCircleIcon size={14} />}
                 <span className="chatFileChipName">{f.name}</span>
                 <button type="button" className="uiClose uiCloseSm chatFileChipRemove" title={t("Remove file")}
-                  onClick={() => setChatFiles((prev) => prev.filter((_, j) => j !== i))}>×</button>
+                  onClick={() => setChatFiles((prev) => prev.filter((_, j) => j !== i))}><XIcon size={14} /></button>
               </span>
             ))}
           </div>
@@ -1655,7 +1655,7 @@ export default function ChatDock({
               <span key={i} className="chatImgPreview">
                 <img src={src} alt={t("pasted figure")} />
                 <button type="button" className="uiClose uiCloseSm uiCloseDanger chatImgRemove" title={t("Remove image")}
-                  onClick={() => setChatImages((prev) => prev.filter((_, j) => j !== i))}>×</button>
+                  onClick={() => setChatImages((prev) => prev.filter((_, j) => j !== i))}><XIcon size={14} /></button>
               </span>
             ))}
           </div>
@@ -1663,7 +1663,7 @@ export default function ChatDock({
         {dictation === "rec" ? (
           <div className="chatComposerBar chatRecBar">
             <button className="uiBtn chatCircleBtn chatMicBtn" type="button" onClick={() => finishDictation("cancel")} title={t("Cancel recording")} aria-label={t("Cancel recording")}>
-              <XIcon size={13} />
+              <XIcon size={14} />
             </button>
             <canvas ref={waveCanvasRef} className="chatWaveCanvas" />
             <span className="chatRecTimer" aria-live="polite">
@@ -1671,10 +1671,10 @@ export default function ChatDock({
               {Math.floor(recSecs / 60)}:{String(recSecs % 60).padStart(2, "0")}
             </span>
             <button className="uiBtn chatCircleBtn chatMicBtn" type="button" onClick={() => finishDictation("insert")} title={t("Stop — put the transcript in the input")} aria-label={t("Stop and transcribe")}>
-              <StopIcon size={11} />
+              <StopIcon size={14} />
             </button>
             <button className="uiBtn primary chatCircleBtn" type="button" onClick={() => finishDictation("send")} title={t("Stop and send")} aria-label={t("Stop, transcribe and send")}>
-              <ArrowUpIcon size={14} strokeWidth={2.4} />
+              <ArrowUpIcon size={14} />
             </button>
           </div>
         ) : (
@@ -1719,7 +1719,7 @@ export default function ChatDock({
                 <button type="button" className="chatPlusMenuItem"
                   onClick={() => { setOpenPopover(null); fileInputRef.current?.click(); }}>
                   <span className="chatPlusMenuIcon">
-                    <PaperclipIcon size={15} />
+                    <PaperclipIcon size={16} />
                   </span>
                   <span className="chatPlusMenuLabel">{t("Add photos & files")}</span>
                   <span className="chatPlusMenuHint">{t("Images or PDFs from your computer")}</span>
@@ -1727,7 +1727,7 @@ export default function ChatDock({
                 <button type="button" className="chatPlusMenuItem"
                   onClick={() => { setOpenPopover(null); setDocPickerQuery(""); setDocPicker(true); }}>
                   <span className="chatPlusMenuIcon">
-                    <BookIcon size={15} />
+                    <BookIcon size={16} />
                   </span>
                   <span className="chatPlusMenuLabel">{t("Add pages from library")}</span>
                   <span className="chatPlusMenuHint">{chatDocs.length ? `${chatDocs.length} selected` : t("Search your pages")}</span>
@@ -1753,14 +1753,14 @@ export default function ChatDock({
               : attachPdf
                 ? t("Full PDF file is sent with each message (model sees figures & tables). Click to switch to extracted text only.") : t("Send the full PDF file with your messages so the model sees figures & tables (uses more tokens). Click to enable.")}
           >
-            <FileIcon size={12} />
+            <FileIcon size={14} />
             {t("Full PDF")}
           </button> : null}
           {attachPdf && pdfInContext && !nativePdf && !aiOff ? (
             <button type="button" className="chatAttachToggle chatPdfToggle chatPdfWarn"
               onClick={() => setStatus(nativePdfNote)} title={nativePdfNote}
               aria-label={t("This provider cannot accept PDF files")}>
-              <AlertCircleIcon size={12} />
+              <AlertCircleIcon size={14} />
             </button>
           ) : null}
           <span className="chatComposerSpacer" />
@@ -1788,7 +1788,7 @@ export default function ChatDock({
           ) : null}
           {busyHere ? (
             <button className="uiBtn chatCircleBtn chatStopBtn" type="button" onClick={stopChat} title={t("Stop generating")} aria-label={t("Stop generating")}>
-              <StopIcon size={11} />
+              <StopIcon size={14} />
             </button>
           ) : dictation === "busy" ? (
             <button className="uiBtn chatCircleBtn chatMicBtn" type="button" disabled title={t("Transcribing…")} aria-label={t("Transcribing")}>
@@ -1797,10 +1797,10 @@ export default function ChatDock({
           ) : (
             <>
               {canDictate ? <button className="uiBtn chatCircleBtn chatMicBtn" data-guide="chat.voice" type="button" onClick={startDictation} title={t("Dictate — transcribed with your OpenAI key")} aria-label={t("Start dictation")}>
-                <MicIcon size={13} />
+                <MicIcon size={14} />
               </button> : null}
               <button className="uiBtn primary chatCircleBtn" type="submit" disabled={aiOff || !chatInput.trim()} title={t("Send")} aria-label={t("Send")}>
-                <ArrowUpIcon size={14} strokeWidth={2.4} />
+                <ArrowUpIcon size={14} />
               </button>
             </>
           )}

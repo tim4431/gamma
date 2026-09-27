@@ -62,7 +62,7 @@ export function BacklinksPanel({ backlinks, pageId, pageTitle, pages, refCache, 
           <div key={g.id} className="backlinkGroup">
             <div className="backlinkPage" role="button" tabIndex={0} title={t("Open the page \"{name}\"", { name: g.title })}
               onClick={() => open(g.items[0])} onKeyDown={keyOpen(g.items[0])}>
-              <FileGlyph isPdf={isPdf} size={12} />
+              <FileGlyph isPdf={isPdf} size={14} />
               <span className="backlinkPageTitle">{g.title}</span>
             </div>
             {g.items.map((bl) => (

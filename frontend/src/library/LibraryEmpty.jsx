@@ -35,7 +35,7 @@ export default function LibraryEmpty({ onOpenLink, onUpload, onNewPage, onImport
       <div className="libEmptyCards">
         {cards.map(({ id, icon: Icon, primary, onClick, title, text }) => (
           <button key={id} type="button" className={`libEmptyCard ${primary ? "primary" : ""}`} data-action={id} onClick={onClick}>
-            <span className="libEmptyCardIcon"><Icon size={18} /></span>
+            <span className="libEmptyCardIcon"><Icon size={20} /></span>
             <span className="libEmptyCardBody">
               <span className="libEmptyCardTitle">{title}</span>
               <span className="libEmptyCardText">{text}</span>

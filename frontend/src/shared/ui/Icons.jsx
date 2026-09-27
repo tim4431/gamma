@@ -1,19 +1,30 @@
 // Shared inline icons — 24×24 stroke glyphs sized via the `size` prop.
 // One definition per glyph, replacing the copy-pasted <svg> literals that
 // used to drift in stroke width between call sites.
+//
+// Three sizes (docs/dev/ui-design.md, "Icons"): 14 inline with text (chips,
+// menu rows), 16 in buttons and toolbars (the default), 20 in pane headers
+// and empty states; 48 for illustrations. The stroke is set in screen
+// pixels, not in the 24-unit grid: `weight` (1.6 px) is drawn the same at
+// every size, so neighbouring icons of different sizes look equally heavy.
+// An explicit `strokeWidth` (grid units) is for icons sized by CSS.
 import React from "react";
 
-function Icon({ size = 15, strokeWidth = 2, children, ...rest }) {
+export const ICON_WEIGHT = 1.6;
+export const iconStroke = (size, weight = ICON_WEIGHT) => (size ? (weight * 24) / size : 2);
+
+function Icon({ size = 16, weight = ICON_WEIGHT, strokeWidth, children, ...rest }) {
   return (
     <svg width={size} height={size} viewBox="0 0 24 24" fill="none" stroke="currentColor"
-      strokeWidth={strokeWidth} strokeLinecap="round" strokeLinejoin="round" {...rest}>
+      strokeWidth={strokeWidth ?? iconStroke(size, weight)} strokeLinecap="round" strokeLinejoin="round" {...rest}>
       {children}
     </svg>
   );
 }
 
-export const CheckIcon = ({ strokeWidth = 2.4, ...p }) => (
-  <Icon strokeWidth={strokeWidth} {...p}><path d="M20 6 9 17l-5-5" /></Icon>
+// A check mark reads better a touch heavier than the outline icons.
+export const CheckIcon = ({ weight = 2, ...p }) => (
+  <Icon weight={weight} {...p}><path d="M20 6 9 17l-5-5" /></Icon>
 );
 export const CopyIcon = (p) => (
   <Icon {...p}><rect x="9" y="9" width="12" height="12" rx="2" /><path d="M5 15V5a2 2 0 0 1 2-2h10" /></Icon>
@@ -356,20 +367,20 @@ export const LineWidthIcon = (p) => (
 );
 
 // Filled glyphs — bespoke markup, not the stroke wrapper.
-export const SparklesIcon = ({ size = 15, ...rest }) => (
+export const SparklesIcon = ({ size = 16, ...rest }) => (
   <svg width={size} height={size} viewBox="0 0 24 24" fill="currentColor" {...rest}><path d="M12 2l1.9 5.7 5.6 1.8-5.6 1.8L12 17l-1.9-5.7L4.5 9.5l5.6-1.8L12 2z" /><path d="M19 14l.9 2.6 2.6.9-2.6.9L19 21l-.9-2.6-2.6-.9 2.6-.9L19 14z" /></svg>
 );
-export const StopIcon = ({ size = 15, ...rest }) => (
+export const StopIcon = ({ size = 16, ...rest }) => (
   <svg width={size} height={size} viewBox="0 0 24 24" fill="currentColor" {...rest}><rect x="5" y="5" width="14" height="14" rx="2" /></svg>
 );
 
 // Pin glyph — outline when unpinned, filled when pinned. Shared by the list
 // rows, grid tiles, and the pinned strip so the affordance is identical.
-export function PinIcon({ filled = false, size = 13 }) {
+export function PinIcon({ filled = false, size = 14 }) {
   return (
     <svg width={size} height={size} viewBox="0 0 24 24"
       fill={filled ? "currentColor" : "none"} stroke="currentColor"
-      strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
+      strokeWidth={iconStroke(size)} strokeLinecap="round" strokeLinejoin="round">
       <path d="M12 17v5" />
       <path d="M9 10.76a2 2 0 0 1-1.11 1.79l-1.78.9A2 2 0 0 0 5 15.24V16a1 1 0 0 0 1 1h12a1 1 0 0 0 1-1v-.76a2 2 0 0 0-1.11-1.79l-1.78-.9A2 2 0 0 1 15 10.76V7a1 1 0 0 1 1-1 2 2 0 0 0 0-4H8a2 2 0 0 0 0 4 1 1 0 0 1 1 1z" />
     </svg>
@@ -408,7 +419,7 @@ export function FileGlyph({ isPdf, size }) {
   return (
     <svg className={`tileGlyph fileGlyph${isPdf ? " pdf" : ""}${size ? " kindGlyph" : ""}`}
       style={size ? { width: size, height: size } : undefined} aria-hidden="true"
-      viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth={small ? 2 : 1.5} strokeLinecap="round" strokeLinejoin="round">
+      viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth={small ? iconStroke(size) : 1.5} strokeLinecap="round" strokeLinejoin="round">
       <path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z" fill="var(--bg-raised)" />
       <path d="M14 2v6h6" />
       {isPdf && small ? (

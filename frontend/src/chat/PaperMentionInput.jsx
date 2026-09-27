@@ -50,8 +50,8 @@ export default function PaperMentionInput({ value, onChange, pages, openTabs, se
             title={[page.content || t("Untitled"), detail].filter(Boolean).join("\n")}
             aria-selected={i === active} aria-disabled={disabled} className={`slashMenuItem chatMentionOption${i === active ? " selected" : ""}`}
             onPointerDown={(e) => e.preventDefault()} onMouseEnter={() => setActive(i)} onClick={() => choose(page)}>
-            <BookIcon size={15} /><span><strong>{page.content || t("Untitled")}</strong>{detail && <small>{detail}</small>}</span>
-            {selected.includes(page.id) && <CheckIcon size={13} />}
+            <BookIcon size={16} /><span><strong>{page.content || t("Untitled")}</strong>{detail && <small>{detail}</small>}</span>
+            {selected.includes(page.id) && <CheckIcon size={14} />}
           </button>;
         })}
         {!results.length && <div className="popoverHint">{t("No matching pages. Try another title.")}</div>}

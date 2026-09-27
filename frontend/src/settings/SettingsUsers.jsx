@@ -215,7 +215,7 @@ export function UsersSettings({ value, selfOnly = false }) {
               type="checkbox" checked={edit.is_admin} disabled={lastAdmin(u)}
               onChange={(e) => setEdit((f) => ({ ...f, is_admin: e.target.checked }))}
             />
-            <ShieldIcon size={13} /> {t("Admin privilege")}
+            <ShieldIcon size={14} /> {t("Admin privilege")}
           </label>
           {u.username !== myName ? (
             <Section title={t("Danger zone")} tone="danger">
@@ -276,7 +276,7 @@ export function UsersSettings({ value, selfOnly = false }) {
     return (
       <div key={u.username} className="aiProvRow">
         <span className={`aiProvAvatar ${u.is_admin ? "active" : ""}`}>
-          {u.is_admin ? <ShieldIcon size={15} /> : <UserIcon size={15} />}
+          {u.is_admin ? <ShieldIcon size={16} /> : <UserIcon size={16} />}
         </span>
         <span className="aiProvMeta">
           <span className="aiProvName">
@@ -297,11 +297,11 @@ export function UsersSettings({ value, selfOnly = false }) {
           {isAdmin ? (
             <>
               <button className="uiBtn sm" disabled={busy} title={t("Storage limits for {username}", { username: u.username })} onClick={() => openStorage(u)}>
-                <HardDriveIcon size={13} /> {t("Storage")}
+                <HardDriveIcon size={14} /> {t("Storage")}
               </button>
               {!u.is_guest ? (
                 <button className="uiBtn sm" disabled={busy} title={t("Rename {username}, set a password, or grant admin", { username: u.username })} onClick={() => openAccount(u)}>
-                  <PenIcon size={13} /> {t("Edit")}
+                  <PenIcon size={14} /> {t("Edit")}
                 </button>
               ) : null}
             </>
@@ -311,7 +311,7 @@ export function UsersSettings({ value, selfOnly = false }) {
           <div className="aiProvSub">
             {wsList.map((w) => (
               <div key={w.id} className="aiProvSubRow">
-                <span className="aiProvSubIcon"><BookIcon size={13} /></span>
+                <span className="aiProvSubIcon"><BookIcon size={14} /></span>
                 <span className="aiProvSubMeta">
                   <span className="aiProvSubName">
                     {w.name}
@@ -324,7 +324,7 @@ export function UsersSettings({ value, selfOnly = false }) {
                     <button className="uiBtn sm" onClick={() => { closeSettings?.(); switchWorkspace?.(w.id); }}>{t("Open")}</button>
                   ) : null}
                   <button className="uiBtn sm" onClick={() => setManage(w.id)} title={t("Manage {name}", { name: w.name })}>
-                    <PenIcon size={13} /> {t("Manage")}
+                    <PenIcon size={14} /> {t("Manage")}
                   </button>
                 </span>
               </div>
@@ -374,7 +374,7 @@ export function UsersSettings({ value, selfOnly = false }) {
               type="checkbox" checked={!!addForm.is_admin}
               onChange={(e) => setAddForm((f) => ({ ...f, is_admin: e.target.checked }))}
             />
-            <ShieldIcon size={13} /> {t("Grant the admin privilege")}
+            <ShieldIcon size={14} /> {t("Grant the admin privilege")}
           </label>
           {error ? <div className="settingsPaneHint aiKeysError">{error}</div> : null}
           <div className="reportModalBtns">

@@ -9,7 +9,7 @@
 // line (the account's `enterNewNote`; Shift+Enter makes the other).
 import React from "react";
 import { t } from "../shared/i18n/i18n.js";
-import { CornerDownLeftIcon, KeyboardIcon } from "../shared/ui/Icons";
+import { CornerDownLeftIcon, KeyboardIcon, XIcon } from "../shared/ui/Icons";
 import { KeyBinding, KeyCaps, PaneHead, Row, Section, Segmented } from "./SettingsKit";
 import { SECTION_PREFS } from "./sectionPrefs.js";
 import { ALL_COMMANDS, GROUPS, fixedKeys } from "../app/commands.js";
@@ -44,7 +44,7 @@ export function KeyboardSettings({ value }) {
             placeholder={t("Filter shortcuts")} aria-label={t("Filter shortcuts")}
             value={filter} onChange={(e) => setFilter(e.target.value)}
           />
-          {filter ? <button type="button" className="uiClose uiCloseSm" aria-label={t("Clear filter")} onClick={() => setFilter("")}>×</button> : null}
+          {filter ? <button type="button" className="uiClose uiCloseSm" aria-label={t("Clear filter")} onClick={() => setFilter("")}><XIcon size={14} /></button> : null}
         </span>
       </PaneHead>
       <Section title={t("Shortcuts")} scope="account" prefs={SECTION_PREFS.keyboard["Shortcuts"]}

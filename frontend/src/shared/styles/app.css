@@ -283,7 +283,7 @@ body {
 .topbar .iconBtn:disabled { opacity: 0.4; cursor: default; }
 
 /* --- unified close / dismiss control -------------------------------------
-   One look for every "×" in the app, modeled on the tab close button:
+   One look for every × in the app (an XIcon, 14; 16 in Lg), modeled on the tab close button:
    a round, dim glyph that brightens with a soft circular fill on hover and
    presses in on click. Sizes: Sm 20 (chips, tags, rows), the default 24
    (docks, cards, find bars), Lg 28 (dialogs, panes). Danger turns red on
@@ -297,7 +297,6 @@ body {
   background: none;
   border: none;
   border-radius: 50%;
-  font-size: var(--fs-md);
   line-height: 1;
   color: var(--text-dim);
   cursor: pointer;
@@ -308,8 +307,8 @@ body {
 }
 .uiClose:hover { background: var(--bg-subtle); color: var(--text-bright); }
 .uiClose:active { transform: scale(0.82); }
-.uiClose.uiCloseLg { width: 28px; height: 28px; font-size: var(--fs-xl); }
-.uiClose.uiCloseSm { width: 20px; height: 20px; font-size: var(--fs-xs); }
+.uiClose.uiCloseLg { width: 28px; height: 28px; }
+.uiClose.uiCloseSm { width: 20px; height: 20px; }
 .uiClose.uiCloseDanger:hover { background: var(--danger-bg); color: var(--danger); }
 
 .status {
@@ -3582,7 +3581,6 @@ html.appFocusFullscreen, html.appFocusFullscreen body { overflow: hidden; oversc
 /* Icon-only square variant (delete/edit row actions). */
 .uiBtn.iconSq { width: 32px; height: 32px; padding: 0; flex-shrink: 0; }
 .uiBtn.sm.iconSq { width: 28px; height: 28px; }
-.uiBtn.sm.iconSq svg { width: 15px; height: 15px; }
 /* Dropdown trigger (Codex-style select): a uiBtn whose content is the
    current choice plus a chevron. `.block` stretches it into a form field. */
 .uiSelectBtn { gap: 7px; }

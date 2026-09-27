@@ -187,7 +187,7 @@ export default function QuickOpen({
       const CmdIcon = commandIcon(r.cmd);
       return (
         <button key={r.key} {...optionProps(r, i, { title: r.cmd.label })}>
-          <CmdIcon size={15} />
+          <CmdIcon size={16} />
           <span><strong>{r.cmd.label}</strong><small>{r.cmd.group}</small></span>
           {r.cmd.keyLabel && <em className="quickOpenTag quickOpenKey">{r.cmd.keyLabel}</em>}
         </button>
@@ -197,7 +197,7 @@ export default function QuickOpen({
       const search = r.action === "search";
       return (
         <button key={r.key} {...optionProps(r, i, { "data-action": r.action })}>
-          {search ? <SearchIcon size={15} /> : <PlusIcon size={15} />}
+          {search ? <SearchIcon size={16} /> : <PlusIcon size={16} />}
           <span className="quickOpenAction">
             {search ? t("Search inside notes and PDFs for “{q}”", { q }) : t("Create page “{q}”", { q })}
           </span>
@@ -211,7 +211,7 @@ export default function QuickOpen({
       const count = tn("{n} page", "{n} pages", folderMeta[f]?.count || 0);
       return (
         <button key={r.key} {...optionProps(r, i, { title: f, "data-kind": "folder" })}>
-          <FolderIcon size={15} className="quickOpenFolderIcon" />
+          <FolderIcon size={16} className="quickOpenFolderIcon" />
           <span>
             <strong><Marked text={f.slice(f.lastIndexOf("/") + 1)} query={q} /></strong>
             {parent ? <small>{t("in {parent}", { parent })}</small> : null}
@@ -223,7 +223,7 @@ export default function QuickOpen({
     if (r.label) {
       return (
         <button key={r.key} {...optionProps(r, i, { title: r.label, "data-kind": "label" })}>
-          <LabelIcon size={15} />
+          <LabelIcon size={16} />
           <span><strong><Marked text={r.label} query={q} /></strong></span>
           <em className="quickOpenTime">{tn("{n} page", "{n} pages", labelCounts.get(r.label) || 0)}</em>
         </button>
@@ -236,7 +236,7 @@ export default function QuickOpen({
     const title = page.content || t("Untitled");
     return (
       <button key={r.key} {...optionProps(r, i, { title: [title, detail].filter(Boolean).join("\n"), "data-kind": "page" })}>
-        <FileGlyph isPdf={!!pageAttachment(page)} size={15} />
+        <FileGlyph isPdf={!!pageAttachment(page)} size={16} />
         <span><strong><Marked text={title} query={q} /></strong>{detail && <small>{detail}</small>}</span>
         <CardLabels className="fileRowLabels" folders={parseFolderTags(page.properties?.folder)} labels={parseFolderTags(page.properties?.category)} />
         {page.id === currentPageId
@@ -249,7 +249,7 @@ export default function QuickOpen({
     <div className="reportOverlay quickOpenOverlay" onMouseDown={(e) => { if (e.target === e.currentTarget) onClose(); }}>
       <div className="reportModal quickOpen" role="dialog" aria-label={commandMode ? t("Command palette") : t("Open a page")}>
         <div className="quickOpenInput">
-          {commandMode ? <TerminalIcon size={15} /> : <SearchIcon size={15} />}
+          {commandMode ? <TerminalIcon size={16} /> : <SearchIcon size={16} />}
           <input
             ref={inputRef}
             autoFocus

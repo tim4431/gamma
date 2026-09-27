@@ -201,7 +201,7 @@ export function MembersList({ info, me, canManage, busy, onSetRole, onRemove, on
     return (
       <div key={m.pending ? `pending:${m.subject}` : m.username} className="aiProvRow">
         <span className={`aiProvAvatar ${m.role === "owner" ? "active" : ""}`}>
-          {m.role === "owner" ? <ShieldIcon size={15} /> : <UserIcon size={15} />}
+          {m.role === "owner" ? <ShieldIcon size={16} /> : <UserIcon size={16} />}
         </span>
         <span className="aiProvMeta">
           <span className="aiProvName">
@@ -230,7 +230,7 @@ export function MembersList({ info, me, canManage, busy, onSetRole, onRemove, on
               aria-label={t("Remove")}
               onClick={() => (m.pending ? onCancel(m) : onRemove(m.username))}
             >
-              <Trash2Icon size={13} />
+              <Trash2Icon size={16} />
             </button>
           ) : null}
         </span>
@@ -500,7 +500,7 @@ export function ManageWorkspaceDialog({ wsId, me, admin, accounts, confirm, setS
                 title={t("Members")}
                 action={manages ? (
                   <button className="uiBtn sm" disabled={ws.busy} onClick={() => { ws.setError(""); setInviting(true); }}>
-                    <PlusIcon size={13} /> {t("Invite")}
+                    <PlusIcon size={14} /> {t("Invite")}
                   </button>
                 ) : null}
               >
@@ -631,7 +631,7 @@ export function WorkspacesSettings({ value, onServer }) {
     return (
       <div key={w.id} className="aiProvRow">
         <span className={`aiProvAvatar ${current ? "active" : ""}`}>
-          {current ? <CheckIcon size={15} /> : w.personal ? <UserIcon size={15} /> : isPublic ? <GlobeIcon size={15} /> : <UsersIcon size={15} />}
+          {current ? <CheckIcon size={16} /> : w.personal ? <UserIcon size={16} /> : isPublic ? <GlobeIcon size={16} /> : <UsersIcon size={16} />}
         </span>
         <span className="aiProvMeta">
           <span className="aiProvName">
@@ -650,7 +650,7 @@ export function WorkspacesSettings({ value, onServer }) {
           {!current ? <button className="uiBtn sm" onClick={() => { closeSettings?.(); switchWorkspace(w.id); }}>{t("Open")}</button> : null}
           <WorkspaceDataMenus w={w} exportWorkspace={exportWorkspace} importWorkspace={importWorkspace} closeSettings={closeSettings} />
           <button className="uiBtn sm" onClick={() => setManage(w.id)} title={t("Manage {name}", { name: w.name })}>
-            <PenIcon size={13} /> {t("Manage")}
+            <PenIcon size={14} /> {t("Manage")}
           </button>
         </span>
       </div>
@@ -694,7 +694,7 @@ export function WorkspacesSettings({ value, onServer }) {
                   ]}
                 />
                 <button className="uiBtn sm" disabled={busy} onClick={() => { setCreateError(""); setCreating(true); }}>
-                  <PlusIcon size={13} /> {t("New workspace")}
+                  <PlusIcon size={14} /> {t("New workspace")}
                 </button>
               </span>
             )}
@@ -705,7 +705,7 @@ export function WorkspacesSettings({ value, onServer }) {
             {shared.length ? shared.map(row) : (
               <Empty icon={UsersIcon}>
                 <span>{t("No shared workspaces yet.")}</span>
-                {onServer ? <button className="uiBtn sm" onClick={onServer}><PlusIcon size={13} /> {t("New shared workspace")}</button>
+                {onServer ? <button className="uiBtn sm" onClick={onServer}><PlusIcon size={14} /> {t("New shared workspace")}</button>
                   : <span className="settingDesc">{t("An admin makes them.")}</span>}
               </Empty>
             )}

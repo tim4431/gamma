@@ -19,7 +19,7 @@ import { mapOutsideCodeFences, remarkMermaid, scanMermaidFences, setMermaidWidth
 import { MdObject, findObject } from "./MdObject";
 import { cutObject } from "./mdObjects";
 import { blockSpans, parseTable, protectedSpans, scanMathSpans, scanTables } from "./mdScan";
-import { LinkIcon, PenIcon } from "../shared/ui/Icons";
+import { LinkIcon, PenIcon, XIcon } from "../shared/ui/Icons";
 import { FileChip, parseUploadUrl, postFile, uploadFilesAsLines } from "../transfers/FileChip";
 import {
   envCompletions, findMathAtCursor, latexCompletionEdit, latexCompletions,
@@ -174,7 +174,7 @@ function LinkChip({ href, text }) {
           onError={() => setIconBroken(true)}
         />
       ) : (
-        <LinkIcon size={12} strokeWidth={2.2} />
+        <LinkIcon size={14} />
       )}
       <span className="linkChipText">{label}</span>
     </a>
@@ -1524,7 +1524,7 @@ function BlockRow({
             onClick={(e) => { e.stopPropagation(); onInkJump?.(block.id); }}
             title={block.page ? t("Handwriting on page {page} — click to show it", { page: block.page }) : t("Handwriting")}
           >
-            <span className="inkMarker"><PenIcon size={9} strokeWidth={2.4} /></span>
+            <span className="inkMarker"><PenIcon size={9} /></span>
           </button>
         ) : (
           <span className="dotSlot dotSlotEmpty"><span className="noteBulletDot" /></span>
@@ -1761,7 +1761,7 @@ function BlockRow({
               title={block.properties.link_url || t("Open linked page")}
               onClick={(e) => { e.stopPropagation(); onOpenLinkTarget?.(block); }}
             >
-              <LinkIcon size={11} strokeWidth={2.4} />
+              <LinkIcon size={14} />
               {block.properties.link_page_id
                 ? t("linked page")
                 : (block.properties.link_url || "").replace(/^https?:\/\//i, "").slice(0, 48)}
@@ -1773,7 +1773,7 @@ function BlockRow({
             className="uiClose uiCloseSm uiCloseDanger blockDeleteBtn"
             title={t("Delete block")}
             onClick={(e) => { e.stopPropagation(); onDelete(block.id); }}
-          >×</button>
+          ><XIcon size={14} /></button>
         ) : null}
       </div>
       {!readOnly && block.editMode && mathUi ? (
@@ -1874,7 +1874,7 @@ function SortableBlockRow({ block, ...rowProps }) {
             onMouseDown={(e) => e.preventDefault()}
             aria-label={t("Add a block below (Alt+click: above)")}
             title={t("Click to add a block below\nAlt+click to add above")}
-          ><PlusIcon size={15} strokeWidth={2} /></button>
+          ><PlusIcon size={16} /></button>
         ) : null}
       </span>
       {handleMenu ? (

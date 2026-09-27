@@ -44,6 +44,7 @@ import { T, t, tn } from "../shared/i18n/i18n.js";
 import {
   AlertCircleIcon, CheckIcon, CloudIcon, CloudOffIcon, CloudUploadIcon, CopyIcon, ExternalLinkIcon, EyeIcon, GlobeIcon,
   LinkIcon, PenIcon, RefreshIcon, ShieldIcon, Trash2Icon, UserIcon, UsersIcon,
+  XIcon,
 } from "../shared/ui/Icons";
 
 const ROLE_SEGMENTS = {
@@ -103,7 +104,7 @@ function AccessSummary({ settings, kind, cloud = false, saving = false }) {
   const openEdit = settings.audience === "anyone" && settings.role === "edit";
   return (
     <div className={`settingsPaneHint shareSummary ${openEdit ? "shareWarn" : ""}`}>
-      {openEdit ? <AlertCircleIcon size={13} /> : null}
+      {openEdit ? <AlertCircleIcon size={14} /> : null}
       <span>
         {saving ? t("Saving…") : accessSummary(settings, kind, cloud)}
         {openEdit && !saving ? t(" No sign-in needed; edits are recorded under a name they choose.") : ""}
@@ -115,7 +116,7 @@ function AccessSummary({ settings, kind, cloud = false, saving = false }) {
 function CopyLinkButton({ url, copied, onCopy, primary = false }) {
   return (
     <button type="button" className={`uiBtn sm ${copied ? "on" : primary ? "primary" : ""}`} onClick={onCopy} title={url}>
-      {copied ? <CheckIcon size={13} /> : <LinkIcon size={13} />}
+      {copied ? <CheckIcon size={14} /> : <LinkIcon size={14} />}
       {copied ? t("Copied") : t("Copy link")}
     </button>
   );
@@ -183,7 +184,7 @@ function StopSharing({ invited, onStop }) {
       ) : (
         <button type="button" className="uiBtn sm danger" onClick={() => setConfirming(true)}
           title={t("The link stops working; sharing again later makes a new link.")}>
-          <Trash2Icon size={13} />{t("Stop sharing")}
+          <Trash2Icon size={14} />{t("Stop sharing")}
         </button>
       )}
     </div>
@@ -194,7 +195,7 @@ function StopSharing({ invited, onStop }) {
 function PersonRow({ name, tag, sub, icon: Icon, active, children }) {
   return (
     <div className="aiProvRow">
-      <span className={`aiProvAvatar ${active ? "active" : ""}`}><Icon size={15} /></span>
+      <span className={`aiProvAvatar ${active ? "active" : ""}`}><Icon size={16} /></span>
       <span className="aiProvMeta">
         <span className="aiProvName">
           {name}
@@ -214,7 +215,7 @@ export function CopyBox({ children, copied, onCopy, title, label }) {
     <div className="copyBox">
       <div className="copyBoxBody">{children}</div>
       <button type="button" className={`uiBtn sm iconSq copyBoxBtn ${copied ? "on" : ""}`} onClick={onCopy} title={title} aria-label={label}>
-        {copied ? <CheckIcon size={13} /> : <CopyIcon size={13} />}
+        {copied ? <CheckIcon size={16} /> : <CopyIcon size={16} />}
       </button>
     </div>
   );
@@ -234,7 +235,7 @@ function PublishSection({ state, busy, error, copied, onCopy, canEdit, onPublish
   const mirror = state?.mirror;
   const st = mirror ? mirrorState(mirror, { busy: busy === "sync" }) : null;
   const running = busy === "sync" || !!mirror?.status?.running;
-  const spinning = (what) => (busy === what ? <span className="mirrorSpin"><RefreshIcon size={13} /></span> : null);
+  const spinning = (what) => (busy === what ? <span className="mirrorSpin"><RefreshIcon size={14} /></span> : null);
   const capped = !!error?.limit;
   // a published page whose publication cannot run (detached, the identity gone) says why
   const problem = (capped ? error.message : error) || state?.error || (published && !state?.can_publish ? state.reason : "") || "";
@@ -245,7 +246,7 @@ function PublishSection({ state, busy, error, copied, onCopy, canEdit, onPublish
         <div className="publishAccount">
           <a className="uiBtn sm" href={accountUrl} target="_blank" rel="noopener"
             title={t("Your Gamma Cloud account: plan, devices, sign-in methods")}>
-            <ExternalLinkIcon size={13} />{t("Open account")}
+            <ExternalLinkIcon size={14} />{t("Open account")}
           </a>
         </div>
       ) : null}
@@ -271,11 +272,11 @@ function PublishSection({ state, busy, error, copied, onCopy, canEdit, onPublish
           title={t("Keep this page reachable while this computer is off: publishing copies it to the Gamma Cloud share host and shares it there; edits keep syncing both ways.")}>
           {state.can_publish && canEdit ? (
             <button type="button" className="uiBtn sm primary" disabled={!!busy} onClick={() => onPublish()}>
-              {spinning("publish") || <CloudUploadIcon size={13} />}{t("Publish")}
+              {spinning("publish") || <CloudUploadIcon size={14} />}{t("Publish")}
             </button>
           ) : !state.can_publish && state.reason === PUBLISH_SIGN_IN ? (
             <button type="button" className="uiBtn sm" onClick={onLink}>
-              <CloudIcon size={13} />{t("Link Gamma Cloud account")}
+              <CloudIcon size={14} />{t("Link Gamma Cloud account")}
             </button>
           ) : null}
         </Row>
@@ -302,14 +303,14 @@ function PublishSection({ state, busy, error, copied, onCopy, canEdit, onPublish
             // publishing failed after the page reached the share host: the same call finishes the job
             <button type="button" className="uiBtn sm primary" disabled={!!busy} onClick={() => onPublish()}
               title={t("The page is on the share host but its share was not made; publishing again makes the link.")}>
-              {spinning("publish") || <CloudUploadIcon size={13} />}{t("Publish again")}
+              {spinning("publish") || <CloudUploadIcon size={14} />}{t("Publish again")}
             </button>
           ) : null}
           {canEdit ? (
             <button type="button" className={`uiBtn sm iconSq danger ${confirming ? "on" : ""}`} disabled={!!busy}
               onClick={() => setConfirming((v) => !v)} aria-label={t("Unpublish")}
               title={t("Unpublish: the cloud link stops working and the copy on Gamma Cloud is deleted; this page stays here.")}>
-              {spinning("unpublish") || <CloudOffIcon size={13} />}
+              {spinning("unpublish") || <CloudOffIcon size={16} />}
             </button>
           ) : null}
         </span>
@@ -392,7 +393,7 @@ export function SharePopover({
     <div className="popover sharePopover" role="dialog" aria-label={title}>
       <div className="sharePopoverHead">
         <span className="popoverTitle" title={title}>{title}</span>
-        <button type="button" className="uiClose" onClick={onClose} aria-label={t("Close")} title={t("Close")}>×</button>
+        <button type="button" className="uiClose" onClick={onClose} aria-label={t("Close")} title={t("Close")}><XIcon size={14} /></button>
       </div>
       <div className="settingsForm">
         {settings === null ? <Empty icon={LinkIcon}>{t("Loading…")}</Empty> : null}
@@ -435,7 +436,7 @@ export function SharePopover({
                     title={t("Remove {name}", { name: u.name })} aria-label={t("Remove {name}", { name: u.name })}
                     onClick={() => onRemove(u.name)}
                   >
-                    <Trash2Icon size={13} />
+                    <Trash2Icon size={16} />
                   </button>
                 </PersonRow>
               ))}

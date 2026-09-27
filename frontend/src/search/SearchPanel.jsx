@@ -19,7 +19,7 @@
 
 import React, { useEffect, useLayoutEffect, useMemo, useRef, useState } from "react";
 import { API, apiJson } from "../shared/lib/utils";
-import { ChevronDownIcon, ChevronRightIcon, ChevronUpIcon, FileGlyph, FolderIcon, LabelIcon, SearchIcon } from "../shared/ui/Icons";
+import { ChevronDownIcon, ChevronRightIcon, ChevronUpIcon, FileGlyph, FolderIcon, LabelIcon, SearchIcon, XIcon } from "../shared/ui/Icons";
 
 import { buildSearchRegex, normalizeQuery } from "../shared/lib/textnorm";
 import { createTitleScorer } from "../library/librarySearch";
@@ -291,7 +291,7 @@ export default function SearchPanel({
   const pageTag = (page) => <span className="searchPageTag">{t("p. {page}", { page })}</span>;
   const resultHead = (title, isPdf, extra, opts) => (
     <span className="searchResultPage">
-      <FileGlyph isPdf={isPdf} size={13} />
+      <FileGlyph isPdf={isPdf} size={14} />
       <span className="searchResultTitle">{marked(title || t("Untitled"), opts)}</span>
       {extra}
     </span>
@@ -342,19 +342,19 @@ export default function SearchPanel({
               aria-label={t("Toggle result details")}
             >
               {showDetails
-                ? <ChevronDownIcon size={12} strokeWidth={2.4} />
-                : <ChevronRightIcon size={12} strokeWidth={2.4} />}
+                ? <ChevronDownIcon size={14} />
+                : <ChevronRightIcon size={14} />}
             </button>
             <div className="searchInputWrap">
               {labels.map((l) => (
                 <span key={`${l.kind}:${l.name}`} className="categoryBadge searchChip">
-                  {l.kind === "folder" ? <FolderIcon size={11} /> : <LabelIcon size={11} />}
+                  {l.kind === "folder" ? <FolderIcon size={14} /> : <LabelIcon size={14} />}
                   {l.name}
                   <button
                     className="uiClose uiCloseSm searchChipX"
                     title={t("Remove {label} filter \"{name}\"", { label: l.kind === "folder" ? t("folder") : t("label"), name: l.name })}
                     onClick={() => setLabels((prev) => prev.filter((x) => x !== l))}
-                  >×</button>
+                  ><XIcon size={14} /></button>
                 </span>
               ))}
               <input
@@ -391,7 +391,7 @@ export default function SearchPanel({
                       onMouseEnter={() => setSugIdx(i)}
                     >
                       <span className="searchSuggestName">
-                        {s.kind === "folder" ? <FolderIcon size={12} /> : <LabelIcon size={12} />}
+                        {s.kind === "folder" ? <FolderIcon size={14} /> : <LabelIcon size={14} />}
                         {s.name}
                       </span>
                       <span className="searchSuggestHint">{t("Tab")}</span>

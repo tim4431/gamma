@@ -54,6 +54,7 @@ import {
   UsersIcon,
   KeyboardIcon,
   LanguagesIcon,
+  XIcon,
 } from "../shared/ui/Icons";
 
 // One rail: the account card on top (the Account & sync pane), then
@@ -206,7 +207,7 @@ function StorageCard() {
   return (
     <div className="setCard" data-setting={t("Uploaded files")}>
       <div className="setCardHead">
-        <span className="setIcon"><HardDriveIcon size={15} /></span>
+        <span className="setIcon"><HardDriveIcon size={16} /></span>
         <span className="settingText">
           <span className="settingLabel">{t("Uploaded files")}</span>
           <span className="settingDesc">{t("PDFs and images on the server · up to {max_upload_mb} MB each", { max_upload_mb: q.max_upload_mb })}</span>
@@ -443,10 +444,10 @@ function MetaStatusSection({ value }) {
           <button className="uiBtn sm iconSq" aria-label={t("Reindex")}
             title={t("Re-extract every paper into the search index (also fills in the text column)")}
             onClick={() => { requestReindex(value.setStatus, t("— text status fills in as it runs."), value.wakeTasks); pollRefresh(); }}>
-            <RefreshIcon size={13} />
+            <RefreshIcon size={16} />
           </button>
           <button className="uiBtn sm iconSq" onClick={refresh} disabled={!!busy} title={t("Reload this table")} aria-label={t("Reload")}>
-            <ActivityIcon size={13} />
+            <ActivityIcon size={16} />
           </button>
         </span>
       }
@@ -507,7 +508,7 @@ function MetaStatusSection({ value }) {
                     title={t("Extract this paper's text into the search index now")}
                     onClick={(e) => { e.preventDefault(); e.stopPropagation(); indexDocs([p.doc_id]); }}
                   >
-                    <RefreshIcon size={13} />
+                    <RefreshIcon size={14} />
                   </button>
                 ) : <span />}
               </label>
@@ -532,7 +533,7 @@ function MetaStatusSection({ value }) {
               </span>
               <button className="uiBtn sm primary" disabled={!targets.length} onClick={() => retry(targets)}
                 title={selected.size ? t("Fetch metadata for the selected papers") : t("Fetch metadata for papers that are missing it or have an unverified AI record")}>
-                <SparklesIcon size={13} />{selected.size ? t("Fetch selected") : t("Fetch needed")}
+                <SparklesIcon size={14} />{selected.size ? t("Fetch selected") : t("Fetch needed")}
               </button>
               <button className="uiBtn sm" disabled={!shown.length} onClick={() => retry(shown)}
                 title={filterMode === "all"
@@ -542,7 +543,7 @@ function MetaStatusSection({ value }) {
               <button className="uiBtn sm" disabled={!indexTargets.length || indexing}
                 onClick={() => indexDocs(indexTargets.map((p) => p.doc_id))}
                 title={indexing ? t("Indexing is already running — progress in the tasks popover") : selected.size ? t("Extract the selected papers' text into the search index") : t("Extract only the papers the search index is missing or holds at an older extractor version")}>
-                <RefreshIcon size={13} />{indexing ? t("Indexing…") : selected.size ? t("Reindex selected") : t("Reindex needed")}
+                <RefreshIcon size={14} />{indexing ? t("Indexing…") : selected.size ? t("Reindex selected") : t("Reindex needed")}
               </button>
             </div>
           )}
@@ -848,7 +849,7 @@ function SearchResults({ results, query, nav, onPick }) {
           const where = grouped ? r.section || "" : [t(label), r.section].filter(Boolean).join(" › ");
           return (
             <button key={`${r.pane}:${r.label}`} type="button" className="uiBtn settingsSearchResult" onClick={() => onPick(r.pane, r.target)}>
-              <span className="setIcon"><Icon size={15} /></span>
+              <span className="setIcon"><Icon size={16} /></span>
               <span className="settingText">
                 <span className="settingLabel"><MarkedText text={r.label} words={words} /></span>
                 {r.hint ? <span className="settingDesc">{r.hint}</span> : null}
@@ -969,7 +970,7 @@ export default function SettingsDialog({
   const navButton = ([id, label, Icon]) => <button key={id} type="button"
     className={`settingsNavBtn ${pane === id && !query ? "active" : ""}`}
     aria-current={pane === id && !query ? "page" : undefined} onClick={() => navigate(id)}>
-    <Icon size={17} /><span>{t(label)}</span>
+    <Icon size={16} /><span>{t(label)}</span>
     {dot(id)}
   </button>;
   const navGroup = (caption, items, tag) => {
@@ -1020,9 +1021,9 @@ export default function SettingsDialog({
                     event.preventDefault(); navigate(results[0].pane, results[0].target);
                   }
                 }} />
-              {query ? <button className="uiClose uiCloseSm" aria-label={t("Clear search")} onClick={() => setQuery("")}>×</button> : null}
+              {query ? <button className="uiClose uiCloseSm" aria-label={t("Clear search")} onClick={() => setQuery("")}><XIcon size={14} /></button> : null}
             </div>
-            <button className="uiClose uiCloseLg" onClick={() => guard(onClose)} aria-label={t("Close settings")}>×</button>
+            <button className="uiClose uiCloseLg" onClick={() => guard(onClose)} aria-label={t("Close settings")}><XIcon size={16} /></button>
           </div>
           <div className="settingsBody" inert={pending ? "" : undefined}>
             <nav className="settingsSidebar" aria-label={t("Settings categories")}>

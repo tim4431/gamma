@@ -173,7 +173,7 @@ export function WorkspaceBackups({ value }) {
         {(list?.backups || []).map((b) => (
           <div key={b.name} className="aiProvRow">
             <span className={`aiProvAvatar ${b.uploads ? "active" : ""}`}>
-              {b.uploads ? <HardDriveIcon size={15} /> : <DatabaseIcon size={15} />}
+              {b.uploads ? <HardDriveIcon size={16} /> : <DatabaseIcon size={16} />}
             </span>
             <span className="aiProvMeta">
               <span className="aiProvName">
@@ -187,7 +187,7 @@ export function WorkspaceBackups({ value }) {
             </span>
             <span className="aiProvActions">
               <button className="uiBtn sm iconSq" title={t("Download as a zip")} aria-label={t("Download")} onClick={() => download(w, b)}>
-                <DownloadIcon size={13} />
+                <DownloadIcon size={16} />
               </button>
               {w.role !== "viewer" ? (
                 <ActionMenu
@@ -200,7 +200,7 @@ export function WorkspaceBackups({ value }) {
               ) : null}
               {owner ? (
                 <button className="uiBtn sm iconSq" title={t("Delete this snapshot")} aria-label={t("Delete")} onClick={() => remove(w, b)}>
-                  <Trash2Icon size={13} />
+                  <Trash2Icon size={16} />
                 </button>
               ) : null}
             </span>
@@ -313,7 +313,7 @@ export function ServerBackups({ setStatus, confirm }) {
       {(rows || []).map((b) => (
         <div key={b.name} className="aiProvRow">
           <span className={`aiProvAvatar ${b.uploads ? "active" : ""}`}>
-            {b.uploads ? <HardDriveIcon size={15} /> : <DatabaseIcon size={15} />}
+            {b.uploads ? <HardDriveIcon size={16} /> : <DatabaseIcon size={16} />}
           </span>
           <span className="aiProvMeta">
             <span className="aiProvName">
@@ -328,10 +328,10 @@ export function ServerBackups({ setStatus, confirm }) {
           </span>
           <span className="aiProvActions">
             <button className="uiBtn sm iconSq" title={t("Download as a zip")} aria-label={t("Download")} onClick={() => download(b)}>
-              <DownloadIcon size={13} />
+              <DownloadIcon size={16} />
             </button>
             <button className="uiBtn sm iconSq" title={t("Delete this snapshot")} aria-label={t("Delete")} disabled={busy} onClick={() => remove(b)}>
-              <Trash2Icon size={13} />
+              <Trash2Icon size={16} />
             </button>
           </span>
         </div>

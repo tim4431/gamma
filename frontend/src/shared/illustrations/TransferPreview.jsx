@@ -59,7 +59,7 @@ export function ImportPreview({ annotations, strip }) {
       <span className="transferPageNumber">1</span>
     </div>}
     {annotations ? <div className="transferFiles" data-preview="imported-annotations">
-      <FileTextIcon size={15} /><div><strong>{t("Highlights and notes in Gamma")}</strong>
+      <FileTextIcon size={16} /><div><strong>{t("Highlights and notes in Gamma")}</strong>
         <span>{strip ? t("Original annotations removed from the PDF") : t("Originals kept in the PDF, hidden in the viewer")}</span></div>
     </div> : null}
   </figure>;

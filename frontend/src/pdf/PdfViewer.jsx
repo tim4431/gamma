@@ -1574,7 +1574,7 @@ function PdfViewer({ url, citation = null, highlights, pdfScaleValue, scrollRef,
             aria-label={t("Toggle table of contents")}
             type="button"
           >
-            <OutlineIcon size={15} />
+            <OutlineIcon size={16} />
           </button>
         </div>
       ) : null}
@@ -1696,7 +1696,7 @@ function OutlineNode({ item, depth, onDest, onUrl }) {
             aria-label={open ? t("Collapse section") : t("Expand section")}
             type="button"
           >
-            <ChevronRightIcon size={10} strokeWidth={2.5} />
+            <ChevronRightIcon size={10} />
           </button>
         ) : (
           <span className="pdfOutlineChevron" />
@@ -1786,7 +1786,7 @@ function NoteBadge({ hlId, text, style, onClick, onContextMenu }) {
           }}
           onContextMenu={(e) => { hideNow(); onContextMenu(e); }}
         >
-          <MessageSquareIcon size={10} strokeWidth={2.2} />
+          <MessageSquareIcon size={10} />
         </button>
       </span>
       {tip ? createPortal(
@@ -2362,7 +2362,7 @@ function PlainTip({ onConfirm, onLink, translate }) {
             type="button"
             title={t("Link this reference to a paper (DOI / arXiv / existing PDF)")}
           >
-            <LinkIcon size={13} />
+            <LinkIcon size={14} />
           </button>
         ) : null}
         {translate ? (
@@ -2378,7 +2378,7 @@ function PlainTip({ onConfirm, onLink, translate }) {
             aria-expanded={!!trans?.open}
             title={t("Translate the selected text into {lang}", { lang: translate.langLabel })}
           >
-            <LanguagesIcon size={13} />
+            <LanguagesIcon size={14} />
           </button>
         ) : null}
       </div>
@@ -2399,7 +2399,7 @@ function SelTranslation({ trans, langLabel, tooLong, onToggle, keep }) {
       <div className="selTransHead">
         <button type="button" className="selTransToggle" aria-expanded={trans.open}
           onMouseDown={keep} onClick={onToggle}>
-          <ChevronRightIcon size={13} className={`selTransChev ${trans.open ? "open" : ""}`} />
+          <ChevronRightIcon size={14} className={`selTransChev ${trans.open ? "open" : ""}`} />
           <span>{t("Translation")}</span>
           <span className="selTransLang">{langLabel}</span>
           {loading ? <span className="pillSpin" aria-hidden="true" /> : null}
@@ -2408,7 +2408,7 @@ function SelTranslation({ trans, langLabel, tooLong, onToggle, keep }) {
           <button type="button" className="ctlBtn selTransCopy" title={t("Copy translation")} aria-label={t("Copy translation")}
             onMouseDown={keep}
             onClick={async () => { if (await copyText(trans.text)) flashCopied(); }}>
-            {copied ? <CheckIcon size={13} /> : <CopyIcon size={13} />}
+            {copied ? <CheckIcon size={16} /> : <CopyIcon size={16} />}
           </button>
         ) : null}
       </div>

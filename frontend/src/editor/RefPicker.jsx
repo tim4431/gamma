@@ -29,7 +29,7 @@ export function RefPickerPopup({ rows, selected, anchor, query, onPick }) {
             onMouseDown={(e) => e.preventDefault()}
             onClick={() => onPick(r)}
           >
-            <span className="refPopupIcon">{r.kind === "page" ? <FileGlyph isPdf={r.isPdf} size={15} /> : <span className="refPopupDot" />}</span>
+            <span className="refPopupIcon">{r.kind === "page" ? <FileGlyph isPdf={r.isPdf} size={16} /> : <span className="refPopupDot" />}</span>
             <span className="refPopupBody">
               <span className="refPopupText"><Marked text={r.title} query={query} lead={r.kind === "block" ? 48 : 0} /></span>
               {r.meta ? <span className="refPopupMeta">{r.meta}</span> : null}

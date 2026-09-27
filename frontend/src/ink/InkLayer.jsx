@@ -740,18 +740,18 @@ export function InkToolbar({ tools, active, options, eraserMode, eraserSize, las
             : t("{color} pen · {size} pt", { color, size }))
             + (i < 9 ? t(" · key {key}", { key: i + 1 }) : "")
             + (active === tt.id ? t(" — tap again for options") : "");
-          return btn(tt.id, label, hl ? <HighlightIcon size={15} /> : <PenIcon size={15} />,
+          return btn(tt.id, label, hl ? <HighlightIcon size={16} /> : <PenIcon size={16} />,
             <span className="inkToolInk" style={{ background: tt.color, height: hl ? 3 + Math.round(k / 2) : 2 + Math.round(k / 3),
               opacity: hl ? 0.85 : 1 }} />);
         })}
-        {btn("eraser", t("Eraser (E) — the pen's eraser end and barrel button erase too"), <EraserIcon size={15} />)}
-        {btn("select", t("Lasso (L): circle strokes to select them, then drag the box to move or press Delete"), <LassoIcon size={15} />)}
+        {btn("eraser", t("Eraser (E) — the pen's eraser end and barrel button erase too"), <EraserIcon size={16} />)}
+        {btn("select", t("Lasso (L): circle strokes to select them, then drag the box to move or press Delete"), <LassoIcon size={16} />)}
         <span className="pdfInkSep" />
         <button type="button" className={"ctlBtn inkToolBtn" + (active === null ? " modeActive" : "")}
           onClick={() => onPick(null)} title={t("Hand (V): scroll and select text; a stylus still writes")} aria-label={t("Hand")}
-          aria-pressed={active === null}><HandIcon size={15} /></button>
+          aria-pressed={active === null}><HandIcon size={16} /></button>
         <span className="pdfInkSep" />
-        <button type="button" className="ctlBtn" onClick={onClose} title={t("Close the handwriting tools (Esc)")} aria-label={t("Close the handwriting tools")}><XIcon size={15} /></button>
+        <button type="button" className="ctlBtn" onClick={onClose} title={t("Close the handwriting tools (Esc)")} aria-label={t("Close the handwriting tools")}><XIcon size={16} /></button>
         <span className="pdfInkHistory" data-guide="ink.history">
           <button type="button" className="ctlBtn" aria-label={t("Undo ink")} title={t("Undo handwriting")} disabled={!canUndo} onClick={onUndo}><UndoIcon aria-hidden="true" /></button>
           <button type="button" className="ctlBtn" aria-label={t("Redo ink")} title={t("Redo handwriting")} disabled={!canRedo} onClick={onRedo}><RedoIcon aria-hidden="true" /></button>
@@ -783,9 +783,9 @@ export function InkToolbar({ tools, active, options, eraserMode, eraserSize, las
           ))}
           <span className="pdfInkSep" />
           <button type="button" className="ctlBtn" onClick={duplicate} disabled={tools.length >= MAX_TOOLS}
-            title={t("Duplicate: a second copy of this tool to give its own colour and width")} aria-label={t("Duplicate tool")}><CopyIcon size={14} /></button>
+            title={t("Duplicate: a second copy of this tool to give its own colour and width")} aria-label={t("Duplicate tool")}><CopyIcon size={16} /></button>
           <button type="button" className="ctlBtn" onClick={remove} disabled={tools.length <= 1}
-            title={t("Remove this tool from the strip")} aria-label={t("Remove tool")}><TrashIcon size={14} /></button>
+            title={t("Remove this tool from the strip")} aria-label={t("Remove tool")}><TrashIcon size={16} /></button>
         </div>
       ) : null}
       {options && active === "eraser" ? (
