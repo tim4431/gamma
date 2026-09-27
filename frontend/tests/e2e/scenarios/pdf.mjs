@@ -127,6 +127,15 @@ export async function pdfScenarios({ server, browser, alice, makePdf, step, unti
     await page.locator(".blockRow .blockQuote", { hasText: "Quantum" }).waitFor();
     await highlight("Second line");
     await saved("Second line");
+    // A collapsed notes window (double-click on its grip) hides the rows the
+    // same way; the highlight must still reach the server.
+    const grip = page.locator(".dockWindow .dockGrip", { hasText: "Notes" });
+    await grip.dblclick();
+    await page.locator(".dockWindow.collapsed .dockGrip", { hasText: "Notes" }).waitFor();
+    await highlight("arrays");
+    await saved("arrays");
+    await grip.dblclick();
+    await page.locator(".blockRow .blockQuote", { hasText: "arrays" }).waitFor();
     assertNoProblems(page);
   });
 

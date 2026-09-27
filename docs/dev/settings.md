@@ -105,7 +105,9 @@ small caption size; the sentence is its hover `title` and its
 
 The last open page and viewer layout use `app/sessionState.js`, separately from
 synced preferences. Its key is `gamma-session:<user>@<workspace>`. Reads wait
-for workspace selection; changing scope cancels pending saves. Old unscoped
+for workspace selection; changing scope cancels pending saves. Saves are
+debounced (300 ms) and written early on `pagehide`, so a reload right after a
+change (closing the notes window, say) keeps it. Old unscoped
 session caches are ignored because their account owner cannot be determined.
 
 ## Periodic backup tasks
