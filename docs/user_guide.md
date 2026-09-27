@@ -236,7 +236,7 @@ The installed web app still needs the server to be reachable. For a library that
 ## Panels, tabs and navigation
 
 - The Notes and Chat windows are dockable: **drag the ⠿ grip** to dock them left, right or bottom (the drop position decides the order); **double-click the grip to collapse** a window to its header bar and back; **×** closes it (reopen from the View menu — ≡, top right). Drag the dividers to resize. Each paper remembers its own layout.
-- **Tabs** sync to your account across devices. Middle-click closes a tab; right-click pins it (pinned tabs stay left and can't be middle-closed); drag to reorder.
+- **Tabs** sync to your account across devices. Each shows whether it is a paper or a page; the tab you are on always scrolls into view, and a plain mouse wheel over the strip scrolls it sideways. When they don't all fit, **⌄** with the count lists every open tab, with a filter. Middle-click closes a tab; right-click pins it (pinned tabs shrink to an icon, stay at the left edge and can't be middle-closed); drag to reorder.
 - **Background tasks** (uploads, fetches, exports) show in the top bar's tasks popover with progress.
 - A link to a page that isn't in this workspace (deleted, or in another workspace) shows a notice under the top bar with **Search the library**, instead of opening nothing.
 - On a phone, and on a tablet held upright, everything becomes full-screen views behind one bottom bar: **Library** (home), the page's **PDF** and **Notes**, **Chat**, then **Add**, **Search**, a page's **Share** and **More** — your account and settings, background tasks (a spinner on More while something runs), Import/Export and the PDF window toggle. The top bar shows only while tabs are open. Turn the tablet sideways for the docked windows.

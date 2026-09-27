@@ -195,4 +195,39 @@ export async function quickOpenScenarios(env) {
       assertNoProblems(page);
     } finally { await ctx.close(); }
   });
+
+  await step("tabs: the active tab stays in view, and ⌄ lists every open tab and opens the pick", async () => {
+    const made = [];
+    for (let i = 1; i <= 14; i++) made.push(await user.api("/api/blocks", { method: "POST", body: { parent_id: "root", content: `Tab page ${i}` } }));
+    const tabs = made.map((b, i) => ({ id: b.id, title: b.content, ...(i === 0 ? { pinned: true } : {}) }));
+    await user.api("/api/prefs/open-tabs", { method: "PUT", body: { value: tabs } });
+    const ctx = await user.context(browser);
+    const target = made[made.length - 2];
+    const page = await openPage(ctx, `${server.base}/?page=${target.id}&ws=${user.ws}`);
+    try {
+      await page.locator(".blockList").first().waitFor();
+      const active = page.locator(".tabStrip .tab.active");
+      await active.waitFor();
+      await until(() => page.evaluate(() => {
+        const strip = document.querySelector(".tabStrip").getBoundingClientRect();
+        const tab = document.querySelector(".tabStrip .tab.active").getBoundingClientRect();
+        return tab.left >= strip.left && tab.right <= strip.right;
+      }), { what: "the active tab is scrolled into view" });
+      assertEq(await page.locator(".tabStrip .tab.pinned .tabTitle").count(), 0, "a pinned tab is an icon");
+      // The overflow button lists every tab; a filter and Enter open one.
+      await page.getByRole("button", { name: "All open tabs", exact: true }).click();
+      const menu = page.getByRole("dialog", { name: "All open tabs" });
+      await menu.waitFor();
+      assertEq(await menu.getByRole("option").count(), tabs.length, "every open tab is listed");
+      await menu.getByRole("textbox", { name: "Find an open tab" }).fill("page 3");
+      await until(async () => (await menu.getByRole("option").count()) === 1, { what: "the filter narrows the list" });
+      await page.keyboard.press("Enter");
+      await until(() => new URL(page.url()).searchParams.get("block") === made[2].id, { what: "the pick opens" });
+      assertEq(await menu.count(), 0, "opening closes the list");
+      assertNoProblems(page);
+    } finally {
+      await ctx.close();
+      await user.api("/api/prefs/open-tabs", { method: "PUT", body: { value: [] } });
+    }
+  });
 }

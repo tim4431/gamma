@@ -33,6 +33,7 @@ import { createChatSession } from "../chat/chatSession";
 import SearchPanel from "../search/SearchPanel";
 import QuickOpen from "../library/QuickOpen";
 import { ContextMenu, MenuDivider, MenuItem, MenuLabel, MenuScope, MenuSelect, SubMenuItem, menuGroups } from "../shared/ui/Menus";
+import { useWheelPan } from "../shared/ui/wheelPan";
 import {
   ActivityIcon, AlertCircleIcon, ArrowLeftIcon, ArrowUpDownIcon, BookIcon, BugIcon, CheckIcon, CopyIcon, DownloadIcon, ExportIcon,
   ExternalLinkIcon, EyeIcon, EyeOffIcon, FileGlyph, FileIcon, FileTextIcon, FitWidthIcon, FolderGlyph,
@@ -296,28 +297,6 @@ function captureViewerSnapshot() {
   // previous snapshot — require the strip to be at least 40% real page.
   if (covered < vr.width * capH * 0.4) return null;
   try { return out.toDataURL("image/jpeg", SNAP_QUALITY); } catch { return null; }
-}
-
-// Wheel-to-horizontal-pan for a card strip (native non-passive listener —
-// React's synthetic onWheel can't preventDefault); touch swipes pan natively
-// via overflow-x. Returns a callback ref (not a plain one) so the listener
-// follows the element through conditional mounts.
-function useWheelPan() {
-  const cleanupRef = useRef(null);
-  return useCallback((el) => {
-    if (cleanupRef.current) { cleanupRef.current(); cleanupRef.current = null; }
-    if (!el) return;
-    function onWheel(e) {
-      // Real horizontal input (trackpads, tilt wheels) already works; pinch
-      // gestures (ctrlKey) belong to the browser zoom.
-      if (e.ctrlKey || Math.abs(e.deltaX) >= Math.abs(e.deltaY)) return;
-      if (el.scrollWidth <= el.clientWidth) return; // nothing to pan → page scrolls
-      el.scrollLeft += e.deltaMode === 1 ? e.deltaY * 33 : e.deltaY; // LINE mode (Firefox) → ~px
-      e.preventDefault();
-    }
-    el.addEventListener("wheel", onWheel, { passive: false });
-    cleanupRef.current = () => el.removeEventListener("wheel", onWheel);
-  }, []);
 }
 
 // Horizontal card strip. No arrow chrome: the wheel pans it sideways.
@@ -2212,16 +2191,23 @@ function LibraryApp({ publicPage = null, initialServerConfig = null }) {
     setSnapsState(next);
   }, [recentViews, pageSnaps]);
   const [tabMenu, setTabMenu] = useState(null); // {id, pinned, x, y} — tab right-click menu
+  // What each open tab's page carries, for its kind icon (tabs store only
+  // id, title and pinned).
+  const tabKinds = useMemo(() => new Map(homeBlocks.map((b) => [b.id, pageAttachment(b) ? "pdf" : "page"])), [homeBlocks]);
+  const tabKindOf = useCallback((id) => tabKinds.get(id) || "page", [tabKinds]);
   // FLIP animation: when tab order changes, slide each tab from its old
-  // position to the new one (Chrome-style), instead of snapping.
+  // position to the new one (Chrome-style), instead of snapping. Positions
+  // are the tab's place in the strip's content (offsetLeft; the strip is its
+  // offset parent), so the strip scrolling to the active tab moves nothing;
+  // pinned tabs stick to the edge while it scrolls and are left out.
   const tabElsRef = useRef(new Map());
   const tabLeftsRef = useRef(new Map());
   useLayoutEffect(() => {
     const prev = tabLeftsRef.current;
     const next = new Map();
     for (const [id, el] of tabElsRef.current) {
-      if (!el) continue;
-      const left = el.getBoundingClientRect().left;
+      if (!el || el.classList.contains("pinned")) continue;
+      const left = el.offsetLeft;
       next.set(id, left);
       const old = prev.get(id);
       if (old != null && Math.abs(old - left) > 2) {
@@ -9327,6 +9313,9 @@ function LibraryApp({ publicPage = null, initialServerConfig = null }) {
               tabs={openTabs}
               activeId={focusedBlockId}
               tabElements={tabElsRef}
+              kindOf={tabKindOf}
+              menuOpen={openPopover === "tabs"}
+              onMenuOpenChange={(open) => setOpenPopover(open ? "tabs" : null)}
               onReorder={(dragged, target) => updateTabs((prev) => {
                 const from = prev.findIndex((tab) => tab.id === dragged);
                 const to = prev.findIndex((tab) => tab.id === target);

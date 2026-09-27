@@ -1,13 +1,14 @@
 // Shared presentational widgets: workspace chrome, dockable windows, chat
 // markdown, and the auto-growing textarea.
-import React, { createContext, useCallback, useContext, useEffect, useMemo, useRef, useState } from "react";
+import React, { createContext, useCallback, useContext, useEffect, useLayoutEffect, useMemo, useRef, useState } from "react";
 import { textOf } from "../lib/textOf";
 import ReactMarkdown, { defaultUrlTransform } from "react-markdown";
 import remarkGfm from "remark-gfm";
 import remarkMath from "remark-math";
 import rehypeKatex from "rehype-katex";
 import "katex/dist/katex.min.css";
-import { CheckIcon, CopyIcon, ExternalLinkIcon, FileTextIcon, PinIcon, QuoteIcon } from "./Icons";
+import { CheckIcon, ChevronDownIcon, CopyIcon, ExternalLinkIcon, FileGlyph, FileTextIcon, PinIcon, QuoteIcon } from "./Icons";
+import { useWheelPan } from "./wheelPan";
 import { assetUrl, copyText } from "../lib/utils";
 import { parseGammaLink } from "../model/gammaLinks.js";
 import { remarkPaperLinks } from "../lib/remarkPaperLinks.js";
@@ -313,10 +314,21 @@ function PopoverAnchor({ name, children, className = "" }) {
   );
 }
 
+// The topbar's tab strip (Chrome-style). Each tab leads with its page's kind
+// icon (`kindOf(id)` → "pdf" | "page"); pinned tabs are 36px icons stuck to
+// the left edge. The strip keeps the active tab in view, pans with a plain
+// mouse wheel, and when it overflows fades its right edge and shows a
+// "⌄ n" button whose popover lists every open tab with a filter.
+const PINNED_STEP = 38; // a pinned tab's width + the strip's gap: where the next one sticks
+const TAB_FADE = 40; // the right-edge fade the active tab keeps clear of
+
 function OpenTabs({
   tabs,
   activeId,
   tabElements,
+  kindOf,
+  menuOpen = false,
+  onMenuOpenChange,
   onReorder,
   onOpen,
   onClose,
@@ -326,69 +338,198 @@ function OpenTabs({
   // ref (read during dragover) with a state twin for the .dragging style.
   const dragTab = useRef(null);
   const [draggingId, setDraggingId] = useState(null);
+  const stripRef = useRef(null);
+  const wheelPan = useWheelPan();
+  const setStrip = useCallback((el) => { stripRef.current = el; wheelPan(el); }, [wheelPan]);
+  // Whether the tabs overflow the strip, whether it is scrolled off its
+  // start (tabs pass under the pinned ones: those get an edge) and to its
+  // end (nothing hidden on the right: the fade goes).
+  const [overflow, setOverflow] = useState({ over: false, atStart: true, atEnd: true });
+  const measure = useCallback(() => {
+    const el = stripRef.current;
+    if (!el) return;
+    const over = el.scrollWidth > el.clientWidth + 1;
+    const atStart = el.scrollLeft <= 1;
+    const atEnd = el.scrollLeft + el.clientWidth >= el.scrollWidth - 1;
+    setOverflow((o) => (o.over === over && o.atStart === atStart && o.atEnd === atEnd ? o : { over, atStart, atEnd }));
+  }, []);
+  useEffect(() => {
+    const el = stripRef.current;
+    if (!el) return undefined;
+    const observer = new ResizeObserver(measure);
+    observer.observe(el);
+    el.addEventListener("scroll", measure, { passive: true });
+    return () => { observer.disconnect(); el.removeEventListener("scroll", measure); };
+  }, [measure]);
+  const pinnedCount = tabs.filter((tab) => tab.pinned).length;
+  // Keep the active tab in view: clear of the pinned tabs stuck at the left
+  // and of the fade on the right. Positions are in the strip's content
+  // (offsetLeft; the strip is the offset parent).
+  useLayoutEffect(() => {
+    const strip = stripRef.current;
+    const tab = activeId ? tabElements.current.get(activeId) : null;
+    if (strip && tab && !tab.classList.contains("pinned")) {
+      const left = tab.offsetLeft - pinnedCount * PINNED_STEP;
+      const right = tab.offsetLeft + tab.offsetWidth + TAB_FADE - strip.clientWidth;
+      if (strip.scrollLeft > left) strip.scrollLeft = Math.max(0, left);
+      else if (strip.scrollLeft < right) strip.scrollLeft = right;
+    }
+    measure();
+  }, [activeId, tabs, pinnedCount, tabElements, measure]);
+  // The strip stops overflowing (tabs closed): the menu has nothing to add.
+  useEffect(() => { if (!overflow.over && menuOpen) onMenuOpenChange?.(false); }, [overflow.over, menuOpen, onMenuOpenChange]);
+
+  // The all-tabs menu: a filter over the titles, ↑↓ to pick, Enter opens.
+  const [filter, setFilter] = useState("");
+  const [pick, setPick] = useState(0);
+  useEffect(() => { if (menuOpen) { setFilter(""); setPick(Math.max(0, tabs.findIndex((tab) => tab.id === activeId))); } }, [menuOpen]); // eslint-disable-line react-hooks/exhaustive-deps
+  const listRef = useRef(null);
+  useEffect(() => {
+    listRef.current?.querySelector('[aria-selected="true"]')?.scrollIntoView({ block: "nearest" });
+  }, [pick, menuOpen]);
+  const needle = filter.trim().toLowerCase();
+  const listed = needle ? tabs.filter((tab) => (tab.title || "").toLowerCase().includes(needle)) : tabs;
+  const openFromMenu = (tab) => {
+    if (!tab) return;
+    onMenuOpenChange?.(false);
+    if (tab.id !== activeId) onOpen(tab.id);
+  };
+  const kindIcon = (tab, size) => <FileGlyph isPdf={kindOf?.(tab.id) === "pdf"} size={size} />;
+
   return (
-    <div className="tabStrip" role="tablist">
-      {tabs.map((tab) => (
-        <div
-          key={tab.id}
-          role="tab"
-          ref={(element) => {
-            if (element) tabElements.current.set(tab.id, element);
-            else tabElements.current.delete(tab.id);
-          }}
-          className={`tab ${tab.id === activeId ? "active" : ""} ${draggingId === tab.id ? "dragging" : ""} ${tab.pinned ? "pinned" : ""}`}
-          title={tab.title}
-          draggable
-          onDragStart={(event) => {
-            dragTab.current = tab.id;
-            setDraggingId(tab.id);
-            event.dataTransfer.effectAllowed = "move";
-          }}
-          onDragEnd={() => {
-            dragTab.current = null;
-            setDraggingId(null);
-          }}
-          onDragOver={(event) => {
-            const draggedId = dragTab.current;
-            if (!draggedId || draggedId === tab.id) return;
-            event.preventDefault();
-            onReorder(draggedId, tab.id);
-          }}
-          onDrop={(event) => event.preventDefault()}
-          onClick={() => {
-            if (tab.id !== activeId) onOpen(tab.id);
-          }}
-          onAuxClick={(event) => {
-            // Middle-click close skips pinned tabs — pinning is a guard
-            // against exactly this kind of accidental close.
-            if (event.button === 1 && !tab.pinned) {
+    <>
+      <div ref={setStrip} role="tablist"
+        className={`tabStrip${overflow.over && !overflow.atEnd ? " fadeEnd" : ""}${overflow.atStart ? "" : " scrolled"}`}>
+        {tabs.map((tab, index) => (
+          <div
+            key={tab.id}
+            role="tab"
+            aria-selected={tab.id === activeId}
+            aria-label={tab.pinned ? tab.title : undefined}
+            ref={(element) => {
+              if (element) tabElements.current.set(tab.id, element);
+              else tabElements.current.delete(tab.id);
+            }}
+            className={`tab ${tab.id === activeId ? "active" : ""} ${draggingId === tab.id ? "dragging" : ""} ${tab.pinned ? "pinned" : ""}`}
+            style={tab.pinned ? { left: index * PINNED_STEP } : undefined}
+            title={tab.title}
+            draggable
+            onDragStart={(event) => {
+              dragTab.current = tab.id;
+              setDraggingId(tab.id);
+              event.dataTransfer.effectAllowed = "move";
+            }}
+            onDragEnd={() => {
+              dragTab.current = null;
+              setDraggingId(null);
+            }}
+            onDragOver={(event) => {
+              const draggedId = dragTab.current;
+              if (!draggedId || draggedId === tab.id) return;
               event.preventDefault();
-              onClose(tab.id);
-            }
-          }}
-          onContextMenu={(event) => {
-            event.preventDefault();
-            onContext(tab, event.clientX, event.clientY);
-          }}
-        >
-          {tab.pinned ? <span className="tabPin"><PinIcon filled size={11} /></span> : null}
-          <span className="tabTitle">{tab.title}</span>
-          {tab.pinned ? null : (
-            <button
-              className="uiClose tabClose"
-              onClick={(event) => {
-                event.stopPropagation();
+              onReorder(draggedId, tab.id);
+            }}
+            onDrop={(event) => event.preventDefault()}
+            onClick={() => {
+              if (tab.id !== activeId) onOpen(tab.id);
+            }}
+            onAuxClick={(event) => {
+              // Middle-click close skips pinned tabs — pinning is a guard
+              // against exactly this kind of accidental close.
+              if (event.button === 1 && !tab.pinned) {
+                event.preventDefault();
                 onClose(tab.id);
-              }}
-              title={t("Close tab")}
-              aria-label={t("Close {title}", { title: tab.title })}
-            >
-              ×
-            </button>
-          )}
-        </div>
-      ))}
-    </div>
+              }
+            }}
+            onContextMenu={(event) => {
+              event.preventDefault();
+              onContext(tab, event.clientX, event.clientY);
+            }}
+          >
+            <span className="tabKind">{kindIcon(tab, 13)}</span>
+            {tab.pinned ? null : <span className="tabTitle">{tab.title}</span>}
+            {tab.pinned ? null : (
+              <button
+                className="uiClose tabClose"
+                onClick={(event) => {
+                  event.stopPropagation();
+                  onClose(tab.id);
+                }}
+                title={t("Close tab")}
+                aria-label={t("Close {title}", { title: tab.title })}
+              >
+                ×
+              </button>
+            )}
+          </div>
+        ))}
+      </div>
+      {overflow.over ? (
+        <span data-popover="tabs" className="popoverAnchor tabsMenuAnchor">
+          <button
+            className={`iconBtn tabsMenuBtn ${menuOpen ? "activeIcon" : ""}`}
+            onClick={() => onMenuOpenChange?.(!menuOpen)}
+            title={t("All open tabs")}
+            aria-label={t("All open tabs")}
+            aria-expanded={menuOpen}
+          >
+            <ChevronDownIcon size={14} />
+            <span className="tabsMenuCount">{tabs.length}</span>
+          </button>
+          {menuOpen ? (
+            <div className="popover tabsPopover" role="dialog" aria-label={t("All open tabs")}>
+              <input
+                autoFocus
+                className="searchInput"
+                value={filter}
+                placeholder={t("Find an open tab")}
+                aria-label={t("Find an open tab")}
+                onChange={(event) => { setFilter(event.target.value); setPick(0); }}
+                onKeyDown={(event) => {
+                  if (event.nativeEvent.isComposing) return;
+                  if (event.key === "ArrowDown" || event.key === "ArrowUp") {
+                    event.preventDefault();
+                    const step = event.key === "ArrowDown" ? 1 : -1;
+                    setPick((i) => (listed.length ? (i + step + listed.length) % listed.length : 0));
+                  } else if (event.key === "Enter") {
+                    event.preventDefault();
+                    openFromMenu(listed[pick]);
+                  } else if (event.key === "Escape") {
+                    event.preventDefault();
+                    onMenuOpenChange?.(false);
+                  }
+                }}
+              />
+              <div ref={listRef} className="tabsMenuList" role="listbox" aria-label={t("All open tabs")}>
+                {listed.map((tab, i) => (
+                  <div
+                    key={tab.id}
+                    role="option"
+                    aria-selected={i === pick}
+                    className={`tabsMenuRow${tab.id === activeId ? " current" : ""}${i === pick ? " picked" : ""}`}
+                    title={tab.title}
+                    onMouseEnter={() => setPick(i)}
+                    onClick={() => openFromMenu(tab)}
+                  >
+                    {kindIcon(tab, 14)}
+                    <span className="tabsMenuTitle">{tab.title}</span>
+                    {tab.pinned ? <span className="tabsMenuPin"><PinIcon filled size={11} /></span> : (
+                      <button
+                        className="uiClose uiCloseSm"
+                        onClick={(event) => { event.stopPropagation(); onClose(tab.id); }}
+                        title={t("Close tab")}
+                        aria-label={t("Close {title}", { title: tab.title })}
+                      >×</button>
+                    )}
+                  </div>
+                ))}
+                {!listed.length ? <div className="popoverHint">{t("No open tab matches.")}</div> : null}
+              </div>
+            </div>
+          ) : null}
+        </span>
+      ) : null}
+    </>
   );
 }
 

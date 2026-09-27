@@ -510,7 +510,7 @@
   padding: 2px 6px 6px;
 }
 .pinnedLabel svg { color: var(--accent); }
-/* Scrolls like .carouselTrack: wheel pans it (useWheelPan in App.jsx),
+/* Scrolls like .carouselTrack: wheel pans it (shared/ui/wheelPan.js),
    touch swipes natively, no visible scrollbar. */
 .pinnedStrip {
   display: flex;
