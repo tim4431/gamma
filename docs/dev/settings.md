@@ -116,11 +116,25 @@ whether uploads are included, a schedule and a retention rule. Several tasks
 may cover one workspace.
 
 The editor (a `SubDialog`) offers Hourly, Daily, Weekly (chosen weekdays),
-Monthly (a day of the month) and a five-field cron expression. Schedules are
-UTC; the next three runs are previewed in the browser's time zone. Retention
-is an age (days, weeks or 30-day months) or a snapshot count per workspace.
-Only that task's snapshots expire, after a successful run; the newest is
-always kept. Deleting a task keeps its snapshots.
+Monthly (a day of the month) and a five-field cron expression. The stored
+cron is always UTC, so the server is unchanged, but Daily and Weekly times
+are entered in the browser's own time ("Time (your time, PDT)", with
+"= 10:00 UTC" under the box) and Hourly's minute likewise: hour and
+weekday convert together with the browser's current offset
+([settings/backupSchedule.js](../../frontend/src/settings/backupSchedule.js),
+`tests/backupSchedule.test.mjs`), and a zone with daylight saving time is
+told the run moves an hour when the clocks change. Monthly schedules and
+cron expressions stay in UTC (a day of the month cannot cross a month's
+end). The next three runs are previewed in the browser's time zone.
+Retention is an age (days, weeks or 30-day months) or a snapshot count per
+workspace. Only that task's snapshots expire, after a successful run; the
+newest is always kept. Deleting a task keeps its snapshots.
+
+The table fits the pane (the dialog keeps one width on every pane): the
+task cell's second line holds its workspaces, retention and whether files
+are included ("All workspaces I own · keeps 30 days · includes files"), the
+schedule shows in your time over its UTC form, and the state is a dot and a
+word (Not run yet, Queued, Running, Finished, Failed).
 
 `GET/POST /api/backup-tasks`, `PUT/DELETE /api/backup-tasks/{id}`,
 `POST /api/backup-tasks/{id}/run` and `POST /api/backup-tasks/preview`.

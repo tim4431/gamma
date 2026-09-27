@@ -218,7 +218,7 @@ Both live in the **View menu** (≡, top right), on a page or on the home librar
 ## Backups
 
 - **A workspace**: Settings → Workspaces → the row's *Data* menu → **Export** downloads a zip (pages, notes, highlights, uploaded PDFs); **Import** there restores or merges it. **Export all** takes every personal workspace at once.
-- **Snapshots**: Settings → Backups keeps server-side snapshots per workspace you can roll back to.
+- **Snapshots**: Settings → Backups keeps server-side snapshots per workspace you can roll back to. **Add task** schedules them (hourly, daily, weekly, monthly or a cron expression); daily and weekly times are in your own time zone.
 - **The whole server** (administrators): Settings → Server → *Server backups* snapshots every account and workspace; restore with the server stopped (`manage.py backups --restore`).
 
 Account credentials and private AI keys are never part of an export.

@@ -523,6 +523,7 @@
 .metaCell.ok { color: var(--ok); }
 .metaCell.bad { color: var(--danger); }
 .metaCell.muted { color: var(--text-dim); }
+.metaCell.busy { color: var(--accent); }
 .metaStatBatchRow { display: flex; align-items: center; gap: 8px; margin-top: 8px; flex-shrink: 0; }
 .metaStatProgress {
   font-size: calc(11.5px * var(--ui-font-scale, 1));
