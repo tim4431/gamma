@@ -5,13 +5,11 @@
 
 import { api, ApiError, getSettings, serverOrigin, whoAmI } from "./api.js";
 import { connectPublisher, publisherHost, publisherRoot, secureServer, shouldAutoRefresh } from "./publisherSessions.js";
-import "./doi.js"; // defines globalThis.gammaDoiFromPath
+import "./ids.js"; // defines globalThis.gammaDoiFromPath and gammaArxivId
 
 const ICON_ON = { 16: "assets/icons/icon16.png", 32: "assets/icons/icon32.png" };
 const ICON_OFF = { 16: "assets/icons/icon16-off.png", 32: "assets/icons/icon32-off.png" };
 const COLORS = { accent: "#3a7bd5", ok: "#2e8b5e", danger: "#c94a4a", muted: "#7a828e" };
-
-const ARXIV_RE = /arxiv\.org\/(?:abs|pdf)\/([0-9]{4}\.[0-9]{4,5})(?:v\d+)?/i;
 
 // ---------- per-tab state ----------
 
@@ -45,7 +43,7 @@ async function updateBadge(tabId, st) {
   } catch {}
 }
 
-// A DOI used as a URL path (the rule lives in doi.js, shared with detect.js).
+// A DOI used as a URL path (the rule lives in ids.js, shared with detect.js).
 function doiFromUrl(url) {
   try { return globalThis.gammaDoiFromPath(new URL(url).pathname); } catch { return ""; }
 }
@@ -55,9 +53,8 @@ function doiFromUrl(url) {
 function candidateFromUrl(url, title) {
   if (!url || !/^https?:/i.test(url)) return { kind: "none", source_url: url || "" };
   const isPdf = /\.pdf($|[?#])/i.test(url.split("?")[0]);
-  const ax = url.match(ARXIV_RE);
   const doi = doiFromUrl(url);
-  const arxivId = ax ? ax[1] : "";
+  const arxivId = globalThis.gammaArxivId(url);
   const isArxivPdf = /arxiv\.org\/pdf\//i.test(url);
   const pdfUrl = isPdf || isArxivPdf ? url : "";
   const kind = pdfUrl ? "pdf" : arxivId ? "arxiv" : doi ? "doi" : "none";

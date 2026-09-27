@@ -41,7 +41,7 @@ from ..pdf_text import PDF_EXTRACT_FAILED
 from ..pdf_text import page_count as _page_count
 from ..textnorm import INDEX_VERSION, normalize_text
 from .ai import CITE_PROMPT, METADATA_PROMPT, _resolve_model
-from .pdf import CONTACT_EMAIL
+from .pdf import ARXIV_ID, CONTACT_EMAIL
 
 # Guards the doc-id → filename join below (defense in depth: doc ids come from
 # block properties a user can set). Mirrors gamma.db._DOC_ID_RE.
@@ -55,10 +55,8 @@ router = APIRouter(prefix="/api", tags=["metadata"])
 # window sized for AI cost must not starve the free regex/matching steps.
 SCAN_CHARS = 20000
 
-# New-style (2101.01234) and old-style (cond-mat/0501234) arXiv ids
-_ARXIV_ID = r"([0-9]{4}\.[0-9]{4,5}|[a-z][a-z.-]*/[0-9]{7})"
-_ARXIV_URL_RE = re.compile(r"arxiv\.org/(?:abs|pdf)/" + _ARXIV_ID, re.I)
-_ARXIV_TEXT_RE = re.compile(r"arXiv:\s*" + _ARXIV_ID, re.I)
+_ARXIV_URL_RE = re.compile(r"arxiv\.org/(?:abs|pdf|html)/(" + ARXIV_ID + ")", re.I)
+_ARXIV_TEXT_RE = re.compile(r"arXiv:\s*(" + ARXIV_ID + ")", re.I)
 _DOI_RE = re.compile(r"\b(10\.\d{4,9}/[^\s\"'<>]+)")
 _ATOM = "{http://www.w3.org/2005/Atom}"
 _ARXIV_NS = "{http://arxiv.org/schemas/atom}"

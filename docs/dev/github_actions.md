@@ -37,6 +37,8 @@ update-account-server ──▶ cloud.yml --ref <branch>: test → ghcr gamma-cl
                           then pull + restart on the VPS          ← no merge needed
 update-demo-server ──▶ docker.yml --ref <branch>: ghcr gamma :sha-<short> (never :latest)
                        then pin that tag in the demo's project    ← no merge needed
+update-needed ──▶ compares what each deployment runs with the code, then runs
+                  update-account-server → update-demo-server → update-server for the ones behind
 release skill ─┬──▶ desktop.yml  meta: version = max(package.json, newest v* tag + patch)
  (gh workflow  │        build Win/mac/Linux with that version pinned, smoke on all three
   run)         │        publish: Release v<version> (notes = commits since previous tag)

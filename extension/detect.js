@@ -6,8 +6,6 @@
 
 (() => {
   const DOI_RE = /10\.\d{4,9}\/[^\s"'<>?#]+/;
-  const ARXIV_URL_RE = /arxiv\.org\/(?:abs|pdf)\/([0-9]{4}\.[0-9]{4,5})(?:v\d+)?/i;
-  const ARXIV_TEXT_RE = /arxiv:\s*([0-9]{4}\.[0-9]{4,5})/i;
 
   function meta(name) {
     const el = document.querySelector(`meta[name="${name}" i], meta[property="${name}" i]`);
@@ -20,16 +18,14 @@
     try { return decodeURIComponent(m[0]).replace(/[.,;)\]]+$/, ""); } catch { return m[0]; }
   }
 
-  // A DOI used as a URL path: doi.js (loaded before this script) holds the
-  // rule, shared with the worker.
+  // A DOI used as a URL path and the arXiv id: ids.js (loaded before this
+  // script) holds the rules, shared with the worker.
   const doiFromPath = globalThis.gammaDoiFromPath;
+  const arxivFrom = globalThis.gammaArxivId;
 
-  function arxivFrom(text) {
-    const m = (text || "").match(ARXIV_URL_RE) || (text || "").match(ARXIV_TEXT_RE);
-    return m ? m[1] : "";
-  }
-
+  // "" stays "": resolved against the page, it would name the page itself.
   function absolute(url) {
+    if (!url) return "";
     try { return new URL(url, location.href).href; } catch { return ""; }
   }
 

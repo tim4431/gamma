@@ -34,8 +34,9 @@ _FOAF = "{http://xmlns.com/foaf/0.1/}"
 _LINK = "{http://purl.org/rss/1.0/modules/link/}"
 _PRISM = "{http://prismstandard.org/namespaces/1.2/basic/}"
 
-# Same id shape as routers/metadata.py's _ARXIV_URL_RE — keep the two in sync.
-_ARXIV_URL_RE = re.compile(r"arxiv\.org/(?:abs|pdf)/([0-9]{4}\.[0-9]{4,5})", re.I)
+# Same id shape as routers/pdf.py's ARXIV_ID (a copy: gamma.* modules don't
+# import the routers package at load) — keep the two in sync.
+_ARXIV_URL_RE = re.compile(r"arxiv\.org/(?:abs|pdf|html)/([0-9]{4}\.[0-9]{4,5}|[a-z][a-z.-]*/[0-9]{7})", re.I)
 # Zotero records arXiv preprints with a DataCite DOI: 10.48550/arXiv.<id>
 _ARXIV_DOI_RE = re.compile(r"^10\.48550/arxiv\.([0-9]{4}\.[0-9]{4,5})$", re.I)
 

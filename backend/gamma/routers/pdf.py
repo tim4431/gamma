@@ -1,8 +1,8 @@
 """External PDF resolution and proxying (with optional local caching).
 
 Resolution handles the common academic-link shapes: bare arXiv ids and DOIs
-pasted without a URL are promoted to one first, arXiv abstract URLs are
-rewritten to their PDF, DOI links that land on paywalled/bot-blocking publisher
+pasted without a URL are promoted to one first, arXiv abstract and HTML URLs
+are rewritten to their PDF, DOI links that land on paywalled/bot-blocking publisher
 pages fall back to an open-access copy via the Unpaywall API, and failures come
 back as human-readable messages. Institutional access depends on the backend's
 network; publisher bot challenges may still require a browser.
@@ -42,14 +42,18 @@ BROWSER_HEADERS = {
     "Accept-Language": "en-US,en;q=0.9",
 }
 
-_ARXIV_ABS_RE = re.compile(r"arxiv\.org/abs/([0-9]{4}\.[0-9]{4,5}(?:v\d+)?)", re.I)
+# A new-style (2301.12345) or old-style (cond-mat/0402216, math.GT/0309136)
+# arXiv id without its version, non-capturing — the one id shape clip.py,
+# metadata.py and zotero_import.py build their patterns from. arxiv.org
+# serves a paper at /abs/, /pdf/ and /html/<id>.
+ARXIV_ID = r"(?:[0-9]{4}\.[0-9]{4,5}|[a-z][a-z.-]*/[0-9]{7})"
+_ARXIV_PAGE_RE = re.compile(r"arxiv\.org/(?:abs|html)/(" + ARXIV_ID + r"(?:v\d+)?)", re.I)
 _ARXIV_DOI_RE = re.compile(r"10\.48550/arxiv\.([0-9]{4}\.[0-9]{4,5})", re.I)
 _DOI_URL_RE = re.compile(r"(?:dx\.)?doi\.org/(10\.\d{4,9}/[^\s?#]+)", re.I)
 
 # Bare identifiers pasted straight from a paper: "2301.12345" / "arXiv:2301.12345v2"
 # (plus old-style "hep-th/9901001") and "10.1103/PhysRevLett…" / "doi:10.…".
-_BARE_ARXIV_RE = re.compile(
-    r"^(?:arxiv:\s*)?([0-9]{4}\.[0-9]{4,5}(?:v\d+)?|[a-z][a-z-]*(?:\.[a-z]{2})?/[0-9]{7}(?:v\d+)?)$", re.I)
+_BARE_ARXIV_RE = re.compile(r"^(?:arxiv:\s*)?(" + ARXIV_ID + r"(?:v\d+)?)$", re.I)
 _BARE_DOI_RE = re.compile(r"^(?:doi:\s*)?(10\.\d{4,9}/\S+)$", re.I)
 
 
@@ -135,8 +139,8 @@ def resolve_source(source_url: str, allow_oa: bool = True) -> dict:
     resolve endpoint and the extension's /api/clip."""
     url = _identifier_to_url((source_url or "").strip())
 
-    # arXiv abstract pages (and arXiv DOIs) go straight to the PDF
-    m = _ARXIV_ABS_RE.search(url) or _ARXIV_DOI_RE.search(url)
+    # arXiv abstract and HTML pages (and arXiv DOIs) go straight to the PDF
+    m = _ARXIV_PAGE_RE.search(url) or _ARXIV_DOI_RE.search(url)
     if m:
         url = f"https://arxiv.org/pdf/{m.group(1)}"
 

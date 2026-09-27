@@ -26,7 +26,7 @@
         "<all_urls>"
       ],
       "js": [
-        "doi.js",
+        "ids.js",
         "detect.js"
       ],
       "run_at": "document_idle"

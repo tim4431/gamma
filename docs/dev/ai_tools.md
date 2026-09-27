@@ -157,7 +157,7 @@ document in windows with `read_page`'s knobs: `pdf_chars` (default and cap
 from the Read window preference, shared through `_window_args`), `pdf_page`,
 `pdf_offset`, and an excerpt that names the next offset while text remains.
 The PDF behind the source comes from `routers.pdf.resolve_source`, the
-resolver the extension and the "open a link" path use (arXiv abs → pdf,
+resolver the extension and the "open a link" path use (arXiv abs/html → pdf,
 publisher `citation_pdf_url` tags, the Unpaywall open-access fallback,
 browser headers). It is downloaded through the SSRF guard under a size cap
 (`FETCH_MAX_BYTES`, 40 MB) and extracted page by page
