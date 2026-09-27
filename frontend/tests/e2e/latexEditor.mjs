@@ -18,8 +18,8 @@ const bundle = await build({
     const registerRef = (_, ref) => { window.editorRef = ref; };
     function Fixture() {
       const [text, setText] = useState('');
-      const block = {id:'test',content:text,editMode:true,children:[]};
-      return <BlockTree blocks={[block]} rowProps={{focusedId:'test',setFocusedId:noop,
+      const block = {id:'test',content:text,children:[]};
+      return <BlockTree blocks={[block]} rowProps={{focusedId:'test',setFocusedId:noop,view:{editingId:'test',folds:{}},
         onChangeText:(_,value)=>setText(value),onStartEdit:noop,registerRef,
         onEnterSibling:noop,onIndent:noop,onOutdent:noop,onToggle:noop,onDelete:noop,
         allBlocks:[block],refCache:{},highlightColors:[]}} />;

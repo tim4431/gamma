@@ -3,8 +3,9 @@
 // ops — ours echoed back, or another client's — to a tree (applyOps).
 //
 // Pure: no React, no network. Trees are the App's nested block arrays
-// ({id, content, properties, children, …} plus the UI-only editMode /
-// collapsed flags, which never travel). Positions (fractional-index keys,
+// ({id, content, properties, children, …} — the document only; the open
+// editor and the viewer's folding live beside the tree, blockModel's
+// `view`). Positions (fractional-index keys,
 // same library as the backend) live in a separate Map id → key that both
 // functions read and write, so the tree objects themselves stay untouched
 // and history snapshots can share them.
@@ -208,7 +209,7 @@ export function applyOps(tree, ops, pageId, pos) {
       const node = ex
         ? { ...ex.node, content: op.content ?? "", properties: op.props || {}, position: op.position }
         : { id: op.id, content: op.content ?? "", properties: op.props || {}, position: op.position,
-            children: [], collapsed: Boolean(op.props?.collapsed), editMode: false };
+            children: [] };
       out = placeUnder(ex ? ex.rest : out, op.parent, node, pageId, pos);
     } else if (op.op === "move") {
       const ex = extract(out, op.id);
@@ -248,21 +249,16 @@ export function pushOp(queue, op) {
   return false;
 }
 
-// Carry the per-viewer UI flags (open editor, folding) from the tree on
-// screen onto a freshly fetched one, so a reload never closes an editor.
-// The block being edited also keeps ITS text: the editor is the source of
-// truth for it, and the next commit sends that text on (the fresh tree is
-// the new base).
-export function keepUiFlags(fresh, current) {
-  const flags = new Map();
-  const walk = (list) => { for (const n of list || []) { flags.set(n.id, n); walk(n.children); } };
-  walk(current);
+// A refetch under a live page: the block being edited keeps ITS text on
+// the freshly fetched tree — the editor is the source of truth for it, and
+// the next commit sends that text on (the fresh tree is the new base).
+export function keepEditingText(fresh, current, editingId) {
+  if (!editingId) return fresh;
+  let text;
+  const find = (list) => { for (const n of list || []) { if (n.id === editingId) { text = n.content; return true; } if (find(n.children)) return true; } return false; };
+  if (!find(current)) return fresh;
   const apply = (list) => (list || []).map((n) => {
-    const old = flags.get(n.id);
-    const node = old
-      ? { ...n, editMode: !!old.editMode, collapsed: !!old.collapsed,
-          ...(old.editMode ? { content: old.content } : {}) }
-      : n;
+    const node = n.id === editingId ? { ...n, content: text } : n;
     return n.children?.length ? { ...node, children: apply(n.children) } : node;
   });
   return apply(fresh);

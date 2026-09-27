@@ -9,7 +9,7 @@ import remarkGfm from "remark-gfm";
 import remarkMath from "remark-math";
 import rehypeKatex from "rehype-katex";
 import rehypeRaw from "rehype-raw";
-import { withLegacyAccessors } from "../shared/model/blockModel";
+import { isFolded, withLegacyAccessors } from "../shared/model/blockModel";
 import { COLORS } from "../shared/model/highlightColors.js";
 import { gammaLinkId, gammaLinkIds, parseGammaLink, relativeGammaLink } from "../shared/model/gammaLinks.js";
 import { InkCard } from "../ink/InkLayer";
@@ -38,7 +38,7 @@ import { pageByTitle, pickerCounts, rankRefPages, refBlockPath, refBlockText } f
 import { remarkCallouts } from "./callouts";
 import { PeerChips, RenderedCarets } from "../collaboration/Presence";
 import { ContextMenu, MenuItem } from "../shared/ui/Menus";
-import { API, apiJson, assetUrl, copyText, withWorkspace } from "../shared/lib/utils";
+import { API, apiJson, assetUrl, copyText, withShare, withWorkspace } from "../shared/lib/utils";
 import { CopyIcon, ExportIcon, MessageSquareIcon, PlusIcon, Trash2Icon } from "../shared/ui/Icons";
 import { T, t } from "../shared/i18n/i18n.js";
 import { guideEvents } from "../guide/events.js";
@@ -750,9 +750,14 @@ function BlockRow({
   onStatus,
   pages,
   rootId,
+  view,
 }) {
   const ref = useRef(null);
   const clickPosRef = useRef(null);
+  // The viewer's state for this row (blockModel's `view`): its editor open,
+  // its children folded.
+  const editing = view?.editingId === block.id;
+  const collapsed = isFolded(block, view);
   // The hover line in the gap between two of the rendered view's blocks
   // (paragraphs, formulas, lists…): clicking it opens the editor on a line
   // between them. {top (its middle, px in the rendered view), half (its
@@ -775,7 +780,7 @@ function BlockRow({
   // writing an edit_block call for THIS block — the streamed text so far.
   // A block the user is editing keeps its editor; the mark still shows.
   const aiMark = aiMarks?.get(block.id) || null;
-  const aiText = aiLive?.tool === "edit_block" && aiLive.blockId === block.id && !block.editMode
+  const aiText = aiLive?.tool === "edit_block" && aiLive.blockId === block.id && !editing
     ? joinBlockText(block.content || "", aiLive.content, aiLive.mode, aiLive.find, aiLive.at) : null;
   // Whole-page read: every row rings once, staggered by its position, so
   // the read visibly sweeps down the outline. A row with its own mark keeps
@@ -943,7 +948,7 @@ function BlockRow({
     const q = refPopup.query;
     const timer = setTimeout(async () => {
       try {
-        const res = await fetch(`/api/block-search?q=${encodeURIComponent(q)}&limit=12`);
+        const res = await fetch(withShare(`${API}/block-search?q=${encodeURIComponent(q)}&limit=12`));
         const data = await res.json();
         setSearchResults((data.blocks || []).filter((b) => b.id !== block.id));
       } catch (_) { setSearchResults([]); }
@@ -1094,20 +1099,20 @@ function BlockRow({
   // source offset the click mapped to, else posAtCoords); drop the captured
   // click once edit mode is entered so later re-renders don't reuse it.
   useEffect(() => {
-    if (block.editMode) clickPosRef.current = null;
-  }, [block.editMode]);
+    if (editing) clickPosRef.current = null;
+  }, [editing]);
   // Leaving raw editing pretty-prints any tables in the block. Watched on the
   // editMode transition (not the editor's onBlur — switching blocks
   // preventDefaults the mousedown, so the editor unmounts without a blur).
   const wasEditingRef = useRef(false);
   useEffect(() => {
-    if (wasEditingRef.current && !block.editMode && !readOnly) {
+    if (wasEditingRef.current && !editing && !readOnly) {
       const formatted = formatTables(block.content || "");
       if (formatted != null) onChangeText(block.id, formatted);
     }
-    wasEditingRef.current = !!block.editMode;
+    wasEditingRef.current = !!editing;
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [block.editMode]);
+  }, [editing]);
 
   const isHighlight = !!block.highlightId;
   // A handwriting group (docs/dev/handwriting.md): pen marker + the strokes
@@ -1246,7 +1251,7 @@ function BlockRow({
       const url = relativeGammaLink(pm.url, window.location.origin);
       const pageId = gammaLinkId(pm.link);
       const fallback = pm.link.kind === "citation" ? `p. ${pm.link.page}` : "page";
-      fetch(`/api/block-search?ids=${encodeURIComponent(pageId)}`)
+      fetch(withShare(`${API}/block-search?ids=${encodeURIComponent(pageId)}`))
         .then((r) => (r.ok ? r.json() : null))
         .then((d) => {
           const b = d?.blocks?.[0];
@@ -1409,8 +1414,8 @@ function BlockRow({
           // Ctrl on any other block: decided on click (below) — a Ctrl+drag
           // selects note text for a chip instead, so the editor must not open
           // and the selection must be allowed to start.
-          else if ((e.ctrlKey || e.metaKey) && onAddToChat && !block.editMode) return;
-          if (!readOnly && !block.editMode) {
+          else if ((e.ctrlKey || e.metaKey) && onAddToChat && !editing) return;
+          if (!readOnly && !editing) {
             // The raw source lays out differently from the rendered view it
             // replaces: find the clicked character in the source by its text
             // (or, on a gap line, where the block below the gap starts).
@@ -1468,7 +1473,7 @@ function BlockRow({
           // Ctrl+click attaches the block to the next chat message (a chip
           // with its id, so the agent can edit it) — unless the gesture
           // selected text, which App's mouseup turned into a note chip.
-          if (!(e.ctrlKey || e.metaKey) || !onAddToChat || block.highlightId || block.editMode) return;
+          if (!(e.ctrlKey || e.metaKey) || !onAddToChat || block.highlightId || editing) return;
           if (e.target.closest("button, textarea, input, a")) return;
           if (window.getSelection()?.toString().trim()) return;
           e.preventDefault();
@@ -1483,12 +1488,12 @@ function BlockRow({
               onToggle(block.id);
             }}
           >
-            {block.collapsed ? "▸" : "▾"}
+            {collapsed ? "▸" : "▾"}
           </button>
         ) : (
           <span className="collapseSpacer" />
         )}
-        {isHighlight && !block.editMode ? (
+        {isHighlight && !editing ? (
           <>
             <button
               className="collapseBtn highlightDotBtn dotSlot"
@@ -1522,7 +1527,7 @@ function BlockRow({
               >⊕</button>
             ) : null}
           </>
-        ) : isInk && !block.editMode ? (
+        ) : isInk && !editing ? (
           <button
             className="collapseBtn highlightDotBtn dotSlot"
             onClick={(e) => { e.stopPropagation(); onInkJump?.(block.id); }}
@@ -1539,7 +1544,7 @@ function BlockRow({
             {block.page ? `p.${block.page}` : "note"}
           </div>
 
-          {!readOnly && block.editMode ? (
+          {!readOnly && editing ? (
             <BlockCmEditor
               ref={ref}
               autoFocus
@@ -1616,7 +1621,7 @@ function BlockRow({
                 // the neighbouring block at the caret's top or bottom line…
                 // A handled key stops here; the outliner's own keys follow.
                 if (dispatchHotkey(BLOCK_COMMANDS, e, {
-                  block, tree, readOnly, editor: ref.current,
+                  block, tree, view, folded: collapsed, readOnly, editor: ref.current,
                   row: { onHop, onMoveBlock, onDuplicate, onDelete, onEnterSibling, onIndent, onOutdent, onToggle, onAddToChat, onMoveToPage },
                 }, keybindings)) return;
                 // Tab inside raw math (popup closed) hops between argument
@@ -1704,14 +1709,14 @@ function BlockRow({
                 } else if (e.key === "Tab" && e.shiftKey) {
                   e.preventDefault();
                   onOutdent(block.id);
-                } else if (e.key === "ArrowRight" && (block.children?.length || 0) > 0 && block.collapsed
+                } else if (e.key === "ArrowRight" && (block.children?.length || 0) > 0 && collapsed
                   && ref.current && ref.current.selectionEnd === ref.current.value.length) {
                   // At the text's end / start the arrows fold the children;
                   // anywhere else they move the caret (the Collapse / Expand
                   // children commands fold from anywhere).
                   e.preventDefault();
                   onToggle(block.id);
-                } else if (e.key === "ArrowLeft" && (block.children?.length || 0) > 0 && !block.collapsed
+                } else if (e.key === "ArrowLeft" && (block.children?.length || 0) > 0 && !collapsed
                   && ref.current && ref.current.selectionStart === 0) {
                   e.preventDefault();
                   onToggle(block.id);
@@ -1780,7 +1785,7 @@ function BlockRow({
           ><XIcon size={14} /></button>
         ) : null}
       </div>
-      {!readOnly && block.editMode && mathUi ? (
+      {!readOnly && editing && mathUi ? (
         <>
           <MathLivePreview tex={mathUi.tex} display={mathUi.display} anchor={mathUi.previewAnchor} caret={mathUi.caret} />
           {mathUi.ac ? (
@@ -1788,11 +1793,11 @@ function BlockRow({
           ) : null}
         </>
       ) : null}
-      {!readOnly && block.editMode && slashMenu ? (
+      {!readOnly && editing && slashMenu ? (
         <SlashMenuPopup items={slashMenu.items} selected={slashIdx} anchor={slashMenu.anchor} onPick={runSlashCommand}
           grouped={!slashMenu.query} footer />
       ) : null}
-      {!readOnly && block.editMode && pasteMenu ? (
+      {!readOnly && editing && pasteMenu ? (
         <SlashMenuPopup title={t("Paste as")} items={pasteMenu.items} selected={pasteIdx} anchor={pasteMenu.anchor} onPick={applyPasteAs} />
       ) : null}
       {refSearchShown ? (
@@ -2025,7 +2030,7 @@ function BlockTree({ blocks, readOnly, rowProps, depth = 0, parentId }) {
           ) : (
             <BlockRow block={block} depth={depth} {...rowProps} />
           )}
-          {!block.collapsed && (block.children?.length > 0 || live?.parentId === block.id) ? (
+          {!isFolded(block, rowProps.view) && (block.children?.length > 0 || live?.parentId === block.id) ? (
             <div className="blockChildren">
               <BlockTree blocks={block.children} readOnly={readOnly} rowProps={rowProps} depth={depth + 1} parentId={block.id} />
             </div>

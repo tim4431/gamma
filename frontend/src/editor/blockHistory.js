@@ -19,10 +19,12 @@
 //
 // An entry is {tree, caret}: the tree kept by reference (the helpers never
 // mutate in place) and, when the change came from an editor, that editor's
-// selection before it. Restoring while an editor is open keeps the caret's
+// selection before it. The open editor is not part of the tree (App's
+// `view`, blockModel.js): the caller passes `editingId` and takes
+// `onEditing` back. Restoring while an editor is open keeps the caret's
 // block in edit mode and hands the caret back through `onCaret` so the
 // editor puts the cursor where the change was; restoring with no editor open
-// strips editMode so undo never pops editors open. The stack belongs to one
+// opens none, so undo never pops editors open. The stack belongs to one
 // page and is cleared when the page id changes.
 import { useCallback, useEffect, useRef } from "react";
 import { t } from "../shared/i18n/i18n.js";
@@ -66,15 +68,6 @@ export function classifyTransition(prev, next) {
   return only;
 }
 
-function editingId(list) {
-  for (const b of list || []) {
-    if (b.editMode) return b.id;
-    const sub = editingId(b.children);
-    if (sub) return sub;
-  }
-  return null;
-}
-
 // Describe the forward action, even when the caller is restoring it backward.
 // Compare rebased trees so a collaborator's edits are not named as our undo.
 export function describeTransition(before, after) {
@@ -115,11 +108,6 @@ function hasBlock(list, id) {
   return false;
 }
 
-// editMode only on `keepId` (none when null).
-function withEditMode(list, keepId) {
-  return (list || []).map((b) => ({ ...b, editMode: b.id === keepId, children: withEditMode(b.children, keepId) }));
-}
-
 // Options:
 //   isLoad(tree) — true for a tree that came from the server, not an edit
 //   pageId      — the stack is cleared when it changes
@@ -130,11 +118,14 @@ function withEditMode(list, keepId) {
 //                 pre-change selection (App sets it in onChangeText)
 //   onCaret({id, from, to}) — called after a restore that should land the
 //                 cursor in the (kept-open) editor of that block
+//   editingId   — the block whose editor is open right now (null: none)
+//   onEditing(id) — a restore says which editor should be open afterwards
+//                 (null: none)
 export function useBlockHistory(blocks, setBlocks, opts) {
-  const st = useRef({ undo: [], redo: [], prev: blocks, prevCaret: null, displaced: null, intent: null, lastEdit: null });
+  const st = useRef({ undo: [], redo: [], prev: blocks, prevCaret: null, prevEditing: null, displaced: null, intent: null, lastEdit: null });
   const optsRef = useRef({ setBlocks, ...opts });
   optsRef.current = { setBlocks, ...opts };
-  const { pageId } = opts;
+  const { pageId, editingId = null } = opts;
 
   const clear = useCallback(() => {
     st.current.undo = [];
@@ -143,11 +134,10 @@ export function useBlockHistory(blocks, setBlocks, opts) {
   }, []);
   useEffect(clear, [pageId, clear]);
 
-  // Selection of the editor open in `tree`: the live one while that editor
-  // is still the open one, else what it was at the previous commit (the
-  // editor has since moved to another block, e.g. Enter made a new one).
-  const caretIn = (tree) => {
-    const id = editingId(tree);
+  // Selection of the editor open on block `id`: the live one while that
+  // editor is still the open one, else what it was at the previous commit
+  // (the editor has since moved to another block, e.g. Enter made a new one).
+  const caretOf = (id) => {
     if (!id) return null;
     const s = st.current;
     const live = optsRef.current.caretRef?.current;
@@ -160,23 +150,22 @@ export function useBlockHistory(blocks, setBlocks, opts) {
   useEffect(() => {
     const s = st.current;
     const prev = s.prev;
+    const prevEditing = s.prevEditing;
     s.prev = blocks;
     const intent = s.intent;
     s.intent = null;
     const displaced = s.displaced;
     s.displaced = null;
     try {
+      // The editor of the block being merged into closed: the run ends.
+      if (s.lastEdit?.editing && editingId !== s.lastEdit.id) s.lastEdit = null;
       if (prev === blocks || optsRef.current.isLoad?.(blocks)) return;
       if (intent === "undo") { s.redo.push({ tree: prev, caret: displaced }); return; }
       if (intent === "redo") { s.undo.push({ tree: prev, caret: displaced }); return; }
       const kind = classifyTransition(prev, blocks);
-      if (kind === null) {
-        // The editor of the block being merged into closed: the run ends.
-        if (s.lastEdit?.editing && editingId(blocks) !== s.lastEdit.id) s.lastEdit = null;
-        return;
-      }
+      if (kind === null) return;
       const now = Date.now();
-      const editing = kind !== true && editingId(blocks) === kind;
+      const editing = kind !== true && editingId === kind;
       if (kind !== true && s.lastEdit?.id === kind
           && now - s.lastEdit.at < (editing && s.lastEdit.editing ? TYPING_MERGE_MS : EDIT_MERGE_MS)) {
         s.lastEdit.at = now;
@@ -186,15 +175,16 @@ export function useBlockHistory(blocks, setBlocks, opts) {
       s.lastEdit = kind === true ? null : { id: kind, at: now, editing };
       // A content change from an editor carries the selection it started from.
       const before = optsRef.current.caretBeforeRef?.current;
-      const caret = kind !== true && before?.id === kind ? { ...before } : caretIn(prev);
+      const caret = kind !== true && before?.id === kind ? { ...before } : caretOf(prevEditing);
       s.undo.push({ tree: prev, caret });
       if (s.undo.length > MAX_ENTRIES) s.undo.shift();
       s.redo = [];
     } finally {
       const live = optsRef.current.caretRef?.current;
       s.prevCaret = live ? { ...live } : null;
+      s.prevEditing = editingId;
     }
-  }, [blocks]);
+  }, [blocks, editingId]);
 
   // Stable, so a once-mounted key listener can call it. Returns the action
   // description, or false when empty. `inEditor`: from an open editor —
@@ -211,9 +201,10 @@ export function useBlockHistory(blocks, setBlocks, opts) {
     s.lastEdit = null;
     // The state being displaced keeps the cursor it has right now (read
     // before the restore re-syncs the editor's document).
-    s.displaced = caretIn(s.prev);
+    s.displaced = caretOf(o.editingId);
     const caret = inEditor && entry.caret && hasBlock(entry.tree, entry.caret.id) ? entry.caret : null;
-    o.setBlocks(withEditMode(entry.tree, caret?.id || null));
+    o.setBlocks(entry.tree);
+    o.onEditing?.(caret?.id || null);
     if (caret) o.onCaret?.(caret);
     return description;
   }, []);

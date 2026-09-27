@@ -289,7 +289,16 @@ export async function shareScenarios({ server, browser, alice, bob, step, until,
   });
 
   await step("share: an anonymous visitor sees the paper, the highlight and the image, read-only", async () => {
+    // A note linking to the paper and referencing a block on a page the
+    // share does not open: the share view looks both up through the token
+    // (/block-search), and the outside one stays unresolved.
+    const elsewhere = await account.api("/api/blocks", { method: "POST", body: { parent_id: "root", content: "Not shared" } });
+    const secret = await account.api("/api/blocks", { method: "POST", body: { parent_id: elsewhere.id, content: "an unshared secret" } });
+    const note = await account.api("/api/blocks", { method: "POST", body: {
+      parent_id: pdfPageId, content: `links: [the paper](/?page=${pdfPageId}) and [[${secret.id}]]` } });
     const ctx = await browser.newContext({ viewport: { width: 1280, height: 860 } });
+    const lookups = [];
+    ctx.on("response", (r) => { if (r.url().includes("/api/block-search")) lookups.push(r.status()); });
     const page = await openPage(ctx, `${server.base}/?share=${token}`);
     await page.waitForSelector(".readOnlyTitle", { timeout: 15000 });
     assert((await page.textContent(".readOnlyTitle")).includes("Rydberg paper"), "title in the share view");
@@ -299,6 +308,12 @@ export async function shareScenarios({ server, browser, alice, bob, step, until,
       const imgs = await page.$$eval("img.mdImg", (els) => els.map((e) => [e.getAttribute("src"), e.naturalWidth]));
       return imgs.length === 1 && imgs[0][0].includes("share=") && imgs[0][1] === 1;
     }, { what: "image served through the share token" });
+    await page.locator(".blockRow", { hasText: "links:" }).waitFor();
+    await until(() => lookups.length > 0, { what: "the note's links looked up" });
+    assertEq(lookups.filter((s) => s !== 200).length, 0, "lookups go through the share token");
+    assert(!(await page.textContent("body")).includes("an unshared secret"), "a block outside the share stays hidden");
+    await account.api(`/api/blocks/${note.id}`, { method: "DELETE" });
+    await account.api(`/api/blocks/${elsewhere.id}`, { method: "DELETE" });
     await page.locator(".blockRow", { hasText: "figure" }).locator(".blockBody").click();
     await sleep(400); // a negative check: nothing to wait for, so give an editor time to (not) appear
     assert((await page.$(".blockEditorCm")) == null, "no editor opens on a view-only share");

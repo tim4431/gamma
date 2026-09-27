@@ -415,6 +415,23 @@ class ShareScope:
         root = page_root_id(conn, block_id)
         return bool(root) and self.allows_page(conn, root)
 
+    def block_ids(self, conn) -> set[str]:
+        """Every block in reach — the pages and everything inside them — for
+        a read that scans the workspace (block search) and must see only
+        what the share opens."""
+        if self.page:
+            pages = [self.page]
+        else:
+            pages = [r[0] for r in conn.execute("SELECT id FROM unified_blocks WHERE parent_id = 'root'")
+                     if self.allows_page(conn, r[0])]
+        if not pages:
+            return set()
+        marks = ",".join("?" * len(pages))
+        return {r[0] for r in conn.execute(
+            f"WITH RECURSIVE reach(id) AS (SELECT id FROM unified_blocks WHERE id IN ({marks}) "
+            "UNION ALL SELECT b.id FROM unified_blocks b JOIN reach r ON b.parent_id = r.id) "
+            "SELECT id FROM reach", pages)}
+
     def allows_folder(self, name: str) -> bool:
         """Whether a folder-wide read (export) of ``name`` stays inside the
         scope: a folder share covers itself and its subfolders."""

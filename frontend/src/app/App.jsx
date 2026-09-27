@@ -47,14 +47,17 @@ import {
 
 import {
   setBlockText,
-  setBlockEditMode,
   addSiblingBlock,
   addChildBlock,
   addRootBlock,
   indentBlock,
   outdentBlock,
-  toggleCollapsed,
-  expandToBlock,
+  EMPTY_VIEW,
+  withEditing,
+  closeEditing,
+  isFolded,
+  toggleFold,
+  revealBlock,
   isFoldedAway,
   updateBlockTree,
   removeBlockTree,
@@ -91,7 +94,7 @@ import { InkToolbar } from "../ink/InkLayer";
 import { MAX_STROKES, appendStroke, duplicateStrokes, eraseAt, newInk, removeStrokes, restyleStrokes, toolStyle, transformStrokes, translateStrokes } from "../ink/ink";
 import * as inkStore from "../ink/inkStore";
 import { usePageCollab } from "../collaboration/usePageCollab";
-import { applyOps, applyPatch, keepUiFlags } from "../shared/model/blockOps";
+import { applyOps, applyPatch, keepEditingText } from "../shared/model/blockOps";
 import { PresenceBar } from "../collaboration/Presence";
 import { ShareAccessPill } from "../sharing/ShareAccess";
 import { BrandMark } from "../shared/ui/BrandMark";
@@ -3628,6 +3631,15 @@ function LibraryApp({ publicPage = null, initialServerConfig = null }) {
   const [flashingId, setFlashingId] = useState(null);
   const [highlightMenu, setHighlightMenu] = useState(null); // { id, x, y } or null
   const [focusedId, setFocusedId] = useState(null);
+  // The viewer's own state beside the tree (blockModel's `view`): the block
+  // whose editor is open and the folding they changed. Never in the tree:
+  // opening an editor or revealing a block is not an edit, and the live
+  // session and the undo history see only document changes.
+  const [view, setView] = useState(EMPTY_VIEW);
+  const viewRef = useRef(view);
+  viewRef.current = view;
+  const startEditing = (id) => setView((v) => withEditing(v, id));
+  const reveal = (id) => setView((v) => revealBlock(blocksRef.current, v, id));
   const [pageTitle, setPageTitle] = useState("");
   const [titleEditing, setTitleEditing] = useState(false);
   const [titleDraft, setTitleDraft] = useState("");
@@ -3648,6 +3660,12 @@ function LibraryApp({ publicPage = null, initialServerConfig = null }) {
   const blockRefs = useRef({});
   const pendingFocusRef = useRef(null);
   const pendingBlockScrollRef = useRef(null);
+  // A request to scroll to (and focus) a block's row once it is rendered:
+  // the id in the ref, and a counter the effect below listens to — a
+  // request must be answered even when nothing else changes (the block was
+  // never folded away, the tree is as it was).
+  const [blockScrollReq, setBlockScrollReq] = useState(0);
+  const scrollToBlock = (id) => { pendingBlockScrollRef.current = id; setBlockScrollReq((n) => n + 1); };
   // The AI agent's live footprint on the open page (handleAgentEvent):
   // aiMarks lights up the blocks it reads/edits (id → {kind, n}), aiLive is
   // the note edit it is still writing — streamed into the block (edit_block)
@@ -3696,6 +3714,8 @@ function LibraryApp({ publicPage = null, initialServerConfig = null }) {
     caretRef,
     caretBeforeRef,
     onCaret: (caret) => { pendingCaretRef.current = caret; },
+    editingId: view.editingId,
+    onEditing: (id) => setView((v) => withEditing(v, id)),
   });
   // After a restore the kept-open editor has synced the new text (child
   // effects run first); now put the cursor where the change was.
@@ -3731,13 +3751,12 @@ function LibraryApp({ publicPage = null, initialServerConfig = null }) {
       }
       pendingFocusRef.current = null;
     } else if (typeof req === "object" && req.reopen > 0) {
-      const block = findBlock(blocks, id);
-      if (block && !block.editMode) {
+      if (findBlock(blocks, id) && view.editingId !== id) {
         req.reopen -= 1;
-        setBlocks((prev) => setBlockEditMode(prev, id, true));
+        startEditing(id);
       }
     }
-  }, [blocks, readOnly]);
+  }, [blocks, view.editingId, readOnly]);
 
   // Merges an offline copy's sync decided on this page's blocks
   // (docs/dev/mirror.md): a chip on each such row (MergeResolver). Read on
@@ -3799,9 +3818,9 @@ function LibraryApp({ publicPage = null, initialServerConfig = null }) {
   const jumpToRef = useRef(null);
   jumpToRef.current = (pageId, blockId) => {
     setOpenPopover(null);
-    if (blockId) pendingBlockScrollRef.current = blockId;
+    if (blockId) scrollToBlock(blockId);
     if (pageId && pageId !== focusedBlockId) { openPage(pageId); return; }
-    if (blockId) setBlocks((prev) => expandToBlock(prev, blockId));
+    if (blockId) reveal(blockId);
   };
   useEffect(() => {
     const h = (e) => jumpToRef.current?.(e.detail?.page, e.detail?.block);
@@ -3820,16 +3839,16 @@ function LibraryApp({ publicPage = null, initialServerConfig = null }) {
       row.scrollIntoView({ block: "center", behavior: "smooth" });
       setFocusedId(id);
       pendingBlockScrollRef.current = null;
-    } else if (isFoldedAway(blocks, id)) {
-      // Inside a collapsed parent: unfold (a view change — no ops, no undo
-      // step) and try again once it renders.
-      setBlocks((prev) => expandToBlock(prev, id));
+    } else if (isFoldedAway(blocks, id, view)) {
+      // Inside a folded parent: unfold (the viewer's state — no ops, no
+      // undo step) and try again once it renders.
+      setView((v) => revealBlock(blocks, v, id));
     }
     // Otherwise the row isn't rendered yet (not in the tree yet, or the notes
     // window is closed or collapsed — a highlight made on the PDF alone):
     // keep the ref and try again on the next tree change or when the notes
     // come back.
-  }, [blocks, notesVisible, collapsedWins.notes, phonePanel]);
+  }, [blocks, view, blockScrollReq, notesVisible, collapsedWins.notes, phonePanel]);
 
   // A page's passive landing (openBlock): the notes scroll to where the
   // reader left off, else to the top, and that row flashes once — but no
@@ -4014,11 +4033,11 @@ function LibraryApp({ publicPage = null, initialServerConfig = null }) {
       return null;
     }
     if (findBlock(blocks)) {
-      pendingBlockScrollRef.current = id;
-      setBlocks((prev) => expandToBlock(prev, id));
+      scrollToBlock(id);
+      reveal(id);
     } else {
       pushNav(); // block-ref click = link jump to another page
-      pendingBlockScrollRef.current = id;
+      scrollToBlock(id);
       const rootId = pageId || refCache[id]?.page_root_id;
       await openBlock(rootId && rootId !== id ? rootId : id, { link: true });
     }
@@ -4026,7 +4045,7 @@ function LibraryApp({ publicPage = null, initialServerConfig = null }) {
 
   async function onFetchRefs(ids) {
     try {
-      const res = await fetch(`/api/block-search?ids=${ids.join(",")}`);
+      const res = await fetch(withShare(`${API}/block-search?ids=${ids.join(",")}`));
       const data = await res.json();
       if (data.blocks?.length) {
         setRefCache((prev) => {
@@ -4072,7 +4091,7 @@ function LibraryApp({ publicPage = null, initialServerConfig = null }) {
           const block = data.blocks?.[0];
           const rootId = block?.page_root_id;
           if (rootId && rootId !== initialBlockId) {
-            pendingBlockScrollRef.current = initialBlockId;
+            scrollToBlock(initialBlockId);
             pendingJumpRef.current = initialBlockId; // highlight blocks also jump the PDF
             openBlock(rootId, { link: true });
           } else {
@@ -4248,13 +4267,14 @@ function LibraryApp({ publicPage = null, initialServerConfig = null }) {
     return () => { if (timer) clearTimeout(timer); };
   }, [pdfUrl, pdfHidden, focusedBlockId, shareMode, recentThumbs]);
 
-  // `keepUi`: a refetch under a live page — the open editor (and its text)
-  // and the folding survive the swap.
+  // `keepUi`: a refetch under a live page — the open editor keeps its text
+  // (the view itself, editor and folding, lives beside the tree and is
+  // untouched by a refetch).
   async function loadBlocksForBlock(blockId, { keepUi = false } = {}) {
     try {
       const data = await apiJson(`${API}/blocks/${blockId}/subtree`);
       let children = normalizeBlocks((data.block?.children) || []);
-      if (keepUi) children = keepUiFlags(children, blocksRef.current);
+      if (keepUi) children = keepEditingText(children, blocksRef.current, viewRef.current.editingId);
       loadedSeqRef.current = data.seq ?? null;
       setBlocks(loaded(children));
       return children;
@@ -4794,7 +4814,7 @@ function LibraryApp({ publicPage = null, initialServerConfig = null }) {
       let out = prev;
       for (const line of lines) {
         const { blocks: next, newId } = addRootBlock(out);
-        out = updateBlockTree(next, newId, (b) => ({ ...b, content: line, editMode: false }));
+        out = updateBlockTree(next, newId, (b) => ({ ...b, content: line }));
       }
       return out;
     });
@@ -4891,6 +4911,7 @@ function LibraryApp({ publicPage = null, initialServerConfig = null }) {
 
     setFocusedBlockId(block?.id || "");
     setFocusedBlock(block || null);
+    setView(EMPTY_VIEW);
     setPageTitle(block?.content || defaultPageTitle(pageAttachment(block)));
     setBlocks(loaded(childBlocks));
     setDocId(props.doc_id || share.doc_id || "");
@@ -4954,6 +4975,7 @@ function LibraryApp({ publicPage = null, initialServerConfig = null }) {
       setMissingPage("");
       setFocusedBlockId(blockId);
       setFocusedBlock(block);
+      setView(EMPTY_VIEW);
       setPageTitle(block.content || t("Untitled"));
       setSummary(props.summary || "");
       setCategory(props.category || "");
@@ -4976,8 +4998,8 @@ function LibraryApp({ publicPage = null, initialServerConfig = null }) {
           seedBlockIdRef.current = seedId;
           // A page created from "New page" gets the title first (Notion-
           // style); the seed block waits for Enter there.
-          if (!opts?.focusTitle) pendingFocusRef.current = seedId;
-          setBlocks(loaded([{ id: seedId, content: "", children: [], collapsed: false, editMode: !opts?.focusTitle, properties: {} }]));
+          if (!opts?.focusTitle) { pendingFocusRef.current = seedId; startEditing(seedId); }
+          setBlocks(loaded([{ id: seedId, content: "", children: [], properties: {} }]));
         } else {
           setBlocks(loaded(childBlocks));
         }
@@ -5223,6 +5245,7 @@ function LibraryApp({ publicPage = null, initialServerConfig = null }) {
     clearSession();
     setFocusedBlockId(null);
     setFocusedBlock(null);
+    setView(EMPTY_VIEW);
     setBlocks(loaded([]));
     setPdfUrl("");
     setDocId("");
@@ -5904,12 +5927,12 @@ function LibraryApp({ publicPage = null, initialServerConfig = null }) {
   function addHighlight(highlight) {
     if (readOnly) return;
     const withId = { ...highlight, id: highlight.id || makeId() };
-    let nextBlocks = addHighlightAsBlock(blocks, withId);
+    const nextBlocks = addHighlightAsBlock(blocks, withId);
     // Open the new block immediately so the user can type the note without
     // an extra click. addHighlightAsBlock appends at the top level.
-    nextBlocks = nextBlocks.map((b) => b.id === withId.id ? { ...b, editMode: true } : b);
+    startEditing(withId.id);
     pendingFocusRef.current = withId.id;
-    pendingBlockScrollRef.current = withId.id;
+    scrollToBlock(withId.id);
     setBlocks(nextBlocks);
     // autosave effect will persist
     setStatus(t("Highlight saved."));
@@ -6021,7 +6044,7 @@ function LibraryApp({ publicPage = null, initialServerConfig = null }) {
     const missing = changes.filter((c) => c.after.strokes.length && !present.has(c.id));
     if (missing.length) {
       setBlocks((prev) => [...prev, ...missing.map((c) => ({
-        id: c.id, parentId: null, children: [], collapsed: false, editMode: false, content: "",
+        id: c.id, parentId: null, children: [], content: "",
         properties: { ink_url: "", pdf_page: c.page, ink_strokes: 0 },
       }))]);
     }
@@ -6153,8 +6176,8 @@ function LibraryApp({ publicPage = null, initialServerConfig = null }) {
     setInkFlash({ id, nonce: Date.now() });
   }
   function showInkInNotes(id) {
-    pendingBlockScrollRef.current = id;
-    setBlocks((prev) => expandToBlock(prev, id));
+    scrollToBlock(id);
+    reveal(id);
   }
   // The strip's keys while it is open: 1–9 arm the preset at that position,
   // P / H step through the pens / highlighters, E the eraser, L the lasso,
@@ -6373,7 +6396,7 @@ function LibraryApp({ publicPage = null, initialServerConfig = null }) {
     }
   }
 
-  const visibleBlocks = useMemo(() => flattenBlocks(blocks), [blocks]);
+  const treeBlocks = useMemo(() => flattenBlocks(blocks), [blocks]);
   // What the open page carries — THE switch for layout and page-level
   // affordances (docs/dev/block_centric.md). pdfUrl is only the viewer's input.
   const pageAttach = useMemo(() => pageAttachment(focusedBlock), [focusedBlock]);
@@ -6448,7 +6471,7 @@ function LibraryApp({ publicPage = null, initialServerConfig = null }) {
     const row = rowPropsRef.current;
     const block = !homeMode && focusedId ? findBlock(blocks, focusedId) : null;
     if (row && block && !readOnly) {
-      const bctx = { block, tree: blocks, readOnly, editor: null, row };
+      const bctx = { block, tree: blocks, view, folded: isFolded(block, view), readOnly, editor: null, row };
       for (const cmd of BLOCK_COMMANDS) {
         if (cmd.palette === false || cmd.needsEditor || (cmd.when && !cmd.when(bctx))) continue;
         out.push(entry(cmd, () => cmd.run(bctx)));
@@ -6507,9 +6530,10 @@ function LibraryApp({ publicPage = null, initialServerConfig = null }) {
         const id = target?.id || makeId();
         pendingFocusRef.current = id;
         setNotesVisible(true);
+        startEditing(id);
         setBlocks((prev) => target
-          ? updateBlockTree(prev, id, (b) => ({ ...b, editMode: true, properties: { ...b.properties, guide_demo: "attention-note" } }))
-          : [...prev, { id, content: "", children: [], editMode: true, properties: { guide_demo: "attention-note" } }]);
+          ? updateBlockTree(prev, id, (b) => ({ ...b, properties: { ...b.properties, guide_demo: "attention-note" } }))
+          : [...prev, { id, content: "", children: [], properties: { guide_demo: "attention-note" } }]);
         return id;
       },
     },
@@ -6946,7 +6970,7 @@ function LibraryApp({ publicPage = null, initialServerConfig = null }) {
   const prevHighlightsRef = useRef({ json: "", value: [] });
   const highlights = useMemo(() => {
     const byHlId = new Map();
-    for (const b of visibleBlocks) {
+    for (const b of treeBlocks) {
       if (b.properties?.highlight_id) byHlId.set(b.properties.highlight_id, b);
     }
     const next = blocksToHighlights(blocks).map((h) => {
@@ -6959,7 +6983,7 @@ function LibraryApp({ publicPage = null, initialServerConfig = null }) {
     if (json === prevHighlightsRef.current.json) return prevHighlightsRef.current.value;
     prevHighlightsRef.current = { json, value: next };
     return next;
-  }, [blocks, visibleBlocks]);
+  }, [blocks, treeBlocks]);
   const highlightColors = useMemo(
     () => Object.fromEntries(highlights.map((h) => [h.id, h.color])),
     [highlights]
@@ -7315,12 +7339,13 @@ function LibraryApp({ publicPage = null, initialServerConfig = null }) {
     const last = blocks[blocks.length - 1];
     if (last && !last.content && !(last.children || []).length) {
       pendingFocusRef.current = last.id;
-      setBlocks(setBlockEditMode(blocks, last.id, true));
+      startEditing(last.id);
       setFocusedId(last.id);
       return;
     }
     const { blocks: next, newId } = addRootBlock(blocks);
     pendingFocusRef.current = newId;
+    startEditing(newId);
     setBlocks(next);
     setFocusedId(newId);
   }
@@ -7360,9 +7385,9 @@ function LibraryApp({ publicPage = null, initialServerConfig = null }) {
                     e.currentTarget.blur();
                     // On a fresh page, Enter continues into its empty first block.
                     const first = blocksRef.current?.[0];
-                    if (blocksRef.current?.length === 1 && first && !first.content && !first.editMode) {
+                    if (blocksRef.current?.length === 1 && first && !first.content && viewRef.current.editingId !== first.id) {
                       pendingFocusRef.current = first.id;
-                      setBlocks((prev) => prev.map((b, i) => (i === 0 ? { ...b, editMode: true } : b)));
+                      startEditing(first.id);
                     }
                   }
                   else if (e.key === "Escape") { setTitleDraft(pageTitle); setTitleEditing(false); }
@@ -7384,8 +7409,8 @@ function LibraryApp({ publicPage = null, initialServerConfig = null }) {
                 peers={collab.peers}
                 onJump={(id) => {
                   if (!id) return;
-                  pendingBlockScrollRef.current = id;
-                  setBlocks((prev) => expandToBlock(prev, id));
+                  scrollToBlock(id);
+                  reveal(id);
                 }}
               />
             ) : null}
@@ -8307,13 +8332,14 @@ function LibraryApp({ publicPage = null, initialServerConfig = null }) {
                   ) : null}
                 </>
             ) : (
-            visibleBlocks.length === 0 ? (
+            treeBlocks.length === 0 ? (
               <>{notesTail ? null : <div className="empty">{t("No blocks yet.")}</div>}{backlinksPanel}{notesTail}</>
             ) : (
               (() => {
                 const rowProps = {
                   focusedId,
                   setFocusedId,
+                  view,
                   flashingId, // a page's landing row flashes once (landingRef)
                   // The AI agent's live footprint (handleAgentEvent); rootId
                   // places a ghost row for a block being created at top level.
@@ -8340,7 +8366,7 @@ function LibraryApp({ publicPage = null, initialServerConfig = null }) {
                   // chat attach); docNonce retries crops once the PDF is up.
                   captureArea: capturePdfArea,
                   docNonce: pdfDocNonce,
-                  allBlocks: visibleBlocks,
+                  allBlocks: treeBlocks,
                   highlightColors,
                   refCache,
                   onFetchRefs,
@@ -8376,7 +8402,7 @@ function LibraryApp({ publicPage = null, initialServerConfig = null }) {
                       if (caretRef.current?.id === id) caretRef.current = null;
                       collab.sendCursor({ block: id });
                     }
-                    setBlocks((prev) => setBlockEditMode(prev, id, editMode));
+                    setView((v) => (editMode ? withEditing(v, id) : closeEditing(v, id)));
                   },
                   peers: collab.peers,
                   merges,
@@ -8391,6 +8417,7 @@ function LibraryApp({ publicPage = null, initialServerConfig = null }) {
                     if (readOnly) return;
                     const { blocks: next, newId } = addSiblingBlock(blocks, id, { above });
                     pendingFocusRef.current = newId;
+                    startEditing(newId);
                     setBlocks(next);
                     setFocusedId(newId);
                   },
@@ -8398,12 +8425,16 @@ function LibraryApp({ publicPage = null, initialServerConfig = null }) {
                     if (readOnly) return;
                     const { blocks: next, newId } = addChildBlock(blocks, id);
                     pendingFocusRef.current = newId;
+                    // Under a folded parent the new child is unfolded into view.
+                    setView((v) => withEditing(revealBlock(next, v, newId), newId));
                     setBlocks(next);
                     setFocusedId(newId);
                   },
                   onIndent: (id) => {
                     if (readOnly) return;
-                    setBlocks(indentBlock(blocks, id));
+                    const next = indentBlock(blocks, id);
+                    setBlocks(next);
+                    setView((v) => revealBlock(next, v, id)); // its new parent may be folded
                     setFocusedId(id);
                   },
                   onOutdent: (id) => {
@@ -8412,8 +8443,9 @@ function LibraryApp({ publicPage = null, initialServerConfig = null }) {
                     setFocusedId(id);
                   },
                   onToggle: (id) => {
-                    const next = toggleCollapsed(blocks, id);
-                    setBlocks(next);
+                    const next = toggleFold(blocks, view, id);
+                    setBlocks(next.blocks);
+                    setView(next.view);
                   },
                   // Delete the subtree (the handle menu) or, from the
                   // keyboard's "delete line", the block alone with its
@@ -8423,7 +8455,7 @@ function LibraryApp({ publicPage = null, initialServerConfig = null }) {
                     if (readOnly) return;
                     let next = keepChildren ? removeBlockKeepChildren(blocks, id) : removeBlockTree(blocks, id);
                     if (focus && findBlock(next, focus)) {
-                      next = setBlockEditMode(next, focus, true);
+                      startEditing(focus);
                       pendingFocusRef.current = { id: focus, caret: "end" };
                       setFocusedId(focus);
                     }
@@ -8436,10 +8468,10 @@ function LibraryApp({ publicPage = null, initialServerConfig = null }) {
                   // stays with the editor).
                   onHop: (id, dir) => {
                     if (readOnly) return false;
-                    const target = visibleNeighbor(blocks, id, dir);
+                    const target = visibleNeighbor(blocks, id, dir, view);
                     if (!target) return false;
                     pendingFocusRef.current = { id: target.id, caret: dir < 0 ? "end" : "start" };
-                    setBlocks((prev) => setBlockEditMode(prev, target.id, true));
+                    startEditing(target.id);
                     setFocusedId(target.id);
                     return true;
                   },
@@ -8473,7 +8505,7 @@ function LibraryApp({ publicPage = null, initialServerConfig = null }) {
                     const clone = (b) => {
                       const { highlight_id, pdf_position, imported_annot, annot_stripped,
                         ...props } = b.properties || {};
-                      return { ...b, id: makeId(), editMode: false, properties: props,
+                      return { ...b, id: makeId(), properties: props,
                         children: (b.children || []).map(clone) };
                     };
                     const copy = clone(src);
@@ -8496,7 +8528,6 @@ function LibraryApp({ publicPage = null, initialServerConfig = null }) {
                     if (readOnly || !nodes?.length) return;
                     const toBlock = (n) => ({
                       id: makeId(), content: n.content || "", properties: {},
-                      collapsed: false, editMode: false,
                       children: (n.children || []).map(toBlock),
                     });
                     const created = nodes.map(toBlock);
@@ -9579,7 +9610,7 @@ function LibraryApp({ publicPage = null, initialServerConfig = null }) {
               onJump={jumpToHighlightId}
               onHighlightJump={(hlId, additive) => {
                 const b = flattenBlocks(blocks).find(b => b.properties?.highlight_id === hlId);
-                if (b) { pendingBlockScrollRef.current = b.id; setBlocks(prev => expandToBlock(prev, b.id)); }
+                if (b) { scrollToBlock(b.id); reveal(b.id); }
                 // Clicking a highlight also feeds the chat: quote as the
                 // selection (Ctrl+click appends), area rects as an image.
                 addHighlightToChat(highlights.find(h => h.id === hlId), additive);

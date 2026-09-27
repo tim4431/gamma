@@ -1,6 +1,13 @@
 // Logseq-style block model: each block has id, content, properties, children.
 // Highlights are blocks with properties.highlight_id set.
 // Free notes are blocks without properties.highlight_id.
+//
+// The tree is the DOCUMENT and nothing else: every change to it is an edit
+// the live session sends and the undo history records. What only this
+// viewer sees — the block whose editor is open, the folding they changed —
+// is a `view` kept beside the tree ({editingId, folds}, EMPTY_VIEW below),
+// never a flag on a node, so revealing a block or opening an editor can't
+// be mistaken for an edit, and an edit can't be mistaken for a load.
 import { COLORS } from "./highlightColors.js";
 
 const DEFAULT_COLOR = COLORS[0];
@@ -104,7 +111,6 @@ export function appendChild(blocks, id, newBlock) {
       return {
         ...b,
         children: [...(b.children || []), newBlock],
-        collapsed: false
       };
     }
     return {
@@ -114,15 +120,49 @@ export function appendChild(blocks, id, newBlock) {
   });
 }
 
-export function flattenBlocks(blocks, depth = 0, parentId = null) {
+// Every block of the tree in document order, each with its depth and
+// parentId (folding does not hide a block from a lookup — for what is on
+// screen, see visibleBlocks).
+export function flattenBlocks(blocks) {
+  return walkBlocks(blocks, null);
+}
+
+function walkBlocks(blocks, view, depth = 0, parentId = null) {
   const out = [];
   for (const b of blocks || []) {
     out.push(withLegacyAccessors({ ...b, depth, parentId }));
-    if (!b.collapsed) {
-      out.push(...flattenBlocks(b.children || [], depth + 1, b.id));
+    if (!view || !isFolded(b, view)) {
+      out.push(...walkBlocks(b.children || [], view, depth + 1, b.id));
     }
   }
   return out;
+}
+
+// --- the viewer's own state, beside the tree ---
+// `editingId`: the one block whose editor is open. `folds`: the folding of
+// the blocks this viewer touched (id → true folded / false open); a block
+// nobody touched here shows its stored `properties.collapsed`, the default
+// every viewer opens the page with.
+export const EMPTY_VIEW = Object.freeze({ editingId: null, folds: Object.freeze({}) });
+
+export function isFolded(block, view) {
+  const own = view?.folds?.[block.id];
+  return own === undefined ? blockCollapsed(block) : own;
+}
+
+export function withEditing(view, id) {
+  return (view || EMPTY_VIEW).editingId === id ? view || EMPTY_VIEW : { ...(view || EMPTY_VIEW), editingId: id };
+}
+
+// Close `id`'s editor — a blur from an editor that is no longer the open
+// one (another just opened) must not close that one.
+export function closeEditing(view, id) {
+  return view?.editingId === id ? { ...view, editingId: null } : view || EMPTY_VIEW;
+}
+
+// The blocks shown in the outliner, folded subtrees skipped.
+export function visibleBlocks(blocks, view) {
+  return walkBlocks(blocks, view || EMPTY_VIEW);
 }
 
 export function getParentInfo(blocks, id, parent = null) {
@@ -185,44 +225,46 @@ export function setBlockText(blocks, id, text) {
   return updateBlockTree(blocks, id, (b) => ({ ...b, content: text }));
 }
 
-export function setBlockEditMode(blocks, id, editMode) {
-  return updateBlockTree(blocks, id, (b) => ({ ...b, editMode }));
+// Fold or unfold `id`'s children: the viewer's own folding, and the stored
+// `properties.collapsed` with it (a document edit — the default the page
+// opens with next time, for everyone).
+export function toggleFold(blocks, view, id) {
+  const block = findBlock(blocks, id);
+  if (!block) return { blocks, view };
+  const folded = !isFolded(block, view);
+  return {
+    blocks: updateBlockTree(blocks, id, (b) => ({ ...b, properties: { ...b.properties, collapsed: folded } })),
+    view: { ...view, folds: { ...view.folds, [id]: folded } },
+  };
 }
 
-export function toggleCollapsed(blocks, id) {
-  return updateBlockTree(blocks, id, (b) => ({
-    ...b,
-    collapsed: !b.collapsed,
-    properties: { ...b.properties, collapsed: !b.collapsed },
-  }));
-}
-
-export function expandToBlock(blocks, targetId) {
-  let found = false;
-  function walk(list) {
-    return (list || []).map((b) => {
-      if (b.id === targetId) { found = true; return { ...b }; }
-      if (b.children && b.children.length > 0) {
-        const newChildren = walk(b.children);
-        if (found) return { ...b, collapsed: false, children: newChildren };
-      }
-      return b;
-    });
-  }
-  return walk(blocks);
-}
-
-// True when a collapsed ancestor hides `targetId` — what expandToBlock unfolds.
-export function isFoldedAway(blocks, targetId) {
-  const walk = (list, hidden) => {
+// The ancestors of `targetId` (the block itself excluded), top-most first;
+// [] for a root block, null for an unknown id.
+function ancestorsOf(blocks, targetId) {
+  const walk = (list, chain) => {
     for (const b of list || []) {
-      if (b.id === targetId) return hidden;
-      const found = walk(b.children, hidden || !!b.collapsed);
-      if (found !== null) return found;
+      if (b.id === targetId) return chain;
+      const found = walk(b.children, [...chain, b]);
+      if (found) return found;
     }
     return null;
   };
-  return walk(blocks, false) === true;
+  return walk(blocks, []);
+}
+
+// Unfold whatever hides `targetId` — a view change only, nothing the
+// document notices. The same view comes back when nothing hid it.
+export function revealBlock(blocks, view, targetId) {
+  const hiding = (ancestorsOf(blocks, targetId) || []).filter((b) => isFolded(b, view));
+  if (!hiding.length) return view;
+  const folds = { ...view.folds };
+  for (const b of hiding) folds[b.id] = false;
+  return { ...view, folds };
+}
+
+// True when a folded ancestor hides `targetId` — what revealBlock opens.
+export function isFoldedAway(blocks, targetId, view) {
+  return (ancestorsOf(blocks, targetId) || []).some((b) => isFolded(b, view));
 }
 
 function makeNewBlock({ parentId = null, properties = {} } = {}) {
@@ -230,8 +272,6 @@ function makeNewBlock({ parentId = null, properties = {} } = {}) {
     id: makeBlockId(),
     parentId,
     children: [],
-    collapsed: false,
-    editMode: true,
     content: "",
     properties: { ...properties },
   };
@@ -275,8 +315,6 @@ export function addHighlightAsBlock(blocks, highlight) {
     id,
     parentId: null,
     children: [],
-    collapsed: false,
-    editMode: false,
     content: highlight.comment?.text || "",
     properties: {
       highlight_id: id,
@@ -317,13 +355,11 @@ export function blocksToHighlights(blocks) {
   return out;
 }
 
-// --- normalize blocks from server (server doesn't send editMode/collapsed) ---
+// --- normalize blocks from server: every node gets a children array ---
 
 export function normalizeBlocks(blocks) {
   return (blocks || []).map((b) => ({
     ...b,
-    collapsed: b.properties?.collapsed ?? false,
-    editMode: false,
     children: normalizeBlocks(b.children || []),
   }));
 }
@@ -503,9 +539,9 @@ export function removeBlockKeepChildren(blocks, id) {
 }
 
 // The block shown right above (dir -1) or below (+1) `id` in the outliner,
-// collapsed subtrees skipped, or null at either end.
-export function visibleNeighbor(blocks, id, dir) {
-  const flat = flattenBlocks(blocks);
+// folded subtrees skipped, or null at either end.
+export function visibleNeighbor(blocks, id, dir, view) {
+  const flat = visibleBlocks(blocks, view);
   const i = flat.findIndex((b) => b.id === id);
   if (i < 0) return null;
   return flat[i + dir] || null;
