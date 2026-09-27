@@ -76,6 +76,11 @@ test("the first tours are manual; AI chat has steps per place, each ending on th
   assert.ok(aiTour.steps.filter((s) => s.do).every((s) => s.do.every((a) => !a.press && !a.click)), "the tour never sends");
 });
 
+test("a tour's end state is `restore`, never to be confused with its `finishCard`", () => {
+  assert.equal(TOURS.handwriting.restore, "pen", "the handwriting tour re-arms the pen when it runs to its end");
+  for (const tour of Object.values(TOURS)) assert.ok(!("finish" in tour), `${tour.id}: \`finish\` is now \`restore\``);
+});
+
 test("progress survives reload, separates accounts, and tolerates broken browser storage", () => {
   const values = new Map();
   const storage = () => ({ getItem: (k) => values.get(k), setItem: (k, v) => values.set(k, v) });

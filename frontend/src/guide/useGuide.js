@@ -157,7 +157,7 @@ const CREATES_GRACE_MS = 1500; // what turns up this soon was there already
 // the account's "Suggest tours" preference — off, nothing is offered by
 // itself; the Tours menu still works. facts: what App knows (view, hasPdf,
 // demo…), matched against `requires`. services: App's hands — show(surface) brings
-// up a tour's `show` surface, finish(what) restores what a tour's `finish`
+// up a tour's `show` surface, restore(what) restores what a tour's `restore`
 // names once its last step is done, openSettings(pane) serves the finish
 // card's AI tile, plus the demo helpers. tidy: closes App's transient
 // popovers when a step needs none of them.
@@ -253,14 +253,14 @@ export function useGuide({ enabled = true, suggest = true, scope = "", facts = {
       return { ...r, index: r.index + 1, done: false };
     });
   }, []);
-  // A tour that ran to its end hands App its `finish` (the handwriting tour
+  // A tour that ran to its end hands App its `restore` (the handwriting tour
   // ends with the eraser or lasso armed: "pen" re-arms the pen). Leaving a
   // tour early restores nothing.
   useEffect(() => {
     const tour = finished.current;
     if (run || !tour) return;
     finished.current = null;
-    if (tour.finish) servicesRef.current.finish?.(tour.finish);
+    if (tour.restore) servicesRef.current.restore?.(tour.restore);
   }, [run]);
   const next = useCallback(() => advance(), [advance]);
 

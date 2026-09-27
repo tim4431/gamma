@@ -227,9 +227,9 @@ Engine abilities available to every step:
   only shows on hover also shows then (the table's + strips).
 - **`show`** on a tour: a surface App brings up before the first step
   (`services.show("chat")`).
-- **`finish`** on a tour: what App restores once its last step is done
-  (`services.finish("pen")`: the handwriting tour ends with the lasso or the
-  eraser armed, so App re-arms the pen last drawn with). Leaving a tour
+- **`restore`** on a tour: what App restores once its last step is done
+  (`services.restore("pen")`: the handwriting tour ends with the lasso or
+  the eraser armed, so App re-arms the pen last drawn with). Leaving a tour
   early restores nothing. It is unrelated to `finishCard`, the card above,
   which `useGuide` hands the overlay as `finishCard` with `finishAction` for
   its tiles.

@@ -6618,9 +6618,9 @@ function LibraryApp({ publicPage = null, initialServerConfig = null }) {
   }, [homeBlocks]);
   const guide = useGuide({
     services: {
-      // A finished tour's `finish`: "pen" re-arms the pen last drawn with
+      // A finished tour's `restore`: "pen" re-arms the pen last drawn with
       // when the handwriting tour leaves the eraser or the lasso armed.
-      finish: (what) => {
+      restore: (what) => {
         if (what !== "pen") return;
         setInkUi((s) => (s.open && s.pen && (s.tool === "eraser" || s.tool === "select") ? { ...s, tool: s.pen, options: false } : s));
       },
