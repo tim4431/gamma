@@ -96,7 +96,7 @@ an amber **Tip** chip over one plain sentence that says why it helps, with
 | Citations in answers | an AI reply finishes with a citation link (`chat.cited`) | the link; a demo clicks it and waits for `citation.shown`, then the marked passage in the PDF |
 | Sharing a page | the page gets its first share link (`share.created`: the first audience tile picked or person invited) | (choose who can open it,) the link, who has access, general access (worded for what an anyone-with-the-link share exposes when it is one, `shareAudience`), stop sharing — inside the Share popover, top to bottom |
 | Editing tables | an editable table renders in the notes (`table.shown`) | (add one with /table,) the + strips, row/column handles, cells, the corner handle (copy or delete the whole table) |
-| Handwriting | the first stroke (`ink.stroke`) | (draw something,) tap the pen again for colour, width and pen vs monoline, erase part of it, undo, the lasso, the ink block in the notes |
+| Handwriting | the first stroke (`ink.stroke`) | (draw something,) the drawing's note block and its caption, tap the pen again for colour, width and pen vs monoline, erase part of it (Ctrl+Z brings it back), the lasso; finishing re-arms the pen |
 | Working together | another account or a link visitor comes onto the page (`peer.joined`; your own second tab or the desktop app beside the browser is nobody else) | the avatar stack, their block, undo |
 | Shared workspaces | the account belongs to a shared workspace (state) | the account menu's switcher and card |
 | hint: math keys | the live formula preview comes up (`math.previewed`) | the preview: Tab and `\` |
@@ -177,6 +177,10 @@ Engine abilities available to every step:
   only shows on hover also shows then (the table's + strips).
 - **`show`** on a tour: a surface App brings up before the first step
   (`services.show("chat")`).
+- **`finish`** on a tour: what App restores once its last step is done
+  (`services.finish("pen")`: the handwriting tour ends with the lasso or the
+  eraser armed, so App re-arms the pen last drawn with). Leaving a tour
+  early restores nothing.
 - **`Section guide="…"`** in the settings kit groups a section's header and
   rows under one anchor (the Share popover's Who has access and General
   access; its Link section carries `share.link` only once a link exists,
@@ -514,7 +518,8 @@ frontend/tests/e2e/scenarios/auth.mjs             demo mode: the guest lands and
 frontend/tests/e2e/scenarios/triggeredGuide.mjs   offers and hints: tables, sharing (offered, and from
                                                   the menu with and without a link), citations, math,
                                                   Ctrl+P, Back, workspaces, presence, handwriting from the
-                                                  menu (draw, style, erase, undo), Suggest tours off
+                                                  menu (draw, note, style, erase, lasso, the pen
+                                                  re-armed), Suggest tours off
 ```
 
 ## Validation

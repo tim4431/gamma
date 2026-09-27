@@ -1472,7 +1472,7 @@ function BlockRow({
           <span className="dotSlot dotSlotEmpty"><span className="noteBulletDot" /></span>
         )}
 
-        <div className="blockBody">
+        <div className="blockBody" data-guide={isInk ? "notes.ink" : undefined}>
           <div className="blockMeta">
             {block.page ? `p.${block.page}` : "note"}
           </div>

@@ -6485,6 +6485,12 @@ function LibraryApp({ publicPage = null, initialServerConfig = null }) {
     && homeBlocks.every((b) => !b.properties?.folder && !b.properties?.category), [homeBlocks]);
   const guide = useGuide({
     services: {
+      // A finished tour's `finish`: "pen" re-arms the pen last drawn with
+      // when the handwriting tour leaves the eraser or the lasso armed.
+      finish: (what) => {
+        if (what !== "pen") return;
+        setInkUi((s) => (s.open && s.pen && (s.tool === "eraser" || s.tool === "select") ? { ...s, tool: s.pen, options: false } : s));
+      },
       show: (surface) => {
         if (surface !== "chat") return;
         setChatHidden(false);

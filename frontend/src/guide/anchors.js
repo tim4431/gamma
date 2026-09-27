@@ -42,7 +42,7 @@ export const ANCHORS = {
   "ink.history": { view: "ink", open: ["pdf.inkButton"], description: "Undo and redo for handwriting" },
   "dock.notes": { view: "page", description: "The notes: docked beside a PDF, or filling the page without one" },
   "notes.editor": { view: "page", open: ["dock.notes"], description: "The active note editor" },
-  "notes.ink": { view: "ink", pick: "last", description: "A handwriting block in the notes" },
+  "notes.ink": { view: "ink", pick: "last", description: "A handwriting block in the notes: its caption and the drawing" },
   "notes.table": { view: "table", description: "An editable table in the notes" },
   "notes.tableAdd": { view: "table", description: "The strip under a table that adds a row" },
   "notes.tableCorner": { view: "table", description: "The corner handle that selects a whole table" },

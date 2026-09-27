@@ -133,8 +133,9 @@ const CREATES_GRACE_MS = 1500; // what turns up this soon was there already
 // the account's "Suggest tours" preference — off, nothing is offered by
 // itself; the Tours menu still works. facts: what App knows (view, hasPdf,
 // demo…), matched against `requires`. services: App's hands — show(surface) brings
-// up a tour's `show` surface, plus the demo helpers. tidy: closes App's
-// transient popovers when a step needs none of them.
+// up a tour's `show` surface, finish(what) restores what a tour's `finish`
+// names once its last step is done, plus the demo helpers. tidy: closes
+// App's transient popovers when a step needs none of them.
 export function useGuide({ enabled = true, suggest = true, scope = "", facts = {}, services = {}, tidy } = {}) {
   const servicesRef = useRef(services);
   servicesRef.current = services;
@@ -205,17 +206,28 @@ export function useGuide({ enabled = true, suggest = true, scope = "", facts = {
 
   // Moves on from step `from`, or from wherever the run is (null): a pass-over
   // the engine scheduled for one step never moves a later one.
+  const finished = useRef(null); // the tour whose last step just completed
   const advance = useCallback((from = null) => {
     setRun((r) => {
       if (!r || (from !== null && r.index !== from)) return r;
       if (r.index + 1 >= r.steps.length) {
         progress.current.write(r.tour, r.scope, { state: "done" });
         activity.current = null;
+        finished.current = r.tour;
         return null;
       }
       return { ...r, index: r.index + 1, done: false };
     });
   }, []);
+  // A tour that ran to its end hands App its `finish` (the handwriting tour
+  // ends with the eraser or lasso armed: "pen" re-arms the pen). Leaving a
+  // tour early restores nothing.
+  useEffect(() => {
+    const tour = finished.current;
+    if (run || !tour) return;
+    finished.current = null;
+    if (tour.finish) servicesRef.current.finish?.(tour.finish);
+  }, [run]);
   const next = useCallback(() => advance(), [advance]);
 
   const back = useCallback(() => {

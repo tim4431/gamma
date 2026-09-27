@@ -292,7 +292,7 @@ export async function triggeredGuideScenarios(env) {
     } finally { await a.ctx.close(); await own.ctx.close(); await v?.ctx.close(); }
   });
 
-  await step("triggered guide: the handwriting tour has the user draw first, then covers style, eraser and undo", async () => {
+  await step("triggered guide: the handwriting tour has the user draw first, leads with the note, and ends with the pen armed", async () => {
     const upload = await user.upload("/api/uploads", makePdf([["A page to write on"]]), "ink-tour.pdf", "application/pdf");
     const paper = await user.api(`/api/blocks/by-doc/${upload.doc_id}`, { method: "POST", body: { default_title: "Ink tour paper", source_url: upload.source_url } });
     const { ctx, page } = await open(`&page=${paper.id}`);
@@ -312,26 +312,33 @@ export async function triggeredGuideScenarios(env) {
       await page.waitForSelector(".pdfInkBar");
       const box = await page.locator('[data-page="1"]').boundingBox();
       await line([box.x + 100, box.y + 150], [box.x + 260, box.y + 170]);
+      // Why it is worth it first: the drawing is a note block, caption included.
+      await page.waitForSelector('[data-guide-overlay="ink-note"] .guideCard');
+      assertEq(await page.locator('[data-guide="notes.ink"][data-guide-active]').count(), 1, "the ink block is pointed at");
+      await primary(page).click();
       await page.waitForSelector('[data-guide-overlay="ink-style"] .guideCard');
       await page.click(".pdfInkBar .inkToolBtn.modeActive");
-      await page.waitForSelector('[data-guide-overlay="ink-options"] .guideCard');
-      await primary(page).click();
       await page.waitForSelector('[data-guide-overlay="ink-erase"] .guideCard');
       await page.click('[data-guide="ink.eraser"]');
       await line([box.x + 180, box.y + 120], [box.x + 180, box.y + 200]);
-      await page.waitForSelector('[data-guide-overlay="ink-undo"] .guideCard');
-      await page.getByRole("button", { name: "Undo ink", exact: true }).click();
       await page.waitForSelector('[data-guide-overlay="ink-lasso"] .guideCard');
-      await primary(page).click();
-      await page.waitForSelector('[data-guide-overlay="ink-note"] .guideCard');
+      assertEq(await page.locator(".guideSegments i").count(), 5, "five steps from the menu");
+      // The erase card's promise: Ctrl+Z brings the drawing back.
+      await page.keyboard.press("Control+z");
+      await page.waitForSelector('[data-guide="notes.ink"] svg.blockInkCard');
+      await page.click('[data-guide="ink.lasso"]');
       await primary(page).click();
       await until(async () => await page.locator(".guideCard").count() === 0);
       assertEq(await progress(page, "handwriting"), "done");
-      // With a drawing on the page, a replay starts at the tools instead.
+      // Finishing leaves the pen armed, not the lasso or the eraser: the next drag writes.
+      await until(async () => await page.locator('[data-guide="ink.lasso"].modeActive, [data-guide="ink.eraser"].modeActive').count() === 0,
+        { what: "no lasso or eraser armed" });
+      assertEq(await page.locator('.pdfInkBar .inkToolBtn.modeActive:not([aria-label="Hand"])').count(), 1, "the pen is armed again");
+      // With a drawing on the page, a replay starts at the drawing's note instead.
       await page.click('[data-guide="header.account"]');
       await page.click('[data-guide="account.tour"]');
       await page.click('[data-tour="handwriting"]');
-      await page.waitForSelector('[data-guide-overlay="ink-style"] .guideCard');
+      await page.waitForSelector('[data-guide-overlay="ink-note"] .guideCard');
       await page.keyboard.press("Escape");
       assertNoProblems(page);
     } finally { await ctx.close(); }

@@ -672,7 +672,7 @@ export function InkCard({ block, onJump }) {
   const pad = 6;
   const w = b[2] - b[0] + 2 * pad, h = b[3] - b[1] + 2 * pad;
   return (
-    <svg className="blockInkCard" data-guide="notes.ink" viewBox={`${b[0] - pad} ${b[1] - pad} ${w} ${h}`} width={w} height={h}
+    <svg className="blockInkCard" viewBox={`${b[0] - pad} ${b[1] - pad} ${w} ${h}`} width={w} height={h}
       role="img" aria-label={t("Handwriting")}
       onClick={onJump ? (e) => { e.stopPropagation(); onJump(block.id); } : undefined}>
       <Strokes ink={ink} />
