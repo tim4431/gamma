@@ -11,7 +11,7 @@ import { MenuSelect } from "../shared/ui/Menus";
 import { Section, SubDialog, Field, DialogButtons, Empty, UnitInput, AccountPicker } from "./SettingsKit";
 import { ManageWorkspaceDialog, useAccounts, ACCESS_OPTIONS, PUBLIC_ROLE_OPTIONS } from "./SettingsWorkspace";
 import { GlobeIcon, PenIcon, PlusIcon, UsersIcon } from "../shared/ui/Icons";
-import { t } from "../shared/i18n/i18n.js";
+import { t, tn } from "../shared/i18n/i18n.js";
 
 export function WorkspacesAdmin({ value }) {
   const { me, workspaces: mine, switchWorkspace, refreshSession, setStatus, confirm, closeSettings } = value;
@@ -43,7 +43,7 @@ export function WorkspacesAdmin({ value }) {
             {isPublic ? <span className="uiTag">{w.public_role === "editor" ? t("public · everyone edits") : t("public · everyone views")}</span> : null}
           </span>
           <span className="aiProvDesc">
-            {`${owners.length ? `owner ${owners.join(", ")}` : "no owner"} · ${w.members.length} member${w.members.length === 1 ? "" : "s"}`}
+            {`${owners.length ? t("owner {names}", { names: owners.join(", ") }) : t("no owner")} · ${tn("{n} member", "{n} members", w.members.length)}`}
             {` · ${fmtBytes(w.used_bytes)}`}
             {w.quota_mb ? t(" of {quota_mb} MB", { quota_mb: w.quota_mb }) : ""}
           </span>

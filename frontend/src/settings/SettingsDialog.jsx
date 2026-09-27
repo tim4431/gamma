@@ -189,7 +189,7 @@ async function requestReindex(setStatus, scheduledSuffix, wakeTasks) {
     if (result.scheduled || result.busy) wakeTasks?.();
     setStatus(result.busy
       ? t("Indexing is already running—see the tasks popover.") : result.scheduled
-        ? t("Re-indexing {scheduled} paper{_s} {scheduledSuffix}", { scheduled: result.scheduled, _s: result.scheduled === 1 ? "" : "s", scheduledSuffix })
+        ? tn("Re-indexing {n} paper {scheduledSuffix}", "Re-indexing {n} papers {scheduledSuffix}", result.scheduled, { scheduledSuffix })
         : t("No papers with PDFs to index."));
   } catch (err) {
     setStatus(t("Reindex failed: {message}", { message: err.message }));
@@ -290,7 +290,7 @@ function MetaStatusSection({ value }) {
       });
       value.setStatus(r.busy
         ? t("Indexing is already running—try again when it finishes.")
-        : t("Indexing {papers} in the background.", { papers: docIds.length === 1 ? "1 paper" : `${docIds.length} papers` }));
+        : tn("Indexing {n} paper in the background.", "Indexing {n} papers in the background.", docIds.length));
       value.wakeTasks?.();
       pollRefresh();
     } catch (err) {
@@ -364,7 +364,8 @@ function MetaStatusSection({ value }) {
       }
     }
     setBusy(null);
-    value.setStatus(t("Metadata: {ok} fetched{failed}{stopped}.", { ok, failed: failed ? `, ${failed} failed` : "", stopped: stopRef.current ? " (stopped)" : "" }));
+    value.setStatus([t("Metadata: {ok} fetched", { ok }), failed ? t("{failed} failed", { failed }) : "", stopRef.current ? t("stopped") : ""]
+      .filter(Boolean).join(" · "));
     refresh();
   }
 
@@ -392,10 +393,10 @@ function MetaStatusSection({ value }) {
   );
   const metaCell = (p) => {
     if (!p.has_meta) {
-      return p.meta_error ? cell("bad", "failed", p.meta_error) : cell("muted", "none", t("No metadata yet"));
+      return p.meta_error ? cell("bad", t("failed"), p.meta_error) : cell("muted", t("none"), t("No metadata yet"));
     }
     const src = metaSourceInfo({ source: p.meta_source, kind: p.meta_kind, unverified: p.meta_unverified });
-    if (!src) return cell("ok", "yes", t("Metadata resolved"));
+    if (!src) return cell("ok", t("yes"), t("Metadata resolved"));
     return cell(src.warn ? "bad" : p.meta_source === "ai" ? "muted" : "ok", src.short, src.hint);
   };
   // Text and index are separate columns: extraction state is only known once
@@ -410,9 +411,9 @@ function MetaStatusSection({ value }) {
   );
   const indexCell = (p) => (
     p.indexed
-      ? cell("ok", "indexed", t("In the search index"))
+      ? cell("ok", t("indexed"), t("In the search index"))
       : p.index_stale
-        ? cell("muted", "stale", t("Indexed with an older extractor version — Reindex refreshes it"))
+        ? cell("muted", t("stale"), t("Indexed with an older extractor version — Reindex refreshes it"))
         : cell("muted", "—", t("Not in the search index yet"))
   );
 
@@ -424,7 +425,7 @@ function MetaStatusSection({ value }) {
           <MenuSelect
             label={t("Show papers")} value={filterMode} onChange={setFilterMode}
             options={[
-              ["all", `All (${list.length})`],
+              ["all", t("All ({n})", { n: list.length })],
               ["attention", t("Needs attention")],
               ["unverified", t("Unverified AI ({n})", { n: unverified.length })],
               ["missing", t("Missing metadata ({n})", { n: missing.length })],
@@ -456,11 +457,11 @@ function MetaStatusSection({ value }) {
       {list.length ? (
         <>
           <div className="setStats">
-            <Stat icon={PaperIcon} label="verified" value={counts.verified} total={list.length}
+            <Stat icon={PaperIcon} label={t("verified")} value={counts.verified} total={list.length}
               title={t("Metadata from a registry (arXiv/DOI/Crossref), edited by hand, or a non-paper document — nothing left to verify. Missing and unverified AI records count against this.")} />
             <Stat icon={FileTextIcon} label={t("text layer")} value={counts.text} total={list.length}
               title={t("Papers whose PDF yielded extractable text")} />
-            <Stat icon={SearchIcon} label="indexed" value={counts.indexed} total={list.length}
+            <Stat icon={SearchIcon} label={t("indexed")} value={counts.indexed} total={list.length}
               title={t("Papers covered by the full-text search index")} />
           </div>
           <div className="metaStatTable">
@@ -521,11 +522,11 @@ function MetaStatusSection({ value }) {
             <div className="metaStatBatchRow">
               <span className="metaStatProgress">
                 {selected.size
-                  ? `${selected.size} selected`
+                  ? t("{n} selected", { n: selected.size })
                   : needsWork.length || toIndex.length
-                    ? [missing.length && `${missing.length} missing metadata`,
-                       unverified.length && `${unverified.length} unverified (AI)`,
-                       toIndex.length && `${toIndex.length} to index`]
+                    ? [missing.length && t("{n} missing metadata", { n: missing.length }),
+                       unverified.length && t("{n} unverified (AI)", { n: unverified.length }),
+                       toIndex.length && t("{n} to index", { n: toIndex.length })]
                         .filter(Boolean).join(" · ")
                     : t("Everything is verified and indexed")}
               </span>

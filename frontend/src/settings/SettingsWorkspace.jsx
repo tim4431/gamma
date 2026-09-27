@@ -32,8 +32,8 @@ const ROLE_TEXT = { owner: t("you own it"), editor: t("you can edit"), viewer: t
 // a shared one, your role.
 export function workspaceMeta(w) {
   if (w.mirror_of) return t("clone of {mirror_of}", { mirror_of: w.mirror_of });
-  if (w.personal) return w.default ? t("personal · default") : "personal";
-  return `${w.access === "public" ? "public · " : ""}${ROLE_LABEL[w.role] || w.role}`;
+  if (w.personal) return w.default ? t("personal · default") : t("personal");
+  return w.access === "public" ? t("public · {role}", { role: ROLE_LABEL[w.role] || w.role }) : ROLE_LABEL[w.role] || w.role;
 }
 export const ACCESS_OPTIONS = [["private", t("Private"), UsersIcon], ["public", t("Public"), GlobeIcon]];
 export const PUBLIC_ROLE_OPTIONS = [["viewer", t("Everyone can view")], ["editor", t("Everyone can edit")]];
@@ -173,7 +173,9 @@ export function AccessRows({ info, canEdit, onUpdate }) {
 export function StorageRow({ quota, me }) {
   if (!quota) return null;
   const who = quota.account
-    ? t("{workspace_bytes} here · counts against {s} storage", { workspace_bytes: fmtBytes(quota.workspace_bytes), s: quota.account === me ? "your" : `${quota.account}'s` })
+    ? quota.account === me
+      ? t("{workspace_bytes} here · counts against your storage", { workspace_bytes: fmtBytes(quota.workspace_bytes) })
+      : t("{workspace_bytes} here · counts against {account}'s storage", { workspace_bytes: fmtBytes(quota.workspace_bytes), account: quota.account })
     : quota.quota_mb ? t("this workspace's own quota · {quota_mb} MB", { quota_mb: quota.quota_mb }) : t("this workspace's own quota · unlimited");
   return (
     <Row icon={DatabaseIcon} label={t("Storage")} hint={who}
@@ -393,7 +395,7 @@ export function ManageWorkspaceDialog({ wsId, me, admin, accounts, confirm, setS
         const d = await ws.removeMember(username);
         if (!d) return;
         if (leaving) { onClose(); onLeft?.(wsId); return; }
-        done(`Removed ${username}.`);
+        done(t("Removed {username}.", { username }));
       },
     });
   }
@@ -405,7 +407,7 @@ export function ManageWorkspaceDialog({ wsId, me, admin, accounts, confirm, setS
       confirmLabel: t("Delete"), danger: true,
       onConfirm: async () => {
         const d = await ws.destroy();
-        if (d) { done(d.warning || `Deleted ${info?.name}.`); onClose(); onLeft?.(wsId); }
+        if (d) { done(d.warning || t("Deleted {name}.", { name: info?.name })); onClose(); onLeft?.(wsId); }
       },
     });
   }

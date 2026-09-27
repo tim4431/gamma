@@ -11,7 +11,7 @@ import { AlertCircleIcon, CheckIcon, CloudCheckIcon, EyeIcon, EyeOffIcon, Monito
 import { bindable, chordFromEvent } from "../shared/lib/hotkeys.js";
 import { KeyCaps } from "../shared/ui/KeyCaps.jsx";
 import { BROWSER_TAG, profileSyncState } from "./syncState.js";
-import { t } from "../shared/i18n/i18n.js";
+import { t, tn } from "../shared/i18n/i18n.js";
 import { fmtTokens } from "../chat/tokenUsage";
 
 export const SettingsDraftContext = React.createContext(null);
@@ -437,7 +437,7 @@ export function CharSlider({ value, onChange }) {
 
 // ~1800 characters is about one dense page of a paper — enough to make an
 // abstract character budget mean something.
-export const approxPages = (chars) => `≈ ${Math.max(1, Math.round(chars / 1800))} page${chars >= 2700 ? "s" : ""}`;
+export const approxPages = (chars) => { const n = Math.max(1, Math.round(chars / 1800)); return tn("≈ {n} page", "≈ {n} pages", n); };
 
 // Coverage tile: big count, what it counts, and how far along it is.
 export function Stat({ icon: Icon, label, value, total, title }) {
@@ -670,7 +670,7 @@ export function PercentMeter({ percent, barOnly, caption = "" }) {
       <span className="quotaBar">
         <span className={`quotaBarFill${state}`} style={{ width: `${pct ? Math.max(pct, 2) : 0}%` }} />
       </span>
-      {barOnly ? null : <span className="settingDesc">{caption || `${Math.round(pct)}% used`}</span>}
+      {barOnly ? null : <span className="settingDesc">{caption || t("{pct}% used", { pct: Math.round(pct) })}</span>}
     </span>
   );
 }

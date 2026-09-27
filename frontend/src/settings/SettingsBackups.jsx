@@ -15,7 +15,7 @@ import { BackupTasks } from "./BackupTasks";
 import { ActionMenu } from "../shared/ui/Menus";
 import { PaneHead, Section, Empty } from "./SettingsKit";
 import { DatabaseIcon, DownloadIcon, HardDriveIcon, ImportIcon, PlusIcon, Trash2Icon } from "../shared/ui/Icons";
-import { T, t } from "../shared/i18n/i18n.js";
+import { T, t, tn } from "../shared/i18n/i18n.js";
 
 // The one date format of this pane: "Sep 23, 3:00 AM UTC" — the time zone
 // matters because tasks are scheduled in UTC. `fallback` when there is no
@@ -82,7 +82,7 @@ export function WorkspaceBackups({ value }) {
       await loadList(w.id);
     }
     setBusy(null);
-    setStatus(t("Backed up {done} of {n} workspace{_s}.", { done, n: targets.length, _s: targets.length === 1 ? "" : "s" }));
+    setStatus(tn("Backed up {done} of {n} workspace.", "Backed up {done} of {n} workspaces.", targets.length, { done }));
   }
 
   function download(w, b) {
@@ -105,7 +105,7 @@ export function WorkspaceBackups({ value }) {
       confirmLabel: merging ? t("Merge") : t("Replace"),
       danger: !merging,
       onConfirm: async () => {
-        setStatus(merging ? t("Merging into {name}…", { name: w.name }) : `Restoring ${w.name}…`);
+        setStatus(merging ? t("Merging into {name}…", { name: w.name }) : t("Restoring {name}…", { name: w.name }));
         try {
           const d = await apiJson(`${API}/workspaces/${encodeURIComponent(w.id)}/backups/${encodeURIComponent(b.name)}/restore?mode=${mode}`, { method: "POST" });
           if (w.id === workspace?.id) {
@@ -113,9 +113,9 @@ export function WorkspaceBackups({ value }) {
             reloadWorkspace(); // every piece of in-memory state is stale now
             return;
           }
-          setStatus(merging ? t("Merged into {name}: {pages_added} pages added.", { name: w.name, pages_added: d.pages_added ?? 0 }) : `Restored ${w.name}.`);
+          setStatus(merging ? t("Merged into {name}: {pages_added} pages added.", { name: w.name, pages_added: d.pages_added ?? 0 }) : t("Restored {name}.", { name: w.name }));
         } catch (e) {
-          setStatus(`${merging ? "Merge" : "Restore"} failed: ${e.message}`);
+          setStatus(merging ? t("Merge failed: {message}", { message: e.message }) : t("Restore failed: {message}", { message: e.message }));
         }
       },
     });
@@ -149,7 +149,7 @@ export function WorkspaceBackups({ value }) {
         title={(
           <>
             {w.name}
-            {w.personal ? <span className="uiTag">{t("personal")}</span> : <span className="uiTag">{w.access === "public" ? "public" : "shared"}</span>}
+            {w.personal ? <span className="uiTag">{t("personal")}</span> : <span className="uiTag">{w.access === "public" ? t("public") : t("shared")}</span>}
             {w.id === workspace?.id ? <span className="uiTag">{t("open")}</span> : null}
           </>
         )}
@@ -178,10 +178,11 @@ export function WorkspaceBackups({ value }) {
             <span className="aiProvMeta">
               <span className="aiProvName">
                 {when(b)}
-                <span className="uiTag">{b.scheduled ? t("Automatic") : b.label || "backup"}</span>
+                <span className="uiTag">{b.scheduled ? t("Automatic") : b.label || t("backup")}</span>
               </span>
               <span className="aiProvDesc">
-                {fmtBytes(b.size_bytes)}{b.uploads ? ` · ${b.upload_files} upload${b.upload_files === 1 ? "" : "s"}` : t(" · databases only")}{b.by ? ` · by ${b.by}` : ""}
+                {[fmtBytes(b.size_bytes), b.uploads ? tn("{n} upload", "{n} uploads", b.upload_files) : t("databases only"),
+                  b.by ? t("by {name}", { name: b.by }) : ""].filter(Boolean).join(" · ")}
               </span>
             </span>
             <span className="aiProvActions">
@@ -221,7 +222,7 @@ export function WorkspaceBackups({ value }) {
           <Section title={t("Saved snapshots")} />
           <div className="reportModalBtns settingsAlignStart">
             <ActionMenu
-              label={t("Back up all {n} workspace{_s}", { n: owned.length, _s: owned.length === 1 ? "" : "s" })} icon={PlusIcon} disabled={busy != null || !owned.length}
+              label={tn("Back up {n} workspace", "Back up all {n} workspaces", owned.length)} icon={PlusIcon} disabled={busy != null || !owned.length}
               items={[
                 { icon: HardDriveIcon, label: T("Everything"), title: T("One complete snapshot per workspace you own"), onClick: () => backUpAll(true) },
                 { icon: DatabaseIcon, label: T("Databases only"), title: T("One small snapshot per workspace you own — no uploaded PDFs"), onClick: () => backUpAll(false) },
@@ -317,12 +318,12 @@ export function ServerBackups({ setStatus, confirm }) {
           <span className="aiProvMeta">
             <span className="aiProvName">
               {when(b)}
-              <span className="uiTag">{b.label || "backup"}</span>
+              <span className="uiTag">{b.label || t("backup")}</span>
             </span>
             <span className="aiProvDesc">
-              {fmtBytes(b.size_bytes)} · {(b.files || []).length} {t("database file")}{(b.files || []).length === 1 ? "" : "s"}
-              {b.uploads ? ` + ${b.upload_files || 0} uploads` : t(" · databases only")}
-              {b.schema_version != null ? ` · schema v${b.schema_version}` : ""}
+              {[fmtBytes(b.size_bytes), tn("{n} database file", "{n} database files", (b.files || []).length),
+                b.uploads ? tn("{n} upload", "{n} uploads", b.upload_files || 0) : t("databases only"),
+                b.schema_version != null ? t("schema v{version}", { version: b.schema_version }) : ""].filter(Boolean).join(" · ")}
             </span>
           </span>
           <span className="aiProvActions">

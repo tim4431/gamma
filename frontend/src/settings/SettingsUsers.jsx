@@ -173,7 +173,7 @@ export function UsersSettings({ value, selfOnly = false }) {
       onConfirm: async () => {
         const d = await usersCall(`/${encodeURIComponent(u.username)}`, "DELETE");
         if (!d) return;
-        setStatus(d.warning || `Deleted ${u.username}.`);
+        setStatus(d.warning || t("Deleted {name}.", { name: u.username }));
         setEdit(null);
       },
     });
@@ -288,7 +288,7 @@ export function UsersSettings({ value, selfOnly = false }) {
           {u.is_guest || u.max_upload_mb != null ? (
             <span className="aiProvDesc">
               {[u.is_guest ? t("shared demo workspace, resets daily") : "",
-                u.max_upload_mb != null ? `max file ${u.max_upload_mb} MB` : ""].filter(Boolean).join(" · ")}
+                u.max_upload_mb != null ? t("max file {mb} MB", { mb: u.max_upload_mb }) : ""].filter(Boolean).join(" · ")}
             </span>
           ) : null}
           <QuotaMeter usedBytes={u.used_bytes} quotaMb={u.quota_mb ?? defaults?.quota_mb} />

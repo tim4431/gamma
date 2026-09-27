@@ -244,7 +244,7 @@ export function BackupTasks({ workspaces, confirm, onRefresh }) {
             <td><ActionMenu label={t("Actions for {name}", { name: task.name })} icon={MoreIcon} iconOnly disabled={running || busy === task.id} items={[
               { label: T("Run now"), icon: ClockIcon, onClick: () => action(task, "run") },
               { label: T("Edit task"), icon: DatabaseIcon, onClick: () => setEditor(task) },
-              { label: T("Duplicate task"), icon: PlusIcon, onClick: () => setEditor({ ...task, id: undefined, name: `${task.name} copy` }) },
+              { label: T("Duplicate task"), icon: PlusIcon, onClick: () => setEditor({ ...task, id: undefined, name: t("{name} copy", { name: task.name }) }) },
               { label: T("Delete task"), icon: Trash2Icon, onClick: () => confirm({ title: T("Delete backup task"), message: t("Delete “{name}”? Existing snapshots are kept.", { name: task.name }), confirmLabel: t("Delete task"), danger: true, onConfirm: () => action(task, "delete") }) },
             ]} /></td>
           </tr>;
