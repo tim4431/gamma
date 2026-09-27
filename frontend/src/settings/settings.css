@@ -306,7 +306,6 @@
 .setField:last-child { margin-bottom: 0; }
 .setFieldLabel { font-size: var(--fs-sm); font-weight: 600; color: var(--text-primary); }
 .setFieldHint { display: block; margin: -1px 0 2px; font-weight: 400; }
-.setFieldHint::first-letter { text-transform: uppercase; }
 .setField .aiKeyInput { margin-bottom: 0; }
 /* DialogButtons' footnote: what the disabled primary button is waiting for. */
 .reportModalBtns .setFootnote {

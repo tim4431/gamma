@@ -607,7 +607,7 @@ function ProviderForm({ value, onCancel }) {
                 {aiKeysForm.oauthState ? t("Re-open ChatGPT sign-in") : t("Open ChatGPT sign-in")}
               </button>
             </div>
-            <Field label={t("Callback URL")} hint={t("the full address the sign-in ended on")}>
+            <Field label={t("Callback URL")} hint={t("The full address the sign-in ended on")}>
               <input
                 className="aiKeyInput" type="text" spellCheck={false}
                 placeholder="http://localhost:1455/auth/callback?code=…"
@@ -618,7 +618,7 @@ function ProviderForm({ value, onCancel }) {
           </>
         ) : (
           <>
-            <Field label={t("API key")} hint={aiKeysForm.id ? t("leave empty to keep the current one") : null}>
+            <Field label={t("API key")} hint={aiKeysForm.id ? t("Leave empty to keep the current one") : null}>
               <PasswordInput
                 autoComplete="new-password" spellCheck={false}
                 placeholder={keyHelp?.key_placeholder || t("API key")}
@@ -631,7 +631,7 @@ function ProviderForm({ value, onCancel }) {
                 {t("Get a key at {where}", { where: keyWhere })}<ExternalLinkIcon size={14} />
               </a>
             ) : null}
-            {service === "custom" ? <Field label={t("Base URL")} hint={t("optional — default {default_base_url}", { default_base_url: protocol?.default_base_url || "" })}>
+            {service === "custom" ? <Field label={t("Base URL")} hint={t("Optional — default {default_base_url}", { default_base_url: protocol?.default_base_url || "" })}>
               <input
                 className="aiKeyInput" type="text" spellCheck={false}
                 placeholder={protocol?.default_base_url || ""}
@@ -692,14 +692,14 @@ function ProviderForm({ value, onCancel }) {
         ) : null}
         <details className="aiMoreOptions" open={moreOpen} onToggle={(event) => setMoreOpen(event.currentTarget.open)}>
           <summary>{t("More options — name, test model")}</summary>
-          <Field label={t("Name")} hint={t('optional — e.g. "work key"')}>
+          <Field label={t("Name")} hint={t('Optional — e.g. "work key"')}>
             <input
               className="aiKeyInput" type="text" spellCheck={false}
               value={aiKeysForm.name}
               onChange={(event) => setAiKeysForm((form) => ({ ...form, name: event.target.value }))}
             />
           </Field>
-          <Field label={t("Test model")} hint={t("used by the Test button and the login connection check")}>
+          <Field label={t("Test model")} hint={t("Used by the Test button and the login connection check")}>
             <MenuSelect
               label={t("Test model")}
               value={formModels.includes(aiKeysForm.test_model) ? aiKeysForm.test_model : ""}

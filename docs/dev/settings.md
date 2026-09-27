@@ -497,7 +497,8 @@ An irreversible action sits in the pane's or dialog's Danger zone
 (`Section tone="danger"`; the rules are in [ui-design.md](ui-design.md)
 "Dialogs"). Editor dialogs share one layout. A `SubDialog`'s title row
 carries the × unless `closeButton={false}`. Each `Field` puts the label on
-its own line, one hint line under it and the control below. A
+its own line, one hint line under it (a sentence, capital first) and the
+control below. A
 `DialogButtons` footer's `footnote` says what a disabled primary button
 waits for ("Fill in the server and its token to continue."). Editor dialogs
 accept a `draft` value for dismissal protection. See

@@ -102,24 +102,24 @@ export function MirrorDialog({ busy, error, onSubmit, onClose, candidates = [] }
   return (
     <SubDialog title={t("Clone a remote workspace")} onClose={onClose} draft={url || token}>
       <div className="settingsForm">
-      <Field label={t("Origin server")} hint={t("the other Gamma, e.g. https://nas.local:8000")}>
+      <Field label={t("Origin server")} hint={t("The other Gamma, e.g. https://nas.local:8000")}>
         <input className="aiKeyInput" value={url} autoFocus placeholder="https://" onChange={(e) => setUrl(e.target.value)} />
       </Field>
-      <Field label={t("Token")} hint={t("made on that server: Settings → Integrations → Manual setup, with the “Read and write” scope, for the workspace to clone")}>
+      <Field label={t("Token")} hint={t("Made on that server: Settings → Integrations → Manual setup, with the “Read and write” scope, for the workspace to clone")}>
         <input className="aiKeyInput" type="password" value={token} placeholder={t("gamma_…")} onChange={(e) => setToken(e.target.value)} />
       </Field>
       {candidates.length ? (
-        <Field label={t("Into")} hint={t("a new workspace, or one of yours that already holds a copy (an imported backup, a clone whose origin was removed)")}>
+        <Field label={t("Into")} hint={t("A new workspace, or one of yours that already holds a copy (an imported backup, a clone whose origin was removed)")}>
           <MenuSelect block value={into} onChange={setInto}
             options={[["", t("A new workspace")], ...candidates.map((w) => [w.id, w.name])]} />
         </Field>
       ) : null}
       {into ? (
-        <Field label={t("If a page differs")} hint={t("both versions are kept; the other waits under Conflicts")}>
+        <Field label={t("If a page differs")} hint={t("Both versions are kept; the other waits under Conflicts")}>
           <Segmented value={adopt} onChange={setAdopt} options={[["theirs", t("Take remote's")], ["mine", t("Keep local")]]} />
         </Field>
       ) : (
-        <Field label={t("Name here")} hint={t("optional — defaults to the origin workspace's name")}>
+        <Field label={t("Name here")} hint={t("Optional — defaults to the origin workspace's name")}>
           <input className="aiKeyInput" value={name} onChange={(e) => setName(e.target.value)} />
         </Field>
       )}
