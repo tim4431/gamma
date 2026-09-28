@@ -556,6 +556,72 @@ export async function noteScenarios({ server, browser, alice, step, until, sleep
     }
   });
 
+  // Ctrl+F on a page opens the compact find bar (Settings → Search). With no
+  // PDF to step through it still counts what the details would list, and
+  // says when the notes search stopped early.
+  await step("notes: the compact find bar on a notes page counts the results and says when the search stopped early", async () => {
+    const pg = await alice2.api("/api/pages", { method: "POST", body: { title: "Compact find" } });
+    await alice2.api(`/api/pages/${pg.id}/ops`, { method: "POST", body: { client: "e2e", ops: [
+      { op: "insert", id: "cfnote", parent: pg.id, position: "a0", content: "a quokkafind note here" }] } });
+    const p2 = await openPage(ctx, `${server.base}/?ws=${second.id}&page=${pg.id}`);
+    const unroute = await partialBlockSearch(p2);
+    try {
+      await row(p2, "quokkafind").waitFor();
+      await p2.click("button[aria-label='Search']");
+      await p2.waitForSelector(".searchPopover .searchInput");
+      const details = p2.locator("button[aria-label='Toggle result details']");
+      if (/\bon\b/.test(await details.getAttribute("class"))) await details.click();
+      await p2.fill(".searchPopover .searchInput", "quokkafind");
+      const summary = p2.locator(".searchPopover .searchResult", { hasText: "1 result — show it" });
+      await summary.waitFor();
+      await p2.locator(".searchPopover .searchHint", { hasText: "Stopped early — refine the search to see more." }).waitFor();
+      assertEq(await p2.locator(".searchPopover .searchSection").count(), 0, "compact: no result lists");
+      await summary.click();
+      await p2.locator(".searchPopover .searchSection", { hasText: "Notes on this page" }).waitFor();
+      await p2.keyboard.press("Escape");
+      assertNoProblems(p2);
+    } finally {
+      await unroute();
+      await p2.close();
+    }
+  });
+
+  // "Paste as → Blocks" splits an outline into blocks (POST
+  // /api/markdown-blocks); pasted into an empty line, they take its place.
+  await step("notes: Paste as Blocks counts every block it made and leaves no empty line behind", async () => {
+    const pg = await alice2.api("/api/pages", { method: "POST", body: { title: "Paste blocks" } });
+    await alice2.api(`/api/pages/${pg.id}/ops`, { method: "POST", body: { client: "e2e", ops: [
+      { op: "insert", id: "pbfirst", parent: pg.id, position: "a0", content: "above the paste" }] } });
+    const p2 = await openPage(ctx, `${server.base}/?ws=${second.id}&page=${pg.id}`);
+    try {
+      await editRow(p2, "above the paste");
+      await p2.keyboard.press("Shift+Enter");
+      await p2.waitForFunction(() => {
+        const ed = document.activeElement?.closest(".cm-content");
+        return !!ed && (ed.querySelector(".cm-placeholder") != null || ed.textContent === "");
+      }, null, { timeout: 5000 });
+      await p2.evaluate((text) => {
+        const dt = new DataTransfer();
+        dt.setData("text/plain", text);
+        document.activeElement.closest(".cm-content")
+          .dispatchEvent(new ClipboardEvent("paste", { clipboardData: dt, bubbles: true, cancelable: true }));
+      }, "- one\n  - one a\n  - one b\n- two");
+      await p2.locator(".slashMenu .slashMenuItem", { hasText: "Blocks" }).first().click();
+      await p2.getByText("Pasted 4 blocks.").waitFor();
+      await until(async () => same(await tree(alice2, pg.id), [
+        { content: "above the paste", children: [] },
+        { content: "one", children: [{ content: "one a", children: [] }, { content: "one b", children: [] }] },
+        { content: "two", children: [] },
+      ]), { what: "the outline took the empty line's place" });
+      await until(async () => (await p2.locator(".blockEditorCm .cm-content").innerText()) === "two",
+        { what: "the caret ends in the last pasted block" });
+      await closeEditor(p2);
+      assertNoProblems(p2);
+    } finally {
+      await p2.close();
+    }
+  });
+
   // Text over the server's limit (collabSession's MAX_CONTENT, 200,000
   // characters) is held back: the notice says why, and the editor stays open
   // on it (App's onStartEdit) until it is short enough to save.
@@ -569,6 +635,9 @@ export async function noteScenarios({ server, browser, alice, step, until, sleep
       await p2.keyboard.insertText(" " + "word ".repeat(40001));
       const notice = p2.getByText(/^A note is too long to save \(at most 200,000 characters\)/);
       await notice.waitFor();
+      // The whole sentence shows: the pill wraps rather than ending in "…".
+      assert(await p2.locator(".statusPill.error .pillText").evaluate((el) => el.scrollWidth <= el.clientWidth + 1
+        && getComputedStyle(el).whiteSpace === "normal"), "the notice wraps");
       await p2.evaluate(() => document.activeElement?.blur());
       await sleep(300);
       assertEq(await p2.locator(".blockEditorCm").count(), 1, "the editor stays open on the long text");

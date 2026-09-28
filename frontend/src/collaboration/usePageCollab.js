@@ -30,12 +30,14 @@ function socketUrl(pageId) {
 //   onReload(pageId)          — refetch the tree (a change ops can't express)
 //   onStatus(text)            — the status line
 //   onSaveNotice(text, kind)  — the lasting save notice (collabSession.js)
+//   onGone(pageId, gone)      — the page went to Recently deleted, or is back (null)
 // Returns the session's commit/flush/hasPending/sendCursor/overlay/
-// reloadFailed/tooLong, `peers`, `me`, and `reconnect` (reopen the socket —
-// after a display-name change, since the name travels in the handshake).
-// While edits are unsaved, leaving the tab asks first (beforeunload); a tab
-// going to the background flushes (a phone may kill it without a pagehide),
-// and the browser coming back online retries a failed save at once.
+// reloadFailed/tooLong/gone, `peers`, `me`, and `reconnect` (reopen the
+// socket — after a display-name change, since the name travels in the
+// handshake). While edits are unsaved, leaving the tab asks first
+// (beforeunload); a tab going to the background flushes (a phone may kill it
+// without a pagehide), and the browser coming back online or the window
+// regaining focus retries a failed save at once.
 export function usePageCollab(opts) {
   const o = useRef(opts);
   o.current = opts;
@@ -79,11 +81,13 @@ export function usePageCollab(opts) {
     window.addEventListener("beforeunload", onLeave);
     document.addEventListener("visibilitychange", onVisibility);
     window.addEventListener("online", onOnline);
+    window.addEventListener("focus", onOnline);
     return () => {
       window.removeEventListener("pagehide", onHide);
       window.removeEventListener("beforeunload", onLeave);
       document.removeEventListener("visibilitychange", onVisibility);
       window.removeEventListener("online", onOnline);
+      window.removeEventListener("focus", onOnline);
     };
   }, [session]);
 
@@ -96,7 +100,7 @@ export function usePageCollab(opts) {
   return {
     commit: session.commit, flush: session.flush, hasPending: session.hasPending, peers, me,
     sendCursor: session.sendCursor, overlay: session.overlay, reloadFailed: session.reloadFailed,
-    tooLong: session.tooLong,
+    tooLong: session.tooLong, gone: session.gone,
     reconnect: () => { if (enabled && pageId) session.connect(pageId); },
   };
 }

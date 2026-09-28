@@ -16,9 +16,10 @@ const days = [[1, t("Mon")], [2, t("Tue")], [3, t("Wed")], [4, t("Thu")], [5, t(
 const SCOPES = [["all_owned", t("All I own")], ["selected", t("Selected")]];
 const FREQUENCIES = [["hourly", t("Hourly")], ["daily", t("Daily")], ["weekly", t("Weekly")], ["monthly", t("Monthly")], ["custom", t("Custom schedule (cron)")]];
 const UNITS = [["days", t("Days")], ["weeks", t("Weeks")], ["months", t("Months (30 days)")], ["count", t("Snapshots per workspace")]];
-// The server's bound on a task's retention, in days or snapshots
-// (backup_schedule.MAX_RETENTION).
+// The server's bounds (backup_schedule.py): a task's retention, in days or
+// snapshots (MAX_RETENTION), and the tasks one account keeps (MAX_TASKS).
 const MAX_RETENTION = 90;
+const MAX_TASKS = 5;
 
 // This browser's offset from UTC and its zone's short name ("PDT"): what a
 // daily, weekly or hourly schedule is entered and shown in (backupSchedule.js).
@@ -218,9 +219,11 @@ export function BackupTasks({ workspaces, confirm, onRefresh }) {
   }
 
   const owned = workspaces.filter((w) => w.role === "owner");
+  const full = (tasks?.length || 0) >= MAX_TASKS;
+  const limitHint = t("You can keep up to {n} backup tasks. Delete one to add another.", { n: MAX_TASKS });
   return <>
-    <Section title={t("Periodic backup tasks")} action={<button className="uiBtn" disabled={!owned.length} onClick={() => setEditor({})}
-      title={t("Runs while the server is on. Missed runs catch up once; failed tasks retry after an hour.")}><PlusIcon size={14} /> {t("Add task")}</button>} />
+    <Section title={t("Periodic backup tasks")} action={<button className="uiBtn" disabled={!owned.length || full} onClick={() => setEditor({})}
+      title={full ? limitHint : t("Runs while the server is on. Missed runs catch up once; failed tasks retry after an hour.")}><PlusIcon size={14} /> {t("Add task")}</button>} />
     {error ? <div className="backupTaskError aiKeysError" role="alert">{error}<button className="uiBtn sm" onClick={() => { setError(""); load(); }}>{t("Retry")}</button></div> : null}
     {tasks === null && !error ? <Empty icon={ClockIcon}>{t("Loading tasks…")}</Empty> : null}
     {tasks?.length === 0 ? <Empty icon={ClockIcon}>{t("No tasks yet. Add one for a nightly backup, or a schedule of your own.")}</Empty> : null}
@@ -247,12 +250,13 @@ export function BackupTasks({ workspaces, confirm, onRefresh }) {
             <td><ActionMenu label={t("Actions for {name}", { name: task.name })} icon={MoreIcon} iconOnly disabled={running || busy === task.id} items={[
               { label: T("Run now"), icon: ClockIcon, onClick: () => action(task, "run") },
               { label: T("Edit task"), icon: DatabaseIcon, onClick: () => setEditor(task) },
-              { label: T("Duplicate task"), icon: PlusIcon, onClick: () => setEditor({ ...task, id: undefined, name: t("{name} copy", { name: task.name }) }) },
+              { label: T("Duplicate task"), icon: PlusIcon, disabled: full, title: full ? limitHint : undefined, onClick: () => setEditor({ ...task, id: undefined, name: t("{name} copy", { name: task.name }) }) },
               { label: T("Delete task"), icon: Trash2Icon, onClick: () => confirm({ title: T("Delete backup task"), message: t("Delete “{name}”? Existing snapshots are kept.", { name: task.name }), confirmLabel: t("Delete task"), danger: true, onConfirm: () => action(task, "delete") }) },
             ]} /></td>
           </tr>;
         })}</tbody></table>
     </div>}
+    {full ? <p className="settingsPaneHint">{limitHint}</p> : null}
     {tasks?.filter((t) => t.last_error).map((it) => <p key={it.id} className="settingsPaneHint aiKeysError" role="status"><strong>{it.name}:</strong> {it.last_error}{it.enabled ? t(" Next attempt: {next_run}.", { next_run: date(it.next_run) }) : ""}</p>)}
     {editor !== null ? <TaskEditor initial={editor.name !== undefined ? editor : null} workspaces={workspaces} onClose={() => setEditor(null)} onSaved={() => { setEditor(null); load(); }} /> : null}
   </>;

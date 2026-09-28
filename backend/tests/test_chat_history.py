@@ -99,8 +99,10 @@ def test_folder_rename_carries_history(guest):
     assert [s["title"] for s in _sessions(guest, "home:hr2")] == ["root"]
     assert [s["title"] for s in _sessions(guest, "home:hr2/sub")] == ["sub"]
     assert [s["title"] for s in _sessions(guest, "home:hrx")] == ["other"]
+    # a folder delete keeps the history where it was (the folder may come back)
     guest.post("/api/folders/rename", json={"src": "hr2", "dst": ""})
-    assert _sessions(guest, "home:hr2") == [] and _sessions(guest, "home:hr2/sub") == []
+    assert [s["title"] for s in _sessions(guest, "home:hr2")] == ["root"]
+    assert [s["title"] for s in _sessions(guest, "home:hr2/sub")] == ["sub"]
 
 
 def test_page_delete_drops_its_history(guest):

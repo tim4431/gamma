@@ -30,6 +30,9 @@ const CODE_NAMES = new Set([
   "sandbox", "allow", "loading", "decoding", "encType", "spellCheck", "autoCapitalize", "enterKeyHint",
   "pattern", "min", "max", "step", "width", "height", "size", "language", "status", "kindLabel",
 ]);
+// Attributes whose value is shown as text even when it is one lowercase word
+// (a unit, a placeholder, a stat's label), which prose() lets pass as a key.
+const TEXT_ATTRS = /^attr (label|unit|placeholder|title|hint|aria-label|alt)$/;
 // Calls whose string arguments are code.
 const CODE_CALLS = /^(console\.\w+|fetch|apiJson|localStorage\.\w+|sessionStorage\.\w+|\w*\.?querySelector(All)?|\w*\.?closest|\w*\.?addEventListener|\w*\.?removeEventListener|\w*\.?setAttribute|\w*\.?getAttribute|\w*\.?removeAttribute|\w*\.?getPropertyValue|\w*\.?setProperty|\w*\.?matchMedia|\w*\.?includes|\w*\.?startsWith|\w*\.?endsWith|\w*\.?split|\w*\.?join|\w*\.?replace(All)?|\w*\.?indexOf|\w*\.?lastIndexOf|\w*\.?has|\w*\.?get|\w*\.?set|\w*\.?delete|\w*\.?append|\w*\.?createElement|\w*\.?toggle|\w*\.?add|\w*\.?remove|\w*\.?contains|\w*\.?postMessage|\w*\.?dispatchEvent|\w*\.?emit|JSON\.\w+|encodeURIComponent|decodeURIComponent|new URL|URL|new RegExp|RegExp|require|import|usePersistedState|usePersistedFlag|pref|flag|guideEvent|trace|log|debugLog|\w*\.?isTypeSupported|\w*\.?getItem|\w*\.?setItem|\w*\.?removeItem|withWorkspace|withShare|assetUrl|t|tn|T)$/;
 
@@ -133,7 +136,10 @@ export function audit(root = SRC) {
         if (/[A-Za-z]{2}/.test(text) && !/^[\s·•—–|/×✓↑↓←→+-]*$/.test(text)) report(p.node, text, "text");
       },
       StringLiteral(p) {
-        if (!prose(p.node.value)) return;
+        if (!prose(p.node.value)) {
+          if (/^[a-z]{2,}( [a-z]+)*$/.test(p.node.value.trim()) && TEXT_ATTRS.test(context(p))) report(p.node, p.node.value, context(p));
+          return;
+        }
         const ctx = context(p);
         if (ctx !== "code") report(p.node, p.node.value, ctx);
       },

@@ -90,6 +90,8 @@ def db_files() -> list[Path]:
     for root in (config.LEGACY_USERS_DIR, config.WORKSPACES_DIR):
         if root.is_dir():
             for d in sorted(root.iterdir()):
+                if d.name.startswith("."):
+                    continue  # a deleted workspace's leftover (workspaces.remove_leftovers)
                 for name in ("pages.db", "data.db"):
                     if (d / name).is_file():
                         files.append(d / name)

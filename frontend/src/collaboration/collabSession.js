@@ -23,19 +23,24 @@
 //     for a block we have an unacknowledged `set` in flight for is deferred,
 //     then applied only if the server ordered it AFTER ours (its seq is
 //     higher than our ack's) — otherwise ours is the newer value and it is
-//     dropped;
+//     dropped; structure and properties the other way round: remote
+//     batches applied here after our edits but ordered before them on the
+//     server get our batch put back on top when it comes by (`reassert`);
 //   - catches up after a reconnect from the op log (GET …/ops?since=), or
 //     asks for a reload when the log no longer reaches back;
 //   - heals a batch the server refused for naming a block it doesn't have
 //     (404 with `missing`) while the base holds that block: the block goes
-//     out again as an insert ahead of the batch, rather than the whole
-//     queue being dropped and the page reloaded without our edits;
+//     out again ahead of the batch, where this tab has it, rather than the
+//     whole queue being dropped and the page reloaded without our edits;
 //   - survives a batch the page changed under (the server's `conflict`: a
-//     block gone, moved to another page, a move making a cycle): only the
-//     op it names is dropped, the rest goes out again and the page is
-//     refetched; every fetched tree gets this tab's unsaved edits laid over
-//     it (`overlay`), so a reload never shows — or bases a diff on — a page
-//     without them.
+//     block gone, moved to another page, a move making a cycle): the op it
+//     names and every op depending on that block are dropped, the rest goes
+//     out again and the page is refetched; every fetched tree gets this
+//     tab's unsaved edits laid over it (`overlay`), so a reload never shows
+//     — or bases a diff on — a page without them;
+//   - holds a page's edits while the page is in Recently deleted (the
+//     server's 404 for it, or a `trashed` message): nothing is dropped or
+//     sent until the page loads again (restored).
 //
 // The "base" tree is what the server is known to hold from this tab's point
 // of view once the queue has landed: every commit diffs against it and
@@ -49,7 +54,7 @@ export const STRUCTURAL_DEBOUNCE_MS = 80;
 export const CURSOR_THROTTLE_MS = 80;
 export const RETRY_MS = 3000;      // the first retry of a failed save; doubles each time …
 export const MAX_RETRY_MS = 60000; // … up to this
-export const MAX_RESCUES = 20; // blocks re-sent per page before a refusal reloads instead
+export const MAX_RESCUES = 20; // blocks re-sent between two saves that go through, before a refusal is a conflict
 export const MAX_OPS = 500;        // ops per batch, and …
 export const MAX_CONTENT = 200_000; // … characters per block: the server's limits (gamma/ops.py)
 const SOCKET_OPEN = 1; // WebSocket.OPEN
@@ -60,9 +65,12 @@ function pageSession(pageId = "") {
     pageId, base: [], pos: new Map(), queue: [], timer: null, sending: null,
     out: null, // the batch out ({id, ops, cursor}), kept until the server answers it
     inflight: new Map(), deferred: new Map(), retries: 0, rescues: 0, seq: 0,
+    remote: 0, // remote batches applied so far; `queueMark`: the count when the queue last started
+    queueMark: 0,
     pending: new Map(), catchingUp: null, reloading: false,
     problem: "", // why edits of this page wait (a failed save), "" when none do
     tooLong: new Map(), // id → {text, base}: text over MAX_CONTENT held back; the base keeps `base`
+    gone: null, // {trashed}: the page is in Recently deleted (or deleted) — its edits wait, unsent
   };
 }
 
@@ -87,6 +95,36 @@ const sameCursor = (a, b) => !!a && !!b && a.block === b.block && a.anchor === b
 // refusal. App's refetch of the page follows the same rule.
 export const retryableStatus = (status) => !(status >= 400 && status < 500) || status === 408 || status === 429;
 
+// The status of a failed call: utils.apiJson throws a 401 as a bare
+// "401 Unauthorized" Error without one.
+const statusOf = (err) => err?.status || (/^401\b/.test(err?.message || "") ? 401 : 0);
+
+// Why edits wait, in words (never the browser's "Failed to fetch").
+function saveProblem(err) {
+  const status = statusOf(err);
+  if (!status) return t("Not saved yet — the server can't be reached. Retrying…");
+  if (status === 401) return t("Not saved yet — you're signed out. Sign in again and your edits are saved.");
+  if (status === 409) return t("Not saved yet — this browser is signed in to another account now. Sign in again and your edits are saved.");
+  return t("Not saved yet — the server answered {status}. Retrying…", { status });
+}
+
+const someNode = (node, test) => test(node) || (node.children || []).some((c) => someNode(c, test));
+
+// Split `ops` into those that no longer apply now that the blocks in
+// `gone` vanished (their own ops, and inserts under them — whose ids join
+// `gone`, so ops on those go too — and moves into them) and the rest.
+function dependents(ops, gone) {
+  const kept = [], dropped = [];
+  for (const op of ops) {
+    const under = (op.op === "insert" || op.op === "move") && gone.has(op.parent);
+    if (gone.has(op.id) || under) {
+      if (op.op === "insert") gone.add(op.id);
+      dropped.push(op);
+    } else kept.push(op);
+  }
+  return { kept, dropped };
+}
+
 // deps:
 //   clientId              — this tab's id (goes on every batch and the socket URL)
 //   api(path, init)       — JSON call under /api; rejects with err.status on
@@ -107,7 +145,12 @@ export const retryableStatus = (status) => !(status >= 400 && status < 500) || s
 //                                     "pending" — edits wait (a failed save being
 //                                     retried, text too long), up until text is ""
 //                                     again; "rejected" — a batch was refused for
-//                                     good and dropped
+//                                     good and dropped, or edits of a block gone
+//       onGone(pageId, gone)          the open page went to Recently deleted
+//                                     ({trashed}: its trash entry, when known) —
+//                                     its edits wait — or is back (null)
+//     onRemoteOps also gets the base the ops were applied to (`before`, what
+//     the server held before them), for the undo history's text rebase.
 //   onPeers(peers), onMe(me) — presence changes (the hook's React state)
 //   onQueued()                — a local edit was queued (the clone's sync pill shows it as pending)
 //   timers                — {set(fn, ms) → id, clear(id)}; default the globals
@@ -181,14 +224,16 @@ export function createCollabSession({ clientId, api, openSocket, keepalivePost, 
   // --- save notices ---------------------------------------------------------
 
   // The "pending" notice: text held back as too long on the open page, else
-  // why some page's edits wait. Reported only when it changes.
+  // why some page's edits wait (not the open page's own Recently deleted:
+  // App shows that on the page, with Restore). Reported only when it changes.
   let shown = "";
   function notice() {
     const long = st.session.tooLong.size
       ? t("A note is too long to save (at most {max} characters) — shorten it or split it into several notes.",
         { max: MAX_CONTENT.toLocaleString() })
       : "";
-    const text = long || [st.session, ...st.sessions].map((s) => s.problem).find(Boolean) || "";
+    const text = long || [st.session, ...st.sessions]
+      .map((s) => (s.gone && s === st.session ? "" : s.problem)).find(Boolean) || "";
     if (text === shown) return;
     shown = text;
     o().onSaveNotice?.(text, "pending");
@@ -205,10 +250,53 @@ export function createCollabSession({ clientId, api, openSocket, keepalivePost, 
   // (a merge, remote text held back until our ack, an insert that found its
   // block already there): the base takes them, and the screen when this is
   // the open page.
-  function land(s, ops) {
+  function land(s, ops, own = false) {
     if (!ops.length || s !== st.session) return;
+    const before = s.base;
     s.base = applyOps(s.base, ops, s.pageId, s.pos);
-    o().onRemoteOps?.(ops, s.pageId, s.pos);
+    o().onRemoteOps?.(ops, s.pageId, s.pos, before, own);
+  }
+
+  // Our batch was acked (`applied`: its ops as the server applied them)
+  // after this tab applied remote batches made since the batch's edits
+  // were: here theirs came last, on the server ours did (their seqs are
+  // lower). Where both touched the same thing, ours goes back on top — a
+  // block moved by both, one theirs deleted and ours re-created (a rescue:
+  // with the text it has here), a property both set — unless a newer edit
+  // of ours to that block is still queued. Structure is replayed in the
+  // batch's order; text is not (the in-flight bookkeeping decides it).
+  // `own`: no undo-history rebase.
+  function reassert(s, applied) {
+    const newer = new Map(); // id → our ops queued since
+    for (const op of s.queue) newer.set(op.id, [...(newer.get(op.id) || []), op]);
+    const shaped = (id) => (newer.get(id) || []).some((op) => op.op !== "set");
+    const here = indexTree(s.base, s.pageId);
+    // A block the batch itself deletes, with a block it holds then (a note
+    // made and removed within one batch), stays gone.
+    const deleted = new Set(applied.filter((op) => op.op === "delete").map((op) => op.id));
+    const parentOf = new Map(applied.filter((op) => op.op === "insert" || op.op === "move").map((op) => [op.id, op.parent]));
+    const doomed = (id) => {
+      for (let at = id, n = 0; at && n < 10000; n++) {
+        if (deleted.has(at)) return true;
+        at = parentOf.get(at) ?? here.get(at)?.parent;
+      }
+      return false;
+    };
+    const again = [], revived = new Set();
+    for (const op of applied) {
+      if ((op.op === "move" || op.op === "delete") && !shaped(op.id)) again.push(op);
+      else if (op.op === "insert" && !here.has(op.id) && !shaped(op.id) && !doomed(op.id)) {
+        again.push(op);
+        revived.add(op.id);
+      } else if (op.op === "set" && revived.has(op.id)) again.push(op);
+      else if (op.op === "set" && op.props) {
+        const later = (newer.get(op.id) || []).filter((q) => q.op === "set" && q.props);
+        const keys = Object.keys(op.props).filter((k) => !later.some((q) => k in q.props));
+        if (keys.length) again.push({ op: "set", id: op.id, props: Object.fromEntries(keys.map((k) => [k, op.props[k]])) });
+      }
+    }
+    for (const id of revived) for (const op of newer.get(id) || []) again.push(op); // its text typed since
+    land(s, again, true);
   }
 
   // One content set of ours for block `id` is settled (acked or dropped).
@@ -236,11 +324,13 @@ export function createCollabSession({ clientId, api, openSocket, keepalivePost, 
     land(s, late);
   }
 
-  // Inserts re-creating block `id` and its subtree as the base holds them,
-  // or null when the base doesn't have it or the budget is spent.
-  // Re-inserting an id the server does have leaves that block as it is
-  // there (create-if-absent), so descendants that did reach it converge
-  // instead of failing.
+  // Ops re-creating block `id` and its subtree as the base holds them, or
+  // null when the base doesn't have it or the budget is spent. Re-inserting
+  // an id the server does have leaves that block as it is there
+  // (create-if-absent), so descendants that did reach it converge instead
+  // of failing; a move then puts the block where this tab has it — the
+  // server may hold it under a block this very batch deletes (someone moved
+  // it there meanwhile), and it must leave before that delete takes it along.
   function rescue(s, id) {
     if (!id || s.rescues >= MAX_RESCUES) return null;
     const hit = indexTree(s.base, s.pageId).get(id);
@@ -250,10 +340,35 @@ export function createCollabSession({ clientId, api, openSocket, keepalivePost, 
       const position = s.pos.get(node.id);
       out.push({ op: "insert", id: node.id, parent, ...(position ? { position } : {}),
         content: node.content || "", props: node.properties || {} });
+      if (node === hit.node) out.push({ op: "move", id: node.id, parent, ...(position ? { position } : {}) });
       for (const c of node.children || []) walk(c, node.id);
     };
     walk(hit.node, hit.parent);
     return out;
+  }
+
+  // Park the page's edits: it is in Recently deleted (`trashed`: its entry,
+  // when the server said) or gone. Nothing is dropped and nothing sent — the
+  // batch out keeps its id, typing still queues — until the page loads
+  // again (restored: `commit` of a load resumes).
+  function park(s, trashed = null) {
+    if (s.timer) { cancel(s.timer); s.timer = null; }
+    const news = !s.gone || (!!trashed && !s.gone.trashed);
+    if (news) s.gone = { trashed: trashed || s.gone?.trashed || null };
+    setProblem(s, s.out || s.queue.length
+      ? t("Edits to a page in Recently deleted are kept here and saved if it is restored.") : "");
+    if (news && s === st.session) o().onGone?.(s.pageId, s.gone);
+  }
+  function unpark(s) {
+    if (!s.gone) return;
+    s.gone = null;
+    s.retries = 0;
+    setProblem(s, "");
+    if (s === st.session) o().onGone?.(s.pageId, null);
+    if ((s.out || s.queue.length) && !s.sending) {
+      if (s.timer) cancel(s.timer);
+      s.timer = later(() => { s.timer = null; send(s); }, 0);
+    }
   }
 
   // Send the page's batch: the one out again (a retry, or what is left of a
@@ -262,11 +377,12 @@ export function createCollabSession({ clientId, api, openSocket, keepalivePost, 
   // it: a retry of one whose answer was lost is answered, not re-applied.
   function send(s = st.session) {
     if (s.sending) return s.sending;
+    if (s.gone) return false; // parked until the page is back
     if (!s.out) {
       if (!s.queue.length) return null;
       // Our caret in the text this batch produces, for the page it belongs to.
       const cur = s === st.session && cursor.latest ? cursor.latest : null;
-      s.out = { id: nextBatchId(), ops: s.queue.splice(0, MAX_OPS), cursor: cur };
+      s.out = { id: nextBatchId(), ops: s.queue.splice(0, MAX_OPS), cursor: cur, mark: s.queueMark };
     }
     const page = s.pageId;
     const batch = s.out;
@@ -283,6 +399,7 @@ export function createCollabSession({ clientId, api, openSocket, keepalivePost, 
         });
         s.out = null;
         s.retries = 0;
+        s.rescues = 0;
         setProblem(s, "");
         // What the others were told: the caret as the server stored it (it
         // is remapped when a merge moved the text under it).
@@ -300,15 +417,17 @@ export function createCollabSession({ clientId, api, openSocket, keepalivePost, 
         const ackSeq = res.seq || 0;
         // An ack proves only that this batch committed; earlier remote
         // batches may still be missing. Use the same ordered inbox as WS.
-        if (s === st.session) await receive({ ...res, client: clientId });
+        if (s === st.session) await receive({ ...res, client: clientId, mark: batch.mark });
         const late = [], lateCursors = [];
+        const moved = new Set(ops.filter((op) => op.op === "move").map((op) => op.id));
         for (const op of ops) {
           if (op.op === "insert") {
             // An insert the server already had leaves the block as it is
             // there (a retry, a rescue): this tab converges on it — unless
-            // newer text of ours for it is on its way.
+            // newer text of ours for it is on its way, or the batch moved
+            // it on (a rescue: the echo is where it was before that).
             const got = found.get(op.id);
-            if (got && !s.inflight.has(op.id) && (got.parent !== op.parent || (got.content ?? "") !== (op.content ?? "")
+            if (got && !s.inflight.has(op.id) && !moved.has(op.id) && (got.parent !== op.parent || (got.content ?? "") !== (op.content ?? "")
                 || Object.keys(propsPatch(op.props, got.props)).length)) late.push(got);
             continue;
           }
@@ -349,27 +468,57 @@ export function createCollabSession({ clientId, api, openSocket, keepalivePost, 
   // null when (what is left of) it goes out again at once, false when it
   // waits for a retry.
   function refused(s, batch, err) {
-    const status = err?.status || 0;
+    const status = statusOf(err);
     const data = err?.data || {};
     const page = s.pageId;
-    const lost = status === 404 ? rescue(s, data.missing) : null;
+    if (status === 404 && !data.missing && !data.conflict) {
+      // The page itself is gone — in Recently deleted, most likely: the
+      // edits wait for it to come back.
+      park(s, data.trashed || null);
+      return false;
+    }
+    // A block this batch already re-sent is missing again: the batch itself
+    // removes it on the server (deletes what holds it there) — no rescue
+    // can help, it is a conflict like any other.
+    const lost = status === 404 && !batch.rescued?.has(data.missing) ? rescue(s, data.missing) : null;
     if (lost) {
-      // The server never got this block (its insert was lost) or lost it
-      // since: send it again ahead of the refused batch. Nothing of the
+      // The server never got this block (its insert was lost), lost it
+      // since, or holds it under a block this batch deletes: send it again,
+      // where this tab has it, ahead of the refused batch. Nothing of the
       // batch was written, so all of it goes out again (a new batch).
       s.rescues += 1;
-      s.out = { ...batch, id: nextBatchId(), ops: [...lost, ...batch.ops] };
+      s.out = { ...batch, id: nextBatchId(), ops: [...lost, ...batch.ops],
+        rescued: new Set([...(batch.rescued || []), data.missing]) };
       return null;
     }
-    if (data.conflict && batch.ops[data.index]) {
+    const failed = batch.ops[data.index];
+    if (data.conflict && failed) {
       // The page changed under the batch (the block is gone, lives in
-      // another page, the move would make a cycle): that one op no longer
-      // applies. The rest goes out again — text edits keep the base they
+      // another page, the move would make a cycle): that op no longer
+      // applies, nor does any op of the batch or the queue behind it on a
+      // vanished block (its subtree) — they all go at once, not one per
+      // round trip. The rest goes out again — text edits keep the base they
       // were made from, so the server merges them — and the page is
       // refetched: this screen still shows the refused change.
-      const rest = batch.ops.filter((_, i) => i !== data.index);
-      forget(s, [batch.ops[data.index]]);
+      let rest = batch.ops.filter((_, i) => i !== data.index), dropped = [failed];
+      if (data.conflict !== "cycle") {
+        const named = /^(block|parent) (\S+) is outside this page/.exec(err?.message || "");
+        const gone = new Set([data.missing || named?.[2] || failed.id]);
+        if (failed.op === "insert") gone.add(failed.id);
+        const inBatch = dependents(rest, gone);
+        const inQueue = dependents(s.queue, gone);
+        rest = inBatch.kept;
+        s.queue = inQueue.kept;
+        dropped = [failed, ...inBatch.dropped, ...inQueue.dropped];
+      }
+      forget(s, dropped);
       s.out = rest.length ? { ...batch, id: nextBatchId(), ops: rest } : null;
+      if (dropped.some((op) => op.op !== "delete" && op.op !== "move")) {
+        // Text or a new note that can't be saved any more: never silently.
+        const text = t("Someone else deleted or moved a note you were editing — that edit couldn't be saved.");
+        o().onStatus?.(text);
+        o().onSaveNotice?.(text, "rejected");
+      }
       if (s === st.session) o().onReload?.(page);
       return null;
     }
@@ -377,12 +526,11 @@ export function createCollabSession({ clientId, api, openSocket, keepalivePost, 
     if (signedOut || retryableStatus(status)) {
       // Offline, a server error, signed out: the batch waits, id and all,
       // and is tried again — ever longer apart, never given up (the
-      // `online` event and a socket reconnect try at once). Once the person
-      // signs in again it goes out.
+      // `online` event, the window regaining focus and a socket reconnect
+      // try at once). Once the person signs in again it goes out. The
+      // notice (the "save" pill, not the status line) goes once it is saved.
       s.retries += 1;
-      const text = t("Save failed: {message} — retrying…", { message: err?.message || "" });
-      o().onStatus?.(text);
-      setProblem(s, text);
+      setProblem(s, saveProblem(err));
       if (s.timer) cancel(s.timer); // a typing debounce armed while it was out
       s.timer = later(() => { s.timer = null; send(s); }, Math.min(RETRY_MS * 2 ** (s.retries - 1), MAX_RETRY_MS));
       return false;
@@ -402,6 +550,7 @@ export function createCollabSession({ clientId, api, openSocket, keepalivePost, 
   function enqueue(ops, now = false) {
     const s = st.session;
     st.sessions.add(s);
+    if (!s.queue.length) s.queueMark = s.remote; // what this tab had applied when these edits were made
     for (const op of ops) {
       // inflight counts the content sets queued or out per block (the ack
       // settles once per op of the batch, so the two must agree): a
@@ -413,6 +562,8 @@ export function createCollabSession({ clientId, api, openSocket, keepalivePost, 
       }
     }
     onQueued?.();
+    // The page is in Recently deleted: the edits wait for it to come back.
+    if (s.gone) { park(s); return; }
     // A batch waits for its retry: the queue follows it, and typing never
     // cuts the wait short.
     if (s.out && !s.sending) return;
@@ -452,11 +603,13 @@ export function createCollabSession({ clientId, api, openSocket, keepalivePost, 
       seedPositions(tree, s.pos);
       s.base = heldBack(s, tree);
       notice();
+      unpark(s); // it loaded: back from Recently deleted
       return [];
     }
     if (isLoad) {
       seedPositions(tree, s.pos);
       s.base = heldBack(s, tree);
+      unpark(s);
       if (seq != null) {
         s.seq = Math.max(s.seq, seq);
         for (const n of s.pending.keys()) if (n <= s.seq) s.pending.delete(n);
@@ -520,6 +673,9 @@ export function createCollabSession({ clientId, api, openSocket, keepalivePost, 
   async function flush() {
     await Promise.all([...st.sessions].map(async (s) => {
       if (s.timer) { cancel(s.timer); s.timer = null; }
+      // A batch waiting for its retry goes now; if it fails again the
+      // retries start over rather than stretch (a flush is no failed retry).
+      if (s.out && !s.sending) s.retries = 0;
       let saved = await (s.sending || send(s));
       // send() may start the next queued batch before the first promise
       // resolves. Wait for that batch too, even though its queue is now empty.
@@ -534,21 +690,33 @@ export function createCollabSession({ clientId, api, openSocket, keepalivePost, 
     return [...st.sessions].some((s) => s.queue.length > 0 || !!s.sending || !!s.out);
   }
 
-  // The network is back (the browser's `online`, the socket's hello): a
-  // batch waiting for its next try goes out now.
+  // The network may be back (the browser's `online`, the window regaining
+  // focus, the socket's hello): a batch waiting for its next try goes out
+  // now, and should that fail the retries start over — short again, not a
+  // minute behind the recovery.
   function retryNow() {
     for (const s of st.sessions) {
-      if (!s.out || s.sending) continue;
+      if (!s.out || s.sending || s.gone) continue;
       if (s.timer) { cancel(s.timer); s.timer = null; }
+      s.retries = 0;
       send(s);
     }
   }
 
+  // App's refetch of the page answered that it is in Recently deleted
+  // (`trashed`: its entry): its edits wait, like after a refused save.
+  function gone(pageId, trashed = null) {
+    const s = st.session.pageId === pageId ? st.session : [...st.sessions].find((x) => x.pageId === pageId);
+    if (s) park(s, trashed);
+  }
+
   // Tab closing / reloading: a keepalive POST of what is still unsaved — the
   // batch out under its own id (the server answers a copy that already
-  // landed instead of applying it twice), then the queue.
+  // landed instead of applying it twice), then the queue. (Not for a page
+  // in Recently deleted: the server refuses it.)
   function pagehide() {
     for (const s of st.sessions) {
+      if (s.gone) continue;
       const batches = s.out ? [s.out] : [];
       for (let i = 0; i < s.queue.length; i += MAX_OPS) {
         batches.push({ id: nextBatchId(), ops: s.queue.slice(i, i + MAX_OPS) });
@@ -576,11 +744,22 @@ export function createCollabSession({ clientId, api, openSocket, keepalivePost, 
   function applyRemoteBatch(msg) {
     const s = st.session;
     const page = s.pageId;
-    if (msg.seq > s.seq) s.pending.set(msg.seq, msg);
+    if (msg.seq > s.seq) {
+      // (a copy from the socket or the log keeps the mark our ack put on it)
+      const had = s.pending.get(msg.seq);
+      s.pending.set(msg.seq, had?.mark != null && msg.mark == null ? { ...msg, mark: had.mark } : msg);
+    }
     while (!s.reloading && s.pending.has(s.seq + 1)) {
       const m = s.pending.get(++s.seq);
       s.pending.delete(s.seq);
-      if (m.client === clientId) continue;
+      if (m.client === clientId) {
+        // Ours, in its place in the order (its ack, or its fan-out while it
+        // is still out): remote batches applied here since its edits were
+        // made were ordered before it — ours goes back on top of them.
+        const mark = m.mark ?? s.out?.mark;
+        if (mark != null && s.remote > mark) reassert(s, m.ops || []);
+        continue;
+      }
       const now = [];
       let held = false;
       for (const op of m.ops || []) {
@@ -596,8 +775,25 @@ export function createCollabSession({ clientId, api, openSocket, keepalivePost, 
         now.push(op);
       }
       if (now.length) {
+        s.remote += 1;
+        const before = s.base;
         s.base = applyOps(s.base, now, page, s.pos);
-        o().onRemoteOps?.(now, page, s.pos);
+        o().onRemoteOps?.(now, page, s.pos, before);
+        // A move this tab can't place was ordered before an unsent delete
+        // of ours that took its block, or where it goes, along here but not
+        // yet on the server. A note moved out of a block we deleted
+        // survives there: the page is refetched, our unsent edits laid over
+        // it. One moved into it goes with it there: it goes here too —
+        // unless we have edits of it on their way (the rescue keeps it).
+        const moves = now.filter((op) => op.op === "move");
+        if (moves.length) {
+          const known = indexTree(before, page);
+          if (moves.some((op) => !known.has(op.id))) o().onReload?.(page);
+          const mine = new Set([...(s.out?.ops || []), ...s.queue].map((op) => op.id));
+          const doomed = moves.filter((op) => known.has(op.id) && op.parent !== page && !known.has(op.parent)
+            && !someNode(known.get(op.id).node, (n) => mine.has(n.id)));
+          if (doomed.length) land(s, doomed.map((op) => ({ op: "delete", id: op.id })));
+        }
       }
       // Place the caret against the text from this batch; held content's
       // caret waits with it until our write is acknowledged.
@@ -686,6 +882,11 @@ export function createCollabSession({ clientId, api, openSocket, keepalivePost, 
             if (msg.seq) receive({ ...msg, ops: [{ op: "reload" }] });
             else { session.reloading = true; o().onReload?.(pageId); }
             break;
+          case "trashed":
+            // The page went to Recently deleted: what is typed here waits
+            // for it to be restored (its `reload` then refetches).
+            park(session, msg.trashed || null);
+            break;
           default:
         }
       };
@@ -735,7 +936,7 @@ export function createCollabSession({ clientId, api, openSocket, keepalivePost, 
 
   return {
     commit, flush, hasPending, sendCursor, pagehide, connect, disconnect,
-    overlay, retryNow, reloadFailed, tooLong,
+    overlay, retryNow, reloadFailed, tooLong, gone,
     get peers() { return peers; },
     get me() { return me; },
   };

@@ -8,8 +8,10 @@
 #   share    the free share host: a Gamma (ghcr.io/tim4431/gamma) in cloud
 #            mode holding every free account's published pages, its data on
 #            ./share-data and its settings in share.env (share.env.example).
-#            Reached only through caddy (no host port). Pinned to an image
-#            tag: bump it with the desktop release.
+#            Reached only through caddy (no host port), whose
+#            X-Forwarded-For it believes on this project's network (its
+#            subnet pinned below). Pinned to an image tag: bump it with the
+#            desktop release.
 #   caddy    TLS on the host's own 80/443 with its internal certificate
 #            (`tls internal`; Cloudflare holds the public one), for a host
 #            with a public address (a VPS). The DNS record for the hostname
@@ -17,8 +19,9 @@
 #            the external network `gamma-edge`, where the public demo — its
 #            own compose project, cloud/deploy/demo/ — answers as
 #            `gamma-demo`. Create that network once per host before the
-#            first `up` (`docker network create gamma-edge`): this file
-#            refuses to start without it.
+#            first `up` (`docker network create --subnet 10.202.0.0/24
+#            gamma-edge` — the demo trusts that subnet, demo/README.md):
+#            this file refuses to start without it.
 #
 # Variants layered with -f: compose.tunnel.yml replaces caddy with a
 # Cloudflare Tunnel (no open port; a NAS); compose.build.yml builds the
@@ -38,6 +41,11 @@ services:
     image: ghcr.io/tim4431/gamma:sha-a0d31c6
     restart: unless-stopped
     env_file: share.env
+    environment:
+      # Caddy (or the tunnel) reaches it over this project's network, whose
+      # subnet is pinned below: its X-Forwarded-For is believed, anyone
+      # else's is not (the image trusts loopback only).
+      FORWARDED_ALLOW_IPS: 10.201.0.0/24
     volumes:
       - ./share-data:/data
     depends_on:
@@ -67,6 +75,13 @@ volumes:
   caddy-config:
 
 networks:
+  # Pinned so the share host can trust exactly it (FORWARDED_ALLOW_IPS). A
+  # host whose network predates the pin: `docker compose down && docker
+  # compose up -d` once recreates it.
+  default:
+    ipam:
+      config:
+        - subnet: 10.201.0.0/24
   edge:
     name: gamma-edge
     external: true

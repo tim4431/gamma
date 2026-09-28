@@ -53,15 +53,16 @@ class MathWidget extends WidgetType {
 }
 
 class RefChipWidget extends WidgetType {
-  constructor(label, embed) {
+  constructor(label, embed, trashed) {
     super();
     this.label = label;
     this.embed = embed; // ![[id]] transclusion — chip in the editor, card when rendered
+    this.trashed = trashed; // its page is in Recently deleted: the label is that page's title
   }
-  eq(other) { return other.label === this.label && other.embed === this.embed; }
+  eq(other) { return other.label === this.label && other.embed === this.embed && other.trashed === this.trashed; }
   toDOM(view) {
     const span = document.createElement("span");
-    span.className = "blockRefChip cmRefChip" + (this.embed ? " cmEmbedChip" : "");
+    span.className = "blockRefChip cmRefChip" + (this.embed ? " cmEmbedChip" : "") + (this.trashed ? " trashedRef" : "");
     span.textContent = (this.embed ? "⧉ " : "") + this.label;
     span.addEventListener("mousedown", (e) => {
       e.preventDefault();
@@ -413,9 +414,10 @@ function buildInlineDecos(state, ctx) {
     if (overlapsClaimed(from, to)) continue;
     claimed.push([from, to]);
     if (touched(from, to)) continue;
-    const label = ctx.labels?.[m[1]]?.content || m[1];
+    const ref = ctx.labels?.[m[1]];
+    const label = ref?.content || ref?.trashed?.title || m[1];
     ranges.push(Decoration.replace({
-      widget: new RefChipWidget(label, m[0].startsWith("!")),
+      widget: new RefChipWidget(label, m[0].startsWith("!"), !!ref?.trashed),
     }).range(from, to));
   }
 
@@ -1055,7 +1057,7 @@ const BlockCmEditor = React.forwardRef(function BlockCmEditor({
   // Ref labels resolve asynchronously (onFetchRefs); refresh the chip
   // decorations when their text actually changes, not on every render.
   const labelsKey = Object.entries(refLabels || {})
-    .map(([id, r]) => `${id}:${r?.content}`).join("\u0000");
+    .map(([id, r]) => `${id}:${r?.content}:${r?.trashed ? "trashed" : ""}`).join("\u0000");
   useEffect(() => {
     const view = viewRef.current;
     if (!view) return;

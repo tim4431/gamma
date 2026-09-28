@@ -17,13 +17,14 @@ const settle = async () => { for (let i = 0; i < 20; i++) await Promise.resolve(
 // A session over fakes; `api(path, init)` answers the HTTP calls. Timers
 // never fire on their own: h.fire() runs whatever is armed.
 function setup(t, api, { canWrite = true, connect = true } = {}) {
-  const h = { calls: [], remote: [], reloads: [], status: [], keepalive: [], sockets: [], timers: new Map(), peers: [], me: null };
+  const h = { calls: [], remote: [], reloads: [], status: [], notices: [], keepalive: [], sockets: [], timers: new Map(), peers: [], me: null };
   let timerId = 0;
   const options = {
     pageId: "page-a", canWrite,
     onRemoteOps: (ops, page, pos) => { h.remote.push(...ops); h.tree = applyOps(h.tree, ops, page, pos); },
     onReload: (page) => h.reloads.push(page),
     onStatus: (text) => h.status.push(text),
+    onSaveNotice: (text, kind) => h.notices.push([kind, text]),
   };
   h.session = createCollabSession({
     clientId: ME,
@@ -112,12 +113,14 @@ test("network retries keep local content protected until it is acknowledged", as
   });
   h.edit([block("a", "mine"), block("b")]);
   await h.session.flush();
-  assert.match(h.status[0], /retrying/);
+  assert.deepEqual(h.notices, [["pending", "Not saved yet — the server can't be reached. Retrying…"]]);
+  assert.deepEqual(h.status, [], "no in-progress status line that would outlive the save");
   h.ops(batch(1, [{ op: "set", id: "a", content: "theirs" }]));
   assert.equal(h.tree[0].content, "mine");
   await h.session.flush();
   assert.equal(h.tree[0].content, "mine");
   assert.equal(h.session.hasPending(), false);
+  assert.deepEqual(h.notices[h.notices.length - 1], ["pending", ""], "the notice goes once it is saved");
 });
 
 test("retries never give up, ever longer apart; the edits stay for pagehide", async (t) => {
@@ -134,7 +137,7 @@ test("retries never give up, ever longer apart; the edits stay for pagehide", as
   assert.deepEqual(waits, [RETRY_MS, 2 * RETRY_MS, 4 * RETRY_MS, 8 * RETRY_MS, 16 * RETRY_MS,
     MAX_RETRY_MS, MAX_RETRY_MS, MAX_RETRY_MS]);
   assert.equal(h.timers.size, 1, "a retry is still armed");
-  assert.match(h.status[h.status.length - 1], /retrying/);
+  assert.match(h.notices[h.notices.length - 1][1], /Retrying/);
   assert.equal(h.session.hasPending(), true);
   h.session.pagehide();
   assert.equal(h.keepalive.length, 1);
@@ -144,7 +147,7 @@ test("retries never give up, ever longer apart; the edits stay for pagehide", as
 });
 
 test("a rejected batch is dropped and the page reloads", async (t) => {
-  const h = setup(t, async () => { const e = new Error("no such block"); e.status = 404; throw e; });
+  const h = setup(t, async () => { const e = new Error("invalid position"); e.status = 400; throw e; });
   h.edit([block("a", "mine"), block("b")]);
   await h.session.flush();
   assert.match(h.status[0], /^Save rejected/);
@@ -166,9 +169,10 @@ test("a batch refused for a block the server lacks sends that block again, subtr
   h.load("page-a", [block("a"), { ...block("b"), position: "a1" }, c]);
   h.edit([block("a"), { ...block("b"), position: "a1" }, { ...c, content: "edited" }]);
   await h.session.flush();
-  assert.deepEqual(bodies[1].map((op) => [op.op, op.id]), [["insert", "c"], ["insert", "d"], ["set", "c"]]);
+  // (the move puts c where this tab has it, should the server hold it elsewhere)
+  assert.deepEqual(bodies[1].map((op) => [op.op, op.id]), [["insert", "c"], ["move", "c"], ["insert", "d"], ["set", "c"]]);
   assert.deepEqual([bodies[1][0].parent, bodies[1][0].position, bodies[1][0].content], ["page-a", "a2", "edited"]);
-  assert.equal(bodies[1][1].parent, "c");
+  assert.equal(bodies[1][2].parent, "c");
   assert.deepEqual(h.reloads, []);
   assert.equal(h.status.length, 0);
   assert.equal(h.session.hasPending(), false);

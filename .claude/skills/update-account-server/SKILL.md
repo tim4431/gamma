@@ -64,7 +64,13 @@ skill; never touch it from here). This project holds only its way in: the
 Caddyfile's `@demo` handle and Caddy on the external network `gamma-edge`,
 where the demo answers as `gamma-demo`. `compose.yml` refuses to start while
 that network is missing; on a new host create it first
-(`docker network inspect gamma-edge >/dev/null 2>&1 || docker network create gamma-edge`).
+(`docker network inspect gamma-edge >/dev/null 2>&1 || docker network create --subnet 10.202.0.0/24 gamma-edge`;
+the demo trusts that subnet). The project's own default network has a pinned
+subnet the share host trusts (`FORWARDED_ALLOW_IPS`); when a copied
+`compose.yml` brings that pin to a host whose network predates it, `up -d`
+cannot change the network in place: with the user's agreement, run
+`docker compose down && docker compose up -d` once (the portal and the share
+host are gone for those seconds).
 
 ## Update
 

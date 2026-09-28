@@ -678,21 +678,21 @@ def _zotero_existing_page(conn, item):
     return row
 
 
+# New pages a Zotero import writes in one transaction: few commits, and each
+# hold of the write lock stays short (their files are stored before it).
+ZOTERO_PAGES_PER_COMMIT = 50
+
+
 def _zotero_folders(item, prefix):
     folders = [f"{prefix}/{p}" if prefix else p for p in item["folders"]]
     return folders or ([prefix] if prefix else [])
 
 
-def _zotero_item_page(conn, ws, uploads, zf, item, prefix, report, actor):
-    """Store the item's PDF (if any), find-or-create its page, merge metadata,
-    labels and notes. The file is stored first, outside any transaction, so
-    a long import never holds the workspace's write lock. A new page and its
-    notes are then one short transaction, stamped at its commit, that looks
-    for the page again first (two imports of one item make one page); a merge
-    into an existing page is an op batch by ``actor`` (``apply_ops``), which
-    its open tabs and the workspace's mirrors see. Returns (block_id,
-    pdf_path) when embedded annotations should be imported afterwards, else
-    None."""
+def _zotero_prepare(conn, ws, zf, item, prefix, report) -> dict:
+    """What the item makes of the library: the page it merges into (found
+    by PDF, else by Zotero key) or a new one, with the properties and the
+    notes it adds. Its PDF is stored here, outside any transaction, so a
+    long import never holds the workspace's write lock over file writes."""
     digest = item["digest"]
     row = _zotero_existing_page(conn, item)
 
@@ -734,52 +734,81 @@ def _zotero_item_page(conn, ws, uploads, zf, item, prefix, report, actor):
             "SELECT json_extract(properties,'$.zotero_note') FROM unified_blocks WHERE parent_id=?",
             (block_id,)).fetchall() if r[0]}
         todo = [n for n in todo if n["key"] not in existing]
+    return {"item": item, "row": row, "block_id": block_id, "old": old, "props": props,
+            "todo": todo, "created": created}
 
-    if created:
-        write_lock(conn)
-        if _zotero_existing_page(conn, item) is not None:
-            # Another import of this item made its page since the lookup
-            # above: merge into that one, as a re-run would.
-            conn.rollback()
-            return _zotero_item_page(conn, ws, uploads, zf, item, prefix, report, actor)
-        try:
-            now = page_now()
-            pos = generate_key_between(last_child_position(conn, "root"), None)
-            conn.execute(
-                "INSERT INTO unified_blocks (id,parent_id,position,content,properties,created_at,updated_at) "
-                "VALUES (?,'root',?,?,?,?,?)",
-                (block_id, pos, item["title"], json.dumps(props), now, now))
-            positions = generate_n_keys_between(None, None, n=len(todo)) if todo else []
-            for note, pos in zip(todo, positions):
-                conn.execute(
-                    "INSERT INTO unified_blocks (id,parent_id,position,content,properties,created_at,updated_at) "
-                    "VALUES (?,?,?,?,?,?,?)",
-                    (secrets.token_urlsafe(9), block_id, pos, note["text"],
-                     json.dumps({"zotero_note": note["key"]}), now, now))
-            conn.commit()
-        except BaseException:
-            conn.rollback()
-            raise
-        report["pages_created"] += 1
-    else:
-        patch = props_patch(old, props)
-        batch = ([{"op": "set", "id": block_id, "props": patch}] if patch else []) + [
-            {"op": "insert", "id": secrets.token_urlsafe(9), "parent": block_id,
-             "content": note["text"], "props": {"zotero_note": note["key"]}} for note in todo]
-        for i in range(0, len(batch), MAX_OPS):
-            after_commit(ws, conn, apply_ops(conn, block_id, batch[i:i + MAX_OPS], actor=actor))
-        report["pages_merged"] += 1
-    report["notes_imported"] += len(todo)
-    report["pages"].append({"id": block_id, "title": item["title"] if created else row[2],
+
+def _zotero_done(prep, report, uploads):
+    """Count a written item into the report. Returns (block_id, pdf_path)
+    when its PDF's embedded annotations should be imported afterwards, else
+    None."""
+    item, props, created = prep["item"], prep["props"], prep["created"]
+    report["pages_created" if created else "pages_merged"] += 1
+    report["notes_imported"] += len(prep["todo"])
+    report["pages"].append({"id": prep["block_id"], "title": item["title"] if created else prep["row"][2],
                             "created": created, "kind": "pdf" if props.get("doc_id") else "page",
                             "folders": parse_tags(props.get("folder"))})
-
     doc_id = props.get("doc_id")
     if doc_id:
         pdf_path = uploads / f"{doc_id}.pdf"
         if pdf_path.exists():
-            return block_id, pdf_path
+            return prep["block_id"], pdf_path
     return None
+
+
+def _zotero_merge(conn, ws, prep, report, uploads, actor):
+    """An item that merges into an existing page: an op batch by ``actor``
+    (``apply_ops``), which the page's open tabs and the workspace's mirrors
+    see."""
+    block_id = prep["block_id"]
+    patch = props_patch(prep["old"], prep["props"])
+    batch = ([{"op": "set", "id": block_id, "props": patch}] if patch else []) + [
+        {"op": "insert", "id": secrets.token_urlsafe(9), "parent": block_id,
+         "content": note["text"], "props": {"zotero_note": note["key"]}} for note in prep["todo"]]
+    for i in range(0, len(batch), MAX_OPS):
+        after_commit(ws, conn, apply_ops(conn, block_id, batch[i:i + MAX_OPS], actor=actor))
+    return _zotero_done(prep, report, uploads)
+
+
+def _zotero_write_new(conn, staged, report, uploads):
+    """Write new items' pages and notes, ZOTERO_PAGES_PER_COMMIT of them in
+    one short transaction, their roots stamped at its commit (the change
+    feed reads the root). Each page is looked for again under the lock: an
+    item another import (or an earlier item of this batch) made a page for
+    is not written but returned, to merge into that page. Returns
+    ``(annotation jobs, items to merge)``."""
+    write_lock(conn)
+    written, retry = [], []
+    try:
+        now = page_now()
+        pos = last_child_position(conn, "root")
+        for prep in staged:
+            item = prep["item"]
+            if _zotero_existing_page(conn, item) is not None:
+                retry.append(item)
+                continue
+            pos = generate_key_between(pos, None)
+            conn.execute(
+                "INSERT INTO unified_blocks (id,parent_id,position,content,properties,created_at,updated_at) "
+                "VALUES (?,'root',?,?,?,?,?)",
+                (prep["block_id"], pos, item["title"], json.dumps(prep["props"]), now, now))
+            todo = prep["todo"]
+            positions = generate_n_keys_between(None, None, n=len(todo)) if todo else []
+            for note, note_pos in zip(todo, positions):
+                conn.execute(
+                    "INSERT INTO unified_blocks (id,parent_id,position,content,properties,created_at,updated_at) "
+                    "VALUES (?,?,?,?,?,?,?)",
+                    (secrets.token_urlsafe(9), prep["block_id"], note_pos, note["text"],
+                     json.dumps({"zotero_note": note["key"]}), now, now))
+            written.append(prep)
+        stamp = page_now()
+        conn.executemany("UPDATE unified_blocks SET updated_at=? WHERE id=?",
+                         [(stamp, prep["block_id"]) for prep in written])
+        conn.commit()
+    except BaseException:
+        conn.rollback()
+        raise
+    return [job for job in (_zotero_done(prep, report, uploads) for prep in written) if job], retry
 
 
 # Sync endpoint: zip + PyPDF2 work is CPU-bound; the threadpool keeps the loop free.
@@ -873,16 +902,48 @@ def import_zotero(request: Request, file: UploadFile = File(...),
         annot_jobs = []
         actor = actor_of(request)
         with connect_pages_db(ws) as conn:
-            for item in items:  # one short transaction per item (_zotero_item_page)
+            staged = []  # new pages, written ZOTERO_PAGES_PER_COMMIT at a time
+
+            def skip(item, reason):
+                report["skipped"].append({"title": item["title"], "reason": reason})
+
+            def flush():
+                if not staged:
+                    return
+                batch = staged[:]
+                staged.clear()
                 try:
-                    job = _zotero_item_page(conn, ws, uploads, zf, item, prefix, report, actor)
+                    jobs, retry = _zotero_write_new(conn, batch, report, uploads)
+                except Exception as e:
+                    log.warning(f"[zotero] {len(batch)} new page(s) failed: {e}")
+                    for prep in batch:
+                        skip(prep["item"], str(e))
+                    return
+                annot_jobs.extend(jobs)
+                for item in retry:  # made meanwhile: merge into that page
+                    run(item)
+
+            def run(item):
+                try:
+                    prep = _zotero_prepare(conn, ws, zf, item, prefix, report)
+                    if prep["created"]:
+                        staged.append(prep)
+                        if len(staged) >= ZOTERO_PAGES_PER_COMMIT:
+                            flush()
+                        return
+                    flush()  # the pages before it first: the report keeps the export's order
+                    job = _zotero_merge(conn, ws, prep, report, uploads, actor)
                     if job:
                         annot_jobs.append(job)
                 except HTTPException as e:  # per-file quota (413/507) skips the item
-                    report["skipped"].append({"title": item["title"], "reason": str(e.detail)})
+                    skip(item, str(e.detail))
                 except Exception as e:
                     log.warning(f"[zotero] item '{item['title'][:80]}' failed: {e}")
-                    report["skipped"].append({"title": item["title"], "reason": str(e)})
+                    skip(item, str(e))
+
+            for item in items:
+                run(item)
+            flush()
 
     # Annotations after the pages are committed — import_embedded_annotations
     # opens its own connections.

@@ -1442,8 +1442,8 @@ def ai_chat_context(payload: AIChatContextRequest, request: Request):
     file: the system prompt, the tools and every turn — the draft in the
     composer as the last one. PDFs go as their extracted text (a file to
     read or paste elsewhere); no provider is called, none needs to be set up."""
-    user = require_user(request)
-    ws = require_ws(request)
+    ws = require_ws(request)  # a token too: the chat reads its workspace
+    user = request.state.user
     scope = _chat_scope(request, user, payload)
     tools = _chat_tools(payload, scope["can_write"])
     _, messages, system, coverage, crops = _chat_prompt(ws, payload, scope, tools, allow_native=False)
@@ -1456,12 +1456,13 @@ def ai_chat_context(payload: AIChatContextRequest, request: Request):
 # keeps the event loop free for other requests meanwhile.
 @router.post("/ai/chat")
 def ai_chat(payload: AIChatRequest, request: Request):
-    user = require_user(request)
     # The chat reads (and its tools edit) the request's workspace; the AI
     # providers are the account's own. A viewer, or a read-scope integration
     # token, gets no mutating tools (_chat_scope: auth.can_write, the rule
-    # every write endpoint applies).
+    # every write endpoint applies). A token reaches the chat through its
+    # workspace (require_ws), never the account's provider settings.
     ws = require_ws(request)
+    user = request.state.user
     try:
         rt = require_ai_runtime(user)
     except HTTPException as e:

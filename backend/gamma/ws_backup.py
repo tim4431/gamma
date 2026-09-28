@@ -58,6 +58,7 @@ MAX_SCHEDULED_PER_WORKSPACE = 100  # scheduled ones per workspace, every task to
 PRE_RESTORE_KEEP = 3               # "pre-restore" snapshots kept per workspace
 MIN_FREE_BYTES = 1 << 30           # no new snapshot while the disk has less free than this
 DELETED_KEEP_DAYS = 90             # final copies of deleted workspaces (backups/deleted/)
+STALE_TEMP_S = 3600                # a snapshot's work file this old was left by a killed process
 NAME_RE = re.compile(r"^\d{8}-\d{6}-[A-Za-z0-9_.-]{1,40}$")
 LABEL_RE = re.compile(r"^[A-Za-z0-9_.-]{1,40}$")
 
@@ -169,8 +170,9 @@ def restore_zip(ws: str, zpath: Path, mode: str = "replace", *, selected: set[st
     shapes first (normalized: a backup can be older than any step), what
     the workspace holds now is kept as an automatic ``pre-restore`` snapshot
     (uploads included; not for a guest's workspace — refused when that
-    snapshot cannot be taken), then pages.db and data.db are swapped in with
-    the sqlite backup API (transactional, safe while the app serves).
+    snapshot cannot be taken), then pages.db is copied in within one write
+    transaction and data.db with the sqlite backup API (both transactional,
+    safe while the app serves).
     ``merge``: additive — pages (and chats) the workspace does not have are
     appended, everything it has stays (``_merge``). In both modes the
     backup's uploads the workspace lacks are copied in first (content-hash
@@ -287,38 +289,62 @@ def _keep_current(ws: str, by: str) -> dict | None:
     return kept
 
 
+def _copy_tables(conn, schema: str) -> None:
+    """Make every table of ``conn``'s main database hold what the attached
+    ``schema`` holds (the columns both have; a table the copy lacks ends
+    empty) — inside the caller's transaction."""
+    theirs = {r[0] for r in conn.execute(f"SELECT name FROM {schema}.sqlite_master WHERE type = 'table'")}
+    for (table,) in conn.execute("SELECT name FROM main.sqlite_master WHERE type = 'table' "
+                                 "AND name NOT LIKE 'sqlite_%'").fetchall():
+        conn.execute(f'DELETE FROM main."{table}"')
+        if table not in theirs:
+            continue
+        have = {r[1] for r in conn.execute(f'PRAGMA {schema}.table_info("{table}")')}
+        cols = ", ".join(f'"{r[1]}"' for r in conn.execute(f'PRAGMA main.table_info("{table}")') if r[1] in have)
+        conn.execute(f'INSERT INTO main."{table}" ({cols}) SELECT {cols} FROM {schema}."{table}"')
+
+
 def _replace(ws: str, root: Path, tdir: Path, by: str) -> dict:
-    """Swap the (normalized) copies in. The op log, the tombstones and the
-    page stamps are written into the copy first, so they arrive with it in
-    one step: each restored page gets a ``reload`` above the highest seq
-    either side had (a client never sees a seq go back), its root is
-    stamped now, and pages the restore removes get a tombstone."""
+    """Swap the (normalized) copies in. pages.db is copied into the live
+    file in ONE write transaction, which also reads the live op log and
+    writes the new one: each restored page gets a ``reload`` above the
+    highest seq either side had, read under the same lock — so no batch
+    committed while the restore runs can hold a seq the log hands out again
+    (a client never sees a seq go back) —, its root is stamped now, and
+    pages the restore removes get a tombstone. data.db follows through the
+    sqlite backup API."""
     from . import block_index, ops
 
     with connect_pages_db(ws) as live:
-        live_seqs = dict(live.execute("SELECT page_id, MAX(seq) FROM page_ops GROUP BY page_id").fetchall())
-        live_pages = {r[0] for r in live.execute("SELECT id FROM unified_blocks WHERE parent_id = 'root'")}
-        live_ids = {r[0] for r in live.execute("SELECT id FROM unified_blocks")}
-    with closing(sqlite3.connect(str(tdir / "pages.db"))) as conn:
-        pages = [r[0] for r in conn.execute("SELECT id FROM unified_blocks WHERE parent_id = 'root'")]
-        for page in pages:
-            ops.log_reload(conn, page, by, after=live_seqs.get(page, 0))
-        now = page_now()
-        removed = sorted(live_pages - set(pages))
-        conn.executemany("INSERT OR REPLACE INTO deleted_pages (page_id, deleted_at, actor) VALUES (?, ?, ?)",
-                         [(p, now, by) for p in removed])
-        conn.executemany("DELETE FROM deleted_pages WHERE page_id = ?", [(p,) for p in pages])
-        restored_ids = {r[0] for r in conn.execute("SELECT id FROM unified_blocks")}
-        conn.commit()
-    restored = []
-    for dbname in ("pages.db", "data.db"):
-        snap = tdir / dbname
-        if not snap.exists():
-            continue
+        live.execute("ATTACH DATABASE ? AS restored", (str(tdir / "pages.db"),))
+        try:
+            write_lock(live)  # batches wait here until the restore is in, then land above it
+            live_seqs = dict(live.execute("SELECT page_id, MAX(seq) FROM page_ops GROUP BY page_id").fetchall())
+            live_pages = {r[0] for r in live.execute("SELECT id FROM unified_blocks WHERE parent_id = 'root'")}
+            live_ids = {r[0] for r in live.execute("SELECT id FROM unified_blocks")}
+            _copy_tables(live, "restored")
+            pages = [r[0] for r in live.execute("SELECT id FROM unified_blocks WHERE parent_id = 'root'")]
+            for page in pages:
+                ops.log_reload(live, page, by, after=live_seqs.get(page, 0))
+            now = page_now()
+            removed = sorted(live_pages - set(pages))
+            live.executemany("INSERT OR REPLACE INTO deleted_pages (page_id, deleted_at, actor) VALUES (?, ?, ?)",
+                             [(p, now, by) for p in removed])
+            live.executemany("DELETE FROM deleted_pages WHERE page_id = ?", [(p,) for p in pages])
+            restored_ids = {r[0] for r in live.execute("SELECT id FROM unified_blocks")}
+            live.commit()
+        except BaseException:
+            live.rollback()
+            raise
+        finally:
+            live.execute("DETACH DATABASE restored")
+    restored = ["pages.db"]
+    snap = tdir / "data.db"
+    if snap.exists():
         with closing(sqlite3.connect(str(snap))) as src_conn, \
-                closing(sqlite3.connect(str(root / dbname), timeout=10)) as dst_conn:
+                closing(sqlite3.connect(str(root / "data.db"), timeout=10)) as dst_conn:
             src_conn.backup(dst_conn)
-        restored.append(dbname)
+        restored.append("data.db")
     gone = sorted(live_ids - restored_ids)
     if gone:  # chats and index rows of what went (data.db may not have come with the backup)
         with connect_pages_db(ws) as conn:
@@ -643,6 +669,53 @@ def check_free_space(path: Path) -> None:
                           f"once {MIN_FREE_BYTES // (1 << 20)} MB is free")
 
 
+def _is_temp(path: Path) -> bool:
+    """A snapshot's work file: ``.<name>.part`` (a zip, a server backup's
+    folder) or a database copy beside it (``.<name>.part.pages.db``, its
+    ``-wal`` / ``-shm``)."""
+    return path.name.startswith(".") and ".part" in path.name
+
+
+def _sweep_temp(d: Path, now: float) -> int:
+    removed = 0
+    if not d.is_dir():
+        return 0
+    for f in d.iterdir():
+        try:
+            if not _is_temp(f):
+                continue
+            # a folder is written deep inside (a server backup's uploads): its newest file dates it
+            touched = max([f.stat().st_mtime] + ([p.stat().st_mtime for p in f.rglob("*")] if f.is_dir() else []))
+            if now - touched < STALE_TEMP_S:
+                continue
+            if f.is_dir():
+                shutil.rmtree(str(f))
+            else:
+                f.unlink()
+            removed += 1
+        except OSError:
+            continue  # in use after all, or gone meanwhile: the next sweep
+    return removed
+
+
+def sweep_stale_temp(now: float | None = None) -> int:
+    """Remove what snapshots a killed process never finished left behind —
+    the work files (``_is_temp``) older than STALE_TEMP_S in every
+    workspace's snapshot folder, ``backups/deleted/`` and ``backups/`` (the
+    server backups' work folders); a younger one may be a snapshot running
+    now. Returns how many went. The app runs it at startup and every
+    STALE_TEMP_S; ``create`` sweeps its own folder first."""
+    now = datetime.now(timezone.utc).timestamp() if now is None else now
+    dirs = [config.BACKUPS_DIR, deleted_dir()]
+    root = config.BACKUPS_DIR / "workspaces"
+    if root.is_dir():
+        dirs += [d for d in root.iterdir() if d.is_dir()]
+    removed = sum(_sweep_temp(d, now) for d in dirs)
+    if removed:
+        log.info(f"[backups] removed {removed} temp file(s) of snapshots that never finished")
+    return removed
+
+
 def create(ws: str, *, label: str = "manual", uploads: bool = True, by: str = "", scheduled: bool = False,
            task_id: str = "", auto: bool = False) -> dict:
     """Take a snapshot: ``scheduled`` for a backup task's run, ``auto`` for
@@ -663,6 +736,7 @@ def create(ws: str, *, label: str = "manual", uploads: bool = True, by: str = ""
             raise BackupError(f"this workspace already has {MAX_PER_WORKSPACE} backups — delete one first")
         d = store_dir(ws)
         d.mkdir(parents=True, exist_ok=True)
+        _sweep_temp(d, datetime.now(timezone.utc).timestamp())  # what a snapshot killed half way left
         check_free_space(d)
         name = _free_name(d, label)
         dest = d / f"{name}.zip"

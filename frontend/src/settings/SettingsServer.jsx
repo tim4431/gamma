@@ -54,9 +54,9 @@ export function ServerSettings({ value }) {
 function fmtUptime(seconds) {
   const s = Math.max(0, Number(seconds) || 0);
   const d = Math.floor(s / 86400), h = Math.floor((s % 86400) / 3600), m = Math.floor((s % 3600) / 60);
-  if (d) return `${d}d ${h}h`;
-  if (h) return `${h}h ${m}m`;
-  return `${m}m`;
+  if (d) return t("{d}d {h}h", { d, h });
+  if (h) return t("{h}h {m}m", { h, m });
+  return t("{m}m", { m });
 }
 
 // What the update row says: newer / current / unknown, in that order of use.
@@ -108,10 +108,10 @@ function ServerDashboard() {
   const updateTone = info.update_available ? "warn" : "";
   return <>
     <div className="setStats">
-      <StatText icon={ServerIcon} label="version" value={info.version ? `v${info.version}` : "dev build"}
+      <StatText icon={ServerIcon} label={t("version")} value={info.version ? `v${info.version}` : t("dev build")}
         hint={info.commit ? t("build {commit}", { commit: info.commit }) : info.frozen ? t("desktop app") : t("run from a checkout")}
         title={t("Gamma {label} · Python {python} · {platform} · data schema {schema_version}", { label: info.label, python: info.python, platform: info.platform, schema_version: info.schema_version })} />
-      <StatText icon={ActivityIcon} label="uptime" value={fmtUptime(info.uptime_seconds)}
+      <StatText icon={ActivityIcon} label={t("uptime")} value={fmtUptime(info.uptime_seconds)}
         hint={t("since {started}", { started: new Date(info.started_at).toLocaleString() })} />
       <StatText icon={AlertCircleIcon} label={t("warnings · errors")} value={`${counts.warning || 0} · ${counts.error || 0}`}
         hint={t("{info} info lines since start", { info: counts.info || 0 })} tone={logTone}

@@ -10,7 +10,12 @@ browsers signed into the same account also work. Backend: `gamma/ops.py`, `gamma
 Block undo/redo returns a description of the action (`describeTransition`):
 note creation/deletion/move, a text edit with a short preview, a properties
 or highlight edit. It is derived from the before/after trees, so a rebased
-remote change is never named as ours. The status pill shows it. The
+remote change is never named as ours. The status pill shows it. Undo never
+takes back what someone else changed after the step was recorded (see
+"reconciliation" below): what it had to leave alone is said ("Undone: … —
+kept what someone else changed since"), a step with nothing of ours left
+says "Can't undo: someone else changed this since", and a step that changes
+nothing any more is passed over, never reported as undone. The
 handwriting stroke history is separate ([handwriting.md](handwriting.md)).
 
 ## The model in one paragraph
@@ -74,7 +79,10 @@ log). A retry gets that answer instead of being applied twice, which the
 three-way merge would otherwise do to the same keystrokes. The lookup and
 the store happen under the batch's write lock. A restart forgets the
 answers; a retry after one is applied again, which the create-if-absent
-insert and the merge's "already the text" rule make mostly harmless.
+insert and the merge's "already the text" rule make mostly harmless. An
+offline copy names its pushes the same way and keeps the ids in its state
+until the answer is read, sending again only what the remote does not
+show yet ([mirror.md](mirror.md) "Rounds cut short").
 
 `apply_ops(conn, page_id, ops, actor=, client=, share_scoped=, cursor=, batch_id=)` applies and
 commits; `after_commit(ws, conn, result)` does the derived-data work and
@@ -137,8 +145,11 @@ continue from `since` at all, because it ends before it or skips the batch
 right after it. A backup restore leaves the last case
 ([workspaces.md](workspaces.md) "Export and backups"). It puts a page's log
 from the backup in place, then logs a `reload` one above the highest seq the
-live log or the backup had (`log_reload(after=)`). That way a page's seq
-never goes back, and a tab that was anywhere before the restore reloads
+live log or the backup had (`log_reload(after=)`). A replace reads the live
+log, copies the backup's pages.db in and writes those `reload`s in one write
+transaction (`ws_backup._replace`), so a batch posted meanwhile waits and
+lands above the `reload` instead of taking a seq the restored log hands out
+again. That way a page's seq never goes back, and a tab that was anywhere before the restore reloads
 instead of dropping the next batches as already seen. The restore also tells
 the open rooms to reload.
 
@@ -191,7 +202,12 @@ tombstone the feed reports; the tombstone goes when the id is created
 again. A page moved to Recently deleted (`ops.trash_page`) keeps its log but
 leaves the feed's pages and gets the tombstone, so to a copy it is deleted.
 Restoring it clears the tombstone and stamps the root, so the page is listed
-again as if created.
+again as if created. The page's room hears both: `trashed` when it goes (an
+open tab keeps what its typist has not sent yet and says the page was
+deleted, instead of reloading into a 404) and `reload` when it comes back —
+from the trash (`ops.restore_page`) or with a merge restore that takes it
+out of the trash (`ws_backup._merge`) — so the tab refetches and sends what
+it kept.
 
 ## Rooms and the socket (`gamma/collab.py`, `routers/collab.py`)
 
@@ -219,13 +235,26 @@ an anyone-with-the-link edit share admits a visitor without an account, who
 joins under the display name in `?name=`, [api.md](api.md) "Link
 visitors"). Anything else is closed with 4403 before accept. The handshake
 runs these reads (`_socket_access`) and the read of the log position in
-worker threads; the room itself only ever changes on the loop.
+worker threads; the room itself only ever changes on the loop. Once the peer
+is in the room and has its hello (still the first message a socket gets),
+`peer_access` runs once more: a revoke that landed between the first check
+and the join found no peer for `revalidate` to close, so this check closes
+it (4403), announcing its `leave`. A
+client gone at any point of the handshake (navigated away as the socket
+opened) is an ordinary close, never an ASGI error.
 
 `collab.revalidate(ws)` runs `peer_access` again for every peer of the
 workspace's rooms whenever access there changes: a share updated or stopped
 (`routers/shares.py`, a folder share moved or dropped with its folder), a
 member re-roled or removed, the workspace's access changed or the workspace
-deleted (`routers/workspaces.py`). A peer that lost access leaves the room
+deleted (`routers/workspaces.py`), an account deleted
+(`collab.revalidate_account` from `workspaces.delete_account`: every
+workspace with a room it is in, and the workspaces that went with it — a
+share peer whose account is gone counts as a stranger), and a batch that
+changes a page root's `folder` labels (`collab.revalidate_shares` from
+`ops.after_commit`, only when a peer of the workspace came through a share
+link: a folder share reaches the pages filed in its folder, and the batch
+itself still reaches the visitor it refiles away). A peer that lost access leaves the room
 at once and its socket is closed with 4403; the client does not reconnect.
 A peer whose edit right changed is announced again with a fresh `join`. Any
 handler may call it: it runs on the sockets' loop, does the database checks
@@ -241,7 +270,10 @@ display-name reconnect) replaces its peer, keeping its colour, and the old
 socket is closed with 4409. `leave` removes only that very peer, and
 unregisters a room only while it is the registered one. A leave is announced
 only when something was removed, so an old socket's teardown can neither
-knock the tab out of its room nor take the room from the others.
+knock the tab out of its room nor take the room from the others. A peer
+whose send fails leaves at once and the room announces its `leave` then
+(its handler's teardown finds nothing left to remove), so no ghost peer
+stays with the others.
 Messages:
 
 - server → client: `hello {client, color, seq, peers}` on join; `join {peer}`
@@ -249,7 +281,10 @@ Messages:
   actor, client, ops, cursor?}` for every applied batch (the sender's own
   included, it filters by client id; `cursor` is the writer's caret in the
   text after the batch, when the POST carried one — the server also stores
-  it as the writer's presence); `reload {seq}`.
+  it as the writer's presence); `reload {seq}` (refetch the tree — a
+  change ops cannot express, a restore, the page back from Recently
+  deleted); `trashed` (the page went to Recently deleted: keep the unsent
+  edits, show it, wait for a `reload`).
 - client → server: `cursor {block, anchor, head}` only (`anchor`/`head` = -1
   when no editor is open on that block). **Writes never travel over the
   socket**: they are `POST /api/pages/{id}/ops`, so auth and scoping live in
@@ -273,8 +308,8 @@ only wires it to the browser: `utils.apiJson`, `new WebSocket(...)` on the
 share- or workspace-qualified URL, the pagehide keepalive, a `beforeunload`
 prompt while `hasPending()`, a flush when the tab goes to the background
 (`visibilitychange` to hidden — a phone may kill it without a pagehide), an
-immediate retry on the browser's `online`, and `peers` / `me` as React
-state. The session owns:
+immediate retry on the browser's `online` and on the window regaining
+focus, and `peers` / `me` as React state. The session owns:
 
 - **the base tree**: what the server is known to hold from this tab's point of
   view. The block tree's transition effect calls
@@ -319,24 +354,47 @@ state. The session owns:
   adopted from it, and an insert the server already had converges on the
   block as the server has it. A refused batch is handled by why:
   - a 404 naming a block the server doesn't have (`missing`) while the base
-    holds it — its insert was lost — sends that block and its subtree again
-    as inserts ahead of the batch (up to `MAX_RESCUES` per page);
-  - a `conflict` (the page changed under the batch) drops only the op at
-    `index`. The rest goes out again at once as a new batch (text edits
+    holds it sends that block and its subtree again ahead of the batch:
+    inserts (create-if-absent), and a move of the block to where this tab
+    has it. Its insert may have been lost, or someone moved it under a
+    block this very batch deletes — the move takes it out before the
+    delete does, so the typing in it survives. A block missing again after
+    its rescue is not rescued twice (the batch itself removes it): it is a
+    conflict like below. `MAX_RESCUES` bounds the rescues between two saves
+    that go through;
+  - a `conflict` (the page changed under the batch) drops the op at `index`
+    and, unless it was a cycle, every op of the batch and of the queue
+    behind it on the vanished block: its own ops, inserts under it (and
+    what goes under those) and moves into it — at once, not one op per
+    round trip. The rest goes out again at once as a new batch (text edits
     keep the base they were typed from, so the server merges them), and the
-    page is refetched, since the screen still shows the refused change;
+    page is refetched once, since the screen still shows the refused
+    change. Dropped text or new notes are never dropped silently: a
+    "rejected" notice says someone deleted or moved the note;
+  - a 404 for the page itself (it went to Recently deleted — the room's
+    `trashed` message usually says so first, and App's refetch answering
+    404 with a trash entry calls `gone`): the page's edits are *parked*.
+    Nothing is dropped or sent; the batch out keeps its id and typing still
+    queues. App shows the page's notice with Restore (`onGone`); from
+    another page the "save" pill says why edits wait. The next load of the
+    page (the restore's `reload`, the Restore button's refetch) unparks
+    them: the overlay has kept them on screen and they go out;
   - signed out (401), another account signed in in this browser (the
     X-Gamma-User 409), offline, a server error, 408 or 429: the batch waits,
     id and all, and is retried after 3 s, doubling up to a minute, never
-    given up. The `online` event and a socket hello retry at once, and it
-    goes out once the person signs in again. Typing meanwhile queues behind
-    it;
+    given up. The `online` event, the window regaining focus and a socket
+    hello retry at once, as does a `flush()`; a failure there starts the
+    retries over at 3 s rather than stretching them (a save lands seconds
+    after the network is back, not a minute). It goes out once the person
+    signs in again. Typing meanwhile queues behind it;
   - anything else (malformed, not allowed any more): that batch alone is
     dropped, what was queued after it still goes, and the page is refetched.
-  While edits wait, a notice stays up (`onSaveNotice(text, "pending")`, a
-  "save" pill in App until the edits are saved). A dropped batch gets a
-  "rejected" notice that stays 20 s, where the status line alone lasts a
-  second. Text over `MAX_CONTENT` (the server's per-block limit) never
+  While edits wait, a notice says why in words ("Not saved yet — the server
+  can't be reached. Retrying…", never the browser's "Failed to fetch"):
+  `onSaveNotice(text, "pending")`, a "save" pill in App that goes when the
+  edits are saved — never the in-progress status line, which nothing would
+  clear. A dropped edit gets a "rejected" notice that stays 20 s, where the
+  status line alone lasts a second. Text over `MAX_CONTENT` (the server's per-block limit) never
   enters the queue. The op goes without it and the base keeps the last text
   that can be saved, so the text is diffed and sent again once shortened.
   The editor stays open on it (`tooLong(id)`), the notice says why, and a
@@ -344,10 +402,15 @@ state. The session owns:
 - **same-block merge**: a content `set` carries `base`, the text the change
   was made from (`diffTrees` reads it off the base tree; `pushOp` keeps the
   first base of a run of keystrokes). When the server finds the block
-  changed since, it applies the edit as a patch onto the current text
-  (diff-match-patch with fuzzy context matching): edits to different spans
-  both survive, a hunk that no longer fits is dropped and the stored text
-  stands for that span. The echoed op carries the merged text and the
+  changed since, it merges the two changes in base coordinates
+  (`textmerge.merge`: each side's edit `base → text` as replaced spans from
+  diff-match-patch's diff, both applied to `base`): edits to different
+  spans both survive, and so do insertions at the same or neighbouring
+  offsets, the one stored first coming first — two people typing at one
+  caret keep both people's keystrokes (text typed in front of a word the
+  other replaced stays in front of the replacement). Only a span of ours that replaces
+  characters the stored change also replaced is dropped; the stored text
+  stands for it. The echoed op carries the merged text and the
   batch's `cursor` is remapped into it. On the ack, a set whose stored
   text differs from what we sent lands on screen like a remote op — but
   only when no newer set of ours for that block is queued or in flight:
@@ -373,13 +436,48 @@ state. The session owns:
   the ack, applied only if its seq is higher than the ack's (theirs is the
   newer server value), else dropped (ours is). Its property patch still
   applies immediately, so successive updates to different keys are preserved.
+  Structure and properties the other way round: a remote batch applied here
+  after an edit of ours was ordered *before* it on the server whenever our
+  batch comes back with a higher seq. When our batch comes by in the
+  ordered inbox (its ack, or its own fan-out while it is still out) and
+  remote batches were applied since its edits were queued (`remote` against
+  the batch's `mark`), `reassert` replays its structure in its order — moves,
+  deletes, and inserts of blocks this tab no longer has (a rescue re-created
+  a note someone deleted: it comes back with the text typed here) — and its
+  property patches, skipping any block a newer queued edit of ours touches.
+  Before, a block both people moved stayed where the other put it on this
+  screen, and a rescued note never reappeared here. These ops land without
+  an undo-history rebase (`onRemoteOps`' `own`). A remote move this tab
+  can't place — its block or its target is gone here — means an unsent
+  delete of ours took them along here but not (yet) on the server, where
+  that move came first: a note moved out of the block we deleted survives
+  there, one moved into it goes with it. The page is refetched, our unsent
+  edits laid over it.
   Other operations apply at
   once — to the base, to the on-screen tree through `onRemoteOps` (a
   `"remote"` transition: no history entry; it is diffed like an edit, and
   since the base already has the ops only an edit of ours rendered in the
   same pass goes out), and to every
   undo snapshot (`blockHistory.rebase`), so undoing your own edit never
-  reverts someone else's. A snapshot lacking the target parent of a remote
+  reverts someone else's. App commits a remote transition at once
+  (`flushSync`), so its diff runs before the next batch advances the base:
+  rendered later, the tree of a first batch was diffed against a base that
+  already held the second, and an idle tab sent the second batch's notes
+  back as deletes and re-inserts (a paste arriving as two batches).
+  Ops landing on a fetched tree not committed yet keep it a load. A remote
+  move that shifts the row of the open editor (it, an ancestor, or a
+  reorder among their siblings — `displacedRow`) remounts or detaches that
+  editor; App takes its blur for what it is and puts the focus and caret
+  back, so the typing goes on.
+  In the undo history a remote content set is carried over onto each
+  snapshot's own text as the change `before → after` (`rebaseText`, one
+  replaced span each side), so undoing our typing in a block someone else
+  typed in takes out only ours; where the two spans overlap the snapshot
+  keeps its text and marks the block `contested`. Every block a remote batch
+  changes is stamped (`touched`), and a step (`undoStep` → `planRestore`)
+  never deletes a block, with what it holds, that someone else edited,
+  moved or made after the step was recorded, nor reverts contested text:
+  those parts are left as they are and the rest applies. A snapshot lacking the target parent of a remote
   move or insert (it predates that block) keeps the block where it was:
   `applyOps` never lets a block vanish with an op it can't place. A load (a
   fetched tree) empties the undo stack, since its snapshots predate what the
@@ -472,8 +570,19 @@ state in App instead of the tree.
   surrogates, a tab reconnecting on its client id, a stale room, the hello
   counting a batch committed while joining, revoked shares and removed or
   re-roled members closing or re-announcing open sockets.
+- `backend/tests/test_textmerge.py`: the same-block merge — different spans,
+  insertions at one caret keeping both (through the op endpoint too), an
+  insertion in front of a replaced word, an insertion inside the other
+  side's deleted span, a span both replaced.
 - `frontend/tests/blockOps.test.mjs`: `node --test tests/blockOps.test.mjs`
-  from `frontend/` (pure diff/apply round-trips).
+  from `frontend/` (pure diff/apply round-trips, and which remote moves
+  displace the open editor's row).
+- `frontend/tests/blockHistory.test.mjs`: what a transition counts as, and
+  collaborative undo — a remote text change carried over onto an older
+  text, undo taking out only our typing in a block someone else wrote in,
+  never deleting a note they wrote in or under, contested text kept while
+  the rest of the step applies, a step emptied by them said so, a step that
+  changes nothing passed over.
 - `frontend/tests/collabSession.test.mjs`: `createCollabSession` over fake
   HTTP, socket and timers — ack/socket ordering and catch-up, content versus
   property reconciliation, the merged text on an ack (landed at once, or
@@ -481,11 +590,16 @@ state in App instead of the tree.
   during a save, presence messages, the caret throttle, reconnect backoff,
   read-only sessions; browser behavior is covered separately below.
 - `frontend/tests/collabRobustness.test.mjs`: the refused-batch paths
-  (conflict, signed out, refused for good), batch splitting, text too long,
-  a batch id across retries, a reload and a return to the page keeping
-  unsaved edits, a failed refetch, a revoked socket, and the undo stack
-  after a reload or over a move it can't place (`blockHistory`'s
-  `observeTree` / `rebaseHistory` without React).
+  (conflict, signed out, refused for good), every op on a deleted block
+  dropped in one round trip, a delete racing a move into it, a rescue not
+  repeated and its budget restored, ours put back on top of theirs (a block
+  both moved, a note a rescue re-created), a remote move this tab can't
+  place refetching the page, a page in Recently deleted parking its
+  edits until it is back, early retries starting over, batch splitting,
+  text too long, a batch id across retries, a reload and a return to the
+  page keeping unsaved edits, a failed refetch, a revoked socket, and the
+  undo stack after a reload or over a move it can't place (`blockHistory`'s
+  `observeTree` / `rebaseHistory` / `undoStep` without React).
 - End to end: `npm run e2e -- --only collab` from `frontend/`
   (`tests/e2e/scenarios/collab.mjs`, [debugging.md](debugging.md)): two
   browser contexts on one page of a shared workspace — presence stack and row
@@ -496,8 +610,14 @@ state in App instead of the tree.
   mid-block edit sits where the person typed (and the other caret shifts
   along), undo after a remote edit
   keeps the remote edit, a rename reaches the other tab, an edit made offline
-  lands once the network is back, a remote delete, a note moved in with a
-  reload surviving Ctrl+Z, a failed refresh keeping the page and retrying, a
+  lands once the network is back (its notice in words, gone with the save),
+  a remote delete, a note moved in with a
+  reload surviving Ctrl+Z, a failed refresh keeping the page and retrying,
+  undo never deleting the text the other wrote in our note, the other
+  indenting around an open editor keeping it open, typing at one caret
+  keeping both people's keystrokes, a paste arriving as two batches leaving
+  the idle tab silent, typing kept through Recently deleted and saved after
+  the restore, a
   highlight made by the other person; `share.mjs` covers the invited editor on a share link and
   the stranger typing through an anyone-with-the-link edit share under a
   renamed display name.
@@ -511,12 +631,15 @@ state in App instead of the tree.
 - A remote delete of a block with our text edit in flight applies at once;
   the edit then comes back as a rescue only if our base still held the
   block, else it is dropped with the block (the screen already showed the
-  delete).
-- Same-block simultaneous typing merges by span (three-way merge above); a set whose content already is the block's text (the same edit sent twice, a retried batch, a clone pushing what it already pulled) merges nothing — patching it in again would double the change;
-  two people changing the *same* characters within one save window still
-  resolve by server order for that span. If character-exact convergence
-  ever matters, the upgrade path is CodeMirror's collab rebase on just the
-  open block; not a CRDT.
+  delete, and a "rejected" notice says the edit couldn't be saved).
+- Same-block simultaneous typing merges by span (three-way merge above); a set whose content already is the block's text (the same edit sent twice, a retried batch, a clone pushing what it already pulled) merges nothing — merging it in again would double the change;
+  two people replacing the *same* characters within one save window still
+  resolve by server order for that span (insertions at one spot keep both).
+  If character-exact convergence ever matters, the upgrade path is
+  CodeMirror's collab rebase on just the open block; not a CRDT.
+- Undo's text rebase takes each side's change as one span: two edits of
+  ours far apart in one block with someone's edit between them count as
+  overlapping, and that block's text is left as it is by the undo.
 - The socket needs a proxy that forwards websocket upgrades (Vite's dev proxy
   has `ws: true`; a reverse proxy in front of the NAS must pass `Upgrade`).
   uvicorn needs the `websockets` package (`requirements.txt`; the desktop

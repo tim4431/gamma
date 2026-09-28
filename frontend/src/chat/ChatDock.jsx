@@ -606,6 +606,37 @@ export default function ChatDock({
     return () => { cancelled = true; };
   }, [chatKey, docId, readOnly, session]);
 
+  // Back in this tab: another tab or member may have moved the conversation
+  // on (a newer answer, a New chat), so the stored copy is read again and
+  // shown when its version is not the one this tab holds. Only while this
+  // tab's copy is saved and no reply streams here: otherwise the next save's
+  // merge brings the stored copy in. The draft in the composer stays.
+  useEffect(() => {
+    const refresh = () => {
+      if (document.visibilityState === "hidden") return;
+      const key = chatKeyRef.current;
+      const reply = session.getSnapshot().replies.get(key);
+      if (session.isActive(key) || (reply && !session.isSaved(key))) return;
+      const version = session.version(key);
+      apiJson(`${API}/chats/${encodeURIComponent(key)}`).then((data) => {
+        if (data.updated_at === undefined || data.updated_at === version) return; // a share view has no version
+        if (chatKeyRef.current !== key || session.isActive(key)
+          || session.getSnapshot().replies.get(key) !== reply || session.version(key) !== version) return;
+        session.forget(key);
+        session.seen(key, data.messages || [], data.updated_at);
+        setChatMessages(data.messages || []);
+        setChatTitle(data.title || "");
+        setHistory(null);
+      }).catch(() => {});
+    };
+    window.addEventListener("focus", refresh);
+    document.addEventListener("visibilitychange", refresh);
+    return () => {
+      window.removeEventListener("focus", refresh);
+      document.removeEventListener("visibilitychange", refresh);
+    };
+  }, [session]);
+
   // History: the bucket's earlier conversations (server `chat_history`).
   // "New chat" archives the current one there instead of deleting it, and
   // opening an entry swaps it with the current one. Both send the client's

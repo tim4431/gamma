@@ -21,18 +21,32 @@
 // a run of typing undoes as one chunk, like any editor — else
 // EDIT_MERGE_MS: a drag, a run of toggles).
 //
-// An entry is {tree, caret}: the tree kept by reference (the helpers never
-// mutate in place) and, when the change came from an editor, that editor's
-// selection before it. The open editor is not part of the tree (App's
-// `view`, blockModel.js): the caller passes `editingId` and takes
-// `onEditing` back. Restoring while an editor is open keeps the caret's
-// block in edit mode and hands the caret back through `onCaret` so the
-// editor puts the cursor where the change was; restoring with no editor open
-// opens none, so undo never pops editors open. The stack belongs to one
-// page and is cleared when the page id changes. The stack's bookkeeping is
-// plain functions over one state object (`observeTree`, `rebaseHistory`,
-// `clearHistory`), so the node tests drive it without React.
+// An entry is {tree, caret, mark}: the tree kept by reference (the helpers
+// never mutate in place), when the change came from an editor that
+// editor's selection before it, and the history's clock when it was pushed.
+// The open editor is not part of the tree (App's `view`, blockModel.js):
+// the caller passes `editingId` and takes `onEditing` back. Restoring while
+// an editor is open keeps the caret's block in edit mode and hands the caret
+// back through `onCaret` so the editor puts the cursor where the change was;
+// restoring with no editor open opens none, so undo never pops editors
+// open. The stack belongs to one page and is cleared when the page id
+// changes.
+//
+// Collaborative undo: another client's ops are folded into every entry
+// (`rebaseHistory`) — structure and properties as they are, text as a
+// change carried over onto the entry's own text, so undoing our typing in a
+// block someone else typed in too takes out only ours. Undo never takes
+// back what someone else changed after an entry was recorded
+// (`planRestore`): a block the restore would delete that they edited,
+// moved or made stays, as does text of theirs an entry's text couldn't be
+// rebased around; the rest of the entry applies, and when nothing is left
+// the step says so instead of pretending. An entry that changes nothing any
+// more is passed over. The stack's bookkeeping is plain functions over one
+// state object (`observeTree`, `rebaseHistory`, `undoStep`, `clearHistory`),
+// so the node tests drive it without React.
 import { useCallback, useEffect, useRef } from "react";
+import { generateNKeysBetween } from "fractional-indexing";
+import { applyOps, diffTrees, indexTree } from "../shared/model/blockOps.js";
 import { t } from "../shared/i18n/i18n.js";
 
 const MAX_ENTRIES = 200;
@@ -114,23 +128,150 @@ function hasBlock(list, id) {
   return false;
 }
 
-// The history's state: the two stacks, the tree last seen, and the
-// bookkeeping of the transition being recorded.
+const someNode = (node, test) => test(node) || (node.children || []).some((c) => someNode(c, test));
+
+// `tree` with the text of the blocks in `texts` (id → text) replaced.
+function withTexts(tree, texts) {
+  return (tree || []).map((n) => {
+    const kids = n.children?.length ? withTexts(n.children, texts) : n.children;
+    if (texts.has(n.id)) return { ...n, content: texts.get(n.id), children: kids };
+    return kids === n.children ? n : { ...n, children: kids };
+  });
+}
+
+// The history's state: the two stacks, the tree last seen, the bookkeeping
+// of the transition being recorded, and what other clients touched when:
+// `tick` counts their batches, `touched` maps a block to the tick that last
+// changed it (an entry's `mark` is the tick it was pushed at).
 export function createHistory(tree = []) {
-  return { undo: [], redo: [], prev: tree, prevCaret: null, prevEditing: null, displaced: null, intent: null, lastEdit: null };
+  return { undo: [], redo: [], prev: tree, prevCaret: null, prevEditing: null, displaced: null, intent: null, lastEdit: null,
+    tick: 0, touched: new Map() };
 }
 
 export function clearHistory(s) {
   s.undo = [];
   s.redo = [];
   s.lastEdit = null;
+  s.touched = new Map();
 }
 
-// Another client's change landed: fold it into every snapshot, so undoing
-// our own edits never reverts theirs (what a collaborative undo means).
-export function rebaseHistory(s, fn) {
-  if (s.undo.length) s.undo = s.undo.map((e) => ({ ...e, tree: fn(e.tree) }));
-  if (s.redo.length) s.redo = s.redo.map((e) => ({ ...e, tree: fn(e.tree) }));
+// Another client's change `from → to` of one block's text carried over onto
+// `text`, that block's text in a snapshot (`from` changed by our own edits
+// since): each change taken as one replaced span (past the common prefix
+// and suffix), theirs lands in the snapshot unless the two spans overlap —
+// then null: it can't be told apart from ours.
+export function rebaseText(from, to, text) {
+  if (text === from) return to;
+  if (to === from) return text;
+  const span = (a, b) => {
+    const max = Math.min(a.length, b.length);
+    let head = 0;
+    while (head < max && a.charCodeAt(head) === b.charCodeAt(head)) head++;
+    let tail = 0;
+    while (tail < max - head && a.charCodeAt(a.length - 1 - tail) === b.charCodeAt(b.length - 1 - tail)) tail++;
+    return [head, a.length - tail, b.slice(head, b.length - tail)];
+  };
+  const [ours0, ours1] = span(from, text);
+  const [theirs0, theirs1, inserted] = span(from, to);
+  if (theirs1 <= ours0) return text.slice(0, theirs0) + inserted + text.slice(theirs1);
+  if (theirs0 >= ours1) {
+    const shift = text.length - from.length;
+    return text.slice(0, theirs0 + shift) + inserted + text.slice(theirs1 + shift);
+  }
+  return null;
+}
+
+// Another client's batch landed: fold it into every entry, so undoing our
+// own edits never reverts theirs (what a collaborative undo means).
+// `before` is the tree the ops were applied to (the session's base): a
+// content set is carried over onto each entry's text as the change
+// before → after (`rebaseText`); where it can't be, the entry keeps its
+// text and marks the block `contested`. An entry whose snapshot differs
+// from `before` on a block the batch touches is `hit`: should it change
+// nothing any more, that is because of them. Every block the batch
+// changed is stamped in `touched`.
+export function rebaseHistory(s, ops, { pageId, pos, before = [] }) {
+  const stamp = ++s.tick;
+  const was = indexTree(before, pageId);
+  const texts = new Map(); // id → [text before the batch, after it]
+  const shaped = [];
+  for (const op of ops || []) {
+    if (op.op === "set") {
+      const props = Object.keys(op.props || {}).some((k) => k !== "collapsed");
+      if (op.content !== undefined || props) s.touched.set(op.id, stamp);
+      const had = was.get(op.id)?.node;
+      if (op.content !== undefined && had) {
+        texts.set(op.id, [texts.get(op.id)?.[0] ?? (had.content || ""), op.content]);
+        if (op.props) shaped.push({ op: "set", id: op.id, props: op.props });
+        continue;
+      }
+    } else if (op.op === "insert" || op.op === "move") s.touched.set(op.id, stamp);
+    shaped.push(op);
+  }
+  const ids = [...new Set((ops || []).map((op) => op.id))];
+  const rebase = (e) => {
+    const mine = !e.hit || texts.size ? indexTree(e.tree, pageId) : null;
+    const hit = e.hit || ids.some((id) => {
+      const a = mine.get(id), b = was.get(id);
+      if (!a || !b) return !!a !== !!b;
+      return a.parent !== b.parent || (a.node.content || "") !== (b.node.content || "")
+        || !propsEqual(a.node.properties, b.node.properties);
+    });
+    let tree = shaped.length ? applyOps(e.tree, shaped, pageId, pos) : e.tree;
+    let contested = e.contested;
+    const changed = new Map();
+    for (const [id, [from, to]] of texts) {
+      const node = mine.get(id)?.node;
+      if (!node) continue;
+      const text = rebaseText(from, to, node.content || "");
+      if (text === null) contested = new Set([...(contested || []), id]);
+      else if (text !== (node.content || "")) changed.set(id, text);
+    }
+    if (changed.size) tree = withTexts(tree, changed);
+    return { ...e, tree, hit, contested };
+  };
+  if (s.undo.length) s.undo = s.undo.map(rebase);
+  if (s.redo.length) s.redo = s.redo.map(rebase);
+}
+
+// Scratch positions for planning a restore: the order the tree has now.
+function orderKeys(tree, pos = new Map()) {
+  const keys = generateNKeysBetween(null, null, (tree || []).length);
+  (tree || []).forEach((n, i) => { pos.set(n.id, keys[i]); orderKeys(n.children, pos); });
+  return pos;
+}
+const PLAN_PAGE = "\u0000page";
+
+// What restoring `entry` over the tree now (`s.prev`) comes to: `tree`
+// (null when it would change nothing) and `held` — part of it was left as
+// it is, since someone else changed it after the entry was recorded: a
+// block the restore would delete (with what it holds) that they edited,
+// moved or made, and text of theirs the entry's text couldn't be rebased
+// around. The rest applies.
+export function planRestore(s, entry) {
+  const current = s.prev, target = entry.tree;
+  if (classifyTransition(current, target) === null) return { tree: null, held: !!entry.hit };
+  const touched = (id) => (s.touched.get(id) || 0) > (entry.mark || 0);
+  const pos = orderKeys(current);
+  const ops = diffTrees(current, target, PLAN_PAGE, pos);
+  const here = indexTree(current, PLAN_PAGE), there = indexTree(target, PLAN_PAGE);
+  const kept = [];
+  let held = false;
+  for (const op of ops) {
+    if (op.op === "delete" && someNode(here.get(op.id).node, (n) => !there.has(n.id) && touched(n.id))) {
+      held = true; // (what the target has elsewhere is moved out first, never deleted)
+      continue;
+    }
+    if (op.op === "set" && op.content !== undefined && entry.contested?.has(op.id)) {
+      held = true;
+      if (op.props) kept.push({ op: "set", id: op.id, props: op.props });
+      continue;
+    }
+    kept.push(op);
+  }
+  if (!held) return { tree: target, held: false };
+  const tree = applyOps(current, kept, PLAN_PAGE, pos);
+  return { tree: classifyTransition(current, tree) === null ? null : tree, held: true };
 }
 
 // Selection of the editor open on block `id`: the live one while that
@@ -162,8 +303,8 @@ export function observeTree(s, blocks, o, editingId = null) {
     const origin = o.originOf?.(blocks);
     if (origin === "load") { clearHistory(s); return; }
     if (origin) return;
-    if (intent === "undo") { s.redo.push({ tree: prev, caret: displaced }); return; }
-    if (intent === "redo") { s.undo.push({ tree: prev, caret: displaced }); return; }
+    if (intent === "undo") { s.redo.push({ tree: prev, caret: displaced, mark: s.tick }); return; }
+    if (intent === "redo") { s.undo.push({ tree: prev, caret: displaced, mark: s.tick }); return; }
     const kind = classifyTransition(prev, blocks);
     if (kind === null) return;
     const now = Date.now();
@@ -178,13 +319,44 @@ export function observeTree(s, blocks, o, editingId = null) {
     // A content change from an editor carries the selection it started from.
     const before = o.caretBeforeRef?.current;
     const caret = kind !== true && before?.id === kind ? { ...before } : caretOf(s, prevEditing, o);
-    s.undo.push({ tree: prev, caret });
+    s.undo.push({ tree: prev, caret, mark: s.tick });
     if (s.undo.length > MAX_ENTRIES) s.undo.shift();
     s.redo = [];
   } finally {
     const live = o.caretRef?.current;
     s.prevCaret = live ? { ...live } : null;
     s.prevEditing = editingId;
+  }
+}
+
+// One undo (or redo) step (`o`: the hook's options): the newest entry that
+// still changes something is restored, as far as `planRestore` lets it.
+// Returns {description, kept} (kept: what someone else changed since was
+// left as it is), {blocked: true} when nothing of the entry could be
+// restored for that reason (the entry is used up), or false when the stack
+// is empty. `inEditor`: from an open editor — the restored block stays in
+// edit mode with the cursor where the change was; otherwise nothing opens.
+export function undoStep(s, o, redo = false, inEditor = false) {
+  const stack = redo ? s.redo : s.undo;
+  for (;;) {
+    const entry = stack.pop();
+    if (!entry) return false;
+    const plan = planRestore(s, entry);
+    if (!plan.tree) {
+      if (plan.held) return { blocked: true };
+      continue; // it changes nothing any more: the one before it
+    }
+    const description = redo ? describeTransition(s.prev, plan.tree) : describeTransition(plan.tree, s.prev);
+    s.intent = redo ? "redo" : "undo";
+    s.lastEdit = null;
+    // The state being displaced keeps the cursor it has right now (read
+    // before the restore re-syncs the editor's document).
+    s.displaced = caretOf(s, o.editingId, o);
+    const caret = inEditor && entry.caret && hasBlock(plan.tree, entry.caret.id) ? entry.caret : null;
+    o.setBlocks(plan.tree);
+    o.onEditing?.(caret?.id || null);
+    if (caret) o.onCaret?.(caret);
+    return { description, kept: plan.held };
   }
 }
 
@@ -216,30 +388,15 @@ export function useBlockHistory(blocks, setBlocks, opts) {
   // run in declaration order — call this hook before that effect).
   useEffect(() => { observeTree(st.current, blocks, optsRef.current, editingId); }, [blocks, editingId]);
 
-  // Stable, so a once-mounted key listener can call it. Returns the action
-  // description, or false when empty. `inEditor`: from an open editor —
-  // the restored block stays in edit mode with the cursor where the change
-  // was; otherwise nothing opens.
+  // Stable, so a once-mounted key listener can call it (`undoStep`).
   const undo = useCallback((redo = false, inEditor = false) => {
     const o = optsRef.current;
     if (!o.enabled) return false;
-    const s = st.current;
-    const entry = (redo ? s.redo : s.undo).pop();
-    if (!entry) return false;
-    const description = redo ? describeTransition(s.prev, entry.tree) : describeTransition(entry.tree, s.prev);
-    s.intent = redo ? "redo" : "undo";
-    s.lastEdit = null;
-    // The state being displaced keeps the cursor it has right now (read
-    // before the restore re-syncs the editor's document).
-    s.displaced = caretOf(s, o.editingId, o);
-    const caret = inEditor && entry.caret && hasBlock(entry.tree, entry.caret.id) ? entry.caret : null;
-    o.setBlocks(entry.tree);
-    o.onEditing?.(caret?.id || null);
-    if (caret) o.onCaret?.(caret);
-    return description;
+    return undoStep(st.current, o, redo, inEditor);
   }, []);
 
-  const rebase = useCallback((fn) => rebaseHistory(st.current, fn), []);
+  // Another client's ops landed (`rebaseHistory`): {pageId, pos, before}.
+  const rebase = useCallback((ops, where) => rebaseHistory(st.current, ops, where), []);
 
   return { undo, clear, rebase };
 }

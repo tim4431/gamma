@@ -676,6 +676,36 @@ export async function settingsScenarios(env) {
     } finally { await ctx.close(); }
   });
 
+  // An account keeps at most five tasks (backup_schedule.MAX_TASKS): at five,
+  // Add task and Duplicate are disabled and a line under the table says why.
+  await step("settings: at five backup tasks, Add task is disabled and says why", async () => {
+    const made = [];
+    for (let i = 1; i <= 5; i++) {
+      made.push(await user.api("/api/backup-tasks", { method: "POST", body: { name: `Task ${i}`, scope: "all_owned", cron: "0 3 * * *" } }));
+    }
+    const { ctx, page } = await setup();
+    try {
+      await openSettings(page);
+      await nav(page, "Backups").click();
+      const add = page.getByRole("button", { name: "Add task", exact: true });
+      await page.getByRole("region", { name: "Periodic backup tasks" }).locator("tr", { hasText: "Task 5" }).waitFor();
+      assert(await add.isDisabled(), "Add task is disabled at the limit");
+      await page.getByText("You can keep up to 5 backup tasks. Delete one to add another.").waitFor();
+      const actions = page.getByRole("button", { name: "Actions for Task 1", exact: true });
+      await actions.click();
+      const duplicate = page.getByRole("button", { name: "Duplicate task", exact: true });
+      assert(await duplicate.isDisabled(), "Duplicate too");
+      await actions.click(); // (Escape would close Settings)
+      await duplicate.waitFor({ state: "detached" });
+      await user.api(`/api/backup-tasks/${made[0].id}`, { method: "DELETE" });
+      await until(async () => !(await add.isDisabled()), { what: "a deleted task frees a place", timeout: 15000 });
+      assertNoProblems(page);
+    } finally {
+      await ctx.close();
+      for (const task of made.slice(1)) await user.api(`/api/backup-tasks/${task.id}`, { method: "DELETE" });
+    }
+  });
+
   // A replace restore first keeps the workspace as it is (ws_backup's
   // automatic pre-restore snapshot); restoring a workspace other than the
   // open one reloads its list in place, where that snapshot shows its tag.

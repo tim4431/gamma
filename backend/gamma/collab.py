@@ -14,10 +14,13 @@ Presence is never persisted. Document changes never travel over the socket
 towards the server — writes are ``POST /api/pages/{id}/ops`` (gamma/ops.py),
 the socket only carries the applied batches back out.
 
-Access is decided by ``peer_access`` — at the handshake, and again for
-every peer of a workspace by ``revalidate`` whenever who may see what
-changes there (a share stopped or narrowed, a member removed or re-roled):
-a peer that lost access is dropped and its socket closed with 4403.
+Access is decided by ``peer_access`` — at the handshake (once more right
+after the join, so a revoke landing in between is not missed), and again
+for every peer of a workspace by ``revalidate`` whenever who may see what
+changes there (a share stopped or narrowed, a member removed or re-roled, a
+page refiled out of a shared folder — ``revalidate_shares`` —, an account
+deleted — ``revalidate_account``): a peer that lost access is dropped and
+its socket closed with 4403.
 """
 
 import asyncio
@@ -78,10 +81,11 @@ class Room:
         results = await asyncio.gather(*(p.ws.send_text(text) for p in targets),
                                        return_exceptions=True)
         for peer, res in zip(targets, results):
-            if isinstance(res, BaseException) and self.peers.get(peer.client) is peer:
-                # A dead socket: its handler's finally block removes the peer
-                # too, but don't wait for that to keep it out of the next send.
-                del self.peers[peer.client]
+            # A dead socket leaves now, not when its handler notices, to keep
+            # it out of the next send. Its handler's teardown then finds
+            # nothing to remove, so the others hear it went from here.
+            if isinstance(res, BaseException) and leave(self, peer):
+                publish(self.key[0], self.key[1], {"t": "leave", "client": peer.client})
 
 
 def join(ws: str, page_id: str, peer: Peer) -> Room:
@@ -95,7 +99,7 @@ def join(ws: str, page_id: str, peer: Peer) -> Room:
     old = room.peers.get(peer.client)
     room.peers[peer.client] = peer
     if old is not None and old.ws is not peer.ws:
-        _schedule(_close(old.ws, CLOSE_REPLACED))
+        _schedule(close_quietly(old.ws, CLOSE_REPLACED))
     return room
 
 
@@ -112,7 +116,8 @@ def leave(room: Room, peer: Peer) -> bool:
     return True
 
 
-async def _close(sock, code: int) -> None:
+async def close_quietly(sock, code: int) -> None:
+    """Close a socket that may be gone already (the client navigated away)."""
     try:
         await sock.close(code=code)
     except Exception:  # noqa: BLE001 — already closed / torn down
@@ -201,6 +206,8 @@ def peer_access(ws: str, page_id: str, account: str, is_guest: bool, token: str)
         share = share_lookup(token)
         if not share or share["workspace_id"] != ws:
             return None
+        if account and not workspaces.account_exists(account):
+            account, is_guest = "", False  # deleted since it joined: a stranger to the share now
         level, _reason = share_access(share, account or None, is_guest)
         if not level:
             return None
@@ -233,6 +240,28 @@ def revalidate(ws: str) -> None:
         _schedule(_revalidate(ws))
 
 
+def revalidate_shares(ws: str) -> None:
+    """A page's folder labels changed, and a folder share reaches the pages
+    filed in its folder: ``revalidate`` the workspace when a peer of its
+    rooms came through a share link — the only peers a label decides for
+    (checked in memory, so a refiling batch pays nothing otherwise)."""
+    if any(peer.token for key, room in list(_rooms.items()) if key[0] == ws
+           for peer in list(room.peers.values())):
+        _schedule(_revalidate(ws))
+
+
+def revalidate_account(username: str, workspaces=()) -> None:
+    """An account was deleted: ``revalidate`` every workspace with a room
+    the account is in (as a member or through a share link) and
+    ``workspaces``, the ones that went with it."""
+    wanted = set(workspaces)
+    for key, room in list(_rooms.items()):
+        if any(peer.account == username for peer in list(room.peers.values())):
+            wanted.add(key[0])
+    for ws in wanted:
+        revalidate(ws)
+
+
 def _access_of(ws: str, targets: list) -> list:
     """``peer_access`` for each ``(page_id, peer)``; None (no access) for a
     check that fails — a workspace deleted meanwhile."""
@@ -258,7 +287,7 @@ async def _revalidate(ws: str) -> None:
         if can_edit is None:
             if leave(room, peer):
                 publish(ws, key[1], {"t": "leave", "client": peer.client})
-            await _close(peer.ws, CLOSE_REVOKED)
+            await close_quietly(peer.ws, CLOSE_REVOKED)
         elif can_edit != peer.can_edit:
             peer.can_edit = can_edit
             publish(ws, key[1], {"t": "join", "peer": peer.public()}, exclude=peer.client)

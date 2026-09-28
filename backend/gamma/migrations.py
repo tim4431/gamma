@@ -424,8 +424,8 @@ def _each_pages_db(step: str, fn) -> None:
         return
     for ws_root in sorted(config.WORKSPACES_DIR.iterdir()):
         pages_db = ws_root / "pages.db"
-        if not ws_root.is_dir() or not pages_db.is_file():
-            continue
+        if not ws_root.is_dir() or not pages_db.is_file() or ws_root.name.startswith("."):
+            continue  # (a dot-name: a deleted workspace's leftover, workspaces.remove_leftovers)
         try:
             with closing(sqlite3.connect(str(pages_db))) as pdb:
                 for stmt in PAGES_SCHEMA:

@@ -36,12 +36,15 @@ keyed by that subject until their first cloud sign-in creates or links the
 local account (``claim_pending_memberships``, called by gamma/cloud_auth.py).
 """
 
+import os
 import re
 import secrets
 import shutil
 import sqlite3
+import time
 import urllib.parse
 
+from . import collab
 from .config import WORKSPACES_DIR
 from .db import connect_users_db, page_now, safe_ws_id, ws_dir, ws_uploads_dir
 from .logbuf import log
@@ -59,6 +62,12 @@ MAX_PENDING_PER_WORKSPACE = 100
 # The account server's username rule (cloud/gammacloud/accounts.py USERNAME_RE).
 CLOUD_USERNAME_RE = re.compile(r"^[a-z0-9][a-z0-9-]{1,30}[a-z0-9]$")
 LOOKUP_TIMEOUT = 10
+# A deleted workspace's directory is set aside under this prefix, then removed
+# (remove_files); what a file held open keeps goes later (remove_leftovers).
+LEFTOVER_PREFIX = ".deleting-"
+LEFTOVERS_EVERY_S = 3600
+REMOVE_TRIES = 10
+REMOVE_RETRY_S = 0.1
 
 _COLS = "id, name, created_by, created_at, kind, access, public_role, quota_mb"
 
@@ -152,6 +161,11 @@ def role_of(ws: str, username: str) -> str | None:
     if access == "public" and public_role in PUBLIC_ROLES and not is_guest:
         return public_role
     return None
+
+
+def account_exists(username: str) -> bool:
+    with connect_users_db() as conn:
+        return bool(conn.execute("SELECT 1 FROM users WHERE username = ?", (username,)).fetchone())
 
 
 def at_least(role: str | None, needed: str) -> bool:
@@ -699,9 +713,26 @@ def _delete_rows(conn, ws: str) -> None:
     conn.execute("DELETE FROM workspaces WHERE id = ?", (ws,))
 
 
+def _retrying(fn, *args):
+    """``fn(*args)``, tried again for about a second while it raises
+    OSError: on Windows a background pass (the notes index, the upload
+    check) may hold one of the workspace's files open for a moment."""
+    for attempt in range(REMOVE_TRIES):
+        try:
+            return fn(*args)
+        except OSError:
+            if attempt == REMOVE_TRIES - 1:
+                raise
+            time.sleep(REMOVE_RETRY_S)
+
+
 def remove_files(ws: str) -> str:
-    """rmtree the workspace directory (and its stored backups); returns ""
-    or a warning."""
+    """Remove the workspace directory (and its stored backups); returns ""
+    or a warning. The directory is first renamed to ``.deleting-<id>-…``
+    (atomic: from then on nothing finds the workspace, and a background
+    pass about to open one of its databases finds no directory instead of
+    creating a fresh file in a half-removed one), then removed. What a file
+    held open keeps there (Windows) goes with ``remove_leftovers``."""
     from . import ws_backup  # local: ws_backup imports seed → db
 
     ws_backup.remove_all(ws)
@@ -711,13 +742,43 @@ def remove_files(ws: str) -> str:
         return ""
     if not path.exists():
         return ""
+    doomed = path.with_name(f"{LEFTOVER_PREFIX}{path.name}-{secrets.token_hex(3)}")
     try:
-        shutil.rmtree(str(path))
+        _retrying(os.rename, path, doomed)
+    except OSError as e:
+        log.warning(f"[workspaces] could not set {path} aside ({e}); removing it in place")
+        doomed = path
+    try:
+        _retrying(shutil.rmtree, str(doomed))
         return ""
     except OSError as e:
+        if doomed != path:  # the workspace is gone; the rest is swept later
+            log.warning(f"[workspaces] {doomed.name} stays until the next cleanup: {e}")
+            return ""
         log.warning(f"[workspaces] could not remove {path}: {e}")
         return (f"the workspace's files could not be removed ({e}); "
                 f"delete workspaces/{ws}/ by hand")
+
+
+def remove_leftovers() -> list[str]:
+    """Remove the ``.deleting-*`` directories workspace deletes could not
+    finish (a file held open at the time); their names. The app runs it at
+    startup and every LEFTOVERS_EVERY_S."""
+    if not WORKSPACES_DIR.is_dir():
+        return []
+    gone = []
+    for d in WORKSPACES_DIR.iterdir():
+        if not (d.is_dir() and d.name.startswith(LEFTOVER_PREFIX)):
+            continue
+        try:
+            shutil.rmtree(str(d))
+        except OSError as e:
+            log.warning(f"[workspaces] could not remove {d.name} yet: {e}")
+            continue
+        gone.append(d.name)
+    if gone:
+        log.info(f"[workspaces] removed what deletes left behind: {gone}")
+    return gone
 
 
 def _deleted_with(conn, username: str) -> list[str]:
@@ -785,6 +846,8 @@ def delete_account(username: str, *, release_now: bool = False, by: str = "") ->
         conn.execute("DELETE FROM ai_usage WHERE username = ?", (username,))
         conn.execute("DELETE FROM users WHERE username = ?", (username,))
         conn.commit()
+    # its open page sockets, and everyone's in the workspaces that went, close now
+    collab.revalidate_account(username, deleted)
     return deleted
 
 
@@ -840,4 +903,5 @@ def orphan_dirs() -> list[str]:
         return []
     with connect_users_db() as conn:
         known = {r[0] for r in conn.execute("SELECT id FROM workspaces")}
-    return sorted(d.name for d in WORKSPACES_DIR.iterdir() if d.is_dir() and d.name not in known)
+    return sorted(d.name for d in WORKSPACES_DIR.iterdir()
+                  if d.is_dir() and d.name not in known and not d.name.startswith(LEFTOVER_PREFIX))

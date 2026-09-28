@@ -7,14 +7,14 @@ from fastapi import APIRouter, HTTPException, Request
 from pydantic import BaseModel
 
 from .. import notices
-from ..auth import require_user
+from ..auth import is_token, signed_in
 
 router = APIRouter(prefix="/api", tags=["notices"])
 
 
 def _account(request: Request) -> str | None:
-    user = require_user(request)
-    if request.state.is_guest or getattr(request.state, "auth", "session") == "token":
+    user = signed_in(request)
+    if request.state.is_guest or is_token(request):
         return None
     return user
 

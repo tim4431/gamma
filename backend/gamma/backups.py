@@ -70,7 +70,7 @@ def _upload_dirs() -> list[Path]:
     for root in (config.LEGACY_USERS_DIR, config.WORKSPACES_DIR):
         if root.is_dir():
             for d in sorted(root.iterdir()):
-                if (d / "uploads").is_dir():
+                if (d / "uploads").is_dir() and not d.name.startswith("."):
                     dirs.append(d / "uploads")
     return dirs
 
@@ -136,9 +136,10 @@ def _dir_size(path: Path) -> int:
 
 
 def info(name: str) -> dict | None:
-    """The backup's manifest plus its name, path, size and ``damaged`` (the
-    database copies that failed their check); None for an unknown name or
-    an interrupted snapshot (no manifest)."""
+    """The backup's manifest plus its name, path, size, ``damaged`` (the
+    database copies that failed their check) and ``auto`` as pruning reads
+    it (``is_auto``: an old manifest has no flag); None for an unknown name
+    or an interrupted snapshot (no manifest)."""
     path = backup_path(name)
     if not path or not path.is_dir():
         return None
@@ -147,7 +148,8 @@ def info(name: str) -> dict | None:
     except (OSError, ValueError):
         return None
     damaged = sorted(rel for rel, result in (manifest.get("integrity") or {}).items() if result != "ok")
-    return {"name": name, "path": str(path), "size_bytes": _dir_size(path), **manifest, "damaged": damaged}
+    return {"name": name, "path": str(path), "size_bytes": _dir_size(path), **manifest,
+            "auto": is_auto(manifest), "damaged": damaged}
 
 
 def list_backups() -> list[dict]:

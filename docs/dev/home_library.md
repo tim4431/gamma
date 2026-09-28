@@ -277,7 +277,10 @@ the page's popover with folder wording, without the Gamma Cloud and
 Citation sections. Its one link reaches every page filed in the folder or
 below it, now and later ([api.md](api.md) "Shares"). Renaming, moving or
 deleting a folder carries its chat buckets and its shares along through
-`POST /folders/rename`, one call made before the tag rewrite.
+`POST /folders/rename`, one call made before the tag rewrite. A delete drops
+the folder's shares but never its chats: each active conversation is filed
+into the folder's chat history, under the same key, whichever of "Keep
+pages" / "Delete pages too" was chosen.
 
 ## Recently deleted
 
@@ -329,5 +332,13 @@ rows. Each row has Restore and a trash button that deletes for good after
 App's confirm box, and the dialog's footer has Empty. A link to a trashed
 page gets a 404 whose body carries `trashed` (the page's trash entry). The
 missing-page notice then names the page and offers Restore, which restores
-it and opens what the link named. The browser suite's `trash` group
+it and opens what the link named. A `[[ref]]` or `![[embed]]` naming a block
+of a trashed page is missing from the ref lookup (`/block-search?ids=`), so
+App's `onFetchRefs` asks `GET /blocks/{id}` for each such id (a member only,
+never a share view) and caches the 404's `trashed` entry, or `missing` when
+there is none. The chip then shows the page's title struck through
+(`.trashedRef`, the dashed look of an unlinked chip) and the card says the
+page is in Recently deleted; a click opens the notice with Restore. An id
+nothing holds renders as the unlinked chip, its card as "Embedded note not
+found." (BlockTree's `refLabelOf`). The browser suite's `trash` group
 (`e2e/scenarios/trash.mjs`) covers the flow.

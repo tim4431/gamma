@@ -9,7 +9,7 @@ before — so an undo, a cut pasted in a later batch, an AI edit, an ink undo
 or a re-attached PDF finds it again. A reference that comes back clears the
 row. A file still unreferenced RETAIN_S after both its row's ``since`` and
 its own mtime (an upload of the same bytes re-dates it,
-``storage._store``) is purged. Nothing here touches the quota: an
+``storage._store``, under the workspace's ``guard``) is purged. Nothing here touches the quota: an
 unreferenced file counts like any stored one until it goes.
 
 Who notices what:
@@ -129,6 +129,14 @@ _locks_guard = threading.Lock()
 def _lock(ws: str) -> threading.Lock:
     with _locks_guard:
         return _locks.setdefault(ws, threading.Lock())
+
+
+def guard(ws: str) -> threading.Lock:
+    """The workspace's lock the check, the full pass and the purge hold.
+    ``storage._store`` re-dates a stored file under it, so a re-upload of
+    bytes the purge is about to delete lands either before the purge's
+    check (the file stays) or after its delete (the file is written again)."""
+    return _lock(ws)
 
 
 def _has_pages_db(ws: str) -> bool:

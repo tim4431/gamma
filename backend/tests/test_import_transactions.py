@@ -1,6 +1,8 @@
 """Imports write in short transactions: the Zotero and Markdown-zip imports
-store a page's files first, outside any transaction, then write its rows in
-one short transaction stamped at its commit. Other writers are never shut
+store a page's files first, outside any transaction, then write the rows of
+up to 50 new pages in one short transaction, their roots stamped at its
+commit (a transaction per page made big imports twice as slow). Other
+writers are never shut
 out for the length of an import (they used to wait out the 10 s busy
 timeout and fail with "database is locked"), and a page is never stamped
 with the import's start time (the change feed's 60 s grace missed pages of
@@ -93,6 +95,7 @@ def _stamp(ws, page_id):
 
 
 def test_zotero_import_stores_files_outside_its_transactions(monkeypatch):
+    monkeypatch.setattr(imports, "ZOTERO_PAGES_PER_COMMIT", 2)
     ws = make_user("it_zotero", "it-password-1")
     c = login("it_zotero", "it-password-1")
     seen = []
@@ -109,12 +112,13 @@ def test_zotero_import_stores_files_outside_its_transactions(monkeypatch):
     assert r.status_code == 200, r.text
     assert r.json()["pages_created"] == 3 and len(seen) == 3
     assert all(ok for ok, _ in seen)
-    # each page is stamped at its own commit, after its file was stored —
-    # not with the time the import started
+    # each page is stamped at its batch's commit, after its file was stored —
+    # not with the time the import started; the first batch (two pages)
+    # committed before the third file was stored
     pages = sorted(r.json()["pages"], key=lambda p: p["title"])
     for (_, stored_at), page in zip(seen, pages):
         assert _stamp(ws, page["id"]) > stored_at
-    assert _stamp(ws, pages[0]["id"]) < seen[1][1]
+    assert _stamp(ws, pages[0]["id"]) == _stamp(ws, pages[1]["id"]) < seen[2][1]
 
 
 def test_zotero_merge_is_an_op_batch():
@@ -154,7 +158,8 @@ def test_zotero_merge_is_an_op_batch():
     assert c.get(f"/api/pages/{page_id}/ops", params={"since": 0}).json()["seq"] == 1
 
 
-def test_markdown_zip_import_commits_page_by_page(monkeypatch):
+def test_markdown_zip_import_commits_in_batches(monkeypatch):
+    monkeypatch.setattr(markdown_zip_import, "PAGES_PER_COMMIT", 2)
     ws = make_user("it_mdzip", "it-password-1")
     c = login("it_mdzip", "it-password-1")
     seen = []
@@ -177,6 +182,6 @@ def test_markdown_zip_import_commits_page_by_page(monkeypatch):
     pages = sorted(d["pages"], key=lambda p: p["title"])
     for (_, stored_at), page in zip(seen, pages):
         assert _stamp(ws, page["id"]) > stored_at
-    assert _stamp(ws, pages[0]["id"]) < seen[1][1]
+    assert _stamp(ws, pages[0]["id"]) == _stamp(ws, pages[1]["id"]) < seen[2][1]
     body = c.get(f"/api/blocks/{pages[2]['id']}/subtree").json()["block"]["children"][0]["content"]
     assert "/api/uploads/" in body

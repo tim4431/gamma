@@ -8,7 +8,7 @@ import time
 from fastapi import APIRouter, HTTPException, Request
 from fastapi.responses import JSONResponse
 from fractional_indexing import generate_key_between
-from pydantic import BaseModel, model_validator
+from pydantic import BaseModel
 
 from ..auth import actor_of, require_ws, require_ws_writer, resolve_ws, share_scope
 from ..blocks_store import (
@@ -20,6 +20,7 @@ from ..blocks_store import (
     delete_children,
     fetch_subtree,
     flatten_tree,
+    free_position,
     get_or_create_doc_page,
     page_for_doc,
     page_root_id,
@@ -32,8 +33,8 @@ from ..blocks_store import (
 from .. import block_index, cloud_auth, upload_gc
 from ..db import connect_pages_db, page_now
 from ..markdown_export import build_tree
-from ..ops import (MAX_CONTENT, OpError, commit_ops, delete_page, latest_seq, note_reload, record_ops,
-                   storable, trash_page)
+from ..ops import (MAX_CONTENT, OpError, StorableBody, commit_ops, delete_page, latest_seq, note_reload,
+                   record_ops, trash_page)
 from ..storage import upload_refs
 from ..textnorm import fuzzy_pattern, literal_runs
 
@@ -44,28 +45,18 @@ router = APIRouter(prefix="/api", tags=["blocks"])
 BLOCK_SEARCH_BUDGET_S = 2.0
 
 
-class UBCreateRequest(BaseModel):
+class UBCreateRequest(StorableBody):
     parent_id: str
     content: str = ""
     properties: dict = {}
     before: str | None = None   # fractional position of the sibling before this one
     after: str | None = None    # fractional position of the sibling after this one
 
-    @model_validator(mode="before")
-    @classmethod
-    def _storable(cls, data):
-        return storable(data)  # half an emoji becomes U+FFFD: SQLite can't store it
 
-
-class UBUpdateRequest(BaseModel):
+class UBUpdateRequest(StorableBody):
     content: str | None = None
     base: str | None = None     # the text `content` was edited from: merged, not replaced (ops.py)
     properties: dict | None = None
-
-    @model_validator(mode="before")
-    @classmethod
-    def _storable(cls, data):
-        return storable(data)
 
 
 class UBReorderRequest(BaseModel):
@@ -335,7 +326,9 @@ def ub_get_subtree(block_id: str, request: Request):
     out = {"block": build_tree(rows, block_id)}
     if seq is not None:
         out["seq"] = seq
-    return out
+    # Serialized here, in the worker thread: a returned dict is encoded on the
+    # event loop, which a 5,000-block page would stall for a fifth of a second.
+    return JSONResponse(out)
 
 
 @router.get("/blocks/{block_id}/backlinks")
@@ -409,10 +402,12 @@ def ub_create_block(payload: UBCreateRequest, request: Request):
         # A new page: not an op on any page. Share editors never get here.
         if scope is not None:
             raise HTTPException(status_code=403, detail="not accessible via this share link")
-        try:
-            new_pos = generate_key_between(payload.before, payload.after)
-        except Exception as e:
-            raise HTTPException(status_code=400, detail=f"invalid before/after: {e}")
+        new_pos = ""  # neither neighbour named: last in the library
+        if payload.before is not None or payload.after is not None:
+            try:
+                new_pos = generate_key_between(payload.before, payload.after)
+            except Exception as e:
+                raise HTTPException(status_code=400, detail=f"invalid before/after: {e}")
         with connect_pages_db(ws) as conn:
             return create_page(conn, payload.content, payload.properties,
                                block_id=block_id, position=new_pos)
@@ -593,6 +588,7 @@ def ub_reorder_block(block_id: str, payload: UBReorderRequest, request: Request)
                 raise HTTPException(status_code=403, detail="not accessible via this share link")
             if parent in {r[0] for r in fetch_subtree(conn, block_id)}:
                 raise HTTPException(status_code=400, detail="cannot move a block into its own subtree")
+            new_pos = free_position(conn, parent, new_pos, block_id)  # re-keyed like an op's move
             now = page_now()
             conn.execute(
                 "UPDATE unified_blocks SET parent_id = ?, position = ?, updated_at = ? WHERE id = ?",

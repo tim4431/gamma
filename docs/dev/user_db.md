@@ -188,7 +188,8 @@ nothing uses any more.
   mirror's pull) are checked first (`storage.matches_name`: a PDF must be a
   PDF, anything else must hash to its name). Bytes that are not what the
   name says are dropped, so a captive portal's page never becomes a stored
-  PDF.
+  PDF. Nor does half of one: a pull that ends short of the length the
+  remote announced is refused before the check ([mirror.md](mirror.md)).
 - **What counts as a reference.** `storage.upload_refs`, the one grammar:
   `/api/uploads/<name>` anywhere in a block's content or properties (images,
   file chips, `ink_url`, `source_url`) and a block's `doc_id` (its PDF,
@@ -202,7 +203,10 @@ nothing uses any more.
   transaction (`upload_gc.claim`: the op batches, `PUT
   /blocks/{id}/children`, `blocks_store.create_page`). An upload of the same
   bytes re-dates the file (`os.utime`), which restarts both the upload grace
-  and the 30 days. Until it is purged, an unreferenced file counts against
+  and the 30 days. It does so under the workspace's `upload_gc.guard`, the
+  lock the purge holds from its check to its delete, so a re-upload lands
+  either before the check (the file stays) or after the delete (the bytes
+  are written again). Until it is purged, an unreferenced file counts against
   the quota like any other.
 - **Who notices.** An op batch knows the names it stopped referencing
   (`dropped_uploads` on `apply_ops`'s result; `ops.delete_page` and the

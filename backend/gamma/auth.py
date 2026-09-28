@@ -3,7 +3,8 @@
 Two questions every endpoint answers through this module:
 
 - WHO is asking — ``request.state.user`` from the session cookie
-  (``require_user`` for identity-only endpoints: session, AI keys, admin).
+  (``require_user`` for account-level endpoints: session, AI keys, prefs,
+  admin — an integration token is refused there).
 - WHICH WORKSPACE the data comes from — ``require_ws`` (session member of
   the workspace named by ``?ws=`` / ``X-Gamma-Workspace`` / the account's
   default), ``resolve_ws`` (a ``?share=`` token's workspace, else
@@ -294,12 +295,34 @@ def _api_bearer(request: Request) -> str:
     return value
 
 
-def require_user(request: Request) -> str:
-    """Return the session username or raise 401. Identity only — endpoints
-    that touch a workspace's data use require_ws / resolve_ws instead."""
+TOKEN_REFUSAL = "an integration token cannot do this — sign in"
+
+
+def is_token(request: Request) -> bool:
+    """Whether the request came with an integration token (a bearer on the
+    HTTP API) rather than a browser session."""
+    return getattr(request.state, "auth", "session") == "token"
+
+
+def signed_in(request: Request) -> str:
+    """The account behind the request — a session's, or an integration
+    token's — or 401. What the workspace helpers build on; an endpoint asks
+    require_user (the account itself) or require_ws (its data) instead."""
     user = request.state.user
     if not user:
         raise HTTPException(status_code=401)
+    return user
+
+
+def require_user(request: Request) -> str:
+    """Return the session username or raise 401. For ACCOUNT-level
+    endpoints (AI providers and usage, preferences, the workspace list,
+    backups, ...), so an integration token gets 403: it is bound to one
+    workspace and reaches that workspace's data only — endpoints that touch
+    a workspace use require_ws / resolve_ws instead."""
+    user = signed_in(request)
+    if is_token(request):
+        raise HTTPException(403, TOKEN_REFUSAL)
     return user
 
 
@@ -308,8 +331,6 @@ def require_personal_user(request: Request, detail: str) -> str:
     username = require_user(request)
     if request.state.is_guest:
         raise HTTPException(403, detail)
-    if getattr(request.state, "auth", "session") == "token":
-        raise HTTPException(403, "an integration token cannot do this — sign in")
     return username
 
 
@@ -357,10 +378,10 @@ def require_ws(request: Request, write: bool = False) -> str:
     """The workspace this session request works in (401 without a session,
     403 when the account is not a member — or is only a viewer and ``write``
     is set). Cached on request.state as ``ws`` / ``ws_role``."""
-    user = require_user(request)
+    user = signed_in(request)
     ws = getattr(request.state, "ws", None)
     if ws is None:
-        if getattr(request.state, "auth", "session") == "token":
+        if is_token(request):
             # A token names its workspace; a request may only repeat it.
             wanted = requested_ws(request)
             if wanted and wanted != request.state.token_ws:
@@ -383,7 +404,7 @@ def _write_refusal(request: Request) -> str:
     write scope."""
     if request.state.ws_role == "viewer":
         return "you can only view this workspace"
-    if getattr(request.state, "auth", "session") == "token" and request.state.token_scope != "write":
+    if is_token(request) and request.state.token_scope != "write":
         return "this token is read-only"
     return ""
 

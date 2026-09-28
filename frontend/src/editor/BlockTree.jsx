@@ -391,10 +391,10 @@ function BlockEmbedCard({ refId, refBlock, refLabels, onBlockRefClick, onEmbedEd
 
   return (
     <span
-      className={`blockEmbedCard${draft != null ? " editing" : ""}`}
-      role={editable ? undefined : "link"}
+      className={`blockEmbedCard${draft != null ? " editing" : ""}${refBlock?.trashed || refBlock?.missing ? " gone" : ""}`}
+      role={editable || refBlock?.missing ? undefined : "link"}
       title={draft != null ? undefined
-        : refBlock?.page_title ? `From: ${refBlock.page_title}` : t("Embedded note")}
+        : refBlock?.page_title ? t("From: {page_title}", { page_title: refBlock.page_title }) : t("Embedded note")}
       onMouseDown={(e) => e.stopPropagation()}
       onClick={(e) => {
         e.preventDefault();
@@ -406,7 +406,7 @@ function BlockEmbedCard({ refId, refBlock, refLabels, onBlockRefClick, onEmbedEd
         if (editable) {
           draftBaseRef.current = refBlock.content;
           setDraft(refBlock.content);
-        } else onBlockRefClick?.(refId);
+        } else if (!refBlock?.missing) onBlockRefClick?.(refId);
       }}
     >
       <span className="blockEmbedBody">
@@ -456,7 +456,11 @@ function BlockEmbedCard({ refId, refBlock, refLabels, onBlockRefClick, onEmbedEd
             onTableEdit={editable ? stableTbl : undefined}
             onMermaidEdit={editable ? stableMermaid : undefined} />
         ) : (
-          <span className="blockPlaceholder">{t("embedded note…")}</span>
+          // A source in Recently deleted names its page (the click opens the
+          // notice that offers Restore); one that no page holds says so.
+          <span className="blockPlaceholder">{refBlock?.trashed
+            ? t("“{title}” is in Recently deleted.", { title: refBlock.trashed.title })
+            : refBlock?.missing ? t("Embedded note not found.") : t("embedded note…")}</span>
         )}
       </span>
       {draft != null && mathUi ? (
@@ -541,11 +545,14 @@ export const BlockMarkdown = React.memo(function BlockMarkdown({ content, blockI
           if (href?.startsWith("blockref:")) {
             const refId = href.slice(9);
             const ref = refLabels?.[refId];
-            return (
+            // An id nothing answers to reads as a hand-typed title no page
+            // has: the unlinked chip below.
+            if (!ref?.missing) return (
               <a
                 href={`?block=${refId}`}
-                className="blockRefChip"
-                title={ref?.page_title ? t("From: {page_title}", { page_title: ref.page_title }) : undefined}
+                className={`blockRefChip${ref?.trashed ? " trashedRef" : ""}`}
+                title={ref?.trashed ? t("“{title}” is in Recently deleted.", { title: ref.trashed.title })
+                  : ref?.page_title ? t("From: {page_title}", { page_title: ref.page_title }) : undefined}
                 onClick={(e) => {
                   if (e.metaKey || e.ctrlKey) return;
                   e.preventDefault();
@@ -553,11 +560,11 @@ export const BlockMarkdown = React.memo(function BlockMarkdown({ content, blockI
                   onBlockRefClick?.(refId);
                 }}
               >
-                {ref?.content || String(children)}
+                {ref?.trashed ? ref.trashed.title : ref?.content || String(children)}
               </a>
             );
           }
-          if (href?.startsWith("unlinked:")) {
+          if (href?.startsWith("unlinked:") || href?.startsWith("blockref:")) {
             return (
               <span className="unlinkedRef" title={t("Not linked: no page has this title. Type [[ and pick a page from the list to link it.")}>
                 {children}
@@ -667,8 +674,18 @@ export const BlockMarkdown = React.memo(function BlockMarkdown({ content, blockI
   && prev.nested === next.nested
   && Object.keys(prev.refLabels).length === Object.keys(next.refLabels).length
   && Object.entries(next.refLabels).every(([id, r]) =>
-    prev.refLabels[id]?.content === r.content && prev.refLabels[id]?.page_title === r.page_title)
+    prev.refLabels[id]?.content === r.content && prev.refLabels[id]?.page_title === r.page_title
+    && prev.refLabels[id]?.trashed === r.trashed && prev.refLabels[id]?.missing === r.missing)
 );
+
+// A cached ref as the chips and embed cards read it: the block's text and
+// its page's title, or, for a block no page holds (App's onFetchRefs), its
+// page's Recently deleted entry (`trashed`) or `missing`.
+export function refLabelOf(rb) {
+  if (rb.trashed) return { trashed: rb.trashed };
+  if (rb.missing) return { missing: true };
+  return { content: rb.content, page_title: rb.page_title };
+}
 
 // Area-highlight crops shown on note cards. Nothing is stored with the block —
 // the region is re-cropped from the loaded document (App's pdfCaptureRef) and
@@ -939,15 +956,15 @@ function BlockRow({
   // whose identity changes on every edit.
   const refLabels = useMemo(() => {
     const out = {};
-    const add = (id) => {
+    const add = (id, gone) => {
       const rb = allBlocks?.find((b) => b.id === id) || refCache?.[id];
-      if (rb) out[id] = { content: rb.content, page_title: rb.page_title };
+      if (rb && (gone || !(rb.trashed || rb.missing))) out[id] = refLabelOf(rb);
     };
-    for (const [, id] of (block.content || "").matchAll(/\[\[([a-zA-Z0-9_-]+)\]\]/g)) add(id);
+    for (const [, id] of (block.content || "").matchAll(/\[\[([a-zA-Z0-9_-]+)\]\]/g)) add(id, true);
     // Gamma links (citations, page links) resolve through the same cache: the
     // title labels the card, and a link that doesn't resolve stays an
     // ordinary URL.
-    for (const id of gammaLinkIds(block.content || "")) add(id);
+    for (const id of gammaLinkIds(block.content || "")) if (!out[id]) add(id, false);
     return out;
   }, [block.content, allBlocks, refCache]);
   // The [[ link picker: { query, anchor } while a "[[" is being typed.
@@ -1010,10 +1027,12 @@ function BlockRow({
   // Resolve cross-note refs and Gamma link targets found in content
   useEffect(() => {
     if (!block.content || !onFetchRefs) return;
-    const ids = [...block.content.matchAll(/\[\[([a-zA-Z0-9_-]+)\]\]/g)].map((m) => m[1])
-      .concat(gammaLinkIds(block.content));
+    const refIds = [...block.content.matchAll(/\[\[([a-zA-Z0-9_-]+)\]\]/g)].map((m) => m[1]);
+    const ids = refIds.concat(gammaLinkIds(block.content));
     const unknown = ids.filter((id) => !allBlocks?.find((b) => b.id === id) && !refCache?.[id]);
-    if (unknown.length > 0) onFetchRefs(unknown);
+    // Only a [[ref]]'s id is asked about when the search misses it (a Gamma
+    // link may name another server's page).
+    if (unknown.length > 0) onFetchRefs(unknown, unknown.filter((id) => refIds.includes(id)));
   }, [block.content]);
 
   // A picked row: the typed "[[query" becomes [[id]] (a "!" before it
@@ -1272,7 +1291,8 @@ function BlockRow({
           selection: { anchor: pm.start },
           userEvent: "input",
         });
-        onPasteBlocks?.(block.id, nodes);
+        // Pasted into an empty line: the blocks take this block's place.
+        onPasteBlocks?.(block.id, nodes, { replace: !(ta.value || "").trim() && !block.children?.length });
       }).catch(() => {});
     } else if (item.name === "gamma") {
       // Stored host-free: the note keeps working when this library moves to

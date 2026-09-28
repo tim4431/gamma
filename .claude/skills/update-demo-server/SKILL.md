@@ -7,8 +7,9 @@ description: Build the Gamma server image from a branch by dispatching docker.ym
 
 `demo.gammapdf.com` is a Gamma in demo mode ([docs/dev/guests.md](../../../docs/dev/guests.md)
 "Demo mode"). It is its OWN compose project on the VPS `root@69.63.206.178`,
-folder `/root/Container/gamma-demo/`: `compose.yml`, `.env` (one line,
-`GAMMA_TAG=sha-<short>`, the image to run), `demo.env` (its settings) and
+folder `/root/Container/gamma-demo/`: `compose.yml`, `.env` (`GAMMA_TAG=sha-<short>`,
+the image to run, and `EDGE_SUBNET`, the subnet of `gamma-edge` whose
+`X-Forwarded-For` the demo believes), `demo.env` (its settings) and
 `data/` (its whole state). It runs `ghcr.io/tim4431/gamma:${GAMMA_TAG}` and
 answers as `gamma-demo` on the external Docker network `gamma-edge`, where the
 account project's Caddy (`/root/Container/gamma-account/`) routes the name to
@@ -125,6 +126,11 @@ ssh root@69.63.206.178 "grep -o '^[A-Z_]*=' /root/Container/gamma-demo/demo.env"
 ```
 
 Name any new variable to the user to add by hand; step 5's `up -d` applies it.
+A `compose.yml` that needs `EDGE_SUBNET` fails `docker compose config -q` until
+the host's `.env` has it: add `EDGE_SUBNET=<subnet>` with the subnet
+`docker network inspect gamma-edge --format '{{range .IPAM.Config}}{{.Subnet}}{{end}}'`
+prints (with the user's agreement, like the copy). Without it the demo's
+image trusts no proxy and every visitor shares Caddy's guest-login limit.
 
 ## 5. Pin the tag and restart
 
@@ -140,7 +146,7 @@ echo "$TAG" | grep -Eq '^sha-[0-9a-f]{7}$' || { echo "not a sha-<7 hex> tag: $TA
 cd /root/Container/gamma-demo
 docker pull -q "ghcr.io/tim4431/gamma:$TAG"
 cp .env .env.bak
-printf 'GAMMA_TAG=%s\n' "$TAG" > .env
+{ grep -v '^GAMMA_TAG=' .env.bak || true; printf 'GAMMA_TAG=%s\n' "$TAG"; } > .env
 if ! docker compose config demo | grep -q "image: ghcr.io/tim4431/gamma:$TAG\$"; then
   cp .env.bak .env; echo "compose does not resolve the new tag; .env restored"; exit 1
 fi

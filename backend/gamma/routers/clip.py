@@ -32,6 +32,7 @@ from ..blocks_store import (
     get_or_create_doc_page,
     last_child_position,
     page_attachment,
+    page_for_doc,
     write_lock,
 )
 from ..db import connect_pages_db, get_pref, page_now, safe_doc_id, ws_uploads_dir
@@ -322,6 +323,8 @@ def clip(payload: ClipRequest, request: Request):
     with connect_pages_db(ws) as conn:
         # No tab title: the page is named after the URL's file name, else the
         # doc id (attachment_props), marked auto_title for the metadata lookup.
+        write_lock(conn)  # whether the PDF has a page, and its creation, as one step
+        existed = page_for_doc(conn, doc_id) is not None
         block = get_or_create_doc_page(conn, doc_id, title, page_source, ws=ws, actor=actor)
         props = dict(block.get("properties") or {})
         if source_url and not props.get("web_url") and source_url != page_source:
@@ -334,7 +337,7 @@ def clip(payload: ClipRequest, request: Request):
     # 4. Metadata, off the request.
     if payload.fetch_metadata and not (block.get("properties") or {}).get("meta"):
         _start_metadata(ws, actor, block["id"], doi=doi, arxiv_id=arxiv_id)
-    return _result(block, existed=False, note=note)
+    return _result(block, existed=existed, note=note)
 
 
 @router.get("/library/lookup")

@@ -34,9 +34,13 @@ def test_folder_rename_moves_buckets_by_prefix(guest):
 def test_folder_rename_collision_keeps_real_destination(guest):
     _put(guest, "home:x", "src")
     _put(guest, "home:y", "dest")
-    guest.post("/api/folders/rename", json={"src": "x", "dst": "y"})
+    r = guest.post("/api/folders/rename", json={"src": "x", "dst": "y"})
+    assert r.json()["archived"] == 1
     assert _msgs(guest, "home:y")[0]["text"] == "dest"
     assert _msgs(guest, "home:x") == []
+    # the source's conversation is filed into the destination's history, never dropped
+    hist = guest.get("/api/chat-history?bucket=home:y").json()["sessions"]
+    assert [h["preview"] for h in hist] == ["src"]
 
 
 def test_folder_rename_overwrites_empty_destination_row(guest):
@@ -48,11 +52,13 @@ def test_folder_rename_overwrites_empty_destination_row(guest):
     assert _msgs(guest, "home:q")[0]["text"] == "src"
 
 
-def test_folder_delete_drops_buckets(guest):
-    _put(guest, "home:z/deep", "gone")
+def test_folder_delete_files_buckets_into_their_history(guest):
+    _put(guest, "home:z/deep", "kept")
     r = guest.post("/api/folders/rename", json={"src": "z", "dst": ""})
-    assert r.json()["moved"] == 1
+    assert r.json()["archived"] == 1
     assert _msgs(guest, "home:z/deep") == []
+    hist = guest.get("/api/chat-history?bucket=home:z/deep").json()["sessions"]
+    assert [h["preview"] for h in hist] == ["kept"]
 
 
 def test_folder_rename_never_touches_root_bucket(guest):

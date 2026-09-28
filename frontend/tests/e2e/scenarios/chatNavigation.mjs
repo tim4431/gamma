@@ -256,6 +256,78 @@ export async function chatNavigationScenarios(env) {
     }
   });
 
+  // A tab back in focus reads the stored conversation again, and "New chat"
+  // in one tab wins over a tab still holding the old conversation: that
+  // tab's next question starts the new conversation instead of bringing the
+  // archived one back (chatSession.mergeChats).
+  await step("chat navigation: a focused tab shows the other tab's answer; New chat in one tab wins over a stale tab", async () => {
+    await alice.api(`/api/chats/${pdf.id}`, { method: "PUT", body: { messages: [] } });
+    const historyCount = async () => (await alice.api(`/api/chat-history?bucket=${encodeURIComponent(pdf.id)}`)).sessions.length;
+    const historyBefore = await historyCount();
+    const tabs = [];
+    try {
+      for (let i = 0; i < 2; i++) {
+        const ctx = await alice.context(browser);
+        await fakeAiModels(ctx);
+        await ctx.addInitScript(() => {
+          localStorage.setItem("gamma-ai-login-check", "off");
+          const fetch = window.fetch.bind(window);
+          window.fetch = (input, init) => {
+            if (String(input).endsWith("/api/ai/chat")) {
+              return Promise.resolve(new Response(new ReadableStream({
+                start(controller) {
+                  window.chatStream = {
+                    push: (event) => controller.enqueue(new TextEncoder().encode(JSON.stringify(event) + "\n")),
+                    finish: () => controller.close(),
+                  };
+                },
+              }), { headers: { "Content-Type": "application/x-ndjson" } }));
+            }
+            return fetch(input, init);
+          };
+        });
+        tabs.push({ ctx, page: await openPage(ctx, `${server.base}/?ws=${alice.ws}&page=${pdf.id}`) });
+      }
+      for (const { page } of tabs) {
+        await page.getByRole("combobox", { name: "Message AI" }).waitFor();
+        await page.waitForLoadState("networkidle");
+      }
+      const ask = async ({ page }, question, answer) => {
+        await page.evaluate(() => { window.chatStream = null; });
+        const input = page.getByRole("combobox", { name: "Message AI" });
+        await input.fill(question);
+        await input.press("Enter");
+        await page.waitForFunction(() => !!window.chatStream);
+        await page.evaluate((text) => { window.chatStream.push({ delta: text }); window.chatStream.finish(); }, answer);
+      };
+      const stored = async () => ((await alice.api(`/api/chats/${pdf.id}`)).messages || []).map((m) => m.text);
+      const panel = ({ page }) => page.locator(".chatPanel").innerText();
+      const focus = ({ page }) => page.evaluate(() => window.dispatchEvent(new Event("focus")));
+      const [a, b] = tabs;
+      await ask(a, "First question in tab A", "First answer in tab A.");
+      await until(async () => (await stored()).includes("First answer in tab A."), { what: "tab A's reply saved" });
+      await focus(b);
+      await until(async () => (await panel(b)).includes("First answer in tab A."), { what: "tab B, back in focus, shows it" });
+
+      await a.page.getByRole("button", { name: "New chat", exact: true }).click();
+      await until(async () => (await stored()).length === 0, { what: "the conversation archived" });
+      // B still shows the old conversation and asks in it.
+      await ask(b, "Question after the new chat", "Answer after the new chat.");
+      await until(async () => JSON.stringify(await stored()) === JSON.stringify(["Question after the new chat", "Answer after the new chat."]),
+        { what: "the stale tab's question starts the new conversation" });
+      await until(async () => !(await panel(b)).includes("First answer in tab A."), { what: "tab B drops the archived turns" });
+      assertEq(await historyCount(), historyBefore + 1, "the old conversation is in history once");
+      await focus(a);
+      await until(async () => (await panel(a)).includes("Answer after the new chat."), { what: "tab A, back in focus, shows it" });
+      for (const tab of tabs) {
+        assertEq(await tab.page.getByTestId("chat-save-error").count(), 0, "nothing is left unsaved");
+        assertNoProblems(tab.page);
+      }
+    } finally {
+      for (const { ctx } of tabs) await ctx.close();
+    }
+  });
+
   // Chats are the workspace's and only its editors write them: a viewer asks
   // the AI too, but the conversation stays in the tab (ChatDock's canSave,
   // App's chat session saving nothing).

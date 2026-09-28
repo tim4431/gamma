@@ -1,4 +1,5 @@
 import React, { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState } from "react";
+import { flushSync } from "react-dom";
 import { Panel, PanelGroup, PanelResizeHandle } from "react-resizable-panels";
 import PdfViewer, { clampZoom } from "../pdf/PdfViewer";
 import { highlightSpot, rangeSpot } from "../pdf/pdfSelectionSpot";
@@ -96,7 +97,7 @@ import { MAX_STROKES, appendStroke, duplicateStrokes, eraseAt, newInk, removeStr
 import * as inkStore from "../ink/inkStore";
 import { usePageCollab } from "../collaboration/usePageCollab";
 import { retryableStatus } from "../collaboration/collabSession.js";
-import { applyOps, applyPatch } from "../shared/model/blockOps";
+import { applyOps, applyPatch, displacedRow } from "../shared/model/blockOps";
 import { PresenceBar } from "../collaboration/Presence";
 import { ShareAccessPill } from "../sharing/ShareAccess";
 import { BrandMark } from "../shared/ui/BrandMark";
@@ -1300,6 +1301,20 @@ function LibraryApp({ publicPage = null, initialServerConfig = null }) {
     if (id !== trashed.id) pendingBlockScrollRef.current = id;
     openBlock(trashed.id, { link: true });
   }
+  // The open page went to Recently deleted while open (pageGone): Restore
+  // brings it back and refetches it — the edits that waited go out with
+  // that load (collabSession's `unpark`).
+  async function restoreOpenPage() {
+    const id = focusedBlockId;
+    try {
+      await apiJson(`${API}/trash/${encodeURIComponent(id)}/restore`, { method: "POST" });
+    } catch (err) {
+      setStatus(t("Restore failed: {message}", { message: err.message }));
+      return;
+    }
+    fetchHomeBlocks();
+    if (id === focusedBlockIdRef.current) loadBlocksForBlock(id);
+  }
 
   // Pinned folders — [{path, at}], most recently pinned first, shown in the
   // same Pinned strip as pinned pages. Folders are label-derived (no block to
@@ -1542,7 +1557,10 @@ function LibraryApp({ publicPage = null, initialServerConfig = null }) {
     const inPath = (t) => t === path || t.startsWith(path + "/");
     const members = homeBlocks.filter((b) => parseFolderTags(b.properties?.folder).some(inPath));
     const cleanupAfter = async (statusMsg) => {
-      await moveFolderChats([[path, ""]]); // drop the folder's chat buckets too
+      // Both choices keep the folder's chats: the server files each active
+      // conversation into its folder's history (pages may come back from
+      // Recently deleted, their folder with them) and drops the folder's shares.
+      await moveFolderChats([[path, ""]]);
       updateExtraFolders((prev) => prev.filter((f) => !inPath(f)));
       remapPinnedFolders((t) => (inPath(t) ? "" : t));
       setPageFolders((prev) => prev.filter((t) => !inPath(t)));
@@ -1565,18 +1583,18 @@ function LibraryApp({ publicPage = null, initialServerConfig = null }) {
       return;
     }
     const n = members.length;
-    const papers = `${n} page${n === 1 ? "" : "s"}`;
     setConfirmBox({
       title: T("Delete folder"),
-      message: t("Delete “{path}”? It contains {papers}. Keep {them} in the library (only the folder goes away), or delete {them} too — pages linked into other folders as well. Deleted pages can be restored from Recently deleted for 30 days.", { path, papers, them: n === 1 ? t("it") : t("them") }),
+      message: tn("Delete “{path}”? It contains {n} page. Keep it in the library (only the folder goes away), or delete it too — pages linked into other folders as well. Deleted pages can be restored from Recently deleted for 30 days.",
+        "Delete “{path}”? It contains {n} pages. Keep them in the library (only the folder goes away), or delete them too — pages linked into other folders as well. Deleted pages can be restored from Recently deleted for 30 days.", n, { path }),
       confirmLabel: t("Keep pages"),
       onConfirm: async () => {
         for (const b of members) {
           try { await writePageFolders(b.id, parseFolderTags(b.properties?.folder).filter((t) => !inPath(t))); } catch {}
         }
-        await cleanupAfter(t("Folder “{path}” deleted — its {papers} stay in the library.", { path, papers }));
+        await cleanupAfter(tn("Folder “{path}” deleted — its {n} page stays in the library.", "Folder “{path}” deleted — its {n} pages stay in the library.", n, { path }));
       },
-      altLabel: t("Delete {papers} too", { papers }),
+      altLabel: tn("Delete {n} page too", "Delete {n} pages too", n),
       altDanger: true,
       onAlt: async () => {
         const ids = members.map((b) => b.id);
@@ -1584,7 +1602,7 @@ function LibraryApp({ publicPage = null, initialServerConfig = null }) {
           try { await apiJson(`${API}/blocks/${id}`, { method: "DELETE" }); } catch {}
         }
         updateTabs((prev) => prev.filter((t) => !ids.includes(t.id)));
-        await cleanupAfter(t("Folder “{path}” deleted — its {papers} moved to Recently deleted.", { path, papers }));
+        await cleanupAfter(tn("Folder “{path}” deleted — its {n} page moved to Recently deleted.", "Folder “{path}” deleted — its {n} pages moved to Recently deleted.", n, { path }));
       },
     });
   }
@@ -3774,9 +3792,10 @@ function LibraryApp({ publicPage = null, initialServerConfig = null }) {
 
   useEffect(() => {
     // A request is a block id, or {id, caret: "start" | "end" | offset,
-    // reopen} from a keyboard command: the caret lands where the command
-    // says, and `reopen` counts the tries at re-opening an editor a DOM
-    // move closed (the blur a browser fires when a focused node moves).
+    // head?, reopen} from a keyboard command or a remote move of the row:
+    // the caret (a selection up to `head`) lands where it says, and `reopen`
+    // counts the tries at re-opening an editor a DOM move closed (the blur a
+    // browser fires when a focused node moves).
     const req = pendingFocusRef.current;
     if (!req || readOnly) return;
     const id = typeof req === "string" ? req : req.id;
@@ -3786,7 +3805,7 @@ function LibraryApp({ publicPage = null, initialServerConfig = null }) {
       if (typeof req === "object" && req.caret != null) {
         const len = ref.current.value.length;
         const pos = req.caret === "end" ? len : req.caret === "start" ? 0 : Math.min(req.caret, len);
-        ref.current.setSelectionRange(pos, pos);
+        ref.current.setSelectionRange(pos, req.head != null ? Math.min(req.head, len) : pos);
       }
       pendingFocusRef.current = null;
     } else if (typeof req === "object" && req.reopen > 0) {
@@ -3933,29 +3952,46 @@ function LibraryApp({ publicPage = null, initialServerConfig = null }) {
   // then diffed as an `insert`, not a `set` on a block the server rejects
   // (404 "no such block"). Cleared once that insert has been queued.
   const seedBlockIdRef = useRef(null);
+  // The open page went to Recently deleted while open ({trashed}: its trash
+  // entry when the server named it) — its edits wait, unsent — or null.
+  const [pageGone, setPageGone] = useState(null);
+  useEffect(() => { setPageGone(null); }, [focusedBlockId]);
   const collab = usePageCollab({
     pageId: focusedBlockId,
     enabled: !!focusedBlockId,
     canWrite: !readOnly,
-    onRemoteOps: (ops, pageId, pos) => applyRemoteRef.current?.(ops, pageId, pos),
+    onRemoteOps: (ops, pageId, pos, before, own) => applyRemoteRef.current?.(ops, pageId, pos, before, own),
     onReload: (pageId) => {
       if (pageId === focusedBlockIdRef.current) loadBlocksForBlock(pageId);
     },
     onStatus: (msg) => setStatus(msg),
     // Lasting, unlike the status line: edits waiting ("pending") stay up
-    // until they are saved; a dropped batch ("rejected") stays a while.
+    // until they are saved (and the pill with them); a dropped edit
+    // ("rejected") stays a while.
     onSaveNotice: (msg, kind) => {
+      if (msg) logSys(msg, kind === "rejected" ? "error" : "warning");
       if (kind === "rejected") postPill("saveRejected", { msg, error: true }, { after: [20000, null] });
       else postPill("save", msg ? { msg, error: true } : null);
     },
+    onGone: (pageId, gone) => { if (pageId === focusedBlockIdRef.current) setPageGone(gone); },
   });
   const collabRef = useRef(collab);
   collabRef.current = collab;
+  // Set while the tree's transition effect hands a tree to the session: a
+  // load there may apply held-back batches at once, inside React's commit.
+  const committingRef = useRef(false);
   // Ops from another client (or a server-side writer): the page block's own
   // changes update the title/properties state, the rest apply to the tree
   // as a "remote" transition (no history entry; the base already has them,
-  // so nothing of theirs is re-sent) and fold into every undo snapshot.
-  applyRemoteRef.current = (ops, pageId, pos) => {
+  // so nothing of theirs is re-sent) and fold into every undo snapshot
+  // (`before`: the session's base they were applied to; not for `own` ops,
+  // ours put back on top of theirs — collabSession's `reassert`). The
+  // transition commits at once (flushSync): its effect must diff against
+  // the base before the next batch advances it — rendered later, a first
+  // batch's tree would be diffed against a base already holding the
+  // second, and the second batch's notes sent back as deletes (then
+  // re-inserts).
+  applyRemoteRef.current = (ops, pageId, pos, before, own = false) => {
     if (pageId !== focusedBlockId) return;
     for (const op of ops) {
       if (op.op !== "set" || op.id !== pageId) continue;
@@ -3973,10 +4009,20 @@ function LibraryApp({ publicPage = null, initialServerConfig = null }) {
     }
     const treeOps = ops.filter((op) => !(op.op === "set" && op.id === pageId));
     if (!treeOps.length) return;
-    setBlocks((prev) => {
+    // A move that shifts the row of the open editor (it, an ancestor, or a
+    // reorder of their siblings) remounts or detaches that editor: its blur
+    // is not the person leaving it, and the caret goes back where it was.
+    const editing = view.editingId;
+    if (editing && displacedRow(blocks, treeOps, editing, pageId)) {
+      const c = caretRef.current?.id === editing ? caretRef.current : null;
+      keepEditRef.current = { id: editing, until: performance.now() + 500 };
+      pendingFocusRef.current = { id: editing, caret: c ? c.from : "end", head: c?.to, reopen: 2 };
+    }
+    const apply = () => setBlocks((prev) => {
       try {
         const next = applyOps(prev, treeOps, pageId, pos);
-        if (next !== prev) treeOriginRef.current.set(next, "remote");
+        // ops landing on a fetched tree not committed yet keep it a load
+        if (next !== prev) treeOriginRef.current.set(next, treeOriginRef.current.get(prev) === "load" ? "load" : "remote");
         return next;
       } catch (err) {
         // A batch we can't apply (should not happen): resync from the server
@@ -3986,7 +4032,10 @@ function LibraryApp({ publicPage = null, initialServerConfig = null }) {
         return prev;
       }
     });
-    blockHistory.rebase((tree) => { try { return applyOps(tree, treeOps, pageId, pos); } catch { return tree; } });
+    if (committingRef.current) apply();
+    else flushSync(apply);
+    if (own) return;
+    try { blockHistory.rebase(treeOps, { pageId, pos, before }); } catch (err) { console.error("undo history rebase failed", err); }
   };
   // Send queued edits NOW — before anything replaces the block tree.
   function flushPendingSave() { collabRef.current.flush(); }
@@ -3997,7 +4046,8 @@ function LibraryApp({ publicPage = null, initialServerConfig = null }) {
     const seed = seedBlockIdRef.current;
     if (origin === "load") {
       const known = seed ? blocks.filter((b) => b.id !== seed) : blocks;
-      collab.commit(known, { isLoad: true, seq: loadedSeqRef.current });
+      committingRef.current = true;
+      try { collab.commit(known, { isLoad: true, seq: loadedSeqRef.current }); } finally { committingRef.current = false; }
       loadedSeqRef.current = null;
       return;
     }
@@ -4088,14 +4138,27 @@ function LibraryApp({ publicPage = null, initialServerConfig = null }) {
     }
   }
 
-  async function onFetchRefs(ids) {
+  // `probe`: the ids among them a [[ref]] or ![[embed]] names (not a Gamma
+  // link's, which may name another server). One the search doesn't return
+  // is gone, and its 404 says whether it is in Recently deleted (`trashed`,
+  // its page's trash entry): the chip and the card show it so
+  // (BlockTree's `refLabelOf`) rather than the bare id or a card that never
+  // loads. A share view never asks: a share learns nothing beyond its pages.
+  async function onFetchRefs(ids, probe = ids) {
     try {
       const res = await fetch(withShare(`${API}/block-search?ids=${ids.join(",")}`));
       const data = await res.json();
-      if (data.blocks?.length) {
+      const found = new Set((data.blocks || []).map((b) => b.id));
+      const gone = res.ok && !shareMode ? probe.filter((id) => !found.has(id)).slice(0, 20) : [];
+      const answers = await Promise.all(gone.map((id) => apiJson(`${API}/blocks/${encodeURIComponent(id)}`).then(
+        () => null,
+        (err) => (err.status === 404 ? [id, err.data?.trashed ? { trashed: err.data.trashed } : { missing: true }] : null))));
+      const goneEntries = answers.filter(Boolean);
+      if (data.blocks?.length || goneEntries.length) {
         setRefCache((prev) => {
           const next = { ...prev };
-          data.blocks.forEach((b) => { next[b.id] = b; });
+          data.blocks?.forEach((b) => { next[b.id] = b; });
+          goneEntries.forEach(([id, entry]) => { next[id] = entry; });
           return next;
         });
       }
@@ -4355,6 +4418,13 @@ function LibraryApp({ publicPage = null, initialServerConfig = null }) {
     } catch (err) {
       if (!current()) return;
       collabRef.current.reloadFailed(blockId);
+      if (err?.status === 404 && err.data?.trashed) {
+        // Moved to Recently deleted: the page stays on screen with its
+        // unsaved edits, which wait for a restore (the notice says so).
+        collabRef.current.gone(blockId, err.data.trashed);
+        postPill("refresh", null);
+        return;
+      }
       const again = retryableStatus(err?.status || 0);
       postPill("refresh", {
         msg: again ? t("Couldn't refresh the page — retrying…") : t("Couldn't refresh the page: {message}", { message: err.message }),
@@ -6513,7 +6583,11 @@ function LibraryApp({ publicPage = null, initialServerConfig = null }) {
       if (!inEditor && isTextField(active)) return false;
       const applied = blockHistory.undo(redo, inEditor);
       if (applied || inEditor || !active || active === document.body) {
-        setStatus(applied ? `${redo ? "Redone" : "Undone"}: ${applied}.` : (redo ? t("Nothing to redo in notes.") : t("Nothing to undo in notes.")));
+        setStatus(applied?.blocked ? (redo ? t("Can't redo: someone else changed this since.") : t("Can't undo: someone else changed this since."))
+          : applied?.kept ? (redo ? t("Redone: {what} — kept what someone else changed since.", { what: applied.description })
+            : t("Undone: {what} — kept what someone else changed since.", { what: applied.description }))
+          : applied ? `${redo ? t("Redone") : t("Undone")}: ${applied.description}.`
+          : (redo ? t("Nothing to redo in notes.") : t("Nothing to undo in notes.")));
       }
       // Always swallowed in an editor: the browser's native contenteditable
       // undo would otherwise mutate CodeMirror's DOM behind its back.
@@ -8625,13 +8699,22 @@ function LibraryApp({ publicPage = null, initialServerConfig = null }) {
                     const next = found ? moveObjectInTree(blocks, { sourceId, obj: found.obj, target }) : null;
                     if (next) setBlocks(next);
                   },
-                  onPasteBlocks: (id, nodes) => {
+                  onPasteBlocks: (id, nodes, { replace = false } = {}) => {
                     if (readOnly || !nodes?.length) return;
                     const toBlock = (n) => ({
                       id: makeId(), content: n.content || "", properties: {},
                       children: (n.children || []).map(toBlock),
                     });
                     const created = nodes.map(toBlock);
+                    const count = (list) => list.reduce((n, b) => n + 1 + count(b.children), 0);
+                    // A paste into an empty line (`replace`: nothing else in
+                    // the block, no children) takes the line's place, as a
+                    // text paste would, and the caret goes to the end of the
+                    // last pasted block. A highlight's or ink's block stays.
+                    const host = findBlock(blocks, id);
+                    const dropHost = replace && !!host && Object.keys(host.properties || {}).every((k) => k === "collapsed");
+                    let last = created[created.length - 1];
+                    while (last.children.length) last = last.children[last.children.length - 1];
                     // Siblings after the pasting block (its own editor stays
                     // open, so its content is never rewritten under it).
                     // Functional: the paste handler dispatched the text removal
@@ -8641,9 +8724,15 @@ function LibraryApp({ publicPage = null, initialServerConfig = null }) {
                       for (let i = created.length - 1; i >= 0; i--) {
                         out = insertSibling(out, id, created[i], true);
                       }
-                      return out;
+                      return dropHost ? removeBlockTree(out, id) : out;
                     });
-                    setStatus(t("Pasted {n} block{_s}.", { n: nodes.length, _s: nodes.length === 1 ? "" : "s" }));
+                    if (dropHost) {
+                      startEditing(last.id);
+                      pendingFocusRef.current = { id: last.id, caret: "end" };
+                      setFocusedId(last.id);
+                    }
+                    const n = count(created);
+                    setStatus(tn("Pasted {n} block.", "Pasted {n} blocks.", n));
                   },
                   onStatus: (msg) => setStatus(msg),
                   onBlockDragOver: (e, block) => {
@@ -9484,6 +9573,19 @@ function LibraryApp({ publicPage = null, initialServerConfig = null }) {
             </button>
           )}
           <button type="button" className="uiBtn sm" onClick={() => setMissingPage(null)}>{t("Dismiss")}</button>
+        </div>
+      ) : null}
+      {pageGone && focusedBlockId ? (
+        <div className="missingPageNotice pageTrashedNotice" role="status">
+          <AlertCircleIcon size={16} aria-hidden="true" />
+          <span className="missingPageText">
+            <b>{t("This page was moved to Recently deleted.")}</b>{" "}
+            {collab.hasPending() ? t("Your unsaved edits are kept here and saved if it is restored.") : null}{" "}
+            {lib.organize ? null : t("Someone who can edit this workspace can restore it.")}
+          </span>
+          {lib.organize ? (
+            <button type="button" className="uiBtn sm primary" onClick={restoreOpenPage}>{t("Restore")}</button>
+          ) : null}
         </div>
       ) : null}
       {attachModeBlockId && (

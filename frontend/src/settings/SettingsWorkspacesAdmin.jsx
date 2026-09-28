@@ -155,7 +155,7 @@ function NewWorkspaceDialog({ me, accounts, setStatus, onCreated, onClose }) {
           </Field>
         ) : null}
         <Field label={t("Workspace quota")} hint={t("Total uploads · blank = unlimited")}>
-          <UnitInput unit="MB" min={0} placeholder="unlimited" value={form.quota_mb} onChange={(quota_mb) => set({ quota_mb })} />
+          <UnitInput unit="MB" min={0} placeholder={t("unlimited")} value={form.quota_mb} onChange={(quota_mb) => set({ quota_mb })} />
         </Field>
         {error ? <div className="settingsPaneHint aiKeysError">{error}</div> : null}
         <DialogButtons footnote={form.name.trim() && form.owner ? null : t("Give it a name and an owner to continue.")}>

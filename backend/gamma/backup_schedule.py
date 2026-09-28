@@ -284,7 +284,12 @@ def mutate(owner, task_id, action):
             targets(task)
             task.update(requested=True, state='queued')
             _write(task)
-    if action != 'delete':
+    if action == 'delete':
+        try:  # its lock file goes too (one another process holds open stays; nothing reads it)
+            (root() / f'{task_id}.lock').unlink(missing_ok=True)
+        except OSError:
+            pass
+    else:
         _wake()  # "Run now" starts now, not at the next round
     return task
 

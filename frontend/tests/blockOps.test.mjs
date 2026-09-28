@@ -2,7 +2,7 @@
 import assert from "node:assert/strict";
 import { test } from "node:test";
 import { generateNKeysBetween } from "fractional-indexing";
-import { applyOps, diffTrees, propsPatch, pushOp, seedPositions } from "../src/shared/model/blockOps.js";
+import { applyOps, diffTrees, displacedRow, propsPatch, pushOp, seedPositions } from "../src/shared/model/blockOps.js";
 
 const PAGE = "page1";
 const N = (id, content = "", children = [], properties = {}, extra = {}) =>
@@ -168,4 +168,18 @@ test("a diff of a large flat reorder stays minimal", () => {
   assert.deepEqual(ops.map((o) => o.id), ["n0", "n1", "n2"]);
   const got = applyOps(base, ops, PAGE, new Map(pos));
   assert.deepEqual(got.map((n) => n.id), rotated.map((n) => n.id));
+});
+
+test("a remote move displaces the open editor's row when it moves it, an ancestor, or reorders their siblings", () => {
+  // top · parent[ child (editing), sibling ] · other
+  const tree = [N("top"), N("parent", "", [N("child"), N("sibling")]), N("other")];
+  const moved = (op) => displacedRow(tree, [op], "child", PAGE);
+  assert.equal(moved({ op: "move", id: "parent", parent: "top", position: "a0" }), true, "an ancestor indented");
+  assert.equal(moved({ op: "move", id: "child", parent: PAGE, position: "a9" }), true, "the block outdented");
+  assert.equal(moved({ op: "move", id: "sibling", parent: "parent", position: "Zz" }), true, "a sibling reordered");
+  assert.equal(moved({ op: "move", id: "other", parent: PAGE, position: "Zz" }), true, "the ancestor's siblings reordered");
+  assert.equal(moved({ op: "move", id: "other", parent: "top", position: "a0" }), false, "a block moved elsewhere");
+  assert.equal(moved({ op: "insert", id: "new", parent: "parent", position: "a0", content: "", props: {} }), false, "a new block");
+  assert.equal(displacedRow(tree, [{ op: "set", id: "child", content: "x" }], "child", PAGE), false);
+  assert.equal(displacedRow(tree, [{ op: "move", id: "parent", parent: "top" }], null, PAGE), false, "no editor open");
 });

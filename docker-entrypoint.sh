@@ -36,5 +36,5 @@ $AS_USER python manage.py setup
 
 # --proxy-headers: the client address (and scheme) come from X-Forwarded-For
 # / -Proto when the peer is one FORWARDED_ALLOW_IPS lists (the Dockerfile's
-# default: loopback and the private ranges).
+# default: loopback only — behind a reverse proxy, set it to the proxy).
 exec $AS_USER uvicorn app:app --host 0.0.0.0 --port "${GAMMA_PORT:-9001}" --proxy-headers

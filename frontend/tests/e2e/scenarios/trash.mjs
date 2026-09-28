@@ -79,4 +79,42 @@ export async function trashScenarios(env) {
       assertNoProblems(page, [new RegExp(`/blocks/${doomed.id}/subtree -> 404`)]);
     } finally { await ctx.close(); }
   });
+
+  // A [[ref]] or ![[embed]] naming a trashed page's block: the ref lookup
+  // leaves it out, and the block's 404 names the trash entry (App's
+  // onFetchRefs), so the chip and the card say where the page went.
+  await step("trash: a [[ref]] and an ![[embed]] of a page in the trash say so; the chip offers Restore", async () => {
+    const away = await pageApi("Linked away");
+    await user.api(`/api/pages/${away.id}/ops`, { method: "POST", body: { client: "e2e", ops: [
+      { op: "insert", id: "awaynote", parent: away.id, position: "a0", content: "the embedded note" }] } });
+    const linker = await pageApi("Linker");
+    await user.api(`/api/pages/${linker.id}/ops`, { method: "POST", body: { client: "e2e", ops: [
+      { op: "insert", id: "linkref", parent: linker.id, position: "a0", content: `see [[${away.id}]] here` },
+      { op: "insert", id: "linkembed", parent: linker.id, position: "a1", content: "![[awaynote]]" },
+      { op: "insert", id: "linkghost", parent: linker.id, position: "a2", content: "and [[nosuchblock]] too" }] } });
+    await user.api(`/api/blocks/${away.id}`, { method: "DELETE" });
+    const ctx = await user.context(browser);
+    const page = await openPage(ctx, `${server.base}/?page=${linker.id}&ws=${user.ws}`);
+    try {
+      const chip = page.locator(".blockRow", { hasText: "see" }).locator(".blockRefChip.trashedRef");
+      await chip.waitFor({ timeout: 15000 });
+      assertEq(await chip.innerText(), "Linked away", "the chip names the page, not its id");
+      assertEq(await chip.getAttribute("title"), "“Linked away” is in Recently deleted.");
+      const card = page.locator(".blockEmbedCard.gone");
+      await card.waitFor();
+      assertEq(await card.innerText(), "“Linked away” is in Recently deleted.", "the card says where its source went");
+      assertEq(await page.locator(".blockRow", { hasText: "too" }).locator(".unlinkedRef").innerText(), "nosuchblock",
+        "an id nothing holds is an unlinked chip");
+      await chip.click();
+      const notice = page.locator(".missingPageNotice");
+      await notice.waitFor();
+      await notice.getByRole("button", { name: "Restore", exact: true }).click();
+      await page.locator(".blockRow", { hasText: "the embedded note" }).waitFor();
+      assert((await library()).includes(away.id), "restored from the link");
+      assertNoProblems(page, [
+        new RegExp(`/blocks/(${away.id}|awaynote|nosuchblock) -> 404`),
+        new RegExp(`/blocks/${away.id}/subtree -> 404`),
+      ]);
+    } finally { await ctx.close(); }
+  });
 }

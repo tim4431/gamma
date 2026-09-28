@@ -253,14 +253,23 @@ def test_rate_limit_table_is_bounded(monkeypatch):
     assert getattr(over.value, "status_code", None) == 429
 
 
-def test_docker_image_trusts_forwarded_headers_from_private_peers_only():
+def test_docker_image_trusts_forwarded_headers_from_loopback_only():
     """uvicorn rewrites the client address from X-Forwarded-For only for the
-    peers FORWARDED_ALLOW_IPS lists; the image's default names loopback and
-    the private ranges a reverse proxy connects from."""
+    peers FORWARDED_ALLOW_IPS lists; the image's default is loopback only
+    (uvicorn's own), so a deployment behind a proxy names the proxy. The
+    demo and the share host do: each trusts exactly the subnet its Caddy
+    connects from, pinned in its compose files."""
     root = Path(__file__).resolve().parents[2]
     value = re.search(r'FORWARDED_ALLOW_IPS="([^"]+)"', (root / "Dockerfile").read_text(encoding="utf-8")).group(1)
     nets = [ipaddress.ip_network(v) for v in value.split(",")]
-    assert all(n.is_private or n.is_loopback for n in nets)
-    assert any(ipaddress.ip_address("172.18.0.5") in n for n in nets)
-    assert not any(ipaddress.ip_address("203.0.113.9") in n for n in nets)
+    assert all(n.is_loopback for n in nets)
+    assert not any(ipaddress.ip_address("172.18.0.5") in n for n in nets)
     assert "--proxy-headers" in (root / "docker-entrypoint.sh").read_text(encoding="utf-8")
+    deploy = root / "cloud" / "deploy"
+    compose = (deploy / "compose.yml").read_text(encoding="utf-8")
+    share = re.search(r"FORWARDED_ALLOW_IPS: (\S+)", compose).group(1)
+    assert f"- subnet: {share}" in compose  # the project network Caddy reaches the share host over
+    assert "FORWARDED_ALLOW_IPS: ${EDGE_SUBNET" in (deploy / "demo" / "compose.yml").read_text(encoding="utf-8")
+    edge = re.search(r"^EDGE_SUBNET=(\S+)", (deploy / "demo" / ".env.example").read_text(encoding="utf-8"),
+                     re.M).group(1)
+    assert f"--subnet {edge} gamma-edge" in (deploy / "demo" / "README.md").read_text(encoding="utf-8")

@@ -52,12 +52,12 @@ from datetime import timedelta
 from typing import Annotated, Literal, Union
 
 from fractional_indexing import FIError, generate_key_between, validate_order_key
-from pydantic import BaseModel, Field
+from pydantic import BaseModel, Field, model_validator
 
 from . import block_index, collab, textmerge, upload_gc
 from .blocks_store import (
-    BLOCK_COLUMNS, TRASH, block_to_dict, delete_subtree, ensure_trash, fetch_subtree, last_child_position,
-    subtree_refs, trashed_page, valid_block_id, write_lock)
+    BLOCK_COLUMNS, TRASH, block_to_dict, delete_subtree, ensure_trash, fetch_subtree, free_position,
+    last_child_position, subtree_refs, trashed_page, valid_block_id, write_lock)
 from .db import connect_pages_db, format_stamp, page_now, parse_stamp
 from .logbuf import log
 from .storage import upload_refs
@@ -116,6 +116,17 @@ def storable(value):
     if isinstance(value, list):
         return [storable(v) for v in value]
     return value
+
+
+class StorableBody(BaseModel):
+    """A request body whose strings are made ``storable`` as it is parsed:
+    half an emoji becomes U+FFFD before it can reach SQLite (or a JSON
+    answer, which cannot encode it either)."""
+
+    @model_validator(mode="before")
+    @classmethod
+    def _storable(cls, data):
+        return storable(data)
 
 
 class SetOp(BaseModel):
@@ -228,21 +239,12 @@ class _Batch:
             raise OpError(403, f"{what} {block_id} is outside this page", conflict=MOVED)
 
     def free_position(self, parent: str, position: str | None, block_id: str) -> str:
-        if position is None:
-            return generate_key_between(last_child_position(self.conn, parent), None)
-        try:
-            validate_order_key(position)
-        except FIError as e:
-            raise OpError(400, f"invalid position: {e}")
-        clash = self.conn.execute(
-            "SELECT 1 FROM unified_blocks WHERE parent_id = ? AND position = ? AND id != ?",
-            (parent, position, block_id)).fetchone()
-        if not clash:
-            return position
-        nxt = self.conn.execute(
-            "SELECT MIN(position) FROM unified_blocks WHERE parent_id = ? AND position > ? AND id != ?",
-            (parent, position, block_id)).fetchone()[0]
-        return generate_key_between(position, nxt)
+        if position is not None:
+            try:
+                validate_order_key(position)
+            except FIError as e:
+                raise OpError(400, f"invalid position: {e}")
+        return free_position(self.conn, parent, position, block_id)
 
     def check_parent(self, parent: str, block_id: str | None) -> None:
         if parent == "root":
@@ -555,8 +557,12 @@ def after_commit(ws: str, conn, result: dict) -> dict:
     dropped go to the orphan check (gamma/upload_gc.py, debounced on its own
     thread, never on the request), and the deleted blocks' data.db rows are
     purged (the library-wide part only when a PDF-carrying block went; it
-    may wait on data.db's lock)."""
+    may wait on data.db's lock). A batch that refiled the page (its folder
+    labels) re-checks the room peers a folder share admitted."""
     collab.publish_ops(ws, result)
+    if any(op["op"] == "set" and op["id"] == result["page_id"] and "folder" in (op.get("props") or {})
+           for op in result["ops"]):
+        collab.revalidate_shares(ws)
     upload_gc.schedule(ws, result["dropped_uploads"])
     if result["deleted_ids"]:
         block_index.purge_page_data(ws, conn, result["deleted_ids"], library=result["doc_deleted"])
@@ -622,7 +628,8 @@ def trash_page(ws: str, conn, page_id: str, *, actor: str, client: str = "") -> 
     the reserved ``trash`` block, stamped ``deleted_at`` / ``deleted_by``;
     its blocks, files, chats and op log stay as they are. To everything
     else it is deleted: listings and searches pass it by, ops to it are
-    refused, its room is told to reload (the 404), and the ``deleted_pages``
+    refused, its room hears ``trashed`` (an open tab keeps what its typist
+    has not sent yet, for a restore to take back), and the ``deleted_pages``
     tombstone a hard delete leaves is written, so a copy of the workspace
     removes its copy. ``restore_page`` brings it back, ``delete_page``
     removes it for good. Commits; returns its trash entry. OpError(404)
@@ -645,7 +652,7 @@ def trash_page(ws: str, conn, page_id: str, *, actor: str, client: str = "") -> 
     except BaseException:
         conn.rollback()
         raise
-    collab.publish_reload(ws, page_id)
+    collab.publish(ws, page_id, {"t": "trashed"})
     notify_commit(ws, client, page_id)
     return trashed_page(page_id, row[1], props)
 
@@ -655,8 +662,9 @@ def restore_page(ws: str, conn, page_id: str, *, client: str = "") -> dict:
     in the library, its folder labels as they were, the deletion stamps
     gone. The root is stamped and the tombstone cleared, so the change feed
     shows a page (re)created and a copy of the workspace takes it back
-    whole. Commits; returns the page's block dict. OpError(404) unless the
-    page is in the trash."""
+    whole; its room hears ``reload`` (a tab still open on it refetches and
+    sends what it kept). Commits; returns the page's block dict. OpError(404)
+    unless the page is in the trash."""
     write_lock(conn)
     try:
         row = conn.execute("SELECT parent_id, properties FROM unified_blocks WHERE id = ?", (page_id,)).fetchone()
@@ -673,6 +681,7 @@ def restore_page(ws: str, conn, page_id: str, *, client: str = "") -> dict:
     except BaseException:
         conn.rollback()
         raise
+    collab.publish_reload(ws, page_id)
     notify_commit(ws, client, page_id)
     return block_to_dict(conn.execute(
         f"SELECT {BLOCK_COLUMNS} FROM unified_blocks WHERE id = ?", (page_id,)).fetchone())

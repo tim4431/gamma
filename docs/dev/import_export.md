@@ -175,13 +175,15 @@ folder of notes, because they only differ in naming and link conventions
 - **Idempotent**: a `.md` already imported (same bytes — `markdown_import`
   digest — or the same `notion_id`) is skipped, and links to it resolve to
   the existing page, so re-importing an export adds nothing.
-- **Page by page**: a page's bundled files are stored while its links are
-  rewritten, outside any transaction. Its rows then go in as one short
-  transaction: `insert_note_page` takes the write lock and stamps the page,
-  and the import commits. Other writers are never shut out for the length
-  of an import, the change feed lists each page as it lands
-  ([collab.md](collab.md) "The change feed"), and an import that fails half
-  way keeps the pages it finished.
+- **In short batches**: a page's bundled files are stored while its links
+  are rewritten, outside any transaction. Its rows then wait with the next
+  ones, and every `PAGES_PER_COMMIT` (50) pages go in as one short
+  transaction: `insert_note_page` takes the write lock, the batch's roots
+  are stamped again right before it commits. Other writers are never shut
+  out for the length of an import, the change feed lists each batch as it
+  lands ([collab.md](collab.md) "The change feed"), and an import that
+  fails half way keeps the batches it finished. (A transaction per page
+  made big imports about twice as slow.)
 
 The report's counts (`pages_created`, `pages_skipped`, `assets_stored`,
 `links_resolved`, `notion`) and warnings appear in the shared dialog. `pages`
@@ -209,12 +211,15 @@ tags→`category`, notes→child blocks (`properties.zotero_note`), then runs th
 shared `import_embedded_annotations` (reader annotations arrive inside the
 exported PDFs; `strip` follows the client's embedded-annotations preference).
 Merging only fills gaps: existing meta/bibtex/files are kept, labels union.
-Each item is its own short transaction (`_zotero_item_page`). Its PDF is
-stored first, outside any transaction; a new page and its notes are then
-inserted under the write lock and stamped at that commit. The page is
-looked for again once the lock is held: when another import of the same
-item made it meanwhile (a double-click, two tabs), this one merges into it
-instead of making a second. The embedded annotations are likewise checked
+Each item's PDF is stored first, outside any transaction
+(`_zotero_prepare`). New pages and their notes then go in
+`ZOTERO_PAGES_PER_COMMIT` (50) at a time, in one short transaction under
+the write lock, their roots stamped at its commit (`_zotero_write_new`);
+an item that merges writes the new pages before it first, so the report
+keeps the export's order. Each new page is looked for again once the lock
+is held: when another import of the same item made it meanwhile (a
+double-click, two tabs), or an earlier item of the batch did, this one
+merges into it after the commit instead of making a second. The embedded annotations are likewise checked
 against the page's `imported_annot` keys under the lock. A merge into an
 existing page is an op batch by the importing account (a `set` of the
 changed properties plus an `insert` per new note, through `apply_ops`),

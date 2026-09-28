@@ -154,7 +154,7 @@ export function AccessRows({ info, canEdit, onUpdate }) {
         <Row icon={HardDriveIcon} label={t("Workspace quota")} hint={t("total uploads · blank or 0 = unlimited")}
           title={t("A shared workspace's own storage cap. It counts against nobody's personal quota; the per-file limit is the server default.")}>
           <UnitInput
-            unit="MB" min={0} placeholder="unlimited" value={info.quota_mb ?? ""}
+            unit="MB" min={0} placeholder={t("unlimited")} value={info.quota_mb ?? ""}
             onCommit={(raw) => {
               const n = raw.trim() === "" ? 0 : Number.parseInt(raw, 10);
               if (!Number.isFinite(n) || n < 0) return;
@@ -271,7 +271,7 @@ export function InviteDialog({ name, accounts, exclude, cloud, busy, error, onSu
           <Field label={t("Gamma Cloud username")} hint={t("They join on their first sign-in here")}>
             <input
               className="aiKeyInput" type="text" autoFocus spellCheck={false} autoCapitalize="none"
-              placeholder="username" value={cloudName}
+              placeholder={t("username")} value={cloudName}
               onChange={(e) => setCloudName(e.target.value)}
               onKeyDown={(e) => { if (e.key === "Enter") submit(); }}
             />

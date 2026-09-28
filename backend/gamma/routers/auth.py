@@ -16,7 +16,7 @@ from pydantic import BaseModel
 from starlette.background import BackgroundTask
 
 from .. import cloud_auth, guests, ratelimit, version, workspaces, ws_backup
-from ..auth import require_user, requested_ws, set_session_cookie
+from ..auth import TOKEN_REFUSAL, is_token, require_user, requested_ws, set_session_cookie
 from ..ratelimit import client_ip
 from ..db import connect_users_db, page_now, ws_dir
 
@@ -223,6 +223,8 @@ def get_session(request: Request):
     build = version.build_info()
     if not user:
         return {"user": None, "build": build}
+    if is_token(request):  # a token is no session: GET /api/sync/whoami says who it is
+        raise HTTPException(status_code=403, detail=TOKEN_REFUSAL)
     out = {"user": user, "is_guest": request.state.is_guest, "is_admin": request.state.is_admin,
            "default_workspace": request.state.default_ws or workspaces.ensure_personal(user),
            "workspaces": workspaces.list_for_user(user), "build": build}

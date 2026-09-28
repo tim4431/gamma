@@ -249,11 +249,14 @@ def _store(ws: str, filename: str, data: bytes) -> bool:
         write_atomic(target, data)
         return True
     if size is not None:
-        try:
-            os.utime(target)
-            return True
-        except FileNotFoundError:
-            pass  # purged a moment ago (gamma/upload_gc.py): store it again
+        from . import upload_gc  # local: upload_gc imports this module
+
+        with upload_gc.guard(ws):  # never between the purge's check and its delete
+            try:
+                os.utime(target)
+                return True
+            except FileNotFoundError:
+                pass  # purged a moment ago (gamma/upload_gc.py): store it again
     check_upload_allowed(ws, len(data))
     write_atomic(target, data)
     return False

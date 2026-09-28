@@ -156,7 +156,7 @@ Keep identity and data location separate in endpoint code:
 
 | Helper in `backend/gamma/auth.py` | Purpose |
 |---|---|
-| `require_user(request)` | Session username; account-only data such as AI settings |
+| `require_user(request)` | Session username; account-only data such as AI settings (an integration token gets 403) |
 | `require_ws(request, write=False)` | Workspace ID with effective viewer access |
 | `require_ws(request, write=True)` | Workspace ID with editor or owner access (and, through an integration token, a write-scope one) |
 | `can_write(request)` | The same write rule as a yes/no, for an endpoint that offers less instead of refusing (the AI chat arms no changing tools) |
@@ -269,8 +269,12 @@ uploads only after that, so every file the copied pages name is on disk when
 the list is taken. A file an orphan sweep removes in between is left out and
 named in the manifest's `missing_uploads`; it never fails the snapshot. A
 workspace takes one snapshot at a time (a lock per workspace). Each is
-written under a unique temporary name and renamed when complete; a second
-one in the same second is named `<time>-<label>.2`. Every database copy is
+written under a unique temporary name (`.<name>.<random>.part`, its
+database copies beside it) and renamed when complete; a second one in the
+same second is named `<time>-<label>.2`. What a killed process leaves of an
+unfinished one (the work files of workspace snapshots, final copies and
+server backups older than an hour) is removed at startup, hourly after that
+and before the workspace's next snapshot (`ws_backup.sweep_stale_temp`). Every database copy is
 quick-checked (`gamma/integrity.py`) and the result goes into the
 manifest's `integrity`. The listing shows a damaged copy and missing files.
 
@@ -280,7 +284,8 @@ is refused whole.
 
 - **Replace** normalizes the unpacked copies, keeps what the workspace holds
   now as an automatic `pre-restore` snapshot with its uploads, and swaps the
-  databases in. The pre-restore snapshot shows as "Before restore"; the
+  databases in: pages.db is copied into the live file in one write
+  transaction, data.db with the backup API. The pre-restore snapshot shows as "Before restore"; the
   newest three stay (`PRE_RESTORE_KEEP`) and do not count against the cap.
   The restore is refused when that snapshot cannot be taken.
 - **Files.** The backup's files the workspace lacks are copied in. Files
@@ -304,7 +309,10 @@ Either way a restore writes pages behind the op log, so it keeps the log and
 the change feed honest ([collab.md](collab.md)):
 
 - every page it wrote gets a `reload` entry above the highest seq either
-  side had (a tab's seq never goes back), and its root is stamped now;
+  side had (a tab's seq never goes back), and its root is stamped now; a
+  replace copies pages.db in and writes these in the same write transaction
+  that read the live seqs, so a batch committed meanwhile waits and lands
+  above them;
 - pages a replace removed get a `deleted_pages` tombstone, and pages a
   merge brought back lose theirs;
 - every open room of the workspace (a replace) or of the added pages (a
@@ -326,14 +334,20 @@ copy is written before the delete's checks run again under the users.db
 write lock; when they refuse after all (the account's other personal
 workspace went meanwhile, so this one is its last), the copy goes again —
 no copy is kept of a delete that did not happen. A guest's workspace keeps
-no copy.
+no copy. The directory is then renamed to `.deleting-<id>-…` (atomic, so a
+background pass about to open one of its databases finds none instead of
+creating a fresh file in a half-removed directory) and removed, each step
+retried for a second while a file is held open (Windows). What still stays
+is removed at the next startup or hourly (`workspaces.remove_leftovers`); a
+dot-named directory is never taken for a workspace. Its open page sockets
+close (`collab.revalidate`).
 
 **Scheduled tasks** (`gamma/backup_schedule.py`, API in [api.md](api.md)):
 a task belongs to an account, names the owned workspaces it snapshots
 (a fixed selection or "all owned"), a five-field UTC cron and a retention
 rule (keep N snapshots or N days). Tasks are files, `backups/tasks/<id>.json`.
 The app lifespan runs `run_due` every 30 s; each task is processed under an
-OS file lock (`<id>.lock`, `msvcrt`/`fcntl`), so several workers never run
+OS file lock (`<id>.lock`, removed with the task; `msvcrt`/`fcntl`), so several workers never run
 one task twice. A task whose `next_run` passed while the server was down
 runs once on the next round, then reschedules from the cron.
 A failed run is retried after an hour. "Run now" sets `requested`, keeps

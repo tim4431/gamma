@@ -166,7 +166,10 @@ allowance work the same on every server.
 
 demo.gammapdf.com is its own compose project on the VPS, in a folder next
 to the account server's (`GAMMA_DEMO=1` in its `demo.env`), reached through
-the account project's Caddy over the shared Docker network `gamma-edge`. It
+the account project's Caddy over the shared Docker network `gamma-edge`,
+whose subnet (`EDGE_SUBNET` in the folder's `.env`) is the one range whose
+`X-Forwarded-For` it believes — the image trusts loopback only, and without
+it every visitor would share Caddy's ten guest logins an hour. It
 runs the `sha-<short>` tag of a branch build (`docker.yml` dispatched on the
 branch, which never moves `:latest`), named by `GAMMA_TAG` in the folder's
 `.env`: setup in [cloud/deploy/demo/README.md](../../cloud/deploy/demo/README.md),

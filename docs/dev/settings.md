@@ -135,7 +135,8 @@ newest is always kept. Deleting a task keeps its snapshots.
 The server bounds what tasks can pile up. A schedule runs at most once an
 hour (the schedule preview refuses a cron with two minute values).
 Retention is at most 90 days or 90 snapshots (the editor's box stops
-there). An account keeps at most five tasks, and a run is refused while the
+there). An account keeps at most five tasks (at five, Add task and Duplicate
+are disabled and a line under the table says so), and a run is refused while the
 disk has less than 1 GB free. A refused run shows its reason in the row and
 raises the `backup-failed` notice ([workspaces.md](workspaces.md) "Export
 and backups").

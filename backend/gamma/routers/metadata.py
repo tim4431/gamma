@@ -35,7 +35,7 @@ from ..ai_context import pdf_path as _pdf_path
 from ..ai_settings import ai_runtime, require_ai_runtime
 from ..auth import require_ws
 from ..blocks_store import page_attachment, write_lock
-from ..ops import after_commit, apply_ops, props_patch
+from ..ops import StorableBody, after_commit, apply_ops, props_patch
 from ..db import connect_data_db, connect_pages_db, page_now, ws_uploads_dir
 from ..logbuf import log
 from ..pdf_index import doc_chars
@@ -942,7 +942,7 @@ def fetch_page_metadata(ws: str, block_id: str, actor: str, prompt: str = "", mo
             "cached": False, "title_updated": title_updated, "page_title": page_title}
 
 
-class MetaUpdateRequest(BaseModel):
+class MetaUpdateRequest(StorableBody):
     block_id: str
     meta: dict = {}
 

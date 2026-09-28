@@ -138,3 +138,71 @@ test("a failure that outlasts the retries stays visible until a save goes throug
   session.forget("home");
   assert.equal(session.version("home"), "");
 });
+
+test("what the other copy dropped stays dropped, unless ours changed its turn", () => {
+  const base = [msg("q1", "old"), msg("a1", "old answer"), msg("q2", "second"), msg("a2", "second answer")];
+  // The other tab started a New chat: the stored conversation is empty.
+  assert.deepEqual(mergeChats(base, [...base, msg("q3", "asked here")], []).map((m) => m.id), ["q3"]);
+  // It edited and resent its last question: the old turn stays gone.
+  const resent = [msg("q1", "old"), msg("a1", "old answer"), msg("q9", "second, reworded")];
+  assert.deepEqual(mergeChats(base, [...base, msg("q3", "asked here")], resent).map((m) => m.id), ["q1", "a1", "q3", "q9"]);
+  // A reply that kept streaming here keeps its question with it.
+  const streamed = [...base.slice(0, 3), msg("a2", "second answer, finished")];
+  assert.deepEqual(mergeChats(base, streamed, []).map((m) => [m.id, m.text]),
+    [["q2", "second"], ["a2", "second answer, finished"]]);
+});
+
+test("after a New chat in another tab, a stale tab's question starts the new conversation", async () => {
+  const old = [msg("q1", "old question"), msg("a1", "old answer")];
+  const srv = server(old, "v0");
+  const session = createChatSession(srv.save, noWait);
+  session.seen("page", old, "v0");
+  // Tab A: New chat. The stored conversation went to history.
+  srv.messages = [];
+  srv.at = "";
+  const asked = [...old, msg("q2", "asked in the stale tab")];
+  session.start("page", asked, "", new AbortController());
+  await session.flush("page");
+  assert.deepEqual(srv.messages.map((m) => m.id), ["q2"]);
+  // The stream keeps handing in lists built on the old conversation.
+  session.update("page", [...asked, msg("a2", "part", { partial: true })]);
+  assert.deepEqual(session.getSnapshot().replies.get("page").messages.map((m) => m.id), ["q2", "a2"]);
+  await session.update("page", [...asked, msg("a2", "the answer")], true);
+  session.finish("page");
+  assert.deepEqual(srv.messages.map((m) => [m.id, m.text]), [["q2", "asked in the stale tab"], ["a2", "the answer"]]);
+  assert.equal(session.saveError("page"), "");
+});
+
+test("a reply that finishes after another tab's New chat keeps its question, not the archived turns", async () => {
+  const old = [msg("q1", "old question"), msg("a1", "old answer")];
+  const srv = server(old, "v0");
+  const session = createChatSession(srv.save, noWait);
+  session.seen("page", old, "v0");
+  const asked = [...old, msg("q2", "still answering")];
+  session.start("page", asked, "", new AbortController());
+  session.update("page", [...asked, msg("a2", "part", { partial: true })]);
+  await session.flush("page");
+  assert.deepEqual(srv.messages.map((m) => m.id), ["q1", "a1", "q2", "a2"]);
+  // Tab A: New chat while the reply streams here.
+  srv.messages = [];
+  srv.at = "";
+  await session.update("page", [...asked, msg("a2", "the full answer")], true);
+  session.finish("page");
+  assert.deepEqual(srv.messages.map((m) => [m.id, m.text]), [["q2", "still answering"], ["a2", "the full answer"]]);
+});
+
+test("one tab alone saves what it holds, each save naming the version the last one left", async () => {
+  const srv = server([], "v0");
+  const session = createChatSession(srv.save, noWait);
+  session.seen("page", [], "v0");
+  const first = [msg("q1", "hi")];
+  session.start("page", first, "", new AbortController());
+  await session.update("page", [...first, msg("a1", "hello")], true);
+  session.finish("page");
+  const second = [...first, msg("a1", "hello"), msg("q2", "again")];
+  session.start("page", second, "", new AbortController());
+  await session.update("page", [...second, msg("a2", "sure")], true);
+  session.finish("page");
+  assert.deepEqual(srv.messages.map((m) => m.id), ["q1", "a1", "q2", "a2"]);
+  assert.deepEqual(srv.calls.map((c) => c.seen), ["v0", "v1", "v2", "v3"]);
+});

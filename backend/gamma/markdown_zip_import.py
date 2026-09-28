@@ -67,6 +67,9 @@ MAX_TOTAL_BYTES = 1 << 30        # uncompressed, across nested zips
 MAX_NESTED_ZIPS = 50
 MAX_TABLE_ROWS = 500
 MAX_TABLE_COLS = 40
+# New pages written in one transaction: few commits, and each hold of the
+# write lock stays short (a page's files are stored before it is staged).
+PAGES_PER_COMMIT = 50
 
 _MD_EXTS = (".md", ".markdown")
 _NOTION_ID_RE = re.compile(r"\s+[0-9a-f]{32}$", re.I)
@@ -358,7 +361,8 @@ def insert_note_page(conn, page_id, title, props, tree) -> int:
     """Insert a root page (last on root) plus its ``{content, children}``
     tree (a node's own ``id`` is honoured); returns the number of note blocks
     written. Takes the write lock first (the position is read under it) and
-    stamps the rows then; the caller commits right after, so the change feed
+    stamps the rows then; the caller commits soon after (restamping the
+    root first when more pages share the transaction), so the change feed
     sees the page by the time it is stamped."""
     write_lock(conn)
     now = page_now()
@@ -680,6 +684,26 @@ def import_markdown_zip(ws: str, zf: zipfile.ZipFile, conn, folder: str = "",
 
         return _LINK_RE.sub(md_repl, _WIKILINK_RE.sub(wiki_repl, body))
 
+    staged = []  # pages whose files are stored, written PAGES_PER_COMMIT at a time
+
+    def flush():
+        """Write the staged pages in one short transaction, their roots
+        stamped at its commit (the change feed reads the root)."""
+        if not staged:
+            return
+        try:
+            for plan in staged:
+                report["blocks_imported"] += insert_note_page(conn, plan.page_id, plan.title, plan.props,
+                                                              plan.tree)
+            stamp = page_now()
+            conn.executemany("UPDATE unified_blocks SET updated_at=? WHERE id=?",
+                             [(stamp, plan.page_id) for plan in staged])
+            conn.commit()
+        except BaseException:
+            conn.rollback()
+            raise
+        staged.clear()
+
     for plan in plans:
         if selected is not None and plan.entry.path not in selected:
             continue
@@ -713,13 +737,9 @@ def import_markdown_zip(ws: str, zf: zipfile.ZipFile, conn, folder: str = "",
         for node in _walk(plan.tree):
             node["content"] = rewrite_links(node["content"], base_dir, plan.page_id)
         if not preview:
-            try:
-                report["blocks_imported"] += insert_note_page(conn, plan.page_id, plan.title, plan.props,
-                                                              plan.tree)
-                conn.commit()
-            except BaseException:
-                conn.rollback()
-                raise
+            staged.append(plan)
+            if len(staged) >= PAGES_PER_COMMIT:
+                flush()
         report["pages_created"] += 1
         warnings = report["warnings"][warning_start:]
         report["pages"].append({"id": plan.page_id, "title": plan.title, "folder": plan.folder,
@@ -729,6 +749,7 @@ def import_markdown_zip(ws: str, zf: zipfile.ZipFile, conn, folder: str = "",
                                 "action": "skip" if plan.existing else "create", "warnings": warnings,
                                 "missing": any("Missing" in w["reason"] for w in warnings)})
 
+    flush()
     for inner in opened:
         inner.close()
     log.info(f"[markdown-zip] {report['pages_created']} pages, {report['pages_skipped']} skipped, "

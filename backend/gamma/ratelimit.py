@@ -22,8 +22,9 @@ MAX_KEYS = 10_000
 def client_ip(request: Request) -> str:
     """The client's address: the socket peer. Behind a reverse proxy that is
     the proxy, unless uvicorn rewrites it from X-Forwarded-For, which it
-    does only for a peer listed in FORWARDED_ALLOW_IPS (default 127.0.0.1).
-    The header itself is never read here: anyone can send it."""
+    does only for a peer listed in FORWARDED_ALLOW_IPS (default 127.0.0.1,
+    the Docker image's too — a deployment behind a proxy names it). The
+    header itself is never read here: anyone can send it."""
     return request.client.host if request.client else "?"
 
 

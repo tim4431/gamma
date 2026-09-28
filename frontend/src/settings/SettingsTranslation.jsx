@@ -119,7 +119,7 @@ function TranslationPerformance({ value }) {
       hint={t("Translation calls in flight at once (1–4)")}
       title={t("A page is translated in small chunks, this many at a time; a whole-document job streams chunks across pages and never exceeds it. Higher is faster until your provider's rate limit pushes back.")}
     >
-      <UnitInput value={value.translateParallel} unit="calls" min={1}
+      <UnitInput value={value.translateParallel} unit={t("calls")} min={1}
         onCommit={(raw) => {
           const n = Number.parseInt(raw, 10);
           if (Number.isFinite(n)) value.setTranslateParallel(Math.max(1, Math.min(TRANSLATE_PARALLEL_MAX, n)));

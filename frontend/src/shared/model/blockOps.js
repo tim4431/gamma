@@ -234,6 +234,24 @@ export function applyOps(tree, ops, pageId, pos) {
   return out;
 }
 
+// Whether another client's `ops` move the row of block `id` in the DOM:
+// the block or an ancestor is moved (re-parented rows remount, so an open
+// editor in it unmounts), or a sibling list holding one of them is
+// reordered (React may move our row's node). Either blurs the editor open
+// on it, which the caller must not take for the person leaving it.
+export function displacedRow(tree, ops, id, pageId) {
+  if (!id || !(ops || []).some((op) => op.op === "move" || op.op === "insert")) return false;
+  const index = indexTree(tree, pageId);
+  const lineage = new Set(), lists = new Set();
+  for (let at = index.get(id); at; at = index.get(at.parent)) {
+    lineage.add(at.node.id);
+    lists.add(at.parent);
+  }
+  if (!lineage.size) return false;
+  return ops.some((op) => (op.op === "move" || op.op === "insert") && index.has(op.id)
+    && (lineage.has(op.id) || (op.parent === index.get(op.id).parent && lists.has(op.parent))));
+}
+
 // Coalesce a queue of ops: a `set` for a block folds into the last `set`
 // for the same block when nothing structural about it sits in between.
 // Returns the queued op it was folded into (as it was before), or null when

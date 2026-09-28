@@ -1076,10 +1076,14 @@ Focused page id in the paper view, `home` at the library root,
 switching folders re-scopes the next message. The
 `/api/chats/{block_id:path}` routes take the `:path` converter for the nested
 keys, and folder rename/move/delete calls `POST /api/folders/rename`
-(`chats.move_folder_buckets`; {src, dst}, dst "" deletes) BEFORE rewriting the tags so the destination
+(`chats.move_folder_buckets`; {src, dst}, dst "" for a delete) BEFORE rewriting the tags so the destination
 bucket exists when ChatDock reloads (a destination holding a real conversation
-wins; empty save-echo rows are overwritten) — folder conversations follow
-renames and moves, and are deleted with their folder.
+stays active and the moved-in one is filed into its history; empty save-echo
+rows are overwritten) — folder conversations follow renames and moves. No
+conversation is ever dropped with a folder: a delete ("Keep pages" and
+"Delete pages too" alike) files each active one into its own bucket's
+history, which stays under the folder's key, so a page restored from
+Recently deleted brings its folder back with its chats.
 
 Replies stream per bucket, independently. `chat/chatSession.js` (owned by
 App, so navigation can unmount the dock while a request runs) keeps one
@@ -1102,9 +1106,18 @@ older copy is refused with 409 and the stored conversation. The session then
 merges the two (`mergeChats`, three-way from the copy it had read). Every
 message either side added stays, ours after the message it follows, else at
 the end. Our newer version of a message wins, theirs wins where ours is
-unchanged, and only what this tab itself dropped (an edit-and-resend) goes.
-The session shows the merge and saves it against the stored version; a
-reply still streaming is rebased onto it on its next update. Messages carry
+unchanged, and what either side dropped since the copy was read goes: this
+tab's edit-and-resend, and the other side's New chat (the stored
+conversation is then empty, or another one opened from history) or
+edit-and-resend, so a stale tab never brings an archived conversation back.
+A turn (a question and the replies after it) this tab changed since stays
+whole: a reply that finished here after another tab's New chat starts the
+new conversation with its question. The session shows the merge and saves
+it against the stored version; a reply still streaming is rebased onto it
+on its next update. A tab that comes back into focus (`focus`,
+`visibilitychange`) reads the stored conversation again and shows it when
+its version is not the tab's, as long as the tab's copy is saved and no
+reply streams there; the composer's draft stays. Messages carry
 a client-minted `id`, so the versions of one streamed reply are one message;
 older messages match by content. A save that fails on the network or with a
 5xx is retried (1, 3, 8 s). One that still fails, or a refusal, marks the
@@ -1152,6 +1165,7 @@ updated_at`). Routes: `gamma/routers/chats.py`, prefix `/api/chat-history`.
   - Delete: confirm dialog, then `DELETE /chat-history/{id}`. The active
     conversation has no delete; start a new chat instead.
 - History follows its bucket: `POST /folders/rename` rewrites entry
-  buckets along with the active rows, and `purge_page_data` drops a deleted
-  page's entries. The gamma export/import and the account-merge path copy
+  buckets along with the active rows (a folder delete leaves them), and
+  `purge_page_data` drops the entries of a page deleted for good (a page in
+  Recently deleted keeps its chats). The gamma export/import and the account-merge path copy
   only the active `chats` rows, not history.

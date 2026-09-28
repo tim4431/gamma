@@ -11,7 +11,7 @@ from fastapi import FastAPI, HTTPException, Request
 from fastapi.responses import FileResponse, Response
 
 from . import backup_schedule, cloud_sync, config, guests, migrations
-from . import sync_engine, trash, upload_gc, version
+from . import sync_engine, trash, upload_gc, version, workspaces, ws_backup
 from .publish import check_config as check_publish_config
 from .auth import session_middleware
 from .compression import JsonGzip
@@ -47,7 +47,7 @@ from .routers import (
     sync,
     trash as trash_router,
     uploads,
-    workspaces,
+    workspaces as workspaces_router,
     ws_backups, cloud_auth as cloud_auth_router)
 from .seed import ensure_admin_seed
 
@@ -156,7 +156,10 @@ def create_app() -> FastAPI:
         async with mcp.lifespan(app) as state, backup_schedule.lifespan(), \
                 every(cloud_sync.CHECK_INTERVAL, cloud_sync.check_all, "cloud: the grant check failed"), \
                 every(guests.SWEEP_INTERVAL_S, guests.delete_expired, "[guests] sweep failed"), \
-                every(trash.SWEEP_INTERVAL_S, trash.sweep, "[trash] sweep failed"):
+                every(trash.SWEEP_INTERVAL_S, trash.sweep, "[trash] sweep failed"), \
+                every(ws_backup.STALE_TEMP_S, ws_backup.sweep_stale_temp, "[backups] temp sweep failed"), \
+                every(workspaces.LEFTOVERS_EVERY_S, workspaces.remove_leftovers,
+                      "[workspaces] leftover sweep failed"):
             yield state
 
     app = FastAPI(title="Gamma PDF Annotator", lifespan=lifespan)
@@ -171,7 +174,7 @@ def create_app() -> FastAPI:
     app.include_router(auth_router.router)
     app.include_router(cloud_auth_router.router)
     app.include_router(admin.router)
-    app.include_router(workspaces.router)
+    app.include_router(workspaces_router.router)
     app.include_router(ws_backups.router)
     app.include_router(backup_tasks.router)
     app.include_router(ai.router)

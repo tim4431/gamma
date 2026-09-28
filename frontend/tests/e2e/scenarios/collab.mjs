@@ -2,8 +2,12 @@
 // chips), each other's ops arriving live, concurrent edits to different
 // blocks converging, same-block typing merging both people's text, one
 // person's undo leaving the other's edit alone, a rename reaching the other
-// tab, edits made offline landing once the network is back, a note moved in
-// with a reload surviving Ctrl+Z, a failed refresh keeping the page, and a
+// tab, edits made offline landing once the network is back (and the notice
+// going with them), a note moved in with a reload surviving Ctrl+Z, a failed
+// refresh keeping the page, undo never deleting what the other wrote in our
+// note, an indent around an open editor keeping it open, typing at one caret
+// keeping both people's keystrokes, a two-batch paste leaving the idle tab
+// silent, typing kept through Recently deleted and a restore, and a
 // highlight one person makes on the PDF showing up for the other.
 import { tree, same, editRow, closeEditor } from "./notes.mjs";
 import { waitForPdf, selectPdfText } from "./pdf.mjs";
@@ -29,6 +33,17 @@ export async function collabScenarios({ server, browser, alice, bob, makePdf, st
   const B = await openPage(ctxB, url);
   const bodyHas = (p, s) => until(async () => (await p.textContent("body")).includes(s), { what: `"${s}" visible`, timeout: 10000 });
   const serverHas = (s) => until(async () => JSON.stringify(await tree(aliceT, pageId)).includes(s), { what: `server has "${s}"` });
+  const pill = async (p) => (await p.$$eval(".statusPill", (els) => els.map((e) => e.textContent).join(" | "))) || "";
+  // A page of its own for a step, open in both tabs: its id and a tree reader.
+  const scratchPage = async (title, contents, tabs = [A, B]) => {
+    const pg = await aliceT.api("/api/pages", { method: "POST", body: { title } });
+    for (const content of contents) await aliceT.api("/api/blocks", { method: "POST", body: { parent_id: pg.id, content } });
+    for (const p of tabs) {
+      await p.goto(`${server.base}/?page=${pg.id}&ws=${teamId}`);
+      if (contents.length) await bodyHas(p, contents[contents.length - 1]);
+    }
+    return { id: pg.id, tree: () => tree(aliceT, pg.id) };
+  };
 
   await step("collab: both see each other in the presence stack", async () => {
     await bodyHas(A, "beta"); await bodyHas(B, "beta");
@@ -196,9 +211,13 @@ export async function collabScenarios({ server, browser, alice, bob, makePdf, st
     await closeEditor(A);
     await attempted;
     assert(!JSON.stringify(await tree(aliceT, pageId)).includes("offline"), "nothing reached the server while offline");
+    // the wait is told in words (not the browser's "Failed to fetch") …
+    await until(async () => (await pill(A)).includes("Not saved yet — the server can't be reached"), { what: "the waiting notice" });
     await ctxA.setOffline(false);
     await serverHas("(bob) later offline");
     await bodyHas(B, "(bob) later offline");
+    // … and goes with the save
+    await until(async () => !(await pill(A)).includes("Not saved"), { what: "no save notice once saved", timeout: 3000 });
     // The failed POSTs and the dropped socket are expected while offline.
     assertNoProblems(A, [/ERR_INTERNET_DISCONNECTED|Failed to fetch|WebSocket|net::ERR/]);
     assertNoProblems(B);
@@ -248,6 +267,111 @@ export async function collabScenarios({ server, browser, alice, bob, makePdf, st
     await bodyHas(A, "arrives after a retry"); // the retry
     await A.unroute("**/subtree*");
     assertNoProblems(A, [/net::ERR|Failed to fetch|subtree/]); assertNoProblems(B);
+  });
+
+  await step("collab: undo takes back only alice's typing, never the text bob wrote in her note", async () => {
+    const pg = await scratchPage("Undo with others", ["existing block"]);
+    await editRow(A, "existing block");
+    await A.keyboard.press("Shift+Enter"); // a new note …
+    await A.keyboard.type("alice made this"); // … and typing in it
+    await closeEditor(A);
+    await bodyHas(B, "alice made this");
+    await editRow(B, "alice made this");
+    await B.keyboard.type(" and bob wrote this");
+    await closeEditor(B);
+    await bodyHas(A, "alice made this and bob wrote this");
+    const texts = async () => (await pg.tree()).map((b) => b.content);
+    await A.keyboard.press("Control+z");
+    await until(async () => same(await texts(), ["existing block", " and bob wrote this"]), { what: "alice's typing taken out, bob's kept" });
+    await A.keyboard.press("Control+z"); // would delete the note bob wrote in
+    await until(async () => (await pill(A)).includes("Can't undo: someone else changed this since"), { what: "the undo says why it stops" });
+    await sleep(500);
+    assert(same(await texts(), ["existing block", " and bob wrote this"]), "bob's text is never deleted");
+    await until(async () => !(await B.textContent("body")).includes("alice made this"), { what: "bob's screen shows the undo" });
+    await bodyHas(B, "and bob wrote this");
+    assertNoProblems(A); assertNoProblems(B);
+  });
+
+  await step("collab: bob indenting the note around alice's keeps her editor open, typing and all", async () => {
+    const pg = await scratchPage("Moves while typing", ["sibling above", "parent node"]);
+    const parentId = (await aliceT.api(`/api/blocks/${pg.id}/subtree`)).block.children[1].id;
+    await aliceT.api("/api/blocks", { method: "POST", body: { parent_id: parentId, content: "child one" } });
+    await bodyHas(A, "child one"); await bodyHas(B, "child one");
+    await editRow(A, "child one");
+    await A.keyboard.type(" typing");
+    await editRow(B, "parent node");
+    await B.keyboard.press("Home");
+    await B.keyboard.press("Tab"); // the parent (and alice's note in it) moves under "sibling above"
+    await B.evaluate(() => document.activeElement?.blur());
+    await until(async () => (await pg.tree())[0]?.children?.[0]?.content === "parent node", { what: "bob's indent on the server" });
+    await until(async () => (await A.textContent(".blockEditorCm .cm-content").catch(() => "")) === "child one typing"
+      && (await A.evaluate(() => !!document.activeElement?.closest(".blockEditorCm"))), { what: "alice's editor open and focused after the move" });
+    await A.keyboard.type(" more");
+    await closeEditor(A);
+    const want = [{ content: "sibling above", children: [{ content: "parent node", children: [{ content: "child one typing more", children: [] }] }] }];
+    await until(async () => same(await pg.tree(), want), { what: `server tree ${JSON.stringify(want)}` });
+    assertNoProblems(A); assertNoProblems(B);
+  });
+
+  await step("collab: typing at one caret keeps both people's keystrokes", async () => {
+    const pg = await scratchPage("One caret", ["tag"]);
+    // bob's saves reach the server a little later: alice's always land first
+    await B.route("**/api/pages/*/ops", async (route) => { await sleep(150); await route.continue(); });
+    await editRow(A, "tag");
+    await editRow(B, "tag");
+    await A.keyboard.type("x");
+    await B.keyboard.type("Y");
+    await sleep(700);
+    await A.keyboard.type("xxxx");
+    await B.keyboard.type("YYYY");
+    await closeEditor(A);
+    await closeEditor(B);
+    await B.unroute("**/api/pages/*/ops");
+    const final = await until(async () => {
+      const c = (await pg.tree())[0]?.content || "";
+      return (c.match(/x/g) || []).length === 5 && (c.match(/Y/g) || []).length === 5 ? c : null;
+    }, { what: "five x's and five Y's on the server" });
+    await bodyHas(A, final); await bodyHas(B, final);
+    assertNoProblems(A); assertNoProblems(B);
+  });
+
+  await step("collab: a long paste arriving in two batches makes the idle tab send nothing", async () => {
+    await scratchPage("Two-batch paste", ["paste here"]);
+    const posted = [];
+    const onRequest = (r) => { if (r.url().includes("/ops") && r.method() === "POST") posted.push(r.postDataJSON().ops.length); };
+    B.on("request", onRequest);
+    const lines = Array.from({ length: 520 }, (_, i) => `- line ${i}`);
+    await editRow(A, "paste here");
+    await A.keyboard.press("Shift+Enter");
+    await A.evaluate((text) => {
+      const dt = new DataTransfer();
+      dt.setData("text/plain", text);
+      document.querySelector(".blockEditorCm .cm-content")
+        .dispatchEvent(new ClipboardEvent("paste", { clipboardData: dt, bubbles: true, cancelable: true }));
+    }, lines.join("\n"));
+    await A.locator(".slashMenu .slashMenuItem", { hasText: "Blocks" }).first().click({ timeout: 5000 });
+    await until(async () => (await B.$$(".blockRowWrap")).length >= 521, { what: "the whole paste on bob's screen", timeout: 20000 });
+    await sleep(1500);
+    B.off("request", onRequest);
+    assert(!posted.length, `bob's idle tab posted ops: ${JSON.stringify(posted)}`);
+    await closeEditor(A).catch(() => {});
+    assertNoProblems(A); assertNoProblems(B);
+  });
+
+  await step("collab: typing in a page moved to Recently deleted is kept, and saved once it is restored", async () => {
+    const pg = await scratchPage("Trashed while typing", ["bob types here"], [B]);
+    await editRow(B, "bob types here");
+    await B.keyboard.type(" before");
+    await until(async () => (await pg.tree())[0]?.content === "bob types here before", { what: "saved before the trash" });
+    await aliceT.api(`/api/blocks/${pg.id}`, { method: "DELETE" }); // to Recently deleted
+    await until(async () => !!(await B.$(".pageTrashedNotice")), { what: "bob sees the page went to Recently deleted" });
+    await B.keyboard.type(" after");
+    await closeEditor(B);
+    await bodyHas(B, "bob types here before after"); // kept on screen, waiting
+    await aliceT.api(`/api/trash/${pg.id}/restore`, { method: "POST" });
+    await until(async () => (await pg.tree())[0]?.content === "bob types here before after", { what: "the waiting edit saved after the restore" });
+    await until(async () => !(await B.$(".pageTrashedNotice")), { what: "the notice gone" });
+    assertNoProblems(B);
   });
 
   await step("collab: a highlight bob makes on the PDF appears on alice's page", async () => {

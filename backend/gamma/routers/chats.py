@@ -31,6 +31,7 @@ from pydantic import BaseModel
 
 from ..auth import require_ws, resolve_ws, share_scope
 from ..db import connect_data_db, connect_pages_db, page_now, stamp_after
+from ..ops import StorableBody
 
 
 router = APIRouter(prefix="/api/chats", tags=["chats"])
@@ -46,7 +47,7 @@ def _require_chat_writer(request: Request) -> str:
     return require_ws(request, write=True)
 
 
-class ChatSaveRequest(BaseModel):
+class ChatSaveRequest(StorableBody):
     messages: list | None = None   # None = keep the stored messages (a rename)
     title: str | None = None       # None = keep the stored title
     # The version (the active row's updated_at) the client's copy is based
@@ -54,14 +55,14 @@ class ChatSaveRequest(BaseModel):
     updated_at: str | None = None
 
 
-class ChatArchiveRequest(BaseModel):
+class ChatArchiveRequest(StorableBody):
     bucket: str
     messages: list = []   # the client's current conversation (authoritative)
     title: str = ""
     updated_at: str | None = None  # the version the client's copy is based on (see ChatSaveRequest)
 
 
-class ChatTitleRequest(BaseModel):
+class ChatTitleRequest(StorableBody):
     title: str
 
 
@@ -141,17 +142,36 @@ def _archive(database, bucket: str, messages: list, title: str, seen: str | None
     return _file(database, bucket, messages, title, now)
 
 
+def _file_active(database, bucket: str, into: str, now: str) -> bool:
+    """Move ``bucket``'s active conversation into ``into``'s history and
+    clear the active row; False when there was nothing to keep."""
+    row = database.execute("SELECT title, messages FROM chats WHERE block_id = ?", (bucket,)).fetchone()
+    database.execute("DELETE FROM chats WHERE block_id = ?", (bucket,))
+    messages = json.loads(row[1] or "[]") if row else []
+    if not messages:
+        return False
+    _file(database, into, messages, row[0] or derive_title(messages), now)
+    return True
+
+
 def move_folder_buckets(ws: str, src: str, dst: str) -> dict:
     """Follow a folder rename/move/delete (POST /folders/rename,
     gamma/routers/folders.py): per-folder buckets embed the path in their
     key, so path rewrites must carry the conversations along — the same
     src → dst prefix mapping the frontend applies to the pages' folder tags
     (subfolders ride along). When the destination already holds a real
-    conversation it wins and the source is dropped; an empty destination
-    row (a save-effect echo) is overwritten. History entries simply follow
-    their bucket (ids never collide). ``dst`` "" drops the conversations."""
+    conversation it stays active and the source's is filed into the
+    destination's history; an empty destination row (a save-effect echo) is
+    overwritten. History entries simply follow their bucket (ids never
+    collide). ``dst`` "" (the folder is gone — its pages kept elsewhere or
+    moved to Recently deleted): nothing moves, each active conversation is
+    filed into its own bucket's history, where the folder finds it again if
+    it comes back (a restored page brings its folder label). A conversation
+    is never dropped here."""
     src_key = f"home:{src}"
     prefix_match = "(bucket = ? OR substr(bucket, 1, ?) = ?)"
+    now = page_now()
+    archived = 0
     with connect_data_db(ws) as database:
         database.execute("BEGIN IMMEDIATE")  # a save landing meanwhile must not be left behind
         rows = database.execute(
@@ -160,30 +180,27 @@ def move_folder_buckets(ws: str, src: str, dst: str) -> dict:
         ).fetchall()
         for (old_id,) in rows:
             if not dst:
-                database.execute("DELETE FROM chats WHERE block_id = ?", (old_id,))
+                archived += _file_active(database, old_id, old_id, now)
                 continue
             new_id = f"home:{dst}" + old_id[len(src_key):]
             existing = database.execute(
                 "SELECT messages FROM chats WHERE block_id = ?", (new_id,)
             ).fetchone()
             if existing and json.loads(existing[0] or "[]"):
-                database.execute("DELETE FROM chats WHERE block_id = ?", (old_id,))
+                archived += _file_active(database, old_id, new_id, now)
             else:
                 database.execute("DELETE FROM chats WHERE block_id = ?", (new_id,))
                 database.execute("UPDATE chats SET block_id = ? WHERE block_id = ?",
                                  (new_id, old_id))
-        hist = database.execute(
+        hist = [] if not dst else database.execute(
             f"SELECT id, bucket FROM chat_history WHERE {prefix_match}",
             (src_key, len(src_key) + 1, src_key + "/"),
         ).fetchall()
         for entry_id, bucket in hist:
-            if not dst:
-                database.execute("DELETE FROM chat_history WHERE id = ?", (entry_id,))
-            else:
-                database.execute("UPDATE chat_history SET bucket = ? WHERE id = ?",
-                                 (f"home:{dst}" + bucket[len(src_key):], entry_id))
+            database.execute("UPDATE chat_history SET bucket = ? WHERE id = ?",
+                             (f"home:{dst}" + bucket[len(src_key):], entry_id))
         database.commit()
-    return {"moved": len(rows), "history_moved": len(hist)}
+    return {"moved": len(rows) if dst else 0, "history_moved": len(hist), "archived": archived}
 
 
 @router.get("/{block_id:path}")

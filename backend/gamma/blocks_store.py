@@ -49,6 +49,25 @@ def last_child_position(conn, parent_id: str) -> str | None:
     return row[0] if row else None
 
 
+def free_position(conn, parent_id: str, position: str | None, block_id: str = "") -> str:
+    """The sibling key ``block_id`` gets under ``parent_id``: ``position``
+    (a key the client minted) unless another sibling holds it — clients
+    mint keys on their own, so two can pick the same — else a key between
+    it and the next sibling up; None appends after the last child. Call it
+    under the write lock, in the transaction that writes the key."""
+    if position is None:
+        return generate_key_between(last_child_position(conn, parent_id), None)
+    clash = conn.execute(
+        "SELECT 1 FROM unified_blocks WHERE parent_id = ? AND position = ? AND id != ?",
+        (parent_id, position, block_id)).fetchone()
+    if not clash:
+        return position
+    nxt = conn.execute(
+        "SELECT MIN(position) FROM unified_blocks WHERE parent_id = ? AND position > ? AND id != ?",
+        (parent_id, position, block_id)).fetchone()[0]
+    return generate_key_between(position, nxt)
+
+
 def fetch_subtree(conn, block_id: str):
     """Fetch a block + all its descendants."""
     return conn.execute(
@@ -349,7 +368,8 @@ def create_page(conn, title: str, props: dict | None = None, *,
                 block_id: str = "", position: str = "") -> dict:
     """Insert a new root page and return its block dict. Commits. Last in
     the library unless ``position`` (a sibling key the caller minted) says
-    otherwise; ``block_id`` reuses an id (a page brought back) — its
+    otherwise — re-keyed like an op's when another page holds it
+    (``free_position``); ``block_id`` reuses an id (a page brought back) — its
     ``deleted_pages`` tombstone, if any, is cleared, and a copy of it in
     Recently deleted gives way, as it would to a hard delete and a
     re-create (a mirror bringing the page back with its own tree; files
@@ -360,11 +380,12 @@ def create_page(conn, title: str, props: dict | None = None, *,
     title = (title or "").strip() or "Untitled"
     props = dict(props or {})
     now = page_now()
+    write_lock(conn)  # the free key and the insert as one step
     if conn.execute("SELECT 1 FROM unified_blocks WHERE id = ? AND parent_id = ?",
                     (block_id, TRASH)).fetchone():
         delete_subtree(conn, block_id)
         conn.execute("DELETE FROM page_ops WHERE page_id = ?", (block_id,))
-    new_pos = position or generate_key_between(last_child_position(conn, "root"), None)
+    new_pos = free_position(conn, "root", position or None, block_id)
     conn.execute(
         "INSERT INTO unified_blocks (id, parent_id, position, content, properties, created_at, updated_at) "
         "VALUES (?, 'root', ?, ?, ?, ?, ?)",

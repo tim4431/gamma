@@ -740,7 +740,7 @@ function AdvancedAiSettings({ value }) {
         <Row icon={RefreshIcon} label={t("Tool rounds")}
           hint={t("AI ↔ tool round-trips per message")}
           title={t("Each round-trip lets the model issue more tool calls. This is a runaway guard — actual work is separately capped at 200 changes per message.")}>
-          <UnitInput value={value.toolRounds} unit="rounds" min={1}
+          <UnitInput value={value.toolRounds} unit={t("rounds")} min={1}
             onCommit={(raw) => {
               const n = Number.parseInt(raw, 10);
               if (Number.isFinite(n)) value.setToolRounds(Math.max(1, Math.min(100, n)));

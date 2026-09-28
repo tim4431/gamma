@@ -163,7 +163,10 @@ Things that already hold and only need checking:
   go through `net_guard.guarded_urlopen`, which refuses private addresses
   and redirects to them; every new outbound path must too.
 - `ratelimit.client_ip` is the connection's peer. Uvicorn rewrites it from
-  `X-Forwarded-For`, but only for proxies in `FORWARDED_ALLOW_IPS`. Behind
+  `X-Forwarded-For`, but only for proxies in `FORWARDED_ALLOW_IPS`
+  (loopback by default, in the Docker image too, so a deployment behind a
+  proxy must name it — the demo and the share host trust their compose
+  network's pinned subnet). Behind
   Cloudflare the proxy in front of Gamma must put `CF-Connecting-IP` into
   that header (as the demo's Caddy does), or every visitor shares one bucket
   and the limiter locks the whole site.

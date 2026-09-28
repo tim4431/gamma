@@ -1,7 +1,7 @@
 """gamma/sync_tree.py: snapshots and the ops between them (the pure half of
 the mirror)."""
 
-from gamma.sync_tree import diff, snapshot_from_tree, subtree_ids, upload_refs
+from gamma.sync_tree import apply, diff, moved, snapshot_from_tree, subtree_ids, upload_refs
 
 P = "page1"
 
@@ -76,6 +76,29 @@ def test_root_is_only_set_and_only_when_both_have_it():
     assert diff({}, target, P) == []
     base2 = _snap(root_props={"meta": {"t": 1}})
     assert diff(base2, _snap(), P) == [{"op": "set", "id": P, "props": {"meta": None}}]
+
+
+def test_apply_is_the_way_back_from_a_diff():
+    base = _snap(("x", P, "a0", "one"), ("y", P, "a1", "two"), ("z", "y", "a0", "three"), ("w", P, "a2", "four"))
+    target = _snap(("x", P, "a0", "one!"), ("y", P, "a1", "two", {"color": "red"}),
+                   ("n", "y", "a0", "new"), ("z", "n", "a0", "three"))
+    assert apply(base, diff(base, target, P)) == target
+    assert base["x"]["content"] == "one"  # the snapshot given is left as it was
+    # an op whose block or parent is missing changes nothing; a title written drops the automatic marker
+    titled = _snap(root_props={"auto_title": "T"})
+    assert apply(titled, [{"op": "move", "id": "gone", "parent": P}, {"op": "insert", "id": "q", "parent": "nope"},
+                          {"op": "set", "id": P, "content": "Renamed"}]) == _snap(root_content="Renamed")
+
+
+def test_a_key_the_server_re_keyed_is_no_move():
+    base = _snap(("a", P, "a0", ""), ("b", P, "a1", ""), ("c", P, "a2", ""))
+    # re-keyed on arrival: the base's key still falls between the same neighbours
+    assert moved(base, _snap(("a", P, "a0V", ""), ("b", P, "a1", ""), ("c", P, "a2", ""))) == set()
+    assert moved(base, _snap(("a", P, "a0X", ""), ("b", P, "a1X", ""), ("c", P, "a2", ""))) == set()
+    # moved: before another sibling, under another parent, or next to a block made there
+    assert moved(base, _snap(("a", P, "a0", ""), ("b", P, "a1", ""), ("c", P, "Zz", ""))) == {"c"}
+    assert moved(base, _snap(("a", P, "a0", ""), ("b", "a", "a0", ""), ("c", P, "a2", ""))) == {"b"}
+    assert moved(base, _snap(("a", P, "a0", ""), ("n", P, "a0V", ""), ("b", P, "a0G", ""), ("c", P, "a2", ""))) == {"b"}
 
 
 def test_with_base_false_omits_base_texts():

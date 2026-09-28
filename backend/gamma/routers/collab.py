@@ -132,38 +132,61 @@ def _log_position(ws: str, page_id: str) -> int:
         return latest_seq(conn, page_id)
 
 
+def _still_admitted(ws: str, page_id: str, peer: collab.Peer) -> bool | None:
+    """``collab.peer_access`` once more, for a peer in the room: a revoke
+    that landed between the handshake's check and the join found no peer
+    to close (``revalidate`` walks the rooms); this finds it."""
+    return collab.peer_access(ws, page_id, peer.account, peer.is_guest, peer.token)
+
+
 @router.websocket("/ws/page/{page_id}")
 async def page_socket(sock: WebSocket, page_id: str):
     """The page's live channel. Server → client: ``hello {client, color,
     seq, peers}`` on join, ``join {peer}`` / ``leave {client}``, ``cursor
     {client, block, anchor, head}``, ``ops {seq, actor, client, at, ops}``
-    for every applied batch, ``reload`` for changes ops can't express.
+    for every applied batch, ``reload`` for changes ops can't express (a
+    restore included), ``trashed`` when the page went to Recently deleted.
     Client → server: ``cursor {block, anchor, head}`` only — writes are
     ``POST /pages/{id}/ops``. Closed with 4403 when access is refused or
     revoked (``collab.revalidate``), 4409 when the same tab joined again.
     The database reads (the access check, the log position) run in worker
-    threads; the room itself lives on the loop."""
+    threads; the room itself lives on the loop. A client gone at any point
+    of the handshake (navigated away as the socket opened) is an ordinary
+    close, never an error."""
     access = await run_in_threadpool(_socket_access, sock, page_id)
     if not access:
-        await sock.close(code=collab.CLOSE_REVOKED)
+        await collab.close_quietly(sock, collab.CLOSE_REVOKED)
         return
     ws, peer = access
-    await sock.accept()
-    client = peer.client = (sock.query_params.get("client") or secrets.token_urlsafe(6))[:32]
-    room = collab.room_for(ws, page_id)
-    same_tab = room.peers.get(client) if room else None  # a reconnect keeps its colour
-    peer.color = same_tab.color if same_tab else room.next_color() if room else 0
-    room = collab.join(ws, page_id, peer)
-    # The log position is read only now that the peer is in the room: a
-    # batch committed before this read is counted in the hello (the client
-    # catches up on it), one after it reaches the peer as it is fanned out —
-    # possibly just before the hello, which the client's ordered inbox takes
-    # as it takes any batch.
-    seq = await run_in_threadpool(_log_position, ws, page_id)
-    await sock.send_text(json.dumps({"t": "hello", "client": client, "color": peer.color, "seq": seq,
-                                     "peers": room.presence()}))
-    await room.broadcast(json.dumps({"t": "join", "peer": peer.public()}), exclude=client)
+    room = None
     try:
+        await sock.accept()
+        client = peer.client = (sock.query_params.get("client") or secrets.token_urlsafe(6))[:32]
+        room = collab.room_for(ws, page_id)
+        same_tab = room.peers.get(client) if room else None  # a reconnect keeps its colour
+        peer.color = same_tab.color if same_tab else room.next_color() if room else 0
+        room = collab.join(ws, page_id, peer)
+        # The log position is read only now that the peer is in the room: a
+        # batch committed before this read is counted in the hello (the client
+        # catches up on it), one after it reaches the peer as it is fanned out —
+        # possibly just before the hello, which the client's ordered inbox takes
+        # as it takes any batch.
+        seq = await run_in_threadpool(_log_position, ws, page_id)
+        await sock.send_text(json.dumps({"t": "hello", "client": client, "color": peer.color, "seq": seq,
+                                         "peers": room.presence()}))
+        await room.broadcast(json.dumps({"t": "join", "peer": peer.public()}), exclude=client)
+        # Access once more now that the peer is in the room (after the hello,
+        # which stays the first message a socket gets): a revoke that landed
+        # while it joined closes it here, as revalidate would have.
+        can_edit = await run_in_threadpool(_still_admitted, ws, page_id, peer)
+        if can_edit is None:
+            if collab.leave(room, peer):
+                collab.publish(ws, page_id, {"t": "leave", "client": client})
+            await collab.close_quietly(sock, collab.CLOSE_REVOKED)
+            return
+        if can_edit != peer.can_edit:
+            peer.can_edit = can_edit
+            collab.publish(ws, page_id, {"t": "join", "peer": peer.public()}, exclude=client)
         while True:
             msg = await sock.receive_json()
             if not isinstance(msg, dict):
@@ -181,7 +204,8 @@ async def page_socket(sock: WebSocket, page_id: str):
         # Announce through publish (its own task on the loop), never by
         # awaiting here: a handler being torn down may be inside a cancelled
         # scope, and a cancelled send would leave the others with a ghost peer.
-        # Nothing to announce when a newer socket of this tab took its place
-        # or access was revoked (revalidate announced it).
-        if collab.leave(room, peer):
-            collab.publish(ws, page_id, {"t": "leave", "client": client})
+        # Nothing to announce when a newer socket of this tab took its place,
+        # access was revoked (revalidate announced it) or a failed send
+        # dropped it (the room announced it).
+        if room is not None and collab.leave(room, peer):
+            collab.publish(ws, page_id, {"t": "leave", "client": peer.client})

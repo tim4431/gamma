@@ -57,18 +57,21 @@ def test_concurrent_first_mcp_requests_and_lifespan_restart():
 
 
 def test_the_background_rounds_run_at_startup(monkeypatch):
-    """The app lifespan runs the grant check, the guest sweeper and the
-    trash sweeper once at startup (then each at its interval)."""
-    from gamma import cloud_sync, guests, trash
+    """The app lifespan runs the grant check, the guest sweeper, the trash
+    sweeper and the leftover sweeps (snapshot temp files, deleted
+    workspaces' directories) once at startup (then each at its interval)."""
+    from gamma import cloud_sync, guests, trash, workspaces, ws_backup
     from gamma.app import app
 
     ran = []
     monkeypatch.setattr(cloud_sync, "check_all", lambda: ran.append("grant check"))
     monkeypatch.setattr(guests, "delete_expired", lambda: ran.append("guests"))
     monkeypatch.setattr(trash, "sweep", lambda: ran.append("trash"))
+    monkeypatch.setattr(ws_backup, "sweep_stale_temp", lambda: ran.append("backup temp"))
+    monkeypatch.setattr(workspaces, "remove_leftovers", lambda: ran.append("leftovers"))
     with TestClient(app):
         for _ in range(100):
-            if len(ran) == 3:
+            if len(ran) == 5:
                 break
             time.sleep(0.01)
-    assert sorted(ran) == ["grant check", "guests", "trash"]
+    assert sorted(ran) == ["backup temp", "grant check", "guests", "leftovers", "trash"]

@@ -9,6 +9,9 @@ sets for changed content (carrying ``base``, the text it was edited from —
 the server's three-way merge reads it) or a properties patch, and deletes
 of the top-most removed subtrees last. Inserts and moves come in tree
 order, so a parent always exists before its children arrive.
+``apply(snapshot, ops)`` is the other way round: what a server holds after
+ops, keys taken as sent. ``moved(base, target)`` names the blocks a
+person moved, telling them from blocks the server only re-keyed.
 """
 
 import json
@@ -126,6 +129,61 @@ def diff(base: dict, target: dict, page_id: str, *, with_base: bool = True) -> l
         if parent in target or parent == page_id or parent not in base:
             ops.append({"op": "delete", "id": bid})
     return ops
+
+
+def apply(snapshot: dict, ops: list[dict]) -> dict:
+    """``snapshot`` after ``ops`` as a server applies them, keys taken as
+    sent (a server re-keys a key that is taken; the caller reads its answer
+    for those). An op whose block or parent is missing changes nothing,
+    like a retried op there."""
+    out = {k: {**v, "props": dict(v["props"])} for k, v in snapshot.items()}
+    for op in ops:
+        kind, bid = op["op"], op["id"]
+        if kind == "insert":
+            if bid not in out and op["parent"] in out:
+                out[bid] = {"parent": op["parent"], "position": op.get("position") or "",
+                            "content": op.get("content") or "", "props": dict(op.get("props") or {})}
+        elif kind == "move":
+            if bid in out and op["parent"] in out:
+                out[bid] = {**out[bid], "parent": op["parent"], "position": op.get("position") or out[bid]["position"]}
+        elif kind == "set":
+            if bid not in out:
+                continue
+            b, patch = out[bid], op.get("props") or {}
+            if op.get("content") is not None:
+                b["content"] = op["content"]
+                if "auto_title" not in patch:
+                    b["props"].pop("auto_title", None)  # a title written drops the automatic marker (ops.py)
+            for k, v in patch.items():
+                if v is None:
+                    b["props"].pop(k, None)
+                else:
+                    b["props"][k] = v
+        elif kind == "delete" and bid in out:
+            for gone in subtree_ids(out, bid):
+                out.pop(gone, None)
+    return out
+
+
+def moved(base: dict, target: dict) -> set[str]:
+    """The blocks ``target`` holds somewhere else than ``base`` did: under
+    another parent, or on a key that puts them elsewhere among their
+    siblings. A key that changed while ``base``'s key still falls between
+    the same two neighbours in ``target`` is no move: the server re-keyed a
+    block that landed on a taken key (a delete and an insert at one key
+    applied in the other order, say), and nobody moved anything."""
+    out = set()
+    for parent, ids in children_of(target).items():
+        for n, bid in enumerate(ids):
+            was = base.get(bid)
+            if was is None or (was["parent"] == parent and was["position"] == target[bid]["position"]):
+                continue
+            lower = target[ids[n - 1]]["position"] if n else None
+            upper = target[ids[n + 1]]["position"] if n + 1 < len(ids) else None
+            key = was["position"]
+            if was["parent"] != parent or not ((lower is None or lower < key) and (upper is None or key < upper)):
+                out.add(bid)
+    return out
 
 
 def upload_refs(blocks) -> set[str]:

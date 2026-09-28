@@ -25,7 +25,12 @@ const sameMessage = (a, b) => JSON.stringify(a) === JSON.stringify(b);
 // changed it since `base` — a reply that kept streaming), except the ones
 // this copy dropped since `base` (an edit-and-resend); every message only
 // `ours` has is added after the message it follows in ours (at the end when
-// it follows none). Messages match by their `id`, else by content.
+// it follows none). What `theirs` dropped since `base` stays dropped too —
+// the other copy started a New chat (the stored conversation is empty, or
+// another one opened from history) or edited and resent — unless ours
+// changed its turn since (a question and the replies after it): then the
+// whole turn stays, so a reply that finished here keeps its question.
+// Messages match by their `id`, else by content.
 export function mergeChats(base, ours, theirs) {
   const baseBy = new Map((base || []).map((m) => [messageKey(m), m]));
   const oursBy = new Map((ours || []).map((m) => [messageKey(m), m]));
@@ -39,11 +44,21 @@ export function mergeChats(base, ours, theirs) {
     }
     out.push(baseBy.has(key) && sameMessage(mine, baseBy.get(key)) ? m : mine);
   }
+  const changed = (m) => !baseBy.has(messageKey(m)) || !sameMessage(m, baseBy.get(messageKey(m)));
+  const kept = new Set(); // ours' messages in a turn ours changed since `base`
+  let turn = [];
+  const closeTurn = () => { if (turn.some(changed)) turn.forEach((m) => kept.add(m)); turn = []; };
+  for (const m of ours || []) {
+    if (m?.role === "user") closeTurn();
+    turn.push(m);
+  }
+  closeTurn();
   let at = null;
   for (const m of ours || []) {
     const key = messageKey(m);
     const found = out.findIndex((x) => messageKey(x) === key);
     if (found >= 0) { at = found + 1; continue; }
+    if (!kept.has(m)) continue; // theirs dropped it since the base, and ours left its turn alone
     const place = at ?? out.length;
     out.splice(place, 0, m);
     at = place + 1;

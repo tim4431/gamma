@@ -277,15 +277,21 @@ export default function SearchPanel({
   const anything = titleMatches.length || titlesExtra.length || notesHere.length || notesElsewhere.length
     || linkHits.length || labelMatches.length || (showPdfMatches && pdfMatches.length) || libElsewhere.length
     || notesPartial;
+  // What the details list besides the open PDF's matches (the compact bar's
+  // summary line).
+  const listed = titleMatches.length + titlesExtra.length + notesHere.length + notesElsewhere.length
+    + linkHits.length + labelMatches.length + libElsewhere.length;
 
   // One switch for the whole detail area (all the result lists). Its default
   // comes from Settings → Search via the detailsDefault prop (App owns the
-  // per-place preference: home expanded unless turned off — with no open PDF
-  // a compact find bar shows nothing — paper view compact unless turned on).
+  // per-place preference: home expanded unless turned off, paper view
+  // compact unless turned on). Compact, the bar keeps the open PDF's match
+  // count and one line counting the rest, which expands the details.
   // Re-applied each time the panel opens; the toggle button then only affects
   // the current panel session.
   const [showDetails, setShowDetails] = useState(detailsDefault);
-  useEffect(() => { if (open) setShowDetails(detailsDefault); }, [open]);
+  // (Before paint: the popover never shows last session's state first.)
+  useLayoutEffect(() => { if (open) setShowDetails(detailsDefault); }, [open]);
 
   // Result rows: the page's kind glyph and title, then one line of text,
   // the query marked in both (search/snippets.js maps each match back
@@ -428,6 +434,18 @@ export default function SearchPanel({
           <div className="searchResults">
             {busy ? <div className="searchHint">{t("Searching…")}</div> : null}
             {!busy && q && !anything ? <div className="searchHint">{t("No matches.")}</div> : null}
+            {/* The compact find bar still says what the details hold (the
+                open PDF's matches are the count beside the box), and that a
+                cut-short notes scan found only some. */}
+            {!showDetails && !busy && q && listed ? (
+              <button type="button" className="searchResult" onClick={() => setShowDetails(true)}
+                title={t("Expand result details: titles, notes, and other pages")}>
+                <span className="searchResultText">{showPdfMatches && pdfMatches.length
+                  ? tn("{n} more result — show it", "{n} more results — show them", listed)
+                  : tn("{n} result — show it", "{n} results — show them", listed)}</span>
+              </button>
+            ) : null}
+            {!showDetails && !busy && q && notesPartial ? <div className="searchHint">{t("Stopped early — refine the search to see more.")}</div> : null}
             {showDetails ? (
               <>
                 {labels.length ? (
