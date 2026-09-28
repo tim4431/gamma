@@ -172,3 +172,27 @@ def test_reference_pdf_is_readable_and_searchable(org, indexed_pdf, monkeypatch)
         text, action = run_agent_tool(ids["ws"], scope, name, args)
         assert not action.get("error"), text
         assert "cat qubits" in text and ids["a"] in text
+
+
+def test_context_export_is_the_prompt_the_chat_sends(org):
+    """/ai/chat/context renders the request /ai/chat would send — system
+    prompt, tools, replayed turns, the draft last — without a provider."""
+    c, ids = org
+    response = c.post("/api/ai/chat/context", json={
+        "prompt": "What next?", "title": "My chat", "agent_scope": "page",
+        "page_id": ids["b"], "pages": [ids["b"], ids["note"]],
+        "history": [{"role": "user", "text": "Summarize ```code```"},
+                    {"role": "ai", "text": "Done.", "actions": [
+                        {"tool": "read_page", "args": {"page_id": ids["note"]}, "result": "loose note text"}]}]})
+    assert response.status_code == 200, response.text
+    assert response.headers["content-type"].startswith("text/markdown")
+    text = response.text
+    assert text.startswith("# My chat — context")
+    assert "## System prompt" in text and "## Tools" in text and "`read_page`" in text
+    assert f"Gamma page ID: {ids['note']}" in text
+    assert "### 3. Tool result · read_page" in text and "loose note text" in text
+    # A turn holding its own fence gets a longer one around it.
+    assert "````text\n" in text
+    # The document context rides on the oldest question, the draft is last.
+    assert "User question: Summarize" in text
+    assert text.rstrip().endswith("### 5. User\n\n```text\nWhat next?\n```")

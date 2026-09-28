@@ -51,6 +51,7 @@ from ..ai_context import (
     build_messages as _build_messages,
     canonical_tool as _canonical_tool,
     MAX_CONTEXT_BLOCKS,
+    context_markdown,
     elide_live_results,
     gather_inputs as _gather_inputs,
     parse_images as _parse_images,
@@ -1353,6 +1354,77 @@ def _next_drop(drop: int, history: int) -> int:
     return min(history, max(drop + 2, drop * 2))
 
 
+def _chat_scope(request: Request, user: str, payload) -> dict:
+    """The tool scope of a chat request: what its tools reach and what the
+    agent prompt names."""
+    return {"type": payload.agent_scope, "folder": payload.folder,
+            "page_id": payload.page_id, "read_chars": payload.read_char_limit,
+            "context_pages": list(payload.pages),
+            # The agent prompt names the cursor block / attached chips so
+            # "this block" resolves without a read_block round-trip.
+            "focus_block_id": (payload.focus_block_id or "").strip()[:64],
+            "context_blocks": [str(b)[:64] for b in payload.context_blocks[:MAX_CONTEXT_BLOCKS]],
+            # What edit_block mode "selection" rewrites (labels S1, S2…).
+            "note_selections": request_note_selections(payload),
+            "actor": user, "can_write": ws_role(request) != "viewer"}
+
+
+def _chat_tools(payload) -> list | None:
+    """The armed tool specs: the scope decides which tools exist, the
+    permission toggles pick the subset — None (or no scope) is a plain chat."""
+    valid_scope = payload.agent_scope in ("folder", "page") and (
+        payload.agent_scope != "page" or payload.page_id)
+    return (agent_tools(payload.agent_scope, payload.permissions,
+                        payload.read_char_limit) or None) if valid_scope else None
+
+
+def _chat_prompt(ws: str, payload, scope: dict, tools, allow_native: bool, drop: int = 0):
+    """The request's turns, system prompt and native files, with the
+    ``drop`` oldest history items left out — what /ai/chat sends and
+    /ai/chat/context exports. Returns ``(pdf_b64s, messages, system,
+    coverage, crops)``; ``crops`` are the pictures of selected regions whose
+    text is unreliable, riding with the user's own images."""
+    crops = []
+    pdf_b64s, context, coverage, message_context = _gather_inputs(ws, payload, allow_native, crops=crops)
+    # The tools and the agent prompt know what the context already holds
+    # (read_page never repeats it; the prompt names the pages to read).
+    scope["coverage"] = coverage
+    located = next((c["selection"]["passages"] for c in coverage if c.get("selection")), None)
+    # Agent chats replay each saved reply's tool calls/results so the
+    # model keeps what it already listed/read/changed across turns.
+    messages = _build_messages(payload, context, with_tools=bool(tools), located=located,
+                               message_context=message_context, drop_turns=drop)
+    # A custom prompt always applies; the built-in one only when there's a document
+    system = (payload.system or "").strip()[:8000] or (_SYSTEM_PROMPT if (context or pdf_b64s) else "")
+    if context or pdf_b64s:
+        system += _CITATION_PROMPT
+    if tools:
+        system = ((system + "\n\n" if system else "")
+                  + agent_system(scope, payload.permissions,
+                                 (payload.agent_system or "").strip()[:8000]))
+    return pdf_b64s, messages, system, coverage, crops
+
+
+class AIChatContextRequest(AIChatRequest):
+    title: str = ""  # the conversation's name, the export's heading
+
+
+@router.post("/ai/chat/context")
+def ai_chat_context(payload: AIChatContextRequest, request: Request):
+    """What /ai/chat would send the model for this request, as a Markdown
+    file: the system prompt, the tools and every turn — the draft in the
+    composer as the last one. PDFs go as their extracted text (a file to
+    read or paste elsewhere); no provider is called, none needs to be set up."""
+    user = require_user(request)
+    ws = require_ws(request)
+    scope = _chat_scope(request, user, payload)
+    tools = _chat_tools(payload)
+    _, messages, system, coverage, crops = _chat_prompt(ws, payload, scope, tools, allow_native=False)
+    text = context_markdown(payload.title, system, messages, tools, coverage,
+                            _parse_images(payload.images) + crops)
+    return Response(text, media_type="text/markdown; charset=utf-8")
+
+
 # Sync endpoint on purpose: the AI call can take minutes; FastAPI's threadpool
 # keeps the event loop free for other requests meanwhile.
 @router.post("/ai/chat")
@@ -1369,23 +1441,8 @@ def ai_chat(payload: AIChatRequest, request: Request):
     entry = _resolve_model(rt, payload.model)
     effort = _resolve_effort(payload.effort)
     images = _parse_images(payload.images)
-    custom_system = (payload.system or "").strip()[:8000]
-    # The scope decides which tools exist; the permission toggles pick the
-    # armed subset — an empty result (or no scope) is a plain chat.
-    scope = {"type": payload.agent_scope, "folder": payload.folder,
-             "page_id": payload.page_id, "read_chars": payload.read_char_limit,
-             "context_pages": list(payload.pages),
-             # The agent prompt names the cursor block / attached chips so
-             # "this block" resolves without a read_block round-trip.
-             "focus_block_id": (payload.focus_block_id or "").strip()[:64],
-             "context_blocks": [str(b)[:64] for b in payload.context_blocks[:MAX_CONTEXT_BLOCKS]],
-             # What edit_block mode "selection" rewrites (labels S1, S2…).
-             "note_selections": request_note_selections(payload),
-             "actor": user, "can_write": ws_role(request) != "viewer"}
-    valid_scope = payload.agent_scope in ("folder", "page") and (
-        payload.agent_scope != "page" or payload.page_id)
-    tools = (agent_tools(payload.agent_scope, payload.permissions,
-                         payload.read_char_limit) or None) if valid_scope else None
+    scope = _chat_scope(request, user, payload)
+    tools = _chat_tools(payload)
     # Which model answers, at what effort, with tools or not — the reply's
     # footer names them, and the coverage chip's advice depends on the tools.
     answered = {"id": entry["id"], "name": entry["model"], "effort": effort, "tools": bool(tools)}
@@ -1402,30 +1459,10 @@ def ai_chat(payload: AIChatRequest, request: Request):
                         images=state["images"], stream=stream, tools=tools, cache_key=cache_key)
 
     def prepared(allow_native, drop=0):
-        """The request's turns, system prompt and native files, with the
-        ``drop`` oldest history items left out."""
-        # Pictures of selected regions whose text is unreliable ride with
-        # the user's own images.
-        crops = []
-        pdf_b64s, context, coverage, message_context = _gather_inputs(ws, payload, allow_native, crops=crops)
+        """_chat_prompt, keeping the coverage report and the pictures."""
+        pdf_b64s, messages, system, coverage, crops = _chat_prompt(ws, payload, scope, tools, allow_native, drop)
         state["coverage"] = coverage
         state["images"] = images + crops
-        # The tools and the agent prompt know what the context already holds
-        # (read_page never repeats it; the prompt names the pages to read).
-        scope["coverage"] = coverage
-        located = next((c["selection"]["passages"] for c in coverage if c.get("selection")), None)
-        # Agent chats replay each saved reply's tool calls/results so the
-        # model keeps what it already listed/read/changed across turns.
-        messages = _build_messages(payload, context, with_tools=bool(tools), located=located,
-                                   message_context=message_context, drop_turns=drop)
-        # A custom prompt always applies; the built-in one only when there's a document
-        system = custom_system or (_SYSTEM_PROMPT if (context or pdf_b64s) else "")
-        if context or pdf_b64s:
-            system += _CITATION_PROMPT
-        if tools:
-            system = ((system + "\n\n" if system else "")
-                      + agent_system(scope, payload.permissions,
-                                     (payload.agent_system or "").strip()[:8000]))
         return pdf_b64s, messages, system
 
     def fitted(allow_native):

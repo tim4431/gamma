@@ -25,7 +25,7 @@ import { aiServiceTiles } from "../settings/SettingsAi";
 import { renderKatex } from "../editor/LatexEditor";
 import { chipSegments } from "./chipText";
 import { effortFor } from "./effort";
-import { AlertCircleIcon, ArrowDownIcon, ArrowUpIcon, BookIcon, CheckIcon, ChevronDownIcon, ChevronUpIcon, CloudDownloadIcon, CopyIcon, EyeIcon, FileIcon, FolderIcon, GlobeIcon, HighlightIcon, HistoryIcon, InfoIcon, ListIcon, MicIcon, OutlineIcon, PaperclipIcon, PencilIcon, PlusIcon, QuoteIcon, SearchIcon, SettingsIcon, SlidersIcon, SparklesIcon, StopIcon, TextCursorIcon, TrashIcon, XIcon } from "../shared/ui/Icons";
+import { AlertCircleIcon, ArrowDownIcon, ArrowUpIcon, BookIcon, CheckIcon, ChevronDownIcon, ChevronUpIcon, CloudDownloadIcon, CopyIcon, DownloadIcon, EyeIcon, FileIcon, FolderIcon, GlobeIcon, HighlightIcon, HistoryIcon, InfoIcon, ListIcon, MicIcon, OutlineIcon, PaperclipIcon, PencilIcon, PlusIcon, QuoteIcon, SearchIcon, SettingsIcon, SlidersIcon, SparklesIcon, StopIcon, TextCursorIcon, TrashIcon, XIcon } from "../shared/ui/Icons";
 import { T, getLocale, t } from "../shared/i18n/i18n.js";
 
 const JSON_HEADERS = { "Content-Type": "application/json" };
@@ -811,6 +811,84 @@ export default function ChatDock({
     }
   }, [chatMessages, busyHere]);
 
+  // What the message points at inside the notes: the chips, and the cursor
+  // block's selection when it has one (first, as the server labels it S1).
+  function pendingNotes() {
+    const notes = chatNotes || [];
+    const cursorSel = cursorChip?.sel ? [{ id: cursorChip.id, ...cursorChip.sel }] : [];
+    return { notes, cursorSel };
+  }
+
+  // The /api/ai/chat request for `text` after `prevMessages`, from what the
+  // composer holds now — the send and the context export build the same one.
+  function chatRequest(text, prevMessages, { selectedDocs = chatDocs, includeNotes = chatIncludeNotes, attach = false, model = "", key = chatKey } = {}) {
+    const { notes, cursorSel } = pendingNotes();
+    const contextIds = [...new Set([focusedBlockId, ...selectedDocs].filter(Boolean))];
+    return {
+      prompt: text,
+      page_id: focusedBlockId || "",
+      // Only what the server replays: the text and the tool calls of
+      // each turn — never the pictures, reports and counts saved with
+      // them (failed replies aren't answers).
+      history: prevMessages.filter((m) => !m.error).map(({ role, text: turnText, actions: turnActions }) => ({
+        role, text: turnText, ...(turnActions?.length ? { actions: turnActions } : {}) })),
+      chat_key: key, // the conversation, for the provider's prompt cache
+      model: model || chatModel || "",
+      selections: pdfSelections,
+      focus_block_id: cursorChip ? cursorChip.id : "",
+      // Note chips: attached blocks go as ids (the server serves their
+      // current text, id-labelled, so the agent can edit them); selected
+      // note text as exact source ranges — edit_block mode "selection"
+      // rewrites only that.
+      context_blocks: notes.filter((n) => n.kind === "block").map((n) => n.id),
+      note_selections: [...cursorSel, ...notes.filter((n) => n.kind === "note")]
+        .map((n) => ({ block_id: n.id, from: n.from, to: n.to, text: n.text })),
+      attach_pdf: attach,
+      effort,
+      system: chatSystem || "",
+      pages: selectedDocs.length ? contextIds : [],
+      include_notes: includeNotes,
+      images: chatImages,
+      files: chatFiles,
+      context_char_limit: chatContextChars,
+      multi_context_char_limit: multiContextChars,
+      ...agentPayload(),
+    };
+  }
+
+  // Download what the model would be sent now — system prompt, tools, every
+  // turn with the pages' context, the draft as the last message — as Markdown.
+  const [exporting, setExporting] = useState(false);
+  async function exportContext() {
+    setExporting(true);
+    try {
+      const res = await fetch(`${API}/ai/chat/context`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        credentials: "include",
+        body: JSON.stringify({ ...chatRequest(chatInput.trim(), chatMessages), title: activeTitle }),
+      });
+      if (!res.ok) {
+        let detail = "";
+        try { detail = (await res.json()).detail || ""; } catch { /* not JSON */ }
+        throw new Error(detail || `HTTP ${res.status}`);
+      }
+      const url = URL.createObjectURL(await res.blob());
+      const filename = `${activeTitle.replace(/[\\/:*?"<>|\s]+/g, " ").trim().slice(0, 80) || "chat"} - context.md`;
+      const a = document.createElement("a");
+      a.href = url;
+      a.download = filename;
+      document.body.appendChild(a);
+      a.click();
+      a.remove();
+      setTimeout(() => URL.revokeObjectURL(url), 2000);
+    } catch (err) {
+      setStatus(t("Couldn't export the chat context: {message}", { message: err.message }));
+    } finally {
+      setExporting(false);
+    }
+  }
+
   // Core chat send. baseMessages overrides the history (used when re-sending
   // an edited message: everything after the edited message is discarded,
   // ChatGPT-style).
@@ -825,17 +903,8 @@ export default function ChatDock({
     const selections = pdfSelections;
     const selection = selections.map((s) => s.text).join("\n\n---\n\n");
     setPdfSelections([]);
-    // Note chips: attached blocks go as ids (the server serves their current
-    // text, id-labelled, so the agent can edit them); selected note text as
-    // verbatim passages.
-    const notes = chatNotes || [];
+    const { notes, cursorSel } = pendingNotes();
     setChatNotes?.([]);
-    const contextBlocks = notes.filter((n) => n.kind === "block").map((n) => n.id);
-    // Selected note text goes as exact source ranges (the cursor block's
-    // selection first) — edit_block mode "selection" rewrites only that.
-    const cursorSel = cursorChip?.sel ? [{ id: cursorChip.id, ...cursorChip.sel }] : [];
-    const noteSelections = [...cursorSel, ...notes.filter((n) => n.kind === "note")]
-      .map((n) => ({ block_id: n.id, from: n.from, to: n.to, text: n.text }));
     if (cursorSel.length) onSelectionSent?.();
     const images = chatImages;
     setChatImages([]);
@@ -908,31 +977,11 @@ export default function ChatDock({
         headers: { "Content-Type": "application/json" },
         credentials: "include",
         signal: ctrl.signal,
+        // chatRequest reads this render's composer state — the clears above
+        // only change it for the next render.
         body: JSON.stringify({
-          prompt: text,
-          page_id: focusedBlockId || "",
-          // Only what the server replays: the text and the tool calls of
-          // each turn — never the pictures, reports and counts saved with
-          // them (failed replies aren't answers).
-          history: prevMessages.filter((m) => !m.error).map(({ role, text: turnText, actions: turnActions }) => ({
-            role, text: turnText, ...(turnActions?.length ? { actions: turnActions } : {}) })),
-          chat_key: sendKey, // the conversation, for the provider's prompt cache
-          model: model || chatModel || "",
-          selections,
-          focus_block_id: cursorChip ? cursorChip.id : "",
-          context_blocks: contextBlocks,
-          note_selections: noteSelections,
-          attach_pdf: sendingPdf,
-          effort,
-          system: chatSystem || "",
-          pages: selectedDocs.length ? contextIds : [],
-          include_notes: includeNotes,
-          images,
-          files,
-          context_char_limit: chatContextChars,
-          multi_context_char_limit: multiContextChars,
+          ...chatRequest(text, prevMessages, { selectedDocs, includeNotes, attach: sendingPdf, model, key: sendKey }),
           stream: true,
-          ...agentPayload(),
         }),
       });
       if (!res.ok) {
@@ -1228,10 +1277,10 @@ export default function ChatDock({
   }
 
   // Header: one icon strip (the PDF zoom column's buttons, laid flat) —
-  // the context ring (opens the settings popover, whose Tokens section
+  // Export context, the context ring (opens the settings popover, whose Tokens section
   // spells it out), ⚙ chat settings (context size, tools and tokens — the
   // same prefs Settings / AI edits, in a popover; the model and effort are
-  // the composer's model chip), Tools, Find, New chat.
+  // the composer's model chip), Tools, Find, History, New chat.
   const settingsOpen = openPopover === "chatsettings";
   const findBtn = (
     <button type="button" className={`ctlBtn ${chatFindOpen ? "modeActive" : ""}`}
@@ -1249,6 +1298,13 @@ export default function ChatDock({
   const headerContent = aiOff ? null : (
     <>
       <div className="ctlBtnRow chatPanelHeaderBtns">
+        {/* First in the strip: a button right of ⚙ would push its popover
+            (right-aligned under it) past a narrow panel's edge. */}
+        <button type="button" className="ctlBtn" onClick={exportContext} disabled={exporting}
+          title={t("Export context — download what the model is sent (system prompt, pages, every message and your draft) as Markdown")}
+          aria-label={t("Export chat context")}>
+          <DownloadIcon size={16} />
+        </button>
         {headerModels.length > 0 ? (() => {
           const totalUsage = conversationUsage(chatMessages);
           const usageTitle = totalUsage ? t("; this conversation: {input} tokens in, {output} out", { input: fmtTokens(totalUsage.input), output: fmtTokens(totalUsage.output) }) : "";

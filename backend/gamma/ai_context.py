@@ -9,7 +9,7 @@ import sqlite3
 from urllib.request import Request as URLRequest
 
 from .blocks_store import fetch_subtree, page_attachment, page_for_doc, page_root_id
-from .db import connect_pages_db, pdf_upload_path, ws_db_path
+from .db import connect_pages_db, page_now, pdf_upload_path, ws_db_path
 from .foldertags import parse_tags
 from .logbuf import log
 from .net_guard import guarded_urlopen
@@ -492,6 +492,72 @@ def build_messages(payload, context: str, with_tools: bool = False,
         content = f"{head}\n\nUser question: {content}"
     messages.append({"role": "user", "content": content})
     return messages
+
+
+def _fenced(text: str, info: str = "") -> str:
+    """``text`` in a code fence longer than any backtick run inside it, so
+    notes with their own fences stay whole."""
+    longest = max((len(run) for run in re.findall(r"`+", text)), default=0)
+    fence = "`" * max(3, longest + 1)
+    return f"{fence}{info}\n{text}\n{fence}"
+
+
+def _coverage_line(entry: dict) -> str:
+    bits = []
+    if entry.get("doc_id"):
+        shown, pages = entry.get("pages_shown") or 0, entry.get("pages") or 0
+        bits.append(f"PDF text, pages 1–{shown} of {pages}" if entry.get("partial") and shown and pages
+                    else "PDF text")
+    if entry.get("notes"):
+        bits.append("notes")
+    return f"- {entry.get('title') or 'Untitled'}" + (f" ({', '.join(bits)})" if bits else "")
+
+
+def context_markdown(title: str, system: str, messages: list, tools: list | None = None,
+                     coverage: list | None = None, images: list | None = None) -> str:
+    """A chat request as a Markdown file: the pages in context, the system
+    prompt, the tools, then every turn exactly as the model receives it —
+    text only; pictures are counted, never embedded (the wires put the
+    request's own on its last user turn)."""
+    def plural(n, word):
+        return f"{n} {word}{'' if n == 1 else 's'}"
+
+    tokens = prompt_tokens(messages, system, tools, images)
+    out = [f"# {title.strip() or 'AI chat'} — context", "",
+           f"Exported {page_now()[:16].replace('T', ' ')} UTC · {plural(len(messages), 'message')} · "
+           f"about {tokens:,} tokens (estimate)", ""]
+    if coverage:
+        out += ["## Pages in context", "", *(_coverage_line(c) for c in coverage), ""]
+    if system:
+        out += ["## System prompt", "", _fenced(system, "text"), ""]
+    if tools:
+        summaries = [(t["name"], (t.get("description") or "").split("\n", 1)[0]) for t in tools]
+        out += ["## Tools", "", *(f"- `{name}` — {summary}" for name, summary in summaries),
+                "", _fenced(json.dumps(tools, ensure_ascii=False, indent=2), "json"), ""]
+    out += ["## Messages", ""]
+    names = {}  # tool call id -> tool name, for the result headings
+    last_user = max((i for i, m in enumerate(messages) if m.get("role") == "user"), default=-1)
+    for i, message in enumerate(messages):
+        role = message.get("role")
+        calls = message.get("tool_calls") or []
+        if role == "tool":
+            heading = f"Tool result · {names.get(message.get('call_id'), 'tool')}"
+        elif role == "assistant":
+            heading = "Assistant" + (f" · calls {', '.join(c['name'] for c in calls)}" if calls else "")
+        else:
+            heading = "User"
+        out += [f"### {i + 1}. {heading}", ""]
+        if message.get("content"):
+            out += [_fenced(str(message["content"]), "text"), ""]
+        for call in calls:
+            names[call.get("id")] = call.get("name")
+        if calls:
+            out += [_fenced(json.dumps([{"name": c.get("name"), "arguments": c.get("arguments")}
+                                        for c in calls], ensure_ascii=False, indent=2), "json"), ""]
+        pictures = len(message.get("images") or ()) + (len(images or ()) if i == last_user else 0)
+        if pictures:
+            out += [f"*{plural(pictures, 'picture')} sent with this message (not included).*", ""]
+    return "\n".join(out)
 
 
 def _download_pdf_from_source(ws: str, doc_id: str, pdf_path) -> None:

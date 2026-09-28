@@ -397,6 +397,22 @@ not thread-safe and overlapping extractions fail both — and reads up to
 `MAX_PAGES` (5000, a runaway guard that logs when it bites; pages past it are
 invisible to search AND read_page, so keep it far above real documents).
 
+### Exporting the context
+
+The chat header's download button saves what the model would be sent right
+now as a Markdown file. ChatDock builds the body with the same
+`chatRequest(text, history)` a send uses, with the composer's draft as the
+prompt. `POST /api/ai/chat/context` runs it through `_chat_prompt`, the one
+step `/ai/chat` also uses for its turns and system prompt, and
+`ai_context.context_markdown` writes the result: the pages in context (the
+coverage report), the system prompt, the tool specs, then every turn as
+sent, each in a fence longer than any backtick run inside it. The document
+context sits on the oldest question and the draft is the last turn. Two
+things differ from a live send. PDFs always go as extracted text (the file
+is meant to be read or pasted somewhere else, so `attach_pdf` is ignored),
+and pictures are counted but not embedded. Nothing is trimmed to fit a
+window, and no provider is called.
+
 ### Prompt caching
 
 Every request re-sends the whole conversation (no wire keeps state:
