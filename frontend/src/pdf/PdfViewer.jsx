@@ -661,12 +661,19 @@ function PdfViewer({ url, citation = null, highlights, pdfScaleValue, scrollRef,
   // with the note — clicking the rectangle later re-crops it, rendered
   // offscreen straight from the document, so it works even while the page
   // isn't on screen (e.g. a click in the notes window before scrolling).
+  // Only from the document the viewer is asked to show: during a paper
+  // switch pdfDoc is still the previous paper's until the new one commits
+  // (it stays on screen meanwhile), and a crop taken then would be that
+  // paper's page — the caller retries once the new document is rendered.
+  const urlRef = useRef(url);
+  urlRef.current = url;
   useEffect(() => {
     if (!captureRef) return;
     captureRef.current = pdfDoc ? async (h) => {
       const r = h?.position?.boundingRect;
       const pn = r?.pageNumber || h?.position?.pageNumber;
       if (!r || !pn) return null;
+      if (docUrlRef.current !== urlRef.current) return null;
       try {
         const page = await pdfDoc.getPage(pn);
         const vpBase = page.getViewport({ scale: 1 });
@@ -741,6 +748,7 @@ function PdfViewer({ url, citation = null, highlights, pdfScaleValue, scrollRef,
   // teardown on unmount: documents belong to DOC_CACHE, which is what makes
   // coming back to a paper instant.
   const displayedDocRef = useRef(null);
+  const docUrlRef = useRef(""); // the url pdfDoc belongs to (lags `url` during a load)
 
   // The three ways a document reaches the screen (docs/dev/pdf_loading.md).
   // Every commit lands heights, page tree and document in ONE render, so the
@@ -766,6 +774,7 @@ function PdfViewer({ url, citation = null, highlights, pdfScaleValue, scrollRef,
   };
   const commitDoc = (url, doc, heights, widths, exact) => {
     displayedDocRef.current = doc;
+    docUrlRef.current = url;
     commitLayout(heights, widths, exact);
     if (skeletonRef.current !== url) setDocSeq((s) => s + 1);
     skeletonRef.current = null;

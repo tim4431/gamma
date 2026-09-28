@@ -601,6 +601,54 @@ export async function pdfScenarios({ server, browser, alice, makePdf, step, unti
     }
   });
 
+  // Area-highlight thumbnails are re-cropped from the loaded document. During
+  // a paper switch the viewer still holds the previous paper's document (it
+  // stays on screen until the new one commits): a crop taken then showed that
+  // paper's page under the new paper's note, and stuck — cached by rect alone.
+  await step("pdf: a note's area-highlight thumbnail comes from its own paper after switching papers", async () => {
+    const rect = { x1: 60, y1: 40, x2: 480, y2: 110, width: 612, height: 792, pageNumber: 2 };
+    const area = (parent, content, id) => account.api("/api/blocks", { method: "POST", body: { parent_id: parent, content,
+      properties: { highlight_id: id, quote: "", color: "rgba(255, 229, 100, 0.55)", pdf_page: 2,
+        pdf_position: { pageNumber: 2, boundingRect: rect, rects: [rect], area: true } } } });
+    await area(pageId, "rydberg top of page two", "area-rydberg");
+    const other = await account.upload("/api/uploads", makePdf([["Other paper page one"], ["OTHER PAPER TOP LINE"]]), "other.pdf", "application/pdf");
+    const otherId = (await account.api(`/api/blocks/by-doc/${other.doc_id}`, { method: "POST", body: { default_title: "Other paper", source_url: other.source_url } })).id;
+    await area(otherId, "other top of page two", "area-other");
+    const thumb = (p) => until(async () => (await p.$$eval("img.blockAreaSnap", (imgs) => imgs.map((i) => i.src)))[0] || null,
+      { what: "the area thumbnail", timeout: 15000 });
+    const switchTo = async (p, title, note) => {
+      await p.keyboard.press("Escape"); // nothing else open, focus back on the page
+      await p.keyboard.press("Control+p");
+      const dialog = p.getByRole("dialog", { name: "Open a page" });
+      await dialog.waitFor();
+      const input = dialog.getByRole("textbox", { name: "Search pages by title or label" });
+      await until(() => input.evaluate((el) => el === document.activeElement), { what: "the palette's input takes focus" });
+      await input.fill(title);
+      const rows = dialog.locator('[role="option"][data-kind="page"]');
+      await until(async () => (await rows.count()) === 1 && new RegExp(title).test(await rows.textContent()), { what: `the "${title}" row` });
+      await p.keyboard.press("Enter");
+      await p.getByText(note, { exact: true }).waitFor();
+    };
+    const c = await account.context(browser);
+    try {
+      // The reference: each paper's thumbnail on a fresh load.
+      let p = await openPage(c, `${server.base}/?page=${otherId}&ws=${account.ws}`);
+      const otherFresh = await thumb(p);
+      await p.close();
+      p = await openPage(c, `${server.base}/?page=${pageId}&ws=${account.ws}`);
+      const rydberg = await thumb(p);
+      assert(rydberg !== otherFresh, "the two papers' crops differ");
+      // Switching inside the app: each paper's note shows its own crop.
+      await switchTo(p, "Other paper", "other top of page two");
+      await until(async () => (await thumb(p)) === otherFresh, { what: "the other paper's own crop", timeout: 15000 });
+      await switchTo(p, "Rydberg paper", "rydberg top of page two");
+      await until(async () => (await thumb(p)) === rydberg, { what: "the Rydberg paper's own crop", timeout: 15000 });
+      assertNoProblems(p);
+      await p.close();
+    } finally { await c.close(); }
+    await account.api(`/api/blocks/${otherId}`, { method: "DELETE" });
+  });
+
   if (ctx) await ctx.close();
   return { pdfPageId: pageId, docId };
 }

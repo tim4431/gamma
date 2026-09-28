@@ -8363,9 +8363,11 @@ function LibraryApp({ publicPage = null, initialServerConfig = null }) {
                   readOnly,
                   // Area-highlight cards show their crop, re-rendered from the
                   // loaded document each session (never stored, same as the
-                  // chat attach); docNonce retries crops once the PDF is up.
+                  // chat attach); docNonce retries crops once the PDF is up,
+                  // docKey keeps one paper's crops from serving another's.
                   captureArea: capturePdfArea,
                   docNonce: pdfDocNonce,
+                  docKey: pdfUrl,
                   allBlocks: treeBlocks,
                   highlightColors,
                   refCache,
